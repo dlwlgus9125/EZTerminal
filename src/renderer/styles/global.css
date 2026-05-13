@@ -1,0 +1,114 @@
+/* Base reset and font stack */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-0, #0a0d0c);
+  color: var(--text, #c8d3cf);
+  /* Monospace font stack — terminal UI */
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, "Courier New",
+    monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-0, #0a0d0c);
+}
+
+.app-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim, #7a8581);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+}
+
+/* Remove default focus outline — will be replaced with custom */
+:focus {
+  outline: none;
+}
+
+/* Scrollbar styling — terminal dark theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-1, #0e1311);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong, #2c3633);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint, #4a5552);
+}
+
+/* Selection */
+::selection {
+  background: rgba(74, 222, 128, 0.2);
+  color: inherit;
+}
+
+/* Button reset */
+button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Input reset */
+input,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+}
+
+/* List reset */
+ul,
+ol {
+  list-style: none;
+}
+
+/* Anchor reset */
+a {
+  color: inherit;
+  text-decoration: none;
+}

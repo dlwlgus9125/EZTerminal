@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+out/
+dist/
+.vite/
+
+# Coverage
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# TypeScript incremental
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Electron Forge artifacts
+forge.env.d.ts
+
+# Test reports
+playwright-report/
+test-results/
+
+# Package manager lock (keep pnpm-lock.yaml)
+package-lock.json
+yarn.lock

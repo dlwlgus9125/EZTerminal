@@ -1,0 +1,45 @@
+/* Phosphor 17 design tokens — applied under [data-theme='dark'] */
+/* Source: EZTerminalBAK/ezterminal/project/phases/_theme.css */
+
+[data-theme="dark"] {
+  /* Background layers */
+  --bg-0: #0a0d0c;
+  --bg-1: #0e1311;
+  --bg-2: #131918;
+  --bg-3: #1a201f;
+
+  /* Borders */
+  --border: #1f2725;
+  --border-faint: #161c1b;
+  --border-strong: #2c3633;
+
+  /* Text */
+  --text: #c8d3cf;
+  --text-dim: #7a8581;
+  --text-muted: #5a6562;
+  --text-faint: #4a5552;
+
+  /* Semantic colors */
+  --green: #4ade80;
+  --green-dim: #2d6a4a;
+  --green-glow: rgba(74, 222, 128, 0.45);
+
+  --cyan: #5eead4;
+
+  --amber: #fbbf24;
+
+  --red: #f87171;
+
+  --magenta: #c084fc;
+
+  /* Shadows */
+  --shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.02);
+
+  /* Layout dimensions */
+  --titlebar-height: 32px;
+  --tabbar-height: 36px;
+  --statusbar-height: 22px;
+  --rail-width: 48px;
+  --panel-width: 300px;
+  --gutter-size: 6px;
+}
