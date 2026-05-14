@@ -1,0 +1,77 @@
+{
+  "project": "EZTerminal",
+  "description": "Electron 기반 로컬 터미널 에뮬레이터 — xterm 호환 VT 렌더링, 다중 탭/분할, 시스템/네트워크 모니터링",
+  "stack": [
+    "electron",
+    "electron-forge",
+    "vite",
+    "react",
+    "typescript",
+    "zustand",
+    "xterm-js",
+    "node-pty",
+    "css-modules",
+    "vitest",
+    "playwright",
+    "testing-library-react",
+    "systeminformation",
+    "cap-npcap",
+    "biome",
+    "pnpm"
+  ],
+  "test": {
+    "command": "pnpm test",
+    "strategy": "vitest"
+  },
+  "build": {
+    "command": "pnpm build"
+  },
+  "lint": {
+    "command": "pnpm lint"
+  },
+  "smoke": {
+    "required": true,
+    "artifact_kind": "desktop",
+    "command": "pnpm test:e2e --grep smoke",
+    "description": "Electron headless smoke via Playwright",
+    "gui_strategy": "headless",
+    "startup_timeout_seconds": 15,
+    "survival_seconds": 8,
+    "stderr_fail_regex": "Unhandled exception|Fatal|Traceback|panic|ENOENT|EACCES|ERR_ELECTRON",
+    "window_title_regex": "EZTerminal",
+    "expected_automation_name_regex": "",
+    "expected_text_regex": "",
+    "screenshot_path": ".harness/artifacts/gui-smoke.png",
+    "min_pixel_variance": 12.0
+  },
+  "architecture": {
+    "lifecycle_stage": "production",
+    "quality_priorities": ["reliability", "performance", "maintainability"],
+    "performance_budgets": "startup <3s, key-to-pty <16ms, monitoring-update <100ms, bundle <15MB",
+    "operational_constraints": "Windows desktop, local development",
+    "compatibility_policy": "semver after v1.0",
+    "adr_required": true
+  },
+  "executor": {
+    "agent": "claude-sonnet-4-6",
+    "context_window": 200000,
+    "budget_ratio": 0.4,
+    "backend": "claude-code",
+    "reviewer_backend": "claude-code",
+    "reviewer_model": "",
+    "codex_reviewer_model": ""
+  },
+  "harness": {
+    "root": "."
+  },
+  "defaults": {
+    "spec_location": "docs/specs/",
+    "plan_location": "docs/plans/",
+    "max_retries": 3,
+    "timeout": 1800,
+    "auto_push": false,
+    "prompt_logging": false,
+    "verifier": "off",
+    "verifier_max_rounds": 1
+  }
+}
