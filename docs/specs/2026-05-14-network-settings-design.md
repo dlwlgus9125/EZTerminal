@@ -74,6 +74,41 @@ Inherits Spec 1 budgets. Spec 3 specific:
 | Cost | Ring buffer memory: PacketBufferSize * ~200B max | None for default 1000 |
 | Maintainability | cap API stable across 0.x | API may change before 1.0 |
 
+## Wiring Map
+
+| ID | Aspect | Value |
+|----|--------|-------|
+| WM-EP-REF | Entry point | Inherited from Spec 1: WM-EP1 (`src/main/index.ts`), WM-EP2 (`src/renderer/index.tsx`) |
+| WM-REG6 | Registration | IPC handlers in `src/main/ipc/network.ts`: `ipcMain.handle('network:startCapture')`, `ipcMain.handle('network:stopCapture')`, `ipcMain.handle('network:getConnections')`; push via `mainWindow.webContents.send('network:traffic')`, `mainWindow.webContents.send('network:packets')` |
+| WM-REG7 | Registration | Settings schema extension in `src/main/settings/schema.ts`: PacketBufferSize, metric intervals added to Settings type |
+| WM-DF7 | Data flow | Rail Network click → uiSlice.activePanel='network' → useVisibilityLifecycle fires → `electronAPI.network.startTraffic()` → NetworkService.startTraffic(interval) → systeminformation.networkStats() or cap stats → `mainWindow.webContents.send('network:traffic', trafficPoint)` → networkSlice.addTraffic(point) → TrafficChart render |
+| WM-DF8 | Data flow | Capture Start button → `electronAPI.network.startCapture(interfaceName)` → `ipcMain.handle('network:startCapture')` → NetworkService.startCapture(iface) → cap.open(iface) → packet callback → ring buffer push → `mainWindow.webContents.send('network:packets', packets)` → networkSlice.addPackets(packets) → PacketList render |
+| WM-DF9 | Data flow | Connections Expander open → `electronAPI.network.getConnections()` → `ipcMain.handle('network:getConnections')` → NetworkService.getConnections() → netstat-based collection → Connection[] → ConnectionTable render |
+| WM-DF10 | Data flow | Settings monitoring section change → `electronAPI.settings.save(settings)` → SettingsService.save() → MetricsService/NetworkService pick up new intervals on next tick |
+| WM-C23 | Contract | `NetworkService.startTraffic(interval: number): void` |
+| WM-C24 | Contract | `NetworkService.stopTraffic(): void` |
+| WM-C25 | Contract | `NetworkService.startCapture(interfaceName: string): void` |
+| WM-C26 | Contract | `NetworkService.stopCapture(): void` |
+| WM-C27 | Contract | `NetworkService.getConnections(): Promise<Connection[]>` |
+| WM-C28 | Contract | `NetworkService.isNpcapAvailable(): boolean` |
+| WM-C29 | Contract | `ElectronAPI.network.startTraffic(): Promise<void>` |
+| WM-C30 | Contract | `ElectronAPI.network.stopTraffic(): Promise<void>` |
+| WM-C31 | Contract | `ElectronAPI.network.startCapture(interfaceName: string): Promise<void>` |
+| WM-C32 | Contract | `ElectronAPI.network.stopCapture(): Promise<void>` |
+| WM-C33 | Contract | `ElectronAPI.network.getConnections(): Promise<Connection[]>` |
+| WM-C34 | Contract | `ElectronAPI.network.onTraffic(callback: (point: TrafficPoint) => void): void` |
+| WM-C35 | Contract | `ElectronAPI.network.onPackets(callback: (packets: Packet[]) => void): void` |
+
+## Initialization Order
+
+| Order | Module | Prerequisite | Readiness Signal |
+|-------|--------|-------------|------------------|
+| 1 | main/network | main/settings (for PacketBufferSize), Npcap detection at startup | NetworkService instance created, npcapAvailable flag set |
+| 2 | main/ipc (network channels) | main/network instance | network:* handlers registered |
+| 3 | renderer/networkSlice | preload/api (network.onTraffic, network.onPackets registered) | Slice initialized, subscribed to network events |
+| 4 | NetworkPanel | networkSlice + panel visibility=true | network:startTraffic called |
+| 5 | PacketCaptureService | main/network + Npcap available + user action | cap handle opened on first startCapture (lazy) |
+
 ## Decision Log
 
 | # | Decision | ADR | Reason |
@@ -304,7 +339,7 @@ Inherits Spec 1 budgets. Spec 3 specific:
 **Acceptance criteria:**
 - [ ] Given: Settings 패널
       When: CPU 수집 간격을 2초로 변경
-      Then: MetricsService가 2초 간격으로 전환
+      Then: 메트릭 수집 주기가 2초로 변경되어 2초마다 데이터 수신
       Verify: `pnpm test -- --run --grep "settings-metric-interval"`
       Verify-type: lib
       Automatable: true

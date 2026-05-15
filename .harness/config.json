@@ -73,5 +73,12 @@
     "prompt_logging": false,
     "verifier": "off",
     "verifier_max_rounds": 1
+  },
+  "wiring": {
+    "enabled": true,
+    "exempt_reason": "",
+    "view_extensions": [".tsx", ".jsx"],
+    "view_test_command": "",
+    "wiring_gate_command": ""
   }
 }

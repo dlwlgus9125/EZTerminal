@@ -70,6 +70,30 @@ Inherits Spec 1 budgets. Spec 2 specific:
 | Cost | None declared | Risk: none |
 | Maintainability | systeminformation API stable across v5 | API breaking change on major bump |
 
+## Wiring Map
+
+| ID | Aspect | Value |
+|----|--------|-------|
+| WM-EP-REF | Entry point | Inherited from Spec 1: WM-EP1 (`src/main/index.ts`), WM-EP2 (`src/renderer/index.tsx`) |
+| WM-REG5 | Registration | IPC handlers in `src/main/ipc/metrics.ts`: `ipcMain.handle('metrics:start')`, `ipcMain.handle('metrics:stop')`; push via `mainWindow.webContents.send('metrics:data')` |
+| WM-DF5 | Data flow | Rail Status click → uiSlice.activePanel='status' → useVisibilityLifecycle fires → `electronAPI.metrics.start()` → `ipcMain.handle('metrics:start')` → MetricsService.start() → setInterval → systeminformation.currentLoad()/mem()/fsSize()/processes()/graphics() → `mainWindow.webContents.send('metrics:data', payload)` → preload listener → metricsSlice.update(payload) → StatusPanel re-render |
+| WM-DF6 | Data flow | Panel hide/minimize → useVisibilityLifecycle fires → `electronAPI.metrics.stop()` → `ipcMain.handle('metrics:stop')` → MetricsService.stop() → clearInterval |
+| WM-C17 | Contract | `MetricsService.start(intervals: { cpu: number; disk: number; process: number }): void` |
+| WM-C18 | Contract | `MetricsService.stop(): void` |
+| WM-C19 | Contract | `MetricsService.getData(): MetricPayload` |
+| WM-C20 | Contract | `ElectronAPI.metrics.start(): Promise<void>` |
+| WM-C21 | Contract | `ElectronAPI.metrics.stop(): Promise<void>` |
+| WM-C22 | Contract | `ElectronAPI.metrics.onData(callback: (data: MetricPayload) => void): void` |
+
+## Initialization Order
+
+| Order | Module | Prerequisite | Readiness Signal |
+|-------|--------|-------------|------------------|
+| 1 | main/metrics | main/settings (for interval config) | MetricsService instance created, idle state |
+| 2 | main/ipc (metrics channels) | main/metrics instance | metrics:start, metrics:stop handlers registered |
+| 3 | renderer/metricsSlice | preload/api (metrics.onData registered) | Slice initialized, subscribed to metrics:data events |
+| 4 | StatusPanel | metricsSlice + panel visibility=true | metrics:start called, first data received and rendered |
+
 ## Decision Log
 
 | # | Decision | ADR | Reason |
@@ -96,19 +120,19 @@ Inherits Spec 1 budgets. Spec 2 specific:
 - main/metrics: MetricsService
 - main/ipc: metrics:start, metrics:stop, metrics:data 채널
 **Acceptance criteria:**
-- [ ] Given: MetricsService 정지 상태
+- [ ] Given: 메트릭 수집이 중지된 상태
       When: metrics:start IPC
       Then: interval 시작, 첫 데이터 100ms 이내 전달
       Verify: `pnpm test -- --run --grep "metrics-start"`
       Verify-type: lib
       Automatable: true
-- [ ] Given: MetricsService 실행 중
+- [ ] Given: 메트릭 수집이 실행 중인 상태
       When: metrics:stop IPC
       Then: interval 정리, 추가 데이터 전달 없음
       Verify: `pnpm test -- --run --grep "metrics-stop"`
       Verify-type: lib
       Automatable: true
-- [ ] Given: MetricsService 실행 중
+- [ ] Given: 메트릭 수집이 실행 중인 상태
       When: metrics:start 재호출
       Then: 중복 interval 없음 (기존 유지)
       Verify: `pnpm test -- --run --grep "metrics-no-duplicate"`
@@ -131,7 +155,7 @@ Inherits Spec 1 budgets. Spec 2 specific:
 - main/metrics: processCollector
 - renderer/components: ProcessList
 **Acceptance criteria:**
-- [ ] Given: MetricsService 실행 중
+- [ ] Given: 메트릭 수집이 실행 중인 상태
       When: 프로세스 수집 주기 도달
       Then: 상위 20개 프로세스 반환 (PID, name, CPU%, mem%)
       Verify: `pnpm test -- --run --grep "process-list-bounded"`

@@ -1,7 +1,7 @@
 ---
 doc_type: reference
 authority: canonical
-status: draft
+status: active
 ---
 
 # Project Conventions
@@ -94,3 +94,20 @@ Playwright for full Electron app testing.
 ### [advisory] Run the Electron app for user-facing UI changes
 
 Automated tests required first. Visual workflows must also be verified in running app.
+
+## View Wiring Tests
+
+### [important] Wiring test file naming
+
+View wiring tests use the pattern `*.wiring.test.tsx` and live alongside their source files.
+
+### [important] Preload API mock pattern
+
+Wiring tests mock `window.electronAPI` with a typed stub object. Do not mock individual IPC channels — mock the full preload API surface to verify integration contracts.
+
+### [important] Wiring test scope
+
+Each wiring test verifies:
+- Component binds to the correct store slice (binding resolution)
+- Event handlers are connected to the correct preload API methods (handler connection)
+- Required dependencies (stores, preload API) are available at mount time (dependency resolution)

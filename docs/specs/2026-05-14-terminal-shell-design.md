@@ -84,6 +84,49 @@ Electron 3-layer architecture: main (Node.js) / preload (contextBridge) / render
 | Cost | None declared | Risk: none (local desktop) |
 | Maintainability | Biome zero warnings, TS strict | Tech debt in solo project |
 
+## Wiring Map
+
+| ID | Aspect | Value |
+|----|--------|-------|
+| WM-EP1 | Entry point | `main()` in `src/main/index.ts` — Electron app bootstrap |
+| WM-EP2 | Entry point | `createRoot()` in `src/renderer/index.tsx` — React mount |
+| WM-REG1 | Registration | IPC handlers registered in `src/main/ipc/index.ts` via `ipcMain.handle()` for pty:create, pty:write, pty:resize; `ipcMain.on()` for pty:data, pty:exit |
+| WM-REG2 | Registration | Preload API exposed in `src/preload/index.ts` via `contextBridge.exposeInMainWorld('electronAPI', {...})` |
+| WM-REG3 | Registration | Zustand stores created in `src/renderer/stores/index.ts` — tabSlice, settingsSlice, uiSlice |
+| WM-REG4 | Registration | xterm.js Terminal + addons loaded in `src/renderer/terminal/TerminalView.ts` — WebGLAddon, FitAddon, Unicode11Addon, SearchAddon |
+| WM-DF1 | Data flow | Keystroke → xterm.js `onData` → `electronAPI.pty.write(sessionId, data)` → preload IPC → `ipcMain.handle('pty:write')` → `PtyManager.write(sessionId, data)` → node-pty stdin |
+| WM-DF2 | Data flow | PTY stdout → 16ms coalescer (Buffer[]) → `mainWindow.webContents.send('pty:data', sessionId, coalesced)` → preload listener → `electronAPI.pty.onData` callback → `terminal.write(data)` |
+| WM-DF3 | Data flow | Container ResizeObserver → FitAddon.fit() → cols/rows change → 100ms debounce → `electronAPI.pty.resize(sessionId, cols, rows)` → `ipcMain.handle('pty:resize')` → `pty.resize(cols, rows)` |
+| WM-DF4 | Data flow | Settings change (renderer) → `electronAPI.settings.save(settings)` → `ipcMain.handle('settings:save')` → SettingsService.save() → atomic .tmp→rename |
+| WM-C1 | Contract | `PtyManager.create(shellPath?: string): { sessionId: string }` |
+| WM-C2 | Contract | `PtyManager.write(sessionId: string, data: string): void` |
+| WM-C3 | Contract | `PtyManager.resize(sessionId: string, cols: number, rows: number): void` |
+| WM-C4 | Contract | `PtyManager.kill(sessionId: string): Promise<void>` |
+| WM-C5 | Contract | `PtyManager.killAll(timeoutMs?: number): Promise<void>` |
+| WM-C6 | Contract | `SettingsService.load(): Settings` |
+| WM-C7 | Contract | `SettingsService.save(settings: Settings): void` |
+| WM-C8 | Contract | `WindowManager.createMain(): BrowserWindow` |
+| WM-C9 | Contract | `WindowManager.createFloating(panelId: string): BrowserWindow` |
+| WM-C10 | Contract | `ElectronAPI.pty.create(shellPath?: string): Promise<{ sessionId: string }>` |
+| WM-C11 | Contract | `ElectronAPI.pty.write(sessionId: string, data: string): Promise<void>` |
+| WM-C12 | Contract | `ElectronAPI.pty.resize(sessionId: string, cols: number, rows: number): Promise<void>` |
+| WM-C13 | Contract | `ElectronAPI.pty.onData(callback: (sessionId: string, data: string) => void): void` |
+| WM-C14 | Contract | `ElectronAPI.pty.onExit(callback: (sessionId: string, exitCode: number) => void): void` |
+| WM-C15 | Contract | `ElectronAPI.settings.load(): Promise<Settings>` |
+| WM-C16 | Contract | `ElectronAPI.settings.save(settings: Settings): Promise<void>` |
+
+## Initialization Order
+
+| Order | Module | Prerequisite | Readiness Signal |
+|-------|--------|-------------|------------------|
+| 1 | main/pty | None | PtyManager instance created |
+| 2 | main/settings | fs access | Settings JSON loaded or defaults applied |
+| 3 | main/ipc | main/pty, main/settings | All ipcMain.handle() calls registered |
+| 4 | main/window | Electron app.whenReady() + main/ipc | BrowserWindow 'ready-to-show' event |
+| 5 | preload/api | main/ipc registered | contextBridge.exposeInMainWorld() complete |
+| 6 | renderer/stores | preload/api available (window.electronAPI) | Zustand stores initialized with initial data |
+| 7 | renderer/terminal | renderer/stores + preload/api | First TerminalView mounted, PTY session active |
+
 ## Decision Log
 
 | # | Decision | ADR | Reason |
@@ -200,7 +243,7 @@ Electron 3-layer architecture: main (Node.js) / preload (contextBridge) / render
 4. addon-unicode11로 한글/이모지 올바른 폭 계산
 5. scrollback 20,000줄
 6. Phosphor 토큰에서 xterm.js theme 객체 생성
-**Output:** VT 시퀀스가 올바르게 렌더링됨
+**Output:** VT 시퀀스가 xterm.js 버퍼에 기록되고 스크롤백 라인 수 증가
 **Impact scope:**
 - renderer/terminal: TerminalView 컴포넌트
 - renderer/styles: Phosphor → xterm.js theme 매핑
@@ -218,8 +261,8 @@ Electron 3-layer architecture: main (Node.js) / preload (contextBridge) / render
       Verify-type: lib
       Automatable: true
 - [ ] Given: 터미널에 한글/이모지 출력
-      When: unicode11 addon 활성
-      Then: 올바른 셀 폭으로 렌더링 (한글 2칸, 이모지 2칸)
+      When: 유니코드 확장 폭 계산이 활성화된 상태에서 렌더링
+      Then: 한글이 2셀, 이모지가 2셀 폭으로 렌더링
       Verify: `pnpm test -- --run --grep "unicode-width"`
       Verify-type: lib
       Automatable: true
@@ -403,7 +446,7 @@ Electron 3-layer architecture: main (Node.js) / preload (contextBridge) / render
 **Acceptance criteria:**
 - [ ] Given: SplitNode(horizontal, 0.5)
       When: SplitContainer 렌더
-      Then: CSS grid-template-columns: 1fr 6px 1fr
+      Then: 두 페인이 동일 비율로 가로 배치되고 6px 구분선이 그 사이에 표시됨
       Verify: `pnpm test -- --run --grep "split-render-horizontal"`
       Verify-type: lib
       Automatable: true

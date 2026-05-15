@@ -5,6 +5,7 @@
 - spec location: docs/specs/
 - plan location: docs/plans/
 - fully automated verification: e2e AC에 실행 가능한 Verify 커맨드 필수. 수동 확인 항목은 Automatable: false로 명시하고, /plan에서 자동 프로브로 대체. Verify 커맨드 없는 e2e AC는 자동 FAIL. Verify 커맨드는 실행 시점에 plan file에서 추출 — 캐시/메모리/구현자 보고서가 아닌 plan file이 유일한 원본 (ezpowers 1.3.2 Verify Fidelity Gate).
+- wiring: config.json에 wiring 블록 필수 (enabled: true). view-bearing task는 view wiring verification 필수. wiring test 파일 명명: *.wiring.test.tsx.
 
 ## Current Scope
 - Electron 3-layer: main (node-pty, IPC handlers, metrics, network, settings), preload (typed contextBridge), renderer (React 19, Zustand, xterm.js)
