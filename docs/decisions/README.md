@@ -11,6 +11,8 @@
 | ADR-005 | Persist xterm.js instances via display:none | Accepted |
 | ADR-006 | Visibility lifecycle pattern for collectors | Accepted |
 | ADR-007 | Npcap graceful degradation | Accepted |
+| [ADR-008](ADR-008-osc7-cwd-detection.md) | OSC 7 CWD detection + Win32 fallback | Accepted |
+| [ADR-009](ADR-009-custom-file-protocol.md) | Custom file protocol for preview | Accepted |
 
 ## Template
 

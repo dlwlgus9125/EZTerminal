@@ -91,6 +91,20 @@ Traffic and capture are independent systems:
 
 Window control commands use fire-and-forget send (no response needed for minimize/maximize/close).
 
+## Filesystem Channels (7)
+
+| Channel | Direction | Type | Signature |
+|---------|-----------|------|-----------|
+| `fs:readdir` | renderer -> main | invoke/handle | `(dirPath: string) => DirEntry[]` |
+| `fs:readPreview` | renderer -> main | invoke/handle | `(filePath: string) => FilePreview` |
+| `fs:getCwd` | renderer -> main | invoke/handle | `(sessionId: string) => string` |
+| `fs:watchDir` | renderer -> main | invoke/handle | `(dirPath: string) => void` |
+| `fs:unwatchDir` | renderer -> main | invoke/handle | `(dirPath: string) => void` |
+| `fs:changed` | main -> renderer | send/on | `(event: FsChangeEvent) => void` |
+| `scrollback:save` | renderer -> main | invoke/handle | `(text: string) => { saved: boolean; path?: string }` |
+
+fs:readdir, fs:readPreview, fs:getCwd, fs:watchDir, fs:unwatchDir, and scrollback:save use invoke/handle for error propagation (permission denied, path not found). fs:changed uses M->R push for real-time file watcher events (add, unlink, addDir, unlinkDir). Watcher lifecycle bound to panel visibility (ADR-006).
+
 ## Error Propagation
 
 - **invoke/handle** errors: Handler throws -> renderer `invoke()` rejects with error message. Renderer must catch and display user-facing errors.
@@ -101,7 +115,7 @@ Window control commands use fire-and-forget send (no response needed for minimiz
 
 | Pattern | Count | Channels |
 |---------|-------|----------|
-| invoke/handle | 9 | pty:create, pty:kill, settings:load, settings:save, window:isMaximized, network:startCapture, network:stopCapture, network:getConnections, network:isNpcapAvailable |
+| invoke/handle | 15 | pty:create, pty:kill, settings:load, settings:save, window:isMaximized, network:startCapture, network:stopCapture, network:getConnections, network:isNpcapAvailable, fs:readdir, fs:readPreview, fs:getCwd, fs:watchDir, fs:unwatchDir, scrollback:save |
 | send (R->M) | 9 | pty:write, pty:resize, metrics:start, metrics:stop, network:startTraffic, network:stopTraffic, window:minimize, window:maximize, window:close |
-| send (M->R) | 5+N | pty:data:{id}, pty:exit:{id}, metrics:data, network:traffic, network:packets |
-| **Total** | **23+N** | N = active PTY sessions (max 4, so max 8 per-session channels) |
+| send (M->R) | 6+N | pty:data:{id}, pty:exit:{id}, metrics:data, network:traffic, network:packets, fs:changed |
+| **Total** | **30+N** | N = active PTY sessions (max 4, so max 8 per-session channels) |

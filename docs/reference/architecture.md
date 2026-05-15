@@ -37,6 +37,10 @@ status: active
 | preload/api | contextBridge typed surface | ElectronAPI interface |
 | renderer/stores | Zustand slices (tab, settings, metrics, network, ui) | Per-slice selectors and actions |
 | renderer/terminal | xterm.js wrapper with addon management | TerminalView: mount/write/resize/dispose |
+| main/filesystem | CWD readdir, file stat, text preview read, CWD query | FilesystemService: readDir/readPreview/getCwd |
+| main/scrollback | Save dialog + scrollback text write | ScrollbackService: saveScrollback |
+| main/protocol | ezterm-file:// custom protocol registration | registerFileProtocol at app ready |
+| renderer/stores (filesSlice) | File tree state, selected file, preview, CWD | filesSlice: tree, selectedPath, previewData, cwdPath |
 | renderer/components | React UI tree | Props-driven components |
 
 ## Allowed Dependencies
@@ -52,7 +56,12 @@ preload/api    → electron (contextBridge, ipcRenderer)
 renderer/*     → preload/api (via window.electronAPI)
 renderer/terminal → xterm.js, @xterm/addon-*
 renderer/stores   → zustand
-renderer/components → renderer/stores, renderer/terminal
+renderer/components → renderer/stores, renderer/terminal, @tanstack/react-virtual
+main/filesystem  → fs, path (Node.js), chokidar 4.x
+main/scrollback  → electron (dialog), fs
+main/protocol    → electron (protocol), fs, path
+main/ipc         → main/filesystem, main/scrollback (addition to existing)
+renderer/terminal → @xterm/addon-serialize (addition)
 ```
 
 ## Forbidden Dependencies
@@ -72,6 +81,10 @@ renderer/components → renderer/stores, renderer/terminal
 | System metrics | main/metrics | renderer subscribes via IPC |
 | Network data | main/network | renderer subscribes via IPC |
 | Terminal buffer | xterm.js (renderer) | main unaware of buffer content |
+| File tree | main/filesystem (computed) | renderer requests via IPC, caches in filesSlice |
+| File preview | main/filesystem (text) / renderer (image/HTML via protocol) | text: IPC response. image/HTML: ezterm-file:// direct load |
+| CWD per session | main/filesystem (Win32 fallback) / renderer (OSC 7) | OSC 7 updates filesSlice directly; fallback queries main |
+| Scrollback text | renderer (xterm.js SerializeAddon) | serialized in renderer, sent to main for file write |
 
 ## Key Architectural Decisions
 
@@ -82,6 +95,8 @@ renderer/components → renderer/stores, renderer/terminal
 - ADR-005: Persist xterm.js instances via display:none
 - ADR-006: Visibility lifecycle pattern for collectors
 - ADR-007: Npcap graceful degradation
+- ADR-008: OSC 7 CWD detection + Win32 API fallback
+- ADR-009: Custom file protocol (ezterm-file://) for image/HTML preview
 
 ## Lifecycle Stage
 

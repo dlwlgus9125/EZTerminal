@@ -84,8 +84,8 @@ interface SettingsSlice {
 
 ```typescript
 interface UiSlice {
-  activePanel: 'status' | 'network' | 'settings' | null;
-  togglePanel(panel: 'status' | 'network' | 'settings'): void;
+  activePanel: 'status' | 'network' | 'settings' | 'files' | null;
+  togglePanel(panel: 'status' | 'network' | 'settings' | 'files'): void;
 }
 ```
 
@@ -119,6 +119,57 @@ interface NetworkSlice {
   setConnections(conns: Connection[]): void;
   selectPacket(index: number | null): void;
   setInterface(iface: string | null): void;
+}
+```
+
+### filesSlice
+
+```typescript
+interface FilesSlice {
+  tree: DirEntry[];
+  selectedPath: string | null;
+  previewData: FilePreview | null;
+  cwdPath: string | null;
+  cwdSource: 'osc7' | 'poll' | null;
+  expandedDirs: Set<string>;
+  setTree(entries: DirEntry[]): void;
+  setSelected(path: string | null): void;
+  setPreview(preview: FilePreview | null): void;
+  setCwd(path: string, source: 'osc7' | 'poll'): void;
+  toggleExpanded(dirPath: string): void;
+}
+```
+
+## Filesystem Types
+
+### DirEntry
+
+```typescript
+interface DirEntry {
+  name: string;
+  isDirectory: boolean;
+  size: number;
+  modified: number;
+}
+```
+
+### FilePreview
+
+```typescript
+interface FilePreview {
+  type: 'text' | 'image' | 'html' | 'binary';
+  content: string;
+  size: number;
+  truncated: boolean;
+}
+```
+
+### FsChangeEvent
+
+```typescript
+interface FsChangeEvent {
+  type: 'add' | 'unlink' | 'addDir' | 'unlinkDir';
+  path: string;
 }
 ```
 

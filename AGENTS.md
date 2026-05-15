@@ -8,12 +8,15 @@
 - wiring: config.json에 wiring 블록 필수 (enabled: true). view-bearing task는 view wiring verification 필수. wiring test 파일 명명: *.wiring.test.tsx.
 
 ## Current Scope
-- Electron 3-layer: main (node-pty, IPC handlers, metrics, network, settings), preload (typed contextBridge), renderer (React 19, Zustand, xterm.js)
+- Electron 3-layer: main (node-pty, IPC handlers, metrics, network, settings, filesystem, scrollback, protocol), preload (typed contextBridge), renderer (React 19, Zustand, xterm.js)
 - PTY: node-pty 1.0, 16ms frame coalescing, UUID sessions, 5 IPC channels (pty:create, pty:write, pty:resize, pty:data, pty:exit)
-- Terminal: xterm.js 5 + WebGL/Canvas fallback, addon-fit, addon-search, scrollback 20K
+- Terminal: xterm.js 5 + WebGL/Canvas fallback, addon-fit, addon-search, addon-serialize, scrollback 20K
 - Multi-tab/split: Zustand slices, LayoutNode binary tree, max 4 panes, custom SplitContainer (CSS Grid recursive)
 - UI: custom titlebar, tab bar, Terminal | Rail(48px) | Panel 300px, status bar
-- Rail panels: Status, Network, Settings — lazy creation, visibility-bound lifecycle
+- Rail panels: Files, Status, Network, Settings — lazy creation, visibility-bound lifecycle (ADR-006)
+- Files panel: CWD file explorer + text/image/HTML preview, directory watching (chokidar), CWD detection (OSC 7 + Win32 fallback), virtual scrolling
+- Save Scrollback: SerializeAddon plain text export + SaveAs dialog
+- Custom file protocol: ezterm-file:// for image/HTML preview (ADR-009)
 - Floating panels: separate BrowserWindow, pop-out/dock round-trip
 - System monitoring: systeminformation 5 (CPU/mem/disk/process/GPU)
 - Network monitoring: cap 0.3 (Npcap), traffic, packet capture, hex dump, connection table
@@ -23,13 +26,15 @@
 - Electron (Forge v7 + Vite)
 - React 19 + Zustand 5
 - TypeScript 5.8 strict
-- xterm.js 5 + WebGL + fit + unicode11 + search addons
+- xterm.js 5 + WebGL + fit + unicode11 + search + serialize addons
 - node-pty 1.0
 - CSS Modules + CSS custom properties (Phosphor 17 tokens)
 - Vitest 3 + Playwright + @testing-library/react
 - Biome
 - systeminformation 5
 - cap 0.3 (Npcap)
+- chokidar 4.x
+- @tanstack/react-virtual
 - pnpm 10
 
 ## Conventions
@@ -49,7 +54,7 @@ Coding rules: see `docs/reference/conventions.md`.
 - No blur/transition/glow effects in rendering hot path.
 - No SkiaSharp or native rendering. Electron + xterm.js WebGL only.
 - No external process dependencies (btop/psnet). Self-contained monitoring via systeminformation + cap.
-- PTY via node-pty only, no direct Win32 API calls.
+- PTY via node-pty only. Win32 API used only for CWD fallback detection (ADR-008).
 - Last tab/pane close is blocked. Always preserve at least one.
 - Keyboard open/close is viewport change, not resize (from previous implementation lesson).
 

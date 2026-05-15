@@ -20,6 +20,15 @@ _Avoid:_ "트래픽" interchangeably with "캡처" — traffic is aggregate stat
 **capture** — Packet capture: raw packet recording via cap library (requires Npcap). Records individual packets with headers and payload. Disabled gracefully when Npcap is absent.
 _Avoid:_ "캡처" when meaning traffic statistics — use "traffic" for aggregate data.
 
+**preview** — File preview: read-only display of file content in the Files panel. Text preview: UTF-8 text up to 1MB rendered as plain text. Image preview: .png/.jpg/.gif/.bmp/.webp/.svg loaded via `ezterm-file://` custom protocol. Binary files show metadata only (name, size, modified date).
+_Avoid:_ "미리보기" without qualifier — always say "text preview" or "image preview" when the type matters.
+
+**CWD** — Current Working Directory of the active PTY session. Detected via OSC 7 escape sequence (primary) or Win32 API process CWD query (fallback, 2s polling). Drives the Files panel root directory.
+_Avoid:_ Confusing terminal CWD with the Electron app's process.cwd() — they are independent.
+
+**scrollback** — Terminal scrollback buffer: the retained output history in xterm.js, capped at 20K lines. Serialized to plain text via @xterm/addon-serialize for Save Scrollback. Distinct from the visible viewport (which shows a window into the scrollback).
+_Avoid:_ "스크롤백" interchangeably with "터미널 출력" — scrollback is the persisted history, terminal output is the live stream.
+
 ## Relationships
 
 - A **Tab** contains exactly one **LayoutNode** tree (binary tree of panes).
@@ -28,3 +37,5 @@ _Avoid:_ "캡처" when meaning traffic statistics — use "traffic" for aggregat
 - **Data frame** coalescing happens in the main process; **animation frame** scheduling happens in the renderer.
 - **Traffic** collection and **packet capture** are independent systems: traffic uses systeminformation (no Npcap needed), capture requires Npcap via cap library.
 - IPC channels use two patterns: `invoke/handle` for request-response, `send/on` for fire-and-forget commands and push events. PTY data uses per-session channels (`pty:data:{id}`).
+- **Files panel** root directory tracks the active pane's **CWD**. CWD changes update filesSlice; watcher lifecycle follows ADR-006 visibility binding.
+- **Scrollback** is owned by xterm.js in the renderer; **Save Scrollback** serializes it to plain text via SerializeAddon and sends the text to main for dialog + file write.
