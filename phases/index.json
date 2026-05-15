@@ -1,15 +1,15 @@
 {
   "current_phase": "brainstorm",
   "phases": {
-    "setup": { "status": "complete", "completed_at": "2026-05-14T00:00:00Z" },
+    "setup": { "status": "complete", "completed_at": "2026-05-15T00:00:00Z" },
     "brainstorm": {
       "status": "complete",
       "completed_at": "2026-05-15T00:00:00Z",
-      "artifact": "docs/specs/2026-05-14-terminal-shell-design.md",
+      "artifact": "docs/specs/2026-05-15-terminal-shell-design.md",
       "artifacts": [
-        "docs/specs/2026-05-14-terminal-shell-design.md",
-        "docs/specs/2026-05-14-system-monitor-design.md",
-        "docs/specs/2026-05-14-network-settings-design.md"
+        "docs/specs/2026-05-15-terminal-shell-design.md",
+        "docs/specs/2026-05-15-system-monitor-design.md",
+        "docs/specs/2026-05-15-network-settings-design.md"
       ]
     },
     "plan": { "status": "pending", "artifact": null },
@@ -20,13 +20,13 @@
     "timestamp": "2026-05-15T00:00:00Z",
     "audit_point": "post-brainstorm",
     "spec_artifacts": [
-      "docs/specs/2026-05-14-terminal-shell-design.md",
-      "docs/specs/2026-05-14-system-monitor-design.md",
-      "docs/specs/2026-05-14-network-settings-design.md"
+      "docs/specs/2026-05-15-terminal-shell-design.md",
+      "docs/specs/2026-05-15-system-monitor-design.md",
+      "docs/specs/2026-05-15-network-settings-design.md"
     ],
     "plan_artifact": null,
     "fail_count": 0,
     "warn_count": 0,
-    "summary": "D2 PASS, D6 L1 PASS, D7 PASS — all gates passed"
+    "summary": "All dimensions PASS"
   }
 }

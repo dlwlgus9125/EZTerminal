@@ -31,7 +31,7 @@ status: active
 | main/pty | PTY session CRUD, 16ms frame coalescing | PtyManager: create/write/resize/kill |
 | main/ipc | IPC channel registration and routing | Channel handlers for pty:*, metrics:*, network:*, settings:* |
 | main/metrics | System metric collection (systeminformation) | MetricsService: start/stop/getData |
-| main/network | Traffic + packet capture (cap/systeminformation) | NetworkService: startCapture/stop/getTraffic/getConnections |
+| main/network | Traffic + packet capture (cap/systeminformation) | NetworkService: startTraffic/stopTraffic/startCapture/stopCapture/getConnections/isNpcapAvailable |
 | main/settings | Atomic JSON persistence | SettingsService: load/save/getDefaults |
 | main/window | BrowserWindow lifecycle | WindowManager: createMain/createFloating/broadcast |
 | preload/api | contextBridge typed surface | ElectronAPI interface |

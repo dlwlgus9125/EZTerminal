@@ -22,7 +22,7 @@
 ## Stack
 - Electron (Forge v7 + Vite)
 - React 19 + Zustand 5
-- TypeScript 5.7 strict
+- TypeScript 5.8 strict
 - xterm.js 5 + WebGL + fit + unicode11 + search addons
 - node-pty 1.0
 - CSS Modules + CSS custom properties (Phosphor 17 tokens)

@@ -44,6 +44,12 @@
     "screenshot_path": ".harness/artifacts/gui-smoke.png",
     "min_pixel_variance": 12.0
   },
+  "server": {
+    "start_command": "",
+    "stop_command": "",
+    "health_check_url": "",
+    "health_check_timeout": 15
+  },
   "architecture": {
     "lifecycle_stage": "production",
     "quality_priorities": ["reliability", "performance", "maintainability"],
