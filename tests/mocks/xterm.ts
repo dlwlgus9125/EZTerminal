@@ -30,28 +30,24 @@ export class MockTerminal {
   private readonly _buffer: string[] = [];
   private loadedAddons: unknown[] = [];
 
-  readonly onData = {
-    event: (handler: DataHandler) => {
-      this.dataHandlers.push(handler);
-      return {
-        dispose: () => {
-          const idx = this.dataHandlers.indexOf(handler);
-          if (idx !== -1) this.dataHandlers.splice(idx, 1);
-        },
-      };
-    },
+  onData = (handler: DataHandler): { dispose: () => void } => {
+    this.dataHandlers.push(handler);
+    return {
+      dispose: () => {
+        const idx = this.dataHandlers.indexOf(handler);
+        if (idx !== -1) this.dataHandlers.splice(idx, 1);
+      },
+    };
   };
 
-  readonly onResize = {
-    event: (handler: ResizeHandler) => {
-      this.resizeHandlers.push(handler);
-      return {
-        dispose: () => {
-          const idx = this.resizeHandlers.indexOf(handler);
-          if (idx !== -1) this.resizeHandlers.splice(idx, 1);
-        },
-      };
-    },
+  onResize = (handler: ResizeHandler): { dispose: () => void } => {
+    this.resizeHandlers.push(handler);
+    return {
+      dispose: () => {
+        const idx = this.resizeHandlers.indexOf(handler);
+        if (idx !== -1) this.resizeHandlers.splice(idx, 1);
+      },
+    };
   };
 
   constructor(options: MockTerminalOptions = {}) {

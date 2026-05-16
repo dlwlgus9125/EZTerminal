@@ -1,16 +1,10 @@
 import type { ReactElement } from "react";
+import { TerminalView } from "./components/Terminal";
 
-/**
- * App root component.
- * Sets data-theme='dark' on the document element to activate Phosphor tokens.
- * The html element already has data-theme='dark' from index.html.
- */
 function App(): ReactElement {
   return (
     <div className="app-root">
-      <div className="app-placeholder">
-        <span>EZTerminal</span>
-      </div>
+      <TerminalView sessionId={null} />
     </div>
   );
 }

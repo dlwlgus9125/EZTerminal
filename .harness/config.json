@@ -16,6 +16,7 @@
     "testing-library-react",
     "systeminformation",
     "cap-npcap",
+    "electron-log",
     "biome",
     "pnpm"
   ],

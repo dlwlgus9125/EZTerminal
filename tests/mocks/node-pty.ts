@@ -6,7 +6,7 @@
 import { vi } from "vitest";
 
 type DataCallback = (data: string) => void;
-type ExitCallback = (exitCode: number, signal?: number) => void;
+type ExitCallback = (event: { exitCode: number; signal?: number }) => void;
 
 export interface MockPtyOptions {
   cols?: number;
@@ -39,18 +39,22 @@ export class MockIPty {
     this.handleFlowControl = false;
   }
 
-  get onData(): { event: (callback: DataCallback) => void } {
+  onData(callback: DataCallback): { dispose: () => void } {
+    this.dataCallbacks.push(callback);
     return {
-      event: (callback: DataCallback) => {
-        this.dataCallbacks.push(callback);
+      dispose: () => {
+        const idx = this.dataCallbacks.indexOf(callback);
+        if (idx !== -1) this.dataCallbacks.splice(idx, 1);
       },
     };
   }
 
-  get onExit(): { event: (callback: ExitCallback) => void } {
+  onExit(callback: ExitCallback): { dispose: () => void } {
+    this.exitCallbacks.push(callback);
     return {
-      event: (callback: ExitCallback) => {
-        this.exitCallbacks.push(callback);
+      dispose: () => {
+        const idx = this.exitCallbacks.indexOf(callback);
+        if (idx !== -1) this.exitCallbacks.splice(idx, 1);
       },
     };
   }
@@ -74,7 +78,7 @@ export class MockIPty {
     this.killed = true;
     const sigNum = signal === "SIGKILL" ? 9 : 0;
     for (const cb of this.exitCallbacks) {
-      cb(0, sigNum);
+      cb({ exitCode: 0, signal: sigNum });
     }
   }
 
@@ -100,7 +104,7 @@ export class MockIPty {
    */
   emitExit(exitCode: number, signal?: number): void {
     for (const cb of this.exitCallbacks) {
-      cb(exitCode, signal);
+      cb({ exitCode, signal });
     }
   }
 }

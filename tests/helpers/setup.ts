@@ -12,7 +12,7 @@ document.documentElement.setAttribute("data-theme", "dark");
 // Mock window.electronAPI — renderer components expect this to exist
 const mockElectronAPI = {
   pty: {
-    create: vi.fn().mockResolvedValue("mock-pty-id"),
+    create: vi.fn().mockResolvedValue({ ok: true, data: "mock-pty-id" }),
     write: vi.fn(),
     resize: vi.fn(),
     kill: vi.fn().mockResolvedValue(undefined),

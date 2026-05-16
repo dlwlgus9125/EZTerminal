@@ -3,7 +3,10 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  testMatch: ["**/*.e2e.ts", "**/*.spec.ts", "**/*.test.ts"],
   timeout: 60000,
+  // Allow extra time for Electron worker teardown (PTY processes need time to exit)
+  workers: 1,
   expect: {
     timeout: 10000,
   },
@@ -11,6 +14,9 @@ export default defineConfig({
   use: {
     // Electron requires the app to be built before testing
     trace: "on-first-retry",
+    launchOptions: {
+      slowMo: 0,
+    },
   },
   projects: [
     {

@@ -7,6 +7,8 @@ export default defineConfig({
   plugins: [react()],
   // Set root to renderer directory so Vite can find index.html
   root: path.resolve(__dirname, "src/renderer"),
+  // Use relative base for Electron file:// protocol
+  base: "./",
   css: {
     modules: {
       localsConvention: "camelCase",

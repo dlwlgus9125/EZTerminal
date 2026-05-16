@@ -10,6 +10,6 @@
     "types": ["node"],
     "jsx": "react-jsx"
   },
-  "include": ["src/main/**/*", "forge.config.ts"],
+  "include": ["src/main/**/*", "src/shared/**/*", "forge.config.ts"],
   "exclude": ["node_modules", "out", ".vite"]
 }

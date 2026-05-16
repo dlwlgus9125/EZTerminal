@@ -10,6 +10,6 @@
     "types": ["node"],
     "jsx": "react-jsx"
   },
-  "include": ["src/preload/**/*"],
+  "include": ["src/preload/**/*", "src/shared/**/*"],
   "exclude": ["node_modules", "out", ".vite"]
 }

@@ -1,11 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { IpcResult } from "../shared/ipc-types";
 
 // Typed API surface exposed to renderer
 // Renderer accesses this via window.electronAPI
 export interface ElectronAPI {
   // PTY channels
   pty: {
-    create: (opts: { cols: number; rows: number; shell?: string }) => Promise<string>;
+    create: (opts: { cols: number; rows: number; shell?: string }) => Promise<IpcResult<string>>;
     write: (id: string, data: string) => void;
     resize: (id: string, cols: number, rows: number) => void;
     kill: (id: string) => Promise<void>;

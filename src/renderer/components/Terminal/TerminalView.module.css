@@ -1,0 +1,22 @@
+.terminalWrapper {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: #0a0d0c;
+}
+
+.terminalContainer {
+  flex: 1;
+  overflow: hidden;
+}
+
+.errorMessage {
+  color: #f48771;
+  padding: 8px 12px;
+  font-family: monospace;
+  font-size: 13px;
+  background-color: rgba(244, 135, 113, 0.1);
+  border-bottom: 1px solid rgba(244, 135, 113, 0.3);
+}
