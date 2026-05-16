@@ -30,7 +30,10 @@ function formatBytes(bytes: number): string {
   return `${bytes.toFixed(0)} B/s`;
 }
 
-export function NetworkPanel({ isVisible, npcapAvailable = false }: NetworkPanelProps): ReactElement {
+export function NetworkPanel({
+  isVisible,
+  npcapAvailable = false,
+}: NetworkPanelProps): ReactElement {
   const [traffic, setTraffic] = useState<TrafficData | null>(null);
   const [connections, setConnections] = useState<ConnectionInfo[]>([]);
   const unsubRef = useRef<(() => void) | null>(null);
@@ -91,7 +94,9 @@ export function NetworkPanel({ isVisible, npcapAvailable = false }: NetworkPanel
       <section className={styles.section} data-testid="connections-section">
         <h3 className={styles.sectionTitle}>Connections</h3>
         {connections.length === 0 ? (
-          <div className={styles.empty} data-testid="connections-empty">No active connections</div>
+          <div className={styles.empty} data-testid="connections-empty">
+            No active connections
+          </div>
         ) : (
           <div className={styles.tableWrapper}>
             <table className={styles.table} data-testid="connections-table">

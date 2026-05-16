@@ -36,9 +36,7 @@ async function flushAsync(rounds = 10): Promise<void> {
 }
 
 function makeStatsData(rx = 1000, tx = 500) {
-  mockNetworkStats.mockResolvedValue([
-    { iface: "eth0", rx_bytes: rx, tx_bytes: tx },
-  ]);
+  mockNetworkStats.mockResolvedValue([{ iface: "eth0", rx_bytes: rx, tx_bytes: tx }]);
 }
 
 function makeConnectionsData() {

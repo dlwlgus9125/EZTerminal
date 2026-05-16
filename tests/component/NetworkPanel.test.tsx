@@ -34,8 +34,8 @@ const { NetworkPanel } = await import(
 
 function makeTraffic(overrides: Partial<TrafficData> = {}): TrafficData {
   return {
-    rxBytesPerSec: 1024 * 512,   // 512 KB/s
-    txBytesPerSec: 1024 * 128,   // 128 KB/s
+    rxBytesPerSec: 1024 * 512, // 512 KB/s
+    txBytesPerSec: 1024 * 128, // 128 KB/s
     interface: "eth0",
     timestamp: Date.now(),
     ...overrides,

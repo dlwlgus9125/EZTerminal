@@ -63,11 +63,20 @@ test.describe("Terminal echo", () => {
     const hasContent = await window.evaluate(() => {
       const term = (window as Record<string, unknown>).__xterm__;
       if (!term) return "NO_XTERM";
-      const t = term as { buffer: { active: { length: number; getLine: (i: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } };
+      const t = term as {
+        buffer: {
+          active: {
+            length: number;
+            getLine: (
+              i: number
+            ) => { translateToString: (trimRight?: boolean) => string } | undefined;
+          };
+        };
+      };
       const buf = t.buffer.active;
       for (let i = 0; i < buf.length; i++) {
         const line = buf.getLine(i);
-        if (line && line.translateToString(true).includes("hello")) return "FOUND";
+        if (line?.translateToString(true).includes("hello")) return "FOUND";
       }
       // Collect first 5 non-empty lines for debugging
       const lines: string[] = [];
@@ -102,17 +111,26 @@ test.describe("Terminal command", () => {
     await window.waitForFunction(
       () => {
         const term = (window as Record<string, unknown>).__xterm__ as
-          | { buffer: { active: { length: number; getLine: (i: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } }
+          | {
+              buffer: {
+                active: {
+                  length: number;
+                  getLine: (
+                    i: number
+                  ) => { translateToString: (trimRight?: boolean) => string } | undefined;
+                };
+              };
+            }
           | undefined;
         if (!term) return false;
         const buf = term.buffer.active;
         for (let i = 0; i < buf.length; i++) {
           const line = buf.getLine(i);
-          if (line && line.translateToString(true).includes("test")) return true;
+          if (line?.translateToString(true).includes("test")) return true;
         }
         return false;
       },
-      { timeout: 10000 },
+      { timeout: 10000 }
     );
 
     await closeApp(app);

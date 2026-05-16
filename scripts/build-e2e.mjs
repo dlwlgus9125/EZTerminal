@@ -11,31 +11,56 @@ const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 
 // Main process
 mkdirSync(".vite/build", { recursive: true });
-execFileSync(npx, [
-  "esbuild", "src/main/index.ts",
-  "--bundle", "--platform=node", "--format=cjs",
-  "--external:electron", "--external:node-pty", "--external:cap",
-  "--external:systeminformation", "--external:electron-log", "--external:chokidar",
-  "--define:MAIN_WINDOW_VITE_DEV_SERVER_URL=\"\"",
-  "--define:MAIN_WINDOW_VITE_NAME=\"main_window\"",
-  "--outfile=.vite/build/index.js",
-], { stdio: "inherit", cwd: process.cwd() });
+execFileSync(
+  npx,
+  [
+    "esbuild",
+    "src/main/index.ts",
+    "--bundle",
+    "--platform=node",
+    "--format=cjs",
+    "--external:electron",
+    "--external:node-pty",
+    "--external:cap",
+    "--external:systeminformation",
+    "--external:electron-log",
+    "--external:chokidar",
+    '--define:MAIN_WINDOW_VITE_DEV_SERVER_URL=""',
+    '--define:MAIN_WINDOW_VITE_NAME="main_window"',
+    "--outfile=.vite/build/index.js",
+  ],
+  { stdio: "inherit", cwd: process.cwd() }
+);
 
 // Preload
 mkdirSync(".vite/preload", { recursive: true });
-execFileSync(npx, [
-  "esbuild", "src/preload/index.ts",
-  "--bundle", "--platform=node", "--format=cjs",
-  "--external:electron",
-  "--outfile=.vite/preload/index.js",
-], { stdio: "inherit", cwd: process.cwd() });
+execFileSync(
+  npx,
+  [
+    "esbuild",
+    "src/preload/index.ts",
+    "--bundle",
+    "--platform=node",
+    "--format=cjs",
+    "--external:electron",
+    "--outfile=.vite/preload/index.js",
+  ],
+  { stdio: "inherit", cwd: process.cwd() }
+);
 
 // Renderer
 mkdirSync(".vite/renderer/main_window", { recursive: true });
-execFileSync(npx, [
-  "vite", "build",
-  "--config", "vite.renderer.config.ts",
-  "--outDir", "../../.vite/renderer/main_window",
-], { stdio: "inherit", cwd: process.cwd() });
+execFileSync(
+  npx,
+  [
+    "vite",
+    "build",
+    "--config",
+    "vite.renderer.config.ts",
+    "--outDir",
+    "../../.vite/renderer/main_window",
+  ],
+  { stdio: "inherit", cwd: process.cwd() }
+);
 
 console.log("\n--- e2e build complete ---");

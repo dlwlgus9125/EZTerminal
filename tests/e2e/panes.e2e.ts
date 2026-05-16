@@ -38,7 +38,13 @@ async function closeApp(app: Awaited<ReturnType<typeof launchApp>>): Promise<voi
 }
 
 /** Focus xterm so customKeyEventHandler is active and global keydown fires */
-async function focusTerminal(window: Awaited<ReturnType<typeof launchApp>>["firstWindow"] extends (...args: any[]) => Promise<infer W> ? W : never) {
+async function focusTerminal(
+  window: Awaited<ReturnType<typeof launchApp>>["firstWindow"] extends (
+    ...args: unknown[]
+  ) => Promise<infer W>
+    ? W
+    : never
+) {
   const xtermTextarea = window.locator(".xterm-helper-textarea").first();
   await xtermTextarea.click({ force: true });
 }

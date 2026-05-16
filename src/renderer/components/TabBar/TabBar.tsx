@@ -15,6 +15,7 @@ export function TabBar(): ReactElement {
       <div className={styles.tabs}>
         {tabList.map((tab, index) => (
           <button
+            type="button"
             key={tab.id}
             className={`${styles.tab} ${tab.id === activeTabId ? styles.active : ""}`}
             data-tab-id={tab.id}
@@ -27,6 +28,7 @@ export function TabBar(): ReactElement {
         ))}
       </div>
       <button
+        type="button"
         className={styles.addBtn}
         data-add-tab
         onClick={addTab}

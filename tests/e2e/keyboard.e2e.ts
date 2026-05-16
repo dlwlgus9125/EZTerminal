@@ -204,9 +204,7 @@ test.describe("Keyboard ctrl-c sigint", () => {
     // Secondary: if DOM text is available, verify interrupt happened
     if (xtermContent.length > 0) {
       const hasInterruptSignal =
-        xtermContent.includes("^C") ||
-        xtermContent.includes("ping") ||
-        xtermContent.includes(">");
+        xtermContent.includes("^C") || xtermContent.includes("ping") || xtermContent.includes(">");
       expect(hasInterruptSignal).toBe(true);
     }
 

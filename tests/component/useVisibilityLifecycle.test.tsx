@@ -6,7 +6,7 @@
  * AC-L3-02-N1: rapid toggle no duplicate start
  */
 
-import { renderHook, act, cleanup } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useVisibilityLifecycle } from "../../src/renderer/hooks/useVisibilityLifecycle";
 
@@ -71,7 +71,11 @@ describe("visibility minimize", () => {
     expect(onStart).toHaveBeenCalledOnce();
 
     act(() => {
-      Object.defineProperty(document, "hidden", { value: true, writable: true, configurable: true });
+      Object.defineProperty(document, "hidden", {
+        value: true,
+        writable: true,
+        configurable: true,
+      });
       document.dispatchEvent(new Event("visibilitychange"));
     });
 
@@ -86,14 +90,22 @@ describe("visibility minimize", () => {
 
     // Hide
     act(() => {
-      Object.defineProperty(document, "hidden", { value: true, writable: true, configurable: true });
+      Object.defineProperty(document, "hidden", {
+        value: true,
+        writable: true,
+        configurable: true,
+      });
       document.dispatchEvent(new Event("visibilitychange"));
     });
     expect(onStop).toHaveBeenCalledOnce();
 
     // Restore
     act(() => {
-      Object.defineProperty(document, "hidden", { value: false, writable: true, configurable: true });
+      Object.defineProperty(document, "hidden", {
+        value: false,
+        writable: true,
+        configurable: true,
+      });
       document.dispatchEvent(new Event("visibilitychange"));
     });
     expect(onStart).toHaveBeenCalledTimes(2);
@@ -106,7 +118,7 @@ describe("visibility rapid toggle", () => {
   it("AC-L3-02-N1: rapid open/close/open does not duplicate start", () => {
     const onStart = vi.fn();
     const onStop = vi.fn();
-    let isVisible = true;
+    const isVisible = true;
 
     const { rerender } = renderHook(
       ({ isVisible: v }: { isVisible: boolean }) =>

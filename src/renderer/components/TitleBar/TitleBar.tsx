@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactElement } from "react";
+import { type ReactElement, useEffect, useRef } from "react";
 import styles from "./TitleBar.module.css";
 
 export function TitleBar(): ReactElement {
@@ -24,25 +24,24 @@ export function TitleBar(): ReactElement {
 
   return (
     <div className={styles.titleBar} data-testid="title-bar">
-      <div
-        ref={dragRef}
-        className={styles.dragRegion}
-        data-drag-region
-      />
+      <div ref={dragRef} className={styles.dragRegion} data-drag-region />
       <div className={styles.controls}>
         <button
+          type="button"
           className={styles.controlBtn}
           data-control="minimize"
           onClick={handleMinimize}
           aria-label="Minimize"
         />
         <button
+          type="button"
           className={styles.controlBtn}
           data-control="maximize"
           onClick={handleMaximize}
           aria-label="Maximize"
         />
         <button
+          type="button"
           className={`${styles.controlBtn} ${styles.closeBtn}`}
           data-control="close"
           onClick={handleClose}

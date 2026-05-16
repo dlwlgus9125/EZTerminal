@@ -112,14 +112,18 @@ test.describe("Tab switch", () => {
     await window.keyboard.press("Control+t");
     await window.waitForTimeout(500);
 
-    const activeAfterCreate = await window.locator("[data-active='true']").getAttribute("data-tab-id");
+    const activeAfterCreate = await window
+      .locator("[data-active='true']")
+      .getAttribute("data-tab-id");
     expect(activeAfterCreate).not.toBe(tab1Id);
 
     // Ctrl+Tab → back to first tab (2 tabs, wraps around)
     await window.keyboard.press("Control+Tab");
     await window.waitForTimeout(500);
 
-    const activeAfterSwitch = await window.locator("[data-active='true']").getAttribute("data-tab-id");
+    const activeAfterSwitch = await window
+      .locator("[data-active='true']")
+      .getAttribute("data-tab-id");
     expect(activeAfterSwitch).toBe(tab1Id);
 
     await closeApp(app);

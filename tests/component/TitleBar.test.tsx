@@ -17,9 +17,9 @@ describe("TitleBar drag", () => {
     const { container } = render(<TitleBar />);
     const dragEl = container.querySelector("[data-drag-region]") as HTMLElement;
     expect(dragEl).not.toBeNull();
-    expect(dragEl.style.webkitAppRegion ?? dragEl.style.getPropertyValue("-webkit-app-region")).toBe(
-      "drag"
-    );
+    expect(
+      dragEl.style.webkitAppRegion ?? dragEl.style.getPropertyValue("-webkit-app-region")
+    ).toBe("drag");
   });
 });
 

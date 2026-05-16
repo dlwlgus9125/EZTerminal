@@ -27,6 +27,7 @@ export function Rail(): ReactElement {
     <nav className={styles.rail} data-testid="rail" aria-label="Side panel navigation">
       {PANEL_IDS.map((id) => (
         <button
+          type="button"
           key={id}
           className={`${styles.icon} ${activePanelId === id ? styles.active : ""}`}
           data-panel-id={id}

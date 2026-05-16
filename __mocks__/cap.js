@@ -4,9 +4,27 @@
  */
 
 const mockCapInstance = {
-  open: jest.fn ? jest.fn() : (() => { const f = () => {}; f.mock = { calls: [] }; return f; })(),
-  close: jest.fn ? jest.fn() : (() => { const f = () => {}; f.mock = { calls: [] }; return f; })(),
-  on: jest.fn ? jest.fn() : (() => { const f = () => {}; f.mock = { calls: [] }; return f; })(),
+  open: jest.fn
+    ? jest.fn()
+    : (() => {
+        const f = () => {};
+        f.mock = { calls: [] };
+        return f;
+      })(),
+  close: jest.fn
+    ? jest.fn()
+    : (() => {
+        const f = () => {};
+        f.mock = { calls: [] };
+        return f;
+      })(),
+  on: jest.fn
+    ? jest.fn()
+    : (() => {
+        const f = () => {};
+        f.mock = { calls: [] };
+        return f;
+      })(),
 };
 
 function Cap() {
