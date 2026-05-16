@@ -41,6 +41,21 @@ body {
   background: var(--bg-0, #0a0d0c);
 }
 
+.app-body {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.app-panel {
+  flex-shrink: 0;
+  background: var(--bg-1, #0e1311);
+  border-left: 1px solid var(--border, #1e2725);
+  overflow: hidden;
+}
+
 .app-placeholder {
   flex: 1;
   display: flex;

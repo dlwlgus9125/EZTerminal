@@ -1,0 +1,37 @@
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 48px;
+  flex-shrink: 0;
+  background: var(--bg-1, #0e1311);
+  border-right: 1px solid var(--border, #1e2725);
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim, #7a8581);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: background 80ms, color 80ms;
+}
+
+.icon:hover {
+  background: var(--bg-2, #141a18);
+  color: var(--text, #c8d3cf);
+}
+
+.icon.active {
+  background: var(--bg-2, #141a18);
+  color: var(--accent, #4ade80);
+}

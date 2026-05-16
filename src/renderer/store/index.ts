@@ -207,10 +207,18 @@ export function createStore(): UseBoundStore<StoreApi<AppStore>> {
       return collectPaneIds(tab.layout);
     },
 
-    // ---- PanelSlice (stub) ----
+    // ---- PanelSlice ----
     activePanelId: null,
-    openPanel(_panelId) {},
-    closePanel() {},
+
+    openPanel(panelId) {
+      set((s) => ({
+        activePanelId: s.activePanelId === panelId ? null : panelId,
+      }));
+    },
+
+    closePanel() {
+      set({ activePanelId: null });
+    },
 
     // ---- SettingsSlice (stub) ----
     settings: defaultSettings,

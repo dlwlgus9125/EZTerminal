@@ -1,7 +1,10 @@
 /**
- * Panel slice stub — implemented in T7 (Rail + Visibility Lifecycle).
+ * Panel slice — T7 implementation.
  * Tracks which side panel is currently open.
+ * openPanel toggles: calling with the active panel closes it.
  */
+
+import type { StateCreator } from "zustand";
 
 export interface PanelSliceState {
   activePanelId: string | null;
@@ -14,10 +17,19 @@ export interface PanelSliceActions {
 
 export type PanelSlice = PanelSliceState & PanelSliceActions;
 
-export function createPanelSlice(): PanelSlice {
-  return {
+// For use inside the combined store creator
+export function createPanelSlice(): StateCreator<PanelSlice> {
+  return (set, _get) => ({
     activePanelId: null,
-    openPanel: () => {},
-    closePanel: () => {},
-  };
+
+    openPanel(panelId: string) {
+      set((s) => ({
+        activePanelId: s.activePanelId === panelId ? null : panelId,
+      }));
+    },
+
+    closePanel() {
+      set({ activePanelId: null });
+    },
+  });
 }
