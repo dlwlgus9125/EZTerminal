@@ -1,7 +1,8 @@
 /**
- * FrameBuffer — T1 skeleton scope.
+ * FrameBuffer — T1+T2 scope.
  * Coalesces PTY data chunks per session over a 16ms window.
- * Single-session in T1; per-session independence expanded in T2.
+ * Per-session independent buffers (T2).
+ * endSession(): discard pending buffer for a session (T2).
  */
 
 type FlushCallback = (sessionId: string, data: string) => void;
@@ -28,6 +29,16 @@ export class FrameBuffer {
       }, COALESCE_MS);
       this.timers.set(sessionId, timer);
     }
+  }
+
+  /** Discard all buffered data for a session (call on session end). */
+  endSession(sessionId: string): void {
+    const timer = this.timers.get(sessionId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.timers.delete(sessionId);
+    }
+    this.chunks.delete(sessionId);
   }
 
   private flush(sessionId: string): void {

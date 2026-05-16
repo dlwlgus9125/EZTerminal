@@ -1,5 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { IpcResult } from "../shared/ipc-types";
+import type { MetricsData } from "../shared/metrics-types";
+import type { TrafficData } from "../shared/network-types";
+import type { UserSettings } from "../shared/settings-types";
 
 // Typed API surface exposed to renderer
 // Renderer accesses this via window.electronAPI
@@ -15,20 +18,20 @@ export interface ElectronAPI {
   };
   // Settings channels
   settings: {
-    load: () => Promise<unknown>;
-    save: (settings: unknown) => Promise<void>;
+    load: () => Promise<IpcResult<UserSettings>>;
+    save: (settings: UserSettings) => Promise<IpcResult<void>>;
   };
   // Metrics channels
   metrics: {
     start: () => void;
     stop: () => void;
-    onUpdate: (callback: (data: unknown) => void) => () => void;
+    onUpdate: (callback: (data: MetricsData) => void) => () => void;
   };
   // Network channels
   network: {
     startCapture: () => void;
     stopCapture: () => void;
-    onTraffic: (callback: (data: unknown) => void) => () => void;
+    onTraffic: (callback: (data: TrafficData) => void) => () => void;
   };
   // Window control
   window: {
@@ -59,14 +62,14 @@ const electronAPI: ElectronAPI = {
     },
   },
   settings: {
-    load: () => ipcRenderer.invoke("settings:load"),
-    save: (settings) => ipcRenderer.invoke("settings:save", settings),
+    load: () => ipcRenderer.invoke("settings:load") as Promise<IpcResult<UserSettings>>,
+    save: (settings) => ipcRenderer.invoke("settings:save", settings) as Promise<IpcResult<void>>,
   },
   metrics: {
     start: () => ipcRenderer.send("metrics:start"),
     stop: () => ipcRenderer.send("metrics:stop"),
     onUpdate: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
+      const handler = (_event: Electron.IpcRendererEvent, data: MetricsData) => callback(data);
       ipcRenderer.on("metrics:update", handler);
       return () => ipcRenderer.removeListener("metrics:update", handler);
     },
@@ -75,7 +78,7 @@ const electronAPI: ElectronAPI = {
     startCapture: () => ipcRenderer.send("network:start"),
     stopCapture: () => ipcRenderer.send("network:stop"),
     onTraffic: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
+      const handler = (_event: Electron.IpcRendererEvent, data: TrafficData) => callback(data);
       ipcRenderer.on("network:traffic", handler);
       return () => ipcRenderer.removeListener("network:traffic", handler);
     },

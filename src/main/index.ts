@@ -38,6 +38,7 @@ function registerIpcHandlers(): void {
             frameBuffer.push(result.data, data);
           });
           pty.onExit(({ exitCode }) => {
+            frameBuffer.endSession(result.data);
             mainWindow?.webContents.send(`pty:exit:${result.data}`, exitCode);
           });
         }
@@ -98,6 +99,7 @@ function createWindow(): void {
 app.whenReady().then(() => {
   registerIpcHandlers();
   createWindow();
+  ptyManager.startOrphanScan();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -106,8 +108,12 @@ app.whenReady().then(() => {
   });
 });
 
-app.on("window-all-closed", () => {
+app.on("before-quit", () => {
+  ptyManager.stopOrphanScan();
   ptyManager.killAll();
+});
+
+app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }

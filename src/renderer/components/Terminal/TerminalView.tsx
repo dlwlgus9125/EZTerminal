@@ -1,14 +1,43 @@
 /**
- * TerminalView — T1 skeleton scope.
+ * TerminalView — T1+T2 scope.
  * Mounts xterm.js, wires PTY create/data/write IPC.
- * WebGL addon NOT loaded (deferred to T2).
- * FitAddon loaded to handle container sizing.
+ * T2 additions:
+ * - WebGL addon (with Canvas fallback on WebGL failure)
+ * - FitAddon (fit on mount)
+ * - Phosphor theme
+ * - Full unmount cleanup (dispose terminal + addons)
+ * - Zero-size container guard
  */
 
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import styles from "./TerminalView.module.css";
+
+/** Phosphor terminal theme — dark green phosphor palette */
+const PHOSPHOR_THEME = {
+  background: "#0a0d0c",
+  foreground: "#33ff33",
+  cursor: "#33ff33",
+  cursorAccent: "#0a0d0c",
+  black: "#0a0d0c",
+  red: "#ff3333",
+  green: "#33ff33",
+  yellow: "#ffff33",
+  blue: "#3399ff",
+  magenta: "#ff33ff",
+  cyan: "#33ffff",
+  white: "#d4d4d4",
+  brightBlack: "#333333",
+  brightRed: "#ff6666",
+  brightGreen: "#66ff66",
+  brightYellow: "#ffff66",
+  brightBlue: "#66bbff",
+  brightMagenta: "#ff66ff",
+  brightCyan: "#66ffff",
+  brightWhite: "#ffffff",
+};
 
 interface TerminalViewProps {
   /** Pre-existing session ID. If null, a new session will be created on mount. */
@@ -19,6 +48,7 @@ export function TerminalView({ sessionId: initialSessionId }: TerminalViewProps)
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const webglAddonRef = useRef<WebglAddon | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSessionId);
 
@@ -27,23 +57,40 @@ export function TerminalView({ sessionId: initialSessionId }: TerminalViewProps)
     const container = containerRef.current;
     if (!container) return;
 
-    // Create xterm Terminal instance
+    // Create xterm Terminal instance with Phosphor theme
     const terminal = new Terminal({
       cols: 80,
       rows: 24,
       fontSize: 14,
       fontFamily: "Menlo, Monaco, 'Courier New', monospace",
-      theme: {
-        background: "#0a0d0c",
-        foreground: "#d4d4d4",
-      },
+      theme: PHOSPHOR_THEME,
     });
     terminalRef.current = terminal;
 
+    // FitAddon — must be loaded before open
     const fitAddon = new FitAddon();
     fitAddonRef.current = fitAddon;
     terminal.loadAddon(fitAddon);
+
+    // WebGL addon — with Canvas fallback on failure
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddonRef.current = webglAddon;
+      terminal.loadAddon(webglAddon);
+    } catch {
+      // WebGL unavailable — xterm falls back to DOM/Canvas renderer automatically
+      console.log("[TerminalView] WebGL unavailable, using Canvas renderer");
+      webglAddonRef.current = null;
+    }
+
     terminal.open(container);
+
+    // Fit to container size (guard for zero-size)
+    try {
+      fitAddon.fit();
+    } catch {
+      // Container may have zero size in tests or before layout
+    }
 
     let sessionId = initialSessionId;
     let unsubData: (() => void) | null = null;
@@ -51,7 +98,6 @@ export function TerminalView({ sessionId: initialSessionId }: TerminalViewProps)
 
     async function initSession(): Promise<void> {
       if (!sessionId) {
-        // Create a new PTY session
         const result = await window.electronAPI.pty.create({ cols: 80, rows: 24 });
         if (!result.ok) {
           setErrorCode(result.code);
@@ -84,13 +130,6 @@ export function TerminalView({ sessionId: initialSessionId }: TerminalViewProps)
           window.electronAPI.pty.resize(sessionId, cols, rows);
         }
       });
-
-      // Fit to container
-      try {
-        fitAddon.fit();
-      } catch {
-        // Container may not have size yet
-      }
     }
 
     initSession().catch((err: unknown) => {
@@ -101,8 +140,11 @@ export function TerminalView({ sessionId: initialSessionId }: TerminalViewProps)
     return () => {
       unsubData?.();
       unsubExit?.();
+      webglAddonRef.current?.dispose();
+      webglAddonRef.current = null;
       terminal.dispose();
       terminalRef.current = null;
+      fitAddonRef.current = null;
     };
   }, []);
 

@@ -1,7 +1,8 @@
 /**
- * PtyManager — T1 skeleton scope.
+ * PtyManager — T1+T2 scope.
  * create/kill PTY sessions; store in Map by UUID.
- * Orphan scan NOT implemented (deferred to T2).
+ * Orphan scan: 30s interval removes exited sessions.
+ * Error paths: killSession returns IpcResult (SESSION_NOT_FOUND).
  */
 
 import { randomUUID } from "node:crypto";
@@ -10,8 +11,16 @@ import * as nodePty from "node-pty";
 import type { IpcResult } from "../shared/ipc-types";
 import type { PtyCreateOptions } from "../shared/terminal-types";
 
+const ORPHAN_SCAN_INTERVAL_MS = 30_000;
+
+interface SessionEntry {
+  pty: IPty;
+  exited: boolean;
+}
+
 export class PtyManager {
-  private readonly sessions = new Map<string, IPty>();
+  private readonly sessions = new Map<string, SessionEntry>();
+  private orphanTimer: ReturnType<typeof setInterval> | null = null;
 
   async create(opts: PtyCreateOptions): Promise<IpcResult<string>> {
     const shell =
@@ -26,7 +35,15 @@ export class PtyManager {
         env: process.env as Record<string, string>,
       });
       const id = randomUUID();
-      this.sessions.set(id, pty);
+      const entry: SessionEntry = { pty, exited: false };
+      this.sessions.set(id, entry);
+
+      // Track exit so orphan scan can remove it
+      pty.onExit(() => {
+        const e = this.sessions.get(id);
+        if (e) e.exited = true;
+      });
+
       console.log(`[PtyManager] created session ${id} pid=${pty.pid}`);
       return { ok: true, data: id };
     } catch (err) {
@@ -36,11 +53,12 @@ export class PtyManager {
     }
   }
 
+  /** Kill a session and remove from Map. Returns void — no error on missing ID. */
   kill(id: string): void {
-    const pty = this.sessions.get(id);
-    if (!pty) return;
+    const entry = this.sessions.get(id);
+    if (!entry) return;
     try {
-      pty.kill();
+      entry.pty.kill();
     } catch {
       // already dead
     }
@@ -48,13 +66,48 @@ export class PtyManager {
     console.log(`[PtyManager] killed session ${id}`);
   }
 
+  /** Kill with explicit IpcResult — SESSION_NOT_FOUND if missing. */
+  killSession(id: string): IpcResult<void> {
+    const entry = this.sessions.get(id);
+    if (!entry) {
+      return { ok: false, code: "SESSION_NOT_FOUND", message: `Session ${id} not found` };
+    }
+    this.kill(id);
+    return { ok: true, data: undefined };
+  }
+
   killAll(): void {
-    for (const id of this.sessions.keys()) {
+    for (const id of [...this.sessions.keys()]) {
       this.kill(id);
     }
   }
 
   getSession(id: string): IPty | undefined {
-    return this.sessions.get(id);
+    return this.sessions.get(id)?.pty;
+  }
+
+  /** Start 30s orphan scan. Call once at app startup. */
+  startOrphanScan(): void {
+    if (this.orphanTimer !== null) return;
+    this.orphanTimer = setInterval(() => {
+      this.scanOrphans();
+    }, ORPHAN_SCAN_INTERVAL_MS);
+  }
+
+  /** Stop orphan scan. Call before tests or app quit. */
+  stopOrphanScan(): void {
+    if (this.orphanTimer !== null) {
+      clearInterval(this.orphanTimer);
+      this.orphanTimer = null;
+    }
+  }
+
+  private scanOrphans(): void {
+    for (const [id, entry] of this.sessions) {
+      if (entry.exited) {
+        console.log(`[PtyManager] removing orphan session ${id}`);
+        this.sessions.delete(id);
+      }
+    }
   }
 }
