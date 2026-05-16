@@ -85,6 +85,9 @@ export function TerminalView({ sessionId: initialSessionId }: TerminalViewProps)
 
     terminal.open(container);
 
+    // Expose xterm instance for e2e test access (buffer API for WebGL-compatible text reading)
+    (window as unknown as { __xterm__?: Terminal }).__xterm__ = terminal;
+
     // Fit to container size (guard for zero-size)
     try {
       fitAddon.fit();

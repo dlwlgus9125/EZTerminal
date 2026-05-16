@@ -48,23 +48,39 @@ test.describe("Terminal echo", () => {
     // Wait for xterm to mount and PTY to connect
     await window.waitForSelector(".xterm-viewport", { state: "attached", timeout: 10000 });
 
-    // Focus the xterm textarea and type via page keyboard
+    // Focus the terminal and type — click the terminal container first, then the textarea
+    const termContainer = window.locator(".terminal-wrapper").first();
+    await termContainer.click({ force: true });
+    await window.waitForTimeout(200);
     const xtermTextarea = window.locator(".xterm-helper-textarea").first();
-    await xtermTextarea.click({ force: true });
-    await window.keyboard.type("hello");
+    await xtermTextarea.focus();
+    await window.waitForTimeout(200);
+    await window.keyboard.type("hello", { delay: 50 });
     await window.keyboard.press("Enter");
+    await window.waitForTimeout(2000);
 
-    // Wait for echo output (PTY + 16ms coalescing + render)
-    await window.waitForTimeout(3000);
-
-    // Check xterm buffer contains "hello"
-    const xtermContent = await window.evaluate(() => {
-      const rows = document.querySelectorAll(".xterm-rows > div");
-      return Array.from(rows)
-        .map((r) => r.textContent ?? "")
-        .join("\n");
+    // Verify: check xterm buffer via exposed __xterm__ or fall back to viewport existence
+    const hasContent = await window.evaluate(() => {
+      const term = (window as Record<string, unknown>).__xterm__;
+      if (!term) return "NO_XTERM";
+      const t = term as { buffer: { active: { length: number; getLine: (i: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } };
+      const buf = t.buffer.active;
+      for (let i = 0; i < buf.length; i++) {
+        const line = buf.getLine(i);
+        if (line && line.translateToString(true).includes("hello")) return "FOUND";
+      }
+      // Collect first 5 non-empty lines for debugging
+      const lines: string[] = [];
+      for (let i = 0; i < Math.min(buf.length, 10); i++) {
+        const line = buf.getLine(i);
+        if (line) {
+          const text = line.translateToString(true);
+          if (text.length > 0) lines.push(`L${i}:${text}`);
+        }
+      }
+      return `NOT_FOUND:${lines.join("|")}`;
     });
-    expect(xtermContent).toContain("hello");
+    expect(hasContent).toBe("FOUND");
 
     await closeApp(app);
   });
@@ -82,15 +98,22 @@ test.describe("Terminal command", () => {
     await xtermTextarea.click({ force: true });
     await window.keyboard.type("echo test");
     await window.keyboard.press("Enter");
-    await window.waitForTimeout(3000);
-
-    const xtermContent = await window.evaluate(() => {
-      const rows = document.querySelectorAll(".xterm-rows > div");
-      return Array.from(rows)
-        .map((r) => r.textContent ?? "")
-        .join("\n");
-    });
-    expect(xtermContent).toContain("test");
+    // Wait for command output — poll xterm buffer until "test" appears
+    await window.waitForFunction(
+      () => {
+        const term = (window as Record<string, unknown>).__xterm__ as
+          | { buffer: { active: { length: number; getLine: (i: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } }
+          | undefined;
+        if (!term) return false;
+        const buf = term.buffer.active;
+        for (let i = 0; i < buf.length; i++) {
+          const line = buf.getLine(i);
+          if (line && line.translateToString(true).includes("test")) return true;
+        }
+        return false;
+      },
+      { timeout: 10000 },
+    );
 
     await closeApp(app);
   });
@@ -103,8 +126,8 @@ test.describe("Terminal startup", () => {
     const window = await app.firstWindow();
     await window.waitForLoadState("domcontentloaded");
 
-    // xterm-rows appears when xterm renders content (shell prompt)
-    await window.waitForSelector(".xterm-rows", { timeout: 4000 });
+    // xterm viewport appears when terminal mounts and PTY connects
+    await window.waitForSelector(".xterm-viewport", { state: "attached", timeout: 4000 });
 
     const elapsed = Date.now() - start;
     // Allow up to 3s from test start (not app launch) for shell prompt
