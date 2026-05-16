@@ -1,0 +1,104 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  height: 100%;
+  overflow-y: auto;
+  color: var(--color-text-primary, #d4d4d4);
+  font-size: 13px;
+}
+
+.title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted, #888);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted, #888);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.label {
+  font-size: 12px;
+  color: var(--color-text-muted, #888);
+}
+
+.input,
+.select {
+  background: var(--color-surface, #0d1110);
+  border: 1px solid var(--color-border, #2a2d2c);
+  border-radius: 4px;
+  color: var(--color-text-primary, #d4d4d4);
+  font-size: 13px;
+  padding: 4px 8px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.input:focus,
+.select:focus {
+  border-color: var(--color-accent, #4ec9b0);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.saveButton {
+  background: var(--color-accent, #4ec9b0);
+  border: none;
+  border-radius: 4px;
+  color: #000;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 16px;
+}
+
+.saveButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.saveButton:hover:not(:disabled) {
+  background: var(--color-accent-hover, #3ab89e);
+}
+
+.statusSaved {
+  font-size: 12px;
+  color: var(--color-accent, #4ec9b0);
+}
+
+.statusError {
+  font-size: 12px;
+  color: var(--color-error, #f44747);
+}
+
+.validationError {
+  font-size: 12px;
+  color: var(--color-error, #f44747);
+  padding: 4px 0;
+}

@@ -8,7 +8,7 @@ import { create } from "zustand";
 import type { StoreApi, UseBoundStore } from "zustand";
 import type { LayoutSlice } from "./layout-slice";
 import type { PanelSlice } from "./panel-slice";
-import { defaultSettings } from "./settings-slice";
+import { createSettingsSlice, defaultSettings } from "./settings-slice";
 import type { SettingsSlice } from "./settings-slice";
 import type { TerminalSlice } from "./terminal-slice";
 
@@ -220,9 +220,8 @@ export function createStore(): UseBoundStore<StoreApi<AppStore>> {
       set({ activePanelId: null });
     },
 
-    // ---- SettingsSlice (stub) ----
-    settings: defaultSettings,
-    updateSettings(_partial) {},
+    // ---- SettingsSlice ----
+    ...createSettingsSlice(set),
   }));
 }
 

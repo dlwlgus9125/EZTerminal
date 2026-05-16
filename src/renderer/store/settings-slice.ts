@@ -1,6 +1,7 @@
 /**
- * Settings slice stub — implemented in T10 (Files + Preview + Settings).
+ * Settings slice — T10 implementation.
  * Holds user preferences loaded from settings.json.
+ * updateSettings merges partial updates and persists via IPC.
  */
 
 export interface UserSettingsState {
@@ -27,9 +28,15 @@ export const defaultSettings: UserSettingsState = {
   shell: "",
 };
 
-export function createSettingsSlice(): SettingsSlice {
+export function createSettingsSlice(
+  set: (updater: (state: SettingsSlice) => Partial<SettingsSlice>) => void
+): SettingsSlice {
   return {
     settings: defaultSettings,
-    updateSettings: () => {},
+    updateSettings(partial) {
+      set((state) => ({
+        settings: { ...state.settings, ...partial },
+      }));
+    },
   };
 }

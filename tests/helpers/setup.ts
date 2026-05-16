@@ -20,8 +20,8 @@ const mockElectronAPI = {
     onExit: vi.fn().mockReturnValue(() => {}),
   },
   settings: {
-    load: vi.fn().mockResolvedValue({}),
-    save: vi.fn().mockResolvedValue(undefined),
+    load: vi.fn().mockResolvedValue({ ok: true, data: null }),
+    save: vi.fn().mockResolvedValue({ ok: true }),
   },
   metrics: {
     start: vi.fn(),
@@ -32,6 +32,12 @@ const mockElectronAPI = {
     startCapture: vi.fn(),
     stopCapture: vi.fn(),
     onTraffic: vi.fn().mockReturnValue(() => {}),
+  },
+  fs: {
+    readDir: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+    watch: vi.fn(),
+    stopWatch: vi.fn(),
+    onChanged: vi.fn().mockReturnValue(() => {}),
   },
   window: {
     minimize: vi.fn(),

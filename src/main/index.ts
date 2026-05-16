@@ -1,9 +1,12 @@
 import path from "node:path";
-import { BrowserWindow, app, ipcMain } from "electron";
+import { BrowserWindow, app, ipcMain, protocol } from "electron";
+import { FileProtocolHandler } from "./file-protocol";
+import { FilesystemManager } from "./filesystem";
 import { FrameBuffer } from "./frame-buffer";
 import { MetricsCollector } from "./metrics";
 import { NetworkCollector } from "./network";
 import { PtyManager } from "./pty-manager";
+import { SettingsManager } from "./settings";
 
 // Handle squirrel events on Windows (optional in dev/test mode)
 try {
@@ -23,6 +26,10 @@ const ptyManager = new PtyManager();
 const frameBuffer = new FrameBuffer();
 const metricsCollector = new MetricsCollector(() => mainWindow);
 const networkCollector = new NetworkCollector(() => mainWindow);
+const filesystemManager = new FilesystemManager(() => mainWindow);
+const settingsPath = path.join(app.getPath("userData"), "settings.json");
+const settingsManager = new SettingsManager(settingsPath);
+const fileProtocolHandler = new FileProtocolHandler(process.cwd());
 
 function registerIpcHandlers(): void {
   // Coalesced PTY data → push to renderer
@@ -89,6 +96,67 @@ function registerIpcHandlers(): void {
   ipcMain.on("network:stop", () => {
     networkCollector.stop();
   });
+
+  // settings:load — load user settings from disk
+  ipcMain.handle("settings:load", async () => {
+    try {
+      const settings = await settingsManager.load();
+      return { ok: true, data: settings };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
+  });
+
+  // settings:save — atomic save user settings
+  ipcMain.handle("settings:save", async (_event, settings) => {
+    try {
+      if (!settingsManager.validate(settings)) {
+        return { ok: false, error: "Invalid settings" };
+      }
+      await settingsManager.save(settings);
+      mainWindow?.webContents.send("settings:applied", settings);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
+  });
+
+  // fs:readDir — list directory entries
+  ipcMain.handle("fs:readDir", async (_event, dirPath: string) => {
+    try {
+      const entries = await filesystemManager.readDir(dirPath);
+      return { ok: true, data: entries };
+    } catch (err: unknown) {
+      return { ok: false, error: String(err) };
+    }
+  });
+
+  // fs:watch — start chokidar watch on dirPath
+  ipcMain.on("fs:watch", (_event, dirPath: string) => {
+    filesystemManager.watch(dirPath);
+    fileProtocolHandler.setCwd(dirPath);
+  });
+
+  // fs:stopWatch — stop chokidar watch
+  ipcMain.on("fs:stopWatch", () => {
+    filesystemManager.stopWatch();
+  });
+}
+
+function registerProtocols(): void {
+  // ezterm-file:// — serve local files scoped to CWD
+  protocol.handle("ezterm-file", async (request) => {
+    const url = new URL(request.url);
+    // Decode the path from the URL (hostname + pathname combined)
+    const rawPath = decodeURIComponent(url.hostname + url.pathname);
+    const result = await fileProtocolHandler.serve(rawPath);
+    if ("error" in result) {
+      return new Response(result.error, { status: 403 });
+    }
+    return new Response(result.data, {
+      headers: { "Content-Type": result.mimeType },
+    });
+  });
 }
 
 function createWindow(): void {
@@ -121,6 +189,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  registerProtocols();
   registerIpcHandlers();
   createWindow();
   ptyManager.startOrphanScan();
@@ -135,6 +204,7 @@ app.whenReady().then(() => {
 app.on("before-quit", () => {
   metricsCollector.stop();
   networkCollector.stop();
+  filesystemManager.dispose();
   ptyManager.stopOrphanScan();
   ptyManager.killAll();
 });

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { DirEntry } from "../main/filesystem";
 import type { IpcResult } from "../shared/ipc-types";
 import type { MetricsData } from "../shared/metrics-types";
 import type { TrafficData } from "../shared/network-types";
@@ -32,6 +33,13 @@ export interface ElectronAPI {
     startCapture: () => void;
     stopCapture: () => void;
     onTraffic: (callback: (data: TrafficData) => void) => () => void;
+  };
+  // Filesystem channels
+  fs: {
+    readDir: (dirPath: string) => Promise<IpcResult<DirEntry[]>>;
+    watch: (dirPath: string) => void;
+    stopWatch: () => void;
+    onChanged: (callback: (dirPath: string) => void) => () => void;
   };
   // Window control
   window: {
@@ -81,6 +89,17 @@ const electronAPI: ElectronAPI = {
       const handler = (_event: Electron.IpcRendererEvent, data: TrafficData) => callback(data);
       ipcRenderer.on("network:traffic", handler);
       return () => ipcRenderer.removeListener("network:traffic", handler);
+    },
+  },
+  fs: {
+    readDir: (dirPath) =>
+      ipcRenderer.invoke("fs:readDir", dirPath) as Promise<IpcResult<DirEntry[]>>,
+    watch: (dirPath) => ipcRenderer.send("fs:watch", dirPath),
+    stopWatch: () => ipcRenderer.send("fs:stopWatch"),
+    onChanged: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, dirPath: string) => callback(dirPath);
+      ipcRenderer.on("fs:changed", handler);
+      return () => ipcRenderer.removeListener("fs:changed", handler);
     },
   },
   window: {
