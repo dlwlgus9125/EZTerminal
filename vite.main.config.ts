@@ -4,11 +4,14 @@ import { defineConfig } from "vite";
 export default defineConfig({
   build: {
     rollupOptions: {
+      // External modules — must match scripts/build-e2e.mjs externals
+      // and forge.config.ts asar.unpack list.
       external: [
         "electron",
         "node-pty",
         "cap",
         "systeminformation",
+        "chokidar",
         "fs",
         "path",
         "os",

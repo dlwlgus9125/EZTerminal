@@ -19,17 +19,19 @@ execFileSync(
     "--bundle",
     "--platform=node",
     "--format=cjs",
+    // External modules — must match vite.main.config.ts externals
+    // and forge.config.ts asar.unpack list.
     "--external:electron",
     "--external:node-pty",
     "--external:cap",
     "--external:systeminformation",
     "--external:electron-log",
     "--external:chokidar",
-    '--define:MAIN_WINDOW_VITE_DEV_SERVER_URL=""',
-    '--define:MAIN_WINDOW_VITE_NAME="main_window"',
+    "--define:MAIN_WINDOW_VITE_DEV_SERVER_URL='\"\"'",
+    "--define:MAIN_WINDOW_VITE_NAME='\"main_window\"'",
     "--outfile=.vite/build/index.js",
   ],
-  { stdio: "inherit", cwd: process.cwd() }
+  { stdio: "inherit", cwd: process.cwd(), shell: true }
 );
 
 // Preload
@@ -45,7 +47,7 @@ execFileSync(
     "--external:electron",
     "--outfile=.vite/preload/index.js",
   ],
-  { stdio: "inherit", cwd: process.cwd() }
+  { stdio: "inherit", cwd: process.cwd(), shell: true }
 );
 
 // Renderer
@@ -60,7 +62,7 @@ execFileSync(
     "--outDir",
     "../../.vite/renderer/main_window",
   ],
-  { stdio: "inherit", cwd: process.cwd() }
+  { stdio: "inherit", cwd: process.cwd(), shell: true }
 );
 
 console.log("\n--- e2e build complete ---");

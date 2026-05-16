@@ -14,7 +14,9 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "build:e2e": "node scripts/build-e2e.mjs",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "verify:externals": "node scripts/verify-externals.mjs",
+    "dist:smoke": "node scripts/dist-smoke.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.24",
@@ -28,6 +30,7 @@
     "electron-log": "^5.4.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "node-pty": "^1.0.0",
     "systeminformation": "^5.23.27",
     "zustand": "^5.0.5"
   },
@@ -53,7 +56,6 @@
     "electron": "^36.3.1",
     "electron-rebuild": "^3.2.9",
     "jsdom": "^26.1.0",
-    "node-pty": "^1.0.0",
     "playwright": "^1.52.0",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",

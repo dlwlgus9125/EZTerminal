@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { MakerSquirrel } from "@electron-forge/maker-squirrel";
 import { MakerZIP } from "@electron-forge/maker-zip";
 import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-natives";
@@ -6,9 +9,45 @@ import type { ForgeConfig } from "@electron-forge/shared-types";
 
 const config: ForgeConfig = {
   packagerConfig: {
-    asar: true,
+    asar: {
+      unpack: "**/node_modules/{node-pty,systeminformation,chokidar,electron-log}/**",
+    },
     name: "EZTerminal",
     executableName: "ezterminal",
+    afterCopy: [
+      (
+        buildPath: string,
+        _electronVersion: string,
+        _platform: string,
+        _arch: string,
+        callback: (err?: Error | null) => void
+      ) => {
+        // VitePlugin bundles JS but leaves native modules as require() calls.
+        // We need node_modules in the packaged app for these to resolve.
+        const destModules = path.join(buildPath, "node_modules");
+        if (!fs.existsSync(destModules)) {
+          fs.mkdirSync(destModules, { recursive: true });
+        }
+        // Install production deps into the packaged app directory
+        const pkgSrc = path.join(__dirname, "package.json");
+        const pkgDest = path.join(buildPath, "package.json");
+        // Copy package.json if not already there
+        if (!fs.existsSync(pkgDest)) {
+          fs.copyFileSync(pkgSrc, pkgDest);
+        }
+        try {
+          const { execSync } = require("node:child_process");
+          execSync("pnpm install --prod --no-frozen-lockfile", {
+            cwd: buildPath,
+            stdio: "inherit",
+            shell: true,
+          });
+          callback();
+        } catch (err) {
+          callback(err as Error);
+        }
+      },
+    ],
   },
   rebuildConfig: {},
   makers: [
@@ -22,16 +61,13 @@ const config: ForgeConfig = {
   plugins: [
     new AutoUnpackNativesPlugin({}),
     new VitePlugin({
-      // `build` can specify multiple entry builds, one per process type.
       build: [
         {
-          // Main process entry
           entry: "src/main/index.ts",
           config: "vite.main.config.ts",
           target: "main",
         },
         {
-          // Preload scripts
           entry: "src/preload/index.ts",
           config: "vite.preload.config.ts",
           target: "preload",

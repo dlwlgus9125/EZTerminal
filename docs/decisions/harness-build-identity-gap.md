@@ -2,6 +2,7 @@
 
 > 2026-05-16 — EZTerminal 구현 과정에서 반복 발생한 "e2e PASS / 실앱 FAIL" 문제의 구조적 원인 분석.
 > 대상: EZPowers 하네스 (choiceexecutor, pipeline-audit, smoke gate)
+> **Status:** Root cause (vite.main.config.ts missing chokidar external) resolved. Fix A (Distribution Smoke) implemented.
 
 ## 문제 요약
 
@@ -165,3 +166,37 @@ Before reporting DONE for {skeleton} or final tasks:
 2. **Dependency Location Gate (C)** — 저비용 정적 분석. deps/devDeps 오분류 즉시 감지.
 3. **Build Artifact Identity Check (B)** — 중기. 빌드 시스템 분석 필요.
 4. **Implementer Prompt 보강 (D)** — 문화적 변화. 효과 제한적이지만 비용 0.
+
+## Applied Fixes (2026-05-16)
+
+### Fix 1: vite.main.config.ts externals 정렬
+
+**근본 원인 해결.** `chokidar`를 `vite.main.config.ts`의 `rollupOptions.external`에 추가.
+Vite 프로덕션 빌드가 `require("chokidar")`를 emit하도록 하여, `build-e2e.mjs` 및 `forge.config.ts` ASAR unpack 목록과 동기화.
+
+### Fix 2: Externals 동기화 검증 (`scripts/verify-externals.mjs`)
+
+`src/main/`의 실제 import를 기준으로 세 파일(vite, esbuild, forge)의 externals 목록 자동 비교.
+- import되는 모듈이 어느 설정에서든 누락 → FAIL
+- 설정에만 존재하고 import 없음 → WARN
+- `pnpm verify:externals`로 실행.
+
+### Fix 3: Distribution Smoke (`scripts/dist-smoke.mjs`)
+
+제안 A (Distribution Smoke Gate) 구현.
+- `electron-forge package`로 패키징
+- exe 실행, 8초 생존 확인
+- stderr에서 crash 패턴 검사 (`Cannot find module`, `MODULE_NOT_FOUND`, `ERR_REQUIRE_ESM`, `SyntaxError`)
+- `pnpm dist:smoke`로 실행.
+
+### Fix 4: 구현 플랜 업데이트
+
+- SI-6 (external 목록 동기화), SI-7 (distribution smoke) 구조 불변량 추가.
+- T8, T9, T10, T11, T12의 Verification method에 `pnpm dist:smoke` 추가.
+- Full-Feature Wiring Gate에 Distribution Gate 추가.
+
+### Remaining (미적용)
+
+- **B: Build Artifact Identity Check** — pipeline-audit D2 코드 변경 필요.
+- **C full: 자동 의존성 위치 스캔** — verify-externals.mjs가 부분 커버, 전체 자동화는 추후.
+- **D: Implementer Prompt 보강** — 문화적 변화, 비용 0이지만 효과 제한적.

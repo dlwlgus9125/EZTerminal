@@ -62,6 +62,8 @@ Unmapped requirements: 0. All 28 requirements covered.
 | SI-3 | contextIsolation: true, nodeIntegration: false | ASR-09, ADR-001 | `grep "contextIsolation: true" src/main/index.ts && grep "nodeIntegration: false" src/main/index.ts` |
 | SI-4 | TypeScript strict + noUncheckedIndexedAccess | ASR-10, conventions | `pnpm typecheck` |
 | SI-5 | Biome 0 warnings | ASR-10 | `pnpm lint` |
+| SI-6 | vite.main.config.ts externals = build-e2e.mjs externals = forge.config.ts asar.unpack | harness-build-identity-gap ADR | `pnpm verify:externals` |
+| SI-7 | Distribution exe starts without crash | ASR-01 | `pnpm dist:smoke` |
 
 ---
 
@@ -476,7 +478,7 @@ Unmapped requirements: 0. All 28 requirements covered.
 - [ ] AC-L3-05-3: CPU/mem/disk 렌더링 / Verify: `pnpm test -- --grep "StatusPanel render"`
 - [ ] AC-L3-05-N1: SI 에러 resilience / Verify: `pnpm test -- --grep "Metrics error resilience"`
 
-**Verification method:** Unit + component test Verify commands.
+**Verification method:** Unit + component test Verify commands + `pnpm dist:smoke`.
 **View wiring verification:** `tests/component/StatusPanel.wiring.test.tsx`
 **Wiring probe:**
 - Entry point: `src/main/index.ts` | Module: `src/main/metrics.ts` | Probe type: `runtime-load` | Verify: `pnpm test -- --grep "Metrics collector"`
@@ -517,7 +519,7 @@ Unmapped requirements: 0. All 28 requirements covered.
 - [ ] AC-L3-06-5: Npcap 미설치 UI / Verify: `pnpm test -- --grep "Network npcap fallback UI"`
 - [ ] AC-L3-06-N1: 인터페이스 없음 / Verify: `pnpm test -- --grep "Network no interface"`
 
-**Verification method:** Unit + component test Verify commands.
+**Verification method:** Unit + component test Verify commands + `pnpm dist:smoke`.
 **View wiring verification:** `tests/component/NetworkPanel.wiring.test.tsx`
 **Wiring probe:**
 - Entry point: `src/main/index.ts` | Module: `src/main/network.ts` | Probe type: `runtime-load` | Verify: `pnpm test -- --grep "Network npcap detect"`
@@ -580,7 +582,7 @@ Unmapped requirements: 0. All 28 requirements covered.
 - [ ] AC-L3-08-3: 기본값 생성 / Verify: `pnpm test -- --grep "Settings default"`
 - [ ] AC-L3-08-N1: 손상 JSON 복구 / Verify: `pnpm test -- --grep "Settings corrupt"`
 
-**Verification method:** Unit + component test Verify commands.
+**Verification method:** Unit + component test Verify commands + `pnpm dist:smoke`.
 **View wiring verification:** `tests/component/FilesPanel.wiring.test.tsx`, `tests/component/SettingsPanel.wiring.test.tsx`
 **Wiring probe:**
 - Entry point: `src/main/index.ts` | Module: `src/main/filesystem.ts` | Probe type: `runtime-load` | Verify: `pnpm test -- --grep "FilesPanel CWD OSC7"`
@@ -638,7 +640,7 @@ Unmapped requirements: 0. All 28 requirements covered.
 - [ ] AC-L4-03-3: 명령 실행 / Verify: `pnpm test -- --grep "Palette execute"`
 - [ ] AC-L4-03-N1: 필터 결과 없음 / Verify: `pnpm test -- --grep "Palette no match"`
 
-**Verification method:** e2e + component test Verify commands.
+**Verification method:** e2e + component test Verify commands + `pnpm dist:smoke`.
 **View wiring verification:** `ContextMenu.wiring.test.tsx`, `CommandPalette.wiring.test.tsx`
 **Wiring probe:**
 - Entry point: `src/renderer/main.tsx` | Module: `src/renderer/components/ContextMenu/ContextMenu.tsx` | Probe type: `import-chain` | Verify: `pnpm typecheck`
@@ -687,7 +689,7 @@ Unmapped requirements: 0. All 28 requirements covered.
 - [ ] AC-L4-05-3: ESC 닫기 / Verify: `pnpm test -- --grep "FindBar close"`
 - [ ] AC-L4-05-N1: 검색 결과 없음 / Verify: `pnpm test -- --grep "FindBar no results"`
 
-**Verification method:** Component test Verify commands.
+**Verification method:** Component test Verify commands + `pnpm dist:smoke`.
 **View wiring verification:** `tests/component/FindBar.wiring.test.tsx` — W1 binding (SearchAddon → highlight), W2 handler (Enter → findNext)
 **Wiring probe:**
 - Entry point: `src/renderer/main.tsx` | Module: `src/renderer/components/FindBar/FindBar.tsx` | Probe type: `import-chain` | Verify: `pnpm typecheck`
@@ -737,6 +739,10 @@ Unmapped requirements: 0. All 28 requirements covered.
 **Covers:** T1 → T2 → T3 → T4 → T5 → T6 → T7
 **Expected observation:** 앱 시작, 터미널 I/O 정상, 탭 생성/닫기/전환, pane 분할/닫기, Rail 패널 토글, 셸 프롬프트 3초 이내
 **Verify:** `pnpm test:e2e --grep smoke`
+
+**Distribution Gate:**
+Test Smoke PASS 이후, `pnpm dist:smoke`로 패키징된 exe가 8초 이상 생존하는지 검증.
+이 게이트는 docs/decisions/harness-build-identity-gap.md에 문서화된 "e2e PASS / 실앱 FAIL" 갭을 차단한다.
 
 ---
 
@@ -810,3 +816,4 @@ Parallel slots: {T4, T5}, {T8, T9, T10, T12}
 | xterm WebGL in CI | Medium | T2, T6 | 컴포넌트 테스트에서 mock, e2e는 headless Electron |
 | Task 10 크기 (4 requirements) | Medium | T10 | 파일 시스템 + 설정은 동일 패턴 반복, 분리 시 preload/main 중복 수정 증가 |
 | tsconfig shared 경로 누락 | High | T1 | Step 3에서 즉시 해결 |
+| Build identity gap (e2e vs forge) | High | All | externals 동기화 (`pnpm verify:externals`) + dist:smoke gate |
