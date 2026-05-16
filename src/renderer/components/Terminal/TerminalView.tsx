@@ -117,6 +117,48 @@ export function TerminalView({ sessionId: initialSessionId }: TerminalViewProps)
         console.log(`[TerminalView] PTY exited code=${code}`);
       });
 
+      // customKeyEventHandler — intercept shortcuts before xterm processes them.
+      // Ctrl+C: send SIGINT (\x03) to PTY and suppress xterm's default.
+      // Global tab/pane shortcuts (Ctrl+T/W/Tab, Ctrl+Shift+D/E/W, Ctrl+Alt+Arrow)
+      // are handled by useKeyboardShortcuts at window level; return false here so
+      // xterm does not also handle them, but the window listener still fires first.
+      terminal.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
+        // Let keyup events through unmodified
+        if (ev.type !== "keydown") return true;
+
+        // Ctrl+C → send SIGINT to PTY (do not copy to clipboard)
+        if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && ev.key === "c") {
+          if (sessionId) {
+            window.electronAPI.pty.write(sessionId, "\x03");
+          }
+          return false; // suppress xterm's own Ctrl+C handling
+        }
+
+        // Suppress xterm handling for global shortcuts handled by useKeyboardShortcuts
+        // so they don't also produce PTY output.
+        // Ctrl+T, Ctrl+W (no shift), Ctrl+Tab
+        if (ev.ctrlKey && !ev.shiftKey && !ev.altKey) {
+          if (ev.key === "t" || ev.key === "w" || ev.key === "Tab") return false;
+        }
+        // Ctrl+Shift+D/E/W
+        if (ev.ctrlKey && ev.shiftKey && !ev.altKey) {
+          if (ev.key === "D" || ev.key === "E" || ev.key === "W") return false;
+        }
+        // Ctrl+Alt+Arrow
+        if (ev.ctrlKey && !ev.shiftKey && ev.altKey) {
+          if (
+            ev.key === "ArrowLeft" ||
+            ev.key === "ArrowRight" ||
+            ev.key === "ArrowUp" ||
+            ev.key === "ArrowDown"
+          )
+            return false;
+        }
+
+        // All other keys pass through to PTY via onData
+        return true;
+      });
+
       // User input → send to PTY
       terminal.onData((data: string) => {
         if (sessionId) {

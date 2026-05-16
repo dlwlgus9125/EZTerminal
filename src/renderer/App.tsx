@@ -4,10 +4,13 @@ import { StatusBar } from "./components/StatusBar";
 import { TabBar } from "./components/TabBar";
 import { TerminalView } from "./components/Terminal";
 import { TitleBar } from "./components/TitleBar";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useStore } from "./store";
 import type { LayoutNode } from "./store/layout-slice";
 
 function App(): ReactElement {
+  useKeyboardShortcuts();
+
   const activeTabId = useStore((s) => s.activeTabId);
   const tabs = useStore((s) => s.tabs);
 
