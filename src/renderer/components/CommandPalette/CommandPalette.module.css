@@ -1,0 +1,70 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 80px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.panel {
+  width: 480px;
+  max-width: calc(100vw - 32px);
+  background: var(--bg-2, #141a18);
+  border: 1px solid var(--border, #1e2725);
+  border-radius: 8px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.input {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border, #1e2725);
+  color: var(--text, #c8d3cf);
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.input::placeholder {
+  color: var(--text-dim, #7a8581);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.item {
+  padding: 8px 16px;
+  color: var(--text, #c8d3cf);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 3px;
+  margin: 0 4px;
+}
+
+.item:hover {
+  background: var(--bg-3, #1a2220);
+}
+
+.item.active {
+  background: var(--accent-dim, #1a3028);
+  color: var(--accent, #4ade80);
+}
+
+.noMatch {
+  padding: 12px 16px;
+  color: var(--text-dim, #7a8581);
+  font-size: 13px;
+  font-style: italic;
+}

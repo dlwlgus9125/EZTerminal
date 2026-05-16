@@ -1,0 +1,70 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-1, #0e1311);
+  border-left: 1px solid var(--border, #1e2725);
+  overflow: hidden;
+}
+
+.panel.floating {
+  border: none;
+  border-radius: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--bg-2, #141a18);
+  border-bottom: 1px solid var(--border, #1e2725);
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim, #7a8581);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.controls {
+  display: flex;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-dim, #7a8581);
+  font-size: 11px;
+  cursor: pointer;
+  border: none;
+  transition: background 80ms, color 80ms;
+}
+
+.btn:hover {
+  background: var(--bg-3, #1a2220);
+  color: var(--text, #c8d3cf);
+}
+
+.btnClose:hover {
+  background: #3d1010;
+  color: #f87171;
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}

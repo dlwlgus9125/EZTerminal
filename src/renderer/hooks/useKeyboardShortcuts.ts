@@ -20,10 +20,11 @@ import { useStore } from "../store";
 
 interface KeyboardShortcutsOptions {
   onToggleFindBar?: () => void;
+  onToggleCommandPalette?: () => void;
 }
 
 export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): void {
-  const { onToggleFindBar } = options;
+  const { onToggleFindBar, onToggleCommandPalette } = options;
   const activeTabId = useStore((s) => s.activeTabId);
   const tabs = useStore((s) => s.tabs);
   const addTab = useStore((s) => s.addTab);
@@ -55,6 +56,13 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === "f") {
         e.preventDefault();
         onToggleFindBar?.();
+        return;
+      }
+
+      // Ctrl+Shift+P → toggle command palette
+      if (e.ctrlKey && e.shiftKey && !e.altKey && e.key === "P") {
+        e.preventDefault();
+        onToggleCommandPalette?.();
         return;
       }
 
@@ -141,5 +149,6 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): vo
     focusPane,
     getPaneIds,
     onToggleFindBar,
+    onToggleCommandPalette,
   ]);
 }

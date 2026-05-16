@@ -23,6 +23,7 @@ declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
 let mainWindow: BrowserWindow | null = null;
+const floatingWindows = new Map<string, BrowserWindow>();
 const ptyManager = new PtyManager();
 const frameBuffer = new FrameBuffer();
 const metricsCollector = new MetricsCollector(() => mainWindow);
@@ -141,6 +142,47 @@ function registerIpcHandlers(): void {
   // fs:stopWatch — stop chokidar watch
   ipcMain.on("fs:stopWatch", () => {
     filesystemManager.stopWatch();
+  });
+
+  // float:popout — spawn a child BrowserWindow for a panel
+  ipcMain.on("float:popout", (_event, panelId: string) => {
+    if (floatingWindows.has(panelId)) {
+      floatingWindows.get(panelId)?.focus();
+      return;
+    }
+    const preloadPath = path.join(__dirname, "../preload/index.js");
+    const child = new BrowserWindow({
+      width: 360,
+      height: 600,
+      minWidth: 280,
+      minHeight: 200,
+      frame: true,
+      title: `Panel – ${panelId}`,
+      backgroundColor: "#0a0d0c",
+      webPreferences: {
+        preload: preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false,
+      },
+    });
+    floatingWindows.set(panelId, child);
+    const url = MAIN_WINDOW_VITE_DEV_SERVER_URL
+      ? `${MAIN_WINDOW_VITE_DEV_SERVER_URL}?float=${panelId}`
+      : `file://${path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)}?float=${panelId}`;
+    child.loadURL(url);
+    child.on("closed", () => {
+      floatingWindows.delete(panelId);
+      mainWindow?.webContents.send("float:docked", panelId);
+    });
+  });
+
+  // float:dock — close the child window and notify renderer
+  ipcMain.on("float:dock", (_event, panelId: string) => {
+    const child = floatingWindows.get(panelId);
+    if (child && !child.isDestroyed()) {
+      child.close();
+    }
   });
 
   // scrollback:save — serialize terminal buffer and prompt for save location

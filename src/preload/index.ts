@@ -52,6 +52,12 @@ export interface ElectronAPI {
   scrollback: {
     save: (content: string) => Promise<{ ok: boolean; error?: string }>;
   };
+  // Floating panel channels
+  float: {
+    popout: (panelId: string) => void;
+    dock: (panelId: string) => void;
+    onDocked: (callback: (panelId: string) => void) => () => void;
+  };
 }
 
 const electronAPI: ElectronAPI = {
@@ -115,6 +121,15 @@ const electronAPI: ElectronAPI = {
   scrollback: {
     save: (content: string) =>
       ipcRenderer.invoke("scrollback:save", content) as Promise<{ ok: boolean; error?: string }>,
+  },
+  float: {
+    popout: (panelId: string) => ipcRenderer.send("float:popout", panelId),
+    dock: (panelId: string) => ipcRenderer.send("float:dock", panelId),
+    onDocked: (callback: (panelId: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, panelId: string) => callback(panelId);
+      ipcRenderer.on("float:docked", handler);
+      return () => ipcRenderer.removeListener("float:docked", handler);
+    },
   },
 };
 
