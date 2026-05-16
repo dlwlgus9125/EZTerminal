@@ -98,10 +98,10 @@ Unmapped requirements: 0. All 28 requirements covered.
 - WM-REG-9: Frame coalescing buffer in `main/frame-buffer.ts`
 
 **Completion criteria (from spec):**
-- [ ] Given: TerminalView + PTY 연결 / When: "hello" 입력 / Then: xterm에 "hello" 표시 / Verify: `pnpm test:e2e -- --grep "Terminal echo"`
-- [ ] Given: PowerShell PTY / When: "echo test\n" 입력 / Then: "test" 출력 표시 / Verify: `pnpm test:e2e -- --grep "Terminal command"`
-- [ ] Given: 앱 실행 / When: 완전 로드 / Then: 3초 이내 셸 프롬프트 / Verify: `pnpm test:e2e -- --grep "Terminal startup"`
-- [ ] Given: PTY 생성 실패 / When: IpcResult { ok: false } / Then: 에러 메시지 표시 / Verify: `pnpm test -- --grep "Terminal pty error"`
+- [x] Given: TerminalView + PTY 연결 / When: "hello" 입력 / Then: xterm에 "hello" 표시 / Verify: `pnpm test:e2e -- --grep "Terminal echo"`
+- [x] Given: PowerShell PTY / When: "echo test\n" 입력 / Then: "test" 출력 표시 / Verify: `pnpm test:e2e -- --grep "Terminal command"`
+- [x] Given: 앱 실행 / When: 완전 로드 / Then: 3초 이내 셸 프롬프트 / Verify: `pnpm test:e2e -- --grep "Terminal startup"`
+- [x] Given: PTY 생성 실패 / When: IpcResult { ok: false } / Then: 에러 메시지 표시 / Verify: `pnpm test -- --grep "Terminal pty error"`
 
 **Verification method:** Run e2e Verify commands after implementation.
 **Runtime verification:** `pnpm test:e2e --grep smoke`
@@ -110,18 +110,18 @@ Unmapped requirements: 0. All 28 requirements covered.
 - Entry point: `src/main/index.ts` | Module: `src/main/frame-buffer.ts` | Probe type: `runtime-load` | Verify: `pnpm test:e2e -- --grep "Terminal echo"`
 - Entry point: `src/renderer/main.tsx` | Module: `src/renderer/components/Terminal/TerminalView.tsx` | Probe type: `e2e-touch` | Verify: `pnpm test:e2e -- --grep "Terminal echo"`
 
-- [ ] Step 1: Write e2e test for terminal echo (expect fail — no PTY).
-- [ ] Step 2: Create `src/shared/` types (IpcResult, PtyCreateOptions, PtySession).
-- [ ] Step 3: Update tsconfig files to include `src/shared/`.
-- [ ] Step 4: Implement PtyManager (create/kill + Map).
-- [ ] Step 5: Implement FrameBuffer (16ms coalescing).
-- [ ] Step 6: Register IPC handlers in `main/index.ts`.
-- [ ] Step 7: Update `preload/index.ts` PTY channels with shared types.
-- [ ] Step 8: Create TerminalView component (xterm mount + data wiring).
-- [ ] Step 9: Wire App.tsx to render TerminalView.
-- [ ] Step 10: Run e2e tests → pass.
-- [ ] Step 11: Run smoke → pass.
-- [ ] Step 12: Commit.
+- [x] Step 1: Write e2e test for terminal echo (expect fail — no PTY).
+- [x] Step 2: Create `src/shared/` types (IpcResult, PtyCreateOptions, PtySession).
+- [x] Step 3: Update tsconfig files to include `src/shared/`.
+- [x] Step 4: Implement PtyManager (create/kill + Map).
+- [x] Step 5: Implement FrameBuffer (16ms coalescing).
+- [x] Step 6: Register IPC handlers in `main/index.ts`.
+- [x] Step 7: Update `preload/index.ts` PTY channels with shared types.
+- [x] Step 8: Create TerminalView component (xterm mount + data wiring).
+- [x] Step 9: Wire App.tsx to render TerminalView.
+- [x] Step 10: Run e2e tests → pass.
+- [x] Step 11: Run smoke → pass.
+- [x] Step 12: Commit.
 
 ---
 
@@ -156,38 +156,38 @@ Unmapped requirements: 0. All 28 requirements covered.
 - WM-C-5: WebGL context (active-only + dispose/recreate) 구현
 
 **Completion criteria (from spec):**
-- [ ] AC-01-1: IpcResult<T> 타입 정의 / Verify: `pnpm typecheck`
-- [ ] AC-01-2: PTY 채널 타입 / Verify: `pnpm typecheck`
-- [ ] AC-01-3: Metrics 타입 / Verify: `pnpm typecheck`
-- [ ] AC-01-4: Network 타입 / Verify: `pnpm typecheck`
-- [ ] AC-01-5: Settings 타입 / Verify: `pnpm typecheck`
-- [ ] AC-01-N1: preload unknown 0개 / Verify: `grep -c "unknown" src/preload/index.ts | test $(cat) -eq 0`
-- [ ] AC-02-1: PTY create → UUID + Map / Verify: `pnpm test -- --grep "PtyManager create"`
-- [ ] AC-02-2: PTY kill → 종료 + Map 제거 / Verify: `pnpm test -- --grep "PtyManager kill"`
-- [ ] AC-02-3: before-quit 전체 정리 / Verify: `pnpm test -- --grep "PtyManager cleanup"`
-- [ ] AC-02-4: Orphan 30초 스캔 / Verify: `pnpm test -- --grep "PtyManager orphan"`
-- [ ] AC-02-N1: 잘못된 shell → PTY_CREATE_FAILED / Verify: `pnpm test -- --grep "PtyManager invalid shell"`
-- [ ] AC-02-N2: 없는 세션 kill → SESSION_NOT_FOUND / Verify: `pnpm test -- --grep "PtyManager kill nonexistent"`
-- [ ] AC-03-1: 16ms 내 여러 청크 합침 / Verify: `pnpm test -- --grep "FrameBuffer coalesce"`
-- [ ] AC-03-2: 첫 청크 시 타이머 시작 / Verify: `pnpm test -- --grep "FrameBuffer flush"`
-- [ ] AC-03-3: 세션별 독립 버퍼 / Verify: `pnpm test -- --grep "FrameBuffer per-session"`
-- [ ] AC-03-N1: 세션 종료 시 버퍼 폐기 / Verify: `pnpm test -- --grep "FrameBuffer cleanup"`
-- [ ] AC-04-1: pty:create → IpcResult<string> / Verify: `pnpm test -- --grep "IPC pty:create"`
-- [ ] AC-04-2: pty:write → stdin 기록 / Verify: `pnpm test -- --grep "IPC pty:write"`
-- [ ] AC-04-3: pty:resize → PTY resize / Verify: `pnpm test -- --grep "IPC pty:resize"`
-- [ ] AC-04-4: pty:data push / Verify: `pnpm test -- --grep "IPC pty:data push"`
-- [ ] AC-04-N1: 없는 세션 write 무시 / Verify: `pnpm test -- --grep "IPC pty:write nonexistent"`
-- [ ] AC-05-1: pty.create → Promise<IpcResult<string>> / Verify: `pnpm typecheck`
-- [ ] AC-05-2: metrics.onUpdate → (data: MetricsData) => void / Verify: `pnpm typecheck`
-- [ ] AC-05-3: settings.load → Promise<IpcResult<UserSettings>> / Verify: `pnpm typecheck`
-- [ ] AC-05-N1: 타입 불일치 시 컴파일 에러 / Verify: `pnpm typecheck`
-- [ ] AC-06-1: xterm.js 마운트 / Verify: `pnpm test -- --grep "TerminalView mount"`
-- [ ] AC-06-2: WebGL addon 로딩 / Verify: `pnpm test -- --grep "TerminalView webgl"`
-- [ ] AC-06-3: addon-fit / Verify: `pnpm test -- --grep "TerminalView fit"`
-- [ ] AC-06-4: Phosphor 테마 / Verify: `pnpm test -- --grep "TerminalView theme"`
-- [ ] AC-06-5: 언마운트 정리 / Verify: `pnpm test -- --grep "TerminalView unmount"`
-- [ ] AC-06-N1: WebGL 실패 Canvas fallback / Verify: `pnpm test -- --grep "TerminalView canvas fallback"`
-- [ ] AC-06-N2: 0 크기 컨테이너 / Verify: `pnpm test -- --grep "TerminalView zero size"`
+- [x] AC-01-1: IpcResult<T> 타입 정의 / Verify: `pnpm typecheck`
+- [x] AC-01-2: PTY 채널 타입 / Verify: `pnpm typecheck`
+- [x] AC-01-3: Metrics 타입 / Verify: `pnpm typecheck`
+- [x] AC-01-4: Network 타입 / Verify: `pnpm typecheck`
+- [x] AC-01-5: Settings 타입 / Verify: `pnpm typecheck`
+- [x] AC-01-N1: preload unknown 0개 / Verify: `grep -c "unknown" src/preload/index.ts | test $(cat) -eq 0`
+- [x] AC-02-1: PTY create → UUID + Map / Verify: `pnpm test -- --grep "PtyManager create"`
+- [x] AC-02-2: PTY kill → 종료 + Map 제거 / Verify: `pnpm test -- --grep "PtyManager kill"`
+- [x] AC-02-3: before-quit 전체 정리 / Verify: `pnpm test -- --grep "PtyManager cleanup"`
+- [x] AC-02-4: Orphan 30초 스캔 / Verify: `pnpm test -- --grep "PtyManager orphan"`
+- [x] AC-02-N1: 잘못된 shell → PTY_CREATE_FAILED / Verify: `pnpm test -- --grep "PtyManager invalid shell"`
+- [x] AC-02-N2: 없는 세션 kill → SESSION_NOT_FOUND / Verify: `pnpm test -- --grep "PtyManager kill nonexistent"`
+- [x] AC-03-1: 16ms 내 여러 청크 합침 / Verify: `pnpm test -- --grep "FrameBuffer coalesce"`
+- [x] AC-03-2: 첫 청크 시 타이머 시작 / Verify: `pnpm test -- --grep "FrameBuffer flush"`
+- [x] AC-03-3: 세션별 독립 버퍼 / Verify: `pnpm test -- --grep "FrameBuffer per-session"`
+- [x] AC-03-N1: 세션 종료 시 버퍼 폐기 / Verify: `pnpm test -- --grep "FrameBuffer cleanup"`
+- [x] AC-04-1: pty:create → IpcResult<string> / Verify: `pnpm test -- --grep "IPC pty:create"`
+- [x] AC-04-2: pty:write → stdin 기록 / Verify: `pnpm test -- --grep "IPC pty:write"`
+- [x] AC-04-3: pty:resize → PTY resize / Verify: `pnpm test -- --grep "IPC pty:resize"`
+- [x] AC-04-4: pty:data push / Verify: `pnpm test -- --grep "IPC pty:data push"`
+- [x] AC-04-N1: 없는 세션 write 무시 / Verify: `pnpm test -- --grep "IPC pty:write nonexistent"`
+- [x] AC-05-1: pty.create → Promise<IpcResult<string>> / Verify: `pnpm typecheck`
+- [x] AC-05-2: metrics.onUpdate → (data: MetricsData) => void / Verify: `pnpm typecheck`
+- [x] AC-05-3: settings.load → Promise<IpcResult<UserSettings>> / Verify: `pnpm typecheck`
+- [x] AC-05-N1: 타입 불일치 시 컴파일 에러 / Verify: `pnpm typecheck`
+- [x] AC-06-1: xterm.js 마운트 / Verify: `pnpm test -- --grep "TerminalView mount"`
+- [x] AC-06-2: WebGL addon 로딩 / Verify: `pnpm test -- --grep "TerminalView webgl"`
+- [x] AC-06-3: addon-fit / Verify: `pnpm test -- --grep "TerminalView fit"`
+- [x] AC-06-4: Phosphor 테마 / Verify: `pnpm test -- --grep "TerminalView theme"`
+- [x] AC-06-5: 언마운트 정리 / Verify: `pnpm test -- --grep "TerminalView unmount"`
+- [x] AC-06-N1: WebGL 실패 Canvas fallback / Verify: `pnpm test -- --grep "TerminalView canvas fallback"`
+- [x] AC-06-N2: 0 크기 컨테이너 / Verify: `pnpm test -- --grep "TerminalView zero size"`
 
 **Verification method:** Run all listed Verify commands.
 **Runtime verification:** `pnpm test:e2e --grep smoke`
@@ -196,19 +196,19 @@ Unmapped requirements: 0. All 28 requirements covered.
 - Entry point: `src/main/index.ts` | Module: `src/shared/network-types.ts` | Probe type: `import-chain` | Verify: `pnpm typecheck`
 - Entry point: `src/main/index.ts` | Module: `src/shared/settings-types.ts` | Probe type: `import-chain` | Verify: `pnpm typecheck`
 
-- [ ] Step 1: Create remaining shared types (metrics, network, settings).
-- [ ] Step 2: Update preload — replace all unknown with concrete types.
-- [ ] Step 3: Run typecheck → pass.
-- [ ] Step 4: Write PTY lifecycle tests (orphan, error paths).
-- [ ] Step 5: Implement PTY orphan scan + error handling.
-- [ ] Step 6: Write frame buffer tests (per-session, cleanup).
-- [ ] Step 7: Complete frame buffer implementation.
-- [ ] Step 8: Write IPC handler tests (all channels).
-- [ ] Step 9: Complete IPC handler coverage.
-- [ ] Step 10: Write TerminalView tests (WebGL, fit, theme, unmount, fallbacks).
-- [ ] Step 11: Complete TerminalView (WebGL addon, FitAddon, theme, unmount, Canvas fallback).
-- [ ] Step 12: Run all Verify commands → pass.
-- [ ] Step 13: Commit.
+- [x] Step 1: Create remaining shared types (metrics, network, settings).
+- [x] Step 2: Update preload — replace all unknown with concrete types.
+- [x] Step 3: Run typecheck → pass.
+- [x] Step 4: Write PTY lifecycle tests (orphan, error paths).
+- [x] Step 5: Implement PTY orphan scan + error handling.
+- [x] Step 6: Write frame buffer tests (per-session, cleanup).
+- [x] Step 7: Complete frame buffer implementation.
+- [x] Step 8: Write IPC handler tests (all channels).
+- [x] Step 9: Complete IPC handler coverage.
+- [x] Step 10: Write TerminalView tests (WebGL, fit, theme, unmount, fallbacks).
+- [x] Step 11: Complete TerminalView (WebGL addon, FitAddon, theme, unmount, Canvas fallback).
+- [x] Step 12: Run all Verify commands → pass.
+- [x] Step 13: Commit.
 
 ---
 
