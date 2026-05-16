@@ -1,6 +1,7 @@
 import path from "node:path";
 import { BrowserWindow, app, ipcMain } from "electron";
 import { FrameBuffer } from "./frame-buffer";
+import { MetricsCollector } from "./metrics";
 import { PtyManager } from "./pty-manager";
 
 // Handle squirrel events on Windows (optional in dev/test mode)
@@ -19,6 +20,7 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 let mainWindow: BrowserWindow | null = null;
 const ptyManager = new PtyManager();
 const frameBuffer = new FrameBuffer();
+const metricsCollector = new MetricsCollector(() => mainWindow);
 
 function registerIpcHandlers(): void {
   // Coalesced PTY data → push to renderer
@@ -65,6 +67,16 @@ function registerIpcHandlers(): void {
   ipcMain.handle("pty:kill", (_event, id: string) => {
     ptyManager.kill(id);
   });
+
+  // metrics:start — begin 2s SI polling
+  ipcMain.on("metrics:start", () => {
+    metricsCollector.start();
+  });
+
+  // metrics:stop — stop polling
+  ipcMain.on("metrics:stop", () => {
+    metricsCollector.stop();
+  });
 }
 
 function createWindow(): void {
@@ -109,6 +121,7 @@ app.whenReady().then(() => {
 });
 
 app.on("before-quit", () => {
+  metricsCollector.stop();
   ptyManager.stopOrphanScan();
   ptyManager.killAll();
 });
