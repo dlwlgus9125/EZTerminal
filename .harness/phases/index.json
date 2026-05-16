@@ -3,7 +3,7 @@
   "phases": {
     "brainstorm": { "status": "complete" },
     "plan": { "status": "complete" },
-    "build": { "status": "in_progress" }
+    "build": { "status": "complete", "completed_at": "2026-05-16T22:05:00+09:00" }
   },
   "audit": {
     "status": "WARN",
