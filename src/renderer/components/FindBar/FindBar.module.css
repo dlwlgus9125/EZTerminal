@@ -1,0 +1,47 @@
+.findBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background-color: #0f1210;
+  border-bottom: 1px solid rgba(51, 255, 51, 0.2);
+  font-family: Menlo, Monaco, "Courier New", monospace;
+  font-size: 12px;
+  color: #33ff33;
+}
+
+.input {
+  flex: 1;
+  background-color: #0a0d0c;
+  border: 1px solid rgba(51, 255, 51, 0.4);
+  color: #33ff33;
+  font-family: inherit;
+  font-size: inherit;
+  padding: 2px 6px;
+  outline: none;
+}
+
+.input:focus {
+  border-color: #33ff33;
+}
+
+.noResults {
+  color: #ff3333;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  color: #33ff33;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.7;
+}
+
+.closeBtn:hover {
+  opacity: 1;
+}

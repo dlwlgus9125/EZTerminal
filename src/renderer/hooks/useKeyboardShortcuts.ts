@@ -1,11 +1,12 @@
 /**
- * useKeyboardShortcuts — T6 scope.
+ * useKeyboardShortcuts — T6+T12 scope.
  * Global keyboard shortcuts for tab and pane management.
  *
  * Tab shortcuts (window-level):
  *   Ctrl+T        → create new tab
  *   Ctrl+W        → close active tab (blocked if last)
  *   Ctrl+Tab      → switch to next tab
+ *   Ctrl+F        → toggle find bar (calls onToggleFindBar if provided)
  *
  * Pane shortcuts (via xterm customKeyEventHandler — see TerminalView):
  *   Ctrl+Shift+D  → split active pane right (horizontal)
@@ -17,7 +18,12 @@
 import { useEffect } from "react";
 import { useStore } from "../store";
 
-export function useKeyboardShortcuts(): void {
+interface KeyboardShortcutsOptions {
+  onToggleFindBar?: () => void;
+}
+
+export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}): void {
+  const { onToggleFindBar } = options;
   const activeTabId = useStore((s) => s.activeTabId);
   const tabs = useStore((s) => s.tabs);
   const addTab = useStore((s) => s.addTab);
@@ -42,6 +48,13 @@ export function useKeyboardShortcuts(): void {
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === "t") {
         e.preventDefault();
         addTab();
+        return;
+      }
+
+      // Ctrl+F → toggle find bar
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === "f") {
+        e.preventDefault();
+        onToggleFindBar?.();
         return;
       }
 
@@ -117,5 +130,16 @@ export function useKeyboardShortcuts(): void {
     return () => {
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
     };
-  }, [activeTabId, tabs, addTab, closeTab, switchTab, splitPane, closePane, focusPane, getPaneIds]);
+  }, [
+    activeTabId,
+    tabs,
+    addTab,
+    closeTab,
+    switchTab,
+    splitPane,
+    closePane,
+    focusPane,
+    getPaneIds,
+    onToggleFindBar,
+  ]);
 }

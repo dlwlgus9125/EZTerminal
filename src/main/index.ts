@@ -1,5 +1,6 @@
+import fs from "node:fs/promises";
 import path from "node:path";
-import { BrowserWindow, app, ipcMain, protocol } from "electron";
+import { BrowserWindow, app, dialog, ipcMain, protocol } from "electron";
 import { FileProtocolHandler } from "./file-protocol";
 import { FilesystemManager } from "./filesystem";
 import { FrameBuffer } from "./frame-buffer";
@@ -140,6 +141,24 @@ function registerIpcHandlers(): void {
   // fs:stopWatch — stop chokidar watch
   ipcMain.on("fs:stopWatch", () => {
     filesystemManager.stopWatch();
+  });
+
+  // scrollback:save — serialize terminal buffer and prompt for save location
+  ipcMain.handle("scrollback:save", async (_event, content: string) => {
+    try {
+      const result = await dialog.showSaveDialog({
+        title: "Save Scrollback",
+        defaultPath: "scrollback.txt",
+        filters: [{ name: "Text Files", extensions: ["txt"] }],
+      });
+      if (result.canceled || !result.filePath) {
+        return { ok: true };
+      }
+      await fs.writeFile(result.filePath, content, "utf-8");
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
   });
 }
 

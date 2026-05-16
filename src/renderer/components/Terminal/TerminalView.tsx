@@ -1,5 +1,5 @@
 /**
- * TerminalView — T1+T2 scope.
+ * TerminalView — T1+T2+T12 scope.
  * Mounts xterm.js, wires PTY create/data/write IPC.
  * T2 additions:
  * - WebGL addon (with Canvas fallback on WebGL failure)
@@ -7,12 +7,21 @@
  * - Phosphor theme
  * - Full unmount cleanup (dispose terminal + addons)
  * - Zero-size container guard
+ * T12 additions:
+ * - SearchAddon (loaded for FindBar integration)
+ * - SerializeAddon (loaded for scrollback save)
+ * - findBarOpen prop toggles FindBar visibility
+ * - onSearch callback routes query to SearchAddon.findNext()
+ * - onSerialize callback serializes terminal buffer
  */
 
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import { type ReactElement, useEffect, useRef, useState } from "react";
+import { FindBar } from "../FindBar";
 import styles from "./TerminalView.module.css";
 
 /** Phosphor terminal theme — dark green phosphor palette */
@@ -42,13 +51,23 @@ const PHOSPHOR_THEME = {
 interface TerminalViewProps {
   /** Pre-existing session ID. If null, a new session will be created on mount. */
   sessionId: string | null;
+  /** Whether the find bar is currently open. */
+  findBarOpen?: boolean;
+  /** Called when the find bar should close (ESC or close button). */
+  onFindBarClose?: () => void;
 }
 
-export function TerminalView({ sessionId: initialSessionId }: TerminalViewProps): ReactElement {
+export function TerminalView({
+  sessionId: initialSessionId,
+  findBarOpen = false,
+  onFindBarClose,
+}: TerminalViewProps): ReactElement {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const webglAddonRef = useRef<WebglAddon | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const serializeAddonRef = useRef<SerializeAddon | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSessionId);
 
@@ -82,6 +101,16 @@ export function TerminalView({ sessionId: initialSessionId }: TerminalViewProps)
       console.log("[TerminalView] WebGL unavailable, using Canvas renderer");
       webglAddonRef.current = null;
     }
+
+    // SearchAddon — for FindBar
+    const searchAddon = new SearchAddon();
+    searchAddonRef.current = searchAddon;
+    terminal.loadAddon(searchAddon);
+
+    // SerializeAddon — for scrollback save
+    const serializeAddon = new SerializeAddon();
+    serializeAddonRef.current = serializeAddon;
+    terminal.loadAddon(serializeAddon);
 
     terminal.open(container);
 
@@ -139,9 +168,9 @@ export function TerminalView({ sessionId: initialSessionId }: TerminalViewProps)
 
         // Suppress xterm handling for global shortcuts handled by useKeyboardShortcuts
         // so they don't also produce PTY output.
-        // Ctrl+T, Ctrl+W (no shift), Ctrl+Tab
+        // Ctrl+T, Ctrl+W (no shift), Ctrl+Tab, Ctrl+F
         if (ev.ctrlKey && !ev.shiftKey && !ev.altKey) {
-          if (ev.key === "t" || ev.key === "w" || ev.key === "Tab") return false;
+          if (ev.key === "t" || ev.key === "w" || ev.key === "Tab" || ev.key === "f") return false;
         }
         // Ctrl+Shift+D/E/W
         if (ev.ctrlKey && ev.shiftKey && !ev.altKey) {
@@ -187,11 +216,33 @@ export function TerminalView({ sessionId: initialSessionId }: TerminalViewProps)
       unsubExit?.();
       webglAddonRef.current?.dispose();
       webglAddonRef.current = null;
+      searchAddonRef.current = null;
+      serializeAddonRef.current = null;
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
   }, []);
+
+  function handleSearch(query: string): boolean {
+    if (!searchAddonRef.current) return false;
+    return searchAddonRef.current.findNext(query);
+  }
+
+  function handleFindBarClose(): void {
+    onFindBarClose?.();
+    terminalRef.current?.focus();
+  }
+
+  async function handleSaveScrollback(): Promise<void> {
+    if (!serializeAddonRef.current) return;
+    const content = serializeAddonRef.current.serialize();
+    await window.electronAPI.scrollback.save(content);
+  }
+
+  // Expose save scrollback for external callers (e.g. context menu)
+  (window as unknown as { __saveScrollback__?: () => Promise<void> }).__saveScrollback__ =
+    handleSaveScrollback;
 
   return (
     <div className={`${styles.terminalWrapper} terminal-wrapper`}>
@@ -200,6 +251,7 @@ export function TerminalView({ sessionId: initialSessionId }: TerminalViewProps)
           PTY error: {errorCode}
         </div>
       )}
+      {findBarOpen && <FindBar onClose={handleFindBarClose} onSearch={handleSearch} />}
       <div ref={containerRef} className={styles.terminalContainer} />
     </div>
   );

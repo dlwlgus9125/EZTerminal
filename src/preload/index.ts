@@ -48,6 +48,10 @@ export interface ElectronAPI {
     close: () => void;
     isMaximized: () => Promise<boolean>;
   };
+  // Scrollback channels
+  scrollback: {
+    save: (content: string) => Promise<{ ok: boolean; error?: string }>;
+  };
 }
 
 const electronAPI: ElectronAPI = {
@@ -107,6 +111,10 @@ const electronAPI: ElectronAPI = {
     maximize: () => ipcRenderer.send("window:maximize"),
     close: () => ipcRenderer.send("window:close"),
     isMaximized: () => ipcRenderer.invoke("window:isMaximized"),
+  },
+  scrollback: {
+    save: (content: string) =>
+      ipcRenderer.invoke("scrollback:save", content) as Promise<{ ok: boolean; error?: string }>,
   },
 };
 

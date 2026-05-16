@@ -60,6 +60,23 @@ vi.mock("@xterm/addon-fit", () => ({
   },
 }));
 
+vi.mock("@xterm/addon-search", () => ({
+  SearchAddon: class SearchAddon {
+    activate = vi.fn();
+    dispose = vi.fn();
+    findNext = vi.fn().mockReturnValue(true);
+    findPrevious = vi.fn().mockReturnValue(true);
+  },
+}));
+
+vi.mock("@xterm/addon-serialize", () => ({
+  SerializeAddon: class SerializeAddon {
+    activate = vi.fn();
+    dispose = vi.fn();
+    serialize = vi.fn().mockReturnValue("");
+  },
+}));
+
 const { TerminalView } = await import("../../src/renderer/components/Terminal/TerminalView");
 
 describe("TerminalView mount (W1, W5)", () => {

@@ -45,6 +45,9 @@ const mockElectronAPI = {
     close: vi.fn(),
     isMaximized: vi.fn().mockResolvedValue(false),
   },
+  scrollback: {
+    save: vi.fn().mockResolvedValue({ ok: true }),
+  },
 };
 
 Object.defineProperty(window, "electronAPI", {
