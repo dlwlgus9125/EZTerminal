@@ -3,7 +3,11 @@
  * Mirrors the ElectronAPI interface in src/preload/index.ts.
  */
 
+import type { DirEntry } from "../main/filesystem";
 import type { IpcResult } from "../shared/ipc-types";
+import type { MetricsData } from "../shared/metrics-types";
+import type { TrafficData } from "../shared/network-types";
+import type { UserSettings } from "../shared/settings-types";
 
 declare global {
   interface Window {
@@ -17,24 +21,38 @@ declare global {
         onExit: (id: string, callback: (code: number) => void) => () => void;
       };
       settings: {
-        load: () => Promise<unknown>;
-        save: (settings: unknown) => Promise<void>;
+        load: () => Promise<IpcResult<UserSettings>>;
+        save: (settings: UserSettings) => Promise<IpcResult<void>>;
       };
       metrics: {
         start: () => void;
         stop: () => void;
-        onUpdate: (callback: (data: unknown) => void) => () => void;
+        onUpdate: (callback: (data: MetricsData) => void) => () => void;
       };
       network: {
         startCapture: () => void;
         stopCapture: () => void;
-        onTraffic: (callback: (data: unknown) => void) => () => void;
+        onTraffic: (callback: (data: TrafficData) => void) => () => void;
+      };
+      fs: {
+        readDir: (dirPath: string) => Promise<IpcResult<DirEntry[]>>;
+        watch: (dirPath: string) => void;
+        stopWatch: () => void;
+        onChanged: (callback: (dirPath: string) => void) => () => void;
       };
       window: {
         minimize: () => void;
         maximize: () => void;
         close: () => void;
         isMaximized: () => Promise<boolean>;
+      };
+      scrollback: {
+        save: (content: string) => Promise<{ ok: boolean; error?: string }>;
+      };
+      float: {
+        popout: (panelId: string) => void;
+        dock: (panelId: string) => void;
+        onDocked: (callback: (panelId: string) => void) => () => void;
       };
     };
   }
