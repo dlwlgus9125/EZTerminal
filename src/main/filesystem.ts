@@ -9,13 +9,7 @@ import path from "node:path";
 import * as chokidar from "chokidar";
 import type { BrowserWindow } from "electron";
 
-export interface DirEntry {
-  name: string;
-  path: string;
-  isDirectory: boolean;
-  size: number;
-  modifiedAt: number;
-}
+export type { DirEntry } from "../shared/filesystem-types";
 
 export class FilesystemManager {
   private watcher: chokidar.FSWatcher | null = null;

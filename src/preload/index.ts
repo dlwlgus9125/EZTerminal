@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { DirEntry } from "../main/filesystem";
+import type { DirEntry } from "../shared/filesystem-types";
 import type { IpcResult } from "../shared/ipc-types";
 import type { MetricsData } from "../shared/metrics-types";
 import type { TrafficData } from "../shared/network-types";

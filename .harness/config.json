@@ -85,7 +85,7 @@
     "enabled": true,
     "exempt_reason": "",
     "view_extensions": [".tsx", ".jsx"],
-    "view_test_command": "",
-    "wiring_gate_command": ""
+    "view_test_command": "pnpm test -- --grep wiring",
+    "wiring_gate_command": "pnpm test:e2e"
   }
 }

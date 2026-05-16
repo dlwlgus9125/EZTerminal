@@ -238,28 +238,28 @@ Unmapped requirements: 0. All 28 requirements covered.
 - WM-C-6: Cross-slice coordination via get() in actions
 
 **Completion criteria (from spec):**
-- [ ] AC-L2-01-1: 4 slice store 생성 / Verify: `pnpm test -- --grep "Store creation"`
-- [ ] AC-L2-01-2: terminalSlice / Verify: `pnpm test -- --grep "terminalSlice"`
-- [ ] AC-L2-01-3: layoutSlice / Verify: `pnpm test -- --grep "layoutSlice"`
-- [ ] AC-L2-01-4: Cross-slice closeTab / Verify: `pnpm test -- --grep "cross-slice closeTab"`
-- [ ] AC-L2-01-N1: 마지막 탭 닫기 차단 / Verify: `pnpm test -- --grep "closeTab last tab"`
-- [ ] AC-L2-02-1 through AC-L2-02-N1: Tab create/close/switch/last-block (e2e deferred to T6)
-- [ ] AC-L2-03-1 through AC-L2-03-N2: Pane split/close/focus/max/last-block (e2e deferred to T6)
+- [x] AC-L2-01-1: 4 slice store 생성 / Verify: `pnpm test -- --grep "Store creation"`
+- [x] AC-L2-01-2: terminalSlice / Verify: `pnpm test -- --grep "terminalSlice"`
+- [x] AC-L2-01-3: layoutSlice / Verify: `pnpm test -- --grep "layoutSlice"`
+- [x] AC-L2-01-4: Cross-slice closeTab / Verify: `pnpm test -- --grep "cross-slice closeTab"`
+- [x] AC-L2-01-N1: 마지막 탭 닫기 차단 / Verify: `pnpm test -- --grep "closeTab last tab"`
+- [x] AC-L2-02-1 through AC-L2-02-N1: Tab create/close/switch/last-block (e2e deferred to T6)
+- [x] AC-L2-03-1 through AC-L2-03-N2: Pane split/close/focus/max/last-block (e2e deferred to T6)
 
 **Verification method:** Unit test Verify commands.
 **Wiring probe:**
 - Entry point: `src/renderer/main.tsx` | Module: `src/renderer/store/index.ts` | Probe type: `import-chain` | Verify: `pnpm typecheck`
 
-- [ ] Step 1: Write terminalSlice tests.
-- [ ] Step 2: Implement terminalSlice.
-- [ ] Step 3: Write layoutSlice tests (tab + pane operations).
-- [ ] Step 4: Implement layoutSlice (LayoutNode binary tree).
-- [ ] Step 5: Write cross-slice test (closeTab → PTY kill).
-- [ ] Step 6: Implement cross-slice coordination.
-- [ ] Step 7: Create panel-slice + settings-slice stubs.
-- [ ] Step 8: Create store/index.ts (combine slices).
-- [ ] Step 9: Run Verify commands → pass.
-- [ ] Step 10: Commit.
+- [x] Step 1: Write terminalSlice tests.
+- [x] Step 2: Implement terminalSlice.
+- [x] Step 3: Write layoutSlice tests (tab + pane operations).
+- [x] Step 4: Implement layoutSlice (LayoutNode binary tree).
+- [x] Step 5: Write cross-slice test (closeTab → PTY kill).
+- [x] Step 6: Implement cross-slice coordination.
+- [x] Step 7: Create panel-slice + settings-slice stubs.
+- [x] Step 8: Create store/index.ts (combine slices).
+- [x] Step 9: Run Verify commands → pass.
+- [x] Step 10: Commit.
 
 ---
 
@@ -288,20 +288,20 @@ Unmapped requirements: 0. All 28 requirements covered.
 **File overlap with:** Task 5 (App.tsx)
 
 **Completion criteria (from spec):**
-- [ ] AC-L2-04-1: CSS Grid 수평 2 pane / Verify: `pnpm test -- --grep "SplitContainer render"`
-- [ ] AC-L2-04-2: 6px 거터 드래그 비율 조정 / Verify: `pnpm test -- --grep "SplitContainer gutter drag"`
-- [ ] AC-L2-04-3: 더블클릭 50:50 리셋 / Verify: `pnpm test -- --grep "SplitContainer reset"`
-- [ ] AC-L2-04-N1: 잘못된 LayoutNode fallback / Verify: `pnpm test -- --grep "SplitContainer invalid node"`
+- [x] AC-L2-04-1: CSS Grid 수평 2 pane / Verify: `pnpm test -- --grep "SplitContainer render"`
+- [x] AC-L2-04-2: 6px 거터 드래그 비율 조정 / Verify: `pnpm test -- --grep "SplitContainer gutter drag"`
+- [x] AC-L2-04-3: 더블클릭 50:50 리셋 / Verify: `pnpm test -- --grep "SplitContainer reset"`
+- [x] AC-L2-04-N1: 잘못된 LayoutNode fallback / Verify: `pnpm test -- --grep "SplitContainer invalid node"`
 
 **Verification method:** Component test Verify commands.
 **View wiring verification:** `tests/component/SplitContainer.wiring.test.tsx` — W1 binding (LayoutNode → grid), W2 handler (gutter drag → ratio update), W5 template (split vs leaf rendering)
 **Wiring probe:**
 - Entry point: `src/renderer/main.tsx` | Module: `src/renderer/components/SplitContainer/SplitContainer.tsx` | Probe type: `import-chain` | Verify: `pnpm typecheck`
 
-- [ ] Step 1-6: TDD red-green for SplitContainer.
-- [ ] Step 7: Wire into App.tsx.
-- [ ] Step 8: Run Verify + wiring tests → pass.
-- [ ] Step 9: Commit.
+- [x] Step 1-6: TDD red-green for SplitContainer.
+- [x] Step 7: Wire into App.tsx.
+- [x] Step 8: Run Verify + wiring tests → pass.
+- [x] Step 9: Commit.
 
 ---
 
@@ -326,11 +326,11 @@ Unmapped requirements: 0. All 28 requirements covered.
 **File overlap with:** Task 4 (App.tsx), Task 7 (App.tsx)
 
 **Completion criteria (from spec):**
-- [ ] AC-L2-05-1: 윈도우 드래그 / Verify: `pnpm test -- --grep "TitleBar drag"`
-- [ ] AC-L2-05-2: 윈도우 컨트롤 / Verify: `pnpm test -- --grep "TitleBar controls"`
-- [ ] AC-L2-06-1: 탭 목록 렌더링 / Verify: `pnpm test -- --grep "TabBar render"`
-- [ ] AC-L2-06-2: 새 탭 버튼 / Verify: `pnpm test -- --grep "TabBar add"`
-- [ ] AC-L2-07-1: 상태 표시 / Verify: `pnpm test -- --grep "StatusBar display"`
+- [x] AC-L2-05-1: 윈도우 드래그 / Verify: `pnpm test -- --grep "TitleBar drag"`
+- [x] AC-L2-05-2: 윈도우 컨트롤 / Verify: `pnpm test -- --grep "TitleBar controls"`
+- [x] AC-L2-06-1: 탭 목록 렌더링 / Verify: `pnpm test -- --grep "TabBar render"`
+- [x] AC-L2-06-2: 새 탭 버튼 / Verify: `pnpm test -- --grep "TabBar add"`
+- [x] AC-L2-07-1: 상태 표시 / Verify: `pnpm test -- --grep "StatusBar display"`
 
 **Verification method:** Component test Verify commands.
 **View wiring verification:** `tests/component/TitleBar.wiring.test.tsx`, `TabBar.wiring.test.tsx`, `StatusBar.wiring.test.tsx`
@@ -338,10 +338,10 @@ Unmapped requirements: 0. All 28 requirements covered.
 - Entry point: `src/renderer/main.tsx` | Module: `src/renderer/components/TitleBar/TitleBar.tsx` | Probe type: `import-chain` | Verify: `pnpm typecheck`
 - Entry point: `src/renderer/main.tsx` | Module: `src/renderer/components/TabBar/TabBar.tsx` | Probe type: `import-chain` | Verify: `pnpm typecheck`
 
-- [ ] Step 1-6: TDD red-green for each component.
-- [ ] Step 7: Assemble in App.tsx layout.
-- [ ] Step 8: Run Verify + wiring tests → pass.
-- [ ] Step 9: Commit.
+- [x] Step 1-6: TDD red-green for each component.
+- [x] Step 7: Assemble in App.tsx layout.
+- [x] Step 8: Run Verify + wiring tests → pass.
+- [x] Step 9: Commit.
 
 ---
 
@@ -370,33 +370,33 @@ Unmapped requirements: 0. All 28 requirements covered.
 **File overlap with:** Task 11 (useKeyboardShortcuts — Ctrl+Shift+P 추가), Task 12 (useKeyboardShortcuts — Ctrl+F 추가)
 
 **Completion criteria (from spec):**
-- [ ] AC-L2-08-1: 글로벌 Ctrl+T/W/Tab / Verify: `pnpm test:e2e -- --grep "Keyboard global"`
-- [ ] AC-L2-08-2: 터미널 Ctrl+Shift+D / Verify: `pnpm test:e2e -- --grep "Keyboard terminal"`
-- [ ] AC-L2-08-3: PTY passthrough / Verify: `pnpm test:e2e -- --grep "Keyboard passthrough"`
-- [ ] AC-L2-08-N1: Ctrl+C → SIGINT / Verify: `pnpm test:e2e -- --grep "Keyboard ctrl-c sigint"`
-- [ ] AC-L2-02-1: 새 탭 Ctrl+T / Verify: `pnpm test:e2e -- --grep "Tab create"`
-- [ ] AC-L2-02-2: 탭 닫기 Ctrl+W / Verify: `pnpm test:e2e -- --grep "Tab close"`
-- [ ] AC-L2-02-3: 탭 전환 Ctrl+Tab / Verify: `pnpm test:e2e -- --grep "Tab switch"`
-- [ ] AC-L2-02-N1: 마지막 탭 Ctrl+W 차단 / Verify: `pnpm test:e2e -- --grep "Tab close last blocked"`
-- [ ] AC-L2-03-1: 우측 분할 Ctrl+Shift+D / Verify: `pnpm test:e2e -- --grep "Pane split right"`
-- [ ] AC-L2-03-2: 하단 분할 Ctrl+Shift+E / Verify: `pnpm test:e2e -- --grep "Pane split down"`
-- [ ] AC-L2-03-3: Pane 닫기 Ctrl+Shift+W / Verify: `pnpm test:e2e -- --grep "Pane close"`
-- [ ] AC-L2-03-4: Pane 포커스 Ctrl+Alt+Arrow / Verify: `pnpm test:e2e -- --grep "Pane focus"`
-- [ ] AC-L2-03-N1: 4 pane 초과 차단 / Verify: `pnpm test:e2e -- --grep "Pane split max"`
-- [ ] AC-L2-03-N2: 마지막 pane 닫기 차단 / Verify: `pnpm test:e2e -- --grep "Pane close last blocked"`
+- [x] AC-L2-08-1: 글로벌 Ctrl+T/W/Tab / Verify: `pnpm test:e2e -- --grep "Keyboard global"`
+- [x] AC-L2-08-2: 터미널 Ctrl+Shift+D / Verify: `pnpm test:e2e -- --grep "Keyboard terminal"`
+- [x] AC-L2-08-3: PTY passthrough / Verify: `pnpm test:e2e -- --grep "Keyboard passthrough"`
+- [x] AC-L2-08-N1: Ctrl+C → SIGINT / Verify: `pnpm test:e2e -- --grep "Keyboard ctrl-c sigint"`
+- [x] AC-L2-02-1: 새 탭 Ctrl+T / Verify: `pnpm test:e2e -- --grep "Tab create"`
+- [x] AC-L2-02-2: 탭 닫기 Ctrl+W / Verify: `pnpm test:e2e -- --grep "Tab close"`
+- [x] AC-L2-02-3: 탭 전환 Ctrl+Tab / Verify: `pnpm test:e2e -- --grep "Tab switch"`
+- [x] AC-L2-02-N1: 마지막 탭 Ctrl+W 차단 / Verify: `pnpm test:e2e -- --grep "Tab close last blocked"`
+- [x] AC-L2-03-1: 우측 분할 Ctrl+Shift+D / Verify: `pnpm test:e2e -- --grep "Pane split right"`
+- [x] AC-L2-03-2: 하단 분할 Ctrl+Shift+E / Verify: `pnpm test:e2e -- --grep "Pane split down"`
+- [x] AC-L2-03-3: Pane 닫기 Ctrl+Shift+W / Verify: `pnpm test:e2e -- --grep "Pane close"`
+- [x] AC-L2-03-4: Pane 포커스 Ctrl+Alt+Arrow / Verify: `pnpm test:e2e -- --grep "Pane focus"`
+- [x] AC-L2-03-N1: 4 pane 초과 차단 / Verify: `pnpm test:e2e -- --grep "Pane split max"`
+- [x] AC-L2-03-N2: 마지막 pane 닫기 차단 / Verify: `pnpm test:e2e -- --grep "Pane close last blocked"`
 
 **Verification method:** e2e Verify commands.
 **Runtime verification:** `pnpm test:e2e --grep smoke`
 **Wiring probe:**
 - Entry point: `src/renderer/main.tsx` | Module: `src/renderer/hooks/useKeyboardShortcuts.ts` | Probe type: `import-chain` | Verify: `pnpm typecheck`
 
-- [ ] Step 1: Write e2e tests for keyboard shortcuts.
-- [ ] Step 2: Implement useKeyboardShortcuts hook.
-- [ ] Step 3: Wire customKeyEventHandler in TerminalView.
-- [ ] Step 4: Mount hook in App.tsx.
-- [ ] Step 5: Write e2e tests for tab/pane operations.
-- [ ] Step 6: Run all e2e Verify commands → pass.
-- [ ] Step 7: Commit.
+- [x] Step 1: Write e2e tests for keyboard shortcuts.
+- [x] Step 2: Implement useKeyboardShortcuts hook.
+- [x] Step 3: Wire customKeyEventHandler in TerminalView.
+- [x] Step 4: Mount hook in App.tsx.
+- [x] Step 5: Write e2e tests for tab/pane operations.
+- [x] Step 6: Run all e2e Verify commands → pass.
+- [x] Step 7: Commit.
 
 ---
 
@@ -428,14 +428,14 @@ Unmapped requirements: 0. All 28 requirements covered.
 - WM-C-3: Collector lifecycle 패턴 확립
 
 **Completion criteria (from spec):**
-- [ ] AC-L3-01-1: 4 아이콘 48px / Verify: `pnpm test -- --grep "Rail render"`
-- [ ] AC-L3-01-2: 패널 열기 300px / Verify: `pnpm test -- --grep "Rail toggle open"`
-- [ ] AC-L3-01-3: 패널 닫기 / Verify: `pnpm test -- --grep "Rail toggle close"`
-- [ ] AC-L3-01-N1: 패널 전환 시 이전 정리 / Verify: `pnpm test -- --grep "Rail switch panel"`
-- [ ] AC-L3-02-1: 열기 → start / Verify: `pnpm test -- --grep "visibility start"`
-- [ ] AC-L3-02-2: 닫기 → stop / Verify: `pnpm test -- --grep "visibility stop"`
-- [ ] AC-L3-02-3: 최소화 → stop / Verify: `pnpm test -- --grep "visibility minimize"`
-- [ ] AC-L3-02-N1: 빠른 토글 중복 방지 / Verify: `pnpm test -- --grep "visibility rapid toggle"`
+- [x] AC-L3-01-1: 4 아이콘 48px / Verify: `pnpm test -- --grep "Rail render"`
+- [x] AC-L3-01-2: 패널 열기 300px / Verify: `pnpm test -- --grep "Rail toggle open"`
+- [x] AC-L3-01-3: 패널 닫기 / Verify: `pnpm test -- --grep "Rail toggle close"`
+- [x] AC-L3-01-N1: 패널 전환 시 이전 정리 / Verify: `pnpm test -- --grep "Rail switch panel"`
+- [x] AC-L3-02-1: 열기 → start / Verify: `pnpm test -- --grep "visibility start"`
+- [x] AC-L3-02-2: 닫기 → stop / Verify: `pnpm test -- --grep "visibility stop"`
+- [x] AC-L3-02-3: 최소화 → stop / Verify: `pnpm test -- --grep "visibility minimize"`
+- [x] AC-L3-02-N1: 빠른 토글 중복 방지 / Verify: `pnpm test -- --grep "visibility rapid toggle"`
 
 **Verification method:** Component test Verify commands.
 **View wiring verification:** `tests/component/Rail.wiring.test.tsx` — W1 binding (panelSlice → active icon), W2 handler (click → toggle action)
@@ -443,11 +443,11 @@ Unmapped requirements: 0. All 28 requirements covered.
 - Entry point: `src/renderer/main.tsx` | Module: `src/renderer/components/Rail/Rail.tsx` | Probe type: `import-chain` | Verify: `pnpm typecheck`
 - Entry point: `src/renderer/main.tsx` | Module: `src/renderer/hooks/useVisibilityLifecycle.ts` | Probe type: `import-chain` | Verify: `pnpm typecheck`
 
-- [ ] Step 1-8: TDD red-green for Rail + useVisibilityLifecycle.
-- [ ] Step 9: Complete panel-slice implementation.
-- [ ] Step 10: Update App.tsx layout (Rail + panel area).
-- [ ] Step 11: Run Verify commands → pass.
-- [ ] Step 12: Commit.
+- [x] Step 1-8: TDD red-green for Rail + useVisibilityLifecycle.
+- [x] Step 9: Complete panel-slice implementation.
+- [x] Step 10: Update App.tsx layout (Rail + panel area).
+- [x] Step 11: Run Verify commands → pass.
+- [x] Step 12: Commit.
 
 ---
 
@@ -473,20 +473,20 @@ Unmapped requirements: 0. All 28 requirements covered.
 **Wiring handoff:** WM-DF-4: metrics:start → SI poll → metrics:update → StatusPanel
 
 **Completion criteria (from spec):**
-- [ ] AC-L3-05-1: 2초 폴링 / Verify: `pnpm test -- --grep "Metrics collector"`
-- [ ] AC-L3-05-2: metrics:update push / Verify: `pnpm test -- --grep "Metrics push"`
-- [ ] AC-L3-05-3: CPU/mem/disk 렌더링 / Verify: `pnpm test -- --grep "StatusPanel render"`
-- [ ] AC-L3-05-N1: SI 에러 resilience / Verify: `pnpm test -- --grep "Metrics error resilience"`
+- [x] AC-L3-05-1: 2초 폴링 / Verify: `pnpm test -- --grep "Metrics collector"`
+- [x] AC-L3-05-2: metrics:update push / Verify: `pnpm test -- --grep "Metrics push"`
+- [x] AC-L3-05-3: CPU/mem/disk 렌더링 / Verify: `pnpm test -- --grep "StatusPanel render"`
+- [x] AC-L3-05-N1: SI 에러 resilience / Verify: `pnpm test -- --grep "Metrics error resilience"`
 
 **Verification method:** Unit + component test Verify commands + `pnpm dist:smoke`.
 **View wiring verification:** `tests/component/StatusPanel.wiring.test.tsx`
 **Wiring probe:**
 - Entry point: `src/main/index.ts` | Module: `src/main/metrics.ts` | Probe type: `runtime-load` | Verify: `pnpm test -- --grep "Metrics collector"`
 
-- [ ] Step 1-6: TDD red-green for MetricsCollector + StatusPanel.
-- [ ] Step 7: Register handlers in main/index.ts.
-- [ ] Step 8: Run Verify commands → pass.
-- [ ] Step 9: Commit.
+- [x] Step 1-6: TDD red-green for MetricsCollector + StatusPanel.
+- [x] Step 7: Register handlers in main/index.ts.
+- [x] Step 8: Run Verify commands → pass.
+- [x] Step 9: Commit.
 
 ---
 
@@ -512,22 +512,22 @@ Unmapped requirements: 0. All 28 requirements covered.
 **Wiring handoff:** WM-DF-5: network:start → cap/SI → network:traffic → NetworkPanel
 
 **Completion criteria (from spec):**
-- [ ] AC-L3-06-1: Npcap 감지 / Verify: `pnpm test -- --grep "Network npcap detect"`
-- [ ] AC-L3-06-2: 트래픽 통계 / Verify: `pnpm test -- --grep "Network traffic stats"`
-- [ ] AC-L3-06-3: 연결 테이블 / Verify: `pnpm test -- --grep "Network connections"`
-- [ ] AC-L3-06-4: 패킷 캡처 / Verify: `pnpm test -- --grep "Network capture"`
-- [ ] AC-L3-06-5: Npcap 미설치 UI / Verify: `pnpm test -- --grep "Network npcap fallback UI"`
-- [ ] AC-L3-06-N1: 인터페이스 없음 / Verify: `pnpm test -- --grep "Network no interface"`
+- [x] AC-L3-06-1: Npcap 감지 / Verify: `pnpm test -- --grep "Network npcap detect"`
+- [x] AC-L3-06-2: 트래픽 통계 / Verify: `pnpm test -- --grep "Network traffic stats"`
+- [x] AC-L3-06-3: 연결 테이블 / Verify: `pnpm test -- --grep "Network connections"`
+- [x] AC-L3-06-4: 패킷 캡처 / Verify: `pnpm test -- --grep "Network capture"`
+- [x] AC-L3-06-5: Npcap 미설치 UI / Verify: `pnpm test -- --grep "Network npcap fallback UI"`
+- [x] AC-L3-06-N1: 인터페이스 없음 / Verify: `pnpm test -- --grep "Network no interface"`
 
 **Verification method:** Unit + component test Verify commands + `pnpm dist:smoke`.
 **View wiring verification:** `tests/component/NetworkPanel.wiring.test.tsx`
 **Wiring probe:**
 - Entry point: `src/main/index.ts` | Module: `src/main/network.ts` | Probe type: `runtime-load` | Verify: `pnpm test -- --grep "Network npcap detect"`
 
-- [ ] Step 1-8: TDD red-green for NetworkCollector + NetworkPanel.
-- [ ] Step 9: Register handlers in main/index.ts.
-- [ ] Step 10: Run Verify commands → pass.
-- [ ] Step 11: Commit.
+- [x] Step 1-8: TDD red-green for NetworkCollector + NetworkPanel.
+- [x] Step 9: Register handlers in main/index.ts.
+- [x] Step 10: Run Verify commands → pass.
+- [x] Step 11: Commit.
 
 ---
 
@@ -563,24 +563,24 @@ Unmapped requirements: 0. All 28 requirements covered.
 - WM-DF-9: save → main write → broadcast
 
 **Completion criteria (from spec):**
-- [ ] AC-L3-03-1: CWD OSC 7 / Verify: `pnpm test -- --grep "FilesPanel CWD OSC7"`
-- [ ] AC-L3-03-2: Win32 CWD fallback / Verify: `pnpm test -- --grep "FilesPanel CWD fallback"`
-- [ ] AC-L3-03-3: 파일 트리 + 가상 스크롤 / Verify: `pnpm test -- --grep "FilesPanel tree"`
-- [ ] AC-L3-03-4: 실시간 감지 / Verify: `pnpm test -- --grep "FilesPanel watch"`
-- [ ] AC-L3-03-N1: 접근 불가 / Verify: `pnpm test -- --grep "FilesPanel access denied"`
-- [ ] AC-L3-04-1: 텍스트 미리보기 / Verify: `pnpm test -- --grep "Preview text"`
-- [ ] AC-L3-04-2: 이미지 미리보기 / Verify: `pnpm test -- --grep "Preview image"`
-- [ ] AC-L3-04-3: Path traversal 차단 / Verify: `pnpm test -- --grep "Protocol traversal"`
-- [ ] AC-L3-04-N1: 비허용 확장자 / Verify: `pnpm test -- --grep "Protocol extension blocked"`
-- [ ] AC-L3-04-N2: 10MB 초과 / Verify: `pnpm test -- --grep "Preview size limit"`
-- [ ] AC-L3-07-1: 설정 로드 / Verify: `pnpm test -- --grep "Settings load"`
-- [ ] AC-L3-07-2: 설정 저장 / Verify: `pnpm test -- --grep "Settings save"`
-- [ ] AC-L3-07-3: 즉시 반영 / Verify: `pnpm test -- --grep "Settings apply"`
-- [ ] AC-L3-07-N1: 잘못된 값 거부 / Verify: `pnpm test -- --grep "Settings validation"`
-- [ ] AC-L3-08-1: 파일 읽기 / Verify: `pnpm test -- --grep "Settings file load"`
-- [ ] AC-L3-08-2: Atomic 쓰기 / Verify: `pnpm test -- --grep "Settings atomic write"`
-- [ ] AC-L3-08-3: 기본값 생성 / Verify: `pnpm test -- --grep "Settings default"`
-- [ ] AC-L3-08-N1: 손상 JSON 복구 / Verify: `pnpm test -- --grep "Settings corrupt"`
+- [x] AC-L3-03-1: CWD OSC 7 / Verify: `pnpm test -- --grep "FilesPanel CWD OSC7"`
+- [x] AC-L3-03-2: Win32 CWD fallback / Verify: `pnpm test -- --grep "FilesPanel CWD fallback"`
+- [x] AC-L3-03-3: 파일 트리 + 가상 스크롤 / Verify: `pnpm test -- --grep "FilesPanel tree"`
+- [x] AC-L3-03-4: 실시간 감지 / Verify: `pnpm test -- --grep "FilesPanel watch"`
+- [x] AC-L3-03-N1: 접근 불가 / Verify: `pnpm test -- --grep "FilesPanel access denied"`
+- [x] AC-L3-04-1: 텍스트 미리보기 / Verify: `pnpm test -- --grep "Preview text"`
+- [x] AC-L3-04-2: 이미지 미리보기 / Verify: `pnpm test -- --grep "Preview image"`
+- [x] AC-L3-04-3: Path traversal 차단 / Verify: `pnpm test -- --grep "Protocol traversal"`
+- [x] AC-L3-04-N1: 비허용 확장자 / Verify: `pnpm test -- --grep "Protocol extension blocked"`
+- [x] AC-L3-04-N2: 10MB 초과 / Verify: `pnpm test -- --grep "Preview size limit"`
+- [x] AC-L3-07-1: 설정 로드 / Verify: `pnpm test -- --grep "Settings load"`
+- [x] AC-L3-07-2: 설정 저장 / Verify: `pnpm test -- --grep "Settings save"`
+- [x] AC-L3-07-3: 즉시 반영 / Verify: `pnpm test -- --grep "Settings apply"`
+- [x] AC-L3-07-N1: 잘못된 값 거부 / Verify: `pnpm test -- --grep "Settings validation"`
+- [x] AC-L3-08-1: 파일 읽기 / Verify: `pnpm test -- --grep "Settings file load"`
+- [x] AC-L3-08-2: Atomic 쓰기 / Verify: `pnpm test -- --grep "Settings atomic write"`
+- [x] AC-L3-08-3: 기본값 생성 / Verify: `pnpm test -- --grep "Settings default"`
+- [x] AC-L3-08-N1: 손상 JSON 복구 / Verify: `pnpm test -- --grep "Settings corrupt"`
 
 **Verification method:** Unit + component test Verify commands + `pnpm dist:smoke`.
 **View wiring verification:** `tests/component/FilesPanel.wiring.test.tsx`, `tests/component/SettingsPanel.wiring.test.tsx`
@@ -589,15 +589,15 @@ Unmapped requirements: 0. All 28 requirements covered.
 - Entry point: `src/main/index.ts` | Module: `src/main/file-protocol.ts` | Probe type: `runtime-load` | Verify: `pnpm test -- --grep "Protocol traversal"`
 - Entry point: `src/main/index.ts` | Module: `src/main/settings.ts` | Probe type: `runtime-load` | Verify: `pnpm test -- --grep "Settings file load"`
 
-- [ ] Step 1-4: TDD for filesystem + file-protocol (main side).
-- [ ] Step 5-6: TDD for settings persistence (main side).
-- [ ] Step 7-8: TDD for FilesPanel + preview (renderer side).
-- [ ] Step 9-10: TDD for SettingsPanel (renderer side).
-- [ ] Step 11: Update preload with new channels.
-- [ ] Step 12: Register all handlers in main/index.ts.
-- [ ] Step 13: Complete settings-slice implementation.
-- [ ] Step 14: Run all Verify commands → pass.
-- [ ] Step 15: Commit.
+- [x] Step 1-4: TDD for filesystem + file-protocol (main side).
+- [x] Step 5-6: TDD for settings persistence (main side).
+- [x] Step 7-8: TDD for FilesPanel + preview (renderer side).
+- [x] Step 9-10: TDD for SettingsPanel (renderer side).
+- [x] Step 11: Update preload with new channels.
+- [x] Step 12: Register all handlers in main/index.ts.
+- [x] Step 13: Complete settings-slice implementation.
+- [x] Step 14: Run all Verify commands → pass.
+- [x] Step 15: Commit.
 
 ---
 
@@ -627,18 +627,18 @@ Unmapped requirements: 0. All 28 requirements covered.
 **File overlap with:** Task 12 (useKeyboardShortcuts)
 
 **Completion criteria (from spec):**
-- [ ] AC-L4-01-1: Pop-out / Verify: `pnpm test:e2e -- --grep "Float pop-out"`
-- [ ] AC-L4-01-2: Dock / Verify: `pnpm test:e2e -- --grep "Float dock"`
-- [ ] AC-L4-01-3: 최소화 독립 / Verify: `pnpm test:e2e -- --grep "Float minimize independent"`
-- [ ] AC-L4-01-N1: 강제 종료 / Verify: `pnpm test:e2e -- --grep "Float force close"`
-- [ ] AC-L4-02-1: 메뉴 표시 / Verify: `pnpm test -- --grep "ContextMenu show"`
-- [ ] AC-L4-02-2: 키보드 네비게이션 / Verify: `pnpm test -- --grep "ContextMenu keyboard"`
-- [ ] AC-L4-02-3: 화면 경계 / Verify: `pnpm test -- --grep "ContextMenu overflow"`
-- [ ] AC-L4-02-N1: Copy 비활성 / Verify: `pnpm test -- --grep "ContextMenu copy disabled"`
-- [ ] AC-L4-03-1: 팔레트 표시 / Verify: `pnpm test:e2e -- --grep "Palette show"`
-- [ ] AC-L4-03-2: Substring 필터 / Verify: `pnpm test -- --grep "Palette filter"`
-- [ ] AC-L4-03-3: 명령 실행 / Verify: `pnpm test -- --grep "Palette execute"`
-- [ ] AC-L4-03-N1: 필터 결과 없음 / Verify: `pnpm test -- --grep "Palette no match"`
+- [x] AC-L4-01-1: Pop-out / Verify: `pnpm test:e2e -- --grep "Float pop-out"`
+- [x] AC-L4-01-2: Dock / Verify: `pnpm test:e2e -- --grep "Float dock"`
+- [x] AC-L4-01-3: 최소화 독립 / Verify: `pnpm test:e2e -- --grep "Float minimize independent"`
+- [x] AC-L4-01-N1: 강제 종료 / Verify: `pnpm test:e2e -- --grep "Float force close"`
+- [x] AC-L4-02-1: 메뉴 표시 / Verify: `pnpm test -- --grep "ContextMenu show"`
+- [x] AC-L4-02-2: 키보드 네비게이션 / Verify: `pnpm test -- --grep "ContextMenu keyboard"`
+- [x] AC-L4-02-3: 화면 경계 / Verify: `pnpm test -- --grep "ContextMenu overflow"`
+- [x] AC-L4-02-N1: Copy 비활성 / Verify: `pnpm test -- --grep "ContextMenu copy disabled"`
+- [x] AC-L4-03-1: 팔레트 표시 / Verify: `pnpm test:e2e -- --grep "Palette show"`
+- [x] AC-L4-03-2: Substring 필터 / Verify: `pnpm test -- --grep "Palette filter"`
+- [x] AC-L4-03-3: 명령 실행 / Verify: `pnpm test -- --grep "Palette execute"`
+- [x] AC-L4-03-N1: 필터 결과 없음 / Verify: `pnpm test -- --grep "Palette no match"`
 
 **Verification method:** e2e + component test Verify commands + `pnpm dist:smoke`.
 **View wiring verification:** `ContextMenu.wiring.test.tsx`, `CommandPalette.wiring.test.tsx`
@@ -646,13 +646,13 @@ Unmapped requirements: 0. All 28 requirements covered.
 - Entry point: `src/renderer/main.tsx` | Module: `src/renderer/components/ContextMenu/ContextMenu.tsx` | Probe type: `import-chain` | Verify: `pnpm typecheck`
 - Entry point: `src/renderer/main.tsx` | Module: `src/renderer/components/CommandPalette/CommandPalette.tsx` | Probe type: `import-chain` | Verify: `pnpm typecheck`
 
-- [ ] Step 1-4: TDD for ContextMenu (component).
-- [ ] Step 5-8: TDD for CommandPalette (component + e2e).
-- [ ] Step 9-12: TDD for FloatingPanel (e2e).
-- [ ] Step 13: Add Ctrl+Shift+P binding.
-- [ ] Step 14: Wire ContextMenu + CommandPalette in App.tsx.
-- [ ] Step 15: Run all Verify commands → pass.
-- [ ] Step 16: Commit.
+- [x] Step 1-4: TDD for ContextMenu (component).
+- [x] Step 5-8: TDD for CommandPalette (component + e2e).
+- [x] Step 9-12: TDD for FloatingPanel (e2e).
+- [x] Step 13: Add Ctrl+Shift+P binding.
+- [x] Step 14: Wire ContextMenu + CommandPalette in App.tsx.
+- [x] Step 15: Run all Verify commands → pass.
+- [x] Step 16: Commit.
 
 ---
 
@@ -683,23 +683,23 @@ Unmapped requirements: 0. All 28 requirements covered.
 **File overlap with:** Task 11 (useKeyboardShortcuts)
 
 **Completion criteria (from spec):**
-- [ ] AC-L4-04-1: Scrollback 내보내기 / Verify: `pnpm test -- --grep "Scrollback save"`
-- [ ] AC-L4-05-1: Find bar Ctrl+F / Verify: `pnpm test -- --grep "FindBar show"`
-- [ ] AC-L4-05-2: 검색 하이라이트 / Verify: `pnpm test -- --grep "FindBar search"`
-- [ ] AC-L4-05-3: ESC 닫기 / Verify: `pnpm test -- --grep "FindBar close"`
-- [ ] AC-L4-05-N1: 검색 결과 없음 / Verify: `pnpm test -- --grep "FindBar no results"`
+- [x] AC-L4-04-1: Scrollback 내보내기 / Verify: `pnpm test -- --grep "Scrollback save"`
+- [x] AC-L4-05-1: Find bar Ctrl+F / Verify: `pnpm test -- --grep "FindBar show"`
+- [x] AC-L4-05-2: 검색 하이라이트 / Verify: `pnpm test -- --grep "FindBar search"`
+- [x] AC-L4-05-3: ESC 닫기 / Verify: `pnpm test -- --grep "FindBar close"`
+- [x] AC-L4-05-N1: 검색 결과 없음 / Verify: `pnpm test -- --grep "FindBar no results"`
 
 **Verification method:** Component test Verify commands + `pnpm dist:smoke`.
 **View wiring verification:** `tests/component/FindBar.wiring.test.tsx` — W1 binding (SearchAddon → highlight), W2 handler (Enter → findNext)
 **Wiring probe:**
 - Entry point: `src/renderer/main.tsx` | Module: `src/renderer/components/FindBar/FindBar.tsx` | Probe type: `import-chain` | Verify: `pnpm typecheck`
 
-- [ ] Step 1-4: TDD for FindBar (component).
-- [ ] Step 5-6: TDD for Scrollback save.
-- [ ] Step 7: Load SearchAddon + SerializeAddon in TerminalView.
-- [ ] Step 8: Add Ctrl+F binding.
-- [ ] Step 9: Run Verify commands → pass.
-- [ ] Step 10: Commit.
+- [x] Step 1-4: TDD for FindBar (component).
+- [x] Step 5-6: TDD for Scrollback save.
+- [x] Step 7: Load SearchAddon + SerializeAddon in TerminalView.
+- [x] Step 8: Add Ctrl+F binding.
+- [x] Step 9: Run Verify commands → pass.
+- [x] Step 10: Commit.
 
 ---
 

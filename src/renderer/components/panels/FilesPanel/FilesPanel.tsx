@@ -8,7 +8,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useRef, useState } from "react";
 import type { ReactElement } from "react";
-import type { DirEntry } from "../../../../main/filesystem";
+import type { DirEntry } from "../../../../shared/filesystem-types";
 import styles from "./FilesPanel.module.css";
 
 interface FilesPanelProps {

@@ -12,7 +12,7 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DirEntry } from "../../src/main/filesystem";
+import type { DirEntry } from "../../src/shared/filesystem-types";
 
 let capturedOnChanged: ((dir: string) => void) | null = null;
 
