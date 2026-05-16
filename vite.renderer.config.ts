@@ -15,6 +15,10 @@ export default defineConfig({
     },
   },
   build: {
+    // Absolute path required: Forge VitePlugin sets outDir as relative,
+    // but our custom root makes it resolve to src/renderer/.vite/ instead
+    // of the project root .vite/ where electron-packager expects it.
+    outDir: path.resolve(__dirname, ".vite/renderer/main_window"),
     rollupOptions: {
       // Ensure Node.js built-ins are NOT bundled into renderer
       external: [],
