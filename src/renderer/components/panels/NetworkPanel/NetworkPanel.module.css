@@ -1,0 +1,97 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  height: 100%;
+  overflow-y: auto;
+  color: var(--color-text-primary, #d4d4d4);
+  font-size: 13px;
+}
+
+.title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted, #888);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted, #888);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.label {
+  color: var(--color-text-muted, #888);
+}
+
+.value {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary, #d4d4d4);
+}
+
+.empty {
+  color: var(--color-text-muted, #888);
+  font-size: 12px;
+}
+
+.tableWrapper {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.table th,
+.table td {
+  padding: 4px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border, #2a2d2c);
+}
+
+.table th {
+  color: var(--color-text-muted, #888);
+  font-weight: 600;
+}
+
+.captureActive {
+  color: var(--color-text-primary, #d4d4d4);
+  font-size: 12px;
+}
+
+.npcapFallback {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--color-text-muted, #888);
+  font-size: 12px;
+}
+
+.npcapLink {
+  color: var(--color-accent, #4ec9b0);
+  text-decoration: none;
+}
+
+.npcapLink:hover {
+  text-decoration: underline;
+}

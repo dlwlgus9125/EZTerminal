@@ -2,6 +2,7 @@ import path from "node:path";
 import { BrowserWindow, app, ipcMain } from "electron";
 import { FrameBuffer } from "./frame-buffer";
 import { MetricsCollector } from "./metrics";
+import { NetworkCollector } from "./network";
 import { PtyManager } from "./pty-manager";
 
 // Handle squirrel events on Windows (optional in dev/test mode)
@@ -21,6 +22,7 @@ let mainWindow: BrowserWindow | null = null;
 const ptyManager = new PtyManager();
 const frameBuffer = new FrameBuffer();
 const metricsCollector = new MetricsCollector(() => mainWindow);
+const networkCollector = new NetworkCollector(() => mainWindow);
 
 function registerIpcHandlers(): void {
   // Coalesced PTY data → push to renderer
@@ -77,6 +79,16 @@ function registerIpcHandlers(): void {
   ipcMain.on("metrics:stop", () => {
     metricsCollector.stop();
   });
+
+  // network:start — begin SI polling + optional cap capture
+  ipcMain.on("network:start", () => {
+    networkCollector.start();
+  });
+
+  // network:stop — stop polling + capture
+  ipcMain.on("network:stop", () => {
+    networkCollector.stop();
+  });
 }
 
 function createWindow(): void {
@@ -122,6 +134,7 @@ app.whenReady().then(() => {
 
 app.on("before-quit", () => {
   metricsCollector.stop();
+  networkCollector.stop();
   ptyManager.stopOrphanScan();
   ptyManager.killAll();
 });
