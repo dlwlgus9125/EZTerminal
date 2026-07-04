@@ -42,7 +42,7 @@ const components = { terminal: TerminalPanel };
 let tabCounter = 0;
 
 /** Cycle order for the theme button (E1). */
-const THEME_ORDER: readonly ThemeName[] = ['dark', 'light', 'high-contrast'];
+const THEME_ORDER: readonly ThemeName[] = ['dark', 'light', 'high-contrast', 'matrix'];
 
 /** How long a layout may keep changing before it is persisted. Changes made
  * less than this before a hard kill are lost — accepted v1 window (gate Q2). */

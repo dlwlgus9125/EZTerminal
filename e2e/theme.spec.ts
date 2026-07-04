@@ -6,7 +6,7 @@ import path from 'node:path';
 import { launchApp } from './launch-app';
 
 // E1: built-in themes with persistence. The theme button cycles
-// dark -> light -> high-contrast -> dark, applies immediately (data-theme
+// dark -> light -> high-contrast -> matrix -> dark, applies immediately (data-theme
 // attribute + the --term-* CSS vars actually changing), and the choice
 // persists to settings.json so it survives a relaunch.
 
@@ -50,7 +50,7 @@ test('theme button applies immediately and persists across relaunch', async () =
   await app2.close();
 });
 
-test('theme cycles dark -> light -> high-contrast -> dark', async () => {
+test('theme cycles dark -> light -> high-contrast -> matrix -> dark', async () => {
   const dir = tempUserData();
   const app = await launchApp(dir);
   const w = await app.firstWindow();
@@ -61,6 +61,8 @@ test('theme cycles dark -> light -> high-contrast -> dark', async () => {
   await expect(btn).toHaveText('Theme: light');
   await btn.click();
   await expect(btn).toHaveText('Theme: high-contrast');
+  await btn.click();
+  await expect(btn).toHaveText('Theme: matrix');
   await btn.click();
   await expect(btn).toHaveText('Theme: dark');
 

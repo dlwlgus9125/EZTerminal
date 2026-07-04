@@ -75,7 +75,7 @@ export const StartupPrefSchema = z.object({
 });
 /** Built-in theme names (E1) — persisted in settings.json, applied via the
  * `data-theme` DOM attribute + the matching xterm ITheme in renderer/themes.ts. */
-export const ThemeNameSchema = z.enum(['dark', 'light', 'high-contrast']);
+export const ThemeNameSchema = z.enum(['dark', 'light', 'high-contrast', 'matrix']);
 export type ThemeName = z.infer<typeof ThemeNameSchema>;
 
 export const SettingsSchema = z.object({

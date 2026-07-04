@@ -4,6 +4,28 @@
    The structured block/table engine is unchanged; only its skin is.
    ────────────────────────────────────────────────────────────────────────── */
 
+/* Matrix theme faces (E1+) — self-hosted so the packaged renderer renders them:
+   its build-time CSP is `font-src 'self'` (see vite.renderer.config.ts), which
+   blocks remote Google Fonts, and offline builds can't reach them anyway. Vite
+   fingerprints + emits these woff2 from ./fonts into the bundle, served from
+   'self'. Latin subset only — the chrome + VT323 wordmark are ASCII. Declared
+   unconditionally but only referenced under [data-theme='matrix'], so the other
+   three themes never fetch them. */
+@font-face {
+  font-family: 'Share Tech Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/share-tech-mono-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'VT323';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/vt323-latin.woff2') format('woff2');
+}
+
 :root {
   color-scheme: dark;
 
@@ -82,6 +104,160 @@
   --term-cyan: #00e5ff;
   --term-blue: #66b2ff;
   --term-selection: rgba(0, 255, 102, 0.35);
+}
+
+/* == PALETTE == mirrors THEMES.matrix.cssVars in themes.ts (keep the two in sync).
+   Also overrides --term-font (whole chrome switches to Share Tech Mono) and bumps
+   the root font-size a touch so the lighter face stays legible. */
+[data-theme='matrix'] {
+  color-scheme: dark;
+  font-size: 14px;
+  --term-font: 'Share Tech Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
+
+  --term-bg: #010301;
+  --term-bg-raised: #071007;
+  --term-bg-inset: #020402;
+  --term-bg-hover: rgba(41, 211, 152, 0.08);
+
+  --term-border: #12492a;
+  --term-border-faint: #0a2a15;
+
+  --term-fg: #5fe7ac;
+  --term-fg-bright: #c7ffe4;
+  --term-fg-dim: #1c9d6c;
+  --term-fg-faint: #0f6a48;
+
+  --term-green: #29d398;
+  --term-red: #ff4d5e;
+  --term-amber: #f5c451;
+  --term-cyan: #1fb6c9;
+  --term-blue: #4db8ff;
+
+  --term-selection: rgba(41, 211, 152, 0.25);
+}
+
+/* == CRT GLOW == a phosphor bloom on accents; a faint one on body/output. */
+[data-theme='matrix'] .app-title,
+[data-theme='matrix'] .prompt-sigil,
+[data-theme='matrix'] .block-command,
+[data-theme='matrix'] .block-cwd,
+[data-theme='matrix'] .prompt-cwd,
+[data-theme='matrix'] .cmd-input,
+[data-theme='matrix'] .vt-header,
+[data-theme='matrix'] .status-section-title,
+[data-theme='matrix'] .block-status,
+[data-theme='matrix'] .status-metric {
+  text-shadow: 0 0 6px rgba(41, 211, 152, 0.4);
+}
+[data-theme='matrix'] .text-block {
+  text-shadow: 0 0 4px rgba(41, 211, 152, 0.28);
+}
+/* Wordmark leans into the retro face. */
+[data-theme='matrix'] .app-title {
+  font-family: 'VT323', 'Share Tech Mono', monospace;
+  font-size: 1.15rem;
+  letter-spacing: 2px;
+  color: var(--term-fg-bright);
+}
+
+/* == SCANLINES == one fixed CRT overlay over the whole window. pointer-events:
+   none means it never intercepts clicks; .app has no transform, so `fixed`
+   anchors to the viewport. */
+[data-theme='matrix'] .app::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 20, 8, 0.22) 3px,
+    rgba(0, 0, 0, 0) 4px
+  );
+}
+
+/* == STATUS INDICATORS == dot → glyph. Colour AND shape encode the state, so it
+   reads for colour-blind users too. Only the ::before glyph changes — the text
+   node ('running' / 'done' / 'error' / 'cancelled') is untouched, so the e2e
+   assertions on block-status textContent still pass. Stronger glow + punchier
+   running pulse. */
+[data-theme='matrix'] .block-status::before {
+  font-size: 0.9em;
+  margin-right: 0.45em;
+  text-shadow: 0 0 8px currentColor;
+}
+[data-theme='matrix'] .block-status--running::before {
+  content: '\25B6'; /* ▶ */
+  animation: matrix-status-pulse 0.9s ease-in-out infinite;
+}
+[data-theme='matrix'] .block-status--done::before {
+  content: '\2713'; /* ✓ */
+}
+[data-theme='matrix'] .block-status--error::before {
+  content: '\2715'; /* ✕ */
+}
+[data-theme='matrix'] .block-status--cancelled::before {
+  content: '\23F8'; /* ⏸ */
+}
+@keyframes matrix-status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.3; transform: scale(0.72); }
+}
+
+/* == SESSION SIGNAL == the single "session live" dot becomes a 3-bar signal
+   meter — pure CSS, no markup change (App.tsx keeps <span class="session-dot"/>).
+   The element is the tall pulsing middle bar; ::before / ::after are the shorter
+   side bars. */
+[data-theme='matrix'] .session-dot {
+  width: 3px;
+  height: 13px;
+  border-radius: 1px;
+  background: var(--term-fg-bright);
+  box-shadow: 0 0 7px var(--term-fg-bright);
+  position: relative;
+  overflow: visible;
+  animation: matrix-status-pulse 1.7s ease-in-out infinite;
+}
+[data-theme='matrix'] .session-dot::before,
+[data-theme='matrix'] .session-dot::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  width: 3px;
+  border-radius: 1px;
+  background: var(--term-green);
+  box-shadow: 0 0 5px var(--term-green);
+}
+[data-theme='matrix'] .session-dot::before { left: -5px; height: 7px; }
+[data-theme='matrix'] .session-dot::after  { left: 5px;  height: 10px; }
+
+/* == PTY / AGENT TUI GLOW == bg/fg for the xterm surface come from
+   THEMES.matrix.xterm (themes.ts). This adds the phosphor bloom so Claude Code /
+   Codex output glows green too, WITHOUT touching the agent's own ANSI colours.
+   xterm 6 uses the DOM renderer (.xterm-rows) by default; the canvas rule is a
+   safety net if a canvas/webgl addon is ever added. */
+[data-theme='matrix'] .xterm .xterm-rows {
+  text-shadow: 0 0 3px rgba(41, 211, 152, 0.4);
+}
+[data-theme='matrix'] .xterm .xterm-screen canvas {
+  filter: drop-shadow(0 0 2px rgba(41, 211, 152, 0.45));
+}
+/* Plain adaptive-render PTY view (ansi→html text). */
+[data-theme='matrix'] .pty-plain-block .text-block {
+  text-shadow: 0 0 4px rgba(41, 211, 152, 0.32);
+}
+
+/* == RESULT TABLE == cyan headers already themed via vars; add the bloom. */
+[data-theme='matrix'] .vt-cell--head {
+  text-shadow: 0 0 6px rgba(31, 182, 201, 0.4);
+}
+
+/* == RUN / CANCEL / ACCEPT buttons == a little extra phosphor on the primaries. */
+[data-theme='matrix'] .btn-run,
+[data-theme='matrix'] .ssh-prompt-actions .btn-run {
+  text-shadow: 0 0 6px rgba(41, 211, 152, 0.45);
 }
 
 * {

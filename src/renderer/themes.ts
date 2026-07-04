@@ -11,6 +11,14 @@ import type { ThemeName } from '../shared/layout-schema';
 const FONT_FAMILY = '"Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace';
 const FONT_SIZE = 13;
 
+// Matrix theme (E1+): a monospace "digital rain / CRT" skin. Share Tech Mono is
+// the primary face; it must be loaded by the renderer (see index.css — @import
+// or self-hosted @font-face) or xterm silently falls back to the next in the
+// stack. Kept slightly larger (14) so the lighter Share Tech Mono glyphs stay
+// legible at terminal density.
+const MATRIX_FONT_FAMILY = '"Share Tech Mono", "Cascadia Code", "Cascadia Mono", Consolas, monospace';
+const MATRIX_FONT_SIZE = 14;
+
 export interface ThemeDefinition {
   /** --term-* CSS variable overrides mirrored in index.css's [data-theme] block.
    * Empty for 'dark': its values ARE the :root defaults (no override needed). */
@@ -86,6 +94,41 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
     fontFamily: FONT_FAMILY,
     fontSize: FONT_SIZE,
   },
+  // Matrix (E1+) — near-black bg with a green phosphor foreground ramp. Mirror
+  // these cssVars in index.css's [data-theme='matrix'] block by hand. The xterm
+  // ITheme sets ONLY background/foreground/cursor/selection — the 16 ANSI colors
+  // are intentionally left at xterm's defaults so an agent TUI (Claude Code /
+  // Codex) keeps its own colour coding; the green "glow" over xterm is a CSS
+  // filter in index.css, not an ANSI remap.
+  matrix: {
+    cssVars: {
+      '--term-bg': '#010301',
+      '--term-bg-raised': '#071007',
+      '--term-bg-inset': '#020402',
+      '--term-bg-hover': 'rgba(41, 211, 152, 0.08)',
+      '--term-border': '#12492a',
+      '--term-border-faint': '#0a2a15',
+      '--term-fg': '#5fe7ac',
+      '--term-fg-bright': '#c7ffe4',
+      '--term-fg-dim': '#1c9d6c',
+      '--term-fg-faint': '#0f6a48',
+      '--term-green': '#29d398',
+      '--term-red': '#ff4d5e',
+      '--term-amber': '#f5c451',
+      '--term-cyan': '#1fb6c9',
+      '--term-blue': '#4db8ff',
+      '--term-selection': 'rgba(41, 211, 152, 0.25)',
+    },
+    xterm: {
+      background: '#010301',
+      foreground: '#5fe7ac',
+      cursor: '#7dffb0',
+      cursorAccent: '#010301',
+      selectionBackground: 'rgba(41, 211, 152, 0.28)',
+    },
+    fontFamily: MATRIX_FONT_FAMILY,
+    fontSize: MATRIX_FONT_SIZE,
+  },
 };
 
 /** Read the theme currently applied to the document (App sets this attribute
@@ -93,5 +136,5 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
  * value. PtyBlock uses this both at mount and on every 'ez:theme' event. */
 export function getActiveThemeName(): ThemeName {
   const attr = document.documentElement.dataset.theme;
-  return attr === 'light' || attr === 'high-contrast' ? attr : 'dark';
+  return attr === 'light' || attr === 'high-contrast' || attr === 'matrix' ? attr : 'dark';
 }
