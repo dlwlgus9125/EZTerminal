@@ -1,0 +1,46 @@
+# Changelog
+
+수동 관리 (semver). 릴리스 절차: `docs/release/README.md`.
+
+## [Unreleased]
+
+### Added
+- CI (GitHub Actions windows-latest): typecheck/lint/vitest/e2e/package/guard/packaged-smoke (Stage 0)
+- 앱 아이덴티티: 아이콘(플레이스홀더)/저작권/win32 메타데이터 + Squirrel 인스톨러 설정 (B-M1)
+- 릴리스 플로우: 태그 `v*` → 검증 → draft GitHub Release (B-M2)
+- 코드서명 인프라 (env-gated, 인증서는 외부 의존) (B-M3)
+
+### Added (기능)
+- **레이아웃 프리셋·영속 (Track A ③):** 재시작 시 레이아웃 복원, 이름 있는 프리셋
+  저장/적용/삭제, 시작 프리셋 지정. 복원은 절대 이전 세션을 부활시키지 않음(전부 새 세션)
+- **PTY firehose 백프레셔 (Stage C):** `!<무한출력>` 이 렌더러 큐를 무한 성장시키던 문제 —
+  바이트-ack 프로토콜(xterm flush 기준 64KiB ack, 1MiB에서 pause / 256KiB에서 resume)로
+  in-flight 총량이 구성적으로 유계. 실측: pause는 실제 native 배압(자식 블록)
+- **빌트인 테마 (E1):** dark(기존과 동일)/light/high-contrast — 즉시 적용 + xterm 라이브
+  재테마 + settings.json 영속. 헤더 버튼으로 순환
+- **크래시 진단 (B-M5):** 로컬 전용 crashReporter + main.log 로테이션 + 인터프리터 크래시 배너
+- **명령 팔레트 (E2):** Ctrl+Shift+P — 부분수열 필터, 탭/분할/테마/프리셋 액션, 키바인딩 중앙화
+- **JS 스크립팅 (E4):** `run-script <path> [args]` — 스크립트별 격리 프로세스, `ez.run()`으로
+  구조화 파이프라인 실행·가공, 배열 반환 시 표 렌더. 상한: ez.run 100k rows·출력 8MB
+- **SSH 원격 (E5):** `ssh-connect user@host [--key "<path>"] [--port <n>]` — 내장 ssh2(pure-JS),
+  원격 PTY 셸이 기존 xterm 블록·백프레셔 재사용. 호스트키 TOFU(변경 시 하드 실패), 비밀번호는
+  세션당 프롬프트(저장 안 함), 호스트 검증이 자격증명 입력보다 항상 선행
+- **크로스플랫폼 ps (E6 부분):** `ps`가 플랫폼별 소스 디스패치(win32 tasklist / posix `ps -eo`) —
+  mac/linux 파서 유닛검증 완료, 실검증은 하드웨어 확보 시
+
+### Fixed
+- `gen-rows 100000000` 등 고빈도 progress 스트림에서 렌더러 메인스레드 포화로
+  취소 클릭이 굶주리던 문제 — progress 통지 스로틀(33ms leading+trailing)로 해소
+- `setStartup`이 settings.json을 통째로 덮어써 이후 추가된 설정 필드(테마)를 지울 수 있던
+  문제 — write-chain 위 read-modify-write로 교체 (E1 중 발견)
+
+### Security
+- dev 툴체인 CVE 전부 해소 → `pnpm audit` 0건: vitest 2.1→3.2.6(critical), vite 5.4→6.4.3
+  (+@vitejs/plugin-react 4.7, forge plugin-vite와 호환 실증), esbuild 0.25(vite 경유),
+  `pnpm.overrides`로 tar≥7.5.16·tmp≥0.2.4 (전이 의존성; tar 7은 @electron/rebuild의
+  ^6 선언 위로 올린 것 — 현재 native 컴파일 경로는 prebuilds라 미사용, 향후 소스 컴파일 시 이 override 의심할 것)
+- 내비게이션 가드: 모든 `file://` 허용 → 앱 렌더러 index.html 한정 (B-M6)
+- Windows 패키지에서 비-Windows node-pty prebuilds·winpty 소스 제거 (~45MB 감량, 서명 가능해짐)
+
+### Notes
+- 첫 배포 트레인 `0.1.0`: Stage A(레이아웃 영속) 완료 후 태깅 예정

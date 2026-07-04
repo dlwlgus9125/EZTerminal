@@ -1,0 +1,1077 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   EZTerminal — dark console aesthetic (Windows Terminal "Campbell" / Warp).
+   Monospace everywhere, prompt-driven command lines, terminal-tight density.
+   The structured block/table engine is unchanged; only its skin is.
+   ────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: dark;
+
+  /* Monospace stack — Cascadia ships with Windows Terminal, Consolas is always
+     present on Windows; generic monospace closes the fallback. */
+  --term-font: 'Cascadia Code', 'Cascadia Mono', Consolas, 'Courier New', monospace;
+
+  /* Console surfaces, near-black with subtly layered depth. */
+  --term-bg: #0c0c0c;          /* the console background */
+  --term-bg-raised: #151515;   /* command line / input strip */
+  --term-bg-inset: #0a0a0a;    /* table body, deepest plane */
+  --term-bg-hover: rgba(255, 255, 255, 0.04);
+
+  /* Hairline separators — block chrome stays thin, never card-like. */
+  --term-border: #242424;
+  --term-border-faint: #1a1a1a;
+
+  /* Foreground ramp. */
+  --term-fg: #cccccc;          /* default text */
+  --term-fg-bright: #f2f2f2;   /* command text, emphasis */
+  --term-fg-dim: #7f7f7f;      /* metadata, counts */
+  --term-fg-faint: #565656;    /* chrome glyphs, loading */
+
+  /* Classic terminal accents. */
+  --term-green: #29d398;       /* success / done / prompt */
+  --term-red: #f0556a;         /* error */
+  --term-amber: #e5b567;       /* cancelled / warn */
+  --term-cyan: #56b6c2;        /* table headers, paths */
+  --term-blue: #4d9fff;        /* running / focus */
+
+  --term-selection: rgba(45, 211, 152, 0.22);
+
+  font-family: var(--term-font);
+  font-size: 13px;
+  font-feature-settings: 'calt' 1, 'liga' 0; /* keep code legible, no fancy ligatures */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Built-in themes (E1) — applied via data-theme on <html>; :root above stays the
+   'dark' default (no churn). Values mirror src/renderer/themes.ts THEMES —
+   CSS can't import that file, so keep the two in sync by hand. */
+[data-theme='light'] {
+  color-scheme: light;
+  --term-bg: #f5f5f5;
+  --term-bg-raised: #ffffff;
+  --term-bg-inset: #ececec;
+  --term-bg-hover: rgba(0, 0, 0, 0.05);
+  --term-border: #d0d0d0;
+  --term-border-faint: #e2e2e2;
+  --term-fg: #1c1c1c;
+  --term-fg-bright: #000000;
+  --term-fg-dim: #5f5f5f;
+  --term-fg-faint: #8f8f8f;
+  --term-green: #0e8a4b;
+  --term-red: #c62839;
+  --term-amber: #9a6a00;
+  --term-cyan: #0f7c8c;
+  --term-blue: #1857c4;
+  --term-selection: rgba(14, 138, 75, 0.18);
+}
+
+[data-theme='high-contrast'] {
+  --term-bg: #000000;
+  --term-bg-raised: #000000;
+  --term-bg-inset: #000000;
+  --term-bg-hover: rgba(255, 255, 255, 0.15);
+  --term-border: #ffffff;
+  --term-border-faint: #808080;
+  --term-fg: #ffffff;
+  --term-fg-bright: #ffffff;
+  --term-fg-dim: #d0d0d0;
+  --term-fg-faint: #a0a0a0;
+  --term-green: #00ff66;
+  --term-red: #ff3b3b;
+  --term-amber: #ffcc00;
+  --term-cyan: #00e5ff;
+  --term-blue: #66b2ff;
+  --term-selection: rgba(0, 255, 102, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--term-bg);
+  color: var(--term-fg);
+}
+
+::selection {
+  background: var(--term-selection);
+  color: var(--term-fg-bright);
+}
+
+/* Dark, slim terminal scrollbars throughout. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2e2e2e;
+  border: 2px solid var(--term-bg);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3d3d3d;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+  background: var(--term-bg);
+}
+
+/* One terminal surface: block list (fills, scrolls) + pinned prompt below. Fills its
+   dockview panel content box. min-height:0 lets the nested block-list scroll instead
+   of overflowing the pane. */
+.pane {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ── dockview host (tabs) ──────────────────────────────────────────────────── */
+/* The dockview component fills the app column below the title bar. Its
+   position:relative is load-bearing: .status-drawer below is an absolutely
+   positioned child anchored to THIS box. Do not add transform/filter/z-index
+   here — any of those creates a new stacking context on .dock-host and traps
+   the drawer's z-index underneath dockview's own panels instead of above them. */
+.dock-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+.ez-dock {
+  height: 100%;
+}
+
+/* Status overlay panel (status-overlay-panel) — a non-modal 300px drawer that
+   covers the dockview area's full height, never the app-head above it. z-index
+   60 sits above the preset dropdown (50) and below the command palette (100). */
+.status-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 300px;
+  z-index: 60;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  background: var(--term-bg-raised);
+  border-left: 1px solid var(--term-border);
+  box-shadow: -6px 0 18px rgba(0, 0, 0, 0.35);
+}
+
+.status-section {
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid var(--term-border-faint);
+}
+
+.status-section-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--term-cyan);
+}
+
+.status-metric {
+  font-size: 0.82rem;
+  color: var(--term-fg-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-loading {
+  font-size: 0.75rem;
+  color: var(--term-fg-faint);
+}
+
+.sparkline {
+  display: block;
+  width: 100%;
+  height: 24px;
+  margin-top: 0.3rem;
+  color: var(--term-green);
+}
+
+.status-disk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.status-disk-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--term-fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-disk-bar {
+  height: 5px;
+  margin-top: 0.15rem;
+  background: var(--term-bg-inset);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.status-disk-bar-fill {
+  height: 100%;
+  background: var(--term-blue);
+}
+
+.status-core-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.3rem 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.status-core-grid--compact {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.2rem 0.35rem;
+}
+
+.status-core-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  color: var(--term-fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-mem-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.status-net-sparks {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.status-net-sparks .sparkline {
+  flex: 1 1 50%;
+  margin-top: 0;
+}
+
+.status-net-sparks .sparkline:last-child {
+  color: var(--term-blue);
+}
+
+.status-proc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-proc-table th {
+  text-align: left;
+  padding: 0.15rem 0.25rem;
+  color: var(--term-cyan);
+  font-weight: 600;
+}
+
+.status-proc-table td {
+  padding: 0.15rem 0.25rem;
+  color: var(--term-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 0;
+}
+
+.status-packet-toggle {
+  margin-top: 0.5rem;
+  width: 100%;
+}
+
+.status-packet-view {
+  margin-top: 0.5rem;
+}
+
+.status-packet-ack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--term-fg-dim);
+}
+
+.status-packet-status {
+  font-size: 0.72rem;
+  color: var(--term-amber);
+}
+
+.status-packet-status a {
+  color: var(--term-blue);
+}
+
+/* Re-skin dockview's dark theme to the EZTerminal console palette (#0c0c0c). */
+.dockview-theme-dark.ez-dock {
+  --dv-group-view-background-color: var(--term-bg);
+  --dv-tabs-and-actions-container-background-color: var(--term-bg-raised);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--term-bg);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--term-bg-raised);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--term-bg);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--term-bg-raised);
+  --dv-activegroup-visiblepanel-tab-color: var(--term-fg-bright);
+  --dv-activegroup-hiddenpanel-tab-color: var(--term-fg-faint);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--term-fg);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--term-fg-faint);
+  --dv-separator-border: var(--term-border);
+  --dv-tabs-and-actions-container-height: 30px;
+}
+
+/* New-tab / split buttons in the title bar. */
+.btn-new-tab,
+.btn-split {
+  padding: 0.1rem 0.5rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  background: var(--term-bg-inset);
+  border: 1px solid var(--term-border);
+  color: var(--term-fg);
+}
+.btn-new-tab:hover,
+.btn-split:hover {
+  color: var(--term-fg-bright);
+  border-color: var(--term-green);
+}
+
+/* Interpreter-crash banner (B-M5): unmissable, non-modal, dismissible. */
+.crash-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 0 0 auto;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.78rem;
+  background: #3a1214;
+  border-bottom: 1px solid var(--term-red);
+  color: var(--term-fg-bright);
+}
+.crash-banner-path {
+  font-size: 0.7rem;
+  color: var(--term-fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crash-banner .btn {
+  margin-left: auto;
+}
+
+/* Layout presets dropdown (Track A ③ A-M4) — anchored to the title-bar button. */
+.preset-box {
+  position: relative;
+}
+.preset-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  min-width: 220px;
+  padding: 0.35rem;
+  background: var(--term-bg-raised);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.preset-empty {
+  padding: 0.2rem 0.35rem;
+  font-size: 0.72rem;
+  color: var(--term-fg-faint);
+}
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.preset-apply {
+  flex: 1 1 auto;
+  text-align: left;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.75rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--term-fg);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preset-apply:hover {
+  border-color: var(--term-green);
+  color: var(--term-fg-bright);
+}
+.preset-icon {
+  flex: 0 0 auto;
+  padding: 0.1rem 0.3rem;
+  font-size: 0.72rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--term-fg-faint);
+  cursor: pointer;
+}
+.preset-icon:hover {
+  color: var(--term-fg-bright);
+  border-color: var(--term-border);
+}
+.preset-save-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--term-border);
+}
+.preset-name-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.75rem;
+  font-family: inherit;
+  background: var(--term-bg-inset);
+  border: 1px solid var(--term-border);
+  border-radius: 3px;
+  color: var(--term-fg);
+}
+.preset-name-input:focus {
+  outline: none;
+  border-color: var(--term-green);
+}
+
+/* Command palette (E2) — a centered overlay, same dark/bordered chrome as
+   .preset-menu. Fixed over the whole app so it sits above dockview panes. */
+.palette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.45);
+}
+.command-palette {
+  width: 480px;
+  max-width: calc(100vw - 2rem);
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--term-bg-raised);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.palette-input {
+  flex: 0 0 auto;
+  padding: 0.55rem 0.75rem;
+  font-family: var(--term-font);
+  font-size: 0.85rem;
+  background: var(--term-bg-inset);
+  border: none;
+  border-bottom: 1px solid var(--term-border);
+  color: var(--term-fg-bright);
+  caret-color: var(--term-green);
+}
+.palette-input:focus {
+  outline: none;
+}
+.palette-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0.35rem;
+}
+.palette-empty {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--term-fg-faint);
+}
+.palette-item {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.78rem;
+  border-radius: 3px;
+  color: var(--term-fg);
+  cursor: pointer;
+}
+.palette-item--selected {
+  background: var(--term-bg-hover);
+  color: var(--term-fg-bright);
+}
+
+/* ── slim title bar (the terminal window's chrome line) ───────────────────── */
+.app-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 0 0 auto;
+  height: 34px;
+  padding: 0 0.85rem;
+  background: var(--term-bg-raised);
+  border-bottom: 1px solid var(--term-border);
+  user-select: none;
+}
+
+/* "session live" indicator — a small steady-green dot. */
+.session-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--term-green);
+  box-shadow: 0 0 6px rgba(41, 211, 152, 0.55);
+  flex: 0 0 auto;
+}
+
+.app-title {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--term-fg-bright);
+}
+
+.versions {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--term-fg-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.versions-sep {
+  margin: 0 0.4rem;
+  color: #333;
+}
+
+.versions--missing {
+  color: var(--term-red);
+}
+
+/* ── block list — newest at bottom, input pinned below (Warp-like) ────────── */
+.block-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0.35rem 0 0.5rem;
+}
+
+/* Each command + its output. Minimal chrome: a thin top rule between blocks,
+   no heavy card border/background — output reads like terminal scrollback. */
+.block {
+  background: transparent;
+  border-top: 1px solid var(--term-border-faint);
+  padding: 0.05rem 0 0.2rem;
+  animation: block-in 150ms ease-out;
+}
+
+.block:first-child {
+  border-top: none;
+}
+
+@keyframes block-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The typed-prompt line at the top of a block. Sticky so the command line,
+   status indicator, and Cancel/Dismiss controls stay visible at the top of the
+   scroll container even while output streams and auto-scroll pins to the bottom.
+   This also prevents the rAF auto-scroll from yanking the Cancel button away from
+   a Playwright (or human) click that is already in progress. */
+.block-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.22rem 0.6rem;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--term-bg);
+}
+
+/* Collapse/cancel/dismiss are utility affordances, not part of the transcript
+   itself — keep them out of the way until the row is hovered (or focused, for
+   keyboard use) so the feed reads as output, not a row of buttons. Opacity
+   (not display/visibility) so they stay hit-testable — a click still lands
+   without a prior hover, exactly like a real mouse click does in practice. */
+.block-toggle,
+.block-cancel,
+.block-dismiss {
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.block:hover .block-toggle,
+.block:hover .block-cancel,
+.block:hover .block-dismiss,
+.block-toggle:focus-visible,
+.block-cancel:focus-visible,
+.block-dismiss:focus-visible {
+  opacity: 1;
+}
+
+.block-toggle {
+  background: transparent;
+  border: none;
+  color: var(--term-fg-faint);
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.1rem 0.15rem;
+}
+
+.block-toggle:hover {
+  color: var(--term-fg);
+}
+
+/* Dim cyan cwd path that precedes the prompt sigil on a block's command line. */
+.block-cwd {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 38%;
+  color: var(--term-cyan);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.7;
+}
+
+/* Green prompt sigil — the same glyph leads the block command and the input. */
+.prompt-sigil {
+  flex: 0 0 auto;
+  color: var(--term-green);
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.block-command {
+  flex: 1 1 auto;
+  font-family: var(--term-font);
+  font-size: 0.85rem;
+  color: var(--term-fg-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.block-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.72rem;
+  color: var(--term-fg-dim);
+}
+
+.block-count::before {
+  content: '';
+  display: inline-block;
+}
+
+/* Status — a colored dot + lowercase exit-style label, never a pill. The label
+   text node stays exactly "running"/"done"/"error"/"cancelled" (e2e asserts it);
+   the dot is a CSS ::before glyph and is not part of textContent. */
+.block-status {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--term-fg-dim);
+}
+
+.block-status::before {
+  content: '●';
+  font-size: 0.62em;
+  margin-right: 0.4em;
+  line-height: 1;
+  color: currentColor;
+}
+
+.block-status--running { color: var(--term-blue); }
+.block-status--done    { color: var(--term-green); }
+.block-status--error   { color: var(--term-red); }
+.block-status--cancelled { color: var(--term-amber); }
+
+.block-status--running::before {
+  animation: status-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.block-cancel {
+  padding: 0.08rem 0.5rem;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.block-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--term-fg-faint);
+  cursor: pointer;
+  font-size: 0.78rem;
+  line-height: 1;
+  padding: 0.1rem 0.3rem;
+}
+
+.block-dismiss:hover {
+  color: var(--term-red);
+}
+
+.block-body {
+  padding: 0 0.6rem;
+}
+
+.block-pending {
+  padding: 0.25rem 0.85rem;
+  color: var(--term-fg-dim);
+  font-size: 0.82rem;
+}
+
+/* Text output (scalars / external program streams). */
+.text-block {
+  margin: 0.15rem 0 0;
+  padding: 0.35rem 0;
+  font-family: var(--term-font);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--term-fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.text-block--error {
+  color: var(--term-red);
+}
+
+/* ── TUI pane takeover (terminal-feel pass T1) ─────────────────────────────
+   While a pane's active block is a RUNNING xterm `pty` (auto-upgraded or
+   `!cmd`-forced), it takes over the pane like a real terminal handing the
+   screen to a full-screen program: sibling blocks and the pinned cmd-input
+   are hidden (display:none — CSS only, nothing unmounts, so live PTYs/blocks
+   survive) and the takeover block stretches to fill the pane's remaining
+   height. Released the moment the block leaves 'running' (TerminalPane.tsx). */
+.pane--tui-takeover .block-list {
+  overflow: hidden;
+}
+.pane--tui-takeover .block:not(.block--takeover) {
+  display: none;
+}
+.pane--tui-takeover .cmd-row {
+  display: none;
+}
+.pane--tui-takeover .block--takeover {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  border-top: none;
+}
+.pane--tui-takeover .block--takeover .block-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.pane--tui-takeover .block--takeover .pty-block {
+  height: 100%;
+  margin: 0;
+}
+
+/* The takeover block's own header (command echo + toggle/cancel/dismiss) reads
+   like a terminal's title bar once a full-screen TUI owns the pane — hidden by
+   default (so xterm gets the full pane height, not height minus a header row)
+   and revealed as a thin overlay only while the mouse is over the block's top
+   strip, or a control inside it holds focus. Opacity, not display: an
+   opacity:0 element is still hit-testable, so Playwright's click() still lands
+   on block-cancel (and a real mousemove reveals it first); :focus-within keeps
+   Tab access working the same way. */
+.pane--tui-takeover .block--takeover .block-head {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  opacity: 0;
+  border-bottom: 1px solid var(--term-border);
+  transition: opacity 120ms ease;
+}
+.pane--tui-takeover .block--takeover .block-head:hover,
+.pane--tui-takeover .block--takeover .block-head:focus-within {
+  opacity: 1;
+}
+
+/* ── PTY / TUI block — a live xterm terminal for `!cmd` interactive programs ─── */
+.pty-block {
+  height: 360px;
+  margin: 0.15rem 0 0.35rem;
+  padding: 0.35rem 0.5rem;
+  background: var(--term-bg);
+  border: 1px solid var(--term-border-faint);
+  border-radius: 4px;
+  overflow: hidden;
+}
+/* xterm fills the block; FitAddon derives cols/rows from this box. */
+.pty-block .xterm,
+.pty-block .xterm-viewport,
+.pty-block .xterm-screen {
+  height: 100%;
+}
+
+/* ── PTY plain view (Phase 3 adaptive-render default) ──────────────────────── */
+/* A focusable wrapper around a normal .text-block — keyboard input forwards to
+   the live PTY (PtyBlock.tsx) until/unless the block upgrades to xterm. */
+.pty-plain-block {
+  outline: none;
+}
+.pty-plain-block:focus-visible {
+  outline: 1px solid var(--term-border-faint);
+  outline-offset: 2px;
+}
+.pty-plain-waiting {
+  color: var(--term-fg-dim);
+  animation: pty-plain-blink 1s step-start infinite;
+}
+@keyframes pty-plain-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ── ssh-connect prompt card (E5) — password/passphrase or TOFU host-key ──── */
+.ssh-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.15rem 0 0.35rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--term-bg-inset);
+  border: 1px solid var(--term-border-faint);
+  border-radius: 4px;
+}
+
+.ssh-prompt-message {
+  margin: 0;
+  color: var(--term-fg);
+  font-size: 0.82rem;
+}
+
+.ssh-prompt-fingerprint {
+  margin: 0;
+  color: var(--term-amber);
+  font-family: var(--term-font);
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.ssh-prompt-input {
+  background: var(--term-bg);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  color: var(--term-fg-bright);
+  font-family: var(--term-font);
+  font-size: 0.85rem;
+  padding: 0.3rem 0.5rem;
+}
+
+.ssh-prompt-input:focus {
+  outline: none;
+  border-color: var(--term-green);
+}
+
+.ssh-prompt-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* ── virtualized table — styled as terminal output, not a web grid ────────── */
+.result-table {
+  font-family: var(--term-font);
+  font-size: 0.8rem;
+  margin-top: 0.15rem;
+  border: 1px solid var(--term-border-faint);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--term-bg-inset);
+}
+
+.vt-header {
+  display: flex;
+  background: var(--term-bg-raised);
+  border-bottom: 1px solid var(--term-border);
+  color: var(--term-cyan);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.vt-scroll {
+  background: var(--term-bg-inset);
+}
+
+.vt-row {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  border-bottom: 1px solid var(--term-border-faint);
+  transition: background 80ms ease;
+}
+
+.vt-row:hover {
+  background: var(--term-bg-hover);
+}
+
+.vt-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 0.7rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--term-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.vt-cell--head {
+  padding-top: 0.34rem;
+  padding-bottom: 0.34rem;
+  color: var(--term-cyan);
+}
+
+.vt-cell--loading {
+  color: var(--term-fg-faint);
+}
+
+/* ── command input — the live prompt line, pinned to the bottom ───────────── */
+.cmd-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.6rem;
+  /* Same surface as the feed above it (not a distinct raised toolbar) — the
+     live prompt reads as the next line of the transcript, just pinned. */
+  background: var(--term-bg);
+  border-top: 1px solid var(--term-border-faint);
+}
+
+/* Live cwd path in the input prompt — dim cyan, like a terminal's `cwd ❯`. */
+.prompt-cwd {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  color: var(--term-cyan);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.85;
+}
+
+.prompt-sigil--input {
+  font-size: 0.95rem;
+}
+
+.cmd-input {
+  flex: 1 1 auto;
+  background: transparent;
+  border: none;
+  color: var(--term-fg-bright);
+  font-family: var(--term-font);
+  font-size: 0.9rem;
+  padding: 0.15rem 0;
+  caret-color: var(--term-green);
+}
+
+.cmd-input:focus {
+  outline: none;
+}
+
+.cmd-input::placeholder {
+  color: var(--term-fg-faint);
+}
+
+/* Dim (not just inert) while a run is active — same disabled condition as
+   before, now visually distinct from the normal, editable prompt. */
+.cmd-input:disabled {
+  opacity: 0.45;
+}
+
+/* Subtle ghost buttons — terminal affordances, not web CTAs. */
+.btn {
+  padding: 0.28rem 0.85rem;
+  border-radius: 4px;
+  border: 1px solid var(--term-border);
+  background: transparent;
+  color: var(--term-fg-dim);
+  cursor: pointer;
+  font-family: var(--term-font);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--term-bg-hover);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-run {
+  color: var(--term-green);
+  border-color: rgba(41, 211, 152, 0.35);
+}
+
+.btn-run:hover:not(:disabled) {
+  border-color: var(--term-green);
+  background: rgba(41, 211, 152, 0.1);
+}
+
+.btn-cancel {
+  color: var(--term-red);
+  border-color: rgba(240, 85, 106, 0.3);
+}
+
+.btn-cancel:hover:not(:disabled) {
+  border-color: var(--term-red);
+  background: rgba(240, 85, 106, 0.1);
+}

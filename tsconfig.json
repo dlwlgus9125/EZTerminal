@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "sourceMap": true,
+    "types": ["node"]
+  },
+  "include": [
+    "src",
+    "e2e",
+    "e2e-packaged",
+    "forge.config.ts",
+    "forge.env.d.ts",
+    "vite.main.config.ts",
+    "vite.preload.config.ts",
+    "vite.renderer.config.ts",
+    "vite.interpreter.config.ts",
+    "vite.script-host.config.ts",
+    "vitest.config.ts",
+    "playwright.config.ts",
+    "playwright.packaged.config.ts"
+  ]
+}

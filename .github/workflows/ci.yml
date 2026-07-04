@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    # Single windows-latest job: the packaged-exe smoke (Fuses + asar + ConPTY) is
+    # Windows-first and Electron e2e needs a desktop session, which Windows runners have.
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # pnpm.onlyBuiltDependencies in package.json allowlists electron /
+      # electron-winstaller / node-pty build scripts.
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      # Fresh checkout has no .vite, so the e2e global-setup builds the real bundles
+      # (locally a stale .vite is silently reused — CI closes that gap by construction).
+      - run: pnpm e2e
+      - run: pnpm package
+      - run: pnpm guard:native
+      # global-setup re-runs guard:native and reuses the exe packaged above.
+      - run: pnpm test:e2e:packaged
+
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
