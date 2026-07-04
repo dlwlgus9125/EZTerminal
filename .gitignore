@@ -51,6 +51,8 @@ out-*/
 
 # Generic build output
 dist/
+# Loose packaged zip at repo root (bundle/zip-maker output, not an out-*/ dir)
+/ezterminal.zip
 
 # Playwright
 /test-results/
