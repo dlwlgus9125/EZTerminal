@@ -1,10 +1,12 @@
 # EZTerminal — 다음 세션 이어가기 (Resume Handoff)
 
-> 마지막 작업: 2026-07-03. **결정 없이 진행 가능한 작업 전부 완료** — Stage 0·A·C·D + B(M4만 잔여) +
-> E1 테마·E2 팔레트·E4 스크립팅·E5 SSH 완료 + E6 크로스플랫폼 ps 부분(유닛). 커밋 9ee3a8e.
+> 마지막 작업: 2026-07-04. **결정 없이 진행 가능한 작업 전부 완료** — Stage 0·A·C·D + B(M4만 잔여) +
+> E1 테마·E2 팔레트·E4 스크립팅·E5 SSH + CLI 패리티·번들 ConPTY + **시스템 상태 패널 v1/v2·실시간 패킷 캡처
+> + Matrix(CRT) 테마** 완료 + E6 크로스플랫폼 ps 부분(유닛). HEAD `ba213a7` (main, origin 푸시됨).
 > 플랜 원본: `~/.claude/plans/zesty-wiggling-pony.md` (Stage 0→A→B→C→D→E, 실행 로그 포함).
 > **실행 방식(유저 지시): Stage C/E 구현=Sonnet executor 위임, 리드(Fable)=게이트·리뷰·재현검증·커밋.**
-> **잔여는 전부 사용자 결정 대기**: B-M4 자동업데이트·E3 AI = GitHub 저장소/데이터 이그레스 결정 필요(둘 다 "보류" 상태).
+> **원격/CI는 이미 가동**: 저장소 생성·푸시 완료(`github.com/dlwlgus9125/EZTerminal`, **private**), GitHub Actions CI가
+> `windows-2022` 러너로 가동(`cap` 네이티브 빌드 픽스). **잔여는 사용자 결정 대기**: B-M4 자동업데이트·v0.1.0 태깅=공개 여부·서명 결정, E3 AI=데이터 이그레스 동의.
 
 ## 프로젝트 한 줄
 "기존 터미널 래퍼가 아니라 **자체 구조화 데이터 셸 + 명령 블록 UI**" (Warp 블록 + Nushell 데이터 + AI 계열). Electron + React + TypeScript, Windows 우선.
@@ -64,13 +66,19 @@
 - `gen-rows 100000000` 취소 e2e가 유휴 머신에서 **결정적** 실패(6연속) — "문서화된 flake"의 정체: progress 프레임(5천행당 1개×2만)마다 React 재렌더+rAF 레이아웃으로 메인스레드 포화→클릭 기아. 유휴 머신=인터프리터 가속=악화.
 - 수정: `block-controller.ts` — progress만 leading+trailing 33ms 통지 스로틀(스냅샷은 매 프레임 갱신, end/error/cancelled/chunk는 즉시). 31s 타임아웃→2.8s 통과, e2e 스위트 2.1분→~1.2분.
 
-## 검증 베이스라인 (전부 green, 2026-07-03 — 커밋 9ee3a8e)
+### ✅ 추가 완료 (2026-07-03 ~ 07-04) — 상세는 `docs/ROADMAP.md` 진행 현황 참조
+- **CLI 패리티**(sigil-free 자동 PTY·배치 shim·적응 렌더, verifier PASS AC 10/10) → **터미널 느낌 회복**(TUI 페인 테이크오버·인라인 프롬프트) → **번들 ConPTY**(`useConptyDll` — Win10 구형 ConPTY 스크롤백 결함 해소; kill은 `taskkill` 우회).
+- **시스템 상태 패널 v1/v2**: CPU 코어 그리드·MEM 상세·NET 스파크·연결 목록·DISK/PROC(`systeminformation`) + **실시간 패킷 캡처**(`cap`+Npcap, off-by-default, 전용 `src/packet-capture/` utilityProcess).
+- **Matrix(CRT) 테마**(4번째 빌트인, self-host woff2, 커밋 `ba213a7`).
+- **원격/CI**: `github.com/dlwlgus9125/EZTerminal`(private) 푸시, GitHub Actions `windows-2022` 러너로 가동.
+
+## 검증 베이스라인 (로컬 전부 green, 2026-07-04 — HEAD `ba213a7`)
 ```
 pnpm typecheck   # 0   ← 리드 재현은 항상 여기부터 (E4 때 typecheck 생략 공백 교훈)
 pnpm lint        # 0 (게이트 포함)
-pnpm test        # vitest 303 (30 files) — SSH 백프레셔 실증(실 ssh2 Server) 포함
-pnpm e2e         # 44 (launch-app.ts 격리 필수; 테마·백프레셔·팔레트·스크립팅·SSH 4 포함)
-pnpm test:e2e:packaged  # guard OK + 7 (asar-fork·pty·layout seam×2·script-host·ssh 직결모듈)
+pnpm test        # vitest 372 (상태 패널 v1/v2·패킷 캡처·matrix 포함)
+pnpm e2e         # 73 (launch-app.ts 격리 필수; 상태 패널·패킷 캡처·테마 사이클 포함)
+pnpm test:e2e:packaged  # guard OK + 8 (직결 모듈 스모크; 상태 패널 패키지드는 수동)
 pnpm package / pnpm make # exit 0
 pnpm audit       # 0 vulnerabilities (ssh2 신규 경보 0)
 ```
@@ -85,7 +93,7 @@ pnpm audit       # 0 vulnerabilities (ssh2 신규 경보 0)
 0. ~~E2 팔레트(aca4312)~~ · ~~E4 스크립팅(d7717fe — 게이트 4블로커 반영, script-host/ez.run/상한)~~ **완료.**
    E4 알려진 v1 제약: ez.run은 외부(byte-stream) 명령 미지원(구조화 rows 전용) · rows 반환 시
    stdout 폐기 · bare import는 스크립트 위치 기준. 후속 후보: ez.run 텍스트 모드.
-2. **사용자 결정 대기 (블로커):** ① GitHub 저장소 생성+공개/비공개(CI 가동·B-M2 릴리스·B-M4 업데이트 피드 게이트) ② 서명 인증서(무서명 잠정 수용 중) ③ 실물 아이콘 아트 ④ 크래시 덤프 보존(last-10 제안) ⑤ E3 AI 보조 데이터 이그레스 동의
+2. **사용자 결정 대기 (블로커):** ① GitHub 저장소 **생성·푸시·CI 가동 완료(private)** — 남은 결정은 공개/비공개 전환(B-M4 업데이트 피드 게이트)·B-M2 릴리스 태깅 ② 서명 인증서(무서명 잠정 수용 중) ③ 실물 아이콘 아트 ④ 크래시 덤프 보존(last-10 제안) ⑤ E3 AI 보조 데이터 이그레스 동의
 3. **B-M4 자동업데이트:** Squirrel+GitHub Releases(공개 저장소 필요). **자동 재시작 절대 금지** — 배너→사용자 restart.
 4. **E3 AI 보조(인터뷰+Codex 게이트) → E4 스크립팅 → E5 SSH → E6 크로스플랫폼** (플랜 참조).
    실행 방식: 구현=Sonnet 위임, 게이트·리뷰·검증·커밋=리드.
