@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { BlockController } from './block-controller';
 import { Block } from './Block';
 import { formatCwd } from './format-cwd';
-import { removePaneCwd, setPaneCwd } from './pane-registry';
+import { registerPaneInput, removePaneCwd, setPaneCwd, unregisterPaneInput } from './pane-registry';
 
 // A TerminalPane is one independent shell surface: its own shell session (cwd/env/
 // variables/history), its own stack of command Blocks, and its own pinned prompt.
@@ -36,9 +36,12 @@ interface TerminalPaneProps {
   /** This pane's dockview panel id — the pane-registry key the file-explorer
    * drawer (M1) uses to read this pane's live cwd when it opens. */
   readonly panelId: string;
+  /** Starting cwd for a pane opened via the file-explorer's "open terminal
+   * here" action (M2); undefined for a plain new tab/split (interpreter default). */
+  readonly initialCwd?: string;
 }
 
-export function TerminalPane({ panelId }: TerminalPaneProps): JSX.Element {
+export function TerminalPane({ panelId, initialCwd }: TerminalPaneProps): JSX.Element {
   const [command, setCommand] = useState('');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   // Submitted commands (oldest first) for ↑/↓ recall. The renderer submits these,
@@ -104,7 +107,7 @@ export function TerminalPane({ panelId }: TerminalPaneProps): JSX.Element {
   useEffect(() => {
     let cancelled = false;
     void window.ezterminal
-      ?.createSession?.()
+      ?.createSession?.(initialCwd)
       .then((info) => {
         if (cancelled) {
           window.ezterminal?.destroySession?.(info.sessionId);
@@ -126,6 +129,16 @@ export function TerminalPane({ panelId }: TerminalPaneProps): JSX.Element {
       }
       removePaneCwd(panelId);
     };
+  }, [panelId, initialCwd]);
+
+  // Paste-path-into-terminal (M2, file-explorer context menu): registers a
+  // sink that appends text to the live command draft, space-separated unless
+  // the draft is empty or already ends in whitespace.
+  useEffect(() => {
+    registerPaneInput(panelId, (text) => {
+      setCommand((prev) => (prev === '' || /\s$/.test(prev) ? `${prev}${text}` : `${prev} ${text}`));
+    });
+    return () => unregisterPaneInput(panelId);
   }, [panelId]);
 
   // The interpreter is shared by all sessions in Phase 1, so its death kills this one

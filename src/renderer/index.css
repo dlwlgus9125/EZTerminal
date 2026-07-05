@@ -644,6 +644,79 @@ body {
   word-break: break-word;
 }
 
+/* Right-click context menu (M2) — clones .preset-menu's chrome but is cursor-
+   positioned (`left`/`top` set inline by FileContextMenu.tsx) via `fixed`
+   rather than anchored to a relatively-positioned parent. z-index 95 sits
+   above the viewer (90) and below the command palette (100). */
+.file-context-menu {
+  position: fixed;
+  z-index: 95;
+  min-width: 190px;
+  padding: 0.35rem;
+  background: var(--term-bg-raised);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.file-context-menu-item {
+  text-align: left;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--term-fg);
+  cursor: pointer;
+}
+.file-context-menu-item:hover {
+  border-color: var(--term-green);
+  color: var(--term-fg-bright);
+}
+
+/* Transient action feedback (M2) — "Copied" / "No active terminal", same
+   auto-clearing pattern as ConnectionInfoPanel's copy buttons. */
+.file-toast {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.72rem;
+  color: var(--term-green);
+}
+
+/* Delete confirmation (M2) — centered overlay like the viewer, same z-index
+   (never shown at the same time: the viewer opens from a row click, this
+   from a row's context menu). NEVER a permanent-delete option — trash only. */
+.file-confirm-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+.file-confirm-box {
+  max-width: 240px;
+  padding: 0.9rem 1rem;
+  background: var(--term-bg-raised);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+  text-align: center;
+}
+.file-confirm-box p {
+  margin: 0 0 0.7rem;
+  font-size: 0.82rem;
+  color: var(--term-fg-bright);
+}
+.file-confirm-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
 /* Re-skin dockview's dark theme to the EZTerminal console palette (#0c0c0c). */
 .dockview-theme-dark.ez-dock {
   --dv-group-view-background-color: var(--term-bg);

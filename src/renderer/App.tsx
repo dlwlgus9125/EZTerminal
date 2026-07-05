@@ -36,7 +36,7 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
     });
     return () => disposable.dispose();
   }, [props.api]);
-  return <TerminalPane panelId={props.api.id} />;
+  return <TerminalPane panelId={props.api.id} initialCwd={props.params?.cwd as string | undefined} />;
 }
 
 const components = { terminal: TerminalPanel };
@@ -73,7 +73,7 @@ export function App(): JSX.Element {
   // across tabs AND splits. `renderer: 'always'` is required either way so a pane that
   // later becomes hidden stays mounted and its live PTY survives (Codex B7).
   const openPanel = useCallback(
-    (position?: { referencePanel: string; direction: 'right' | 'below' }) => {
+    (position?: { referencePanel: string; direction: 'right' | 'below' }, cwd?: string) => {
       const api = apiRef.current;
       if (!api) return;
       tabCounter += 1;
@@ -82,6 +82,7 @@ export function App(): JSX.Element {
         component: 'terminal',
         title: `Terminal ${tabCounter}`,
         renderer: 'always',
+        ...(cwd ? { params: { cwd } } : {}),
         ...(position ? { position } : {}),
       });
     },
@@ -89,6 +90,10 @@ export function App(): JSX.Element {
   );
 
   const addTab = useCallback(() => openPanel(), [openPanel]);
+
+  // File-explorer drawer's "open terminal here" (M2): a fresh tab whose session
+  // starts in `dirPath`, threaded through dockview panel params to TerminalPanel.
+  const onOpenTerminalAt = useCallback((dirPath: string) => openPanel(undefined, dirPath), [openPanel]);
 
   // Split the pane the user last focused. Omitting `direction` would default to
   // 'within' (a tab, not a split), so it is always explicit.
@@ -608,7 +613,11 @@ export function App(): JSX.Element {
         {statsOpen && <StatusPanel />}
         {pairingOpen && <ConnectionInfoPanel />}
         {filesOpen && (
-          <FileExplorerPanel activePanelId={activePanelId} onClose={() => setFilesOpen(false)} />
+          <FileExplorerPanel
+            activePanelId={activePanelId}
+            onClose={() => setFilesOpen(false)}
+            onOpenTerminalAt={onOpenTerminalAt}
+          />
         )}
       </div>
 
