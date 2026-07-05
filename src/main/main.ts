@@ -16,23 +16,29 @@ import { networkInterfaces } from 'node:os';
 import started from 'electron-squirrel-startup';
 
 import { isAppUrl } from './url-guard';
+import { FileService } from './file-service';
 import { LayoutStore } from './layout-store';
 import { ScriptHostRegistry } from './script-host-registry';
 import { PacketCaptureRegistry } from './packet-capture-registry';
+import { PacketMirror } from './packet-mirror';
 import { KnownHostsStore } from './known-hosts-store';
 import { LogFile, pruneCrashDumps } from './diagnostics';
 import { SystemStatsService } from './system-stats-service';
+import { StatsVisibility } from './stats-visibility';
 import { SessionDirectory } from './session-directory';
 import { RemoteTokenStore } from './remote-token-store';
 import {
   startRemoteBridge,
   DEFAULT_REMOTE_BRIDGE_PORT,
   type RemoteBridgeHandle,
+  type RemoteFileSource,
   type RemoteInterpreter,
+  type RemotePacketSource,
+  type RemoteStatsSource,
 } from './remote-bridge';
 import { formatConnectionInfo } from './remote-connection-info';
 import type { StartupPref, ThemeName } from '../shared/layout-schema';
-import type { InterpreterToMain, MainToInterpreter, SessionInfo } from '../shared/ipc';
+import type { InterpreterToMain, MainToInterpreter, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
 
 // The main process is the broker (architecture §1).
 // It owns the interpreter utilityProcess lifetime and brokers per-command
@@ -193,7 +199,7 @@ const createWindow = (): void => {
       const { commandText, runId, sessionId } = payload;
       const { port1, port2 } = new MessageChannelMain();
       // Send command + session + port2 to interpreter (session must already exist).
-      interpreter.postMessage({ type: 'run', commandText, sessionId }, [port2]);
+      interpreter.postMessage({ type: 'run', commandText, sessionId, runId }, [port2]);
       // Transfer port1 to renderer — arrives as a DOM MessagePort via event.ports.
       // Echo `runId` so the preload/renderer correlate THIS port to THIS run even
       // when multiple runs are in flight across panes (Codex B3).
@@ -220,32 +226,79 @@ app.on('ready', () => {
     console.error('[main] layout store init failed:', err);
   });
 
-  // ── Status overlay panel stats (status-overlay-panel) ─────────────────────
+  // ── Status overlay panel stats (status-overlay-panel + mobile M1) ─────────
   // The service always ticks its graph loop (CPU/MEM ring buffer, app
-  // lifetime); this callback only decides whether to PUSH a snapshot to the
-  // renderer, gated on panelVisible — 1Hz push cost is zero while closed.
+  // lifetime); this callback decides whether to PUSH a snapshot to desktop
+  // windows (gated on `desktopStatsVisible` — a plain bool, deliberately NOT
+  // `systemStatsService.isPanelVisible()` anymore: that now reflects the
+  // COMBINED desktop-or-remote refcount via `statsVisibility` below, and
+  // gating the desktop push on it would leak stats-update to desktop windows
+  // just because a phone subscribed. Desktop behavior stays bit-identical).
+  // Every snapshot ALSO fans out unconditionally to `remoteStatsListeners` —
+  // per-connection gating is inherent, since a listener only exists in that
+  // set while that connection's own `stats-visible:true` is active.
+  let desktopStatsVisible = false;
+  const remoteStatsListeners = new Set<(snapshot: SystemStatsSnapshot) => void>();
   systemStatsService = new SystemStatsService(mainLog, (snapshot) => {
-    if (!systemStatsService?.isPanelVisible()) return;
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
-      win.webContents.send('stats:update', snapshot);
+    if (desktopStatsVisible) {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+        win.webContents.send('stats:update', snapshot);
+      }
     }
+    for (const listener of remoteStatsListeners) listener(snapshot);
   });
   systemStatsService.start();
+  const statsVisibility = new StatsVisibility((effective) => systemStatsService?.setPanelVisible(effective));
   ipcMain.handle('stats:history', () => systemStatsService?.getHistory() ?? []);
   ipcMain.on('stats:panel-visible', (_event, visible: boolean) => {
-    systemStatsService?.setPanelVisible(Boolean(visible));
+    desktopStatsVisible = Boolean(visible);
+    statsVisibility.setDesktopVisible(desktopStatsVisible);
   });
 
-  // ── Packet capture (Phase 2B, off-by-default sub-view) ───────────────────
+  // ── File explorer (file-explorer plan, M1) ────────────────────────────────
+  // FileService is the single fs authority; this instance is also handed to
+  // the WS bridge's `RemoteFileSource` seam in M3. `openFileInApp`/
+  // `revealFileInExplorer` stay here (Electron `shell`, desktop-only) rather
+  // than in FileService, which stays electron-free.
+  const fileService = new FileService({ trashItem: (p) => shell.trashItem(p) });
+  ipcMain.handle('files:list', (_event, path: string) => fileService.listDirectory(path));
+  ipcMain.handle('files:roots', () => fileService.listRoots());
+  ipcMain.handle('files:read-text', (_event, path: string) => fileService.readTextFile(path));
+  ipcMain.handle('files:mkdir', (_event, dirPath: string, name: string) =>
+    fileService.createFolder(dirPath, name),
+  );
+  ipcMain.handle('files:rename', (_event, path: string, newName: string) =>
+    fileService.renameEntry(path, newName),
+  );
+  ipcMain.handle('files:trash', (_event, path: string) => fileService.trashEntry(path));
+  ipcMain.handle('files:open-path', async (_event, path: string) => {
+    const err = await shell.openPath(path);
+    if (err) console.error('[main] shell.openPath failed:', err);
+  });
+  ipcMain.handle('files:reveal', (_event, path: string) => {
+    shell.showItemInFolder(path);
+  });
+
+  // ── Packet capture (Phase 2B, off-by-default sub-view) + mobile tee (M3) ──
   // main only forks the host and brokers its port to the renderer — it never
   // sees packet rows or capture status (both flow host -> renderer directly
   // over the port, same "bulk stays off main" shape as run-command's cmd-port
   // below). Output resolves to .vite/build/packet-capture-host.js, same
   // directory as main.js/interpreter-process.js/script-host.js.
+  //
+  // `packetMirror` (declared before assignment, referenced only inside the
+  // registry's `onLiveChange` closure which fires later — see PacketMirror's
+  // own header comment) brokers a SECOND port per mobile subscriber from the
+  // same live host, entirely independent of the desktop's direct port above.
+  let packetMirror: PacketMirror | null = null;
   packetCaptureRegistry = new PacketCaptureRegistry(
     path.join(__dirname, 'packet-capture-host.js'),
+    (live) => packetMirror?.setLive(live),
   );
+  packetMirror = new PacketMirror({
+    addViewerPort: () => packetCaptureRegistry?.addViewerPort() ?? null,
+  });
   ipcMain.on('packets:subscribe', (event) => {
     if (!packetCaptureRegistry) return;
     const port1 = packetCaptureRegistry.subscribe();
@@ -347,6 +400,40 @@ app.on('ready', () => {
     interpreter?.postMessage({ type: 'destroy-session', sessionId });
   });
 
+  // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
+  // listSessions is a straight passthrough to the directory already kept
+  // above. session-added/session-removed fan out to every desktop window
+  // here; remote-bridge.ts subscribes to the SAME sessionDirectory
+  // independently for its own WS fan-out (T2.1). Both broadcasts are
+  // origin-agnostic (including a window's own session — see SessionDirectory's
+  // doc for why the ordering is safe).
+  ipcMain.handle('list-sessions', () => sessionDirectory.list());
+  sessionDirectory.onSessionAdded((session) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('session-added', session);
+    }
+  });
+  sessionDirectory.onSessionRemoved((sessionId) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('session-removed', sessionId);
+    }
+  });
+
+  // attach-run (T2.2f): brokers a NON-INITIATING port onto an existing run's
+  // ExecutionSession — mirrors the run-command handler in createWindow()
+  // exactly (fresh MessageChannelMain, port2 to the interpreter, port1 to
+  // THIS event's sender), except it never starts a new run (canRun/session-
+  // registry are untouched — attach is view+input, not a second writer).
+  ipcMain.on('attach-run', (event, payload: { sessionId: string; runId: string }) => {
+    if (!interpreter) return;
+    const { runId } = payload;
+    const { port1, port2 } = new MessageChannelMain();
+    interpreter.postMessage({ type: 'attach-run', runId }, [port2]);
+    event.sender.postMessage('attach-port', { runId }, [port1]);
+  });
+
   // Enforce the CSP as a response header for the packaged renderer (defense-in-depth
   // alongside the build-injected <meta>, SEC-MED-3). Skipped under the Vite dev
   // server, whose HMR needs inline scripts / eval / a websocket the strict policy
@@ -384,11 +471,27 @@ app.on('ready', () => {
   // script-host spawn/kill protocol (E4).
   interpreter.on('message', (msg: InterpreterToMain) => {
     if (msg?.type === 'session-created') {
-      sessionDirectory.add({ sessionId: msg.sessionId, cwd: msg.cwd });
+      // Resolve the requester's OWN correlated promise before adding to the
+      // directory — sessionDirectory.add()'s session-added broadcast is
+      // deferred internally (setImmediate), but resolving first here is
+      // extra, cheap defense-in-depth for the same ordering guarantee (ADR C6).
       const pending = pendingCreates.get(msg.requestId);
       if (pending) {
         pendingCreates.delete(msg.requestId);
         pending.resolve({ sessionId: msg.sessionId, cwd: msg.cwd });
+      }
+      sessionDirectory.add({ sessionId: msg.sessionId, cwd: msg.cwd });
+    } else if (msg?.type === 'run-started') {
+      // M2 mirroring: announce to every desktop window so an observer can
+      // attachRun. runId is caller-minted, so unlike session-added there's no
+      // "learn my own id first" race to guard — a plain broadcast is enough.
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+        win.webContents.send('run-started', {
+          sessionId: msg.sessionId,
+          runId: msg.runId,
+          commandText: msg.commandText,
+        });
       }
     } else if (msg?.type === 'spawn-script-host') {
       const result = scriptHostRegistry.spawn(msg.hostId, msg.scriptPath, msg.args, msg.cwd, (hostId, code) => {
@@ -484,6 +587,18 @@ app.on('ready', () => {
     },
   };
   const remoteBridgePort = Number(process.env.EZTERMINAL_REMOTE_PORT) || DEFAULT_REMOTE_BRIDGE_PORT;
+  const remoteStatsSource: RemoteStatsSource = {
+    getHistory: () => systemStatsService?.getHistory() ?? [],
+    onSnapshot: (listener) => {
+      remoteStatsListeners.add(listener);
+      return () => remoteStatsListeners.delete(listener);
+    },
+    acquire: () => statsVisibility.acquire(),
+    release: () => statsVisibility.release(),
+  };
+  const remotePacketSource: RemotePacketSource = {
+    subscribe: (listener) => packetMirror?.subscribe(listener) ?? (() => undefined),
+  };
   remoteBridgeHandle = startRemoteBridge({
     port: remoteBridgePort,
     getToken: async () => {
@@ -493,6 +608,11 @@ app.on('ready', () => {
     interpreter: remoteInterpreterAdapter,
     sessionDirectory,
     createMessageChannel: () => new MessageChannelMain(),
+    statsSource: remoteStatsSource,
+    packetSource: remotePacketSource,
+    // `satisfies` forces a structural check here — the same `fileService`
+    // instance backs the desktop IPC handlers above and the mobile bridge.
+    fileSource: fileService satisfies RemoteFileSource,
   });
 
   // Desktop pairing panel (M4): connection info/token are read-only display +

@@ -1,6 +1,6 @@
 {
   "name": "ezterminal-mobile",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "description": "EZTerminal mobile remote control — reuses the desktop renderer's BlockController/Block components over a WS transport (mobile remote-control plan, M1+).",
   "type": "module",
@@ -11,11 +11,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "cap:sync": "cap sync android",
-    "e2e:smoke": "node e2e/smoke.ts"
+    "e2e:smoke": "node e2e/smoke.ts",
+    "e2e:parity": "node e2e/parity.ts"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
     "@capacitor/core": "^6.2.0",
+    "@capacitor/filesystem": "^6.0.4",
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/react-virtual": "^3.14.4",
     "@xterm/addon-fit": "^0.11.0",

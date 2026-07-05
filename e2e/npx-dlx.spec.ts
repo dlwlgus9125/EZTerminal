@@ -37,7 +37,9 @@ test('AC-5: a node_modules/.bin/*.cmd shim (npx/pnpm-dlx shape) runs sigil-free 
   await expect(window.getByTestId('pty-block')).toHaveCount(0);
   await expect.poll(() => plainText(window), { timeout: 15_000 }).toContain('READY');
 
-  await plainBlock.click();
+  // Plain-mode input routes through cmd-input now (M1 focus retention) — it
+  // stays enabled/focused through the run, so click it, not the output view.
+  await window.getByTestId('cmd-input').click();
   await window.keyboard.type('hi');
   await window.keyboard.press('Enter');
   await expect.poll(() => plainText(window), { timeout: 15_000 }).toContain('ECHO:');

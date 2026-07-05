@@ -8,13 +8,13 @@ import { createRoot } from 'react-dom/client';
 // nothing to import at runtime).
 
 import { App } from './App';
+import { applyTheme, loadTheme } from './theme';
 import '../../src/renderer/index.css';
 import './mobile.css';
 
-// Mobile has no theme picker (M2 scope) — default to 'dark', matching the WS
-// transport's getTheme() stub. index.css's `[data-theme]` blocks only apply
-// overrides for light/high-contrast/matrix; 'dark' needs no cssVars override.
-document.documentElement.dataset.theme = 'dark';
+// Mobile picks its own theme independent of the desktop bridge (M4 scope,
+// localStorage-only — see theme.ts's module doc).
+applyTheme(loadTheme());
 
 const container = document.getElementById('root');
 if (!container) {

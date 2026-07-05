@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useEffect, useState } from 'react';
 import {
   DockviewReact,
   type DockviewApi,
@@ -11,6 +11,7 @@ import 'dockview-react/dist/styles/dockview.css';
 import { maxTabSuffix, type LayoutEnvelope, type ThemeName } from '../shared/layout-schema';
 import { CommandPalette, type PaletteAction } from './CommandPalette';
 import { ConnectionInfoPanel } from './ConnectionInfoPanel';
+import { FileExplorerPanel } from './FileExplorerPanel';
 import { StatusPanel } from './StatusPanel';
 import { TerminalPane } from './TerminalPane';
 
@@ -22,6 +23,18 @@ import { TerminalPane } from './TerminalPane';
 // TerminalPane/session/PTY survive the move (dockview re-parents, never remounts). Panels
 // render with `renderer: 'always'` so a hidden pane stays MOUNTED (visibility:hidden, not
 // unmounted) — its live PTY/xterm survives (Codex B7 / dockview docs).
+
+// C6 sessionId-report channel: TerminalPanel is dockview's registered component
+// (module-scoped, outside App's closure), so it can't otherwise reach App's
+// onSessionBound/onSessionUnbound callbacks — a context bridges the two without
+// threading them through dockview panel `params` (which must stay JSON-
+// serializable for `saveLayout`'s api.toJSON(), so a function value can't live
+// there).
+interface SessionBindingContextValue {
+  readonly onSessionBound: (panelId: string, sessionId: string) => void;
+  readonly onSessionUnbound: (panelId: string) => void;
+}
+const SessionBindingContext = createContext<SessionBindingContextValue | null>(null);
 
 // The dockview panel content. On becoming visible again, broadcast a refit so the
 // pane's xterm re-fits: a visibility:hidden panel keeps its layout size, so xterm's
@@ -35,7 +48,16 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
     });
     return () => disposable.dispose();
   }, [props.api]);
-  return <TerminalPane />;
+  const binding = useContext(SessionBindingContext);
+  return (
+    <TerminalPane
+      panelId={props.api.id}
+      initialCwd={props.params?.cwd as string | undefined}
+      adoptSessionId={props.params?.adoptSessionId as string | undefined}
+      onSessionBound={binding?.onSessionBound}
+      onSessionUnbound={binding?.onSessionUnbound}
+    />
+  );
 }
 
 const components = { terminal: TerminalPanel };
@@ -66,13 +88,108 @@ export function App(): JSX.Element {
   const versions = window.ezterminal?.versions;
   const apiRef = useRef<DockviewApi | null>(null);
 
+  // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
+  // sessionId -> panelId for every panel this window has bound (created OR
+  // adopted) a session for. Two jobs: (1) self-filter `onSessionAdded`, an
+  // unconditional broadcast that also fires for a session THIS window itself
+  // just created/adopted (correlated response -> broadcast ordering is a
+  // main-side guarantee — see remote-protocol.ts — so the map entry is
+  // already there by the time the echo arrives); (2) find the panel to close
+  // when `onSessionRemoved` reports a session gone from elsewhere.
+  const sessionPanelMapRef = useRef<Map<string, string>>(new Map());
+
+  const onSessionBound = useCallback((panelId: string, sessionId: string): void => {
+    sessionPanelMapRef.current.set(sessionId, panelId);
+  }, []);
+
+  const onSessionUnbound = useCallback((panelId: string): void => {
+    for (const [sessionId, boundPanelId] of sessionPanelMapRef.current) {
+      if (boundPanelId === panelId) sessionPanelMapRef.current.delete(sessionId);
+    }
+  }, []);
+
+  const sessionBindingValue = useMemo<SessionBindingContextValue>(
+    () => ({ onSessionBound, onSessionUnbound }),
+    [onSessionBound, onSessionUnbound],
+  );
+
+  // A session created/destroyed on ANY surface (another desktop tab/window, or
+  // mobile) gets mirrored here: an unknown id adds a new ADOPT-mode tab
+  // (T2.3); a removed id closes whichever panel is bound to it (self-echo for
+  // a LOCAL destroy is a no-op — TerminalPane's unmount already called
+  // onSessionUnbound synchronously, well before any IPC round trip, before
+  // this broadcast comes back).
+  //
+  // The ADD side needs a defer that REMOVE doesn't (confirmed race, e2e/
+  // splits.spec.ts flake under load): TerminalPane's `createSession()` reply
+  // resolves a Promise, so its continuation (`bindSession` -> `onSessionBound`
+  // -> the `sessionPanelMapRef.current.set(...)` below) is a MICROTASK.
+  // `onSessionAdded`'s broadcast, in contrast, fires a plain SYNCHRONOUS
+  // `ipcRenderer.on` listener — main already sends the reply before the
+  // broadcast (it resolves the correlated Promise first, then calls
+  // `sessionDirectory.add()`, whose own listener dispatch is deferred via
+  // `setImmediate` — see session-directory.ts's module doc, ADR C6), but that
+  // only orders WHEN main SENDS the two messages. If the renderer ever has a
+  // backlog of already-arrived IPC messages (plausible under load — an
+  // isolated run of this spec never reproduced the flake, only the full
+  // gate's contention did) and drains more than one in a single JS task
+  // before a microtask checkpoint, the synchronous broadcast handler can run
+  // BEFORE the reply's microtask gets a turn — this pane's OWN new session
+  // would then look "unknown" and get a duplicate adopt-mode panel (nothing
+  // would ever clean that duplicate up — closing either one just deletes
+  // whichever entry currently occupies the map's single slot for that
+  // sessionId, since `Map.set` last-write-wins; the other stays a stray,
+  // un-trackable extra pane indefinitely, worth restating since it's why
+  // this needs to be airtight, not just usually-fine).
+  //
+  // Deferring the CHECK by one macrotask (not just one microtask — Electron's
+  // exact number of internal microtask hops for an `invoke` reply isn't
+  // something to rely on) is airtight regardless of the precise interleaving:
+  // a macrotask callback only runs once the CURRENT task's microtask queue is
+  // fully drained, and if the two IPC messages were instead dispatched as two
+  // SEPARATE tasks, every microtask from the earlier one drains before the
+  // later one's task even begins. Either way, by the time this fires, any
+  // already-resolved local `createSession()` for this exact session has
+  // already registered in `sessionPanelMapRef`. Mirroring's own AC4 budget
+  // (adopt tab appears within ~2s) absorbs a same-tick setTimeout(0) trivially.
+  useEffect(() => {
+    const pendingAddChecks = new Set<ReturnType<typeof setTimeout>>();
+    const unsubAdded = window.ezterminal?.onSessionAdded?.((session) => {
+      const timer = setTimeout(() => {
+        pendingAddChecks.delete(timer);
+        if (sessionPanelMapRef.current.has(session.sessionId)) return; // already have a panel for it
+        const api = apiRef.current;
+        if (!api) return;
+        tabCounter += 1;
+        api.addPanel({
+          id: `tab-${tabCounter}`,
+          component: 'terminal',
+          title: `Terminal ${tabCounter}`,
+          renderer: 'always',
+          params: { adoptSessionId: session.sessionId },
+        });
+      }, 0);
+      pendingAddChecks.add(timer);
+    });
+    const unsubRemoved = window.ezterminal?.onSessionRemoved?.((sessionId) => {
+      const panelId = sessionPanelMapRef.current.get(sessionId);
+      if (!panelId) return; // not one of ours (never bound, or already closed)
+      apiRef.current?.getPanel(panelId)?.api.close();
+    });
+    return () => {
+      unsubAdded?.();
+      unsubRemoved?.();
+      for (const timer of pendingAddChecks) clearTimeout(timer);
+    };
+  }, []);
+
   // Both "new tab" and "split" open a fresh self-contained TerminalPane. Passing a
   // `position` makes dockview place it in a NEW grid group (a split) instead of the
   // active group (a tab). One module-scoped counter keeps ids/titles globally unique
   // across tabs AND splits. `renderer: 'always'` is required either way so a pane that
   // later becomes hidden stays mounted and its live PTY survives (Codex B7).
   const openPanel = useCallback(
-    (position?: { referencePanel: string; direction: 'right' | 'below' }) => {
+    (position?: { referencePanel: string; direction: 'right' | 'below' }, cwd?: string) => {
       const api = apiRef.current;
       if (!api) return;
       tabCounter += 1;
@@ -81,6 +198,7 @@ export function App(): JSX.Element {
         component: 'terminal',
         title: `Terminal ${tabCounter}`,
         renderer: 'always',
+        ...(cwd ? { params: { cwd } } : {}),
         ...(position ? { position } : {}),
       });
     },
@@ -88,6 +206,10 @@ export function App(): JSX.Element {
   );
 
   const addTab = useCallback(() => openPanel(), [openPanel]);
+
+  // File-explorer drawer's "open terminal here" (M2): a fresh tab whose session
+  // starts in `dirPath`, threaded through dockview panel params to TerminalPanel.
+  const onOpenTerminalAt = useCallback((dirPath: string) => openPanel(undefined, dirPath), [openPanel]);
 
   // Split the pane the user last focused. Omitting `direction` would default to
   // 'within' (a tab, not a split), so it is always explicit.
@@ -204,6 +326,15 @@ export function App(): JSX.Element {
 
   // ── Mobile pairing panel (M4) ─────────────────────────────────────────────
   const [pairingOpen, setPairingOpen] = useState(false);
+
+  // ── File explorer drawer (file-explorer plan, M1) ─────────────────────────
+  // Left-edge overlay — unlike stats/pairing above, it does not share their
+  // right-slot mutual exclusion. `activePanelId` tracks dockview's active
+  // panel so the drawer can read that pane's live cwd via pane-registry when
+  // it opens (best-effort snapshot only, no live-following — see App.tsx's
+  // onDidActivePanelChange subscription in onReady below).
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [activePanelId, setActivePanelId] = useState<string | null>(null);
 
   // ── Theme (E1) ────────────────────────────────────────────────────────────
   // Applied via `data-theme` on <html> so index.css's [data-theme] blocks take
@@ -330,6 +461,8 @@ export function App(): JSX.Element {
     (event: DockviewReadyEvent) => {
       apiRef.current = event.api;
       const api = event.api;
+      setActivePanelId(api.activePanel?.id ?? null);
+      api.onDidActivePanelChange((changeEvent) => setActivePanelId(changeEvent.panel?.id ?? null));
       // Test seam: e2e drives programmatic panel moves through this handle. dockview's
       // mouse drag is native HTML5 DnD (not Playwright-drivable); panel.api.moveTo(...)
       // uses the identical move engine a drag invokes.
@@ -528,6 +661,15 @@ export function App(): JSX.Element {
         <button
           className="btn btn-split"
           onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
+          onClick={() => setFilesOpen((open) => !open)}
+          title="Toggle file explorer"
+          data-testid="btn-toggle-files"
+        >
+          Files
+        </button>
+        <button
+          className="btn btn-split"
+          onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
           onClick={() => {
             setStatsOpen((open) => !open);
             setPairingOpen(false); // same status-drawer slot (right:0) — only one at a time
@@ -578,14 +720,23 @@ export function App(): JSX.Element {
       )}
 
       <div className="dock-host">
-        <DockviewReact
-          className="dockview-theme-dark ez-dock"
-          components={components}
-          onReady={onReady}
-          disableFloatingGroups
-        />
+        <SessionBindingContext.Provider value={sessionBindingValue}>
+          <DockviewReact
+            className="dockview-theme-dark ez-dock"
+            components={components}
+            onReady={onReady}
+            disableFloatingGroups
+          />
+        </SessionBindingContext.Provider>
         {statsOpen && <StatusPanel />}
         {pairingOpen && <ConnectionInfoPanel />}
+        {filesOpen && (
+          <FileExplorerPanel
+            activePanelId={activePanelId}
+            onClose={() => setFilesOpen(false)}
+            onOpenTerminalAt={onOpenTerminalAt}
+          />
+        )}
       </div>
 
       {paletteOpen && (

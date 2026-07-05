@@ -10,6 +10,25 @@
  * the renderer: both the batched `PacketBatchFrame`s and the
  * `PacketStatusFrame` status changes.
  *
+ * Mobile packet-tee (M3): a second, later `{type:'add-port'}` message hands
+ * this host ANOTHER port — the mobile mirror's viewer port, brokered by
+ * `PacketCaptureRegistry.addViewerPort()` (see `src/main/packet-mirror.ts`).
+ * Every status/batch frame fans out to every live port, and a late-attaching
+ * port is immediately replayed `lastStatus` so it doesn't sit stuck at
+ * "connecting…" if the desktop's capture already resolved to a status
+ * (including a FAILURE status) before it attached. Because of this, the
+ * handler is registered with `.on('message', ...)` rather than the original
+ * `.once` — the init port's early-return failure paths (`npcap-missing`/
+ * `access-denied`/`error`) must still leave the utilityProcess's message loop
+ * alive for a late `add-port` to arrive; `.once` would have torn the listener
+ * down entirely after the first message.
+ *
+ * The `init` port (`ports[0]`) is treated as PRIMARY: only ITS `close` tears
+ * capture down (mirrors the original single-port semantics — the desktop
+ * owns start/stop). A later-attached viewer port's `close` only prunes that
+ * one port from the fan-out list; it never affects capture or the other
+ * ports.
+ *
  * SECURITY: header-only capture — src/dst IP, protocol name, and total frame
  * length ONLY. Payload bytes are read into the libpcap buffer (required to
  * decode headers) but never copied into a PacketRow, logged, or written to
@@ -29,7 +48,7 @@
  */
 
 import type { MessagePortMain } from 'electron';
-import type { PacketCaptureFrame, PacketRow } from '../shared/ipc';
+import type { PacketCaptureFrame, PacketCaptureStatus, PacketRow, PacketStatusFrame } from '../shared/ipc';
 import { PACKET_FLUSH_INTERVAL_MS, PACKET_RING_CAPACITY, PacketRingBuffer } from './packet-ring-buffer';
 
 type ElectronMsgEvent = { data: unknown; ports: ReadonlyArray<unknown> };
@@ -66,6 +85,15 @@ interface CapStatic {
   findDevice(): string | undefined;
 }
 
+// ── Multi-port fan-out (M3) ──────────────────────────────────────────────────
+const ports: MessagePortMain[] = [];
+/** Last status broadcast (if any) — replayed to a late-attaching port immediately. */
+let lastStatus: PacketStatusFrame | null = null;
+let initialized = false;
+/** Reassigned once real capture starts; a no-op before then (nothing to tear
+ * down if `cap` never loaded or the device never opened). */
+let stopCapture: () => void = () => undefined;
+
 function send(port: MessagePortMain, frame: PacketCaptureFrame): void {
   try {
     port.postMessage(frame);
@@ -74,8 +102,44 @@ function send(port: MessagePortMain, frame: PacketCaptureFrame): void {
   }
 }
 
-process.parentPort.once('message', (event: ElectronMsgEvent) => {
+function broadcastStatus(status: PacketCaptureStatus): void {
+  lastStatus = { type: 'status', status };
+  for (const port of ports) send(port, lastStatus);
+}
+
+function broadcastRows(rows: PacketRow[]): void {
+  const frame: PacketCaptureFrame = { type: 'packets', rows };
+  for (const port of ports) send(port, frame);
+}
+
+/** Register a newly-attached port: replay the last known status (if any) so it
+ * never sits stuck at "connecting…", and prune it from `ports` on close. */
+function addPort(port: MessagePortMain, isPrimary: boolean): void {
+  ports.push(port);
+  if (lastStatus) send(port, lastStatus);
+  port.on('close', () => {
+    const idx = ports.indexOf(port);
+    if (idx !== -1) ports.splice(idx, 1);
+    if (isPrimary) stopCapture();
+  });
+}
+
+process.parentPort.on('message', (event: ElectronMsgEvent) => {
+  const data = event.data as { type?: string } | undefined;
+
+  if (data?.type === 'add-port') {
+    const port = event.ports[0] as unknown as MessagePortMain;
+    addPort(port, false);
+    return;
+  }
+
+  // Only the FIRST message (`{type:'init'}`) runs capture setup — a second one
+  // is unexpected and ignored (`add-port` above is handled every time).
+  if (initialized) return;
+  initialized = true;
+
   const port = event.ports[0] as unknown as MessagePortMain;
+  addPort(port, true);
 
   let cap: CapModule;
   try {
@@ -84,15 +148,15 @@ process.parentPort.once('message', (event: ElectronMsgEvent) => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     cap = require('cap') as CapModule;
   } catch {
-    send(port, { type: 'status', status: 'npcap-missing' });
-    return;
+    broadcastStatus('npcap-missing');
+    return; // `.on` (not `.once`) keeps the message loop alive for a late add-port.
   }
 
   // `Cap.findDevice()` with no argument returns the first non-loopback device
   // (cap's own default-device heuristic).
   const device = cap.Cap.findDevice();
   if (!device) {
-    send(port, { type: 'status', status: 'error' });
+    broadcastStatus('error');
     return;
   }
 
@@ -110,7 +174,7 @@ process.parentPort.once('message', (event: ElectronMsgEvent) => {
     // failed — the spike's designated meaning for this failure mode is a
     // permissions restriction (some Npcap installs restrict capture to
     // admin), not re-diagnosed further here.
-    send(port, { type: 'status', status: 'access-denied' });
+    broadcastStatus('access-denied');
     return;
   }
 
@@ -137,12 +201,12 @@ process.parentPort.once('message', (event: ElectronMsgEvent) => {
 
   const flushTimer = setInterval(() => {
     const rows = ring.drain();
-    if (rows.length > 0) send(port, { type: 'packets', rows });
+    if (rows.length > 0) broadcastRows(rows);
   }, PACKET_FLUSH_INTERVAL_MS);
 
-  send(port, { type: 'status', status: 'capturing' });
+  broadcastStatus('capturing');
 
-  const stop = (): void => {
+  stopCapture = (): void => {
     clearInterval(flushTimer);
     try {
       c.close();
@@ -150,5 +214,4 @@ process.parentPort.once('message', (event: ElectronMsgEvent) => {
       // Already closed / device gone — nothing more to do.
     }
   };
-  port.on('close', stop);
 });

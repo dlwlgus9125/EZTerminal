@@ -7,9 +7,14 @@ const ROOT = path.resolve(__dirname, '..');
 // `out/<productName>-<platform>-<arch>/<productName>(.exe)`.
 const PRODUCT = 'EZTerminal';
 
+// Mirrors forge.config.ts's `outDir: process.env.EZ_OUT_DIR` (default stays
+// `out/` — EZ_OUT_DIR exists because a stale handle from another session can
+// EBUSY-lock out/EZTerminal-win32-x64).
+const OUT_DIR = process.env.EZ_OUT_DIR ?? 'out';
+
 /** Absolute path to the packaged executable for the current platform/arch. */
 export function packagedExePath(): string {
-  const dir = path.join(ROOT, 'out', `${PRODUCT}-${process.platform}-${process.arch}`);
+  const dir = path.join(ROOT, OUT_DIR, `${PRODUCT}-${process.platform}-${process.arch}`);
   const exe =
     process.platform === 'win32'
       ? `${PRODUCT}.exe`

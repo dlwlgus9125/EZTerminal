@@ -37,6 +37,37 @@ export const PTY_HIGH_WATER = 1024 * 1024;
 export const PTY_LOW_WATER = 256 * 1024;
 
 /**
+ * M2 mirroring (T2.2d/e, Critic C4): a `pty`-shape run may be observed by more
+ * than one port — the initiator (above, unchanged) plus any number of non-
+ * initiating `attach-run` mirrors. Two properties matter: a late attacher
+ * still sees recent output (bounded scrollback ring, replay-then-live), and a
+ * SLOW mirror can never stall/gate the primary (its own lag only ever drops
+ * ITS OWN future bytes — never queued, never affects the primary's pause).
+ */
+/** Bounded scrollback ring capacity (oldest bytes drop first) — an `attach()`
+ * replays exactly this much recent output before tee-ing live. */
+export const PTY_SCROLLBACK_RING_BYTES = 256 * 1024;
+/** Max concurrent `attach()` subscribers — the next `attach()` is rejected (null). */
+export const PTY_ATTACH_CAP = 4;
+/** A subscriber's OWN pause/resume thresholds — independent of the primary's
+ * `PTY_HIGH_WATER`/`PTY_LOW_WATER` above, which are untouched by attach traffic. */
+export const PTY_ATTACH_HIGH_WATER = 1024 * 1024;
+export const PTY_ATTACH_LOW_WATER = 256 * 1024;
+
+/** Returned by {@link PtySession.attach}. `replay` is the ring's contents AT
+ * attach time; live bytes stream via the `onData` callback passed to `attach`
+ * afterward, dropped (not queued) whenever this subscriber's own unacked-byte
+ * count is over `PTY_ATTACH_HIGH_WATER`, resuming once it acks back down to
+ * `PTY_ATTACH_LOW_WATER`. */
+export interface PtyAttachHandle {
+  readonly replay: Uint8Array;
+  /** Cumulative bytes this subscriber has flushed — same monotonic-ack shape as `PtySession.ack`. */
+  ack(bytes: number): void;
+  /** Stop receiving further live data and free the subscriber slot. Idempotent. */
+  detach(): void;
+}
+
+/**
  * Adaptive-render trigger detector (Phase 3, M0a-confirmed trigger set —
  * .omc/research/pty-signal-measurements.md §7). Fires ONCE, on the FIRST
  * high-confidence "about to read interactive input" DEC private-mode SET
@@ -96,6 +127,12 @@ export interface PtySession {
   ack(bytes: number): void;
   /** Tear down: kill the PTY + release the source. Idempotent. */
   dispose(): void;
+  /**
+   * M2 mirroring: attach a non-initiating observer. Returns `null` once
+   * `PTY_ATTACH_CAP` subscribers are already attached, or once the session
+   * has already settled/disposed (no zombie subscribers).
+   */
+  attach(onData: (bytes: Uint8Array) => void): PtyAttachHandle | null;
 }
 
 /**
@@ -118,6 +155,40 @@ export function runPtySession(
   let sent = 0;
   let acked = 0;
   let paused = false;
+
+  // M2 mirroring (T2.2d/e): bounded scrollback ring (oldest bytes drop first,
+  // always keeping at least the newest chunk even if it alone exceeds the
+  // cap) + per-`attach()` subscribers, each paced independently of `sent`/
+  // `acked`/`paused` above (a slow subscriber only ever drops ITS OWN future
+  // bytes — never queued, never touches `pty.pause()`/`pty.resume()`).
+  interface AttachSubscriber {
+    readonly onData: (bytes: Uint8Array) => void;
+    sent: number;
+    acked: number;
+    paused: boolean;
+  }
+  const attachSubscribers = new Set<AttachSubscriber>();
+  const ring: Uint8Array[] = [];
+  let ringBytes = 0;
+
+  const appendToRing = (data: Uint8Array): void => {
+    ring.push(data);
+    ringBytes += data.byteLength;
+    while (ringBytes > PTY_SCROLLBACK_RING_BYTES && ring.length > 1) {
+      const dropped = ring.shift();
+      if (dropped) ringBytes -= dropped.byteLength;
+    }
+  };
+
+  const concatRing = (): Uint8Array => {
+    const out = new Uint8Array(ringBytes);
+    let offset = 0;
+    for (const c of ring) {
+      out.set(c, offset);
+      offset += c.byteLength;
+    }
+    return out;
+  };
 
   const pty = data.spawn(clampDim(cols), clampDim(rows));
 
@@ -171,6 +242,16 @@ export function runPtySession(
       emit({ type: 'pty-render-upgrade' });
     }
     emit({ type: 'pty-data', data: bytes });
+    appendToRing(bytes);
+    // Tee to every attach subscriber independently — a paused one just misses
+    // this chunk (dropped, not queued); it never affects the primary's own
+    // pause below or any OTHER subscriber's delivery (no head-of-line block).
+    for (const sub of attachSubscribers) {
+      if (sub.paused) continue;
+      sub.onData(bytes);
+      sub.sent += bytes.byteLength;
+      if (sub.sent - sub.acked > PTY_ATTACH_HIGH_WATER) sub.paused = true;
+    }
     if (!paused && sent - acked > PTY_HIGH_WATER) {
       paused = true;
       pty.pause();
@@ -207,6 +288,24 @@ export function runPtySession(
       settled = true;
       resumeThenKill();
       cleanup();
+      attachSubscribers.clear();
+    },
+    attach(onData: (bytes: Uint8Array) => void): PtyAttachHandle | null {
+      if (settled) return null;
+      if (attachSubscribers.size >= PTY_ATTACH_CAP) return null;
+      const sub: AttachSubscriber = { onData, sent: 0, acked: 0, paused: false };
+      attachSubscribers.add(sub);
+      return {
+        replay: concatRing(),
+        ack(bytes: number): void {
+          if (settled || !Number.isFinite(bytes)) return;
+          if (bytes > sub.acked) sub.acked = Math.min(bytes, sub.sent);
+          if (sub.paused && sub.sent - sub.acked <= PTY_ATTACH_LOW_WATER) sub.paused = false;
+        },
+        detach(): void {
+          attachSubscribers.delete(sub);
+        },
+      };
     },
   };
 }

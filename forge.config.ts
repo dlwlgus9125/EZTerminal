@@ -62,8 +62,8 @@ const config: ForgeConfig = {
   outDir: process.env.EZ_OUT_DIR,
   packagerConfig: {
     windowsSign,
-    // App identity (B-M1). icon.ico is a generated PLACEHOLDER until real art
-    // lands — regenerate with `node scripts/generate-placeholder-icon.mjs`.
+    // App identity (B-M1, real art landed M4a). icon.ico is generated from
+    // appicon.png — regenerate with `node scripts/generate-app-icon.mjs`.
     // electron-packager embeds it into the exe via rcedit, so `pnpm package`
     // fails loudly if the .ico is malformed.
     icon: './assets/icon',

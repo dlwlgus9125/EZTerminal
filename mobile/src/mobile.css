@@ -14,6 +14,11 @@ body,
 #root {
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
+  /* Cutout/gesture-nav depth (mobile-parity plan D7) — mostly 0 on the
+   * emulator (no notch), real insets only show up on a physical device. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
 }
 
 /* ── Connect screen ─────────────────────────────────────────────────────── */
@@ -21,12 +26,25 @@ body,
 .connect-screen {
   display: flex;
   flex-direction: column;
-  gap: 16px;
   padding: 24px;
-  max-width: 420px;
-  margin: 0 auto;
   justify-content: center;
   min-height: 100%;
+}
+
+/* The actual card — kept separate from `.connect-screen`'s full-height
+ * centering wrapper so the border/background only wrap the form, not the
+ * whole screen edge-to-edge. */
+.connect-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 24px;
+  border-radius: 12px;
+  border: 1px solid var(--term-border, #444);
+  background: var(--term-bg-raised, #161616);
 }
 
 .connect-title {
@@ -122,12 +140,15 @@ body,
   height: 100%;
 }
 
-.mobile-session-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.stats-btn {
+  margin-left: auto;
+  font-size: 1.1rem;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--term-border-faint, #222);
+}
+
+.theme-btn {
+  font-size: 1.1rem;
+  padding: 8px 12px;
 }
 
 .mobile-session-dead-banner {
@@ -170,7 +191,489 @@ body,
 /* Larger touch targets than the mouse-sized desktop defaults throughout. */
 .mobile-session-view .btn,
 .session-switcher .btn,
-.connect-screen .btn {
+.connect-screen .btn,
+.mobile-stats-view .btn,
+.mobile-workspace .btn {
   min-height: 40px;
   padding: 10px 14px;
+}
+
+/* ── Stats view (M2 temporary full-screen overlay — M5's MobileWorkspace will
+ * own proper tab-bar integration; the `status-*` section classes it renders
+ * with come from the desktop's index.css, imported wholesale by main.tsx) ── */
+
+.mobile-stats-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.mobile-stats-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--term-border-faint, #222);
+}
+
+.mobile-stats-tabs {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+}
+
+.mobile-stats-tab {
+  flex: 1;
+  min-height: 40px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--term-border, #444);
+  background: var(--term-bg-inset, #1c1c1c);
+  color: var(--term-fg, inherit);
+  font-family: inherit;
+}
+
+.mobile-stats-tab--active {
+  border-color: var(--term-green, #29d398);
+  color: var(--term-fg-bright, inherit);
+  background: var(--term-bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+.mobile-stats-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* Summary tab only (D7): reflows CPU/MEM/NET/DISK/PROC sections from a single
+ * column (cover-screen width) to an auto-fit grid (unfolded main screen ends
+ * up ~2 columns; rotation just reflows) — no layout branches, no media
+ * queries. The 연결/캡처 tabs stay single-section, so `.mobile-stats-body`'s
+ * own flex-column above is what renders those unchanged. */
+.mobile-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+/* ── Matrix CRT scanlines ────────────────────────────────────────────────── */
+
+/* Verbatim copy of index.css's `[data-theme='matrix'] .app::after` (desktop
+ * has no #root — retargeted here since mobile's root element is #root, not
+ * .app; adding an .app class would drag in the desktop's 100vh layout). */
+[data-theme='matrix'] #root::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 20, 8, 0.22) 3px,
+    rgba(0, 0, 0, 0) 4px
+  );
+}
+
+/* ── Theme menu (bottom sheet) ───────────────────────────────────────────── */
+
+.theme-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.theme-menu-sheet {
+  width: 100%;
+  max-width: 720px;
+  margin-inline: auto;
+  background: var(--term-bg-raised, #161616);
+  border: 1px solid var(--term-border, #444);
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  padding: 16px;
+}
+
+.theme-menu-title {
+  margin: 0 0 12px;
+  font-size: 1rem;
+  color: var(--term-fg-bright, inherit);
+}
+
+.theme-menu-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.theme-menu-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--term-border-faint, #222);
+  background: var(--term-bg-inset, #1c1c1c);
+  color: var(--term-fg, inherit);
+  font-family: inherit;
+  font-size: 0.95rem;
+  text-align: left;
+}
+
+.theme-menu-option--active {
+  border-color: var(--term-green, #29d398);
+}
+
+.theme-menu-swatch {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--term-border, #444);
+}
+
+.theme-menu-swatch-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.theme-menu-label {
+  flex: 1;
+}
+
+.theme-menu-check {
+  color: var(--term-green, #29d398);
+}
+
+/* ── Mobile workspace (M5: multi-session tabs + keep-alive) ─────────────── */
+
+.mobile-workspace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.workspace-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--term-border-faint, #222);
+  background: var(--term-bg-raised, #161616);
+}
+
+/* Keep-alive: an inactive tab is hidden, never unmounted (see
+ * MobileWorkspace.tsx's module doc) — display:none is toggled inline per tab. */
+.tab-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Tab strip ───────────────────────────────────────────────────────────── */
+
+.tab-strip {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.tab-pill {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 2px;
+  padding: 4px 4px 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--term-border, #444);
+  background: var(--term-bg-inset, #1c1c1c);
+}
+
+.tab-pill--active {
+  border-color: var(--term-green, #29d398);
+}
+
+.tab-pill-label {
+  padding: 4px 2px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  color: var(--term-fg, inherit);
+  background: transparent;
+  border: none;
+  font-family: inherit;
+}
+
+.tab-pill-close {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 2px 6px;
+  font-size: 0.8rem;
+  background: transparent;
+  border: none;
+  color: var(--term-fg, inherit);
+}
+
+/* ── Session switcher: fixed bottom-sheet variant (the `☰` convenience
+ * surface used while tabs already exist — the zero-tab 'page' variant reuses
+ * `.session-switcher` in normal flow with no wrapper) ──────────────────── */
+
+.session-switcher-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.session-switcher-sheet {
+  width: 100%;
+  max-width: 720px;
+  margin-inline: auto;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--term-bg-raised, #161616);
+  border: 1px solid var(--term-border, #444);
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+}
+
+/* ── Mobile file view (file-explorer plan, M4) — full-screen overlay, same
+   shape as `.mobile-stats-view`; no safe-area handling of its own (`#root`'s
+   own padding already covers insets — see mobile.css's module doc). ─────── */
+
+.mobile-file-view,
+.mobile-file-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.mobile-file-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--term-border-faint, #222);
+}
+
+.mobile-file-path-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  border-radius: 6px;
+  border: 1px solid var(--term-border, #444);
+  background: var(--term-bg-inset, #1c1c1c);
+  color: var(--term-fg, inherit);
+}
+
+.mobile-file-error {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  color: var(--term-red, #ff4d5e);
+}
+
+.mobile-file-notice,
+.mobile-file-progress {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  color: var(--term-amber, #e5b567);
+}
+
+.mobile-file-toast {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  color: var(--term-green, #29d398);
+}
+
+.mobile-file-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* >=44px touch target (Apple/Android guidance) — bigger than the mouse-sized
+   desktop drawer's row height. */
+.mobile-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--term-border-faint, #222);
+}
+
+.mobile-file-icon {
+  flex: none;
+  color: var(--term-fg-faint, #888);
+}
+
+.mobile-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-file-size {
+  flex: none;
+  font-size: 0.8rem;
+  color: var(--term-fg-faint, #888);
+}
+
+.mobile-file-viewer-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.95rem;
+}
+
+.mobile-file-truncated {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  color: var(--term-amber, #e5b567);
+  border-bottom: 1px solid var(--term-border-faint, #222);
+}
+
+.mobile-file-viewer-content {
+  flex: 1;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  font-family: inherit;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Long-press action sheet — same bottom-sheet chrome/z-index as `.theme-menu-*`. */
+.mobile-file-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.mobile-file-sheet {
+  width: 100%;
+  max-width: 720px;
+  margin-inline: auto;
+  background: var(--term-bg-raised, #161616);
+  border: 1px solid var(--term-border, #444);
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mobile-file-sheet-item {
+  min-height: 44px;
+  padding: 10px 14px;
+  text-align: left;
+  font-family: inherit;
+  font-size: 0.95rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--term-fg, inherit);
+}
+
+/* Delete confirmation reuses the sheet backdrop but centers a small card
+   instead of docking to the bottom. */
+.mobile-file-confirm-box {
+  margin: auto;
+  max-width: 320px;
+  padding: 20px;
+  border-radius: 12px;
+  background: var(--term-bg-raised, #161616);
+  border: 1px solid var(--term-border, #444);
+  text-align: center;
+}
+
+.mobile-file-confirm-box p {
+  margin: 0 0 16px;
+  font-size: 0.95rem;
+  color: var(--term-fg-bright, inherit);
+}
+
+.mobile-file-confirm-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.files-btn {
+  font-size: 1.1rem;
+  padding: 8px 12px;
+}
+
+/* ── Upload (file-explorer plan, M5) ────────────────────────────────────── */
+
+.mobile-file-hidden-input {
+  display: none;
+}
+
+.mobile-upload-list {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--term-border-faint, #222);
+}
+
+.mobile-upload-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 14px;
+  font-size: 0.82rem;
+}
+
+.mobile-upload-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-upload-status {
+  flex: none;
+  color: var(--term-fg-faint, #888);
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-upload-status--done {
+  color: var(--term-green, #29d398);
+}
+
+.mobile-upload-status--failed {
+  color: var(--term-red, #ff4d5e);
 }

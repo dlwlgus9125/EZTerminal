@@ -5,6 +5,7 @@
  * framed streaming back via dedicated MessagePort → renderer. (architecture §3)
  */
 import type { LayoutEnvelope, StartupPref, ThemeName } from './layout-schema';
+import type { FileListResult, FileOpResult, FileReadTextResult } from './files';
 
 /** The single key under which the preload bridge is exposed on `window`. */
 export const BRIDGE_KEY = 'ezterminal' as const;
@@ -261,6 +262,10 @@ export interface RunMessage {
   readonly commandText: string;
   /** The session this run executes in. Must already exist (create-session first). */
   readonly sessionId: string;
+  /** Caller-minted id naming this run (M2 mirroring) — lets a LATER `attach-run`
+   * find this same execution, and lets the interpreter announce `run-started`
+   * back to main correlated to it. */
+  readonly runId: string;
 }
 
 /** Create a new shell session. Interpreter mints the id + resolves the cwd (Codex B5). */
@@ -276,6 +281,19 @@ export interface CreateSessionMessage {
 export interface DestroySessionMessage {
   readonly type: 'destroy-session';
   readonly sessionId: string;
+}
+
+/**
+ * Attach a NON-INITIATING observer port to an existing run (M2 mirroring —
+ * see `EzTerminalApi.attachRun`). Carries the dedicated port as transfer,
+ * same as `RunMessage`. An unknown/already-ended `runId` gets a terminal
+ * `error` frame and the port closed (see `ExecutionSession.attach`) rather
+ * than resurrecting anything — mirrors `RunMessage`'s "never lazily create"
+ * discipline (Codex B1) for runs instead of sessions.
+ */
+export interface AttachRunMessage {
+  readonly type: 'attach-run';
+  readonly runId: string;
 }
 
 // ── Script host broker (E4 §6.1) ─────────────────────────────────────────────
@@ -343,6 +361,7 @@ export type MainToInterpreter =
   | RunMessage
   | CreateSessionMessage
   | DestroySessionMessage
+  | AttachRunMessage
   | ScriptHostReadyMessage
   | ScriptHostErrorMessage
   | ScriptHostExitMessage
@@ -354,6 +373,17 @@ export interface SessionCreatedMessage {
   readonly requestId: string;
   readonly sessionId: string;
   readonly cwd: string;
+}
+
+/**
+ * interpreter -> main: a run just began (M2 mirroring) — main fans this out
+ * as the `run-started` IPC push (desktop windows) and WS broadcast (mobile),
+ * same fields as `RunStartedInfo` (the renderer-facing shape) but named
+ * distinctly here since this crosses the main<->interpreter boundary, not
+ * the preload bridge.
+ */
+export interface InterpreterRunStartedMessage extends RunStartedInfo {
+  readonly type: 'run-started';
 }
 
 /** main -> interpreter: the host forked; its RPC port arrives via event.ports[0]. */
@@ -378,6 +408,7 @@ export interface ScriptHostExitMessage {
 
 export type InterpreterToMain =
   | SessionCreatedMessage
+  | InterpreterRunStartedMessage
   | SpawnScriptHostMessage
   | KillScriptHostMessage
   | KnownHostCheckMessage
@@ -387,6 +418,26 @@ export type InterpreterToMain =
 export interface SessionInfo {
   readonly sessionId: string;
   readonly cwd: string;
+}
+
+// ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ─────
+// A session/run may originate from ANY connected surface (another desktop
+// tab, another desktop window, or a remote mobile client). `listSessions` +
+// `onSessionAdded`/`onSessionRemoved` let a renderer observe the full set
+// live (seed via `listSessions`, then stay current via the two pushes —
+// same seed-then-subscribe shape as `getStatsHistory`/`onStatsUpdate`).
+// `onRunStarted` announces a run the moment it begins, in any session; a
+// mirroring observer answers it with `attachRun` to receive that run's
+// frame stream. Both pushes are unconditional broadcasts (including runs/
+// sessions THIS window itself just started) — the caller distinguishes its
+// own echo, since it already has the id from its own local call.
+
+/** Announces a run the instant it starts, before any port is brokered — a
+ * mirroring observer uses `sessionId`/`runId` to call `attachRun`. */
+export interface RunStartedInfo {
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly commandText: string;
 }
 
 // ── System stats overlay panel (status-overlay-panel, rev6/Option A″) ───────
@@ -579,4 +630,43 @@ export interface EzTerminalApi {
   /** Mint + persist a new token — existing connections keep working (the bridge
    * only re-checks the token on new connections); new connections need it. */
   rotateRemoteToken: () => Promise<string>;
+
+  // ── File explorer (file-explorer plan, M1) ────────────────────────────────
+  // Desktop drawer thin passthroughs to main's `FileService`. `''` for a path
+  // means "resolve to the home dir" (see `FileService.listDirectory`).
+  /** List a directory's entries (folders-first, name-sorted, dotfiles included). */
+  listFiles: (path: string) => Promise<FileListResult>;
+  /** Windows drive letters (`A:\`..`Z:\`) to browse from when there's no parent. */
+  listFileRoots: () => Promise<string[]>;
+  /** Read a file for the read-only viewer — binary files come back `isText:false`. */
+  readTextFile: (path: string) => Promise<FileReadTextResult>;
+  createFolder: (dirPath: string, name: string) => Promise<FileOpResult>;
+  renameFile: (path: string, newName: string) => Promise<FileOpResult>;
+  /** Moves to the OS trash only — never a permanent delete. */
+  trashFile: (path: string) => Promise<FileOpResult>;
+  /** Open a file with its OS-registered default app. Desktop-only (no mobile analog). */
+  openFileInApp: (path: string) => Promise<void>;
+  /** Reveal a file in the OS file manager. Desktop-only (no mobile analog). */
+  revealFileInExplorer: (path: string) => Promise<void>;
+
+  // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
+  /** Every currently-live session, oldest-created first (mirrors `SessionDirectory.list()`). */
+  listSessions: () => Promise<readonly SessionInfo[]>;
+  /** A session now exists, any origin (including this window's own — see the
+   * echo note above). Returns an unsubscribe. */
+  onSessionAdded: (listener: (session: SessionInfo) => void) => () => void;
+  /** A session is gone, any origin. Returns an unsubscribe. */
+  onSessionRemoved: (listener: (sessionId: string) => void) => () => void;
+  /** A run started in some session, any origin — call `attachRun` to mirror it. Returns an unsubscribe. */
+  onRunStarted: (listener: (info: RunStartedInfo) => void) => () => void;
+  /**
+   * Attach as a NON-INITIATING observer to a run: receives the same
+   * `InterpreterFrame` stream `runCommand` does and may send `pty-input`/
+   * `pty-resize` controls, but this side alone closing never tears the run
+   * down for the initiator (last-port-close semantics owned by main, T2.2c).
+   * Mirrors `runCommand`'s port-transfer shape exactly (see its doc above):
+   * resolves once the request is sent; the dedicated port for this `runId`
+   * arrives asynchronously via a persistent `attach-port` window message.
+   */
+  attachRun: (sessionId: string, runId: string) => Promise<void>;
 }

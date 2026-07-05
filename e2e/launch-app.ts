@@ -13,13 +13,21 @@ export const MAIN_ENTRY = path.resolve(__dirname, '..', '.vite', 'build', 'main.
  *
  * Pass `userDataDir` to deliberately SHARE state across relaunches — the
  * layout-persistence restart-restore tests do exactly that.
+ *
+ * `extraEnv` overrides/adds env vars for this launch — e.g. session-mirror.spec.ts
+ * sets `EZTERMINAL_REMOTE_PORT` to a dedicated test port so it never binds the
+ * same port a real, already-running desktop instance would use.
  */
-export function launchApp(userDataDir?: string): Promise<ElectronApplication> {
+export function launchApp(
+  userDataDir?: string,
+  extraEnv: Record<string, string> = {},
+): Promise<ElectronApplication> {
   const dir = userDataDir ?? mkdtempSync(path.join(tmpdir(), 'ezterm-e2e-'));
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
   }
   env.EZTERMINAL_USER_DATA_DIR = dir;
+  Object.assign(env, extraEnv);
   return electron.launch({ args: [MAIN_ENTRY], env });
 }

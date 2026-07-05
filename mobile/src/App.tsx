@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ConnectScreen, type SavedConnection } from './ConnectScreen';
-import { SessionSwitcher } from './SessionSwitcher';
-import { MobileSessionView } from './MobileSessionView';
+import { MobileWorkspace } from './MobileWorkspace';
 import { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
 const STORAGE_KEY = 'ezterminal-mobile-connection';
@@ -46,15 +45,14 @@ function persistConnection(conn: SavedConnection): void {
 }
 
 // App — the mobile shell's top-level state machine: disconnected (show
-// ConnectScreen) -> connecting -> connected (SessionSwitcher, then a selected
-// MobileSessionView). Replaces the desktop's dockview host (App.tsx there) —
+// ConnectScreen) -> connecting -> connected (MobileWorkspace, M5's tabbed
+// authed shell). Replaces the desktop's dockview host (App.tsx there) —
 // nothing here is dockview-specific, so this file has no desktop analogue.
 export function App(): JSX.Element {
   const [transport, setTransport] = useState<WsEzTerminalTransport | null>(null);
   const [authed, setAuthed] = useState(false);
   const [connectFailed, setConnectFailed] = useState(false);
   const [sessionDead, setSessionDead] = useState(false);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const transportRef = useRef<WsEzTerminalTransport | null>(null);
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -71,7 +69,6 @@ export function App(): JSX.Element {
       clearConnectTimeout();
       setConnectFailed(false);
       setSessionDead(false);
-      setActiveSessionId(null);
 
       const t = new WsEzTerminalTransport({ url, token });
       transportRef.current = t;
@@ -117,7 +114,6 @@ export function App(): JSX.Element {
     transportRef.current = null;
     setTransport(null);
     setAuthed(false);
-    setActiveSessionId(null);
   }, [clearConnectTimeout]);
 
   if (!transport || !authed) {
@@ -142,17 +138,5 @@ export function App(): JSX.Element {
     );
   }
 
-  if (!activeSessionId) {
-    return (
-      <SessionSwitcher transport={transport} onSelect={setActiveSessionId} onDisconnect={disconnect} />
-    );
-  }
-
-  return (
-    <MobileSessionView
-      key={activeSessionId}
-      sessionId={activeSessionId}
-      onBack={() => setActiveSessionId(null)}
-    />
-  );
+  return <MobileWorkspace transport={transport} onDisconnect={disconnect} />;
 }

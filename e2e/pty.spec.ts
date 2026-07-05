@@ -122,8 +122,10 @@ test('AC-3: bare `node` REPL auto-routes to PTY, rendered PLAIN — prompt, eval
   // Node's REPL prompt appears (raw-mode, real TTY behavior — no sigil needed).
   await expect.poll(() => plainText(window), { timeout: 15_000 }).toContain('>');
 
-  // Evaluate an expression through the plain-mode input path (B-R4 minimal keyset).
-  await plainBlock.click();
+  // Evaluate an expression through the plain-mode input path (B-R4 minimal
+  // keyset), which now routes through cmd-input (M1 focus retention) instead
+  // of the output view.
+  await window.getByTestId('cmd-input').click();
   await window.keyboard.type('21 + 21');
   await window.keyboard.press('Enter');
   await expect.poll(() => plainText(window), { timeout: 15_000 }).toContain('42');

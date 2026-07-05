@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { SessionDirectory } from './session-directory';
+import type { SessionInfo } from '../shared/ipc';
 
 describe('SessionDirectory', () => {
   it('starts empty', () => {
@@ -36,10 +37,46 @@ describe('SessionDirectory', () => {
     expect(dir.list().map((s) => s.sessionId)).toEqual(['first', 'second']);
   });
 
-  it('add() with the same sessionId again overwrites (idempotent re-add)', () => {
+  it('add() with an already-tracked sessionId is a no-op — does not overwrite cwd', () => {
     const dir = new SessionDirectory();
     dir.add({ sessionId: 's1', cwd: '/home/a' });
     dir.add({ sessionId: 's1', cwd: '/home/changed' });
-    expect(dir.list()).toEqual([{ sessionId: 's1', cwd: '/home/changed' }]);
+    expect(dir.list()).toEqual([{ sessionId: 's1', cwd: '/home/a' }]);
+  });
+
+  it('add() for an already-tracked sessionId fires onSessionAdded ZERO times (AC4 double-add fix)', async () => {
+    const dir = new SessionDirectory();
+    dir.add({ sessionId: 's1', cwd: '/home/a' });
+    const added: SessionInfo[] = [];
+    dir.onSessionAdded((session) => added.push(session));
+
+    dir.add({ sessionId: 's1', cwd: '/home/a' }); // e.g. main.ts's handler AND remote-bridge.ts's both call add() for the same WS-originated session-created
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(added).toEqual([]);
+  });
+
+  it('a genuinely new add() fires onSessionAdded exactly once', async () => {
+    const dir = new SessionDirectory();
+    const added: SessionInfo[] = [];
+    dir.onSessionAdded((session) => added.push(session));
+
+    dir.add({ sessionId: 's1', cwd: '/home/a' });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(added).toEqual([{ sessionId: 's1', cwd: '/home/a' }]);
+  });
+
+  it('remove() called twice for the same sessionId fires onSessionRemoved exactly once', async () => {
+    const dir = new SessionDirectory();
+    dir.add({ sessionId: 's1', cwd: '/home/a' });
+    const removed: string[] = [];
+    dir.onSessionRemoved((sessionId) => removed.push(sessionId));
+
+    dir.remove('s1');
+    dir.remove('s1'); // redundant second call (e.g. two listeners both reacting to one destroy) must not double-fire
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(removed).toEqual(['s1']);
   });
 });

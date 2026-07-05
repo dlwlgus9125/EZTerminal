@@ -20,8 +20,13 @@ const PRODUCT = 'EZTerminal';
 const platform = process.platform;
 const arch = process.arch;
 
-// Mirrors e2e-packaged/paths.ts packaging layout: out/<Product>-<platform>-<arch>/
-const packagedDir = path.join(ROOT, 'out', `${PRODUCT}-${platform}-${arch}`);
+// Mirrors forge.config.ts's `outDir: process.env.EZ_OUT_DIR` (default stays
+// `out/`) and e2e-packaged/paths.ts's OUT_DIR — same env fallback, so this
+// guard checks wherever THIS run actually packaged to, not always `out/`.
+const OUT_DIR = process.env.EZ_OUT_DIR ?? 'out';
+
+// Mirrors e2e-packaged/paths.ts packaging layout: <OUT_DIR>/<Product>-<platform>-<arch>/
+const packagedDir = path.join(ROOT, OUT_DIR, `${PRODUCT}-${platform}-${arch}`);
 const resourcesDir = path.join(packagedDir, 'resources');
 const unpackedRoot = path.join(resourcesDir, 'app.asar.unpacked');
 const asarFile = path.join(resourcesDir, 'app.asar');

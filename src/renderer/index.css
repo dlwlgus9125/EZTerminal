@@ -501,6 +501,236 @@ body {
   color: var(--term-blue);
 }
 
+/* File explorer drawer (file-explorer plan, M1) — mirrors .status-drawer
+   above but anchored to the LEFT edge (border-right instead of border-left),
+   its own toggle slot (not part of the stats/pairing right-side mutual
+   exclusion). Same width/z-index as .status-drawer.
+
+   z-order ladder for the whole file-explorer stack (M6 audit — verified
+   correct; keep this comment in sync if any of these values ever change,
+   rather than re-deriving the ladder from scratch elsewhere):
+     .palette-overlay (100)        — command palette, above everything
+     .file-context-menu (95)       — right-click menu, above the viewer
+     .file-viewer-overlay (90)     — text viewer
+     .file-confirm-overlay (90)    — delete confirm (same slot as the viewer;
+                                      never shown at the same time — one opens
+                                      from a row click, the other from that
+                                      row's context menu)
+     .file-drawer (60)             — the drawer itself (this rule)
+     .preset-menu (50)             — layout presets dropdown, below the drawer
+   100 > 95 > 90 >= 90 > 60 > 50 holds throughout. */
+.file-drawer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 300px;
+  z-index: 60;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--term-bg-raised);
+  border-right: 1px solid var(--term-border);
+  box-shadow: 6px 0 18px rgba(0, 0, 0, 0.35);
+}
+
+.file-drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--term-border-faint);
+}
+
+.file-path-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.75rem;
+  font-family: inherit;
+  background: var(--term-bg-inset);
+  border: 1px solid var(--term-border);
+  border-radius: 3px;
+  color: var(--term-fg);
+}
+
+.file-path-input:focus {
+  outline: none;
+  border-color: var(--term-green);
+}
+
+.file-error {
+  padding: 0.4rem 0.6rem;
+  font-size: 0.75rem;
+  color: var(--term-red);
+}
+
+.file-binary-notice {
+  padding: 0.4rem 0.6rem;
+  font-size: 0.75rem;
+  color: var(--term-amber);
+}
+
+.file-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.file-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  color: var(--term-fg);
+  cursor: pointer;
+}
+
+.file-entry:hover {
+  background: var(--term-bg-inset);
+  color: var(--term-fg-bright);
+}
+
+.file-entry-icon {
+  flex: 0 0 auto;
+  color: var(--term-fg-faint);
+}
+
+.file-entry-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-entry-size {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  color: var(--term-fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Read-only text viewer overlay (M1) — centered over the dock-host, above the
+   drawer (60) and below the command palette (100); M2's context menu sits
+   above it at 95. */
+.file-viewer-overlay {
+  position: absolute;
+  top: 5%;
+  left: 5%;
+  right: 5%;
+  bottom: 5%;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  background: var(--term-bg-raised);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+}
+
+.file-viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--term-border-faint);
+  font-size: 0.82rem;
+  color: var(--term-fg-bright);
+}
+
+.file-viewer-truncated {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.72rem;
+  color: var(--term-amber);
+  border-bottom: 1px solid var(--term-border-faint);
+}
+
+.file-viewer-content {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0.75rem;
+  overflow: auto;
+  font-family: inherit;
+  font-size: 0.8rem;
+  color: var(--term-fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Right-click context menu (M2) — clones .preset-menu's chrome but is cursor-
+   positioned (`left`/`top` set inline by FileContextMenu.tsx) via `fixed`
+   rather than anchored to a relatively-positioned parent. z-index 95 sits
+   above the viewer (90) and below the command palette (100). */
+.file-context-menu {
+  position: fixed;
+  z-index: 95;
+  min-width: 190px;
+  padding: 0.35rem;
+  background: var(--term-bg-raised);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.file-context-menu-item {
+  text-align: left;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--term-fg);
+  cursor: pointer;
+}
+.file-context-menu-item:hover {
+  border-color: var(--term-green);
+  color: var(--term-fg-bright);
+}
+
+/* Transient action feedback (M2) — "Copied" / "No active terminal", same
+   auto-clearing pattern as ConnectionInfoPanel's copy buttons. */
+.file-toast {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.72rem;
+  color: var(--term-green);
+}
+
+/* Delete confirmation (M2) — centered overlay like the viewer, same z-index
+   (never shown at the same time: the viewer opens from a row click, this
+   from a row's context menu). NEVER a permanent-delete option — trash only. */
+.file-confirm-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+.file-confirm-box {
+  max-width: 240px;
+  padding: 0.9rem 1rem;
+  background: var(--term-bg-raised);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+  text-align: center;
+}
+.file-confirm-box p {
+  margin: 0 0 0.7rem;
+  font-size: 0.82rem;
+  color: var(--term-fg-bright);
+}
+.file-confirm-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
 /* Re-skin dockview's dark theme to the EZTerminal console palette (#0c0c0c). */
 .dockview-theme-dark.ez-dock {
   --dv-group-view-background-color: var(--term-bg);
@@ -1031,15 +1261,9 @@ body {
 }
 
 /* ── PTY plain view (Phase 3 adaptive-render default) ──────────────────────── */
-/* A focusable wrapper around a normal .text-block — keyboard input forwards to
-   the live PTY (PtyBlock.tsx) until/unless the block upgrades to xterm. */
-.pty-plain-block {
-  outline: none;
-}
-.pty-plain-block:focus-visible {
-  outline: 1px solid var(--term-border-faint);
-  outline-offset: 2px;
-}
+/* A wrapper around a normal .text-block — keyboard input routes through
+   cmd-input (TerminalPane.tsx's activePlainPty, M1) until/unless the block
+   upgrades to xterm; this element itself is output-only. */
 .pty-plain-waiting {
   color: var(--term-fg-dim);
   animation: pty-plain-blink 1s step-start infinite;
