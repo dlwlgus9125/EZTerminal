@@ -173,6 +173,17 @@ const config: ForgeConfig = {
           return true;
         },
       });
+
+      // ws (mobile remote-control M0): externalized from the main bundle
+      // (vite.main.config.ts — bundling breaks its bufferutil/utf-8-validate
+      // fallback), so it's absent from the packaged node_modules unless
+      // copied here, same problem as node-pty/ssh2/cap above. Zero runtime
+      // dependencies of its own (package.json has no "dependencies" field —
+      // bufferutil/utf-8-validate are optional peerDependencies, deliberately
+      // not installed), so a plain self-contained copy suffices.
+      const wsSrc = realpathSync(path.join(process.cwd(), 'node_modules', 'ws'));
+      const wsDest = path.join(buildPath, 'node_modules', 'ws');
+      cpSync(wsSrc, wsDest, { recursive: true, dereference: true });
     },
   },
   makers: [

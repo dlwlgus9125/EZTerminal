@@ -66,3 +66,7 @@ dist/
 
 # Claude Code local/personal settings (machine-specific)
 .claude/settings.local.json
+
+# M3 emulator smoke test's own scratch working file (mobile/e2e/smoke.ts
+# deletes it on a clean exit; this guards against a crashed run leaving it)
+mobile/e2e/.ez_e2e_dump.xml

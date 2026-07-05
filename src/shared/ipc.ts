@@ -478,6 +478,18 @@ export interface PacketStatusFrame {
 /** Discriminated union of all frames sent from the capture host to the renderer. */
 export type PacketCaptureFrame = PacketBatchFrame | PacketStatusFrame;
 
+// ── Mobile remote-control pairing (M4) ───────────────────────────────────────
+// The desktop pairing panel needs LAN URLs a phone can dial + the bridge port.
+// Computed main-side from `os.networkInterfaces()` (see remote-connection-info.ts)
+// but the shape is defined here since, like everything else above, it crosses
+// the preload/IPC boundary.
+
+/** LAN connect URLs (`ws://<ip>:<port>`, one per non-internal IPv4 interface) + the bridge port. */
+export interface RemoteConnectionInfo {
+  readonly urls: readonly string[];
+  readonly port: number;
+}
+
 // ── Preload bridge API ────────────────────────────────────────────────────────
 
 export interface EzTerminalApi {
@@ -558,4 +570,13 @@ export interface EzTerminalApi {
   subscribePackets: () => void;
   /** Ask main to kill the live capture host, if any. Idempotent. */
   unsubscribePackets: () => void;
+
+  // ── Mobile remote-control pairing (M4) ────────────────────────────────────
+  /** LAN connect URLs for the mobile pairing panel + the bridge port. */
+  getRemoteConnectionInfo: () => Promise<RemoteConnectionInfo>;
+  /** The remote bridge's current persisted auth token. */
+  getRemoteToken: () => Promise<string>;
+  /** Mint + persist a new token — existing connections keep working (the bridge
+   * only re-checks the token on new connections); new connections need it. */
+  rotateRemoteToken: () => Promise<string>;
 }

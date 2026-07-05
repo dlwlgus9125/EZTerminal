@@ -1,8 +1,9 @@
 # EZTerminal — 다음 세션 이어가기 (Resume Handoff)
 
-> 마지막 작업: 2026-07-04. **결정 없이 진행 가능한 작업 전부 완료** — Stage 0·A·C·D + B(M4만 잔여) +
-> E1 테마·E2 팔레트·E4 스크립팅·E5 SSH + CLI 패리티·번들 ConPTY + **시스템 상태 패널 v1/v2·실시간 패킷 캡처
-> + Matrix(CRT) 테마** 완료 + E6 크로스플랫폼 ps 부분(유닛). HEAD `ba213a7` (main, origin 푸시됨).
+> 마지막 작업: 2026-07-05. **결정 없이 진행 가능한 작업 전부 완료** — Stage 0·A·C·D + B(M4만 잔여) +
+> E1 테마·E2 팔레트·E4 스크립팅·E5 SSH + CLI 패리티·번들 ConPTY + 시스템 상태 패널 v1/v2·실시간 패킷 캡처
+> + Matrix(CRT) 테마 + **모바일 원격 제어(안드로이드 앱, 2026-07-05)** 완료 + E6 크로스플랫폼 ps 부분(유닛).
+> 이전 HEAD `ba213a7` (main). **모바일 원격 제어는 브랜치 `feat/mobile-remote-control`로 커밋·푸시 — PR 병합 대기.**
 > 플랜 원본: `~/.claude/plans/zesty-wiggling-pony.md` (Stage 0→A→B→C→D→E, 실행 로그 포함).
 > **실행 방식(유저 지시): Stage C/E 구현=Sonnet executor 위임, 리드(Fable)=게이트·리뷰·재현검증·커밋.**
 > **원격/CI는 이미 가동**: 저장소 생성·푸시 완료(`github.com/dlwlgus9125/EZTerminal`, **private**), GitHub Actions CI가
@@ -70,17 +71,22 @@
 - **CLI 패리티**(sigil-free 자동 PTY·배치 shim·적응 렌더, verifier PASS AC 10/10) → **터미널 느낌 회복**(TUI 페인 테이크오버·인라인 프롬프트) → **번들 ConPTY**(`useConptyDll` — Win10 구형 ConPTY 스크롤백 결함 해소; kill은 `taskkill` 우회).
 - **시스템 상태 패널 v1/v2**: CPU 코어 그리드·MEM 상세·NET 스파크·연결 목록·DISK/PROC(`systeminformation`) + **실시간 패킷 캡처**(`cap`+Npcap, off-by-default, 전용 `src/packet-capture/` utilityProcess).
 - **Matrix(CRT) 테마**(4번째 빌트인, self-host woff2, 커밋 `ba213a7`).
+- **모바일 원격 제어 (2026-07-05, 브랜치 `feat/mobile-remote-control`)**: 데스크톱을 안드로이드 앱에서 원격 제어(stats 제외). `EzTerminalApi`+MessagePort seam을 WS로 재구현(`src/main/remote-bridge.ts`, 토큰 인증)해 `BlockController`·블록 컴포넌트 **무수정 재사용**. Capacitor 앱(`mobile/`)+페어링 패널(M4)+에뮬레이터 e2e(`mobile/e2e/smoke.ts`). 재연결 auth 워치독으로 half-open 자가치유. 실기기+Tailscale 라이브 검증. **함정: `echo`는 이 셸 명령 아님(→`cmd /c echo hello`)·ws 번들 크래시(vite external)·androidScheme http·usesCleartextTraffic·tslib hoisted·Android SDK는 있으나 ANDROID_HOME 미설정.** 설계: `docs/design/mobile-remote-control-design.md`.
 - **원격/CI**: `github.com/dlwlgus9125/EZTerminal`(private) 푸시, GitHub Actions `windows-2022` 러너로 가동.
 
-## 검증 베이스라인 (로컬 전부 green, 2026-07-04 — HEAD `ba213a7`)
+## 검증 베이스라인 (로컬 전부 green, 2026-07-05 — 모바일 원격 제어 포함)
 ```
 pnpm typecheck   # 0   ← 리드 재현은 항상 여기부터 (E4 때 typecheck 생략 공백 교훈)
-pnpm lint        # 0 (게이트 포함)
-pnpm test        # vitest 372 (상태 패널 v1/v2·패킷 캡처·matrix 포함)
-pnpm e2e         # 73 (launch-app.ts 격리 필수; 상태 패널·패킷 캡처·테마 사이클 포함)
-pnpm test:e2e:packaged  # guard OK + 8 (직결 모듈 스모크; 상태 패널 패키지드는 수동)
+pnpm lint        # 0 (게이트 포함; .eslintrc가 mobile/ 제외)
+pnpm test        # vitest 418 (모바일 브리지 remote-bridge/token-store/protocol/session-directory/connection-info 포함)
+pnpm e2e         # 73 (launch-app.ts 격리 필수)
+pnpm test:e2e:packaged  # guard OK + 8 (직결 모듈 스모크)
 pnpm package / pnpm make # exit 0
-pnpm audit       # 0 vulnerabilities (ssh2 신규 경보 0)
+pnpm audit --prod  # 0 vulnerabilities (전체 audit 7건은 @capacitor/cli>tar dev-only → prod 게이트로 정의)
+# 모바일: pnpm --filter ezterminal-mobile run typecheck  # 0
+#         pnpm --filter ezterminal-mobile run test        # vitest 23 (트랜스포트 + auth 워치독)
+#         pnpm --filter ezterminal-mobile exec vite build  # dist/ OK  → cap sync android → gradlew assembleDebug → APK
+#         mobile/e2e/smoke.ts  # 부팅된 AVD 필요 (ANDROID_HOME=…\Android\Sdk 세팅)
 ```
 > ⚠️ 루트 `appicon.png`는 미추적 무관 파일(E5 무관, predates) — 커밋에서 제외 유지.
 > ⚠️ ssh-session.test의 암호화키 KDF 테스트(bcrypt-pbkdf 실연산)가 병렬 부하 1회 transient

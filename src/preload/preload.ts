@@ -109,6 +109,12 @@ const api: EzTerminalApi = {
   unsubscribePackets: (): void => {
     ipcRenderer.send('packets:unsubscribe');
   },
+
+  // Mobile remote-control pairing (M4): thin invoke wrappers — main computes
+  // everything (LAN IPs, token store access).
+  getRemoteConnectionInfo: () => ipcRenderer.invoke('remote:get-connection-info'),
+  getRemoteToken: () => ipcRenderer.invoke('remote:get-token'),
+  rotateRemoteToken: () => ipcRenderer.invoke('remote:rotate-token'),
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
