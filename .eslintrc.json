@@ -36,6 +36,7 @@
     ".vite/",
     "dist/",
     "playwright-report/",
-    "test-results/"
+    "test-results/",
+    "mobile/"
   ]
 }
