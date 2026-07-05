@@ -5,6 +5,7 @@ import type { FileEntry } from '../../src/shared/files';
 import { uint8ArrayToBase64 } from '../../src/shared/remote-protocol';
 import { useLongPress } from './long-press';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+import { createUploadQueue, type UploadItem } from './upload-queue';
 
 // MobileFileView — full-screen file browser (file-explorer plan, M4). Modeled
 // on MobileStatsView.tsx's structure (a standalone full-screen overlay with
@@ -22,6 +23,20 @@ import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 // `formatSize` is a small local copy of the desktop drawer's
 // (FileExplorerPanel.tsx) — not shared, since sharing it would mean editing
 // that file too, and this milestone's scope is mobile-only.
+//
+// Upload (M5): ONE `upload-queue.ts` instance lives for this component's
+// whole lifetime (`uploadQueueRef`) rather than one per file-picker
+// interaction, so multiple picks in a row still process strictly
+// sequentially through the same queue. Its `deps.uploadFile`/`onChange`
+// closures are created ONCE and read `currentPathRef` (the LIVE viewed
+// directory, for the "refresh on completion" check) through a ref — the
+// same "stable closure, live values via ref" idiom `MobileSessionView.tsx`
+// uses for `onSessionDeadRef`/`onCwdChangeRef`. The upload TARGET directory
+// is different: it's captured at `enqueue` time and travels with each
+// `UploadItem` as its own `dirPath` field (see upload-queue.ts), so a second
+// pick targeting a different folder while an earlier batch is still mid-
+// queue can never retroactively change where that earlier batch's
+// not-yet-started items upload to.
 
 interface MobileFileViewProps {
   readonly transport: WsEzTerminalTransport;
@@ -98,6 +113,12 @@ export function MobileFileView({
   const [renameValue, setRenameValue] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<{ name: string; fullPath: string } | null>(null);
 
+  // Upload (M5) — see the module doc above for the ref-vs-closure shape.
+  const [uploadItems, setUploadItems] = useState<readonly UploadItem[]>([]);
+  const currentPathRef = useRef<string | null>(null);
+  const prevUploadItemsRef = useRef<readonly UploadItem[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const showToast = useCallback((msg: string): void => {
     setToast(msg);
     setTimeout(() => setToast((current) => (current === msg ? null : current)), 1500);
@@ -113,6 +134,7 @@ export function MobileFileView({
     setError(null);
     setRootsMode(false);
     setCurrentPath(result.path);
+    currentPathRef.current = result.path;
     setParent(result.parent);
     setEntries(result.entries);
     setPathInput(result.path);
@@ -126,6 +148,7 @@ export function MobileFileView({
     setError(null);
     setRootsMode(true);
     setCurrentPath(null);
+    currentPathRef.current = null;
     setParent(null);
     setPathInput('');
     setEntries(roots.map((name) => ({ name, kind: 'dir' as const, isSymlink: false, size: 0, mtimeMs: 0 })));
@@ -279,6 +302,49 @@ export function MobileFileView({
     [transport, fullPathFor, showToast],
   );
 
+  // ── Upload (M5) ────────────────────────────────────────────────────────────
+  // See the module doc for why `deps.uploadFile`/`onChange` are created ONCE
+  // and read the live viewed-directory through a ref rather than being
+  // recreated per render. The upload TARGET directory, in contrast, is not a
+  // ref at all — it travels with each `UploadItem` as its own `dirPath`
+  // (captured at `enqueue` time), which is what makes an overlapping second
+  // batch to a different folder safe (see upload-queue.ts).
+  const uploadQueueRef = useRef<ReturnType<typeof createUploadQueue> | null>(null);
+  if (!uploadQueueRef.current) {
+    uploadQueueRef.current = createUploadQueue({
+      uploadFile: (dirPath, name, bytes, onProgress) => transport.uploadFile(dirPath, name, bytes, onProgress),
+      onChange: (nextItems) => {
+        const prevItems = prevUploadItemsRef.current;
+        for (const item of nextItems) {
+          const wasDone = prevItems.find((p) => p.id === item.id)?.status === 'done';
+          if (item.status === 'done' && !wasDone) {
+            console.log('[ez-e2e] files:upload-done', item.finalName, item.size);
+            if (item.dirPath === currentPathRef.current) {
+              void loadPath(currentPathRef.current);
+            }
+          }
+        }
+        prevUploadItemsRef.current = nextItems;
+        setUploadItems(nextItems);
+      },
+    });
+  }
+
+  const handleFilesPicked = useCallback(
+    async (fileList: FileList): Promise<void> => {
+      if (currentPath === null) return;
+      const dirPath = currentPath; // captured AT ENQUEUE TIME
+      const files = await Promise.all(
+        Array.from(fileList).map(async (file) => ({
+          name: file.name,
+          bytes: new Uint8Array(await file.arrayBuffer()),
+        })),
+      );
+      uploadQueueRef.current?.enqueue(files, dirPath);
+    },
+    [currentPath],
+  );
+
   // ── Long-press action sheet ────────────────────────────────────────────────
   // `useLongPress` only reports (x, y); which row fired is tracked separately
   // (set right before delegating to the hook's onPointerDown) since calling a
@@ -351,6 +417,28 @@ export function MobileFileView({
         >
           ＋
         </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={currentPath === null}
+          aria-label="Upload"
+          data-testid="mobile-file-upload-btn"
+        >
+          ⇧
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="mobile-file-hidden-input"
+          onChange={(e) => {
+            const { files } = e.target;
+            if (files && files.length > 0) void handleFilesPicked(files);
+            e.target.value = ''; // allow re-picking the same file(s) again
+          }}
+          data-testid="mobile-file-upload-input"
+        />
         <button type="button" className="btn" onClick={onClose} aria-label="Close" data-testid="mobile-file-close">
           ✕
         </button>
@@ -374,6 +462,28 @@ export function MobileFileView({
       {downloadProgress && (
         <div className="mobile-file-progress" data-testid="mobile-file-progress">
           {downloadProgress.name}: {formatSize(downloadProgress.received)} / {formatSize(downloadProgress.total)}
+        </div>
+      )}
+      {uploadItems.length > 0 && (
+        <div className="mobile-upload-list" data-testid="mobile-upload-list">
+          {uploadItems.map((item) => (
+            <div key={item.id} className="mobile-upload-row" data-testid="mobile-upload-item">
+              {/* Surfaces a server-side collision auto-rename ("report (1).txt") once done. */}
+              <span className="mobile-upload-name">{item.status === 'done' ? item.finalName : item.name}</span>
+              {item.status === 'pending' && <span className="mobile-upload-status">Waiting…</span>}
+              {item.status === 'uploading' && (
+                <span className="mobile-upload-status">
+                  {formatSize(item.receivedBytes)} / {formatSize(item.size)}
+                </span>
+              )}
+              {item.status === 'done' && (
+                <span className="mobile-upload-status mobile-upload-status--done">Done</span>
+              )}
+              {item.status === 'failed' && (
+                <span className="mobile-upload-status mobile-upload-status--failed">{item.error}</span>
+              )}
+            </div>
+          ))}
         </div>
       )}
 

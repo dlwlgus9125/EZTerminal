@@ -633,3 +633,47 @@ body,
   font-size: 1.1rem;
   padding: 8px 12px;
 }
+
+/* ── Upload (file-explorer plan, M5) ────────────────────────────────────── */
+
+.mobile-file-hidden-input {
+  display: none;
+}
+
+.mobile-upload-list {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--term-border-faint, #222);
+}
+
+.mobile-upload-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 14px;
+  font-size: 0.82rem;
+}
+
+.mobile-upload-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-upload-status {
+  flex: none;
+  color: var(--term-fg-faint, #888);
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-upload-status--done {
+  color: var(--term-green, #29d398);
+}
+
+.mobile-upload-status--failed {
+  color: var(--term-red, #ff4d5e);
+}

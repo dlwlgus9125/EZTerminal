@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WsEzTerminalTransport, type CreateSocket, type WsLike } from './ws-ezterminal';
 import { BlockController } from '../../../src/renderer/block-controller';
 import type { SystemStatsSnapshot } from '../../../src/shared/ipc';
-import { uint8ArrayToBase64, type RemotePacketFrame } from '../../../src/shared/remote-protocol';
+import { FILE_CHUNK_BYTES } from '../../../src/shared/files';
+import { base64ToUint8Array, uint8ArrayToBase64, type RemotePacketFrame } from '../../../src/shared/remote-protocol';
 
 // ── Fake socket ──────────────────────────────────────────────────────────────
 
@@ -990,5 +991,178 @@ describe('WsEzTerminalTransport — file explorer (M4)', () => {
     await expect(rootsPromise).resolves.toEqual([]);
     await expect(opPromise).resolves.toEqual({ ok: false, error: expect.any(String) });
     await expect(readPromise).resolves.toEqual({ ok: false, error: expect.any(String) });
+  });
+});
+
+describe('WsEzTerminalTransport — upload (M5)', () => {
+  // Unlike the read path (purely reactive: an incoming chunk synchronously
+  // triggers an ack send, both inside the SAME synchronous message-handler
+  // call), `uploadFile` is an async function — its continuation after each
+  // `await` only resumes on a microtask tick, not synchronously within
+  // `triggerMessage`. Every step below that expects the transport to have
+  // reacted (sent the next chunk/commit, or settled the promise) needs a
+  // `flush()` first. A macrotask flush (not just one `Promise.resolve()`)
+  // is used so this isn't sensitive to exactly how many microtask hops a
+  // given `await` chain needs.
+  const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  function sentKinds(sockets: FakeSocket[]): string[] {
+    return sockets[0].sent.map((s) => (JSON.parse(s) as { kind: string }).kind);
+  }
+
+  it('uploads in lockstep with acks (chunk N+1 only after ack N), with correct offsets and base64 payloads, and delivers finalName', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const bytes = new Uint8Array(FILE_CHUNK_BYTES + 10); // forces exactly 2 chunks
+    for (let i = 0; i < bytes.length; i++) bytes[i] = i % 256;
+    const progress: number[] = [];
+    const promise = transport.uploadFile('C:\\x', 'big.bin', bytes, (sent) => progress.push(sent));
+
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'file-upload-begin',
+      requestId: 'req-1',
+      dirPath: 'C:\\x',
+      name: 'big.bin',
+      size: bytes.length,
+    });
+
+    sockets[0].triggerMessage({
+      kind: 'file-upload-begin-reply',
+      requestId: 'req-1',
+      ok: true,
+      uploadId: 'up-1',
+      finalName: 'big.bin',
+    });
+    await flush();
+
+    // First chunk sent immediately after the begin-reply — and ONLY the first.
+    const chunk1 = sockets[0].lastSent() as { kind: string; uploadId: string; offset: number; data: string };
+    expect(chunk1.kind).toBe('file-upload-chunk');
+    expect(chunk1.uploadId).toBe('up-1');
+    expect(chunk1.offset).toBe(0);
+    expect(base64ToUint8Array(chunk1.data)).toEqual(bytes.subarray(0, FILE_CHUNK_BYTES));
+    expect(sentKinds(sockets).filter((k) => k === 'file-upload-chunk')).toHaveLength(1);
+
+    sockets[0].triggerMessage({ kind: 'file-upload-ack', uploadId: 'up-1', ok: true, receivedBytes: FILE_CHUNK_BYTES });
+    await flush();
+    expect(progress).toEqual([FILE_CHUNK_BYTES]);
+
+    // Second (final) chunk only now — never before the first ack arrived.
+    const chunk2 = sockets[0].lastSent() as { kind: string; uploadId: string; offset: number; data: string };
+    expect(chunk2.kind).toBe('file-upload-chunk');
+    expect(chunk2.offset).toBe(FILE_CHUNK_BYTES);
+    expect(base64ToUint8Array(chunk2.data)).toEqual(bytes.subarray(FILE_CHUNK_BYTES));
+    expect(sentKinds(sockets).filter((k) => k === 'file-upload-chunk')).toHaveLength(2);
+
+    sockets[0].triggerMessage({ kind: 'file-upload-ack', uploadId: 'up-1', ok: true, receivedBytes: bytes.length });
+    await flush();
+    expect(progress).toEqual([FILE_CHUNK_BYTES, bytes.length]);
+
+    expect(sockets[0].lastSent()).toEqual({ kind: 'file-upload-commit', uploadId: 'up-1' });
+
+    sockets[0].triggerMessage({ kind: 'file-upload-done', uploadId: 'up-1', ok: true, finalName: 'big (1).bin' });
+
+    await expect(promise).resolves.toEqual({ finalName: 'big (1).bin' });
+  });
+
+  it('rejects when file-upload-begin-reply reports failure, without ever sending a chunk', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.uploadFile('C:\\x', 'x.bin', new Uint8Array([1, 2, 3]), () => undefined);
+    sockets[0].triggerMessage({ kind: 'file-upload-begin-reply', requestId: 'req-1', ok: false, error: 'disk full' });
+
+    await expect(promise).rejects.toThrow('disk full');
+    expect(sentKinds(sockets)).not.toContain('file-upload-chunk');
+  });
+
+  it('an ok:false ack rejects and stops sending further chunks', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const bytes = new Uint8Array(FILE_CHUNK_BYTES + 10); // would need 2 chunks if it kept going
+    const promise = transport.uploadFile('C:\\x', 'big.bin', bytes, () => undefined);
+    sockets[0].triggerMessage({
+      kind: 'file-upload-begin-reply',
+      requestId: 'req-1',
+      ok: true,
+      uploadId: 'up-1',
+      finalName: 'big.bin',
+    });
+    await flush(); // let the continuation register the ack listener + send chunk 1
+
+    sockets[0].triggerMessage({ kind: 'file-upload-ack', uploadId: 'up-1', ok: false, error: 'out-of-order chunk' });
+
+    await expect(promise).rejects.toThrow('out-of-order chunk');
+    expect(sentKinds(sockets).filter((k) => k === 'file-upload-chunk')).toHaveLength(1); // never the second
+  });
+
+  it('a socket close before file-upload-begin-reply arrives rejects', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, initialBackoffMs: 100 });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.uploadFile('C:\\x', 'x.bin', new Uint8Array([1, 2, 3]), () => undefined);
+    sockets[0].triggerClose();
+
+    await expect(promise).rejects.toThrow();
+  });
+
+  it('a socket close mid-upload (waiting on a chunk ack) rejects', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      initialBackoffMs: 100,
+      newId: () => 'req-1',
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.uploadFile('C:\\x', 'x.bin', new Uint8Array([1, 2, 3]), () => undefined);
+    sockets[0].triggerMessage({
+      kind: 'file-upload-begin-reply',
+      requestId: 'req-1',
+      ok: true,
+      uploadId: 'up-1',
+      finalName: 'x.bin',
+    });
+    await flush(); // let it register the ack listener before closing
+
+    sockets[0].triggerClose();
+
+    await expect(promise).rejects.toThrow();
+  });
+
+  it('a socket close while waiting on file-upload-done rejects', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      initialBackoffMs: 100,
+      newId: () => 'req-1',
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.uploadFile('C:\\x', 'x.bin', new Uint8Array([1, 2, 3]), () => undefined);
+    sockets[0].triggerMessage({
+      kind: 'file-upload-begin-reply',
+      requestId: 'req-1',
+      ok: true,
+      uploadId: 'up-1',
+      finalName: 'x.bin',
+    });
+    await flush();
+    sockets[0].triggerMessage({ kind: 'file-upload-ack', uploadId: 'up-1', ok: true, receivedBytes: 3 });
+    await flush(); // let it register the done listener before closing
+
+    sockets[0].triggerClose();
+
+    await expect(promise).rejects.toThrow();
   });
 });

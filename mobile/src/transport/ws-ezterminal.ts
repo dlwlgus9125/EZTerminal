@@ -57,11 +57,12 @@ import type {
   SessionInfo,
   SystemStatsSnapshot,
 } from '../../../src/shared/ipc';
-import type { FileListResult, FileOpResult, FileReadTextResult } from '../../../src/shared/files';
+import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult, type FileReadTextResult } from '../../../src/shared/files';
 import type { StartupPref, ThemeName } from '../../../src/shared/layout-schema';
 import {
   base64ToUint8Array,
   decodeFrame,
+  uint8ArrayToBase64,
   type ClientToServerMessage,
   type RemotePacketFrame,
   type ServerToClientMessage,
@@ -85,6 +86,14 @@ interface FileReadAssembly {
   readonly onProgress?: (received: number, total: number) => void;
   readonly resolve: (result: FileReadResult) => void;
 }
+
+/** Local mirrors of the wire's `ok:true/false` reply shapes (M5), same
+ * "small local result type, not imported from remote-protocol.ts" precedent
+ * as `FileReadResult` above — `uploadFile` throws on `ok:false` at each
+ * `await`, which is what actually rejects its outer promise. */
+type UploadBeginResult = { ok: true; uploadId: string; finalName: string } | { ok: false; error: string };
+type UploadAckResult = { ok: true; receivedBytes: number } | { ok: false; error: string };
+type UploadDoneResult = { ok: true; finalName: string } | { ok: false; error: string };
 
 // ── DI seam over the browser `WebSocket` (real instances satisfy this
 //    structurally; tests inject a fake) ──────────────────────────────────────
@@ -230,6 +239,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly pendingFileRoots = new Map<string, (roots: string[]) => void>();
   private readonly pendingFileOps = new Map<string, (result: FileOpResult) => void>();
   private readonly pendingFileReads = new Map<string, FileReadAssembly>();
+
+  // Upload (M5) — `pendingUploadBegins` keys by the client-minted requestId
+  // (the only round trip that has one); every message after that correlates
+  // by the server-minted `uploadId` instead.
+  private readonly pendingUploadBegins = new Map<string, (result: UploadBeginResult) => void>();
+  private readonly pendingUploadAcks = new Map<string, (result: UploadAckResult) => void>();
+  private readonly pendingUploadDones = new Map<string, (result: UploadDoneResult) => void>();
 
   constructor(options: WsEzTerminalOptions) {
     this.url = options.url;
@@ -506,6 +522,48 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     });
   }
 
+  /** Mobile-only (not part of `EzTerminalApi`, like `downloadFile`): uploads
+   * `bytes` to `dirPath/name` on the desktop. Slices into `FILE_CHUNK_BYTES`
+   * pieces, base64-encoding ONE chunk at a time (never the whole file —
+   * see remote-protocol.ts's streaming contract) and awaiting each chunk's
+   * ack before sending the next (one in flight, matching the M3 wire
+   * contract both directions). Rejects on any `ok:false` reply at any stage;
+   * there is no ok:false variant in this return shape (mobile-only, no
+   * `EzTerminalApi` contract to match), so a caller wraps it in try/catch. */
+  async uploadFile(
+    dirPath: string,
+    name: string,
+    bytes: Uint8Array,
+    onProgress: (sentBytes: number) => void,
+  ): Promise<{ finalName: string }> {
+    const requestId = this.newId();
+    const begin = await new Promise<UploadBeginResult>((resolve) => {
+      this.pendingUploadBegins.set(requestId, resolve);
+      this.send({ kind: 'file-upload-begin', requestId, dirPath, name, size: bytes.length });
+    });
+    if (!begin.ok) throw new Error(begin.error);
+    const { uploadId } = begin;
+
+    let offset = 0;
+    while (offset < bytes.length) {
+      const chunk = bytes.subarray(offset, Math.min(offset + FILE_CHUNK_BYTES, bytes.length));
+      const ack = await new Promise<UploadAckResult>((resolve) => {
+        this.pendingUploadAcks.set(uploadId, resolve);
+        this.send({ kind: 'file-upload-chunk', uploadId, offset, data: uint8ArrayToBase64(chunk) });
+      });
+      if (!ack.ok) throw new Error(ack.error);
+      offset += chunk.length;
+      onProgress(offset);
+    }
+
+    const done = await new Promise<UploadDoneResult>((resolve) => {
+      this.pendingUploadDones.set(uploadId, resolve);
+      this.send({ kind: 'file-upload-commit', uploadId });
+    });
+    if (!done.ok) throw new Error(done.error);
+    return { finalName: done.finalName };
+  }
+
   /** Shared assembler for `readTextFile`/`downloadFile`: sends `file-read`,
    * preallocates the receive buffer once `file-read-meta` reports `sendBytes`,
    * copies each `file-read-chunk` at its offset, and acks (ack-gated — see
@@ -618,6 +676,20 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       assembly.resolve({ ok: false, error: 'Connection to EZTerminal lost' });
     }
     this.pendingFileReads.clear();
+    // Upload (M5): same "resolve with a connection-lost result" treatment —
+    // `uploadFile` throws on `ok:false`, which is what rejects its promise.
+    for (const resolve of this.pendingUploadBegins.values()) {
+      resolve({ ok: false, error: 'Connection to EZTerminal lost' });
+    }
+    this.pendingUploadBegins.clear();
+    for (const resolve of this.pendingUploadAcks.values()) {
+      resolve({ ok: false, error: 'Connection to EZTerminal lost' });
+    }
+    this.pendingUploadAcks.clear();
+    for (const resolve of this.pendingUploadDones.values()) {
+      resolve({ ok: false, error: 'Connection to EZTerminal lost' });
+    }
+    this.pendingUploadDones.clear();
     if (this.stopped) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -747,6 +819,27 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         } else {
           this.send({ kind: 'file-read-ack', requestId: msg.requestId, offset: received });
         }
+        break;
+      }
+
+      case 'file-upload-begin-reply': {
+        const resolve = this.pendingUploadBegins.get(msg.requestId);
+        this.pendingUploadBegins.delete(msg.requestId);
+        resolve?.(msg.ok ? { ok: true, uploadId: msg.uploadId, finalName: msg.finalName } : { ok: false, error: msg.error });
+        break;
+      }
+
+      case 'file-upload-ack': {
+        const resolve = this.pendingUploadAcks.get(msg.uploadId);
+        this.pendingUploadAcks.delete(msg.uploadId);
+        resolve?.(msg.ok ? { ok: true, receivedBytes: msg.receivedBytes } : { ok: false, error: msg.error });
+        break;
+      }
+
+      case 'file-upload-done': {
+        const resolve = this.pendingUploadDones.get(msg.uploadId);
+        this.pendingUploadDones.delete(msg.uploadId);
+        resolve?.(msg.ok ? { ok: true, finalName: msg.finalName } : { ok: false, error: msg.error });
         break;
       }
     }
