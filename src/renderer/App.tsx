@@ -117,20 +117,59 @@ export function App(): JSX.Element {
   // mobile) gets mirrored here: an unknown id adds a new ADOPT-mode tab
   // (T2.3); a removed id closes whichever panel is bound to it (self-echo for
   // a LOCAL destroy is a no-op — TerminalPane's unmount already called
-  // onSessionUnbound before this broadcast round-trips back).
+  // onSessionUnbound synchronously, well before any IPC round trip, before
+  // this broadcast comes back).
+  //
+  // The ADD side needs a defer that REMOVE doesn't (confirmed race, e2e/
+  // splits.spec.ts flake under load): TerminalPane's `createSession()` reply
+  // resolves a Promise, so its continuation (`bindSession` -> `onSessionBound`
+  // -> the `sessionPanelMapRef.current.set(...)` below) is a MICROTASK.
+  // `onSessionAdded`'s broadcast, in contrast, fires a plain SYNCHRONOUS
+  // `ipcRenderer.on` listener — main already sends the reply before the
+  // broadcast (it resolves the correlated Promise first, then calls
+  // `sessionDirectory.add()`, whose own listener dispatch is deferred via
+  // `setImmediate` — see session-directory.ts's module doc, ADR C6), but that
+  // only orders WHEN main SENDS the two messages. If the renderer ever has a
+  // backlog of already-arrived IPC messages (plausible under load — an
+  // isolated run of this spec never reproduced the flake, only the full
+  // gate's contention did) and drains more than one in a single JS task
+  // before a microtask checkpoint, the synchronous broadcast handler can run
+  // BEFORE the reply's microtask gets a turn — this pane's OWN new session
+  // would then look "unknown" and get a duplicate adopt-mode panel (nothing
+  // would ever clean that duplicate up — closing either one just deletes
+  // whichever entry currently occupies the map's single slot for that
+  // sessionId, since `Map.set` last-write-wins; the other stays a stray,
+  // un-trackable extra pane indefinitely, worth restating since it's why
+  // this needs to be airtight, not just usually-fine).
+  //
+  // Deferring the CHECK by one macrotask (not just one microtask — Electron's
+  // exact number of internal microtask hops for an `invoke` reply isn't
+  // something to rely on) is airtight regardless of the precise interleaving:
+  // a macrotask callback only runs once the CURRENT task's microtask queue is
+  // fully drained, and if the two IPC messages were instead dispatched as two
+  // SEPARATE tasks, every microtask from the earlier one drains before the
+  // later one's task even begins. Either way, by the time this fires, any
+  // already-resolved local `createSession()` for this exact session has
+  // already registered in `sessionPanelMapRef`. Mirroring's own AC4 budget
+  // (adopt tab appears within ~2s) absorbs a same-tick setTimeout(0) trivially.
   useEffect(() => {
+    const pendingAddChecks = new Set<ReturnType<typeof setTimeout>>();
     const unsubAdded = window.ezterminal?.onSessionAdded?.((session) => {
-      if (sessionPanelMapRef.current.has(session.sessionId)) return; // already have a panel for it
-      const api = apiRef.current;
-      if (!api) return;
-      tabCounter += 1;
-      api.addPanel({
-        id: `tab-${tabCounter}`,
-        component: 'terminal',
-        title: `Terminal ${tabCounter}`,
-        renderer: 'always',
-        params: { adoptSessionId: session.sessionId },
-      });
+      const timer = setTimeout(() => {
+        pendingAddChecks.delete(timer);
+        if (sessionPanelMapRef.current.has(session.sessionId)) return; // already have a panel for it
+        const api = apiRef.current;
+        if (!api) return;
+        tabCounter += 1;
+        api.addPanel({
+          id: `tab-${tabCounter}`,
+          component: 'terminal',
+          title: `Terminal ${tabCounter}`,
+          renderer: 'always',
+          params: { adoptSessionId: session.sessionId },
+        });
+      }, 0);
+      pendingAddChecks.add(timer);
     });
     const unsubRemoved = window.ezterminal?.onSessionRemoved?.((sessionId) => {
       const panelId = sessionPanelMapRef.current.get(sessionId);
@@ -140,6 +179,7 @@ export function App(): JSX.Element {
     return () => {
       unsubAdded?.();
       unsubRemoved?.();
+      for (const timer of pendingAddChecks) clearTimeout(timer);
     };
   }, []);
 
