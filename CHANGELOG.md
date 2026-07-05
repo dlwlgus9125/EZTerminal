@@ -9,6 +9,10 @@
 - 앱 아이덴티티: 아이콘(플레이스홀더)/저작권/win32 메타데이터 + Squirrel 인스톨러 설정 (B-M1)
 - 릴리스 플로우: 태그 `v*` → 검증 → draft GitHub Release (B-M2)
 - 코드서명 인프라 (env-gated, 인증서는 외부 의존) (B-M3)
+- 상태 패널/패킷 캡처 의존성: `systeminformation@5.31.11`(정확 핀)·`cap@^0.2.1`; 네이티브 가드
+  `guard:native-cap`; 빌드 엔트리 `vite.packet-capture.config.ts`(6번째)
+- CI 러너 `windows-2022` 핀 — `windows-latest`의 VS18을 `@electron/node-gyp`가 못 읽어 `cap`
+  네이티브 빌드가 `pnpm install`에서 실패하던 문제 해소 (cap은 번들 WinPcap SDK로 컴파일)
 
 ### Added (기능)
 - **레이아웃 프리셋·영속 (Track A ③):** 재시작 시 레이아웃 복원, 이름 있는 프리셋
@@ -27,6 +31,12 @@
   세션당 프롬프트(저장 안 함), 호스트 검증이 자격증명 입력보다 항상 선행
 - **크로스플랫폼 ps (E6 부분):** `ps`가 플랫폼별 소스 디스패치(win32 tasklist / posix `ps -eo`) —
   mac/linux 파서 유닛검증 완료, 실검증은 하드웨어 확보 시
+- **시스템 상태 패널:** 우측 300px 비모달 오버레이 드로어 — CPU(코어 그리드)/MEM(상세·swap)/
+  NET(스파크)/DISK/PROC/연결 목록. `systeminformation` 1Hz(상시 순수 JS) + 패널 개방 시 PowerShell 수집기
+- **실시간 패킷 캡처:** native `cap` + Npcap — off-by-default, 1회 승인 게이트(`packetAckSeen`),
+  헤더 전용, 전용 utilityProcess(`src/packet-capture/`, MessagePort 직접 브로커, rows 200 상한, rAF 병합)
+- **Matrix(CRT) 테마:** 4번째 빌트인 — 녹색 인광 팔레트 + self-host woff2(Share Tech Mono/VT323,
+  패키지 CSP `font-src 'self'` 대응) + `[data-theme='matrix']` 스코프 CRT 효과(스캔라인·글로우)
 
 ### Fixed
 - `gen-rows 100000000` 등 고빈도 progress 스트림에서 렌더러 메인스레드 포화로
@@ -43,4 +53,5 @@
 - Windows 패키지에서 비-Windows node-pty prebuilds·winpty 소스 제거 (~45MB 감량, 서명 가능해짐)
 
 ### Notes
-- 첫 배포 트레인 `0.1.0`: Stage A(레이아웃 영속) 완료 후 태깅 예정
+- 첫 배포 트레인 `0.1.0`: Stage A(레이아웃 영속) 완료 + 원격 저장소 생성·푸시됨
+  (`github.com/dlwlgus9125/EZTerminal`, private). 태깅은 공개 여부·서명 결정 후 (현재 태그·릴리스 없음).

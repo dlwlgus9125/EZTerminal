@@ -11,9 +11,12 @@ concurrency:
 
 jobs:
   ci:
-    # Single windows-latest job: the packaged-exe smoke (Fuses + asar + ConPTY) is
+    # Single Windows job: the packaged-exe smoke (Fuses + asar + ConPTY) is
     # Windows-first and Electron e2e needs a desktop session, which Windows runners have.
-    runs-on: windows-latest
+    # Pinned to windows-2022 (VS2022): windows-latest now ships VS18, which the `cap`
+    # dependency's @electron/node-gyp (v10) can't parse ("unknown version undefined")
+    # → node-gyp finds no C++ toolchain and `pnpm install` dies compiling cap.
+    runs-on: windows-2022
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +31,9 @@ jobs:
           cache: pnpm
 
       # pnpm.onlyBuiltDependencies in package.json allowlists electron /
-      # electron-winstaller / node-pty build scripts.
+      # electron-winstaller / node-pty / cap build scripts. cap compiles from source
+      # (node-gyp) against its bundled WinPcap SDK; .npmrc clang=false routes it to
+      # MSVC. wpcap.dll (Npcap) is only needed at runtime for live capture, not to build.
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm typecheck
