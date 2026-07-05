@@ -60,11 +60,31 @@ import type {
 import type { FileListResult, FileOpResult, FileReadTextResult } from '../../../src/shared/files';
 import type { StartupPref, ThemeName } from '../../../src/shared/layout-schema';
 import {
+  base64ToUint8Array,
   decodeFrame,
   type ClientToServerMessage,
   type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../../../src/shared/remote-protocol';
+
+/** Generic result of one `file-read` round trip (M4) — `readTextFile`/
+ * `downloadFile` each reshape this into their own public return type. */
+type FileReadResult =
+  | { readonly ok: true; readonly fileSize: number; readonly isText: boolean; readonly truncated: boolean; readonly bytes: Uint8Array }
+  | { readonly ok: false; readonly error: string };
+
+/** Tracks one in-flight `file-read` request between `file-read-meta` and the
+ * last `file-read-chunk` — `buffer` is allocated once `sendBytes` is known
+ * (null beforehand, and stays null for a binary file in `'text'` mode, which
+ * never streams any chunk). `onProgress` is only used by `downloadFile`. */
+interface FileReadAssembly {
+  buffer: Uint8Array | null;
+  fileSize: number;
+  isText: boolean;
+  truncated: boolean;
+  readonly onProgress?: (received: number, total: number) => void;
+  readonly resolve: (result: FileReadResult) => void;
+}
 
 // ── DI seam over the browser `WebSocket` (real instances satisfy this
 //    structurally; tests inject a fake) ──────────────────────────────────────
@@ -199,6 +219,17 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * unlike cmd ports, there's no per-run correlation id, and it survives a
    * reconnect without a second handoff). */
   private packetPort: FakeMessagePort<RemotePacketFrame> | null = null;
+
+  // File explorer (M4) — pending request maps, one per reply shape, keyed by
+  // the client-minted `requestId`. A dropped connection resolves every
+  // in-flight entry with a "connection lost" result (see `endConnection`)
+  // rather than leaving the caller's promise hanging forever — the same
+  // ok:false/empty-array convention `FileListResult`/`FileOpResult` already
+  // use for an expected failure, so callers need no separate try/catch path.
+  private readonly pendingFileList = new Map<string, (result: FileListResult) => void>();
+  private readonly pendingFileRoots = new Map<string, (roots: string[]) => void>();
+  private readonly pendingFileOps = new Map<string, (result: FileOpResult) => void>();
+  private readonly pendingFileReads = new Map<string, FileReadAssembly>();
 
   constructor(options: WsEzTerminalOptions) {
     this.url = options.url;
@@ -385,33 +416,117 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return Promise.resolve(this.token);
   }
 
-  // ── File explorer (file-explorer plan) — stubs for M1, real impls in M4 ───
-  // `EzTerminalApi` grew these members in M1 to unblock the desktop drawer;
-  // the mobile browser/viewer over the WS bridge's `file-*` messages doesn't
-  // land until M4, so these reject rather than silently no-op.
-  listFiles(): Promise<FileListResult> {
-    return Promise.reject(new Error('files: not supported yet'));
+  // ── File explorer (file-explorer plan, M4) ────────────────────────────────
+  // `openFileInApp`/`revealFileInExplorer` stay rejecting stubs — desktop-only
+  // (no mobile analog: there's no "OS default app" or file manager to hand
+  // off to on the phone side of this connection). Every other member below
+  // is a real request/reply round trip over the M3 wire protocol.
+  //
+  // NO client-initiated `file-read-cancel` (viewer/download abandoned mid-
+  // stream): `readTextFile`/`downloadFile`'s signatures (the former fixed by
+  // `EzTerminalApi`, the latter specified by the file-explorer plan) return a
+  // bare Promise with no cancel handle, and reads are bounded (<=1MiB text,
+  // <=50MiB raw) so a stray finish is cheap. The bridge's own M3 close-
+  // teardown already closes any stream still open when THIS connection
+  // drops, so nothing leaks server-side either way.
+
+  listFiles(path: string): Promise<FileListResult> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      this.pendingFileList.set(requestId, resolve);
+      this.send({ kind: 'file-list', requestId, path });
+    });
   }
+
   listFileRoots(): Promise<string[]> {
-    return Promise.reject(new Error('files: not supported yet'));
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      this.pendingFileRoots.set(requestId, resolve);
+      this.send({ kind: 'file-roots', requestId });
+    });
   }
-  readTextFile(): Promise<FileReadTextResult> {
-    return Promise.reject(new Error('files: not supported yet'));
+
+  /** Streams in `'text'` mode (1MiB cap + binary detection, both server-side
+   * via `FileService`) then reshapes the raw byte result into `FileReadTextResult`. */
+  readTextFile(path: string): Promise<FileReadTextResult> {
+    return this.requestFileRead(path, 'text').then((result) => {
+      if (!result.ok) return { ok: false, error: result.error };
+      if (!result.isText) return { ok: true, isText: false, fileSize: result.fileSize };
+      const content = new TextDecoder('utf-8', { fatal: false }).decode(result.bytes);
+      return { ok: true, isText: true, content, truncated: result.truncated, fileSize: result.fileSize };
+    });
   }
-  createFolder(): Promise<FileOpResult> {
-    return Promise.reject(new Error('files: not supported yet'));
+
+  createFolder(dirPath: string, name: string): Promise<FileOpResult> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      this.pendingFileOps.set(requestId, resolve);
+      this.send({ kind: 'file-mkdir', requestId, dirPath, name });
+    });
   }
-  renameFile(): Promise<FileOpResult> {
-    return Promise.reject(new Error('files: not supported yet'));
+
+  renameFile(path: string, newName: string): Promise<FileOpResult> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      this.pendingFileOps.set(requestId, resolve);
+      this.send({ kind: 'file-rename', requestId, path, newName });
+    });
   }
-  trashFile(): Promise<FileOpResult> {
-    return Promise.reject(new Error('files: not supported yet'));
+
+  trashFile(path: string): Promise<FileOpResult> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      this.pendingFileOps.set(requestId, resolve);
+      this.send({ kind: 'file-trash', requestId, path });
+    });
   }
+
   openFileInApp(): Promise<void> {
-    return Promise.reject(new Error('files: not supported yet'));
+    return Promise.reject(new Error('files: desktop-only'));
   }
   revealFileInExplorer(): Promise<void> {
-    return Promise.reject(new Error('files: not supported yet'));
+    return Promise.reject(new Error('files: desktop-only'));
+  }
+
+  /** Mobile-only (not part of `EzTerminalApi`, like `listSessions`): streams
+   * in `'raw'` mode (50MiB cap, no text/binary detection — mirrors
+   * `FileService.openReadStream('raw')`) for the "download to phone" action.
+   * `name` is `path`'s final segment (handles both `/` and `\` separators —
+   * the desktop side may send either). Rejects on any read failure; there is
+   * no ok:false variant in this return shape (mobile-only, no `EzTerminalApi`
+   * contract to match), so a caller wraps it in try/catch. */
+  downloadFile(
+    path: string,
+    onProgress: (received: number, total: number) => void,
+  ): Promise<{ name: string; bytes: Uint8Array }> {
+    return this.requestFileRead(path, 'raw', onProgress).then((result) => {
+      if (!result.ok) throw new Error(result.error);
+      const name = path.split(/[/\\]/).pop() || path;
+      return { name, bytes: result.bytes };
+    });
+  }
+
+  /** Shared assembler for `readTextFile`/`downloadFile`: sends `file-read`,
+   * preallocates the receive buffer once `file-read-meta` reports `sendBytes`,
+   * copies each `file-read-chunk` at its offset, and acks (ack-gated — see
+   * remote-protocol.ts's streaming contract) until `done`. */
+  private requestFileRead(
+    path: string,
+    mode: 'text' | 'raw',
+    onProgress?: (received: number, total: number) => void,
+  ): Promise<FileReadResult> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      this.pendingFileReads.set(requestId, {
+        buffer: null,
+        fileSize: 0,
+        isText: true,
+        truncated: false,
+        onProgress,
+        resolve,
+      });
+      this.send({ kind: 'file-read', requestId, path, mode });
+    });
   }
 
   // ── connection lifecycle ─────────────────────────────────────────────────
@@ -487,6 +602,22 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       port.deliver({ type: 'error', message: 'Connection to EZTerminal lost' });
     }
     this.ports.clear();
+    // File explorer (M4): no reply is ever coming for these now — resolve
+    // every in-flight request rather than leaving its promise pending forever.
+    for (const resolve of this.pendingFileList.values()) {
+      resolve({ ok: false, error: 'Connection to EZTerminal lost' });
+    }
+    this.pendingFileList.clear();
+    for (const resolve of this.pendingFileRoots.values()) resolve([]);
+    this.pendingFileRoots.clear();
+    for (const resolve of this.pendingFileOps.values()) {
+      resolve({ ok: false, error: 'Connection to EZTerminal lost' });
+    }
+    this.pendingFileOps.clear();
+    for (const assembly of this.pendingFileReads.values()) {
+      assembly.resolve({ ok: false, error: 'Connection to EZTerminal lost' });
+    }
+    this.pendingFileReads.clear();
     if (this.stopped) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -553,6 +684,71 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       case 'packet-frame':
         this.packetPort?.deliver(msg.frame);
         break;
+
+      case 'file-list-reply':
+        this.pendingFileList.get(msg.requestId)?.(msg.result);
+        this.pendingFileList.delete(msg.requestId);
+        break;
+
+      case 'file-roots-reply':
+        this.pendingFileRoots.get(msg.requestId)?.([...msg.roots]);
+        this.pendingFileRoots.delete(msg.requestId);
+        break;
+
+      case 'file-op-reply':
+        this.pendingFileOps.get(msg.requestId)?.(msg.result);
+        this.pendingFileOps.delete(msg.requestId);
+        break;
+
+      case 'file-read-meta': {
+        const assembly = this.pendingFileReads.get(msg.requestId);
+        if (!assembly) break;
+        if (!msg.ok) {
+          this.pendingFileReads.delete(msg.requestId);
+          assembly.resolve({ ok: false, error: msg.error });
+          break;
+        }
+        if (msg.sendBytes <= 0) {
+          // Binary file in 'text' mode (or a genuinely empty file) — no
+          // chunk ever follows (remote-protocol.ts's streaming contract).
+          this.pendingFileReads.delete(msg.requestId);
+          assembly.resolve({
+            ok: true,
+            fileSize: msg.fileSize,
+            isText: msg.isText,
+            truncated: msg.truncated,
+            bytes: new Uint8Array(0),
+          });
+          break;
+        }
+        assembly.buffer = new Uint8Array(msg.sendBytes);
+        assembly.fileSize = msg.fileSize;
+        assembly.isText = msg.isText;
+        assembly.truncated = msg.truncated;
+        break;
+      }
+
+      case 'file-read-chunk': {
+        const assembly = this.pendingFileReads.get(msg.requestId);
+        if (!assembly || !assembly.buffer) break;
+        const data = base64ToUint8Array(msg.data);
+        assembly.buffer.set(data, msg.offset);
+        const received = msg.offset + data.length;
+        assembly.onProgress?.(received, assembly.buffer.length);
+        if (msg.done) {
+          this.pendingFileReads.delete(msg.requestId);
+          assembly.resolve({
+            ok: true,
+            fileSize: assembly.fileSize,
+            isText: assembly.isText,
+            truncated: assembly.truncated,
+            bytes: assembly.buffer,
+          });
+        } else {
+          this.send({ kind: 'file-read-ack', requestId: msg.requestId, offset: received });
+        }
+        break;
+      }
     }
   }
 

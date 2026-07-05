@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import { BlockController } from '../../src/renderer/block-controller';
 import { Block } from '../../src/renderer/Block';
+import { registerPaneInput, unregisterPaneInput } from '../../src/renderer/pane-registry';
 import { TouchInputBar } from './TouchInputBar';
 
 // MobileSessionView — the mobile analogue of the desktop's TerminalPane.tsx.
@@ -41,9 +42,15 @@ function nextRunId(): string {
 export function MobileSessionView({
   sessionId,
   onSessionDead,
+  onCwdChange,
 }: {
   sessionId: string;
   onSessionDead?: () => void;
+  /** Best-effort cwd snapshot (file-explorer plan, M4) — mirrors desktop
+   * TerminalPane's `setPaneCwd` call site (latest `end`, falling back to
+   * `start`). MobileWorkspace records it in a map keyed by sessionId; Files
+   * reads it ONCE at open, never live-follows it. */
+  onCwdChange?: (sessionId: string, cwd: string) => void;
 }): JSX.Element {
   const [command, setCommand] = useState('');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
@@ -60,6 +67,8 @@ export function MobileSessionView({
   // subscribe/unsubscribe below.
   const onSessionDeadRef = useRef(onSessionDead);
   onSessionDeadRef.current = onSessionDead;
+  const onCwdChangeRef = useRef(onCwdChange);
+  onCwdChangeRef.current = onCwdChange;
 
   const blockListRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -88,6 +97,19 @@ export function MobileSessionView({
     });
     return unsub;
   }, []);
+
+  // Paste-path-into-terminal (file-explorer plan, M4): registers a sink that
+  // appends text to the live command draft, space-separated unless the
+  // draft is empty or already ends in whitespace — mirrors desktop
+  // TerminalPane's identical registration, keyed by sessionId instead of a
+  // dockview panelId (`pane-registry.ts` is a plain string-keyed registry,
+  // agnostic to what the key represents).
+  useEffect(() => {
+    registerPaneInput(sessionId, (text) => {
+      setCommand((prev) => (prev === '' || /\s$/.test(prev) ? `${prev}${text}` : `${prev} ${text}`));
+    });
+    return () => unregisterPaneInput(sessionId);
+  }, [sessionId]);
 
   // M3 e2e test hook ONLY: a running command's output renders into a
   // `[data-testid="text-output"]` element (TextBlock.tsx or PtyBlock.tsx's
@@ -158,6 +180,10 @@ export function MobileSessionView({
       const onActiveChange = (): void => {
         const snap = controller.getSnapshot();
         setActiveRunning(snap.status === 'running');
+        // cwd snapshot (M4): mirrors desktop TerminalPane's same site — latest
+        // `end`, falling back to `start`, so a `cd` is reflected.
+        const cwd = snap.endCwd ?? snap.startCwd;
+        if (cwd) onCwdChangeRef.current?.(sessionId, cwd);
         if (stickToBottom.current) requestAnimationFrame(scrollBlockListToBottom);
       };
       activeUnsub.current = controller.subscribe(onActiveChange);

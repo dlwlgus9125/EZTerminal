@@ -39,4 +39,7 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Download-to-phone (file-explorer plan, M4): scoped storage (API 30+)
+         needs no permission for app-scoped writes; this covers API <=29 only. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
 </manifest>

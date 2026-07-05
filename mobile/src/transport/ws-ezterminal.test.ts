@@ -771,3 +771,224 @@ describe('WsEzTerminalTransport — packets reconnect replay', () => {
     expect(sockets[1].sent.filter((s) => JSON.parse(s).kind === 'packets-subscribe')).toHaveLength(0);
   });
 });
+
+describe('WsEzTerminalTransport — file explorer (M4)', () => {
+  it('listFiles sends file-list and resolves with the reply result, correlated by requestId', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.listFiles('C:\\x');
+    expect(sockets[0].lastSent()).toEqual({ kind: 'file-list', requestId: 'req-1', path: 'C:\\x' });
+
+    const result = { ok: true, path: 'C:\\x', parent: null, entries: [] };
+    sockets[0].triggerMessage({ kind: 'file-list-reply', requestId: 'req-1', result });
+    await expect(promise).resolves.toEqual(result);
+  });
+
+  it('listFileRoots sends file-roots and resolves with a mutable copy of the roots array', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.listFileRoots();
+    expect(sockets[0].lastSent()).toEqual({ kind: 'file-roots', requestId: 'req-1' });
+
+    sockets[0].triggerMessage({ kind: 'file-roots-reply', requestId: 'req-1', roots: ['C:\\', 'D:\\'] });
+    await expect(promise).resolves.toEqual(['C:\\', 'D:\\']);
+  });
+
+  it('createFolder sends file-mkdir and resolves with the file-op-reply result', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.createFolder('C:\\x', 'new');
+    expect(sockets[0].lastSent()).toEqual({ kind: 'file-mkdir', requestId: 'req-1', dirPath: 'C:\\x', name: 'new' });
+
+    sockets[0].triggerMessage({ kind: 'file-op-reply', requestId: 'req-1', result: { ok: true } });
+    await expect(promise).resolves.toEqual({ ok: true });
+  });
+
+  it('renameFile sends file-rename and resolves with the file-op-reply result', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.renameFile('C:\\x\\a.txt', 'b.txt');
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'file-rename',
+      requestId: 'req-1',
+      path: 'C:\\x\\a.txt',
+      newName: 'b.txt',
+    });
+
+    sockets[0].triggerMessage({ kind: 'file-op-reply', requestId: 'req-1', result: { ok: false, error: 'boom' } });
+    await expect(promise).resolves.toEqual({ ok: false, error: 'boom' });
+  });
+
+  it('trashFile sends file-trash and resolves with the file-op-reply result', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.trashFile('C:\\x\\a.txt');
+    expect(sockets[0].lastSent()).toEqual({ kind: 'file-trash', requestId: 'req-1', path: 'C:\\x\\a.txt' });
+
+    sockets[0].triggerMessage({ kind: 'file-op-reply', requestId: 'req-1', result: { ok: true } });
+    await expect(promise).resolves.toEqual({ ok: true });
+  });
+
+  it('readTextFile streams meta + ack-gated chunks, reassembling exact bytes with correct ack offsets', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.readTextFile('C:\\a.txt');
+    expect(sockets[0].lastSent()).toEqual({ kind: 'file-read', requestId: 'req-1', path: 'C:\\a.txt', mode: 'text' });
+
+    sockets[0].triggerMessage({
+      kind: 'file-read-meta',
+      requestId: 'req-1',
+      ok: true,
+      fileSize: 5,
+      sendBytes: 5,
+      isText: true,
+      truncated: false,
+    });
+
+    const chunk1 = uint8ArrayToBase64(new Uint8Array([104, 101, 108])); // 'hel'
+    sockets[0].triggerMessage({ kind: 'file-read-chunk', requestId: 'req-1', offset: 0, data: chunk1, done: false });
+    // The ack for chunk 1 must be sent before chunk 2 ever arrives (ack-gated streaming).
+    expect(sockets[0].lastSent()).toEqual({ kind: 'file-read-ack', requestId: 'req-1', offset: 3 });
+
+    const chunk2 = uint8ArrayToBase64(new Uint8Array([108, 111])); // 'lo'
+    sockets[0].triggerMessage({ kind: 'file-read-chunk', requestId: 'req-1', offset: 3, data: chunk2, done: true });
+
+    await expect(promise).resolves.toEqual({
+      ok: true,
+      isText: true,
+      content: 'hello',
+      truncated: false,
+      fileSize: 5,
+    });
+  });
+
+  it('readTextFile resolves isText:false without ever sending an ack (no chunk follows a binary meta)', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.readTextFile('C:\\a.bin');
+    sockets[0].triggerMessage({
+      kind: 'file-read-meta',
+      requestId: 'req-1',
+      ok: true,
+      fileSize: 10,
+      sendBytes: 0,
+      isText: false,
+      truncated: false,
+    });
+
+    await expect(promise).resolves.toEqual({ ok: true, isText: false, fileSize: 10 });
+    expect(sockets[0].sent.some((s) => (JSON.parse(s) as { kind: string }).kind === 'file-read-ack')).toBe(false);
+  });
+
+  it('readTextFile resolves ok:false when file-read-meta reports a failure', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.readTextFile('C:\\missing.txt');
+    sockets[0].triggerMessage({ kind: 'file-read-meta', requestId: 'req-1', ok: false, error: 'ENOENT' });
+
+    await expect(promise).resolves.toEqual({ ok: false, error: 'ENOENT' });
+  });
+
+  it('downloadFile (raw mode) reports progress after each chunk and resolves with the reassembled bytes', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const progress: Array<[number, number]> = [];
+    const promise = transport.downloadFile('C:\\x\\photo.png', (received, total) =>
+      progress.push([received, total]),
+    );
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'file-read',
+      requestId: 'req-1',
+      path: 'C:\\x\\photo.png',
+      mode: 'raw',
+    });
+
+    sockets[0].triggerMessage({
+      kind: 'file-read-meta',
+      requestId: 'req-1',
+      ok: true,
+      fileSize: 5,
+      sendBytes: 5,
+      isText: true,
+      truncated: false,
+    });
+
+    const chunk1 = new Uint8Array([1, 2, 3]);
+    sockets[0].triggerMessage({
+      kind: 'file-read-chunk',
+      requestId: 'req-1',
+      offset: 0,
+      data: uint8ArrayToBase64(chunk1),
+      done: false,
+    });
+    const chunk2 = new Uint8Array([4, 5]);
+    sockets[0].triggerMessage({
+      kind: 'file-read-chunk',
+      requestId: 'req-1',
+      offset: 3,
+      data: uint8ArrayToBase64(chunk2),
+      done: true,
+    });
+
+    const result = await promise;
+    expect(result.name).toBe('photo.png');
+    expect(result.bytes).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+    expect(progress).toEqual([
+      [3, 5],
+      [5, 5],
+    ]);
+  });
+
+  it('downloadFile rejects when file-read-meta reports a failure', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.downloadFile('C:\\x\\gone.bin', () => undefined);
+    sockets[0].triggerMessage({ kind: 'file-read-meta', requestId: 'req-1', ok: false, error: 'EPERM' });
+
+    await expect(promise).rejects.toThrow('EPERM');
+  });
+
+  it('a socket close resolves every in-flight file request instead of leaving it pending forever', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      initialBackoffMs: 100,
+      newId: () => 'req-1',
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const listPromise = transport.listFiles('C:\\x');
+    const rootsPromise = transport.listFileRoots();
+    const opPromise = transport.createFolder('C:\\x', 'y');
+    const readPromise = transport.readTextFile('C:\\x\\a.txt');
+
+    sockets[0].triggerClose();
+
+    await expect(listPromise).resolves.toEqual({ ok: false, error: expect.any(String) });
+    await expect(rootsPromise).resolves.toEqual([]);
+    await expect(opPromise).resolves.toEqual({ ok: false, error: expect.any(String) });
+    await expect(readPromise).resolves.toEqual({ ok: false, error: expect.any(String) });
+  });
+});

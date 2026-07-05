@@ -454,3 +454,182 @@ body,
   border-bottom: none;
   border-radius: 12px 12px 0 0;
 }
+
+/* ── Mobile file view (file-explorer plan, M4) — full-screen overlay, same
+   shape as `.mobile-stats-view`; no safe-area handling of its own (`#root`'s
+   own padding already covers insets — see mobile.css's module doc). ─────── */
+
+.mobile-file-view,
+.mobile-file-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.mobile-file-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--term-border-faint, #222);
+}
+
+.mobile-file-path-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  border-radius: 6px;
+  border: 1px solid var(--term-border, #444);
+  background: var(--term-bg-inset, #1c1c1c);
+  color: var(--term-fg, inherit);
+}
+
+.mobile-file-error {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  color: var(--term-red, #ff4d5e);
+}
+
+.mobile-file-notice,
+.mobile-file-progress {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  color: var(--term-amber, #e5b567);
+}
+
+.mobile-file-toast {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  color: var(--term-green, #29d398);
+}
+
+.mobile-file-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* >=44px touch target (Apple/Android guidance) — bigger than the mouse-sized
+   desktop drawer's row height. */
+.mobile-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--term-border-faint, #222);
+}
+
+.mobile-file-icon {
+  flex: none;
+  color: var(--term-fg-faint, #888);
+}
+
+.mobile-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-file-size {
+  flex: none;
+  font-size: 0.8rem;
+  color: var(--term-fg-faint, #888);
+}
+
+.mobile-file-viewer-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.95rem;
+}
+
+.mobile-file-truncated {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  color: var(--term-amber, #e5b567);
+  border-bottom: 1px solid var(--term-border-faint, #222);
+}
+
+.mobile-file-viewer-content {
+  flex: 1;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  font-family: inherit;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Long-press action sheet — same bottom-sheet chrome/z-index as `.theme-menu-*`. */
+.mobile-file-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.mobile-file-sheet {
+  width: 100%;
+  max-width: 720px;
+  margin-inline: auto;
+  background: var(--term-bg-raised, #161616);
+  border: 1px solid var(--term-border, #444);
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mobile-file-sheet-item {
+  min-height: 44px;
+  padding: 10px 14px;
+  text-align: left;
+  font-family: inherit;
+  font-size: 0.95rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--term-fg, inherit);
+}
+
+/* Delete confirmation reuses the sheet backdrop but centers a small card
+   instead of docking to the bottom. */
+.mobile-file-confirm-box {
+  margin: auto;
+  max-width: 320px;
+  padding: 20px;
+  border-radius: 12px;
+  background: var(--term-bg-raised, #161616);
+  border: 1px solid var(--term-border, #444);
+  text-align: center;
+}
+
+.mobile-file-confirm-box p {
+  margin: 0 0 16px;
+  font-size: 0.95rem;
+  color: var(--term-fg-bright, inherit);
+}
+
+.mobile-file-confirm-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.files-btn {
+  font-size: 1.1rem;
+  padding: 8px 12px;
+}

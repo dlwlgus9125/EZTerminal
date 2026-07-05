@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useReducer, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import type { ThemeName } from '../../src/shared/layout-schema';
+import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
+import { MobileFileView } from './MobileFileView';
 import { MobileSessionView } from './MobileSessionView';
 import { MobileStatsView } from './MobileStatsView';
 import { SessionSwitcher } from './SessionSwitcher';
@@ -44,10 +46,18 @@ export function MobileWorkspace({
   onDisconnect: () => void;
 }): JSX.Element {
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
-  const [view, setView] = useState<'terminal' | 'stats'>('terminal');
+  const [view, setView] = useState<'terminal' | 'stats' | 'files'>('terminal');
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<ThemeName>(() => loadTheme());
+
+  // File explorer (M4): the best-effort cwd snapshot each session's
+  // MobileSessionView reports via `onCwdChange` — read ONCE when Files opens
+  // (never live-followed), same locked requirement as the desktop drawer.
+  const cwdMapRef = useRef(new Map<string, string>());
+  const handleCwdChange = useCallback((sessionId: string, cwd: string) => {
+    cwdMapRef.current.set(sessionId, cwd);
+  }, []);
 
   const handleThemeSelect = useCallback((name: ThemeName) => {
     applyTheme(name);
@@ -67,15 +77,34 @@ export function MobileWorkspace({
 
   const closeTab = useCallback((sessionId: string) => {
     dispatch({ type: 'close', sessionId });
+    cwdMapRef.current.delete(sessionId);
   }, []);
 
   const handleSessionDead = useCallback((sessionId: string) => {
     dispatch({ type: 'sessionDied', sessionId });
+    cwdMapRef.current.delete(sessionId);
   }, []);
 
   const quickNewTab = useCallback(() => {
     void transport.createSession().then((info) => openTab(info.sessionId, info.cwd));
   }, [transport, openTab]);
+
+  // File-explorer drawer's "open terminal here" (M4): a fresh tab whose
+  // session starts in `dirPath` — mirrors `quickNewTab`, cwd threaded through.
+  const onOpenTerminalAt = useCallback(
+    (dirPath: string) => {
+      void transport.createSession(dirPath).then((info) => openTab(info.sessionId, info.cwd));
+    },
+    [transport, openTab],
+  );
+
+  // File-explorer drawer's "paste path into terminal" (M4): the active
+  // session's command draft, via the same `pane-registry` sink
+  // MobileSessionView registers (keyed by sessionId).
+  const onPastePath = useCallback((path: string) => {
+    if (!tabsState.activeSessionId) return;
+    insertIntoPaneInput(tabsState.activeSessionId, path);
+  }, [tabsState.activeSessionId]);
 
   // Fires on every active-tab change, however it happened (open, explicit
   // activate, or a close that fell back to a neighbor) — a previously
@@ -91,6 +120,23 @@ export function MobileWorkspace({
 
   if (view === 'stats') {
     return <MobileStatsView onClose={() => setView('terminal')} />;
+  }
+
+  if (view === 'files') {
+    const activeSession = tabsState.tabs.find((t) => t.sessionId === tabsState.activeSessionId);
+    const initialPath =
+      (tabsState.activeSessionId && cwdMapRef.current.get(tabsState.activeSessionId)) ??
+      activeSession?.cwd ??
+      '';
+    return (
+      <MobileFileView
+        transport={transport}
+        initialPath={initialPath}
+        onClose={() => setView('terminal')}
+        onOpenTerminalAt={onOpenTerminalAt}
+        onPastePath={onPastePath}
+      />
+    );
   }
 
   if (tabsState.tabs.length === 0) {
@@ -133,6 +179,15 @@ export function MobileWorkspace({
         </button>
         <button
           type="button"
+          className="btn files-btn"
+          onClick={() => setView('files')}
+          aria-label="Files"
+          data-testid="files-btn"
+        >
+          📁
+        </button>
+        <button
+          type="button"
           className="btn stats-btn"
           onClick={() => setView('stats')}
           aria-label="Stats"
@@ -160,6 +215,7 @@ export function MobileWorkspace({
           <MobileSessionView
             sessionId={tab.sessionId}
             onSessionDead={() => handleSessionDead(tab.sessionId)}
+            onCwdChange={handleCwdChange}
           />
         </div>
       ))}
