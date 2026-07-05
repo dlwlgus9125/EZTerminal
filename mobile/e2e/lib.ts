@@ -261,7 +261,11 @@ export async function waitForAnyNodeText(text: string, timeoutMs = 15000): Promi
   for (;;) {
     const nodes = tryDumpUi();
     if (nodes.length > 0) lastNodes = nodes;
-    const match = nodes.find((n) => n.text === text);
+    // Exact text first, then prefix — VERIFIED TRAP (first live run): the
+    // WebView merges a row's child spans into ONE dumped node text, so a file
+    // row (name span + size span) dumps as `"parityreadtxt.txt25 B"` and an
+    // equality check can never match the bare filename.
+    const match = nodes.find((n) => n.text === text) ?? nodes.find((n) => n.text.startsWith(text));
     if (match) return center(match.bounds);
     if (Date.now() - start > timeoutMs) {
       throw new Error(

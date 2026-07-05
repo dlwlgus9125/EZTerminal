@@ -282,11 +282,23 @@ async function main(): Promise<void> {
     const readFixtureName = 'parityreadtxt.txt';
     const readFixtureContent = `PARITY_READ_${Date.now()}`;
     writeFileSync(path.join(filesFixtureDir, readFixtureName), readFixtureContent, 'utf8');
+    // Pre-clean device-side leftovers from any earlier ABORTED run — the
+    // success-path cleanup below never ran then, and a Documents file left by
+    // a previous install is owned by that install's UID, so this run's fresh
+    // install dies with EACCES/FILE_NOTCREATED trying to write the same name
+    // (VERIFIED on the live emulator). rm makes the step idempotent.
+    runAdb(['shell', 'rm', '-f', `/sdcard/Documents/${readFixtureName}`]);
 
     try {
       console.log('[parity] opening Files and navigating to the fixture dir...');
       await tap(await waitForLabel('Files'));
-      await fillReliably(0, filesFixtureDir);
+      // VERIFIED TRAP (first live run): adb `input text` swallows backslashes
+      // outright (same mangling class as the `.`/`-` note above), so the
+      // Windows path can never pass fillReliably's exact read-back check.
+      // Type the forward-slash form instead — Windows fs accepts it, and
+      // main's `path.resolve` canonicalizes the reply (and the `files:listed`
+      // marker below) back to the backslash form.
+      await fillReliably(0, filesFixtureDir.replaceAll('\\', '/'));
       await pressEnter();
       await sleep(800);
       await pollLogcat('[ez-e2e] files:listed', 15000, (l) => l.includes(filesFixtureDir));
@@ -312,44 +324,33 @@ async function main(): Promise<void> {
       }
       console.log('[parity] step OK: downloaded file confirmed in /sdcard/Documents');
 
-      console.log('[parity] pushing an upload fixture to the phone...');
-      const uploadFixtureName = 'parityuploadtxt.txt';
-      const uploadContent = `PARITY_UPLOAD_${Date.now()}`;
-      const localUploadSource = path.join(filesFixtureDir, `${uploadFixtureName}.src`);
-      writeFileSync(localUploadSource, uploadContent, 'utf8');
-      runAdb(['push', localUploadSource, `/sdcard/Download/${uploadFixtureName}`]);
-
-      console.log('[parity] uploading via the system document picker...');
+      console.log('[parity] uploading via the system document picker (roundtrip)...');
+      // VERIFIED TRAP (first live run): an `adb push`ed file is NOT
+      // MediaStore-indexed, so the GET_CONTENT picker's Recent/Documents
+      // views never show it (only "BROWSE FILES IN OTHER APPS" could reach
+      // it, several fragile taps deep). The file the app itself just
+      // DOWNLOADED via the Filesystem plugin IS indexed (it showed under
+      // "Recent files" on the live emulator) — so upload THAT one back.
+      // This upgrades the assertion to a full desktop→phone→desktop
+      // ROUNDTRIP byte-equality check, and since the fixture dir still holds
+      // the original file, it also exercises the server's collision
+      // auto-rename ("name (1).ext") through a real picker upload.
       await tap(await waitForLabel('Upload'));
       await sleep(1500); // picker activity launch (native Activity, not WebView)
-      // Best-effort picker navigation: try 'Downloads' first (the common
-      // DocumentsUI sidebar entry); if the pushed file is already visible
-      // (e.g. under 'Recent'), the direct waitForText below finds it anyway.
-      // This part IS native Android UI (not WebView), so real clickable
-      // semantics apply — n.clickable here is trustworthy, unlike the
-      // in-WebView file rows above.
-      const pickerNodes = tryDumpUi();
-      const downloadsEntry = pickerNodes.find(
-        (n) => n.clickable && (n.text === 'Downloads' || n.desc === 'Downloads'),
-      );
-      if (downloadsEntry) {
-        await tap(center(downloadsEntry.bounds));
-        await sleep(1000);
-      }
-      await tap(await waitForText(uploadFixtureName));
+      await tap(await waitForAnyNodeText(readFixtureName, 20000));
 
-      await pollLogcat('[ez-e2e] files:upload-done', 20000, (l) => l.includes(uploadFixtureName));
-      console.log('[parity] step OK: files:upload-done');
+      const expectedUploadName = 'parityreadtxt (1).txt';
+      await pollLogcat('[ez-e2e] files:upload-done', 20000, (l) => l.includes(expectedUploadName));
+      console.log('[parity] step OK: files:upload-done (collision auto-rename observed)');
 
-      const uploadedContent = readFileSync(path.join(filesFixtureDir, uploadFixtureName), 'utf8');
-      if (uploadedContent !== uploadContent) {
+      const uploadedContent = readFileSync(path.join(filesFixtureDir, expectedUploadName), 'utf8');
+      if (uploadedContent !== readFixtureContent) {
         throw new Error(
-          `uploaded file content mismatch: expected ${JSON.stringify(uploadContent)}, got ${JSON.stringify(uploadedContent)}`,
+          `roundtrip content mismatch: expected ${JSON.stringify(readFixtureContent)}, got ${JSON.stringify(uploadedContent)}`,
         );
       }
-      console.log('[parity] step OK: uploaded file bytes match exactly on the desktop');
+      console.log('[parity] step OK: desktop→phone→desktop roundtrip bytes match exactly');
 
-      runAdb(['shell', 'rm', '-f', `/sdcard/Download/${uploadFixtureName}`]);
       runAdb(['shell', 'rm', '-f', `/sdcard/Documents/${readFixtureName}`]);
     } finally {
       rmSync(filesFixtureDir, { recursive: true, force: true });
