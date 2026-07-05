@@ -5,6 +5,7 @@
  * framed streaming back via dedicated MessagePort → renderer. (architecture §3)
  */
 import type { LayoutEnvelope, StartupPref, ThemeName } from './layout-schema';
+import type { FileListResult, FileOpResult, FileReadTextResult } from './files';
 
 /** The single key under which the preload bridge is exposed on `window`. */
 export const BRIDGE_KEY = 'ezterminal' as const;
@@ -579,4 +580,22 @@ export interface EzTerminalApi {
   /** Mint + persist a new token — existing connections keep working (the bridge
    * only re-checks the token on new connections); new connections need it. */
   rotateRemoteToken: () => Promise<string>;
+
+  // ── File explorer (file-explorer plan, M1) ────────────────────────────────
+  // Desktop drawer thin passthroughs to main's `FileService`. `''` for a path
+  // means "resolve to the home dir" (see `FileService.listDirectory`).
+  /** List a directory's entries (folders-first, name-sorted, dotfiles included). */
+  listFiles: (path: string) => Promise<FileListResult>;
+  /** Windows drive letters (`A:\`..`Z:\`) to browse from when there's no parent. */
+  listFileRoots: () => Promise<string[]>;
+  /** Read a file for the read-only viewer — binary files come back `isText:false`. */
+  readTextFile: (path: string) => Promise<FileReadTextResult>;
+  createFolder: (dirPath: string, name: string) => Promise<FileOpResult>;
+  renameFile: (path: string, newName: string) => Promise<FileOpResult>;
+  /** Moves to the OS trash only — never a permanent delete. */
+  trashFile: (path: string) => Promise<FileOpResult>;
+  /** Open a file with its OS-registered default app. Desktop-only (no mobile analog). */
+  openFileInApp: (path: string) => Promise<void>;
+  /** Reveal a file in the OS file manager. Desktop-only (no mobile analog). */
+  revealFileInExplorer: (path: string) => Promise<void>;
 }

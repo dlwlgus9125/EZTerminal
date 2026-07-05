@@ -11,6 +11,7 @@ import 'dockview-react/dist/styles/dockview.css';
 import { maxTabSuffix, type LayoutEnvelope, type ThemeName } from '../shared/layout-schema';
 import { CommandPalette, type PaletteAction } from './CommandPalette';
 import { ConnectionInfoPanel } from './ConnectionInfoPanel';
+import { FileExplorerPanel } from './FileExplorerPanel';
 import { StatusPanel } from './StatusPanel';
 import { TerminalPane } from './TerminalPane';
 
@@ -35,7 +36,7 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
     });
     return () => disposable.dispose();
   }, [props.api]);
-  return <TerminalPane />;
+  return <TerminalPane panelId={props.api.id} />;
 }
 
 const components = { terminal: TerminalPanel };
@@ -205,6 +206,15 @@ export function App(): JSX.Element {
   // ── Mobile pairing panel (M4) ─────────────────────────────────────────────
   const [pairingOpen, setPairingOpen] = useState(false);
 
+  // ── File explorer drawer (file-explorer plan, M1) ─────────────────────────
+  // Left-edge overlay — unlike stats/pairing above, it does not share their
+  // right-slot mutual exclusion. `activePanelId` tracks dockview's active
+  // panel so the drawer can read that pane's live cwd via pane-registry when
+  // it opens (best-effort snapshot only, no live-following — see App.tsx's
+  // onDidActivePanelChange subscription in onReady below).
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [activePanelId, setActivePanelId] = useState<string | null>(null);
+
   // ── Theme (E1) ────────────────────────────────────────────────────────────
   // Applied via `data-theme` on <html> so index.css's [data-theme] blocks take
   // over the --term-* vars; 'ez:theme' notifies open PtyBlocks to re-theme their
@@ -330,6 +340,8 @@ export function App(): JSX.Element {
     (event: DockviewReadyEvent) => {
       apiRef.current = event.api;
       const api = event.api;
+      setActivePanelId(api.activePanel?.id ?? null);
+      api.onDidActivePanelChange((changeEvent) => setActivePanelId(changeEvent.panel?.id ?? null));
       // Test seam: e2e drives programmatic panel moves through this handle. dockview's
       // mouse drag is native HTML5 DnD (not Playwright-drivable); panel.api.moveTo(...)
       // uses the identical move engine a drag invokes.
@@ -528,6 +540,15 @@ export function App(): JSX.Element {
         <button
           className="btn btn-split"
           onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
+          onClick={() => setFilesOpen((open) => !open)}
+          title="Toggle file explorer"
+          data-testid="btn-toggle-files"
+        >
+          Files
+        </button>
+        <button
+          className="btn btn-split"
+          onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
           onClick={() => {
             setStatsOpen((open) => !open);
             setPairingOpen(false); // same status-drawer slot (right:0) — only one at a time
@@ -586,6 +607,9 @@ export function App(): JSX.Element {
         />
         {statsOpen && <StatusPanel />}
         {pairingOpen && <ConnectionInfoPanel />}
+        {filesOpen && (
+          <FileExplorerPanel activePanelId={activePanelId} onClose={() => setFilesOpen(false)} />
+        )}
       </div>
 
       {paletteOpen && (

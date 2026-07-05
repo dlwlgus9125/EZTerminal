@@ -57,6 +57,7 @@ import type {
   SessionInfo,
   SystemStatsSnapshot,
 } from '../../../src/shared/ipc';
+import type { FileListResult, FileOpResult, FileReadTextResult } from '../../../src/shared/files';
 import type { StartupPref, ThemeName } from '../../../src/shared/layout-schema';
 import {
   decodeFrame,
@@ -382,6 +383,35 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   }
   rotateRemoteToken(): Promise<string> {
     return Promise.resolve(this.token);
+  }
+
+  // ── File explorer (file-explorer plan) — stubs for M1, real impls in M4 ───
+  // `EzTerminalApi` grew these members in M1 to unblock the desktop drawer;
+  // the mobile browser/viewer over the WS bridge's `file-*` messages doesn't
+  // land until M4, so these reject rather than silently no-op.
+  listFiles(): Promise<FileListResult> {
+    return Promise.reject(new Error('files: not supported yet'));
+  }
+  listFileRoots(): Promise<string[]> {
+    return Promise.reject(new Error('files: not supported yet'));
+  }
+  readTextFile(): Promise<FileReadTextResult> {
+    return Promise.reject(new Error('files: not supported yet'));
+  }
+  createFolder(): Promise<FileOpResult> {
+    return Promise.reject(new Error('files: not supported yet'));
+  }
+  renameFile(): Promise<FileOpResult> {
+    return Promise.reject(new Error('files: not supported yet'));
+  }
+  trashFile(): Promise<FileOpResult> {
+    return Promise.reject(new Error('files: not supported yet'));
+  }
+  openFileInApp(): Promise<void> {
+    return Promise.reject(new Error('files: not supported yet'));
+  }
+  revealFileInExplorer(): Promise<void> {
+    return Promise.reject(new Error('files: not supported yet'));
   }
 
   // ── connection lifecycle ─────────────────────────────────────────────────

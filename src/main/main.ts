@@ -16,6 +16,7 @@ import { networkInterfaces } from 'node:os';
 import started from 'electron-squirrel-startup';
 
 import { isAppUrl } from './url-guard';
+import { FileService } from './file-service';
 import { LayoutStore } from './layout-store';
 import { ScriptHostRegistry } from './script-host-registry';
 import { PacketCaptureRegistry } from './packet-capture-registry';
@@ -252,6 +253,30 @@ app.on('ready', () => {
   ipcMain.on('stats:panel-visible', (_event, visible: boolean) => {
     desktopStatsVisible = Boolean(visible);
     statsVisibility.setDesktopVisible(desktopStatsVisible);
+  });
+
+  // ── File explorer (file-explorer plan, M1) ────────────────────────────────
+  // FileService is the single fs authority; this instance is also handed to
+  // the WS bridge's `RemoteFileSource` seam in M3. `openFileInApp`/
+  // `revealFileInExplorer` stay here (Electron `shell`, desktop-only) rather
+  // than in FileService, which stays electron-free.
+  const fileService = new FileService({ trashItem: (p) => shell.trashItem(p) });
+  ipcMain.handle('files:list', (_event, path: string) => fileService.listDirectory(path));
+  ipcMain.handle('files:roots', () => fileService.listRoots());
+  ipcMain.handle('files:read-text', (_event, path: string) => fileService.readTextFile(path));
+  ipcMain.handle('files:mkdir', (_event, dirPath: string, name: string) =>
+    fileService.createFolder(dirPath, name),
+  );
+  ipcMain.handle('files:rename', (_event, path: string, newName: string) =>
+    fileService.renameEntry(path, newName),
+  );
+  ipcMain.handle('files:trash', (_event, path: string) => fileService.trashEntry(path));
+  ipcMain.handle('files:open-path', async (_event, path: string) => {
+    const err = await shell.openPath(path);
+    if (err) console.error('[main] shell.openPath failed:', err);
+  });
+  ipcMain.handle('files:reveal', (_event, path: string) => {
+    shell.showItemInFolder(path);
   });
 
   // ── Packet capture (Phase 2B, off-by-default sub-view) + mobile tee (M3) ──

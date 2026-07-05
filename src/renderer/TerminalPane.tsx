@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { BlockController } from './block-controller';
 import { Block } from './Block';
 import { formatCwd } from './format-cwd';
+import { removePaneCwd, setPaneCwd } from './pane-registry';
 
 // A TerminalPane is one independent shell surface: its own shell session (cwd/env/
 // variables/history), its own stack of command Blocks, and its own pinned prompt.
@@ -31,7 +32,13 @@ function nextRunId(): string {
 let liveSessionCount = 0;
 (window as Window & { __ezSessions?: () => number }).__ezSessions = () => liveSessionCount;
 
-export function TerminalPane(): JSX.Element {
+interface TerminalPaneProps {
+  /** This pane's dockview panel id — the pane-registry key the file-explorer
+   * drawer (M1) uses to read this pane's live cwd when it opens. */
+  readonly panelId: string;
+}
+
+export function TerminalPane({ panelId }: TerminalPaneProps): JSX.Element {
   const [command, setCommand] = useState('');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   // Submitted commands (oldest first) for ↑/↓ recall. The renderer submits these,
@@ -106,6 +113,7 @@ export function TerminalPane(): JSX.Element {
         sessionIdRef.current = info.sessionId;
         setSessionId(info.sessionId);
         setCurrentCwd((prev) => prev ?? info.cwd);
+        setPaneCwd(panelId, info.cwd);
         liveSessionCount += 1;
       })
       .catch(() => undefined);
@@ -116,8 +124,9 @@ export function TerminalPane(): JSX.Element {
         sessionIdRef.current = null;
         liveSessionCount -= 1;
       }
+      removePaneCwd(panelId);
     };
-  }, []);
+  }, [panelId]);
 
   // The interpreter is shared by all sessions in Phase 1, so its death kills this one
   // too — latch dead to stop accepting runs (Codex B8). Also release a stuck TUI
@@ -209,7 +218,10 @@ export function TerminalPane(): JSX.Element {
           snap.status === 'running' && snap.shape === 'pty' && snap.ptyRenderMode === 'xterm',
         );
         const cwd = snap.endCwd ?? snap.startCwd;
-        if (cwd) setCurrentCwd(cwd);
+        if (cwd) {
+          setCurrentCwd(cwd);
+          setPaneCwd(panelId, cwd);
+        }
         if (stickToBottom.current) requestAnimationFrame(scrollBlockListToBottom);
       };
       activeUnsub.current = controller.subscribe(onActiveChange);
@@ -225,7 +237,7 @@ export function TerminalPane(): JSX.Element {
       window.removeEventListener('message', onWindowMessage);
       console.error('[renderer] runCommand failed:', err);
     });
-  }, [command, scrollBlockListToBottom, sessionId, sessionDead, activeRunning]);
+  }, [command, scrollBlockListToBottom, sessionId, sessionDead, activeRunning, panelId]);
 
   const handleCancel = useCallback(() => {
     activeController.current?.cancel();

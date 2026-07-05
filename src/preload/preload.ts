@@ -115,6 +115,17 @@ const api: EzTerminalApi = {
   getRemoteConnectionInfo: () => ipcRenderer.invoke('remote:get-connection-info'),
   getRemoteToken: () => ipcRenderer.invoke('remote:get-token'),
   rotateRemoteToken: () => ipcRenderer.invoke('remote:rotate-token'),
+
+  // File explorer (file-explorer plan, M1): thin invoke wrappers — main's
+  // FileService is the sole fs authority.
+  listFiles: (path: string) => ipcRenderer.invoke('files:list', path),
+  listFileRoots: () => ipcRenderer.invoke('files:roots'),
+  readTextFile: (path: string) => ipcRenderer.invoke('files:read-text', path),
+  createFolder: (dirPath: string, name: string) => ipcRenderer.invoke('files:mkdir', dirPath, name),
+  renameFile: (path: string, newName: string) => ipcRenderer.invoke('files:rename', path, newName),
+  trashFile: (path: string) => ipcRenderer.invoke('files:trash', path),
+  openFileInApp: (path: string) => ipcRenderer.invoke('files:open-path', path),
+  revealFileInExplorer: (path: string) => ipcRenderer.invoke('files:reveal', path),
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
