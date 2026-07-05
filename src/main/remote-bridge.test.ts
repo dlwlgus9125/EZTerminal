@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   attachConnection,
@@ -6,12 +6,14 @@ import {
   type RemoteBridgeOptions,
   type RemoteInterpreter,
   type RemoteMessageChannel,
+  type RemotePacketSource,
   type RemotePort,
+  type RemoteStatsSource,
   type RemoteWs,
 } from './remote-bridge';
 import { SessionDirectory } from './session-directory';
-import type { InterpreterToMain, MainToInterpreter } from '../shared/ipc';
-import type { ServerToClientMessage } from '../shared/remote-protocol';
+import type { InterpreterToMain, MainToInterpreter, PacketRow, SystemStatsSnapshot } from '../shared/ipc';
+import type { RemotePacketFrame, ServerToClientMessage } from '../shared/remote-protocol';
 
 const TOKEN = 'the-secret-token';
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -22,6 +24,9 @@ class FakeWs implements RemoteWs {
   readyState = 1; // OPEN, matches WS_OPEN
   readonly sent: ServerToClientMessage[] = [];
   closeCode: number | undefined;
+  /** Left `undefined` unless a test sets it — matches a fake that never
+   * reports backpressure (M3's `bufferedAmount ?? 0` gate). */
+  bufferedAmount: number | undefined;
   private readonly messageHandlers: Array<(data: { toString(): string }, isBinary: boolean) => void> = [];
   private readonly closeHandlers: Array<() => void> = [];
 
@@ -107,6 +112,76 @@ class FakePort implements RemotePort {
     this.closed = true;
     for (const h of this.closeHandlers) h();
   }
+}
+
+/** A fake `RemoteStatsSource` — tracks acquire/release counts + live listeners. */
+class FakeStatsSource implements RemoteStatsSource {
+  acquireCount = 0;
+  releaseCount = 0;
+  history: SystemStatsSnapshot[] = [];
+  private readonly listeners = new Set<(snapshot: SystemStatsSnapshot) => void>();
+
+  getHistory(): SystemStatsSnapshot[] {
+    return this.history;
+  }
+
+  onSnapshot(listener: (snapshot: SystemStatsSnapshot) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  acquire(): void {
+    this.acquireCount++;
+  }
+
+  release(): void {
+    this.releaseCount++;
+  }
+
+  get listenerCount(): number {
+    return this.listeners.size;
+  }
+
+  /** Test helper: simulate the 1Hz push. */
+  emit(snapshot: SystemStatsSnapshot): void {
+    for (const l of this.listeners) l(snapshot);
+  }
+}
+
+/** A fake `RemotePacketSource` — tracks how many listeners are currently subscribed. */
+class FakePacketSource implements RemotePacketSource {
+  private readonly listeners = new Set<(frame: RemotePacketFrame) => void>();
+
+  subscribe(listener: (frame: RemotePacketFrame) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  get listenerCount(): number {
+    return this.listeners.size;
+  }
+
+  /** Test helper: simulate the mirror relaying a frame to every subscriber. */
+  emit(frame: RemotePacketFrame): void {
+    for (const l of this.listeners) l(frame);
+  }
+}
+
+function makePacketRow(at: number): PacketRow {
+  return { at, src: '10.0.0.1', dst: '10.0.0.2', proto: 'TCP', len: 60 };
+}
+
+function makeSnapshot(at: number): SystemStatsSnapshot {
+  return {
+    at,
+    cpu: { loadPct: 12.5, cores: [10, 15] },
+    mem: { usedBytes: 100, totalBytes: 200 },
+    memDetail: null,
+    net: null,
+    disks: null,
+    procs: null,
+    conns: null,
+  };
 }
 
 function makeFakeChannel(): RemoteMessageChannel {
@@ -378,5 +453,236 @@ describe('RemoteBridge — connection teardown', () => {
 
     expect(channels.every((c) => c.port1.closed)).toBe(true);
     expect(interpreter.listenerCount).toBe(0);
+  });
+});
+
+describe('RemoteBridge — stats mirroring (M1)', () => {
+  it('stats-visible:true acquires once and relays subsequent snapshots to THIS ws only', async () => {
+    const statsSource = new FakeStatsSource();
+    const wsA = new FakeWs();
+    const wsB = new FakeWs();
+    const { options } = makeOptions({ statsSource });
+    await authed(wsA, options);
+    await authed(wsB, options);
+
+    wsA.clientSend({ kind: 'stats-visible', visible: true });
+
+    expect(statsSource.acquireCount).toBe(1);
+    expect(statsSource.listenerCount).toBe(1);
+
+    const snapshot = makeSnapshot(1000);
+    statsSource.emit(snapshot);
+
+    expect(wsA.sent).toContainEqual({ kind: 'stats-update', snapshot });
+    expect(wsB.sent.some((m) => m.kind === 'stats-update')).toBe(false);
+  });
+
+  it('a second stats-visible:true on the same connection is idempotent (no extra acquire/listener)', async () => {
+    const statsSource = new FakeStatsSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ statsSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'stats-visible', visible: true });
+    ws.clientSend({ kind: 'stats-visible', visible: true });
+
+    expect(statsSource.acquireCount).toBe(1);
+    expect(statsSource.listenerCount).toBe(1);
+  });
+
+  it('stats-visible:false releases + unsubscribes exactly once, including a redundant second call', async () => {
+    const statsSource = new FakeStatsSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ statsSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'stats-visible', visible: true });
+    ws.clientSend({ kind: 'stats-visible', visible: false });
+    ws.clientSend({ kind: 'stats-visible', visible: false }); // redundant — must not double-release
+
+    expect(statsSource.releaseCount).toBe(1);
+    expect(statsSource.listenerCount).toBe(0);
+
+    // Unsubscribed — a snapshot emitted after turning off must not be relayed.
+    statsSource.emit(makeSnapshot(2000));
+    expect(ws.sent.some((m) => m.kind === 'stats-update')).toBe(false);
+  });
+
+  it('closing the ws releases + unsubscribes exactly once for a still-visible subscription', async () => {
+    const statsSource = new FakeStatsSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ statsSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'stats-visible', visible: true });
+    ws.close();
+
+    expect(statsSource.releaseCount).toBe(1);
+    expect(statsSource.listenerCount).toBe(0);
+  });
+
+  it('stats-history replies with the current history payload (FIFO, no correlation id)', async () => {
+    const statsSource = new FakeStatsSource();
+    statsSource.history = [makeSnapshot(1), makeSnapshot(2)];
+    const ws = new FakeWs();
+    const { options } = makeOptions({ statsSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'stats-history' });
+
+    expect(ws.sent).toContainEqual({ kind: 'stats-history', snapshots: statsSource.history });
+  });
+
+  it('a pre-auth stats-visible message is rejected like any other pre-auth message', () => {
+    const statsSource = new FakeStatsSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ statsSource });
+    attachConnection(ws, options);
+
+    ws.clientSend({ kind: 'stats-visible', visible: true });
+
+    expect(ws.closeCode).toBe(AUTH_CLOSE_CODE);
+    expect(statsSource.acquireCount).toBe(0);
+  });
+});
+
+describe('RemoteBridge — packet mirroring (M3)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('packets-subscribe relays a status frame immediately (not coalesced)', async () => {
+    const packetSource = new FakePacketSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ packetSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'packets-subscribe' });
+    expect(packetSource.listenerCount).toBe(1);
+
+    packetSource.emit({ type: 'status', status: 'capturing' });
+
+    expect(ws.sent).toContainEqual({
+      kind: 'packet-frame',
+      frame: { type: 'status', status: 'capturing' },
+    });
+  });
+
+  it('a second packets-subscribe on the same connection is idempotent (no extra listener)', async () => {
+    const packetSource = new FakePacketSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ packetSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'packets-subscribe' });
+    ws.clientSend({ kind: 'packets-subscribe' });
+
+    expect(packetSource.listenerCount).toBe(1);
+  });
+
+  it('two batches spaced 100ms apart coalesce into ONE flush within the 500ms window', async () => {
+    const packetSource = new FakePacketSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ packetSource });
+    await authed(ws, options);
+
+    vi.useFakeTimers();
+    ws.clientSend({ kind: 'packets-subscribe' });
+
+    packetSource.emit({ type: 'packets', rows: [makePacketRow(1)] });
+    vi.advanceTimersByTime(100);
+    packetSource.emit({ type: 'packets', rows: [makePacketRow(2)] });
+    vi.advanceTimersByTime(100);
+
+    expect(ws.sent.filter((m) => m.kind === 'packet-frame')).toHaveLength(0); // 500ms window hasn't elapsed
+
+    vi.advanceTimersByTime(300); // total 500ms since subscribe — the flush timer fires
+    const flushes = ws.sent.filter((m) => m.kind === 'packet-frame');
+    expect(flushes).toHaveLength(1);
+    expect(flushes[0]).toEqual({
+      kind: 'packet-frame',
+      frame: { type: 'packets', rows: [makePacketRow(1), makePacketRow(2)] },
+    });
+  });
+
+  it('caps the pending buffer at 500 rows, dropping the oldest', async () => {
+    const packetSource = new FakePacketSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ packetSource });
+    await authed(ws, options);
+
+    vi.useFakeTimers();
+    ws.clientSend({ kind: 'packets-subscribe' });
+
+    const rows = Array.from({ length: 600 }, (_, i) => makePacketRow(i));
+    packetSource.emit({ type: 'packets', rows });
+    vi.advanceTimersByTime(500);
+
+    const flush = ws.sent.find((m) => m.kind === 'packet-frame') as {
+      kind: 'packet-frame';
+      frame: { type: string; rows: PacketRow[] };
+    };
+    expect(flush.frame.rows).toHaveLength(500);
+    expect(flush.frame.rows[0]).toEqual(makePacketRow(100)); // oldest 100 dropped
+    expect(flush.frame.rows.at(-1)).toEqual(makePacketRow(599));
+  });
+
+  it('skips and clears a flush while ws.bufferedAmount is over the backpressure threshold', async () => {
+    const packetSource = new FakePacketSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ packetSource });
+    await authed(ws, options);
+
+    vi.useFakeTimers();
+    ws.clientSend({ kind: 'packets-subscribe' });
+    ws.bufferedAmount = 262_144 + 1;
+
+    packetSource.emit({ type: 'packets', rows: [makePacketRow(1)] });
+    vi.advanceTimersByTime(500);
+    expect(ws.sent.some((m) => m.kind === 'packet-frame')).toBe(false);
+
+    // Cleared, not just skipped — once backpressure clears, the dropped batch
+    // does NOT reappear in a later flush.
+    ws.bufferedAmount = 0;
+    vi.advanceTimersByTime(500);
+    expect(ws.sent.some((m) => m.kind === 'packet-frame')).toBe(false);
+  });
+
+  it('packets-unsubscribe unsubscribes + clears the timer exactly once, including a redundant second call', async () => {
+    const packetSource = new FakePacketSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ packetSource });
+    await authed(ws, options);
+    ws.clientSend({ kind: 'packets-subscribe' });
+    expect(packetSource.listenerCount).toBe(1);
+
+    ws.clientSend({ kind: 'packets-unsubscribe' });
+    ws.clientSend({ kind: 'packets-unsubscribe' }); // redundant — must not throw/double-release
+
+    expect(packetSource.listenerCount).toBe(0);
+  });
+
+  it('closing the ws while subscribed unsubscribes exactly once', async () => {
+    const packetSource = new FakePacketSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ packetSource });
+    await authed(ws, options);
+    ws.clientSend({ kind: 'packets-subscribe' });
+
+    ws.close();
+
+    expect(packetSource.listenerCount).toBe(0);
+  });
+
+  it('a pre-auth packets-subscribe message is rejected like any other pre-auth message', () => {
+    const packetSource = new FakePacketSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ packetSource });
+    attachConnection(ws, options);
+
+    ws.clientSend({ kind: 'packets-subscribe' });
+
+    expect(ws.closeCode).toBe(AUTH_CLOSE_CODE);
+    expect(packetSource.listenerCount).toBe(0);
   });
 });

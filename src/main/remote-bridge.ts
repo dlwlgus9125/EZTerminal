@@ -19,14 +19,19 @@
  * matching the persisted token — anything else (wrong kind, wrong token)
  * closes the socket immediately (WS close code 4001) and no other message is
  * processed before auth succeeds.
+ *
+ * `startRemoteBridge` also runs a ws ping/pong heartbeat sweep so a
+ * half-open phone socket (app backgrounded/killed without a clean close)
+ * doesn't keep a `statsSource`/packet-mirror acquire alive forever.
  */
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, type WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
 
-import type { InterpreterFrame, InterpreterToMain, MainToInterpreter, SessionInfo } from '../shared/ipc';
+import type { InterpreterFrame, InterpreterToMain, MainToInterpreter, PacketRow, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
 import {
   encodeFrame,
   type ClientToServerMessage,
+  type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../shared/remote-protocol';
 import type { SessionDirectory } from './session-directory';
@@ -36,6 +41,21 @@ export const AUTH_CLOSE_CODE = 4001;
 
 /** Default bridge port — overridable via `EZTERMINAL_REMOTE_PORT`. */
 export const DEFAULT_REMOTE_BRIDGE_PORT = 7420;
+
+/** Ping cadence + missed-pong tolerance for `startRemoteBridge`'s heartbeat sweep. */
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_MAX_MISSED_PONGS = 2;
+
+/** Per-connection packet-frame coalescing (M3): the host already flushes at
+ * 100ms (`PACKET_FLUSH_INTERVAL_MS`); this widens it to 500ms over the phone
+ * link so a busy LAN doesn't spam the socket at 10 msg/s. */
+const MOBILE_PACKET_FLUSH_MS = 500;
+/** Oldest rows drop once a connection's coalescing buffer exceeds this many
+ * (mobile only ever renders `PACKET_ROW_CAP` (200) rows anyway). */
+const MOBILE_PACKET_PENDING_CAP = 500;
+/** Skip (and clear) a flush while the socket's send buffer is this backed up,
+ * rather than piling more onto an already-slow link. 256 KiB. */
+const MOBILE_PACKET_BACKPRESSURE_BYTES = 262_144;
 
 // ── DI seams (narrow slices of Electron's MessagePortMain / UtilityProcess /
 //    `ws`'s WebSocket — real instances satisfy these structurally, fakes in
@@ -62,6 +82,11 @@ export interface RemoteInterpreter {
 
 export interface RemoteWs {
   readonly readyState: number;
+  /** `ws`'s own backpressure gauge (bytes queued, not yet flushed to the OS
+   * socket) — `undefined` on a fake that never reports one (never treated as
+   * backed up). Used to skip a packet-frame flush rather than pile onto an
+   * already-slow link (M3). */
+  readonly bufferedAmount?: number;
   send(data: string): void;
   close(code?: number): void;
   on(event: 'message', listener: (data: { toString(): string }, isBinary: boolean) => void): void;
@@ -71,6 +96,32 @@ export interface RemoteWs {
 /** Matches `ws`'s `WebSocket.OPEN` (standard WebSocket readyState 1). */
 const WS_OPEN = 1;
 
+/**
+ * DI seam over the desktop's `StatsVisibility` + `SystemStatsService`: the
+ * bridge only ever acquires/releases and reads snapshots/history through
+ * this, so it never imports either directly. `onSnapshot`'s feed is
+ * UNGATED (every 1Hz tick, regardless of desktop panel visibility) — this
+ * connection's own `statsVisible` flag decides whether to relay it.
+ */
+export interface RemoteStatsSource {
+  getHistory(): SystemStatsSnapshot[];
+  onSnapshot(listener: (snapshot: SystemStatsSnapshot) => void): () => void;
+  acquire(): void;
+  release(): void;
+}
+
+/**
+ * DI seam over `PacketMirror` (src/main/packet-mirror.ts): the bridge only
+ * ever subscribes/unsubscribes through this, so it never imports the mirror
+ * (or `PacketCaptureRegistry`) directly. Each `subscribe()` call is this
+ * connection's OWN feed — `PacketMirror` gives every subscriber its own
+ * viewer port, so one connection's subscribe/unsubscribe never affects
+ * another's.
+ */
+export interface RemotePacketSource {
+  subscribe(listener: (frame: RemotePacketFrame) => void): () => void;
+}
+
 export interface RemoteBridgeOptions {
   readonly port: number;
   readonly getToken: () => Promise<string> | string;
@@ -79,6 +130,10 @@ export interface RemoteBridgeOptions {
   readonly createMessageChannel: () => RemoteMessageChannel;
   /** Test seam: overrides crypto.randomUUID for deterministic internal ids. */
   readonly newId?: () => string;
+  /** Optional so existing fixtures/tests without stats wiring keep working. */
+  readonly statsSource?: RemoteStatsSource;
+  /** Optional so existing fixtures/tests without packet wiring keep working. */
+  readonly packetSource?: RemotePacketSource;
 }
 
 /**
@@ -92,9 +147,45 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
   const runs = new Map<string, RemotePort>();
   // Bridge-minted requestId -> the client's own requestId (echoed back on reply).
   const pendingCreates = new Map<string, string>();
+  // This connection's own stats subscription (independent of the desktop panel
+  // and of every other connection — statsSource.acquire()/release() combine
+  // them all via refcount, see StatsVisibility).
+  let statsVisible = false;
+  let statsUnsub: (() => void) | null = null;
+  // This connection's own packet subscription (M3) — independent of every
+  // other connection, same shape as stats above. Batch frames are coalesced
+  // into `pendingPacketRows` and flushed on `packetFlushTimer`; status frames
+  // bypass coalescing entirely (sent immediately, see the subscribe handler).
+  let packetsSubscribed = false;
+  let packetsUnsub: (() => void) | null = null;
+  let pendingPacketRows: PacketRow[] = [];
+  let packetFlushTimer: ReturnType<typeof setInterval> | null = null;
 
   const send = (msg: ServerToClientMessage): void => {
     if (ws.readyState === WS_OPEN) ws.send(JSON.stringify(msg));
+  };
+
+  const flushPendingPackets = (): void => {
+    if (pendingPacketRows.length === 0) return;
+    if ((ws.bufferedAmount ?? 0) > MOBILE_PACKET_BACKPRESSURE_BYTES) {
+      pendingPacketRows = []; // skip AND clear — don't pile onto a backed-up link
+      return;
+    }
+    const rows = pendingPacketRows;
+    pendingPacketRows = [];
+    send({ kind: 'packet-frame', frame: { type: 'packets', rows } });
+  };
+
+  const stopPacketsSubscription = (): void => {
+    if (!packetsSubscribed) return;
+    packetsSubscribed = false;
+    packetsUnsub?.();
+    packetsUnsub = null;
+    if (packetFlushTimer !== null) {
+      clearInterval(packetFlushTimer);
+      packetFlushTimer = null;
+    }
+    pendingPacketRows = [];
   };
 
   const onInterpreterMessage = (msg: InterpreterToMain): void => {
@@ -112,6 +203,13 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
     options.interpreter.off('message', onInterpreterMessage);
     for (const port of runs.values()) port.close();
     runs.clear();
+    if (statsVisible) {
+      statsVisible = false;
+      statsUnsub?.();
+      statsUnsub = null;
+      options.statsSource?.release();
+    }
+    stopPacketsSubscription();
   });
 
   ws.on('message', (data, isBinary) => {
@@ -184,6 +282,49 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
         break;
       }
 
+      case 'stats-visible': {
+        if (!options.statsSource) break;
+        if (msg.visible) {
+          if (statsVisible) break; // idempotent — already on
+          statsVisible = true;
+          options.statsSource.acquire();
+          statsUnsub = options.statsSource.onSnapshot((snapshot) => send({ kind: 'stats-update', snapshot }));
+        } else {
+          if (!statsVisible) break; // idempotent — already off
+          statsVisible = false;
+          statsUnsub?.();
+          statsUnsub = null;
+          options.statsSource.release();
+        }
+        break;
+      }
+
+      case 'stats-history':
+        send({ kind: 'stats-history', snapshots: options.statsSource?.getHistory() ?? [] });
+        break;
+
+      case 'packets-subscribe': {
+        if (!options.packetSource) break;
+        if (packetsSubscribed) break; // idempotent — already on
+        packetsSubscribed = true;
+        packetsUnsub = options.packetSource.subscribe((frame) => {
+          if (frame.type === 'status') {
+            send({ kind: 'packet-frame', frame }); // never coalesced — always immediate
+            return;
+          }
+          pendingPacketRows.push(...frame.rows);
+          if (pendingPacketRows.length > MOBILE_PACKET_PENDING_CAP) {
+            pendingPacketRows = pendingPacketRows.slice(pendingPacketRows.length - MOBILE_PACKET_PENDING_CAP);
+          }
+        });
+        packetFlushTimer = setInterval(flushPendingPackets, MOBILE_PACKET_FLUSH_MS);
+        break;
+      }
+
+      case 'packets-unsubscribe':
+        stopPacketsSubscription();
+        break;
+
       // 'auth' after auth already succeeded — ignored (no-op, not an error).
       default:
         break;
@@ -198,8 +339,32 @@ export interface RemoteBridgeHandle {
 /** Start the WS server (binds `0.0.0.0` — LAN/Tailscale reachable, token-gated). */
 export function startRemoteBridge(options: RemoteBridgeOptions): RemoteBridgeHandle {
   const wss = new WebSocketServer({ port: options.port, host: '0.0.0.0' });
-  wss.on('connection', (ws) => attachConnection(ws as unknown as RemoteWs, options));
+
+  // Heartbeat sweep (attachConnection itself is untouched — fakes/tests never
+  // see this): counts consecutive missed pongs per socket, terminating once a
+  // connection misses HEARTBEAT_MAX_MISSED_PONGS in a row.
+  const missedPongs = new WeakMap<WebSocket, number>();
+  wss.on('connection', (ws) => {
+    missedPongs.set(ws, 0);
+    ws.on('pong', () => missedPongs.set(ws, 0));
+    attachConnection(ws as unknown as RemoteWs, options);
+  });
+  const heartbeat = setInterval(() => {
+    for (const ws of wss.clients) {
+      const missed = missedPongs.get(ws) ?? 0;
+      if (missed >= HEARTBEAT_MAX_MISSED_PONGS) {
+        ws.terminate();
+        continue;
+      }
+      missedPongs.set(ws, missed + 1);
+      ws.ping();
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+
   return {
-    stop: () => wss.close(),
+    stop: () => {
+      clearInterval(heartbeat);
+      wss.close();
+    },
   };
 }

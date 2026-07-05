@@ -19,9 +19,11 @@ import { isAppUrl } from './url-guard';
 import { LayoutStore } from './layout-store';
 import { ScriptHostRegistry } from './script-host-registry';
 import { PacketCaptureRegistry } from './packet-capture-registry';
+import { PacketMirror } from './packet-mirror';
 import { KnownHostsStore } from './known-hosts-store';
 import { LogFile, pruneCrashDumps } from './diagnostics';
 import { SystemStatsService } from './system-stats-service';
+import { StatsVisibility } from './stats-visibility';
 import { SessionDirectory } from './session-directory';
 import { RemoteTokenStore } from './remote-token-store';
 import {
@@ -29,10 +31,12 @@ import {
   DEFAULT_REMOTE_BRIDGE_PORT,
   type RemoteBridgeHandle,
   type RemoteInterpreter,
+  type RemotePacketSource,
+  type RemoteStatsSource,
 } from './remote-bridge';
 import { formatConnectionInfo } from './remote-connection-info';
 import type { StartupPref, ThemeName } from '../shared/layout-schema';
-import type { InterpreterToMain, MainToInterpreter, SessionInfo } from '../shared/ipc';
+import type { InterpreterToMain, MainToInterpreter, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
 
 // The main process is the broker (architecture §1).
 // It owns the interpreter utilityProcess lifetime and brokers per-command
@@ -220,32 +224,55 @@ app.on('ready', () => {
     console.error('[main] layout store init failed:', err);
   });
 
-  // ── Status overlay panel stats (status-overlay-panel) ─────────────────────
+  // ── Status overlay panel stats (status-overlay-panel + mobile M1) ─────────
   // The service always ticks its graph loop (CPU/MEM ring buffer, app
-  // lifetime); this callback only decides whether to PUSH a snapshot to the
-  // renderer, gated on panelVisible — 1Hz push cost is zero while closed.
+  // lifetime); this callback decides whether to PUSH a snapshot to desktop
+  // windows (gated on `desktopStatsVisible` — a plain bool, deliberately NOT
+  // `systemStatsService.isPanelVisible()` anymore: that now reflects the
+  // COMBINED desktop-or-remote refcount via `statsVisibility` below, and
+  // gating the desktop push on it would leak stats-update to desktop windows
+  // just because a phone subscribed. Desktop behavior stays bit-identical).
+  // Every snapshot ALSO fans out unconditionally to `remoteStatsListeners` —
+  // per-connection gating is inherent, since a listener only exists in that
+  // set while that connection's own `stats-visible:true` is active.
+  let desktopStatsVisible = false;
+  const remoteStatsListeners = new Set<(snapshot: SystemStatsSnapshot) => void>();
   systemStatsService = new SystemStatsService(mainLog, (snapshot) => {
-    if (!systemStatsService?.isPanelVisible()) return;
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
-      win.webContents.send('stats:update', snapshot);
+    if (desktopStatsVisible) {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+        win.webContents.send('stats:update', snapshot);
+      }
     }
+    for (const listener of remoteStatsListeners) listener(snapshot);
   });
   systemStatsService.start();
+  const statsVisibility = new StatsVisibility((effective) => systemStatsService?.setPanelVisible(effective));
   ipcMain.handle('stats:history', () => systemStatsService?.getHistory() ?? []);
   ipcMain.on('stats:panel-visible', (_event, visible: boolean) => {
-    systemStatsService?.setPanelVisible(Boolean(visible));
+    desktopStatsVisible = Boolean(visible);
+    statsVisibility.setDesktopVisible(desktopStatsVisible);
   });
 
-  // ── Packet capture (Phase 2B, off-by-default sub-view) ───────────────────
+  // ── Packet capture (Phase 2B, off-by-default sub-view) + mobile tee (M3) ──
   // main only forks the host and brokers its port to the renderer — it never
   // sees packet rows or capture status (both flow host -> renderer directly
   // over the port, same "bulk stays off main" shape as run-command's cmd-port
   // below). Output resolves to .vite/build/packet-capture-host.js, same
   // directory as main.js/interpreter-process.js/script-host.js.
+  //
+  // `packetMirror` (declared before assignment, referenced only inside the
+  // registry's `onLiveChange` closure which fires later — see PacketMirror's
+  // own header comment) brokers a SECOND port per mobile subscriber from the
+  // same live host, entirely independent of the desktop's direct port above.
+  let packetMirror: PacketMirror | null = null;
   packetCaptureRegistry = new PacketCaptureRegistry(
     path.join(__dirname, 'packet-capture-host.js'),
+    (live) => packetMirror?.setLive(live),
   );
+  packetMirror = new PacketMirror({
+    addViewerPort: () => packetCaptureRegistry?.addViewerPort() ?? null,
+  });
   ipcMain.on('packets:subscribe', (event) => {
     if (!packetCaptureRegistry) return;
     const port1 = packetCaptureRegistry.subscribe();
@@ -484,6 +511,18 @@ app.on('ready', () => {
     },
   };
   const remoteBridgePort = Number(process.env.EZTERMINAL_REMOTE_PORT) || DEFAULT_REMOTE_BRIDGE_PORT;
+  const remoteStatsSource: RemoteStatsSource = {
+    getHistory: () => systemStatsService?.getHistory() ?? [],
+    onSnapshot: (listener) => {
+      remoteStatsListeners.add(listener);
+      return () => remoteStatsListeners.delete(listener);
+    },
+    acquire: () => statsVisibility.acquire(),
+    release: () => statsVisibility.release(),
+  };
+  const remotePacketSource: RemotePacketSource = {
+    subscribe: (listener) => packetMirror?.subscribe(listener) ?? (() => undefined),
+  };
   remoteBridgeHandle = startRemoteBridge({
     port: remoteBridgePort,
     getToken: async () => {
@@ -493,6 +532,8 @@ app.on('ready', () => {
     interpreter: remoteInterpreterAdapter,
     sessionDirectory,
     createMessageChannel: () => new MessageChannelMain(),
+    statsSource: remoteStatsSource,
+    packetSource: remotePacketSource,
   });
 
   // Desktop pairing panel (M4): connection info/token are read-only display +
