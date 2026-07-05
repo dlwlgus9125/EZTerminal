@@ -4,6 +4,7 @@ import { BlockController } from './block-controller';
 import { Block } from './Block';
 import { formatCwd } from './format-cwd';
 import { registerPaneInput, removePaneCwd, setPaneCwd, unregisterPaneInput } from './pane-registry';
+import { keyToPtyBytes } from './pty-keys';
 
 // A TerminalPane is one independent shell surface: its own shell session (cwd/env/
 // variables/history), its own stack of command Blocks, and its own pinned prompt.
@@ -63,6 +64,16 @@ export function TerminalPane({ panelId, initialCwd }: TerminalPaneProps): JSX.El
   // `activeRunning` — a pane has at most one running block (session runs are
   // serialized), so there is never more than one takeover candidate.
   const [activeTakeover, setActiveTakeover] = useState(false);
+  // Whether the active run is a RUNNING plain-mode `pty` block (M1 focus
+  // retention): while true, cmd-input's onKeyDown/onPaste below route
+  // keystrokes straight to the PTY child instead of command-editing/
+  // history/Enter-run, so the composer can double as the plain-PTY input
+  // surface without losing focus. Derived from the SAME active-run snapshot
+  // as `activeRunning`/`activeTakeover`. Caveat: it only flips true once this
+  // run's MessagePort arrives and the controller subscribes (onActiveChange
+  // below) — the ~1 frame between clicking Run and that arrival, keys typed
+  // still hit command-editing instead of the PTY (accepted, plan ADR).
+  const [activePlainPty, setActivePlainPty] = useState(false);
   // Unsubscribe from the active controller's status (replaced on each new run).
   const activeUnsub = useRef<(() => void) | null>(null);
 
@@ -143,13 +154,15 @@ export function TerminalPane({ panelId, initialCwd }: TerminalPaneProps): JSX.El
 
   // The interpreter is shared by all sessions in Phase 1, so its death kills this one
   // too — latch dead to stop accepting runs (Codex B8). Also release a stuck TUI
-  // takeover (T1): if the interpreter dies mid-run, the active block's `onFrame`
-  // never delivers the 'end'/'error' that would normally flip `activeTakeover`
-  // false, which would otherwise hide cmd-input/other blocks permanently.
+  // takeover (T1) and a stuck plain-PTY input route (M1): if the interpreter dies
+  // mid-run, the active block's `onFrame` never delivers the 'end'/'error' that
+  // would normally flip `activeTakeover`/`activePlainPty` false, which would
+  // otherwise hide cmd-input permanently or keep routing keys nowhere.
   useEffect(() => {
     const unsub = window.ezterminal?.onSessionDead?.(() => {
       setSessionDead(true);
       setActiveTakeover(false);
+      setActivePlainPty(false);
     });
     return () => unsub?.();
   }, []);
@@ -230,6 +243,9 @@ export function TerminalPane({ panelId, initialCwd }: TerminalPaneProps): JSX.El
         setActiveTakeover(
           snap.status === 'running' && snap.shape === 'pty' && snap.ptyRenderMode === 'xterm',
         );
+        setActivePlainPty(
+          snap.status === 'running' && snap.shape === 'pty' && snap.ptyRenderMode === 'plain',
+        );
         const cwd = snap.endCwd ?? snap.startCwd;
         if (cwd) {
           setCurrentCwd(cwd);
@@ -270,6 +286,7 @@ export function TerminalPane({ panelId, initialCwd }: TerminalPaneProps): JSX.El
           activeController.current = null;
           setActiveRunning(false);
           setActiveTakeover(false);
+          setActivePlainPty(false);
         }
         entry.controller.dispose();
       }
@@ -319,15 +336,29 @@ export function TerminalPane({ panelId, initialCwd }: TerminalPaneProps): JSX.El
         <input
           className="cmd-input"
           value={command}
-          // Disabled while a foreground run is active (Phase 3 papercut fix): a
-          // plain-mode PTY block wires its own keyboard input directly, so
-          // cmd-input looking editable while it can't actually submit anything
-          // was misleading; this also lets the block reliably hand focus back
-          // to cmd-input on exit (PtyBlock.tsx) since a disabled input cannot
-          // receive focus, so the timing only needs to work in one direction.
-          disabled={!sessionId || sessionDead || activeRunning}
+          // Disabled only during a TUI takeover (M1 focus retention): the
+          // takeover's xterm view needs real focus for term.onData to work
+          // (PtyBlock.tsx's PtyXtermView, unchanged), and cmd-input is hidden
+          // via CSS during takeover anyway ('.pane--tui-takeover'). Otherwise
+          // — idle, or a plain-mode PTY run — cmd-input stays enabled and
+          // focused: a plain run routes its keystrokes here straight to the
+          // PTY child (onKeyDown/onPaste below, activePlainPty) instead of
+          // disabling input entirely, so the user never has to click back in.
+          disabled={!sessionId || sessionDead || activeTakeover}
           onChange={(e) => setCommand(e.target.value)}
           onKeyDown={(e) => {
+            if (activePlainPty) {
+              // Plain PTY run: keystrokes go straight to the PTY child
+              // (M1 focus retention) — command editing / history recall /
+              // Enter-run are all suspended for the run's duration, matching
+              // PtyPlainView's former minimal keyset (mode-key-map guard: the
+              // same key means something different depending on the mode).
+              const bytes = keyToPtyBytes(e);
+              if (bytes === null) return; // unsupported key — leave default input behavior alone
+              e.preventDefault();
+              activeController.current?.sendPtyInput(bytes);
+              return;
+            }
             if (e.key === 'Enter') {
               handleRun();
               return;
@@ -356,6 +387,12 @@ export function TerminalPane({ panelId, initialCwd }: TerminalPaneProps): JSX.El
                 setCommand(draftBeforeRecall.current);
               }
             }
+          }}
+          onPaste={(e) => {
+            if (!activePlainPty) return; // idle: default paste-into-input behavior
+            e.preventDefault();
+            const text = e.clipboardData.getData('text');
+            if (text) activeController.current?.sendPtyInput(text);
           }}
           aria-label="command input"
           data-testid="cmd-input"

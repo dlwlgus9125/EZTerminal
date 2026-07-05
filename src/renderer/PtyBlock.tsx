@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  useSyncExternalStore,
-  type ClipboardEvent,
-  type KeyboardEvent,
-} from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -138,49 +132,28 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
 
 // ── plain view (Phase 3 adaptive render default) ─────────────────────────────
 
-/**
- * Minimal keyset forwarded to the PTY child in plain mode (B-R4): printable
- * characters, Enter, Backspace, Ctrl+C, Ctrl+D, Tab. Richer editing (arrow
- * keys / history) and IME composition are intentionally UNSUPPORTED here — a
- * program that needs them either emits a high-confidence signal (auto-upgrade
- * to xterm) or the user re-runs with `!cmd` (forced xterm). Returns null for
- * anything outside this set so the browser keeps its default behavior.
- */
-function keyToPtyBytes(e: KeyboardEvent): string | null {
-  if (e.ctrlKey && !e.altKey && !e.metaKey) {
-    if (e.key === 'c' || e.key === 'C') return '\x03';
-    if (e.key === 'd' || e.key === 'D') return '\x04';
-    return null;
-  }
-  if (e.altKey || e.metaKey) return null;
-  if (e.key === 'Enter') return '\r';
-  if (e.key === 'Backspace') return '\x7f';
-  if (e.key === 'Tab') return '\t';
-  if (e.key.length === 1) return e.key; // any other single printable character
-  return null;
-}
-
 function PtyPlainView({ controller }: { controller: BlockController }): JSX.Element {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const containerRef = useRef<HTMLDivElement>(null);
   const outputRef = useRef<HTMLPreElement>(null);
 
-  // Mount: auto-focus + wire the plain sink. Appending is imperative DOM (NOT
-  // React state) for the same reason xterm's byte sink is — plain output can
-  // be just as firehose-y (npm/pnpm progress, a large one-shot dump) as PTY
-  // bytes, and must stay out of React state to avoid render-thrash (B2 e2e:
-  // large plain output must complete without a UI stall or ack deadlock).
+  // Mount: wire the plain sink (input focus now lives on cmd-input — M1 focus
+  // retention routes plain-PTY keystrokes there, TerminalPane.tsx's
+  // activePlainPty). Appending is imperative DOM (NOT React state) for the
+  // same reason xterm's byte sink is — plain output can be just as firehose-y
+  // (npm/pnpm progress, a large one-shot dump) as PTY bytes, and must stay out
+  // of React state to avoid render-thrash (B2 e2e: large plain output must
+  // complete without a UI stall or ack deadlock).
   useEffect(() => {
-    containerRef.current?.focus();
     return controller.setPlainDataSink((html) => {
       outputRef.current?.insertAdjacentHTML('beforeend', html);
     });
   }, [controller]);
 
-  // On exit (status leaves 'running'), hand focus back to this pane's cmd-input
-  // (re-enabled once the run settles — TerminalPane.tsx) so the next command
-  // can be typed without a click. rAF gives that re-render a tick to commit
-  // (cmd-input is disabled, and therefore unfocusable, while running).
+  // On exit (status leaves 'running'): re-focus this pane's cmd-input. Now a
+  // harmless backstop (M1) — plain-mode input routes through cmd-input while
+  // running too, so cmd-input was never actually unfocused here; this only
+  // guards against focus having drifted elsewhere for some other reason.
   useEffect(() => {
     if (snapshot.status === 'running') return;
     const pane = containerRef.current?.closest('.pane');
@@ -190,33 +163,11 @@ function PtyPlainView({ controller }: { controller: BlockController }): JSX.Elem
     return () => cancelAnimationFrame(raf);
   }, [snapshot.status]);
 
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
-    const bytes = keyToPtyBytes(e);
-    if (bytes === null) return; // unsupported key — leave default browser behavior alone
-    // Forwarded keys MUST preventDefault: Tab would otherwise move focus,
-    // Backspace/Space would scroll/navigate instead of reaching the PTY.
-    e.preventDefault();
-    controller.sendPtyInput(bytes);
-  };
-
-  const onPaste = (e: ClipboardEvent<HTMLDivElement>): void => {
-    e.preventDefault();
-    const text = e.clipboardData.getData('text');
-    if (text) controller.sendPtyInput(text);
-  };
-
   return (
-    // Element-scoped keydown/paste only (no window listener) — must not steal
-    // keystrokes meant for cmd-input or the command palette elsewhere in the UI.
-    <div
-      ref={containerRef}
-      className="pty-plain-block"
-      data-testid="pty-plain-block"
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-      onPaste={onPaste}
-      onMouseDown={() => containerRef.current?.focus()}
-    >
+    // Output-only surface (M1): plain-mode input now routes through cmd-input
+    // (TerminalPane.tsx's activePlainPty path), so this div no longer needs
+    // its own tabIndex/key handlers.
+    <div ref={containerRef} className="pty-plain-block" data-testid="pty-plain-block">
       <pre ref={outputRef} className="text-block" data-testid="text-output" />
       {snapshot.status === 'running' && (
         <span className="pty-plain-waiting" data-testid="pty-plain-waiting" aria-hidden="true">

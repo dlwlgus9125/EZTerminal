@@ -1261,15 +1261,9 @@ body {
 }
 
 /* ── PTY plain view (Phase 3 adaptive-render default) ──────────────────────── */
-/* A focusable wrapper around a normal .text-block — keyboard input forwards to
-   the live PTY (PtyBlock.tsx) until/unless the block upgrades to xterm. */
-.pty-plain-block {
-  outline: none;
-}
-.pty-plain-block:focus-visible {
-  outline: 1px solid var(--term-border-faint);
-  outline-offset: 2px;
-}
+/* A wrapper around a normal .text-block — keyboard input routes through
+   cmd-input (TerminalPane.tsx's activePlainPty, M1) until/unless the block
+   upgrades to xterm; this element itself is output-only. */
 .pty-plain-waiting {
   color: var(--term-fg-dim);
   animation: pty-plain-blink 1s step-start infinite;

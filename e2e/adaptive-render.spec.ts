@@ -139,7 +139,9 @@ test('adaptive render: line-oriented prompt — typed echo + Backspace edit roun
   // buffer back verbatim on Enter, so the SERVER-side buffer content (not the
   // plain view's own append-only rendering of the raw \b\x20\b bytes) is what
   // actually proves Backspace reached the PTY and was applied.
-  await plainBlock.click();
+  // Plain-mode input now routes through cmd-input (M1 focus retention) — it
+  // stays enabled/focused through the run, so click it, not the output view.
+  await window.getByTestId('cmd-input').click();
   await window.keyboard.type('abx');
   await window.keyboard.press('Backspace');
   await window.keyboard.press('Enter');
@@ -182,12 +184,90 @@ test('adaptive render: Ctrl+C reaches the PTY child through the plain input path
   await expect(plainBlock).toBeVisible();
   await expect.poll(() => plainText(window), { timeout: 15_000 }).toContain('name:');
 
-  await plainBlock.click();
+  // Plain-mode input routes through cmd-input now (M1) — click it, not the
+  // output view.
+  await window.getByTestId('cmd-input').click();
   await window.keyboard.press('Control+c');
 
   await expect.poll(() => plainText(window), { timeout: 10_000 }).toContain('SIGINT');
   await expect(window.getByTestId('block-status')).toHaveText('done', { timeout: 10_000 });
   await expect(window.getByTestId('pty-block')).toHaveCount(0);
+
+  await app.close();
+});
+
+// ── M1: focus retention (composer stays the single input surface) ───────────
+
+test('AC-1 focus retention: cmd-input keeps focus through a plain run and is immediately retypable, no click needed', async () => {
+  const app = await launchApp();
+  const window = await app.firstWindow();
+  await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  const cmdInput = window.getByTestId('cmd-input');
+  await cmdInput.click();
+  await cmdInput.fill('echo hi');
+  // Enter (not a Run-button click) is the real flow this fixes: cmd-input
+  // already has focus from typing, and it is no longer disabled for the
+  // duration of the run (M1 — disabled is activeTakeover-gated, not
+  // activeRunning-gated), so focus is never yanked away mid-run.
+  await cmdInput.press('Enter');
+
+  await expect(window.getByTestId('block-status')).toHaveText('done', { timeout: 15_000 });
+  await expect(cmdInput).toBeFocused();
+
+  // Immediately typeable with no click in between — proves focus was never
+  // lost (not merely re-focused afterward, PtyBlock.tsx's exit-focus effect).
+  await window.keyboard.press('Control+a');
+  await window.keyboard.type('echo again');
+  await expect(cmdInput).toHaveValue('echo again');
+
+  await app.close();
+});
+
+test('mode-key-map guard: Arrow/Enter mean history-recall+run when idle, PTY input while a plain run is active', async () => {
+  const app = await launchApp();
+  const window = await app.firstWindow();
+  await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  const cmdInput = window.getByTestId('cmd-input');
+
+  // Idle baseline: run one throwaway command so ArrowUp has history to recall.
+  await cmdInput.fill('echo idle-marker');
+  await cmdInput.press('Enter');
+  await expect(window.getByTestId('block-status')).toHaveText('done', { timeout: 15_000 });
+
+  await cmdInput.fill('');
+  await cmdInput.press('ArrowUp');
+  await expect(cmdInput).toHaveValue('echo idle-marker'); // idle: Arrow recalls history
+
+  // Start a plain PTY run and wait for its input prompt. Scoped to the LATEST
+  // block: the idle run above left its own (finished) `text-output`/
+  // `block-status` in the DOM, so an unscoped lookup would be ambiguous
+  // under Playwright's strict mode (mirrors pty.spec.ts's AC-4 pattern).
+  await cmdInput.fill(`node ${LINE_PROMPT_FIXTURE}`);
+  await cmdInput.press('Enter');
+  const runBlock = window.getByTestId('block').last();
+  const plainBlock = runBlock.getByTestId('pty-plain-block');
+  await expect(plainBlock).toBeVisible();
+  await expect
+    .poll(() => runBlock.getByTestId('text-output').innerText(), { timeout: 15_000 })
+    .toContain('name:');
+
+  // activePlainPty: ArrowUp does NOT recall history into the composer — the
+  // mode-key-map guard suspends history/Enter-run while a plain PTY run owns
+  // the composer's keystrokes.
+  const beforeArrow = await cmdInput.inputValue();
+  await window.keyboard.press('ArrowUp');
+  await expect(cmdInput).toHaveValue(beforeArrow); // unchanged — not history recall
+
+  // Enter goes to the PTY as '\r' (not a new run) — the fixture echoes the
+  // typed name back on Enter, which only happens if Enter reached the PTY.
+  await window.keyboard.type('bob');
+  await window.keyboard.press('Enter');
+  await expect
+    .poll(() => runBlock.getByTestId('text-output').innerText(), { timeout: 10_000 })
+    .toContain('HELLO bob');
+  await expect(runBlock.getByTestId('block-status')).toHaveText('done', { timeout: 10_000 });
 
   await app.close();
 });
