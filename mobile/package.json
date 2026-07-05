@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "cap:sync": "cap sync android",
-    "e2e:smoke": "node e2e/smoke.ts"
+    "e2e:smoke": "node e2e/smoke.ts",
+    "e2e:parity": "node e2e/parity.ts"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
