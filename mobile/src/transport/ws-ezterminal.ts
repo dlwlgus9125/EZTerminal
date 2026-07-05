@@ -53,6 +53,7 @@ import type {
   InterpreterFrame,
   RemoteConnectionInfo,
   RendererControl,
+  RunStartedInfo,
   RuntimeVersions,
   SessionInfo,
   SystemStatsSnapshot,
@@ -213,6 +214,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * an immediate replay of the CURRENT state to a listener that just subscribed. */
   private readonly authListeners = new Set<(authed: boolean) => void>();
 
+  // Session mirroring (M2): full mirroring across desktop tabs + mobile. These
+  // three broadcasts are origin-agnostic (fire for sessions/runs THIS
+  // connection itself started too, same as desktop's ipc.ts) — the caller
+  // self-filters, it already has the id from its own local call.
+  private readonly sessionAddedListeners = new Set<(session: SessionInfo) => void>();
+  private readonly sessionRemovedListeners = new Set<(sessionId: string) => void>();
+  private readonly runStartedListeners = new Set<(info: RunStartedInfo) => void>();
+
   /** The desired stats-visible state, remembered across reconnects — see the
    * 'auth-ok' replay in `handleServerMessage`. */
   private statsVisible = false;
@@ -315,6 +324,39 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   onSessionDead(listener: (info?: { logPath?: string | null }) => void): () => void {
     this.sessionDeadListeners.add(listener);
     return () => this.sessionDeadListeners.delete(listener);
+  }
+
+  // ── Session mirroring (M2) ────────────────────────────────────────────────
+
+  onSessionAdded(listener: (session: SessionInfo) => void): () => void {
+    this.sessionAddedListeners.add(listener);
+    return () => this.sessionAddedListeners.delete(listener);
+  }
+
+  onSessionRemoved(listener: (sessionId: string) => void): () => void {
+    this.sessionRemovedListeners.add(listener);
+    return () => this.sessionRemovedListeners.delete(listener);
+  }
+
+  onRunStarted(listener: (info: RunStartedInfo) => void): () => void {
+    this.runStartedListeners.add(listener);
+    return () => this.runStartedListeners.delete(listener);
+  }
+
+  /** Mirrors `runCommand`'s `_ezAttachPort` handoff (see its doc + module doc)
+   * — same `FakeMessagePort`/`ports` map, keyed by `runId` regardless of
+   * whether this connection is the run's initiator or an attacher, since
+   * `frame` messages carry only `runId` either way. */
+  attachRun(sessionId: string, runId: string): Promise<void> {
+    const port = new FakeMessagePort((control) => {
+      this.send({ kind: 'control', runId, control });
+    });
+    this.ports.set(runId, port);
+    this.send({ kind: 'attach-run', sessionId, runId });
+    const event = new MessageEvent('message', { data: { _ezAttachPort: runId }, source: window });
+    Object.defineProperty(event, 'ports', { value: [port], enumerable: true, configurable: true });
+    window.dispatchEvent(event);
+    return Promise.resolve();
   }
 
   /** Mobile-only (not part of `EzTerminalApi`): drives the ConnectScreen's
@@ -746,6 +788,17 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       }
       case 'session-dead':
         for (const listener of this.sessionDeadListeners) listener({ logPath: msg.logPath });
+        break;
+      case 'session-added':
+        for (const listener of this.sessionAddedListeners) listener(msg.session);
+        break;
+      case 'session-removed':
+        for (const listener of this.sessionRemovedListeners) listener(msg.sessionId);
+        break;
+      case 'run-started':
+        for (const listener of this.runStartedListeners) {
+          listener({ sessionId: msg.sessionId, runId: msg.runId, commandText: msg.commandText });
+        }
         break;
       case 'stats-update':
         for (const listener of this.statsListeners) listener(msg.snapshot);

@@ -5,6 +5,7 @@ import { Block } from './Block';
 import { formatCwd } from './format-cwd';
 import { registerPaneInput, removePaneCwd, setPaneCwd, unregisterPaneInput } from './pane-registry';
 import { keyToPtyBytes } from './pty-keys';
+import type { RunStartedInfo, SessionInfo } from '../shared/ipc';
 
 // A TerminalPane is one independent shell surface: its own shell session (cwd/env/
 // variables/history), its own stack of command Blocks, and its own pinned prompt.
@@ -27,9 +28,10 @@ function nextRunId(): string {
   return `run-${runCounter}-${Date.now()}`;
 }
 
-// Live (adopted) session count across all panes — the `window.__ezSessions` test
-// seam (Codex gate B6): layout-persistence e2e asserts no session leaks after
-// restore/preset apply. Counts only sessions a mounted pane adopted.
+// Live LOCALLY-CREATED session count across all panes — the `window.__ezSessions`
+// test seam (Codex gate B6): layout-persistence e2e asserts no session leaks after
+// restore/preset apply. Excludes M2 adopt-mode panes (bound to a session this
+// window did NOT create) — those detach, never destroy, on unmount.
 let liveSessionCount = 0;
 (window as Window & { __ezSessions?: () => number }).__ezSessions = () => liveSessionCount;
 
@@ -40,9 +42,33 @@ interface TerminalPaneProps {
   /** Starting cwd for a pane opened via the file-explorer's "open terminal
    * here" action (M2); undefined for a plain new tab/split (interpreter default). */
   readonly initialCwd?: string;
+  /**
+   * M2 adopt mode: bind to this ALREADY-EXISTING session instead of creating a
+   * new one (this pane is following a session another surface — another
+   * desktop tab, or mobile — created). `createSession` is skipped entirely;
+   * on unmount the pane DETACHES (never `destroySession`s it). If the session
+   * no longer exists (e.g. a restored layout referencing a session from a
+   * PRIOR run of the interpreter), falls back to an ordinary new session —
+   * see the mount effect. Undefined for a plain new tab/split.
+   */
+  readonly adoptSessionId?: string;
+  /** C6 sessionId-report channel: fires once this pane's sessionId is known
+   * (created OR adopted), so App.tsx can self-filter the `onSessionAdded`
+   * broadcast (which fires for sessions this window itself just bound too)
+   * and find the right panel to close on `onSessionRemoved`. */
+  readonly onSessionBound?: (panelId: string, sessionId: string) => void;
+  /** Companion to `onSessionBound` — fires on unmount so App.tsx can forget
+   * the mapping (this panel no longer represents any session). */
+  readonly onSessionUnbound?: (panelId: string) => void;
 }
 
-export function TerminalPane({ panelId, initialCwd }: TerminalPaneProps): JSX.Element {
+export function TerminalPane({
+  panelId,
+  initialCwd,
+  adoptSessionId,
+  onSessionBound,
+  onSessionUnbound,
+}: TerminalPaneProps): JSX.Element {
   const [command, setCommand] = useState('');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   // Submitted commands (oldest first) for ↑/↓ recall. The renderer submits these,
@@ -82,6 +108,16 @@ export function TerminalPane({ panelId, initialCwd }: TerminalPaneProps): JSX.El
   const [sessionId, setSessionId] = useState<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const [sessionDead, setSessionDead] = useState(false);
+  // M2 adopt mode: true once bound to an EXISTING session (vs. one this pane
+  // created, including the C5 fallback below) — decides destroy-vs-detach on
+  // unmount. Latest onSessionBound/onSessionUnbound in refs (not effect deps)
+  // so a fresh inline closure from App on every render doesn't churn the
+  // mount effect (mirrors MobileSessionView's onSessionDeadRef pattern).
+  const isAdoptedRef = useRef(false);
+  const onSessionBoundRef = useRef(onSessionBound);
+  onSessionBoundRef.current = onSessionBound;
+  const onSessionUnboundRef = useRef(onSessionUnbound);
+  onSessionUnboundRef.current = onSessionUnbound;
 
   // The session's current working directory, shown in the live prompt. Seeded from
   // the session's startup cwd, then tracked from the active block's frames (latest
@@ -108,39 +144,80 @@ export function TerminalPane({ panelId, initialCwd }: TerminalPaneProps): JSX.El
   const blocksRef = useRef<BlockEntry[]>([]);
   blocksRef.current = blocks;
 
-  // Create this pane's shell session on mount and seed the prompt from its
-  // authoritative cwd (Codex B5). Destroy it on unmount so its state is released —
-  // the backend teardown is authoritative even if this cleanup is skipped (B6).
+  // Bind this pane to a session on mount — either ADOPT an existing one (M2,
+  // `adoptSessionId`) or CREATE a fresh one (Codex B5), seeding the prompt
+  // from its authoritative cwd either way. A created session is destroyed on
+  // unmount so its state is released — the backend teardown is authoritative
+  // even if this cleanup is skipped (B6); an ADOPTED session only DETACHES
+  // (`isAdoptedRef`) — it belongs to whoever created it (maybe another
+  // surface entirely), so this pane merely stops representing it.
   // The `cancelled` guard (Track A ③ A-M3, folds debt item (f)): if the effect
-  // cleans up before createSession resolves — dev StrictMode double-mount, or a
-  // pane torn down mid-restore during the fromJSON N-panel mount burst — the late
-  // resolution must destroy the orphan session instead of adopting it.
+  // cleans up before the bind resolves — dev StrictMode double-mount, or a
+  // pane torn down mid-restore during the fromJSON N-panel mount burst — the
+  // late resolution must destroy/ignore the orphan instead of adopting it.
   useEffect(() => {
     let cancelled = false;
-    void window.ezterminal
-      ?.createSession?.(initialCwd)
-      .then((info) => {
-        if (cancelled) {
-          window.ezterminal?.destroySession?.(info.sessionId);
-          return;
-        }
-        sessionIdRef.current = info.sessionId;
-        setSessionId(info.sessionId);
-        setCurrentCwd((prev) => prev ?? info.cwd);
-        setPaneCwd(panelId, info.cwd);
-        liveSessionCount += 1;
-      })
-      .catch(() => undefined);
+
+    const bindSession = (info: SessionInfo, adopted: boolean): void => {
+      isAdoptedRef.current = adopted;
+      sessionIdRef.current = info.sessionId;
+      setSessionId(info.sessionId);
+      setCurrentCwd((prev) => prev ?? info.cwd);
+      setPaneCwd(panelId, info.cwd);
+      if (!adopted) liveSessionCount += 1;
+      onSessionBoundRef.current?.(panelId, info.sessionId);
+    };
+
+    const createFresh = (): void => {
+      void window.ezterminal
+        ?.createSession?.(initialCwd)
+        .then((info) => {
+          if (cancelled) {
+            window.ezterminal?.destroySession?.(info.sessionId);
+            return;
+          }
+          bindSession(info, false);
+        })
+        .catch(() => undefined);
+    };
+
+    if (adoptSessionId) {
+      // C5 persistence guard (Critic MS2): the adopt/fallback decision MUST be
+      // sequenced strictly after `listSessions()` resolves — deciding off a
+      // stale/assumed list would race a session mid-creation elsewhere
+      // (warm-restore race). A restored layout can reference a session from a
+      // PRIOR run of the interpreter (gone after a restart) — fall back to an
+      // ordinary new session in that case, same as a plain ungrouped tab.
+      void (window.ezterminal?.listSessions?.() ?? Promise.resolve([]))
+        .then((sessions) => {
+          if (cancelled) return;
+          const existing = sessions.find((s) => s.sessionId === adoptSessionId);
+          if (existing) {
+            bindSession(existing, true);
+          } else {
+            createFresh();
+          }
+        })
+        .catch(() => {
+          if (!cancelled) createFresh();
+        });
+    } else {
+      createFresh();
+    }
+
     return () => {
       cancelled = true;
       if (sessionIdRef.current) {
-        window.ezterminal?.destroySession?.(sessionIdRef.current);
+        if (!isAdoptedRef.current) {
+          window.ezterminal?.destroySession?.(sessionIdRef.current);
+          liveSessionCount -= 1;
+        }
+        onSessionUnboundRef.current?.(panelId);
         sessionIdRef.current = null;
-        liveSessionCount -= 1;
       }
       removePaneCwd(panelId);
     };
-  }, [panelId, initialCwd]);
+  }, [panelId, initialCwd, adoptSessionId]);
 
   // Paste-path-into-terminal (M2, file-explorer context menu): registers a
   // sink that appends text to the live command draft, space-separated unless
@@ -193,6 +270,40 @@ export function TerminalPane({ panelId, initialCwd }: TerminalPaneProps): JSX.El
     };
   }, []);
 
+  // Bind a run's controller as this pane's ACTIVE one — shared by a run this
+  // pane itself started (handleRun below) and one it's MIRRORING (another
+  // origin's run in this pane's session, see the onRunStarted effect below):
+  // keeps the top-level Cancel/takeover/plain-PTY-input-routing state in sync
+  // with whichever run is live, tracks the live prompt cwd, and follows
+  // streaming output to the bottom while pinned. A session serializes its
+  // runs (`canRun` — at most one running block at a time), so there is never
+  // more than one "active" controller to track, whichever pane surfaced it.
+  const bindActiveController = useCallback(
+    (controller: BlockController): void => {
+      activeController.current = controller;
+      activeUnsub.current?.();
+      const onActiveChange = (): void => {
+        const snap = controller.getSnapshot();
+        setActiveRunning(snap.status === 'running');
+        setActiveTakeover(
+          snap.status === 'running' && snap.shape === 'pty' && snap.ptyRenderMode === 'xterm',
+        );
+        setActivePlainPty(
+          snap.status === 'running' && snap.shape === 'pty' && snap.ptyRenderMode === 'plain',
+        );
+        const cwd = snap.endCwd ?? snap.startCwd;
+        if (cwd) {
+          setCurrentCwd(cwd);
+          setPaneCwd(panelId, cwd);
+        }
+        if (stickToBottom.current) requestAnimationFrame(scrollBlockListToBottom);
+      };
+      activeUnsub.current = controller.subscribe(onActiveChange);
+      onActiveChange();
+    },
+    [panelId, scrollBlockListToBottom],
+  );
+
   const handleRun = useCallback(() => {
     // Gate: need a live session (B1/B5), and serialize foreground runs — one command
     // at a time per session (B4); the backend rejects a concurrent run defensively.
@@ -231,30 +342,7 @@ export function TerminalPane({ panelId, initialCwd }: TerminalPaneProps): JSX.El
         return;
       }
       const controller = new BlockController(text, port);
-      activeController.current = controller;
-      // On every frame from the active run: keep the top-level Cancel in sync (it
-      // disables once the run finishes), track the live prompt cwd (latest `end`,
-      // else `start`), and — while pinned — follow the streaming output to the
-      // bottom after React paints the new content (rAF, so scrollHeight is current).
-      activeUnsub.current?.();
-      const onActiveChange = (): void => {
-        const snap = controller.getSnapshot();
-        setActiveRunning(snap.status === 'running');
-        setActiveTakeover(
-          snap.status === 'running' && snap.shape === 'pty' && snap.ptyRenderMode === 'xterm',
-        );
-        setActivePlainPty(
-          snap.status === 'running' && snap.shape === 'pty' && snap.ptyRenderMode === 'plain',
-        );
-        const cwd = snap.endCwd ?? snap.startCwd;
-        if (cwd) {
-          setCurrentCwd(cwd);
-          setPaneCwd(panelId, cwd);
-        }
-        if (stickToBottom.current) requestAnimationFrame(scrollBlockListToBottom);
-      };
-      activeUnsub.current = controller.subscribe(onActiveChange);
-      onActiveChange();
+      bindActiveController(controller);
       setBlocks((prev) =>
         prev.map((entry) => (entry.id === runId ? { ...entry, controller } : entry)),
       );
@@ -266,7 +354,51 @@ export function TerminalPane({ panelId, initialCwd }: TerminalPaneProps): JSX.El
       window.removeEventListener('message', onWindowMessage);
       console.error('[renderer] runCommand failed:', err);
     });
-  }, [command, scrollBlockListToBottom, sessionId, sessionDead, activeRunning, panelId]);
+  }, [command, sessionId, sessionDead, activeRunning, bindActiveController]);
+
+  // Mirror a run this pane did NOT start (M2 full mirroring): ANY session —
+  // whether this pane created it or adopted it — may receive a run from
+  // another surface (another desktop pane/window, or mobile), since sessions
+  // are shared, not exclusively owned. `onRunStarted` is an unconditional
+  // broadcast, including this pane's OWN runs (self-echo) — `blocksRef`
+  // already has an entry for a run THIS pane started (added synchronously in
+  // handleRun, above), so checking it is enough to tell "mine, already
+  // handled" apart from "someone else's, attach".
+  useEffect(() => {
+    const unsub = window.ezterminal?.onRunStarted?.((info: RunStartedInfo) => {
+      if (info.sessionId !== sessionIdRef.current) return; // not my session
+      if (blocksRef.current.some((entry) => entry.id === info.runId)) return; // my own run
+
+      setBlocks((prev) => [...prev, { id: info.runId, command: info.commandText, controller: null }]);
+
+      // Mirrors handleRun's `_ezPort` handshake above, but for the
+      // `_ezAttachPort` handoff `attachRun` triggers (preload.ts, ws-ezterminal.ts).
+      const onWindowMessage = (ev: MessageEvent): void => {
+        if (ev.source !== window && ev.origin !== window.location.origin) return;
+        if (!ev.data || ev.data._ezAttachPort !== info.runId) return;
+        window.removeEventListener('message', onWindowMessage);
+
+        const port = ev.ports[0];
+        if (!port) {
+          console.error('[renderer] attach-port message arrived with no port');
+          return;
+        }
+        const controller = new BlockController(info.commandText, port);
+        bindActiveController(controller);
+        setBlocks((prev) =>
+          prev.map((entry) => (entry.id === info.runId ? { ...entry, controller } : entry)),
+        );
+      };
+
+      window.addEventListener('message', onWindowMessage);
+
+      window.ezterminal.attachRun(info.sessionId, info.runId).catch((err: unknown) => {
+        window.removeEventListener('message', onWindowMessage);
+        console.error('[renderer] attachRun failed:', err);
+      });
+    });
+    return () => unsub?.();
+  }, [bindActiveController]);
 
   const handleCancel = useCallback(() => {
     activeController.current?.cancel();

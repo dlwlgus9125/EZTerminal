@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { BRIDGE_KEY, type EzTerminalApi, type SystemStatsSnapshot } from '../shared/ipc';
+import {
+  BRIDGE_KEY,
+  type EzTerminalApi,
+  type RunStartedInfo,
+  type SessionInfo,
+  type SystemStatsSnapshot,
+} from '../shared/ipc';
 
 // Preload runs with context isolation ON (architecture §1).
 // We expose a NARROW, explicit API — never the raw ipcRenderer.
@@ -30,6 +36,14 @@ ipcRenderer.on('cmd-port', (event, payload: { runId: string }) => {
   const port = event.ports[0];
   if (!port) return;
   window.postMessage({ _ezPort: payload?.runId }, '/', [port]);
+});
+
+// Same relay for a mirroring `attachRun`'s port (M2): keyed by `runId` exactly
+// like `cmd-port` above (multiple concurrent attaches never mis-correlate).
+ipcRenderer.on('attach-port', (event, payload: { runId: string }) => {
+  const port = event.ports[0];
+  if (!port) return;
+  window.postMessage({ _ezAttachPort: payload?.runId }, '/', [port]);
 });
 
 // Same relay for the packet-capture sub-view's port (status-panel-v2 Phase 2B).
@@ -68,6 +82,30 @@ const api: EzTerminalApi = {
     const handler = (_event: unknown, info?: { logPath?: string | null }): void => listener(info);
     ipcRenderer.on('session-dead', handler);
     return () => ipcRenderer.removeListener('session-dead', handler);
+  },
+
+  // Session mirroring (M2): full mirroring across desktop tabs + mobile.
+  listSessions: (): Promise<readonly SessionInfo[]> => ipcRenderer.invoke('list-sessions'),
+  onSessionAdded: (listener: (session: SessionInfo) => void): (() => void) => {
+    const handler = (_event: unknown, session: SessionInfo): void => listener(session);
+    ipcRenderer.on('session-added', handler);
+    return () => ipcRenderer.removeListener('session-added', handler);
+  },
+  onSessionRemoved: (listener: (sessionId: string) => void): (() => void) => {
+    const handler = (_event: unknown, sessionId: string): void => listener(sessionId);
+    ipcRenderer.on('session-removed', handler);
+    return () => ipcRenderer.removeListener('session-removed', handler);
+  },
+  onRunStarted: (listener: (info: RunStartedInfo) => void): (() => void) => {
+    const handler = (_event: unknown, info: RunStartedInfo): void => listener(info);
+    ipcRenderer.on('run-started', handler);
+    return () => ipcRenderer.removeListener('run-started', handler);
+  },
+  attachRun: (sessionId: string, runId: string): Promise<void> => {
+    // The port arrives asynchronously via the persistent 'attach-port' listener
+    // above, keyed by runId — same shape as runCommand's cmd-port (see its doc).
+    ipcRenderer.send('attach-run', { sessionId, runId });
+    return Promise.resolve();
   },
 
   // Layout persistence (Track A ③): thin invoke wrappers — main validates all.

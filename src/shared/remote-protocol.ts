@@ -27,6 +27,7 @@ import type {
   PacketCaptureStatus,
   PtyDataFrame,
   RendererControl,
+  RunStartedInfo,
   SessionInfo,
   SystemStatsSnapshot,
 } from './ipc';
@@ -117,6 +118,23 @@ export interface ControlMessage {
   readonly kind: 'control';
   readonly runId: string;
   readonly control: RendererControl;
+}
+
+/**
+ * Attach as a non-initiating observer to a run (mirroring, M2) — mirrors
+ * `RunCommandRequest`'s shape but never starts a new run. Frames for
+ * `runId` (replay-then-live) arrive over the same `frame` messages this
+ * connection already gets for its own runs; a `frame` for a `runId` this
+ * connection didn't itself `run-command`/`attach-run` simply won't arrive
+ * until one of those is sent. `control` messages for `runId` (e.g.
+ * `pty-input`) are accepted the same as from the initiator; this
+ * connection closing never tears the run down for the initiator or other
+ * attachers (last-port-close semantics, owned by main).
+ */
+export interface AttachRunRequest {
+  readonly kind: 'attach-run';
+  readonly sessionId: string;
+  readonly runId: string;
 }
 
 /** Tell main whether THIS connection wants the 1Hz stats push (mirrors `setStatsPanelVisible`). */
@@ -250,6 +268,7 @@ export type ClientToServerMessage =
   | DestroySessionRequest
   | RunCommandRequest
   | ControlMessage
+  | AttachRunRequest
   | StatsVisibleMessage
   | StatsHistoryRequest
   | PacketsSubscribeMessage
@@ -293,6 +312,27 @@ export interface FrameMessage {
   readonly kind: 'frame';
   readonly runId: string;
   readonly frame: WireInterpreterFrame;
+}
+
+// ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ────
+// Broadcast to EVERY connection (origin-agnostic — including one this same
+// connection just created via `create-session`, same self-echo shape as
+// `ipc.ts`'s `onSessionAdded`/`onSessionRemoved`/`onRunStarted`). A client
+// answers `RunStartedMessage` with `attach-run` to mirror that run's frames.
+
+export interface SessionAddedMessage {
+  readonly kind: 'session-added';
+  readonly session: SessionInfo;
+}
+
+export interface SessionRemovedMessage {
+  readonly kind: 'session-removed';
+  readonly sessionId: string;
+}
+
+/** Same fields as `ipc.ts`'s `RunStartedInfo`, framed for the wire. */
+export interface RunStartedMessage extends RunStartedInfo {
+  readonly kind: 'run-started';
 }
 
 /** The shared interpreter utilityProcess died — every session is gone. */
@@ -407,6 +447,9 @@ export type ServerToClientMessage =
   | SessionListMessage
   | SessionCreatedReply
   | FrameMessage
+  | SessionAddedMessage
+  | SessionRemovedMessage
+  | RunStartedMessage
   | SessionDeadMessage
   | StatsUpdateMessage
   | StatsHistoryReply

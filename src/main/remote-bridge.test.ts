@@ -391,7 +391,7 @@ describe('RemoteBridge — run-command frame/control multiplexing', () => {
 
     ws.clientSend({ kind: 'run-command', runId: 'run-1', sessionId: 'sess-1', commandText: 'ls' });
     expect(interpreter.posted).toHaveLength(1);
-    expect(interpreter.posted[0].message).toEqual({ type: 'run', commandText: 'ls', sessionId: 'sess-1' });
+    expect(interpreter.posted[0].message).toEqual({ type: 'run', commandText: 'ls', sessionId: 'sess-1', runId: 'run-1' });
     expect(channels).toHaveLength(1);
     expect(channels[0].port1.started).toBe(true);
 

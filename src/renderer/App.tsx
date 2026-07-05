@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useEffect, useState } from 'react';
 import {
   DockviewReact,
   type DockviewApi,
@@ -24,6 +24,18 @@ import { TerminalPane } from './TerminalPane';
 // render with `renderer: 'always'` so a hidden pane stays MOUNTED (visibility:hidden, not
 // unmounted) — its live PTY/xterm survives (Codex B7 / dockview docs).
 
+// C6 sessionId-report channel: TerminalPanel is dockview's registered component
+// (module-scoped, outside App's closure), so it can't otherwise reach App's
+// onSessionBound/onSessionUnbound callbacks — a context bridges the two without
+// threading them through dockview panel `params` (which must stay JSON-
+// serializable for `saveLayout`'s api.toJSON(), so a function value can't live
+// there).
+interface SessionBindingContextValue {
+  readonly onSessionBound: (panelId: string, sessionId: string) => void;
+  readonly onSessionUnbound: (panelId: string) => void;
+}
+const SessionBindingContext = createContext<SessionBindingContextValue | null>(null);
+
 // The dockview panel content. On becoming visible again, broadcast a refit so the
 // pane's xterm re-fits: a visibility:hidden panel keeps its layout size, so xterm's
 // ResizeObserver does NOT fire on show — an explicit nudge is required (Codex B7).
@@ -36,7 +48,16 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
     });
     return () => disposable.dispose();
   }, [props.api]);
-  return <TerminalPane panelId={props.api.id} initialCwd={props.params?.cwd as string | undefined} />;
+  const binding = useContext(SessionBindingContext);
+  return (
+    <TerminalPane
+      panelId={props.api.id}
+      initialCwd={props.params?.cwd as string | undefined}
+      adoptSessionId={props.params?.adoptSessionId as string | undefined}
+      onSessionBound={binding?.onSessionBound}
+      onSessionUnbound={binding?.onSessionUnbound}
+    />
+  );
 }
 
 const components = { terminal: TerminalPanel };
@@ -66,6 +87,61 @@ async function pickStartupLayout(): Promise<LayoutEnvelope | null> {
 export function App(): JSX.Element {
   const versions = window.ezterminal?.versions;
   const apiRef = useRef<DockviewApi | null>(null);
+
+  // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
+  // sessionId -> panelId for every panel this window has bound (created OR
+  // adopted) a session for. Two jobs: (1) self-filter `onSessionAdded`, an
+  // unconditional broadcast that also fires for a session THIS window itself
+  // just created/adopted (correlated response -> broadcast ordering is a
+  // main-side guarantee — see remote-protocol.ts — so the map entry is
+  // already there by the time the echo arrives); (2) find the panel to close
+  // when `onSessionRemoved` reports a session gone from elsewhere.
+  const sessionPanelMapRef = useRef<Map<string, string>>(new Map());
+
+  const onSessionBound = useCallback((panelId: string, sessionId: string): void => {
+    sessionPanelMapRef.current.set(sessionId, panelId);
+  }, []);
+
+  const onSessionUnbound = useCallback((panelId: string): void => {
+    for (const [sessionId, boundPanelId] of sessionPanelMapRef.current) {
+      if (boundPanelId === panelId) sessionPanelMapRef.current.delete(sessionId);
+    }
+  }, []);
+
+  const sessionBindingValue = useMemo<SessionBindingContextValue>(
+    () => ({ onSessionBound, onSessionUnbound }),
+    [onSessionBound, onSessionUnbound],
+  );
+
+  // A session created/destroyed on ANY surface (another desktop tab/window, or
+  // mobile) gets mirrored here: an unknown id adds a new ADOPT-mode tab
+  // (T2.3); a removed id closes whichever panel is bound to it (self-echo for
+  // a LOCAL destroy is a no-op — TerminalPane's unmount already called
+  // onSessionUnbound before this broadcast round-trips back).
+  useEffect(() => {
+    const unsubAdded = window.ezterminal?.onSessionAdded?.((session) => {
+      if (sessionPanelMapRef.current.has(session.sessionId)) return; // already have a panel for it
+      const api = apiRef.current;
+      if (!api) return;
+      tabCounter += 1;
+      api.addPanel({
+        id: `tab-${tabCounter}`,
+        component: 'terminal',
+        title: `Terminal ${tabCounter}`,
+        renderer: 'always',
+        params: { adoptSessionId: session.sessionId },
+      });
+    });
+    const unsubRemoved = window.ezterminal?.onSessionRemoved?.((sessionId) => {
+      const panelId = sessionPanelMapRef.current.get(sessionId);
+      if (!panelId) return; // not one of ours (never bound, or already closed)
+      apiRef.current?.getPanel(panelId)?.api.close();
+    });
+    return () => {
+      unsubAdded?.();
+      unsubRemoved?.();
+    };
+  }, []);
 
   // Both "new tab" and "split" open a fresh self-contained TerminalPane. Passing a
   // `position` makes dockview place it in a NEW grid group (a split) instead of the
@@ -604,12 +680,14 @@ export function App(): JSX.Element {
       )}
 
       <div className="dock-host">
-        <DockviewReact
-          className="dockview-theme-dark ez-dock"
-          components={components}
-          onReady={onReady}
-          disableFloatingGroups
-        />
+        <SessionBindingContext.Provider value={sessionBindingValue}>
+          <DockviewReact
+            className="dockview-theme-dark ez-dock"
+            components={components}
+            onReady={onReady}
+            disableFloatingGroups
+          />
+        </SessionBindingContext.Provider>
         {statsOpen && <StatusPanel />}
         {pairingOpen && <ConnectionInfoPanel />}
         {filesOpen && (

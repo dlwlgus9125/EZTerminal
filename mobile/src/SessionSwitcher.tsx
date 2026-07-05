@@ -32,17 +32,31 @@ export function SessionSwitcher({
   const [sessions, setSessions] = useState<readonly SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const refresh = useCallback(() => {
-    setLoading(true);
+  // M2 full mirroring: seed the list once via `listSessions()`, then stay
+  // live via `onSessionAdded`/`onSessionRemoved` (both unconditional
+  // broadcasts, including a session THIS connection's own create/destroy
+  // below just caused) instead of re-polling after every local action.
+  useEffect(() => {
+    let cancelled = false;
     void transport.listSessions().then((list) => {
+      if (cancelled) return;
       setSessions(list);
       setLoading(false);
     });
+    const unsubAdded = transport.onSessionAdded((session) => {
+      setSessions((prev) =>
+        prev.some((s) => s.sessionId === session.sessionId) ? prev : [...prev, session],
+      );
+    });
+    const unsubRemoved = transport.onSessionRemoved((sessionId) => {
+      setSessions((prev) => prev.filter((s) => s.sessionId !== sessionId));
+    });
+    return () => {
+      cancelled = true;
+      unsubAdded();
+      unsubRemoved();
+    };
   }, [transport]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   const createAndOpen = useCallback(() => {
     void transport.createSession().then((info) => onSelect(info.sessionId, info.cwd));
@@ -50,10 +64,10 @@ export function SessionSwitcher({
 
   const destroy = useCallback(
     (sessionId: string) => {
+      // The list drops it via the onSessionRemoved subscription above (echo included).
       transport.destroySession(sessionId);
-      refresh();
     },
-    [transport, refresh],
+    [transport],
   );
 
   const content = (

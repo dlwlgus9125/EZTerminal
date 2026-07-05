@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WsEzTerminalTransport, type CreateSocket, type WsLike } from './ws-ezterminal';
 import { BlockController } from '../../../src/renderer/block-controller';
-import type { SystemStatsSnapshot } from '../../../src/shared/ipc';
+import type { RunStartedInfo, SessionInfo, SystemStatsSnapshot } from '../../../src/shared/ipc';
 import { FILE_CHUNK_BYTES } from '../../../src/shared/files';
 import { base64ToUint8Array, uint8ArrayToBase64, type RemotePacketFrame } from '../../../src/shared/remote-protocol';
 
@@ -66,6 +66,25 @@ function captureEzPort(runId: string): { readonly port: MessagePort | undefined;
   let port: MessagePort | undefined;
   const onMessage = (ev: MessageEvent): void => {
     if (!ev.data || (ev.data as { _ezPort?: string })._ezPort !== runId) return;
+    expect(ev.source).toBe(window);
+    port = ev.ports[0];
+  };
+  window.addEventListener('message', onMessage);
+  return {
+    get port() {
+      return port;
+    },
+    stop: () => window.removeEventListener('message', onMessage),
+  };
+}
+
+/** Captures the `_ezAttachPort` window message TerminalPane.tsx/MobileSessionView.tsx
+ * listen for when mirroring a run (M2) — same contract as `captureEzPort` above,
+ * keyed by `_ezAttachPort` instead of `_ezPort`. */
+function captureEzAttachPort(runId: string): { readonly port: MessagePort | undefined; stop: () => void } {
+  let port: MessagePort | undefined;
+  const onMessage = (ev: MessageEvent): void => {
+    if (!ev.data || (ev.data as { _ezAttachPort?: string })._ezAttachPort !== runId) return;
     expect(ev.source).toBe(window);
     port = ev.ports[0];
   };
@@ -510,6 +529,84 @@ describe('WsEzTerminalTransport — onSessionDead', () => {
     unsub();
     sockets[0].triggerMessage({ kind: 'session-dead', logPath: '/logs/main.log' });
     expect(calls).toHaveLength(1); // no further calls after unsubscribe
+  });
+});
+
+describe('WsEzTerminalTransport — session mirroring (M2)', () => {
+  it('onSessionAdded/onSessionRemoved fire on the matching broadcast; unsubscribe stops delivery', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+
+    const added: SessionInfo[] = [];
+    const removed: string[] = [];
+    const unsubAdded = transport.onSessionAdded((s) => added.push(s));
+    const unsubRemoved = transport.onSessionRemoved((id) => removed.push(id));
+
+    sockets[0].triggerMessage({ kind: 'session-added', session: { sessionId: 'a', cwd: '/a' } });
+    sockets[0].triggerMessage({ kind: 'session-removed', sessionId: 'a' });
+    expect(added).toEqual([{ sessionId: 'a', cwd: '/a' }]);
+    expect(removed).toEqual(['a']);
+
+    unsubAdded();
+    unsubRemoved();
+    sockets[0].triggerMessage({ kind: 'session-added', session: { sessionId: 'b', cwd: '/b' } });
+    sockets[0].triggerMessage({ kind: 'session-removed', sessionId: 'b' });
+    expect(added).toHaveLength(1); // no further calls after unsubscribe
+    expect(removed).toHaveLength(1);
+  });
+
+  it('onRunStarted fires with sessionId/runId/commandText on a run-started broadcast', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+
+    const seen: RunStartedInfo[] = [];
+    transport.onRunStarted((info) => seen.push(info));
+
+    sockets[0].triggerMessage({
+      kind: 'run-started',
+      sessionId: 'sess-1',
+      runId: 'run-9',
+      commandText: 'ls',
+    });
+
+    expect(seen).toEqual([{ sessionId: 'sess-1', runId: 'run-9', commandText: 'ls' }]);
+  });
+
+  it('attachRun() sends attach-run and dispatches the _ezAttachPort handoff, delivering frames for that runId to a real BlockController', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+
+    const capture = captureEzAttachPort('run-9');
+    await transport.attachRun('sess-1', 'run-9');
+    capture.stop();
+
+    expect(sockets[0].lastSent()).toEqual({ kind: 'attach-run', sessionId: 'sess-1', runId: 'run-9' });
+    expect(capture.port).toBeDefined();
+
+    const controller = new BlockController('mirrored', capture.port!);
+    sockets[0].triggerMessage({
+      kind: 'frame',
+      runId: 'run-9',
+      frame: { type: 'start', commandText: 'ls', cwd: '/a' },
+    });
+    expect(controller.getSnapshot().startCwd).toBe('/a');
+  });
+
+  it('relays a control posted to an attached port as {kind:control, runId, control}', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+
+    const capture = captureEzAttachPort('run-9');
+    await transport.attachRun('sess-1', 'run-9');
+    capture.stop();
+
+    capture.port!.postMessage({ type: 'pty-input', data: 'hi' });
+
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'control',
+      runId: 'run-9',
+      control: { type: 'pty-input', data: 'hi' },
+    });
   });
 });
 

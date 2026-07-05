@@ -199,7 +199,7 @@ const createWindow = (): void => {
       const { commandText, runId, sessionId } = payload;
       const { port1, port2 } = new MessageChannelMain();
       // Send command + session + port2 to interpreter (session must already exist).
-      interpreter.postMessage({ type: 'run', commandText, sessionId }, [port2]);
+      interpreter.postMessage({ type: 'run', commandText, sessionId, runId }, [port2]);
       // Transfer port1 to renderer — arrives as a DOM MessagePort via event.ports.
       // Echo `runId` so the preload/renderer correlate THIS port to THIS run even
       // when multiple runs are in flight across panes (Codex B3).
@@ -400,6 +400,40 @@ app.on('ready', () => {
     interpreter?.postMessage({ type: 'destroy-session', sessionId });
   });
 
+  // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
+  // listSessions is a straight passthrough to the directory already kept
+  // above. session-added/session-removed fan out to every desktop window
+  // here; remote-bridge.ts subscribes to the SAME sessionDirectory
+  // independently for its own WS fan-out (T2.1). Both broadcasts are
+  // origin-agnostic (including a window's own session — see SessionDirectory's
+  // doc for why the ordering is safe).
+  ipcMain.handle('list-sessions', () => sessionDirectory.list());
+  sessionDirectory.onSessionAdded((session) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('session-added', session);
+    }
+  });
+  sessionDirectory.onSessionRemoved((sessionId) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('session-removed', sessionId);
+    }
+  });
+
+  // attach-run (T2.2f): brokers a NON-INITIATING port onto an existing run's
+  // ExecutionSession — mirrors the run-command handler in createWindow()
+  // exactly (fresh MessageChannelMain, port2 to the interpreter, port1 to
+  // THIS event's sender), except it never starts a new run (canRun/session-
+  // registry are untouched — attach is view+input, not a second writer).
+  ipcMain.on('attach-run', (event, payload: { sessionId: string; runId: string }) => {
+    if (!interpreter) return;
+    const { runId } = payload;
+    const { port1, port2 } = new MessageChannelMain();
+    interpreter.postMessage({ type: 'attach-run', runId }, [port2]);
+    event.sender.postMessage('attach-port', { runId }, [port1]);
+  });
+
   // Enforce the CSP as a response header for the packaged renderer (defense-in-depth
   // alongside the build-injected <meta>, SEC-MED-3). Skipped under the Vite dev
   // server, whose HMR needs inline scripts / eval / a websocket the strict policy
@@ -437,11 +471,27 @@ app.on('ready', () => {
   // script-host spawn/kill protocol (E4).
   interpreter.on('message', (msg: InterpreterToMain) => {
     if (msg?.type === 'session-created') {
-      sessionDirectory.add({ sessionId: msg.sessionId, cwd: msg.cwd });
+      // Resolve the requester's OWN correlated promise before adding to the
+      // directory — sessionDirectory.add()'s session-added broadcast is
+      // deferred internally (setImmediate), but resolving first here is
+      // extra, cheap defense-in-depth for the same ordering guarantee (ADR C6).
       const pending = pendingCreates.get(msg.requestId);
       if (pending) {
         pendingCreates.delete(msg.requestId);
         pending.resolve({ sessionId: msg.sessionId, cwd: msg.cwd });
+      }
+      sessionDirectory.add({ sessionId: msg.sessionId, cwd: msg.cwd });
+    } else if (msg?.type === 'run-started') {
+      // M2 mirroring: announce to every desktop window so an observer can
+      // attachRun. runId is caller-minted, so unlike session-added there's no
+      // "learn my own id first" race to guard — a plain broadcast is enough.
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+        win.webContents.send('run-started', {
+          sessionId: msg.sessionId,
+          runId: msg.runId,
+          commandText: msg.commandText,
+        });
       }
     } else if (msg?.type === 'spawn-script-host') {
       const result = scriptHostRegistry.spawn(msg.hostId, msg.scriptPath, msg.args, msg.cwd, (hostId, code) => {

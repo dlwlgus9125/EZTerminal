@@ -24,12 +24,18 @@ import type {
   RendererControl,
   MainToInterpreter,
   InterpreterToMain,
+  CancelledFrame,
+  EndFrame,
+  ErrorFrame,
+  ProgressFrame,
+  SchemaFrame,
+  StartFrame,
 } from '../shared/ipc';
 import { readFile } from 'node:fs/promises';
 
 import { evaluate, parse } from './core';
 import { describeError, runBlock, type BlockHandle } from './block-runner';
-import { runPtySession, type PtySession } from './pty-session';
+import { runPtySession, type PtySession, type PtyAttachHandle } from './pty-session';
 import { runScriptSession, type HostChannel, type HostToInterpreterMsg, type ScriptSession, type SpawnHost } from './script-runner';
 import { runSshSession, type KnownHostCheckResult, type SshSession, type SshSessionDeps } from './ssh-session';
 import { createSshClient } from './external/ssh-client';
@@ -60,6 +66,17 @@ interface ExecutionHooks {
   onDisposed?: () => void;
 }
 
+/** A non-initiating observer port attached via `attach-run` (M2 mirroring).
+ * For a `pty`-shape block, `ptyHandle` delegates pty-data replay + this
+ * port's OWN byte-ack pacing entirely to `pty-session.ts`'s `attach()` (its
+ * ring buffer + per-subscriber backpressure, T2.2d/e) — isolated from the
+ * primary port's counters so a slow mirror can never pause/stall it. `null`
+ * for a non-pty (table/text) block, which has no byte stream to pace at all. */
+interface AttachPortState {
+  readonly port: MessagePortMain;
+  readonly ptyHandle: PtyAttachHandle | null;
+}
+
 /**
  * Owns a single command execution: output framing, the block's ResultStore (via
  * runBlock), and cancellation. One instance per `run` message. cwd/env/variables
@@ -70,6 +87,17 @@ interface ExecutionHooks {
  * it when its session is destroyed (Codex B2). `onSettled` fires on the terminal
  * frame (freeing the session's foreground slot) while the port stays open for paging;
  * `onDisposed` fires when the port actually closes.
+ *
+ * M2 mirroring: {@link attach} adds a NON-INITIATING observer port (from a
+ * mirroring desktop tab or a remote mobile client via `attach-run`). Every
+ * frame fans out to the primary port AND every attached port — the primary's
+ * existing byte-ack backpressure (pty-session.ts) is untouched; each attach
+ * port paces itself independently (its own `pty-ack`, T2.2e) so a slow mirror
+ * never delays the primary (no head-of-line blocking). Port teardown follows
+ * last-port-close semantics (T2.2c): a port merely disconnecting (or an
+ * attacher's explicit `close`) only disposes the WHOLE execution once it was
+ * the LAST port standing; only the PRIMARY port's explicit `close` control
+ * always ends it outright (matches the pre-M2 single-port behavior exactly).
  */
 class ExecutionSession implements Execution {
   private readonly ac = new AbortController();
@@ -77,9 +105,23 @@ class ExecutionSession implements Execution {
   private ptySession: PtySession | null = null;
   private scriptSession: ScriptSession | null = null;
   private sshSession: SshSession | null = null;
-  private port: MessagePortMain | null = null;
+  private primaryPort: MessagePortMain | null = null;
+  private readonly attachPorts = new Map<MessagePortMain, AttachPortState>();
   private settled = false;
   private disposed = false;
+
+  // Replay state for a late `attach` (M2): enough to let a new port re-render
+  // the block's current shape/state. Structured (table/text) row DATA is never
+  // replayed here — the attacher re-pages it from the ResultStore itself via
+  // its own `requestRows`/`setViewport`, same as any fresh port would.
+  private lastStart: StartFrame | null = null;
+  private lastSchema: SchemaFrame | null = null;
+  private lastProgress: ProgressFrame | null = null;
+  private ptyRenderUpgraded = false;
+  // A late attach to an ALREADY-FINISHED run (settled but still open for
+  // paging, e.g. a completed pty's scrollback) still needs to learn that —
+  // the terminal frame itself only ever fires once, in the past.
+  private lastTerminal: EndFrame | ErrorFrame | CancelledFrame | null = null;
 
   constructor(
     private readonly shell: ShellSession,
@@ -87,14 +129,16 @@ class ExecutionSession implements Execution {
   ) {}
 
   run(commandText: string, port: MessagePortMain): void {
-    this.port = port;
+    this.primaryPort = port;
     const { signal } = this.ac;
     const send = (frame: InterpreterFrame): void => {
       if (this.disposed) return;
       // Attach the session cwd onto the terminal `end` frame so the renderer's
       // prompt reflects a `cd` (cwd AFTER the command). The pure block-runner that
       // emits `end` stays cwd-agnostic; the session-aware wrapper augments it here.
-      port.postMessage(frame.type === 'end' ? { ...frame, cwd: this.shell.cwd } : frame);
+      const outFrame = frame.type === 'end' ? { ...frame, cwd: this.shell.cwd } : frame;
+      this.recordForReplay(outFrame);
+      this.broadcast(outFrame);
       // A terminal frame settles the foreground run (freeing the session), but the
       // port stays OPEN so the renderer can keep paging the completed result.
       if (frame.type === 'end' || frame.type === 'error' || frame.type === 'cancelled') {
@@ -102,16 +146,7 @@ class ExecutionSession implements Execution {
       }
     };
 
-    port.on('message', (event: ElectronMsgEvent) => {
-      this.handleControl(event.data as RendererControl);
-    });
-    // Fallback teardown (ARCH-P1 / CODE-M4): if the renderer's port is closed/GC'd
-    // without a `close` control reaching us (e.g. window/pane torn down), the port
-    // emits 'close' — dispose so the ResultStore + child are released and don't leak
-    // in utilityProcess memory for the app lifetime. dispose() is idempotent, so this
-    // is safe alongside the explicit `close` control and session destroy.
-    port.on('close', () => this.dispose());
-    port.start();
+    this.wirePort(port, /* isPrimary */ true);
 
     send({ type: 'start', commandText, cwd: this.shell.cwd });
 
@@ -148,12 +183,57 @@ class ExecutionSession implements Execution {
     }
   }
 
+  /**
+   * Attach a NON-INITIATING observer port (M2 mirroring, `attach-run`):
+   * replays enough state for it to render the block (start/schema/pty
+   * scrollback ring/render-upgrade — the ring + this port's own byte-ack
+   * pacing come straight from `pty-session.ts`'s `attach()`, T2.2d/e), then
+   * tees every subsequent frame to it alongside the primary. A dead
+   * execution or (for a pty-shape block) a full subscriber cap rejects with
+   * a terminal `error` frame instead of silently doing nothing — same shape
+   * as `rejectRun` for an unknown `run`.
+   */
+  attach(port: MessagePortMain): void {
+    if (this.disposed) {
+      rejectRun(port, 'run already ended');
+      return;
+    }
+    let ptyHandle: PtyAttachHandle | null = null;
+    if (this.ptySession) {
+      ptyHandle = this.ptySession.attach((bytes) => {
+        try {
+          port.postMessage({ type: 'pty-data', data: bytes } satisfies InterpreterFrame);
+        } catch {
+          // Port already torn down; its own 'close' handler will clean up.
+        }
+      });
+      if (!ptyHandle) {
+        rejectRun(port, 'too many mirror viewers for this run');
+        return;
+      }
+    }
+    const state: AttachPortState = { port, ptyHandle };
+    this.attachPorts.set(port, state);
+    this.wirePort(port, /* isPrimary */ false);
+    if (this.lastStart) port.postMessage(this.lastStart);
+    if (this.lastSchema) port.postMessage(this.lastSchema);
+    if (this.ptyRenderUpgraded) port.postMessage({ type: 'pty-render-upgrade' } satisfies InterpreterFrame);
+    if (ptyHandle && ptyHandle.replay.byteLength > 0) {
+      port.postMessage({ type: 'pty-data', data: ptyHandle.replay } satisfies InterpreterFrame);
+    }
+    if (this.lastProgress) port.postMessage(this.lastProgress);
+    // Replay LAST, if the run already finished before this attach — a late
+    // observer must still learn that (the real terminal frame only ever fired
+    // once, in the past; the port stays open afterward for paging/scrollback).
+    if (this.lastTerminal) port.postMessage(this.lastTerminal);
+  }
+
   /** {@link Execution}: signal cancellation (streams stop, external procs are killed). */
   abort(): void {
     this.ac.abort();
   }
 
-  /** {@link Execution}: release the ResultStore/PTY child + close the port. Idempotent. */
+  /** {@link Execution}: release the ResultStore/PTY child + close every port. Idempotent. */
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -163,10 +243,19 @@ class ExecutionSession implements Execution {
     this.sshSession?.dispose();
     this.settle();
     try {
-      this.port?.close();
+      this.primaryPort?.close();
     } catch {
       // Port already torn down (renderer gone); nothing to do.
     }
+    this.primaryPort = null;
+    for (const state of this.attachPorts.values()) {
+      try {
+        state.port.close();
+      } catch {
+        // Already torn down.
+      }
+    }
+    this.attachPorts.clear();
     this.hooks.onDisposed?.();
   }
 
@@ -176,13 +265,95 @@ class ExecutionSession implements Execution {
     this.hooks.onSettled?.();
   }
 
-  private handleControl(control: RendererControl): void {
+  /** Common wiring for both the primary port (`run`) and an attach port. */
+  private wirePort(port: MessagePortMain, isPrimary: boolean): void {
+    port.on('message', (event: ElectronMsgEvent) => {
+      this.handleControl(port, event.data as RendererControl);
+    });
+    // Last-port-close teardown (T2.2c): a port disconnecting (renderer/pane/
+    // mirror torn down without an explicit `close` control) only disposes the
+    // WHOLE execution once it was the LAST port standing — a mirror viewer
+    // dropping off must never kill the initiator's run.
+    port.on('close', () => {
+      if (isPrimary) {
+        this.primaryPort = null;
+      } else {
+        this.attachPorts.get(port)?.ptyHandle?.detach();
+        this.attachPorts.delete(port);
+      }
+      if (!this.primaryPort && this.attachPorts.size === 0) this.dispose();
+    });
+    port.start();
+  }
+
+  /** Tee a frame to the primary port (unchanged path/backpressure) and every
+   * attach port. `pty-data` is EXCLUDED here — for a pty-shape block, attach
+   * ports get their live bytes straight from `pty-session.ts`'s own `attach()`
+   * tee (its ring buffer + per-subscriber backpressure, T2.2d/e); routing it
+   * through here too would double-deliver it. */
+  private broadcast(frame: InterpreterFrame): void {
+    this.primaryPort?.postMessage(frame);
+    if (frame.type === 'pty-data') return;
+    for (const state of this.attachPorts.values()) {
+      try {
+        state.port.postMessage(frame);
+      } catch {
+        // Attach port already torn down; its own 'close' handler will clean up.
+      }
+    }
+  }
+
+  /** Remember enough per-frame state (T2.2d) for a LATER `attach` to replay —
+   * table/text row data, and pty-data bytes (owned by pty-session.ts's own
+   * ring, see `attach()`), are deliberately excluded (see the field docs above). */
+  private recordForReplay(frame: InterpreterFrame): void {
+    switch (frame.type) {
+      case 'start':
+        this.lastStart = frame;
+        break;
+      case 'schema':
+        this.lastSchema = frame;
+        break;
+      case 'progress':
+        this.lastProgress = frame;
+        break;
+      case 'pty-render-upgrade':
+        this.ptyRenderUpgraded = true;
+        break;
+      case 'end':
+      case 'error':
+      case 'cancelled':
+        this.lastTerminal = frame;
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Detach one attach port WITHOUT disposing the execution unless it was the
+   * last port standing (an attacher's own explicit `close` — same rule as a
+   * bare disconnect, see `wirePort`'s 'close' handler). */
+  private detachPort(port: MessagePortMain): void {
+    this.attachPorts.get(port)?.ptyHandle?.detach();
+    this.attachPorts.delete(port);
+    try {
+      port.close();
+    } catch {
+      // Already gone.
+    }
+    if (!this.primaryPort && this.attachPorts.size === 0) this.dispose();
+  }
+
+  private handleControl(port: MessagePortMain, control: RendererControl): void {
     switch (control?.type) {
       case 'cancel':
         this.abort();
         break;
       case 'close':
-        this.dispose();
+        // Only the PRIMARY port's close ends the run for everyone (T2.2c) —
+        // an attacher's close just detaches that one mirror viewer.
+        if (port === this.primaryPort) this.dispose();
+        else this.detachPort(port);
         break;
       case 'requestRows':
       case 'setViewport':
@@ -198,8 +369,15 @@ class ExecutionSession implements Execution {
         this.sshSession?.resize(control.cols, control.rows);
         break;
       case 'pty-ack':
-        this.ptySession?.ack(control.bytes);
-        this.sshSession?.ack(control.bytes);
+        if (port === this.primaryPort) {
+          this.ptySession?.ack(control.bytes);
+          this.sshSession?.ack(control.bytes);
+        } else {
+          // This attach port's own pacing — delegated entirely to
+          // pty-session.ts's `PtyAttachHandle` (T2.2e), isolated from the
+          // primary's counters.
+          this.attachPorts.get(port)?.ptyHandle?.ack(control.bytes);
+        }
         break;
       case 'ssh-prompt-response':
         this.sshSession?.handlePromptResponse(control);
@@ -219,6 +397,12 @@ console.log(`[interpreter] started — pid ${process.pid}, type: ${process.type}
 // sessions; each owns its own cwd/env/variables/history so tabs/panes are isolated.
 // Sessions are created ONLY via `create-session` — never lazily on `run` (Codex B1).
 const registry = new SessionRegistry(() => randomUUID());
+
+// runId -> its ExecutionSession (M2 mirroring), so a later `attach-run` can find
+// the run it names. Populated in the `run` case below, dropped on dispose —
+// an unknown/already-disposed runId is rejected (see `attach-run`'s handler),
+// never silently resurrected (same discipline as `run`'s own session check, B1).
+const executionsByRunId = new Map<string, ExecutionSession>();
 
 // The `ps` process source — created ONCE (Windows `tasklist`), injected into each
 // per-command EvalContext so the pure core never imports child_process (§7).
@@ -381,10 +565,32 @@ process.parentPort.on('message', (event: ElectronMsgEvent) => {
       const { record } = gate;
       const execution = new ExecutionSession(record.shell, {
         onSettled: () => registry.settle(record, execution),
-        onDisposed: () => registry.remove(record, execution),
+        onDisposed: () => {
+          registry.remove(record, execution);
+          executionsByRunId.delete(msg.runId);
+        },
       });
       registry.begin(record, execution);
+      executionsByRunId.set(msg.runId, execution);
       execution.run(msg.commandText, port);
+      // M2 mirroring: announce the run so main can fan out `run-started` to
+      // every OTHER surface (desktop windows / WS clients) as a mirroring cue.
+      process.parentPort.postMessage({
+        type: 'run-started',
+        sessionId: msg.sessionId,
+        runId: msg.runId,
+        commandText: msg.commandText,
+      } satisfies InterpreterToMain);
+      break;
+    }
+    case 'attach-run': {
+      const port = event.ports[0] as unknown as MessagePortMain;
+      const execution = executionsByRunId.get(msg.runId);
+      if (!execution) {
+        rejectRun(port, `run ${msg.runId} does not exist`);
+        break;
+      }
+      execution.attach(port);
       break;
     }
     case 'script-host-ready': {

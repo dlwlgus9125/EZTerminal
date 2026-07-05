@@ -244,18 +244,41 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
   };
 
   const onInterpreterMessage = (msg: InterpreterToMain): void => {
-    if (msg.type !== 'session-created') return;
-    const clientRequestId = pendingCreates.get(msg.requestId);
-    if (clientRequestId === undefined) return; // some other connection's create
-    pendingCreates.delete(msg.requestId);
-    const session: SessionInfo = { sessionId: msg.sessionId, cwd: msg.cwd };
-    options.sessionDirectory.add(session);
-    send({ kind: 'session-created', requestId: clientRequestId, session });
+    if (msg.type === 'session-created') {
+      const clientRequestId = pendingCreates.get(msg.requestId);
+      if (clientRequestId === undefined) return; // some other connection's create
+      pendingCreates.delete(msg.requestId);
+      const session: SessionInfo = { sessionId: msg.sessionId, cwd: msg.cwd };
+      // Correlated reply BEFORE the directory add — sessionDirectory.add()'s
+      // own session-added broadcast to THIS connection (via the subscription
+      // below) is deferred internally (setImmediate), but replying first here
+      // is extra, cheap defense-in-depth for the same ordering guarantee (ADR C6).
+      send({ kind: 'session-created', requestId: clientRequestId, session });
+      options.sessionDirectory.add(session);
+    } else if (msg.type === 'run-started' && authed) {
+      // M2 mirroring: runId is caller-minted, so unlike session-added there's
+      // no "learn my own id first" race — a plain broadcast is enough.
+      send({ kind: 'run-started', sessionId: msg.sessionId, runId: msg.runId, commandText: msg.commandText });
+    }
   };
   options.interpreter.on('message', onInterpreterMessage);
 
+  // Session mirroring (M2): every connection observes every session change,
+  // origin-agnostic (including one THIS connection just created — same
+  // self-echo shape as the desktop's session-added IPC push, see
+  // SessionDirectory's doc for why the ordering is safe). Gated on `authed`
+  // so an unauthenticated socket never sees session data.
+  const unsubSessionAdded = options.sessionDirectory.onSessionAdded((session) => {
+    if (authed) send({ kind: 'session-added', session });
+  });
+  const unsubSessionRemoved = options.sessionDirectory.onSessionRemoved((sessionId) => {
+    if (authed) send({ kind: 'session-removed', sessionId });
+  });
+
   ws.on('close', () => {
     options.interpreter.off('message', onInterpreterMessage);
+    unsubSessionAdded();
+    unsubSessionRemoved();
     for (const port of runs.values()) port.close();
     runs.clear();
     if (statsVisible) {
@@ -327,9 +350,26 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
         port1.on('close', () => runs.delete(runId));
         port1.start();
         options.interpreter.postMessage(
-          { type: 'run', commandText: msg.commandText, sessionId: msg.sessionId },
+          { type: 'run', commandText: msg.commandText, sessionId: msg.sessionId, runId },
           [port2],
         );
+        break;
+      }
+
+      // Attach as a non-initiating observer to a run (M2 mirroring) — reuses
+      // the SAME `runs` map + frame-relay/control-forwarding shape as
+      // `run-command` above (a `control` for this `runId` already forwards
+      // correctly with no further changes needed).
+      case 'attach-run': {
+        const { runId } = msg;
+        const { port1, port2 } = options.createMessageChannel();
+        runs.set(runId, port1);
+        port1.on('message', (event) => {
+          send({ kind: 'frame', runId, frame: encodeFrame(event.data as InterpreterFrame) });
+        });
+        port1.on('close', () => runs.delete(runId));
+        port1.start();
+        options.interpreter.postMessage({ type: 'attach-run', runId }, [port2]);
         break;
       }
 
