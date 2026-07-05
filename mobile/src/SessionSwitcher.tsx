@@ -3,18 +3,31 @@ import { useCallback, useEffect, useState } from 'react';
 import type { SessionInfo } from '../../src/shared/ipc';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
-// SessionSwitcher — the mobile-only drawer (no desktop analogue) listing every
-// session currently live on the desktop bridge (`list-sessions`), with
-// create/destroy/select. Selecting mounts a `MobileSessionView` for that
-// sessionId; this component itself never creates a BlockController/port.
+// SessionSwitcher — the session manager listing every session currently live
+// on the desktop bridge (`list-sessions`), with create/destroy/open-as-tab.
+// Dual variant (M5, mobile-parity plan D5): 'page' renders in normal document
+// flow — MobileWorkspace shows this as the zero-tab home screen, which MUST
+// stay in-flow (not a fixed overlay) so uiautomator's accessibility dump can
+// see '+ New Session' with no WebView running (see mobile/e2e/smoke.ts).
+// 'sheet' is a ☰-opened fixed bottom sheet, a convenience surface while tabs
+// are already open — not e2e-load-bearing.
+//
+// Selecting a session hands `(sessionId, cwd)` up so MobileWorkspace can open
+// it as a tab; this component itself never creates a BlockController/port.
+// The M4 theme button that used to live here has moved to MobileWorkspace's
+// header (it owns theme state for the whole authed shell now).
 export function SessionSwitcher({
+  variant,
   transport,
   onSelect,
   onDisconnect,
+  onCloseSheet,
 }: {
+  variant: 'page' | 'sheet';
   transport: WsEzTerminalTransport;
-  onSelect: (sessionId: string) => void;
+  onSelect: (sessionId: string, cwd: string) => void;
   onDisconnect: () => void;
+  onCloseSheet?: () => void;
 }): JSX.Element {
   const [sessions, setSessions] = useState<readonly SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,7 +45,7 @@ export function SessionSwitcher({
   }, [refresh]);
 
   const createAndOpen = useCallback(() => {
-    void transport.createSession().then((info) => onSelect(info.sessionId));
+    void transport.createSession().then((info) => onSelect(info.sessionId, info.cwd));
   }, [transport, onSelect]);
 
   const destroy = useCallback(
@@ -43,7 +56,7 @@ export function SessionSwitcher({
     [transport, refresh],
   );
 
-  return (
+  const content = (
     <div className="session-switcher" data-testid="session-switcher">
       <header className="session-switcher-head">
         <h2>Sessions</h2>
@@ -61,7 +74,7 @@ export function SessionSwitcher({
               <button
                 type="button"
                 className="session-open"
-                onClick={() => onSelect(s.sessionId)}
+                onClick={() => onSelect(s.sessionId, s.cwd)}
                 data-testid="session-open"
               >
                 {s.cwd}
@@ -89,6 +102,22 @@ export function SessionSwitcher({
       >
         + New Session
       </button>
+    </div>
+  );
+
+  if (variant === 'page') {
+    return content;
+  }
+
+  return (
+    <div
+      className="session-switcher-backdrop"
+      data-testid="session-switcher-backdrop"
+      onClick={onCloseSheet}
+    >
+      <div className="session-switcher-sheet" onClick={(e) => e.stopPropagation()}>
+        {content}
+      </div>
     </div>
   );
 }

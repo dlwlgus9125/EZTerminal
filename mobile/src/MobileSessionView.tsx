@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import { BlockController } from '../../src/renderer/block-controller';
 import { Block } from '../../src/renderer/Block';
-import { formatCwd } from '../../src/renderer/format-cwd';
 import { TouchInputBar } from './TouchInputBar';
 
 // MobileSessionView — the mobile analogue of the desktop's TerminalPane.tsx.
@@ -16,6 +15,14 @@ import { TouchInputBar } from './TouchInputBar';
 // never creates or destroys a session itself. Everything below `sessionId`
 // (command running, block list, cancel, dismiss, history recall) is a direct
 // port of TerminalPane's logic.
+//
+// M5: this is now one of possibly several tabs MobileWorkspace keeps mounted
+// (display:none when inactive, never unmounted — see MobileWorkspace.tsx's
+// module doc). The header ('‹ Sessions', cwd, 📊/🎨 buttons + ThemeMenu) moved
+// up to MobileWorkspace, which owns tabs/stats/theme for the whole authed
+// shell; this view only owns the block list + input row + its own session-
+// dead banner, and surfaces death upward via `onSessionDead` so the workspace
+// can close this tab (MobileWorkspace.tsx's `handleSessionDead`).
 
 interface BlockEntry {
   readonly id: string;
@@ -33,10 +40,10 @@ function nextRunId(): string {
 
 export function MobileSessionView({
   sessionId,
-  onBack,
+  onSessionDead,
 }: {
   sessionId: string;
-  onBack: () => void;
+  onSessionDead?: () => void;
 }): JSX.Element {
   const [command, setCommand] = useState('');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
@@ -47,8 +54,12 @@ export function MobileSessionView({
   const [activeControllerForTouch, setActiveControllerForTouch] = useState<BlockController | null>(null);
   const [activeRunning, setActiveRunning] = useState(false);
   const activeUnsub = useRef<(() => void) | null>(null);
-  const [currentCwd, setCurrentCwd] = useState<string | null>(null);
   const [sessionDead, setSessionDead] = useState(false);
+  // Latest callback in a ref (not an effect dependency) so a fresh inline
+  // closure from MobileWorkspace on every render doesn't churn the
+  // subscribe/unsubscribe below.
+  const onSessionDeadRef = useRef(onSessionDead);
+  onSessionDeadRef.current = onSessionDead;
 
   const blockListRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -67,9 +78,14 @@ export function MobileSessionView({
   }, []);
 
   // The shared interpreter's death kills every session — latch dead so the
-  // input disables (Codex B8, same as TerminalPane).
+  // input disables (Codex B8, same as TerminalPane), and tell the workspace
+  // so it can close this tab (all open tabs get this at once, since the
+  // signal is global — see module doc).
   useEffect(() => {
-    const unsub = window.ezterminal.onSessionDead(() => setSessionDead(true));
+    const unsub = window.ezterminal.onSessionDead(() => {
+      setSessionDead(true);
+      onSessionDeadRef.current?.();
+    });
     return unsub;
   }, []);
 
@@ -142,8 +158,6 @@ export function MobileSessionView({
       const onActiveChange = (): void => {
         const snap = controller.getSnapshot();
         setActiveRunning(snap.status === 'running');
-        const cwd = snap.endCwd ?? snap.startCwd;
-        if (cwd) setCurrentCwd(cwd);
         if (stickToBottom.current) requestAnimationFrame(scrollBlockListToBottom);
       };
       activeUnsub.current = controller.subscribe(onActiveChange);
@@ -184,17 +198,6 @@ export function MobileSessionView({
 
   return (
     <div className="pane mobile-session-view" data-testid="mobile-session-view">
-      <header className="mobile-session-head">
-        <button type="button" className="btn" onClick={onBack} data-testid="mobile-back-btn">
-          ‹ Sessions
-        </button>
-        {currentCwd && (
-          <span className="prompt-cwd" title={currentCwd} data-testid="prompt-cwd">
-            {formatCwd(currentCwd)}
-          </span>
-        )}
-      </header>
-
       {sessionDead && (
         <div className="mobile-session-dead-banner" data-testid="session-dead-banner">
           Connection lost.

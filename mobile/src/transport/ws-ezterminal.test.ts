@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WsEzTerminalTransport, type CreateSocket, type WsLike } from './ws-ezterminal';
 import { BlockController } from '../../../src/renderer/block-controller';
-import { uint8ArrayToBase64 } from '../../../src/shared/remote-protocol';
+import type { SystemStatsSnapshot } from '../../../src/shared/ipc';
+import { uint8ArrayToBase64, type RemotePacketFrame } from '../../../src/shared/remote-protocol';
 
 // ── Fake socket ──────────────────────────────────────────────────────────────
 
@@ -64,6 +65,24 @@ function captureEzPort(runId: string): { readonly port: MessagePort | undefined;
   let port: MessagePort | undefined;
   const onMessage = (ev: MessageEvent): void => {
     if (!ev.data || (ev.data as { _ezPort?: string })._ezPort !== runId) return;
+    expect(ev.source).toBe(window);
+    port = ev.ports[0];
+  };
+  window.addEventListener('message', onMessage);
+  return {
+    get port() {
+      return port;
+    },
+    stop: () => window.removeEventListener('message', onMessage),
+  };
+}
+
+/** Captures the `_ezPacketPort` window message `subscribePackets()` dispatches
+ * (module doc's "same mechanics as runCommand's `_ezPort` handoff"). */
+function captureEzPacketPort(): { readonly port: MessagePort | undefined; stop: () => void } {
+  let port: MessagePort | undefined;
+  const onMessage = (ev: MessageEvent): void => {
+    if (!ev.data || (ev.data as { _ezPacketPort?: boolean })._ezPacketPort !== true) return;
     expect(ev.source).toBe(window);
     port = ev.ports[0];
   };
@@ -498,5 +517,257 @@ describe('WsEzTerminalTransport — desktop-only EzTerminalApi stubs', () => {
     const { createSocket } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'my-token', createSocket });
     await expect(transport.getRemoteToken()).resolves.toBe('my-token');
+  });
+});
+
+// ── Stats (M2) ───────────────────────────────────────────────────────────────
+
+function makeSnapshot(at: number): SystemStatsSnapshot {
+  return {
+    at,
+    cpu: { loadPct: 10, cores: [10, 20] },
+    mem: { usedBytes: 100, totalBytes: 200 },
+    memDetail: null,
+    net: null,
+    disks: null,
+    procs: null,
+    conns: null,
+  };
+}
+
+describe('WsEzTerminalTransport — stats', () => {
+  it('setStatsPanelVisible(true) sends a stats-visible envelope once authed; repeats do not crash', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    transport.setStatsPanelVisible(true);
+    expect(sockets[0].lastSent()).toEqual({ kind: 'stats-visible', visible: true });
+
+    transport.setStatsPanelVisible(true);
+    expect(sockets[0].sent.filter((s) => JSON.parse(s).kind === 'stats-visible')).toHaveLength(2);
+  });
+
+  it('does not send stats-visible before auth-ok — only records the desired state for later replay', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+
+    transport.setStatsPanelVisible(true);
+    expect(sockets[0].sent.filter((s) => JSON.parse(s).kind === 'stats-visible')).toHaveLength(0);
+  });
+
+  it('fans out stats-update to multiple listeners; unsubscribe stops delivery', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+
+    const seenA: SystemStatsSnapshot[] = [];
+    const seenB: SystemStatsSnapshot[] = [];
+    const unsubA = transport.onStatsUpdate((s) => seenA.push(s));
+    const unsubB = transport.onStatsUpdate((s) => seenB.push(s));
+
+    const snap1 = makeSnapshot(1);
+    sockets[0].triggerMessage({ kind: 'stats-update', snapshot: snap1 });
+    expect(seenA).toEqual([snap1]);
+    expect(seenB).toEqual([snap1]);
+
+    unsubA();
+    const snap2 = makeSnapshot(2);
+    sockets[0].triggerMessage({ kind: 'stats-update', snapshot: snap2 });
+    expect(seenA).toEqual([snap1]); // unsubscribed — no further delivery
+    expect(seenB).toEqual([snap1, snap2]);
+
+    unsubB();
+  });
+
+  it('getStatsHistory() resolves concurrent calls FIFO against unrelated stats-history replies', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+
+    const first = transport.getStatsHistory();
+    const second = transport.getStatsHistory();
+    expect(sockets[0].sent.filter((s) => JSON.parse(s).kind === 'stats-history')).toHaveLength(2);
+
+    const snapA = makeSnapshot(1);
+    const snapB = makeSnapshot(2);
+    sockets[0].triggerMessage({ kind: 'stats-history', snapshots: [snapA] });
+    sockets[0].triggerMessage({ kind: 'stats-history', snapshots: [snapB] });
+
+    await expect(first).resolves.toEqual([snapA]);
+    await expect(second).resolves.toEqual([snapB]);
+  });
+});
+
+describe('WsEzTerminalTransport — stats reconnect replay', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('replays stats-visible:true on the reconnect auth-ok when stats were enabled beforehand', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      initialBackoffMs: 100,
+      maxBackoffMs: 1000,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    transport.setStatsPanelVisible(true);
+    expect(sockets[0].lastSent()).toEqual({ kind: 'stats-visible', visible: true });
+
+    sockets[0].triggerClose();
+    vi.advanceTimersByTime(100);
+    expect(sockets).toHaveLength(2);
+
+    sockets[1].triggerMessage({ kind: 'auth-ok' });
+    expect(sockets[1].lastSent()).toEqual({ kind: 'stats-visible', visible: true });
+  });
+
+  it('does not replay stats-visible on reconnect if it was never enabled', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, initialBackoffMs: 100 });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    sockets[0].triggerClose();
+    vi.advanceTimersByTime(100);
+    sockets[1].triggerMessage({ kind: 'auth-ok' });
+    expect(sockets[1].sent.filter((s) => JSON.parse(s).kind === 'stats-visible')).toHaveLength(0);
+  });
+});
+
+// ── Packets (M3) ─────────────────────────────────────────────────────────────
+
+describe('WsEzTerminalTransport — packets', () => {
+  it('subscribePackets() sends packets-subscribe once authed and dispatches the _ezPacketPort handoff', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const capture = captureEzPacketPort();
+    transport.subscribePackets();
+    capture.stop();
+
+    expect(sockets[0].lastSent()).toEqual({ kind: 'packets-subscribe' });
+    expect(capture.port).toBeDefined();
+  });
+
+  it('does not send packets-subscribe before auth — only records the desired state for later replay', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+
+    transport.subscribePackets();
+
+    expect(sockets[0].sent.filter((s) => JSON.parse(s).kind === 'packets-subscribe')).toHaveLength(0);
+  });
+
+  it('delivers packet-frame batch and status frames to the handed-off port', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const capture = captureEzPacketPort();
+    transport.subscribePackets();
+    capture.stop();
+
+    const received: RemotePacketFrame[] = [];
+    capture.port!.addEventListener('message', (e) => received.push((e as MessageEvent).data));
+
+    sockets[0].triggerMessage({ kind: 'packet-frame', frame: { type: 'status', status: 'capturing' } });
+    sockets[0].triggerMessage({
+      kind: 'packet-frame',
+      frame: { type: 'packets', rows: [{ at: 1, src: '1.1.1.1', dst: '2.2.2.2', proto: 'TCP', len: 60 }] },
+    });
+
+    expect(received).toEqual([
+      { type: 'status', status: 'capturing' },
+      { type: 'packets', rows: [{ at: 1, src: '1.1.1.1', dst: '2.2.2.2', proto: 'TCP', len: 60 }] },
+    ]);
+  });
+
+  it('delivers an idle status frame the same way as any other status', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const capture = captureEzPacketPort();
+    transport.subscribePackets();
+    capture.stop();
+
+    const received: RemotePacketFrame[] = [];
+    capture.port!.addEventListener('message', (e) => received.push((e as MessageEvent).data));
+
+    sockets[0].triggerMessage({ kind: 'packet-frame', frame: { type: 'status', status: 'idle' } });
+
+    expect(received).toEqual([{ type: 'status', status: 'idle' }]);
+  });
+
+  it('unsubscribePackets() sends packets-unsubscribe and closes the port', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const capture = captureEzPacketPort();
+    transport.subscribePackets();
+    capture.stop();
+
+    transport.unsubscribePackets();
+
+    expect(sockets[0].lastSent()).toEqual({ kind: 'packets-unsubscribe' });
+    expect((capture.port as unknown as { isDisposed: boolean }).isDisposed).toBe(true);
+  });
+});
+
+describe('WsEzTerminalTransport — packets reconnect replay', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('replays packets-subscribe on the reconnect auth-ok WITHOUT a second _ezPacketPort handoff', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      initialBackoffMs: 100,
+      maxBackoffMs: 1000,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    let handoffs = 0;
+    const onHandoff = (ev: MessageEvent): void => {
+      if (ev.data && (ev.data as { _ezPacketPort?: boolean })._ezPacketPort === true) handoffs++;
+    };
+    window.addEventListener('message', onHandoff);
+
+    transport.subscribePackets();
+    expect(sockets[0].lastSent()).toEqual({ kind: 'packets-subscribe' });
+    expect(handoffs).toBe(1);
+
+    sockets[0].triggerClose();
+    vi.advanceTimersByTime(100);
+    expect(sockets).toHaveLength(2);
+
+    sockets[1].triggerMessage({ kind: 'auth-ok' });
+    expect(sockets[1].lastSent()).toEqual({ kind: 'packets-subscribe' });
+    expect(handoffs).toBe(1); // same FakeMessagePort reused — no second handoff
+
+    window.removeEventListener('message', onHandoff);
+  });
+
+  it('does not replay packets-subscribe on reconnect if it was never enabled', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, initialBackoffMs: 100 });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    sockets[0].triggerClose();
+    vi.advanceTimersByTime(100);
+    sockets[1].triggerMessage({ kind: 'auth-ok' });
+    expect(sockets[1].sent.filter((s) => JSON.parse(s).kind === 'packets-subscribe')).toHaveLength(0);
   });
 });

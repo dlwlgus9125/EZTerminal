@@ -30,10 +30,23 @@
  * back to a real `Uint8Array` before dispatching, so `BlockController` (which
  * reads `frame.data.byteLength`) never has to know the difference.
  *
- * Methods outside mobile's scope (layout/presets/theme persistence, the stats
- * overlay, packet capture — all explicitly excluded, see the mobile remote-
- * control plan) are implemented as inert stubs purely to satisfy the shared
- * `EzTerminalApi` type; nothing calls them from the mobile UI.
+ * Methods outside mobile's scope (layout/presets/theme persistence — all
+ * explicitly excluded, see the mobile remote-control plan) are implemented as
+ * inert stubs purely to satisfy the shared `EzTerminalApi` type; nothing
+ * calls them from the mobile UI. The stats overlay (M2) and the packet-tee
+ * (M3) ARE in scope — `onStatsUpdate`/`getStatsHistory`/
+ * `setStatsPanelVisible`/`subscribePackets`/`unsubscribePackets` below are all
+ * real implementations.
+ *
+ * `subscribePackets`/`unsubscribePackets` reuse the SAME `_ezPort`-style
+ * handoff as `runCommand`, but with ONE important difference: the packet port
+ * is created ONCE (on the first `subscribePackets()` call) and kept alive for
+ * the lifetime of the subscription, including across reconnects — unlike a
+ * per-run `FakeMessagePort`, there is no `runId` to correlate a fresh port to,
+ * and the consumer (`MobileStatsView`'s capture tab) only ever listens on the
+ * one port it received from the one handoff. A reconnect's 'auth-ok' replays
+ * `packets-subscribe` (mirroring `stats-visible`'s replay) WITHOUT a second
+ * handoff — the server's `PacketMirror` replays the current status on its own.
  */
 import type {
   EzTerminalApi,
@@ -42,11 +55,13 @@ import type {
   RendererControl,
   RuntimeVersions,
   SessionInfo,
+  SystemStatsSnapshot,
 } from '../../../src/shared/ipc';
 import type { StartupPref, ThemeName } from '../../../src/shared/layout-schema';
 import {
   decodeFrame,
   type ClientToServerMessage,
+  type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../../../src/shared/remote-protocol';
 
@@ -81,8 +96,14 @@ const DEFAULT_AUTH_TIMEOUT_MS = 6000;
  * a genuine `MessagePort` can't be used here. Implements only the surface
  * `BlockController` actually calls: `addEventListener('message', ...)` (native
  * `EventTarget` behavior), `postMessage`, `start`, `close`.
+ *
+ * Generic over the delivered frame type so the SAME class serves both the
+ * per-run cmd port (`FakeMessagePort<InterpreterFrame>`, the default) and the
+ * persistent packet port (`FakeMessagePort<RemotePacketFrame>`) — the class
+ * itself is just an `EventTarget` wrapper; only the type of what flows over
+ * `deliver()` differs.
  */
-export class FakeMessagePort extends EventTarget {
+export class FakeMessagePort<TFrame = InterpreterFrame> extends EventTarget {
   private disposed = false;
 
   constructor(private readonly onControl: (control: RendererControl) => void) {
@@ -106,7 +127,7 @@ export class FakeMessagePort extends EventTarget {
   }
 
   /** Transport-internal: push a decoded frame in as a 'message' event. */
-  deliver(frame: InterpreterFrame): void {
+  deliver(frame: TFrame): void {
     if (this.disposed) return;
     this.dispatchEvent(new MessageEvent('message', { data: frame }));
   }
@@ -161,6 +182,22 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   /** Mobile-only (M2 ConnectScreen): fires on every authed transition, including
    * an immediate replay of the CURRENT state to a listener that just subscribed. */
   private readonly authListeners = new Set<(authed: boolean) => void>();
+
+  /** The desired stats-visible state, remembered across reconnects — see the
+   * 'auth-ok' replay in `handleServerMessage`. */
+  private statsVisible = false;
+  private readonly statsListeners = new Set<(snapshot: SystemStatsSnapshot) => void>();
+  /** `stats-history` has no correlation id on the wire (same precedent as
+   * `list-sessions`) — concurrent callers are served FIFO as replies arrive. */
+  private readonly pendingStatsHistory: Array<(snapshots: readonly SystemStatsSnapshot[]) => void> = [];
+
+  /** The desired packets-subscribed state, remembered across reconnects — see
+   * the 'auth-ok' replay in `handleServerMessage`. */
+  private packetsSubscribed = false;
+  /** ONE persistent port for the lifetime of a subscription (see module doc —
+   * unlike cmd ports, there's no per-run correlation id, and it survives a
+   * reconnect without a second handoff). */
+  private packetPort: FakeMessagePort<RemotePacketFrame> | null = null;
 
   constructor(options: WsEzTerminalOptions) {
     this.url = options.url;
@@ -240,7 +277,32 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return () => this.authListeners.delete(listener);
   }
 
-  // ── Out of scope for mobile (layout/presets/theme/stats/packets) — inert
+  /** One 1Hz stats push while `setStatsPanelVisible(true)` — mirrors the desktop's `StatusPanel.tsx`. */
+  onStatsUpdate(listener: (snapshot: SystemStatsSnapshot) => void): () => void {
+    this.statsListeners.add(listener);
+    return () => this.statsListeners.delete(listener);
+  }
+
+  getStatsHistory(): Promise<SystemStatsSnapshot[]> {
+    return new Promise((resolve) => {
+      // Copy to a mutable array — the wire reply is `readonly` but this method's
+      // `EzTerminalApi` signature (unlike mobile-only `listSessions`) is not.
+      this.pendingStatsHistory.push((snapshots) => resolve([...snapshots]));
+      this.send({ kind: 'stats-history' });
+    });
+  }
+
+  /** Tell the bridge whether THIS connection wants the 1Hz push. Only sent while
+   * authed — sending anything before `auth-ok` gets the connection closed by the
+   * bridge (see `remote-bridge.ts`'s un-authed guard) — but the desired state is
+   * always remembered so a not-yet-authed (or reconnecting) call is replayed by
+   * the 'auth-ok' handler below once the handshake completes. */
+  setStatsPanelVisible(visible: boolean): void {
+    this.statsVisible = visible;
+    if (this.authed) this.send({ kind: 'stats-visible', visible });
+  }
+
+  // ── Out of scope for mobile (layout/presets/theme persistence) — inert
   //    stubs only, to satisfy `EzTerminalApi`. Nothing in the mobile UI calls
   //    these (see the mobile remote-control plan's exclusions). ─────────────
 
@@ -280,20 +342,30 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   setTheme(): Promise<void> {
     return Promise.resolve();
   }
-  onStatsUpdate(): () => void {
-    return () => undefined;
-  }
-  getStatsHistory(): Promise<never[]> {
-    return Promise.resolve([]);
-  }
-  setStatsPanelVisible(): void {
-    /* stats overlay is desktop-only — excluded from mobile scope */
-  }
+
+  /** Ask the bridge to tee packet-capture frames to this connection
+   * (view-only — the desktop owns start/stop). Sends immediately if authed
+   * (like `setStatsPanelVisible`); the desired state is always remembered so
+   * a not-yet-authed (or reconnecting) call is replayed on 'auth-ok'. The
+   * `_ezPacketPort` handoff (module doc) only happens ONCE — a second call
+   * before `unsubscribePackets()` just re-sends the wire message. */
   subscribePackets(): void {
-    /* packet capture is desktop-only — excluded from mobile scope */
+    this.packetsSubscribed = true;
+    if (this.authed) this.send({ kind: 'packets-subscribe' });
+    if (!this.packetPort) {
+      const port = new FakeMessagePort<RemotePacketFrame>(() => undefined);
+      this.packetPort = port;
+      const event = new MessageEvent('message', { data: { _ezPacketPort: true }, source: window });
+      Object.defineProperty(event, 'ports', { value: [port], enumerable: true, configurable: true });
+      window.dispatchEvent(event);
+    }
   }
+
   unsubscribePackets(): void {
-    /* packet capture is desktop-only — excluded from mobile scope */
+    this.packetsSubscribed = false;
+    if (this.authed) this.send({ kind: 'packets-unsubscribe' });
+    this.packetPort?.close();
+    this.packetPort = null;
   }
 
   // ── Mobile remote-control pairing (M4, desktop-side pairing panel only) ───
@@ -411,6 +483,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         // A fully successful (re)connect resets the backoff — a flappy link
         // that keeps briefly reconnecting shouldn't creep toward the cap.
         this.backoffMs = this.initialBackoffMs;
+        // Replay the stats subscription across reconnects — the bridge's own
+        // `statsVisible` is per-connection state that does NOT survive a new
+        // socket (see `setStatsPanelVisible`'s doc comment).
+        if (this.statsVisible) this.send({ kind: 'stats-visible', visible: true });
+        // Same replay for packets — NO second `_ezPacketPort` handoff: the
+        // existing `packetPort` (if any) is reused, and the server's
+        // `PacketMirror` replays the current status on its own.
+        if (this.packetsSubscribed) this.send({ kind: 'packets-subscribe' });
         break;
       case 'auth-fail':
         this.setAuthed(false);
@@ -433,6 +513,15 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       }
       case 'session-dead':
         for (const listener of this.sessionDeadListeners) listener({ logPath: msg.logPath });
+        break;
+      case 'stats-update':
+        for (const listener of this.statsListeners) listener(msg.snapshot);
+        break;
+      case 'stats-history':
+        this.pendingStatsHistory.shift()?.(msg.snapshots);
+        break;
+      case 'packet-frame':
+        this.packetPort?.deliver(msg.frame);
         break;
     }
   }

@@ -13,6 +13,16 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- Android 15 (API 35) enforces edge-to-edge for targetSdk 35+, which
+             draws the WebView UNDER the status bar: the app's header buttons
+             land in the status-bar touch zone and become untappable (observed
+             on the API 35 emulator — stats/theme buttons dead). Chromium
+             WebView reports env(safe-area-inset-top)=0 without a display
+             cutout, so a CSS-only fix cannot work on Capacitor 6. This flag
+             restores the legacy (non-overlapping) layout; it is honored
+             through Android 16 for apps targeting <=35, and must be revisited
+             if targetSdkVersion is ever bumped to 36 (flag ignored there). -->
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
     </style>
 
 
