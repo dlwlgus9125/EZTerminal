@@ -31,6 +31,7 @@ import {
   startRemoteBridge,
   DEFAULT_REMOTE_BRIDGE_PORT,
   type RemoteBridgeHandle,
+  type RemoteFileSource,
   type RemoteInterpreter,
   type RemotePacketSource,
   type RemoteStatsSource,
@@ -559,6 +560,9 @@ app.on('ready', () => {
     createMessageChannel: () => new MessageChannelMain(),
     statsSource: remoteStatsSource,
     packetSource: remotePacketSource,
+    // `satisfies` forces a structural check here — the same `fileService`
+    // instance backs the desktop IPC handlers above and the mobile bridge.
+    fileSource: fileService satisfies RemoteFileSource,
   });
 
   // Desktop pairing panel (M4): connection info/token are read-only display +

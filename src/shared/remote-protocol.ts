@@ -30,6 +30,7 @@ import type {
   SessionInfo,
   SystemStatsSnapshot,
 } from './ipc';
+import type { FileListResult, FileOpResult } from './files';
 
 // ── Uint8Array <-> base64 (isomorphic: relies only on global atob/btoa, no
 //    Node Buffer — this module is shared with the browser-side mobile
@@ -138,6 +139,110 @@ export interface PacketsUnsubscribeMessage {
   readonly kind: 'packets-unsubscribe';
 }
 
+// ── File explorer (file-explorer plan, M3) ───────────────────────────────────
+// Mirrors the desktop drawer's IPC surface (src/shared/ipc.ts's 8 members),
+// framed for the wire — `FileService` on main is the single fs authority for
+// both; the bridge's `RemoteFileSource` (remote-bridge.ts) is a thin protocol
+// adapter over the exact same method signatures. `requestId` is CLIENT-minted
+// (same precedent as `CreateSessionRequest` above); `uploadId` is SERVER-
+// minted (it names the `.ezpart` file `FileService.beginUpload` opens), so
+// every upload message after `file-upload-begin` correlates by `uploadId`
+// instead, not `requestId`.
+//
+// Streaming contract (file-read / file-upload-chunk): ONE chunk may be in
+// flight at a time in EACH direction. A download only sends chunk N+1 after
+// the client acks chunk N (`file-read-ack`) — the client has no
+// bufferedAmount-style gauge of its own to self-pace on, so the server paces
+// it instead. An upload is already client-paced the other way: the client
+// only sends its next slice after the previous `file-upload-ack`. Binary
+// payloads always travel as base64 text inside JSON (the bridge never sends
+// or receives a raw WS binary frame) — reuses `uint8ArrayToBase64`/
+// `base64ToUint8Array` above; never redefined here.
+
+/** `''` = the desktop's home dir (mirrors `FileService.listDirectory`). */
+export interface FileListRequest {
+  readonly kind: 'file-list';
+  readonly requestId: string;
+  readonly path: string;
+}
+
+export interface FileRootsRequest {
+  readonly kind: 'file-roots';
+  readonly requestId: string;
+}
+
+/** `'text'` = the read-only viewer (`FileService`'s 1MiB cap + text/binary
+ * detection); `'raw'` = a phone download (50MiB cap, no detection). */
+export interface FileReadRequest {
+  readonly kind: 'file-read';
+  readonly requestId: string;
+  readonly path: string;
+  readonly mode: 'text' | 'raw';
+}
+
+/** Client ack for one `file-read-chunk` — see the streaming contract above:
+ * the server sends chunk N+1 only after receiving the ack for chunk N. */
+export interface FileReadAckMessage {
+  readonly kind: 'file-read-ack';
+  readonly requestId: string;
+  readonly offset: number;
+}
+
+export interface FileReadCancelMessage {
+  readonly kind: 'file-read-cancel';
+  readonly requestId: string;
+}
+
+export interface FileMkdirRequest {
+  readonly kind: 'file-mkdir';
+  readonly requestId: string;
+  readonly dirPath: string;
+  readonly name: string;
+}
+
+export interface FileRenameRequest {
+  readonly kind: 'file-rename';
+  readonly requestId: string;
+  readonly path: string;
+  readonly newName: string;
+}
+
+export interface FileTrashRequest {
+  readonly kind: 'file-trash';
+  readonly requestId: string;
+  readonly path: string;
+}
+
+export interface FileUploadBeginRequest {
+  readonly kind: 'file-upload-begin';
+  readonly requestId: string;
+  readonly dirPath: string;
+  readonly name: string;
+  readonly size: number;
+}
+
+/** `uploadId` (not `requestId` — that round trip already completed at
+ * `file-upload-begin-reply`) correlates every chunk/commit/abort to the
+ * upload it belongs to. */
+export interface FileUploadChunkMessage {
+  readonly kind: 'file-upload-chunk';
+  readonly uploadId: string;
+  readonly offset: number;
+  /** Base64 — decoded length must be <= `FILE_CHUNK_BYTES`; the bridge hard-
+   * rejects (aborts the upload) anything over 2x that as a corrupt/hostile chunk. */
+  readonly data: string;
+}
+
+export interface FileUploadCommitMessage {
+  readonly kind: 'file-upload-commit';
+  readonly uploadId: string;
+}
+
+export interface FileUploadAbortMessage {
+  readonly kind: 'file-upload-abort';
+  readonly uploadId: string;
+}
+
 export type ClientToServerMessage =
   | AuthMessage
   | ListSessionsMessage
@@ -148,7 +253,19 @@ export type ClientToServerMessage =
   | StatsVisibleMessage
   | StatsHistoryRequest
   | PacketsSubscribeMessage
-  | PacketsUnsubscribeMessage;
+  | PacketsUnsubscribeMessage
+  | FileListRequest
+  | FileRootsRequest
+  | FileReadRequest
+  | FileReadAckMessage
+  | FileReadCancelMessage
+  | FileMkdirRequest
+  | FileRenameRequest
+  | FileTrashRequest
+  | FileUploadBeginRequest
+  | FileUploadChunkMessage
+  | FileUploadCommitMessage
+  | FileUploadAbortMessage;
 
 // ── Server -> client envelopes ───────────────────────────────────────────────
 
@@ -208,6 +325,82 @@ export interface PacketFrameMessage {
   readonly frame: RemotePacketFrame;
 }
 
+// ── File explorer (file-explorer plan, M3) — replies for the client messages above ──
+
+export interface FileListReply {
+  readonly kind: 'file-list-reply';
+  readonly requestId: string;
+  readonly result: FileListResult;
+}
+
+export interface FileRootsReply {
+  readonly kind: 'file-roots-reply';
+  readonly requestId: string;
+  readonly roots: readonly string[];
+}
+
+/** `ok:false` OR `isText:false` ENDS the exchange — no `file-read-chunk` ever
+ * follows either case (mirrors `FileService.openReadStream`'s meta, plus the
+ * failure branch `openReadStream` itself returns). */
+export type FileReadMetaMessage =
+  | {
+      readonly kind: 'file-read-meta';
+      readonly requestId: string;
+      readonly ok: true;
+      readonly fileSize: number;
+      readonly sendBytes: number;
+      readonly isText: boolean;
+      readonly truncated: boolean;
+    }
+  | {
+      readonly kind: 'file-read-meta';
+      readonly requestId: string;
+      readonly ok: false;
+      readonly error: string;
+    };
+
+export interface FileReadChunkMessage {
+  readonly kind: 'file-read-chunk';
+  readonly requestId: string;
+  readonly offset: number;
+  /** Base64 — see the streaming contract above `ClientToServerMessage`. */
+  readonly data: string;
+  readonly done: boolean;
+}
+
+/** Shared reply shape for `file-mkdir`/`file-rename`/`file-trash` — all three
+ * resolve to a plain `FileOpResult` on `FileService`. */
+export interface FileOpReply {
+  readonly kind: 'file-op-reply';
+  readonly requestId: string;
+  readonly result: FileOpResult;
+}
+
+export type FileUploadBeginReply =
+  | {
+      readonly kind: 'file-upload-begin-reply';
+      readonly requestId: string;
+      readonly ok: true;
+      readonly uploadId: string;
+      readonly finalName: string;
+    }
+  | {
+      readonly kind: 'file-upload-begin-reply';
+      readonly requestId: string;
+      readonly ok: false;
+      readonly error: string;
+    };
+
+/** `ok:false` means the server already aborted (and unlinked the `.ezpart`
+ * file for) this upload — the client must not send further chunks for it. */
+export type FileUploadAckMessage =
+  | { readonly kind: 'file-upload-ack'; readonly uploadId: string; readonly ok: true; readonly receivedBytes: number }
+  | { readonly kind: 'file-upload-ack'; readonly uploadId: string; readonly ok: false; readonly error: string };
+
+export type FileUploadDoneMessage =
+  | { readonly kind: 'file-upload-done'; readonly uploadId: string; readonly ok: true; readonly finalName: string }
+  | { readonly kind: 'file-upload-done'; readonly uploadId: string; readonly ok: false; readonly error: string };
+
 export type ServerToClientMessage =
   | AuthOkMessage
   | AuthFailMessage
@@ -217,4 +410,12 @@ export type ServerToClientMessage =
   | SessionDeadMessage
   | StatsUpdateMessage
   | StatsHistoryReply
-  | PacketFrameMessage;
+  | PacketFrameMessage
+  | FileListReply
+  | FileRootsReply
+  | FileReadMetaMessage
+  | FileReadChunkMessage
+  | FileOpReply
+  | FileUploadBeginReply
+  | FileUploadAckMessage
+  | FileUploadDoneMessage;

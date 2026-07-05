@@ -29,11 +29,15 @@ import { randomUUID } from 'node:crypto';
 
 import type { InterpreterFrame, InterpreterToMain, MainToInterpreter, PacketRow, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
 import {
+  base64ToUint8Array,
   encodeFrame,
+  uint8ArrayToBase64,
   type ClientToServerMessage,
   type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../shared/remote-protocol';
+import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
+import type { FileReadStream } from './file-service';
 import type { SessionDirectory } from './session-directory';
 
 /** Non-standard WS close code: auth was missing/wrong on this connection. */
@@ -122,6 +126,38 @@ export interface RemotePacketSource {
   subscribe(listener: (frame: RemotePacketFrame) => void): () => void;
 }
 
+/**
+ * DI seam over `FileService` (src/main/file-service.ts, file-explorer plan
+ * M0): the bridge only ever calls through this, so it never imports
+ * `FileService` directly — the method signatures mirror it exactly so
+ * `fileService satisfies RemoteFileSource` (main.ts) holds structurally with
+ * zero adaptation. Deliberately has NO `readTextFile` — the bridge always
+ * streams via `openReadStream`, even for `'text'` (viewer) mode.
+ */
+export interface RemoteFileSource {
+  listDirectory(dirPath: string): Promise<FileListResult>;
+  listRoots(): Promise<string[]>;
+  openReadStream(
+    filePath: string,
+    mode: 'text' | 'raw',
+  ): Promise<{ ok: false; error: string } | ({ ok: true } & FileReadStream)>;
+  createFolder(dirPath: string, name: string): Promise<FileOpResult>;
+  renameEntry(entryPath: string, newName: string): Promise<FileOpResult>;
+  trashEntry(entryPath: string): Promise<FileOpResult>;
+  beginUpload(
+    dirPath: string,
+    name: string,
+    size: number,
+  ): Promise<{ ok: true; uploadId: string; finalName: string } | { ok: false; error: string }>;
+  writeUploadChunk(
+    uploadId: string,
+    offset: number,
+    data: Uint8Array,
+  ): Promise<{ ok: true; receivedBytes: number } | { ok: false; error: string }>;
+  commitUpload(uploadId: string): Promise<{ ok: true; finalName: string } | { ok: false; error: string }>;
+  abortUpload(uploadId: string): Promise<void>;
+}
+
 export interface RemoteBridgeOptions {
   readonly port: number;
   readonly getToken: () => Promise<string> | string;
@@ -134,6 +170,8 @@ export interface RemoteBridgeOptions {
   readonly statsSource?: RemoteStatsSource;
   /** Optional so existing fixtures/tests without packet wiring keep working. */
   readonly packetSource?: RemotePacketSource;
+  /** Optional so existing fixtures/tests without file wiring keep working. */
+  readonly fileSource?: RemoteFileSource;
 }
 
 /**
@@ -160,9 +198,26 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
   let packetsUnsub: (() => void) | null = null;
   let pendingPacketRows: PacketRow[] = [];
   let packetFlushTimer: ReturnType<typeof setInterval> | null = null;
+  // File explorer (M3): open read streams keyed by the client's `requestId`,
+  // and uploadIds this connection currently owns (for close-teardown abort —
+  // FileService's own idle sweep is a backstop, not relied on here).
+  const fileReads = new Map<string, FileReadStream>();
+  const fileUploads = new Set<string>();
 
   const send = (msg: ServerToClientMessage): void => {
     if (ws.readyState === WS_OPEN) ws.send(JSON.stringify(msg));
+  };
+
+  /** Pull one chunk from an open read stream and send it — called once right
+   * after `file-read-meta` and again on every `file-read-ack` (the one-in-
+   * flight-chunk contract documented in remote-protocol.ts). */
+  const sendNextReadChunk = async (requestId: string, stream: FileReadStream): Promise<void> => {
+    const { offset, data, done } = await stream.next();
+    send({ kind: 'file-read-chunk', requestId, offset, data: uint8ArrayToBase64(data), done });
+    if (done) {
+      fileReads.delete(requestId);
+      await stream.close();
+    }
   };
 
   const flushPendingPackets = (): void => {
@@ -210,6 +265,13 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
       options.statsSource?.release();
     }
     stopPacketsSubscription();
+    // File explorer (M3): a dropped connection is the only owner of its open
+    // reads/uploads — close every stream and abort every upload rather than
+    // leaving a `.ezpart` file or an fd open until the idle sweep gets to it.
+    for (const stream of fileReads.values()) void stream.close();
+    fileReads.clear();
+    for (const uploadId of fileUploads) void options.fileSource?.abortUpload(uploadId);
+    fileUploads.clear();
   });
 
   ws.on('message', (data, isBinary) => {
@@ -323,6 +385,170 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
 
       case 'packets-unsubscribe':
         stopPacketsSubscription();
+        break;
+
+      // ── File explorer (file-explorer plan, M3) ────────────────────────────
+      // Every arm below guards `if (!options.fileSource) break;` — silent
+      // no-op, same convention as stats/packets above when their source is absent.
+
+      case 'file-list': {
+        if (!options.fileSource) break;
+        const { requestId } = msg;
+        void options.fileSource.listDirectory(msg.path).then((result) => {
+          send({ kind: 'file-list-reply', requestId, result });
+        });
+        break;
+      }
+
+      case 'file-roots': {
+        if (!options.fileSource) break;
+        const { requestId } = msg;
+        void options.fileSource.listRoots().then((roots) => {
+          send({ kind: 'file-roots-reply', requestId, roots });
+        });
+        break;
+      }
+
+      case 'file-mkdir': {
+        if (!options.fileSource) break;
+        const { requestId } = msg;
+        void options.fileSource.createFolder(msg.dirPath, msg.name).then((result) => {
+          send({ kind: 'file-op-reply', requestId, result });
+        });
+        break;
+      }
+
+      case 'file-rename': {
+        if (!options.fileSource) break;
+        const { requestId } = msg;
+        void options.fileSource.renameEntry(msg.path, msg.newName).then((result) => {
+          send({ kind: 'file-op-reply', requestId, result });
+        });
+        break;
+      }
+
+      case 'file-trash': {
+        if (!options.fileSource) break;
+        const { requestId } = msg;
+        void options.fileSource.trashEntry(msg.path).then((result) => {
+          send({ kind: 'file-op-reply', requestId, result });
+        });
+        break;
+      }
+
+      case 'file-read': {
+        if (!options.fileSource) break;
+        const { requestId } = msg;
+        void options.fileSource.openReadStream(msg.path, msg.mode).then(async (result) => {
+          if (!result.ok) {
+            send({ kind: 'file-read-meta', requestId, ok: false, error: result.error });
+            return;
+          }
+          const { meta } = result;
+          send({
+            kind: 'file-read-meta',
+            requestId,
+            ok: true,
+            fileSize: meta.fileSize,
+            sendBytes: meta.sendBytes,
+            isText: meta.isText,
+            truncated: meta.truncated,
+          });
+          if (meta.sendBytes <= 0) {
+            await result.close(); // binary in 'text' mode, or a genuinely empty file
+            return;
+          }
+          fileReads.set(requestId, result);
+          await sendNextReadChunk(requestId, result);
+        });
+        break;
+      }
+
+      case 'file-read-ack': {
+        const stream = fileReads.get(msg.requestId);
+        if (!stream) break;
+        void sendNextReadChunk(msg.requestId, stream);
+        break;
+      }
+
+      case 'file-read-cancel': {
+        const stream = fileReads.get(msg.requestId);
+        if (!stream) break;
+        fileReads.delete(msg.requestId);
+        void stream.close();
+        break;
+      }
+
+      case 'file-upload-begin': {
+        if (!options.fileSource) break;
+        const { requestId } = msg;
+        void options.fileSource.beginUpload(msg.dirPath, msg.name, msg.size).then((result) => {
+          if (!result.ok) {
+            send({ kind: 'file-upload-begin-reply', requestId, ok: false, error: result.error });
+            return;
+          }
+          fileUploads.add(result.uploadId);
+          send({
+            kind: 'file-upload-begin-reply',
+            requestId,
+            ok: true,
+            uploadId: result.uploadId,
+            finalName: result.finalName,
+          });
+        });
+        break;
+      }
+
+      case 'file-upload-chunk': {
+        if (!options.fileSource) break;
+        const { uploadId, offset } = msg;
+        let bytes: Uint8Array;
+        try {
+          bytes = base64ToUint8Array(msg.data);
+        } catch {
+          fileUploads.delete(uploadId);
+          void options.fileSource.abortUpload(uploadId);
+          send({ kind: 'file-upload-ack', uploadId, ok: false, error: 'malformed chunk' });
+          break;
+        }
+        // Hard cap regardless of what the client claims — never trust size alone.
+        if (bytes.length > FILE_CHUNK_BYTES * 2) {
+          fileUploads.delete(uploadId);
+          void options.fileSource.abortUpload(uploadId);
+          send({ kind: 'file-upload-ack', uploadId, ok: false, error: 'chunk exceeds the wire chunk limit' });
+          break;
+        }
+        void options.fileSource.writeUploadChunk(uploadId, offset, bytes).then((result) => {
+          if (!result.ok) {
+            // FileService already aborted+unlinked on any rejection (out-of-
+            // order/oversized/write-error) — this id is done either way.
+            fileUploads.delete(uploadId);
+            send({ kind: 'file-upload-ack', uploadId, ok: false, error: result.error });
+            return;
+          }
+          send({ kind: 'file-upload-ack', uploadId, ok: true, receivedBytes: result.receivedBytes });
+        });
+        break;
+      }
+
+      case 'file-upload-commit': {
+        if (!options.fileSource) break;
+        const { uploadId } = msg;
+        void options.fileSource.commitUpload(uploadId).then((result) => {
+          fileUploads.delete(uploadId);
+          if (!result.ok) {
+            send({ kind: 'file-upload-done', uploadId, ok: false, error: result.error });
+            return;
+          }
+          send({ kind: 'file-upload-done', uploadId, ok: true, finalName: result.finalName });
+        });
+        break;
+      }
+
+      case 'file-upload-abort':
+        if (!options.fileSource) break;
+        fileUploads.delete(msg.uploadId);
+        void options.fileSource.abortUpload(msg.uploadId);
         break;
 
       // 'auth' after auth already succeeded — ignored (no-op, not an error).

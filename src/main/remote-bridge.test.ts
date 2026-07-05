@@ -4,6 +4,7 @@ import {
   attachConnection,
   AUTH_CLOSE_CODE,
   type RemoteBridgeOptions,
+  type RemoteFileSource,
   type RemoteInterpreter,
   type RemoteMessageChannel,
   type RemotePacketSource,
@@ -12,8 +13,10 @@ import {
   type RemoteWs,
 } from './remote-bridge';
 import { SessionDirectory } from './session-directory';
+import type { FileReadStream } from './file-service';
 import type { InterpreterToMain, MainToInterpreter, PacketRow, SystemStatsSnapshot } from '../shared/ipc';
-import type { RemotePacketFrame, ServerToClientMessage } from '../shared/remote-protocol';
+import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
+import { uint8ArrayToBase64, type RemotePacketFrame, type ServerToClientMessage } from '../shared/remote-protocol';
 
 const TOKEN = 'the-secret-token';
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -165,6 +168,50 @@ class FakePacketSource implements RemotePacketSource {
   emit(frame: RemotePacketFrame): void {
     for (const l of this.listeners) l(frame);
   }
+}
+
+/** A hand-rolled fake `RemoteFileSource` (plain object of `vi.fn()`s, per the
+ * milestone's testing convention) — `FileService`'s own behavior is already
+ * covered by its 37 unit tests (M0); this only verifies the bridge's wiring. */
+function makeFileSource(overrides: Partial<RemoteFileSource> = {}): RemoteFileSource {
+  return {
+    listDirectory: vi.fn(async (): Promise<FileListResult> => ({ ok: true, path: '/x', parent: null, entries: [] })),
+    listRoots: vi.fn(async () => ['/']),
+    openReadStream: vi.fn(async () => ({ ok: false as const, error: 'not stubbed in this fake' })),
+    createFolder: vi.fn(async (): Promise<FileOpResult> => ({ ok: true })),
+    renameEntry: vi.fn(async (): Promise<FileOpResult> => ({ ok: true })),
+    trashEntry: vi.fn(async (): Promise<FileOpResult> => ({ ok: true })),
+    beginUpload: vi.fn(async () => ({ ok: true as const, uploadId: 'up-1', finalName: 'file' })),
+    writeUploadChunk: vi.fn(async () => ({ ok: true as const, receivedBytes: 0 })),
+    commitUpload: vi.fn(async () => ({ ok: true as const, finalName: 'file' })),
+    abortUpload: vi.fn(async () => undefined),
+    ...overrides,
+  };
+}
+
+/** A fake open read stream: `next()` walks `chunks` in order, tracking its
+ * own running offset, and marks `done` on the last one — `close()` is a spy
+ * so tests can assert it fires exactly once. */
+function makeFakeReadStream(
+  meta: { fileSize: number; sendBytes: number; isText: boolean; truncated: boolean },
+  chunks: readonly Uint8Array[],
+): { stream: { ok: true } & FileReadStream; closeSpy: ReturnType<typeof vi.fn> } {
+  let i = 0;
+  let offset = 0;
+  const closeSpy = vi.fn(async () => undefined);
+  const stream = {
+    ok: true as const,
+    meta,
+    next: vi.fn(async () => {
+      const data = chunks[i] ?? new Uint8Array(0);
+      const chunkOffset = offset;
+      offset += data.length;
+      i += 1;
+      return { offset: chunkOffset, data, done: i >= chunks.length };
+    }),
+    close: closeSpy,
+  };
+  return { stream, closeSpy };
 }
 
 function makePacketRow(at: number): PacketRow {
@@ -684,5 +731,336 @@ describe('RemoteBridge — packet mirroring (M3)', () => {
 
     expect(ws.closeCode).toBe(AUTH_CLOSE_CODE);
     expect(packetSource.listenerCount).toBe(0);
+  });
+});
+
+describe('RemoteBridge — file explorer (M3)', () => {
+  it('a pre-auth file-list message is rejected like any other pre-auth message', () => {
+    const fileSource = makeFileSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    attachConnection(ws, options);
+
+    ws.clientSend({ kind: 'file-list', requestId: 'r1', path: '' });
+
+    expect(ws.closeCode).toBe(AUTH_CLOSE_CODE);
+    expect(fileSource.listDirectory).not.toHaveBeenCalled();
+  });
+
+  it('file-list round-trips: passthrough result, requestId echoed', async () => {
+    const result: FileListResult = { ok: true, path: 'C:\\x', parent: null, entries: [] };
+    const fileSource = makeFileSource({ listDirectory: vi.fn(async () => result) });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-list', requestId: 'r1', path: 'C:\\x' });
+    await flush();
+
+    expect(fileSource.listDirectory).toHaveBeenCalledWith('C:\\x');
+    expect(ws.sent).toContainEqual({ kind: 'file-list-reply', requestId: 'r1', result });
+  });
+
+  it('file-roots round-trips the drive list', async () => {
+    const fileSource = makeFileSource({ listRoots: vi.fn(async () => ['C:\\', 'D:\\']) });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-roots', requestId: 'r1' });
+    await flush();
+
+    expect(ws.sent).toContainEqual({ kind: 'file-roots-reply', requestId: 'r1', roots: ['C:\\', 'D:\\'] });
+  });
+
+  it('file-mkdir round-trips via file-op-reply', async () => {
+    const result: FileOpResult = { ok: false, error: 'boom' };
+    const fileSource = makeFileSource({ createFolder: vi.fn(async () => result) });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-mkdir', requestId: 'r1', dirPath: 'C:\\x', name: 'new' });
+    await flush();
+
+    expect(fileSource.createFolder).toHaveBeenCalledWith('C:\\x', 'new');
+    expect(ws.sent).toContainEqual({ kind: 'file-op-reply', requestId: 'r1', result });
+  });
+
+  it('file-rename round-trips via file-op-reply', async () => {
+    const result: FileOpResult = { ok: true };
+    const fileSource = makeFileSource({ renameEntry: vi.fn(async () => result) });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-rename', requestId: 'r1', path: 'C:\\x\\a.txt', newName: 'b.txt' });
+    await flush();
+
+    expect(fileSource.renameEntry).toHaveBeenCalledWith('C:\\x\\a.txt', 'b.txt');
+    expect(ws.sent).toContainEqual({ kind: 'file-op-reply', requestId: 'r1', result });
+  });
+
+  it('file-trash round-trips via file-op-reply', async () => {
+    const result: FileOpResult = { ok: true };
+    const fileSource = makeFileSource({ trashEntry: vi.fn(async () => result) });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-trash', requestId: 'r1', path: 'C:\\x\\a.txt' });
+    await flush();
+
+    expect(fileSource.trashEntry).toHaveBeenCalledWith('C:\\x\\a.txt');
+    expect(ws.sent).toContainEqual({ kind: 'file-op-reply', requestId: 'r1', result });
+  });
+
+  it('file-read (text mode) streams meta then ack-gated chunks that reassemble exactly, done on the last', async () => {
+    const chunk1 = new Uint8Array([1, 2, 3]);
+    const chunk2 = new Uint8Array([4, 5]);
+    const { stream, closeSpy } = makeFakeReadStream(
+      { fileSize: 5, sendBytes: 5, isText: true, truncated: false },
+      [chunk1, chunk2],
+    );
+    const fileSource = makeFileSource({ openReadStream: vi.fn(async () => stream) });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-read', requestId: 'r1', path: 'C:\\a.txt', mode: 'text' });
+    await flush();
+
+    expect(fileSource.openReadStream).toHaveBeenCalledWith('C:\\a.txt', 'text');
+    expect(ws.sent).toContainEqual({
+      kind: 'file-read-meta',
+      requestId: 'r1',
+      ok: true,
+      fileSize: 5,
+      sendBytes: 5,
+      isText: true,
+      truncated: false,
+    });
+    expect(ws.sent).toContainEqual({
+      kind: 'file-read-chunk',
+      requestId: 'r1',
+      offset: 0,
+      data: uint8ArrayToBase64(chunk1),
+      done: false,
+    });
+    expect(closeSpy).not.toHaveBeenCalled();
+
+    ws.clientSend({ kind: 'file-read-ack', requestId: 'r1', offset: 3 });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'file-read-chunk',
+      requestId: 'r1',
+      offset: 3,
+      data: uint8ArrayToBase64(chunk2),
+      done: true,
+    });
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('file-read on a binary file sends meta only — no chunk is ever requested or sent', async () => {
+    const closeSpy = vi.fn(async () => undefined);
+    const stream = {
+      ok: true as const,
+      meta: { fileSize: 10, sendBytes: 0, isText: false, truncated: false },
+      next: vi.fn(),
+      close: closeSpy,
+    };
+    const fileSource = makeFileSource({ openReadStream: vi.fn(async () => stream) });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-read', requestId: 'r1', path: 'C:\\a.bin', mode: 'text' });
+    await flush();
+
+    expect(ws.sent.some((m) => m.kind === 'file-read-chunk')).toBe(false);
+    expect(stream.next).not.toHaveBeenCalled();
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('file-read-cancel closes the open stream; a stale ack afterward does not resurrect it', async () => {
+    const { stream, closeSpy } = makeFakeReadStream(
+      { fileSize: 10, sendBytes: 10, isText: true, truncated: false },
+      [new Uint8Array([1]), new Uint8Array([2])],
+    );
+    const fileSource = makeFileSource({ openReadStream: vi.fn(async () => stream) });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-read', requestId: 'r1', path: 'C:\\a.txt', mode: 'text' });
+    await flush();
+
+    ws.clientSend({ kind: 'file-read-cancel', requestId: 'r1' });
+    await flush();
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+
+    ws.clientSend({ kind: 'file-read-ack', requestId: 'r1', offset: 1 });
+    await flush();
+    expect(stream.next).toHaveBeenCalledTimes(1); // only the initial send — none after cancel
+  });
+
+  it('closing the ws also closes any open read stream for this connection', async () => {
+    const { stream, closeSpy } = makeFakeReadStream(
+      { fileSize: 10, sendBytes: 10, isText: true, truncated: false },
+      [new Uint8Array([1])],
+    );
+    const fileSource = makeFileSource({ openReadStream: vi.fn(async () => stream) });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-read', requestId: 'r1', path: 'C:\\a.txt', mode: 'text' });
+    await flush();
+
+    ws.close();
+
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('upload happy path: begin -> 2 chunks (decoded correctly, offsets threaded) -> commit', async () => {
+    const writeUploadChunk = vi.fn(async (_uploadId: string, offset: number, data: Uint8Array) => ({
+      ok: true as const,
+      receivedBytes: offset + data.length,
+    }));
+    const fileSource = makeFileSource({
+      beginUpload: vi.fn(async () => ({ ok: true as const, uploadId: 'up-1', finalName: 'photo.png' })),
+      writeUploadChunk,
+      commitUpload: vi.fn(async () => ({ ok: true as const, finalName: 'photo.png' })),
+    });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-upload-begin', requestId: 'r1', dirPath: 'C:\\x', name: 'photo.png', size: 5 });
+    await flush();
+    expect(ws.sent).toContainEqual({
+      kind: 'file-upload-begin-reply',
+      requestId: 'r1',
+      ok: true,
+      uploadId: 'up-1',
+      finalName: 'photo.png',
+    });
+
+    const chunk1 = new Uint8Array([10, 20, 30]);
+    const chunk2 = new Uint8Array([40, 50]);
+    ws.clientSend({ kind: 'file-upload-chunk', uploadId: 'up-1', offset: 0, data: uint8ArrayToBase64(chunk1) });
+    await flush();
+    expect(writeUploadChunk).toHaveBeenNthCalledWith(1, 'up-1', 0, chunk1);
+    expect(ws.sent).toContainEqual({ kind: 'file-upload-ack', uploadId: 'up-1', ok: true, receivedBytes: 3 });
+
+    ws.clientSend({ kind: 'file-upload-chunk', uploadId: 'up-1', offset: 3, data: uint8ArrayToBase64(chunk2) });
+    await flush();
+    expect(writeUploadChunk).toHaveBeenNthCalledWith(2, 'up-1', 3, chunk2);
+    expect(ws.sent).toContainEqual({ kind: 'file-upload-ack', uploadId: 'up-1', ok: true, receivedBytes: 5 });
+
+    ws.clientSend({ kind: 'file-upload-commit', uploadId: 'up-1' });
+    await flush();
+    expect(fileSource.commitUpload).toHaveBeenCalledWith('up-1');
+    expect(ws.sent).toContainEqual({ kind: 'file-upload-done', uploadId: 'up-1', ok: true, finalName: 'photo.png' });
+  });
+
+  it('an oversized chunk (>2x FILE_CHUNK_BYTES decoded) is hard-rejected: ack ok:false + abortUpload, writeUploadChunk never called', async () => {
+    const fileSource = makeFileSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    const oversized = new Uint8Array(FILE_CHUNK_BYTES * 2 + 1);
+    ws.clientSend({ kind: 'file-upload-chunk', uploadId: 'up-1', offset: 0, data: uint8ArrayToBase64(oversized) });
+    await flush();
+
+    expect(fileSource.writeUploadChunk).not.toHaveBeenCalled();
+    expect(fileSource.abortUpload).toHaveBeenCalledWith('up-1');
+    expect(ws.sent).toContainEqual(expect.objectContaining({ kind: 'file-upload-ack', uploadId: 'up-1', ok: false }));
+  });
+
+  it('a chunk for an unknown uploadId gets an ok:false ack (relayed from the fileSource)', async () => {
+    const fileSource = makeFileSource({
+      writeUploadChunk: vi.fn(async () => ({ ok: false as const, error: 'unknown uploadId' })),
+    });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({
+      kind: 'file-upload-chunk',
+      uploadId: 'no-such-upload',
+      offset: 0,
+      data: uint8ArrayToBase64(new Uint8Array([1])),
+    });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'file-upload-ack',
+      uploadId: 'no-such-upload',
+      ok: false,
+      error: 'unknown uploadId',
+    });
+  });
+
+  it('file-upload-abort passes through to abortUpload and drops the id from tracking (no double-abort on later close)', async () => {
+    const fileSource = makeFileSource({
+      beginUpload: vi.fn(async () => ({ ok: true as const, uploadId: 'up-1', finalName: 'x.bin' })),
+    });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-upload-begin', requestId: 'r1', dirPath: 'C:\\x', name: 'x.bin', size: 5 });
+    await flush();
+
+    ws.clientSend({ kind: 'file-upload-abort', uploadId: 'up-1' });
+    await flush();
+    expect(fileSource.abortUpload).toHaveBeenCalledWith('up-1');
+
+    (fileSource.abortUpload as ReturnType<typeof vi.fn>).mockClear();
+    ws.close();
+    expect(fileSource.abortUpload).not.toHaveBeenCalled();
+  });
+
+  it('closing the ws mid-upload aborts every tracked upload for this connection', async () => {
+    const fileSource = makeFileSource({
+      beginUpload: vi.fn(async () => ({ ok: true as const, uploadId: 'up-1', finalName: 'x.bin' })),
+    });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-upload-begin', requestId: 'r1', dirPath: 'C:\\x', name: 'x.bin', size: 5 });
+    await flush();
+
+    ws.close();
+
+    expect(fileSource.abortUpload).toHaveBeenCalledWith('up-1');
+  });
+
+  it('without a fileSource option, every file-* message is a silent no-op (no reply, no crash)', async () => {
+    const ws = new FakeWs();
+    const { options } = makeOptions(); // no fileSource
+    await authed(ws, options);
+
+    expect(() => {
+      ws.clientSend({ kind: 'file-list', requestId: 'r1', path: '' });
+      ws.clientSend({ kind: 'file-roots', requestId: 'r2' });
+      ws.clientSend({ kind: 'file-read', requestId: 'r3', path: 'C:\\a.txt', mode: 'text' });
+      ws.clientSend({ kind: 'file-read-ack', requestId: 'r3', offset: 0 });
+      ws.clientSend({ kind: 'file-read-cancel', requestId: 'r3' });
+      ws.clientSend({ kind: 'file-mkdir', requestId: 'r4', dirPath: 'C:\\x', name: 'y' });
+      ws.clientSend({ kind: 'file-rename', requestId: 'r5', path: 'C:\\x', newName: 'y' });
+      ws.clientSend({ kind: 'file-trash', requestId: 'r6', path: 'C:\\x' });
+      ws.clientSend({ kind: 'file-upload-begin', requestId: 'r7', dirPath: 'C:\\x', name: 'y', size: 1 });
+      ws.clientSend({ kind: 'file-upload-chunk', uploadId: 'up-1', offset: 0, data: '' });
+      ws.clientSend({ kind: 'file-upload-commit', uploadId: 'up-1' });
+      ws.clientSend({ kind: 'file-upload-abort', uploadId: 'up-1' });
+    }).not.toThrow();
+    await flush();
+
+    expect(ws.sent.filter((m) => m.kind.startsWith('file-'))).toHaveLength(0);
   });
 });
