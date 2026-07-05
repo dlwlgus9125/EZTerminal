@@ -76,11 +76,14 @@ function resolveDeviceSerial(): string | undefined {
 }
 
 /** Runs `adb <args>` via spawnSync (argv array, never a shell string) and
- * returns stdout. Throws with stderr included if adb itself reports failure. */
+ * returns stdout. Throws with stderr included if adb itself reports failure.
+ * `maxBuffer` matches {@link runAdbBinary}'s 32MiB override — Node's 1MiB
+ * default overflows on a long parity run's `logcat -d` (observed crashing a
+ * real gate run once the log had accumulated past it). */
 export function runAdb(args: string[]): string {
   const serial = resolveDeviceSerial();
   const fullArgs = serial ? ['-s', serial, ...args] : args;
-  const result = spawnSync(ADB_BIN, fullArgs, { encoding: 'utf8' });
+  const result = spawnSync(ADB_BIN, fullArgs, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   if (result.status !== 0) {
     throw new Error(`adb ${fullArgs.join(' ')} failed (exit ${String(result.status)}): ${result.stderr}`);
   }

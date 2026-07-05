@@ -1,7 +1,7 @@
 {
   "name": "ezterminal",
   "productName": "EZTerminal",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "EZTerminal — a structured-data shell terminal (Phase 1 shell core).",
   "main": ".vite/build/main.js",
   "private": true,
@@ -63,6 +63,7 @@
     "eslint-import-resolver-typescript": "^3.7.0",
     "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-react-hooks": "^4.6.2",
+    "png2icons": "^2.0.1",
     "typescript": "^5.5.4",
     "vite": "^6.4.3",
     "vitest": "^3.2.6"
