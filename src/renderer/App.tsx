@@ -10,6 +10,7 @@ import 'dockview-react/dist/styles/dockview.css';
 
 import { maxTabSuffix, type LayoutEnvelope, type ThemeName } from '../shared/layout-schema';
 import { CommandPalette, type PaletteAction } from './CommandPalette';
+import { ConnectionInfoPanel } from './ConnectionInfoPanel';
 import { StatusPanel } from './StatusPanel';
 import { TerminalPane } from './TerminalPane';
 
@@ -200,6 +201,9 @@ export function App(): JSX.Element {
   useEffect(() => {
     window.ezterminal.setStatsPanelVisible(statsOpen);
   }, [statsOpen]);
+
+  // ── Mobile pairing panel (M4) ─────────────────────────────────────────────
+  const [pairingOpen, setPairingOpen] = useState(false);
 
   // ── Theme (E1) ────────────────────────────────────────────────────────────
   // Applied via `data-theme` on <html> so index.css's [data-theme] blocks take
@@ -524,11 +528,26 @@ export function App(): JSX.Element {
         <button
           className="btn btn-split"
           onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
-          onClick={() => setStatsOpen((open) => !open)}
+          onClick={() => {
+            setStatsOpen((open) => !open);
+            setPairingOpen(false); // same status-drawer slot (right:0) — only one at a time
+          }}
           title="Toggle system status panel"
           data-testid="btn-toggle-stats"
         >
           Stats
+        </button>
+        <button
+          className="btn btn-split"
+          onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
+          onClick={() => {
+            setPairingOpen((open) => !open);
+            setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
+          }}
+          title="Show mobile pairing info"
+          data-testid="btn-toggle-pairing"
+        >
+          Pairing
         </button>
         {versions && (
           <span className="versions" title="runtime versions">
@@ -566,6 +585,7 @@ export function App(): JSX.Element {
           disableFloatingGroups
         />
         {statsOpen && <StatusPanel />}
+        {pairingOpen && <ConnectionInfoPanel />}
       </div>
 
       {paletteOpen && (

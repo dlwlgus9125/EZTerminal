@@ -12,6 +12,7 @@ import type { UtilityProcess } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { networkInterfaces } from 'node:os';
 import started from 'electron-squirrel-startup';
 
 import { isAppUrl } from './url-guard';
@@ -21,6 +22,15 @@ import { PacketCaptureRegistry } from './packet-capture-registry';
 import { KnownHostsStore } from './known-hosts-store';
 import { LogFile, pruneCrashDumps } from './diagnostics';
 import { SystemStatsService } from './system-stats-service';
+import { SessionDirectory } from './session-directory';
+import { RemoteTokenStore } from './remote-token-store';
+import {
+  startRemoteBridge,
+  DEFAULT_REMOTE_BRIDGE_PORT,
+  type RemoteBridgeHandle,
+  type RemoteInterpreter,
+} from './remote-bridge';
+import { formatConnectionInfo } from './remote-connection-info';
 import type { StartupPref, ThemeName } from '../shared/layout-schema';
 import type { InterpreterToMain, MainToInterpreter, SessionInfo } from '../shared/ipc';
 
@@ -70,6 +80,9 @@ let systemStatsService: SystemStatsService | null = null;
 // from createWindow()'s lifecycle hooks below, so (like systemStatsService) it
 // must be a module-level `let`, not a local const inside the 'ready' handler.
 let packetCaptureRegistry: PacketCaptureRegistry | null = null;
+
+// Mobile remote-control WS bridge (M0) — created once on 'ready', stopped on quit.
+let remoteBridgeHandle: RemoteBridgeHandle | null = null;
 
 // Pending `create-session` round-trips, keyed by requestId: the interpreter mints
 // the authoritative {sessionId, cwd} and replies with `session-created` (Codex B5).
@@ -303,7 +316,13 @@ app.on('ready', () => {
     void layoutStore.flush();
     systemStatsService?.stop();
     packetCaptureRegistry?.kill();
+    remoteBridgeHandle?.stop();
   });
+
+  // Session directory (mobile remote-control M0) — a thin {cwd, createdAt} list
+  // main didn't previously keep, so a remote client can ask "what sessions exist"
+  // via `list-sessions`. Hooked at the same two points as the renderer flow below.
+  const sessionDirectory = new SessionDirectory();
 
   // Session lifecycle (Codex B1/B5). create-session is the ONLY way a shell session
   // comes into being — the interpreter mints the authoritative {sessionId, cwd} and
@@ -324,6 +343,7 @@ app.on('ready', () => {
   // Destroy a session when its pane/tab closes (fire-and-forget; interpreter aborts
   // the session's in-flight runs and drops it — idempotent, Codex B2/B6).
   ipcMain.on('destroy-session', (_event, sessionId: string) => {
+    sessionDirectory.remove(sessionId);
     interpreter?.postMessage({ type: 'destroy-session', sessionId });
   });
 
@@ -364,6 +384,7 @@ app.on('ready', () => {
   // script-host spawn/kill protocol (E4).
   interpreter.on('message', (msg: InterpreterToMain) => {
     if (msg?.type === 'session-created') {
+      sessionDirectory.add({ sessionId: msg.sessionId, cwd: msg.cwd });
       const pending = pendingCreates.get(msg.requestId);
       if (pending) {
         pendingCreates.delete(msg.requestId);
@@ -439,6 +460,53 @@ app.on('ready', () => {
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send('session-dead', { logPath: mainLog?.path ?? null });
     }
+  });
+
+  // ── Mobile remote-control WS bridge (M0) ─────────────────────────────────
+  // Default ON, bound to 0.0.0.0 (LAN + Tailscale reachable — a token gates
+  // access since there's no port-forwarding-free path to the open internet).
+  // The interpreter reference is read lazily on every call (closure over the
+  // module-level `let interpreter`) so it keeps working across the
+  // fork-at-ready timing and reflects a null'd-out interpreter after exit.
+  const remoteTokenStore = new RemoteTokenStore(path.join(app.getPath('userData')));
+  const remoteTokenReady = remoteTokenStore.init().catch((err) => {
+    console.error('[main] remote token store init failed:', err);
+  });
+  const remoteInterpreterAdapter: RemoteInterpreter = {
+    postMessage: (msg, transfer) => {
+      interpreter?.postMessage(msg, transfer as never);
+    },
+    on: (event, listener) => {
+      interpreter?.on(event, listener);
+    },
+    off: (event, listener) => {
+      interpreter?.off(event, listener);
+    },
+  };
+  const remoteBridgePort = Number(process.env.EZTERMINAL_REMOTE_PORT) || DEFAULT_REMOTE_BRIDGE_PORT;
+  remoteBridgeHandle = startRemoteBridge({
+    port: remoteBridgePort,
+    getToken: async () => {
+      await remoteTokenReady;
+      return remoteTokenStore.getToken();
+    },
+    interpreter: remoteInterpreterAdapter,
+    sessionDirectory,
+    createMessageChannel: () => new MessageChannelMain(),
+  });
+
+  // Desktop pairing panel (M4): connection info/token are read-only display +
+  // an explicit rotate action, same invoke shape as the settings handlers above.
+  ipcMain.handle('remote:get-connection-info', () => {
+    return formatConnectionInfo(networkInterfaces(), remoteBridgePort);
+  });
+  ipcMain.handle('remote:get-token', async () => {
+    await remoteTokenReady;
+    return remoteTokenStore.getToken();
+  });
+  ipcMain.handle('remote:rotate-token', async () => {
+    await remoteTokenReady;
+    return remoteTokenStore.rotateToken();
   });
 
   createWindow();
