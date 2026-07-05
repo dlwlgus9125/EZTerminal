@@ -171,6 +171,32 @@ export async function typeText(text: string): Promise<void> {
   await sleep(400);
 }
 
+/** Simulates a long-press at `p` via `adb shell input swipe x y x y <ms>` —
+ * the standard adb trick for a "hold in place" gesture: a swipe with
+ * identical start/end coordinates dwells for the full duration instead of
+ * moving. Used for MobileFileView's row long-press action sheet (M6), which
+ * needs >=500ms of continuous contact (long-press.ts's `LongPressTracker`
+ * default) — a plain {@link tap} is a quick down+up, too fast to fire it. */
+export async function longPress(p: Point, ms = 600): Promise<void> {
+  runAdb(['shell', 'input', 'swipe', String(p.x), String(p.y), String(p.x), String(p.y), String(ms)]);
+  await sleep(400);
+}
+
+/** Sends Android's KEYCODE_ENTER (66) to whatever EditText currently has
+ * focus. Every OTHER flow in this codebase's e2e scripts submits via an
+ * explicit button (Run, Connect, ...) rather than relying on the IME's
+ * Enter/Go action — this exists for MobileFileView's path bar (M6), whose
+ * `onKeyDown` only navigates on a literal Enter keydown and has no separate
+ * submit button. UNVERIFIED against a real emulator as of this writing (see
+ * parity.ts's files-step comment) — KEYCODE_ENTER reaching a focused plain
+ * `<input>`'s `keydown` handler as `key: 'Enter'` is the standard, widely
+ * used Android UI-automation technique, but has no prior track record in
+ * THIS codebase's scripts to point to. */
+export async function pressEnter(): Promise<void> {
+  runAdb(['shell', 'input', 'keyevent', '66']);
+  await sleep(500);
+}
+
 /** Poll `uiautomator dump` until a clickable node with `text` appears (cold
  * starts, connect/session round trips, etc. all vary in timing — a fixed
  * sleep either wastes time or races a slow one). */
@@ -211,6 +237,35 @@ export async function waitForLabel(label: string, timeoutMs = 15000): Promise<Po
     if (Date.now() - start > timeoutMs) {
       throw new Error(
         `Timed out waiting for label "${label}". Current texts: ${JSON.stringify(lastNodes.map((n) => n.text || n.desc).filter(Boolean))}`,
+      );
+    }
+    await sleep(500);
+  }
+}
+
+/** Like {@link waitForText}, but does NOT require the matching node to be
+ * marked `clickable` (M6) — every tap target these scripts have used up to
+ * now (Run/Connect/theme-sheet-rows/TabStrip's pills — the latter genuine
+ * `<button>` elements, confirmed by reading TabStrip.tsx while adding this)
+ * IS a real `<button>`, which the WebView's accessibility bridge always
+ * marks clickable. MobileFileView's file-list rows (M6) are plain
+ * `<div onClick>`, not buttons — Chrome's accessibility engine does not
+ * reliably infer clickability for a bare div from its JS listener alone, so
+ * `waitForText`'s `n.clickable` filter risks never matching a real, tappable
+ * row. This is safe regardless: `input tap` simulates a physical touch at a
+ * screen position — it never consults the accessibility tree's `clickable`
+ * flag, which only exists here as a disambiguating search filter. */
+export async function waitForAnyNodeText(text: string, timeoutMs = 15000): Promise<Point> {
+  const start = Date.now();
+  let lastNodes: DumpNode[] = [];
+  for (;;) {
+    const nodes = tryDumpUi();
+    if (nodes.length > 0) lastNodes = nodes;
+    const match = nodes.find((n) => n.text === text);
+    if (match) return center(match.bounds);
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(
+        `Timed out waiting for text "${text}" (any node). Current texts: ${JSON.stringify(lastNodes.map((n) => n.text).filter(Boolean))}`,
       );
     }
     await sleep(500);
@@ -259,12 +314,22 @@ export async function waitForEditText(index: number, timeoutMs = 15000): Promise
  * `input text` has nothing focused to receive it and is silently dropped.
  * Password fields are NOT masked in the accessibility tree's `text` attribute
  * (only visually), so a plain equality check works for every field this
- * touches, including the token field. */
+ * touches, including the token field.
+ *
+ * Clears any PRE-EXISTING content before typing (move-to-end + generous
+ * backspace, one `input keyevent` call) — every field this was originally
+ * written against (ConnectScreen's URL/token, cmd-input) starts empty, so
+ * this was a no-op for them and the gap went unnoticed; MobileFileView's
+ * path bar (M6) starts pre-filled with a cwd snapshot, where typing without
+ * clearing first would just insert into the existing text instead of
+ * replacing it. */
 export async function fillReliably(index: number, text: string, maxAttempts = 5): Promise<void> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const p = await waitForEditText(index);
     await tap(p);
     await sleep(600);
+    runAdb(['shell', 'input', 'keyevent', '123', ...Array<string>(120).fill('67')]); // MOVE_END, then DEL x120
+    await sleep(300);
     await typeText(text);
     await sleep(300);
     const editTexts = tryDumpUi().filter((n) => n.className === 'android.widget.EditText');

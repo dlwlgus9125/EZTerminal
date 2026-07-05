@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { FileEntry } from '../shared/files';
 import { FileContextMenu, type FileContextMenuItem } from './FileContextMenu';
@@ -84,6 +84,13 @@ export function FileExplorerPanel({
   const [renamingEntry, setRenamingEntry] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<{ name: string; fullPath: string } | null>(null);
+  // M6 hardening: a rapid double-click/double-Enter before a mutation's
+  // response arrives could fire it twice (e.g. two trashFile calls for the
+  // same path — the second fails confusingly once the first already
+  // succeeded). One shared ref covers all three mutations below since they
+  // never legitimately overlap; a plain ref (not state) is enough since this
+  // only needs to block a second call, not drive any visible UI.
+  const mutatingRef = useRef(false);
 
   const loadPath = useCallback(async (path: string): Promise<void> => {
     setBinaryNotice(null);
@@ -186,18 +193,23 @@ export function FileExplorerPanel({
   }, []);
 
   const submitNewFolder = useCallback(async (): Promise<void> => {
-    if (currentPath === null) return;
+    if (currentPath === null || mutatingRef.current) return;
     const name = newFolderName.trim();
     if (!name) return;
-    const result = await window.ezterminal.createFolder(currentPath, name);
-    if (!result.ok) {
-      setError(result.error);
-      return;
+    mutatingRef.current = true;
+    try {
+      const result = await window.ezterminal.createFolder(currentPath, name);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setCreatingFolder(false);
+      setNewFolderName('');
+      setError(null);
+      await loadPath(currentPath);
+    } finally {
+      mutatingRef.current = false;
     }
-    setCreatingFolder(false);
-    setNewFolderName('');
-    setError(null);
-    await loadPath(currentPath);
   }, [currentPath, newFolderName, loadPath]);
 
   const startRename = useCallback((entry: FileEntry): void => {
@@ -207,17 +219,22 @@ export function FileExplorerPanel({
 
   const submitRename = useCallback(
     async (entry: FileEntry): Promise<void> => {
-      if (currentPath === null) return;
+      if (currentPath === null || mutatingRef.current) return;
       const name = renameValue.trim();
       if (!name) return;
-      const result = await window.ezterminal.renameFile(fullPathFor(entry), name);
-      if (!result.ok) {
-        setError(result.error);
-        return;
+      mutatingRef.current = true;
+      try {
+        const result = await window.ezterminal.renameFile(fullPathFor(entry), name);
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
+        setRenamingEntry(null);
+        setError(null);
+        await loadPath(currentPath);
+      } finally {
+        mutatingRef.current = false;
       }
-      setRenamingEntry(null);
-      setError(null);
-      await loadPath(currentPath);
     },
     [currentPath, renameValue, fullPathFor, loadPath],
   );
@@ -230,14 +247,19 @@ export function FileExplorerPanel({
   );
 
   const confirmDelete = useCallback(async (): Promise<void> => {
-    if (!deleteTarget) return;
-    const result = await window.ezterminal.trashFile(deleteTarget.fullPath);
-    setDeleteTarget(null);
-    if (!result.ok) {
-      setError(result.error);
-      return;
+    if (!deleteTarget || mutatingRef.current) return;
+    mutatingRef.current = true;
+    try {
+      const result = await window.ezterminal.trashFile(deleteTarget.fullPath);
+      setDeleteTarget(null);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      if (currentPath !== null) await loadPath(currentPath);
+    } finally {
+      mutatingRef.current = false;
     }
-    if (currentPath !== null) await loadPath(currentPath);
   }, [deleteTarget, currentPath, loadPath]);
 
   /** Background (no `entry`) gets current-dir-level actions; a file/dir row

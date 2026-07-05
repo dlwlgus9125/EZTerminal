@@ -504,7 +504,21 @@ body {
 /* File explorer drawer (file-explorer plan, M1) — mirrors .status-drawer
    above but anchored to the LEFT edge (border-right instead of border-left),
    its own toggle slot (not part of the stats/pairing right-side mutual
-   exclusion). Same width/z-index as .status-drawer. */
+   exclusion). Same width/z-index as .status-drawer.
+
+   z-order ladder for the whole file-explorer stack (M6 audit — verified
+   correct; keep this comment in sync if any of these values ever change,
+   rather than re-deriving the ladder from scratch elsewhere):
+     .palette-overlay (100)        — command palette, above everything
+     .file-context-menu (95)       — right-click menu, above the viewer
+     .file-viewer-overlay (90)     — text viewer
+     .file-confirm-overlay (90)    — delete confirm (same slot as the viewer;
+                                      never shown at the same time — one opens
+                                      from a row click, the other from that
+                                      row's context menu)
+     .file-drawer (60)             — the drawer itself (this rule)
+     .preset-menu (50)             — layout presets dropdown, below the drawer
+   100 > 95 > 90 >= 90 > 60 > 50 holds throughout. */
 .file-drawer {
   position: absolute;
   top: 0;

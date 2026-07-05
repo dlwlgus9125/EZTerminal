@@ -112,6 +112,11 @@ export function MobileFileView({
   const [renamingEntry, setRenamingEntry] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<{ name: string; fullPath: string } | null>(null);
+  // M6 hardening: same shared in-flight guard as FileExplorerPanel.tsx — a
+  // rapid double-tap/double-Enter before a mutation's response arrives could
+  // fire it twice (e.g. two trashFile calls for the same path). One ref
+  // covers all three since they never legitimately overlap.
+  const mutatingRef = useRef(false);
 
   // Upload (M5) — see the module doc above for the ref-vs-closure shape.
   const [uploadItems, setUploadItems] = useState<readonly UploadItem[]>([]);
@@ -218,18 +223,23 @@ export function MobileFileView({
   }, []);
 
   const submitNewFolder = useCallback(async (): Promise<void> => {
-    if (currentPath === null) return;
+    if (currentPath === null || mutatingRef.current) return;
     const name = newFolderName.trim();
     if (!name) return;
-    const result = await transport.createFolder(currentPath, name);
-    if (!result.ok) {
-      setError(result.error);
-      return;
+    mutatingRef.current = true;
+    try {
+      const result = await transport.createFolder(currentPath, name);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setCreatingFolder(false);
+      setNewFolderName('');
+      setError(null);
+      await loadPath(currentPath);
+    } finally {
+      mutatingRef.current = false;
     }
-    setCreatingFolder(false);
-    setNewFolderName('');
-    setError(null);
-    await loadPath(currentPath);
   }, [transport, currentPath, newFolderName, loadPath]);
 
   const startRename = useCallback((entry: FileEntry): void => {
@@ -239,17 +249,22 @@ export function MobileFileView({
 
   const submitRename = useCallback(
     async (entry: FileEntry): Promise<void> => {
-      if (currentPath === null) return;
+      if (currentPath === null || mutatingRef.current) return;
       const name = renameValue.trim();
       if (!name) return;
-      const result = await transport.renameFile(fullPathFor(entry), name);
-      if (!result.ok) {
-        setError(result.error);
-        return;
+      mutatingRef.current = true;
+      try {
+        const result = await transport.renameFile(fullPathFor(entry), name);
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
+        setRenamingEntry(null);
+        setError(null);
+        await loadPath(currentPath);
+      } finally {
+        mutatingRef.current = false;
       }
-      setRenamingEntry(null);
-      setError(null);
-      await loadPath(currentPath);
     },
     [transport, currentPath, renameValue, fullPathFor, loadPath],
   );
@@ -262,14 +277,19 @@ export function MobileFileView({
   );
 
   const confirmDelete = useCallback(async (): Promise<void> => {
-    if (!deleteTarget) return;
-    const result = await transport.trashFile(deleteTarget.fullPath);
-    setDeleteTarget(null);
-    if (!result.ok) {
-      setError(result.error);
-      return;
+    if (!deleteTarget || mutatingRef.current) return;
+    mutatingRef.current = true;
+    try {
+      const result = await transport.trashFile(deleteTarget.fullPath);
+      setDeleteTarget(null);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      if (currentPath !== null) await loadPath(currentPath);
+    } finally {
+      mutatingRef.current = false;
     }
-    if (currentPath !== null) await loadPath(currentPath);
   }, [transport, deleteTarget, currentPath, loadPath]);
 
   const handleDownload = useCallback(

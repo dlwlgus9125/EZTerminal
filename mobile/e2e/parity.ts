@@ -39,7 +39,9 @@
  * script). Not run by the automated test suite — like smoke.ts, this drives a
  * real emulator and is invoked manually / by an orchestrator.
  */
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   APK_PATH,
   APP_ID,
@@ -51,11 +53,14 @@ import {
   fillReliably,
   launchDesktop,
   logcatLines,
+  longPress,
   pollLogcat,
+  pressEnter,
   runAdb,
   sleep,
   tap,
   tryDumpUi,
+  waitForAnyNodeText,
   waitForLabel,
   waitForText,
 } from './lib.ts';
@@ -78,6 +83,35 @@ async function selectTheme(label: string): Promise<void> {
   await tap({ x: 540, y: THEME_ROW_Y[label] });
   await sleep(400);
 }
+
+/**
+ * Estimated (UNVERIFIED — no live emulator was available while writing this
+ * step; see the files-step comment below) device-pixel Y for the "Download
+ * to phone" row in MobileFileView's file-row long-press action sheet, at the
+ * emulator's DEFAULT resolution (1080x2340 @ 420dpi, same basis as
+ * THEME_ROW_Y above). The sheet backdrop is `position:fixed`, so — per this
+ * file's own documented trap — it NEVER appears in a uiautomator dump; there
+ * is no dump-based way to find its rows, the exact reason THEME_ROW_Y exists
+ * for the theme sheet.
+ *
+ * Derivation (CSS px -> device px, scale factor 420/160 = 2.625;
+ * mobile.css's `.mobile-file-sheet`/`.mobile-file-sheet-item`):
+ *   sheet padding: 8px top + 8px bottom; item gap: 4px; each item: min-height
+ *   44px + 10px top/bottom padding =~ 64px.
+ *   A FILE row's sheet has 8 items, in this fixed order: 0 Copy path,
+ *   1 Copy name, 2 Refresh, 3 New folder, 4 Rename, 5 Delete, 6 Paste path
+ *   into input, 7 Download to phone (LAST).
+ *   Sheet height (CSS) =~ 8 + 8*64 + 7*4 + 8 = 556px -> ~1459 device px.
+ *   Sheet top (device) =~ 2340 - 1459 = 881.
+ *   "Download to phone" (item 7) center (device) =~
+ *     881 + (8 + 7*(64+4) + 64/2) * 2.625 =~ 2251.
+ *
+ * ACTION REQUIRED on the first manual run: if the tap misses, screenshot
+ * mid-sheet (`runAdbBinary(['exec-out', 'screencap', '-p'])`, exported from
+ * lib.ts) and correct this constant — treat it exactly like THEME_ROW_Y,
+ * just not yet measured against a live device.
+ */
+const DOWNLOAD_ACTION_ROW_Y_ESTIMATE = 2251;
 
 /** True once a `[ez-e2e] stats:` logcat line reports at least one CPU core —
  * i.e. a real snapshot has arrived (not just the initial "측정 중…" state). */
@@ -205,6 +239,121 @@ async function main(): Promise<void> {
     // applyTheme(loadTheme()) marker matters).
     await pollLogcat('[ez-e2e] theme: matrix', 15000);
     console.log('[parity] step OK: theme persistence across restart');
+
+    // ── f. FILES (file-explorer plan, M6) ───────────────────────────────
+    // MUST run strictly BEFORE step (e)'s `wm size`/`wm density` calls — a
+    // hard repo constraint, same reason THEME_ROW_Y-style fixed-geometry
+    // taps break after a resolution change (DOWNLOAD_ACTION_ROW_Y_ESTIMATE
+    // below is exactly that kind of fixed-geometry tap).
+    //
+    // The app is on ConnectScreen here (the theme-persistence restart above
+    // left it there) — reconnect and open a fresh tab first, since
+    // MobileWorkspace's Files button only exists once >=1 tab is open.
+    //
+    // TWO assumptions in this step have NO prior track record in this
+    // codebase's scripts (no live emulator was available while writing it —
+    // this is a MANUAL gate, see this repo's M6 plan):
+    //   1. `pressEnter()` (lib.ts) — every other flow here submits via an
+    //      explicit button; the file path bar has none.
+    //   2. `waitForAnyNodeText` (lib.ts) for the file ROWS themselves —
+    //      MobileFileView's `.mobile-file-row` is a plain `<div onClick>`,
+    //      not a `<button>` like every other tap target in these scripts
+    //      (confirmed by reading TabStrip.tsx: its pills ARE real buttons).
+    //   3. DOWNLOAD_ACTION_ROW_Y_ESTIMATE (above) is a computed, not
+    //      measured, coordinate — the action sheet is a `position:fixed`
+    //      overlay, so it's dump-invisible the same way the ThemeMenu sheet
+    //      is (THEME_ROW_Y's rows WERE measured against a live emulator;
+    //      this one could not be).
+    // If any of these prove wrong on the first manual run, fix them here —
+    // the rest of the step (fixture creation, marker polling, byte-exact
+    // upload/download verification) does not depend on which one broke.
+    console.log('[parity] reconnecting for the files step...');
+    await connectAndAuth(token);
+    await tap(await waitForText('+ New Session'));
+    await pollLogcat('[ez-e2e] tab-active:', 10000);
+    console.log('[parity] step OK: reconnected with a fresh tab');
+
+    console.log('[parity] creating desktop fixture files...');
+    // Letters/digits only in both the dir prefix and file names — VERIFIED
+    // TRAP (this file's header doc): adb-typed `.`/`-` have been observed
+    // reaching cmd.exe mangled even when the EditText's own read-back looked
+    // correct. `mkdtempSync`'s own random suffix is already alphanumeric.
+    const filesFixtureDir = mkdtempSync(path.join(tmpdir(), 'ezparityfiles'));
+    const readFixtureName = 'parityreadtxt.txt';
+    const readFixtureContent = `PARITY_READ_${Date.now()}`;
+    writeFileSync(path.join(filesFixtureDir, readFixtureName), readFixtureContent, 'utf8');
+
+    try {
+      console.log('[parity] opening Files and navigating to the fixture dir...');
+      await tap(await waitForLabel('Files'));
+      await fillReliably(0, filesFixtureDir);
+      await pressEnter();
+      await sleep(800);
+      await pollLogcat('[ez-e2e] files:listed', 15000, (l) => l.includes(filesFixtureDir));
+      console.log('[parity] step OK: files:listed for the fixture dir');
+
+      console.log('[parity] opening the fixture text file...');
+      await tap(await waitForAnyNodeText(readFixtureName));
+      await pollLogcat('[ez-e2e] files:viewer-open', 15000, (l) => l.includes(readFixtureName));
+      console.log('[parity] step OK: files:viewer-open');
+
+      console.log('[parity] downloading the fixture file to the phone...');
+      await tap(await waitForText('‹ Back'));
+      const fileRowPoint = await waitForAnyNodeText(readFixtureName);
+      await longPress(fileRowPoint, 700); // > 500ms LongPressTracker default
+      await sleep(500);
+      await tap({ x: 540, y: DOWNLOAD_ACTION_ROW_Y_ESTIMATE });
+      await pollLogcat('[ez-e2e] files:download-done', 20000, (l) => l.includes(readFixtureName));
+      console.log('[parity] step OK: files:download-done');
+
+      const documentsLs = runAdb(['shell', 'ls', '/sdcard/Documents']);
+      if (!documentsLs.includes(readFixtureName)) {
+        throw new Error(`downloaded file not found in /sdcard/Documents: ${documentsLs}`);
+      }
+      console.log('[parity] step OK: downloaded file confirmed in /sdcard/Documents');
+
+      console.log('[parity] pushing an upload fixture to the phone...');
+      const uploadFixtureName = 'parityuploadtxt.txt';
+      const uploadContent = `PARITY_UPLOAD_${Date.now()}`;
+      const localUploadSource = path.join(filesFixtureDir, `${uploadFixtureName}.src`);
+      writeFileSync(localUploadSource, uploadContent, 'utf8');
+      runAdb(['push', localUploadSource, `/sdcard/Download/${uploadFixtureName}`]);
+
+      console.log('[parity] uploading via the system document picker...');
+      await tap(await waitForLabel('Upload'));
+      await sleep(1500); // picker activity launch (native Activity, not WebView)
+      // Best-effort picker navigation: try 'Downloads' first (the common
+      // DocumentsUI sidebar entry); if the pushed file is already visible
+      // (e.g. under 'Recent'), the direct waitForText below finds it anyway.
+      // This part IS native Android UI (not WebView), so real clickable
+      // semantics apply — n.clickable here is trustworthy, unlike the
+      // in-WebView file rows above.
+      const pickerNodes = tryDumpUi();
+      const downloadsEntry = pickerNodes.find(
+        (n) => n.clickable && (n.text === 'Downloads' || n.desc === 'Downloads'),
+      );
+      if (downloadsEntry) {
+        await tap(center(downloadsEntry.bounds));
+        await sleep(1000);
+      }
+      await tap(await waitForText(uploadFixtureName));
+
+      await pollLogcat('[ez-e2e] files:upload-done', 20000, (l) => l.includes(uploadFixtureName));
+      console.log('[parity] step OK: files:upload-done');
+
+      const uploadedContent = readFileSync(path.join(filesFixtureDir, uploadFixtureName), 'utf8');
+      if (uploadedContent !== uploadContent) {
+        throw new Error(
+          `uploaded file content mismatch: expected ${JSON.stringify(uploadContent)}, got ${JSON.stringify(uploadedContent)}`,
+        );
+      }
+      console.log('[parity] step OK: uploaded file bytes match exactly on the desktop');
+
+      runAdb(['shell', 'rm', '-f', `/sdcard/Download/${uploadFixtureName}`]);
+      runAdb(['shell', 'rm', '-f', `/sdcard/Documents/${readFixtureName}`]);
+    } finally {
+      rmSync(filesFixtureDir, { recursive: true, force: true });
+    }
 
     // ── e. FOLD GEOMETRY ─────────────────────────────────────────────────
     // connectAndAuth is tolerant of re-entry (always re-establishes from a
