@@ -260,18 +260,27 @@ export class FileService {
     } catch (err) {
       return { ok: false, error: errorMessage(err) };
     }
-    const fileSize = (await handle.stat()).size;
-
+    let fileSize: number;
     let isText = true;
-    let sendBytes = fileSize;
+    let sendBytes: number;
     let truncated = false;
-    if (mode === 'text') {
-      isText = await this.detectIsText(handle, resolved, fileSize);
-      sendBytes = isText ? Math.min(fileSize, TEXT_VIEW_MAX_BYTES) : 0;
-      truncated = isText && fileSize > TEXT_VIEW_MAX_BYTES;
-    } else if (fileSize > DOWNLOAD_MAX_FILE_BYTES) {
+    // A post-open failure here (file deleted/EPERM-raced between open and
+    // stat) must not leak `handle` or reject this promise — same containment
+    // pattern as readTextFile.
+    try {
+      fileSize = (await handle.stat()).size;
+      sendBytes = fileSize;
+      if (mode === 'text') {
+        isText = await this.detectIsText(handle, resolved, fileSize);
+        sendBytes = isText ? Math.min(fileSize, TEXT_VIEW_MAX_BYTES) : 0;
+        truncated = isText && fileSize > TEXT_VIEW_MAX_BYTES;
+      } else if (fileSize > DOWNLOAD_MAX_FILE_BYTES) {
+        await handle.close();
+        return { ok: false, error: `file exceeds the ${DOWNLOAD_MAX_FILE_BYTES}-byte download limit` };
+      }
+    } catch (err) {
       await handle.close();
-      return { ok: false, error: `file exceeds the ${DOWNLOAD_MAX_FILE_BYTES}-byte download limit` };
+      return { ok: false, error: errorMessage(err) };
     }
 
     let sent = 0;

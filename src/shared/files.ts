@@ -74,3 +74,27 @@ export type FileReadTextResult =
     }
   | { readonly ok: true; readonly isText: false; readonly fileSize: number }
   | { readonly ok: false; readonly error: string };
+
+const SIZE_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
+
+/** Human-readable byte size for entry rows and transfer progress — shared by
+ * the desktop drawer (`FileExplorerPanel`) and mobile (`MobileFileView`). */
+export function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < SIZE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(1)} ${SIZE_UNITS[unit]}`;
+}
+
+/** Join a listing path and an entry name client-side. Listing paths come from
+ * `path.resolve` on main (see `FileService`), so the path's own separator
+ * tells us which one to join with — mirrors `format-cwd.ts`'s same
+ * `includes('\\')` check. */
+export function joinPath(dir: string, name: string): string {
+  const sep = dir.includes('\\') ? '\\' : '/';
+  return dir.endsWith(sep) ? `${dir}${name}` : `${dir}${sep}${name}`;
+}

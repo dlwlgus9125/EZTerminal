@@ -364,4 +364,31 @@ describe('FileService.openReadStream', () => {
     const result = await makeService().openReadStream(file, 'raw');
     expect(result.ok).toBe(false);
   });
+
+  // Regression pin for a fix where a post-open failure (fs.open succeeds, then
+  // a stat/detectIsText race — e.g. the file is deleted or EPERM'd between
+  // open and stat) leaked the FileHandle and REJECTED instead of returning
+  // {ok:false}. A deterministic repro of that exact race isn't reachable
+  // without faking fs internals (out of this file's test style), so these pin
+  // the public contract directly: openReadStream must never reject, for any
+  // invalid target — if it did, the `await` below would throw and fail the test.
+  it('never rejects — a nonexistent path returns {ok:false}', async () => {
+    const dir = await makeDir();
+    const result = await makeService().openReadStream(path.join(dir, 'does-not-exist.txt'), 'raw');
+    expect(result.ok).toBe(false);
+  });
+
+  it('never rejects — a path with a non-directory path component (ENOTDIR) returns {ok:false}', async () => {
+    // A directory path itself turns out NOT to fail here (fs.open on a dir
+    // succeeds on this platform, and a directory's reported size is 0, which
+    // short-circuits detectIsText's sniff-read before it ever touches
+    // handle.read) — so a plain directory isn't actually an "invalid target".
+    // A path segment that isn't a directory (ENOTDIR) IS a reliable OS-level
+    // failure on both Windows and POSIX.
+    const dir = await makeDir();
+    const notADir = path.join(dir, 'plain-file.txt');
+    await fs.writeFile(notADir, 'x');
+    const result = await makeService().openReadStream(path.join(notADir, 'child.txt'), 'raw');
+    expect(result.ok).toBe(false);
+  });
 });

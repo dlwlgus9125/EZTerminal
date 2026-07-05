@@ -1,7 +1,7 @@
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { FileEntry } from '../../src/shared/files';
+import { formatSize, joinPath, type FileEntry } from '../../src/shared/files';
 import { uint8ArrayToBase64 } from '../../src/shared/remote-protocol';
 import { useLongPress } from './long-press';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
@@ -19,10 +19,6 @@ import { createUploadQueue, type UploadItem } from './upload-queue';
 // long-press needs a row to press) AND from any row's long-press action
 // sheet (matching the plan's literal item list), which acts on the current
 // directory regardless of which row triggered the sheet.
-//
-// `formatSize` is a small local copy of the desktop drawer's
-// (FileExplorerPanel.tsx) — not shared, since sharing it would mean editing
-// that file too, and this milestone's scope is mobile-only.
 //
 // Upload (M5): ONE `upload-queue.ts` instance lives for this component's
 // whole lifetime (`uploadQueueRef`) rather than one per file-picker
@@ -56,26 +52,6 @@ interface DownloadProgress {
   readonly name: string;
   readonly received: number;
   readonly total: number;
-}
-
-const SIZE_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < SIZE_UNITS.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(1)} ${SIZE_UNITS[unit]}`;
-}
-
-/** Mirrors `FileExplorerPanel.tsx`'s `joinPath` — `currentPath` comes from
- * `path.resolve` on main, so its own separator tells us which one to join with. */
-function joinPath(dir: string, name: string): string {
-  const sep = dir.includes('\\') ? '\\' : '/';
-  return dir.endsWith(sep) ? `${dir}${name}` : `${dir}${sep}${name}`;
 }
 
 /** Android <=29 needs a runtime grant for `Directory.Documents` (the static

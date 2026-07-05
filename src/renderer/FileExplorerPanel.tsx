@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { FileEntry } from '../shared/files';
+import { formatSize, joinPath, type FileEntry } from '../shared/files';
 import { FileContextMenu, type FileContextMenuItem } from './FileContextMenu';
 import { FileViewerOverlay } from './FileViewerOverlay';
 import { getPaneCwd, insertIntoPaneInput } from './pane-registry';
@@ -23,27 +23,6 @@ interface ContextMenuState {
   readonly y: number;
   /** `null` = the list background (current-dir-level actions), not a specific row. */
   readonly entry: FileEntry | null;
-}
-
-const SIZE_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < SIZE_UNITS.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(1)} ${SIZE_UNITS[unit]}`;
-}
-
-/** `currentPath` comes from `path.resolve` on main (see `FileService`), so its
- * own separator tells us which one to join with — mirrors `format-cwd.ts`'s
- * same `includes('\\')` check. */
-function joinPath(dir: string, name: string): string {
-  const sep = dir.includes('\\') ? '\\' : '/';
-  return dir.endsWith(sep) ? `${dir}${name}` : `${dir}${sep}${name}`;
 }
 
 /**
