@@ -153,19 +153,36 @@ export interface PtyRenderUpgradeFrame {
 /**
  * The PTY grid's current dimensions (mobile mirroring fix, D3). A mirror
  * (`attach-run`) port has its `pty-resize` controls gated out (interpreter-
- * process.ts's `pty-resize` handler only honors the PRIMARY port) so a
- * phone's smaller xterm can never resize the shared PTY out from under the
- * desktop original — but ignoring resize entirely would leave the mirror's
- * grid stuck at the PTY's spawn size while cursor-addressing bytes are drawn
- * for the PRIMARY's actual (larger) grid, unreadable. Sent on every attach
- * (replaying the current dims) and on every primary resize (fan-out), so a
- * mirror instead renders at the PRIMARY's dimensions via `term.resize()` and
- * scrolls (see `.pty-block--mirror` in index.css) rather than reflowing.
+ * process.ts's `pty-resize` handler only honors the port currently holding
+ * resize authority — the CONTROL port, which starts as the primary but can
+ * move via `pty-claim-control`, control handoff M8a) so a phone's smaller
+ * xterm can never resize the shared PTY out from under the current authority
+ * — but ignoring resize entirely would leave a non-authority mirror's grid
+ * stuck at the PTY's spawn size while cursor-addressing bytes are drawn for
+ * the authority's actual (larger) grid, unreadable. Sent on every attach
+ * (replaying the current dims) and on every resize by the control port
+ * (fan-out to every OTHER port, including a demoted former authority), so a
+ * mirror instead renders at the authority's dimensions via `term.resize()`
+ * and scrolls (see `.pty-block--mirror` in index.css) rather than reflowing.
  */
 export interface PtyDimsFrame {
   readonly type: 'pty-dims';
   readonly cols: number;
   readonly rows: number;
+}
+
+/**
+ * Per-port notification of PTY resize-authority state (control handoff, M8a).
+ * `hasControl:true` tells a port it is now the resize authority — its own
+ * `pty-resize` will be honored (see `PtyClaimControlControl`); `hasControl:
+ * false` tells a port it is a display-only mirror. Sent to the claimer and
+ * every other open port on a `pty-claim-control`, to a fresh attacher (always
+ * `false` — it is never the authority at attach time), and to whichever port
+ * inherits control when the previous authority's port closes/detaches.
+ */
+export interface PtyControlFrame {
+  readonly type: 'pty-control';
+  readonly hasControl: boolean;
 }
 
 /** Discriminated union of all frames sent from interpreter to renderer. */
@@ -180,7 +197,8 @@ export type InterpreterFrame =
   | PtyDataFrame
   | SshPromptFrame
   | PtyRenderUpgradeFrame
-  | PtyDimsFrame;
+  | PtyDimsFrame
+  | PtyControlFrame;
 
 // ── Renderer → Interpreter control ───────────────────────────────────────────
 
@@ -244,6 +262,17 @@ export interface PtyAckControl {
 }
 
 /**
+ * Claim PTY resize authority (control handoff, M8a): the claiming port
+ * becomes the interpreter's resize authority for this run — its `pty-resize`
+ * now applies to the shared PTY, and whichever port held control before (the
+ * primary, by default) demotes to a display-only mirror. See `PtyControlFrame`
+ * for the notification this triggers on every affected port.
+ */
+export interface PtyClaimControlControl {
+  readonly type: 'pty-claim-control';
+}
+
+/**
  * The renderer's answer to an `ssh-prompt` (E5). `value` carries the typed
  * secret for `password`/`passphrase`; `accept` carries the user's decision for
  * `hostkey`. Cancelling the block (or the block closing) while a prompt is
@@ -268,6 +297,7 @@ export type RendererControl =
   | PtyInputControl
   | PtyResizeControl
   | PtyAckControl
+  | PtyClaimControlControl
   | SshPromptResponseControl;
 
 // ── Main ↔ Interpreter (utilityProcess) messages ─────────────────────────────

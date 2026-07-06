@@ -107,6 +107,14 @@ class ExecutionSession implements Execution {
   private scriptSession: ScriptSession | null = null;
   private sshSession: SshSession | null = null;
   private primaryPort: MessagePortMain | null = null;
+  // The port currently holding PTY resize authority (control handoff, M8a).
+  // Starts as the primary (set alongside it in `run()`) so pre-M8a behavior
+  // is unchanged until something actually claims control. Changes via
+  // `pty-claim-control` (`claimControl`) and reverts via `revertControl` when
+  // the holder's port closes/detaches. Resize authority is ALL control means —
+  // primary lifecycle semantics (close-to-dispose, pty-ack pacing) stay keyed
+  // to `primaryPort` regardless of who holds control.
+  private controlPort: MessagePortMain | null = null;
   private readonly attachPorts = new Map<MessagePortMain, AttachPortState>();
   private settled = false;
   private disposed = false;
@@ -124,9 +132,10 @@ class ExecutionSession implements Execution {
   // the terminal frame itself only ever fires once, in the past.
   private lastTerminal: EndFrame | ErrorFrame | CancelledFrame | null = null;
   // The PTY grid's current dimensions (mobile mirroring fix, D3) — set to the
-  // spawn size for a pty/ssh-stream block, updated on every gated primary
-  // `pty-resize`. Replayed to a late attach so its mirror renders at the
-  // PRIMARY's size instead of guessing (see `PtyDimsFrame`'s doc, ipc.ts).
+  // spawn size for a pty/ssh-stream block, updated on every gated `pty-resize`
+  // from the CONTROL port (control handoff, M8a). Replayed to a late attach so
+  // its mirror renders at the current authority's size instead of guessing
+  // (see `PtyDimsFrame`'s doc, ipc.ts).
   private lastDims: { cols: number; rows: number } | null = null;
 
   constructor(
@@ -136,6 +145,7 @@ class ExecutionSession implements Execution {
 
   run(commandText: string, port: MessagePortMain): void {
     this.primaryPort = port;
+    this.controlPort = port;
     const { signal } = this.ac;
     const send = (frame: InterpreterFrame): void => {
       if (this.disposed) return;
@@ -234,6 +244,9 @@ class ExecutionSession implements Execution {
     if (this.lastDims) {
       port.postMessage({ type: 'pty-dims', ...this.lastDims } satisfies InterpreterFrame);
     }
+    // A fresh attacher is never the control port (control handoff, M8a) — say
+    // so explicitly rather than leaving it to infer resize-authority state.
+    port.postMessage({ type: 'pty-control', hasControl: false } satisfies InterpreterFrame);
     if (ptyHandle && ptyHandle.replay.byteLength > 0) {
       port.postMessage({ type: 'pty-data', data: ptyHandle.replay } satisfies InterpreterFrame);
     }
@@ -298,12 +311,14 @@ class ExecutionSession implements Execution {
     // WHOLE execution once it was the LAST port standing — a mirror viewer
     // dropping off must never kill the initiator's run.
     port.on('close', () => {
+      const wasControl = port === this.controlPort;
       if (isPrimary) {
         this.primaryPort = null;
       } else {
         this.attachPorts.get(port)?.ptyHandle?.detach();
         this.attachPorts.delete(port);
       }
+      if (wasControl) this.revertControl();
       if (!this.primaryPort && this.attachPorts.size === 0) this.dispose();
     });
     port.start();
@@ -324,6 +339,70 @@ class ExecutionSession implements Execution {
         // Attach port already torn down; its own 'close' handler will clean up.
       }
     }
+  }
+
+  /** The port currently holding PTY resize authority (control handoff, M8a). */
+  private effectiveControlPort(): MessagePortMain | null {
+    return this.controlPort;
+  }
+
+  /** Post `{type:'pty-control', hasControl}` to `target`, swallowing a torn-
+   * down port the same way every other per-port send in this class does. */
+  private postControlState(target: MessagePortMain, hasControl: boolean): void {
+    try {
+      target.postMessage({ type: 'pty-control', hasControl } satisfies InterpreterFrame);
+    } catch {
+      // Port already torn down; its own 'close' handler will clean up.
+    }
+  }
+
+  /** Post a frame to every open port EXCEPT the current control-port holder
+   * (control handoff, M8a) — used for `pty-dims` fan-out on resize. Before
+   * control handoff this was attach-ports-only (the primary was always the
+   * resize authority, so it never needed telling the dims IT just set); now
+   * the OLD primary must also receive dims once it is no longer in control. */
+  private sendToNonControlPorts(frame: InterpreterFrame): void {
+    const controlPort = this.effectiveControlPort();
+    if (this.primaryPort && this.primaryPort !== controlPort) {
+      try {
+        this.primaryPort.postMessage(frame);
+      } catch {
+        // Primary port already torn down; its own 'close' handler will clean up.
+      }
+    }
+    for (const state of this.attachPorts.values()) {
+      if (state.port === controlPort) continue;
+      try {
+        state.port.postMessage(frame);
+      } catch {
+        // Attach port already torn down; its own 'close' handler will clean up.
+      }
+    }
+  }
+
+  /** Claim PTY resize authority (control handoff, M8a): `claimer` becomes the
+   * new control port — its `pty-resize` will now apply (see the `pty-resize`
+   * case) — and every other open port demotes to display-only. Idempotent if
+   * the control port re-claims: reassigning + re-notifying is a no-op change. */
+  private claimControl(claimer: MessagePortMain): void {
+    this.controlPort = claimer;
+    this.postControlState(claimer, true);
+    if (this.primaryPort && this.primaryPort !== claimer) this.postControlState(this.primaryPort, false);
+    for (const state of this.attachPorts.values()) {
+      if (state.port !== claimer) this.postControlState(state.port, false);
+    }
+  }
+
+  /** The port holding control just closed/detached (M8a) — revert authority
+   * to the primary if it's still alive, else to any surviving attach port
+   * (none left means the execution is tearing down anyway, see the `disposed`
+   * guard). Notifies the new holder `{hasControl:true}`; every other port
+   * already believes `false`. */
+  private revertControl(): void {
+    if (this.disposed) return;
+    const next = this.primaryPort ?? [...this.attachPorts.values()][0]?.port ?? null;
+    this.controlPort = next;
+    if (next) this.postControlState(next, true);
   }
 
   /** Remember enough per-frame state (T2.2d) for a LATER `attach` to replay —
@@ -358,7 +437,9 @@ class ExecutionSession implements Execution {
    * bare disconnect, see `wirePort`'s 'close' handler). */
   private detachPort(port: MessagePortMain): void {
     this.attachPorts.get(port)?.ptyHandle?.detach();
+    const wasControl = port === this.controlPort;
     this.attachPorts.delete(port);
+    if (wasControl) this.revertControl();
     try {
       port.close();
     } catch {
@@ -388,24 +469,21 @@ class ExecutionSession implements Execution {
         this.sshSession?.write(control.data);
         break;
       case 'pty-resize': {
-        // Gated to the PRIMARY port only (same pattern as `pty-ack` below): an
-        // attach mirror's own FitAddon must never resize the shared PTY out
-        // from under the initiator (a phone's ~40-col xterm would otherwise
-        // wrap a desktop-sized TUI unreadably for everyone).
-        if (port !== this.primaryPort) break;
+        // Gated to the CONTROL port only (control handoff, M8a — same pattern
+        // as `pty-ack` below): a display-only mirror's own FitAddon must never
+        // resize the shared PTY out from under whoever holds resize authority
+        // (a phone's ~40-col xterm would otherwise wrap a desktop-sized TUI
+        // unreadably for everyone). The control port starts as the primary
+        // and moves only via an explicit `pty-claim-control`.
+        if (port !== this.effectiveControlPort()) break;
         const cols = clampDim(control.cols);
         const rows = clampDim(control.rows);
         this.ptySession?.resize(cols, rows);
         this.sshSession?.resize(cols, rows);
         this.lastDims = { cols, rows };
-        const dims = { type: 'pty-dims', cols, rows } satisfies InterpreterFrame;
-        for (const state of this.attachPorts.values()) {
-          try {
-            state.port.postMessage(dims);
-          } catch {
-            // Attach port already torn down; its own 'close' handler will clean up.
-          }
-        }
+        // Every OTHER open port learns the new dims — including the primary,
+        // now that it is not guaranteed to be the one who set them.
+        this.sendToNonControlPorts({ type: 'pty-dims', cols, rows } satisfies InterpreterFrame);
         break;
       }
       case 'pty-ack':
@@ -418,6 +496,9 @@ class ExecutionSession implements Execution {
           // primary's counters.
           this.attachPorts.get(port)?.ptyHandle?.ack(control.bytes);
         }
+        break;
+      case 'pty-claim-control':
+        this.claimControl(port);
         break;
       case 'ssh-prompt-response':
         this.sshSession?.handlePromptResponse(control);
