@@ -62,3 +62,81 @@ test('session mirroring: WS create-session/run-command/destroy-session reflect o
     await app.close();
   }
 });
+
+// M4 (plan §M4, desktop attach-on-bind): the mirroring gap this fixes is
+// LEVEL- vs edge-triggered discovery. `run-started` broadcasts exactly once,
+// at the moment a run begins — a pane that binds to a session AFTER that
+// moment (an adopted pane, e.g. after a Ctrl+R reload or a restored layout)
+// has no other way to learn about a run already in flight. This test proves
+// the fix end-to-end: start a run, THEN mount an adopting pane, and confirm
+// it shows the run anyway — something the old edge-triggered-only code could
+// not do, since the adopting pane didn't exist when `run-started` fired.
+test('session mirroring: a pane that adopts a session AFTER a run already started still attaches to it (M4 level-triggered attach)', async () => {
+  const app = await launchApp();
+  const window = await app.firstWindow();
+  await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  const panes = window.getByTestId('pane');
+  await expect(panes).toHaveCount(1);
+  const pane0 = panes.nth(0);
+  const sessionId = await pane0.getAttribute('data-session-id');
+  if (!sessionId) throw new Error('expected pane0 to have a data-session-id');
+
+  // A long-running command whose plain stdout writes emit no TUI signal
+  // (M3 adaptive render never upgrades it to xterm), so its output stays
+  // real DOM text — same long-running-tick shape as launch.spec.ts's cancel
+  // tests, just with a unique marker instead of 'tick'.
+  const marker = `attach-on-bind-${Date.now()}`;
+  await pane0
+    .getByTestId('cmd-input')
+    .fill(`node -e "setInterval(() => process.stdout.write('${marker}'), 50)"`);
+  await pane0.getByTestId('btn-run').click();
+  await expect(pane0.getByTestId('pty-plain-block')).toBeVisible();
+  await expect(pane0).toContainText(marker, { timeout: 10_000 });
+
+  // ONLY NOW — well after the run's one-time `run-started` broadcast already
+  // fired and passed — mount a SECOND pane that ADOPTS the same session, via
+  // the same `window.__ezDock` test seam drag-layout.spec.ts/tab-overflow.spec.ts
+  // use (dockview's mouse drag is native HTML5 DnD, not Playwright-drivable).
+  // `addPanel` with `params.adoptSessionId` is exactly what App.tsx's own
+  // `onSessionAdded` mirroring handler calls — TerminalPanel forwards that
+  // param straight to TerminalPane's `adoptSessionId` prop.
+  await window.evaluate((adoptSessionId) => {
+    type EzDockApi = {
+      addPanel(opts: {
+        id: string;
+        component: string;
+        title: string;
+        renderer: string;
+        params?: Record<string, unknown>;
+        position?: { referencePanel: string; direction: string };
+      }): unknown;
+    };
+    const dock = (globalThis as unknown as { __ezDock?: EzDockApi }).__ezDock;
+    if (!dock) throw new Error('__ezDock test seam missing');
+    dock.addPanel({
+      id: 'tab-adopt-midrun',
+      component: 'terminal',
+      title: 'Adopted',
+      renderer: 'always',
+      params: { adoptSessionId },
+      position: { referencePanel: 'tab-1', direction: 'right' },
+    });
+  }, sessionId);
+
+  // A split places the new pane in its own grid group, visible immediately
+  // (not a hidden inactive tab) — dockview renders new groups after existing
+  // ones, so nth(1) is the adopting pane (same convention as splits.spec.ts).
+  await expect(panes).toHaveCount(2);
+  const adoptedPane = panes.nth(1);
+  await expect(adoptedPane).toHaveAttribute('data-session-id', sessionId);
+
+  // The proof: this pane's mount effect never received `run-started` for
+  // this run (it didn't exist yet when that fired) — so seeing the running
+  // block with live output here can only come from the `listRuns()` catch-up
+  // added in M4.
+  await expect(adoptedPane.getByTestId('pty-plain-block')).toBeVisible({ timeout: 5_000 });
+  await expect(adoptedPane).toContainText(marker, { timeout: 10_000 });
+
+  await app.close();
+});
