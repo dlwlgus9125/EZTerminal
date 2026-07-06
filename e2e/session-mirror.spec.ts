@@ -79,6 +79,9 @@ test('session mirroring: a pane that adopts a session AFTER a run already starte
   const panes = window.getByTestId('pane');
   await expect(panes).toHaveCount(1);
   const pane0 = panes.nth(0);
+  // bindSession is async — under load the pane renders before its session id
+  // lands, so retry-wait for the attribute instead of a one-shot read.
+  await expect(pane0).toHaveAttribute('data-session-id', /.+/);
   const sessionId = await pane0.getAttribute('data-session-id');
   if (!sessionId) throw new Error('expected pane0 to have a data-session-id');
 
