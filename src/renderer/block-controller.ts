@@ -61,6 +61,10 @@ export interface BlockSnapshot {
   /** A `pty`-shape block's current render mode (Phase 3). Meaningless for other
    * shapes; defaults to `plain` and only ever moves plain -> xterm. */
   readonly ptyRenderMode: PtyRenderMode;
+  /** The PRIMARY's current PTY grid size (mobile mirroring fix, D3) — null
+   * until the first `pty-dims` frame (attach replay or a primary resize).
+   * Meaningless outside a mirror controller; a primary never receives it. */
+  readonly ptyDims: { cols: number; rows: number } | null;
   /** Bumped on every change so memoized consumers know to re-read row data. */
   readonly version: number;
 }
@@ -124,6 +128,10 @@ if (typeof window !== 'undefined') {
 export class BlockController {
   readonly command: string;
   private readonly port: MessagePort;
+  /** True for a non-initiating `attach-run` observer (mobile mirroring fix,
+   * D4) — PtyBlock.tsx reads this to size its xterm from `ptyDims` instead of
+   * FitAddon-reporting its own size back (which would resize the shared PTY). */
+  readonly isMirror: boolean;
 
   private readonly cache = new Map<number, ResultRow>();
   private status: BlockStatus = 'running';
@@ -166,6 +174,9 @@ export class BlockController {
   private plainHtml = '';
   private plainSink: PlainDataSink | null = null;
 
+  /** The PRIMARY's PTY grid size, mirrored via `pty-dims` frames (D3). */
+  private ptyDims: { cols: number; rows: number } | null = null;
+
   /** Flow accounting (Stage C): bytes received off the port vs bytes
    * consumed (xterm-flushed in xterm mode, immediate in plain mode — M3);
    * `ptyAckedAt` is the last cumulative value acked. */
@@ -180,9 +191,10 @@ export class BlockController {
   private lastNotifyAt = 0;
   private notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(command: string, port: MessagePort) {
+  constructor(command: string, port: MessagePort, opts?: { readonly mirror?: boolean }) {
     this.command = command;
     this.port = port;
+    this.isMirror = opts?.mirror ?? false;
     this.snapshot = this.buildSnapshot();
     liveControllers.add(this);
 
@@ -417,6 +429,9 @@ export class BlockController {
         this.ptyRenderMode = 'xterm';
         this.plainSink = null;
         break;
+      case 'pty-dims':
+        this.ptyDims = { cols: frame.cols, rows: frame.rows };
+        break;
     }
     // Only `progress` storms; every other frame is one-shot (or user-paced, like
     // `chunk` answering a viewport request) and notifies synchronously.
@@ -463,6 +478,7 @@ export class BlockController {
       endCwd: this.endCwd,
       sshPrompt: this.sshPrompt,
       ptyRenderMode: this.ptyRenderMode,
+      ptyDims: this.ptyDims,
       version: this.version,
     };
   }

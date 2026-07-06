@@ -1305,6 +1305,11 @@ body {
 .pty-block .xterm-screen {
   height: 100%;
 }
+/* Mirror mode (mobile mirroring fix, D3): sized to the PRIMARY's grid, not
+ * this box, so a wide TUI scrolls instead of reflowing. */
+.pty-block--mirror {
+  overflow: auto;
+}
 
 /* ── PTY plain view (Phase 3 adaptive-render default) ──────────────────────── */
 /* A wrapper around a normal .text-block — keyboard input routes through

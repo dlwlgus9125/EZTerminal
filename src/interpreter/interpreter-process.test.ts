@@ -198,6 +198,108 @@ describe('interpreter-process — ExecutionSession port fanout (M2 T2.2b, Critic
   });
 });
 
+/** Polls until `predicate` is true, matching the established pattern for
+ * waiting on real (non-fake-spawned) async process output in this codebase
+ * (see external-command-pty.test.ts's sibling, process-runner.test.ts). */
+async function waitFor(predicate: () => boolean, label: string): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`waitFor timed out: ${label}`);
+}
+
+describe('interpreter-process — pty-resize gate + pty-dims mirroring (mobile mirroring fix, D2/D3)', () => {
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  /** Same shape as `beginRun` above, but `!cmd` forces a real interactive PTY
+   * (no fake-spawn seam exists at this layer — same real-ConPTY precedent as
+   * the `list-runs` describe block below). */
+  function beginPtyRun(
+    handler: MessageHandler,
+    posted: unknown[],
+    runId: string,
+  ): { sessionId: string; primary: FakePort } {
+    handler({ data: { type: 'create-session', requestId: 'req-1' }, ports: [] });
+    const created = posted.find(
+      (m): m is { type: 'session-created'; sessionId: string } =>
+        (m as { type?: string }).type === 'session-created',
+    );
+    if (!created) throw new Error('session-created reply never arrived');
+    const { sessionId } = created;
+
+    const primary = new FakePort();
+    handler({
+      data: { type: 'run', runId, sessionId, commandText: '!cmd' },
+      ports: [primary],
+    });
+    return { sessionId, primary };
+  }
+
+  it('an ATTACH port sending pty-resize is gated out — no NEW pty-dims fans out anywhere', async () => {
+    const { handler, posted } = await importInterpreter();
+    const { primary } = beginPtyRun(handler, posted, 'run-1');
+    const attach = new FakePort();
+    handler({ data: { type: 'attach-run', runId: 'run-1' }, ports: [attach] });
+    const attach2 = new FakePort();
+    handler({ data: { type: 'attach-run', runId: 'run-1' }, ports: [attach2] });
+
+    // Both attach ports already got ONE pty-dims frame from their own attach-time
+    // replay (the initial 80x24 dims) — count those before the gated attempt so
+    // the assertion below isolates whether the resize itself triggered a fanout.
+    const dimsCount = (p: FakePort): number =>
+      p.posted.filter((f) => (f as InterpreterFrame).type === 'pty-dims').length;
+    const before = { attach: dimsCount(attach), attach2: dimsCount(attach2) };
+
+    attach.send({ type: 'pty-resize', cols: 40, rows: 10 }); // a MIRROR trying to resize — must be ignored
+
+    expect(dimsCount(attach)).toBe(before.attach);
+    expect(dimsCount(attach2)).toBe(before.attach2);
+
+    primary.send({ type: 'close' }); // tear down the real cmd.exe child
+  });
+
+  it('a PRIMARY pty-resize delivers pty-dims to an already-attached mirror port', async () => {
+    const { handler, posted } = await importInterpreter();
+    const { primary } = beginPtyRun(handler, posted, 'run-1');
+    const attach = new FakePort();
+    handler({ data: { type: 'attach-run', runId: 'run-1' }, ports: [attach] });
+
+    primary.send({ type: 'pty-resize', cols: 100, rows: 30 });
+
+    expect(attach.posted).toContainEqual({ type: 'pty-dims', cols: 100, rows: 30 });
+
+    primary.send({ type: 'close' });
+  });
+
+  it('a FRESH attach after a primary resize replays pty-dims BEFORE the replayed ring pty-data', async () => {
+    const { handler, posted } = await importInterpreter();
+    const { primary } = beginPtyRun(handler, posted, 'run-1');
+
+    // Wait for the real cmd.exe child to actually emit its startup output so
+    // the ring has bytes to replay — no fake-spawn seam at this layer.
+    await waitFor(
+      () => primary.posted.some((f) => (f as InterpreterFrame).type === 'pty-data'),
+      'first pty-data from the real cmd.exe child',
+    );
+
+    primary.send({ type: 'pty-resize', cols: 100, rows: 30 });
+
+    const late = new FakePort();
+    handler({ data: { type: 'attach-run', runId: 'run-1' }, ports: [late] });
+
+    const dimsIndex = late.posted.findIndex((f) => (f as InterpreterFrame).type === 'pty-dims');
+    const dataIndex = late.posted.findIndex((f) => (f as InterpreterFrame).type === 'pty-data');
+    expect(dimsIndex).toBeGreaterThanOrEqual(0);
+    expect(dataIndex).toBeGreaterThanOrEqual(0);
+    expect(dimsIndex).toBeLessThan(dataIndex);
+
+    primary.send({ type: 'close' });
+  });
+});
+
 describe('interpreter-process — list-runs (M1 mirror-active-runs)', () => {
   afterEach(() => {
     vi.resetModules();

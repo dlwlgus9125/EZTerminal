@@ -150,6 +150,24 @@ export interface PtyRenderUpgradeFrame {
   readonly type: 'pty-render-upgrade';
 }
 
+/**
+ * The PTY grid's current dimensions (mobile mirroring fix, D3). A mirror
+ * (`attach-run`) port has its `pty-resize` controls gated out (interpreter-
+ * process.ts's `pty-resize` handler only honors the PRIMARY port) so a
+ * phone's smaller xterm can never resize the shared PTY out from under the
+ * desktop original — but ignoring resize entirely would leave the mirror's
+ * grid stuck at the PTY's spawn size while cursor-addressing bytes are drawn
+ * for the PRIMARY's actual (larger) grid, unreadable. Sent on every attach
+ * (replaying the current dims) and on every primary resize (fan-out), so a
+ * mirror instead renders at the PRIMARY's dimensions via `term.resize()` and
+ * scrolls (see `.pty-block--mirror` in index.css) rather than reflowing.
+ */
+export interface PtyDimsFrame {
+  readonly type: 'pty-dims';
+  readonly cols: number;
+  readonly rows: number;
+}
+
 /** Discriminated union of all frames sent from interpreter to renderer. */
 export type InterpreterFrame =
   | StartFrame
@@ -161,7 +179,8 @@ export type InterpreterFrame =
   | CancelledFrame
   | PtyDataFrame
   | SshPromptFrame
-  | PtyRenderUpgradeFrame;
+  | PtyRenderUpgradeFrame
+  | PtyDimsFrame;
 
 // ── Renderer → Interpreter control ───────────────────────────────────────────
 

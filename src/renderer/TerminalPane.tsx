@@ -383,7 +383,7 @@ export function TerminalPane({
           console.error('[renderer] attach-port message arrived with no port');
           return;
         }
-        const controller = new BlockController(info.commandText, port);
+        const controller = new BlockController(info.commandText, port, { mirror: true });
         bindActiveController(controller);
         setBlocks((prev) =>
           prev.map((entry) => (entry.id === info.runId ? { ...entry, controller } : entry)),
