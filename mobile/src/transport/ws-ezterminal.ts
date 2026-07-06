@@ -209,6 +209,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   /** `list-sessions` has no request/response correlation id on the wire (M0) —
    * concurrent callers are served FIFO as `session-list` replies arrive. */
   private readonly pendingListSessions: Array<(sessions: readonly SessionInfo[]) => void> = [];
+  /** `list-runs` has no correlation id on the wire either (M1 mirror-active-
+   * runs) — same FIFO precedent as `pendingListSessions` above. */
+  private readonly pendingListRuns: Array<(runs: readonly RunStartedInfo[]) => void> = [];
   private readonly sessionDeadListeners = new Set<(info?: { logPath?: string | null }) => void>();
   /** Mobile-only (M2 ConnectScreen): fires on every authed transition, including
    * an immediate replay of the CURRENT state to a listener that just subscribed. */
@@ -341,6 +344,15 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   onRunStarted(listener: (info: RunStartedInfo) => void): () => void {
     this.runStartedListeners.add(listener);
     return () => this.runStartedListeners.delete(listener);
+  }
+
+  /** Every currently-active run across every session (M1 mirror-active-runs
+   * gap fix) — mirrors `listSessions()`'s FIFO wire shape above. */
+  listRuns(): Promise<readonly RunStartedInfo[]> {
+    return new Promise((resolve) => {
+      this.pendingListRuns.push(resolve);
+      this.send({ kind: 'list-runs' });
+    });
   }
 
   /** Mirrors `runCommand`'s `_ezAttachPort` handoff (see its doc + module doc)
@@ -721,6 +733,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       port.deliver({ type: 'error', message: 'Connection to EZTerminal lost' });
     }
     this.ports.clear();
+    // M1 mirror-active-runs: no reply is ever coming for these now — resolve
+    // every in-flight `listRuns()` call with `[]` rather than leaving it
+    // pending forever (mirrors the file-explorer pending drains below; the
+    // pre-existing `pendingListSessions` hang-on-close is untouched — a
+    // separate, already-known issue, see remote-protocol.ts's module doc).
+    for (const resolve of this.pendingListRuns) resolve([]);
+    this.pendingListRuns.length = 0;
     // File explorer (M4): no reply is ever coming for these now — resolve
     // every in-flight request rather than leaving its promise pending forever.
     for (const resolve of this.pendingFileList.values()) {
@@ -799,6 +818,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       }
       case 'session-list':
         this.pendingListSessions.shift()?.(msg.sessions);
+        break;
+      case 'run-list':
+        this.pendingListRuns.shift()?.(msg.runs);
         break;
       case 'frame': {
         const port = this.ports.get(msg.runId);

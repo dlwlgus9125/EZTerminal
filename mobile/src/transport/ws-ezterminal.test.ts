@@ -197,6 +197,35 @@ describe('WsEzTerminalTransport — createSession / destroySession / listSession
   });
 });
 
+describe('WsEzTerminalTransport — listRuns (M1 mirror-active-runs)', () => {
+  it('listRuns() resolves concurrent calls FIFO against unrelated run-list replies', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+
+    const first = transport.listRuns();
+    const second = transport.listRuns();
+    expect(sockets[0].sent.filter((s) => JSON.parse(s).kind === 'list-runs')).toHaveLength(2);
+
+    const runA: RunStartedInfo = { sessionId: 'a', runId: 'run-a', commandText: 'echo a' };
+    const runB: RunStartedInfo = { sessionId: 'b', runId: 'run-b', commandText: 'echo b' };
+    sockets[0].triggerMessage({ kind: 'run-list', runs: [runA] });
+    sockets[0].triggerMessage({ kind: 'run-list', runs: [runB] });
+
+    await expect(first).resolves.toEqual([runA]);
+    await expect(second).resolves.toEqual([runB]);
+  });
+
+  it('a socket close resolves every in-flight listRuns() call with [] instead of leaving it pending forever', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+
+    const promise = transport.listRuns();
+    sockets[0].triggerClose();
+
+    await expect(promise).resolves.toEqual([]);
+  });
+});
+
 describe('WsEzTerminalTransport — runCommand: _ezPort handoff + frame delivery to a REAL BlockController', () => {
   it('delivers InterpreterFrames from the WS to a real BlockController via the reproduced _ezPort message', async () => {
     const { createSocket, sockets } = makeCreateSocket();

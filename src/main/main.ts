@@ -38,7 +38,7 @@ import {
 } from './remote-bridge';
 import { formatConnectionInfo } from './remote-connection-info';
 import type { StartupPref, ThemeName } from '../shared/layout-schema';
-import type { InterpreterToMain, MainToInterpreter, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
+import type { InterpreterToMain, MainToInterpreter, RunStartedInfo, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
 
 // The main process is the broker (architecture §1).
 // It owns the interpreter utilityProcess lifetime and brokers per-command
@@ -96,6 +96,14 @@ let remoteBridgeHandle: RemoteBridgeHandle | null = null;
 const pendingCreates = new Map<
   string,
   { resolve: (info: SessionInfo) => void; reject: (err: Error) => void }
+>();
+
+// Pending `list-runs` round-trips, keyed by requestId (M1 mirror-active-runs)
+// — same correlation shape as `pendingCreates` above. Rejected en masse if the
+// interpreter dies mid-request (Codex B8).
+const pendingRunLists = new Map<
+  string,
+  { resolve: (runs: readonly RunStartedInfo[]) => void; reject: (err: Error) => void }
 >();
 
 // Defense-in-depth CSP for the raw-HTML injection sink in TextBlock (the ANSI →
@@ -416,6 +424,20 @@ app.on('ready', () => {
   // origin-agnostic (including a window's own session — see SessionDirectory's
   // doc for why the ordering is safe).
   ipcMain.handle('list-sessions', () => sessionDirectory.list());
+  // list-runs (M1 mirror-active-runs): resolves `[]` immediately if there's no
+  // interpreter (mirrors create-session's own guard) — there are no runs to
+  // report either way, so there is nothing to await.
+  ipcMain.handle('list-runs', (): Promise<readonly RunStartedInfo[]> => {
+    return new Promise<readonly RunStartedInfo[]>((resolve, reject) => {
+      if (!interpreter) {
+        resolve([]);
+        return;
+      }
+      const requestId = randomUUID();
+      pendingRunLists.set(requestId, { resolve, reject });
+      interpreter.postMessage({ type: 'list-runs', requestId });
+    });
+  });
   sessionDirectory.onSessionAdded((session) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
@@ -501,6 +523,12 @@ app.on('ready', () => {
           commandText: msg.commandText,
         });
       }
+    } else if (msg?.type === 'run-list') {
+      const pending = pendingRunLists.get(msg.requestId);
+      if (pending) {
+        pendingRunLists.delete(msg.requestId);
+        pending.resolve(msg.runs);
+      }
     } else if (msg?.type === 'spawn-script-host') {
       const result = scriptHostRegistry.spawn(msg.hostId, msg.scriptPath, msg.args, msg.cwd, (hostId, code) => {
         interpreter?.postMessage({ type: 'script-host-exit', hostId, code } satisfies MainToInterpreter);
@@ -566,6 +594,10 @@ app.on('ready', () => {
       reject(new Error('interpreter exited'));
     }
     pendingCreates.clear();
+    for (const { reject } of pendingRunLists.values()) {
+      reject(new Error('interpreter exited'));
+    }
+    pendingRunLists.clear();
     // The payload (additive, B-M5) lets the renderer's banner point the user at
     // the local evidence.
     for (const win of BrowserWindow.getAllWindows()) {

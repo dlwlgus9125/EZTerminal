@@ -213,17 +213,18 @@ export function MobileSessionView({
     });
   }, [command, sessionId, sessionDead, activeRunning, bindActiveController]);
 
-  // Mirror a run this view did NOT start (M2 full mirroring, T2.4 "AC5/AC6"):
-  // the desktop (or another mobile tab) may start a run in this SAME session
-  // — sessions are shared, not exclusively owned by whichever surface created
-  // them. `onRunStarted` is an unconditional broadcast, including this view's
-  // OWN runs (self-echo) — `blocksRef` already has an entry for a run THIS
-  // view started (added synchronously in handleRun, above), so checking it is
-  // enough to tell "mine, already handled" apart from "someone else's, attach".
-  useEffect(() => {
-    const unsub = window.ezterminal.onRunStarted((info: RunStartedInfo) => {
-      if (info.sessionId !== sessionId) return; // not my session
-      if (blocksRef.current.some((entry) => entry.id === info.runId)) return; // my own run
+  // Mirror a run this view did NOT start — shared by two triggers: the
+  // edge-triggered `onRunStarted` broadcast below (a run beginning THIS
+  // instant) and the level-triggered mount effect further down (a run
+  // already in flight when this view mounts). `blocksRef` already has an
+  // entry for a run THIS view started (added synchronously in handleRun,
+  // above) or already attached to, so checking it first — before the
+  // synchronous `setBlocks` add — is what lets both triggers dedupe against
+  // each other and against a run's own origin: the check and the add MUST
+  // stay synchronous with no `await` between them.
+  const attachToRun = useCallback(
+    (info: RunStartedInfo): void => {
+      if (blocksRef.current.some((entry) => entry.id === info.runId)) return; // already handled
 
       setBlocks((prev) => [...prev, { id: info.runId, command: info.commandText, controller: null }]);
 
@@ -239,7 +240,7 @@ export function MobileSessionView({
           console.error('[mobile] attach-port message arrived with no port');
           return;
         }
-        const controller = new BlockController(info.commandText, port);
+        const controller = new BlockController(info.commandText, port, { mirror: true });
         bindActiveController(controller);
         setBlocks((prev) =>
           prev.map((entry) => (entry.id === info.runId ? { ...entry, controller } : entry)),
@@ -252,9 +253,44 @@ export function MobileSessionView({
         window.removeEventListener('message', onWindowMessage);
         console.error('[mobile] attachRun failed:', err);
       });
+    },
+    [bindActiveController],
+  );
+
+  // Edge-triggered mirroring (M2 full mirroring, T2.4 "AC5/AC6"): the desktop
+  // (or another mobile tab) may start a run in this SAME session — sessions
+  // are shared, not exclusively owned by whichever surface created them.
+  // `onRunStarted` is an unconditional broadcast, including this view's OWN
+  // runs (self-echo) — `attachToRun`'s blocksRef check tells "mine, already
+  // handled" apart from "someone else's, attach".
+  useEffect(() => {
+    const unsub = window.ezterminal.onRunStarted((info: RunStartedInfo) => {
+      if (info.sessionId !== sessionId) return; // not my session
+      attachToRun(info);
     });
     return unsub;
-  }, [sessionId, bindActiveController]);
+  }, [sessionId, attachToRun]);
+
+  // Level-triggered mirroring (M3): `onRunStarted` above only fires the
+  // instant a run begins, so a run already in flight when this view mounts
+  // (session switch, tab reopen) would otherwise show nothing. `listRuns()`
+  // is the level-triggered counterpart — query what's active right now and
+  // attach to anything in this session not already covered. Reconnect needs
+  // no separate handling: App.tsx unmounts the whole workspace on de-auth,
+  // so a later remount re-runs this same effect.
+  useEffect(() => {
+    let cancelled = false;
+    void window.ezterminal.listRuns().then((runs) => {
+      if (cancelled) return;
+      for (const run of runs) {
+        if (run.sessionId !== sessionId) continue;
+        attachToRun(run);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, attachToRun]);
 
   const handleCancel = useCallback(() => {
     activeController.current?.cancel();

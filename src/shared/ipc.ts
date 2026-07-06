@@ -150,6 +150,24 @@ export interface PtyRenderUpgradeFrame {
   readonly type: 'pty-render-upgrade';
 }
 
+/**
+ * The PTY grid's current dimensions (mobile mirroring fix, D3). A mirror
+ * (`attach-run`) port has its `pty-resize` controls gated out (interpreter-
+ * process.ts's `pty-resize` handler only honors the PRIMARY port) so a
+ * phone's smaller xterm can never resize the shared PTY out from under the
+ * desktop original — but ignoring resize entirely would leave the mirror's
+ * grid stuck at the PTY's spawn size while cursor-addressing bytes are drawn
+ * for the PRIMARY's actual (larger) grid, unreadable. Sent on every attach
+ * (replaying the current dims) and on every primary resize (fan-out), so a
+ * mirror instead renders at the PRIMARY's dimensions via `term.resize()` and
+ * scrolls (see `.pty-block--mirror` in index.css) rather than reflowing.
+ */
+export interface PtyDimsFrame {
+  readonly type: 'pty-dims';
+  readonly cols: number;
+  readonly rows: number;
+}
+
 /** Discriminated union of all frames sent from interpreter to renderer. */
 export type InterpreterFrame =
   | StartFrame
@@ -161,7 +179,8 @@ export type InterpreterFrame =
   | CancelledFrame
   | PtyDataFrame
   | SshPromptFrame
-  | PtyRenderUpgradeFrame;
+  | PtyRenderUpgradeFrame
+  | PtyDimsFrame;
 
 // ── Renderer → Interpreter control ───────────────────────────────────────────
 
@@ -296,6 +315,18 @@ export interface AttachRunMessage {
   readonly runId: string;
 }
 
+/**
+ * Ask the interpreter for every currently-active run (M1 mirror-active-runs
+ * gap fix): a client that connects/re-mounts AFTER a run already started has
+ * no other way to learn its `runId` for `attach-run` — `run-started` is
+ * edge-triggered, broadcast only once at the moment a run begins. Correlated
+ * by `requestId`, mirroring `CreateSessionMessage`'s round-trip shape.
+ */
+export interface ListRunsMessage {
+  readonly type: 'list-runs';
+  readonly requestId: string;
+}
+
 // ── Script host broker (E4 §6.1) ─────────────────────────────────────────────
 // `run-script` spawns a script-host utilityProcess for the DURATION OF ONE
 // SCRIPT (main is the only process that can fork one, C1/C2). The interpreter
@@ -362,6 +393,7 @@ export type MainToInterpreter =
   | CreateSessionMessage
   | DestroySessionMessage
   | AttachRunMessage
+  | ListRunsMessage
   | ScriptHostReadyMessage
   | ScriptHostErrorMessage
   | ScriptHostExitMessage
@@ -384,6 +416,14 @@ export interface SessionCreatedMessage {
  */
 export interface InterpreterRunStartedMessage extends RunStartedInfo {
   readonly type: 'run-started';
+}
+
+/** interpreter -> main: reply to `list-runs` — every currently-active run
+ * (M1 mirror-active-runs), correlated by `requestId`. */
+export interface RunListMessage {
+  readonly type: 'run-list';
+  readonly requestId: string;
+  readonly runs: readonly RunStartedInfo[];
 }
 
 /** main -> interpreter: the host forked; its RPC port arrives via event.ports[0]. */
@@ -409,6 +449,7 @@ export interface ScriptHostExitMessage {
 export type InterpreterToMain =
   | SessionCreatedMessage
   | InterpreterRunStartedMessage
+  | RunListMessage
   | SpawnScriptHostMessage
   | KillScriptHostMessage
   | KnownHostCheckMessage
@@ -663,6 +704,11 @@ export interface EzTerminalApi {
   // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
   /** Every currently-live session, oldest-created first (mirrors `SessionDirectory.list()`). */
   listSessions: () => Promise<readonly SessionInfo[]>;
+  /** Every currently-active run across every session (M1 mirror-active-runs
+   * gap fix) — lets a client that connects/mounts AFTER a run already started
+   * learn its `runId` to call `attachRun` (`onRunStarted` below is edge-
+   * triggered, firing only once at the moment a run begins). */
+  listRuns: () => Promise<readonly RunStartedInfo[]>;
   /** A session now exists, any origin (including this window's own — see the
    * echo note above). Returns an unsubscribe. */
   onSessionAdded: (listener: (session: SessionInfo) => void) => () => void;

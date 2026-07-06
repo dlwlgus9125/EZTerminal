@@ -185,6 +185,10 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
   const runs = new Map<string, RemotePort>();
   // Bridge-minted requestId -> the client's own requestId (echoed back on reply).
   const pendingCreates = new Map<string, string>();
+  // Bridge-minted requestIds for in-flight `list-runs` round trips (M1
+  // mirror-active-runs) — a Set (not a Map) since the reply carries the runs
+  // themselves, with nothing client-specific to echo back (unlike pendingCreates).
+  const pendingRunLists = new Set<string>();
   // This connection's own stats subscription (independent of the desktop panel
   // and of every other connection — statsSource.acquire()/release() combine
   // them all via refcount, see StatsVisibility).
@@ -259,6 +263,13 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
       // M2 mirroring: runId is caller-minted, so unlike session-added there's
       // no "learn my own id first" race — a plain broadcast is enough.
       send({ kind: 'run-started', sessionId: msg.sessionId, runId: msg.runId, commandText: msg.commandText });
+    } else if (msg.type === 'run-list' && authed) {
+      // Only relay a `run-list` this CONNECTION actually asked for — a Set
+      // entry present means it's ours; another connection's own request is
+      // never removed here (its requestId is simply not in this Set).
+      if (pendingRunLists.delete(msg.requestId)) {
+        send({ kind: 'run-list', runs: msg.runs });
+      }
     }
   };
   options.interpreter.on('message', onInterpreterMessage);
@@ -327,6 +338,13 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
       case 'list-sessions':
         send({ kind: 'session-list', sessions: options.sessionDirectory.list() });
         break;
+
+      case 'list-runs': {
+        const requestId = newId();
+        pendingRunLists.add(requestId);
+        options.interpreter.postMessage({ type: 'list-runs', requestId });
+        break;
+      }
 
       case 'create-session': {
         const requestId = newId();

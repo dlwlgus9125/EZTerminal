@@ -144,6 +144,14 @@ export function TerminalPane({
   const blocksRef = useRef<BlockEntry[]>([]);
   blocksRef.current = blocks;
 
+  // M4 attach-on-bind: latest `attachToRun` (defined below, after
+  // `bindActiveController`) in a ref so the mount effect below — which needs
+  // to call it from inside an async `listRuns()` continuation that fires
+  // long before `attachToRun` exists in this file's top-to-bottom order —
+  // always reaches the current one. Same "latest callback in a ref" idiom as
+  // `onSessionBoundRef`/`onSessionUnboundRef` above.
+  const attachToRunRef = useRef<((info: RunStartedInfo) => void) | null>(null);
+
   // Bind this pane to a session on mount — either ADOPT an existing one (M2,
   // `adoptSessionId`) or CREATE a fresh one (Codex B5), seeding the prompt
   // from its authoritative cwd either way. A created session is destroyed on
@@ -166,6 +174,22 @@ export function TerminalPane({
       setPaneCwd(panelId, info.cwd);
       if (!adopted) liveSessionCount += 1;
       onSessionBoundRef.current?.(panelId, info.sessionId);
+
+      // M4 attach-on-bind: catch up on any run already in progress in this
+      // session — covers the adopt-a-session-with-a-running-TUI gap (Ctrl+R
+      // reload, or a restored/adopted layout panel) that the `onRunStarted`
+      // effect below can't: it's edge-triggered, broadcasting once at the
+      // moment a run BEGINS, so a pane that binds AFTER that moment never
+      // sees it any other way. A fresh session has no runs yet, so this
+      // resolves empty (no-op).
+      void window.ezterminal?.listRuns?.().then((runs) => {
+        if (cancelled) return;
+        for (const run of runs) {
+          if (run.sessionId !== info.sessionId) continue;
+          if (blocksRef.current.some((entry) => entry.id === run.runId)) continue;
+          attachToRunRef.current?.(run);
+        }
+      });
     };
 
     const createFresh = (): void => {
@@ -356,19 +380,16 @@ export function TerminalPane({
     });
   }, [command, sessionId, sessionDead, activeRunning, bindActiveController]);
 
-  // Mirror a run this pane did NOT start (M2 full mirroring): ANY session —
-  // whether this pane created it or adopted it — may receive a run from
-  // another surface (another desktop pane/window, or mobile), since sessions
-  // are shared, not exclusively owned. `onRunStarted` is an unconditional
-  // broadcast, including this pane's OWN runs (self-echo) — `blocksRef`
-  // already has an entry for a run THIS pane started (added synchronously in
-  // handleRun, above), so checking it is enough to tell "mine, already
-  // handled" apart from "someone else's, attach".
-  useEffect(() => {
-    const unsub = window.ezterminal?.onRunStarted?.((info: RunStartedInfo) => {
-      if (info.sessionId !== sessionIdRef.current) return; // not my session
-      if (blocksRef.current.some((entry) => entry.id === info.runId)) return; // my own run
-
+  // Mirror a run this pane did NOT start: adds a pending block, brokers the
+  // `_ezAttachPort` handoff `attachRun` triggers, and binds the resulting
+  // controller as active. Shared by two callers below — the edge-triggered
+  // `onRunStarted` broadcast (M2 full mirroring: another pane/window/mobile
+  // started a run in this pane's session) and the mount effect's level-
+  // triggered `listRuns` catch-up (M4 attach-on-bind: a run already in
+  // progress when this pane bound to the session) — both already know the
+  // run isn't one of this pane's own before calling this.
+  const attachToRun = useCallback(
+    (info: RunStartedInfo): void => {
       setBlocks((prev) => [...prev, { id: info.runId, command: info.commandText, controller: null }]);
 
       // Mirrors handleRun's `_ezPort` handshake above, but for the
@@ -383,7 +404,7 @@ export function TerminalPane({
           console.error('[renderer] attach-port message arrived with no port');
           return;
         }
-        const controller = new BlockController(info.commandText, port);
+        const controller = new BlockController(info.commandText, port, { mirror: true });
         bindActiveController(controller);
         setBlocks((prev) =>
           prev.map((entry) => (entry.id === info.runId ? { ...entry, controller } : entry)),
@@ -396,9 +417,19 @@ export function TerminalPane({
         window.removeEventListener('message', onWindowMessage);
         console.error('[renderer] attachRun failed:', err);
       });
+    },
+    [bindActiveController],
+  );
+  attachToRunRef.current = attachToRun;
+
+  useEffect(() => {
+    const unsub = window.ezterminal?.onRunStarted?.((info: RunStartedInfo) => {
+      if (info.sessionId !== sessionIdRef.current) return; // not my session
+      if (blocksRef.current.some((entry) => entry.id === info.runId)) return; // my own run
+      attachToRun(info);
     });
     return () => unsub?.();
-  }, [bindActiveController]);
+  }, [attachToRun]);
 
   const handleCancel = useCallback(() => {
     activeController.current?.cancel();

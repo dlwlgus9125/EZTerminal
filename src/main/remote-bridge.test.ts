@@ -385,6 +385,49 @@ describe('RemoteBridge — session directory + create/destroy round trip', () =>
   });
 });
 
+describe('RemoteBridge — list-runs (M1 mirror-active-runs)', () => {
+  it('list-runs posts to the interpreter and relays the run-list reply back to this connection', async () => {
+    const ws = new FakeWs();
+    const { options, interpreter } = makeOptions();
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'list-runs' });
+    expect(interpreter.posted).toHaveLength(1);
+    expect(interpreter.posted[0].message).toEqual({ type: 'list-runs', requestId: 'id-1' });
+
+    const runs = [{ sessionId: 'sess-1', runId: 'run-1', commandText: 'ls' }];
+    interpreter.emit({ type: 'run-list', requestId: 'id-1', runs });
+
+    expect(ws.sent).toContainEqual({ kind: 'run-list', runs });
+  });
+
+  it('a run-list reply for a DIFFERENT (unmatched) requestId is NOT relayed to this connection', async () => {
+    const ws = new FakeWs();
+    const { options, interpreter } = makeOptions();
+    await authed(ws, options);
+    ws.clientSend({ kind: 'list-runs' });
+
+    // Some other connection's list-runs round trip.
+    interpreter.emit({ type: 'run-list', requestId: 'not-mine', runs: [] });
+
+    expect(ws.sent.some((m) => m.kind === 'run-list')).toBe(false);
+  });
+
+  it('a list-runs sent before auth succeeds is ignored — no interpreter post, no reply', async () => {
+    const ws = new FakeWs();
+    const { options, interpreter } = makeOptions();
+    attachConnection(ws, options);
+    // Simulate the message racing auth resolution, same as the list-sessions
+    // race test above — only 'auth-ok' should ever be sent.
+    ws.clientSend({ kind: 'auth', token: TOKEN });
+    ws.clientSend({ kind: 'list-runs' });
+    await flush();
+
+    expect(interpreter.posted).toHaveLength(0);
+    expect(ws.sent.some((m) => m.kind === 'run-list')).toBe(false);
+  });
+});
+
 describe('RemoteBridge — run-command frame/control multiplexing', () => {
   it('relays an interpreter frame to the WS tagged with the correct runId', async () => {
     const ws = new FakeWs();

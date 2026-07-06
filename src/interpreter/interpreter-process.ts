@@ -28,6 +28,7 @@ import type {
   EndFrame,
   ErrorFrame,
   ProgressFrame,
+  RunStartedInfo,
   SchemaFrame,
   StartFrame,
 } from '../shared/ipc';
@@ -35,7 +36,7 @@ import { readFile } from 'node:fs/promises';
 
 import { evaluate, parse } from './core';
 import { describeError, runBlock, type BlockHandle } from './block-runner';
-import { runPtySession, type PtySession, type PtyAttachHandle } from './pty-session';
+import { runPtySession, clampDim, type PtySession, type PtyAttachHandle } from './pty-session';
 import { runScriptSession, type HostChannel, type HostToInterpreterMsg, type ScriptSession, type SpawnHost } from './script-runner';
 import { runSshSession, type KnownHostCheckResult, type SshSession, type SshSessionDeps } from './ssh-session';
 import { createSshClient } from './external/ssh-client';
@@ -122,6 +123,11 @@ class ExecutionSession implements Execution {
   // paging, e.g. a completed pty's scrollback) still needs to learn that —
   // the terminal frame itself only ever fires once, in the past.
   private lastTerminal: EndFrame | ErrorFrame | CancelledFrame | null = null;
+  // The PTY grid's current dimensions (mobile mirroring fix, D3) — set to the
+  // spawn size for a pty/ssh-stream block, updated on every gated primary
+  // `pty-resize`. Replayed to a late attach so its mirror renders at the
+  // PRIMARY's size instead of guessing (see `PtyDimsFrame`'s doc, ipc.ts).
+  private lastDims: { cols: number; rows: number } | null = null;
 
   constructor(
     private readonly shell: ShellSession,
@@ -162,6 +168,7 @@ class ExecutionSession implements Execution {
       // A `!cmd` interactive program is a live PTY/TUI, not a paged result — it
       // bypasses the ResultStore/window machinery and runs through runPtySession.
       if (data.kind === 'pty-stream') {
+        this.lastDims = { cols: PTY_INITIAL_COLS, rows: PTY_INITIAL_ROWS };
         this.ptySession = runPtySession(data, send, signal, PTY_INITIAL_COLS, PTY_INITIAL_ROWS);
       } else if (data.kind === 'script-stream') {
         // run-script (E4): a script-host round-trip, not a row/byte source —
@@ -170,6 +177,9 @@ class ExecutionSession implements Execution {
       } else if (data.kind === 'ssh-stream') {
         // ssh-connect (E5): TOFU + credential prompts precede a pty-shaped
         // channel — routed like the pty-stream branch above (see ssh-session.ts).
+        // Same PTY_INITIAL_COLS/ROWS grid: runSshSession's shell() call defaults
+        // to the same 80x24 when not passed explicit initialCols/initialRows.
+        this.lastDims = { cols: PTY_INITIAL_COLS, rows: PTY_INITIAL_ROWS };
         this.sshSession = runSshSession(data, send, signal, sshSessionDeps);
       } else {
         this.handle = runBlock(data, send, signal);
@@ -218,6 +228,12 @@ class ExecutionSession implements Execution {
     if (this.lastStart) port.postMessage(this.lastStart);
     if (this.lastSchema) port.postMessage(this.lastSchema);
     if (this.ptyRenderUpgraded) port.postMessage({ type: 'pty-render-upgrade' } satisfies InterpreterFrame);
+    // Dims BEFORE the ring replay: the mirror must know the PRIMARY's grid
+    // size before it renders any replayed bytes, or cursor-addressing bytes
+    // sized for that grid would be interpreted against xterm's 80x24 default.
+    if (this.lastDims) {
+      port.postMessage({ type: 'pty-dims', ...this.lastDims } satisfies InterpreterFrame);
+    }
     if (ptyHandle && ptyHandle.replay.byteLength > 0) {
       port.postMessage({ type: 'pty-data', data: ptyHandle.replay } satisfies InterpreterFrame);
     }
@@ -231,6 +247,13 @@ class ExecutionSession implements Execution {
   /** {@link Execution}: signal cancellation (streams stop, external procs are killed). */
   abort(): void {
     this.ac.abort();
+  }
+
+  /** True from `run()` until either the terminal frame fires (`lastTerminal`
+   * set) or the execution is disposed — the "active" definition `list-runs`
+   * filters on (M1 mirror-active-runs, D1). */
+  get running(): boolean {
+    return !this.disposed && this.lastTerminal === null;
   }
 
   /** {@link Execution}: release the ResultStore/PTY child + close every port. Idempotent. */
@@ -364,10 +387,27 @@ class ExecutionSession implements Execution {
         this.ptySession?.write(control.data);
         this.sshSession?.write(control.data);
         break;
-      case 'pty-resize':
-        this.ptySession?.resize(control.cols, control.rows);
-        this.sshSession?.resize(control.cols, control.rows);
+      case 'pty-resize': {
+        // Gated to the PRIMARY port only (same pattern as `pty-ack` below): an
+        // attach mirror's own FitAddon must never resize the shared PTY out
+        // from under the initiator (a phone's ~40-col xterm would otherwise
+        // wrap a desktop-sized TUI unreadably for everyone).
+        if (port !== this.primaryPort) break;
+        const cols = clampDim(control.cols);
+        const rows = clampDim(control.rows);
+        this.ptySession?.resize(cols, rows);
+        this.sshSession?.resize(cols, rows);
+        this.lastDims = { cols, rows };
+        const dims = { type: 'pty-dims', cols, rows } satisfies InterpreterFrame;
+        for (const state of this.attachPorts.values()) {
+          try {
+            state.port.postMessage(dims);
+          } catch {
+            // Attach port already torn down; its own 'close' handler will clean up.
+          }
+        }
         break;
+      }
       case 'pty-ack':
         if (port === this.primaryPort) {
           this.ptySession?.ack(control.bytes);
@@ -398,11 +438,13 @@ console.log(`[interpreter] started — pid ${process.pid}, type: ${process.type}
 // Sessions are created ONLY via `create-session` — never lazily on `run` (Codex B1).
 const registry = new SessionRegistry(() => randomUUID());
 
-// runId -> its ExecutionSession (M2 mirroring), so a later `attach-run` can find
-// the run it names. Populated in the `run` case below, dropped on dispose —
-// an unknown/already-disposed runId is rejected (see `attach-run`'s handler),
-// never silently resurrected (same discipline as `run`'s own session check, B1).
-const executionsByRunId = new Map<string, ExecutionSession>();
+// runId -> its ExecutionSession + the RunStartedInfo announced for it (M2
+// mirroring), so a later `attach-run` can find the run it names and `list-runs`
+// (M1 mirror-active-runs) can report it without reconstructing the info.
+// Populated in the `run` case below, dropped on dispose — an unknown/already-
+// disposed runId is rejected (see `attach-run`'s handler), never silently
+// resurrected (same discipline as `run`'s own session check, B1).
+const executionsByRunId = new Map<string, { execution: ExecutionSession; info: RunStartedInfo }>();
 
 // The `ps` process source — created ONCE (Windows `tasklist`), injected into each
 // per-command EvalContext so the pure core never imports child_process (§7).
@@ -571,26 +613,36 @@ process.parentPort.on('message', (event: ElectronMsgEvent) => {
         },
       });
       registry.begin(record, execution);
-      executionsByRunId.set(msg.runId, execution);
+      const info: RunStartedInfo = { sessionId: msg.sessionId, runId: msg.runId, commandText: msg.commandText };
+      executionsByRunId.set(msg.runId, { execution, info });
       execution.run(msg.commandText, port);
       // M2 mirroring: announce the run so main can fan out `run-started` to
       // every OTHER surface (desktop windows / WS clients) as a mirroring cue.
       process.parentPort.postMessage({
         type: 'run-started',
-        sessionId: msg.sessionId,
-        runId: msg.runId,
-        commandText: msg.commandText,
+        ...info,
       } satisfies InterpreterToMain);
       break;
     }
     case 'attach-run': {
       const port = event.ports[0] as unknown as MessagePortMain;
-      const execution = executionsByRunId.get(msg.runId);
-      if (!execution) {
+      const entry = executionsByRunId.get(msg.runId);
+      if (!entry) {
         rejectRun(port, `run ${msg.runId} does not exist`);
         break;
       }
-      execution.attach(port);
+      entry.execution.attach(port);
+      break;
+    }
+    case 'list-runs': {
+      // M1 mirror-active-runs: level-triggered snapshot, unlike `run-started`'s
+      // one-shot broadcast — a late-connecting client uses this to catch up.
+      const runs = [...executionsByRunId.values()].filter((v) => v.execution.running).map((v) => v.info);
+      process.parentPort.postMessage({
+        type: 'run-list',
+        requestId: msg.requestId,
+        runs,
+      } satisfies InterpreterToMain);
       break;
     }
     case 'script-host-ready': {

@@ -31,9 +31,9 @@ class FakePort {
   }
 }
 
-function make(): { port: FakePort; controller: BlockController } {
+function make(opts?: { mirror?: boolean }): { port: FakePort; controller: BlockController } {
   const port = new FakePort();
-  const controller = new BlockController('cmd', port as unknown as MessagePort);
+  const controller = new BlockController('cmd', port as unknown as MessagePort, opts);
   return { port, controller };
 }
 
@@ -454,5 +454,42 @@ describe('BlockController — pty-ack backpressure (Stage C, xterm mode)', () =>
       consumed: PTY_ACK_QUANTUM * 2,
     });
     expect(acks(port.posted)).toEqual([PTY_ACK_QUANTUM * 2]);
+  });
+});
+
+describe('BlockController — mirror mode / pty-dims (mobile mirroring fix, D3/D4)', () => {
+  it('isMirror defaults to false when constructed without opts', () => {
+    const { controller } = make();
+    expect(controller.isMirror).toBe(false);
+  });
+
+  it('isMirror is true when constructed with {mirror: true}', () => {
+    const { controller } = make({ mirror: true });
+    expect(controller.isMirror).toBe(true);
+  });
+
+  it('ptyDims defaults to null', () => {
+    const { controller } = make();
+    expect(controller.getSnapshot().ptyDims).toBeNull();
+  });
+
+  it('a pty-dims frame updates snapshot.ptyDims and notifies', () => {
+    const { port, controller } = make({ mirror: true });
+    let notifies = 0;
+    controller.subscribe(() => {
+      notifies += 1;
+    });
+
+    port.deliver({ type: 'pty-dims', cols: 100, rows: 30 });
+
+    expect(notifies).toBe(1);
+    expect(controller.getSnapshot().ptyDims).toEqual({ cols: 100, rows: 30 });
+  });
+
+  it('a later pty-dims frame replaces the previous dims', () => {
+    const { port, controller } = make({ mirror: true });
+    port.deliver({ type: 'pty-dims', cols: 100, rows: 30 });
+    port.deliver({ type: 'pty-dims', cols: 80, rows: 24 });
+    expect(controller.getSnapshot().ptyDims).toEqual({ cols: 80, rows: 24 });
   });
 });
