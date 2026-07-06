@@ -24,16 +24,41 @@ export function PtyBlock({ controller }: { controller: BlockController }): JSX.E
   return <PtyPlainView controller={controller} />;
 }
 
-// ── xterm view (Phase 2 behavior, unchanged) ─────────────────────────────────
+// ── xterm view (control handoff, M8b: control is now DYNAMIC) ───────────────
 //
 // B3: the parent (Block.tsx) keeps a `pty`-shape block mounted while collapsed
 // (hidden via CSS) so collapsing never destroys a live xterm terminal or drops
 // output — disposed only when the block is dismissed/closed (unmount).
 
+/** The xterm font size derived from the active theme + UI scale — the size a
+ * controlling view renders at, and the ceiling `applyMirrorLayout` (below)
+ * scales down from for a non-controlling view. Module-level, not a
+ * component-body closure, so every effect that needs it computes the same
+ * thing without threading it through refs. */
+function computeBaseFontSize(): number {
+  const activeTheme = THEMES[getActiveThemeName()];
+  return Math.round((activeTheme.fontSize * getActiveUiScale()) / 100);
+}
+
 function PtyXtermView({ controller }: { controller: BlockController }): JSX.Element {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+
+  // Latest-value ref (M8b): the mount effect's callbacks (ResizeObserver,
+  // ez:refit, the pty-data sink's auto-reply gate) are created once and must
+  // still see the CURRENT control state whenever they later fire — control
+  // moves independently of this component re-rendering. Mutated during
+  // render (not inside an effect) so it is current before any effect for
+  // this commit runs.
+  const hasControlRef = useRef(snapshot.hasControl);
+  hasControlRef.current = snapshot.hasControl;
+
+  // The mount effect (re)creates these per mount, closing over that mount's
+  // `term`/`fit`/`el` — routed through refs so the hasControl/ptyDims effects
+  // further down can call the CURRENT mount's versions.
+  const fitAndReportRef = useRef<() => void>(() => {});
+  const applyMirrorLayoutRef = useRef<() => void>(() => {});
 
   // On exit (status leaves 'running'): the pane's TUI takeover releases (T1,
   // TerminalPane.tsx), and — mirroring PtyPlainView's existing exit-focus
@@ -56,24 +81,26 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     const initialTheme = THEMES[getActiveThemeName()];
     const term = new Terminal({
       fontFamily: initialTheme.fontFamily,
-      fontSize: Math.round((initialTheme.fontSize * getActiveUiScale()) / 100),
+      fontSize: computeBaseFontSize(),
       cursorBlink: true,
       scrollback: 5000,
       theme: initialTheme.xterm,
     });
     termRef.current = term;
 
-    // Mirror mode (mobile mirroring fix, D3/D4): a `!cmd` mirror must NEVER
-    // report its own size back — the shared PTY is sized to the PRIMARY only,
-    // and a mirror's `pty-resize` control is gated out interpreter-side
-    // anyway (interpreter-process.ts). No FitAddon at all here; sizing is
-    // driven by `snapshot.ptyDims` in the effect below instead.
-    const fit = controller.isMirror ? null : new FitAddon();
-    if (fit) term.loadAddon(fit);
+    // FitAddon is ALWAYS loaded now (M8b) — a non-controlling view can later
+    // claim control and needs it to report its own size at that point
+    // (`fitAndReport` below); while not in control it is simply never called.
+    const fit = new FitAddon();
+    term.loadAddon(fit);
     term.open(el);
 
+    // In control: report OUR size to the interpreter — this is what claiming
+    // control actually accomplishes (the shared PTY resizes to us). A no-op
+    // while some other port holds control, so every caller below can stay
+    // wired unconditionally instead of branching on control state itself.
     const fitAndReport = (): void => {
-      if (!fit) return; // mirror: no local fit/report — see above
+      if (!hasControlRef.current) return;
       try {
         fit.fit();
       } catch {
@@ -85,18 +112,48 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
       if (term.cols > 0 && term.rows > 0) controller.sendPtyResize(term.cols, term.rows);
     };
 
-    // Resize to the real pane size BEFORE registering the sink — this also
-    // covers the plain->xterm upgrade case (Phase 3): the buffered plain-mode
-    // history replays at the real pane size, not the PTY's 80x24 spawn default
-    // (interpreter-process.ts's PTY_INITIAL_COLS/ROWS). A mirror obeys the
-    // same size-before-sink rule, but at the PRIMARY's grid: attach replays
-    // `pty-dims` ahead of the ring bytes, so the snapshot already carries it
-    // by the time this mounts (the effect below handles LATER dims changes).
-    if (fit) {
+    // NOT in control: render the controlling port's grid (`ptyDims`, replayed
+    // on attach / updated on every authority resize) shrunk to fit this box
+    // instead of reflowing it, so a wide TUI stays legible rather than
+    // wrapping. `term.resize` sets the grid dimensions; the font size is then
+    // scaled down from the base size until the rendered grid's actual pixel
+    // width fits the container.
+    const applyMirrorLayout = (): void => {
+      const dims = controller.getSnapshot().ptyDims ?? { cols: 80, rows: 24 };
+      const base = computeBaseFontSize();
+      term.options.fontSize = base;
+      term.resize(dims.cols, dims.rows);
+
+      const screenEl = el.querySelector<HTMLElement>('.xterm-screen');
+      const containerWidth = el.clientWidth;
+      if (!screenEl || containerWidth <= 0) return; // not measurable yet — skip this tick
+      const screenWidth = screenEl.getBoundingClientRect().width;
+      if (screenWidth <= 0) return;
+
+      let size = Math.min(base, Math.max(6, Math.floor(base * (containerWidth / screenWidth))));
+      term.options.fontSize = size;
+      // Correction loop: the scale factor above is measured at the BASE size,
+      // so rounding can still leave the grid a hair too wide — step down
+      // until it actually fits (or bottoms out at the floor).
+      while (size > 6 && screenEl.getBoundingClientRect().width > containerWidth) {
+        size -= 1;
+        term.options.fontSize = size;
+      }
+    };
+
+    fitAndReportRef.current = fitAndReport;
+    applyMirrorLayoutRef.current = applyMirrorLayout;
+
+    // Lay out to the real size BEFORE registering the sink — this also covers
+    // the plain->xterm upgrade case (Phase 3): the buffered plain-mode
+    // history replays at the right size, not the PTY's 80x24 spawn default
+    // (interpreter-process.ts's PTY_INITIAL_COLS/ROWS). Control state is read
+    // fresh off the controller, not the render closure that scheduled this
+    // effect, since this effect only runs once per mount.
+    if (controller.getSnapshot().hasControl) {
       fitAndReport();
     } else {
-      const dims = controller.getSnapshot().ptyDims;
-      term.resize(dims?.cols ?? 80, dims?.rows ?? 24);
+      applyMirrorLayout();
     }
     term.focus();
 
@@ -105,20 +162,24 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     // upgrade). The write callback drives the backpressure ack (Stage C): the
     // interpreter pauses the PTY when the renderer falls too far behind flushes.
     //
-    // Mirror auto-reply suppression (VERIFIED on a live emulator): xterm
+    // Auto-reply suppression (VERIFIED on a live emulator, M6 — gate moved
+    // from the fixed `controller.isMirror` to live control state, M8b): xterm
     // answers terminal queries (DA `ESC[c`, DSR/CPR, ...) by emitting the
-    // response through onData while it PARSES the incoming bytes. The PRIMARY
-    // view owns those responses; a mirror re-answering queries it merely
-    // replays (the ring holds the original DA query from session start) or
-    // tees live injects duplicate responses into the SHARED PTY as input —
-    // observed corrupting the next typed command into `^[[?1;2cecho ...`.
-    // Auto-replies fire synchronously inside write() parsing, so "onData
-    // while a mirror write is in flight" identifies them; a phone keystroke
-    // landing inside that brief window is dropped, which is the right trade
-    // against corrupting everyone's input stream.
+    // response through onData while it PARSES the incoming bytes. Whoever
+    // holds control owns those responses; a non-controlling view re-answering
+    // queries it merely replays (the ring holds the original DA query from
+    // session start) or tees live injects duplicate responses into the SHARED
+    // PTY as input — observed corrupting the next typed command into
+    // `^[[?1;2cecho ...`. Gating on `hasControlRef` instead of `isMirror`
+    // means a demoted ex-primary stops double-answering once it loses
+    // control, and a promoted view is allowed to answer once it becomes the
+    // authority. Auto-replies fire synchronously inside write() parsing, so
+    // "onData while a non-controlling write is in flight" identifies them; a
+    // phone keystroke landing inside that brief window is dropped, which is
+    // the right trade against corrupting everyone's input stream.
     let mirrorWritesInFlight = 0;
     const unsink = controller.setPtyDataSink((bytes, onFlushed) => {
-      if (!controller.isMirror) {
+      if (hasControlRef.current) {
         term.write(bytes, onFlushed);
         return;
       }
@@ -130,38 +191,45 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     });
     // Keystrokes / pasted text → PTY child (attach ports support input too).
     const dataDisposable = term.onData((data) => {
-      if (mirrorWritesInFlight > 0) return; // mirror auto-reply, not a user — see above
+      if (mirrorWritesInFlight > 0) return; // auto-reply, not a user — see above
       controller.sendPtyInput(data);
     });
 
-    // Keep the PTY grid synced to the rendered size (incl. collapse→expand).
-    // Skipped for a mirror — see the fit-null note above.
-    const observer = fit ? new ResizeObserver(() => fitAndReport()) : null;
-    if (observer) observer.observe(el);
+    // Keep the grid synced to the rendered size (incl. collapse→expand):
+    // dispatch to whichever layout applies for the CURRENT control state.
+    const relayout = (): void => {
+      if (hasControlRef.current) fitAndReport();
+      else applyMirrorLayout();
+    };
+    const observer = new ResizeObserver(() => relayout());
+    observer.observe(el);
     // A dockview tab re-shown via renderer:'always' keeps its layout size, so the
     // ResizeObserver does NOT fire on show — refit explicitly on the host's signal (B7).
-    const onRefit = (): void => fitAndReport();
-    if (fit) window.addEventListener('ez:refit', onRefit);
+    const onRefit = (): void => relayout();
+    window.addEventListener('ez:refit', onRefit);
 
     // Theme switch (E1) and UI scale change (v0.2.0 D1) while this PTY is
     // open: a fresh theme object reference is required for xterm to pick up
-    // the change (assigning back the same reference is a documented no-op),
-    // and fontSize must be recomputed from the (possibly new) theme's base
-    // size composed with the (possibly new) scale — either event can change
-    // either input, so both listeners share this one handler. `fitAndReport`
-    // is a no-op in mirror mode, so a mirror only ever gets the font update.
+    // the change (assigning back the same reference is a documented no-op).
+    // fontSize is then handled by whichever layout applies for the current
+    // control state — `fitAndReport` doesn't touch it, so it is set directly
+    // for a controlling view; `applyMirrorLayout` rescales from the new base.
     const applyTypography = (): void => {
       const activeTheme = THEMES[getActiveThemeName()];
-      term.options.fontSize = Math.round((activeTheme.fontSize * getActiveUiScale()) / 100);
       term.options.theme = { ...activeTheme.xterm };
-      fitAndReport();
+      if (hasControlRef.current) {
+        term.options.fontSize = computeBaseFontSize();
+        fitAndReport();
+      } else {
+        applyMirrorLayout();
+      }
     };
     window.addEventListener('ez:theme', applyTypography);
     window.addEventListener('ez:ui-scale', applyTypography);
 
     return () => {
-      observer?.disconnect();
-      if (fit) window.removeEventListener('ez:refit', onRefit);
+      observer.disconnect();
+      window.removeEventListener('ez:refit', onRefit);
       window.removeEventListener('ez:theme', applyTypography);
       window.removeEventListener('ez:ui-scale', applyTypography);
       dataDisposable.dispose();
@@ -171,26 +239,46 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     };
   }, [controller]);
 
-  // Mirror mode (D3): size the terminal to the PRIMARY's grid instead of the
-  // rendered box, so cursor-addressing bytes drawn for the PRIMARY's (often
-  // larger) grid stay correct — a wide TUI scrolls horizontally in
-  // `.pty-block--mirror` rather than reflowing. Defaults to 80x24 until the
-  // first `pty-dims` frame replays (attach) or arrives (primary resize).
+  // Control transition (control handoff, M8b): gaining control restores the
+  // base font size and reports OUR size to the interpreter — a claim's whole
+  // point, resizing the shared PTY to the claimer. Losing control switches to
+  // shrink-to-fit.
   useEffect(() => {
-    if (!controller.isMirror) return;
-    const term = termRef.current;
-    if (!term) return;
-    const { cols, rows } = snapshot.ptyDims ?? { cols: 80, rows: 24 };
-    term.resize(cols, rows);
-  }, [controller, snapshot.ptyDims]);
+    if (!termRef.current) return; // not mounted yet
+    if (snapshot.hasControl) {
+      termRef.current.options.fontSize = computeBaseFontSize();
+      fitAndReportRef.current();
+    } else {
+      applyMirrorLayoutRef.current();
+    }
+  }, [snapshot.hasControl]);
+
+  // A non-controlling view re-lays-out when the controlling port's grid
+  // changes (`ptyDims` — attach replay or a live resize by whoever holds
+  // control).
+  useEffect(() => {
+    if (hasControlRef.current) return;
+    applyMirrorLayoutRef.current();
+  }, [snapshot.ptyDims]);
 
   return (
     <div
       ref={containerRef}
-      className={controller.isMirror ? 'pty-block pty-block--mirror' : 'pty-block'}
+      className={snapshot.hasControl ? 'pty-block' : 'pty-block pty-block--mirror'}
       data-testid="pty-block"
       onMouseDown={() => termRef.current?.focus()}
-    />
+    >
+      {!snapshot.hasControl && snapshot.status === 'running' && (
+        <button
+          type="button"
+          className="pty-take-control"
+          data-testid="pty-take-control"
+          onClick={() => controller.claimControl()}
+        >
+          Take control
+        </button>
+      )}
+    </div>
   );
 }
 

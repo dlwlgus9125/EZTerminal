@@ -300,6 +300,99 @@ describe('interpreter-process — pty-resize gate + pty-dims mirroring (mobile m
   });
 });
 
+describe('interpreter-process — control handoff (M8a)', () => {
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  /** Same shape as the sibling describe block's helper above (duplicated
+   * because it's declared in that block's closure, not module scope). */
+  function beginPtyRun(
+    handler: MessageHandler,
+    posted: unknown[],
+    runId: string,
+  ): { sessionId: string; primary: FakePort } {
+    handler({ data: { type: 'create-session', requestId: 'req-1' }, ports: [] });
+    const created = posted.find(
+      (m): m is { type: 'session-created'; sessionId: string } =>
+        (m as { type?: string }).type === 'session-created',
+    );
+    if (!created) throw new Error('session-created reply never arrived');
+    const { sessionId } = created;
+
+    const primary = new FakePort();
+    handler({
+      data: { type: 'run', runId, sessionId, commandText: '!cmd' },
+      ports: [primary],
+    });
+    return { sessionId, primary };
+  }
+
+  it('an attach-run CLAIMS control: both ports are notified, and resize authority moves to the claimer', async () => {
+    const { handler, posted } = await importInterpreter();
+    const { primary } = beginPtyRun(handler, posted, 'run-1');
+    const attach = new FakePort();
+    handler({ data: { type: 'attach-run', runId: 'run-1' }, ports: [attach] });
+
+    attach.send({ type: 'pty-claim-control' });
+
+    expect(attach.posted).toContainEqual({ type: 'pty-control', hasControl: true });
+    expect(primary.posted).toContainEqual({ type: 'pty-control', hasControl: false });
+
+    // The claimer's resize now applies — the (former primary) authority is fanned the new dims.
+    attach.send({ type: 'pty-resize', cols: 100, rows: 30 });
+    expect(primary.posted).toContainEqual({ type: 'pty-dims', cols: 100, rows: 30 });
+
+    // The demoted former authority's own resize is now ignored — no new pty-dims anywhere.
+    const dimsCount = (p: FakePort): number =>
+      p.posted.filter((f) => (f as InterpreterFrame).type === 'pty-dims').length;
+    const before = { primary: dimsCount(primary), attach: dimsCount(attach) };
+
+    primary.send({ type: 'pty-resize', cols: 40, rows: 10 });
+
+    expect(dimsCount(primary)).toBe(before.primary);
+    expect(dimsCount(attach)).toBe(before.attach);
+
+    primary.send({ type: 'close' });
+  });
+
+  it('control reverts to the primary once the claiming attacher\'s port closes', async () => {
+    const { handler, posted } = await importInterpreter();
+    const { primary } = beginPtyRun(handler, posted, 'run-1');
+    const attach = new FakePort();
+    handler({ data: { type: 'attach-run', runId: 'run-1' }, ports: [attach] });
+
+    attach.send({ type: 'pty-claim-control' });
+    attach.close(); // the claiming mirror's transport disconnects
+
+    expect(primary.posted).toContainEqual({ type: 'pty-control', hasControl: true });
+
+    // The primary's resize applies again now that authority reverted to it —
+    // verified via a fresh attach replaying the dims it just set.
+    primary.send({ type: 'pty-resize', cols: 100, rows: 30 });
+    const late = new FakePort();
+    handler({ data: { type: 'attach-run', runId: 'run-1' }, ports: [late] });
+    expect(late.posted).toContainEqual({ type: 'pty-dims', cols: 100, rows: 30 });
+
+    primary.send({ type: 'close' });
+  });
+
+  it('a fresh attach receives pty-control{false} in its replay sequence, after the pty-dims replay', async () => {
+    const { handler, posted } = await importInterpreter();
+    const { primary } = beginPtyRun(handler, posted, 'run-1');
+    const attach = new FakePort();
+    handler({ data: { type: 'attach-run', runId: 'run-1' }, ports: [attach] });
+
+    expect(attach.posted).toContainEqual({ type: 'pty-control', hasControl: false });
+    const dimsIndex = attach.posted.findIndex((f) => (f as InterpreterFrame).type === 'pty-dims');
+    const controlIndex = attach.posted.findIndex((f) => (f as InterpreterFrame).type === 'pty-control');
+    expect(dimsIndex).toBeGreaterThanOrEqual(0);
+    expect(controlIndex).toBeGreaterThan(dimsIndex);
+
+    primary.send({ type: 'close' });
+  });
+});
+
 describe('interpreter-process — list-runs (M1 mirror-active-runs)', () => {
   afterEach(() => {
     vi.resetModules();

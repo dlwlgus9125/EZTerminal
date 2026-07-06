@@ -493,3 +493,42 @@ describe('BlockController — mirror mode / pty-dims (mobile mirroring fix, D3/D
     expect(controller.getSnapshot().ptyDims).toEqual({ cols: 80, rows: 24 });
   });
 });
+
+describe('BlockController — control handoff (M8b, dynamic hasControl)', () => {
+  it('hasControl starts true for a primary (no mirror opt)', () => {
+    const { controller } = make();
+    expect(controller.getSnapshot().hasControl).toBe(true);
+  });
+
+  it('hasControl starts false for an attach mirror', () => {
+    const { controller } = make({ mirror: true });
+    expect(controller.getSnapshot().hasControl).toBe(false);
+  });
+
+  it('a pty-control frame updates hasControl and notifies', () => {
+    const { port, controller } = make({ mirror: true });
+    let notifies = 0;
+    controller.subscribe(() => {
+      notifies += 1;
+    });
+
+    port.deliver({ type: 'pty-control', hasControl: true });
+
+    expect(notifies).toBe(1);
+    expect(controller.getSnapshot().hasControl).toBe(true);
+  });
+
+  it('a later pty-control frame can revert hasControl back to false', () => {
+    const { port, controller } = make();
+    port.deliver({ type: 'pty-control', hasControl: false });
+    expect(controller.getSnapshot().hasControl).toBe(false);
+    port.deliver({ type: 'pty-control', hasControl: true });
+    expect(controller.getSnapshot().hasControl).toBe(true);
+  });
+
+  it('claimControl() posts a pty-claim-control control', () => {
+    const { port, controller } = make({ mirror: true });
+    controller.claimControl();
+    expect(port.posted).toContainEqual({ type: 'pty-claim-control' });
+  });
+});
