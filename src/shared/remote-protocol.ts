@@ -93,6 +93,12 @@ export interface ListSessionsMessage {
   readonly kind: 'list-sessions';
 }
 
+/** Ask for every currently-active run across every session (M1 mirror-active-
+ * runs gap fix) — no correlation id, FIFO reply (same precedent as `list-sessions`). */
+export interface ListRunsMessage {
+  readonly kind: 'list-runs';
+}
+
 export interface CreateSessionRequest {
   readonly kind: 'create-session';
   /** Client-minted correlation id, echoed back on `session-created`. */
@@ -264,6 +270,7 @@ export interface FileUploadAbortMessage {
 export type ClientToServerMessage =
   | AuthMessage
   | ListSessionsMessage
+  | ListRunsMessage
   | CreateSessionRequest
   | DestroySessionRequest
   | RunCommandRequest
@@ -299,6 +306,12 @@ export interface AuthFailMessage {
 export interface SessionListMessage {
   readonly kind: 'session-list';
   readonly sessions: readonly SessionInfo[];
+}
+
+/** Reply to `list-runs` — every currently-active run (M1 mirror-active-runs). */
+export interface RunListMessage {
+  readonly kind: 'run-list';
+  readonly runs: readonly RunStartedInfo[];
 }
 
 export interface SessionCreatedReply {
@@ -445,6 +458,7 @@ export type ServerToClientMessage =
   | AuthOkMessage
   | AuthFailMessage
   | SessionListMessage
+  | RunListMessage
   | SessionCreatedReply
   | FrameMessage
   | SessionAddedMessage

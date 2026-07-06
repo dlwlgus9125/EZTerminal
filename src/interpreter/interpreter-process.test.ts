@@ -197,3 +197,51 @@ describe('interpreter-process — ExecutionSession port fanout (M2 T2.2b, Critic
     expect(late.posted.some((f) => (f as { type?: string }).type === 'error')).toBe(false); // still alive
   });
 });
+
+describe('interpreter-process — list-runs (M1 mirror-active-runs)', () => {
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it('returns [] when no run is active', async () => {
+    const { handler, posted } = await importInterpreter();
+
+    handler({ data: { type: 'list-runs', requestId: 'lr-idle' }, ports: [] });
+
+    expect(posted).toContainEqual({ type: 'run-list', requestId: 'lr-idle', runs: [] });
+  });
+
+  it('reports an in-flight `!cmd` run as active, then [] again once it closes', async () => {
+    const { handler, posted } = await importInterpreter();
+    handler({ data: { type: 'create-session', requestId: 'req-1' }, ports: [] });
+    const created = posted.find(
+      (m): m is { type: 'session-created'; sessionId: string } =>
+        (m as { type?: string }).type === 'session-created',
+    );
+    if (!created) throw new Error('session-created reply never arrived');
+    const { sessionId } = created;
+
+    // `!cmd` forces an interactive PTY — real ConPTY spawn, since this test
+    // drives the full interpreter bootstrap (no fake-spawn injection seam
+    // exists at this layer, unlike pty-session.test.ts's fake PtyHandle).
+    // The run has no terminal frame until explicitly closed below, so it
+    // stays "running" long enough to observe via list-runs.
+    const primary = new FakePort();
+    handler({
+      data: { type: 'run', runId: 'run-pty-1', sessionId, commandText: '!cmd' },
+      ports: [primary],
+    });
+
+    handler({ data: { type: 'list-runs', requestId: 'lr-live' }, ports: [] });
+    expect(posted).toContainEqual({
+      type: 'run-list',
+      requestId: 'lr-live',
+      runs: [{ sessionId, runId: 'run-pty-1', commandText: '!cmd' }],
+    });
+
+    primary.send({ type: 'close' }); // primary's own close disposes — kills the real process
+
+    handler({ data: { type: 'list-runs', requestId: 'lr-after-close' }, ports: [] });
+    expect(posted).toContainEqual({ type: 'run-list', requestId: 'lr-after-close', runs: [] });
+  });
+});

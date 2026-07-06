@@ -28,6 +28,7 @@ import type {
   EndFrame,
   ErrorFrame,
   ProgressFrame,
+  RunStartedInfo,
   SchemaFrame,
   StartFrame,
 } from '../shared/ipc';
@@ -233,6 +234,13 @@ class ExecutionSession implements Execution {
     this.ac.abort();
   }
 
+  /** True from `run()` until either the terminal frame fires (`lastTerminal`
+   * set) or the execution is disposed — the "active" definition `list-runs`
+   * filters on (M1 mirror-active-runs, D1). */
+  get running(): boolean {
+    return !this.disposed && this.lastTerminal === null;
+  }
+
   /** {@link Execution}: release the ResultStore/PTY child + close every port. Idempotent. */
   dispose(): void {
     if (this.disposed) return;
@@ -398,11 +406,13 @@ console.log(`[interpreter] started — pid ${process.pid}, type: ${process.type}
 // Sessions are created ONLY via `create-session` — never lazily on `run` (Codex B1).
 const registry = new SessionRegistry(() => randomUUID());
 
-// runId -> its ExecutionSession (M2 mirroring), so a later `attach-run` can find
-// the run it names. Populated in the `run` case below, dropped on dispose —
-// an unknown/already-disposed runId is rejected (see `attach-run`'s handler),
-// never silently resurrected (same discipline as `run`'s own session check, B1).
-const executionsByRunId = new Map<string, ExecutionSession>();
+// runId -> its ExecutionSession + the RunStartedInfo announced for it (M2
+// mirroring), so a later `attach-run` can find the run it names and `list-runs`
+// (M1 mirror-active-runs) can report it without reconstructing the info.
+// Populated in the `run` case below, dropped on dispose — an unknown/already-
+// disposed runId is rejected (see `attach-run`'s handler), never silently
+// resurrected (same discipline as `run`'s own session check, B1).
+const executionsByRunId = new Map<string, { execution: ExecutionSession; info: RunStartedInfo }>();
 
 // The `ps` process source — created ONCE (Windows `tasklist`), injected into each
 // per-command EvalContext so the pure core never imports child_process (§7).
@@ -571,26 +581,36 @@ process.parentPort.on('message', (event: ElectronMsgEvent) => {
         },
       });
       registry.begin(record, execution);
-      executionsByRunId.set(msg.runId, execution);
+      const info: RunStartedInfo = { sessionId: msg.sessionId, runId: msg.runId, commandText: msg.commandText };
+      executionsByRunId.set(msg.runId, { execution, info });
       execution.run(msg.commandText, port);
       // M2 mirroring: announce the run so main can fan out `run-started` to
       // every OTHER surface (desktop windows / WS clients) as a mirroring cue.
       process.parentPort.postMessage({
         type: 'run-started',
-        sessionId: msg.sessionId,
-        runId: msg.runId,
-        commandText: msg.commandText,
+        ...info,
       } satisfies InterpreterToMain);
       break;
     }
     case 'attach-run': {
       const port = event.ports[0] as unknown as MessagePortMain;
-      const execution = executionsByRunId.get(msg.runId);
-      if (!execution) {
+      const entry = executionsByRunId.get(msg.runId);
+      if (!entry) {
         rejectRun(port, `run ${msg.runId} does not exist`);
         break;
       }
-      execution.attach(port);
+      entry.execution.attach(port);
+      break;
+    }
+    case 'list-runs': {
+      // M1 mirror-active-runs: level-triggered snapshot, unlike `run-started`'s
+      // one-shot broadcast — a late-connecting client uses this to catch up.
+      const runs = [...executionsByRunId.values()].filter((v) => v.execution.running).map((v) => v.info);
+      process.parentPort.postMessage({
+        type: 'run-list',
+        requestId: msg.requestId,
+        runs,
+      } satisfies InterpreterToMain);
       break;
     }
     case 'script-host-ready': {

@@ -86,6 +86,7 @@ const api: EzTerminalApi = {
 
   // Session mirroring (M2): full mirroring across desktop tabs + mobile.
   listSessions: (): Promise<readonly SessionInfo[]> => ipcRenderer.invoke('list-sessions'),
+  listRuns: (): Promise<readonly RunStartedInfo[]> => ipcRenderer.invoke('list-runs'),
   onSessionAdded: (listener: (session: SessionInfo) => void): (() => void) => {
     const handler = (_event: unknown, session: SessionInfo): void => listener(session);
     ipcRenderer.on('session-added', handler);
