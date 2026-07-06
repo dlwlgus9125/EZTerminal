@@ -2,10 +2,34 @@
 
 수동 관리 (semver). 릴리스 절차: `docs/release/README.md`.
 
-## [Unreleased]
+## [0.2.0] - 2026-07-06
 
 ### Added
-- CI (GitHub Actions windows-latest): typecheck/lint/vitest/e2e/package/guard/packaged-smoke (Stage 0)
+- **설정 UI (데스크톱+모바일):** 데스크톱 우측 설정 드로어(⚙️) — 테마 직접 선택(라디오 4종)/UI 스케일
+  스테퍼(80–150%, 10%씩, 기본 100%)+리셋/원격 브리지 온오프 토글+상태/앱 버전. stats·pairing과 3자
+  상호배타. 모바일도 동일 구성의 전용 뷰(🎨/ThemeMenu는 parity.ts 고정좌표 의존 때문에 그대로 유지)
+- **전체 UI 스케일:** 터미널+크롬 전부 rem 기반 루트 스케일로 함께 확대/축소(desktop `ui-scale.ts` /
+  mobile 포트 공유). xterm은 테마 폰트 크기에 비례 리스케일 후 기존 0×0 가드 경유 리핏. 데스크톱은
+  `settings.json.uiScale`, 모바일은 `localStorage`에 영속
+- **원격 브리지 온오프:** `remoteEnabled` 설정(부재 시 true, 기존 `theme?` 백컴팻과 동일 패턴) — 끄면
+  WS 리스너 자체가 기동하지 않고, 런타임 토글은 클라이언트 종료→포트 반환까지 직렬화돼 즉시 재시작
+  가능. 비활성 시 pairing 패널에 "Settings에서 활성화" 안내
+- **데스크톱 탭 스트립 오버플로:** dockview 내장 오버플로 드롭다운·탭 스트립 휠 스크롤에 4테마 스타일
+  적용(이전엔 spaced 테마만 스타일돼 사실상 안 보였음) + 활성 탭 전환 시 자동 scrollIntoView
+- **모바일 탭 스와이프 vs 스크롤 충돌 수정:** 스트립이 스크롤 중일 때 탭 전환 스와이프를 억제(순수
+  판정 함수 `decideTabSwipe`), 활성 탭 pill 전환 시 자동 scrollIntoView
+
+### Fixed
+- dark↔matrix 테마 전환 시 xterm 폰트 크기가 13↔14로 갱신되지 않던 잠복 버그 — 테마·UI스케일 공용
+  `applyTypography()` 핸들러로 교체하며 함께 수정
+- 릴리스 워크플로 `release.yml`의 러너를 `windows-latest` → `windows-2022`로 고정 (ci.yml과 동일
+  사유: `windows-latest`가 이제 VS18을 실어 `@electron/node-gyp`가 못 읽고 `cap` 네이티브 빌드가
+  `pnpm install` 단계에서 실패하던 문제)
+
+## [0.1.0] - 2026-07-05
+
+### Added
+- CI (GitHub Actions windows-2022): typecheck/lint/vitest/e2e/package/guard/packaged-smoke (Stage 0)
 - 앱 아이덴티티: 아이콘(플레이스홀더)/저작권/win32 메타데이터 + Squirrel 인스톨러 설정 (B-M1)
 - 릴리스 플로우: 태그 `v*` → 검증 → draft GitHub Release (B-M2)
 - 코드서명 인프라 (env-gated, 인증서는 외부 의존) (B-M3)
@@ -54,4 +78,4 @@
 
 ### Notes
 - 첫 배포 트레인 `0.1.0`: Stage A(레이아웃 영속) 완료 + 원격 저장소 생성·푸시됨
-  (`github.com/dlwlgus9125/EZTerminal`, private). 태깅은 공개 여부·서명 결정 후 (현재 태그·릴리스 없음).
+  (`github.com/dlwlgus9125/EZTerminal`, private). `v0.1.0` 태그·GitHub Release 게시 완료 (2026-07-05).
