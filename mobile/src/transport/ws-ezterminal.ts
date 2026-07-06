@@ -432,6 +432,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   setTheme(): Promise<void> {
     return Promise.resolve();
   }
+  // UI scale (v0.2.0 D1) is mobile's own localStorage choice (mobile/src/ui-scale.ts),
+  // same "out of scope" reasoning as theme above — inert stubs only.
+  getUiScale(): Promise<number> {
+    return Promise.resolve(100);
+  }
+  setUiScale(): Promise<void> {
+    return Promise.resolve();
+  }
 
   /** Ask the bridge to tee packet-capture frames to this connection
    * (view-only — the desktop owns start/stop). Sends immediately if authed
@@ -472,6 +480,17 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   }
   rotateRemoteToken(): Promise<string> {
     return Promise.resolve(this.token);
+  }
+  // The on/off toggle (v0.2.0 D2) is a DESKTOP-side setting (it starts/stops
+  // that host's own bridge) — a mobile client is on the other end of the
+  // connection it would be toggling, so this is an inert "always on" stub,
+  // never surfaced in the mobile UI (see the v0.2.0 plan's D5: no remote
+  // toggle in MobileSettingsView).
+  getRemoteEnabled(): Promise<boolean> {
+    return Promise.resolve(true);
+  }
+  setRemoteEnabled(): Promise<boolean> {
+    return Promise.resolve(true);
   }
 
   // ── File explorer (file-explorer plan, M4) ────────────────────────────────

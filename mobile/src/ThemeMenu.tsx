@@ -5,14 +5,18 @@ import type { ThemeName } from '../../src/shared/layout-schema';
 // The swatch hexes below are the themes' own bg/accent colors (not read from
 // `THEMES` in themes.ts — that module exports `ITheme`/CSS-var objects, not a
 // UI-friendly swatch pair), so they're hardcoded here deliberately.
-interface ThemeOption {
+export interface ThemeOption {
   readonly name: ThemeName;
   readonly label: string;
   readonly bg: string;
   readonly accent: string;
 }
 
-const THEME_OPTIONS: readonly ThemeOption[] = [
+// Exported so MobileSettingsView (M4) can render the same theme list without
+// duplicating the swatch hexes — this is the ONLY change to this file (D5:
+// mobile/e2e/parity.ts drives ThemeMenu by fixed screen geometry, so it must
+// otherwise stay byte-identical).
+export const THEME_OPTIONS: readonly ThemeOption[] = [
   { name: 'dark', label: 'Dark', bg: '#0c0c0c', accent: '#29d398' },
   { name: 'light', label: 'Light', bg: '#f5f5f5', accent: '#0e8a4b' },
   { name: 'high-contrast', label: 'High Contrast', bg: '#000000', accent: '#00ff66' },
