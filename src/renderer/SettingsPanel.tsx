@@ -1,25 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import type { ThemeName } from '../shared/layout-schema';
-import { THEME_ORDER } from './themes';
 import { UI_SCALE_DEFAULT } from './ui-scale';
 
 /**
- * Settings drawer (v0.2.0 M2): theme picker, UI scale stepper, remote bridge
- * toggle. Right-edge overlay reusing StatusPanel/ConnectionInfoPanel's
+ * Settings drawer (v0.2.0 M2): UI scale stepper, remote bridge toggle.
+ * Right-edge overlay reusing StatusPanel/ConnectionInfoPanel's
  * `status-drawer`/`status-section` chrome — same slot family, different
  * content, so it shares App.tsx's stats/pairing mutual-exclusion group.
  */
 interface SettingsPanelProps {
-  readonly theme: ThemeName;
-  readonly onSelectTheme: (name: ThemeName) => void;
   readonly uiScale: number;
   readonly onChangeUiScale: (percent: number) => void;
 }
 
 export function SettingsPanel({
-  theme,
-  onSelectTheme,
   uiScale,
   onChangeUiScale,
 }: SettingsPanelProps): JSX.Element {
@@ -48,24 +42,6 @@ export function SettingsPanel({
 
   return (
     <div className="status-drawer" data-testid="settings-panel">
-      <section className="status-section">
-        <h2 className="status-section-title">Theme</h2>
-        <div className="settings-radio-list">
-          {THEME_ORDER.map((name) => (
-            <label key={name} className="settings-radio-row">
-              <input
-                type="radio"
-                name="settings-theme"
-                checked={theme === name}
-                onChange={() => onSelectTheme(name)}
-                data-testid={`settings-theme-${name}`}
-              />
-              <span>{name}</span>
-            </label>
-          ))}
-        </div>
-      </section>
-
       <section className="status-section">
         <h2 className="status-section-title">UI Scale</h2>
         <div className="settings-scale-stepper">

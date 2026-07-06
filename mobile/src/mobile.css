@@ -292,15 +292,6 @@ body,
   overflow-y: auto;
 }
 
-.mobile-settings-theme-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .settings-scale-stepper {
   display: flex;
   align-items: center;

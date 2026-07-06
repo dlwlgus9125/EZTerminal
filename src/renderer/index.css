@@ -503,12 +503,6 @@ body {
 
 /* Settings drawer (v0.2.0 M2) — same .status-drawer/.status-section shell as
    StatusPanel/ConnectionInfoPanel above; only these two rows are new. */
-.settings-radio-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
 .settings-radio-row {
   display: flex;
   align-items: center;

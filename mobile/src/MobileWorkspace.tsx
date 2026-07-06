@@ -126,8 +126,6 @@ export function MobileWorkspace({
   if (view === 'settings') {
     return (
       <MobileSettingsView
-        currentTheme={currentTheme}
-        onThemeSelect={handleThemeSelect}
         onClose={() => setView('terminal')}
         onDisconnect={onDisconnect}
       />
