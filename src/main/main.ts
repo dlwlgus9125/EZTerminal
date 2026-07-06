@@ -363,13 +363,21 @@ app.on('ready', () => {
     await storeReady;
     await layoutStore.setTheme(theme);
   });
+  ipcMain.handle('settings:get-ui-scale', async () => {
+    await storeReady;
+    return layoutStore.getUiScale();
+  });
+  ipcMain.handle('settings:set-ui-scale', async (_event, uiScale: number) => {
+    await storeReady;
+    if (typeof uiScale === 'number') await layoutStore.setUiScale(uiScale);
+  });
   // Best-effort final flush; the debounced save already persisted anything
   // older than ~300ms (accepted v1 loss window — gate Q2).
   app.on('before-quit', () => {
     void layoutStore.flush();
     systemStatsService?.stop();
     packetCaptureRegistry?.kill();
-    remoteBridgeHandle?.stop();
+    void remoteBridgeHandle?.stop();
   });
 
   // Session directory (mobile remote-control M0) — a thin {cwd, createdAt} list
@@ -599,21 +607,36 @@ app.on('ready', () => {
   const remotePacketSource: RemotePacketSource = {
     subscribe: (listener) => packetMirror?.subscribe(listener) ?? (() => undefined),
   };
-  remoteBridgeHandle = startRemoteBridge({
-    port: remoteBridgePort,
-    getToken: async () => {
-      await remoteTokenReady;
-      return remoteTokenStore.getToken();
-    },
-    interpreter: remoteInterpreterAdapter,
-    sessionDirectory,
-    createMessageChannel: () => new MessageChannelMain(),
-    statsSource: remoteStatsSource,
-    packetSource: remotePacketSource,
-    // `satisfies` forces a structural check here — the same `fileService`
-    // instance backs the desktop IPC handlers above and the mobile bridge.
-    fileSource: fileService satisfies RemoteFileSource,
-  });
+  // Gated on `remoteEnabled` (v0.2.0 D2): a closure so both boot and the
+  // runtime toggle below start the SAME shape of bridge.
+  const startBridge = (): void => {
+    remoteBridgeHandle = startRemoteBridge({
+      port: remoteBridgePort,
+      getToken: async () => {
+        await remoteTokenReady;
+        return remoteTokenStore.getToken();
+      },
+      interpreter: remoteInterpreterAdapter,
+      sessionDirectory,
+      createMessageChannel: () => new MessageChannelMain(),
+      statsSource: remoteStatsSource,
+      packetSource: remotePacketSource,
+      // `satisfies` forces a structural check here — the same `fileService`
+      // instance backs the desktop IPC handlers above and the mobile bridge.
+      fileSource: fileService satisfies RemoteFileSource,
+    });
+  };
+  // `app.on('ready', ...)` isn't async, so the boot gate is a fire-and-forget
+  // IIFE rather than a top-level await.
+  void (async () => {
+    await storeReady;
+    if (await layoutStore.getRemoteEnabled()) startBridge();
+  })();
+
+  // Runtime on/off toggle (v0.2.0 D2): every start/stop chains off `bridgeOp`
+  // so rapid toggles from the renderer never overlap (e.g. a stop still
+  // draining its `wss.close` callback while a second toggle races the same port).
+  let bridgeOp: Promise<void> = Promise.resolve();
 
   // Desktop pairing panel (M4): connection info/token are read-only display +
   // an explicit rotate action, same invoke shape as the settings handlers above.
@@ -627,6 +650,26 @@ app.on('ready', () => {
   ipcMain.handle('remote:rotate-token', async () => {
     await remoteTokenReady;
     return remoteTokenStore.rotateToken();
+  });
+  ipcMain.handle('remote:get-enabled', async () => {
+    await storeReady;
+    return layoutStore.getRemoteEnabled();
+  });
+  ipcMain.handle('remote:set-enabled', async (_event, enabled: boolean) => {
+    if (typeof enabled !== 'boolean') return remoteBridgeHandle !== null;
+    await storeReady;
+    await layoutStore.setRemoteEnabled(enabled);
+    bridgeOp = bridgeOp.then(async () => {
+      if (enabled) {
+        if (!remoteBridgeHandle) startBridge();
+      } else if (remoteBridgeHandle) {
+        const handle = remoteBridgeHandle;
+        remoteBridgeHandle = null;
+        await handle.stop();
+      }
+    });
+    await bridgeOp;
+    return remoteBridgeHandle !== null;
   });
 
   createWindow();

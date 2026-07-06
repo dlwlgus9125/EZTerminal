@@ -59,7 +59,7 @@
   --term-selection: rgba(45, 211, 152, 0.22);
 
   font-family: var(--term-font);
-  font-size: 13px;
+  font-size: calc(13px * var(--ez-ui-scale, 1));
   font-feature-settings: 'calt' 1, 'liga' 0; /* keep code legible, no fancy ligatures */
   -webkit-font-smoothing: antialiased;
 }
@@ -111,7 +111,7 @@
    the root font-size a touch so the lighter face stays legible. */
 [data-theme='matrix'] {
   color-scheme: dark;
-  font-size: 14px;
+  font-size: calc(14px * var(--ez-ui-scale, 1));
   --term-font: 'Share Tech Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
 
   --term-bg: #010301;

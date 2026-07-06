@@ -84,6 +84,11 @@ export const SettingsSchema = z.object({
   // Optional + schemaVersion stays 1: settings.json files written before E1
   // still parse with theme absent; layout-store defaults absence to 'dark'.
   theme: ThemeNameSchema.optional(),
+  // UI scale (v0.2.0 D1) — integer percent, absent defaults to 100 in layout-store.
+  uiScale: z.number().int().min(80).max(150).optional(),
+  // Remote WS bridge on/off (v0.2.0 D2) — absent defaults to true (pre-existing
+  // always-on behavior) in layout-store.
+  remoteEnabled: z.boolean().optional(),
 });
 export type StartupPref = z.infer<typeof StartupPrefSchema>;
 export type SettingsFile = z.infer<typeof SettingsSchema>;

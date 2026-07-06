@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { WebSocket as RealWebSocket } from 'ws';
 
 import {
   attachConnection,
   AUTH_CLOSE_CODE,
+  startRemoteBridge,
   type RemoteBridgeOptions,
   type RemoteFileSource,
   type RemoteInterpreter,
@@ -1063,4 +1065,36 @@ describe('RemoteBridge — file explorer (M3)', () => {
 
     expect(ws.sent.filter((m) => m.kind.startsWith('file-'))).toHaveLength(0);
   });
+});
+
+describe('startRemoteBridge — real WS server lifecycle (v0.2.0 D2)', () => {
+  // Dedicated fixed port (distinct from e2e's session-mirror.spec.ts 17420) so a
+  // same-port restart below is deterministic rather than relying on OS-assigned port 0.
+  const TEST_PORT = 17431;
+
+  function connect(port: number): Promise<RealWebSocket> {
+    return new Promise((resolve, reject) => {
+      const client = new RealWebSocket(`ws://127.0.0.1:${port}`);
+      client.once('open', () => resolve(client));
+      client.once('error', reject);
+    });
+  }
+
+  it('stop() terminates connected clients (their close fires) and releases the port for an immediate same-port restart', async () => {
+    const { options } = makeOptions({ port: TEST_PORT });
+    const handle = startRemoteBridge(options);
+    const client = await connect(TEST_PORT);
+
+    const clientClosed = new Promise<void>((resolve) => client.once('close', () => resolve()));
+    await handle.stop();
+    await clientClosed; // wss's per-client ws.terminate() fired the client's own close
+
+    // Immediate restart on the SAME port must not throw EADDRINUSE: stop()
+    // only resolves once wss.close's callback fires, guaranteeing the
+    // previous listening socket is released first.
+    const handle2 = startRemoteBridge(options);
+    const client2 = await connect(TEST_PORT);
+    client2.close();
+    await handle2.stop();
+  }, 10_000);
 });

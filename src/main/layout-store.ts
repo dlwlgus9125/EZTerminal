@@ -173,6 +173,22 @@ export class LayoutStore {
     await this.updateSettings((current) => ({ ...current, theme }), 'theme');
   }
 
+  async getUiScale(): Promise<number> {
+    return (await this.loadSettingsFile()).uiScale ?? 100;
+  }
+
+  async setUiScale(uiScale: number): Promise<void> {
+    await this.updateSettings((current) => ({ ...current, uiScale }), 'uiScale');
+  }
+
+  async getRemoteEnabled(): Promise<boolean> {
+    return (await this.loadSettingsFile()).remoteEnabled ?? true;
+  }
+
+  async setRemoteEnabled(remoteEnabled: boolean): Promise<void> {
+    await this.updateSettings((current) => ({ ...current, remoteEnabled }), 'remoteEnabled');
+  }
+
   /** Read + validate settings.json, defaulting to `{ startup: {mode:'last'} }`
    * when absent/corrupt (quarantining the latter). Shared by every getter. */
   private async loadSettingsFile(): Promise<SettingsFile> {

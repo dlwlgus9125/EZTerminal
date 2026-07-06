@@ -608,6 +608,12 @@ export interface EzTerminalApi {
   /** Persist a theme choice — main validates before writing. */
   setTheme: (theme: ThemeName) => Promise<void>;
 
+  // ── UI scale (v0.2.0 D1) ──────────────────────────────────────────────────
+  /** The persisted UI scale percent (defaults to 100 when never set). */
+  getUiScale: () => Promise<number>;
+  /** Persist a UI scale percent — main validates before writing. */
+  setUiScale: (uiScale: number) => Promise<void>;
+
   // ── Status overlay panel stats (status-overlay-panel) ─────────────────────
   /** Subscribe to the 1Hz stats push (flows only while the panel is open). Returns an unsubscribe. */
   onStatsUpdate: (listener: (snapshot: SystemStatsSnapshot) => void) => () => void;
@@ -630,6 +636,11 @@ export interface EzTerminalApi {
   /** Mint + persist a new token — existing connections keep working (the bridge
    * only re-checks the token on new connections); new connections need it. */
   rotateRemoteToken: () => Promise<string>;
+  /** Whether the remote bridge is enabled (persisted, defaults to true). */
+  getRemoteEnabled: () => Promise<boolean>;
+  /** Persist the on/off toggle and start/stop the bridge accordingly (serialized
+   * against overlapping toggles main-side). Returns the resulting running state. */
+  setRemoteEnabled: (enabled: boolean) => Promise<boolean>;
 
   // ── File explorer (file-explorer plan, M1) ────────────────────────────────
   // Desktop drawer thin passthroughs to main's `FileService`. `''` for a path

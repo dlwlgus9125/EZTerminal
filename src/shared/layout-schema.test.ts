@@ -180,3 +180,54 @@ describe('layout-schema — SettingsSchema theme field (E1)', () => {
     expect(parsed.success).toBe(false);
   });
 });
+
+describe('layout-schema — SettingsSchema uiScale + remoteEnabled fields (v0.2.0 M1)', () => {
+  it('round-trips a settings file with both new fields present', () => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: LAYOUT_SCHEMA_VERSION,
+      startup: { mode: 'last' },
+      uiScale: 120,
+      remoteEnabled: false,
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.uiScale).toBe(120);
+    expect(parsed.success && parsed.data.remoteEnabled).toBe(false);
+  });
+
+  it('round-trips a settings file with both new fields absent (pre-v0.2.0 files still parse)', () => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: LAYOUT_SCHEMA_VERSION,
+      startup: { mode: 'last' },
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.uiScale).toBeUndefined();
+    expect(parsed.success && parsed.data.remoteEnabled).toBeUndefined();
+  });
+
+  it.each([79, 151, 100.5])('rejects an out-of-range or non-integer uiScale (%d)', (uiScale) => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: LAYOUT_SCHEMA_VERSION,
+      startup: { mode: 'last' },
+      uiScale,
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it.each([80, 100, 150])('accepts a boundary uiScale (%d)', (uiScale) => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: LAYOUT_SCHEMA_VERSION,
+      startup: { mode: 'last' },
+      uiScale,
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects a non-boolean remoteEnabled', () => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: LAYOUT_SCHEMA_VERSION,
+      startup: { mode: 'last' },
+      remoteEnabled: 'yes',
+    });
+    expect(parsed.success).toBe(false);
+  });
+});

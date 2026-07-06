@@ -183,3 +183,39 @@ describe('LayoutStore — theme (E1)', () => {
     expect(await store.getStartup()).toEqual({ mode: 'preset', presetName: 'dev 2-pane' });
   });
 });
+
+describe('LayoutStore — uiScale + remoteEnabled (v0.2.0 M1)', () => {
+  it('defaults uiScale to 100 and round-trips a set value', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    expect(await store.getUiScale()).toBe(100);
+    await store.setUiScale(120);
+    expect(await store.getUiScale()).toBe(120);
+  });
+
+  it('defaults remoteEnabled to true and round-trips a set value', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    expect(await store.getRemoteEnabled()).toBe(true);
+    await store.setRemoteEnabled(false);
+    expect(await store.getRemoteEnabled()).toBe(false);
+  });
+
+  it('interleaved setTheme/setUiScale/setRemoteEnabled all preserve each other (shared settings.json)', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    await store.setTheme('matrix');
+    await store.setUiScale(130);
+    await store.setRemoteEnabled(false);
+    expect(await store.getTheme()).toBe('matrix');
+    expect(await store.getUiScale()).toBe(130);
+    expect(await store.getRemoteEnabled()).toBe(false);
+
+    // Reorder: setRemoteEnabled first, theme last — still no clobber.
+    await store.setRemoteEnabled(true);
+    await store.setTheme('light');
+    expect(await store.getUiScale()).toBe(130);
+    expect(await store.getRemoteEnabled()).toBe(true);
+    expect(await store.getTheme()).toBe('light');
+  });
+});

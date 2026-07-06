@@ -599,12 +599,20 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
 }
 
 export interface RemoteBridgeHandle {
-  stop(): void;
+  /** Terminates every connected client (fires each socket's 'close', see
+   * attachConnection's per-connection teardown) then closes the listening
+   * socket — resolves only once the port is actually released, so an
+   * immediate restart on the same port never races EADDRINUSE. */
+  stop(): Promise<void>;
 }
 
 /** Start the WS server (binds `0.0.0.0` — LAN/Tailscale reachable, token-gated). */
 export function startRemoteBridge(options: RemoteBridgeOptions): RemoteBridgeHandle {
   const wss = new WebSocketServer({ port: options.port, host: '0.0.0.0' });
+  // A bind failure (e.g. EADDRINUSE from a stale listener) must not crash main.
+  wss.on('error', (err) => {
+    console.error('[remote-bridge] WebSocketServer error:', err);
+  });
 
   // Heartbeat sweep (attachConnection itself is untouched — fakes/tests never
   // see this): counts consecutive missed pongs per socket, terminating once a
@@ -628,9 +636,14 @@ export function startRemoteBridge(options: RemoteBridgeOptions): RemoteBridgeHan
   }, HEARTBEAT_INTERVAL_MS);
 
   return {
-    stop: () => {
-      clearInterval(heartbeat);
-      wss.close();
-    },
+    stop: () =>
+      new Promise((resolve) => {
+        clearInterval(heartbeat);
+        for (const ws of wss.clients) ws.terminate();
+        wss.close((err) => {
+          if (err) console.error('[remote-bridge] error closing WebSocketServer:', err);
+          resolve();
+        });
+      }),
   };
 }
