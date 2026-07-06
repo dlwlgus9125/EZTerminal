@@ -15,6 +15,7 @@ import { FileExplorerPanel } from './FileExplorerPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { StatusPanel } from './StatusPanel';
 import { TerminalPane } from './TerminalPane';
+import { THEME_ORDER } from './themes';
 import { applyUiScale, clampUiScale, UI_SCALE_DEFAULT } from './ui-scale';
 
 // App is the dockview host: one TerminalPane per tab or split pane. Each pane owns its
@@ -65,9 +66,6 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
 const components = { terminal: TerminalPanel };
 
 let tabCounter = 0;
-
-/** Cycle order for the theme button (E1) — also the theme picker's row order (M2). */
-export const THEME_ORDER: readonly ThemeName[] = ['dark', 'light', 'high-contrast', 'matrix'];
 
 /** How long a layout may keep changing before it is persisted. Changes made
  * less than this before a hard kill are lost — accepted v1 window (gate Q2). */

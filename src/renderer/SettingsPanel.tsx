@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import type { ThemeName } from '../shared/layout-schema';
-import { THEME_ORDER } from './App';
+import { THEME_ORDER } from './themes';
 import { UI_SCALE_DEFAULT } from './ui-scale';
 
 /**
