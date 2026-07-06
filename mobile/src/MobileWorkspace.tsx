@@ -29,9 +29,9 @@ import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 // breaks is xterm's internal measurement of a now-zero-size container, which
 // is why activating a tab dispatches a `resize` event on the next animation
 // frame — xterm/any ResizeObserver-driven view re-measures once it's visible
-// again. (No PtyBlock/xterm view is wired up yet as of M5 — TerminalPane's
-// pty-shape rendering hasn't landed on mobile — but this keeps the tab
-// mechanism correct for when it does, per the mobile-parity plan's risk #1.)
+// again. (Mobile renders PtyBlock/xterm too, via the shared Block.tsx — this
+// keep-alive is what makes that survive tab switches, per the mobile-parity
+// plan's risk #1.)
 //
 // Zero-tab state: renders `SessionSwitcher variant="page"` as the ENTIRE
 // screen (no workspace header above it) — it must stay in normal document
