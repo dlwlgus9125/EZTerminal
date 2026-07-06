@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from 'react';
 export function ConnectionInfoPanel(): JSX.Element {
   const [urls, setUrls] = useState<readonly string[] | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const [remoteEnabled, setRemoteEnabled] = useState<boolean | null>(null);
   const [justRotated, setJustRotated] = useState(false);
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
@@ -20,6 +21,9 @@ export function ConnectionInfoPanel(): JSX.Element {
     });
     void window.ezterminal.getRemoteToken().then((t) => {
       if (alive) setToken(t);
+    });
+    void window.ezterminal.getRemoteEnabled().then((v) => {
+      if (alive) setRemoteEnabled(v);
     });
     return () => {
       alive = false;
@@ -40,7 +44,7 @@ export function ConnectionInfoPanel(): JSX.Element {
     });
   }, []);
 
-  const loading = urls === null || token === null;
+  const loading = urls === null || token === null || remoteEnabled === null;
 
   return (
     <div className="status-drawer" data-testid="connection-info-panel">
@@ -48,6 +52,10 @@ export function ConnectionInfoPanel(): JSX.Element {
         <h2 className="status-section-title">Mobile Pairing</h2>
         {loading ? (
           <div className="status-loading">Loading…</div>
+        ) : !remoteEnabled ? (
+          <div className="status-loading" data-testid="pairing-remote-disabled">
+            Remote access is disabled — enable it in Settings
+          </div>
         ) : urls.length === 0 ? (
           <div className="status-loading">No LAN network detected.</div>
         ) : (

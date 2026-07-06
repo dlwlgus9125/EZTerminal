@@ -12,8 +12,10 @@ import { maxTabSuffix, type LayoutEnvelope, type ThemeName } from '../shared/lay
 import { CommandPalette, type PaletteAction } from './CommandPalette';
 import { ConnectionInfoPanel } from './ConnectionInfoPanel';
 import { FileExplorerPanel } from './FileExplorerPanel';
+import { SettingsPanel } from './SettingsPanel';
 import { StatusPanel } from './StatusPanel';
 import { TerminalPane } from './TerminalPane';
+import { applyUiScale, clampUiScale, UI_SCALE_DEFAULT } from './ui-scale';
 
 // App is the dockview host: one TerminalPane per tab or split pane. Each pane owns its
 // own shell session, so panes are fully isolated. Panes are created programmatically —
@@ -64,8 +66,8 @@ const components = { terminal: TerminalPanel };
 
 let tabCounter = 0;
 
-/** Cycle order for the theme button (E1). */
-const THEME_ORDER: readonly ThemeName[] = ['dark', 'light', 'high-contrast', 'matrix'];
+/** Cycle order for the theme button (E1) — also the theme picker's row order (M2). */
+export const THEME_ORDER: readonly ThemeName[] = ['dark', 'light', 'high-contrast', 'matrix'];
 
 /** How long a layout may keep changing before it is persisted. Changes made
  * less than this before a hard kill are lost — accepted v1 window (gate Q2). */
@@ -327,6 +329,9 @@ export function App(): JSX.Element {
   // ── Mobile pairing panel (M4) ─────────────────────────────────────────────
   const [pairingOpen, setPairingOpen] = useState(false);
 
+  // ── Settings drawer (v0.2.0 M2) ───────────────────────────────────────────
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   // ── File explorer drawer (file-explorer plan, M1) ─────────────────────────
   // Left-edge overlay — unlike stats/pairing above, it does not share their
   // right-slot mutual exclusion. `activePanelId` tracks dockview's active
@@ -358,12 +363,47 @@ export function App(): JSX.Element {
     });
   }, [applyTheme]);
 
+  const selectTheme = useCallback(
+    (name: ThemeName): void => {
+      userChangedThemeRef.current = true;
+      applyTheme(name);
+      void window.ezterminal.setTheme(name);
+    },
+    [applyTheme],
+  );
+
   const cycleTheme = useCallback((): void => {
-    userChangedThemeRef.current = true;
     const next = THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length];
-    applyTheme(next);
-    void window.ezterminal.setTheme(next);
-  }, [theme, applyTheme]);
+    selectTheme(next);
+  }, [theme, selectTheme]);
+
+  // ── UI scale (v0.2.0 D1) ──────────────────────────────────────────────────
+  // Mirrors the theme mechanism directly above: applyUiScaleState sets the CSS
+  // var + notifies open PtyBlocks (ui-scale.ts's applyUiScale) AND the local
+  // label state; the boot fetch guards against a fast user change the same way
+  // userChangedThemeRef does.
+  const [uiScale, setUiScaleState] = useState<number>(UI_SCALE_DEFAULT);
+  const userChangedUiScaleRef = useRef(false);
+
+  const applyUiScaleState = useCallback((percent: number): void => {
+    applyUiScale(percent);
+    setUiScaleState(clampUiScale(percent));
+  }, []);
+
+  useEffect(() => {
+    void window.ezterminal.getUiScale().then((percent) => {
+      if (!userChangedUiScaleRef.current) applyUiScaleState(percent);
+    });
+  }, [applyUiScaleState]);
+
+  const changeUiScale = useCallback(
+    (percent: number): void => {
+      userChangedUiScaleRef.current = true;
+      applyUiScaleState(percent);
+      void window.ezterminal.setUiScale(clampUiScale(percent));
+    },
+    [applyUiScaleState],
+  );
 
   // ── Presets (A-M4) ────────────────────────────────────────────────────────
   const [presetsOpen, setPresetsOpen] = useState(false);
@@ -673,6 +713,7 @@ export function App(): JSX.Element {
           onClick={() => {
             setStatsOpen((open) => !open);
             setPairingOpen(false); // same status-drawer slot (right:0) — only one at a time
+            setSettingsOpen(false);
           }}
           title="Toggle system status panel"
           data-testid="btn-toggle-stats"
@@ -685,11 +726,25 @@ export function App(): JSX.Element {
           onClick={() => {
             setPairingOpen((open) => !open);
             setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
+            setSettingsOpen(false);
           }}
           title="Show mobile pairing info"
           data-testid="btn-toggle-pairing"
         >
           Pairing
+        </button>
+        <button
+          className="btn btn-split"
+          onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
+          onClick={() => {
+            setSettingsOpen((open) => !open);
+            setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
+            setPairingOpen(false);
+          }}
+          title="Settings"
+          data-testid="btn-toggle-settings"
+        >
+          ⚙️
         </button>
         {versions && (
           <span className="versions" title="runtime versions">
@@ -730,6 +785,14 @@ export function App(): JSX.Element {
         </SessionBindingContext.Provider>
         {statsOpen && <StatusPanel />}
         {pairingOpen && <ConnectionInfoPanel />}
+        {settingsOpen && (
+          <SettingsPanel
+            theme={theme}
+            onSelectTheme={selectTheme}
+            uiScale={uiScale}
+            onChangeUiScale={changeUiScale}
+          />
+        )}
         {filesOpen && (
           <FileExplorerPanel
             activePanelId={activePanelId}

@@ -501,6 +501,37 @@ body {
   color: var(--term-blue);
 }
 
+/* Settings drawer (v0.2.0 M2) — same .status-drawer/.status-section shell as
+   StatusPanel/ConnectionInfoPanel above; only these two rows are new. */
+.settings-radio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.settings-radio-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--term-fg);
+  cursor: pointer;
+}
+
+.settings-scale-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.settings-scale-value {
+  min-width: 3.2em;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--term-fg-bright);
+  font-variant-numeric: tabular-nums;
+}
+
 /* File explorer drawer (file-explorer plan, M1) — mirrors .status-drawer
    above but anchored to the LEFT edge (border-right instead of border-left),
    its own toggle slot (not part of the stats/pairing right-side mutual
