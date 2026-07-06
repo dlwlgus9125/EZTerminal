@@ -104,9 +104,35 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     // (Phase 2: pre-mount bytes; Phase 3: the ENTIRE plain-mode history on an
     // upgrade). The write callback drives the backpressure ack (Stage C): the
     // interpreter pauses the PTY when the renderer falls too far behind flushes.
-    const unsink = controller.setPtyDataSink((bytes, onFlushed) => term.write(bytes, onFlushed));
+    //
+    // Mirror auto-reply suppression (VERIFIED on a live emulator): xterm
+    // answers terminal queries (DA `ESC[c`, DSR/CPR, ...) by emitting the
+    // response through onData while it PARSES the incoming bytes. The PRIMARY
+    // view owns those responses; a mirror re-answering queries it merely
+    // replays (the ring holds the original DA query from session start) or
+    // tees live injects duplicate responses into the SHARED PTY as input —
+    // observed corrupting the next typed command into `^[[?1;2cecho ...`.
+    // Auto-replies fire synchronously inside write() parsing, so "onData
+    // while a mirror write is in flight" identifies them; a phone keystroke
+    // landing inside that brief window is dropped, which is the right trade
+    // against corrupting everyone's input stream.
+    let mirrorWritesInFlight = 0;
+    const unsink = controller.setPtyDataSink((bytes, onFlushed) => {
+      if (!controller.isMirror) {
+        term.write(bytes, onFlushed);
+        return;
+      }
+      mirrorWritesInFlight++;
+      term.write(bytes, () => {
+        mirrorWritesInFlight--;
+        onFlushed();
+      });
+    });
     // Keystrokes / pasted text → PTY child (attach ports support input too).
-    const dataDisposable = term.onData((data) => controller.sendPtyInput(data));
+    const dataDisposable = term.onData((data) => {
+      if (mirrorWritesInFlight > 0) return; // mirror auto-reply, not a user — see above
+      controller.sendPtyInput(data);
+    });
 
     // Keep the PTY grid synced to the rendered size (incl. collapse→expand).
     // Skipped for a mirror — see the fit-null note above.
