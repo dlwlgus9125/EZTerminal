@@ -1,13 +1,11 @@
 import { useCallback, useState } from 'react';
 
-import type { ThemeName } from '../../src/shared/layout-schema';
 import {
   UI_SCALE_DEFAULT,
   UI_SCALE_STEP,
   applyUiScale,
   clampUiScale,
 } from '../../src/renderer/ui-scale';
-import { THEME_OPTIONS } from './ThemeMenu';
 import { loadUiScale, saveUiScale } from './ui-scale';
 
 const CONNECTION_STORAGE_KEY = 'ezterminal-mobile-connection';
@@ -34,15 +32,11 @@ function readConnectionUrl(): string {
 // "Connection" always reflects a live session — there is no disconnected
 // state to render here.
 interface MobileSettingsViewProps {
-  readonly currentTheme: ThemeName;
-  readonly onThemeSelect: (name: ThemeName) => void;
   readonly onClose: () => void;
   readonly onDisconnect: () => void;
 }
 
 export function MobileSettingsView({
-  currentTheme,
-  onThemeSelect,
   onClose,
   onDisconnect,
 }: MobileSettingsViewProps): JSX.Element {
@@ -77,36 +71,6 @@ export function MobileSettingsView({
       </header>
 
       <div className="mobile-settings-body">
-        <section className="status-section">
-          <h2 className="status-section-title">Theme</h2>
-          <ul className="mobile-settings-theme-list">
-            {THEME_OPTIONS.map((opt) => (
-              <li key={opt.name}>
-                <button
-                  type="button"
-                  className={
-                    opt.name === currentTheme
-                      ? 'theme-menu-option theme-menu-option--active'
-                      : 'theme-menu-option'
-                  }
-                  onClick={() => onThemeSelect(opt.name)}
-                  data-testid={`settings-theme-${opt.name}`}
-                >
-                  <span className="theme-menu-swatch" style={{ background: opt.bg }} aria-hidden="true">
-                    <span className="theme-menu-swatch-dot" style={{ background: opt.accent }} />
-                  </span>
-                  <span className="theme-menu-label">{opt.label}</span>
-                  {opt.name === currentTheme && (
-                    <span className="theme-menu-check" aria-hidden="true">
-                      ✓
-                    </span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-
         <section className="status-section">
           <h2 className="status-section-title">UI Scale</h2>
           <div className="settings-scale-stepper">

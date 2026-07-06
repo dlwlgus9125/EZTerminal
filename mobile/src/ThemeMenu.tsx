@@ -12,11 +12,7 @@ export interface ThemeOption {
   readonly accent: string;
 }
 
-// Exported so MobileSettingsView (M4) can render the same theme list without
-// duplicating the swatch hexes — this is the ONLY change to this file (D5:
-// mobile/e2e/parity.ts drives ThemeMenu by fixed screen geometry, so it must
-// otherwise stay byte-identical).
-export const THEME_OPTIONS: readonly ThemeOption[] = [
+const THEME_OPTIONS: readonly ThemeOption[] = [
   { name: 'dark', label: 'Dark', bg: '#0c0c0c', accent: '#29d398' },
   { name: 'light', label: 'Light', bg: '#f5f5f5', accent: '#0e8a4b' },
   { name: 'high-contrast', label: 'High Contrast', bg: '#000000', accent: '#00ff66' },

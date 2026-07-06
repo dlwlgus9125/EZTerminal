@@ -798,12 +798,7 @@ export function App(): JSX.Element {
         {statsOpen && <StatusPanel />}
         {pairingOpen && <ConnectionInfoPanel />}
         {settingsOpen && (
-          <SettingsPanel
-            theme={theme}
-            onSelectTheme={selectTheme}
-            uiScale={uiScale}
-            onChangeUiScale={changeUiScale}
-          />
+          <SettingsPanel uiScale={uiScale} onChangeUiScale={changeUiScale} />
         )}
         {filesOpen && (
           <FileExplorerPanel
