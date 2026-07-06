@@ -1,8 +1,11 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 
 import { launchApp } from './launch-app';
 import { TestWsClient } from './ws-client';
+
+const ECHO_FIXTURE = path.resolve(__dirname, 'fixtures', 'pty-echo.js');
 
 // M2 full mirroring (plan §M2, AC4/AC5): a session/run created over the mobile
 // remote-control WS bridge must reflect onto the desktop dockview the same way
@@ -140,6 +143,81 @@ test('session mirroring: a pane that adopts a session AFTER a run already starte
   // added in M4.
   await expect(adoptedPane.getByTestId('pty-plain-block')).toBeVisible({ timeout: 5_000 });
   await expect(adoptedPane).toContainText(marker, { timeout: 10_000 });
+
+  await app.close();
+});
+
+// M8b (control handoff, plan §M8): a non-controlling mirror can CLAIM control
+// of a shared PTY run — the interpreter's resize authority moves to it (M8a),
+// and the renderer reflects that dynamically: the claiming mirror's "Take
+// control" chip disappears and the demoted primary's own chip appears in its
+// place. Uses the same __ezDock adopt-split seam as the M4 test above, but a
+// forceXterm (`!cmd`) run — M4's run is PLAIN mode (`pty-plain-block`, no
+// xterm), and the take-control chip only exists in the xterm view.
+test('session mirroring: a non-controlling mirror can claim PTY control, moving resize authority (M8b)', async () => {
+  const app = await launchApp();
+  const window = await app.firstWindow();
+  await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  const panes = window.getByTestId('pane');
+  const pane0 = panes.nth(0);
+  await expect(pane0).toHaveAttribute('data-session-id', /.+/);
+  const sessionId = await pane0.getAttribute('data-session-id');
+  if (!sessionId) throw new Error('expected pane0 to have a data-session-id');
+
+  await pane0.getByTestId('cmd-input').fill(`!node ${ECHO_FIXTURE}`);
+  await pane0.getByTestId('btn-run').click();
+  await expect(pane0.getByTestId('pty-block')).toBeVisible();
+  await expect
+    .poll(() => pane0.locator('.pty-block .xterm-rows').innerText(), { timeout: 15_000 })
+    .toContain('READY');
+
+  // The primary starts IN control — no take-control chip on it.
+  const primaryChip = pane0.getByTestId('pty-take-control');
+  await expect(primaryChip).toHaveCount(0);
+
+  // Adopt-split: a second pane mirroring the same session (same seam as the
+  // M4 test above — dockview's mouse drag is native HTML5 DnD, not
+  // Playwright-drivable). Panel id `tab-1` is the app's first-panel id
+  // (module-scoped `tabCounter` starts at 0, incremented to 1 on mount).
+  await window.evaluate((adoptSessionId) => {
+    type EzDockApi = {
+      addPanel(opts: {
+        id: string;
+        component: string;
+        title: string;
+        renderer: string;
+        params?: Record<string, unknown>;
+        position?: { referencePanel: string; direction: string };
+      }): unknown;
+    };
+    const dock = (globalThis as unknown as { __ezDock?: EzDockApi }).__ezDock;
+    if (!dock) throw new Error('__ezDock test seam missing');
+    dock.addPanel({
+      id: 'tab-adopt-control',
+      component: 'terminal',
+      title: 'Adopted',
+      renderer: 'always',
+      params: { adoptSessionId },
+      position: { referencePanel: 'tab-1', direction: 'right' },
+    });
+  }, sessionId);
+
+  await expect(panes).toHaveCount(2);
+  const mirrorPane = panes.nth(1);
+  await expect(mirrorPane).toHaveAttribute('data-session-id', sessionId);
+  await expect(mirrorPane.getByTestId('pty-block')).toBeVisible({ timeout: 5_000 });
+
+  // The mirror is NOT in control — its chip is visible; the primary still has none.
+  const mirrorChip = mirrorPane.getByTestId('pty-take-control');
+  await expect(mirrorChip).toBeVisible({ timeout: 5_000 });
+  await expect(primaryChip).toHaveCount(0);
+
+  // Claim control: the interpreter moves resize authority to the mirror,
+  // notifying every port on the run — the chip swaps sides.
+  await mirrorChip.click();
+  await expect(mirrorChip).toHaveCount(0, { timeout: 5_000 });
+  await expect(primaryChip).toBeVisible({ timeout: 5_000 });
 
   await app.close();
 });

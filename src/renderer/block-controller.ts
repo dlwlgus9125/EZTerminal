@@ -65,6 +65,11 @@ export interface BlockSnapshot {
    * until the first `pty-dims` frame (attach replay or a primary resize).
    * Meaningless outside a mirror controller; a primary never receives it. */
   readonly ptyDims: { cols: number; rows: number } | null;
+  /** Whether this port currently holds PTY resize authority (control handoff,
+   * M8a/M8b) — DYNAMIC, unlike `isMirror` which is fixed at construction.
+   * Starts `!opts.mirror` (a primary starts in control; an attach mirror does
+   * not) and moves on `pty-control` frames as control is claimed/reverted. */
+  readonly hasControl: boolean;
   /** Bumped on every change so memoized consumers know to re-read row data. */
   readonly version: number;
 }
@@ -177,6 +182,11 @@ export class BlockController {
   /** The PRIMARY's PTY grid size, mirrored via `pty-dims` frames (D3). */
   private ptyDims: { cols: number; rows: number } | null = null;
 
+  /** PTY resize authority, DYNAMIC (control handoff, M8a/M8b) — see
+   * `BlockSnapshot.hasControl`'s doc. Initialized in the constructor from
+   * `!opts.mirror`, then driven entirely by `pty-control` frames. */
+  private hasControl: boolean;
+
   /** Flow accounting (Stage C): bytes received off the port vs bytes
    * consumed (xterm-flushed in xterm mode, immediate in plain mode — M3);
    * `ptyAckedAt` is the last cumulative value acked. */
@@ -195,6 +205,7 @@ export class BlockController {
     this.command = command;
     this.port = port;
     this.isMirror = opts?.mirror ?? false;
+    this.hasControl = !this.isMirror;
     this.snapshot = this.buildSnapshot();
     liveControllers.add(this);
 
@@ -319,6 +330,13 @@ export class BlockController {
     this.port.postMessage({ type: 'pty-resize', cols, rows });
   }
 
+  /** Claim PTY resize authority (control handoff, M8a/M8b) — the interpreter
+   * replies with `pty-control` frames to this port and every other one on the
+   * run, updating `hasControl` accordingly (see `onFrame`'s `pty-control` case). */
+  claimControl(): void {
+    this.port.postMessage({ type: 'pty-claim-control' });
+  }
+
   // ── ssh-connect prompt (E5) ──────────────────────────────────────────────────
   /** Answer the outstanding `ssh-prompt`. Clears it locally right away (instant
    * UI feedback / prevents double-submit) — the interpreter is authoritative and
@@ -432,6 +450,9 @@ export class BlockController {
       case 'pty-dims':
         this.ptyDims = { cols: frame.cols, rows: frame.rows };
         break;
+      case 'pty-control':
+        this.hasControl = frame.hasControl;
+        break;
     }
     // Only `progress` storms; every other frame is one-shot (or user-paced, like
     // `chunk` answering a viewport request) and notifies synchronously.
@@ -479,6 +500,7 @@ export class BlockController {
       sshPrompt: this.sshPrompt,
       ptyRenderMode: this.ptyRenderMode,
       ptyDims: this.ptyDims,
+      hasControl: this.hasControl,
       version: this.version,
     };
   }
