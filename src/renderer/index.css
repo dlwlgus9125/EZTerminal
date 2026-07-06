@@ -776,6 +776,27 @@ body {
   --dv-inactivegroup-hiddenpanel-tab-color: var(--term-fg-faint);
   --dv-separator-border: var(--term-border);
   --dv-tabs-and-actions-container-height: 30px;
+  /* Tab strip overflow (v0.2.0 M3): the built-in scrollbar + "N hidden" chip
+     + its popover only ship pre-themed for dockview's "-spaced" theme
+     variants — our plain dockview-theme-dark class left these on generic
+     --dv-* fallbacks that don't track our 4 --term-* themes. */
+  --dv-tabs-container-scrollbar-color: var(--term-fg-dim);
+  --dv-icon-hover-background-color: var(--term-bg-hover);
+  --dv-tab-divider-color: var(--term-border);
+}
+
+/* The overflow chip has no border/background of its own in its base rule
+   (text + hover-bg only) — add both so a clipped tab strip reads as "here's
+   a dropdown for the rest" rather than looking like the tabs just vanished. */
+.ez-dock .dv-tabs-overflow-dropdown-default {
+  border: 1px solid var(--term-border);
+  border-radius: 3px;
+}
+
+/* The popover list itself gets the same drop shadow as this app's other
+   floating menus (.preset-menu, .command-palette). */
+.ez-dock .dv-tabs-overflow-container {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
 }
 
 /* New-tab / split buttons in the title bar. */

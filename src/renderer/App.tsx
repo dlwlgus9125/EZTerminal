@@ -502,7 +502,21 @@ export function App(): JSX.Element {
       apiRef.current = event.api;
       const api = event.api;
       setActivePanelId(api.activePanel?.id ?? null);
-      api.onDidActivePanelChange((changeEvent) => setActivePanelId(changeEvent.panel?.id ?? null));
+      api.onDidActivePanelChange((changeEvent) => {
+        setActivePanelId(changeEvent.panel?.id ?? null);
+        // Tab strip overflow (v0.2.0 M3): dockview's own tab strip already
+        // scrolls a newly-active tab into view within ITS group (tabs.js's
+        // setActivePanel), but that's an internal implementation detail we
+        // shouldn't rely on staying that way — this is a small, idempotent
+        // belt-and-suspenders nudge on top of it. rAF gives dockview's own
+        // DOM update (the new .dv-active-tab class) a tick to commit first.
+        requestAnimationFrame(() => {
+          const activeTab =
+            document.querySelector('.ez-dock .dv-active-group .dv-tab.dv-active-tab') ??
+            document.querySelector('.ez-dock .dv-tab.dv-active-tab');
+          activeTab?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+        });
+      });
       // Test seam: e2e drives programmatic panel moves through this handle. dockview's
       // mouse drag is native HTML5 DnD (not Playwright-drivable); panel.api.moveTo(...)
       // uses the identical move engine a drag invokes.
