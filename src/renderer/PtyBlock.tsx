@@ -5,6 +5,7 @@ import '@xterm/xterm/css/xterm.css';
 
 import type { BlockController } from './block-controller';
 import { THEMES, getActiveThemeName } from './themes';
+import { getActiveUiScale } from './ui-scale';
 
 // PtyBlock — the render surface for a `pty`-shape block. Execution is ALWAYS a
 // live PTY (any single, non-piped external command, or `!cmd`); render is
@@ -55,7 +56,7 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     const initialTheme = THEMES[getActiveThemeName()];
     const term = new Terminal({
       fontFamily: initialTheme.fontFamily,
-      fontSize: initialTheme.fontSize,
+      fontSize: Math.round((initialTheme.fontSize * getActiveUiScale()) / 100),
       cursorBlink: true,
       scrollback: 5000,
       theme: initialTheme.xterm,
@@ -101,18 +102,26 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     const onRefit = (): void => fitAndReport();
     window.addEventListener('ez:refit', onRefit);
 
-    // Theme switch (E1) while this PTY is open: a fresh object reference is
-    // required for xterm to pick up the change (assigning back the same
-    // reference is a documented no-op).
-    const onThemeChange = (): void => {
-      term.options.theme = { ...THEMES[getActiveThemeName()].xterm };
+    // Theme switch (E1) and UI scale change (v0.2.0 D1) while this PTY is
+    // open: a fresh theme object reference is required for xterm to pick up
+    // the change (assigning back the same reference is a documented no-op),
+    // and fontSize must be recomputed from the (possibly new) theme's base
+    // size composed with the (possibly new) scale — either event can change
+    // either input, so both listeners share this one handler.
+    const applyTypography = (): void => {
+      const activeTheme = THEMES[getActiveThemeName()];
+      term.options.fontSize = Math.round((activeTheme.fontSize * getActiveUiScale()) / 100);
+      term.options.theme = { ...activeTheme.xterm };
+      fitAndReport();
     };
-    window.addEventListener('ez:theme', onThemeChange);
+    window.addEventListener('ez:theme', applyTypography);
+    window.addEventListener('ez:ui-scale', applyTypography);
 
     return () => {
       observer.disconnect();
       window.removeEventListener('ez:refit', onRefit);
-      window.removeEventListener('ez:theme', onThemeChange);
+      window.removeEventListener('ez:theme', applyTypography);
+      window.removeEventListener('ez:ui-scale', applyTypography);
       dataDisposable.dispose();
       unsink();
       term.dispose();

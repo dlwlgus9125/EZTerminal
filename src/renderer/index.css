@@ -59,7 +59,7 @@
   --term-selection: rgba(45, 211, 152, 0.22);
 
   font-family: var(--term-font);
-  font-size: 13px;
+  font-size: calc(13px * var(--ez-ui-scale, 1));
   font-feature-settings: 'calt' 1, 'liga' 0; /* keep code legible, no fancy ligatures */
   -webkit-font-smoothing: antialiased;
 }
@@ -111,7 +111,7 @@
    the root font-size a touch so the lighter face stays legible. */
 [data-theme='matrix'] {
   color-scheme: dark;
-  font-size: 14px;
+  font-size: calc(14px * var(--ez-ui-scale, 1));
   --term-font: 'Share Tech Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
 
   --term-bg: #010301;
@@ -501,6 +501,37 @@ body {
   color: var(--term-blue);
 }
 
+/* Settings drawer (v0.2.0 M2) — same .status-drawer/.status-section shell as
+   StatusPanel/ConnectionInfoPanel above; only these two rows are new. */
+.settings-radio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.settings-radio-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--term-fg);
+  cursor: pointer;
+}
+
+.settings-scale-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.settings-scale-value {
+  min-width: 3.2em;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--term-fg-bright);
+  font-variant-numeric: tabular-nums;
+}
+
 /* File explorer drawer (file-explorer plan, M1) — mirrors .status-drawer
    above but anchored to the LEFT edge (border-right instead of border-left),
    its own toggle slot (not part of the stats/pairing right-side mutual
@@ -745,6 +776,27 @@ body {
   --dv-inactivegroup-hiddenpanel-tab-color: var(--term-fg-faint);
   --dv-separator-border: var(--term-border);
   --dv-tabs-and-actions-container-height: 30px;
+  /* Tab strip overflow (v0.2.0 M3): the built-in scrollbar + "N hidden" chip
+     + its popover only ship pre-themed for dockview's "-spaced" theme
+     variants — our plain dockview-theme-dark class left these on generic
+     --dv-* fallbacks that don't track our 4 --term-* themes. */
+  --dv-tabs-container-scrollbar-color: var(--term-fg-dim);
+  --dv-icon-hover-background-color: var(--term-bg-hover);
+  --dv-tab-divider-color: var(--term-border);
+}
+
+/* The overflow chip has no border/background of its own in its base rule
+   (text + hover-bg only) — add both so a clipped tab strip reads as "here's
+   a dropdown for the rest" rather than looking like the tabs just vanished. */
+.ez-dock .dv-tabs-overflow-dropdown-default {
+  border: 1px solid var(--term-border);
+  border-radius: 3px;
+}
+
+/* The popover list itself gets the same drop shadow as this app's other
+   floating menus (.preset-menu, .command-palette). */
+.ez-dock .dv-tabs-overflow-container {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
 }
 
 /* New-tab / split buttons in the title bar. */

@@ -9,12 +9,18 @@ import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
 import { applyTheme, loadTheme } from './theme';
+import { loadUiScale } from './ui-scale';
+import { applyUiScale } from '../../src/renderer/ui-scale';
 import '../../src/renderer/index.css';
 import './mobile.css';
 
 // Mobile picks its own theme independent of the desktop bridge (M4 scope,
 // localStorage-only — see theme.ts's module doc).
 applyTheme(loadTheme());
+
+// Same independence for UI scale (D1) — mobile's own localStorage key, shared
+// clamp/apply logic with the desktop (src/renderer/ui-scale.ts).
+applyUiScale(loadUiScale());
 
 const container = document.getElementById('root');
 if (!container) {

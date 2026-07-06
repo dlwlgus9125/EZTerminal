@@ -1,0 +1,64 @@
+import { test, expect } from '@playwright/test';
+import { WebSocket } from 'ws';
+
+import { launchApp } from './launch-app';
+import { TestWsClient } from './ws-client';
+
+// v0.2.0 M6: the Settings drawer's remote on/off toggle (D2). The load-bearing
+// property is main.ts's async `stop()` (remote-bridge.ts): disabling must
+// actually terminate live client sockets AND fully release the port before
+// resolving, so a rapid re-enable never races an EADDRINUSE. Drives the REAL
+// remote-bridge.ts with a Node `ws` client, the same way session-mirror.spec.ts
+// does — this port is dedicated to this spec so it never collides with
+// another instance's default-port bridge.
+const REMOTE_PORT = 17421;
+
+test('remote toggle: disabling closes the live client and refuses new ones; re-enabling rebinds cleanly', async () => {
+  const app = await launchApp(undefined, { EZTERMINAL_REMOTE_PORT: String(REMOTE_PORT) });
+  const win = await app.firstWindow();
+  await expect(win.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  const token = await win.evaluate(() => window.ezterminal.getRemoteToken());
+  const client = await TestWsClient.connectAuthed(`ws://127.0.0.1:${REMOTE_PORT}`, token);
+
+  try {
+    await win.getByTestId('btn-toggle-settings').click();
+    await expect(win.getByTestId('settings-panel')).toBeVisible();
+
+    const toggle = win.getByTestId('settings-remote-toggle');
+    await expect(toggle).toBeChecked(); // remoteEnabled defaults to true
+
+    // ── Toggle OFF ───────────────────────────────────────────────────────────
+    // A plain click, not locator.uncheck(): the checkbox is React-controlled
+    // and its onChange only flips state after an async IPC round trip (the
+    // real bridge shutdown), so uncheck()'s single immediate post-click state
+    // check fails — expect(...).not.toBeChecked() polls until it settles.
+    await toggle.click();
+    await expect(toggle).not.toBeChecked();
+
+    // The already-connected client's socket must actually be terminated, not
+    // just orphaned.
+    await client.waitForClose();
+
+    // A fresh connect attempt must be refused outright (port fully released
+    // by the listener, not just no-longer-authenticating).
+    const refused = new WebSocket(`ws://127.0.0.1:${REMOTE_PORT}`);
+    const outcome = await new Promise<'error' | 'open'>((resolve) => {
+      refused.once('error', () => resolve('error'));
+      refused.once('open', () => resolve('open'));
+    });
+    expect(outcome).toBe('error');
+    refused.removeAllListeners();
+
+    // ── Toggle back ON ───────────────────────────────────────────────────────
+    // A clean rebind of the SAME port — no EADDRINUSE from the just-stopped listener.
+    await toggle.click();
+    await expect(toggle).toBeChecked();
+
+    const client2 = await TestWsClient.connectAuthed(`ws://127.0.0.1:${REMOTE_PORT}`, token);
+    client2.close();
+  } finally {
+    client.close();
+    await app.close();
+  }
+});

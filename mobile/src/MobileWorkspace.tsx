@@ -4,6 +4,7 @@ import type { ThemeName } from '../../src/shared/layout-schema';
 import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
 import { MobileFileView } from './MobileFileView';
 import { MobileSessionView } from './MobileSessionView';
+import { MobileSettingsView } from './MobileSettingsView';
 import { MobileStatsView } from './MobileStatsView';
 import { SessionSwitcher } from './SessionSwitcher';
 import { TabStrip } from './TabStrip';
@@ -46,7 +47,7 @@ export function MobileWorkspace({
   onDisconnect: () => void;
 }): JSX.Element {
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
-  const [view, setView] = useState<'terminal' | 'stats' | 'files'>('terminal');
+  const [view, setView] = useState<'terminal' | 'stats' | 'files' | 'settings'>('terminal');
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<ThemeName>(() => loadTheme());
@@ -120,6 +121,17 @@ export function MobileWorkspace({
 
   if (view === 'stats') {
     return <MobileStatsView onClose={() => setView('terminal')} />;
+  }
+
+  if (view === 'settings') {
+    return (
+      <MobileSettingsView
+        currentTheme={currentTheme}
+        onThemeSelect={handleThemeSelect}
+        onClose={() => setView('terminal')}
+        onDisconnect={onDisconnect}
+      />
+    );
   }
 
   if (view === 'files') {
@@ -203,6 +215,15 @@ export function MobileWorkspace({
           data-testid="theme-btn"
         >
           🎨
+        </button>
+        <button
+          type="button"
+          className="btn settings-btn"
+          onClick={() => setView('settings')}
+          aria-label="Settings"
+          data-testid="settings-btn"
+        >
+          ⚙️
         </button>
       </header>
 

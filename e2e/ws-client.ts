@@ -79,4 +79,18 @@ export class TestWsClient {
   close(): void {
     this.ws.close();
   }
+
+  /** Resolve once the underlying socket closes, whether client- or
+   * server-initiated (remote-toggle.spec.ts uses this to prove a bridge
+   * shutdown actually terminates its existing connections, not just stops
+   * accepting new ones). */
+  waitForClose(): Promise<void> {
+    return new Promise((resolve) => {
+      if (this.ws.readyState === WebSocket.CLOSED) {
+        resolve();
+        return;
+      }
+      this.ws.once('close', () => resolve());
+    });
+  }
 }

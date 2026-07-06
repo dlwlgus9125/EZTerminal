@@ -126,6 +126,9 @@ const api: EzTerminalApi = {
   setTheme: (theme: import('../shared/layout-schema').ThemeName) =>
     ipcRenderer.invoke('settings:set-theme', theme),
 
+  getUiScale: () => ipcRenderer.invoke('settings:get-ui-scale'),
+  setUiScale: (uiScale: number) => ipcRenderer.invoke('settings:set-ui-scale', uiScale),
+
   // Status overlay panel stats (status-overlay-panel): push, invoke, send —
   // same shapes as onSessionDead/loadLayout/destroySession above.
   onStatsUpdate: (listener: (snapshot: SystemStatsSnapshot) => void): (() => void) => {
@@ -153,6 +156,8 @@ const api: EzTerminalApi = {
   getRemoteConnectionInfo: () => ipcRenderer.invoke('remote:get-connection-info'),
   getRemoteToken: () => ipcRenderer.invoke('remote:get-token'),
   rotateRemoteToken: () => ipcRenderer.invoke('remote:rotate-token'),
+  getRemoteEnabled: () => ipcRenderer.invoke('remote:get-enabled'),
+  setRemoteEnabled: (enabled: boolean) => ipcRenderer.invoke('remote:set-enabled', enabled),
 
   // File explorer (file-explorer plan, M1): thin invoke wrappers — main's
   // FileService is the sole fs authority.

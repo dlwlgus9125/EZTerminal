@@ -28,6 +28,9 @@ export interface ThemeDefinition {
   readonly fontSize: number;
 }
 
+/** Cycle order for the theme button (E1) — also the theme picker's row order (M2). */
+export const THEME_ORDER: readonly ThemeName[] = ['dark', 'light', 'high-contrast', 'matrix'];
+
 export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
   dark: {
     cssVars: {},
