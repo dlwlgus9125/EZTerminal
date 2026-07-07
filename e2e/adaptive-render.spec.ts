@@ -224,6 +224,31 @@ test('AC-1 focus retention: cmd-input keeps focus through a plain run and is imm
   await app.close();
 });
 
+test('click-to-refocus: clicking the screen area returns focus to cmd-input', async () => {
+  const app = await launchApp();
+  const window = await app.firstWindow();
+  await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  const cmdInput = window.getByTestId('cmd-input');
+  await cmdInput.click();
+  await cmdInput.fill('echo hi');
+  await cmdInput.press('Enter');
+  await expect(window.getByTestId('block-status')).toHaveText('done', { timeout: 15_000 });
+  await expect(cmdInput).toHaveValue(''); // command cleared on submit
+
+  // Force focus loss, then prove a screen click restores it.
+  await window.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await expect(cmdInput).not.toBeFocused();
+  await window.getByTestId('block-list').click({ position: { x: 5, y: 5 } });
+  await expect(cmdInput).toBeFocused();
+
+  // Immediately typeable with no manual input-click.
+  await window.keyboard.type('echo again');
+  await expect(cmdInput).toHaveValue('echo again');
+
+  await app.close();
+});
+
 test('mode-key-map guard: Arrow/Enter mean history-recall+run when idle, PTY input while a plain run is active', async () => {
   const app = await launchApp();
   const window = await app.firstWindow();

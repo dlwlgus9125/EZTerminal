@@ -129,6 +129,7 @@ export function TerminalPane({
   // flips false if the user scrolls up, so we never yank them back down.
   const blockListRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  const cmdInputRef = useRef<HTMLInputElement>(null);
 
   const scrollBlockListToBottom = useCallback((): void => {
     const el = blockListRef.current;
@@ -140,6 +141,20 @@ export function TerminalPane({
     if (!el) return;
     stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
   }, []);
+
+  // Click-to-refocus: returns focus to the composer so the next command is
+  // immediately typeable — EXCEPT (a) while selecting text to copy (non-collapsed
+  // selection), and (b) when the click lands in a running interactive xterm block
+  // (.pty-block), which must keep focus for keystrokes to reach the child
+  // (PtyBlock.tsx:269). Plain output / tables / empty space refocus the input.
+  const handleScreenClick = (e: React.MouseEvent): void => {
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return; // preserve drag-to-select/copy
+    const target = e.target as HTMLElement;
+    if (target.closest('.pty-block')) return; // xterm block keeps its own focus
+    if (target.closest('button, a, input, textarea, select')) return; // interactive controls
+    cmdInputRef.current?.focus();
+  };
 
   const blocksRef = useRef<BlockEntry[]>([]);
   blocksRef.current = blocks;
@@ -344,6 +359,7 @@ export function TerminalPane({
     setHistory((prev) => [...prev, text]);
     historyIndex.current = null;
     draftBeforeRecall.current = '';
+    setCommand('');
 
     setBlocks((prev) => [...prev, { id: runId, command: text, controller: null }]);
 
@@ -470,6 +486,7 @@ export function TerminalPane({
         data-testid="block-list"
         ref={blockListRef}
         onScroll={onBlockListScroll}
+        onClick={handleScreenClick}
       >
         {blocks.map((entry) =>
           entry.controller ? (
@@ -497,6 +514,7 @@ export function TerminalPane({
           ❯
         </span>
         <input
+          ref={cmdInputRef}
           className="cmd-input"
           value={command}
           // Disabled only during a TUI takeover (M1 focus retention): the
