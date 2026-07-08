@@ -303,26 +303,6 @@ body,
   text-align: center;
 }
 
-/* ── Matrix CRT scanlines ────────────────────────────────────────────────── */
-
-/* Verbatim copy of index.css's `[data-theme='matrix'] .app::after` (desktop
- * has no #root — retargeted here since mobile's root element is #root, not
- * .app; adding an .app class would drag in the desktop's 100vh layout). */
-[data-theme='matrix'] #root::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 200;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    0deg,
-    rgba(0, 0, 0, 0) 0px,
-    rgba(0, 0, 0, 0) 2px,
-    rgba(0, 20, 8, 0.22) 3px,
-    rgba(0, 0, 0, 0) 4px
-  );
-}
-
 /* ── Theme menu (bottom sheet) ───────────────────────────────────────────── */
 
 .theme-menu-backdrop {

@@ -4,13 +4,14 @@
    The structured block/table engine is unchanged; only its skin is.
    ────────────────────────────────────────────────────────────────────────── */
 
-/* Matrix theme faces (E1+) — self-hosted so the packaged renderer renders them:
-   its build-time CSP is `font-src 'self'` (see vite.renderer.config.ts), which
-   blocks remote Google Fonts, and offline builds can't reach them anyway. Vite
-   fingerprints + emits these woff2 from ./fonts into the bundle, served from
-   'self'. Latin subset only — the chrome + VT323 wordmark are ASCII. Declared
+/* Self-hosted font faces so the packaged renderer renders them: its build-time
+   CSP is `font-src 'self'` (see vite.renderer.config.ts), which blocks remote
+   Google Fonts, and offline builds can't reach them anyway. Vite fingerprints +
+   emits these woff2 from ./fonts into the bundle, served from 'self'. Latin
+   subset only. Share Tech Mono / VT323 are Matrix theme faces (E1+), declared
    unconditionally but only referenced under [data-theme='matrix'], so the other
-   three themes never fetch them. */
+   built-in themes never fetch them. JetBrains Mono / Fira Code are body-font
+   picker entries (fonts.ts FONT_CATALOG), selectable independent of theme. */
 @font-face {
   font-family: 'Share Tech Mono';
   font-style: normal;
@@ -24,6 +25,20 @@
   font-weight: 400;
   font-display: swap;
   src: url('./fonts/vt323-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/jetbrains-mono-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Fira Code';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/fira-code-latin.woff2') format('woff2');
 }
 
 :root {
@@ -136,20 +151,22 @@
   --term-selection: rgba(41, 211, 152, 0.25);
 }
 
-/* == CRT GLOW == a phosphor bloom on accents; a faint one on body/output. */
-[data-theme='matrix'] .app-title,
-[data-theme='matrix'] .prompt-sigil,
-[data-theme='matrix'] .block-command,
-[data-theme='matrix'] .block-cwd,
-[data-theme='matrix'] .prompt-cwd,
-[data-theme='matrix'] .cmd-input,
-[data-theme='matrix'] .vt-header,
-[data-theme='matrix'] .status-section-title,
-[data-theme='matrix'] .block-status,
-[data-theme='matrix'] .status-metric {
+/* == CRT GLOW (phosphor-glow effect) == a phosphor bloom on accents; a faint
+   one on body/output. Gated by data-effect-phosphor-glow, not theme, so any
+   theme can opt in — Matrix declares it default-on (effects.ts). */
+html[data-effect-phosphor-glow='on'] .app-title,
+html[data-effect-phosphor-glow='on'] .prompt-sigil,
+html[data-effect-phosphor-glow='on'] .block-command,
+html[data-effect-phosphor-glow='on'] .block-cwd,
+html[data-effect-phosphor-glow='on'] .prompt-cwd,
+html[data-effect-phosphor-glow='on'] .cmd-input,
+html[data-effect-phosphor-glow='on'] .vt-header,
+html[data-effect-phosphor-glow='on'] .status-section-title,
+html[data-effect-phosphor-glow='on'] .block-status,
+html[data-effect-phosphor-glow='on'] .status-metric {
   text-shadow: 0 0 6px rgba(41, 211, 152, 0.4);
 }
-[data-theme='matrix'] .text-block {
+html[data-effect-phosphor-glow='on'] .text-block {
   text-shadow: 0 0 4px rgba(41, 211, 152, 0.28);
 }
 /* Wordmark leans into the retro face. */
@@ -160,10 +177,12 @@
   color: var(--term-fg-bright);
 }
 
-/* == SCANLINES == one fixed CRT overlay over the whole window. pointer-events:
-   none means it never intercepts clicks; .app has no transform, so `fixed`
-   anchors to the viewport. */
-[data-theme='matrix'] .app::after {
+/* == SCANLINES == one fixed CRT overlay over the whole window, anchored on
+   <html> — the one element both platforms share (desktop has .app, mobile has
+   #root) — so the same rule serves desktop and mobile. pointer-events: none
+   means it never intercepts clicks. Gated by data-effect-scanlines, not theme,
+   so any theme can opt in and the toggle can turn it off. */
+html[data-effect-scanlines='on']::after {
   content: '';
   position: fixed;
   inset: 0;
@@ -177,15 +196,40 @@
     rgba(0, 0, 0, 0) 4px
   );
 }
+/* == FLICKER == a very subtle CRT flicker on the scanline overlay itself, so
+   it composes with scanlines rather than owning its own pseudo-element (there
+   is nothing to flicker unless scanlines has actually painted the ::after). */
+html[data-effect-scanlines='on'][data-effect-flicker='on']::after {
+  animation: crt-flicker 0.15s steps(2, jump-none) infinite;
+}
+@keyframes crt-flicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.92; }
+}
+
+/* == CRT CURVATURE == a subtle vignette on its own ::before layer (scanlines
+   owns ::after, so the two effects compose without colliding). GPU-cheap:
+   opacity/gradient only, no filter/blur. */
+html[data-effect-crt-curvature='on']::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 199;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.35) 100%);
+}
 
 /* == STATUS INDICATORS == dot → glyph. Colour AND shape encode the state, so it
    reads for colour-blind users too. Only the ::before glyph changes — the text
    node ('running' / 'done' / 'error' / 'cancelled') is untouched, so the e2e
    assertions on block-status textContent still pass. Stronger glow + punchier
-   running pulse. */
+   running pulse. Sizing is Matrix identity; the glow is the phosphor-glow
+   effect (split below so toggling it off doesn't revert glyph sizing). */
 [data-theme='matrix'] .block-status::before {
   font-size: 0.9em;
   margin-right: 0.45em;
+}
+html[data-effect-phosphor-glow='on'] .block-status::before {
   text-shadow: 0 0 8px currentColor;
 }
 [data-theme='matrix'] .block-status--running::before {
@@ -237,26 +281,28 @@
    THEMES.matrix.xterm (themes.ts). This adds the phosphor bloom so Claude Code /
    Codex output glows green too, WITHOUT touching the agent's own ANSI colours.
    xterm 6 uses the DOM renderer (.xterm-rows) by default; the canvas rule is a
-   safety net if a canvas/webgl addon is ever added. */
-[data-theme='matrix'] .xterm .xterm-rows {
+   safety net if a canvas/webgl addon is ever added. The canvas filter isn't a
+   text-shadow, so it stays Matrix identity; the two glow rules below are the
+   phosphor-glow effect. */
+html[data-effect-phosphor-glow='on'] .xterm .xterm-rows {
   text-shadow: 0 0 3px rgba(41, 211, 152, 0.4);
 }
 [data-theme='matrix'] .xterm .xterm-screen canvas {
   filter: drop-shadow(0 0 2px rgba(41, 211, 152, 0.45));
 }
 /* Plain adaptive-render PTY view (ansi→html text). */
-[data-theme='matrix'] .pty-plain-block .text-block {
+html[data-effect-phosphor-glow='on'] .pty-plain-block .text-block {
   text-shadow: 0 0 4px rgba(41, 211, 152, 0.32);
 }
 
 /* == RESULT TABLE == cyan headers already themed via vars; add the bloom. */
-[data-theme='matrix'] .vt-cell--head {
+html[data-effect-phosphor-glow='on'] .vt-cell--head {
   text-shadow: 0 0 6px rgba(31, 182, 201, 0.4);
 }
 
 /* == RUN / CANCEL / ACCEPT buttons == a little extra phosphor on the primaries. */
-[data-theme='matrix'] .btn-run,
-[data-theme='matrix'] .ssh-prompt-actions .btn-run {
+html[data-effect-phosphor-glow='on'] .btn-run,
+html[data-effect-phosphor-glow='on'] .ssh-prompt-actions .btn-run {
   text-shadow: 0 0 6px rgba(41, 211, 152, 0.45);
 }
 
@@ -501,8 +547,10 @@ body {
   color: var(--term-blue);
 }
 
-/* Settings drawer (v0.2.0 M2) — same .status-drawer/.status-section shell as
-   StatusPanel/ConnectionInfoPanel above; only these two rows are new. */
+/* Settings drawer (v0.2.0 M2; theme/font selects + import added in
+   theme-effects-font M3) — same .status-drawer/.status-section shell as
+   StatusPanel/ConnectionInfoPanel above; the rules below are the drawer's own
+   additions. */
 .settings-radio-row {
   display: flex;
   align-items: center;
@@ -516,6 +564,36 @@ body {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+}
+
+.settings-theme-select,
+.settings-font-select {
+  width: 100%;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  background: var(--term-bg-inset);
+  border: 1px solid var(--term-border);
+  border-radius: 3px;
+  color: var(--term-fg);
+}
+
+.settings-theme-select:focus,
+.settings-font-select:focus {
+  outline: none;
+  border-color: var(--term-green);
+}
+
+.settings-theme-import {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.settings-theme-import-error {
+  font-size: 0.72rem;
+  color: var(--term-red);
 }
 
 .settings-scale-value {

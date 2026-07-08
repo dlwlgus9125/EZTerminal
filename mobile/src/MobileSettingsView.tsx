@@ -1,11 +1,22 @@
 import { useCallback, useState } from 'react';
 
+import { EFFECT_CATALOG, type EffectId } from '../../src/renderer/effects';
+import { FONT_CATALOG } from '../../src/renderer/fonts';
+import { applyThemeVarsAndEffects, setUserFontId } from '../../src/renderer/theme-runtime';
+import { getActiveTheme, getActiveThemeName } from '../../src/renderer/themes';
 import {
   UI_SCALE_DEFAULT,
   UI_SCALE_STEP,
   applyUiScale,
   clampUiScale,
 } from '../../src/renderer/ui-scale';
+import {
+  MOBILE_EFFECT_DEFAULTS,
+  loadEffectToggles,
+  loadFont,
+  saveEffectToggles,
+  saveFont,
+} from './theme';
 import { loadUiScale, saveUiScale } from './ui-scale';
 
 const CONNECTION_STORAGE_KEY = 'ezterminal-mobile-connection';
@@ -54,6 +65,34 @@ export function MobileSettingsView({
   const dec = useCallback(() => setScale(uiScale - UI_SCALE_STEP), [setScale, uiScale]);
   const inc = useCallback(() => setScale(uiScale + UI_SCALE_STEP), [setScale, uiScale]);
   const reset = useCallback(() => setScale(UI_SCALE_DEFAULT), [setScale]);
+
+  // ── Font (theme-effects-font Wave 3) ────────────────────────────────────
+  const [fontId, setFontId] = useState(() => loadFont());
+  const selectFont = useCallback((id: string) => {
+    saveFont(id);
+    setUserFontId(id);
+    setFontId(id);
+    window.dispatchEvent(new Event('ez:theme')); // PtyBlock's applyTypography listens for this
+  }, []);
+
+  // ── Effects (theme-effects-font Wave 3) ─────────────────────────────────
+  // Filtered to the ACTIVE theme's own declared effects (AC-E4) — nothing
+  // changes theme while this view is open (there's no route to ThemeMenu from
+  // here), so reading it once per render (no state) is safe.
+  const activeTheme = getActiveTheme();
+  const declaredEffects = (activeTheme.effects ?? []) as EffectId[];
+  const [effectToggles, setEffectToggles] = useState(() => loadEffectToggles());
+  const toggleEffect = useCallback((id: EffectId) => {
+    setEffectToggles((prev) => {
+      const next = { ...prev, [id]: !(prev[id] ?? false) };
+      saveEffectToggles(next);
+      applyThemeVarsAndEffects(getActiveThemeName(), {
+        effectToggles: next,
+        platformDefaults: MOBILE_EFFECT_DEFAULTS,
+      });
+      return next;
+    });
+  }, []);
 
   return (
     <div className="mobile-settings-view" data-testid="mobile-settings-view">
@@ -105,6 +144,53 @@ export function MobileSettingsView({
               Reset
             </button>
           </div>
+        </section>
+
+        <section className="status-section">
+          <h2 className="status-section-title">Font</h2>
+          <div className="status-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {FONT_CATALOG.map((font) => (
+              <button
+                key={font.id}
+                type="button"
+                className="btn"
+                aria-pressed={fontId === font.id}
+                onClick={() => selectFont(font.id)}
+                data-testid={`settings-font-${font.id}`}
+              >
+                {fontId === font.id ? '✓ ' : ''}
+                {font.label}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="status-section">
+          <h2 className="status-section-title">Effects</h2>
+          {declaredEffects.length === 0 ? (
+            <div className="status-metric" data-testid="settings-effects-empty">
+              No effects for this theme
+            </div>
+          ) : (
+            <div className="status-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {declaredEffects.map((id) => {
+                const on = effectToggles[id] ?? false;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    className="btn"
+                    aria-pressed={on}
+                    onClick={() => toggleEffect(id)}
+                    data-testid={`settings-effect-${id}`}
+                  >
+                    {on ? '✓ ' : ''}
+                    {EFFECT_CATALOG[id].label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </section>
 
         <section className="status-section">

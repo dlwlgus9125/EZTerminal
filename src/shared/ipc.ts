@@ -6,9 +6,13 @@
  */
 import type { LayoutEnvelope, StartupPref, ThemeName } from './layout-schema';
 import type { FileListResult, FileOpResult, FileReadTextResult } from './files';
+import type { ThemeMod } from './theme-schema';
 
 /** The single key under which the preload bridge is exposed on `window`. */
 export const BRIDGE_KEY = 'ezterminal' as const;
+
+/** Desktop-only bridge key (theme-effects-font M3) — see `EzTerminalDesktopApi`. */
+export const DESKTOP_BRIDGE_KEY = 'ezterminalDesktop' as const;
 
 /** Runtime version strings, surfaced by the preload (no IPC round-trip). */
 export interface RuntimeVersions {
@@ -756,4 +760,26 @@ export interface EzTerminalApi {
    * arrives asynchronously via a persistent `attach-port` window message.
    */
   attachRun: (sessionId: string, runId: string) => Promise<void>;
+}
+
+// ── Desktop-only preload bridge API (theme-effects-font M3) ──────────────────
+// A SEPARATE bridge from EzTerminalApi (not an extension of it): mobile has no
+// implementation of these 6 methods, and adding them to EzTerminalApi would
+// force mobile's transport to stub every one of them (TS2420) just to satisfy
+// the shared interface. `window.ezterminalDesktop` is optional on `Window` (see
+// shared/window.d.ts) so every call site guards with `?.`.
+
+export interface EzTerminalDesktopApi {
+  /** Custom theme mods folder-scanned from `.ezterminal/themes/*.json` at
+   * startup (main/theme-store.ts) — already validated (`ThemeMod`, not raw JSON). */
+  getAvailableThemes: () => Promise<ThemeMod[]>;
+  /** Validate + persist a pasted/uploaded theme mod so it reappears next launch. */
+  importTheme: (json: string) => Promise<{ ok: boolean; error?: string }>;
+  /** The persisted FONT_CATALOG id (undefined = use the active theme's own font). */
+  getFont: () => Promise<string | undefined>;
+  setFont: (id: string) => Promise<void>;
+  /** Per-effect on/off overrides, keyed by EffectId. Absent entries default
+   * per-platform (desktop: theme-declared default) via `resolveActiveEffects`. */
+  getEffectToggles: () => Promise<Record<string, boolean>>;
+  setEffectToggles: (toggles: Record<string, boolean>) => Promise<void>;
 }
