@@ -21,18 +21,22 @@ const ALL_OFF: Record<EffectId, boolean> = {
   'phosphor-glow': false,
   flicker: false,
   'crt-curvature': false,
+  'crt-rollbar': false,
+  'scanline-scroll': false,
 };
 const ALL_ON: Record<EffectId, boolean> = {
   scanlines: true,
   'phosphor-glow': true,
   flicker: true,
   'crt-curvature': true,
+  'crt-rollbar': true,
+  'scanline-scroll': true,
 };
 
 describe('EFFECT_CATALOG', () => {
   it('declares exactly the 4 spec-d ids', () => {
     expect(Object.keys(EFFECT_CATALOG).sort()).toEqual(
-      ['crt-curvature', 'flicker', 'phosphor-glow', 'scanlines'].sort(),
+      ['crt-curvature', 'crt-rollbar', 'flicker', 'phosphor-glow', 'scanline-scroll', 'scanlines'].sort(),
     );
   });
 });

@@ -7,7 +7,13 @@ import type { ThemeDefinition } from './themes';
 // arbitrary CSS ships with a mod. The CSS worker keys selectors off these
 // exact ids: `html[data-effect-<id>='on']` (index.css).
 
-export type EffectId = 'scanlines' | 'phosphor-glow' | 'flicker' | 'crt-curvature';
+export type EffectId =
+  | 'scanlines'
+  | 'phosphor-glow'
+  | 'flicker'
+  | 'crt-curvature'
+  | 'crt-rollbar'
+  | 'scanline-scroll';
 
 export interface EffectCatalogEntry {
   readonly id: EffectId;
@@ -23,6 +29,8 @@ export const EFFECT_CATALOG: Readonly<Record<EffectId, EffectCatalogEntry>> = {
   'phosphor-glow': { id: 'phosphor-glow', label: 'Phosphor Glow', defaultOn: true },
   flicker: { id: 'flicker', label: 'Flicker', defaultOn: false },
   'crt-curvature': { id: 'crt-curvature', label: 'CRT Curvature', defaultOn: false },
+  'crt-rollbar': { id: 'crt-rollbar', label: 'CRT Roll Bar', defaultOn: true },
+  'scanline-scroll': { id: 'scanline-scroll', label: 'Scanline Scroll', defaultOn: true },
 };
 
 const EFFECT_IDS = Object.keys(EFFECT_CATALOG) as EffectId[];

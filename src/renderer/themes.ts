@@ -160,7 +160,7 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
     },
     fontFamily: MATRIX_FONT_FAMILY,
     fontSize: MATRIX_FONT_SIZE,
-    effects: ['scanlines', 'phosphor-glow'],
+    effects: ['scanlines', 'phosphor-glow', 'crt-rollbar', 'scanline-scroll'],
     swatch: { bg: '#010301', accent: '#5fe7ac' },
   },
 };
