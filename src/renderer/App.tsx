@@ -14,6 +14,12 @@ import { CommandPalette, type PaletteAction } from './CommandPalette';
 import { ConnectionInfoPanel } from './ConnectionInfoPanel';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import { DEFAULT_ROLLBAR_PARAMS, applyRollbarParams, clampRollbarParams, type RollbarParams } from './effect-params';
+import {
+  DEFAULT_INTERFERENCE_PARAMS,
+  applyInterferenceParams,
+  clampInterferenceParams,
+  type InterferenceParams,
+} from './effect-params';
 import { FileExplorerPanel } from './FileExplorerPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { StatusPanel } from './StatusPanel';
@@ -386,6 +392,15 @@ export function App(): JSX.Element {
     setRollbarState(next);
   }, []);
 
+  // CRT-interference params (crt-interference) — same ref-mirrors-state shape
+  // as rollbar above, one aggregate for the four parameterized effects.
+  const [interference, setInterferenceState] = useState<InterferenceParams>(DEFAULT_INTERFERENCE_PARAMS);
+  const interferenceRef = useRef<InterferenceParams>(DEFAULT_INTERFERENCE_PARAMS);
+  const setInterference = useCallback((next: InterferenceParams): void => {
+    interferenceRef.current = next;
+    setInterferenceState(next);
+  }, []);
+
   const applyTheme = useCallback((name: ThemeName): void => {
     document.documentElement.dataset.theme = name;
     applyThemeVarsAndEffects(name, {
@@ -431,10 +446,11 @@ export function App(): JSX.Element {
       await refreshAvailableThemes();
       if (cancelled) return;
       try {
-        const [persistedFontId, persistedToggles, persistedRollbar] = await Promise.all([
+        const [persistedFontId, persistedToggles, persistedRollbar, persistedEffectParams] = await Promise.all([
           window.ezterminalDesktop?.getFont(),
           window.ezterminalDesktop?.getEffectToggles(),
           window.ezterminalDesktop?.getRollbar(),
+          window.ezterminalDesktop?.getEffectParams(),
         ]);
         if (cancelled) return;
         if (persistedFontId) {
@@ -447,6 +463,11 @@ export function App(): JSX.Element {
           applyRollbarParams(clamped);
           setRollbar(clamped);
         }
+        if (persistedEffectParams) {
+          const clampedFx = clampInterferenceParams(persistedEffectParams);
+          applyInterferenceParams(clampedFx);
+          setInterference(clampedFx);
+        }
       } catch {
         // Desktop bridge unavailable — no user font override, theme defaults for effects.
       }
@@ -456,7 +477,7 @@ export function App(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [applyTheme, refreshAvailableThemes, setEffectToggles, setRollbar]);
+  }, [applyTheme, refreshAvailableThemes, setEffectToggles, setRollbar, setInterference]);
 
   const selectTheme = useCallback(
     (name: ThemeName): void => {
@@ -502,6 +523,19 @@ export function App(): JSX.Element {
       void window.ezterminalDesktop?.setRollbar(next);
     },
     [setRollbar],
+  );
+
+  const onChangeEffectParams = useCallback(
+    (effectId: keyof InterferenceParams, partial: Record<string, number | boolean>): void => {
+      const next = clampInterferenceParams({
+        ...interferenceRef.current,
+        [effectId]: { ...interferenceRef.current[effectId], ...partial },
+      });
+      setInterference(next);
+      applyInterferenceParams(next);
+      void window.ezterminalDesktop?.setEffectParams(next);
+    },
+    [setInterference],
   );
 
   // ── UI scale (v0.2.0 D1) ──────────────────────────────────────────────────
@@ -941,6 +975,8 @@ export function App(): JSX.Element {
             onToggleEffect={onToggleEffect}
             rollbar={rollbar}
             onChangeRollbar={onChangeRollbar}
+            interference={interference}
+            onChangeEffectParams={onChangeEffectParams}
           />
         )}
         {filesOpen && (

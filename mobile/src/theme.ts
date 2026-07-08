@@ -2,8 +2,11 @@ import type { ThemeName } from '../../src/shared/layout-schema';
 import { EFFECT_CATALOG, type EffectId } from '../../src/renderer/effects';
 import {
   DEFAULT_ROLLBAR_PARAMS,
+  applyInterferenceParams,
   applyRollbarParams,
+  clampInterferenceParams,
   clampRollbarParams,
+  type InterferenceParams,
   type RollbarParams,
 } from '../../src/renderer/effect-params';
 import { applyThemeVarsAndEffects, themeModToDefinition } from '../../src/renderer/theme-runtime';
@@ -27,6 +30,7 @@ const CUSTOM_THEMES_KEY = 'ezterminal-mobile-custom-themes';
 const FONT_KEY = 'ezterminal-mobile-font';
 const EFFECTS_KEY = 'ezterminal-mobile-effects';
 const ROLLBAR_KEY = 'ezterminal-mobile-rollbar';
+const EFFECT_PARAMS_KEY = 'ezterminal-mobile-effect-params';
 
 export const THEME_NAMES: readonly ThemeName[] = ['dark', 'light', 'high-contrast', 'matrix'];
 
@@ -114,6 +118,7 @@ export function applyTheme(name: ThemeName): void {
   document.documentElement.dataset.theme = name;
   applyThemeVarsAndEffects(name, { effectToggles: loadEffectToggles(), platformDefaults: MOBILE_EFFECT_DEFAULTS });
   applyRollbarParams(clampRollbarParams(loadRollbar()));
+  applyInterferenceParams(clampInterferenceParams(loadEffectParams()));
   window.dispatchEvent(new Event('ez:theme'));
   console.log('[ez-e2e] theme:', name);
 }
@@ -184,6 +189,28 @@ export function loadRollbar(): Partial<RollbarParams> {
 export function saveRollbar(params: Partial<RollbarParams>): void {
   try {
     localStorage.setItem(ROLLBAR_KEY, JSON.stringify(params));
+  } catch {
+    // best-effort — a private-browsing/quota failure only costs persistence next time
+  }
+}
+
+// ── CRT-interference params (crt-interference) ───────────────────────────────
+// Same localStorage lifecycle as rollbar above; the loose return type is
+// deliberate — effect-params.ts's clampInterferenceParams is the single
+// clamp/default authority and swallows any corrupt/partial stored shape.
+
+export function loadEffectParams(): unknown {
+  try {
+    const raw = localStorage.getItem(EFFECT_PARAMS_KEY);
+    return raw ? (JSON.parse(raw) as unknown) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveEffectParams(params: InterferenceParams): void {
+  try {
+    localStorage.setItem(EFFECT_PARAMS_KEY, JSON.stringify(params));
   } catch {
     // best-effort — a private-browsing/quota failure only costs persistence next time
   }

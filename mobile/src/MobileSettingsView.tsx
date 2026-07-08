@@ -1,7 +1,15 @@
 import { useCallback, useState } from 'react';
 
 import { EFFECT_CATALOG, type EffectId } from '../../src/renderer/effects';
-import { applyRollbarParams, clampRollbarParams, type RollbarParams } from '../../src/renderer/effect-params';
+import {
+  applyInterferenceParams,
+  applyRollbarParams,
+  clampInterferenceParams,
+  clampRollbarParams,
+  type InterferenceParams,
+  type RollbarParams,
+} from '../../src/renderer/effect-params';
+import { EffectParamSliders, isInterferenceEffectId } from '../../src/renderer/EffectParamSliders';
 import { FONT_CATALOG } from '../../src/renderer/fonts';
 import { applyThemeVarsAndEffects, setUserFontId } from '../../src/renderer/theme-runtime';
 import { getActiveTheme, getActiveThemeName } from '../../src/renderer/themes';
@@ -13,9 +21,11 @@ import {
 } from '../../src/renderer/ui-scale';
 import {
   MOBILE_EFFECT_DEFAULTS,
+  loadEffectParams,
   loadEffectToggles,
   loadFont,
   loadRollbar,
+  saveEffectParams,
   saveEffectToggles,
   saveFont,
   saveRollbar,
@@ -108,6 +118,20 @@ export function MobileSettingsView({
       return next;
     });
   }, []);
+
+  // CRT-interference params (crt-interference) — same load/clamp/save shape.
+  const [interference, setInterference] = useState(() => clampInterferenceParams(loadEffectParams()));
+  const changeEffectParams = useCallback(
+    (effectId: keyof InterferenceParams, partial: Record<string, number | boolean>) => {
+      setInterference((prev) => {
+        const next = clampInterferenceParams({ ...prev, [effectId]: { ...prev[effectId], ...partial } });
+        saveEffectParams(next);
+        applyInterferenceParams(next);
+        return next;
+      });
+    },
+    [],
+  );
 
   return (
     <div className="mobile-settings-view" data-testid="mobile-settings-view">
@@ -279,6 +303,9 @@ export function MobileSettingsView({
               </label>
             </div>
           )}
+          {declaredEffects.filter(isInterferenceEffectId).map((id) => (
+            <EffectParamSliders key={id} effectId={id} params={interference} onChange={changeEffectParams} />
+          ))}
         </section>
 
         <section className="status-section">

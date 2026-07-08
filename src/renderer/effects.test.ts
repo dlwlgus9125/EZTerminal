@@ -23,6 +23,9 @@ const ALL_OFF: Record<EffectId, boolean> = {
   'crt-curvature': false,
   'crt-rollbar': false,
   'scanline-scroll': false,
+  'jitter-burst': false,
+  'micro-jitter': false,
+  'static-noise': false,
 };
 const ALL_ON: Record<EffectId, boolean> = {
   scanlines: true,
@@ -31,13 +34,32 @@ const ALL_ON: Record<EffectId, boolean> = {
   'crt-curvature': true,
   'crt-rollbar': true,
   'scanline-scroll': true,
+  'jitter-burst': true,
+  'micro-jitter': true,
+  'static-noise': true,
 };
 
 describe('EFFECT_CATALOG', () => {
-  it('declares exactly the 4 spec-d ids', () => {
+  it('declares exactly the known ids', () => {
     expect(Object.keys(EFFECT_CATALOG).sort()).toEqual(
-      ['crt-curvature', 'crt-rollbar', 'flicker', 'phosphor-glow', 'scanline-scroll', 'scanlines'].sort(),
+      [
+        'crt-curvature',
+        'crt-rollbar',
+        'flicker',
+        'phosphor-glow',
+        'scanline-scroll',
+        'scanlines',
+        'jitter-burst',
+        'micro-jitter',
+        'static-noise',
+      ].sort(),
     );
+  });
+
+  it('ships the interference trio strictly opt-in (defaultOn false)', () => {
+    expect(EFFECT_CATALOG['jitter-burst'].defaultOn).toBe(false);
+    expect(EFFECT_CATALOG['micro-jitter'].defaultOn).toBe(false);
+    expect(EFFECT_CATALOG['static-noise'].defaultOn).toBe(false);
   });
 });
 
@@ -66,6 +88,15 @@ describe('resolveActiveEffects — gating truth table', () => {
     expect(active.has('scanlines')).toBe(true);
     const inactive = resolveActiveEffects(theme(['scanlines']), {}, ALL_OFF);
     expect(inactive.has('scanlines')).toBe(false);
+  });
+
+  it('gates the new interference ids exactly like the originals', () => {
+    const declared = theme(['jitter-burst', 'micro-jitter', 'static-noise']);
+    const active = resolveActiveEffects(declared, { 'jitter-burst': true }, ALL_OFF);
+    expect(active.has('jitter-burst')).toBe(true);
+    expect(active.has('micro-jitter')).toBe(false); // declared but defaulted off
+    const undeclared = resolveActiveEffects(theme([]), { 'static-noise': true }, ALL_ON);
+    expect(undeclared.has('static-noise')).toBe(false); // AC-E4
   });
 });
 

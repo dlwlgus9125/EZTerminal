@@ -13,7 +13,10 @@ export type EffectId =
   | 'flicker'
   | 'crt-curvature'
   | 'crt-rollbar'
-  | 'scanline-scroll';
+  | 'scanline-scroll'
+  | 'jitter-burst'
+  | 'micro-jitter'
+  | 'static-noise';
 
 export interface EffectCatalogEntry {
   readonly id: EffectId;
@@ -31,6 +34,13 @@ export const EFFECT_CATALOG: Readonly<Record<EffectId, EffectCatalogEntry>> = {
   'crt-curvature': { id: 'crt-curvature', label: 'CRT Curvature', defaultOn: false },
   'crt-rollbar': { id: 'crt-rollbar', label: 'CRT Roll Bar', defaultOn: true },
   'scanline-scroll': { id: 'scanline-scroll', label: 'Scanline Scroll', defaultOn: true },
+  // CRT interference trio (crt-interference): intrusive by design, so all
+  // three ship defaultOn:false on every platform — strictly opt-in, like
+  // flicker/crt-curvature above. Params live in effect-params.ts
+  // (InterferenceParams), which also parameterizes the upgraded flicker.
+  'jitter-burst': { id: 'jitter-burst', label: 'Burst Jitter', defaultOn: false },
+  'micro-jitter': { id: 'micro-jitter', label: 'Micro Jitter', defaultOn: false },
+  'static-noise': { id: 'static-noise', label: 'Static Noise', defaultOn: false },
 };
 
 const EFFECT_IDS = Object.keys(EFFECT_CATALOG) as EffectId[];
