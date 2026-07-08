@@ -4,7 +4,7 @@
  * T1 vertical slice: Renderer → main broker → utilityProcess interpreter →
  * framed streaming back via dedicated MessagePort → renderer. (architecture §3)
  */
-import type { LayoutEnvelope, StartupPref, ThemeName } from './layout-schema';
+import type { LayoutEnvelope, RollbarSettings, StartupPref, ThemeName } from './layout-schema';
 import type { FileListResult, FileOpResult, FileReadTextResult } from './files';
 import type { ThemeMod } from './theme-schema';
 
@@ -782,4 +782,9 @@ export interface EzTerminalDesktopApi {
    * per-platform (desktop: theme-declared default) via `resolveActiveEffects`. */
   getEffectToggles: () => Promise<Record<string, boolean>>;
   setEffectToggles: (toggles: Record<string, boolean>) => Promise<void>;
+  /** crt-rollbar line params (rollbar-params) — a partial wire shape; the
+   * renderer clamps/defaults absent fields via effect-params.ts's
+   * `clampRollbarParams`. */
+  getRollbar: () => Promise<RollbarSettings>;
+  setRollbar: (params: RollbarSettings) => Promise<void>;
 }

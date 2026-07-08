@@ -1,5 +1,11 @@
 import type { ThemeName } from '../../src/shared/layout-schema';
 import { EFFECT_CATALOG, type EffectId } from '../../src/renderer/effects';
+import {
+  DEFAULT_ROLLBAR_PARAMS,
+  applyRollbarParams,
+  clampRollbarParams,
+  type RollbarParams,
+} from '../../src/renderer/effect-params';
 import { applyThemeVarsAndEffects, themeModToDefinition } from '../../src/renderer/theme-runtime';
 import { listThemes, registerTheme } from '../../src/renderer/themes';
 import { validateThemeMod } from '../../src/shared/theme-schema';
@@ -20,6 +26,7 @@ const THEME_KEY = 'ezterminal-mobile-theme';
 const CUSTOM_THEMES_KEY = 'ezterminal-mobile-custom-themes';
 const FONT_KEY = 'ezterminal-mobile-font';
 const EFFECTS_KEY = 'ezterminal-mobile-effects';
+const ROLLBAR_KEY = 'ezterminal-mobile-rollbar';
 
 export const THEME_NAMES: readonly ThemeName[] = ['dark', 'light', 'high-contrast', 'matrix'];
 
@@ -106,6 +113,7 @@ export function importCustomTheme(json: string): { ok: boolean; error?: string }
 export function applyTheme(name: ThemeName): void {
   document.documentElement.dataset.theme = name;
   applyThemeVarsAndEffects(name, { effectToggles: loadEffectToggles(), platformDefaults: MOBILE_EFFECT_DEFAULTS });
+  applyRollbarParams(clampRollbarParams(loadRollbar()));
   window.dispatchEvent(new Event('ez:theme'));
   console.log('[ez-e2e] theme:', name);
 }
@@ -152,6 +160,30 @@ export function loadEffectToggles(): Record<string, boolean> {
 export function saveEffectToggles(toggles: Record<string, boolean>): void {
   try {
     localStorage.setItem(EFFECTS_KEY, JSON.stringify(toggles));
+  } catch {
+    // best-effort — a private-browsing/quota failure only costs persistence next time
+  }
+}
+
+// ── crt-rollbar line params (rollbar-params) ─────────────────────────────────
+// Same localStorage lifecycle as effect toggles above; clamping/defaulting
+// happens in effect-params.ts's clampRollbarParams (shared with desktop), not
+// here — a corrupt/partial stored value is handed to it as-is.
+
+export function loadRollbar(): Partial<RollbarParams> {
+  try {
+    const raw = localStorage.getItem(ROLLBAR_KEY);
+    if (!raw) return DEFAULT_ROLLBAR_PARAMS;
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === 'object' ? (parsed as Partial<RollbarParams>) : DEFAULT_ROLLBAR_PARAMS;
+  } catch {
+    return DEFAULT_ROLLBAR_PARAMS;
+  }
+}
+
+export function saveRollbar(params: Partial<RollbarParams>): void {
+  try {
+    localStorage.setItem(ROLLBAR_KEY, JSON.stringify(params));
   } catch {
     // best-effort — a private-browsing/quota failure only costs persistence next time
   }

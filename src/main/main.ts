@@ -38,7 +38,7 @@ import {
   type RemoteStatsSource,
 } from './remote-bridge';
 import { formatConnectionInfo } from './remote-connection-info';
-import type { StartupPref, ThemeName } from '../shared/layout-schema';
+import type { RollbarSettings, StartupPref, ThemeName } from '../shared/layout-schema';
 import type { InterpreterToMain, MainToInterpreter, RunStartedInfo, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
 
 // The main process is the broker (architecture §1).
@@ -402,6 +402,14 @@ app.on('ready', () => {
   ipcMain.handle('settings:set-effect-toggles', async (_event, toggles: Record<string, boolean>) => {
     await storeReady;
     if (toggles && typeof toggles === 'object') await layoutStore.setEffectToggles(toggles);
+  });
+  ipcMain.handle('settings:get-rollbar', async () => {
+    await storeReady;
+    return layoutStore.getRollbar();
+  });
+  ipcMain.handle('settings:set-rollbar', async (_event, params: RollbarSettings) => {
+    await storeReady;
+    if (params && typeof params === 'object') await layoutStore.setRollbar(params);
   });
   // Best-effort final flush; the debounced save already persisted anything
   // older than ~300ms (accepted v1 loss window — gate Q2).

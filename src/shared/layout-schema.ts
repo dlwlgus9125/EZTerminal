@@ -93,6 +93,19 @@ export function isBuiltinTheme(name: string): boolean {
 export const ThemeNameSchema = z.string().min(1);
 export type ThemeName = z.infer<typeof ThemeNameSchema>;
 
+/** Wire shape for crt-rollbar line params (rollbar-params) — every field
+ * optional, numbers unbounded here: renderer/effect-params.ts's
+ * `clampRollbarParams` is the single place that clamps/defaults, both on
+ * read and on set. */
+export const RollbarParamsSchema = z.object({
+  count: z.number().optional(),
+  thickness: z.number().optional(),
+  gap: z.number().optional(),
+  color: z.string().optional(),
+  speed: z.number().optional(),
+});
+export type RollbarSettings = z.infer<typeof RollbarParamsSchema>;
+
 export const SettingsSchema = z.object({
   schemaVersion: z.literal(LAYOUT_SCHEMA_VERSION),
   startup: StartupPrefSchema,
@@ -116,6 +129,11 @@ export const SettingsSchema = z.object({
   // Absent entries default per-platform (desktop: theme-declared default,
   // mobile: off) via resolveActiveEffects's platformDefaults parameter.
   effectToggles: z.record(z.string(), z.boolean()).optional(),
+  // crt-rollbar line params (rollbar-params) — a partial wire shape; absent
+  // fields (and out-of-range values) default/clamp in
+  // renderer/effect-params.ts's clampRollbarParams, so this schema itself
+  // stays loose (bounds enforcement lives in exactly one place).
+  rollbar: RollbarParamsSchema.optional(),
 });
 export type StartupPref = z.infer<typeof StartupPrefSchema>;
 export type SettingsFile = z.infer<typeof SettingsSchema>;
