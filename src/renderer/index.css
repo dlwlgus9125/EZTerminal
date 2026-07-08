@@ -219,6 +219,62 @@ html[data-effect-crt-curvature='on']::before {
   background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.35) 100%);
 }
 
+/* == CRT ROLL BAR (crt-rollbar effect) == a single soft-bright horizontal band
+   that sweeps top→bottom on a loop — the old-CRT "vertical hold" roll ("줄
+   내려가는"). On body::after (html::after/::before are taken by scanlines /
+   curvature) with a z-index above them, so it reads over everything. GPU-cheap:
+   transform + opacity only, pointer-events:none. */
+html[data-effect-crt-rollbar='on'] body::after {
+  content: '';
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 20vh;
+  z-index: 201;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(190, 255, 225, 0.05) 42%,
+    rgba(215, 255, 238, 0.16) 50%,
+    rgba(190, 255, 225, 0.05) 58%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  will-change: transform;
+  animation: crt-rollbar-sweep 5.5s linear infinite;
+}
+@keyframes crt-rollbar-sweep {
+  0% { transform: translateY(-20vh); }
+  100% { transform: translateY(100vh); }
+}
+
+/* == SCANLINE SCROLL (scanline-scroll effect) == the horizontal scanline
+   pattern itself drifting continuously downward — distinct from the static
+   `scanlines` overlay, and independently toggleable. On body::before; animates
+   background-position only. */
+html[data-effect-scanline-scroll='on'] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 198;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(120, 255, 190, 0.10) 3px,
+    rgba(0, 0, 0, 0) 4px
+  );
+  background-size: 100% 4px;
+  will-change: background-position;
+  animation: scanline-scroll-move 0.5s linear infinite;
+}
+@keyframes scanline-scroll-move {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 4px; }
+}
+
 /* == STATUS INDICATORS == dot → glyph. Colour AND shape encode the state, so it
    reads for colour-blind users too. Only the ::before glyph changes — the text
    node ('running' / 'done' / 'error' / 'cancelled') is untouched, so the e2e

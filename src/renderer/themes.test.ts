@@ -28,8 +28,8 @@ describe('themes — built-ins', () => {
     expect(THEME_ORDER).toEqual(['dark', 'light', 'high-contrast', 'matrix']);
   });
 
-  it('matrix declares scanlines + phosphor-glow (AC-E1)', () => {
-    expect(THEMES.matrix.effects).toEqual(['scanlines', 'phosphor-glow']);
+  it('matrix declares scanlines + phosphor-glow + crt-rollbar + scanline-scroll (AC-E1)', () => {
+    expect(THEMES.matrix.effects).toEqual(['scanlines', 'phosphor-glow', 'crt-rollbar', 'scanline-scroll']);
   });
 
   it('dark/light/high-contrast declare no effects', () => {
