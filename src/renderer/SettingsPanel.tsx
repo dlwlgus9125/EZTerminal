@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { ThemeName } from '../shared/layout-schema';
 import { EFFECT_CATALOG, type EffectId } from './effects';
-import type { RollbarParams } from './effect-params';
+import type { InterferenceParams, RollbarParams } from './effect-params';
+import { EffectParamSliders, isInterferenceEffectId } from './EffectParamSliders';
 import { FONT_CATALOG } from './fonts';
 import type { ThemeDefinition } from './themes';
 import { UI_SCALE_DEFAULT } from './ui-scale';
@@ -34,6 +35,13 @@ interface SettingsPanelProps {
    * crt-rollbar toggle only when the active theme declares that effect. */
   readonly rollbar: RollbarParams;
   readonly onChangeRollbar: (partial: Partial<RollbarParams>) => void;
+  /** CRT-interference params (crt-interference) — sliders render beneath each
+   * of the four parameterized effects' toggles when the theme declares them. */
+  readonly interference: InterferenceParams;
+  readonly onChangeEffectParams: (
+    effectId: keyof InterferenceParams,
+    partial: Record<string, number | boolean>,
+  ) => void;
 }
 
 export function SettingsPanel({
@@ -50,6 +58,8 @@ export function SettingsPanel({
   onToggleEffect,
   rollbar,
   onChangeRollbar,
+  interference,
+  onChangeEffectParams,
 }: SettingsPanelProps): JSX.Element {
   const [remoteEnabled, setRemoteEnabled] = useState<boolean | null>(null);
   const [remotePort, setRemotePort] = useState<number | null>(null);
@@ -274,6 +284,9 @@ export function SettingsPanel({
                       />
                     </label>
                   </div>
+                )}
+                {isInterferenceEffectId(id) && (
+                  <EffectParamSliders effectId={id} params={interference} onChange={onChangeEffectParams} />
                 )}
               </div>
             );

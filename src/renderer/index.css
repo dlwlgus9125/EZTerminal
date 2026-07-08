@@ -196,15 +196,27 @@ html[data-effect-scanlines='on']::after {
     rgba(0, 0, 0, 0) 4px
   );
 }
-/* == FLICKER == a very subtle CRT flicker on the scanline overlay itself, so
-   it composes with scanlines rather than owning its own pseudo-element (there
-   is nothing to flicker unless scanlines has actually painted the ::after). */
-html[data-effect-scanlines='on'][data-effect-flicker='on']::after {
-  animation: crt-flicker 0.15s steps(2, jump-none) infinite;
+/* == FLICKER (upgraded, crt-interference) == brightness-only CRT flicker on
+   the CONTENT (#root opacity) — decoupled from scanlines (the old stub
+   animated the scanline overlay and silently required scanlines on) and
+   parameterized: frequency/depth come from flicker params (--fx-flicker-*,
+   effect-params.ts; fallbacks = defaults 8Hz / 8% = the stub's original
+   0.15s / 0.92 feel). Opacity, not filter:brightness — compositor-cheap, and
+   against the near-black body bg an opacity dip reads as a brightness dip.
+   COMPOSITION: micro-jitter also animates #root (transform); `animation` is
+   a per-element shorthand, so the both-on case needs the explicit combined
+   rule below (two separate rules would drop whichever loses the cascade). */
+html[data-effect-flicker='on'] #root {
+  animation: fx-flicker var(--fx-flicker-duration, 0.125s) steps(2, jump-none) infinite;
 }
-@keyframes crt-flicker {
+html[data-effect-micro-jitter='on'][data-effect-flicker='on'] #root {
+  animation:
+    fx-micro-jitter var(--fx-micro-duration, 0.5s) step-end infinite,
+    fx-flicker var(--fx-flicker-duration, 0.125s) steps(2, jump-none) infinite;
+}
+@keyframes fx-flicker {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.92; }
+  50% { opacity: var(--fx-flicker-min, 0.92); }
 }
 
 /* == CRT CURVATURE == a subtle vignette on its own ::before layer (scanlines
@@ -286,6 +298,121 @@ html[data-effect-scanline-scroll='on'] body::before {
 @keyframes scanline-scroll-move {
   0% { background-position: 0 0; }
   100% { background-position: 0 4px; }
+}
+
+/* == CRT INTERFERENCE (jitter-burst / micro-jitter / static-noise) == the
+   "치직치직" reception-trouble set. All params come from effect-params.ts
+   (fallbacks mirror the defaults there).
+
+   ELEMENT BUDGET — html/body pseudos are all taken (scanlines html::after,
+   curvature html::before, scanline-scroll body::before, rollbar body::after),
+   and two transform animations on ONE element would collide (`animation` is
+   per-element; even comma-listed, two keyframes both writing `transform`
+   don't compose). Nested transforms DO compose, so ownership is split:
+     - jitter-burst  -> transform on `body` (rollbar/scanline-scroll pseudos
+       bump WITH the content — beam artifacts move on sync loss; the html-
+       level scanline mask + vignette stay put — they're the physical glass)
+     - micro-jitter  -> transform on `#root`
+     - flicker       -> opacity on `#root` (combined rule above when both on)
+     - noise overlays -> #root::before (burst flash) / #root::after (static)
+   Every element has exactly one animation-owning selector chain.
+
+   NOTE: transform/opacity on body/#root makes them containing blocks /
+   stacking contexts. #root's box == viewport on both platforms, so fixed
+   descendants (palette, context menu, drawers) keep their visual anchor —
+   and during a bump they jitter with the content, which is the point. The
+   z-202 noise overlays sit above scanlines(200)/rollbar(201) normally; when
+   a #root stacking context exists they cap at #root's own level instead —
+   both orderings look fine (all are translucent dark layers).
+
+   Displacements are integer px with step-end timing only: pure compositor
+   translations — no reflow, no xterm repaint, no subpixel text blur.
+
+   The burst keyframes below are the STATIC DEFAULTS (period 5s, 250ms burst
+   -> 5% window, intensity 6, flash on): effect-params.ts regenerates both
+   blocks into #ez-fx-keyframes (appended after this sheet, so it wins the
+   keyframes-name cascade) whenever params change — % stops can't be var()s. */
+:root {
+  /* One shared 128px grayscale fractal-noise tile (SVG feTurbulence), inline
+     data: URI — packaged CSP allows img-src data: (vite.renderer.config.ts),
+     no external asset. Used by both the static-noise overlay and the
+     jitter-burst flash. */
+  --fx-noise-texture: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='128'%20height='128'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.9'%20numOctaves='2'%20stitchTiles='stitch'/%3E%3CfeColorMatrix%20type='saturate'%20values='0'/%3E%3C/filter%3E%3Crect%20width='128'%20height='128'%20filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+html[data-effect-jitter-burst='on'] body {
+  will-change: transform;
+  animation: fx-jitter-burst var(--fx-burst-period, 5s) step-end infinite;
+}
+@keyframes fx-jitter-burst {
+  0% { transform: translate(0px, 6px); }
+  1.00% { transform: translate(-4px, -6px); }
+  2.00% { transform: translate(2px, 4px); }
+  3.00% { transform: translate(0px, -3px); }
+  4.00% { transform: translate(-2px, 2px); }
+  5.00% { transform: translate(0px, 0px); }
+  100% { transform: translate(0px, 0px); }
+}
+html[data-effect-jitter-burst='on'] #root::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 202;
+  pointer-events: none;
+  background-image: var(--fx-noise-texture);
+  background-size: 128px 128px;
+  opacity: 0;
+  animation: fx-burst-flash var(--fx-burst-period, 5s) linear infinite;
+}
+@keyframes fx-burst-flash {
+  0% { opacity: 0.25; }
+  5.00% { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+html[data-effect-micro-jitter='on'] #root {
+  will-change: transform;
+  animation: fx-micro-jitter var(--fx-micro-duration, 0.5s) step-end infinite;
+}
+/* 10 jumps per cycle at irregular stops — deterministic "random". Amplitude
+   scales every offset via the one var (rollbar's calc-inside-keyframes
+   precedent). 100% repeats 0% (invisible under step-end; kept for sanity). */
+@keyframes fx-micro-jitter {
+  0% { transform: translate(0, var(--fx-micro-amp, 1px)); }
+  11% { transform: translate(calc(var(--fx-micro-amp, 1px) * -1), 0); }
+  23% { transform: translate(0, calc(var(--fx-micro-amp, 1px) * -1)); }
+  37% { transform: translate(var(--fx-micro-amp, 1px), var(--fx-micro-amp, 1px)); }
+  48% { transform: translate(0, 0); }
+  59% { transform: translate(calc(var(--fx-micro-amp, 1px) * -1), calc(var(--fx-micro-amp, 1px) * -1)); }
+  71% { transform: translate(var(--fx-micro-amp, 1px), 0); }
+  84% { transform: translate(0, var(--fx-micro-amp, 1px)); }
+  93% { transform: translate(calc(var(--fx-micro-amp, 1px) * -1), var(--fx-micro-amp, 1px)); }
+  100% { transform: translate(0, var(--fx-micro-amp, 1px)); }
+}
+
+html[data-effect-static-noise='on'] #root::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 202;
+  pointer-events: none;
+  background-image: var(--fx-noise-texture);
+  background-size: var(--fx-noise-size, 144px) var(--fx-noise-size, 144px);
+  opacity: var(--fx-noise-opacity, 0.12);
+  will-change: background-position;
+  animation: fx-noise-shuffle var(--fx-noise-duration, 0.4s) step-end infinite;
+}
+/* Tile-origin shuffle through fixed pseudo-random offsets = animated snow. */
+@keyframes fx-noise-shuffle {
+  0% { background-position: 0% 0%; }
+  12.5% { background-position: 37% 61%; }
+  25% { background-position: 71% 13%; }
+  37.5% { background-position: 19% 83%; }
+  50% { background-position: 89% 41%; }
+  62.5% { background-position: 53% 7%; }
+  75% { background-position: 7% 29%; }
+  87.5% { background-position: 61% 97%; }
+  100% { background-position: 0% 0%; }
 }
 
 /* == STATUS INDICATORS == dot → glyph. Colour AND shape encode the state, so it

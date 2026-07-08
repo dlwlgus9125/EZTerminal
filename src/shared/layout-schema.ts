@@ -108,6 +108,18 @@ export const RollbarParamsSchema = z.object({
 });
 export type RollbarSettings = z.infer<typeof RollbarParamsSchema>;
 
+/** Wire shape for the CRT-interference param blob (crt-interference) — ONE
+ * loose record for all parameterized effects (jitter-burst / micro-jitter /
+ * static-noise / flicker), keyed by effect id. Kept as loose as `rollbar`
+ * above and for the same reason: renderer/effect-params.ts's
+ * `clampInterferenceParams` is the single clamp/default authority, and a
+ * since-removed effect id in an old settings.json must still parse. */
+export const EffectParamsSchema = z.record(
+  z.string(),
+  z.record(z.string(), z.union([z.number(), z.boolean()])),
+);
+export type EffectParamsSettings = z.infer<typeof EffectParamsSchema>;
+
 export const SettingsSchema = z.object({
   schemaVersion: z.literal(LAYOUT_SCHEMA_VERSION),
   startup: StartupPrefSchema,
@@ -136,6 +148,9 @@ export const SettingsSchema = z.object({
   // renderer/effect-params.ts's clampRollbarParams, so this schema itself
   // stays loose (bounds enforcement lives in exactly one place).
   rollbar: RollbarParamsSchema.optional(),
+  // CRT-interference params (crt-interference) — same loose-wire policy as
+  // `rollbar`, one blob for all four parameterized effects.
+  effectParams: EffectParamsSchema.optional(),
 });
 export type StartupPref = z.infer<typeof StartupPrefSchema>;
 export type SettingsFile = z.infer<typeof SettingsSchema>;

@@ -4,7 +4,7 @@
  * T1 vertical slice: Renderer → main broker → utilityProcess interpreter →
  * framed streaming back via dedicated MessagePort → renderer. (architecture §3)
  */
-import type { LayoutEnvelope, RollbarSettings, StartupPref, ThemeName } from './layout-schema';
+import type { EffectParamsSettings, LayoutEnvelope, RollbarSettings, StartupPref, ThemeName } from './layout-schema';
 import type { FileListResult, FileOpResult, FileReadTextResult } from './files';
 import type { ThemeMod } from './theme-schema';
 
@@ -787,4 +787,9 @@ export interface EzTerminalDesktopApi {
    * `clampRollbarParams`. */
   getRollbar: () => Promise<RollbarSettings>;
   setRollbar: (params: RollbarSettings) => Promise<void>;
+  /** CRT-interference param blob (crt-interference) — one loose record for
+   * all parameterized effects; the renderer clamps via effect-params.ts's
+   * `clampInterferenceParams` on both read and set. */
+  getEffectParams: () => Promise<EffectParamsSettings>;
+  setEffectParams: (params: EffectParamsSettings) => Promise<void>;
 }

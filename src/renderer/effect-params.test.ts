@@ -1,7 +1,26 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_ROLLBAR_PARAMS, applyRollbarParams, clampRollbarParams } from './effect-params';
+import {
+  DEFAULT_BURST_PARAMS,
+  DEFAULT_FLICKER_PARAMS,
+  DEFAULT_INTERFERENCE_PARAMS,
+  DEFAULT_MICRO_PARAMS,
+  DEFAULT_NOISE_PARAMS,
+  DEFAULT_ROLLBAR_PARAMS,
+  applyFlickerParams,
+  applyInterferenceParams,
+  applyMicroJitterParams,
+  applyNoiseParams,
+  applyRollbarParams,
+  buildBurstKeyframes,
+  clampBurstJitterParams,
+  clampFlickerParams,
+  clampInterferenceParams,
+  clampMicroJitterParams,
+  clampNoiseParams,
+  clampRollbarParams,
+} from './effect-params';
 import type { RollbarParams } from './effect-params';
 
 describe('clampRollbarParams', () => {
@@ -100,5 +119,134 @@ describe('applyRollbarParams', () => {
     applyRollbarParams({ ...DEFAULT_ROLLBAR_PARAMS, thickness: 8, softness: 100 });
     expect(style.getPropertyValue('--fx-rollbar-grad-in')).toBe('4.00px');
     expect(style.getPropertyValue('--fx-rollbar-grad-out')).toBe('4.00px');
+  });
+});
+
+describe('clamp — interference param sets', () => {
+  it('clamps burst-jitter bounds and rounds', () => {
+    expect(clampBurstJitterParams({ period: 999 }).period).toBe(30);
+    expect(clampBurstJitterParams({ period: 0 }).period).toBe(1);
+    expect(clampBurstJitterParams({ duration: 9999 }).duration).toBe(1000);
+    expect(clampBurstJitterParams({ duration: 10 }).duration).toBe(50);
+    expect(clampBurstJitterParams({ intensity: 99 }).intensity).toBe(20);
+    expect(clampBurstJitterParams({ intensity: 0.4 }).intensity).toBe(1);
+  });
+
+  it('coerces the burst flash flag to a strict boolean', () => {
+    expect(clampBurstJitterParams({ flash: false }).flash).toBe(false);
+    expect(clampBurstJitterParams({ flash: true }).flash).toBe(true);
+    expect(clampBurstJitterParams({}).flash).toBe(DEFAULT_BURST_PARAMS.flash);
+    expect(clampBurstJitterParams({ flash: 'yes' as unknown as boolean }).flash).toBe(DEFAULT_BURST_PARAMS.flash);
+  });
+
+  it('clamps micro-jitter, noise, and flicker bounds', () => {
+    expect(clampMicroJitterParams({ speed: 99 }).speed).toBe(20);
+    expect(clampMicroJitterParams({ amplitude: 12 }).amplitude).toBe(5);
+    expect(clampNoiseParams({ density: 0 }).density).toBe(1);
+    expect(clampNoiseParams({ opacity: 500 }).opacity).toBe(100);
+    expect(clampNoiseParams({ speed: -3 }).speed).toBe(1);
+    expect(clampFlickerParams({ frequency: 99 }).frequency).toBe(30);
+    expect(clampFlickerParams({ depth: 90 }).depth).toBe(40);
+  });
+
+  it('falls back to defaults on non-finite / absent values', () => {
+    expect(clampBurstJitterParams({ period: Number.NaN }).period).toBe(DEFAULT_BURST_PARAMS.period);
+    expect(clampMicroJitterParams({})).toEqual(DEFAULT_MICRO_PARAMS);
+    expect(clampNoiseParams({})).toEqual(DEFAULT_NOISE_PARAMS);
+    expect(clampFlickerParams({})).toEqual(DEFAULT_FLICKER_PARAMS);
+  });
+
+  it('clampInterferenceParams survives a non-object and fills every set', () => {
+    expect(clampInterferenceParams(undefined)).toEqual(DEFAULT_INTERFERENCE_PARAMS);
+    expect(clampInterferenceParams('garbage')).toEqual(DEFAULT_INTERFERENCE_PARAMS);
+    const mixed = clampInterferenceParams({ 'micro-jitter': { amplitude: 99 }, flicker: { depth: 20 } });
+    expect(mixed['micro-jitter'].amplitude).toBe(5);
+    expect(mixed['micro-jitter'].speed).toBe(DEFAULT_MICRO_PARAMS.speed);
+    expect(mixed.flicker.depth).toBe(20);
+    expect(mixed['jitter-burst']).toEqual(DEFAULT_BURST_PARAMS);
+    expect(mixed['static-noise']).toEqual(DEFAULT_NOISE_PARAMS);
+  });
+});
+
+describe('buildBurstKeyframes', () => {
+  it('emits the exact default keyframes (P=5s, D=250ms -> 5% window, I=6)', () => {
+    const css = buildBurstKeyframes(DEFAULT_BURST_PARAMS);
+    expect(css).toContain('0.00% { transform: translate(0px, 6px); }');
+    expect(css).toContain('1.00% { transform: translate(-4px, -6px); }');
+    expect(css).toContain('2.00% { transform: translate(2px, 4px); }');
+    expect(css).toContain('3.00% { transform: translate(0px, -3px); }');
+    expect(css).toContain('4.00% { transform: translate(-2px, 2px); }');
+    expect(css).toContain('5.00% { transform: translate(0px, 0px); }');
+    expect(css).toContain('100% { transform: translate(0px, 0px); }');
+    // flash timeline shares the window: peak 0.25 at 0%, off by 5%
+    expect(css).toContain('0% { opacity: 0.25; }');
+    expect(css).toContain('5.00% { opacity: 0; }');
+  });
+
+  it('zeroes the flash peak when flash is off (shake continues)', () => {
+    const css = buildBurstKeyframes({ ...DEFAULT_BURST_PARAMS, flash: false });
+    expect(css).toContain('0% { opacity: 0; }');
+    expect(css).not.toContain('0.25');
+    expect(css).toContain('translate(-4px, -6px)'); // jitter untouched
+  });
+
+  it('caps the burst window at 50% and floors it at 1%', () => {
+    // 1000ms burst in a 1s cycle would be 100% -> capped to half the cycle
+    expect(buildBurstKeyframes({ ...DEFAULT_BURST_PARAMS, period: 1, duration: 1000 })).toContain(
+      '50.00% { transform: translate(0px, 0px); }',
+    );
+    // 50ms in 30s is 0.17% -> floored so the burst always exists
+    expect(buildBurstKeyframes({ ...DEFAULT_BURST_PARAMS, period: 30, duration: 50 })).toContain(
+      '1.00% { transform: translate(0px, 0px); }',
+    );
+  });
+
+  it('scales offsets with intensity (rounded to integer px)', () => {
+    const css = buildBurstKeyframes({ ...DEFAULT_BURST_PARAMS, intensity: 20 });
+    expect(css).toContain('translate(0px, 20px)'); // [0, 1] * 20
+    expect(css).toContain('translate(-12px, -20px)'); // [-0.6, -1] * 20
+    expect(css).toContain('translate(8px, 14px)'); // [0.4, 0.7] * 20
+  });
+});
+
+describe('apply — interference CSS custom properties', () => {
+  it('applyMicroJitterParams maps speed to a 4/speed duration and amplitude to px', () => {
+    applyMicroJitterParams({ speed: 8, amplitude: 3 });
+    const style = document.documentElement.style;
+    expect(style.getPropertyValue('--fx-micro-duration')).toBe('0.50s');
+    expect(style.getPropertyValue('--fx-micro-amp')).toBe('3px');
+  });
+
+  it('applyNoiseParams maps density to tile size, opacity to 0..1, speed to duration', () => {
+    applyNoiseParams(DEFAULT_NOISE_PARAMS);
+    const style = document.documentElement.style;
+    expect(style.getPropertyValue('--fx-noise-size')).toBe('144px'); // 64 + (100-60)*2
+    expect(style.getPropertyValue('--fx-noise-opacity')).toBe('0.12');
+    expect(style.getPropertyValue('--fx-noise-duration')).toBe('0.40s');
+    applyNoiseParams({ ...DEFAULT_NOISE_PARAMS, density: 100 });
+    expect(style.getPropertyValue('--fx-noise-size')).toBe('64px'); // finest grain
+  });
+
+  it('applyFlickerParams maps frequency to 1/f duration and depth to the dim floor', () => {
+    applyFlickerParams(DEFAULT_FLICKER_PARAMS);
+    const style = document.documentElement.style;
+    expect(style.getPropertyValue('--fx-flicker-duration')).toBe('0.125s');
+    expect(style.getPropertyValue('--fx-flicker-min')).toBe('0.92');
+    applyFlickerParams({ frequency: 2, depth: 40 });
+    expect(style.getPropertyValue('--fx-flicker-duration')).toBe('0.500s');
+    expect(style.getPropertyValue('--fx-flicker-min')).toBe('0.60');
+  });
+
+  it('applyInterferenceParams writes the burst period var and the #ez-fx-keyframes block', () => {
+    document.getElementById('ez-fx-keyframes')?.remove();
+    applyInterferenceParams(DEFAULT_INTERFERENCE_PARAMS);
+    expect(document.documentElement.style.getPropertyValue('--fx-burst-period')).toBe('5s');
+    const el = document.getElementById('ez-fx-keyframes');
+    expect(el).toBeInstanceOf(HTMLStyleElement);
+    expect(el?.textContent).toContain('@keyframes fx-jitter-burst');
+    expect(el?.textContent).toContain('@keyframes fx-burst-flash');
+    // idempotent element reuse: a second apply must not create a duplicate
+    applyInterferenceParams(DEFAULT_INTERFERENCE_PARAMS);
+    expect(document.querySelectorAll('#ez-fx-keyframes').length).toBe(1);
   });
 });

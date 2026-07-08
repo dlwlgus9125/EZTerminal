@@ -29,6 +29,7 @@ import {
   SettingsSchema,
   buildLayoutEnvelope,
   validateLayoutEnvelope,
+  type EffectParamsSettings,
   type LayoutEnvelope,
   type PresetsFile,
   type RollbarSettings,
@@ -214,6 +215,14 @@ export class LayoutStore {
 
   async setRollbar(rollbar: RollbarSettings): Promise<void> {
     await this.updateSettings((current) => ({ ...current, rollbar }), 'rollbar');
+  }
+
+  async getEffectParams(): Promise<EffectParamsSettings> {
+    return (await this.loadSettingsFile()).effectParams ?? {};
+  }
+
+  async setEffectParams(effectParams: EffectParamsSettings): Promise<void> {
+    await this.updateSettings((current) => ({ ...current, effectParams }), 'effectParams');
   }
 
   /** Read + validate settings.json, defaulting to `{ startup: {mode:'last'} }`

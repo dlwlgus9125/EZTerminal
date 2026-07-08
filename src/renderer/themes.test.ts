@@ -28,8 +28,17 @@ describe('themes — built-ins', () => {
     expect(THEME_ORDER).toEqual(['dark', 'light', 'high-contrast', 'matrix']);
   });
 
-  it('matrix declares scanlines + phosphor-glow + crt-rollbar + scanline-scroll (AC-E1)', () => {
-    expect(THEMES.matrix.effects).toEqual(['scanlines', 'phosphor-glow', 'crt-rollbar', 'scanline-scroll']);
+  it('matrix declares the CRT effect set incl. the interference quartet (AC-E1, crt-interference)', () => {
+    expect(THEMES.matrix.effects).toEqual([
+      'scanlines',
+      'phosphor-glow',
+      'crt-rollbar',
+      'scanline-scroll',
+      'flicker',
+      'jitter-burst',
+      'micro-jitter',
+      'static-noise',
+    ]);
   });
 
   it('dark/light/high-contrast declare no effects', () => {
