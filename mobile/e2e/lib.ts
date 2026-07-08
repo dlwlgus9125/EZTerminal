@@ -36,7 +36,7 @@ export const APK_PATH = path.join(
   'app-debug.apk',
 );
 export const APP_ID = 'com.ezterminal.remote';
-export const REMOTE_PORT = 7420;
+export const REMOTE_PORT = Number(process.env.EZTERMINAL_REMOTE_PORT) || 7420;
 // 10.0.2.2 is the Android emulator's fixed alias for the HOST machine's localhost.
 export const EMULATOR_HOST_URL = `ws://10.0.2.2:${REMOTE_PORT}`;
 const DUMP_DEVICE_PATH = '/sdcard/ez_e2e_dump.xml';

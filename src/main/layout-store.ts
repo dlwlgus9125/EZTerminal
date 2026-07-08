@@ -189,6 +189,24 @@ export class LayoutStore {
     await this.updateSettings((current) => ({ ...current, remoteEnabled }), 'remoteEnabled');
   }
 
+  /** The persisted FONT_CATALOG id (theme-effects-font M3) — undefined means
+   * "use the active theme's own fontFamily" (resolveFontFamily). */
+  async getFont(): Promise<string | undefined> {
+    return (await this.loadSettingsFile()).fontFamily;
+  }
+
+  async setFont(id: string): Promise<void> {
+    await this.updateSettings((current) => ({ ...current, fontFamily: id }), 'fontFamily');
+  }
+
+  async getEffectToggles(): Promise<Record<string, boolean>> {
+    return (await this.loadSettingsFile()).effectToggles ?? {};
+  }
+
+  async setEffectToggles(effectToggles: Record<string, boolean>): Promise<void> {
+    await this.updateSettings((current) => ({ ...current, effectToggles }), 'effectToggles');
+  }
+
   /** Read + validate settings.json, defaulting to `{ startup: {mode:'last'} }`
    * when absent/corrupt (quarantining the latter). Shared by every getter. */
   private async loadSettingsFile(): Promise<SettingsFile> {

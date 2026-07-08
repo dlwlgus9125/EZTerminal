@@ -4,7 +4,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 
 import type { BlockController } from './block-controller';
-import { THEMES, getActiveThemeName } from './themes';
+import { resolveFontFamily } from './fonts';
+import { getUserFontId } from './theme-runtime';
+import { getActiveTheme } from './themes';
 import { getActiveUiScale } from './ui-scale';
 
 // PtyBlock — the render surface for a `pty`-shape block. Execution is ALWAYS a
@@ -36,7 +38,7 @@ export function PtyBlock({ controller }: { controller: BlockController }): JSX.E
  * component-body closure, so every effect that needs it computes the same
  * thing without threading it through refs. */
 function computeBaseFontSize(): number {
-  const activeTheme = THEMES[getActiveThemeName()];
+  const activeTheme = getActiveTheme();
   return Math.round((activeTheme.fontSize * getActiveUiScale()) / 100);
 }
 
@@ -78,9 +80,9 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     const el = containerRef.current;
     if (!el) return;
 
-    const initialTheme = THEMES[getActiveThemeName()];
+    const initialTheme = getActiveTheme();
     const term = new Terminal({
-      fontFamily: initialTheme.fontFamily,
+      fontFamily: resolveFontFamily(getUserFontId(), initialTheme),
       fontSize: computeBaseFontSize(),
       cursorBlink: true,
       scrollback: 5000,
@@ -215,8 +217,9 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     // control state — `fitAndReport` doesn't touch it, so it is set directly
     // for a controlling view; `applyMirrorLayout` rescales from the new base.
     const applyTypography = (): void => {
-      const activeTheme = THEMES[getActiveThemeName()];
+      const activeTheme = getActiveTheme();
       term.options.theme = { ...activeTheme.xterm };
+      term.options.fontFamily = resolveFontFamily(getUserFontId(), activeTheme);
       if (hasControlRef.current) {
         term.options.fontSize = computeBaseFontSize();
         fitAndReport();

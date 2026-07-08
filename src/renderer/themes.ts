@@ -1,5 +1,5 @@
 import type { ITheme } from '@xterm/xterm';
-import type { ThemeName } from '../shared/layout-schema';
+import { isBuiltinTheme, type ThemeName } from '../shared/layout-schema';
 
 // Built-in themes (E1) — single source of truth for the renderer. Chrome colors
 // are applied by setting `data-theme` on <html> and letting index.css's
@@ -7,6 +7,13 @@ import type { ThemeName } from '../shared/layout-schema';
 // can't import this file, so the blocks mirror `cssVars` by hand). xterm has no
 // concept of CSS variables, so PtyBlock reads `xterm`/`fontFamily`/`fontSize`
 // straight from this object instead.
+//
+// theme-effects-font M0: `THEMES` now coexists with a runtime registry of
+// externally-supplied theme mods (see `registerTheme`/`listThemes` below).
+// `ThemeName` (shared/layout-schema.ts) is an open, validated string rather
+// than a closed enum, so a custom mod can carry any id that passes
+// `validateThemeMod` (shared/theme-schema.ts). `getActiveTheme()` is now THE
+// single accessor that resolves either kind — see its own doc comment.
 
 const FONT_FAMILY = '"Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace';
 const FONT_SIZE = 13;
@@ -20,12 +27,23 @@ const MATRIX_FONT_FAMILY = '"Share Tech Mono", "Cascadia Code", "Cascadia Mono",
 const MATRIX_FONT_SIZE = 14;
 
 export interface ThemeDefinition {
+  /** Stable identity — the `data-theme` attribute value / registry key. For a
+   * built-in this equals its THEMES key; for a mod it's `ThemeMod.id`. */
+  readonly id: string;
+  /** Display name (theme picker / Settings dropdown). */
+  readonly name: string;
   /** --term-* CSS variable overrides mirrored in index.css's [data-theme] block.
    * Empty for 'dark': its values ARE the :root defaults (no override needed). */
   readonly cssVars: Readonly<Record<string, string>>;
   readonly xterm: ITheme;
   readonly fontFamily: string;
   readonly fontSize: number;
+  /** Effect catalog ids (renderer/effects.ts) this theme opts into — an
+   * effect not listed here never activates regardless of the user's toggle. */
+  readonly effects?: readonly string[];
+  /** Theme-picker swatch pair; independent of `cssVars`/`xterm` because a
+   * picker wants ONE representative bg/accent, not the full palette. */
+  readonly swatch?: { readonly bg: string; readonly accent: string };
 }
 
 /** Cycle order for the theme button (E1) — also the theme picker's row order (M2). */
@@ -33,13 +51,18 @@ export const THEME_ORDER: readonly ThemeName[] = ['dark', 'light', 'high-contras
 
 export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
   dark: {
+    id: 'dark',
+    name: 'Dark',
     cssVars: {},
     // Exactly the values PtyBlock hardcoded pre-E1 — pixel-identical default.
     xterm: { background: '#0c0c0c', foreground: '#e6e6e6' },
     fontFamily: FONT_FAMILY,
     fontSize: FONT_SIZE,
+    swatch: { bg: '#0c0c0c', accent: '#29d398' },
   },
   light: {
+    id: 'light',
+    name: 'Light',
     cssVars: {
       '--term-bg': '#f5f5f5',
       '--term-bg-raised': '#ffffff',
@@ -68,8 +91,11 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
     },
     fontFamily: FONT_FAMILY,
     fontSize: FONT_SIZE,
+    swatch: { bg: '#f5f5f5', accent: '#0e8a4b' },
   },
   'high-contrast': {
+    id: 'high-contrast',
+    name: 'High Contrast',
     cssVars: {
       '--term-bg': '#000000',
       '--term-bg-raised': '#000000',
@@ -96,6 +122,7 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
     },
     fontFamily: FONT_FAMILY,
     fontSize: FONT_SIZE,
+    swatch: { bg: '#000000', accent: '#00ff66' },
   },
   // Matrix (E1+) — near-black bg with a green phosphor foreground ramp. Mirror
   // these cssVars in index.css's [data-theme='matrix'] block by hand. The xterm
@@ -104,6 +131,8 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
   // Codex) keeps its own colour coding; the green "glow" over xterm is a CSS
   // filter in index.css, not an ANSI remap.
   matrix: {
+    id: 'matrix',
+    name: 'Matrix',
     cssVars: {
       '--term-bg': '#010301',
       '--term-bg-raised': '#071007',
@@ -131,13 +160,67 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
     },
     fontFamily: MATRIX_FONT_FAMILY,
     fontSize: MATRIX_FONT_SIZE,
+    effects: ['scanlines', 'phosphor-glow'],
+    swatch: { bg: '#010301', accent: '#5fe7ac' },
   },
 };
 
-/** Read the theme currently applied to the document (App sets this attribute
- * before dispatching 'ez:theme'), defaulting to 'dark' for an absent/unknown
- * value. PtyBlock uses this both at mount and on every 'ez:theme' event. */
-export function getActiveThemeName(): ThemeName {
+// ── custom-theme registry (theme-effects-font M0) ────────────────────────────
+// Mods registered at runtime (desktop folder-scan / Import, mobile Import).
+// Built-ins are NOT stored here; they live in `THEMES` and always win an id
+// collision (registerTheme warns+no-ops rather than letting a mod shadow
+// one). Module-level Map — one registry per renderer process, matching how
+// `THEMES` itself is a module singleton.
+const customThemes = new Map<string, ThemeDefinition>();
+
+/** Register a validated custom theme (desktop folder-scan / Import path —
+ * callers pass the ThemeDefinition built from a `validateThemeMod` result).
+ * Silently rejects (console.warn, no-op) an id that collides with a built-in
+ * — built-ins always win. `validateThemeMod` already blocks this at the
+ * mod-authoring stage, so this is defense-in-depth for direct callers. */
+export function registerTheme(def: ThemeDefinition): void {
+  if (isBuiltinTheme(def.id)) {
+    console.warn(`registerTheme: "${def.id}" collides with a built-in theme id — ignoring`);
+    return;
+  }
+  customThemes.set(def.id, def);
+}
+
+/** All themes available to pick from: built-ins first (THEME_ORDER), then
+ * registered mods in registration order. */
+export function listThemes(): ThemeDefinition[] {
+  return [...THEME_ORDER.map((name) => THEMES[name]), ...customThemes.values()];
+}
+
+/**
+ * THE single theme accessor (theme-effects-font M0) — resolves the DOM's raw
+ * `data-theme` attribute against built-ins ∪ the custom registry, falling
+ * back to 'dark' for an absent/unknown value (a deleted-mod-on-relaunch, or a
+ * value set before its registerTheme() call has run). Both theming channels
+ * should read through this: chrome CSS vars and the terminal (xterm).
+ * PtyBlock.tsx resolves through this accessor too — the old
+ * `THEMES[getActiveThemeName()]` indexing (unsound for a custom theme id) was
+ * migrated away in the same wave that added this function.
+ */
+export function getActiveTheme(): ThemeDefinition {
   const attr = document.documentElement.dataset.theme;
-  return attr === 'light' || attr === 'high-contrast' || attr === 'matrix' ? attr : 'dark';
+  if (attr !== undefined) {
+    const builtin = THEMES[attr];
+    if (builtin) return builtin;
+    const custom = customThemes.get(attr);
+    if (custom) return custom;
+  }
+  return THEMES.dark;
+}
+
+/** Read the theme name currently applied to the document (App sets this
+ * attribute before dispatching 'ez:theme'). Post-M0 this returns the RAW
+ * attribute string (dropped the old 4-literal narrowing) — resolve an actual
+ * ThemeDefinition through `getActiveTheme()`, not by indexing `THEMES` with
+ * this value (see its doc comment). Retained for raw-attribute reads that only
+ * need the id, not a resolved ThemeDefinition (e.g.
+ * mobile/src/MobileSettingsView.tsx reading the active theme id) — xterm
+ * resolution goes through `getActiveTheme()` instead. */
+export function getActiveThemeName(): string {
+  return document.documentElement.dataset.theme ?? 'dark';
 }

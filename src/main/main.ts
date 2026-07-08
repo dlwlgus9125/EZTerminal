@@ -18,6 +18,7 @@ import started from 'electron-squirrel-startup';
 import { isAppUrl } from './url-guard';
 import { FileService } from './file-service';
 import { LayoutStore } from './layout-store';
+import { getAvailableThemes, importTheme } from './theme-store';
 import { ScriptHostRegistry } from './script-host-registry';
 import { PacketCaptureRegistry } from './packet-capture-registry';
 import { PacketMirror } from './packet-mirror';
@@ -378,6 +379,29 @@ app.on('ready', () => {
   ipcMain.handle('settings:set-ui-scale', async (_event, uiScale: number) => {
     await storeReady;
     if (typeof uiScale === 'number') await layoutStore.setUiScale(uiScale);
+  });
+
+  // ── Custom themes + font/effects settings (theme-effects-font M3) ────────
+  // theme-store.ts owns its own fs (the themes dir, independent of layoutStore's
+  // userData files) so its handlers don't await `storeReady`; font/effect
+  // toggles live in settings.json, so those do.
+  ipcMain.handle('theme:get-available', () => getAvailableThemes());
+  ipcMain.handle('theme:import', (_event, json: string) => importTheme(json));
+  ipcMain.handle('settings:get-font', async () => {
+    await storeReady;
+    return layoutStore.getFont();
+  });
+  ipcMain.handle('settings:set-font', async (_event, id: string) => {
+    await storeReady;
+    if (typeof id === 'string') await layoutStore.setFont(id);
+  });
+  ipcMain.handle('settings:get-effect-toggles', async () => {
+    await storeReady;
+    return layoutStore.getEffectToggles();
+  });
+  ipcMain.handle('settings:set-effect-toggles', async (_event, toggles: Record<string, boolean>) => {
+    await storeReady;
+    if (toggles && typeof toggles === 'object') await layoutStore.setEffectToggles(toggles);
   });
   // Best-effort final flush; the debounced save already persisted anything
   // older than ~300ms (accepted v1 loss window — gate Q2).

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import type { ThemeName } from '../../src/shared/layout-schema';
 import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
+import { setUserFontId } from '../../src/renderer/theme-runtime';
 import { MobileFileView } from './MobileFileView';
 import { MobileSessionView } from './MobileSessionView';
 import { MobileSettingsView } from './MobileSettingsView';
@@ -9,9 +10,20 @@ import { MobileStatsView } from './MobileStatsView';
 import { SessionSwitcher } from './SessionSwitcher';
 import { TabStrip } from './TabStrip';
 import { ThemeMenu } from './ThemeMenu';
-import { applyTheme, loadTheme, saveTheme } from './theme';
+import { applyTheme, loadCustomThemes, loadFont, loadTheme, saveTheme } from './theme';
 import { initialTabsState, tabsReducer } from './tabs';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+
+// theme-effects-font Wave 3 boot init — MODULE TOP LEVEL, not inside the
+// component: main.tsx's own top-level `applyTheme(loadTheme())` runs AFTER
+// its full import graph is evaluated (App.tsx statically imports this file),
+// so a bare call here beats that later statement — the same trick main.tsx
+// itself relies on for its own boot-time applyTheme call. loadCustomThemes()
+// registers any persisted custom theme mod so a persisted custom theme id
+// resolves instead of silently falling back to 'dark' (AC-T4); setUserFontId
+// seeds the persisted font override so PtyBlock's first render already uses it.
+loadCustomThemes();
+setUserFontId(loadFont());
 
 // MobileWorkspace — the authed shell (M5, mobile-parity plan D5). Replaces
 // App.tsx's old direct SessionSwitcher <-> MobileSessionView switching: this

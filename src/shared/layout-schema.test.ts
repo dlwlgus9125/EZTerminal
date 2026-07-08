@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  BUILTIN_THEME_IDS,
   LAYOUT_SCHEMA_VERSION,
   MAX_PANELS,
   SettingsSchema,
+  ThemeNameSchema,
   buildLayoutEnvelope,
+  isBuiltinTheme,
   maxTabSuffix,
   sanitizeSerializedLayout,
   validateLayoutEnvelope,
@@ -161,7 +164,7 @@ describe('layout-schema — SettingsSchema theme field (E1)', () => {
     expect(parsed.success && parsed.data.theme).toBeUndefined();
   });
 
-  it('accepts a settings file with a valid theme', () => {
+  it('accepts a settings file with a valid built-in theme', () => {
     const parsed = SettingsSchema.safeParse({
       schemaVersion: LAYOUT_SCHEMA_VERSION,
       startup: { mode: 'last' },
@@ -171,13 +174,43 @@ describe('layout-schema — SettingsSchema theme field (E1)', () => {
     expect(parsed.success && parsed.data.theme).toBe('high-contrast');
   });
 
-  it('rejects an unknown theme name', () => {
+  it('rejects an empty theme string', () => {
     const parsed = SettingsSchema.safeParse({
       schemaVersion: LAYOUT_SCHEMA_VERSION,
       startup: { mode: 'last' },
-      theme: 'solarized',
+      theme: '',
     });
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe('layout-schema — ThemeNameSchema is an open string (theme-effects-font M0)', () => {
+  it.each(BUILTIN_THEME_IDS)('back-compat: old built-in theme value %s still parses', (name) => {
+    expect(ThemeNameSchema.safeParse(name).success).toBe(true);
+  });
+
+  it('accepts an arbitrary custom theme id (no longer a closed enum)', () => {
+    // Pre-M0 this was rejected outright (closed z.enum of the 4 built-ins).
+    // Custom/imported theme mods now carry their own id, so the schema is an
+    // open, non-empty string — id-shape/safety is enforced separately by
+    // shared/theme-schema.ts's validateThemeMod, not here.
+    expect(ThemeNameSchema.safeParse('solarized').success).toBe(true);
+    expect(ThemeNameSchema.safeParse('my-neon-mod').success).toBe(true);
+  });
+
+  it('rejects an empty string', () => {
+    expect(ThemeNameSchema.safeParse('').success).toBe(false);
+  });
+});
+
+describe('layout-schema — isBuiltinTheme', () => {
+  it('is true for exactly the 4 built-ins', () => {
+    for (const id of BUILTIN_THEME_IDS) expect(isBuiltinTheme(id)).toBe(true);
+  });
+
+  it('is false for a custom/unknown id', () => {
+    expect(isBuiltinTheme('my-neon-mod')).toBe(false);
+    expect(isBuiltinTheme('')).toBe(false);
   });
 });
 
@@ -227,6 +260,48 @@ describe('layout-schema — SettingsSchema uiScale + remoteEnabled fields (v0.2.
       schemaVersion: LAYOUT_SCHEMA_VERSION,
       startup: { mode: 'last' },
       remoteEnabled: 'yes',
+    });
+    expect(parsed.success).toBe(false);
+  });
+});
+
+describe('layout-schema — SettingsSchema fontFamily + effectToggles fields (theme-effects-font M0)', () => {
+  it('round-trips a settings file with both new fields present', () => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: LAYOUT_SCHEMA_VERSION,
+      startup: { mode: 'last' },
+      fontFamily: 'jetbrains-mono',
+      effectToggles: { scanlines: true, flicker: false },
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.fontFamily).toBe('jetbrains-mono');
+    expect(parsed.success && parsed.data.effectToggles).toEqual({ scanlines: true, flicker: false });
+  });
+
+  it('round-trips a settings file with both new fields absent (pre-M0 files still parse)', () => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: LAYOUT_SCHEMA_VERSION,
+      startup: { mode: 'last' },
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.fontFamily).toBeUndefined();
+    expect(parsed.success && parsed.data.effectToggles).toBeUndefined();
+  });
+
+  it('rejects an empty fontFamily string', () => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: LAYOUT_SCHEMA_VERSION,
+      startup: { mode: 'last' },
+      fontFamily: '',
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects a non-boolean value inside effectToggles', () => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: LAYOUT_SCHEMA_VERSION,
+      startup: { mode: 'last' },
+      effectToggles: { scanlines: 'on' },
     });
     expect(parsed.success).toBe(false);
   });

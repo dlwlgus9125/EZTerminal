@@ -1,11 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   BRIDGE_KEY,
+  DESKTOP_BRIDGE_KEY,
   type EzTerminalApi,
+  type EzTerminalDesktopApi,
   type RunStartedInfo,
   type SessionInfo,
   type SystemStatsSnapshot,
 } from '../shared/ipc';
+import type { ThemeMod } from '../shared/theme-schema';
 
 // Preload runs with context isolation ON (architecture §1).
 // We expose a NARROW, explicit API — never the raw ipcRenderer.
@@ -173,3 +176,21 @@ const api: EzTerminalApi = {
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
+
+// Desktop-only bridge (theme-effects-font M3) — a SEPARATE object from `api`
+// above, not merged into it (see EzTerminalDesktopApi's doc in shared/ipc.ts
+// for why: mobile has no implementation of these, and folding them into the
+// shared EzTerminalApi would force mobile's transport to stub every one).
+const desktopApi: EzTerminalDesktopApi = {
+  getAvailableThemes: (): Promise<ThemeMod[]> => ipcRenderer.invoke('theme:get-available'),
+  importTheme: (json: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('theme:import', json),
+  getFont: (): Promise<string | undefined> => ipcRenderer.invoke('settings:get-font'),
+  setFont: (id: string): Promise<void> => ipcRenderer.invoke('settings:set-font', id),
+  getEffectToggles: (): Promise<Record<string, boolean>> =>
+    ipcRenderer.invoke('settings:get-effect-toggles'),
+  setEffectToggles: (toggles: Record<string, boolean>): Promise<void> =>
+    ipcRenderer.invoke('settings:set-effect-toggles', toggles),
+};
+
+contextBridge.exposeInMainWorld(DESKTOP_BRIDGE_KEY, desktopApi);

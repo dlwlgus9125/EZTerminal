@@ -73,9 +73,24 @@ export const StartupPrefSchema = z.object({
   mode: z.union([z.literal('last'), z.literal('preset')]),
   presetName: z.string().min(1).max(64).optional(),
 });
-/** Built-in theme names (E1) — persisted in settings.json, applied via the
- * `data-theme` DOM attribute + the matching xterm ITheme in renderer/themes.ts. */
-export const ThemeNameSchema = z.enum(['dark', 'light', 'high-contrast', 'matrix']);
+/** Built-in theme ids (E1; theme-effects-font M0) — the 4 themes that ship
+ * with the app and always win an id collision against a custom mod (see
+ * shared/theme-schema.ts's `validateThemeMod` and renderer/themes.ts's
+ * `registerTheme`). */
+export const BUILTIN_THEME_IDS = ['dark', 'light', 'high-contrast', 'matrix'] as const;
+
+export function isBuiltinTheme(name: string): boolean {
+  return (BUILTIN_THEME_IDS as readonly string[]).includes(name);
+}
+
+/** Theme id/name — persisted in settings.json, applied via the `data-theme`
+ * DOM attribute + the matching xterm ITheme in renderer/themes.ts. Was a
+ * closed enum of the 4 built-ins pre-M0; now an open, runtime-validated
+ * string so a custom/imported theme mod can register under its own id.
+ * Resolve an actual theme through renderer/themes.ts's `getActiveTheme()`
+ * (built-in ∪ registry, falls back to 'dark') rather than assuming this is
+ * one of the 4 built-ins. */
+export const ThemeNameSchema = z.string().min(1);
 export type ThemeName = z.infer<typeof ThemeNameSchema>;
 
 export const SettingsSchema = z.object({
@@ -89,6 +104,18 @@ export const SettingsSchema = z.object({
   // Remote WS bridge on/off (v0.2.0 D2) — absent defaults to true (pre-existing
   // always-on behavior) in layout-store.
   remoteEnabled: z.boolean().optional(),
+  // User font override (theme-effects-font M0) — a renderer/fonts.ts
+  // FONT_CATALOG id; absent means "use the active theme's own fontFamily"
+  // (resolveFontFamily). Bounded, not enum-validated: an unrecognized id
+  // (a removed catalog entry) still parses and just falls back to the theme
+  // font rather than corrupting the whole settings file.
+  fontFamily: z.string().min(1).max(256).optional(),
+  // Per-effect on/off (theme-effects-font M0), keyed by renderer/effects.ts's
+  // EffectId — Record<string, ...> rather than a closed key set so a
+  // since-removed/renamed effect in an old settings.json still parses.
+  // Absent entries default per-platform (desktop: theme-declared default,
+  // mobile: off) via resolveActiveEffects's platformDefaults parameter.
+  effectToggles: z.record(z.string(), z.boolean()).optional(),
 });
 export type StartupPref = z.infer<typeof StartupPrefSchema>;
 export type SettingsFile = z.infer<typeof SettingsSchema>;
