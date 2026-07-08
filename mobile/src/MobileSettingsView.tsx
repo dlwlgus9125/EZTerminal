@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 
 import { EFFECT_CATALOG, type EffectId } from '../../src/renderer/effects';
+import { applyRollbarParams, clampRollbarParams, type RollbarParams } from '../../src/renderer/effect-params';
 import { FONT_CATALOG } from '../../src/renderer/fonts';
 import { applyThemeVarsAndEffects, setUserFontId } from '../../src/renderer/theme-runtime';
 import { getActiveTheme, getActiveThemeName } from '../../src/renderer/themes';
@@ -14,8 +15,10 @@ import {
   MOBILE_EFFECT_DEFAULTS,
   loadEffectToggles,
   loadFont,
+  loadRollbar,
   saveEffectToggles,
   saveFont,
+  saveRollbar,
 } from './theme';
 import { loadUiScale, saveUiScale } from './ui-scale';
 
@@ -90,6 +93,18 @@ export function MobileSettingsView({
         effectToggles: next,
         platformDefaults: MOBILE_EFFECT_DEFAULTS,
       });
+      return next;
+    });
+  }, []);
+
+  // crt-rollbar line params (rollbar-params) — same load/clamp/save shape as
+  // font/effects above.
+  const [rollbar, setRollbar] = useState(() => clampRollbarParams(loadRollbar()));
+  const changeRollbar = useCallback((partial: Partial<RollbarParams>) => {
+    setRollbar((prev) => {
+      const next = clampRollbarParams({ ...prev, ...partial });
+      saveRollbar(next);
+      applyRollbarParams(next);
       return next;
     });
   }, []);
@@ -189,6 +204,67 @@ export function MobileSettingsView({
                   </button>
                 );
               })}
+            </div>
+          )}
+          {declaredEffects.includes('crt-rollbar') && (
+            <div className="settings-rollbar-params" data-testid="settings-rollbar-params">
+              <label className="settings-rollbar-row">
+                <span>Line count: {rollbar.count}</span>
+                <input
+                  type="range"
+                  min={1}
+                  max={40}
+                  step={1}
+                  value={rollbar.count}
+                  onChange={(e) => changeRollbar({ count: Number(e.target.value) })}
+                  data-testid="settings-rollbar-count"
+                />
+              </label>
+              <label className="settings-rollbar-row">
+                <span>Line thickness: {rollbar.thickness}px</span>
+                <input
+                  type="range"
+                  min={1}
+                  max={10}
+                  step={1}
+                  value={rollbar.thickness}
+                  onChange={(e) => changeRollbar({ thickness: Number(e.target.value) })}
+                  data-testid="settings-rollbar-thickness"
+                />
+              </label>
+              <label className="settings-rollbar-row">
+                <span>Line gap: {rollbar.gap}px</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={30}
+                  step={1}
+                  value={rollbar.gap}
+                  onChange={(e) => changeRollbar({ gap: Number(e.target.value) })}
+                  data-testid="settings-rollbar-gap"
+                />
+              </label>
+              <label className="settings-rollbar-row">
+                <span>Line color</span>
+                <input
+                  type="color"
+                  value={rollbar.color}
+                  onChange={(e) => changeRollbar({ color: e.target.value })}
+                  data-testid="settings-rollbar-color"
+                />
+              </label>
+              <label className="settings-rollbar-row">
+                <span>Roll speed: {rollbar.speed}</span>
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  step={1}
+                  value={rollbar.speed}
+                  onChange={(e) => changeRollbar({ speed: Number(e.target.value) })}
+                  data-testid="settings-rollbar-speed"
+                />
+              </label>
             </div>
           )}
         </section>

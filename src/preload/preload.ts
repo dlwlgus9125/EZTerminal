@@ -191,6 +191,10 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.invoke('settings:get-effect-toggles'),
   setEffectToggles: (toggles: Record<string, boolean>): Promise<void> =>
     ipcRenderer.invoke('settings:set-effect-toggles', toggles),
+  getRollbar: (): Promise<import('../shared/layout-schema').RollbarSettings> =>
+    ipcRenderer.invoke('settings:get-rollbar'),
+  setRollbar: (params: import('../shared/layout-schema').RollbarSettings): Promise<void> =>
+    ipcRenderer.invoke('settings:set-rollbar', params),
 };
 
 contextBridge.exposeInMainWorld(DESKTOP_BRIDGE_KEY, desktopApi);

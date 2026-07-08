@@ -31,6 +31,7 @@ import {
   validateLayoutEnvelope,
   type LayoutEnvelope,
   type PresetsFile,
+  type RollbarSettings,
   type SettingsFile,
   type StartupPref,
   type ThemeName,
@@ -205,6 +206,14 @@ export class LayoutStore {
 
   async setEffectToggles(effectToggles: Record<string, boolean>): Promise<void> {
     await this.updateSettings((current) => ({ ...current, effectToggles }), 'effectToggles');
+  }
+
+  async getRollbar(): Promise<RollbarSettings> {
+    return (await this.loadSettingsFile()).rollbar ?? {};
+  }
+
+  async setRollbar(rollbar: RollbarSettings): Promise<void> {
+    await this.updateSettings((current) => ({ ...current, rollbar }), 'rollbar');
   }
 
   /** Read + validate settings.json, defaulting to `{ startup: {mode:'last'} }`

@@ -13,6 +13,7 @@ import type { ThemeMod } from '../shared/theme-schema';
 import { CommandPalette, type PaletteAction } from './CommandPalette';
 import { ConnectionInfoPanel } from './ConnectionInfoPanel';
 import { EFFECT_CATALOG, type EffectId } from './effects';
+import { DEFAULT_ROLLBAR_PARAMS, applyRollbarParams, clampRollbarParams, type RollbarParams } from './effect-params';
 import { FileExplorerPanel } from './FileExplorerPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { StatusPanel } from './StatusPanel';
@@ -375,6 +376,16 @@ export function App(): JSX.Element {
 
   const [fontId, setFontId] = useState<string | undefined>(undefined);
 
+  // crt-rollbar line params (rollbar-params) — same ref-mirrors-state shape
+  // as effectToggles above, needed so onChangeRollbar (a stable, dep-free
+  // callback) can read the latest value without becoming a moving target.
+  const [rollbar, setRollbarState] = useState<RollbarParams>(DEFAULT_ROLLBAR_PARAMS);
+  const rollbarRef = useRef<RollbarParams>(DEFAULT_ROLLBAR_PARAMS);
+  const setRollbar = useCallback((next: RollbarParams): void => {
+    rollbarRef.current = next;
+    setRollbarState(next);
+  }, []);
+
   const applyTheme = useCallback((name: ThemeName): void => {
     document.documentElement.dataset.theme = name;
     applyThemeVarsAndEffects(name, {
@@ -420,9 +431,10 @@ export function App(): JSX.Element {
       await refreshAvailableThemes();
       if (cancelled) return;
       try {
-        const [persistedFontId, persistedToggles] = await Promise.all([
+        const [persistedFontId, persistedToggles, persistedRollbar] = await Promise.all([
           window.ezterminalDesktop?.getFont(),
           window.ezterminalDesktop?.getEffectToggles(),
+          window.ezterminalDesktop?.getRollbar(),
         ]);
         if (cancelled) return;
         if (persistedFontId) {
@@ -430,6 +442,11 @@ export function App(): JSX.Element {
           setFontId(persistedFontId);
         }
         if (persistedToggles) setEffectToggles(persistedToggles);
+        if (persistedRollbar) {
+          const clamped = clampRollbarParams(persistedRollbar);
+          applyRollbarParams(clamped);
+          setRollbar(clamped);
+        }
       } catch {
         // Desktop bridge unavailable — no user font override, theme defaults for effects.
       }
@@ -439,7 +456,7 @@ export function App(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [applyTheme, refreshAvailableThemes, setEffectToggles]);
+  }, [applyTheme, refreshAvailableThemes, setEffectToggles, setRollbar]);
 
   const selectTheme = useCallback(
     (name: ThemeName): void => {
@@ -475,6 +492,16 @@ export function App(): JSX.Element {
       applyThemeVarsAndEffects(theme, { effectToggles: next, platformDefaults: DESKTOP_EFFECT_DEFAULTS });
     },
     [theme, setEffectToggles],
+  );
+
+  const onChangeRollbar = useCallback(
+    (partial: Partial<RollbarParams>): void => {
+      const next = clampRollbarParams({ ...rollbarRef.current, ...partial });
+      setRollbar(next);
+      applyRollbarParams(next);
+      void window.ezterminalDesktop?.setRollbar(next);
+    },
+    [setRollbar],
   );
 
   // ── UI scale (v0.2.0 D1) ──────────────────────────────────────────────────
@@ -912,6 +939,8 @@ export function App(): JSX.Element {
             activeThemeEffects={activeThemeDef.effects ?? []}
             effectToggles={effectToggles}
             onToggleEffect={onToggleEffect}
+            rollbar={rollbar}
+            onChangeRollbar={onChangeRollbar}
           />
         )}
         {filesOpen && (

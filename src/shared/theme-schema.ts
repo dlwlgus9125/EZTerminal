@@ -65,7 +65,7 @@ const CSS_NAMED_COLORS = new Set([
   'whitesmoke', 'yellow', 'yellowgreen', 'transparent',
 ]);
 
-function isColorValue(value: string): boolean {
+export function isColorValue(value: string): boolean {
   if (DANGEROUS_VALUE_RE.test(value)) return false;
   if (HEX_COLOR_RE.test(value)) return true;
   if (FUNC_COLOR_RE.test(value)) return true;

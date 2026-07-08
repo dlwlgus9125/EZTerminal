@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { ThemeName } from '../shared/layout-schema';
 import { EFFECT_CATALOG, type EffectId } from './effects';
+import type { RollbarParams } from './effect-params';
 import { FONT_CATALOG } from './fonts';
 import type { ThemeDefinition } from './themes';
 import { UI_SCALE_DEFAULT } from './ui-scale';
@@ -29,6 +30,10 @@ interface SettingsPanelProps {
   readonly activeThemeEffects: readonly string[];
   readonly effectToggles: Record<string, boolean>;
   readonly onToggleEffect: (id: string, on: boolean) => void;
+  /** crt-rollbar line params (rollbar-params) — controls render beneath the
+   * crt-rollbar toggle only when the active theme declares that effect. */
+  readonly rollbar: RollbarParams;
+  readonly onChangeRollbar: (partial: Partial<RollbarParams>) => void;
 }
 
 export function SettingsPanel({
@@ -43,6 +48,8 @@ export function SettingsPanel({
   activeThemeEffects,
   effectToggles,
   onToggleEffect,
+  rollbar,
+  onChangeRollbar,
 }: SettingsPanelProps): JSX.Element {
   const [remoteEnabled, setRemoteEnabled] = useState<boolean | null>(null);
   const [remotePort, setRemotePort] = useState<number | null>(null);
@@ -185,15 +192,78 @@ export function SettingsPanel({
             if (!entry) return null;
             const on = effectToggles[id] ?? entry.defaultOn;
             return (
-              <label key={id} className="settings-radio-row">
-                <input
-                  type="checkbox"
-                  checked={on}
-                  onChange={(e) => onToggleEffect(id, e.target.checked)}
-                  data-testid={`settings-effect-${id}`}
-                />
-                <span>{entry.label}</span>
-              </label>
+              <div key={id}>
+                <label className="settings-radio-row">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={(e) => onToggleEffect(id, e.target.checked)}
+                    data-testid={`settings-effect-${id}`}
+                  />
+                  <span>{entry.label}</span>
+                </label>
+                {id === 'crt-rollbar' && (
+                  <div className="settings-rollbar-params" data-testid="settings-rollbar-params">
+                    <label className="settings-rollbar-row">
+                      <span>Line count: {rollbar.count}</span>
+                      <input
+                        type="range"
+                        min={1}
+                        max={40}
+                        step={1}
+                        value={rollbar.count}
+                        onChange={(e) => onChangeRollbar({ count: Number(e.target.value) })}
+                        data-testid="settings-rollbar-count"
+                      />
+                    </label>
+                    <label className="settings-rollbar-row">
+                      <span>Line thickness: {rollbar.thickness}px</span>
+                      <input
+                        type="range"
+                        min={1}
+                        max={10}
+                        step={1}
+                        value={rollbar.thickness}
+                        onChange={(e) => onChangeRollbar({ thickness: Number(e.target.value) })}
+                        data-testid="settings-rollbar-thickness"
+                      />
+                    </label>
+                    <label className="settings-rollbar-row">
+                      <span>Line gap: {rollbar.gap}px</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={30}
+                        step={1}
+                        value={rollbar.gap}
+                        onChange={(e) => onChangeRollbar({ gap: Number(e.target.value) })}
+                        data-testid="settings-rollbar-gap"
+                      />
+                    </label>
+                    <label className="settings-rollbar-row">
+                      <span>Line color</span>
+                      <input
+                        type="color"
+                        value={rollbar.color}
+                        onChange={(e) => onChangeRollbar({ color: e.target.value })}
+                        data-testid="settings-rollbar-color"
+                      />
+                    </label>
+                    <label className="settings-rollbar-row">
+                      <span>Roll speed: {rollbar.speed}</span>
+                      <input
+                        type="range"
+                        min={1}
+                        max={20}
+                        step={1}
+                        value={rollbar.speed}
+                        onChange={(e) => onChangeRollbar({ speed: Number(e.target.value) })}
+                        data-testid="settings-rollbar-speed"
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
             );
           })
         )}
