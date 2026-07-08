@@ -8,16 +8,17 @@ import { isColorValue } from '../shared/theme-schema';
 // the effect still looks right before JS ever sets a var).
 
 export interface RollbarParams {
-  readonly count: number;
-  /** Per-line thickness in px. */
+  /** Per-line thickness in px (1..200 — thick CRT bands welcome; opacity and
+   * gradient softness scale with it since the stops are computed from it). */
   readonly thickness: number;
-  /** Spread 0..100 (%): how far apart the lines sit. At 100 the FIRST line is
-   * at the very top of the screen and the LAST at the very bottom (band =
-   * full viewport, lines evenly distributed between); at 0 the lines touch. */
+  /** Line spacing 1..100 (% of the screen height): the constant pitch from
+   * one line's top to the next line's top. The stream is an endless conveyor
+   * — there is no line count; as one line exits at the bottom the next enters
+   * at the top, always exactly this far behind. 100 = one screen-height apart. */
   readonly gap: number;
   readonly color: string;
-  /** Roll speed 1..20 (higher = faster); mapped to the sweep animation
-   * duration in `applyRollbarParams` (duration = 24 / speed seconds). */
+  /** Roll speed 1..20 (higher = faster): a line crosses the full screen in
+   * 24/speed seconds, independent of the spacing. */
   readonly speed: number;
   /** Per-bar opacity 0..100 (%). */
   readonly opacity: number;
@@ -28,20 +29,17 @@ export interface RollbarParams {
 }
 
 export const DEFAULT_ROLLBAR_PARAMS: RollbarParams = {
-  count: 10,
   thickness: 2,
-  gap: 100,
+  gap: 10,
   color: '#c8ffe6',
   speed: 4,
   opacity: 90,
   softness: 70,
 };
 
-const COUNT_MIN = 1;
-const COUNT_MAX = 40;
 const THICKNESS_MIN = 1;
-const THICKNESS_MAX = 10;
-const GAP_MIN = 0;
+const THICKNESS_MAX = 200;
+const GAP_MIN = 1;
 const GAP_MAX = 100;
 const SPEED_MIN = 1;
 const SPEED_MAX = 20;
@@ -65,7 +63,6 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
  * values go through) and falls back to the default swatch when invalid. */
 export function clampRollbarParams(partial: Partial<RollbarParams>): RollbarParams {
   return {
-    count: clampInt(partial.count, COUNT_MIN, COUNT_MAX, DEFAULT_ROLLBAR_PARAMS.count),
     thickness: clampInt(partial.thickness, THICKNESS_MIN, THICKNESS_MAX, DEFAULT_ROLLBAR_PARAMS.thickness),
     gap: clampInt(partial.gap, GAP_MIN, GAP_MAX, DEFAULT_ROLLBAR_PARAMS.gap),
     color:
@@ -80,40 +77,30 @@ export function clampRollbarParams(partial: Partial<RollbarParams>): RollbarPara
 
 /** Write the params onto <html> as `--fx-rollbar-*` custom properties —
  * index.css's crt-rollbar block reads these (with matching fallback
- * defaults) to size/space/color its repeating-gradient lines and set the
- * sweep duration.
+ * defaults).
  *
- * The band geometry is derived HERE as calc() strings (not in CSS) so the
- * count=1 edge case can't divide by zero and older calc() engines never
- * have to divide by a var:
- *  - height: `count*thickness px` at gap=0 (lines touching) growing linearly
- *    to `100vh` at gap=100 — so at max spread the FIRST line sits at the very
- *    top of the screen and the LAST at the very bottom.
- *  - period: (height - thickness) / (count - 1) — the pitch between line
- *    STARTS; the last line's bottom edge lands exactly on the band's bottom.
- *  - count=1: a single line (band = one thickness; period = thickness so the
- *    repeating gradient paints exactly one line). */
+ * SEAMLESS CONVEYOR geometry: the only geometric var is the PERIOD (the
+ * pitch between line tops, `gap`% of the viewport = `${gap}vh`). CSS derives
+ * the rest from it: the overlay is one period TALLER than the screen and
+ * starts one period ABOVE it, and the sweep animation translates it DOWN by
+ * exactly one period before looping — pattern period == travel distance, so
+ * the loop reset is invisible: as a line exits at the bottom, the next line
+ * is already entering at the top at the same constant pitch. The screen is
+ * never empty and the spacing never varies.
+ *
+ * Duration is per-PERIOD: a line must cross the full screen in 24/speed
+ * seconds regardless of spacing, so one period of travel takes
+ * (24/speed) * (gap/100) seconds. */
 export function applyRollbarParams(params: RollbarParams): void {
   const root = document.documentElement;
-  const { count, thickness, gap } = params;
-  const linesPx = count * thickness;
-  const spread = (gap / 100).toFixed(4);
-  const height =
-    count === 1
-      ? `${thickness}px`
-      : `calc(${linesPx}px + ${spread} * (100vh - ${linesPx}px))`;
-  const period =
-    count === 1
-      ? `${thickness}px`
-      : `calc((${linesPx}px + ${spread} * (100vh - ${linesPx}px) - ${thickness}px) / ${count - 1})`;
-  root.style.setProperty('--fx-rollbar-count', String(count));
+  const { thickness, gap } = params;
   root.style.setProperty('--fx-rollbar-thickness', String(thickness));
-  root.style.setProperty('--fx-rollbar-gap', String(gap));
-  root.style.setProperty('--fx-rollbar-height', height);
-  root.style.setProperty('--fx-rollbar-period', period);
+  root.style.setProperty('--fx-rollbar-period', `${gap}vh`);
   root.style.setProperty('--fx-rollbar-color', params.color);
-  // Higher speed = shorter sweep duration; the CSS animation reads this var.
-  root.style.setProperty('--fx-rollbar-duration', `${(24 / params.speed).toFixed(2)}s`);
+  root.style.setProperty(
+    '--fx-rollbar-duration',
+    `${((24 / params.speed) * (gap / 100)).toFixed(2)}s`,
+  );
   root.style.setProperty('--fx-rollbar-opacity', (params.opacity / 100).toFixed(2));
   // Gradient softness -> the two color-stop offsets INSIDE each line's
   // thickness: fade-in ends at t*softness/200, fade-out starts mirrored.
