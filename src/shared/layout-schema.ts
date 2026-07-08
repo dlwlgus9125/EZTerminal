@@ -103,6 +103,8 @@ export const RollbarParamsSchema = z.object({
   gap: z.number().optional(),
   color: z.string().optional(),
   speed: z.number().optional(),
+  opacity: z.number().optional(),
+  softness: z.number().optional(),
 });
 export type RollbarSettings = z.infer<typeof RollbarParamsSchema>;
 

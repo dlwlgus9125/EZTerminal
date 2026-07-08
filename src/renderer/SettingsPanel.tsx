@@ -261,6 +261,30 @@ export function SettingsPanel({
                         data-testid="settings-rollbar-speed"
                       />
                     </label>
+                    <label className="settings-rollbar-row">
+                      <span>Bar opacity: {rollbar.opacity}%</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={rollbar.opacity}
+                        onChange={(e) => onChangeRollbar({ opacity: Number(e.target.value) })}
+                        data-testid="settings-rollbar-opacity"
+                      />
+                    </label>
+                    <label className="settings-rollbar-row">
+                      <span>Line gradient: {rollbar.softness}%</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={rollbar.softness}
+                        onChange={(e) => onChangeRollbar({ softness: Number(e.target.value) })}
+                        data-testid="settings-rollbar-softness"
+                      />
+                    </label>
                   </div>
                 )}
               </div>

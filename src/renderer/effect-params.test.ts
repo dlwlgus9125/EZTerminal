@@ -24,6 +24,13 @@ describe('clampRollbarParams', () => {
     expect(clampRollbarParams({ speed: 0 }).speed).toBe(1);
   });
 
+  it('clamps opacity and softness to 0-100', () => {
+    expect(clampRollbarParams({ opacity: 150 }).opacity).toBe(100);
+    expect(clampRollbarParams({ opacity: -1 }).opacity).toBe(0);
+    expect(clampRollbarParams({ softness: 999 }).softness).toBe(100);
+    expect(clampRollbarParams({ softness: -9 }).softness).toBe(0);
+  });
+
   it('rounds a fractional in-range value', () => {
     expect(clampRollbarParams({ count: 5.6 }).count).toBe(6);
   });
@@ -50,7 +57,7 @@ describe('clampRollbarParams', () => {
 
 describe('applyRollbarParams', () => {
   it('sets the CSS custom properties on documentElement', () => {
-    applyRollbarParams({ count: 12, thickness: 3, gap: 5, color: '#abcdef', speed: 4 });
+    applyRollbarParams({ count: 12, thickness: 3, gap: 5, color: '#abcdef', speed: 4, opacity: 90, softness: 70 });
     const style = document.documentElement.style;
     expect(style.getPropertyValue('--fx-rollbar-count')).toBe('12');
     expect(style.getPropertyValue('--fx-rollbar-thickness')).toBe('3');
@@ -85,5 +92,25 @@ describe('applyRollbarParams', () => {
     applyRollbarParams({ ...DEFAULT_ROLLBAR_PARAMS, speed: 12 });
     // 24/12 = 2.00s
     expect(document.documentElement.style.getPropertyValue('--fx-rollbar-duration')).toBe('2.00s');
+  });
+
+  it('maps opacity % to a 0..1 css value', () => {
+    applyRollbarParams({ ...DEFAULT_ROLLBAR_PARAMS, opacity: 35 });
+    expect(document.documentElement.style.getPropertyValue('--fx-rollbar-opacity')).toBe('0.35');
+  });
+
+  it('maps softness to the per-line gradient stop offsets', () => {
+    // thickness 8, softness 50 -> fade-in ends at 8*50/200 = 2px, fade-out starts at 6px
+    applyRollbarParams({ ...DEFAULT_ROLLBAR_PARAMS, thickness: 8, softness: 50 });
+    const style = document.documentElement.style;
+    expect(style.getPropertyValue('--fx-rollbar-grad-in')).toBe('2.00px');
+    expect(style.getPropertyValue('--fx-rollbar-grad-out')).toBe('6.00px');
+    // softness 0 -> hard edges (0 / t); 100 -> triangle (t/2 / t/2)
+    applyRollbarParams({ ...DEFAULT_ROLLBAR_PARAMS, thickness: 8, softness: 0 });
+    expect(style.getPropertyValue('--fx-rollbar-grad-in')).toBe('0.00px');
+    expect(style.getPropertyValue('--fx-rollbar-grad-out')).toBe('8.00px');
+    applyRollbarParams({ ...DEFAULT_ROLLBAR_PARAMS, thickness: 8, softness: 100 });
+    expect(style.getPropertyValue('--fx-rollbar-grad-in')).toBe('4.00px');
+    expect(style.getPropertyValue('--fx-rollbar-grad-out')).toBe('4.00px');
   });
 });
