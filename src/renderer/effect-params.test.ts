@@ -71,11 +71,12 @@ describe('applyRollbarParams', () => {
   });
 
   it('scales the per-period duration with spacing so line speed stays constant', () => {
-    // gap 100 (one screen apart): a period IS a full screen -> 24/4 = 6.00s
+    // gap 100 (one screen apart) at default speed 1: a period IS a full
+    // screen -> 24/1 = 24.00s
     applyRollbarParams({ ...DEFAULT_ROLLBAR_PARAMS, gap: 100 });
     const style = document.documentElement.style;
     expect(style.getPropertyValue('--fx-rollbar-period')).toBe('100vh');
-    expect(style.getPropertyValue('--fx-rollbar-duration')).toBe('6.00s');
+    expect(style.getPropertyValue('--fx-rollbar-duration')).toBe('24.00s');
     // gap 10 at speed 12: (24/12) * 0.10 = 0.20s per pitch
     applyRollbarParams({ ...DEFAULT_ROLLBAR_PARAMS, gap: 10, speed: 12 });
     expect(style.getPropertyValue('--fx-rollbar-duration')).toBe('0.20s');
