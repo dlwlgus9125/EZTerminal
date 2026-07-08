@@ -1,7 +1,7 @@
 {
   "name": "ezterminal",
   "productName": "EZTerminal",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "EZTerminal — a structured-data shell terminal (Phase 1 shell core).",
   "main": ".vite/build/main.js",
   "private": true,
