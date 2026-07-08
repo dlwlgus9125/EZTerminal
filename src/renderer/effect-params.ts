@@ -9,7 +9,11 @@ import { isColorValue } from '../shared/theme-schema';
 
 export interface RollbarParams {
   readonly count: number;
+  /** Per-line thickness in px. */
   readonly thickness: number;
+  /** Spread 0..100 (%): how far apart the lines sit. At 100 the FIRST line is
+   * at the very top of the screen and the LAST at the very bottom (band =
+   * full viewport, lines evenly distributed between); at 0 the lines touch. */
   readonly gap: number;
   readonly color: string;
   /** Roll speed 1..20 (higher = faster); mapped to the sweep animation
@@ -20,7 +24,7 @@ export interface RollbarParams {
 export const DEFAULT_ROLLBAR_PARAMS: RollbarParams = {
   count: 10,
   thickness: 2,
-  gap: 4,
+  gap: 100,
   color: '#c8ffe6',
   speed: 4,
 };
@@ -30,7 +34,7 @@ const COUNT_MAX = 40;
 const THICKNESS_MIN = 1;
 const THICKNESS_MAX = 10;
 const GAP_MIN = 0;
-const GAP_MAX = 30;
+const GAP_MAX = 100;
 const SPEED_MIN = 1;
 const SPEED_MAX = 20;
 
@@ -63,12 +67,36 @@ export function clampRollbarParams(partial: Partial<RollbarParams>): RollbarPara
 /** Write the params onto <html> as `--fx-rollbar-*` custom properties —
  * index.css's crt-rollbar block reads these (with matching fallback
  * defaults) to size/space/color its repeating-gradient lines and set the
- * sweep duration. */
+ * sweep duration.
+ *
+ * The band geometry is derived HERE as calc() strings (not in CSS) so the
+ * count=1 edge case can't divide by zero and older calc() engines never
+ * have to divide by a var:
+ *  - height: `count*thickness px` at gap=0 (lines touching) growing linearly
+ *    to `100vh` at gap=100 — so at max spread the FIRST line sits at the very
+ *    top of the screen and the LAST at the very bottom.
+ *  - period: (height - thickness) / (count - 1) — the pitch between line
+ *    STARTS; the last line's bottom edge lands exactly on the band's bottom.
+ *  - count=1: a single line (band = one thickness; period = thickness so the
+ *    repeating gradient paints exactly one line). */
 export function applyRollbarParams(params: RollbarParams): void {
   const root = document.documentElement;
-  root.style.setProperty('--fx-rollbar-count', String(params.count));
-  root.style.setProperty('--fx-rollbar-thickness', String(params.thickness));
-  root.style.setProperty('--fx-rollbar-gap', String(params.gap));
+  const { count, thickness, gap } = params;
+  const linesPx = count * thickness;
+  const spread = (gap / 100).toFixed(4);
+  const height =
+    count === 1
+      ? `${thickness}px`
+      : `calc(${linesPx}px + ${spread} * (100vh - ${linesPx}px))`;
+  const period =
+    count === 1
+      ? `${thickness}px`
+      : `calc((${linesPx}px + ${spread} * (100vh - ${linesPx}px) - ${thickness}px) / ${count - 1})`;
+  root.style.setProperty('--fx-rollbar-count', String(count));
+  root.style.setProperty('--fx-rollbar-thickness', String(thickness));
+  root.style.setProperty('--fx-rollbar-gap', String(gap));
+  root.style.setProperty('--fx-rollbar-height', height);
+  root.style.setProperty('--fx-rollbar-period', period);
   root.style.setProperty('--fx-rollbar-color', params.color);
   // Higher speed = shorter sweep duration; the CSS animation reads this var.
   root.style.setProperty('--fx-rollbar-duration', `${(24 / params.speed).toFixed(2)}s`);
