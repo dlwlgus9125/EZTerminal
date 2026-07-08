@@ -219,26 +219,29 @@ html[data-effect-crt-curvature='on']::before {
   background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.35) 100%);
 }
 
-/* == CRT ROLL BAR (crt-rollbar effect) == a band of horizontal lines that
-   sweeps top→bottom on a loop — the old-CRT "vertical hold" roll ("줄
-   내려가는"). Count/thickness/gap(spread %)/color/speed are user-configurable
-   (rollbar-params, Settings). Geometry comes from effect-params.ts's
-   applyRollbarParams as pre-computed calc() strings: --fx-rollbar-height
-   (band height — full 100vh at gap=100, so the first line rides the top edge
-   and the last rides the bottom) and --fx-rollbar-period (pitch between line
-   starts). EVERY line is identical: the same color and the same soft
-   fade-in/out gradient within its own thickness — deliberately NO band-level
-   edge mask (it made the first/last lines dimmer than the middle ones).
-   Fallbacks mirror DEFAULT_ROLLBAR_PARAMS (count 10, thickness 2, gap 100).
-   On body::after (html::after/::before are taken by scanlines/curvature),
-   z-index above them. GPU-cheap: transform + opacity, pointer-events:none. */
+/* == CRT ROLL BAR (crt-rollbar effect) == an ENDLESS CONVEYOR of horizontal
+   lines drifting top→bottom at a constant pitch — the old-CRT "vertical
+   hold" roll ("줄 내려가는"). No line count: as one line exits at the bottom
+   the next is already entering at the top, always --fx-rollbar-period apart
+   (the pitch, `gap`% of the viewport, set by effect-params.ts). SEAMLESS
+   because pattern period == travel distance: the overlay is one period
+   taller than the screen, starts one period above it, and translates down by
+   exactly one period per animation loop — the reset lands on an identical
+   frame, so the screen is never empty and the spacing never varies.
+   Thickness/color/speed/opacity/gradient-softness are the other params
+   (rollbar-params, Settings). EVERY line is identical (same color, same
+   soft fade within its own thickness). Fallbacks mirror
+   DEFAULT_ROLLBAR_PARAMS (thickness 2, gap 10% -> 10vh, speed 4 -> 0.60s per
+   period). On body::after (html::after/::before are taken by
+   scanlines/curvature), z-index above them. GPU-cheap: transform + opacity,
+   pointer-events:none. */
 html[data-effect-crt-rollbar='on'] body::after {
   content: '';
   position: fixed;
   left: 0;
   right: 0;
-  top: 0;
-  height: var(--fx-rollbar-height, 100vh);
+  top: calc(-1 * var(--fx-rollbar-period, 10vh));
+  height: calc(100vh + var(--fx-rollbar-period, 10vh));
   z-index: 201;
   pointer-events: none;
   background-image: repeating-linear-gradient(
@@ -248,15 +251,15 @@ html[data-effect-crt-rollbar='on'] body::after {
     var(--fx-rollbar-color, #c8ffe6) var(--fx-rollbar-grad-out, 1.3px),
     color-mix(in srgb, var(--fx-rollbar-color, #c8ffe6) 0%, transparent) calc(var(--fx-rollbar-thickness, 2) * 1px),
     transparent calc(var(--fx-rollbar-thickness, 2) * 1px),
-    transparent var(--fx-rollbar-period, calc((100vh - 2px) / 9))
+    transparent var(--fx-rollbar-period, 10vh)
   );
   opacity: var(--fx-rollbar-opacity, 0.9);
   will-change: transform;
-  animation: crt-rollbar-sweep var(--fx-rollbar-duration, 5.5s) linear infinite;
+  animation: crt-rollbar-sweep var(--fx-rollbar-duration, 0.6s) linear infinite;
 }
 @keyframes crt-rollbar-sweep {
-  0% { transform: translateY(calc(-1 * var(--fx-rollbar-height, 100vh))); }
-  100% { transform: translateY(100vh); }
+  0% { transform: translateY(0); }
+  100% { transform: translateY(var(--fx-rollbar-period, 10vh)); }
 }
 
 /* == SCANLINE SCROLL (scanline-scroll effect) == the horizontal scanline

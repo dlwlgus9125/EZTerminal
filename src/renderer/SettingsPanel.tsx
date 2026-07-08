@@ -205,23 +205,11 @@ export function SettingsPanel({
                 {id === 'crt-rollbar' && (
                   <div className="settings-rollbar-params" data-testid="settings-rollbar-params">
                     <label className="settings-rollbar-row">
-                      <span>Line count: {rollbar.count}</span>
-                      <input
-                        type="range"
-                        min={1}
-                        max={40}
-                        step={1}
-                        value={rollbar.count}
-                        onChange={(e) => onChangeRollbar({ count: Number(e.target.value) })}
-                        data-testid="settings-rollbar-count"
-                      />
-                    </label>
-                    <label className="settings-rollbar-row">
                       <span>Line thickness: {rollbar.thickness}px</span>
                       <input
                         type="range"
                         min={1}
-                        max={10}
+                        max={200}
                         step={1}
                         value={rollbar.thickness}
                         onChange={(e) => onChangeRollbar({ thickness: Number(e.target.value) })}
@@ -229,10 +217,10 @@ export function SettingsPanel({
                       />
                     </label>
                     <label className="settings-rollbar-row">
-                      <span>Line spread: {rollbar.gap}%</span>
+                      <span>Line spacing: {rollbar.gap}%</span>
                       <input
                         type="range"
-                        min={0}
+                        min={1}
                         max={100}
                         step={1}
                         value={rollbar.gap}
