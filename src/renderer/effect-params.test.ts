@@ -14,8 +14,8 @@ describe('clampRollbarParams', () => {
     expect(clampRollbarParams({ thickness: 0 }).thickness).toBe(1);
   });
 
-  it('clamps gap above/below the 0-30 range', () => {
-    expect(clampRollbarParams({ gap: 999 }).gap).toBe(30);
+  it('clamps gap (spread %) above/below the 0-100 range', () => {
+    expect(clampRollbarParams({ gap: 999 }).gap).toBe(100);
     expect(clampRollbarParams({ gap: -5 }).gap).toBe(0);
   });
 
@@ -58,6 +58,27 @@ describe('applyRollbarParams', () => {
     expect(style.getPropertyValue('--fx-rollbar-color')).toBe('#abcdef');
     // speed 4 -> duration 24/4 = 6.00s
     expect(style.getPropertyValue('--fx-rollbar-duration')).toBe('6.00s');
+    // 12 lines x 3px = 36px at 5% spread toward the full viewport
+    expect(style.getPropertyValue('--fx-rollbar-height')).toBe('calc(36px + 0.0500 * (100vh - 36px))');
+    expect(style.getPropertyValue('--fx-rollbar-period')).toBe(
+      'calc((36px + 0.0500 * (100vh - 36px) - 3px) / 11)',
+    );
+  });
+
+  it('spans the full viewport at gap=100 (first line top, last line bottom)', () => {
+    applyRollbarParams({ ...DEFAULT_ROLLBAR_PARAMS, count: 10, thickness: 2, gap: 100 });
+    const style = document.documentElement.style;
+    expect(style.getPropertyValue('--fx-rollbar-height')).toBe('calc(20px + 1.0000 * (100vh - 20px))');
+    expect(style.getPropertyValue('--fx-rollbar-period')).toBe(
+      'calc((20px + 1.0000 * (100vh - 20px) - 2px) / 9)',
+    );
+  });
+
+  it('renders a single line for count=1 (no divide-by-zero pitch)', () => {
+    applyRollbarParams({ ...DEFAULT_ROLLBAR_PARAMS, count: 1, thickness: 4 });
+    const style = document.documentElement.style;
+    expect(style.getPropertyValue('--fx-rollbar-height')).toBe('4px');
+    expect(style.getPropertyValue('--fx-rollbar-period')).toBe('4px');
   });
 
   it('maps a higher speed to a shorter duration', () => {

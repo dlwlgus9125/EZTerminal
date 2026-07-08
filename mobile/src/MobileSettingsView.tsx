@@ -233,11 +233,11 @@ export function MobileSettingsView({
                 />
               </label>
               <label className="settings-rollbar-row">
-                <span>Line gap: {rollbar.gap}px</span>
+                <span>Line spread: {rollbar.gap}%</span>
                 <input
                   type="range"
                   min={0}
-                  max={30}
+                  max={100}
                   step={1}
                   value={rollbar.gap}
                   onChange={(e) => changeRollbar({ gap: Number(e.target.value) })}
