@@ -19,6 +19,12 @@ export interface RollbarParams {
   /** Roll speed 1..20 (higher = faster); mapped to the sweep animation
    * duration in `applyRollbarParams` (duration = 24 / speed seconds). */
   readonly speed: number;
+  /** Per-bar opacity 0..100 (%). */
+  readonly opacity: number;
+  /** Per-line gradient softness 0..100 (%): 0 = hard solid edges, 100 = a
+   * full fade-in/out triangle (no solid core). Every line gets the SAME
+   * gradient — this shapes it. */
+  readonly softness: number;
 }
 
 export const DEFAULT_ROLLBAR_PARAMS: RollbarParams = {
@@ -27,6 +33,8 @@ export const DEFAULT_ROLLBAR_PARAMS: RollbarParams = {
   gap: 100,
   color: '#c8ffe6',
   speed: 4,
+  opacity: 90,
+  softness: 70,
 };
 
 const COUNT_MIN = 1;
@@ -37,6 +45,10 @@ const GAP_MIN = 0;
 const GAP_MAX = 100;
 const SPEED_MIN = 1;
 const SPEED_MAX = 20;
+const OPACITY_MIN = 0;
+const OPACITY_MAX = 100;
+const SOFTNESS_MIN = 0;
+const SOFTNESS_MAX = 100;
 
 /** Round + clamp to [min, max]; a non-finite input (absent/corrupt) falls
  * back to `fallback` — same double-clamp shape as ui-scale.ts's clampUiScale. */
@@ -61,6 +73,8 @@ export function clampRollbarParams(partial: Partial<RollbarParams>): RollbarPara
         ? partial.color
         : DEFAULT_ROLLBAR_PARAMS.color,
     speed: clampInt(partial.speed, SPEED_MIN, SPEED_MAX, DEFAULT_ROLLBAR_PARAMS.speed),
+    opacity: clampInt(partial.opacity, OPACITY_MIN, OPACITY_MAX, DEFAULT_ROLLBAR_PARAMS.opacity),
+    softness: clampInt(partial.softness, SOFTNESS_MIN, SOFTNESS_MAX, DEFAULT_ROLLBAR_PARAMS.softness),
   };
 }
 
@@ -100,4 +114,11 @@ export function applyRollbarParams(params: RollbarParams): void {
   root.style.setProperty('--fx-rollbar-color', params.color);
   // Higher speed = shorter sweep duration; the CSS animation reads this var.
   root.style.setProperty('--fx-rollbar-duration', `${(24 / params.speed).toFixed(2)}s`);
+  root.style.setProperty('--fx-rollbar-opacity', (params.opacity / 100).toFixed(2));
+  // Gradient softness -> the two color-stop offsets INSIDE each line's
+  // thickness: fade-in ends at t*softness/200, fade-out starts mirrored.
+  // softness 0 -> stops at 0/t (hard edges); 100 -> both at t/2 (triangle).
+  const fadePx = (thickness * params.softness) / 200;
+  root.style.setProperty('--fx-rollbar-grad-in', `${fadePx.toFixed(2)}px`);
+  root.style.setProperty('--fx-rollbar-grad-out', `${(thickness - fadePx).toFixed(2)}px`);
 }

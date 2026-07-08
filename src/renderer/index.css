@@ -244,13 +244,13 @@ html[data-effect-crt-rollbar='on'] body::after {
   background-image: repeating-linear-gradient(
     to bottom,
     color-mix(in srgb, var(--fx-rollbar-color, #c8ffe6) 0%, transparent) 0,
-    var(--fx-rollbar-color, #c8ffe6) calc(var(--fx-rollbar-thickness, 2) * 0.35px),
-    var(--fx-rollbar-color, #c8ffe6) calc(var(--fx-rollbar-thickness, 2) * 0.65px),
+    var(--fx-rollbar-color, #c8ffe6) var(--fx-rollbar-grad-in, 0.7px),
+    var(--fx-rollbar-color, #c8ffe6) var(--fx-rollbar-grad-out, 1.3px),
     color-mix(in srgb, var(--fx-rollbar-color, #c8ffe6) 0%, transparent) calc(var(--fx-rollbar-thickness, 2) * 1px),
     transparent calc(var(--fx-rollbar-thickness, 2) * 1px),
     transparent var(--fx-rollbar-period, calc((100vh - 2px) / 9))
   );
-  opacity: 0.9;
+  opacity: var(--fx-rollbar-opacity, 0.9);
   will-change: transform;
   animation: crt-rollbar-sweep var(--fx-rollbar-duration, 5.5s) linear infinite;
 }
