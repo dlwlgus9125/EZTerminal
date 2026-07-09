@@ -1,24 +1,20 @@
 /**
  * KnownHostsStore — TOFU host-key persistence (E5 §3), main's fs-owned store.
  *
- * Mirrors `layout-store.ts`'s write protocol exactly: atomic `<file>.tmp` ->
- * rename (one retry on a transient Windows lock, then drop), quarantine any
- * corrupt/invalid file to `<file>.corrupt` (overwriting prior evidence),
- * stale-`.tmp` cleanup on `init()`. Simpler than LayoutStore — one record
- * type, no debounced/latest-wins burst (a host-key write happens once per TOFU
- * accept, not on every keystroke), so each `add()` is its own atomic write,
- * serialized on a write chain so a concurrent check() during a write always
- * either fully precedes or fully follows it.
+ * Composes a JsonFile for the atomic-write / .corrupt-quarantine / write-chain
+ * protocol; this store keeps only the TOFU domain logic and the known_hosts
+ * schema. A host-key write happens once per TOFU accept (not on every
+ * keystroke), so each add() is its own atomic write, serialized on the file's
+ * write chain so a concurrent check() during a write always either fully
+ * precedes or fully follows it.
  */
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
-
 import {
   emptyKnownHostsFile,
   hostRecordKey,
   validateKnownHostsFile,
   type KnownHostsFile,
 } from '../shared/known-hosts-schema';
+import { JsonFile } from './json-file';
 
 const KNOWN_HOSTS_FILE = 'known_hosts.json';
 
@@ -31,27 +27,21 @@ export interface KnownHostCheckResult {
 }
 
 export class KnownHostsStore {
-  private readonly dir: string;
-  private writeChain: Promise<void> = Promise.resolve();
+  private readonly file: JsonFile;
 
   constructor(dir: string) {
-    this.dir = dir;
-  }
-
-  private file(): string {
-    return path.join(this.dir, KNOWN_HOSTS_FILE);
+    this.file = new JsonFile(dir, KNOWN_HOSTS_FILE);
   }
 
   /** Absolute path to known_hosts.json — surfaced in mismatch errors so the
    * user knows exactly which file to edit to recover from a key rotation. */
   get path(): string {
-    return this.file();
+    return this.file.path;
   }
 
   /** Ensure the dir exists and clear a crash-stale `.tmp` remnant. */
   async init(): Promise<void> {
-    await fs.mkdir(this.dir, { recursive: true });
-    await fs.unlink(`${this.file()}.tmp`).catch(() => undefined);
+    await this.file.init();
   }
 
   /** TOFU lookup: `match` (identical fingerprint), `mismatch` (key rotated or
@@ -66,63 +56,21 @@ export class KnownHostsStore {
 
   /** Persist a newly-accepted host key (TOFU accept). Serialized on the write chain. */
   async add(host: string, port: number, keyType: string, fingerprint: string): Promise<void> {
-    await this.enqueue(async () => {
+    await this.file.enqueue(async () => {
       const data = await this.load();
       data.hosts[hostRecordKey(host, port)] = { keyType, fingerprintSha256: fingerprint };
-      await this.atomicWrite(JSON.stringify(data));
+      await this.file.writeAtomic(JSON.stringify(data));
     });
   }
 
   private async load(): Promise<KnownHostsFile> {
-    let text: string;
-    try {
-      text = await fs.readFile(this.file(), 'utf8');
-    } catch {
-      return emptyKnownHostsFile(); // absent — first use
-    }
-    let raw: unknown;
-    try {
-      raw = JSON.parse(text);
-    } catch {
-      await this.quarantine();
-      return emptyKnownHostsFile();
-    }
+    const raw = await this.file.read();
+    if (raw === undefined) return emptyKnownHostsFile(); // absent (or unparseable — already quarantined by read())
     const parsed = validateKnownHostsFile(raw);
     if (parsed === null) {
-      await this.quarantine();
+      await this.file.quarantine();
       return emptyKnownHostsFile();
     }
     return parsed;
-  }
-
-  private async quarantine(): Promise<void> {
-    const target = this.file();
-    try {
-      await fs.rename(target, `${target}.corrupt`);
-      console.error(`[known-hosts-store] quarantined ${KNOWN_HOSTS_FILE} -> ${KNOWN_HOSTS_FILE}.corrupt`);
-    } catch {
-      // Already gone (double-quarantine race or ENOENT) — nothing to preserve.
-    }
-  }
-
-  private enqueue(op: () => Promise<void>): Promise<void> {
-    this.writeChain = this.writeChain.then(op);
-    return this.writeChain;
-  }
-
-  private async atomicWrite(data: string): Promise<void> {
-    const target = this.file();
-    const tmp = `${target}.tmp`;
-    try {
-      await fs.writeFile(tmp, data, 'utf8');
-      try {
-        await fs.rename(tmp, target);
-      } catch {
-        await fs.rename(tmp, target); // one retry (transient Windows lock), then drop
-      }
-    } catch (err) {
-      console.error('[known-hosts-store] atomic write failed:', err);
-      await fs.unlink(tmp).catch(() => undefined);
-    }
   }
 }
