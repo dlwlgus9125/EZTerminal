@@ -27,7 +27,7 @@
 import { WebSocketServer, type WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
 
-import type { InterpreterFrame, InterpreterToMain, MainToInterpreter, PacketRow, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
+import type { InterpreterFrame, InterpreterToMain, PacketRow, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
 import {
   base64ToUint8Array,
   encodeFrame,
@@ -39,6 +39,7 @@ import {
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
 import type { FileReadStream } from './file-service';
 import type { SessionDirectory } from './session-directory';
+import type { RemoteInterpreter, RemoteMessageChannel, RemotePort } from './interpreter-broker';
 
 /** Non-standard WS close code: auth was missing/wrong on this connection. */
 export const AUTH_CLOSE_CODE = 4001;
@@ -65,24 +66,11 @@ const MOBILE_PACKET_BACKPRESSURE_BYTES = 262_144;
 //    `ws`'s WebSocket — real instances satisfy these structurally, fakes in
 //    tests need implement nothing more) ─────────────────────────────────────
 
-export interface RemotePort {
-  postMessage(message: unknown): void;
-  on(event: 'message', listener: (event: { data: unknown }) => void): void;
-  on(event: 'close', listener: () => void): void;
-  start(): void;
-  close(): void;
-}
-
-export interface RemoteMessageChannel {
-  readonly port1: RemotePort;
-  readonly port2: RemotePort;
-}
-
-export interface RemoteInterpreter {
-  postMessage(message: MainToInterpreter, transfer?: readonly RemotePort[]): void;
-  on(event: 'message', listener: (message: InterpreterToMain) => void): void;
-  off(event: 'message', listener: (message: InterpreterToMain) => void): void;
-}
+// `RemotePort` / `RemoteMessageChannel` / `RemoteInterpreter` are owned by the
+// interpreter broker (they describe its interpreter/port seams). Re-exported
+// here so existing importers of this module (e.g. remote-bridge.test.ts) keep
+// resolving them unchanged.
+export type { RemoteInterpreter, RemoteMessageChannel, RemotePort };
 
 export interface RemoteWs {
   readonly readyState: number;
