@@ -8,10 +8,9 @@ import {
   shell,
   utilityProcess,
 } from 'electron';
-import type { UtilityProcess } from 'electron';
+import type { UtilityProcess, MessagePortMain } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { randomUUID } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 import started from 'electron-squirrel-startup';
 
@@ -26,14 +25,13 @@ import { KnownHostsStore } from './known-hosts-store';
 import { LogFile, pruneCrashDumps } from './diagnostics';
 import { SystemStatsService } from './system-stats-service';
 import { StatsVisibility } from './stats-visibility';
-import { SessionDirectory } from './session-directory';
 import { RemoteTokenStore } from './remote-token-store';
+import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
 import {
   startRemoteBridge,
   DEFAULT_REMOTE_BRIDGE_PORT,
   type RemoteBridgeHandle,
   type RemoteFileSource,
-  type RemoteInterpreter,
   type RemotePacketSource,
   type RemoteStatsSource,
 } from './remote-bridge';
@@ -80,6 +78,12 @@ process.on('unhandledRejection', (reason) => {
 // Interpreter utilityProcess — created once on 'ready', lives for the app lifetime.
 let interpreter: UtilityProcess | null = null;
 
+// The single main-side broker over the interpreter — created once on 'ready'
+// right after the fork. main (local IPC) and remote-bridge (WS) are thin
+// adapters over this ONE instance; it owns the create-session/list-runs
+// correlation state, the run/attach port brokering, and the session/run dispatch.
+let broker: InterpreterBroker | null = null;
+
 // Status overlay panel stats collector — created once on 'ready' (status-overlay-panel).
 let systemStatsService: SystemStatsService | null = null;
 
@@ -90,22 +94,6 @@ let packetCaptureRegistry: PacketCaptureRegistry | null = null;
 
 // Mobile remote-control WS bridge (M0) — created once on 'ready', stopped on quit.
 let remoteBridgeHandle: RemoteBridgeHandle | null = null;
-
-// Pending `create-session` round-trips, keyed by requestId: the interpreter mints
-// the authoritative {sessionId, cwd} and replies with `session-created` (Codex B5).
-// Rejected en masse if the interpreter dies mid-request (Codex B8).
-const pendingCreates = new Map<
-  string,
-  { resolve: (info: SessionInfo) => void; reject: (err: Error) => void }
->();
-
-// Pending `list-runs` round-trips, keyed by requestId (M1 mirror-active-runs)
-// — same correlation shape as `pendingCreates` above. Rejected en masse if the
-// interpreter dies mid-request (Codex B8).
-const pendingRunLists = new Map<
-  string,
-  { resolve: (runs: readonly RunStartedInfo[]) => void; reject: (err: Error) => void }
->();
 
 // Defense-in-depth CSP for the raw-HTML injection sink in TextBlock (the ANSI →
 // HTML external output, sanitized upstream by ansi_up). Strict: only same-origin
@@ -201,18 +189,17 @@ const createWindow = (): void => {
   ipcMain.on(
     'run-command',
     (event, payload: { commandText: string; runId: string; sessionId: string }) => {
-      if (!interpreter) {
+      if (!broker) {
         console.error('[main] interpreter not ready for command:', payload?.commandText);
         return;
       }
       const { commandText, runId, sessionId } = payload;
-      const { port1, port2 } = new MessageChannelMain();
-      // Send command + session + port2 to interpreter (session must already exist).
-      interpreter.postMessage({ type: 'run', commandText, sessionId, runId }, [port2]);
+      const port1 = broker.runCommand(sessionId, runId, commandText);
+      if (!port1) return;
       // Transfer port1 to renderer — arrives as a DOM MessagePort via event.ports.
       // Echo `runId` so the preload/renderer correlate THIS port to THIS run even
       // when multiple runs are in flight across panes (Codex B3).
-      event.sender.postMessage('cmd-port', { runId }, [port1]);
+      event.sender.postMessage('cmd-port', { runId }, [port1 as unknown as MessagePortMain]);
       console.log(`[main] brokered port for run ${runId} in session ${sessionId}`);
     },
   );
@@ -428,80 +415,43 @@ app.on('ready', () => {
     void remoteBridgeHandle?.stop();
   });
 
-  // Session directory (mobile remote-control M0) — a thin {cwd, createdAt} list
-  // main didn't previously keep, so a remote client can ask "what sessions exist"
-  // via `list-sessions`. Hooked at the same two points as the renderer flow below.
-  const sessionDirectory = new SessionDirectory();
-
   // Session lifecycle (Codex B1/B5). create-session is the ONLY way a shell session
   // comes into being — the interpreter mints the authoritative {sessionId, cwd} and
   // replies via `session-created`, correlated by requestId. A pane awaits this before
-  // it can run commands.
-  ipcMain.handle('create-session', (_event, cwd?: string): Promise<SessionInfo> => {
-    return new Promise<SessionInfo>((resolve, reject) => {
-      if (!interpreter) {
-        reject(new Error('interpreter not running'));
-        return;
-      }
-      const requestId = randomUUID();
-      pendingCreates.set(requestId, { resolve, reject });
-      interpreter.postMessage({ type: 'create-session', requestId, cwd });
-    });
-  });
+  // it can run commands. The broker owns the correlation state + the session directory.
+  ipcMain.handle('create-session', (_event, cwd?: string): Promise<SessionInfo> =>
+    broker ? broker.createSession(cwd) : Promise.reject(new Error('interpreter not running')),
+  );
 
   // Destroy a session when its pane/tab closes (fire-and-forget; interpreter aborts
   // the session's in-flight runs and drops it — idempotent, Codex B2/B6).
   ipcMain.on('destroy-session', (_event, sessionId: string) => {
-    sessionDirectory.remove(sessionId);
-    interpreter?.postMessage({ type: 'destroy-session', sessionId });
+    broker?.destroySession(sessionId);
   });
 
   // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
-  // listSessions is a straight passthrough to the directory already kept
-  // above. session-added/session-removed fan out to every desktop window
-  // here; remote-bridge.ts subscribes to the SAME sessionDirectory
-  // independently for its own WS fan-out (T2.1). Both broadcasts are
-  // origin-agnostic (including a window's own session — see SessionDirectory's
-  // doc for why the ordering is safe).
-  ipcMain.handle('list-sessions', () => sessionDirectory.list());
+  // list-sessions is a straight passthrough to the broker's directory;
+  // session-added/session-removed/run-started fan out to every desktop window
+  // via the broker subscriptions wired at broker construction. remote-bridge.ts
+  // subscribes to the SAME broker independently for its own WS fan-out (T2.1).
+  ipcMain.handle('list-sessions', () => broker?.listSessions() ?? []);
   // list-runs (M1 mirror-active-runs): resolves `[]` immediately if there's no
-  // interpreter (mirrors create-session's own guard) — there are no runs to
-  // report either way, so there is nothing to await.
-  ipcMain.handle('list-runs', (): Promise<readonly RunStartedInfo[]> => {
-    return new Promise<readonly RunStartedInfo[]>((resolve, reject) => {
-      if (!interpreter) {
-        resolve([]);
-        return;
-      }
-      const requestId = randomUUID();
-      pendingRunLists.set(requestId, { resolve, reject });
-      interpreter.postMessage({ type: 'list-runs', requestId });
-    });
-  });
-  sessionDirectory.onSessionAdded((session) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
-      win.webContents.send('session-added', session);
-    }
-  });
-  sessionDirectory.onSessionRemoved((sessionId) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
-      win.webContents.send('session-removed', sessionId);
-    }
-  });
+  // broker/interpreter (mirrors create-session's own guard) — there are no runs
+  // to report either way, so there is nothing to await.
+  ipcMain.handle('list-runs', (): Promise<readonly RunStartedInfo[]> =>
+    broker ? broker.listRuns() : Promise.resolve([]),
+  );
 
   // attach-run (T2.2f): brokers a NON-INITIATING port onto an existing run's
   // ExecutionSession — mirrors the run-command handler in createWindow()
-  // exactly (fresh MessageChannelMain, port2 to the interpreter, port1 to
+  // exactly (broker mints a fresh port pair, port2 to the interpreter, port1 to
   // THIS event's sender), except it never starts a new run (canRun/session-
   // registry are untouched — attach is view+input, not a second writer).
   ipcMain.on('attach-run', (event, payload: { sessionId: string; runId: string }) => {
-    if (!interpreter) return;
-    const { runId } = payload;
-    const { port1, port2 } = new MessageChannelMain();
-    interpreter.postMessage({ type: 'attach-run', runId }, [port2]);
-    event.sender.postMessage('attach-port', { runId }, [port1]);
+    if (!broker) return;
+    const port1 = broker.attachRun(payload.runId);
+    if (!port1) return;
+    event.sender.postMessage('attach-port', { runId: payload.runId }, [port1 as unknown as MessagePortMain]);
   });
 
   // Enforce the CSP as a response header for the packaged renderer (defense-in-depth
@@ -531,45 +481,60 @@ app.on('ready', () => {
     stdio: 'inherit',
   });
 
+  // The single main-side broker over the interpreter (interpreter-broker plan).
+  // It attaches listener #1 (session/run dispatch) + an exit listener in its
+  // constructor and owns the session directory; main's own listener #2 below
+  // handles the disjoint script-host/known-host message types.
+  broker = new InterpreterBroker({
+    interpreter: interpreter as unknown as BrokerInterpreter,
+    createMessageChannel: () => new MessageChannelMain(),
+  });
+  console.log('[main] interpreter broker ready');
+
+  // ── Session/run fan-out to every desktop window (M2 mirroring) ────────────
+  // The broker is the sole session `add`/`remove` caller; these subscriptions
+  // replace the former sessionDirectory.onSessionAdded/onSessionRemoved wiring
+  // and the run-started broadcast arm of the interpreter message dispatcher.
+  // remote-bridge.ts subscribes to the SAME broker independently (T2.1). Both
+  // broadcasts are origin-agnostic (including a window's own session — see
+  // SessionDirectory's doc for why the ordering is safe).
+  broker.onSessionAdded((session) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('session-added', session);
+    }
+  });
+  broker.onSessionRemoved((sessionId) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('session-removed', sessionId);
+    }
+  });
+  broker.onRunStarted((info) => {
+    // runId is caller-minted, so unlike session-added there's no "learn my own
+    // id first" race to guard — a plain broadcast is enough.
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('run-started', {
+        sessionId: info.sessionId,
+        runId: info.runId,
+        commandText: info.commandText,
+      });
+    }
+  });
+
   // run-script (E4 §6.1): main is the only process that can fork a utilityProcess
   // (C1/C2), so the interpreter asks main to spawn/kill a script-host per
   // `run-script` invocation, correlated by hostId. Output resolves to
   // .vite/build/script-host.js, same directory as main.js/interpreter-process.js.
   const scriptHostRegistry = new ScriptHostRegistry(path.join(__dirname, 'script-host.js'));
 
-  // Interpreter → main replies: `session-created` for create-session, and the
-  // script-host spawn/kill protocol (E4).
+  // Interpreter → main replies: the script-host spawn/kill protocol (E4) + the
+  // known_hosts TOFU verdicts. This is listener #2 — disjoint by message type
+  // from the broker's listener #1 (session-created/run-started/run-list), so the
+  // two never double-process a message.
   interpreter.on('message', (msg: InterpreterToMain) => {
-    if (msg?.type === 'session-created') {
-      // Resolve the requester's OWN correlated promise before adding to the
-      // directory — sessionDirectory.add()'s session-added broadcast is
-      // deferred internally (setImmediate), but resolving first here is
-      // extra, cheap defense-in-depth for the same ordering guarantee (ADR C6).
-      const pending = pendingCreates.get(msg.requestId);
-      if (pending) {
-        pendingCreates.delete(msg.requestId);
-        pending.resolve({ sessionId: msg.sessionId, cwd: msg.cwd });
-      }
-      sessionDirectory.add({ sessionId: msg.sessionId, cwd: msg.cwd });
-    } else if (msg?.type === 'run-started') {
-      // M2 mirroring: announce to every desktop window so an observer can
-      // attachRun. runId is caller-minted, so unlike session-added there's no
-      // "learn my own id first" race to guard — a plain broadcast is enough.
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
-        win.webContents.send('run-started', {
-          sessionId: msg.sessionId,
-          runId: msg.runId,
-          commandText: msg.commandText,
-        });
-      }
-    } else if (msg?.type === 'run-list') {
-      const pending = pendingRunLists.get(msg.requestId);
-      if (pending) {
-        pendingRunLists.delete(msg.requestId);
-        pending.resolve(msg.runs);
-      }
-    } else if (msg?.type === 'spawn-script-host') {
+    if (msg?.type === 'spawn-script-host') {
       const result = scriptHostRegistry.spawn(msg.hostId, msg.scriptPath, msg.args, msg.cwd, (hostId, code) => {
         interpreter?.postMessage({ type: 'script-host-exit', hostId, code } satisfies MainToInterpreter);
       });
@@ -626,18 +591,12 @@ app.on('ready', () => {
     interpreter = null;
     // Shared-fate (Codex B8, extended for E4): ONE utilityProcess backs every
     // session, so its death kills them all — including every live script-host,
-    // which would otherwise become an orphaned process (design §6.1). Fail
-    // in-flight create-session calls and tell every renderer to mark its panes
-    // dead + stop accepting runs (no auto-respawn in Phase 1).
+    // which would otherwise become an orphaned process (design §6.1). Tell every
+    // renderer to mark its panes dead + stop accepting runs (no auto-respawn in
+    // Phase 1). The broker's OWN exit listener flips its `alive` flag and rejects
+    // in-flight create-session/list-runs pendings — this listener stays orthogonal
+    // (process/window cleanup), so it must NOT also reject them here.
     scriptHostRegistry.killAll();
-    for (const { reject } of pendingCreates.values()) {
-      reject(new Error('interpreter exited'));
-    }
-    pendingCreates.clear();
-    for (const { reject } of pendingRunLists.values()) {
-      reject(new Error('interpreter exited'));
-    }
-    pendingRunLists.clear();
     // The payload (additive, B-M5) lets the renderer's banner point the user at
     // the local evidence.
     for (const win of BrowserWindow.getAllWindows()) {
@@ -648,24 +607,12 @@ app.on('ready', () => {
   // ── Mobile remote-control WS bridge (M0) ─────────────────────────────────
   // Default ON, bound to 0.0.0.0 (LAN + Tailscale reachable — a token gates
   // access since there's no port-forwarding-free path to the open internet).
-  // The interpreter reference is read lazily on every call (closure over the
-  // module-level `let interpreter`) so it keeps working across the
-  // fork-at-ready timing and reflects a null'd-out interpreter after exit.
+  // The bridge adapts to the SAME broker instance the local IPC handlers use,
+  // so both transports share one interpreter listener + one session directory.
   const remoteTokenStore = new RemoteTokenStore(path.join(app.getPath('userData')));
   const remoteTokenReady = remoteTokenStore.init().catch((err) => {
     console.error('[main] remote token store init failed:', err);
   });
-  const remoteInterpreterAdapter: RemoteInterpreter = {
-    postMessage: (msg, transfer) => {
-      interpreter?.postMessage(msg, transfer as never);
-    },
-    on: (event, listener) => {
-      interpreter?.on(event, listener);
-    },
-    off: (event, listener) => {
-      interpreter?.off(event, listener);
-    },
-  };
   const remoteBridgePort = Number(process.env.EZTERMINAL_REMOTE_PORT) || DEFAULT_REMOTE_BRIDGE_PORT;
   const remoteStatsSource: RemoteStatsSource = {
     getHistory: () => systemStatsService?.getHistory() ?? [],
@@ -688,9 +635,7 @@ app.on('ready', () => {
         await remoteTokenReady;
         return remoteTokenStore.getToken();
       },
-      interpreter: remoteInterpreterAdapter,
-      sessionDirectory,
-      createMessageChannel: () => new MessageChannelMain(),
+      broker: broker!,
       statsSource: remoteStatsSource,
       packetSource: remotePacketSource,
       // `satisfies` forces a structural check here — the same `fileService`

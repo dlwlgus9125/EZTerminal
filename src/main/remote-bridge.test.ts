@@ -7,14 +7,13 @@ import {
   startRemoteBridge,
   type RemoteBridgeOptions,
   type RemoteFileSource,
-  type RemoteInterpreter,
   type RemoteMessageChannel,
   type RemotePacketSource,
   type RemotePort,
   type RemoteStatsSource,
   type RemoteWs,
 } from './remote-bridge';
-import { SessionDirectory } from './session-directory';
+import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
 import type { FileReadStream } from './file-service';
 import type { InterpreterToMain, MainToInterpreter, PacketRow, SystemStatsSnapshot } from '../shared/ipc';
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
@@ -58,22 +57,30 @@ class FakeWs implements RemoteWs {
   }
 }
 
-class FakeInterpreter implements RemoteInterpreter {
+class FakeInterpreter implements BrokerInterpreter {
   readonly posted: Array<{ message: MainToInterpreter; transfer?: readonly RemotePort[] }> = [];
   private readonly listeners = new Set<(message: InterpreterToMain) => void>();
+  private readonly exitListeners = new Set<(code?: number) => void>();
 
   postMessage(message: MainToInterpreter, transfer?: readonly RemotePort[]): void {
     this.posted.push({ message, transfer });
   }
 
-  on(_event: 'message', listener: (message: InterpreterToMain) => void): void {
-    this.listeners.add(listener);
+  on(event: 'message', listener: (message: InterpreterToMain) => void): void;
+  on(event: 'exit', listener: (code?: number) => void): void;
+  on(
+    event: 'message' | 'exit',
+    listener: ((message: InterpreterToMain) => void) | ((code?: number) => void),
+  ): void {
+    if (event === 'exit') this.exitListeners.add(listener as (code?: number) => void);
+    else this.listeners.add(listener as (message: InterpreterToMain) => void);
   }
 
   off(_event: 'message', listener: (message: InterpreterToMain) => void): void {
     this.listeners.delete(listener);
   }
 
+  /** Count of `message` listeners only — the broker attaches exactly one (#1). */
   get listenerCount(): number {
     return this.listeners.size;
   }
@@ -81,6 +88,11 @@ class FakeInterpreter implements RemoteInterpreter {
   /** Test helper: simulate the interpreter replying to main. */
   emit(message: InterpreterToMain): void {
     for (const l of this.listeners) l(message);
+  }
+
+  /** Test helper: simulate the interpreter process exiting. */
+  emitExit(code?: number): void {
+    for (const l of this.exitListeners) l(code);
   }
 }
 
@@ -244,28 +256,32 @@ function makeFakeChannel(): RemoteMessageChannel {
 function makeOptions(overrides: Partial<RemoteBridgeOptions> = {}): {
   options: RemoteBridgeOptions;
   interpreter: FakeInterpreter;
-  sessionDirectory: SessionDirectory;
+  broker: InterpreterBroker;
   channels: Array<{ port1: FakePort; port2: FakePort }>;
 } {
   const interpreter = new FakeInterpreter();
-  const sessionDirectory = new SessionDirectory();
   const channels: Array<{ port1: FakePort; port2: FakePort }> = [];
   let idCounter = 0;
-
-  const options: RemoteBridgeOptions = {
-    port: 0,
-    getToken: () => TOKEN,
+  // A REAL broker over the fake interpreter — the bridge is a thin adapter over
+  // it, so the newId/createMessageChannel/interpreter seams feed the broker
+  // (not the options). The broker attaches its single interpreter listener here.
+  const broker = new InterpreterBroker({
     interpreter,
-    sessionDirectory,
     createMessageChannel: () => {
       const channel = makeFakeChannel() as { port1: FakePort; port2: FakePort };
       channels.push(channel);
       return channel;
     },
     newId: () => `id-${++idCounter}`,
+  });
+
+  const options: RemoteBridgeOptions = {
+    port: 0,
+    getToken: () => TOKEN,
+    broker,
     ...overrides,
   };
-  return { options, interpreter, sessionDirectory, channels };
+  return { options, interpreter, broker, channels };
 }
 
 async function authed(ws: FakeWs, options: RemoteBridgeOptions): Promise<void> {
@@ -322,7 +338,7 @@ describe('RemoteBridge — auth gate', () => {
 describe('RemoteBridge — session directory + create/destroy round trip', () => {
   it('create-session posts to the interpreter and relays session-created back with the CLIENT requestId', async () => {
     const ws = new FakeWs();
-    const { options, interpreter, sessionDirectory } = makeOptions();
+    const { options, interpreter, broker } = makeOptions();
     await authed(ws, options);
 
     ws.clientSend({ kind: 'create-session', requestId: 'client-req-1', cwd: '/tmp' });
@@ -334,13 +350,15 @@ describe('RemoteBridge — session directory + create/destroy round trip', () =>
     });
 
     interpreter.emit({ type: 'session-created', requestId: 'id-1', sessionId: 'sess-1', cwd: '/tmp' });
+    // The reply now flows through the broker's promise resolution (.then microtask).
+    await flush();
 
     expect(ws.sent).toContainEqual({
       kind: 'session-created',
       requestId: 'client-req-1',
       session: { sessionId: 'sess-1', cwd: '/tmp' },
     });
-    expect(sessionDirectory.list()).toEqual([{ sessionId: 'sess-1', cwd: '/tmp' }]);
+    expect(broker.listSessions()).toEqual([{ sessionId: 'sess-1', cwd: '/tmp' }]);
   });
 
   it('a session-created reply for a DIFFERENT (unmatched) requestId is ignored by this connection', async () => {
@@ -349,17 +367,24 @@ describe('RemoteBridge — session directory + create/destroy round trip', () =>
     await authed(ws, options);
     ws.clientSend({ kind: 'create-session', requestId: 'client-req-1' });
 
-    // Some other connection's create-session round trip.
+    // Some other connection's create-session round trip — the broker holds this
+    // connection's pending under 'id-1', so 'not-mine' resolves nothing here.
     interpreter.emit({ type: 'session-created', requestId: 'not-mine', sessionId: 'sess-x', cwd: '/x' });
+    await flush();
 
     expect(ws.sent.some((m) => m.kind === 'session-created')).toBe(false);
   });
 
   it('list-sessions returns the current directory contents', async () => {
     const ws = new FakeWs();
-    const { options, sessionDirectory } = makeOptions();
-    sessionDirectory.add({ sessionId: 'existing', cwd: '/existing' });
+    const { options, interpreter } = makeOptions();
     await authed(ws, options);
+
+    // The broker owns the directory now — seed a session through a create-session
+    // round-trip (the broker mints 'id-1' for the first create on this broker).
+    ws.clientSend({ kind: 'create-session', requestId: 'seed', cwd: '/existing' });
+    interpreter.emit({ type: 'session-created', requestId: 'id-1', sessionId: 'existing', cwd: '/existing' });
+    await flush();
 
     ws.clientSend({ kind: 'list-sessions' });
 
@@ -371,13 +396,17 @@ describe('RemoteBridge — session directory + create/destroy round trip', () =>
 
   it('destroy-session removes it from the directory and posts to the interpreter', async () => {
     const ws = new FakeWs();
-    const { options, interpreter, sessionDirectory } = makeOptions();
-    sessionDirectory.add({ sessionId: 'sess-1', cwd: '/tmp' });
+    const { options, interpreter, broker } = makeOptions();
     await authed(ws, options);
+
+    // Seed through a create-session round-trip, then destroy it.
+    ws.clientSend({ kind: 'create-session', requestId: 'seed', cwd: '/tmp' });
+    interpreter.emit({ type: 'session-created', requestId: 'id-1', sessionId: 'sess-1', cwd: '/tmp' });
+    await flush();
 
     ws.clientSend({ kind: 'destroy-session', sessionId: 'sess-1' });
 
-    expect(sessionDirectory.list()).toEqual([]);
+    expect(broker.listSessions()).toEqual([]);
     expect(interpreter.posted).toContainEqual({
       message: { type: 'destroy-session', sessionId: 'sess-1' },
       transfer: undefined,
@@ -397,6 +426,8 @@ describe('RemoteBridge — list-runs (M1 mirror-active-runs)', () => {
 
     const runs = [{ sessionId: 'sess-1', runId: 'run-1', commandText: 'ls' }];
     interpreter.emit({ type: 'run-list', requestId: 'id-1', runs });
+    // The reply now flows through the broker's listRuns promise (.then microtask).
+    await flush();
 
     expect(ws.sent).toContainEqual({ kind: 'run-list', runs });
   });
@@ -407,8 +438,10 @@ describe('RemoteBridge — list-runs (M1 mirror-active-runs)', () => {
     await authed(ws, options);
     ws.clientSend({ kind: 'list-runs' });
 
-    // Some other connection's list-runs round trip.
+    // Some other connection's list-runs round trip — the broker holds this
+    // connection's pending under 'id-1', so 'not-mine' resolves nothing here.
     interpreter.emit({ type: 'run-list', requestId: 'not-mine', runs: [] });
+    await flush();
 
     expect(ws.sent.some((m) => m.kind === 'run-list')).toBe(false);
   });
@@ -531,9 +564,12 @@ describe('RemoteBridge — run-command frame/control multiplexing', () => {
 });
 
 describe('RemoteBridge — connection teardown', () => {
-  it('closing the WS closes every open run port and detaches the interpreter listener', async () => {
+  it('closing the WS closes every open run port; the broker keeps its single interpreter listener across connections', async () => {
     const ws = new FakeWs();
     const { options, interpreter, channels } = makeOptions();
+    // The broker attaches exactly ONE interpreter message listener (#1) at
+    // construction — attachConnection adds none (AC(d): constant across N conns).
+    expect(interpreter.listenerCount).toBe(1);
     await authed(ws, options);
     expect(interpreter.listenerCount).toBe(1);
 
@@ -541,10 +577,16 @@ describe('RemoteBridge — connection teardown', () => {
     ws.clientSend({ kind: 'run-command', runId: 'run-2', sessionId: 'sess-1', commandText: 'pwd' });
     expect(channels.every((c) => !c.port1.closed)).toBe(true);
 
+    // A SECOND connection on the SAME broker must not add a second listener.
+    const ws2 = new FakeWs();
+    await authed(ws2, options);
+    expect(interpreter.listenerCount).toBe(1);
+
     ws.close();
 
     expect(channels.every((c) => c.port1.closed)).toBe(true);
-    expect(interpreter.listenerCount).toBe(0);
+    // Still exactly one — the broker's listener outlives any single connection.
+    expect(interpreter.listenerCount).toBe(1);
   });
 });
 
