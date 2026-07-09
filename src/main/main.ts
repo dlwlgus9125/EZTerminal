@@ -39,9 +39,10 @@ import { formatConnectionInfo } from './remote-connection-info';
 import type { EffectParamsSettings, RollbarSettings, StartupPref, ThemeName } from '../shared/layout-schema';
 import type { InterpreterToMain, MainToInterpreter, RunStartedInfo, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
 
-// The main process is the broker (architecture §1).
-// It owns the interpreter utilityProcess lifetime and brokers per-command
-// MessagePorts between the renderer and the interpreter so that bulk frame
+// The main process owns the interpreter utilityProcess lifetime (architecture
+// §1). Per-command MessagePort brokering + session/run correlation live in the
+// extracted InterpreterBroker (interpreter-broker.ts); main (local IPC) and
+// remote-bridge (WS) are thin adapters over one shared instance, so bulk frame
 // data never routes through main.
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
