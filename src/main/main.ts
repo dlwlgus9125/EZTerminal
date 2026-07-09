@@ -196,7 +196,12 @@ const createWindow = (): void => {
       }
       const { commandText, runId, sessionId } = payload;
       const port1 = broker.runCommand(sessionId, runId, commandText);
-      if (!port1) return;
+      // A truthy broker over a DEAD interpreter returns null — restore the
+      // pre-broker "not ready" log (parity), then skip the transfer.
+      if (!port1) {
+        console.error('[main] interpreter not ready for command:', commandText);
+        return;
+      }
       // Transfer port1 to renderer — arrives as a DOM MessagePort via event.ports.
       // Echo `runId` so the preload/renderer correlate THIS port to THIS run even
       // when multiple runs are in flight across panes (Codex B3).
