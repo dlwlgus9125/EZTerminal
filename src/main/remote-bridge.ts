@@ -25,9 +25,8 @@
  * doesn't keep a `statsSource`/packet-mirror acquire alive forever.
  */
 import { WebSocketServer, type WebSocket } from 'ws';
-import { randomUUID } from 'node:crypto';
 
-import type { InterpreterFrame, InterpreterToMain, MainToInterpreter, PacketRow, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
+import type { InterpreterFrame, PacketRow, SystemStatsSnapshot } from '../shared/ipc';
 import {
   base64ToUint8Array,
   encodeFrame,
@@ -38,7 +37,7 @@ import {
 } from '../shared/remote-protocol';
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
 import type { FileReadStream } from './file-service';
-import type { SessionDirectory } from './session-directory';
+import type { InterpreterBroker, RemoteInterpreter, RemoteMessageChannel, RemotePort } from './interpreter-broker';
 
 /** Non-standard WS close code: auth was missing/wrong on this connection. */
 export const AUTH_CLOSE_CODE = 4001;
@@ -65,24 +64,11 @@ const MOBILE_PACKET_BACKPRESSURE_BYTES = 262_144;
 //    `ws`'s WebSocket — real instances satisfy these structurally, fakes in
 //    tests need implement nothing more) ─────────────────────────────────────
 
-export interface RemotePort {
-  postMessage(message: unknown): void;
-  on(event: 'message', listener: (event: { data: unknown }) => void): void;
-  on(event: 'close', listener: () => void): void;
-  start(): void;
-  close(): void;
-}
-
-export interface RemoteMessageChannel {
-  readonly port1: RemotePort;
-  readonly port2: RemotePort;
-}
-
-export interface RemoteInterpreter {
-  postMessage(message: MainToInterpreter, transfer?: readonly RemotePort[]): void;
-  on(event: 'message', listener: (message: InterpreterToMain) => void): void;
-  off(event: 'message', listener: (message: InterpreterToMain) => void): void;
-}
+// `RemotePort` / `RemoteMessageChannel` / `RemoteInterpreter` are owned by the
+// interpreter broker (they describe its interpreter/port seams). Re-exported
+// here so existing importers of this module (e.g. remote-bridge.test.ts) keep
+// resolving them unchanged.
+export type { RemoteInterpreter, RemoteMessageChannel, RemotePort };
 
 export interface RemoteWs {
   readonly readyState: number;
@@ -161,11 +147,10 @@ export interface RemoteFileSource {
 export interface RemoteBridgeOptions {
   readonly port: number;
   readonly getToken: () => Promise<string> | string;
-  readonly interpreter: RemoteInterpreter;
-  readonly sessionDirectory: SessionDirectory;
-  readonly createMessageChannel: () => RemoteMessageChannel;
-  /** Test seam: overrides crypto.randomUUID for deterministic internal ids. */
-  readonly newId?: () => string;
+  /** The single shared interpreter broker — main.ts and this bridge adapt to
+   * ONE instance, so there is exactly one interpreter listener + one session
+   * directory across both transports. */
+  readonly broker: InterpreterBroker;
   /** Optional so existing fixtures/tests without stats wiring keep working. */
   readonly statsSource?: RemoteStatsSource;
   /** Optional so existing fixtures/tests without packet wiring keep working. */
@@ -180,15 +165,8 @@ export interface RemoteBridgeOptions {
  * drive it with a fake `RemoteWs` without opening a real network socket.
  */
 export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): void {
-  const newId = options.newId ?? randomUUID;
   let authed = false;
   const runs = new Map<string, RemotePort>();
-  // Bridge-minted requestId -> the client's own requestId (echoed back on reply).
-  const pendingCreates = new Map<string, string>();
-  // Bridge-minted requestIds for in-flight `list-runs` round trips (M1
-  // mirror-active-runs) — a Set (not a Map) since the reply carries the runs
-  // themselves, with nothing client-specific to echo back (unlike pendingCreates).
-  const pendingRunLists = new Set<string>();
   // This connection's own stats subscription (independent of the desktop panel
   // and of every other connection — statsSource.acquire()/release() combine
   // them all via refcount, see StatsVisibility).
@@ -247,49 +225,31 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
     pendingPacketRows = [];
   };
 
-  const onInterpreterMessage = (msg: InterpreterToMain): void => {
-    if (msg.type === 'session-created') {
-      const clientRequestId = pendingCreates.get(msg.requestId);
-      if (clientRequestId === undefined) return; // some other connection's create
-      pendingCreates.delete(msg.requestId);
-      const session: SessionInfo = { sessionId: msg.sessionId, cwd: msg.cwd };
-      // Correlated reply BEFORE the directory add — sessionDirectory.add()'s
-      // own session-added broadcast to THIS connection (via the subscription
-      // below) is deferred internally (setImmediate), but replying first here
-      // is extra, cheap defense-in-depth for the same ordering guarantee (ADR C6).
-      send({ kind: 'session-created', requestId: clientRequestId, session });
-      options.sessionDirectory.add(session);
-    } else if (msg.type === 'run-started' && authed) {
-      // M2 mirroring: runId is caller-minted, so unlike session-added there's
-      // no "learn my own id first" race — a plain broadcast is enough.
-      send({ kind: 'run-started', sessionId: msg.sessionId, runId: msg.runId, commandText: msg.commandText });
-    } else if (msg.type === 'run-list' && authed) {
-      // Only relay a `run-list` this CONNECTION actually asked for — a Set
-      // entry present means it's ours; another connection's own request is
-      // never removed here (its requestId is simply not in this Set).
-      if (pendingRunLists.delete(msg.requestId)) {
-        send({ kind: 'run-list', runs: msg.runs });
-      }
-    }
-  };
-  options.interpreter.on('message', onInterpreterMessage);
-
-  // Session mirroring (M2): every connection observes every session change,
-  // origin-agnostic (including one THIS connection just created — same
-  // self-echo shape as the desktop's session-added IPC push, see
-  // SessionDirectory's doc for why the ordering is safe). Gated on `authed`
-  // so an unauthenticated socket never sees session data.
-  const unsubSessionAdded = options.sessionDirectory.onSessionAdded((session) => {
+  // Session/run mirroring (M2): every connection observes every session/run
+  // change via the SHARED broker, origin-agnostic (including one THIS connection
+  // just created — the broker resolves the create-session reply BEFORE its
+  // deferred onSessionAdded fan-out, so a requester always learns "this sessionId
+  // is mine" before the broadcast echo, see ADR C6). Gated on `authed` so an
+  // unauthenticated socket never sees session/run data. The broker holds the
+  // single interpreter listener; this connection adds none.
+  const unsubSessionAdded = options.broker.onSessionAdded((session) => {
     if (authed) send({ kind: 'session-added', session });
   });
-  const unsubSessionRemoved = options.sessionDirectory.onSessionRemoved((sessionId) => {
+  const unsubSessionRemoved = options.broker.onSessionRemoved((sessionId) => {
     if (authed) send({ kind: 'session-removed', sessionId });
+  });
+  const unsubRunStarted = options.broker.onRunStarted((info) => {
+    // runId is caller-minted, so unlike session-added there's no "learn my own
+    // id first" race — a plain broadcast is enough.
+    if (authed) {
+      send({ kind: 'run-started', sessionId: info.sessionId, runId: info.runId, commandText: info.commandText });
+    }
   });
 
   ws.on('close', () => {
-    options.interpreter.off('message', onInterpreterMessage);
     unsubSessionAdded();
     unsubSessionRemoved();
+    unsubRunStarted();
     for (const port of runs.values()) port.close();
     runs.clear();
     if (statsVisible) {
@@ -336,41 +296,53 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
 
     switch (msg.kind) {
       case 'list-sessions':
-        send({ kind: 'session-list', sessions: options.sessionDirectory.list() });
+        send({ kind: 'session-list', sessions: options.broker.listSessions() });
         break;
 
       case 'list-runs': {
-        const requestId = newId();
-        pendingRunLists.add(requestId);
-        options.interpreter.postMessage({ type: 'list-runs', requestId });
+        // The reply now flows through a `.then` microtask (the broker resolves
+        // the pending promise), still strictly ahead of any onSessionAdded
+        // fan-out (setImmediate). `.catch` swallows a post-interpreter-death
+        // reject — no error frame, keeping the client's silent-hang parity (M1/G2).
+        options.broker
+          .listRuns()
+          .then((runs) => {
+            if (authed) send({ kind: 'run-list', runs });
+          })
+          .catch(() => {});
         break;
       }
 
       case 'create-session': {
-        const requestId = newId();
-        pendingCreates.set(requestId, msg.requestId);
-        options.interpreter.postMessage({ type: 'create-session', requestId, cwd: msg.cwd });
+        // Echo the CLIENT's own requestId (captured here) on reply so mobile
+        // correlation holds; `.catch` swallows a post-death reject (silent-hang
+        // parity, M1/G2).
+        const { requestId, cwd } = msg;
+        options.broker
+          .createSession(cwd)
+          .then((session) => {
+            send({ kind: 'session-created', requestId, session });
+          })
+          .catch(() => {});
         break;
       }
 
       case 'destroy-session':
-        options.sessionDirectory.remove(msg.sessionId);
-        options.interpreter.postMessage({ type: 'destroy-session', sessionId: msg.sessionId });
+        options.broker.destroySession(msg.sessionId);
         break;
 
       case 'run-command': {
         const { runId } = msg;
-        const { port1, port2 } = options.createMessageChannel();
+        // Broker mints the port pair + posts port2 to the interpreter; a `null`
+        // return (dead interpreter) means no port to relay — skip, don't throw.
+        const port1 = options.broker.runCommand(msg.sessionId, runId, msg.commandText);
+        if (!port1) break;
         runs.set(runId, port1);
         port1.on('message', (event) => {
           send({ kind: 'frame', runId, frame: encodeFrame(event.data as InterpreterFrame) });
         });
         port1.on('close', () => runs.delete(runId));
         port1.start();
-        options.interpreter.postMessage(
-          { type: 'run', commandText: msg.commandText, sessionId: msg.sessionId, runId },
-          [port2],
-        );
         break;
       }
 
@@ -380,14 +352,15 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
       // correctly with no further changes needed).
       case 'attach-run': {
         const { runId } = msg;
-        const { port1, port2 } = options.createMessageChannel();
+        // Same null-guard as run-command: a dead interpreter yields no port.
+        const port1 = options.broker.attachRun(runId);
+        if (!port1) break;
         runs.set(runId, port1);
         port1.on('message', (event) => {
           send({ kind: 'frame', runId, frame: encodeFrame(event.data as InterpreterFrame) });
         });
         port1.on('close', () => runs.delete(runId));
         port1.start();
-        options.interpreter.postMessage({ type: 'attach-run', runId }, [port2]);
         break;
       }
 
