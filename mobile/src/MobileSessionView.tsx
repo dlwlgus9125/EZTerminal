@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { BlockController } from '../../src/renderer/block-controller';
 import { Block } from '../../src/renderer/Block';
 import { registerPaneInput, unregisterPaneInput } from '../../src/renderer/pane-registry';
+import { keyToPtyBytes } from '../../src/renderer/pty-keys';
 import { TerminalContextMenu, type TerminalContextMenuItem } from '../../src/renderer/TerminalContextMenu';
 import type { RunStartedInfo } from '../../src/shared/ipc';
 import { useLongPress } from './long-press';
@@ -64,6 +65,12 @@ export function MobileSessionView({
   const activeController = useRef<BlockController | null>(null);
   const [activeControllerForTouch, setActiveControllerForTouch] = useState<BlockController | null>(null);
   const [activeRunning, setActiveRunning] = useState(false);
+  // Whether the active run is a RUNNING plain-mode `pty` block (M4, mirrors
+  // desktop TerminalPane's identical flag): while true, cmd-input's
+  // onKeyDown/onCompositionEnd below route keystrokes straight to the PTY
+  // child instead of disabling the input, so a plain PTY program can be
+  // driven from the physical/soft keyboard without TouchInputBar.
+  const [activePlainPty, setActivePlainPty] = useState(false);
   const activeUnsub = useRef<(() => void) | null>(null);
   const [sessionDead, setSessionDead] = useState(false);
   // Latest callback in a ref (not an effect dependency) so a fresh inline
@@ -97,6 +104,7 @@ export function MobileSessionView({
   useEffect(() => {
     const unsub = window.ezterminal.onSessionDead(() => {
       setSessionDead(true);
+      setActivePlainPty(false);
       onSessionDeadRef.current?.();
     });
     return unsub;
@@ -162,6 +170,9 @@ export function MobileSessionView({
       const onActiveChange = (): void => {
         const snap = controller.getSnapshot();
         setActiveRunning(snap.status === 'running');
+        setActivePlainPty(
+          snap.status === 'running' && snap.shape === 'pty' && snap.ptyRenderMode === 'plain',
+        );
         // cwd snapshot (M4): mirrors desktop TerminalPane's same site — latest
         // `end`, falling back to `start`, so a `cd` is reflected.
         const cwd = snap.endCwd ?? snap.startCwd;
@@ -309,6 +320,7 @@ export function MobileSessionView({
           activeController.current = null;
           setActiveControllerForTouch(null);
           setActiveRunning(false);
+          setActivePlainPty(false);
         }
         entry.controller.dispose();
       }
@@ -416,9 +428,26 @@ export function MobileSessionView({
         <input
           className="cmd-input"
           value={command}
-          disabled={sessionDead || activeRunning}
+          // Disabled while a run is active UNLESS it's a plain PTY (M4,
+          // mirrors desktop TerminalPane): a plain run routes its keystrokes
+          // here straight to the PTY child (onKeyDown/onCompositionEnd
+          // below) instead of disabling input, so a running plain program
+          // can be driven from the physical/soft keyboard. Any other running
+          // shape (xterm-upgraded, non-pty) keeps the input disabled, same
+          // as before.
+          disabled={sessionDead || (activeRunning && !activePlainPty)}
           onChange={(e) => setCommand(e.target.value)}
           onKeyDown={(e) => {
+            if (activePlainPty) {
+              // IME composing (CJK / dead-key input): let the input compose
+              // normally — see desktop TerminalPane's identical guard.
+              if (e.nativeEvent.isComposing || e.key === 'Process') return;
+              const bytes = keyToPtyBytes(e);
+              if (bytes === null) return; // unsupported key — leave default input behavior alone
+              e.preventDefault();
+              activeController.current?.sendPtyInput(bytes);
+              return;
+            }
             if (e.key === 'Enter') {
               handleRun();
               return;
@@ -444,6 +473,11 @@ export function MobileSessionView({
                 setCommand(draftBeforeRecall.current);
               }
             }
+          }}
+          onCompositionEnd={(e) => {
+            if (!activePlainPty) return; // idle: default composition-into-draft behavior
+            if (e.data) activeController.current?.sendPtyInput(e.data);
+            setCommand(''); // clear what the browser composed into the input
           }}
           aria-label="command input"
           data-testid="cmd-input"
