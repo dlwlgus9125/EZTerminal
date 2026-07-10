@@ -56,10 +56,12 @@ describe('EFFECT_CATALOG', () => {
     );
   });
 
-  it('ships the interference trio strictly opt-in (defaultOn false)', () => {
-    expect(EFFECT_CATALOG['jitter-burst'].defaultOn).toBe(false);
+  it('ships the tuned default-on interference set (v0.8.0 look) with micro-jitter still opt-in', () => {
+    expect(EFFECT_CATALOG.flicker.defaultOn).toBe(true);
+    expect(EFFECT_CATALOG['jitter-burst'].defaultOn).toBe(true);
+    expect(EFFECT_CATALOG['static-noise'].defaultOn).toBe(true);
     expect(EFFECT_CATALOG['micro-jitter'].defaultOn).toBe(false);
-    expect(EFFECT_CATALOG['static-noise'].defaultOn).toBe(false);
+    expect(EFFECT_CATALOG['crt-curvature'].defaultOn).toBe(false);
   });
 });
 

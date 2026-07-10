@@ -169,25 +169,25 @@ describe('clamp — interference param sets', () => {
 });
 
 describe('buildBurstKeyframes', () => {
-  it('emits the exact default keyframes (P=5s, D=250ms -> 5% window, I=6)', () => {
+  it('emits the exact default keyframes (P=3s, D=100ms -> 3.33% window, I=1)', () => {
     const css = buildBurstKeyframes(DEFAULT_BURST_PARAMS);
-    expect(css).toContain('0.00% { transform: translate(0px, 6px); }');
-    expect(css).toContain('1.00% { transform: translate(-4px, -6px); }');
-    expect(css).toContain('2.00% { transform: translate(2px, 4px); }');
-    expect(css).toContain('3.00% { transform: translate(0px, -3px); }');
-    expect(css).toContain('4.00% { transform: translate(-2px, 2px); }');
-    expect(css).toContain('5.00% { transform: translate(0px, 0px); }');
+    expect(css).toContain('0.00% { transform: translate(0px, 1px); }');
+    expect(css).toContain('0.67% { transform: translate(-1px, -1px); }');
+    expect(css).toContain('1.33% { transform: translate(0px, 1px); }');
+    expect(css).toContain('2.00% { transform: translate(0px, 0px); }');
+    expect(css).toContain('2.67% { transform: translate(0px, 0px); }');
+    expect(css).toContain('3.33% { transform: translate(0px, 0px); }');
     expect(css).toContain('100% { transform: translate(0px, 0px); }');
-    // flash timeline shares the window: peak 0.25 at 0%, off by 5%
+    // flash timeline shares the window: peak 0.25 at 0%, off by 3.33%
     expect(css).toContain('0% { opacity: 0.25; }');
-    expect(css).toContain('5.00% { opacity: 0; }');
+    expect(css).toContain('3.33% { opacity: 0; }');
   });
 
   it('zeroes the flash peak when flash is off (shake continues)', () => {
     const css = buildBurstKeyframes({ ...DEFAULT_BURST_PARAMS, flash: false });
     expect(css).toContain('0% { opacity: 0; }');
     expect(css).not.toContain('0.25');
-    expect(css).toContain('translate(-4px, -6px)'); // jitter untouched
+    expect(css).toContain('translate(-1px, -1px)'); // jitter untouched
   });
 
   it('caps the burst window at 50% and floors it at 1%', () => {
@@ -220,9 +220,9 @@ describe('apply — interference CSS custom properties', () => {
   it('applyNoiseParams maps density to tile size, opacity to 0..1, speed to duration', () => {
     applyNoiseParams(DEFAULT_NOISE_PARAMS);
     const style = document.documentElement.style;
-    expect(style.getPropertyValue('--fx-noise-size')).toBe('144px'); // 64 + (100-60)*2
-    expect(style.getPropertyValue('--fx-noise-opacity')).toBe('0.12');
-    expect(style.getPropertyValue('--fx-noise-duration')).toBe('0.40s');
+    expect(style.getPropertyValue('--fx-noise-size')).toBe('224px'); // 64 + (100-20)*2
+    expect(style.getPropertyValue('--fx-noise-opacity')).toBe('0.10');
+    expect(style.getPropertyValue('--fx-noise-duration')).toBe('0.50s');
     applyNoiseParams({ ...DEFAULT_NOISE_PARAMS, density: 100 });
     expect(style.getPropertyValue('--fx-noise-size')).toBe('64px'); // finest grain
   });
@@ -230,8 +230,8 @@ describe('apply — interference CSS custom properties', () => {
   it('applyFlickerParams maps frequency to 1/f duration and depth to the dim floor', () => {
     applyFlickerParams(DEFAULT_FLICKER_PARAMS);
     const style = document.documentElement.style;
-    expect(style.getPropertyValue('--fx-flicker-duration')).toBe('0.125s');
-    expect(style.getPropertyValue('--fx-flicker-min')).toBe('0.92');
+    expect(style.getPropertyValue('--fx-flicker-duration')).toBe('0.067s');
+    expect(style.getPropertyValue('--fx-flicker-min')).toBe('0.93');
     applyFlickerParams({ frequency: 2, depth: 40 });
     expect(style.getPropertyValue('--fx-flicker-duration')).toBe('0.500s');
     expect(style.getPropertyValue('--fx-flicker-min')).toBe('0.60');
@@ -240,7 +240,7 @@ describe('apply — interference CSS custom properties', () => {
   it('applyInterferenceParams writes the burst period var and the #ez-fx-keyframes block', () => {
     document.getElementById('ez-fx-keyframes')?.remove();
     applyInterferenceParams(DEFAULT_INTERFERENCE_PARAMS);
-    expect(document.documentElement.style.getPropertyValue('--fx-burst-period')).toBe('5s');
+    expect(document.documentElement.style.getPropertyValue('--fx-burst-period')).toBe('3s');
     const el = document.getElementById('ez-fx-keyframes');
     expect(el).toBeInstanceOf(HTMLStyleElement);
     expect(el?.textContent).toContain('@keyframes fx-jitter-burst');

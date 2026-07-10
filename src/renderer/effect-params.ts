@@ -28,17 +28,17 @@ export interface RollbarParams {
   readonly softness: number;
 }
 
-// Default look: a very wide (120px), very faint (20%) fully-soft band in the
-// Matrix foreground green (#5fe7ac = [data-theme='matrix'] --term-fg),
-// drifting slowly (speed 1 -> a line crosses the screen in 24s) at a 70%
-// screen-height pitch — a subtle old-CRT glow pass, not a hard stripe.
+// Default look: a very wide (120px), very faint (20%) near-fully-soft band
+// in a deep Matrix green (#2fd06d), drifting slowly (speed 1 -> a line
+// crosses the screen in 24s) at a 70% screen-height pitch — a subtle old-CRT
+// glow pass, not a hard stripe.
 export const DEFAULT_ROLLBAR_PARAMS: RollbarParams = {
   thickness: 120,
   gap: 70,
-  color: '#5fe7ac',
+  color: '#2fd06d',
   speed: 1,
   opacity: 20,
-  softness: 100,
+  softness: 99,
 };
 
 const THICKNESS_MIN = 1;
@@ -165,13 +165,13 @@ export type FlickerParams = {
   readonly depth: number;
 };
 
-// Defaults tuned subtle: a 250ms 6px bump every 5s, 1px trembles, a faint
-// (12%) mid-grain snow, and the flicker stub's original feel (the old CSS
-// hardcoded 0.15s / 0.92 — 8Hz/8% keeps that character, now adjustable).
-export const DEFAULT_BURST_PARAMS: BurstJitterParams = { period: 5, duration: 250, intensity: 6, flash: true };
-export const DEFAULT_MICRO_PARAMS: MicroJitterParams = { speed: 8, amplitude: 1 };
-export const DEFAULT_NOISE_PARAMS: NoiseParams = { density: 60, opacity: 12, speed: 10 };
-export const DEFAULT_FLICKER_PARAMS: FlickerParams = { frequency: 8, depth: 8 };
+// Defaults tuned subtle (the v0.8.0 default look): a barely-there 100ms 1px
+// bump every 3s, slow 1px trembles (opt-in), a faint (10%) coarse-grain
+// snow, and a fast shallow flicker (15Hz / 7%).
+export const DEFAULT_BURST_PARAMS: BurstJitterParams = { period: 3, duration: 100, intensity: 1, flash: true };
+export const DEFAULT_MICRO_PARAMS: MicroJitterParams = { speed: 1, amplitude: 1 };
+export const DEFAULT_NOISE_PARAMS: NoiseParams = { density: 20, opacity: 10, speed: 8 };
+export const DEFAULT_FLICKER_PARAMS: FlickerParams = { frequency: 15, depth: 7 };
 
 export function clampBurstJitterParams(partial: Partial<BurstJitterParams>): BurstJitterParams {
   return {

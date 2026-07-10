@@ -30,17 +30,18 @@ export interface EffectCatalogEntry {
 export const EFFECT_CATALOG: Readonly<Record<EffectId, EffectCatalogEntry>> = {
   scanlines: { id: 'scanlines', label: 'Scanlines', defaultOn: true },
   'phosphor-glow': { id: 'phosphor-glow', label: 'Phosphor Glow', defaultOn: true },
-  flicker: { id: 'flicker', label: 'Flicker', defaultOn: false },
+  flicker: { id: 'flicker', label: 'Flicker', defaultOn: true },
   'crt-curvature': { id: 'crt-curvature', label: 'CRT Curvature', defaultOn: false },
   'crt-rollbar': { id: 'crt-rollbar', label: 'CRT Roll Bar', defaultOn: true },
   'scanline-scroll': { id: 'scanline-scroll', label: 'Scanline Scroll', defaultOn: true },
-  // CRT interference trio (crt-interference): intrusive by design, so all
-  // three ship defaultOn:false on every platform — strictly opt-in, like
-  // flicker/crt-curvature above. Params live in effect-params.ts
-  // (InterferenceParams), which also parameterizes the upgraded flicker.
-  'jitter-burst': { id: 'jitter-burst', label: 'Burst Jitter', defaultOn: false },
+  // CRT interference set (crt-interference): tuned-subtle defaults ship ON
+  // (v0.8.0 default look) except micro-jitter, which stays strictly opt-in —
+  // a constant tremble is intrusive even at amplitude 1. Params live in
+  // effect-params.ts (InterferenceParams), which also parameterizes the
+  // upgraded flicker.
+  'jitter-burst': { id: 'jitter-burst', label: 'Burst Jitter', defaultOn: true },
   'micro-jitter': { id: 'micro-jitter', label: 'Micro Jitter', defaultOn: false },
-  'static-noise': { id: 'static-noise', label: 'Static Noise', defaultOn: false },
+  'static-noise': { id: 'static-noise', label: 'Static Noise', defaultOn: true },
 };
 
 const EFFECT_IDS = Object.keys(EFFECT_CATALOG) as EffectId[];

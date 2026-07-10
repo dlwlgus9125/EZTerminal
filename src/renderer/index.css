@@ -200,23 +200,23 @@ html[data-effect-scanlines='on']::after {
    the CONTENT (#root opacity) — decoupled from scanlines (the old stub
    animated the scanline overlay and silently required scanlines on) and
    parameterized: frequency/depth come from flicker params (--fx-flicker-*,
-   effect-params.ts; fallbacks = defaults 8Hz / 8% = the stub's original
-   0.15s / 0.92 feel). Opacity, not filter:brightness — compositor-cheap, and
+   effect-params.ts; fallbacks = defaults 15Hz / 7% -> 0.067s / 0.93, a
+   faster-but-shallower shimmer). Opacity, not filter:brightness — compositor-cheap, and
    against the near-black body bg an opacity dip reads as a brightness dip.
    COMPOSITION: micro-jitter also animates #root (transform); `animation` is
    a per-element shorthand, so the both-on case needs the explicit combined
    rule below (two separate rules would drop whichever loses the cascade). */
 html[data-effect-flicker='on'] #root {
-  animation: fx-flicker var(--fx-flicker-duration, 0.125s) steps(2, jump-none) infinite;
+  animation: fx-flicker var(--fx-flicker-duration, 0.067s) steps(2, jump-none) infinite;
 }
 html[data-effect-micro-jitter='on'][data-effect-flicker='on'] #root {
   animation:
-    fx-micro-jitter var(--fx-micro-duration, 0.5s) step-end infinite,
-    fx-flicker var(--fx-flicker-duration, 0.125s) steps(2, jump-none) infinite;
+    fx-micro-jitter var(--fx-micro-duration, 4.00s) step-end infinite,
+    fx-flicker var(--fx-flicker-duration, 0.067s) steps(2, jump-none) infinite;
 }
 @keyframes fx-flicker {
   0%, 100% { opacity: 1; }
-  50% { opacity: var(--fx-flicker-min, 0.92); }
+  50% { opacity: var(--fx-flicker-min, 0.93); }
 }
 
 /* == CRT CURVATURE == a subtle vignette on its own ::before layer (scanlines
@@ -258,10 +258,10 @@ html[data-effect-crt-rollbar='on'] body::after {
   pointer-events: none;
   background-image: repeating-linear-gradient(
     to bottom,
-    color-mix(in srgb, var(--fx-rollbar-color, #5fe7ac) 0%, transparent) 0,
-    var(--fx-rollbar-color, #5fe7ac) var(--fx-rollbar-grad-in, 60px),
-    var(--fx-rollbar-color, #5fe7ac) var(--fx-rollbar-grad-out, 60px),
-    color-mix(in srgb, var(--fx-rollbar-color, #5fe7ac) 0%, transparent) calc(var(--fx-rollbar-thickness, 120) * 1px),
+    color-mix(in srgb, var(--fx-rollbar-color, #2fd06d) 0%, transparent) 0,
+    var(--fx-rollbar-color, #2fd06d) var(--fx-rollbar-grad-in, 59.40px),
+    var(--fx-rollbar-color, #2fd06d) var(--fx-rollbar-grad-out, 60.60px),
+    color-mix(in srgb, var(--fx-rollbar-color, #2fd06d) 0%, transparent) calc(var(--fx-rollbar-thickness, 120) * 1px),
     transparent calc(var(--fx-rollbar-thickness, 120) * 1px),
     transparent var(--fx-rollbar-period, 70vh)
   );
@@ -328,8 +328,8 @@ html[data-effect-scanline-scroll='on'] body::before {
    Displacements are integer px with step-end timing only: pure compositor
    translations — no reflow, no xterm repaint, no subpixel text blur.
 
-   The burst keyframes below are the STATIC DEFAULTS (period 5s, 250ms burst
-   -> 5% window, intensity 6, flash on): effect-params.ts regenerates both
+   The burst keyframes below are the STATIC DEFAULTS (period 3s, 100ms burst
+   -> 3.33% window, intensity 1, flash on): effect-params.ts regenerates both
    blocks into #ez-fx-keyframes (appended after this sheet, so it wins the
    keyframes-name cascade) whenever params change — % stops can't be var()s. */
 :root {
@@ -342,15 +342,15 @@ html[data-effect-scanline-scroll='on'] body::before {
 
 html[data-effect-jitter-burst='on'] body {
   will-change: transform;
-  animation: fx-jitter-burst var(--fx-burst-period, 5s) step-end infinite;
+  animation: fx-jitter-burst var(--fx-burst-period, 3s) step-end infinite;
 }
 @keyframes fx-jitter-burst {
-  0% { transform: translate(0px, 6px); }
-  1.00% { transform: translate(-4px, -6px); }
-  2.00% { transform: translate(2px, 4px); }
-  3.00% { transform: translate(0px, -3px); }
-  4.00% { transform: translate(-2px, 2px); }
-  5.00% { transform: translate(0px, 0px); }
+  0% { transform: translate(0px, 1px); }
+  0.67% { transform: translate(-1px, -1px); }
+  1.33% { transform: translate(0px, 1px); }
+  2.00% { transform: translate(0px, 0px); }
+  2.67% { transform: translate(0px, 0px); }
+  3.33% { transform: translate(0px, 0px); }
   100% { transform: translate(0px, 0px); }
 }
 html[data-effect-jitter-burst='on'] #root::before {
@@ -362,17 +362,17 @@ html[data-effect-jitter-burst='on'] #root::before {
   background-image: var(--fx-noise-texture);
   background-size: 128px 128px;
   opacity: 0;
-  animation: fx-burst-flash var(--fx-burst-period, 5s) linear infinite;
+  animation: fx-burst-flash var(--fx-burst-period, 3s) linear infinite;
 }
 @keyframes fx-burst-flash {
   0% { opacity: 0.25; }
-  5.00% { opacity: 0; }
+  3.33% { opacity: 0; }
   100% { opacity: 0; }
 }
 
 html[data-effect-micro-jitter='on'] #root {
   will-change: transform;
-  animation: fx-micro-jitter var(--fx-micro-duration, 0.5s) step-end infinite;
+  animation: fx-micro-jitter var(--fx-micro-duration, 4.00s) step-end infinite;
 }
 /* 10 jumps per cycle at irregular stops — deterministic "random". Amplitude
    scales every offset via the one var (rollbar's calc-inside-keyframes
@@ -397,10 +397,10 @@ html[data-effect-static-noise='on'] #root::after {
   z-index: 202;
   pointer-events: none;
   background-image: var(--fx-noise-texture);
-  background-size: var(--fx-noise-size, 144px) var(--fx-noise-size, 144px);
-  opacity: var(--fx-noise-opacity, 0.12);
+  background-size: var(--fx-noise-size, 224px) var(--fx-noise-size, 224px);
+  opacity: var(--fx-noise-opacity, 0.10);
   will-change: background-position;
-  animation: fx-noise-shuffle var(--fx-noise-duration, 0.4s) step-end infinite;
+  animation: fx-noise-shuffle var(--fx-noise-duration, 0.50s) step-end infinite;
 }
 /* Tile-origin shuffle through fixed pseudo-random offsets = animated snow. */
 @keyframes fx-noise-shuffle {

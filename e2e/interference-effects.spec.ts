@@ -36,19 +36,25 @@ async function setSlider(window: Page, testId: string, value: number): Promise<v
   );
 }
 
-test('Matrix declares all four interference effects, strictly opt-in (toggles unchecked, no data-effect attrs)', async () => {
+test('Matrix ships the tuned interference defaults: burst/noise/flicker ON, micro-jitter opt-in', async () => {
   const app = await launchApp();
   const window = await app.firstWindow();
   await openMatrixSettings(window);
 
-  for (const id of NEW_EFFECT_IDS) {
+  for (const id of ['jitter-burst', 'static-noise', 'flicker'] as const) {
     const toggle = window.getByTestId(`settings-effect-${id}`);
     await expect(toggle).toBeVisible();
-    await expect(toggle).not.toBeChecked(); // defaultOn:false — opt-in on desktop too
-    expect(await effectAttr(window, id)).toBeNull();
+    await expect(toggle).toBeChecked(); // defaultOn:true — the tuned v0.8.0 default look
+    await expect.poll(() => effectAttr(window, id)).toBe('on');
     // each parameterized effect exposes its slider group beneath the toggle
     await expect(window.getByTestId(`settings-fx-${id}-params`)).toBeVisible();
   }
+
+  const micro = window.getByTestId('settings-effect-micro-jitter');
+  await expect(micro).toBeVisible();
+  await expect(micro).not.toBeChecked(); // defaultOn:false — still strictly opt-in
+  expect(await effectAttr(window, 'micro-jitter')).toBeNull();
+  await expect(window.getByTestId('settings-fx-micro-jitter-params')).toBeVisible();
 
   await app.close();
 });
@@ -87,11 +93,11 @@ test('the burst period slider rewrites --fx-burst-period and regenerates #ez-fx-
       window.evaluate(() => document.documentElement.style.getPropertyValue('--fx-burst-period')),
     )
     .toBe('12s');
-  // 250ms default burst in a 12s cycle -> window f = 250/1000/12*100 = 2.08%
-  // — the regenerated keyframes carry the recomputed stop.
+  // 100ms default burst in a 12s cycle -> f = 100/1000/12*100 = 0.83%,
+  // floored to the 1% minimum — the regenerated keyframes carry it.
   await expect
     .poll(() => window.evaluate(() => document.getElementById('ez-fx-keyframes')?.textContent ?? ''))
-    .toContain('2.08%');
+    .toContain('1.00% { opacity: 0; }');
 
   await app.close();
 });
