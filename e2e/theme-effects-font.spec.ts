@@ -209,11 +209,9 @@ test('toggling an effect on the Matrix theme flips the data-effect attribute on 
 test('Matrix theme shows scanlines by default on desktop (EFFECT_CATALOG defaultOn wiring, no Settings interaction)', async () => {
   const app = await launchApp();
   const window = await app.firstWindow();
+  // Matrix IS the boot default now — no interaction at all before the
+  // defaultOn wiring must already have applied the effects.
   const themeBtn = window.getByTestId('btn-theme');
-  await expect(themeBtn).toHaveText('Theme: dark');
-  await themeBtn.click(); // light
-  await themeBtn.click(); // high-contrast
-  await themeBtn.click(); // matrix
   await expect(themeBtn).toHaveText('Theme: matrix');
 
   await expect

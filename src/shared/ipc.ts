@@ -678,7 +678,7 @@ export interface EzTerminalApi {
   setStartup: (pref: StartupPref) => Promise<void>;
 
   // ── Theme (E1) ───────────────────────────────────────────────────────────
-  /** The persisted theme choice (defaults to 'dark' when never set). */
+  /** The persisted theme choice (defaults to 'matrix' when never set). */
   getTheme: () => Promise<ThemeName>;
   /** Persist a theme choice — main validates before writing. */
   setTheme: (theme: ThemeName) => Promise<void>;

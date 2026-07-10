@@ -157,10 +157,10 @@ describe('LayoutStore — presets & startup (A-M2)', () => {
 });
 
 describe('LayoutStore — theme (E1)', () => {
-  it('defaults to dark and round-trips a theme choice', async () => {
+  it('defaults to matrix and round-trips a theme choice', async () => {
     const store = new LayoutStore(makeDir());
     await store.init();
-    expect(await store.getTheme()).toBe('dark');
+    expect(await store.getTheme()).toBe('matrix');
     await store.setTheme('light');
     expect(await store.getTheme()).toBe('light');
   });

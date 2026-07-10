@@ -364,7 +364,7 @@ export function App(): JSX.Element {
   // xterm instance (mirrors the existing 'ez:refit' pattern). A custom mod's
   // OWN cssVars/effects are applied by `applyThemeVarsAndEffects` (the shared
   // apply-path helper) right after the attribute is set, before that event.
-  const [theme, setThemeState] = useState<ThemeName>('dark');
+  const [theme, setThemeState] = useState<ThemeName>('matrix');
   const [availableThemes, setAvailableThemes] = useState<ThemeDefinition[]>(() => listThemes());
   // Guards the initial getTheme() fetch against a click that lands before its IPC
   // round-trip resolves — without this, a fast click could be silently overwritten

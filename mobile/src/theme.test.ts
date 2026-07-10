@@ -12,18 +12,18 @@ describe('theme', () => {
     delete document.documentElement.dataset.theme;
   });
 
-  it('defaults to dark when nothing is persisted', () => {
-    expect(loadTheme()).toBe('dark');
-  });
-
-  it('loads a persisted theme', () => {
-    localStorage.setItem('ezterminal-mobile-theme', 'matrix');
+  it('defaults to matrix when nothing is persisted', () => {
     expect(loadTheme()).toBe('matrix');
   });
 
-  it('rejects a garbage value, defaulting to dark', () => {
+  it('loads a persisted theme', () => {
+    localStorage.setItem('ezterminal-mobile-theme', 'light');
+    expect(loadTheme()).toBe('light');
+  });
+
+  it('rejects a garbage value, defaulting to matrix', () => {
     localStorage.setItem('ezterminal-mobile-theme', 'not-a-theme');
-    expect(loadTheme()).toBe('dark');
+    expect(loadTheme()).toBe('matrix');
   });
 
   it('round-trips save/load', () => {

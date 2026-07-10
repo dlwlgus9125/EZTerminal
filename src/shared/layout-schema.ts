@@ -124,7 +124,7 @@ export const SettingsSchema = z.object({
   schemaVersion: z.literal(LAYOUT_SCHEMA_VERSION),
   startup: StartupPrefSchema,
   // Optional + schemaVersion stays 1: settings.json files written before E1
-  // still parse with theme absent; layout-store defaults absence to 'dark'.
+  // still parse with theme absent; layout-store defaults absence to 'matrix'.
   theme: ThemeNameSchema.optional(),
   // UI scale (v0.2.0 D1) — integer percent, absent defaults to 100 in layout-store.
   uiScale: z.number().int().min(80).max(150).optional(),
