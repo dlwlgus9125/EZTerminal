@@ -31,6 +31,10 @@ test('session mirroring: WS create-session/run-command/destroy-session reflect o
   // the pairing panel does (getRemoteToken), rather than reaching into the
   // userData dir's remote-token.json.
   const token = await win.evaluate(() => window.ezterminal.getRemoteToken());
+  // Remote control is OFF by default (opt-in, security review) — enable it so
+  // the bridge binds before the Node `ws` client connects. `setRemoteEnabled`
+  // resolves only after the listener is up, so no connect race follows.
+  await win.evaluate(() => window.ezterminal.setRemoteEnabled(true));
   const client = await TestWsClient.connectAuthed(`ws://127.0.0.1:${REMOTE_PORT}`, token);
 
   try {

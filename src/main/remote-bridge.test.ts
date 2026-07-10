@@ -4,7 +4,9 @@ import { WebSocket as RealWebSocket } from 'ws';
 import {
   attachConnection,
   AUTH_CLOSE_CODE,
+  isRemoteOriginAllowed,
   startRemoteBridge,
+  tokensMatch,
   type RemoteBridgeOptions,
   type RemoteFileSource,
   type RemoteMessageChannel,
@@ -332,6 +334,66 @@ describe('RemoteBridge — auth gate', () => {
     // once auth completes, only 'auth-ok' should have been sent, no session-list.
     expect(ws.sent.filter((m) => m.kind === 'session-list')).toHaveLength(0);
     expect(interpreter.posted).toHaveLength(0);
+  });
+});
+
+describe('RemoteBridge — token comparison (constant-time, security review)', () => {
+  it('accepts an exact match', () => {
+    expect(tokensMatch(TOKEN, TOKEN)).toBe(true);
+  });
+
+  it('rejects a same-length wrong token (the timingSafeEqual path)', () => {
+    expect(tokensMatch('the-secret-tokeX', TOKEN)).toBe(false);
+  });
+
+  it('rejects a wrong-length token without throwing (length-checked before timingSafeEqual)', () => {
+    expect(tokensMatch('the-secret', TOKEN)).toBe(false);
+    expect(tokensMatch(`${TOKEN}-extra`, TOKEN)).toBe(false);
+    expect(tokensMatch('', TOKEN)).toBe(false);
+  });
+
+  it('rejects non-string candidates', () => {
+    expect(tokensMatch(undefined, TOKEN)).toBe(false);
+    expect(tokensMatch(123, TOKEN)).toBe(false);
+    expect(tokensMatch(null, TOKEN)).toBe(false);
+  });
+});
+
+describe('RemoteBridge — origin allowlist (CSWSH/DNS-rebinding defense, security review)', () => {
+  it('allows the Capacitor WebView origin and no-Origin (non-browser) clients', () => {
+    expect(isRemoteOriginAllowed(undefined)).toBe(true); // Node ws / curl send no Origin
+    expect(isRemoteOriginAllowed('')).toBe(true);
+    expect(isRemoteOriginAllowed('http://localhost')).toBe(true); // Android WebView (androidScheme:'http')
+    expect(isRemoteOriginAllowed('https://localhost')).toBe(true);
+    expect(isRemoteOriginAllowed('capacitor://localhost')).toBe(true);
+  });
+
+  it('rejects a foreign browser origin (including a different localhost port)', () => {
+    expect(isRemoteOriginAllowed('https://evil.example')).toBe(false);
+    expect(isRemoteOriginAllowed('http://localhost:5173')).toBe(false);
+    expect(isRemoteOriginAllowed('http://127.0.0.1')).toBe(false);
+  });
+});
+
+describe('RemoteBridge — onAuthenticated hook (auth-deadline wiring, security review)', () => {
+  it('fires exactly once on a successful auth', async () => {
+    const ws = new FakeWs();
+    const { options } = makeOptions();
+    const onAuthenticated = vi.fn();
+    attachConnection(ws, options, { onAuthenticated });
+    ws.clientSend({ kind: 'auth', token: TOKEN });
+    await flush();
+    expect(onAuthenticated).toHaveBeenCalledTimes(1);
+  });
+
+  it('never fires on a failed auth', async () => {
+    const ws = new FakeWs();
+    const { options } = makeOptions();
+    const onAuthenticated = vi.fn();
+    attachConnection(ws, options, { onAuthenticated });
+    ws.clientSend({ kind: 'auth', token: 'wrong' });
+    await flush();
+    expect(onAuthenticated).not.toHaveBeenCalled();
   });
 });
 

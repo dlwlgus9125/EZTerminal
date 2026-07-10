@@ -24,6 +24,8 @@
  * half-open phone socket (app backgrounded/killed without a clean close)
  * doesn't keep a `statsSource`/packet-mirror acquire alive forever.
  */
+import { timingSafeEqual } from 'node:crypto';
+
 import { WebSocketServer, type WebSocket } from 'ws';
 
 import type { InterpreterFrame, PacketRow, SystemStatsSnapshot } from '../shared/ipc';
@@ -48,6 +50,50 @@ export const DEFAULT_REMOTE_BRIDGE_PORT = 7420;
 /** Ping cadence + missed-pong tolerance for `startRemoteBridge`'s heartbeat sweep. */
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEARTBEAT_MAX_MISSED_PONGS = 2;
+
+// ── Network hardening (public-repo security review) ─────────────────────────
+/** Cap on a single inbound frame. The largest legitimate client frame is a
+ * base64-encoded file-upload chunk (`FILE_CHUNK_BYTES * 2` raw ≈ 683 KiB of
+ * base64); 1 MiB leaves headroom while stopping an unauthenticated client from
+ * forcing `ws`'s 100 MiB default allocation on every frame (pre-auth DoS). */
+const MAX_INBOUND_FRAME_BYTES = 1024 * 1024;
+/** Max concurrent connections — one phone plus a little slack. Beyond this the
+ * server refuses new sockets (WS close 1013 "Try Again Later") so a socket
+ * flood can't exhaust the main process. */
+const MAX_REMOTE_CONNECTIONS = 64;
+/** A socket that hasn't authenticated within this window is terminated, so an
+ * unauthenticated client can't sit holding a connection slot indefinitely
+ * (which, with `MAX_REMOTE_CONNECTIONS`, would otherwise starve real clients). */
+const AUTH_DEADLINE_MS = 10_000;
+/** WebView/localhost origins allowed to open the bridge. The Capacitor Android
+ * WebView presents `http://localhost` (capacitor.config.ts's `androidScheme`);
+ * a real browser page presents its own site origin and is rejected — this is
+ * the Cross-Site WebSocket Hijacking / DNS-rebinding defense. Non-browser
+ * clients (the e2e Node `ws` client, curl) send no Origin header at all, which
+ * is allowed: the token remains the real authentication gate. */
+const ALLOWED_WS_ORIGINS: ReadonlySet<string> = new Set([
+  'http://localhost',
+  'https://localhost',
+  'capacitor://localhost',
+]);
+
+/** `verifyClient` predicate — allow no-Origin (non-browser) clients and the
+ * known WebView origins; reject any explicit foreign browser origin. Exported
+ * for unit testing (the real `verifyClient` wiring needs a live server). */
+export function isRemoteOriginAllowed(origin: string | undefined): boolean {
+  return !origin || ALLOWED_WS_ORIGINS.has(origin);
+}
+
+/** Constant-time token comparison. Length-checks first (so a length mismatch
+ * never reaches `timingSafeEqual`, which throws on unequal-length buffers) and
+ * then compares without an early-exit byte loop, so a network attacker learns
+ * nothing about the token from response timing. Exported for unit testing. */
+export function tokensMatch(candidate: unknown, token: string): boolean {
+  if (typeof candidate !== 'string') return false;
+  const a = Buffer.from(candidate);
+  const b = Buffer.from(token);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 /** Per-connection packet-frame coalescing (M3): the host already flushes at
  * 100ms (`PACKET_FLUSH_INTERVAL_MS`); this widens it to 500ms over the phone
@@ -164,7 +210,11 @@ export interface RemoteBridgeOptions {
  * Exported standalone (not bundled into `startRemoteBridge`) so tests can
  * drive it with a fake `RemoteWs` without opening a real network socket.
  */
-export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): void {
+export function attachConnection(
+  ws: RemoteWs,
+  options: RemoteBridgeOptions,
+  hooks?: { onAuthenticated?: () => void },
+): void {
   let authed = false;
   const runs = new Map<string, RemotePort>();
   // This connection's own stats subscription (independent of the desktop panel
@@ -283,8 +333,9 @@ export function attachConnection(ws: RemoteWs, options: RemoteBridgeOptions): vo
         return;
       }
       void Promise.resolve(options.getToken()).then((token) => {
-        if (msg.token === token) {
+        if (tokensMatch(msg.token, token)) {
           authed = true;
+          hooks?.onAuthenticated?.();
           send({ kind: 'auth-ok' });
         } else {
           send({ kind: 'auth-fail' });
@@ -597,9 +648,23 @@ export interface RemoteBridgeHandle {
   stop(): Promise<void>;
 }
 
-/** Start the WS server (binds `0.0.0.0` — LAN/Tailscale reachable, token-gated). */
+/**
+ * Start the WS server. Binds `0.0.0.0` (LAN/Tailscale reachable) — remote
+ * control is OFF by default (see `LayoutStore.getRemoteEnabled`), so the
+ * listener only exists once the user opts in. Access is gated by the persisted
+ * token (`tokensMatch`, constant-time); browser origins are rejected
+ * (`isRemoteOriginAllowed`); frames are capped (`MAX_INBOUND_FRAME_BYTES`) and
+ * connections are bounded (`MAX_REMOTE_CONNECTIONS` + `AUTH_DEADLINE_MS`). The
+ * transport itself is plain `ws://` — intended for a trusted LAN or an
+ * encrypted overlay (Tailscale/WireGuard); see SECURITY.md.
+ */
 export function startRemoteBridge(options: RemoteBridgeOptions): RemoteBridgeHandle {
-  const wss = new WebSocketServer({ port: options.port, host: '0.0.0.0' });
+  const wss = new WebSocketServer({
+    port: options.port,
+    host: '0.0.0.0',
+    maxPayload: MAX_INBOUND_FRAME_BYTES,
+    verifyClient: (info: { origin?: string }) => isRemoteOriginAllowed(info.origin),
+  });
   // A bind failure (e.g. EADDRINUSE from a stale listener) must not crash main.
   wss.on('error', (err) => {
     console.error('[remote-bridge] WebSocketServer error:', err);
@@ -610,9 +675,23 @@ export function startRemoteBridge(options: RemoteBridgeOptions): RemoteBridgeHan
   // connection misses HEARTBEAT_MAX_MISSED_PONGS in a row.
   const missedPongs = new WeakMap<WebSocket, number>();
   wss.on('connection', (ws) => {
+    // Refuse beyond the connection cap so a socket flood can't exhaust main
+    // (1013 = Try Again Later). `wss.clients` already includes this socket.
+    if (wss.clients.size > MAX_REMOTE_CONNECTIONS) {
+      ws.close(1013);
+      return;
+    }
+    // Terminate a socket that never authenticates in time (cleared the moment
+    // auth succeeds, via the onAuthenticated hook, or when the socket closes).
+    // `.unref()` so the timer never keeps the process alive on its own.
+    const authTimer = setTimeout(() => ws.terminate(), AUTH_DEADLINE_MS);
+    authTimer.unref?.();
     missedPongs.set(ws, 0);
     ws.on('pong', () => missedPongs.set(ws, 0));
-    attachConnection(ws as unknown as RemoteWs, options);
+    ws.on('close', () => clearTimeout(authTimer));
+    attachConnection(ws as unknown as RemoteWs, options, {
+      onAuthenticated: () => clearTimeout(authTimer),
+    });
   });
   const heartbeat = setInterval(() => {
     for (const ws of wss.clients) {

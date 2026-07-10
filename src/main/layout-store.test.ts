@@ -193,12 +193,12 @@ describe('LayoutStore — uiScale + remoteEnabled (v0.2.0 M1)', () => {
     expect(await store.getUiScale()).toBe(120);
   });
 
-  it('defaults remoteEnabled to true and round-trips a set value', async () => {
+  it('defaults remoteEnabled to false (opt-in) and round-trips a set value', async () => {
     const store = new LayoutStore(makeDir());
     await store.init();
-    expect(await store.getRemoteEnabled()).toBe(true);
-    await store.setRemoteEnabled(false);
     expect(await store.getRemoteEnabled()).toBe(false);
+    await store.setRemoteEnabled(true);
+    expect(await store.getRemoteEnabled()).toBe(true);
   });
 
   it('defaults scrollback to 5000 and round-trips a set value (WT-parity M5)', async () => {

@@ -626,8 +626,10 @@ app.on('ready', () => {
   });
 
   // ── Mobile remote-control WS bridge (M0) ─────────────────────────────────
-  // Default ON, bound to 0.0.0.0 (LAN + Tailscale reachable — a token gates
-  // access since there's no port-forwarding-free path to the open internet).
+  // Default OFF (opt-in — see LayoutStore.getRemoteEnabled): the bridge grants
+  // a paired device full command + filesystem access, so the listener only
+  // binds once the user enables it in Settings. When enabled it binds 0.0.0.0
+  // (LAN + Tailscale reachable), token-gated and origin-checked.
   // The bridge adapts to the SAME broker instance the local IPC handlers use,
   // so both transports share one interpreter listener + one session directory.
   const remoteTokenStore = new RemoteTokenStore(path.join(app.getPath('userData')));

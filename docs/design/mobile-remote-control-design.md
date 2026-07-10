@@ -41,7 +41,7 @@
 4. **Android가 targetSdk 28+에서 cleartext를 기본 차단**(에러 없이 조용히) → `AndroidManifest.xml`에 `android:usesCleartextTraffic="true"`.
 5. **jsdom·happy-dom에 진짜 `MessageChannel`이 없고** `window.postMessage`의 transfer list를 무시 → 트랜스포트는 `FakeMessagePort`+`dispatchEvent` 방식(테스트=프로덕션 동일 경로).
 6. **`tslib` 미materialize**(`node-linker=hoisted`) → `cap add android` 전에 `pnpm add tslib -w`.
-7. **Android SDK는 설치돼 있어도 `ANDROID_HOME` 미설정일 수 있음** — `C:\Users\dlwlg\AppData\Local\Android\Sdk`(개발 머신). "SDK 없음" 오판 금지.
+7. **Android SDK는 설치돼 있어도 `ANDROID_HOME` 미설정일 수 있음** — 기본값 `%LOCALAPPDATA%\Android\Sdk`. "SDK 없음" 오판 금지.
 
 ## 테스트 (M3)
 

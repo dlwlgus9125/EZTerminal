@@ -53,6 +53,22 @@ out-*/
 dist/
 # Loose packaged zip at repo root (bundle/zip-maker output, not an out-*/ dir)
 /ezterminal.zip
+# Packaged installers / app binaries — never commit build artifacts to source
+# (guards against a stray `EZTerminal-Setup*.exe` / APK at the repo root)
+*.exe
+*.apk
+*.aab
+
+# Signing material — never commit keystores or certificates
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+
+# Editor / tooling backup files (e.g. CLAUDE.md.backup.<timestamp>)
+*.backup.*
 
 # Playwright
 /test-results/

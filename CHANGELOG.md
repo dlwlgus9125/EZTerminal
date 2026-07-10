@@ -2,6 +2,30 @@
 
 수동 관리 (semver). 릴리스 절차: `docs/release/README.md`.
 
+## [0.8.0] - 2026-07-10
+
+Public 전환 전 보안 리뷰 하드닝 — 원격 제어 WS 브리지 attack surface 축소.
+
+### Security
+- **원격 제어 기본 OFF (opt-in):** 브리지는 페어링된 기기에 호스트의 임의 명령 실행 + 파일
+  전체 접근을 부여하므로, 이제 사용자가 Settings에서 명시적으로 켜기 전까지 리스너를 열지
+  않음(기존: 기본 ON). 갓 설치한 앱은 원격 표면을 전혀 노출하지 않음
+- **Origin 검증 (CSWSH / DNS-rebinding 방어):** WS 서버가 브라우저 cross-origin 연결을 거부 —
+  Capacitor WebView origin(`http://localhost`)과 non-browser 클라이언트만 허용
+- **상수시간 토큰 비교:** 페어링 토큰 비교를 `===`에서 `crypto.timingSafeEqual`(길이 선검사)로 교체
+- **pre-auth DoS 가드:** 인바운드 프레임 크기 상한(1 MiB), 동시 연결 수 상한(64), 인증 데드라인
+  (10초 내 미인증 소켓 종료)
+- **모바일 토큰 at-rest:** `android:allowBackup="false"` — 장기 자격증명이 `adb backup`/자동
+  백업으로 유출되지 않도록
+- **`.gitignore` 위생:** 루트에 `*.exe`/`*.apk`/키스토어(`*.jks` 등)/`*.backup.*` 무시 규칙 추가 +
+  Android 키스토어 무시 활성화 — 서명 자료·설치파일 실수 커밋 방지
+- **문서:** `SECURITY.md` 추가 — 원격 브리지 trust-model(페어링 = 전 디스크 접근, 평문 `ws://`는
+  신뢰 네트워크/Tailscale 전제)
+
+### Notes
+- 전송 암호화(`wss://` + 인증서 pinning)는 후속 과제 — 현재는 Tailscale/WireGuard 오버레이의
+  암호화에 의존
+
 ## [0.7.0] - 2026-07-10
 
 Windows Terminal 동작 파리티 (M0–M5).

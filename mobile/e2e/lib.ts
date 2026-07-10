@@ -42,7 +42,8 @@ export const EMULATOR_HOST_URL = `ws://10.0.2.2:${REMOTE_PORT}`;
 const DUMP_DEVICE_PATH = '/sdcard/ez_e2e_dump.xml';
 export const DUMP_LOCAL_PATH = path.join(import.meta.dirname, '.ez_e2e_dump.xml');
 
-const ANDROID_HOME = process.env.ANDROID_HOME ?? String.raw`C:\Users\dlwlg\AppData\Local\Android\Sdk`;
+const ANDROID_HOME =
+  process.env.ANDROID_HOME ?? path.join(process.env.LOCALAPPDATA ?? '', 'Android', 'Sdk');
 const ADB_BIN = path.join(ANDROID_HOME, 'platform-tools', 'adb.exe');
 
 // ── Device targeting ─────────────────────────────────────────────────────
@@ -399,6 +400,11 @@ export async function launchDesktop(): Promise<{ app: ElectronApplication; token
   const win = await app.firstWindow();
   await win.waitForLoadState('domcontentloaded');
   const token: string = await win.evaluate(() => window.ezterminal.getRemoteToken());
+  // Remote control is OFF by default (opt-in, security review) — turn it on so
+  // the phone can reach the bridge. `setRemoteEnabled` resolves only after the
+  // WS listener has actually bound, so the emulator connect that follows won't
+  // race a not-yet-listening port.
+  await win.evaluate(() => window.ezterminal.setRemoteEnabled(true));
   return { app, token };
 }
 

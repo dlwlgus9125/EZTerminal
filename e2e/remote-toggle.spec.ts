@@ -13,26 +13,32 @@ import { TestWsClient } from './ws-client';
 // another instance's default-port bridge.
 const REMOTE_PORT = 17421;
 
-test('remote toggle: disabling closes the live client and refuses new ones; re-enabling rebinds cleanly', async () => {
+test('remote toggle: enabling binds; disabling closes the live client and refuses new ones; re-enabling rebinds cleanly', async () => {
   const app = await launchApp(undefined, { EZTERMINAL_REMOTE_PORT: String(REMOTE_PORT) });
   const win = await app.firstWindow();
   await expect(win.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
   const token = await win.evaluate(() => window.ezterminal.getRemoteToken());
+
+  await win.getByTestId('btn-toggle-settings').click();
+  await expect(win.getByTestId('settings-panel')).toBeVisible();
+
+  const toggle = win.getByTestId('settings-remote-toggle');
+  // Remote control is OFF by default (opt-in, security review): the toggle
+  // starts unchecked and nothing is listening yet.
+  await expect(toggle).not.toBeChecked();
+
+  // ── Enable → the bridge binds and accepts an authed client ─────────────────
+  // A plain click, not locator.check(): the checkbox is React-controlled and
+  // its onChange only flips state after an async IPC round trip (the real
+  // bridge start/stop), so check()/uncheck()'s single immediate post-click
+  // state check fails — expect(...).toBeChecked() polls until it settles.
+  await toggle.click();
+  await expect(toggle).toBeChecked();
   const client = await TestWsClient.connectAuthed(`ws://127.0.0.1:${REMOTE_PORT}`, token);
 
   try {
-    await win.getByTestId('btn-toggle-settings').click();
-    await expect(win.getByTestId('settings-panel')).toBeVisible();
-
-    const toggle = win.getByTestId('settings-remote-toggle');
-    await expect(toggle).toBeChecked(); // remoteEnabled defaults to true
-
     // ── Toggle OFF ───────────────────────────────────────────────────────────
-    // A plain click, not locator.uncheck(): the checkbox is React-controlled
-    // and its onChange only flips state after an async IPC round trip (the
-    // real bridge shutdown), so uncheck()'s single immediate post-click state
-    // check fails — expect(...).not.toBeChecked() polls until it settles.
     await toggle.click();
     await expect(toggle).not.toBeChecked();
 

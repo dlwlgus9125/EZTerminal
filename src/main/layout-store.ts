@@ -198,7 +198,10 @@ export class LayoutStore {
   }
 
   async getRemoteEnabled(): Promise<boolean> {
-    return (await this.loadSettingsFile()).remoteEnabled ?? true;
+    // Default OFF (opt-in): the remote-control WS bridge grants a paired device
+    // full command execution + filesystem access to this host, so it must not
+    // listen until the user explicitly enables it (public-repo security review).
+    return (await this.loadSettingsFile()).remoteEnabled ?? false;
   }
 
   async setRemoteEnabled(remoteEnabled: boolean): Promise<void> {
