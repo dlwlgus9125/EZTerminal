@@ -143,8 +143,9 @@ export function runPty(
     // confirmed via direct reproduction 2026-07-03. Sessions that exit
     // NATURALLY (no explicit kill()) never hit this and are unaffected — the
     // native `_$onProcessExit` teardown path they use is safe. So on Windows,
-    // terminate the child externally (killTree, tree-kill so the M1 batch-
-    // shim's cmd.exe -> node.exe grandchild is reached too) instead of calling
+    // terminate the child externally (killTree, tree-kill so the fallback batch-
+    // shim's cmd.exe -> node.exe grandchild is reached too — de-sugared shims
+    // spawn the target directly and have no cmd.exe grandparent) instead of calling
     // proc.kill() directly; the external kill drives the SAME safe
     // natural-exit path. `proc.kill()` is kept as a last-resort fallback if
     // onExit hasn't fired within 5s (e.g. the external kill itself failed) —

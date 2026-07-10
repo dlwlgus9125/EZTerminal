@@ -15,6 +15,19 @@ function makeCommand(name: string): Command {
   return { type: 'command', name, nameSpan: { start: 0, end: name.length }, args: [] };
 }
 
+/** Like {@link makeCommand}, but with positional string-literal user args. */
+function commandWithArgs(name: string, userArgs: string[]): Command {
+  return {
+    type: 'command',
+    name,
+    nameSpan: { start: 0, end: name.length },
+    args: userArgs.map((value) => ({
+      kind: 'positional' as const,
+      expr: { type: 'string' as const, value, span: { start: 0, end: value.length } },
+    })),
+  };
+}
+
 function makeCtx(): EvalContext {
   return {
     cwd: process.cwd(),
@@ -110,6 +123,118 @@ describe('createExternalResolver — interactive (PTY) path', () => {
     expect(data.kind).toBe('pty-stream');
     if (data.kind === 'pty-stream') {
       expect(data.forceXterm).toBeUndefined();
+    }
+  });
+
+  // fix-ctrlc-treekill: a shim that de-sugars cleanly (shim-resolver.ts) spawns
+  // its real target DIRECTLY via ptyArgv — no cmd.exe in between — so the
+  // target becomes the PTY's console group leader and Ctrl+C's CTRL_C_EVENT
+  // can't be intercepted by cmd.exe's batch-job terminator first.
+  it('(fix-ctrlc-treekill) a node-form .cmd shim de-sugars to node.exe via ptyArgv, not cmd.exe', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'ezterm-pty-'));
+    const cmd = path.join(dir, 'shim.cmd');
+    // Mirrors a real npm cmd-shim's launch line (shim-resolver.ts's node-form:
+    // a quoted `%_prog%`/node.exe token immediately followed by a quoted
+    // `%dp0%`-relative script path, then `%*`) — NOT the simpler `node "%~dp0x.js"
+    // %*` shape the repo's own hand-written e2e fixtures use, which the real
+    // resolver deliberately does not recognize (see shim-resolver.ts's doc
+    // comment on the two shapes it confidently de-sugars).
+    writeFileSync(
+      cmd,
+      '@echo off\r\nSETLOCAL\r\nSET "dp0=%~dp0"\r\nSET "_prog=node"\r\n"%_prog%"  "%dp0%\\cli.js" %*\r\n',
+    );
+
+    let spawnedFile: string | null = null;
+    let spawnedArgs: PtyArgs | null = null;
+    const spawn: PtySpawnFn = (file, args, options) => {
+      spawnedFile = file;
+      spawnedArgs = args;
+      return fakePtySpawn(file, args, options);
+    };
+    const resolve = createExternalResolver(undefined, spawn);
+    const data = resolve(makeCommand(cmd), makeCtx(), { interactive: true, forceXterm: true });
+    expect(data.kind).toBe('pty-stream');
+    if (data.kind === 'pty-stream') {
+      data.spawn(80, 24);
+    }
+
+    // Not cmd.exe: the resolved node target, spawned via the argv path (the
+    // prefix arg is the shim's own cli.js, then the user's args — none here).
+    expect(spawnedFile).toMatch(/node(\.exe)?$/i);
+    expect(spawnedFile).not.toMatch(/cmd\.exe$/i);
+    expect(spawnedArgs).not.toBeNull();
+    const args = spawnedArgs as unknown as PtyArgs;
+    expect(args.kind).toBe('argv');
+    if (args.kind === 'argv') {
+      expect(args.argv).toEqual([path.join(dir, 'cli.js')]);
+    }
+  });
+
+  // fix-ctrlc-treekill: the de-sugared target's own prefixArgs (e.g. the
+  // shim's cli.js) must come BEFORE the user's own args, not after or
+  // interleaved — the prior test above passes zero user args, which can't
+  // distinguish "prepend" from "append" or a swapped order.
+  it('(fix-ctrlc-treekill) prefixArgs precede the user\'s own args in the final argv', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'ezterm-pty-'));
+    const cmd = path.join(dir, 'shim.cmd');
+    writeFileSync(
+      cmd,
+      '@echo off\r\nSETLOCAL\r\nSET "dp0=%~dp0"\r\nSET "_prog=node"\r\n"%_prog%"  "%dp0%\\cli.js" %*\r\n',
+    );
+
+    let spawnedArgs: PtyArgs | null = null;
+    const spawn: PtySpawnFn = (file, args, options) => {
+      spawnedArgs = args;
+      return fakePtySpawn(file, args, options);
+    };
+    const resolve = createExternalResolver(undefined, spawn);
+    const data = resolve(commandWithArgs(cmd, ['--foo', 'bar']), makeCtx(), {
+      interactive: true,
+      forceXterm: true,
+    });
+    expect(data.kind).toBe('pty-stream');
+    if (data.kind === 'pty-stream') {
+      data.spawn(80, 24);
+    }
+
+    expect(spawnedArgs).not.toBeNull();
+    const args = spawnedArgs as unknown as PtyArgs;
+    expect(args.kind).toBe('argv');
+    if (args.kind === 'argv') {
+      expect(args.argv).toEqual([path.join(dir, 'cli.js'), '--foo', 'bar']);
+    }
+  });
+
+  // Fallback preserved: an un-parseable shim (shim-resolver.ts returns null)
+  // still routes through the pre-existing cmd.exe + buildCmdLine path — the
+  // guard-pty-routing.mjs invariant this file already locks in.
+  it('(fix-ctrlc-treekill) an un-parseable .cmd shim still falls back to cmd.exe + commandLine', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'ezterm-pty-'));
+    const bat = path.join(dir, 'tool.cmd');
+    // Not the recognized `node "%~dp0<script>" %*` (or exe-form) shape —
+    // shim-resolver.ts can't de-sugar this, so the fallback must fire.
+    writeFileSync(bat, '@echo off\r\necho hi\r\n');
+
+    let spawnedFile: string | null = null;
+    let spawnedArgs: PtyArgs | null = null;
+    const spawn: PtySpawnFn = (file, args, options) => {
+      spawnedFile = file;
+      spawnedArgs = args;
+      return fakePtySpawn(file, args, options);
+    };
+    const resolve = createExternalResolver(undefined, spawn);
+    const data = resolve(makeCommand(bat), makeCtx(), { interactive: true });
+    expect(data.kind).toBe('pty-stream');
+    if (data.kind === 'pty-stream') {
+      data.spawn(80, 24);
+    }
+
+    expect(spawnedFile).toMatch(/cmd\.exe$/i);
+    expect(spawnedArgs).not.toBeNull();
+    const args = spawnedArgs as unknown as PtyArgs;
+    expect(args.kind).toBe('commandLine');
+    if (args.kind === 'commandLine') {
+      expect(args.commandLine).toContain('tool.cmd');
     }
   });
 

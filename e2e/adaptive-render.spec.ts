@@ -41,6 +41,10 @@ const LINE_PROMPT_FIXTURE = path.resolve(__dirname, 'fixtures', 'line-prompt.js'
 // sigil-free. Real claude/codex auth+TUI remain a manual check (AC-1/AC-2 are
 // dualized per the plan — see docs/release/cli-parity-manual-checklist.md).
 const INK_CMD_SHIM = path.resolve(__dirname, 'fixtures', 'ink-cmd-shim');
+// fix-ctrlc-treekill: same sigil-free, extensionless .cmd-shim invocation as
+// INK_CMD_SHIM, but the wrapped script survives Ctrl+C instead of emitting a
+// TUI trigger burst — see the test below for what this proves.
+const CTRLC_SURVIVOR_CMD_SHIM = path.resolve(__dirname, 'fixtures', 'ctrlc-survivor');
 
 /** Concatenated text currently rendered in the xterm grid (post-upgrade). */
 async function terminalText(window: Page): Promise<string> {
@@ -192,6 +196,42 @@ test('adaptive render: Ctrl+C reaches the PTY child through the plain input path
   await expect.poll(() => plainText(window), { timeout: 10_000 }).toContain('SIGINT');
   await expect(window.getByTestId('block-status')).toHaveText('done', { timeout: 10_000 });
   await expect(window.getByTestId('pty-block')).toHaveCount(0);
+
+  await app.close();
+});
+
+// fix-ctrlc-treekill: CI asserts the FIXED survival behavior (holds on all
+// machines once de-sugared, since it no longer depends on Windows console
+// process-group semantics for a cmd.exe batch job); it does NOT reproduce the
+// env-dependent cmd.exe tree-kill bug itself — real claude/codex interrupt-
+// not-kill stays a manual checklist item (docs/release/cli-parity-manual-checklist.md).
+test('fix-ctrlc-treekill: de-sugared .cmd shim survives Ctrl+C (no cmd.exe batch-job terminator)', async () => {
+  const app = await launchApp();
+  const window = await app.firstWindow();
+  await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  // No `!`, no `.cmd` extension typed — same PATHEXT + auto-interactive routing
+  // as the AC-1/AC-2 case above, but through the de-sugar path (M1's spec.shell
+  // branch resolves the shim to node.exe directly instead of cmd.exe).
+  await window.getByTestId('cmd-input').fill(CTRLC_SURVIVOR_CMD_SHIM);
+  await window.getByTestId('btn-run').click();
+
+  const plainBlock = window.getByTestId('pty-plain-block');
+  await expect(plainBlock).toBeVisible();
+  await expect.poll(() => plainText(window), { timeout: 15_000 }).toContain('SURVIVOR-READY');
+
+  await window.getByTestId('cmd-input').click();
+  await window.keyboard.press('Control+c');
+
+  // Tree survived: the fixture printed INTERRUPTED and the block is still
+  // running (a cmd.exe-fronted tree would have been torn down here instead).
+  await expect.poll(() => plainText(window), { timeout: 10_000 }).toContain('INTERRUPTED');
+  await expect(window.getByTestId('block-status')).toHaveText('running');
+  await expect(window.getByTestId('pty-block')).toHaveCount(0);
+
+  await window.keyboard.type('q');
+  await expect.poll(() => plainText(window), { timeout: 10_000 }).toContain('STILL-ALIVE');
+  await expect(window.getByTestId('block-status')).toHaveText('done', { timeout: 10_000 });
 
   await app.close();
 });
