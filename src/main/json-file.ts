@@ -71,6 +71,38 @@ export class JsonFile {
     return run;
   }
 
+  /** Read + validate on the caller's terms: absent OR schema-miss → `empty`
+   *  (a schema miss also quarantines). read() already quarantined unparseable text. */
+  async readValidated<T>(validate: (raw: unknown) => T | null, empty: T): Promise<T> {
+    const raw = await this.read();
+    if (raw === undefined) return empty;
+    const parsed = validate(raw);
+    if (parsed === null) {
+      await this.quarantine();
+      return empty;
+    }
+    return parsed;
+  }
+
+  /** Atomic read-modify-write, entirely INSIDE the write chain, so two concurrent
+   *  updates can never lose each other. The mutation result is re-validated; an
+   *  invalid result is logged and dropped (no write). */
+  async update<T>(
+    validate: (raw: unknown) => T | null,
+    empty: T,
+    mutate: (current: T) => T,
+    label: string,
+  ): Promise<void> {
+    await this.enqueue(async () => {
+      const next = mutate(await this.readValidated(validate, empty));
+      if (validate(next) === null) {
+        console.error(`[json-file] dropped invalid update of ${path.basename(this.target)} (${label})`);
+        return;
+      }
+      await this.writeAtomic(JSON.stringify(next));
+    });
+  }
+
   /** Atomic write: `<file>.tmp` then rename, one retry on a transient Windows
    *  lock, then log + drop. Call inside an enqueued op. */
   async writeAtomic(data: string): Promise<void> {

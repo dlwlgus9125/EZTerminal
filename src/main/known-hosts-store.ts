@@ -56,21 +56,18 @@ export class KnownHostsStore {
 
   /** Persist a newly-accepted host key (TOFU accept). Serialized on the write chain. */
   async add(host: string, port: number, keyType: string, fingerprint: string): Promise<void> {
-    await this.file.enqueue(async () => {
-      const data = await this.load();
-      data.hosts[hostRecordKey(host, port)] = { keyType, fingerprintSha256: fingerprint };
-      await this.file.writeAtomic(JSON.stringify(data));
-    });
+    await this.file.update(
+      validateKnownHostsFile,
+      emptyKnownHostsFile(),
+      (data) => {
+        data.hosts[hostRecordKey(host, port)] = { keyType, fingerprintSha256: fingerprint };
+        return data;
+      },
+      'known-host add',
+    );
   }
 
   private async load(): Promise<KnownHostsFile> {
-    const raw = await this.file.read();
-    if (raw === undefined) return emptyKnownHostsFile(); // absent (or unparseable — already quarantined by read())
-    const parsed = validateKnownHostsFile(raw);
-    if (parsed === null) {
-      await this.file.quarantine();
-      return emptyKnownHostsFile();
-    }
-    return parsed;
+    return this.file.readValidated(validateKnownHostsFile, emptyKnownHostsFile());
   }
 }

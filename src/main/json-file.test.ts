@@ -174,6 +174,98 @@ describe('JsonFile — quarantine()', () => {
   });
 });
 
+describe('JsonFile — readValidated()', () => {
+  const validate = (raw: unknown): { items: Record<string, number> } | null =>
+    raw !== null && typeof raw === 'object' && 'items' in (raw as Record<string, unknown>)
+      ? (raw as { items: Record<string, number> })
+      : null;
+  const empty = { items: {} };
+
+  it('returns `empty` when the file is absent', async () => {
+    const file = new JsonFile(makeDir(), 'data.json');
+    await file.init();
+
+    expect(await file.readValidated(validate, empty)).toEqual(empty);
+  });
+
+  it('returns the parsed value for a valid file', async () => {
+    const dir = makeDir();
+    const file = new JsonFile(dir, 'data.json');
+    await file.init();
+    writeFileSync(file.path, JSON.stringify({ items: { a: 1 } }), 'utf8');
+
+    expect(await file.readValidated(validate, empty)).toEqual({ items: { a: 1 } });
+  });
+
+  it('quarantines a schema-miss and returns `empty`', async () => {
+    const dir = makeDir();
+    const file = new JsonFile(dir, 'data.json');
+    await file.init();
+    writeFileSync(file.path, JSON.stringify({ wrongShape: true }), 'utf8');
+
+    const result = await file.readValidated(validate, empty);
+
+    expect(result).toEqual(empty);
+    expect(existsSync(file.path)).toBe(false);
+    expect(existsSync(`${file.path}.corrupt`)).toBe(true);
+  });
+});
+
+describe('JsonFile — update()', () => {
+  const validate = (raw: unknown): { items: Record<string, number> } | null =>
+    raw !== null && typeof raw === 'object' && 'items' in (raw as Record<string, unknown>)
+      ? (raw as { items: Record<string, number> })
+      : null;
+  // Each update() call must receive a FRESH empty, exactly as production does
+  // (LayoutStore passes emptyPresets()/emptySettings() per call). Sharing one `empty`
+  // reference across the two concurrent calls would let both mutations accumulate onto
+  // the same absent-file default object even under a buggy read-outside-enqueue impl —
+  // making the regression below a tautology that passes the very bug it guards. Keep
+  // the factory: with fresh empties the buggy shape loses key `a` and this test fails.
+  const mkEmpty = (): { items: Record<string, number> } => ({ items: {} });
+
+  it('lost-update regression: two concurrent updates both survive', async () => {
+    const dir = makeDir();
+    const file = new JsonFile(dir, 'data.json');
+    await file.init();
+
+    await Promise.all([
+      file.update(
+        validate,
+        mkEmpty(),
+        (c) => {
+          c.items.a = 1;
+          return c;
+        },
+        'a',
+      ),
+      file.update(
+        validate,
+        mkEmpty(),
+        (c) => {
+          c.items.b = 2;
+          return c;
+        },
+        'b',
+      ),
+    ]);
+
+    const onDisk = JSON.parse(readFileSync(file.path, 'utf8')) as { items: Record<string, number> };
+    expect(onDisk.items.a).toBe(1);
+    expect(onDisk.items.b).toBe(2);
+  });
+
+  it('drops an invalid mutation result without writing or throwing', async () => {
+    const dir = makeDir();
+    const file = new JsonFile(dir, 'data.json');
+    await file.init();
+
+    await expect(file.update(validate, mkEmpty(), () => ({}) as { items: Record<string, number> }, 'bad')).resolves.toBeUndefined();
+
+    expect(existsSync(file.path)).toBe(false);
+  });
+});
+
 describe('JsonFile — writeAtomic Windows-lock retry', () => {
   it('retries once on a transient rename failure, then lands the write', async () => {
     const dir = makeDir();
