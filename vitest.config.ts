@@ -7,7 +7,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     passWithNoTests: true,
-    include: ['src/**/*.{test,spec}.ts', 'test/**/*.{test,spec}.ts'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'test/**/*.{test,spec}.ts'],
     exclude: ['e2e/**', 'node_modules/**', '.vite/**', 'out/**', 'dist/**'],
   },
 });

@@ -1641,6 +1641,44 @@ body {
   background: rgba(0, 0, 0, 0.7);
 }
 
+/* Right-click copy/paste menu (WT-parity M2) — clones .file-context-menu's
+   chrome (fixed, cursor-positioned via `left`/`top` set inline by
+   TerminalContextMenu.tsx). Not part of the file-explorer z-order ladder
+   above; a plain z-index above the pty block's own contents is enough since
+   the two overlays are never shown together. */
+.terminal-context-menu {
+  position: fixed;
+  z-index: 10;
+  min-width: 160px;
+  padding: 0.35rem;
+  background: var(--term-bg-raised);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.terminal-context-menu-item {
+  text-align: left;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--term-fg);
+  cursor: pointer;
+}
+.terminal-context-menu-item:hover:not(:disabled) {
+  border-color: var(--term-green);
+  color: var(--term-fg-bright);
+}
+.terminal-context-menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ── PTY plain view (Phase 3 adaptive-render default) ──────────────────────── */
 /* A wrapper around a normal .text-block — keyboard input routes through
    cmd-input (TerminalPane.tsx's activePlainPty, M1) until/unless the block

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -8,6 +8,7 @@ import { resolveFontFamily } from './fonts';
 import { getUserFontId } from './theme-runtime';
 import { getActiveTheme } from './themes';
 import { getActiveUiScale } from './ui-scale';
+import { TerminalContextMenu, type TerminalContextMenuItem } from './TerminalContextMenu';
 
 // PtyBlock — the render surface for a `pty`-shape block. Execution is ALWAYS a
 // live PTY (any single, non-piped external command, or `!cmd`); render is
@@ -56,6 +57,10 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
   const hasControlRef = useRef(snapshot.hasControl);
   hasControlRef.current = snapshot.hasControl;
 
+  // Right-click context menu (WT-parity M2) — position of the triggering
+  // `contextmenu` event, or null when closed.
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+
   // The mount effect (re)creates these per mount, closing over that mount's
   // `term`/`fit`/`el` — routed through refs so the hasControl/ptyDims effects
   // further down can call the CURRENT mount's versions.
@@ -96,6 +101,28 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
+
+    // Copy/paste shortcuts (WT-parity M2) — xterm's own key handler, so
+    // everything else (Ctrl+C interrupt, arrows, ...) passes through
+    // untouched (return true). Ctrl+Shift+C copies the current selection;
+    // Ctrl+Shift+V pastes (term.paste applies bracketed-paste framing itself
+    // when the child enabled it).
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown' || !e.ctrlKey || !e.shiftKey) return true;
+      if (e.code === 'KeyC') {
+        if (term.hasSelection()) void navigator.clipboard.writeText(term.getSelection());
+        e.preventDefault(); // suppress Chromium's dev-only Ctrl+Shift+C (inspect element)
+        return false;
+      }
+      if (e.code === 'KeyV') {
+        void navigator.clipboard.readText().then((text) => {
+          if (text) term.paste(text);
+        });
+        e.preventDefault();
+        return false;
+      }
+      return true;
+    });
 
     // In control: report OUR size to the interpreter — this is what claiming
     // control actually accomplishes (the shared PTY resizes to us). A no-op
@@ -264,12 +291,40 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     applyMirrorLayoutRef.current();
   }, [snapshot.ptyDims]);
 
+  const menuItems: TerminalContextMenuItem[] = [
+    {
+      action: 'copy',
+      label: 'Copy',
+      disabled: !termRef.current?.hasSelection(),
+      onClick: () => {
+        const term = termRef.current;
+        if (term) void navigator.clipboard.writeText(term.getSelection());
+      },
+    },
+    {
+      action: 'paste',
+      label: 'Paste',
+      onClick: () => {
+        const term = termRef.current;
+        if (!term) return;
+        void navigator.clipboard.readText().then((text) => {
+          if (text) term.paste(text);
+        });
+      },
+    },
+    { action: 'select-all', label: 'Select All', onClick: () => termRef.current?.selectAll() },
+  ];
+
   return (
     <div
       ref={containerRef}
       className={snapshot.hasControl ? 'pty-block' : 'pty-block pty-block--mirror'}
       data-testid="pty-block"
       onMouseDown={() => termRef.current?.focus()}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenuPos({ x: e.clientX, y: e.clientY });
+      }}
     >
       {!snapshot.hasControl && snapshot.status === 'running' && (
         <button
@@ -281,6 +336,17 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
           Take control
         </button>
       )}
+      {menuPos && (
+        <TerminalContextMenu
+          x={menuPos.x}
+          y={menuPos.y}
+          items={menuItems}
+          onClose={() => {
+            setMenuPos(null);
+            termRef.current?.focus(); // refocus the terminal after the menu closes
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -291,6 +357,8 @@ function PtyPlainView({ controller }: { controller: BlockController }): JSX.Elem
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const containerRef = useRef<HTMLDivElement>(null);
   const outputRef = useRef<HTMLPreElement>(null);
+  // Right-click context menu (WT-parity M2) — same pattern as PtyXtermView's.
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
 
   // Mount: wire the plain sink (input focus now lives on cmd-input — M1 focus
   // retention routes plain-PTY keystrokes there, TerminalPane.tsx's
@@ -318,16 +386,72 @@ function PtyPlainView({ controller }: { controller: BlockController }): JSX.Elem
     return () => cancelAnimationFrame(raf);
   }, [snapshot.status]);
 
+  // Paste (WT-parity M2): routed straight through the controller this view
+  // already holds — the SAME child the composer's onPaste sends to while
+  // `activePlainPty` (TerminalPane.tsx). NOT bracketed-paste-framed: under
+  // the adaptive render model a program that enables bracketed paste
+  // (?2004h) trips the plain->xterm upgrade, so plain mode never has it
+  // active — adding ESC[200~ framing here would be dead code.
+  const menuItems: TerminalContextMenuItem[] = [
+    {
+      action: 'copy',
+      label: 'Copy',
+      disabled: window.getSelection()?.isCollapsed ?? true,
+      onClick: () => {
+        const text = window.getSelection()?.toString();
+        if (text) void navigator.clipboard.writeText(text);
+      },
+    },
+    {
+      action: 'paste',
+      label: 'Paste',
+      onClick: () => {
+        void navigator.clipboard.readText().then((text) => {
+          if (text) controller.sendPtyInput(text);
+        });
+      },
+    },
+    {
+      action: 'select-all',
+      label: 'Select All',
+      onClick: () => {
+        const el = outputRef.current;
+        const sel = window.getSelection();
+        if (!el || !sel) return;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      },
+    },
+  ];
+
   return (
     // Output-only surface (M1): plain-mode input now routes through cmd-input
     // (TerminalPane.tsx's activePlainPty path), so this div no longer needs
     // its own tabIndex/key handlers.
-    <div ref={containerRef} className="pty-plain-block" data-testid="pty-plain-block">
+    <div
+      ref={containerRef}
+      className="pty-plain-block"
+      data-testid="pty-plain-block"
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenuPos({ x: e.clientX, y: e.clientY });
+      }}
+    >
       <pre ref={outputRef} className="text-block" data-testid="text-output" />
       {snapshot.status === 'running' && (
         <span className="pty-plain-waiting" data-testid="pty-plain-waiting" aria-hidden="true">
           ▍
         </span>
+      )}
+      {menuPos && (
+        <TerminalContextMenu
+          x={menuPos.x}
+          y={menuPos.y}
+          items={menuItems}
+          onClose={() => setMenuPos(null)}
+        />
       )}
     </div>
   );
