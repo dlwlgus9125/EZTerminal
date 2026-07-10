@@ -322,6 +322,10 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
       data-testid="pty-block"
       onMouseDown={() => termRef.current?.focus()}
       onContextMenu={(e) => {
+        // Touch devices get the mobile long-press menu instead
+        // (MobileSessionView.tsx, WT-parity M3) — a right-click context menu
+        // is a fine-pointer affordance, so skip it here to avoid a double menu.
+        if (window.matchMedia?.('(pointer: coarse)').matches) return;
         e.preventDefault();
         setMenuPos({ x: e.clientX, y: e.clientY });
       }}
@@ -435,6 +439,10 @@ function PtyPlainView({ controller }: { controller: BlockController }): JSX.Elem
       className="pty-plain-block"
       data-testid="pty-plain-block"
       onContextMenu={(e) => {
+        // Touch devices get the mobile long-press menu instead
+        // (MobileSessionView.tsx, WT-parity M3) — a right-click context menu
+        // is a fine-pointer affordance, so skip it here to avoid a double menu.
+        if (window.matchMedia?.('(pointer: coarse)').matches) return;
         e.preventDefault();
         setMenuPos({ x: e.clientX, y: e.clientY });
       }}

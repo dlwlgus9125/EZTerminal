@@ -3,7 +3,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { BlockController } from '../../src/renderer/block-controller';
 import { Block } from '../../src/renderer/Block';
 import { registerPaneInput, unregisterPaneInput } from '../../src/renderer/pane-registry';
+import { TerminalContextMenu, type TerminalContextMenuItem } from '../../src/renderer/TerminalContextMenu';
 import type { RunStartedInfo } from '../../src/shared/ipc';
+import { useLongPress } from './long-press';
+import { appendToComposer, resolvePasteTarget } from './paste-routing';
 import { TouchInputBar } from './TouchInputBar';
 
 // MobileSessionView — the mobile analogue of the desktop's TerminalPane.tsx.
@@ -107,7 +110,7 @@ export function MobileSessionView({
   // agnostic to what the key represents).
   useEffect(() => {
     registerPaneInput(sessionId, (text) => {
-      setCommand((prev) => (prev === '' || /\s$/.test(prev) ? `${prev}${text}` : `${prev} ${text}`));
+      setCommand((prev) => appendToComposer(prev, text));
     });
     return () => unregisterPaneInput(sessionId);
   }, [sessionId]);
@@ -313,6 +316,58 @@ export function MobileSessionView({
     });
   }, []);
 
+  // Long-press → Copy/Paste/Select All (WT-parity M3): the desktop analogue
+  // is a right-click (PtyBlock.tsx's `TerminalContextMenu`), which a touch
+  // WebView has no equivalent for — `useLongPress` (file-explorer plan, M4)
+  // fires this same `.block-list` container's press instead. Paste is
+  // clipboard-read, so its routing (running PTY vs. idle composer draft) is
+  // decided in `paste-routing.ts`, pure and unit-tested there.
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const longPress = useLongPress((x, y) => setMenu({ x, y }));
+
+  const menuItems: TerminalContextMenuItem[] = [
+    {
+      action: 'paste',
+      label: 'Paste',
+      onClick: () => {
+        navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (!text) return;
+            const target = resolvePasteTarget(activeController.current?.getSnapshot() ?? null);
+            if (target === 'pty') {
+              activeController.current?.sendPtyInput(text);
+            } else {
+              setCommand((prev) => appendToComposer(prev, text));
+            }
+          })
+          .catch((err: unknown) => console.error('[mobile] clipboard read failed:', err));
+      },
+    },
+    {
+      action: 'copy',
+      label: 'Copy',
+      disabled: window.getSelection()?.isCollapsed ?? true,
+      onClick: () => {
+        const text = window.getSelection()?.toString();
+        if (text) void navigator.clipboard.writeText(text);
+      },
+    },
+    {
+      action: 'select-all',
+      label: 'Select All',
+      onClick: () => {
+        const el = blockListRef.current;
+        const sel = window.getSelection();
+        if (!el || !sel) return;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      },
+    },
+  ];
+
   return (
     <div className="pane mobile-session-view" data-testid="mobile-session-view">
       {sessionDead && (
@@ -325,7 +380,15 @@ export function MobileSessionView({
         className="block-list"
         data-testid="block-list"
         ref={blockListRef}
-        onScroll={onBlockListScroll}
+        onScroll={() => {
+          onBlockListScroll();
+          longPress.onScroll();
+        }}
+        onPointerDown={longPress.onPointerDown}
+        onPointerMove={longPress.onPointerMove}
+        onPointerUp={longPress.onPointerUp}
+        onPointerCancel={longPress.onPointerCancel}
+        onContextMenu={longPress.onContextMenu}
       >
         {blocks.map((entry) =>
           entry.controller ? (
@@ -341,6 +404,8 @@ export function MobileSessionView({
           ),
         )}
       </div>
+
+      {menu && <TerminalContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
 
       <TouchInputBar controller={activeControllerForTouch} />
 

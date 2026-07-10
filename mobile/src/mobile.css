@@ -158,6 +158,15 @@ body,
   font-size: 0.85rem;
 }
 
+/* Long-press menu (WT-parity M3) — touch-sized override of the shared
+ * desktop `.terminal-context-menu-item` (src/renderer/index.css), same
+ * >=44px touch-target convention as `.mobile-file-sheet-item` above. */
+.mobile-session-view .terminal-context-menu-item {
+  min-height: 44px;
+  padding: 10px 14px;
+  font-size: 0.95rem;
+}
+
 /* ── Touch input bar (special keys a soft keyboard can't send) ─────────── */
 
 .touch-input-bar {
