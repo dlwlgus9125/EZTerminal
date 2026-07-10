@@ -529,6 +529,13 @@ export function TerminalPane({
           onChange={(e) => setCommand(e.target.value)}
           onKeyDown={(e) => {
             if (activePlainPty) {
+              // IME composing (CJK / dead-key input, M4): let the input
+              // compose normally — don't route the in-progress keydowns to
+              // keyToPtyBytes (they're not the real character yet) or
+              // preventDefault (that would break composition). The composed
+              // text is sent once, on `onCompositionEnd` below, so it must
+              // NOT also go through this per-keydown path.
+              if (e.nativeEvent.isComposing || e.key === 'Process') return;
               // Plain PTY run: keystrokes go straight to the PTY child
               // (M1 focus retention) — command editing / history recall /
               // Enter-run are all suspended for the run's duration, matching
@@ -574,6 +581,11 @@ export function TerminalPane({
             e.preventDefault();
             const text = e.clipboardData.getData('text');
             if (text) activeController.current?.sendPtyInput(text);
+          }}
+          onCompositionEnd={(e) => {
+            if (!activePlainPty) return; // idle: default composition-into-draft behavior
+            if (e.data) activeController.current?.sendPtyInput(e.data);
+            setCommand(''); // clear what the browser composed into the input
           }}
           aria-label="command input"
           data-testid="cmd-input"

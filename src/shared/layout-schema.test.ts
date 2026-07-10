@@ -265,6 +265,45 @@ describe('layout-schema — SettingsSchema uiScale + remoteEnabled fields (v0.2.
   });
 });
 
+describe('layout-schema — SettingsSchema scrollback field (WT-parity M5)', () => {
+  it('round-trips a settings file with scrollback present', () => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: LAYOUT_SCHEMA_VERSION,
+      startup: { mode: 'last' },
+      scrollback: 20000,
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.scrollback).toBe(20000);
+  });
+
+  it('round-trips a settings file with scrollback absent (pre-M5 files still parse)', () => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: LAYOUT_SCHEMA_VERSION,
+      startup: { mode: 'last' },
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.scrollback).toBeUndefined();
+  });
+
+  it.each([99, 100001, 5000.5])('rejects an out-of-range or non-integer scrollback (%d)', (scrollback) => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: LAYOUT_SCHEMA_VERSION,
+      startup: { mode: 'last' },
+      scrollback,
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it.each([100, 5000, 100000])('accepts a boundary scrollback (%d)', (scrollback) => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: LAYOUT_SCHEMA_VERSION,
+      startup: { mode: 'last' },
+      scrollback,
+    });
+    expect(parsed.success).toBe(true);
+  });
+});
+
 describe('layout-schema — SettingsSchema fontFamily + effectToggles fields (theme-effects-font M0)', () => {
   it('round-trips a settings file with both new fields present', () => {
     const parsed = SettingsSchema.safeParse({

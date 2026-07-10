@@ -189,6 +189,14 @@ export class LayoutStore {
     await this.updateSettings((current) => ({ ...current, uiScale }), 'uiScale');
   }
 
+  async getScrollback(): Promise<number> {
+    return (await this.loadSettingsFile()).scrollback ?? 5000;
+  }
+
+  async setScrollback(scrollback: number): Promise<void> {
+    await this.updateSettings((current) => ({ ...current, scrollback }), 'scrollback');
+  }
+
   async getRemoteEnabled(): Promise<boolean> {
     return (await this.loadSettingsFile()).remoteEnabled ?? true;
   }

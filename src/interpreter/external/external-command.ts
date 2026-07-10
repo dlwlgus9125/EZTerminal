@@ -22,6 +22,7 @@ import { buildCmdLine } from './build-cmd-line';
 import { CommandResolver, envGet } from './command-resolver';
 import { runProcess, type SpawnFn } from './process-runner';
 import { runPty, ptyArgv, ptyCommandLine, type PtySpawnFn } from './pty-runner';
+import { resolveShimTarget } from './shim-resolver';
 
 /** ANSI red, used to surface a non-zero exit code in the streamed output. */
 const RED = '\x1b[31m';
@@ -77,7 +78,28 @@ export function createExternalResolver(
         throw new EvalError(`command not found: ${command.name}`, command.nameSpan);
       }
       if (spec.shell) {
-        // M1: batch (.bat/.cmd) shim PTY spawn. node-pty's argv-array path has no
+        // fix-ctrlc-treekill: a shim's cmd.exe -> target.exe tree makes cmd.exe
+        // the PTY's console group leader. CTRL_C_EVENT is delivered to the whole
+        // group, and cmd.exe's own batch-job terminator can tear the tree down
+        // before the real target ever sees it. When the shim de-sugars cleanly
+        // (see shim-resolver.ts), spawn the real target DIRECTLY — it becomes the
+        // group leader itself, so Ctrl+C reaches it with no cmd.exe in between.
+        const desugared = resolveShimTarget(spec.file, ctx.env, undefined, resolver);
+        if (desugared) {
+          return ptyStreamData(
+            (cols, rows) =>
+              runPty(
+                desugared.file,
+                ptyArgv([...desugared.prefixArgs, ...spec.args]),
+                { cwd: ctx.cwd, env: ctx.env, signal: ctx.signal, cols, rows },
+                ptySpawn,
+              ),
+            opts.forceXterm,
+          );
+        }
+
+        // FALLBACK: un-parseable shim (M1 pre-existing behavior, unchanged) —
+        // batch (.bat/.cmd) shim PTY spawn. node-pty's argv-array path has no
         // cross-spawn-equivalent escaping (SEC-HIGH-1), so this goes through
         // node-pty's Windows single-string args path instead — cmd.exe as `file`,
         // a pre-escaped command line built by buildCmdLine() (ported from

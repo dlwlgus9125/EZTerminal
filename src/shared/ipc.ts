@@ -689,6 +689,12 @@ export interface EzTerminalApi {
   /** Persist a UI scale percent — main validates before writing. */
   setUiScale: (uiScale: number) => Promise<void>;
 
+  // ── Scrollback (WT-parity M5) ─────────────────────────────────────────────
+  /** The persisted scrollback line count (defaults to 5000 when never set). */
+  getScrollback: () => Promise<number>;
+  /** Persist a scrollback line count — main validates before writing. */
+  setScrollback: (scrollback: number) => Promise<void>;
+
   // ── Status overlay panel stats (status-overlay-panel) ─────────────────────
   /** Subscribe to the 1Hz stats push (flows only while the panel is open). Returns an unsubscribe. */
   onStatsUpdate: (listener: (snapshot: SystemStatsSnapshot) => void) => () => void;

@@ -26,6 +26,7 @@ import { StatusPanel } from './StatusPanel';
 import { TerminalPane } from './TerminalPane';
 import { applyThemeVarsAndEffects, setUserFontId, themeModToDefinition } from './theme-runtime';
 import { THEME_ORDER, THEMES, listThemes, registerTheme, type ThemeDefinition } from './themes';
+import { applyScrollback, clampScrollback, SCROLLBACK_DEFAULT } from './scrollback';
 import { applyUiScale, clampUiScale, UI_SCALE_DEFAULT } from './ui-scale';
 
 // Desktop's per-effect default-on state (App.tsx's `applyTheme`/`onToggleEffect`
@@ -566,6 +567,34 @@ export function App(): JSX.Element {
     [applyUiScaleState],
   );
 
+  // ── Scrollback (WT-parity M5) ──────────────────────────────────────────────
+  // Mirrors the UI scale mechanism directly above: applyScrollbackState sets
+  // dataset.scrollback + notifies open PtyBlocks (scrollback.ts's
+  // applyScrollback) AND the local label state; the boot fetch guards against
+  // a fast user change the same way userChangedUiScaleRef does.
+  const [scrollback, setScrollbackState] = useState<number>(SCROLLBACK_DEFAULT);
+  const userChangedScrollbackRef = useRef(false);
+
+  const applyScrollbackState = useCallback((lines: number): void => {
+    applyScrollback(lines);
+    setScrollbackState(clampScrollback(lines));
+  }, []);
+
+  useEffect(() => {
+    void window.ezterminal.getScrollback().then((lines) => {
+      if (!userChangedScrollbackRef.current) applyScrollbackState(lines);
+    });
+  }, [applyScrollbackState]);
+
+  const changeScrollback = useCallback(
+    (lines: number): void => {
+      userChangedScrollbackRef.current = true;
+      applyScrollbackState(lines);
+      void window.ezterminal.setScrollback(clampScrollback(lines));
+    },
+    [applyScrollbackState],
+  );
+
   // ── Presets (A-M4) ────────────────────────────────────────────────────────
   const [presetsOpen, setPresetsOpen] = useState(false);
   const [presetNames, setPresetNames] = useState<string[]>([]);
@@ -964,6 +993,8 @@ export function App(): JSX.Element {
           <SettingsPanel
             uiScale={uiScale}
             onChangeUiScale={changeUiScale}
+            scrollback={scrollback}
+            onChangeScrollback={changeScrollback}
             theme={theme}
             onSelectTheme={selectTheme}
             availableThemes={availableThemes}

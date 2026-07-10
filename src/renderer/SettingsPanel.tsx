@@ -5,6 +5,7 @@ import { EFFECT_CATALOG, type EffectId } from './effects';
 import type { InterferenceParams, RollbarParams } from './effect-params';
 import { EffectParamSliders, isInterferenceEffectId } from './EffectParamSliders';
 import { FONT_CATALOG } from './fonts';
+import { SCROLLBACK_MAX, SCROLLBACK_MIN } from './scrollback';
 import type { ThemeDefinition } from './themes';
 import { UI_SCALE_DEFAULT } from './ui-scale';
 
@@ -19,6 +20,8 @@ import { UI_SCALE_DEFAULT } from './ui-scale';
 interface SettingsPanelProps {
   readonly uiScale: number;
   readonly onChangeUiScale: (percent: number) => void;
+  readonly scrollback: number;
+  readonly onChangeScrollback: (lines: number) => void;
   readonly theme: ThemeName;
   readonly onSelectTheme: (name: ThemeName) => void;
   readonly availableThemes: readonly ThemeDefinition[];
@@ -47,6 +50,8 @@ interface SettingsPanelProps {
 export function SettingsPanel({
   uiScale,
   onChangeUiScale,
+  scrollback,
+  onChangeScrollback,
   theme,
   onSelectTheme,
   availableThemes,
@@ -100,6 +105,19 @@ export function SettingsPanel({
   const remoteLoading = remoteEnabled === null || remotePort === null;
   const systemDefaultFontId = FONT_CATALOG.find((f) => f.systemDefault)?.id ?? FONT_CATALOG[0].id;
 
+  // Scrollback input (WT-parity M5 fix): a local text draft so typing a
+  // multi-digit value doesn't clamp+persist on every keystroke — the
+  // committed value only propagates (via onChangeScrollback) on blur/Enter.
+  const [scrollbackDraft, setScrollbackDraft] = useState(String(scrollback));
+  useEffect(() => {
+    setScrollbackDraft(String(scrollback));
+  }, [scrollback]);
+  const commitScrollback = (): void => {
+    const n = Number(scrollbackDraft);
+    if (Number.isFinite(n) && scrollbackDraft.trim() !== '') onChangeScrollback(n);
+    else setScrollbackDraft(String(scrollback));
+  };
+
   return (
     <div className="status-drawer" data-testid="settings-panel">
       <section className="status-section">
@@ -133,6 +151,26 @@ export function SettingsPanel({
             Reset
           </button>
         </div>
+      </section>
+
+      <section className="status-section">
+        <h2 className="status-section-title">Scrollback (lines)</h2>
+        <input
+          type="number"
+          className="settings-scrollback-input"
+          min={SCROLLBACK_MIN}
+          max={SCROLLBACK_MAX}
+          value={scrollbackDraft}
+          onChange={(e) => setScrollbackDraft(e.target.value)}
+          onBlur={commitScrollback}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              commitScrollback();
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          data-testid="settings-scrollback-input"
+        />
       </section>
 
       <section className="status-section">

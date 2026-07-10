@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   crashReporter,
   ipcMain,
+  Menu,
   MessageChannelMain,
   session,
   shell,
@@ -15,6 +16,7 @@ import { networkInterfaces } from 'node:os';
 import started from 'electron-squirrel-startup';
 
 import { isAppUrl } from './url-guard';
+import { buildMenuTemplate } from './app-menu';
 import { FileService } from './file-service';
 import { LayoutStore } from './layout-store';
 import { getAvailableThemes, importTheme } from './theme-store';
@@ -214,6 +216,11 @@ const createWindow = (): void => {
 app.on('ready', () => {
   console.log('[main] EZTerminal main process ready');
 
+  // Terminal-safe application menu (WT-parity M1): replaces Electron's default
+  // menu, whose reload/close accelerators would otherwise steal Ctrl+R /
+  // Ctrl+Shift+R / Ctrl+W / F5 from the terminal — see app-menu.ts.
+  Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate()));
+
   // Diagnostics (B-M5): error log under userData, dump retention keep-last-10
   // (proposed default). Local only — see crashReporter.start above.
   mainLog = new LogFile(path.join(app.getPath('userData'), 'logs', 'main.log'));
@@ -372,6 +379,14 @@ app.on('ready', () => {
   ipcMain.handle('settings:set-ui-scale', async (_event, uiScale: number) => {
     await storeReady;
     if (typeof uiScale === 'number') await layoutStore.setUiScale(uiScale);
+  });
+  ipcMain.handle('settings:get-scrollback', async () => {
+    await storeReady;
+    return layoutStore.getScrollback();
+  });
+  ipcMain.handle('settings:set-scrollback', async (_event, scrollback: number) => {
+    await storeReady;
+    if (typeof scrollback === 'number') await layoutStore.setScrollback(scrollback);
   });
 
   // ── Custom themes + font/effects settings (theme-effects-font M3) ────────

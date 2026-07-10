@@ -477,9 +477,13 @@ html[data-effect-phosphor-glow='on'] .block-status::before {
    THEMES.matrix.xterm (themes.ts). This adds the phosphor bloom so Claude Code /
    Codex output glows green too, WITHOUT touching the agent's own ANSI colours.
    xterm 6 uses the DOM renderer (.xterm-rows) by default; the canvas rule is a
-   safety net if a canvas/webgl addon is ever added. The canvas filter isn't a
-   text-shadow, so it stays Matrix identity; the two glow rules below are the
-   phosphor-glow effect. */
+   safety net if a canvas/webgl addon is ever added — WT-parity M5 evaluated
+   web-links/unicode11/webgl addons and deferred all three: no stable addon
+   release targets @xterm/xterm@6.0.0 yet (npm only has betas tracking xterm
+   6.1.0-beta), and the 5.x-era stable addons throw on activate() against
+   xterm 6, aborting the terminal mount. The canvas filter isn't a text-shadow,
+   so it stays Matrix identity; the two glow rules below are the phosphor-glow
+   effect. */
 html[data-effect-phosphor-glow='on'] .xterm .xterm-rows {
   text-shadow: 0 0 3px rgba(41, 211, 152, 0.4);
 }
@@ -798,6 +802,22 @@ body {
   font-size: 0.82rem;
   color: var(--term-fg-bright);
   font-variant-numeric: tabular-nums;
+}
+
+.settings-scrollback-input {
+  width: 6rem;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  background: var(--term-bg-inset);
+  border: 1px solid var(--term-border);
+  border-radius: 3px;
+  color: var(--term-fg);
+}
+
+.settings-scrollback-input:focus {
+  outline: none;
+  border-color: var(--term-green);
 }
 
 /* crt-rollbar line params (rollbar-params) — nested beneath the crt-rollbar
@@ -1639,6 +1659,44 @@ body {
   color: var(--term-fg-bright);
   border-color: var(--term-green);
   background: rgba(0, 0, 0, 0.7);
+}
+
+/* Right-click copy/paste menu (WT-parity M2) — clones .file-context-menu's
+   chrome (fixed, cursor-positioned via `left`/`top` set inline by
+   TerminalContextMenu.tsx). Not part of the file-explorer z-order ladder
+   above; a plain z-index above the pty block's own contents is enough since
+   the two overlays are never shown together. */
+.terminal-context-menu {
+  position: fixed;
+  z-index: 10;
+  min-width: 160px;
+  padding: 0.35rem;
+  background: var(--term-bg-raised);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.terminal-context-menu-item {
+  text-align: left;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--term-fg);
+  cursor: pointer;
+}
+.terminal-context-menu-item:hover:not(:disabled) {
+  border-color: var(--term-green);
+  color: var(--term-fg-bright);
+}
+.terminal-context-menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* ── PTY plain view (Phase 3 adaptive-render default) ──────────────────────── */

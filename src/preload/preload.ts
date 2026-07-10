@@ -133,6 +133,9 @@ const api: EzTerminalApi = {
   getUiScale: () => ipcRenderer.invoke('settings:get-ui-scale'),
   setUiScale: (uiScale: number) => ipcRenderer.invoke('settings:set-ui-scale', uiScale),
 
+  getScrollback: () => ipcRenderer.invoke('settings:get-scrollback'),
+  setScrollback: (scrollback: number) => ipcRenderer.invoke('settings:set-scrollback', scrollback),
+
   // Status overlay panel stats (status-overlay-panel): push, invoke, send —
   // same shapes as onSessionDead/loadLayout/destroySession above.
   onStatsUpdate: (listener: (snapshot: SystemStatsSnapshot) => void): (() => void) => {
