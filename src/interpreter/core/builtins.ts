@@ -20,6 +20,7 @@ import { join, resolve } from 'node:path';
 import { z } from 'zod';
 
 import type { Expression } from './ast';
+import { coerceArg } from './coerce-arg';
 import { EvalError } from './errors';
 import { evalExpression } from './evaluate';
 import { CommandRegistry } from './registry';
@@ -289,59 +290,6 @@ function cdHandler(_input: PipelineData, inv: Invocation, ctx: EvalContext): Pip
   return valueData(stringValue(dest));
 }
 
-// ── shared bare-word argument resolution (run-script E4, ssh-connect E5) ─────────
-
-/**
- * Resolve a positional/flag-value expression (a script path/arg, or an
- * `ssh-connect user@host`) to its literal string. Mirrors `cdPathArg`: bare
- * words are literal text (not column references), so this does NOT go through
- * `evalExpression` (which rejects identifiers outside row scope). `label`
- * prefixes error messages with the calling builtin's name.
- */
-function bareArgValue(expr: Expression, ctx: EvalContext, label: string): string {
-  switch (expr.type) {
-    case 'identifier':
-      return expr.name;
-    case 'string':
-      return expr.value;
-    case 'number':
-      return String(expr.value);
-    case 'bool':
-      return String(expr.value);
-    case 'filesize':
-      return String(expr.bytes);
-    case 'null':
-      return 'null';
-    case 'variable': {
-      const value = ctx.session.getVar(expr.name);
-      if (value === undefined) throw new EvalError(`undefined variable: $${expr.name}`, expr.span);
-      switch (value.kind) {
-        case 'null':
-          return 'null';
-        case 'bool':
-          return String(value.value);
-        case 'number':
-          return String(value.value);
-        case 'string':
-          return value.value;
-        case 'filesize':
-          return String(value.bytes);
-        case 'datetime':
-          return new Date(value.epochMs).toISOString();
-        default:
-          throw new EvalError(`${label}: $${expr.name} is a ${value.kind}, not a valid argument`, expr.span);
-      }
-    }
-    case 'env': {
-      const raw = ctx.env[expr.name];
-      if (raw === undefined) throw new EvalError(`${label}: $env.${expr.name} is not set`, expr.span);
-      return raw;
-    }
-    case 'binary':
-      throw new EvalError(`${label}: comparison expressions are not valid arguments`, expr.span);
-  }
-}
-
 // ── run-script (E4, resolved by runScriptSession — see script-runner.ts) ─────────
 
 /**
@@ -353,12 +301,12 @@ function bareArgValue(expr: Expression, ctx: EvalContext, label: string): string
  */
 function runScriptHandler(_input: PipelineData, inv: Invocation, ctx: EvalContext): PipelineData {
   const [pathExpr, ...argExprs] = inv.positionals;
-  const rawPath = bareArgValue(pathExpr, ctx, 'run-script');
+  const rawPath = coerceArg(pathExpr, ctx, 'run-script');
   if (!/\.(m?js)$/i.test(rawPath)) {
     throw new EvalError('run-script: only .js/.mjs scripts are supported (v1)');
   }
   const scriptPath = resolve(ctx.cwd, rawPath);
-  const args = argExprs.map((expr) => bareArgValue(expr, ctx, 'run-script'));
+  const args = argExprs.map((expr) => coerceArg(expr, ctx, 'run-script'));
   return scriptStreamData(scriptPath, args);
 }
 
@@ -376,7 +324,7 @@ const DEFAULT_SSH_PORT = 22;
  */
 function sshConnectHandler(_input: PipelineData, inv: Invocation, ctx: EvalContext): PipelineData {
   const [targetExpr] = inv.positionals;
-  const target = bareArgValue(targetExpr, ctx, 'ssh-connect');
+  const target = coerceArg(targetExpr, ctx, 'ssh-connect');
   const at = target.indexOf('@');
   if (at <= 0 || at === target.length - 1) {
     throw new EvalError(`ssh-connect: expected user@host, got '${target}'`, targetExpr.span);

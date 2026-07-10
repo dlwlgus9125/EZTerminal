@@ -4,6 +4,7 @@ import { evaluate, parse } from '../core';
 import type { EvalContext, PipelineData } from '../core';
 import { commandToArgv, createExternalResolver } from './external-command';
 import { ShellSession } from '../shell-session';
+import { stringValue } from '../core/value';
 
 function commandOf(text: string) {
   const stmt = parse(text);
@@ -29,22 +30,48 @@ async function collectText(data: PipelineData): Promise<string> {
 
 describe('commandToArgv', () => {
   it('reconstructs a long flag with no value (node --version)', () => {
-    expect(commandToArgv(commandOf('node --version'))).toEqual(['--version']);
+    expect(commandToArgv(commandOf('node --version'), ctx())).toEqual(['--version']);
   });
 
   it('reconstructs a bare positional (git status)', () => {
-    expect(commandToArgv(commandOf('git status'))).toEqual(['status']);
+    expect(commandToArgv(commandOf('git status'), ctx())).toEqual(['status']);
   });
 
   it('reconstructs a short flag with a quoted string value (node -e "…")', () => {
-    expect(commandToArgv(commandOf('node -e "setInterval(() => {}, 100)"'))).toEqual([
+    expect(commandToArgv(commandOf('node -e "setInterval(() => {}, 100)"'), ctx())).toEqual([
       '-e',
       'setInterval(() => {}, 100)',
     ]);
   });
 
   it('reconstructs a long flag with a value', () => {
-    expect(commandToArgv(commandOf('tool --name value'))).toEqual(['--name', 'value']);
+    expect(commandToArgv(commandOf('tool --name value'), ctx())).toEqual(['--name', 'value']);
+  });
+
+  // Regression: external argv used to throw on a $var ("not yet supported"),
+  // while builtins resolved it — `git checkout $branch` failed. Now unified
+  // through coerceArg, so a $var/$env argument resolves against the session.
+  it('resolves a $var positional argument (git checkout $branch)', () => {
+    const session = new ShellSession(process.cwd());
+    session.setVar('branch', stringValue('main'));
+    const c = session.createContext(new AbortController().signal, createExternalResolver());
+    expect(commandToArgv(commandOf('git checkout $branch'), c)).toEqual(['checkout', 'main']);
+  });
+
+  it('resolves a $env flag value (deploy --target $env.DEPLOY_TARGET)', () => {
+    const session = new ShellSession(process.cwd());
+    session.setEnv('DEPLOY_TARGET', 'prod');
+    const c = session.createContext(new AbortController().signal, createExternalResolver());
+    expect(commandToArgv(commandOf('deploy --target $env.DEPLOY_TARGET'), c)).toEqual([
+      '--target',
+      'prod',
+    ]);
+  });
+
+  it('throws on an undefined $var argument', () => {
+    expect(() => commandToArgv(commandOf('git checkout $nope'), ctx())).toThrow(
+      /undefined variable: \$nope/,
+    );
   });
 });
 
