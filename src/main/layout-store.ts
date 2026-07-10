@@ -39,6 +39,17 @@ const LAYOUT_FILE = 'layout.json';
 const PRESETS_FILE = 'presets.json';
 const SETTINGS_FILE = 'settings.json';
 
+const validatePresets = (raw: unknown): PresetsFile | null => {
+  const p = PresetsFileSchema.safeParse(raw);
+  return p.success ? p.data : null;
+};
+const validateSettings = (raw: unknown): SettingsFile | null => {
+  const p = SettingsSchema.safeParse(raw);
+  return p.success ? p.data : null;
+};
+const emptyPresets = (): PresetsFile => ({ schemaVersion: LAYOUT_SCHEMA_VERSION, presets: {} });
+const emptySettings = (): SettingsFile => ({ schemaVersion: LAYOUT_SCHEMA_VERSION, startup: { mode: 'last' } });
+
 export class LayoutStore {
   private readonly layoutFile: JsonFile;
   private readonly presetsFile: JsonFile;
@@ -119,27 +130,33 @@ export class LayoutStore {
     if (!PresetNameSchema.safeParse(name).success) return false;
     const env = buildLayoutEnvelope(rawLayout, new Date().toISOString());
     if (env === null) return false;
-    const current = await this.loadPresetsFile();
-    current.presets[name] = env;
-    await this.presetsFile.enqueue(() => this.presetsFile.writeAtomic(JSON.stringify(current)));
+    await this.presetsFile.update(
+      validatePresets,
+      emptyPresets(),
+      (current) => {
+        current.presets[name] = env;
+        return current;
+      },
+      'preset save',
+    );
     return true;
   }
 
   async deletePreset(name: string): Promise<void> {
-    const current = await this.loadPresetsFile();
-    if (!(name in current.presets)) return;
-    delete current.presets[name];
-    await this.presetsFile.enqueue(() => this.presetsFile.writeAtomic(JSON.stringify(current)));
+    await this.presetsFile.update(
+      validatePresets,
+      emptyPresets(),
+      (current) => {
+        delete current.presets[name];
+        return current;
+      },
+      'preset delete',
+    );
   }
 
+  /** Read + validate presets.json, defaulting to `{ presets: {} }` when absent/corrupt. */
   private async loadPresetsFile(): Promise<PresetsFile> {
-    const raw = await this.presetsFile.read();
-    if (raw !== undefined) {
-      const parsed = PresetsFileSchema.safeParse(raw);
-      if (parsed.success) return parsed.data;
-      await this.presetsFile.quarantine();
-    }
-    return { schemaVersion: LAYOUT_SCHEMA_VERSION, presets: {} };
+    return this.presetsFile.readValidated(validatePresets, emptyPresets());
   }
 
   // ── settings (startup pref — gate Q5; theme — E1) ───────────────────────
@@ -217,13 +234,7 @@ export class LayoutStore {
   /** Read + validate settings.json, defaulting to `{ startup: {mode:'last'} }`
    * when absent/corrupt (quarantining the latter). Shared by every getter. */
   private async loadSettingsFile(): Promise<SettingsFile> {
-    const raw = await this.settingsFile.read();
-    if (raw !== undefined) {
-      const parsed = SettingsSchema.safeParse(raw);
-      if (parsed.success) return parsed.data;
-      await this.settingsFile.quarantine();
-    }
-    return { schemaVersion: LAYOUT_SCHEMA_VERSION, startup: { mode: 'last' } };
+    return this.settingsFile.readValidated(validateSettings, emptySettings());
   }
 
   /** Read-modify-write settings.json on the settings file's write chain: the
@@ -234,14 +245,6 @@ export class LayoutStore {
     mutate: (current: SettingsFile) => SettingsFile,
     label: string,
   ): Promise<void> {
-    await this.settingsFile.enqueue(async () => {
-      const current = await this.loadSettingsFile();
-      const parsed = SettingsSchema.safeParse(mutate(current));
-      if (!parsed.success) {
-        console.error(`[layout-store] dropped invalid ${label}`);
-        return;
-      }
-      await this.settingsFile.writeAtomic(JSON.stringify(parsed.data));
-    });
+    await this.settingsFile.update(validateSettings, emptySettings(), mutate, label);
   }
 }
