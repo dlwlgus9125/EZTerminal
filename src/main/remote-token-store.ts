@@ -1,14 +1,15 @@
 /**
  * RemoteTokenStore — persists the auth token gating the mobile remote-control
- * WS bridge (`remote-bridge.ts`). Same versioned-envelope + atomic-write +
- * quarantine pattern as `KnownHostsStore`/`LayoutStore`: `getToken()` mints a
- * random token on first call (no prior file) and persists it; every later
- * call (including across store instances / app restarts) returns the same
- * token until `rotateToken()` replaces it.
+ * WS bridge (`remote-bridge.ts`). Composes a JsonFile for the atomic-write /
+ * .corrupt-quarantine / write-chain protocol; this store keeps only the mint /
+ * cache / rotate semantics: `getToken()` mints a random token on first call (no
+ * prior file) and persists it; every later call (including across store
+ * instances / app restarts) returns the same token until `rotateToken()`
+ * replaces it.
  */
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+
+import { JsonFile } from './json-file';
 
 const REMOTE_TOKEN_FILE = 'remote-token.json';
 const REMOTE_TOKEN_SCHEMA_VERSION = 1 as const;
@@ -33,29 +34,23 @@ function generateToken(): string {
 }
 
 export class RemoteTokenStore {
-  private readonly dir: string;
-  private writeChain: Promise<void> = Promise.resolve();
+  private readonly file: JsonFile;
   private cached: string | null = null;
   /** Guards concurrent first-call getToken() races from minting two tokens. */
   private loadPromise: Promise<string> | null = null;
 
   constructor(dir: string) {
-    this.dir = dir;
-  }
-
-  private file(): string {
-    return path.join(this.dir, REMOTE_TOKEN_FILE);
+    this.file = new JsonFile(dir, REMOTE_TOKEN_FILE);
   }
 
   /** Absolute path to remote-token.json. */
   get path(): string {
-    return this.file();
+    return this.file.path;
   }
 
   /** Ensure the dir exists and clear a crash-stale `.tmp` remnant. */
   async init(): Promise<void> {
-    await fs.mkdir(this.dir, { recursive: true });
-    await fs.unlink(`${this.file()}.tmp`).catch(() => undefined);
+    await this.file.init();
   }
 
   /** Returns the persisted token, minting + persisting one on first call. */
@@ -85,61 +80,19 @@ export class RemoteTokenStore {
 
   private async mintAndPersist(): Promise<string> {
     const token = generateToken();
-    await this.enqueue(async () => {
-      await this.atomicWrite(JSON.stringify({ schemaVersion: REMOTE_TOKEN_SCHEMA_VERSION, token }));
-    });
+    await this.file.enqueue(() =>
+      this.file.writeAtomic(JSON.stringify({ schemaVersion: REMOTE_TOKEN_SCHEMA_VERSION, token })),
+    );
     return token;
   }
 
   private async load(): Promise<string | null> {
-    let text: string;
-    try {
-      text = await fs.readFile(this.file(), 'utf8');
-    } catch {
-      return null; // absent — first use
-    }
-    let raw: unknown;
-    try {
-      raw = JSON.parse(text);
-    } catch {
-      await this.quarantine();
-      return null;
-    }
+    const raw = await this.file.read();
+    if (raw === undefined) return null; // absent (or unparseable — already quarantined by read())
     if (!isValidTokenFile(raw)) {
-      await this.quarantine();
+      await this.file.quarantine();
       return null;
     }
     return raw.token;
-  }
-
-  private async quarantine(): Promise<void> {
-    const target = this.file();
-    try {
-      await fs.rename(target, `${target}.corrupt`);
-      console.error(`[remote-token-store] quarantined ${REMOTE_TOKEN_FILE} -> ${REMOTE_TOKEN_FILE}.corrupt`);
-    } catch {
-      // Already gone (double-quarantine race or ENOENT) — nothing to preserve.
-    }
-  }
-
-  private enqueue(op: () => Promise<void>): Promise<void> {
-    this.writeChain = this.writeChain.then(op);
-    return this.writeChain;
-  }
-
-  private async atomicWrite(data: string): Promise<void> {
-    const target = this.file();
-    const tmp = `${target}.tmp`;
-    try {
-      await fs.writeFile(tmp, data, 'utf8');
-      try {
-        await fs.rename(tmp, target);
-      } catch {
-        await fs.rename(tmp, target); // one retry (transient Windows lock), then drop
-      }
-    } catch (err) {
-      console.error('[remote-token-store] atomic write failed:', err);
-      await fs.unlink(tmp).catch(() => undefined);
-    }
   }
 }
