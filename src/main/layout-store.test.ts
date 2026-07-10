@@ -201,6 +201,14 @@ describe('LayoutStore — uiScale + remoteEnabled (v0.2.0 M1)', () => {
     expect(await store.getRemoteEnabled()).toBe(false);
   });
 
+  it('defaults scrollback to 5000 and round-trips a set value (WT-parity M5)', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    expect(await store.getScrollback()).toBe(5000);
+    await store.setScrollback(20000);
+    expect(await store.getScrollback()).toBe(20000);
+  });
+
   it('interleaved setTheme/setUiScale/setRemoteEnabled all preserve each other (shared settings.json)', async () => {
     const store = new LayoutStore(makeDir());
     await store.init();

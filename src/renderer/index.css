@@ -477,9 +477,13 @@ html[data-effect-phosphor-glow='on'] .block-status::before {
    THEMES.matrix.xterm (themes.ts). This adds the phosphor bloom so Claude Code /
    Codex output glows green too, WITHOUT touching the agent's own ANSI colours.
    xterm 6 uses the DOM renderer (.xterm-rows) by default; the canvas rule is a
-   safety net if a canvas/webgl addon is ever added. The canvas filter isn't a
-   text-shadow, so it stays Matrix identity; the two glow rules below are the
-   phosphor-glow effect. */
+   safety net if a canvas/webgl addon is ever added — WT-parity M5 evaluated
+   web-links/unicode11/webgl addons and deferred all three: no stable addon
+   release targets @xterm/xterm@6.0.0 yet (npm only has betas tracking xterm
+   6.1.0-beta), and the 5.x-era stable addons throw on activate() against
+   xterm 6, aborting the terminal mount. The canvas filter isn't a text-shadow,
+   so it stays Matrix identity; the two glow rules below are the phosphor-glow
+   effect. */
 html[data-effect-phosphor-glow='on'] .xterm .xterm-rows {
   text-shadow: 0 0 3px rgba(41, 211, 152, 0.4);
 }
@@ -798,6 +802,22 @@ body {
   font-size: 0.82rem;
   color: var(--term-fg-bright);
   font-variant-numeric: tabular-nums;
+}
+
+.settings-scrollback-input {
+  width: 6rem;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  background: var(--term-bg-inset);
+  border: 1px solid var(--term-border);
+  border-radius: 3px;
+  color: var(--term-fg);
+}
+
+.settings-scrollback-input:focus {
+  outline: none;
+  border-color: var(--term-green);
 }
 
 /* crt-rollbar line params (rollbar-params) — nested beneath the crt-rollbar

@@ -452,6 +452,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   setUiScale(): Promise<void> {
     return Promise.resolve();
   }
+  // Scrollback (WT-parity M5) is out of scope for mobile the same way UI scale
+  // is above — inert stubs only, to satisfy `EzTerminalApi`.
+  getScrollback(): Promise<number> {
+    return Promise.resolve(5000);
+  }
+  setScrollback(): Promise<void> {
+    return Promise.resolve();
+  }
 
   /** Ask the bridge to tee packet-capture frames to this connection
    * (view-only — the desktop owns start/stop). Sends immediately if authed

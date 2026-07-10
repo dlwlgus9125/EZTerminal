@@ -380,6 +380,14 @@ app.on('ready', () => {
     await storeReady;
     if (typeof uiScale === 'number') await layoutStore.setUiScale(uiScale);
   });
+  ipcMain.handle('settings:get-scrollback', async () => {
+    await storeReady;
+    return layoutStore.getScrollback();
+  });
+  ipcMain.handle('settings:set-scrollback', async (_event, scrollback: number) => {
+    await storeReady;
+    if (typeof scrollback === 'number') await layoutStore.setScrollback(scrollback);
+  });
 
   // ── Custom themes + font/effects settings (theme-effects-font M3) ────────
   // theme-store.ts owns its own fs (the themes dir, independent of layoutStore's

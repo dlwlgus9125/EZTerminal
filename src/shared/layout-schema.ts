@@ -128,6 +128,8 @@ export const SettingsSchema = z.object({
   theme: ThemeNameSchema.optional(),
   // UI scale (v0.2.0 D1) — integer percent, absent defaults to 100 in layout-store.
   uiScale: z.number().int().min(80).max(150).optional(),
+  // Scrollback buffer size in lines (WT-parity M5) — absent defaults to 5000 in layout-store.
+  scrollback: z.number().int().min(100).max(100000).optional(),
   // Remote WS bridge on/off (v0.2.0 D2) — absent defaults to true (pre-existing
   // always-on behavior) in layout-store.
   remoteEnabled: z.boolean().optional(),

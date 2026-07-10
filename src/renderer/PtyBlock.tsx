@@ -5,6 +5,7 @@ import '@xterm/xterm/css/xterm.css';
 
 import type { BlockController } from './block-controller';
 import { resolveFontFamily } from './fonts';
+import { getActiveScrollback } from './scrollback';
 import { getUserFontId } from './theme-runtime';
 import { getActiveTheme } from './themes';
 import { getActiveUiScale } from './ui-scale';
@@ -90,7 +91,7 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
       fontFamily: resolveFontFamily(getUserFontId(), initialTheme),
       fontSize: computeBaseFontSize(),
       cursorBlink: true,
-      scrollback: 5000,
+      scrollback: getActiveScrollback(),
       theme: initialTheme.xterm,
     });
     termRef.current = term;
@@ -257,11 +258,19 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     window.addEventListener('ez:theme', applyTypography);
     window.addEventListener('ez:ui-scale', applyTypography);
 
+    // Scrollback setting change (WT-parity M5) while this PTY is open: applied
+    // directly to the live term, no remount needed.
+    const applyScrollbackSetting = (): void => {
+      term.options.scrollback = getActiveScrollback();
+    };
+    window.addEventListener('ez:scrollback', applyScrollbackSetting);
+
     return () => {
       observer.disconnect();
       window.removeEventListener('ez:refit', onRefit);
       window.removeEventListener('ez:theme', applyTypography);
       window.removeEventListener('ez:ui-scale', applyTypography);
+      window.removeEventListener('ez:scrollback', applyScrollbackSetting);
       dataDisposable.dispose();
       unsink();
       term.dispose();
