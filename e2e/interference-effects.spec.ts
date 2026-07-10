@@ -140,3 +140,49 @@ test('micro-jitter and flicker compose on #root (both animations listed, neither
 
   await app.close();
 });
+
+test('crt-rollbar never adds a document scrollbar — the overlay stays inside the viewport', async () => {
+  const app = await launchApp();
+  const window = await app.firstWindow();
+  await openMatrixSettings(window);
+
+  // Matrix ships crt-rollbar ON by default; confirm the fixed overlay is live.
+  await expect.poll(() => effectAttr(window, 'crt-rollbar')).toBe('on');
+
+  // Isolate the rollbar: jitter-burst (also default-on) translates <body> by a
+  // few px during its bursts, which by itself makes the document scrollable by
+  // ~1px and would mask/mimic what we're measuring here. Turn it off so the
+  // only thing that could add scrollable area is the rollbar overlay.
+  await window.getByTestId('settings-effect-jitter-burst').uncheck();
+  await expect.poll(() => effectAttr(window, 'jitter-burst')).toBeNull();
+
+  // Freeze the sweep near the END of its cycle. A negative animation-delay sets
+  // the phase whichever property the sweep animates — background-position (the
+  // fix, overlay pinned inset:0) OR translateY (the old oversized-box approach,
+  // whose box would by now sit ~70vh below the viewport). So this guard is
+  // approach-agnostic: it stays green for the viewport-pinned overlay and fails
+  // if anyone reintroduces an element that translates past the viewport.
+  await window.evaluate(() => {
+    const s = document.createElement('style');
+    s.id = 'ez-test-rollbar-pin';
+    s.textContent =
+      "html[data-effect-crt-rollbar='on'] body::after {" +
+      'animation-delay: calc(-0.99 * var(--fx-rollbar-duration, 16.8s)) !important;' +
+      'animation-play-state: paused !important;' +
+      '}';
+    document.head.appendChild(s);
+  });
+
+  // The document must not become vertically scrollable: the overlay is confined
+  // to the viewport, so it contributes no scrollable area and scrollTop stays 0.
+  const moved = await window.evaluate(() => {
+    const el = document.scrollingElement as HTMLElement;
+    el.scrollTop = 99999;
+    const top = el.scrollTop;
+    el.scrollTop = 0;
+    return top;
+  });
+  expect(moved).toBe(0);
+
+  await app.close();
+});

@@ -236,24 +236,23 @@ html[data-effect-crt-curvature='on']::before {
    hold" roll ("줄 내려가는"). No line count: as one line exits at the bottom
    the next is already entering at the top, always --fx-rollbar-period apart
    (the pitch, `gap`% of the viewport, set by effect-params.ts). SEAMLESS
-   because pattern period == travel distance: the overlay is one period
-   taller than the screen, starts one period above it, and translates down by
-   exactly one period per animation loop — the reset lands on an identical
-   frame, so the screen is never empty and the spacing never varies.
+   because the overlay stays pinned to the viewport (inset:0) with a background
+   tile exactly one period tall, and the animation scrolls background-position
+   down by exactly one period per loop — the reset lands on an identical frame,
+   so the screen is never empty and the spacing never varies. Scrolling the
+   background (rather than translating an oversized element past the viewport)
+   keeps the overlay inside the viewport so it never adds a phantom document
+   scrollbar, matching the scanline-scroll effect below.
    Thickness/color/speed/opacity/gradient-softness are the other params
    (rollbar-params, Settings). EVERY line is identical (same color, same
    soft fade within its own thickness). Fallbacks mirror
    DEFAULT_ROLLBAR_PARAMS (thickness 120, gap 70% -> 70vh, speed 1 -> 16.80s per
    period). On body::after (html::after/::before are taken by
-   scanlines/curvature), z-index above them. GPU-cheap: transform + opacity,
-   pointer-events:none. */
+   scanlines/curvature), z-index above them. pointer-events:none. */
 html[data-effect-crt-rollbar='on'] body::after {
   content: '';
   position: fixed;
-  left: 0;
-  right: 0;
-  top: calc(-1 * var(--fx-rollbar-period, 70vh));
-  height: calc(100vh + var(--fx-rollbar-period, 70vh));
+  inset: 0;
   z-index: 201;
   pointer-events: none;
   background-image: repeating-linear-gradient(
@@ -265,13 +264,14 @@ html[data-effect-crt-rollbar='on'] body::after {
     transparent calc(var(--fx-rollbar-thickness, 120) * 1px),
     transparent var(--fx-rollbar-period, 70vh)
   );
+  background-size: 100% var(--fx-rollbar-period, 70vh);
   opacity: var(--fx-rollbar-opacity, 0.2);
-  will-change: transform;
+  will-change: background-position;
   animation: crt-rollbar-sweep var(--fx-rollbar-duration, 16.8s) linear infinite;
 }
 @keyframes crt-rollbar-sweep {
-  0% { transform: translateY(0); }
-  100% { transform: translateY(var(--fx-rollbar-period, 70vh)); }
+  0% { background-position: 0 0; }
+  100% { background-position: 0 var(--fx-rollbar-period, 70vh); }
 }
 
 /* == SCANLINE SCROLL (scanline-scroll effect) == the horizontal scanline
@@ -580,14 +580,16 @@ body {
 
 /* Status overlay panel (status-overlay-panel) — a non-modal 300px drawer that
    covers the dockview area's full height, never the app-head above it. z-index
-   60 sits above the preset dropdown (50) and below the command palette (100). */
+   155 sits above the preset dropdown (150) and below the command palette (170),
+   and clears dockview's drag sash (99) so the divider never paints over or
+   click-blocks the drawer (see the ladder comment further down). */
 .status-drawer {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
   width: 300px;
-  z-index: 60;
+  z-index: 155;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -853,24 +855,29 @@ body {
 
    z-order ladder for the whole file-explorer stack (M6 audit — verified
    correct; keep this comment in sync if any of these values ever change,
-   rather than re-deriving the ladder from scratch elsewhere):
-     .palette-overlay (100)        — command palette, above everything
-     .file-context-menu (95)       — right-click menu, above the viewer
-     .file-viewer-overlay (90)     — text viewer
-     .file-confirm-overlay (90)    — delete confirm (same slot as the viewer;
+   rather than re-deriving the ladder from scratch elsewhere). Every value sits
+   ABOVE dockview's drag sash (z-index 99, a library default) so a pane divider
+   can never paint over or intercept clicks meant for these overlays, and below
+   the CRT effect overlays (198+, pointer-events:none):
+     .palette-overlay (170)        — command palette, above everything
+     .file-context-menu (165)      — right-click menu, above the viewer
+     .terminal-context-menu (165)  — terminal copy/paste menu (same tier; never
+                                      shown together with the file overlays)
+     .file-viewer-overlay (160)    — text viewer
+     .file-confirm-overlay (160)   — delete confirm (same slot as the viewer;
                                       never shown at the same time — one opens
                                       from a row click, the other from that
                                       row's context menu)
-     .file-drawer (60)             — the drawer itself (this rule)
-     .preset-menu (50)             — layout presets dropdown, below the drawer
-   100 > 95 > 90 >= 90 > 60 > 50 holds throughout. */
+     .status-drawer / .file-drawer (155) — the drawers themselves
+     .preset-menu (150)            — layout presets dropdown, below the drawers
+   170 > 165 >= 165 > 160 >= 160 > 155 > 150 > 99 (sash) holds throughout. */
 .file-drawer {
   position: absolute;
   top: 0;
   left: 0;
   bottom: 0;
   width: 300px;
-  z-index: 60;
+  z-index: 155;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -956,15 +963,15 @@ body {
 }
 
 /* Read-only text viewer overlay (M1) — centered over the dock-host, above the
-   drawer (60) and below the command palette (100); M2's context menu sits
-   above it at 95. */
+   drawers (155) and below the command palette (170); M2's context menu sits
+   above it at 165. */
 .file-viewer-overlay {
   position: absolute;
   top: 5%;
   left: 5%;
   right: 5%;
   bottom: 5%;
-  z-index: 90;
+  z-index: 160;
   display: flex;
   flex-direction: column;
   background: var(--term-bg-raised);
@@ -1005,11 +1012,11 @@ body {
 
 /* Right-click context menu (M2) — clones .preset-menu's chrome but is cursor-
    positioned (`left`/`top` set inline by FileContextMenu.tsx) via `fixed`
-   rather than anchored to a relatively-positioned parent. z-index 95 sits
-   above the viewer (90) and below the command palette (100). */
+   rather than anchored to a relatively-positioned parent. z-index 165 sits
+   above the viewer (160) and below the command palette (170). */
 .file-context-menu {
   position: fixed;
-  z-index: 95;
+  z-index: 165;
   min-width: 190px;
   padding: 0.35rem;
   background: var(--term-bg-raised);
@@ -1050,7 +1057,7 @@ body {
 .file-confirm-overlay {
   position: absolute;
   inset: 0;
-  z-index: 90;
+  z-index: 160;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1152,7 +1159,10 @@ body {
   margin-left: auto;
 }
 
-/* Layout presets dropdown (Track A ③ A-M4) — anchored to the title-bar button. */
+/* Layout presets dropdown (Track A ③ A-M4) — anchored to the title-bar button.
+   z-index 150 keeps the dropdown above dockview's drag sash (99) so a pane
+   divider can't intercept clicks on its buttons; see the file-explorer z-order
+   ladder comment above. */
 .preset-box {
   position: relative;
 }
@@ -1160,7 +1170,7 @@ body {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  z-index: 50;
+  z-index: 150;
   min-width: 220px;
   padding: 0.35rem;
   background: var(--term-bg-raised);
@@ -1237,11 +1247,12 @@ body {
 }
 
 /* Command palette (E2) — a centered overlay, same dark/bordered chrome as
-   .preset-menu. Fixed over the whole app so it sits above dockview panes. */
+   .preset-menu. Fixed over the whole app so it sits above dockview panes and
+   the drag sash (99); top of the overlay ladder. */
 .palette-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 170;
   display: flex;
   justify-content: center;
   padding-top: 12vh;
@@ -1663,12 +1674,13 @@ body {
 
 /* Right-click copy/paste menu (WT-parity M2) — clones .file-context-menu's
    chrome (fixed, cursor-positioned via `left`/`top` set inline by
-   TerminalContextMenu.tsx). Not part of the file-explorer z-order ladder
-   above; a plain z-index above the pty block's own contents is enough since
-   the two overlays are never shown together. */
+   TerminalContextMenu.tsx). z-index 165 (context-menu tier) keeps it above
+   dockview's drag sash (99) — a right-click near a pane border must not be
+   swallowed by the divider — and it is never shown together with the
+   file-explorer overlays. */
 .terminal-context-menu {
   position: fixed;
-  z-index: 10;
+  z-index: 165;
   min-width: 160px;
   padding: 0.35rem;
   background: var(--term-bg-raised);
