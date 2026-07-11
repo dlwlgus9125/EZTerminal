@@ -223,6 +223,43 @@ describe('BlockController — PTY block, xterm mode (Phase 2 + Phase 3 upgraded)
   });
 });
 
+describe('BlockController — paste seam (mobile long-press Paste, IME fix M3)', () => {
+  it('falls back to a raw pty-input when no xterm view registered a handler', () => {
+    const { port, controller } = make();
+    controller.pasteText('line1\nline2');
+    expect(port.posted).toContainEqual({ type: 'pty-input', data: 'line1\nline2' });
+  });
+
+  it('routes through the registered handler (term.paste → bracketed framing)', () => {
+    const { port, controller } = make();
+    const pasted: string[] = [];
+    controller.setPasteHandler((text) => pasted.push(text));
+
+    controller.pasteText('hello');
+
+    expect(pasted).toEqual(['hello']);
+    // The handler owns delivery — no raw pty-input alongside it.
+    expect(port.posted.filter((m) => m.type === 'pty-input')).toHaveLength(0);
+  });
+
+  it('unregistering restores the raw fallback, and a stale unregister is a no-op', () => {
+    const { port, controller } = make();
+    const first: string[] = [];
+    const unregisterFirst = controller.setPasteHandler((text) => first.push(text));
+    unregisterFirst();
+    controller.pasteText('raw again');
+    expect(port.posted).toContainEqual({ type: 'pty-input', data: 'raw again' });
+
+    // A replaced handler's unregister must not clobber the current one.
+    const second: string[] = [];
+    const unregisterA = controller.setPasteHandler(() => {});
+    controller.setPasteHandler((text) => second.push(text));
+    unregisterA(); // stale — current handler stays
+    controller.pasteText('kept');
+    expect(second).toEqual(['kept']);
+  });
+});
+
 describe('BlockController — PTY block, plain mode (Phase 3 adaptive-render default)', () => {
   it('a pty schema frame defaults ptyRenderMode to plain (no upgrade yet)', () => {
     const { port, controller } = make();

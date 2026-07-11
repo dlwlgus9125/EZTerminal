@@ -169,6 +169,13 @@ export class BlockController {
   private ptyDataSink: PtyDataSink | null = null;
   private ptyBuffer: Uint8Array[] = [];
 
+  /** Paste seam (mobile long-press menu): an xterm view registers
+   * `term.paste` here so pasted text gets bracketed-paste framing and \n→\r
+   * normalization when the child enabled it (claude/codex do) instead of
+   * landing as raw keystroke bytes. Absent (plain view / not mounted), paste
+   * falls back to a raw `sendPtyInput`. */
+  private pasteHandler: ((text: string) => void) | null = null;
+
   /** Phase 3 adaptive render: mode + the plain-mode ansi->html pipeline. A
    * single `AnsiHtmlStream` instance is reused for the block's entire plain
    * phase so SGR state (current fg/bg/bold) carries across chunks; `plainHtml`
@@ -323,6 +330,22 @@ export class BlockController {
   /** Forward a keystroke / pasted text from xterm to the PTY child. */
   sendPtyInput(data: string): void {
     this.port.postMessage({ type: 'pty-input', data });
+  }
+
+  /** Register the mounted xterm view's paste path (`term.paste`) — same
+   * register/unregister shape as `setPtyDataSink`. */
+  setPasteHandler(handler: (text: string) => void): () => void {
+    this.pasteHandler = handler;
+    return () => {
+      if (this.pasteHandler === handler) this.pasteHandler = null;
+    };
+  }
+
+  /** Paste text into the PTY through the terminal's paste path when an xterm
+   * view is mounted (bracketed-paste framing), raw otherwise. */
+  pasteText(text: string): void {
+    if (this.pasteHandler) this.pasteHandler(text);
+    else this.sendPtyInput(text);
   }
 
   /** Forward the terminal's new dimensions (xterm FitAddon) to the PTY. */

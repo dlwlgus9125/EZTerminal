@@ -6,6 +6,7 @@ import { registerPaneInput, unregisterPaneInput } from '../../src/renderer/pane-
 import { keyToPtyBytes } from '../../src/renderer/pty-keys';
 import { TerminalContextMenu, type TerminalContextMenuItem } from '../../src/renderer/TerminalContextMenu';
 import type { RunStartedInfo } from '../../src/shared/ipc';
+import { beforeInputTextForPty } from './composer-input';
 import { useLongPress } from './long-press';
 import { appendToComposer, resolvePasteTarget } from './paste-routing';
 import { TouchInputBar } from './TouchInputBar';
@@ -348,7 +349,11 @@ export function MobileSessionView({
             if (!text) return;
             const target = resolvePasteTarget(activeController.current?.getSnapshot() ?? null);
             if (target === 'pty') {
-              activeController.current?.sendPtyInput(text);
+              // pasteText, not sendPtyInput: an xterm-upgraded child (claude/
+              // codex enable bracketed paste) must receive ESC[200~…201~
+              // framing and \n→\r normalization, or a multi-line paste
+              // submits line-by-line as raw Enters.
+              activeController.current?.pasteText(text);
             } else {
               setCommand((prev) => appendToComposer(prev, text));
             }
@@ -473,6 +478,25 @@ export function MobileSessionView({
                 setCommand(draftBeforeRecall.current);
               }
             }
+          }}
+          onBeforeInput={(e) => {
+            if (!activePlainPty) return; // idle: default typing-into-draft behavior
+            // Android soft keyboards deliver most non-composition commits as
+            // `beforeinput` with keydown 229, which the keyToPtyBytes path
+            // above can't route — see composer-input.ts.
+            const text = beforeInputTextForPty(e.nativeEvent as InputEvent);
+            if (text === null) return;
+            e.preventDefault();
+            activeController.current?.sendPtyInput(text);
+          }}
+          onPaste={(e) => {
+            // Desktop parity (TerminalPane.tsx's identical handler): a paste
+            // into the composer during a plain PTY run goes to the child, not
+            // the draft.
+            if (!activePlainPty) return; // idle: default paste-into-input behavior
+            e.preventDefault();
+            const text = e.clipboardData.getData('text');
+            if (text) activeController.current?.sendPtyInput(text);
           }}
           onCompositionEnd={(e) => {
             if (!activePlainPty) return; // idle: default composition-into-draft behavior

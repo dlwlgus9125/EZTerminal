@@ -10,6 +10,7 @@ import { getUserFontId } from './theme-runtime';
 import { getActiveTheme } from './themes';
 import { getActiveUiScale } from './ui-scale';
 import { TerminalContextMenu, type TerminalContextMenuItem } from './TerminalContextMenu';
+import { attachXtermImeHygiene } from './xterm-ime-hygiene';
 
 // PtyBlock — the render surface for a `pty`-shape block. Execution is ALWAYS a
 // live PTY (any single, non-piped external command, or `!cmd`); render is
@@ -224,6 +225,14 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
       if (mirrorWritesInFlight > 0) return; // auto-reply, not a user — see above
       controller.sendPtyInput(data);
     });
+    // Soft-keyboard duplication fix: empty the helper textarea after every
+    // commit so an IME (Samsung keyboard / Gboard) never keeps committed text
+    // as rewritable context — see xterm-ime-hygiene.ts for the full mechanism.
+    const imeHygiene = attachXtermImeHygiene(term);
+    // Mobile long-press Paste (MobileSessionView) routes through here so the
+    // text gets bracketed-paste framing / \n→\r normalization when the child
+    // enabled it — same term.paste path the context-menu Paste below uses.
+    const unregisterPaste = controller.setPasteHandler((text) => term.paste(text));
 
     // Keep the grid synced to the rendered size (incl. collapse→expand):
     // dispatch to whichever layout applies for the CURRENT control state.
@@ -271,6 +280,8 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
       window.removeEventListener('ez:theme', applyTypography);
       window.removeEventListener('ez:ui-scale', applyTypography);
       window.removeEventListener('ez:scrollback', applyScrollbackSetting);
+      unregisterPaste();
+      imeHygiene.dispose();
       dataDisposable.dispose();
       unsink();
       term.dispose();

@@ -2,6 +2,29 @@
 
 수동 관리 (semver). 릴리스 절차: `docs/release/README.md`.
 
+## [0.8.1] - 2026-07-11
+
+모바일 소프트키보드 IME 입력 증식 버그 수정.
+
+### Fixed
+- **모바일 타이핑 시 이전 입력 증식 (Z Fold 7 + 삼성키보드):** xterm의 숨김 helper
+  textarea가 Enter/blur 외엔 비워지지 않아 안드로이드 IME(keyCode 229) 커밋이 무한 누적됐고,
+  키보드 자동교정/예측이 기커밋 텍스트를 고쳐 쓰는 순간 xterm CompositionHelper의
+  String.replace 기반 diff가 실패해 **누적 버퍼 전체가 PTY로 재전송**됨 — 붙여넣은 이전
+  대화가 타이핑마다 증식. 이제 커밋마다 textarea를 비워(조합 중엔 유예 — 한글 조합 보호)
+  키보드가 재작성할 stale 컨텍스트 자체를 제거 (`src/renderer/xterm-ime-hygiene.ts`)
+- **모바일 컴포저 비조합 커밋 유실:** 추천 단어 탭/단어를 커밋하는 스페이스/키보드 클립보드
+  붙여넣기가 plain-PTY 실행 중 PTY로 라우팅되지 않고 입력창에 쌓이던 갭 — `beforeinput`
+  라우팅(`mobile/src/composer-input.ts`)으로 해소, 데스크톱에만 있던 컴포저 onPaste 패리티 추가
+- **롱프레스 Paste 브래킷 프레이밍:** xterm 블록(claude/codex)에 붙여넣을 때 raw 바이트 대신
+  `term.paste()` 경유(BlockController paste seam) — bracketed-paste 프레이밍 + 개행 정규화로
+  여러 줄 붙여넣기가 줄마다 제출되지 않음
+
+### Notes
+- 회귀 가드: 삼성키보드형 IME 이벤트 시퀀스를 합성해 실제 xterm 리스너를 구동하는 e2e 4종
+  (`e2e/ime-input.spec.ts` + `fixtures/ime-echo.js`)과 유닛 14종 추가 — 새 베이스라인
+  unit 772 / mobile 117 / e2e 115
+
 ## [0.8.0] - 2026-07-10
 
 Public 전환 전 보안 리뷰 하드닝 — 원격 제어 WS 브리지 attack surface 축소.
