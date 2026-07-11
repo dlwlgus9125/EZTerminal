@@ -115,6 +115,69 @@ export class TuiSignalDetector {
   }
 }
 
+/**
+ * DEC private-mode state tracker (TUI scroll parity — late-attach mode resync).
+ *
+ * A late `attach()` replays only the bounded ring — once a long-running TUI
+ * evicts its startup DECSETs (claude's full-screen redraws exceed 256 KiB in
+ * seconds), a late mirror's xterm never learns the alt-screen / mouse-tracking
+ * / bracketed-paste state and silently degrades. Observed on the phone
+ * (2026-07-12 emulator capture): the mirror believed `mouseTrackingMode:
+ * 'none'` in the NORMAL buffer, so touch/wheel scrolling fell back to local
+ * viewport scrolling instead of reaching the child. Track the current SET/RST
+ * state of the modes that matter to a mirror and synthesize a restoration
+ * preamble `attach()` prepends to the replay — the same state-resync idea
+ * tmux applies to late clients. Re-scanning bytes kept in the carry window is
+ * harmless: reapplying `h`/`l` is idempotent and text order = stream order.
+ *
+ * Restored modes (everything else is deliberately left out — e.g. `?1004h`
+ * focus reporting would make every mirror inject focus events into the SHARED
+ * PTY input, `?2026h` is transient frame bracketing, `?9001h` is ConPTY
+ * backend noise xterm ignores anyway):
+ *  - 1    DECCKM app cursor keys (arrow-key ENCODING — wheel fallback / soft keys)
+ *  - 7    DECAWM auto-wrap
+ *  - 25   cursor visibility
+ *  - 47 / 1049  alternate screen
+ *  - 1000 / 1002 / 1003 / 1005 / 1006 / 1015 / 1016  mouse tracking + encodings
+ *  - 2004 bracketed paste (a late mirror's `term.paste` framing depends on it)
+ */
+const RESTORED_DEC_MODES: ReadonlySet<number> = new Set([
+  1, 7, 25, 47, 1000, 1002, 1003, 1005, 1006, 1015, 1016, 1049, 2004,
+]);
+// eslint-disable-next-line no-control-regex -- matching a real ESC (0x1b) terminal escape sequence is the entire point of this regex
+const DEC_MODE_RE = /\x1b\[\?([0-9;]+)([hl])/g;
+/** Longer than TuiSignalDetector's carry: DECSET param lists (`?1002;1006h`) are longer. */
+const MODE_CARRY_BYTES = 32;
+
+export class DecPrivateModeTracker {
+  private carry = '';
+  private readonly state = new Map<number, boolean>();
+
+  /** Feed the next output chunk (same Latin-1 rationale as TuiSignalDetector). */
+  feed(chunk: Uint8Array): void {
+    const text = this.carry + Buffer.from(chunk).toString('latin1');
+    if (text.includes('\x1b[?')) {
+      for (const m of text.matchAll(DEC_MODE_RE)) {
+        const set = m[2] === 'h';
+        for (const param of m[1].split(';')) {
+          const mode = Number(param);
+          if (RESTORED_DEC_MODES.has(mode)) this.state.set(mode, set);
+        }
+      }
+    }
+    this.carry = text.slice(-MODE_CARRY_BYTES);
+  }
+
+  /** Restoration preamble for every tracked mode's CURRENT state (empty if none seen). */
+  preamble(): Uint8Array {
+    let out = '';
+    for (const mode of [...this.state.keys()].sort((a, b) => a - b)) {
+      out += `\x1b[?${String(mode)}${this.state.get(mode) === true ? 'h' : 'l'}`;
+    }
+    return Buffer.from(out, 'latin1');
+  }
+}
+
 export interface PtySession {
   /** Forward keystrokes / pasted text to the PTY child. */
   write(data: string): void;
@@ -201,6 +264,7 @@ export function runPtySession(
   // fires once, on the first high-confidence TUI signal.
   let upgraded = false;
   const detector = new TuiSignalDetector();
+  const modeTracker = new DecPrivateModeTracker();
   if (data.forceXterm) {
     upgraded = true;
     emit({ type: 'pty-render-upgrade' });
@@ -241,6 +305,7 @@ export function runPtySession(
       upgraded = true;
       emit({ type: 'pty-render-upgrade' });
     }
+    modeTracker.feed(bytes);
     emit({ type: 'pty-data', data: bytes });
     appendToRing(bytes);
     // Tee to every attach subscriber independently — a paused one just misses
@@ -295,8 +360,22 @@ export function runPtySession(
       if (attachSubscribers.size >= PTY_ATTACH_CAP) return null;
       const sub: AttachSubscriber = { onData, sent: 0, acked: 0, paused: false };
       attachSubscribers.add(sub);
+      // Late-attach mode resync: prepend the tracked DEC private-mode state so
+      // a mirror whose ring replay no longer contains the original DECSETs
+      // (evicted by heavy TUI redraws) still reconstructs alt-screen / mouse /
+      // paste modes. For an early attacher the ring still holds the originals
+      // and reapplying them is idempotent; the ring's own later transitions
+      // replay after the preamble, so the final state always matches the child.
+      const preamble = modeTracker.preamble();
+      const ringData = concatRing();
+      let replay = ringData;
+      if (preamble.byteLength > 0) {
+        replay = new Uint8Array(preamble.byteLength + ringData.byteLength);
+        replay.set(preamble, 0);
+        replay.set(ringData, preamble.byteLength);
+      }
       return {
-        replay: concatRing(),
+        replay,
         ack(bytes: number): void {
           if (settled || !Number.isFinite(bytes)) return;
           if (bytes > sub.acked) sub.acked = Math.min(bytes, sub.sent);

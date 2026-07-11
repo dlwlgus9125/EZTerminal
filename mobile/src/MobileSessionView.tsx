@@ -72,6 +72,13 @@ export function MobileSessionView({
   // child instead of disabling the input, so a plain PTY program can be
   // driven from the physical/soft keyboard without TouchInputBar.
   const [activePlainPty, setActivePlainPty] = useState(false);
+  // TUI takeover (TUI scroll parity, M2 — mirrors desktop TerminalPane's
+  // `activeTakeover`): while the active run is a RUNNING xterm `pty`, the
+  // shared `pane--tui-takeover` CSS (index.css) hides sibling blocks and the
+  // composer row and stretches the TUI to fill this view, so a touch drag
+  // can't collide with block-list scrolling (PtyBlock's touch→wheel bridge
+  // is gated to exactly this state).
+  const [activeTakeover, setActiveTakeover] = useState(false);
   const activeUnsub = useRef<(() => void) | null>(null);
   const [sessionDead, setSessionDead] = useState(false);
   // Latest callback in a ref (not an effect dependency) so a fresh inline
@@ -106,6 +113,7 @@ export function MobileSessionView({
     const unsub = window.ezterminal.onSessionDead(() => {
       setSessionDead(true);
       setActivePlainPty(false);
+      setActiveTakeover(false);
       onSessionDeadRef.current?.();
     });
     return unsub;
@@ -171,6 +179,9 @@ export function MobileSessionView({
       const onActiveChange = (): void => {
         const snap = controller.getSnapshot();
         setActiveRunning(snap.status === 'running');
+        setActiveTakeover(
+          snap.status === 'running' && snap.shape === 'pty' && snap.ptyRenderMode === 'xterm',
+        );
         setActivePlainPty(
           snap.status === 'running' && snap.shape === 'pty' && snap.ptyRenderMode === 'plain',
         );
@@ -322,6 +333,7 @@ export function MobileSessionView({
           setActiveControllerForTouch(null);
           setActiveRunning(false);
           setActivePlainPty(false);
+          setActiveTakeover(false);
         }
         entry.controller.dispose();
       }
@@ -386,7 +398,12 @@ export function MobileSessionView({
   ];
 
   return (
-    <div className="pane mobile-session-view" data-testid="mobile-session-view">
+    <div
+      className={
+        activeTakeover ? 'pane mobile-session-view pane--tui-takeover' : 'pane mobile-session-view'
+      }
+      data-testid="mobile-session-view"
+    >
       {sessionDead && (
         <div className="mobile-session-dead-banner" data-testid="session-dead-banner">
           Connection lost.
@@ -413,6 +430,7 @@ export function MobileSessionView({
               key={entry.id}
               controller={entry.controller}
               onDismiss={() => handleDismiss(entry.id)}
+              isTakeover={activeTakeover && activeController.current === entry.controller}
             />
           ) : (
             <section key={entry.id} className="block" data-testid="block" data-status="running">

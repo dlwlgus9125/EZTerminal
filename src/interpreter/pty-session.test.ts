@@ -2,7 +2,14 @@ import { describe, it, expect } from 'vitest';
 
 import type { InterpreterFrame } from '../shared/ipc';
 import { ptyStreamData, type PtyHandle, type PtyStreamData } from './core';
-import { PTY_HIGH_WATER, PTY_LOW_WATER, TuiSignalDetector, runPtySession } from './pty-session';
+import {
+  DecPrivateModeTracker,
+  PTY_HIGH_WATER,
+  PTY_LOW_WATER,
+  PTY_SCROLLBACK_RING_BYTES,
+  TuiSignalDetector,
+  runPtySession,
+} from './pty-session';
 
 /** A fake PtyHandle the test drives via emitData/emitExit. `forceXterm` mirrors
  * the `!cmd` metadata M2's evaluator threads onto PtyStreamData (Phase 3). */
@@ -358,5 +365,85 @@ describe('runPtySession — adaptive render (Phase 3)', () => {
     // A second trigger-bearing chunk does not upgrade again.
     fake.emitData(new TextEncoder().encode('\x1b[?1049h'));
     expect(frames.filter((f) => f.type === 'pty-render-upgrade')).toHaveLength(1);
+  });
+});
+
+describe('DecPrivateModeTracker (late-attach mode resync)', () => {
+  const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
+  const ESC = '\x1b';
+  const text = (b: Uint8Array): string => Buffer.from(b).toString('latin1');
+
+  it('tracks DECSETs and emits a restoration preamble in ascending mode order', () => {
+    const t = new DecPrivateModeTracker();
+    t.feed(enc(`${ESC}[?1049h${ESC}[?1002h${ESC}[?1006h`));
+    expect(text(t.preamble())).toBe(`${ESC}[?1002h${ESC}[?1006h${ESC}[?1049h`);
+  });
+
+  it('a later DECRST restores the mode as l (current state, not history)', () => {
+    const t = new DecPrivateModeTracker();
+    t.feed(enc(`${ESC}[?1000h${ESC}[?25l`));
+    t.feed(enc(`${ESC}[?1000l`));
+    expect(text(t.preamble())).toBe(`${ESC}[?25l${ESC}[?1000l`);
+  });
+
+  it('handles multi-param DECSET and sequences split across chunks (carry)', () => {
+    const t = new DecPrivateModeTracker();
+    t.feed(enc(`${ESC}[?1002;10`)); // split mid-param
+    t.feed(enc('06h'));
+    expect(text(t.preamble())).toBe(`${ESC}[?1002h${ESC}[?1006h`);
+  });
+
+  it('ignores non-whitelisted modes (focus ?1004, sync-update ?2026, win32-input ?9001)', () => {
+    const t = new DecPrivateModeTracker();
+    t.feed(enc(`${ESC}[?1004h${ESC}[?2026h${ESC}[?9001h${ESC}[?2031h`));
+    expect(t.preamble().byteLength).toBe(0);
+  });
+
+  it('emits nothing when no tracked mode was ever observed', () => {
+    const t = new DecPrivateModeTracker();
+    t.feed(enc('plain output, no DEC sequences'));
+    expect(t.preamble().byteLength).toBe(0);
+  });
+
+  it('re-scanning the carry window never corrupts state (idempotent reapply)', () => {
+    const t = new DecPrivateModeTracker();
+    t.feed(enc(`${ESC}[?1049h`)); // whole sequence sits inside the next carry
+    t.feed(enc('x')); // re-scan of carried bytes reapplies ?1049h — same value
+    t.feed(enc('y'));
+    expect(text(t.preamble())).toBe(`${ESC}[?1049h`);
+  });
+});
+
+describe('runPtySession — late-attach DEC mode resync (TUI scroll parity)', () => {
+  const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
+  const ESC = '\x1b';
+
+  it('an attach AFTER ring eviction still receives the mode-restoration preamble', () => {
+    const fake = makeFakePty();
+    const { emit } = collect();
+    const session = runPtySession(fake.data, emit, new AbortController().signal, 80, 24);
+
+    // claude-style startup: alt screen + any-motion mouse + SGR encoding...
+    fake.emitData(enc(`${ESC}[?1049h${ESC}[?1003h${ESC}[?1006h`));
+    // ...then enough redraw output that the ring evicts the startup chunk.
+    fake.emitData(new Uint8Array(PTY_SCROLLBACK_RING_BYTES + 1024).fill(0x58 /* 'X' */));
+
+    const handle = session.attach(() => {});
+    expect(handle).not.toBeNull();
+    const replay = Buffer.from(handle!.replay).toString('latin1');
+    // The ring no longer holds the originals — the preamble must reconstruct them.
+    expect(replay.startsWith(`${ESC}[?1003h${ESC}[?1006h${ESC}[?1049h`)).toBe(true);
+    expect(replay.slice(replay.indexOf('X'))).not.toContain(`${ESC}[?1003h`);
+  });
+
+  it('an early attach (ring intact) gets preamble + originals — idempotent reapply', () => {
+    const fake = makeFakePty();
+    const { emit } = collect();
+    const session = runPtySession(fake.data, emit, new AbortController().signal, 80, 24);
+    fake.emitData(enc(`${ESC}[?1002h`));
+
+    const handle = session.attach(() => {});
+    const replay = Buffer.from(handle!.replay).toString('latin1');
+    expect(replay).toBe(`${ESC}[?1002h${ESC}[?1002h`); // preamble + ring copy
   });
 });

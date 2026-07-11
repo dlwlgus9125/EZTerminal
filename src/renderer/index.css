@@ -1595,6 +1595,11 @@ body {
 .pane--tui-takeover .block--takeover .pty-block {
   height: 100%;
   margin: 0;
+  /* Touch: a drag over the takeover TUI is terminal scrolling (PtyBlock.tsx's
+     touch→wheel bridge), never browser/list panning — suppress native touch
+     actions up front so Chrome doesn't race the non-passive touchmove
+     handler. Touch-only property: mouse selection/wheel are unaffected. */
+  touch-action: none;
 }
 
 /* The takeover block's own header (command echo + toggle/cancel/dismiss) reads

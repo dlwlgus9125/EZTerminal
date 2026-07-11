@@ -10,6 +10,8 @@ import { getUserFontId } from './theme-runtime';
 import { getActiveTheme } from './themes';
 import { getActiveUiScale } from './ui-scale';
 import { TerminalContextMenu, type TerminalContextMenuItem } from './TerminalContextMenu';
+import { QUERY_CARRY_CHARS, containsTerminalQuery } from './pty-query-gate';
+import { TouchScrollAccumulator } from './touch-scroll';
 import { attachXtermImeHygiene } from './xterm-ime-hygiene';
 
 // PtyBlock — the render surface for a `pty`-shape block. Execution is ALWAYS a
@@ -103,6 +105,10 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
+    // e2e/diagnostic seam (same spirit as block-controller's window.__ezPtyFlow):
+    // expose the live Terminal on its container so tests can read PUBLIC xterm
+    // state (modes.mouseTrackingMode, buffer.active.type) without new IPC.
+    (el as HTMLDivElement & { __ezTerm?: Terminal }).__ezTerm = term;
 
     // Copy/paste shortcuts (WT-parity M2) — xterm's own key handler, so
     // everything else (Ctrl+C interrupt, arrows, ...) passes through
@@ -208,9 +214,28 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     // "onData while a non-controlling write is in flight" identifies them; a
     // phone keystroke landing inside that brief window is dropped, which is
     // the right trade against corrupting everyone's input stream.
+    // Gate refinement (TUI scroll parity, 2026-07-12): arming the gate for
+    // EVERY mirror write assumed brief in-flight windows, but a claude-class
+    // fullscreen TUI repaints continuously (spinner/HUD animation), keeping a
+    // write in flight almost permanently — which swallowed essentially ALL
+    // input from a non-controlling phone mirror (touch-scroll mouse reports
+    // and keys alike; verified on the emulator). Only a write that CARRIES a
+    // terminal query can make xterm emit an auto-reply, so only those writes
+    // arm the gate (pty-query-gate.ts) — the ring-replayed session-start DA
+    // query, the case the gate exists for, still arms it. `queryCarry`
+    // stitches queries split across chunk boundaries (same carry technique as
+    // the interpreter's TuiSignalDetector).
     let mirrorWritesInFlight = 0;
+    let queryCarry = '';
+    const latin1 = new TextDecoder('latin1');
     const unsink = controller.setPtyDataSink((bytes, onFlushed) => {
       if (hasControlRef.current) {
+        term.write(bytes, onFlushed);
+        return;
+      }
+      const text = queryCarry + latin1.decode(bytes);
+      queryCarry = text.slice(-QUERY_CARRY_CHARS);
+      if (!containsTerminalQuery(text)) {
         term.write(bytes, onFlushed);
         return;
       }
@@ -233,6 +258,69 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     // text gets bracketed-paste framing / \n→\r normalization when the child
     // enabled it — same term.paste path the context-menu Paste below uses.
     const unregisterPaste = controller.setPasteHandler((text) => term.paste(text));
+
+    // Touch → wheel bridge (TUI scroll parity, M3): xterm 6 has NO touch
+    // handling (its vs/ scrollable element only listens for 'wheel'), so a
+    // touch drag over a TUI did nothing at all. Re-emit the drag as synthetic
+    // WheelEvents on the xterm screen — one per whole cell of drag distance —
+    // so the scroll intent funnels through xterm's OWN wheel decision tree:
+    // mouse reports when the child enabled tracking (claude), the standard
+    // arrow-key fallback otherwise (vim parity), viewport scroll on the
+    // normal buffer. No protocol logic is duplicated here. Gated to an active
+    // pane takeover: outside it (mobile block-list), a drag must keep
+    // scrolling the LIST natively, not the embedded 360px terminal.
+    const touchAcc = new TouchScrollAccumulator();
+    let lastTouchY: number | null = null;
+    const onTouchStart = (ev: TouchEvent): void => {
+      if (ev.touches.length !== 1 || !el.closest('.pane--tui-takeover')) {
+        lastTouchY = null;
+        return;
+      }
+      touchAcc.reset();
+      lastTouchY = ev.touches[0].clientY;
+    };
+    const onTouchMove = (ev: TouchEvent): void => {
+      if (lastTouchY === null || ev.touches.length !== 1) return;
+      if (!el.closest('.pane--tui-takeover')) return;
+      const screen = el.querySelector<HTMLElement>('.xterm-screen');
+      if (!screen) return;
+      // This drag IS terminal scrolling — keep native/list panning out of it.
+      ev.preventDefault();
+      const touch = ev.touches[0];
+      const dy = lastTouchY - touch.clientY; // finger up = wheel down (natural scrolling)
+      lastTouchY = touch.clientY;
+      const rect = screen.getBoundingClientRect();
+      const cell = term.rows > 0 ? rect.height / term.rows : 0;
+      const steps = touchAcc.feed(dy, cell);
+      if (steps === 0) return;
+      // Clamp the report coordinates into the screen box — a drag can wander
+      // outside it, and mouse-report cell coords must stay on the grid.
+      const x = Math.min(Math.max(touch.clientX, rect.left), rect.right - 1);
+      const y = Math.min(Math.max(touch.clientY, rect.top), rect.bottom - 1);
+      const dir = steps > 0 ? 1 : -1;
+      for (let i = 0; i < Math.abs(steps); i++) {
+        screen.dispatchEvent(
+          new WheelEvent('wheel', {
+            deltaY: dir * cell,
+            deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+            clientX: x,
+            clientY: y,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+    };
+    const onTouchEnd = (): void => {
+      lastTouchY = null;
+      touchAcc.reset();
+    };
+    // Native listeners, touchmove NON-passive: React's synthetic touch events
+    // are passive-by-default and cannot preventDefault the browser scroll.
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd, { passive: true });
+    el.addEventListener('touchcancel', onTouchEnd, { passive: true });
 
     // Keep the grid synced to the rendered size (incl. collapse→expand):
     // dispatch to whichever layout applies for the CURRENT control state.
@@ -275,6 +363,10 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     window.addEventListener('ez:scrollback', applyScrollbackSetting);
 
     return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
       observer.disconnect();
       window.removeEventListener('ez:refit', onRefit);
       window.removeEventListener('ez:theme', applyTypography);
@@ -284,6 +376,7 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
       imeHygiene.dispose();
       dataDisposable.dispose();
       unsink();
+      delete (el as HTMLDivElement & { __ezTerm?: Terminal }).__ezTerm;
       term.dispose();
       termRef.current = null;
     };

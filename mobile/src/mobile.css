@@ -158,6 +158,18 @@ body,
   font-size: 0.85rem;
 }
 
+/* ── TUI takeover on mobile (TUI scroll parity, M2) ───────────────────────
+ * The shared desktop takeover CSS (index.css) reveals the block-head only on
+ * :hover / :focus-within, which touch has no equivalent for — Cancel/✕ would
+ * be unreachable. Keep the head in normal flow and always visible instead of
+ * the desktop's absolute overlay: block--takeover is a flex column, so the
+ * body still fills the remaining height and FitAddon/mirror layout size the
+ * grid to what's left (no overlap over the TUI's first row). */
+.mobile-session-view.pane--tui-takeover .block--takeover .block-head {
+  position: static;
+  opacity: 1;
+}
+
 /* Long-press menu (WT-parity M3) — touch-sized override of the shared
  * desktop `.terminal-context-menu-item` (src/renderer/index.css), same
  * >=44px touch-target convention as `.mobile-file-sheet-item` above. */
