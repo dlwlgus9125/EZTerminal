@@ -1,18 +1,27 @@
 # EZTerminal — 다음 세션 이어가기 (Resume Handoff)
 
-> 마지막 작업: 2026-07-05. **결정 없이 진행 가능한 작업 전부 완료** — Stage 0·A·C·D + B(M4만 잔여) +
-> E1 테마·E2 팔레트·E4 스크립팅·E5 SSH + CLI 패리티·번들 ConPTY + 시스템 상태 패널 v1/v2·실시간 패킷 캡처
-> + Matrix(CRT) 테마 + **모바일 원격 제어(안드로이드 앱, 2026-07-05)** 완료 + E6 크로스플랫폼 ps 부분(유닛).
-> 이전 HEAD `ba213a7` (main). **모바일 원격 제어는 브랜치 `feat/mobile-remote-control`로 커밋·푸시 — PR 병합 대기.**
+> 마지막 릴리스: **2026-07-08, v0.6.7** (main @ `ce3a087`). **결정 없이 진행 가능한 작업 전부 완료** —
+> 토대: Stage 0·A·C·D + B(M4만 잔여) + E1 테마·E2 팔레트·E4 스크립팅·E5 SSH + CLI 패리티·번들 ConPTY +
+> 시스템 상태 패널 v1/v2·실시간 패킷 캡처 + Matrix(CRT) 테마 + **모바일 원격 제어·미러링·컨트롤 핸드오프**
+> (안드로이드 앱) + E6 크로스플랫폼 ps 부분(유닛). **그 위로 v0.2.0~v0.6.7 배포**: 설정 UI/UI 스케일/원격
+> 토글(v0.2.0)·설정 중복 제거(v0.3.0)·미러 attach(v0.4.0)·컨트롤 핸드오프+shrink-to-fit(v0.5.0)·화면클릭
+> 포커스+제출 클리어(v0.5.1)·**확장형 테마 mod+토글 이펙트+폰트 피커(v0.6.0)·CRT 롤바→심리스 컨베이어
+> (v0.6.1~v0.6.6)·CRT 간섭 4종(v0.6.7)**.
+> **모바일 원격 제어는 main에 있음** — PR #3(`74e998f` squash-merge)로 반영됨(옛 `feat/mobile-remote-control`
+> 브랜치는 그 pre-squash 원본이라 main의 ancestor 아님 = stale, 정리 후보).
 > 플랜 원본: `~/.claude/plans/zesty-wiggling-pony.md` (Stage 0→A→B→C→D→E, 실행 로그 포함).
-> **실행 방식(유저 지시): Stage C/E 구현=Sonnet executor 위임, 리드(Fable)=게이트·리뷰·재현검증·커밋.**
-> **원격/CI는 이미 가동**: 저장소 생성·푸시 완료(`github.com/dlwlgus9125/EZTerminal`, **private**), GitHub Actions CI가
-> `windows-2022` 러너로 가동(`cap` 네이티브 빌드 픽스). **잔여는 사용자 결정 대기**: B-M4 자동업데이트·v0.1.0 태깅=공개 여부·서명 결정, E3 AI=데이터 이그레스 동의.
+> **실행 방식(유저 지시): 구현=Sonnet executor 위임, 리드(Fable)=게이트·리뷰·재현검증·커밋.**
+> **원격/CI 가동**: `github.com/dlwlgus9125/EZTerminal`(**private**), GitHub Actions `windows-2022` 러너
+> (`cap` 네이티브 빌드 픽스). **잔여는 사용자 결정 대기**: B-M4 자동업데이트·공개 전환=서명 결정, E3 AI=데이터 이그레스 동의.
+> ⚠️ **문서 정합 주의:** git 태그는 v0.5.1 다음이 v0.6.7뿐 — **v0.6.0~v0.6.6 태그 누락**(릴리스 커밋은 존재).
 
 ## 프로젝트 한 줄
 "기존 터미널 래퍼가 아니라 **자체 구조화 데이터 셸 + 명령 블록 UI**" (Warp 블록 + Nushell 데이터 + AI 계열). Electron + React + TypeScript, Windows 우선.
 
-## 현재 상태 (2026-07-02 세션 종료 시점)
+## 마일스톤 상세 아카이브 (2026-07-02~07-05 인프라·토대, 참고용)
+
+> 현재 상태 요약은 위 헤더 + `docs/ROADMAP.md` 진행 현황 참조. 아래는 토대(영속·백프레셔·SSH·상태 패널·
+> 모바일 브리지) 구축 시점의 상세 기록으로, v0.2.0~v0.6.7 배포는 이 위에 얹혔다.
 
 ### ✅ Track A ③ 프리셋·영속 완료 (앱 최초 영속 계층)
 - **Codex 게이트 선행(A-M0):** verdict REVISE, 블로커 6건 전부 설계 반영 → `docs/research/2026-07-02-codex-track-a-presets-review.md` + `docs/design/layout-persistence-design.md`(GATED).
@@ -74,17 +83,17 @@
 - **모바일 원격 제어 (2026-07-05, 브랜치 `feat/mobile-remote-control`)**: 데스크톱을 안드로이드 앱에서 원격 제어(stats 제외). `EzTerminalApi`+MessagePort seam을 WS로 재구현(`src/main/remote-bridge.ts`, 토큰 인증)해 `BlockController`·블록 컴포넌트 **무수정 재사용**. Capacitor 앱(`mobile/`)+페어링 패널(M4)+에뮬레이터 e2e(`mobile/e2e/smoke.ts`). 재연결 auth 워치독으로 half-open 자가치유. 실기기+Tailscale 라이브 검증. **함정: `echo`는 이 셸 명령 아님(→`cmd /c echo hello`)·ws 번들 크래시(vite external)·androidScheme http·usesCleartextTraffic·tslib hoisted·Android SDK는 있으나 ANDROID_HOME 미설정.** 설계: `docs/design/mobile-remote-control-design.md`.
 - **원격/CI**: `github.com/dlwlgus9125/EZTerminal`(private) 푸시, GitHub Actions `windows-2022` 러너로 가동.
 
-## 검증 베이스라인 (로컬 전부 green, 2026-07-05 — 모바일 원격 제어 포함)
+## 검증 베이스라인 (로컬 전부 green, 2026-07-08 — v0.6.7)
 ```
 pnpm typecheck   # 0   ← 리드 재현은 항상 여기부터 (E4 때 typecheck 생략 공백 교훈)
 pnpm lint        # 0 (게이트 포함; .eslintrc가 mobile/ 제외)
-pnpm test        # vitest 418 (모바일 브리지 remote-bridge/token-store/protocol/session-directory/connection-info 포함)
-pnpm e2e         # 73 (launch-app.ts 격리 필수)
+pnpm test        # vitest 654 (테마 mod/이펙트/폰트/롤바/CRT 간섭 params 유닛 포함)
+pnpm e2e         # 108 (launch-app.ts 격리 필수)
 pnpm test:e2e:packaged  # guard OK + 8 (직결 모듈 스모크)
 pnpm package / pnpm make # exit 0
 pnpm audit --prod  # 0 vulnerabilities (전체 audit 7건은 @capacitor/cli>tar dev-only → prod 게이트로 정의)
 # 모바일: pnpm --filter ezterminal-mobile run typecheck  # 0
-#         pnpm --filter ezterminal-mobile run test        # vitest 23 (트랜스포트 + auth 워치독)
+#         pnpm --filter ezterminal-mobile run test        # vitest 104 (트랜스포트 + auth 워치독 + 테마/이펙트)
 #         pnpm --filter ezterminal-mobile exec vite build  # dist/ OK  → cap sync android → gradlew assembleDebug → APK
 #         mobile/e2e/smoke.ts  # 부팅된 AVD 필요 (ANDROID_HOME=…\Android\Sdk 세팅)
 ```
@@ -101,9 +110,9 @@ pnpm audit --prod  # 0 vulnerabilities (전체 audit 7건은 @capacitor/cli>tar 
    stdout 폐기 · bare import는 스크립트 위치 기준. 후속 후보: ez.run 텍스트 모드.
 2. **사용자 결정 대기 (블로커):** ① GitHub 저장소 **생성·푸시·CI 가동 완료(private)** — 남은 결정은 공개/비공개 전환(B-M4 업데이트 피드 게이트)·B-M2 릴리스 태깅 ② 서명 인증서(무서명 잠정 수용 중) ③ 실물 아이콘 아트 ④ 크래시 덤프 보존(last-10 제안) ⑤ E3 AI 보조 데이터 이그레스 동의
 3. **B-M4 자동업데이트:** Squirrel+GitHub Releases(공개 저장소 필요). **자동 재시작 절대 금지** — 배너→사용자 restart.
-4. **E3 AI 보조(인터뷰+Codex 게이트) → E4 스크립팅 → E5 SSH → E6 크로스플랫폼** (플랜 참조).
+4. **E3 AI 보조(인터뷰+Codex 게이트) → E6 크로스플랫폼(mac/linux 실검증)** (플랜 참조). E4 스크립팅·E5 SSH는 완료.
    실행 방식: 구현=Sonnet 위임, 게이트·리뷰·검증·커밋=리드.
-5. 소소한 후속: light/HC 테마 색상 시각 검수 · IME/한글 e2e(제안) · v0.1.0 태깅(저장소 결정 후).
+5. 소소한 후속: light/HC 테마 색상 시각 검수 · IME/한글 e2e(제안) · **v0.6.0~v0.6.6 태그 소급 생성(누락 — 릴리스 커밋은 존재)** · stale `feat/mobile-remote-control` 원격 브랜치 정리.
 
 ## 아키텍처 요약 (재유도 금지 — LOCKED + addendum)
 - 인터프리터=utilityProcess, main=브로커, renderer=UI. 명령당 MessagePort + credit 백프레셔 + ResultStore 윈도잉. **렌더러 통지는 progress 스로틀 33ms** (block-controller).
