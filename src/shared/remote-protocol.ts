@@ -32,6 +32,15 @@ import type {
   SystemStatsSnapshot,
 } from './ipc';
 import type { FileListResult, FileOpResult } from './files';
+import type {
+  OpenClawAgentSession,
+  OpenClawCoreConfig,
+  OpenClawLifecycleAction,
+  OpenClawLifecycleResult,
+  OpenClawLogLine,
+  OpenClawSetConfigResult,
+  OpenClawStatus,
+} from './openclaw';
 
 // ── Uint8Array <-> base64 (isomorphic: relies only on global atob/btoa, no
 //    Node Buffer — this module is shared with the browser-side mobile
@@ -267,6 +276,65 @@ export interface FileUploadAbortMessage {
   readonly uploadId: string;
 }
 
+// ── OpenClaw management (openclaw-management M4) ────────────────────────────
+// Mirrors the desktop drawer's IPC surface (src/shared/openclaw.ts +
+// openclaw-service.ts's method names) framed for the wire, same "thin
+// protocol adapter over the exact same shapes" precedent as the file
+// explorer messages above — `RemoteOpenClawSource` (remote-bridge.ts) adapts
+// an `OpenClawService` instance + the proxy's `mintTicket()` to this.
+// Status/logs are PUSH subscriptions (mirrors `stats-visible`/
+// `packets-subscribe` — no one-shot "get" for either, since the service
+// itself already polls/pushes); lifecycle/sessions/config/chat-ticket are
+// request/reply, correlated by a CLIENT-minted `requestId` (same precedent
+// as `CreateSessionRequest`).
+
+export interface OpenClawStatusSubscribeMessage {
+  readonly kind: 'openclaw-status-subscribe';
+}
+
+export interface OpenClawStatusUnsubscribeMessage {
+  readonly kind: 'openclaw-status-unsubscribe';
+}
+
+export interface OpenClawLifecycleRequest {
+  readonly kind: 'openclaw-lifecycle';
+  readonly requestId: string;
+  readonly action: OpenClawLifecycleAction;
+}
+
+export interface OpenClawLogsSubscribeMessage {
+  readonly kind: 'openclaw-logs-subscribe';
+}
+
+export interface OpenClawLogsUnsubscribeMessage {
+  readonly kind: 'openclaw-logs-unsubscribe';
+}
+
+export interface OpenClawSessionsGetRequest {
+  readonly kind: 'openclaw-sessions-get';
+  readonly requestId: string;
+}
+
+export interface OpenClawConfigGetRequest {
+  readonly kind: 'openclaw-config-get';
+  readonly requestId: string;
+}
+
+export interface OpenClawConfigSetRequest {
+  readonly kind: 'openclaw-config-set';
+  readonly requestId: string;
+  readonly key: string;
+  readonly value: string;
+}
+
+/** Ask the bridge to mint a fresh chat ticket for the mobile chat embed
+ * (M5) — see openclaw-proxy.ts's module doc for the ticket+cookie auth flow
+ * this feeds. */
+export interface OpenClawChatTicketRequest {
+  readonly kind: 'openclaw-chat-ticket';
+  readonly requestId: string;
+}
+
 export type ClientToServerMessage =
   | AuthMessage
   | ListSessionsMessage
@@ -291,7 +359,16 @@ export type ClientToServerMessage =
   | FileUploadBeginRequest
   | FileUploadChunkMessage
   | FileUploadCommitMessage
-  | FileUploadAbortMessage;
+  | FileUploadAbortMessage
+  | OpenClawStatusSubscribeMessage
+  | OpenClawStatusUnsubscribeMessage
+  | OpenClawLifecycleRequest
+  | OpenClawLogsSubscribeMessage
+  | OpenClawLogsUnsubscribeMessage
+  | OpenClawSessionsGetRequest
+  | OpenClawConfigGetRequest
+  | OpenClawConfigSetRequest
+  | OpenClawChatTicketRequest;
 
 // ── Server -> client envelopes ───────────────────────────────────────────────
 
@@ -454,6 +531,59 @@ export type FileUploadDoneMessage =
   | { readonly kind: 'file-upload-done'; readonly uploadId: string; readonly ok: true; readonly finalName: string }
   | { readonly kind: 'file-upload-done'; readonly uploadId: string; readonly ok: false; readonly error: string };
 
+// ── OpenClaw management (openclaw-management M4) — replies for the client
+// messages above. `openclaw-log-lines` is coalesced ~500ms per connection
+// (same batching/backpressure-skip pattern as `packet-frame` — see
+// remote-bridge.ts's `MOBILE_PACKET_FLUSH_MS`/`MOBILE_PACKET_PENDING_CAP`/
+// `MOBILE_PACKET_BACKPRESSURE_BYTES`), never sent one line at a time. ────────
+
+export interface OpenClawStatusMessage {
+  readonly kind: 'openclaw-status';
+  readonly status: OpenClawStatus;
+}
+
+export interface OpenClawLifecycleResultMessage {
+  readonly kind: 'openclaw-lifecycle-result';
+  readonly requestId: string;
+  readonly result: OpenClawLifecycleResult;
+}
+
+export interface OpenClawLogLinesMessage {
+  readonly kind: 'openclaw-log-lines';
+  readonly lines: readonly OpenClawLogLine[];
+}
+
+export interface OpenClawSessionsReply {
+  readonly kind: 'openclaw-sessions-reply';
+  readonly requestId: string;
+  readonly sessions: readonly OpenClawAgentSession[];
+}
+
+export interface OpenClawConfigReply {
+  readonly kind: 'openclaw-config-reply';
+  readonly requestId: string;
+  readonly config: OpenClawCoreConfig;
+}
+
+export interface OpenClawConfigSetReply {
+  readonly kind: 'openclaw-config-set-reply';
+  readonly requestId: string;
+  readonly result: OpenClawSetConfigResult;
+}
+
+/** `ticket`/`token` are `null` when no ticket could be minted (proxy not
+ * running, or no gateway token available) — `proxyPort` is `0` in that case
+ * too. The client assembles the chat URL itself from the host it already
+ * dials (`http://<host>:<proxyPort>/?t=<ticket>#token=<token>`) — this
+ * server never guesses which of its own reachable IPs the client used. */
+export interface OpenClawChatTicketReply {
+  readonly kind: 'openclaw-chat-ticket-reply';
+  readonly requestId: string;
+  readonly ticket: string | null;
+  readonly proxyPort: number;
+  readonly token: string | null;
+}
+
 export type ServerToClientMessage =
   | AuthOkMessage
   | AuthFailMessage
@@ -475,4 +605,11 @@ export type ServerToClientMessage =
   | FileOpReply
   | FileUploadBeginReply
   | FileUploadAckMessage
-  | FileUploadDoneMessage;
+  | FileUploadDoneMessage
+  | OpenClawStatusMessage
+  | OpenClawLifecycleResultMessage
+  | OpenClawLogLinesMessage
+  | OpenClawSessionsReply
+  | OpenClawConfigReply
+  | OpenClawConfigSetReply
+  | OpenClawChatTicketReply;
