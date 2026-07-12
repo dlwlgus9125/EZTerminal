@@ -227,3 +227,43 @@ describe('LayoutStore — uiScale + remoteEnabled (v0.2.0 M1)', () => {
     expect(await store.getTheme()).toBe('light');
   });
 });
+
+describe('LayoutStore — openclawMode (openclaw-stabilization M2)', () => {
+  it('defaults openclawMode to auto and round-trips a set value', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    expect(await store.getOpenClawMode()).toBe('auto');
+    await store.setOpenClawMode('on');
+    expect(await store.getOpenClawMode()).toBe('on');
+    await store.setOpenClawMode('off');
+    expect(await store.getOpenClawMode()).toBe('off');
+  });
+
+  it('falls back to auto when the persisted settings.json is schema-invalid (whole file quarantines)', async () => {
+    const dir = makeDir();
+    const store = new LayoutStore(dir);
+    await store.init();
+    writeFileSync(
+      path.join(dir, 'settings.json'),
+      JSON.stringify({ schemaVersion: 1, startup: { mode: 'last' }, openclawMode: 'bogus' }),
+      'utf8',
+    );
+    expect(await store.getOpenClawMode()).toBe('auto');
+    expect(existsSync(path.join(dir, 'settings.json.corrupt'))).toBe(true);
+  });
+
+  it('preserves openclawMode alongside other settings writes (shared settings.json)', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    await store.setOpenClawMode('on');
+    await store.setTheme('light');
+    expect(await store.getOpenClawMode()).toBe('on');
+    expect(await store.getTheme()).toBe('light');
+
+    // Reorder: setTheme first, openclawMode last — still no clobber.
+    await store.setTheme('high-contrast');
+    await store.setOpenClawMode('off');
+    expect(await store.getTheme()).toBe('high-contrast');
+    expect(await store.getOpenClawMode()).toBe('off');
+  });
+});

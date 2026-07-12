@@ -231,6 +231,38 @@ describe('OpenClawService — getStatus', () => {
   });
 });
 
+// ── isInstalled — M2 negative-cache TTL ─────────────────────────────────────
+
+describe('OpenClawService — isInstalled negative-cache TTL (M2)', () => {
+  it('re-checks a not-installed result after the TTL elapses and flips to installed', async () => {
+    let currentTime = 0;
+    let cliPath = '';
+    const service = new OpenClawService({
+      env: new Proxy({}, { get: (_t, k) => (k === 'PATH' ? cliPath : undefined) }),
+      now: () => currentTime,
+    });
+    expect(await service.isInstalled()).toBe(false);
+    cliPath = cliDir; // CLI appears on PATH mid-session
+    currentTime += 29_999;
+    expect(await service.isInstalled()).toBe(false); // still within the TTL window — cached
+    currentTime += 1; // 30_000ms total — TTL elapsed
+    expect(await service.isInstalled()).toBe(true); // re-resolved, finds it now
+  });
+
+  it('never re-resolves once installed — a positive result is sticky, no TTL', async () => {
+    let currentTime = 0;
+    let cliPath = cliDir;
+    const service = new OpenClawService({
+      env: new Proxy({}, { get: (_t, k) => (k === 'PATH' ? cliPath : undefined) }),
+      now: () => currentTime,
+    });
+    expect(await service.isInstalled()).toBe(true);
+    cliPath = ''; // CLI "disappears" from PATH
+    currentTime += 1_000_000; // well past the negative-cache TTL
+    expect(await service.isInstalled()).toBe(true); // sticky — never re-resolved
+  });
+});
+
 // ── getStatus — M1 debounce (transient probe failures don't flip running ->
 //    stopped; a `refused` failure still does, immediately) ────────────────
 
@@ -317,6 +349,11 @@ describe('OpenClawService — getStatus debounce (M1)', () => {
     // mid-poll-loop) must share ONE in-flight probe, not start two.
     const p1 = service.getStatus();
     const p2 = service.getStatus();
+    // M2: isInstalled() is now itself async (a cached/positive result still
+    // resolves via a microtask), so the shared probe's httpGet call lands one
+    // tick later than the synchronous getStatus() calls above — flush lets it
+    // fire before asserting the call count.
+    await flush();
     expect(callCount()).toBe(2); // exactly one NEW httpGet call for both callers
     resolveFailure('timeout');
     const [r1, r2] = await Promise.all([p1, p2]);
@@ -326,11 +363,13 @@ describe('OpenClawService — getStatus debounce (M1)', () => {
     // That shared failure must count as exactly ONE streak advance — 2 more
     // sequential failures are needed to flip to `stopped`, not 1.
     const p3 = service.getStatus();
+    await flush(); // M2: same one-tick-later httpGet call as above
     resolveFailure('timeout');
     expect((await p3).state).toBe('running');
     expect(callCount()).toBe(3);
 
     const p4 = service.getStatus();
+    await flush(); // M2: same one-tick-later httpGet call as above
     resolveFailure('timeout');
     expect((await p4).state).toBe('stopped');
     expect(callCount()).toBe(4);

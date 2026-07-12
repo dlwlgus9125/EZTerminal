@@ -4,6 +4,7 @@
  * panel (M3). `OpenClawService` (src/main/openclaw-service.ts) is the sole
  * producer; everything here is a plain data shape, no behavior.
  */
+import type { OpenClawMode } from './layout-schema';
 
 /**
  * `not-installed`: the `openclaw` CLI doesn't resolve on PATH.
@@ -109,3 +110,14 @@ export interface OpenClawChatViewState {
 export const OPENCLAW_CONFIG_UNSET = 'unset' as const;
 
 export type OpenClawCoreConfig = Record<OpenClawConfigKey, string>;
+
+/** Desktop OpenClaw visibility (openclaw-stabilization M2) — `mode` is the
+ * persisted tri-state setting (LayoutStore.getOpenClawMode); `visible` is the
+ * resolved effective visibility ('auto' resolves through
+ * OpenClawService.isInstalled()). Returned by the one-shot `openclaw:get-
+ * visibility` IPC call and pushed on every `settings:set-openclaw-mode` call
+ * via `openclaw:visibility-changed`. */
+export interface OpenClawVisibility {
+  readonly mode: OpenClawMode;
+  readonly visible: boolean;
+}

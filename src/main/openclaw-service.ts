@@ -81,6 +81,10 @@ const RPC_MAX_BACKOFF_MS = 5000;
 // as definitive since a stopped gateway refuses instantly.
 const STATUS_FAILURE_THRESHOLD = 3;
 
+// M2 (openclaw-stabilization): TTL for a NEGATIVE `isInstalled()` result only
+// — see isInstalled's doc for why a positive one never expires.
+const INSTALL_RECHECK_MS = 30_000;
+
 const STATUS_POLL_INTERVAL_MS = 4000;
 const LOG_POLL_INTERVAL_MS = 2000;
 const LOG_BACKFILL_LIMIT = 50;
@@ -410,6 +414,9 @@ export class OpenClawService {
   private readonly port: number;
 
   private installedCache: boolean | null = null;
+  // M2: timestamp of the last NEGATIVE isInstalled() resolution — see
+  // isInstalled's doc. Unused while installedCache is `true` or `null`.
+  private installedCacheAt: number | null = null;
   private configPathPromise: Promise<string> | null = null;
 
   private lifecycleOp: Promise<void> = Promise.resolve();
@@ -454,7 +461,10 @@ export class OpenClawService {
   // ── Status ────────────────────────────────────────────────────────────
 
   async getStatus(force = false): Promise<OpenClawStatus> {
-    if (force) this.installedCache = null;
+    if (force) {
+      this.installedCache = null;
+      this.installedCacheAt = null;
+    }
     if (!this.statusProbe) {
       this.statusProbe = this.probeStatus().finally(() => {
         this.statusProbe = null;
@@ -464,7 +474,7 @@ export class OpenClawService {
   }
 
   private async probeStatus(): Promise<OpenClawStatus> {
-    if (!this.isInstalled()) return { state: 'not-installed', port: this.port };
+    if (!(await this.isInstalled())) return { state: 'not-installed', port: this.port };
 
     let probe: HttpGetResult;
     try {
@@ -500,12 +510,27 @@ export class OpenClawService {
     return { state: starting ? 'starting' : 'stopped', port: this.port };
   }
 
-  private isInstalled(): boolean {
-    if (this.installedCache !== null) return this.installedCache;
+  /** PATH resolution only — no spawn (see the module doc). A `true` result
+   * caches forever (the CLI doesn't get uninstalled mid-session in any
+   * realistic scenario); a `false` result caches for only
+   * INSTALL_RECHECK_MS (M2), so a user who installs the CLI mid-session sees
+   * OpenClaw UI appear within ~30s of the next probe, without needing an
+   * app restart or an explicit `getStatus(force=true)`. */
+  async isInstalled(): Promise<boolean> {
+    if (this.installedCache === true) return true;
+    if (
+      this.installedCache === false &&
+      this.installedCacheAt !== null &&
+      this.now() - this.installedCacheAt < INSTALL_RECHECK_MS
+    ) {
+      return false;
+    }
     const cliName = envGet(this.env, 'EZTERMINAL_OPENCLAW_CLI') ?? 'openclaw';
     const resolver = new CommandResolver(this.env);
-    this.installedCache = resolver.resolve(cliName, []) !== null;
-    return this.installedCache;
+    const resolved = resolver.resolve(cliName, []) !== null;
+    this.installedCache = resolved;
+    this.installedCacheAt = resolved ? null : this.now();
+    return resolved;
   }
 
   subscribeStatus(listener: (status: OpenClawStatus) => void): () => void {

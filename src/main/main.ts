@@ -42,9 +42,9 @@ import {
   type RemoteStatsSource,
 } from './remote-bridge';
 import { formatConnectionInfo } from './remote-connection-info';
-import type { EffectParamsSettings, RollbarSettings, StartupPref, ThemeName } from '../shared/layout-schema';
+import type { EffectParamsSettings, OpenClawMode, RollbarSettings, StartupPref, ThemeName } from '../shared/layout-schema';
 import type { InterpreterToMain, MainToInterpreter, RunStartedInfo, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
-import type { OpenClawAutostartAction, OpenClawLifecycleAction } from '../shared/openclaw';
+import type { OpenClawAutostartAction, OpenClawLifecycleAction, OpenClawVisibility } from '../shared/openclaw';
 
 // The main process owns the interpreter utilityProcess lifetime (architecture
 // §1). Per-command MessagePort brokering + session/run correlation live in the
@@ -123,6 +123,22 @@ let openClawChatView: OpenClawChatViewManager | null = null;
 // createWindow() itself is defined outside 'ready', and openClawChatView's
 // attach() needs a handle to the window it should embed into.
 let mainWindowRef: BrowserWindow | null = null;
+
+/**
+ * OpenClaw desktop visibility (openclaw-stabilization M2): resolves the
+ * tri-state `openclawMode` setting into an effective on/off. 'auto' defers to
+ * `isInstalled` (OpenClawService.isInstalled(), TTL'd negative-cache); 'on'/
+ * 'off' are unconditional. A standalone function (not a closure over one
+ * OpenClawService instance) so the WS remote bridge (M3) can reuse it.
+ */
+async function resolveOpenClawVisibility(
+  mode: OpenClawMode,
+  isInstalled: () => Promise<boolean>,
+): Promise<boolean> {
+  if (mode === 'on') return true;
+  if (mode === 'off') return false;
+  return isInstalled();
+}
 
 // Defense-in-depth CSP for the raw-HTML injection sink in TextBlock (the ANSI →
 // HTML external output, sanitized upstream by ansi_up). Strict: only same-origin
@@ -826,6 +842,34 @@ app.on('ready', () => {
   // autostart (openclaw-management #9) — `gateway install|uninstall`, serialized
   // on the same CLI lane as start/stop/restart (see OpenClawService.runAutostart).
   ipcMain.handle('openclaw:autostart', (_event, action: OpenClawAutostartAction) => openclaw.runAutostart(action));
+
+  // ── OpenClaw desktop visibility (openclaw-stabilization M2) ───────────────
+  // Tri-state setting gating whether ANY OpenClaw UI shows on desktop at all.
+  // Lives in settings.json (hence the `settings:*` channel naming, matching
+  // the generic settings block above) but is colocated here rather than
+  // there, since computing `visible` needs `openclaw` (constructed above).
+  ipcMain.handle('settings:get-openclaw-mode', async () => {
+    await storeReady;
+    return layoutStore.getOpenClawMode();
+  });
+  ipcMain.handle('settings:set-openclaw-mode', async (_event, mode: OpenClawMode) => {
+    if (mode !== 'auto' && mode !== 'on' && mode !== 'off') return;
+    await storeReady;
+    await layoutStore.setOpenClawMode(mode);
+    const visibility: OpenClawVisibility = {
+      mode,
+      visible: await resolveOpenClawVisibility(mode, () => openclaw.isInstalled()),
+    };
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('openclaw:visibility-changed', visibility);
+    }
+  });
+  ipcMain.handle('openclaw:get-visibility', async (): Promise<OpenClawVisibility> => {
+    await storeReady;
+    const mode = await layoutStore.getOpenClawMode();
+    return { mode, visible: await resolveOpenClawVisibility(mode, () => openclaw.isInstalled()) };
+  });
 
   // Status push is wanted by TWO independent UI surfaces: the drawer
   // (openclaw:set-drawer-open) and the M3 chat panel (openclaw:chat-panel-
