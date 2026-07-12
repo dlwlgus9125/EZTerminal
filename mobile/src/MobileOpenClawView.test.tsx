@@ -98,7 +98,7 @@ function renderView(transport: WsEzTerminalTransport, onClose: () => void): HTML
   document.body.appendChild(container);
   root = createRoot(container);
   act(() => {
-    root!.render(<MobileOpenClawView transport={transport} onClose={onClose} />);
+    root!.render(<MobileOpenClawView transport={transport} onClose={onClose} openclawAvailable={true} />);
   });
   return container;
 }

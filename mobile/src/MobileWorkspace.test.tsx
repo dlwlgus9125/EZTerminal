@@ -185,3 +185,25 @@ describe('MobileWorkspace — background pause (openclaw-stabilization M6)', () 
     expect(socket.sentKinds().filter((k) => k === 'openclaw-status-subscribe')).toHaveLength(2);
   });
 });
+
+describe('MobileWorkspace — dead status subscription self-heals on availability flip (architect-review fix)', () => {
+  // Root cause: remote-bridge.ts silently drops an `openclaw-status-subscribe`
+  // sent while the desktop is hidden (its `openclawVisible()` gate `break`s
+  // without ever attaching a listener). Under mode='on', `effectiveOpenClaw
+  // Visible` is a constant `true`, so without `openclawAvailable` in the
+  // status effect's deps a desktop hidden->visible flip would never re-send
+  // the subscribe — the entry dot would stay stuck forever. This asserts the
+  // fix: a false->true availability push re-sends the subscribe.
+  it('mode "on": a false->true availability push re-sends openclaw-status-subscribe', () => {
+    localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
+    const { transport, socket } = makeAuthedTransport();
+    renderWorkspace(transport);
+    expect(socket.sentKinds().filter((k) => k === 'openclaw-status-subscribe')).toHaveLength(1);
+
+    act(() => {
+      socket.triggerMessage({ kind: 'openclaw-availability', visible: true });
+    });
+
+    expect(socket.sentKinds().filter((k) => k === 'openclaw-status-subscribe')).toHaveLength(2);
+  });
+});

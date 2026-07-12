@@ -212,17 +212,35 @@ export class OpenClawChatViewManager {
    * recreates pointed at the new origin rather than blindly re-navigating a
    * dead one; otherwise a same-origin plain `webContents.reload()`. No-op if
    * the view was never created (nothing to reconnect, e.g. no token was
-   * ever available). */
+   * ever available).
+   *
+   * Shares `ensureView()`'s `creating` mutex (race fix): awaits any in-
+   * flight create/recreate first, then holds the mutex itself while it may
+   * destroy/recreate, so a concurrent `ensureView()` can't run at the same
+   * time and double-destroy/create the view. */
   async reload(): Promise<void> {
+    if (this.creating) await this.creating;
     const view = this.view;
     if (!view) return;
+    this.creating = this.doReload(view).finally(() => {
+      this.creating = null;
+    });
+    return this.creating;
+  }
+
+  /** `reload()`'s body, run under the `creating` mutex — re-checks
+   * `this.view === view` after the `resolveOrigin()` await: the captured
+   * view could have been torn down from outside the mutex (e.g. the owning
+   * panel closing and calling `destroy()` directly) while this awaited. */
+  private async doReload(view: WebContentsView): Promise<void> {
     const origin = await this.resolveOrigin();
+    if (this.view !== view) return; // superseded — nothing left to reload
     if (origin && origin !== this.currentOrigin) {
       this.destroy();
       await this.doCreate();
       return;
     }
-    view.webContents.reload();
+    if (!view.webContents.isDestroyed()) view.webContents.reload();
   }
 
   /** Tears the view down entirely (singleton panel closed, or the owning

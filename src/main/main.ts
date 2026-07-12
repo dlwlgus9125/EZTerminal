@@ -494,6 +494,7 @@ app.on('ready', () => {
     void openClawProxyHandle?.stop();
     openClawService?.dispose();
     openClawChatView?.destroy();
+    clearInterval(openclawVisibilityRecheckTimer);
   });
 
   // Session lifecycle (Codex B1/B5). create-session is the ONLY way a shell session

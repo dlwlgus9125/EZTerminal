@@ -749,6 +749,12 @@ export class OpenClawService {
     // connection itself), producing an effective 2s reconnect-attempt storm
     // while stopped. The timer keeps ticking either way (cheap no-op) —
     // this only stops it from touching the network.
+    //
+    // Invariant this relies on: a concurrent status subscription keeps
+    // `wasRunning` fresh (every current surface guarantees one — the desktop
+    // drawer arms status alongside logs; mobile's view subscribes status for
+    // its whole lifetime). A logs-only surface would silently get no lines,
+    // or reintroduce the reconnect storm described above.
     if (!this.wasRunning) return;
     const params = this.logCursor === undefined ? { limit: LOG_BACKFILL_LIMIT } : { cursor: this.logCursor, limit: LOG_POLL_LIMIT };
     const result = await this.withRpc((rpc) => rpc.call('logs.tail', params));

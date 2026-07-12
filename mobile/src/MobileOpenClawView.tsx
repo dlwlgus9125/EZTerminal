@@ -57,9 +57,15 @@ const STATE_LABEL: Record<OpenClawStatus['state'], string> = {
 export function MobileOpenClawView({
   transport,
   onClose,
+  openclawAvailable,
 }: {
   transport: WsEzTerminalTransport;
   onClose: () => void;
+  /** Desktop's effective OpenClaw availability push (openclaw-stabilization
+   * review fix) — a dep-only signal, not read directly: see the status/logs
+   * effects below for why this view needs it too, not just MobileWorkspace's
+   * own entry-dot subscription. */
+  openclawAvailable: boolean;
 }): JSX.Element {
   const [tab, setTab] = useState<OpenClawTab>('status');
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
@@ -70,6 +76,12 @@ export function MobileOpenClawView({
   // backgrounded, re-acquired on foreground; see use-page-visible.ts's doc.
   const pageVisible = usePageVisible();
 
+  // `openclawAvailable` is a dep even though this effect doesn't read it:
+  // this view can stay mounted (open) across a desktop hidden->visible flip
+  // while mode='on', and the bridge silently drops a status-subscribe sent
+  // while hidden (remote-bridge.ts's `openclawVisible()` gate never attaches
+  // it) — without this dep the subscription would never re-send once desktop
+  // becomes visible again (same gap MobileWorkspace's own status effect has).
   useEffect(() => {
     if (!pageVisible) return;
     const unsubscribe = transport.onOpenClawStatus((s) => setStatus(s));
@@ -78,7 +90,7 @@ export function MobileOpenClawView({
       unsubscribe();
       transport.setOpenClawStatusSubscribed(false);
     };
-  }, [pageVisible, transport]);
+  }, [pageVisible, openclawAvailable, transport]);
 
   const runLifecycle = useCallback(
     (action: OpenClawLifecycleAction) => {
@@ -113,6 +125,11 @@ export function MobileOpenClawView({
   const logsSubscribed = logsActive && pageVisible;
   const logsEndRef = useRef<HTMLDivElement | null>(null);
 
+  // `openclawAvailable` dep — same self-healing reasoning as the status
+  // effect above: a desktop hidden->visible flip while this tab stays active
+  // must re-send `openclaw-logs-subscribe`, or the bridge's silent hidden-
+  // drop (remote-bridge.ts's `openclawVisible()` gate) leaves the log tail
+  // dead until the tab is re-opened.
   useEffect(() => {
     if (!logsSubscribed) return;
     setLogs([]);
@@ -127,7 +144,7 @@ export function MobileOpenClawView({
       unsubscribe();
       transport.setOpenClawLogsSubscribed(false);
     };
-  }, [logsSubscribed, transport]);
+  }, [logsSubscribed, openclawAvailable, transport]);
 
   useEffect(() => {
     if (!logsActive) return;

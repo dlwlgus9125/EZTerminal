@@ -104,6 +104,14 @@ export function MobileWorkspace({
   // this persistent subscription and MobileOpenClawView's own mount/unmount
   // subscription (while the view itself is open) don't fight over the same
   // boolean (see ws-ezterminal.ts's `openclawStatusRefcount` doc).
+  //
+  // `openclawAvailable` is listed as a dep even though it doesn't change
+  // `effectiveOpenClawVisible` under mode='on' (always true): the bridge
+  // silently drops a status-subscribe sent while desktop-hidden (remote-
+  // bridge.ts's `openclawVisible()` gate never attaches it), so without this
+  // dep a desktop hidden->visible flip during mode='on' would never re-send
+  // the subscribe — the entry dot would go stale forever. Listing it forces
+  // a cleanup+resubscribe on every availability transition (refcount-safe).
   useEffect(() => {
     if (!effectiveOpenClawVisible || !pageVisible) return;
     const unsubscribe = transport.onOpenClawStatus(setOpenclawState);
@@ -112,7 +120,7 @@ export function MobileWorkspace({
       unsubscribe();
       transport.setOpenClawStatusSubscribed(false);
     };
-  }, [effectiveOpenClawVisible, pageVisible, transport]);
+  }, [effectiveOpenClawVisible, pageVisible, openclawAvailable, transport]);
 
   // File explorer (M4): the best-effort cwd snapshot each session's
   // MobileSessionView reports via `onCwdChange` — read ONCE when Files opens
@@ -186,7 +194,13 @@ export function MobileWorkspace({
   }
 
   if (view === 'openclaw') {
-    return <MobileOpenClawView transport={transport} onClose={() => setView('terminal')} />;
+    return (
+      <MobileOpenClawView
+        transport={transport}
+        onClose={() => setView('terminal')}
+        openclawAvailable={openclawAvailable}
+      />
+    );
   }
 
   if (view === 'settings') {

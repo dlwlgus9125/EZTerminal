@@ -103,7 +103,12 @@ export type ThemeName = z.infer<typeof ThemeNameSchema>;
  * whether ANY OpenClaw UI is exposed on desktop. `auto` (default): visible
  * only when the `openclaw` CLI is installed (OpenClawService.isInstalled()).
  * `on`: always visible. `off`: fully hidden, and no OpenClaw background work
- * (status polling, RPC, proxy) is initiated from the desktop UI. */
+ * (status polling, RPC) is initiated from the desktop UI; a remote client's
+ * status/log/lifecycle/config/chat-ticket requests are refused too (remote-
+ * bridge.ts's `openclawVisible()` gate) — but the OpenClaw proxy's own port
+ * still binds whenever `remoteEnabled` is on, independent of this mode. It
+ * just has nothing to serve without a ticket, and 'off' means none is ever
+ * minted. */
 export const OpenClawModeSchema = z.enum(['auto', 'on', 'off']);
 export type OpenClawMode = z.infer<typeof OpenClawModeSchema>;
 
