@@ -244,7 +244,7 @@ describe('openclaw-proxy — header rewrites (M0 spike parity)', () => {
     await new Promise<void>((resolve) => upstream.server.close(() => resolve()));
   });
 
-  it('strips X-Frame-Options and rewrites ONLY frame-ancestors, leaving every other CSP directive byte-identical', async () => {
+  it('strips X-Frame-Options and rewrites ONLY frame-ancestors (to the mobile app\'s own origin, M5 amendment ③), leaving every other CSP directive byte-identical', async () => {
     upstream = await startFakeUpstream();
     proxy = await startOpenClawProxy({ port: 0, upstreamOrigin: upstream.origin });
     const ticket = proxy.mintTicket();
@@ -255,7 +255,10 @@ describe('openclaw-proxy — header rewrites (M0 spike parity)', () => {
     expect(res.headers['x-frame-options']).toBeUndefined();
 
     const csp = res.headers['content-security-policy'] as string;
-    expect(csp).toContain(`frame-ancestors 'self' http://127.0.0.1:${proxy.port}`);
+    // NOT the proxy's own address (http://127.0.0.1:<port>) — no real page is
+    // ever served from there, so that value silently blocked every embed
+    // (M5 amendment ③); the real ancestor is the Capacitor mobile app itself.
+    expect(csp).toContain("frame-ancestors 'self' http://localhost");
     expect(csp).not.toContain("frame-ancestors 'none'");
     // Every OTHER directive from the baseline survives byte-identical.
     expect(csp).toContain("default-src 'self'");

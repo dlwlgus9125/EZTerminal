@@ -61,7 +61,19 @@
  * `openclaw config set gateway.controlUi.allowedOrigins ...` on the
  * machine running the gateway).
  *
- * Three header rewrites beyond the two amendments above (spike-confirmed
+ * M5 amendment ③ (frame-ancestors targets the MOBILE APP's origin, not this
+ * proxy's own address): a latent bug from the ORIGINAL M4 implementation,
+ * only surfaced once amendments ①/② let a request finally reach this far —
+ * every earlier attempt died at the auth layer (a plain-text 403 has no CSP
+ * header to violate), so this was never observed until the AC5
+ * re-verification live gate hit `net::ERR_BLOCKED_BY_RESPONSE` ("Refused to
+ * frame ... because an ancestor violates ... frame-ancestors"). The
+ * `frame-ancestors` directive lists which ORIGINS ARE ALLOWED TO EMBED this
+ * page — that's the Capacitor mobile app's own origin (`http://localhost`,
+ * `MOBILE_APP_ORIGIN` below), never this proxy's own listen address (no real
+ * page is ever served FROM there to act as an ancestor).
+ *
+ * Three header rewrites beyond the three amendments above (spike-confirmed
  * sufficient, no others needed): drop `X-Frame-Options` entirely, rewrite
  * ONLY the `frame-ancestors` CSP directive (every other directive —
  * `script-src` hashes, `connect-src`, etc. — passes through byte-identical),
@@ -72,6 +84,21 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import net, { type Socket } from 'node:net';
 
 export const DEFAULT_OPENCLAW_PROXY_PORT = 7421;
+
+/** The Capacitor mobile app's OWN origin (mobile/capacitor.config.ts's
+ * `androidScheme: 'http'`, no hostname override -> `http://localhost`,
+ * fixed regardless of the device's actual LAN address/port) — the ONLY page
+ * that should ever be allowed to iframe-embed the Control UI through this
+ * proxy, so it's the `frame-ancestors` value `rewriteFrameAncestors` adds
+ * below. M5 amendment ③ (found by the AC5 re-verification live gate,
+ * post amendments ①/②): the ORIGINAL value here was this proxy's OWN
+ * `http://127.0.0.1:<proxyPort>` address, which is not an ancestor ANY real
+ * page is ever served from — it silently blocked every embed once a request
+ * finally got far enough (past amendments ①/②) to receive a real CSP header
+ * back to enforce ("Refused to frame ... because an ancestor violates
+ * frame-ancestors"), never observed before since every earlier attempt died
+ * at the auth layer (a plain-text 403 has no CSP header to violate). */
+const MOBILE_APP_ORIGIN = 'http://localhost';
 
 const TICKET_BYTES = 32;
 const SESSION_BYTES = 32;
@@ -298,7 +325,7 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
         delete responseHeaders['x-frame-options'];
         const csp = responseHeaders['content-security-policy'];
         if (typeof csp === 'string') {
-          responseHeaders['content-security-policy'] = rewriteFrameAncestors(csp, `http://127.0.0.1:${resolvedPort}`);
+          responseHeaders['content-security-policy'] = rewriteFrameAncestors(csp, MOBILE_APP_ORIGIN);
         }
         res.writeHead(upstreamRes.statusCode ?? 502, responseHeaders);
         upstreamRes.pipe(res);
