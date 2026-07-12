@@ -14,10 +14,19 @@ const ECHO_FIXTURE = path.resolve(__dirname, 'fixtures', 'pty-echo.js');
 // standing in for a phone. `EZTERMINAL_REMOTE_PORT` pins a dedicated port so
 // this never collides with a real, already-running desktop instance's bridge
 // on the default port (remote-bridge.ts's `DEFAULT_REMOTE_BRIDGE_PORT`).
+// `EZTERMINAL_OPENCLAW_PROXY_PORT` does the same for `startBridge`'s OpenClaw
+// reverse proxy (main.ts ~:721/784) — `setRemoteEnabled(true)` below binds
+// BOTH, and without this a real running desktop instance's proxy on the
+// default port (openclaw-proxy.ts's `DEFAULT_OPENCLAW_PROXY_PORT`, 7421)
+// throws EADDRINUSE.
 const REMOTE_PORT = 17420;
+const OPENCLAW_PROXY_PORT = 17422;
 
 test('session mirroring: WS create-session/run-command/destroy-session reflect on the desktop dockview', async () => {
-  const app = await launchApp(undefined, { EZTERMINAL_REMOTE_PORT: String(REMOTE_PORT) });
+  const app = await launchApp(undefined, {
+    EZTERMINAL_REMOTE_PORT: String(REMOTE_PORT),
+    EZTERMINAL_OPENCLAW_PROXY_PORT: String(OPENCLAW_PROXY_PORT),
+  });
   // Named `win`, not `window` (unlike most other specs): this test calls
   // `.evaluate(() => window.…)` to reach the BROWSER global — naming the
   // Page variable `window` would shadow it inside that callback.
