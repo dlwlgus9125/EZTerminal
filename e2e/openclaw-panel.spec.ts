@@ -154,6 +154,52 @@ test('CLI absent: not-installed guidance card, zero error dialogs (AC6)', async 
   }
 });
 
+test('config save: edited model/port draft sends allowlisted config-set argv, restart banner renders (AC4)', async () => {
+  const state = buildFixtureState({ running: true });
+  const { dir, statePath, configPath } = writeFixtureFiles(state);
+  const cliShim = writeFakeCliShim(dir);
+  const gateway = await startFakeGateway(statePath);
+
+  const app = await launchApp(undefined, {
+    EZTERMINAL_OPENCLAW_CLI: cliShim,
+    EZTERMINAL_OPENCLAW_URL: `http://127.0.0.1:${gateway.port}`,
+    EZTERMINAL_OPENCLAW_CONFIG_PATH: configPath,
+    EZTERM_E2E_OPENCLAW_STATE: statePath,
+  });
+  try {
+    const window = await app.firstWindow();
+    await window.getByTestId('btn-toggle-openclaw').click();
+    await expect(window.getByTestId('openclaw-state')).toContainText('실행 중', { timeout: 10_000 });
+
+    // Seed draft fields already populated from the fixture's initial config
+    // (buildFixtureState's `agents.defaults.model`) — wait for the fetch to
+    // land before overwriting, so we're editing rather than racing the seed.
+    const modelInput = window.getByTestId('openclaw-config-model');
+    await expect(modelInput).toHaveValue('openai/gpt-5.5', { timeout: 10_000 });
+
+    await modelInput.fill('openai/gpt-6');
+    await window.getByTestId('openclaw-config-port').fill('18790');
+    await window.screenshot({ path: path.join(SCREENSHOT_DIR, 'config-edited.png') });
+
+    await window.getByTestId('openclaw-config-save').click();
+
+    const banner = window.getByTestId('openclaw-restart-banner');
+    await expect(banner).toBeVisible({ timeout: 10_000 });
+    await expect(banner).toContainText('재시작해야 적용됩니다');
+    await window.screenshot({ path: path.join(SCREENSHOT_DIR, 'config-saved.png') });
+
+    const finalState = JSON.parse(readFileSync(statePath, 'utf8')) as OpenClawFixtureState;
+    const configSetCalls = finalState.cliCalls.filter((c) => c.argv[0] === 'config' && c.argv[1] === 'set');
+    const modelCall = configSetCalls.find((c) => c.argv[2] === 'agents.defaults.model');
+    const portCall = configSetCalls.find((c) => c.argv[2] === 'gateway.port');
+    expect(modelCall?.argv).toEqual(['config', 'set', 'agents.defaults.model', 'openai/gpt-6', '--strict-json']);
+    expect(portCall?.argv).toEqual(['config', 'set', 'gateway.port', '18790', '--strict-json']);
+  } finally {
+    await app.close();
+    await gateway.stop();
+  }
+});
+
 test('autostart: two-step confirm installs, fake CLI argv recorded (task #9)', async () => {
   const state = buildFixtureState({ running: true });
   const { dir, statePath, configPath } = writeFixtureFiles(state);

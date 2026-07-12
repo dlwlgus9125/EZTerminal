@@ -13,8 +13,10 @@
  * argv-recording as start/stop/restart, no state mutation (autostart is
  * orthogonal to `state.running`).
  *
- * Only `gateway start|stop|restart|install|uninstall` invocations are argv-
- * recorded into `state.cliCalls` — `config get` runs TWO PROCESSES
+ * `gateway start|stop|restart|install|uninstall` and `config set` invocations
+ * are argv-recorded into `state.cliCalls` — `config set` is safe to record
+ * because OpenClawPanel.saveConfig awaits each key sequentially (never
+ * concurrent). `config get` is NOT recorded: it runs TWO PROCESSES
  * CONCURRENTLY (OpenClawService.getCoreConfig's Promise.all over both
  * allowlisted keys) and never mutates `state.config`, so recording it too
  * would race on this lockless read-modify-write file without buying any
@@ -69,6 +71,8 @@ if (group === 'config' && sub === 'set') {
   const state = readState();
   state.config = state.config ?? {};
   state.config[key] = value;
+  state.cliCalls = state.cliCalls ?? [];
+  state.cliCalls.push({ argv, at: Date.now() });
   writeState(state);
   process.stdout.write(`Updated ${key}. Restart the gateway to apply.\n`);
   process.exit(0);
