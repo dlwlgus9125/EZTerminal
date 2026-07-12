@@ -202,6 +202,67 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.invoke('settings:get-effect-params'),
   setEffectParams: (params: import('../shared/layout-schema').EffectParamsSettings): Promise<void> =>
     ipcRenderer.invoke('settings:set-effect-params', params),
+
+  // OpenClaw management (openclaw-management M1): thin invoke/send wrappers —
+  // main's OpenClawService is the sole authority, same shape as the file
+  // explorer/settings wrappers above.
+  getOpenClawStatus: (force?: boolean): Promise<import('../shared/openclaw').OpenClawStatus> =>
+    ipcRenderer.invoke('openclaw:get-status', force),
+  runOpenClawLifecycle: (
+    action: import('../shared/openclaw').OpenClawLifecycleAction,
+  ): Promise<import('../shared/openclaw').OpenClawLifecycleResult> => ipcRenderer.invoke('openclaw:lifecycle', action),
+  listOpenClawSessions: (): Promise<readonly import('../shared/openclaw').OpenClawAgentSession[]> =>
+    ipcRenderer.invoke('openclaw:list-sessions'),
+  getOpenClawConfig: (): Promise<import('../shared/openclaw').OpenClawCoreConfig> =>
+    ipcRenderer.invoke('openclaw:get-config'),
+  setOpenClawConfig: (key: string, value: string): Promise<import('../shared/openclaw').OpenClawSetConfigResult> =>
+    ipcRenderer.invoke('openclaw:set-config', key, value),
+  isOpenClawChatAvailable: (): Promise<boolean> => ipcRenderer.invoke('openclaw:chat-available'),
+  setOpenClawDrawerOpen: (open: boolean): void => {
+    ipcRenderer.send('openclaw:set-drawer-open', open);
+  },
+  onOpenClawStatus: (listener: (status: import('../shared/openclaw').OpenClawStatus) => void): (() => void) => {
+    const handler = (_event: unknown, status: import('../shared/openclaw').OpenClawStatus): void => listener(status);
+    ipcRenderer.on('openclaw:status', handler);
+    return () => ipcRenderer.removeListener('openclaw:status', handler);
+  },
+  onOpenClawLog: (listener: (line: import('../shared/openclaw').OpenClawLogLine) => void): (() => void) => {
+    const handler = (_event: unknown, line: import('../shared/openclaw').OpenClawLogLine): void => listener(line);
+    ipcRenderer.on('openclaw:log', handler);
+    return () => ipcRenderer.removeListener('openclaw:log', handler);
+  },
+  runOpenClawAutostart: (
+    action: import('../shared/openclaw').OpenClawAutostartAction,
+  ): Promise<import('../shared/openclaw').OpenClawAutostartResult> => ipcRenderer.invoke('openclaw:autostart', action),
+
+  // OpenClaw chat panel (openclaw-management M3): fire-and-forget sends into
+  // OpenClawChatViewManager, same shape as the drawer wrappers above.
+  setOpenClawChatPanelMounted: (mounted: boolean): void => {
+    ipcRenderer.send('openclaw:chat-panel-mounted', mounted);
+  },
+  openOpenClawChatView: (): void => {
+    ipcRenderer.send('openclaw:chat-open');
+  },
+  closeOpenClawChatView: (): void => {
+    ipcRenderer.send('openclaw:chat-close');
+  },
+  setOpenClawChatBounds: (bounds: import('../shared/openclaw').OpenClawChatBounds): void => {
+    ipcRenderer.send('openclaw:chat-bounds', bounds);
+  },
+  setOpenClawChatVisible: (visible: boolean): void => {
+    ipcRenderer.send('openclaw:chat-visible', visible);
+  },
+  reloadOpenClawChatView: (): void => {
+    ipcRenderer.send('openclaw:chat-reload');
+  },
+  onOpenClawChatViewState: (
+    listener: (state: import('../shared/openclaw').OpenClawChatViewState) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, state: import('../shared/openclaw').OpenClawChatViewState): void =>
+      listener(state);
+    ipcRenderer.on('openclaw:chat-view-state', handler);
+    return () => ipcRenderer.removeListener('openclaw:chat-view-state', handler);
+  },
 };
 
 contextBridge.exposeInMainWorld(DESKTOP_BRIDGE_KEY, desktopApi);

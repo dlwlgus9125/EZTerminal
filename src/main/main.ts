@@ -9,7 +9,7 @@ import {
   shell,
   utilityProcess,
 } from 'electron';
-import type { UtilityProcess, MessagePortMain } from 'electron';
+import type { UtilityProcess, MessagePortMain, Rectangle } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { networkInterfaces } from 'node:os';
@@ -28,18 +28,23 @@ import { LogFile, pruneCrashDumps } from './diagnostics';
 import { SystemStatsService } from './system-stats-service';
 import { StatsVisibility } from './stats-visibility';
 import { RemoteTokenStore } from './remote-token-store';
+import { OpenClawService } from './openclaw-service';
+import { OpenClawChatViewManager } from './openclaw-chat-view';
+import { startOpenClawProxy, DEFAULT_OPENCLAW_PROXY_PORT, type OpenClawProxyHandle } from './openclaw-proxy';
 import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
 import {
   startRemoteBridge,
   DEFAULT_REMOTE_BRIDGE_PORT,
   type RemoteBridgeHandle,
   type RemoteFileSource,
+  type RemoteOpenClawSource,
   type RemotePacketSource,
   type RemoteStatsSource,
 } from './remote-bridge';
 import { formatConnectionInfo } from './remote-connection-info';
 import type { EffectParamsSettings, RollbarSettings, StartupPref, ThemeName } from '../shared/layout-schema';
 import type { InterpreterToMain, MainToInterpreter, RunStartedInfo, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
+import type { OpenClawAutostartAction, OpenClawLifecycleAction } from '../shared/openclaw';
 
 // The main process owns the interpreter utilityProcess lifetime (architecture
 // §1). Per-command MessagePort brokering + session/run correlation live in the
@@ -98,6 +103,27 @@ let packetCaptureRegistry: PacketCaptureRegistry | null = null;
 // Mobile remote-control WS bridge (M0) — created once on 'ready', stopped on quit.
 let remoteBridgeHandle: RemoteBridgeHandle | null = null;
 
+// OpenClaw reverse proxy (openclaw-management M4) — lifecycle in lockstep
+// with remoteBridgeHandle above (both chained through the same `bridgeOp`
+// serialization); stopped on quit. Never touches the gateway itself.
+let openClawProxyHandle: OpenClawProxyHandle | null = null;
+
+// OpenClaw management service (openclaw-management M1) — created once on
+// 'ready'; referenced only for before-quit dispose() below (all its IPC
+// handlers close over a local const, see the 'ready' handler).
+let openClawService: OpenClawService | null = null;
+
+// OpenClaw chat WebContentsView manager (openclaw-management M3) — created
+// once on 'ready', attached to the main window in createWindow() (needs a
+// module-level ref, mirrors mainWindowRef below), torn down on window
+// reload/close (packetCaptureRegistry teardown hygiene precedent) and quit.
+let openClawChatView: OpenClawChatViewManager | null = null;
+
+// The main BrowserWindow — module-level (like the refs above) because
+// createWindow() itself is defined outside 'ready', and openClawChatView's
+// attach() needs a handle to the window it should embed into.
+let mainWindowRef: BrowserWindow | null = null;
+
 // Defense-in-depth CSP for the raw-HTML injection sink in TextBlock (the ANSI →
 // HTML external output, sanitized upstream by ansi_up). Strict: only same-origin
 // scripts, no inline/eval scripts, no remote connections, no <object>/<base>/
@@ -129,6 +155,8 @@ const createWindow = (): void => {
       sandbox: true,
     },
   });
+  mainWindowRef = mainWindow;
+  openClawChatView?.attach(mainWindow);
 
   // ── Navigation hardening (SEC-HIGH-2) ─────────────────────────────────────
   // An OSC-8 link in external output (TextBlock <a href>) must never navigate the
@@ -174,12 +202,17 @@ const createWindow = (): void => {
     // Same reasoning for the packet-capture sub-view (Phase 2B): a reload
     // drops the renderer's port reference, so any live host is now orphaned.
     packetCaptureRegistry?.kill();
+    // Same reasoning again for the OpenClaw chat view (M3): a reload drops
+    // the renderer's bounds/visibility reporting, orphaning the WebContentsView.
+    openClawChatView?.destroy();
   });
 
   // Window destroy (Phase 2B): stop any live capture host — it must not
   // outlive the window whose renderer it was streaming packets to.
   mainWindow.on('closed', () => {
     packetCaptureRegistry?.kill();
+    openClawChatView?.destroy();
+    if (mainWindowRef === mainWindow) mainWindowRef = null;
   });
 
   // ── Per-command MessagePort brokering (architecture §3) ───────────────────
@@ -434,6 +467,9 @@ app.on('ready', () => {
     systemStatsService?.stop();
     packetCaptureRegistry?.kill();
     void remoteBridgeHandle?.stop();
+    void openClawProxyHandle?.stop();
+    openClawService?.dispose();
+    openClawChatView?.destroy();
   });
 
   // Session lifecycle (Codex B1/B5). create-session is the ONLY way a shell session
@@ -625,13 +661,58 @@ app.on('ready', () => {
     }
   });
 
-  // ── Mobile remote-control WS bridge (M0) ─────────────────────────────────
+  // ── OpenClaw management service (openclaw-management M1) ─────────────────
+  // Electron-free service (see openclaw-service.ts's module doc for the M0
+  // Stage-0 latency findings this is built around) — constructed here (rather
+  // than down by its IPC handlers below) because the mobile bridge/proxy
+  // wiring right below needs it to build `remoteOpenClawSource`.
+  const openclaw = new OpenClawService();
+  openClawService = openclaw;
+
+  // ── OpenClaw chat WebContentsView (openclaw-management M3) ────────────────
+  // See openclaw-chat-view.ts's module doc for the config verified live in
+  // the M0 spike. Attached to the window in createWindow(); state pushes
+  // (did-fail-load/did-finish-load) fan out to every window below.
+  openClawChatView = new OpenClawChatViewManager({
+    getChatUrl: () => openclaw.getChatUrl(),
+    onStateChange: (state) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+        win.webContents.send('openclaw:chat-view-state', state);
+      }
+    },
+  });
+
+  // ── Mobile remote-control WS bridge (M0) + OpenClaw reverse proxy (M4) ──
   // Default OFF (opt-in — see LayoutStore.getRemoteEnabled): the bridge grants
   // a paired device full command + filesystem access, so the listener only
   // binds once the user enables it in Settings. When enabled it binds 0.0.0.0
-  // (LAN + Tailscale reachable), token-gated and origin-checked.
+  // (LAN + Tailscale reachable), token-gated and origin-checked. The OpenClaw
+  // proxy (mobile chat embed's tunnel to the gateway, architecture decision
+  // (b)) shares the SAME enable/disable lifecycle — see `startBridge`/the
+  // `remote:set-enabled` handler below, both chained through `bridgeOp`.
   // The bridge adapts to the SAME broker instance the local IPC handlers use,
   // so both transports share one interpreter listener + one session directory.
+  const openClawProxyPort = Number(process.env.EZTERMINAL_OPENCLAW_PROXY_PORT) || DEFAULT_OPENCLAW_PROXY_PORT;
+  // Adapts `openclaw` (an OpenClawService instance) + `openClawProxyHandle`
+  // (started/stopped in lockstep, see `startBridge` below) to the bridge's DI
+  // seam — `mintChatTicket` is the one method genuinely composed from BOTH
+  // sources (the service's token + the proxy's ticket), everything else is a
+  // direct passthrough (method names match `OpenClawService`'s own exactly).
+  const remoteOpenClawSource: RemoteOpenClawSource = {
+    subscribeStatus: (listener) => openclaw.subscribeStatus(listener),
+    runLifecycle: (action) => openclaw.runLifecycle(action),
+    subscribeLogs: (listener) => openclaw.subscribeLogs(listener),
+    listAgentSessions: () => openclaw.listAgentSessions(),
+    getCoreConfig: () => openclaw.getCoreConfig(),
+    setCoreConfig: (key, value) => openclaw.setCoreConfig(key, value),
+    mintChatTicket: async () => {
+      if (!openClawProxyHandle) return null;
+      const token = await openclaw.getChatToken();
+      if (!token) return null;
+      return { ticket: openClawProxyHandle.mintTicket(), proxyPort: openClawProxyHandle.port, token };
+    },
+  };
   const remoteTokenStore = new RemoteTokenStore(path.join(app.getPath('userData')));
   const remoteTokenReady = remoteTokenStore.init().catch((err) => {
     console.error('[main] remote token store init failed:', err);
@@ -650,8 +731,17 @@ app.on('ready', () => {
     subscribe: (listener) => packetMirror?.subscribe(listener) ?? (() => undefined),
   };
   // Gated on `remoteEnabled` (v0.2.0 D2): a closure so both boot and the
-  // runtime toggle below start the SAME shape of bridge.
-  const startBridge = (): void => {
+  // runtime toggle below start the SAME shape of bridge + proxy, in lockstep
+  // (architecture decision (b) — the OpenClaw proxy's lifecycle matches
+  // `remoteEnabled` exactly, never a separate always-on listener).
+  const startBridge = async (): Promise<void> => {
+    if (!openClawProxyHandle) {
+      const status = await openclaw.getStatus();
+      openClawProxyHandle = await startOpenClawProxy({
+        port: openClawProxyPort,
+        upstreamOrigin: `http://127.0.0.1:${status.port}`,
+      });
+    }
     remoteBridgeHandle = startRemoteBridge({
       port: remoteBridgePort,
       getToken: async () => {
@@ -664,13 +754,14 @@ app.on('ready', () => {
       // `satisfies` forces a structural check here — the same `fileService`
       // instance backs the desktop IPC handlers above and the mobile bridge.
       fileSource: fileService satisfies RemoteFileSource,
+      openclawSource: remoteOpenClawSource,
     });
   };
   // `app.on('ready', ...)` isn't async, so the boot gate is a fire-and-forget
   // IIFE rather than a top-level await.
   void (async () => {
     await storeReady;
-    if (await layoutStore.getRemoteEnabled()) startBridge();
+    if (await layoutStore.getRemoteEnabled()) await startBridge();
   })();
 
   // Runtime on/off toggle (v0.2.0 D2): every start/stop chains off `bridgeOp`
@@ -701,15 +792,117 @@ app.on('ready', () => {
     await layoutStore.setRemoteEnabled(enabled);
     bridgeOp = bridgeOp.then(async () => {
       if (enabled) {
-        if (!remoteBridgeHandle) startBridge();
+        if (!remoteBridgeHandle) await startBridge();
       } else if (remoteBridgeHandle) {
         const handle = remoteBridgeHandle;
         remoteBridgeHandle = null;
         await handle.stop();
+        // Proxy lifecycle in lockstep with the bridge (architecture decision
+        // (b)) — never left running once remote control is turned off.
+        if (openClawProxyHandle) {
+          const proxyHandle = openClawProxyHandle;
+          openClawProxyHandle = null;
+          await proxyHandle.stop();
+        }
       }
     });
     await bridgeOp;
     return remoteBridgeHandle !== null;
+  });
+
+  // ── OpenClaw management (openclaw-management M1) ─────────────────────────
+  // `openclaw`/`openClawService` are constructed earlier (see the mobile
+  // bridge/proxy wiring above, which needs it to build `remoteOpenClawSource`)
+  // — IPC here is a thin adapter, same shape as the file explorer's
+  // FileService wiring above. The chat token/URL never cross to the renderer
+  // (M3 owns the WebContentsView main-side) — only a boolean "is a token
+  // available" is exposed via `openclaw:chat-available`.
+  ipcMain.handle('openclaw:get-status', (_event, force?: boolean) => openclaw.getStatus(force));
+  ipcMain.handle('openclaw:lifecycle', (_event, action: OpenClawLifecycleAction) => openclaw.runLifecycle(action));
+  ipcMain.handle('openclaw:list-sessions', () => openclaw.listAgentSessions());
+  ipcMain.handle('openclaw:get-config', () => openclaw.getCoreConfig());
+  ipcMain.handle('openclaw:set-config', (_event, key: string, value: string) => openclaw.setCoreConfig(key, value));
+  ipcMain.handle('openclaw:chat-available', async () => (await openclaw.getChatToken()) !== null);
+  // autostart (openclaw-management #9) — `gateway install|uninstall`, serialized
+  // on the same CLI lane as start/stop/restart (see OpenClawService.runAutostart).
+  ipcMain.handle('openclaw:autostart', (_event, action: OpenClawAutostartAction) => openclaw.runAutostart(action));
+
+  // Status push is wanted by TWO independent UI surfaces: the drawer
+  // (openclaw:set-drawer-open) and the M3 chat panel (openclaw:chat-panel-
+  // mounted — sent for as long as the singleton dockview tab exists, NOT
+  // gated on gateway running state: the panel needs status pushes WHILE
+  // stopped precisely to detect the stopped->running transition and only
+  // then request the WebContentsView, see `openclaw:chat-open` below) —
+  // each reports its own open/closed state, since either can be open while
+  // the other is closed, so a single shared boolean would let closing one
+  // kill pushes the other still needs. Logs stay drawer-only (the chat panel
+  // never shows them). Mirrors the stats overlay's `stats:panel-visible`
+  // gating; broadcasts to every window.
+  let openclawDrawerOpen = false;
+  let openclawChatPanelOpen = false;
+  let openclawUnsubscribeStatus: (() => void) | null = null;
+  let openclawUnsubscribeLogs: (() => void) | null = null;
+  const syncOpenClawStatusSubscription = (): void => {
+    const wantStatus = openclawDrawerOpen || openclawChatPanelOpen;
+    if (wantStatus && !openclawUnsubscribeStatus) {
+      openclawUnsubscribeStatus = openclaw.subscribeStatus((status) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+          win.webContents.send('openclaw:status', status);
+        }
+      });
+    } else if (!wantStatus && openclawUnsubscribeStatus) {
+      openclawUnsubscribeStatus();
+      openclawUnsubscribeStatus = null;
+    }
+  };
+  const syncOpenClawLogSubscription = (): void => {
+    if (openclawDrawerOpen && !openclawUnsubscribeLogs) {
+      openclawUnsubscribeLogs = openclaw.subscribeLogs((line) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+          win.webContents.send('openclaw:log', line);
+        }
+      });
+    } else if (!openclawDrawerOpen && openclawUnsubscribeLogs) {
+      openclawUnsubscribeLogs();
+      openclawUnsubscribeLogs = null;
+    }
+  };
+  ipcMain.on('openclaw:set-drawer-open', (_event, open: boolean) => {
+    openclawDrawerOpen = Boolean(open);
+    syncOpenClawStatusSubscription();
+    syncOpenClawLogSubscription();
+  });
+  ipcMain.on('openclaw:chat-panel-mounted', (_event, mounted: boolean) => {
+    openclawChatPanelOpen = Boolean(mounted);
+    syncOpenClawStatusSubscription();
+  });
+
+  // ── OpenClaw chat WebContentsView IPC (openclaw-management M3) ───────────
+  // The placeholder panel (OpenClawChatPanel.tsx) reports its bounding rect
+  // and App.tsx's single effective-visibility derivation continuously; the
+  // manager itself decides lazy creation (see openclaw-chat-view.ts's module
+  // doc). `chat-open` is sent only once the panel observes status==='running'
+  // (requesting the view); `chat-close` is the panel's unmount, fully
+  // destroying the view (a closed singleton panel has no use for a live,
+  // hidden WebContentsView still holding a renderer process).
+  ipcMain.on('openclaw:chat-open', () => {
+    void openClawChatView?.ensureView();
+  });
+  ipcMain.on('openclaw:chat-close', () => {
+    openClawChatView?.destroy();
+  });
+  ipcMain.on('openclaw:chat-bounds', (_event, bounds: Rectangle) => {
+    if (bounds && typeof bounds === 'object') openClawChatView?.setBounds(bounds);
+  });
+  ipcMain.on('openclaw:chat-visible', (_event, visible: boolean) => {
+    const isVisible = Boolean(visible);
+    if (isVisible) void openClawChatView?.ensureView();
+    openClawChatView?.setVisible(isVisible);
+  });
+  ipcMain.on('openclaw:chat-reload', () => {
+    openClawChatView?.reload();
   });
 
   createWindow();

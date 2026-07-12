@@ -7,6 +7,19 @@
 import type { EffectParamsSettings, LayoutEnvelope, RollbarSettings, StartupPref, ThemeName } from './layout-schema';
 import type { FileListResult, FileOpResult, FileReadTextResult } from './files';
 import type { ThemeMod } from './theme-schema';
+import type {
+  OpenClawAgentSession,
+  OpenClawAutostartAction,
+  OpenClawAutostartResult,
+  OpenClawChatBounds,
+  OpenClawChatViewState,
+  OpenClawCoreConfig,
+  OpenClawLifecycleAction,
+  OpenClawLifecycleResult,
+  OpenClawLogLine,
+  OpenClawSetConfigResult,
+  OpenClawStatus,
+} from './openclaw';
 
 /** The single key under which the preload bridge is exposed on `window`. */
 export const BRIDGE_KEY = 'ezterminal' as const;
@@ -798,4 +811,43 @@ export interface EzTerminalDesktopApi {
    * `clampInterferenceParams` on both read and set. */
   getEffectParams: () => Promise<EffectParamsSettings>;
   setEffectParams: (params: EffectParamsSettings) => Promise<void>;
+
+  // ── OpenClaw management (openclaw-management M1) ────────────────────────
+  // `getChatUrl`/the raw token are deliberately ABSENT from this surface —
+  // the token never crosses to the renderer (main owns the WebContentsView's
+  // `#token=` URL assembly, M3); `isOpenClawChatAvailable` is the only signal
+  // the UI needs to decide whether to offer the chat panel/CTA.
+  getOpenClawStatus: (force?: boolean) => Promise<OpenClawStatus>;
+  runOpenClawLifecycle: (action: OpenClawLifecycleAction) => Promise<OpenClawLifecycleResult>;
+  listOpenClawSessions: () => Promise<readonly OpenClawAgentSession[]>;
+  getOpenClawConfig: () => Promise<OpenClawCoreConfig>;
+  setOpenClawConfig: (key: string, value: string) => Promise<OpenClawSetConfigResult>;
+  isOpenClawChatAvailable: () => Promise<boolean>;
+  /** Gates the main-side status/log push loops (mirrors `setStatsPanelVisible`). */
+  setOpenClawDrawerOpen: (open: boolean) => void;
+  onOpenClawStatus: (listener: (status: OpenClawStatus) => void) => () => void;
+  onOpenClawLog: (listener: (line: OpenClawLogLine) => void) => () => void;
+  /** `gateway install`/`gateway uninstall` (task #9, autostart toggle). */
+  runOpenClawAutostart: (action: OpenClawAutostartAction) => Promise<OpenClawAutostartResult>;
+
+  // ── OpenClaw chat panel (openclaw-management M3) ────────────────────────
+  // The main-owned WebContentsView paints ABOVE the renderer's DOM — this
+  // surface is how OpenClawChatPanel.tsx's placeholder drives it, never the
+  // reverse. See openclaw-chat-view.ts's module doc for the full lifecycle.
+  /** The singleton dockview tab's mount/unmount — gates status push
+   * independently of the drawer (openclaw:chat-panel-mounted). */
+  setOpenClawChatPanelMounted: (mounted: boolean) => void;
+  /** Requests the view be created (only called once status === 'running'). */
+  openOpenClawChatView: () => void;
+  /** Tears the view down entirely — sent on the panel's unmount. */
+  closeOpenClawChatView: () => void;
+  /** Rate-limited by the caller (rAF-throttled ResizeObserver) — window-
+   * content-relative pixels. */
+  setOpenClawChatBounds: (bounds: OpenClawChatBounds) => void;
+  /** The single effective-visibility derivation (panel visible ∧ no drawer/
+   * palette overlay) — see App.tsx. */
+  setOpenClawChatVisible: (visible: boolean) => void;
+  /** The placeholder's "재연결" button, shown while `hasError` is true. */
+  reloadOpenClawChatView: () => void;
+  onOpenClawChatViewState: (listener: (state: OpenClawChatViewState) => void) => () => void;
 }

@@ -68,6 +68,17 @@ import {
   type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../../../src/shared/remote-protocol';
+import {
+  OPENCLAW_CONFIG_ALLOWLIST,
+  OPENCLAW_CONFIG_UNSET,
+  type OpenClawAgentSession,
+  type OpenClawCoreConfig,
+  type OpenClawLifecycleAction,
+  type OpenClawLifecycleResult,
+  type OpenClawLogLine,
+  type OpenClawSetConfigResult,
+  type OpenClawStatus,
+} from '../../../src/shared/openclaw';
 
 /** Generic result of one `file-read` round trip (M4) — `readTextFile`/
  * `downloadFile` each reshape this into their own public return type. */
@@ -95,6 +106,15 @@ interface FileReadAssembly {
 type UploadBeginResult = { ok: true; uploadId: string; finalName: string } | { ok: false; error: string };
 type UploadAckResult = { ok: true; receivedBytes: number } | { ok: false; error: string };
 type UploadDoneResult = { ok: true; finalName: string } | { ok: false; error: string };
+
+/** Reply shape for `getOpenClawChatTicket()` (openclaw-management M4/M5) —
+ * mirrors `OpenClawChatTicketReply` on the wire; `ticket`/`token` are `null`
+ * when no ticket could be minted (see remote-protocol.ts's doc). */
+export interface OpenClawChatTicket {
+  readonly ticket: string | null;
+  readonly proxyPort: number;
+  readonly token: string | null;
+}
 
 // ── DI seam over the browser `WebSocket` (real instances satisfy this
 //    structurally; tests inject a fake) ──────────────────────────────────────
@@ -258,6 +278,24 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly pendingUploadBegins = new Map<string, (result: UploadBeginResult) => void>();
   private readonly pendingUploadAcks = new Map<string, (result: UploadAckResult) => void>();
   private readonly pendingUploadDones = new Map<string, (result: UploadDoneResult) => void>();
+
+  // OpenClaw management (M4) — status/logs use the SAME two-method split as
+  // stats (`onStatsUpdate`/`setStatsPanelVisible`): a plain listener set, plus
+  // a separate desired-state flag that is remembered and REPLAYED on the
+  // 'auth-ok' handler below (same reconnect-safety precedent as
+  // `statsVisible`/`packetsSubscribed`). Lifecycle/sessions/config/chat-ticket
+  // are request/reply, correlated by a locally-minted `requestId` (same FIFO-
+  // map precedent as `pendingFileOps` above) — a dropped connection resolves
+  // every in-flight entry with a "connection lost" result, never left pending.
+  private readonly openclawStatusListeners = new Set<(status: OpenClawStatus) => void>();
+  private openclawStatusSubscribed = false;
+  private readonly openclawLogListeners = new Set<(lines: readonly OpenClawLogLine[]) => void>();
+  private openclawLogsSubscribed = false;
+  private readonly pendingOpenClawLifecycle = new Map<string, (result: OpenClawLifecycleResult) => void>();
+  private readonly pendingOpenClawSessions = new Map<string, (sessions: readonly OpenClawAgentSession[]) => void>();
+  private readonly pendingOpenClawConfigGet = new Map<string, (config: OpenClawCoreConfig) => void>();
+  private readonly pendingOpenClawConfigSet = new Map<string, (result: OpenClawSetConfigResult) => void>();
+  private readonly pendingOpenClawChatTicket = new Map<string, (reply: OpenClawChatTicket) => void>();
 
   constructor(options: WsEzTerminalOptions) {
     this.url = options.url;
@@ -484,6 +522,81 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     if (this.authed) this.send({ kind: 'packets-unsubscribe' });
     this.packetPort?.close();
     this.packetPort = null;
+  }
+
+  // ── OpenClaw management (openclaw-management M4, mobile-only) ────────────
+  // Mirrors the desktop drawer's IPC surface (src/shared/openclaw.ts +
+  // openclaw-service.ts's method names) over the wire protocol added in
+  // remote-protocol.ts. Not part of `EzTerminalApi` — see the module doc.
+
+  /** Fires on every `openclaw-status` push while subscribed (see
+   * `setOpenClawStatusSubscribed`). */
+  onOpenClawStatus(listener: (status: OpenClawStatus) => void): () => void {
+    this.openclawStatusListeners.add(listener);
+    return () => this.openclawStatusListeners.delete(listener);
+  }
+
+  /** Tell the bridge whether THIS connection wants the OpenClaw status push
+   * — mirrors `setStatsPanelVisible`'s replay-on-reconnect shape exactly. */
+  setOpenClawStatusSubscribed(subscribed: boolean): void {
+    this.openclawStatusSubscribed = subscribed;
+    if (this.authed) this.send({ kind: subscribed ? 'openclaw-status-subscribe' : 'openclaw-status-unsubscribe' });
+  }
+
+  /** Fires on every `openclaw-log-lines` push (coalesced batch of lines, see
+   * remote-protocol.ts) while subscribed. */
+  onOpenClawLogLines(listener: (lines: readonly OpenClawLogLine[]) => void): () => void {
+    this.openclawLogListeners.add(listener);
+    return () => this.openclawLogListeners.delete(listener);
+  }
+
+  /** Tell the bridge whether THIS connection wants the OpenClaw log tail —
+   * same replay-on-reconnect shape as `setOpenClawStatusSubscribed`. */
+  setOpenClawLogsSubscribed(subscribed: boolean): void {
+    this.openclawLogsSubscribed = subscribed;
+    if (this.authed) this.send({ kind: subscribed ? 'openclaw-logs-subscribe' : 'openclaw-logs-unsubscribe' });
+  }
+
+  runOpenClawLifecycle(action: OpenClawLifecycleAction): Promise<OpenClawLifecycleResult> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      this.pendingOpenClawLifecycle.set(requestId, resolve);
+      this.send({ kind: 'openclaw-lifecycle', requestId, action });
+    });
+  }
+
+  getOpenClawSessions(): Promise<readonly OpenClawAgentSession[]> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      this.pendingOpenClawSessions.set(requestId, resolve);
+      this.send({ kind: 'openclaw-sessions-get', requestId });
+    });
+  }
+
+  getOpenClawConfig(): Promise<OpenClawCoreConfig> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      this.pendingOpenClawConfigGet.set(requestId, resolve);
+      this.send({ kind: 'openclaw-config-get', requestId });
+    });
+  }
+
+  setOpenClawConfig(key: string, value: string): Promise<OpenClawSetConfigResult> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      this.pendingOpenClawConfigSet.set(requestId, resolve);
+      this.send({ kind: 'openclaw-config-set', requestId, key, value });
+    });
+  }
+
+  /** Mint a fresh chat ticket for the mobile chat embed (M5) — see
+   * openclaw-proxy.ts's module doc for the ticket+cookie auth flow this feeds. */
+  getOpenClawChatTicket(): Promise<OpenClawChatTicket> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      this.pendingOpenClawChatTicket.set(requestId, resolve);
+      this.send({ kind: 'openclaw-chat-ticket', requestId });
+    });
   }
 
   // ── Mobile remote-control pairing (M4, desktop-side pairing panel only) ───
@@ -778,6 +891,24 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve({ ok: false, error: 'Connection to EZTerminal lost' });
     }
     this.pendingUploadDones.clear();
+    // OpenClaw management (M4): same "resolve with a connection-lost result"
+    // treatment as the file/upload maps above — never left pending forever.
+    for (const resolve of this.pendingOpenClawLifecycle.values()) {
+      resolve({ ok: false, stderr: 'Connection to EZTerminal lost' });
+    }
+    this.pendingOpenClawLifecycle.clear();
+    for (const resolve of this.pendingOpenClawSessions.values()) resolve([]);
+    this.pendingOpenClawSessions.clear();
+    for (const resolve of this.pendingOpenClawConfigGet.values()) {
+      resolve(Object.fromEntries(OPENCLAW_CONFIG_ALLOWLIST.map((key) => [key, OPENCLAW_CONFIG_UNSET])) as OpenClawCoreConfig);
+    }
+    this.pendingOpenClawConfigGet.clear();
+    for (const resolve of this.pendingOpenClawConfigSet.values()) {
+      resolve({ ok: false, restartRequired: false, error: 'Connection to EZTerminal lost' });
+    }
+    this.pendingOpenClawConfigSet.clear();
+    for (const resolve of this.pendingOpenClawChatTicket.values()) resolve({ ticket: null, proxyPort: 0, token: null });
+    this.pendingOpenClawChatTicket.clear();
     if (this.stopped) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -812,6 +943,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         // existing `packetPort` (if any) is reused, and the server's
         // `PacketMirror` replays the current status on its own.
         if (this.packetsSubscribed) this.send({ kind: 'packets-subscribe' });
+        // OpenClaw management (M4): same replay shape for status/logs.
+        if (this.openclawStatusSubscribed) this.send({ kind: 'openclaw-status-subscribe' });
+        if (this.openclawLogsSubscribed) this.send({ kind: 'openclaw-logs-subscribe' });
         break;
       case 'auth-fail':
         this.setAuthed(false);
@@ -944,11 +1078,62 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         resolve?.(msg.ok ? { ok: true, finalName: msg.finalName } : { ok: false, error: msg.error });
         break;
       }
+
+      case 'openclaw-status':
+        for (const listener of this.openclawStatusListeners) listener(msg.status);
+        break;
+
+      case 'openclaw-lifecycle-result': {
+        const resolve = this.pendingOpenClawLifecycle.get(msg.requestId);
+        this.pendingOpenClawLifecycle.delete(msg.requestId);
+        resolve?.(msg.result);
+        break;
+      }
+
+      case 'openclaw-log-lines':
+        for (const listener of this.openclawLogListeners) listener(msg.lines);
+        break;
+
+      case 'openclaw-sessions-reply': {
+        const resolve = this.pendingOpenClawSessions.get(msg.requestId);
+        this.pendingOpenClawSessions.delete(msg.requestId);
+        resolve?.(msg.sessions);
+        break;
+      }
+
+      case 'openclaw-config-reply': {
+        const resolve = this.pendingOpenClawConfigGet.get(msg.requestId);
+        this.pendingOpenClawConfigGet.delete(msg.requestId);
+        resolve?.(msg.config);
+        break;
+      }
+
+      case 'openclaw-config-set-reply': {
+        const resolve = this.pendingOpenClawConfigSet.get(msg.requestId);
+        this.pendingOpenClawConfigSet.delete(msg.requestId);
+        resolve?.(msg.result);
+        break;
+      }
+
+      case 'openclaw-chat-ticket-reply': {
+        const resolve = this.pendingOpenClawChatTicket.get(msg.requestId);
+        this.pendingOpenClawChatTicket.delete(msg.requestId);
+        resolve?.({ ticket: msg.ticket, proxyPort: msg.proxyPort, token: msg.token });
+        break;
+      }
     }
   }
 
   /** Test/debug seam: is the current socket authenticated? */
   get isAuthed(): boolean {
     return this.authed;
+  }
+
+  /** The hostname this transport is dialing (no scheme/port) — the chat tab
+   * (M5) derives the OpenClaw proxy's origin from it: same host, a different
+   * port (see `getOpenClawChatTicket()`'s doc). Empty string if `url` doesn't
+   * parse as `ws(s)://host[:port]`. */
+  get connectedHost(): string {
+    return this.url.match(/^wss?:\/\/([^/:?#]+)/i)?.[1] ?? '';
   }
 }

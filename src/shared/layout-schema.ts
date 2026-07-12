@@ -8,8 +8,10 @@
  * Strictness policy (gate B5), by security weight:
  *  - `params` is a STRICT empty object: ANY key (a persisted sessionId above all)
  *    fails validation loudly — B1/B5 as a checked invariant, not a convention.
- *  - `contentComponent` must be the literal 'terminal': an unknown component would
- *    make dockview-react throw at mount; rejecting here routes to the corrupt path.
+ *  - `contentComponent` must be one of the known panel types ('terminal' or,
+ *    since openclaw-management M3, the singleton 'openclaw-chat'): an unknown
+ *    component would make dockview-react throw at mount; rejecting here
+ *    routes to the corrupt path.
  *  - Unsupported serialized feature buckets (floating/popout/edge groups) are
  *    STRIPPED by the sanitizer (gate B4) — we run with floating disabled and
  *    edge/popout unused, so persisted ones can only be stale or hostile.
@@ -28,13 +30,17 @@ export const MAX_PANELS = 64;
 
 const PanelSchema = z.object({
   id: z.string().min(1),
-  contentComponent: z.literal('terminal'),
+  // openclaw-management M3: 'openclaw-chat' is a fixed-id singleton panel
+  // (main-owned WebContentsView embed) — additive to the union, so every
+  // pre-M3 layout/preset file (whose panels are all 'terminal') still parses.
+  contentComponent: z.union([z.literal('terminal'), z.literal('openclaw-chat')]),
   title: z.string().optional(),
   // Serialized panels carry renderer:'always' (F1/F2); tolerate its absence and
   // let the sanitizer force it so restored panes always survive tab switches.
   renderer: z.literal('always').optional(),
   // STRICT empty: a sessionId-like key here is exactly the resurrection bug the
   // Track A P1 gate (B1/B5) forbids — fail loudly, never strip-and-continue.
+  // Applies identically to 'openclaw-chat' panels — they carry no params either.
   params: z.strictObject({}).optional(),
   tabComponent: z.string().optional(),
   minimumWidth: z.number().optional(),

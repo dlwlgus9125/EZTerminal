@@ -5,6 +5,7 @@ import { BlockController } from '../../../src/renderer/block-controller';
 import type { RunStartedInfo, SessionInfo, SystemStatsSnapshot } from '../../../src/shared/ipc';
 import { FILE_CHUNK_BYTES } from '../../../src/shared/files';
 import { base64ToUint8Array, uint8ArrayToBase64, type RemotePacketFrame } from '../../../src/shared/remote-protocol';
+import type { OpenClawLogLine, OpenClawStatus } from '../../../src/shared/openclaw';
 
 // ── Fake socket ──────────────────────────────────────────────────────────────
 
@@ -1290,5 +1291,222 @@ describe('WsEzTerminalTransport — upload (M5)', () => {
     sockets[0].triggerClose();
 
     await expect(promise).rejects.toThrow();
+  });
+});
+
+describe('WsEzTerminalTransport — OpenClaw management (M4)', () => {
+  it('onOpenClawStatus fires on an openclaw-status push; unsubscribe stops delivery', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const received: OpenClawStatus[] = [];
+    const unsubscribe = transport.onOpenClawStatus((status) => received.push(status));
+
+    sockets[0].triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } });
+    unsubscribe();
+    sockets[0].triggerMessage({ kind: 'openclaw-status', status: { state: 'stopped', port: 18789 } });
+
+    expect(received).toEqual([{ state: 'running', port: 18789 }]);
+  });
+
+  it('setOpenClawStatusSubscribed(true) sends openclaw-status-subscribe once authed', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    transport.setOpenClawStatusSubscribed(true);
+    expect(sockets[0].lastSent()).toEqual({ kind: 'openclaw-status-subscribe' });
+
+    transport.setOpenClawStatusSubscribed(false);
+    expect(sockets[0].lastSent()).toEqual({ kind: 'openclaw-status-unsubscribe' });
+  });
+
+  it('does not send openclaw-status-subscribe before auth — only records the desired state for later replay', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+
+    transport.setOpenClawStatusSubscribed(true);
+
+    expect(sockets[0].sent.filter((s) => JSON.parse(s).kind === 'openclaw-status-subscribe')).toHaveLength(0);
+  });
+
+  it('onOpenClawLogLines fires on an openclaw-log-lines push (a coalesced batch)', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const received: Array<readonly OpenClawLogLine[]> = [];
+    transport.onOpenClawLogLines((lines) => received.push(lines));
+
+    const lines: OpenClawLogLine[] = [
+      { time: 't1', level: 'INFO', message: 'a' },
+      { time: 't2', level: 'WARN', message: 'b' },
+    ];
+    sockets[0].triggerMessage({ kind: 'openclaw-log-lines', lines });
+
+    expect(received).toEqual([lines]);
+  });
+
+  it('setOpenClawLogsSubscribed(true/false) sends the matching wire message once authed', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    transport.setOpenClawLogsSubscribed(true);
+    expect(sockets[0].lastSent()).toEqual({ kind: 'openclaw-logs-subscribe' });
+
+    transport.setOpenClawLogsSubscribed(false);
+    expect(sockets[0].lastSent()).toEqual({ kind: 'openclaw-logs-unsubscribe' });
+  });
+
+  it('runOpenClawLifecycle sends openclaw-lifecycle and resolves with the result, correlated by requestId', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.runOpenClawLifecycle('restart');
+    expect(sockets[0].lastSent()).toEqual({ kind: 'openclaw-lifecycle', requestId: 'req-1', action: 'restart' });
+
+    sockets[0].triggerMessage({ kind: 'openclaw-lifecycle-result', requestId: 'req-1', result: { ok: true } });
+    await expect(promise).resolves.toEqual({ ok: true });
+  });
+
+  it('getOpenClawSessions sends openclaw-sessions-get and resolves with the sessions reply', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.getOpenClawSessions();
+    expect(sockets[0].lastSent()).toEqual({ kind: 'openclaw-sessions-get', requestId: 'req-1' });
+
+    const sessions = [{ key: 'k1', sessionId: 's1' }];
+    sockets[0].triggerMessage({ kind: 'openclaw-sessions-reply', requestId: 'req-1', sessions });
+    await expect(promise).resolves.toEqual(sessions);
+  });
+
+  it('getOpenClawConfig sends openclaw-config-get and resolves with the config reply', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.getOpenClawConfig();
+    expect(sockets[0].lastSent()).toEqual({ kind: 'openclaw-config-get', requestId: 'req-1' });
+
+    const config = { 'agents.defaults.model': 'openai/gpt-5.5', 'gateway.port': 'unset' };
+    sockets[0].triggerMessage({ kind: 'openclaw-config-reply', requestId: 'req-1', config });
+    await expect(promise).resolves.toEqual(config);
+  });
+
+  it('setOpenClawConfig sends openclaw-config-set and resolves with the set-reply result', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.setOpenClawConfig('agents.defaults.model', 'x');
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'openclaw-config-set',
+      requestId: 'req-1',
+      key: 'agents.defaults.model',
+      value: 'x',
+    });
+
+    sockets[0].triggerMessage({
+      kind: 'openclaw-config-set-reply',
+      requestId: 'req-1',
+      result: { ok: true, restartRequired: true },
+    });
+    await expect(promise).resolves.toEqual({ ok: true, restartRequired: true });
+  });
+
+  it('getOpenClawChatTicket sends openclaw-chat-ticket and resolves with the ticket reply', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.getOpenClawChatTicket();
+    expect(sockets[0].lastSent()).toEqual({ kind: 'openclaw-chat-ticket', requestId: 'req-1' });
+
+    sockets[0].triggerMessage({
+      kind: 'openclaw-chat-ticket-reply',
+      requestId: 'req-1',
+      ticket: 'tick-1',
+      proxyPort: 7421,
+      token: 'gw-token',
+    });
+    await expect(promise).resolves.toEqual({ ticket: 'tick-1', proxyPort: 7421, token: 'gw-token' });
+  });
+
+  it('a socket close resolves every in-flight OpenClaw request instead of leaving it pending forever', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      initialBackoffMs: 100,
+      newId: () => 'req-1',
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const lifecyclePromise = transport.runOpenClawLifecycle('start');
+    const sessionsPromise = transport.getOpenClawSessions();
+    const configPromise = transport.getOpenClawConfig();
+    const configSetPromise = transport.setOpenClawConfig('agents.defaults.model', 'x');
+    const ticketPromise = transport.getOpenClawChatTicket();
+
+    sockets[0].triggerClose();
+
+    await expect(lifecyclePromise).resolves.toEqual({ ok: false, stderr: expect.any(String) });
+    await expect(sessionsPromise).resolves.toEqual([]);
+    await expect(configPromise).resolves.toEqual({ 'agents.defaults.model': 'unset', 'gateway.port': 'unset' });
+    await expect(configSetPromise).resolves.toEqual({ ok: false, restartRequired: false, error: expect.any(String) });
+    await expect(ticketPromise).resolves.toEqual({ ticket: null, proxyPort: 0, token: null });
+  });
+});
+
+describe('WsEzTerminalTransport — OpenClaw reconnect replay', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('replays openclaw-status-subscribe and openclaw-logs-subscribe on the reconnect auth-ok', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      initialBackoffMs: 100,
+      maxBackoffMs: 1000,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    transport.setOpenClawStatusSubscribed(true);
+    transport.setOpenClawLogsSubscribed(true);
+
+    sockets[0].triggerClose();
+    vi.advanceTimersByTime(100);
+    expect(sockets).toHaveLength(2);
+
+    sockets[1].triggerMessage({ kind: 'auth-ok' });
+    const sentKinds = sockets[1].sent.map((s) => JSON.parse(s).kind);
+    expect(sentKinds).toContain('openclaw-status-subscribe');
+    expect(sentKinds).toContain('openclaw-logs-subscribe');
+  });
+
+  it('does not replay openclaw-status-subscribe/openclaw-logs-subscribe on reconnect if never enabled', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, initialBackoffMs: 100 });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    sockets[0].triggerClose();
+    vi.advanceTimersByTime(100);
+    sockets[1].triggerMessage({ kind: 'auth-ok' });
+
+    const sentKinds = sockets[1].sent.map((s) => JSON.parse(s).kind);
+    expect(sentKinds).not.toContain('openclaw-status-subscribe');
+    expect(sentKinds).not.toContain('openclaw-logs-subscribe');
   });
 });

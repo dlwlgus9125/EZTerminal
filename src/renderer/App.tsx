@@ -21,6 +21,8 @@ import {
   type InterferenceParams,
 } from './effect-params';
 import { FileExplorerPanel } from './FileExplorerPanel';
+import { OpenClawChatPanel, OpenClawOverlayContext } from './OpenClawChatPanel';
+import { OpenClawPanel } from './OpenClawPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { StatusPanel } from './StatusPanel';
 import { TerminalPane } from './TerminalPane';
@@ -82,7 +84,7 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
   );
 }
 
-const components = { terminal: TerminalPanel };
+const components = { terminal: TerminalPanel, 'openclaw-chat': OpenClawChatPanel };
 
 let tabCounter = 0;
 
@@ -230,6 +232,26 @@ export function App(): JSX.Element {
   // starts in `dirPath`, threaded through dockview panel params to TerminalPanel.
   const onOpenTerminalAt = useCallback((dirPath: string) => openPanel(undefined, dirPath), [openPanel]);
 
+  // OpenClaw chat panel (openclaw-management M3): a fixed-id singleton — add
+  // it once, focus it (bring its tab to front) on every later call. Unlike
+  // openPanel above, this never mints a new id (the schema requires the
+  // fixed id 'openclaw-chat', see layout-schema.ts's PanelSchema doc).
+  const openOpenClawChat = useCallback((): void => {
+    const api = apiRef.current;
+    if (!api) return;
+    const existing = api.getPanel('openclaw-chat');
+    if (existing) {
+      existing.api.setActive();
+      return;
+    }
+    api.addPanel({
+      id: 'openclaw-chat',
+      component: 'openclaw-chat',
+      title: 'OpenClaw Chat',
+      renderer: 'always',
+    });
+  }, []);
+
   // Split the pane the user last focused. Omitting `direction` would default to
   // 'within' (a tab, not a split), so it is always explicit.
   const splitActive = useCallback(
@@ -349,6 +371,10 @@ export function App(): JSX.Element {
   // ── Settings drawer (v0.2.0 M2) ───────────────────────────────────────────
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  // ── OpenClaw management drawer (openclaw-management M2) ───────────────────
+  // Same right-slot mutual exclusion as stats/pairing/settings above.
+  const [openclawOpen, setOpenclawOpen] = useState(false);
+
   // ── File explorer drawer (file-explorer plan, M1) ─────────────────────────
   // Left-edge overlay — unlike stats/pairing above, it does not share their
   // right-slot mutual exclusion. `activePanelId` tracks dockview's active
@@ -357,6 +383,13 @@ export function App(): JSX.Element {
   // onDidActivePanelChange subscription in onReady below).
   const [filesOpen, setFilesOpen] = useState(false);
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
+
+  // ── OpenClaw chat overlay visibility (openclaw-management M3) ────────────
+  // Single derivation of "some DOM overlay sits above the dockview area right
+  // now" — the WebContentsView paints natively above ALL of this DOM, so it
+  // must be told to hide whenever any of these would otherwise sit under it
+  // (architecture decision (a)'s z-order rule). Computed after every one of
+  // the flags below is declared (see the effect further down that reads it).
 
   // ── Theme (E1) + custom mods, font, effects (theme-effects-font M3) ──────
   // Applied via `data-theme` on <html> so index.css's [data-theme] blocks take
@@ -666,6 +699,12 @@ export function App(): JSX.Element {
   // ── Command palette (E2) ──────────────────────────────────────────────────
   const [paletteOpen, setPaletteOpen] = useState(false);
 
+  // OpenClaw chat overlay derivation (declared here since it depends on every
+  // overlay flag above, several of which are declared later in the file than
+  // its doc comment further up) — see that comment for the "why".
+  const chatOverlayOpen =
+    statsOpen || pairingOpen || settingsOpen || openclawOpen || filesOpen || presetsOpen || paletteOpen;
+
   const openSavePresetDialog = useCallback((): void => {
     setPresetsOpen(true);
     setSavingPreset(true);
@@ -918,6 +957,7 @@ export function App(): JSX.Element {
             setStatsOpen((open) => !open);
             setPairingOpen(false); // same status-drawer slot (right:0) — only one at a time
             setSettingsOpen(false);
+            setOpenclawOpen(false);
           }}
           title="Toggle system status panel"
           data-testid="btn-toggle-stats"
@@ -931,6 +971,7 @@ export function App(): JSX.Element {
             setPairingOpen((open) => !open);
             setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
             setSettingsOpen(false);
+            setOpenclawOpen(false);
           }}
           title="Show mobile pairing info"
           data-testid="btn-toggle-pairing"
@@ -944,11 +985,26 @@ export function App(): JSX.Element {
             setSettingsOpen((open) => !open);
             setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
             setPairingOpen(false);
+            setOpenclawOpen(false);
           }}
           title="Settings"
           data-testid="btn-toggle-settings"
         >
           ⚙️
+        </button>
+        <button
+          className="btn btn-split"
+          onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
+          onClick={() => {
+            setOpenclawOpen((open) => !open);
+            setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
+            setPairingOpen(false);
+            setSettingsOpen(false);
+          }}
+          title="OpenClaw management"
+          data-testid="btn-toggle-openclaw"
+        >
+          OpenClaw
         </button>
         {versions && (
           <span className="versions" title="runtime versions">
@@ -980,12 +1036,14 @@ export function App(): JSX.Element {
 
       <div className="dock-host">
         <SessionBindingContext.Provider value={sessionBindingValue}>
-          <DockviewReact
-            className="dockview-theme-dark ez-dock"
-            components={components}
-            onReady={onReady}
-            disableFloatingGroups
-          />
+          <OpenClawOverlayContext.Provider value={chatOverlayOpen}>
+            <DockviewReact
+              className="dockview-theme-dark ez-dock"
+              components={components}
+              onReady={onReady}
+              disableFloatingGroups
+            />
+          </OpenClawOverlayContext.Provider>
         </SessionBindingContext.Provider>
         {statsOpen && <StatusPanel />}
         {pairingOpen && <ConnectionInfoPanel />}
@@ -1016,6 +1074,9 @@ export function App(): JSX.Element {
             onClose={() => setFilesOpen(false)}
             onOpenTerminalAt={onOpenTerminalAt}
           />
+        )}
+        {openclawOpen && (
+          <OpenClawPanel onClose={() => setOpenclawOpen(false)} onOpenChat={openOpenClawChat} />
         )}
       </div>
 
