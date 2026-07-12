@@ -40,6 +40,15 @@ import {
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
 import type { FileReadStream } from './file-service';
 import type { InterpreterBroker, RemoteInterpreter, RemoteMessageChannel, RemotePort } from './interpreter-broker';
+import type {
+  OpenClawAgentSession,
+  OpenClawCoreConfig,
+  OpenClawLifecycleAction,
+  OpenClawLifecycleResult,
+  OpenClawLogLine,
+  OpenClawSetConfigResult,
+  OpenClawStatus,
+} from '../shared/openclaw';
 
 /** Non-standard WS close code: auth was missing/wrong on this connection. */
 export const AUTH_CLOSE_CODE = 4001;
@@ -105,6 +114,12 @@ const MOBILE_PACKET_PENDING_CAP = 500;
 /** Skip (and clear) a flush while the socket's send buffer is this backed up,
  * rather than piling more onto an already-slow link. 256 KiB. */
 const MOBILE_PACKET_BACKPRESSURE_BYTES = 262_144;
+
+/** OpenClaw log tail mirroring (M4) — same coalescing/backpressure shape as
+ * the packet-frame constants above, just for `openclaw-log-lines`. */
+const OPENCLAW_LOG_FLUSH_MS = 500;
+const OPENCLAW_LOG_PENDING_CAP = 500;
+const OPENCLAW_LOG_BACKPRESSURE_BYTES = 262_144;
 
 // ── DI seams (narrow slices of Electron's MessagePortMain / UtilityProcess /
 //    `ws`'s WebSocket — real instances satisfy these structurally, fakes in
@@ -190,6 +205,33 @@ export interface RemoteFileSource {
   abortUpload(uploadId: string): Promise<void>;
 }
 
+/** Result of a chat-ticket mint (openclaw-management M4/M5) — `null` when no
+ * ticket could be minted (proxy not running, or no gateway token available;
+ * `mintChatTicket` never throws for this expected case). */
+export type OpenClawChatTicketResult = { readonly ticket: string; readonly proxyPort: number; readonly token: string } | null;
+
+/**
+ * DI seam over `OpenClawService` (src/main/openclaw-service.ts) + the proxy's
+ * `mintTicket()` (src/main/openclaw-proxy.ts): the bridge only ever calls
+ * through this, so it never imports either directly. The method names below
+ * mirror `OpenClawService`'s own public surface exactly (same "structural
+ * match, zero adaptation" precedent as `RemoteFileSource`/`FileService`) —
+ * `mintChatTicket` is the one method main.ts actually composes from TWO
+ * sources (the service's `getChatToken()` + the proxy's `mintTicket()`),
+ * since ticket-minting itself lives on the proxy, not the service.
+ * `setCoreConfig` MAY REJECT (a non-allowlisted key throws on the service) —
+ * every caller below must catch that and reply with an `ok:false` result,
+ * never let it propagate and crash the connection handler. */
+export interface RemoteOpenClawSource {
+  subscribeStatus(listener: (status: OpenClawStatus) => void): () => void;
+  runLifecycle(action: OpenClawLifecycleAction): Promise<OpenClawLifecycleResult>;
+  subscribeLogs(listener: (line: OpenClawLogLine) => void): () => void;
+  listAgentSessions(): Promise<readonly OpenClawAgentSession[]>;
+  getCoreConfig(): Promise<OpenClawCoreConfig>;
+  setCoreConfig(key: string, value: string): Promise<OpenClawSetConfigResult>;
+  mintChatTicket(): Promise<OpenClawChatTicketResult>;
+}
+
 export interface RemoteBridgeOptions {
   readonly port: number;
   readonly getToken: () => Promise<string> | string;
@@ -203,6 +245,8 @@ export interface RemoteBridgeOptions {
   readonly packetSource?: RemotePacketSource;
   /** Optional so existing fixtures/tests without file wiring keep working. */
   readonly fileSource?: RemoteFileSource;
+  /** Optional so existing fixtures/tests without OpenClaw wiring keep working. */
+  readonly openclawSource?: RemoteOpenClawSource;
 }
 
 /**
@@ -235,6 +279,16 @@ export function attachConnection(
   // FileService's own idle sweep is a backstop, not relied on here).
   const fileReads = new Map<string, FileReadStream>();
   const fileUploads = new Set<string>();
+  // OpenClaw management (M4): this connection's own status/logs subscription
+  // state — same shape as stats/packets above (refcounted on the service
+  // side via `subscribeStatus`/`subscribeLogs`; per-connection here is just
+  // "do I currently have one, and its unsubscribe").
+  let openclawStatusSubscribed = false;
+  let openclawStatusUnsub: (() => void) | null = null;
+  let openclawLogsSubscribed = false;
+  let openclawLogsUnsub: (() => void) | null = null;
+  let pendingOpenClawLogLines: OpenClawLogLine[] = [];
+  let openclawLogFlushTimer: ReturnType<typeof setInterval> | null = null;
 
   const send = (msg: ServerToClientMessage): void => {
     if (ws.readyState === WS_OPEN) ws.send(JSON.stringify(msg));
@@ -273,6 +327,38 @@ export function attachConnection(
       packetFlushTimer = null;
     }
     pendingPacketRows = [];
+  };
+
+  // OpenClaw management (M4): status/logs subscription teardown — same
+  // idempotent-stop + backpressure-aware-flush shape as packets above.
+  const stopOpenClawStatusSubscription = (): void => {
+    if (!openclawStatusSubscribed) return;
+    openclawStatusSubscribed = false;
+    openclawStatusUnsub?.();
+    openclawStatusUnsub = null;
+  };
+
+  const flushPendingOpenClawLogs = (): void => {
+    if (pendingOpenClawLogLines.length === 0) return;
+    if ((ws.bufferedAmount ?? 0) > OPENCLAW_LOG_BACKPRESSURE_BYTES) {
+      pendingOpenClawLogLines = []; // skip AND clear — don't pile onto a backed-up link
+      return;
+    }
+    const lines = pendingOpenClawLogLines;
+    pendingOpenClawLogLines = [];
+    send({ kind: 'openclaw-log-lines', lines });
+  };
+
+  const stopOpenClawLogsSubscription = (): void => {
+    if (!openclawLogsSubscribed) return;
+    openclawLogsSubscribed = false;
+    openclawLogsUnsub?.();
+    openclawLogsUnsub = null;
+    if (openclawLogFlushTimer !== null) {
+      clearInterval(openclawLogFlushTimer);
+      openclawLogFlushTimer = null;
+    }
+    pendingOpenClawLogLines = [];
   };
 
   // Session/run mirroring (M2): every connection observes every session/run
@@ -316,6 +402,9 @@ export function attachConnection(
     fileReads.clear();
     for (const uploadId of fileUploads) void options.fileSource?.abortUpload(uploadId);
     fileUploads.clear();
+    // OpenClaw management (M4): same teardown discipline as stats/packets above.
+    stopOpenClawStatusSubscription();
+    stopOpenClawLogsSubscription();
   });
 
   ws.on('message', (data, isBinary) => {
@@ -632,6 +721,114 @@ export function attachConnection(
         fileUploads.delete(msg.uploadId);
         void options.fileSource.abortUpload(msg.uploadId);
         break;
+
+      // ── OpenClaw management (openclaw-management M4) ────────────────────
+      // Every arm below guards `if (!options.openclawSource) break;` — silent
+      // no-op, same convention as stats/packets/file-* above when their
+      // source is absent.
+
+      case 'openclaw-status-subscribe': {
+        if (!options.openclawSource) break;
+        if (openclawStatusSubscribed) break; // idempotent — already on
+        openclawStatusSubscribed = true;
+        openclawStatusUnsub = options.openclawSource.subscribeStatus((status) => {
+          send({ kind: 'openclaw-status', status });
+        });
+        break;
+      }
+
+      case 'openclaw-status-unsubscribe':
+        stopOpenClawStatusSubscription();
+        break;
+
+      case 'openclaw-lifecycle': {
+        if (!options.openclawSource) break;
+        const { requestId, action } = msg;
+        options.openclawSource
+          .runLifecycle(action)
+          .then((result) => send({ kind: 'openclaw-lifecycle-result', requestId, result }))
+          .catch(() => {});
+        break;
+      }
+
+      case 'openclaw-logs-subscribe': {
+        if (!options.openclawSource) break;
+        if (openclawLogsSubscribed) break; // idempotent — already on
+        openclawLogsSubscribed = true;
+        openclawLogsUnsub = options.openclawSource.subscribeLogs((line) => {
+          pendingOpenClawLogLines.push(line);
+          if (pendingOpenClawLogLines.length > OPENCLAW_LOG_PENDING_CAP) {
+            pendingOpenClawLogLines = pendingOpenClawLogLines.slice(
+              pendingOpenClawLogLines.length - OPENCLAW_LOG_PENDING_CAP,
+            );
+          }
+        });
+        openclawLogFlushTimer = setInterval(flushPendingOpenClawLogs, OPENCLAW_LOG_FLUSH_MS);
+        break;
+      }
+
+      case 'openclaw-logs-unsubscribe':
+        stopOpenClawLogsSubscription();
+        break;
+
+      case 'openclaw-sessions-get': {
+        if (!options.openclawSource) break;
+        const { requestId } = msg;
+        options.openclawSource
+          .listAgentSessions()
+          .then((sessions) => send({ kind: 'openclaw-sessions-reply', requestId, sessions }))
+          .catch(() => {});
+        break;
+      }
+
+      case 'openclaw-config-get': {
+        if (!options.openclawSource) break;
+        const { requestId } = msg;
+        options.openclawSource
+          .getCoreConfig()
+          .then((config) => send({ kind: 'openclaw-config-reply', requestId, config }))
+          .catch(() => {});
+        break;
+      }
+
+      case 'openclaw-config-set': {
+        if (!options.openclawSource) break;
+        const { requestId, key, value } = msg;
+        // `setCoreConfig` REJECTS for a non-allowlisted key (defense against a
+        // hostile/buggy client, see OpenClawService's own doc) — that must
+        // surface as an `ok:false` reply, never crash this connection handler.
+        options.openclawSource
+          .setCoreConfig(key, value)
+          .then((result) => send({ kind: 'openclaw-config-set-reply', requestId, result }))
+          .catch((err: unknown) => {
+            send({
+              kind: 'openclaw-config-set-reply',
+              requestId,
+              result: { ok: false, restartRequired: false, error: err instanceof Error ? err.message : String(err) },
+            });
+          });
+        break;
+      }
+
+      case 'openclaw-chat-ticket': {
+        if (!options.openclawSource) break;
+        const { requestId } = msg;
+        options.openclawSource
+          .mintChatTicket()
+          .then((result) => {
+            send({
+              kind: 'openclaw-chat-ticket-reply',
+              requestId,
+              ticket: result?.ticket ?? null,
+              proxyPort: result?.proxyPort ?? 0,
+              token: result?.token ?? null,
+            });
+          })
+          .catch(() => {
+            send({ kind: 'openclaw-chat-ticket-reply', requestId, ticket: null, proxyPort: 0, token: null });
+          });
+        break;
+      }
 
       // 'auth' after auth already succeeded — ignored (no-op, not an error).
       default:

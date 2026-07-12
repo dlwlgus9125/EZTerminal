@@ -7,9 +7,11 @@ import {
   isRemoteOriginAllowed,
   startRemoteBridge,
   tokensMatch,
+  type OpenClawChatTicketResult,
   type RemoteBridgeOptions,
   type RemoteFileSource,
   type RemoteMessageChannel,
+  type RemoteOpenClawSource,
   type RemotePacketSource,
   type RemotePort,
   type RemoteStatsSource,
@@ -20,6 +22,7 @@ import type { FileReadStream } from './file-service';
 import type { InterpreterToMain, MainToInterpreter, PacketRow, SystemStatsSnapshot } from '../shared/ipc';
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
 import { uint8ArrayToBase64, type RemotePacketFrame, type ServerToClientMessage } from '../shared/remote-protocol';
+import type { OpenClawAgentSession, OpenClawLifecycleResult, OpenClawLogLine, OpenClawStatus } from '../shared/openclaw';
 
 const TOKEN = 'the-secret-token';
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -183,6 +186,47 @@ class FakePacketSource implements RemotePacketSource {
   /** Test helper: simulate the mirror relaying a frame to every subscriber. */
   emit(frame: RemotePacketFrame): void {
     for (const l of this.listeners) l(frame);
+  }
+}
+
+/** A fake `RemoteOpenClawSource` — tracks status/log listener counts (like
+ * `FakeStatsSource`) and lets tests script the request/reply methods' return
+ * values via `vi.fn()` overrides, same convention as `makeFileSource`. */
+class FakeOpenClawSource implements RemoteOpenClawSource {
+  private readonly statusListeners = new Set<(status: OpenClawStatus) => void>();
+  private readonly logListeners = new Set<(line: OpenClawLogLine) => void>();
+  readonly runLifecycle = vi.fn(async (): Promise<OpenClawLifecycleResult> => ({ ok: true }));
+  readonly listAgentSessions = vi.fn(async (): Promise<readonly OpenClawAgentSession[]> => []);
+  readonly getCoreConfig = vi.fn(async () => ({ 'agents.defaults.model': 'unset', 'gateway.port': 'unset' }));
+  readonly setCoreConfig = vi.fn(async () => ({ ok: true, restartRequired: true }));
+  readonly mintChatTicket = vi.fn(async (): Promise<OpenClawChatTicketResult> => null);
+
+  subscribeStatus(listener: (status: OpenClawStatus) => void): () => void {
+    this.statusListeners.add(listener);
+    return () => this.statusListeners.delete(listener);
+  }
+
+  subscribeLogs(listener: (line: OpenClawLogLine) => void): () => void {
+    this.logListeners.add(listener);
+    return () => this.logListeners.delete(listener);
+  }
+
+  get statusListenerCount(): number {
+    return this.statusListeners.size;
+  }
+
+  get logListenerCount(): number {
+    return this.logListeners.size;
+  }
+
+  /** Test helper: simulate a status push. */
+  emitStatus(status: OpenClawStatus): void {
+    for (const l of this.statusListeners) l(status);
+  }
+
+  /** Test helper: simulate a log line arriving. */
+  emitLog(line: OpenClawLogLine): void {
+    for (const l of this.logListeners) l(line);
   }
 }
 
@@ -1211,6 +1255,299 @@ describe('RemoteBridge — file explorer (M3)', () => {
     await flush();
 
     expect(ws.sent.filter((m) => m.kind.startsWith('file-'))).toHaveLength(0);
+  });
+});
+
+describe('RemoteBridge — OpenClaw management (M4)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('a pre-auth openclaw-status-subscribe message is rejected like any other pre-auth message', () => {
+    const openclawSource = new FakeOpenClawSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    attachConnection(ws, options);
+
+    ws.clientSend({ kind: 'openclaw-status-subscribe' });
+
+    expect(ws.closeCode).toBe(AUTH_CLOSE_CODE);
+    expect(openclawSource.statusListenerCount).toBe(0);
+  });
+
+  it('openclaw-status-subscribe subscribes and relays pushes; a second subscribe is idempotent', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'openclaw-status-subscribe' });
+    ws.clientSend({ kind: 'openclaw-status-subscribe' }); // idempotent — no extra listener
+    expect(openclawSource.statusListenerCount).toBe(1);
+
+    openclawSource.emitStatus({ state: 'running', port: 18789 });
+    expect(ws.sent).toContainEqual({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } });
+  });
+
+  it('openclaw-status-unsubscribe unsubscribes exactly once, including a redundant second call', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+    ws.clientSend({ kind: 'openclaw-status-subscribe' });
+
+    ws.clientSend({ kind: 'openclaw-status-unsubscribe' });
+    ws.clientSend({ kind: 'openclaw-status-unsubscribe' }); // redundant — must not throw
+
+    expect(openclawSource.statusListenerCount).toBe(0);
+  });
+
+  it('closing the ws while status-subscribed unsubscribes exactly once', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+    ws.clientSend({ kind: 'openclaw-status-subscribe' });
+
+    ws.close();
+
+    expect(openclawSource.statusListenerCount).toBe(0);
+  });
+
+  it('openclaw-lifecycle round-trips via openclaw-lifecycle-result, echoing the client requestId', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    openclawSource.runLifecycle.mockResolvedValueOnce({ ok: false, stderr: 'boom' });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'openclaw-lifecycle', requestId: 'r1', action: 'restart' });
+    await flush();
+
+    expect(openclawSource.runLifecycle).toHaveBeenCalledWith('restart');
+    expect(ws.sent).toContainEqual({
+      kind: 'openclaw-lifecycle-result',
+      requestId: 'r1',
+      result: { ok: false, stderr: 'boom' },
+    });
+  });
+
+  it('openclaw-logs-subscribe coalesces log lines into ONE openclaw-log-lines flush within the 500ms window', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    vi.useFakeTimers();
+    ws.clientSend({ kind: 'openclaw-logs-subscribe' });
+    expect(openclawSource.logListenerCount).toBe(1);
+
+    const lineA: OpenClawLogLine = { time: 't1', level: 'INFO', message: 'a' };
+    const lineB: OpenClawLogLine = { time: 't2', level: 'INFO', message: 'b' };
+    openclawSource.emitLog(lineA);
+    vi.advanceTimersByTime(100);
+    openclawSource.emitLog(lineB);
+    vi.advanceTimersByTime(100);
+    expect(ws.sent.filter((m) => m.kind === 'openclaw-log-lines')).toHaveLength(0); // window hasn't elapsed
+
+    vi.advanceTimersByTime(300); // total 500ms since subscribe
+    const flushes = ws.sent.filter((m) => m.kind === 'openclaw-log-lines');
+    expect(flushes).toHaveLength(1);
+    expect(flushes[0]).toEqual({ kind: 'openclaw-log-lines', lines: [lineA, lineB] });
+  });
+
+  it('caps the pending log buffer at 500 lines, dropping the oldest', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    vi.useFakeTimers();
+    ws.clientSend({ kind: 'openclaw-logs-subscribe' });
+    for (let i = 0; i < 600; i++) {
+      openclawSource.emitLog({ time: String(i), level: 'INFO', message: `m${i}` });
+    }
+    vi.advanceTimersByTime(500);
+
+    const flush = ws.sent.find((m) => m.kind === 'openclaw-log-lines') as {
+      kind: 'openclaw-log-lines';
+      lines: OpenClawLogLine[];
+    };
+    expect(flush.lines).toHaveLength(500);
+    expect(flush.lines[0].message).toBe('m100'); // oldest 100 dropped
+    expect(flush.lines.at(-1)?.message).toBe('m599');
+  });
+
+  it('skips and clears a log flush while ws.bufferedAmount is over the backpressure threshold', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    vi.useFakeTimers();
+    ws.clientSend({ kind: 'openclaw-logs-subscribe' });
+    ws.bufferedAmount = 262_144 + 1;
+
+    openclawSource.emitLog({ time: 't', level: 'INFO', message: 'x' });
+    vi.advanceTimersByTime(500);
+    expect(ws.sent.some((m) => m.kind === 'openclaw-log-lines')).toBe(false);
+
+    ws.bufferedAmount = 0;
+    vi.advanceTimersByTime(500);
+    expect(ws.sent.some((m) => m.kind === 'openclaw-log-lines')).toBe(false); // cleared, not replayed
+  });
+
+  it('openclaw-logs-unsubscribe unsubscribes + clears the flush timer exactly once', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+    ws.clientSend({ kind: 'openclaw-logs-subscribe' });
+
+    ws.clientSend({ kind: 'openclaw-logs-unsubscribe' });
+    ws.clientSend({ kind: 'openclaw-logs-unsubscribe' }); // redundant — must not throw
+
+    expect(openclawSource.logListenerCount).toBe(0);
+  });
+
+  it('closing the ws while logs-subscribed unsubscribes exactly once', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+    ws.clientSend({ kind: 'openclaw-logs-subscribe' });
+
+    ws.close();
+
+    expect(openclawSource.logListenerCount).toBe(0);
+  });
+
+  it('openclaw-sessions-get round-trips via openclaw-sessions-reply, echoing the requestId', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    const sessions = [{ key: 'k1', sessionId: 's1' }];
+    openclawSource.listAgentSessions.mockResolvedValueOnce(sessions);
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'openclaw-sessions-get', requestId: 'r1' });
+    await flush();
+
+    expect(ws.sent).toContainEqual({ kind: 'openclaw-sessions-reply', requestId: 'r1', sessions });
+  });
+
+  it('openclaw-config-get round-trips via openclaw-config-reply, echoing the requestId', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    const config = { 'agents.defaults.model': 'openai/gpt-5.5', 'gateway.port': 'unset' };
+    openclawSource.getCoreConfig.mockResolvedValueOnce(config);
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'openclaw-config-get', requestId: 'r1' });
+    await flush();
+
+    expect(ws.sent).toContainEqual({ kind: 'openclaw-config-reply', requestId: 'r1', config });
+  });
+
+  it('openclaw-config-set round-trips via openclaw-config-set-reply on success', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    openclawSource.setCoreConfig.mockResolvedValueOnce({ ok: true, restartRequired: true });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'openclaw-config-set', requestId: 'r1', key: 'agents.defaults.model', value: 'x' });
+    await flush();
+
+    expect(openclawSource.setCoreConfig).toHaveBeenCalledWith('agents.defaults.model', 'x');
+    expect(ws.sent).toContainEqual({
+      kind: 'openclaw-config-set-reply',
+      requestId: 'r1',
+      result: { ok: true, restartRequired: true },
+    });
+  });
+
+  it('a setCoreConfig allowlist rejection is surfaced as an ok:false reply, not a crash', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    openclawSource.setCoreConfig.mockRejectedValueOnce(
+      new Error("setCoreConfig: 'not.allowed' is not an allowlisted config key"),
+    );
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    expect(() => {
+      ws.clientSend({ kind: 'openclaw-config-set', requestId: 'r1', key: 'not.allowed', value: 'x' });
+    }).not.toThrow();
+    await flush();
+
+    const reply = ws.sent.find((m) => m.kind === 'openclaw-config-set-reply') as {
+      kind: 'openclaw-config-set-reply';
+      requestId: string;
+      result: { ok: boolean; restartRequired: boolean; error?: string };
+    };
+    expect(reply.result.ok).toBe(false);
+    expect(reply.result.restartRequired).toBe(false);
+    expect(reply.result.error).toContain('not an allowlisted');
+  });
+
+  it('openclaw-chat-ticket replies with the minted ticket/proxyPort/token on success', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    openclawSource.mintChatTicket.mockResolvedValueOnce({ ticket: 'tick-1', proxyPort: 7421, token: 'gw-token' });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'openclaw-chat-ticket', requestId: 'r1' });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'openclaw-chat-ticket-reply',
+      requestId: 'r1',
+      ticket: 'tick-1',
+      proxyPort: 7421,
+      token: 'gw-token',
+    });
+  });
+
+  it('openclaw-chat-ticket replies with nulls/0 when no ticket could be minted', async () => {
+    const openclawSource = new FakeOpenClawSource(); // mintChatTicket defaults to resolving null
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'openclaw-chat-ticket', requestId: 'r1' });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'openclaw-chat-ticket-reply',
+      requestId: 'r1',
+      ticket: null,
+      proxyPort: 0,
+      token: null,
+    });
+  });
+
+  it('without an openclawSource option, every openclaw-* message is a silent no-op (no reply, no crash)', async () => {
+    const ws = new FakeWs();
+    const { options } = makeOptions(); // no openclawSource
+    await authed(ws, options);
+
+    expect(() => {
+      ws.clientSend({ kind: 'openclaw-status-subscribe' });
+      ws.clientSend({ kind: 'openclaw-status-unsubscribe' });
+      ws.clientSend({ kind: 'openclaw-lifecycle', requestId: 'r1', action: 'start' });
+      ws.clientSend({ kind: 'openclaw-logs-subscribe' });
+      ws.clientSend({ kind: 'openclaw-logs-unsubscribe' });
+      ws.clientSend({ kind: 'openclaw-sessions-get', requestId: 'r2' });
+      ws.clientSend({ kind: 'openclaw-config-get', requestId: 'r3' });
+      ws.clientSend({ kind: 'openclaw-config-set', requestId: 'r4', key: 'k', value: 'v' });
+      ws.clientSend({ kind: 'openclaw-chat-ticket', requestId: 'r5' });
+    }).not.toThrow();
+    await flush();
+
+    expect(ws.sent.filter((m) => m.kind.startsWith('openclaw-'))).toHaveLength(0);
   });
 });
 

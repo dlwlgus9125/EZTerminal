@@ -29,12 +29,14 @@ import { SystemStatsService } from './system-stats-service';
 import { StatsVisibility } from './stats-visibility';
 import { RemoteTokenStore } from './remote-token-store';
 import { OpenClawService } from './openclaw-service';
+import { startOpenClawProxy, DEFAULT_OPENCLAW_PROXY_PORT, type OpenClawProxyHandle } from './openclaw-proxy';
 import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
 import {
   startRemoteBridge,
   DEFAULT_REMOTE_BRIDGE_PORT,
   type RemoteBridgeHandle,
   type RemoteFileSource,
+  type RemoteOpenClawSource,
   type RemotePacketSource,
   type RemoteStatsSource,
 } from './remote-bridge';
@@ -99,6 +101,11 @@ let packetCaptureRegistry: PacketCaptureRegistry | null = null;
 
 // Mobile remote-control WS bridge (M0) — created once on 'ready', stopped on quit.
 let remoteBridgeHandle: RemoteBridgeHandle | null = null;
+
+// OpenClaw reverse proxy (openclaw-management M4) — lifecycle in lockstep
+// with remoteBridgeHandle above (both chained through the same `bridgeOp`
+// serialization); stopped on quit. Never touches the gateway itself.
+let openClawProxyHandle: OpenClawProxyHandle | null = null;
 
 // OpenClaw management service (openclaw-management M1) — created once on
 // 'ready'; referenced only for before-quit dispose() below (all its IPC
@@ -441,6 +448,7 @@ app.on('ready', () => {
     systemStatsService?.stop();
     packetCaptureRegistry?.kill();
     void remoteBridgeHandle?.stop();
+    void openClawProxyHandle?.stop();
     openClawService?.dispose();
   });
 
@@ -633,13 +641,44 @@ app.on('ready', () => {
     }
   });
 
-  // ── Mobile remote-control WS bridge (M0) ─────────────────────────────────
+  // ── OpenClaw management service (openclaw-management M1) ─────────────────
+  // Electron-free service (see openclaw-service.ts's module doc for the M0
+  // Stage-0 latency findings this is built around) — constructed here (rather
+  // than down by its IPC handlers below) because the mobile bridge/proxy
+  // wiring right below needs it to build `remoteOpenClawSource`.
+  const openclaw = new OpenClawService();
+  openClawService = openclaw;
+
+  // ── Mobile remote-control WS bridge (M0) + OpenClaw reverse proxy (M4) ──
   // Default OFF (opt-in — see LayoutStore.getRemoteEnabled): the bridge grants
   // a paired device full command + filesystem access, so the listener only
   // binds once the user enables it in Settings. When enabled it binds 0.0.0.0
-  // (LAN + Tailscale reachable), token-gated and origin-checked.
+  // (LAN + Tailscale reachable), token-gated and origin-checked. The OpenClaw
+  // proxy (mobile chat embed's tunnel to the gateway, architecture decision
+  // (b)) shares the SAME enable/disable lifecycle — see `startBridge`/the
+  // `remote:set-enabled` handler below, both chained through `bridgeOp`.
   // The bridge adapts to the SAME broker instance the local IPC handlers use,
   // so both transports share one interpreter listener + one session directory.
+  const openClawProxyPort = Number(process.env.EZTERMINAL_OPENCLAW_PROXY_PORT) || DEFAULT_OPENCLAW_PROXY_PORT;
+  // Adapts `openclaw` (an OpenClawService instance) + `openClawProxyHandle`
+  // (started/stopped in lockstep, see `startBridge` below) to the bridge's DI
+  // seam — `mintChatTicket` is the one method genuinely composed from BOTH
+  // sources (the service's token + the proxy's ticket), everything else is a
+  // direct passthrough (method names match `OpenClawService`'s own exactly).
+  const remoteOpenClawSource: RemoteOpenClawSource = {
+    subscribeStatus: (listener) => openclaw.subscribeStatus(listener),
+    runLifecycle: (action) => openclaw.runLifecycle(action),
+    subscribeLogs: (listener) => openclaw.subscribeLogs(listener),
+    listAgentSessions: () => openclaw.listAgentSessions(),
+    getCoreConfig: () => openclaw.getCoreConfig(),
+    setCoreConfig: (key, value) => openclaw.setCoreConfig(key, value),
+    mintChatTicket: async () => {
+      if (!openClawProxyHandle) return null;
+      const token = await openclaw.getChatToken();
+      if (!token) return null;
+      return { ticket: openClawProxyHandle.mintTicket(), proxyPort: openClawProxyHandle.port, token };
+    },
+  };
   const remoteTokenStore = new RemoteTokenStore(path.join(app.getPath('userData')));
   const remoteTokenReady = remoteTokenStore.init().catch((err) => {
     console.error('[main] remote token store init failed:', err);
@@ -658,8 +697,17 @@ app.on('ready', () => {
     subscribe: (listener) => packetMirror?.subscribe(listener) ?? (() => undefined),
   };
   // Gated on `remoteEnabled` (v0.2.0 D2): a closure so both boot and the
-  // runtime toggle below start the SAME shape of bridge.
-  const startBridge = (): void => {
+  // runtime toggle below start the SAME shape of bridge + proxy, in lockstep
+  // (architecture decision (b) — the OpenClaw proxy's lifecycle matches
+  // `remoteEnabled` exactly, never a separate always-on listener).
+  const startBridge = async (): Promise<void> => {
+    if (!openClawProxyHandle) {
+      const status = await openclaw.getStatus();
+      openClawProxyHandle = await startOpenClawProxy({
+        port: openClawProxyPort,
+        upstreamOrigin: `http://127.0.0.1:${status.port}`,
+      });
+    }
     remoteBridgeHandle = startRemoteBridge({
       port: remoteBridgePort,
       getToken: async () => {
@@ -672,13 +720,14 @@ app.on('ready', () => {
       // `satisfies` forces a structural check here — the same `fileService`
       // instance backs the desktop IPC handlers above and the mobile bridge.
       fileSource: fileService satisfies RemoteFileSource,
+      openclawSource: remoteOpenClawSource,
     });
   };
   // `app.on('ready', ...)` isn't async, so the boot gate is a fire-and-forget
   // IIFE rather than a top-level await.
   void (async () => {
     await storeReady;
-    if (await layoutStore.getRemoteEnabled()) startBridge();
+    if (await layoutStore.getRemoteEnabled()) await startBridge();
   })();
 
   // Runtime on/off toggle (v0.2.0 D2): every start/stop chains off `bridgeOp`
@@ -709,11 +758,18 @@ app.on('ready', () => {
     await layoutStore.setRemoteEnabled(enabled);
     bridgeOp = bridgeOp.then(async () => {
       if (enabled) {
-        if (!remoteBridgeHandle) startBridge();
+        if (!remoteBridgeHandle) await startBridge();
       } else if (remoteBridgeHandle) {
         const handle = remoteBridgeHandle;
         remoteBridgeHandle = null;
         await handle.stop();
+        // Proxy lifecycle in lockstep with the bridge (architecture decision
+        // (b)) — never left running once remote control is turned off.
+        if (openClawProxyHandle) {
+          const proxyHandle = openClawProxyHandle;
+          openClawProxyHandle = null;
+          await proxyHandle.stop();
+        }
       }
     });
     await bridgeOp;
@@ -721,14 +777,12 @@ app.on('ready', () => {
   });
 
   // ── OpenClaw management (openclaw-management M1) ─────────────────────────
-  // Electron-free service (see openclaw-service.ts's module doc for the M0
-  // Stage-0 latency findings this is built around) — IPC here is a thin
-  // adapter, same shape as the file explorer's FileService wiring above.
-  // The chat token/URL never cross to the renderer (M3 owns the
-  // WebContentsView main-side) — only a boolean "is a token available" is
-  // exposed via `openclaw:chat-available`.
-  const openclaw = new OpenClawService();
-  openClawService = openclaw;
+  // `openclaw`/`openClawService` are constructed earlier (see the mobile
+  // bridge/proxy wiring above, which needs it to build `remoteOpenClawSource`)
+  // — IPC here is a thin adapter, same shape as the file explorer's
+  // FileService wiring above. The chat token/URL never cross to the renderer
+  // (M3 owns the WebContentsView main-side) — only a boolean "is a token
+  // available" is exposed via `openclaw:chat-available`.
   ipcMain.handle('openclaw:get-status', (_event, force?: boolean) => openclaw.getStatus(force));
   ipcMain.handle('openclaw:lifecycle', (_event, action: OpenClawLifecycleAction) => openclaw.runLifecycle(action));
   ipcMain.handle('openclaw:list-sessions', () => openclaw.listAgentSessions());
