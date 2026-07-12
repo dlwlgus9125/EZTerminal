@@ -68,11 +68,18 @@ import {
 const DEFAULT_PORT = 18789;
 const DEFAULT_HOST = '127.0.0.1';
 
-const HTTP_LIVENESS_TIMEOUT_MS = 3000;
+const HTTP_LIVENESS_TIMEOUT_MS = 5000;
 const RPC_CONNECT_TIMEOUT_MS = 5000;
 const RPC_CALL_TIMEOUT_MS = 10_000;
 const RPC_INITIAL_BACKOFF_MS = 500;
 const RPC_MAX_BACKOFF_MS = 5000;
+
+// M1 (openclaw-management stabilization): a single timed-out/errored probe no
+// longer flips `running` -> `stopped` — the gateway can go briefly
+// unresponsive (e.g. a busy cron job) without actually being down. A
+// `refused` failure (the OS rejects the connection outright) is still treated
+// as definitive since a stopped gateway refuses instantly.
+const STATUS_FAILURE_THRESHOLD = 3;
 
 const STATUS_POLL_INTERVAL_MS = 4000;
 const LOG_POLL_INTERVAL_MS = 2000;
@@ -101,6 +108,11 @@ export type SpawnFn = (
 
 export interface HttpGetResult {
   readonly ok: boolean;
+  /** Failure classification (absent when `ok` is true). `refused` is a
+   * definitive "not running" signal (the OS rejected the connection
+   * outright); `timeout`/`error` are ambiguous — the gateway may just be
+   * momentarily busy — and get debounced in `getStatus`. */
+  readonly reason?: 'timeout' | 'refused' | 'error';
 }
 
 export type HttpGetFn = (url: string) => Promise<HttpGetResult>;
@@ -135,9 +147,11 @@ function defaultHttpGet(url: string): Promise<HttpGetResult> {
     });
     req.on('timeout', () => {
       req.destroy();
-      resolve({ ok: false });
+      resolve({ ok: false, reason: 'timeout' });
     });
-    req.on('error', () => resolve({ ok: false }));
+    req.on('error', (err: NodeJS.ErrnoException) =>
+      resolve({ ok: false, reason: err.code === 'ECONNREFUSED' ? 'refused' : 'error' }),
+    );
   });
 }
 
@@ -401,6 +415,15 @@ export class OpenClawService {
   private lifecycleOp: Promise<void> = Promise.resolve();
   private busyAction: OpenClawLifecycleAction | null = null;
 
+  // M1 status debounce — see STATUS_FAILURE_THRESHOLD's comment.
+  private wasRunning = false;
+  private probeFailureStreak = 0;
+  // Coalesces concurrent getStatus() callers (the renderer's one-shot IPC
+  // getStatus can overlap the internal poll loop) onto a single in-flight
+  // probe — otherwise two concurrent failing probes would each advance
+  // probeFailureStreak, shortening the intended debounce window.
+  private statusProbe: Promise<OpenClawStatus> | null = null;
+
   private rpc: OpenClawRpcConnection | null = null;
   private rpcRefCount = 0;
 
@@ -432,25 +455,49 @@ export class OpenClawService {
 
   async getStatus(force = false): Promise<OpenClawStatus> {
     if (force) this.installedCache = null;
+    if (!this.statusProbe) {
+      this.statusProbe = this.probeStatus().finally(() => {
+        this.statusProbe = null;
+      });
+    }
+    return this.statusProbe;
+  }
+
+  private async probeStatus(): Promise<OpenClawStatus> {
     if (!this.isInstalled()) return { state: 'not-installed', port: this.port };
 
-    let alive: boolean;
+    let probe: HttpGetResult;
     try {
-      alive = (await this.httpGet(`${this.baseUrl}/`)).ok;
+      probe = await this.httpGet(`${this.baseUrl}/`);
     } catch {
       return { state: 'unknown', port: this.port };
     }
-    if (!alive) {
-      const starting = this.busyAction === 'start' || this.busyAction === 'restart';
-      return { state: starting ? 'starting' : 'stopped', port: this.port };
+
+    if (probe.ok) {
+      this.wasRunning = true;
+      this.probeFailureStreak = 0;
+      const enrichment = await this.withRpc((rpc) => rpc.call('status'));
+      const version =
+        enrichment && typeof enrichment === 'object' && enrichment !== null && 'runtimeVersion' in enrichment
+          ? String((enrichment as { runtimeVersion: unknown }).runtimeVersion)
+          : undefined;
+      return { state: 'running', port: this.port, version };
     }
 
-    const enrichment = await this.withRpc((rpc) => rpc.call('status'));
-    const version =
-      enrichment && typeof enrichment === 'object' && enrichment !== null && 'runtimeVersion' in enrichment
-        ? String((enrichment as { runtimeVersion: unknown }).runtimeVersion)
-        : undefined;
-    return { state: 'running', port: this.port, version };
+    // `refused` is definitive (a stopped gateway refuses instantly) — report
+    // it right away. `timeout`/`error` are ambiguous, so a prior `running`
+    // observation is held through up to STATUS_FAILURE_THRESHOLD - 1
+    // transient failures before flipping to `stopped`.
+    if (probe.reason !== 'refused' && this.wasRunning) {
+      this.probeFailureStreak += 1;
+      if (this.probeFailureStreak < STATUS_FAILURE_THRESHOLD) {
+        return { state: 'running', port: this.port };
+      }
+    }
+    this.wasRunning = false;
+    this.probeFailureStreak = 0;
+    const starting = this.busyAction === 'start' || this.busyAction === 'restart';
+    return { state: starting ? 'starting' : 'stopped', port: this.port };
   }
 
   private isInstalled(): boolean {
@@ -502,6 +549,12 @@ export class OpenClawService {
         result = await this.execCli(['gateway', action]).then(({ code, stderr }) =>
           code === 0 ? { ok: true } : { ok: false, stderr: stderr || `exit code ${code}` },
         );
+        // A user-initiated stop must show up as `stopped` immediately, not
+        // after riding out the debounce grace on the next poll.
+        if (action === 'stop' && result.ok) {
+          this.wasRunning = false;
+          this.probeFailureStreak = 0;
+        }
       } finally {
         this.busyAction = null;
         await this.pushStatusNow();

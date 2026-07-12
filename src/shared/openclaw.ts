@@ -8,6 +8,9 @@
 /**
  * `not-installed`: the `openclaw` CLI doesn't resolve on PATH.
  * `stopped`/`running`: HTTP liveness probe against the gateway's own port.
+ * A `running` observation is held through up to 2 transient probe timeouts
+ * (M1 status debounce) before flipping to `stopped` — a connection-refused
+ * failure is treated as definitive and reported immediately instead.
  * `starting`: a `runLifecycle('start'|'restart')` call is in flight.
  * `unknown`: the probe itself failed in an unexpected way (not a clean
  * connection-refused) — distinct from `stopped` so the UI doesn't claim
