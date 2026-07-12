@@ -738,6 +738,18 @@ export class OpenClawService {
   }
 
   private async logTick(): Promise<void> {
+    // M5 (openclaw-stabilization reliability sweep): skip the RPC call
+    // entirely while the gateway isn't known-running — `wasRunning` (the M1
+    // debounce flag, updated by every `probeStatus()`) is the same signal
+    // status polling already trusts. Without this, an unconditional
+    // `withRpc` call here re-triggers `OpenClawRpcConnection.connect()` on
+    // EVERY tick once a failed attempt nulls its `connectPromise` — that
+    // bypasses `scheduleReconnect`'s own exponential-backoff timer entirely
+    // (a SEPARATE, correctly-capped mechanism owned by the persistent
+    // connection itself), producing an effective 2s reconnect-attempt storm
+    // while stopped. The timer keeps ticking either way (cheap no-op) —
+    // this only stops it from touching the network.
+    if (!this.wasRunning) return;
     const params = this.logCursor === undefined ? { limit: LOG_BACKFILL_LIMIT } : { cursor: this.logCursor, limit: LOG_POLL_LIMIT };
     const result = await this.withRpc((rpc) => rpc.call('logs.tail', params));
     if (!result || typeof result !== 'object') return;

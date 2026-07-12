@@ -1355,6 +1355,23 @@ describe('RemoteBridge — OpenClaw management (M4)', () => {
     });
   });
 
+  it('a runLifecycle rejection is surfaced as an ok:false lifecycle result, not a hang (M5/S10)', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    openclawSource.runLifecycle.mockRejectedValueOnce(new Error('boom'));
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'openclaw-lifecycle', requestId: 'r1', action: 'restart' });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'openclaw-lifecycle-result',
+      requestId: 'r1',
+      result: { ok: false, stderr: 'boom' },
+    });
+  });
+
   it('openclaw-logs-subscribe coalesces log lines into ONE openclaw-log-lines flush within the 500ms window', async () => {
     const openclawSource = new FakeOpenClawSource();
     const ws = new FakeWs();
@@ -1459,6 +1476,19 @@ describe('RemoteBridge — OpenClaw management (M4)', () => {
     expect(ws.sent).toContainEqual({ kind: 'openclaw-sessions-reply', requestId: 'r1', sessions });
   });
 
+  it('a listAgentSessions rejection is surfaced as an empty sessions reply, not a hang (M5/S10)', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    openclawSource.listAgentSessions.mockRejectedValueOnce(new Error('boom'));
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'openclaw-sessions-get', requestId: 'r1' });
+    await flush();
+
+    expect(ws.sent).toContainEqual({ kind: 'openclaw-sessions-reply', requestId: 'r1', sessions: [] });
+  });
+
   it('openclaw-config-get round-trips via openclaw-config-reply, echoing the requestId', async () => {
     const openclawSource = new FakeOpenClawSource();
     const config = { 'agents.defaults.model': 'openai/gpt-5.5', 'gateway.port': 'unset' };
@@ -1471,6 +1501,23 @@ describe('RemoteBridge — OpenClaw management (M4)', () => {
     await flush();
 
     expect(ws.sent).toContainEqual({ kind: 'openclaw-config-reply', requestId: 'r1', config });
+  });
+
+  it('a getCoreConfig rejection is surfaced as an all-unset config reply, not a hang (M5/S10)', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    openclawSource.getCoreConfig.mockRejectedValueOnce(new Error('boom'));
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'openclaw-config-get', requestId: 'r1' });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'openclaw-config-reply',
+      requestId: 'r1',
+      config: { 'agents.defaults.model': 'unset', 'gateway.port': 'unset' },
+    });
   });
 
   it('openclaw-config-set round-trips via openclaw-config-set-reply on success', async () => {

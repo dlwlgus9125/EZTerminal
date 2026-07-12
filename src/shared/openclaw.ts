@@ -23,11 +23,7 @@ export interface OpenClawStatus {
   readonly state: OpenClawStatusState;
   /** From the WS `status` RPC's `runtimeVersion` — only present while `running`. */
   readonly version?: string;
-  /** Not obtainable from the fast HTTP/WS path (only `gateway status --json
-   * --no-probe`, a 9-10s CLI call per M0 ⑥) — left undefined on the hot path. */
-  readonly pid?: number;
   readonly port: number;
-  readonly configPath?: string;
 }
 
 /** A subset of `sessions.list`'s per-session fields (WS RPC, M0 ④) — the raw

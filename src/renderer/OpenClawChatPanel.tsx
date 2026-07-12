@@ -102,17 +102,26 @@ export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
     };
   }, []);
 
-  // ── Request the view exactly once per stopped->running transition.
+  // ── Request the view exactly once per stopped->running transition. If an
+  // error is still latched from BEFORE this transition (viewState.hasError),
+  // a plain re-open is a no-op against the existing (errored) view — recover
+  // via the SAME reload path the 재연결 button uses instead, so the panel
+  // doesn't stay stuck behind the reconnect card forever once the gateway is
+  // healthy again (openclaw-stabilization M5).
   useEffect(() => {
     if (status?.state === 'running') {
       if (!openedRef.current) {
         openedRef.current = true;
-        window.ezterminalDesktop?.openOpenClawChatView();
+        if (viewState.hasError) {
+          window.ezterminalDesktop?.reloadOpenClawChatView();
+        } else {
+          window.ezterminalDesktop?.openOpenClawChatView();
+        }
       }
     } else {
       openedRef.current = false;
     }
-  }, [status?.state]);
+  }, [status?.state, viewState.hasError]);
 
   // ── Bounds reporting: rAF-throttled ResizeObserver + scroll/layout nudges.
   const reportBounds = useThrottledRaf(() => {

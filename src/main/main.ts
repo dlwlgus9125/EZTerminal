@@ -1003,7 +1003,7 @@ app.on('ready', () => {
     openClawChatView?.setVisible(isVisible);
   });
   ipcMain.on('openclaw:chat-reload', () => {
-    openClawChatView?.reload();
+    void openClawChatView?.reload();
   });
 
   createWindow();

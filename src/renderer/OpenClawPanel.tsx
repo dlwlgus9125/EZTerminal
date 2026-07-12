@@ -239,13 +239,7 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
           <span className="status-metric">{status ? STATE_LABEL[status.state] : '확인 중…'}</span>
         </div>
         {status?.version && <div className="openclaw-state-detail">버전 {status.version}</div>}
-        {status?.pid !== undefined && <div className="openclaw-state-detail">PID {status.pid}</div>}
         {status && <div className="openclaw-state-detail">포트 {status.port}</div>}
-        {status?.configPath && (
-          <div className="openclaw-state-detail openclaw-state-path" title={status.configPath}>
-            {status.configPath}
-          </div>
-        )}
       </section>
 
       {state === 'not-installed' ? (
@@ -316,6 +310,12 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
               <div className="status-loading">
                 게이트웨이가 중지되어 있습니다. 시작 버튼을 눌러 세션과 로그를 확인하세요.
               </div>
+            </section>
+          )}
+
+          {state === 'unknown' && (
+            <section className="status-section" data-testid="openclaw-guidance">
+              <div className="status-loading">상태를 확인할 수 없습니다.</div>
             </section>
           )}
 

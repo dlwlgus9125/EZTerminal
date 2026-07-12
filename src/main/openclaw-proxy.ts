@@ -123,6 +123,16 @@ const SESSION_COOKIE_NAME = 'ez_openclaw_session';
  * binding doesn't linger — the mobile client re-tickets on every tab
  * activate/reload/retry anyway (MobileOpenClawView.tsx's M5 design). */
 const IP_SESSION_TTL_MS = 10 * 60_000;
+/** M5/S3 (openclaw-stabilization reliability sweep): the cookie session
+ * itself used to never expire at all (a plain `Set<string>` — every ticket
+ * redemption added one, forever; unbounded growth). Fixed-window from
+ * redemption, same non-sliding shape as `IP_SESSION_TTL_MS` above, but
+ * considerably longer: unlike the IP binding (which covers the mobile
+ * embed's own follow-up requests), this cookie is what the "브라우저로 열기"
+ * TOP-LEVEL-navigation fallback relies on for its whole lifetime, so it
+ * should comfortably outlast one browser session rather than expire
+ * mid-use — 24h is that margin without being effectively unbounded again. */
+const SESSION_TTL_MS = 24 * 60 * 60_000;
 
 export interface OpenClawProxyOptions {
   /** Listen port — pass `0` for an OS-assigned ephemeral port (tests). */
@@ -188,12 +198,19 @@ function parseCookies(header: string | undefined): Record<string, string> {
   return out;
 }
 
-/** Constant-time "is `candidate` a member of `values`" — every comparison
- * runs through `timingSafeEqual` (never a plain `===`/`Set.has`), and the
- * loop never short-circuits on a match, so total response time doesn't leak
- * which (if any) stored value matched. `expectedBytes` is the decoded byte
- * length every valid hex-encoded value must have. */
-function constantTimeMember(values: Iterable<string>, candidate: string | undefined, expectedBytes: number): boolean {
+/** Constant-time "is `candidate` a currently-valid (non-expired) session key
+ * of `sessions`" — every comparison runs through `timingSafeEqual` (never a
+ * plain `===`/`Map.has`), and the loop never short-circuits on a match, so
+ * total response time doesn't leak which (if any) stored value matched.
+ * `expectedBytes` is the decoded byte length every valid hex-encoded key
+ * must have. M5/S3: `sessions` now carries an expiry (see `SESSION_TTL_MS`'s
+ * doc) — a match past its `expiresAt` is treated the same as no match. */
+function constantTimeSessionMatch(
+  sessions: ReadonlyMap<string, number>,
+  candidate: string | undefined,
+  expectedBytes: number,
+  now: number,
+): boolean {
   if (!candidate || candidate.length !== expectedBytes * 2) return false;
   let candidateBuf: Buffer;
   try {
@@ -202,12 +219,12 @@ function constantTimeMember(values: Iterable<string>, candidate: string | undefi
     return false;
   }
   if (candidateBuf.length !== expectedBytes) return false;
-  let found = false;
-  for (const value of values) {
-    const valueBuf = Buffer.from(value, 'hex');
-    if (valueBuf.length === candidateBuf.length && timingSafeEqual(candidateBuf, valueBuf)) found = true;
+  let matchedExpiry: number | undefined;
+  for (const [key, expiresAt] of sessions) {
+    const keyBuf = Buffer.from(key, 'hex');
+    if (keyBuf.length === candidateBuf.length && timingSafeEqual(candidateBuf, keyBuf)) matchedExpiry = expiresAt;
   }
-  return found;
+  return matchedExpiry !== undefined && matchedExpiry >= now;
 }
 
 // ── Proxy server ──────────────────────────────────────────────────────────
@@ -217,7 +234,10 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
   const upstream = new URL(options.upstreamOrigin);
 
   const tickets = new Map<string, { readonly expiresAt: number }>();
-  const sessions = new Set<string>();
+  /** M5/S3 — cookie session -> expiresAt (`SESSION_TTL_MS`, fixed-window
+   * from redemption); see `SESSION_TTL_MS`'s doc for why this used to be a
+   * plain unbounded `Set<string>`. */
+  const sessions = new Map<string, number>();
   /** M5 amendment ① — source IP -> expiry, populated on every ticket
    * redemption alongside (never instead of) the cookie session above. */
   const ipSessions = new Map<string, number>();
@@ -252,7 +272,7 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
   };
 
   const isValidSession = (candidate: string | undefined): boolean =>
-    constantTimeMember(sessions, candidate, SESSION_BYTES);
+    constantTimeSessionMatch(sessions, candidate, SESSION_BYTES, now());
 
   /** M5 amendment ① — is `address` a source IP that redeemed a ticket within
    * `IP_SESSION_TTL_MS`? Not `timingSafeEqual`-guarded like the cookie/ticket
@@ -285,7 +305,7 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
         return;
       }
       const session = randomBytes(SESSION_BYTES).toString('hex');
-      sessions.add(session);
+      sessions.set(session, now() + SESSION_TTL_MS);
       const redeemerIp = normalizeIp(req.socket.remoteAddress);
       if (redeemerIp) ipSessions.set(redeemerIp, now() + IP_SESSION_TTL_MS);
       parsedUrl.searchParams.delete('t');
@@ -393,6 +413,9 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
     }
     for (const [ip, expiresAt] of ipSessions) {
       if (expiresAt < t) ipSessions.delete(ip);
+    }
+    for (const [session, expiresAt] of sessions) {
+      if (expiresAt < t) sessions.delete(session);
     }
   }, TICKET_SWEEP_INTERVAL_MS);
   sweepTimer.unref?.();

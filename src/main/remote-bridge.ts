@@ -785,7 +785,13 @@ export function attachConnection(
         options.openclawSource
           .runLifecycle(action)
           .then((result) => send({ kind: 'openclaw-lifecycle-result', requestId, result }))
-          .catch(() => {});
+          .catch((err: unknown) => {
+            send({
+              kind: 'openclaw-lifecycle-result',
+              requestId,
+              result: { ok: false, stderr: err instanceof Error ? err.message : String(err) },
+            });
+          });
         break;
       }
 
@@ -820,7 +826,7 @@ export function attachConnection(
         options.openclawSource
           .listAgentSessions()
           .then((sessions) => send({ kind: 'openclaw-sessions-reply', requestId, sessions }))
-          .catch(() => {});
+          .catch(() => send({ kind: 'openclaw-sessions-reply', requestId, sessions: [] }));
         break;
       }
 
@@ -838,7 +844,13 @@ export function attachConnection(
         options.openclawSource
           .getCoreConfig()
           .then((config) => send({ kind: 'openclaw-config-reply', requestId, config }))
-          .catch(() => {});
+          .catch(() =>
+            send({
+              kind: 'openclaw-config-reply',
+              requestId,
+              config: Object.fromEntries(OPENCLAW_CONFIG_ALLOWLIST.map((key) => [key, OPENCLAW_CONFIG_UNSET])) as OpenClawCoreConfig,
+            }),
+          );
         break;
       }
 

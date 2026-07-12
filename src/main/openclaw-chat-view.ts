@@ -52,6 +52,12 @@ export class OpenClawChatViewManager {
   private desiredVisible = false;
   private desiredBounds: Rectangle = EMPTY_BOUNDS;
   private hasError = false;
+  /** The origin (scheme+host+port) the CURRENT view was created/last
+   * recreated with — see `ensureView`/`reload`'s origin-change recreation
+   * (openclaw-stabilization M5): a `gateway.port` config-set + restart
+   * changes the chat URL's origin, which otherwise left a live view pointed
+   * at a dead one forever. `null` while no view exists. */
+  private currentOrigin: string | null = null;
 
   constructor(private readonly deps: OpenClawChatViewManagerDeps) {}
 
@@ -63,16 +69,47 @@ export class OpenClawChatViewManager {
   }
 
   /**
-   * Idempotent lazy create: a no-op if the view already exists (or is mid-
-   * creation), and a no-op if no token is available yet (nothing to load —
-   * the caller's next visibility/status push will retry). Never throws.
+   * Idempotent lazy create: creates the view if none exists yet (a no-op if
+   * no token is available — nothing to load, the caller's next visibility/
+   * status push will retry). If a view already exists, re-resolves the
+   * fresh chat URL and destroys + recreates it ONLY if the origin changed
+   * since creation (M5 — a `gateway.port` config-set + restart) — a
+   * same-origin call is a cheap no-op. This does NOT retry a latched error
+   * on the SAME origin; that's `reload()`'s job (see OpenClawChatPanel's
+   * stopped->running edge). Never throws.
    */
   async ensureView(): Promise<void> {
-    if (this.view || this.creating) return this.creating ?? undefined;
-    this.creating = this.doCreate().finally(() => {
+    if (this.creating) return this.creating;
+    this.creating = (this.view ? this.recreateIfOriginChanged() : this.doCreate()).finally(() => {
       this.creating = null;
     });
     return this.creating;
+  }
+
+  /** A view already exists — see `ensureView`'s doc. */
+  private async recreateIfOriginChanged(): Promise<void> {
+    const origin = await this.resolveOrigin();
+    if (!origin || origin === this.currentOrigin) return;
+    this.destroy();
+    await this.doCreate();
+  }
+
+  /** Resolves the CURRENT chat URL's origin, or `null` on any failure (no
+   * token yet / an unparsable URL) — shared by `recreateIfOriginChanged` and
+   * `reload()`. Never throws. */
+  private async resolveOrigin(): Promise<string | null> {
+    let url: string | null;
+    try {
+      url = await this.deps.getChatUrl();
+    } catch {
+      return null;
+    }
+    if (!url) return null;
+    try {
+      return new URL(url).origin;
+    } catch {
+      return null;
+    }
   }
 
   private async doCreate(): Promise<void> {
@@ -96,6 +133,7 @@ export class OpenClawChatViewManager {
       webPreferences: { sandbox: true, contextIsolation: true, partition: 'persist:openclaw-chat' },
     });
     this.view = view;
+    this.currentOrigin = origin;
     this.win.contentView.addChildView(view);
     view.setBounds(this.desiredBounds);
     view.setVisible(this.desiredVisible && !this.hasError);
@@ -154,11 +192,24 @@ export class OpenClawChatViewManager {
     this.view?.setVisible(this.desiredVisible && !this.hasError);
   }
 
-  /** Reconnect action (the placeholder's "재연결" button) — re-navigates the
-   * existing view; does nothing if the view was never created (nothing to
-   * reconnect, e.g. no token was ever available). */
-  reload(): void {
-    this.view?.webContents.reload();
+  /** Reconnect action (the placeholder's "재연결" button, and the panel's
+   * stopped->running edge when a previous error is still latched — M5) —
+   * re-resolves the fresh chat URL first: if the origin changed since the
+   * view was created (a `gateway.port` config-set + restart), destroys +
+   * recreates pointed at the new origin rather than blindly re-navigating a
+   * dead one; otherwise a same-origin plain `webContents.reload()`. No-op if
+   * the view was never created (nothing to reconnect, e.g. no token was
+   * ever available). */
+  async reload(): Promise<void> {
+    const view = this.view;
+    if (!view) return;
+    const origin = await this.resolveOrigin();
+    if (origin && origin !== this.currentOrigin) {
+      this.destroy();
+      await this.doCreate();
+      return;
+    }
+    view.webContents.reload();
   }
 
   /** Tears the view down entirely (singleton panel closed, or the owning
@@ -169,6 +220,7 @@ export class OpenClawChatViewManager {
     if (!view) return;
     this.view = null;
     this.hasError = false;
+    this.currentOrigin = null;
     if (this.win && !this.win.isDestroyed()) {
       try {
         this.win.contentView.removeChildView(view);

@@ -19,6 +19,7 @@ import {
   type ChildProcessLike,
   type HttpGetFn,
   type HttpGetResult,
+  type OpenClawWsFactory,
   type OpenClawWsLike,
   type SpawnFn,
 } from './openclaw-service';
@@ -619,12 +620,29 @@ describe('parseLogLine', () => {
 
 describe('OpenClawService — subscribeLogs', () => {
   it('shares ONE RPC connection across multiple listeners and tears it down at zero subscribers', async () => {
-    const { wsFactory, sockets } = makeWsFactory();
+    const { wsFactory: realWsFactory, sockets } = makeWsFactory();
+    // M5 (S2): logTick now gates on `wasRunning` — seed it via a real status
+    // probe first, using a wsFactory that fails FAST on that probe's own
+    // (throwaway) enrichment connection so it never touches `sockets`, then
+    // falls through to the real tracked factory for subscribeLogs below —
+    // every `sockets[N]` index the rest of this test asserts on is
+    // unaffected.
+    let seeded = false;
+    const wsFactory: OpenClawWsFactory = () => {
+      if (!seeded) {
+        seeded = true;
+        throw new Error('seed status probe — no real socket needed');
+      }
+      return realWsFactory();
+    };
     const service = new OpenClawService({
       env: cliEnv,
+      httpGet: async () => ({ ok: true }),
       wsFactory,
       readFile: async () => JSON.stringify({ gateway: { auth: { token: 'tok' } } }),
     });
+    expect((await service.getStatus()).state).toBe('running');
+
     const linesA: OpenClawLogLine[] = [];
     const linesB: OpenClawLogLine[] = [];
     const unsubA = service.subscribeLogs((l) => linesA.push(l));
@@ -654,6 +672,55 @@ describe('OpenClawService — subscribeLogs', () => {
     expect(sockets[0].closed).toBe(false); // one subscriber remains
     unsubB();
     expect(sockets[0].closed).toBe(true); // refcount hit zero — connection closed
+  });
+});
+
+// ── subscribeLogs gated on running (M5) ──────────────────────────────────
+
+describe('OpenClawService — log poll gated on running (M5)', () => {
+  it('while the gateway has never been observed running, a log tick does not call logs.tail (even once the shared connection itself is up)', async () => {
+    const { wsFactory, sockets } = makeWsFactory();
+    const service = new OpenClawService({
+      env: cliEnv,
+      wsFactory,
+      readFile: async () => JSON.stringify({ gateway: { auth: { token: 'tok' } } }),
+    });
+
+    service.subscribeLogs(() => undefined);
+    await flush(); // the first tick (scheduled at delay 0) runs — wasRunning is still false
+    await completeHandshake(sockets[0]);
+    await flush();
+
+    expect(sockets[0].sent.some((m) => m.method === 'logs.tail')).toBe(false);
+  });
+
+  it('once the gateway is known-running (a prior successful probe), a subsequent log tick DOES call logs.tail', async () => {
+    const { wsFactory, sockets } = makeWsFactory();
+    const service = new OpenClawService({
+      env: cliEnv,
+      httpGet: async () => ({ ok: true }),
+      wsFactory,
+      readFile: async () => JSON.stringify({ gateway: { auth: { token: 'tok' } } }),
+    });
+
+    // Establish `wasRunning` via an ordinary status probe BEFORE subscribing
+    // to logs — that's the debounce flag logTick now gates on. No subscriber
+    // exists yet, so this probe's own WS enrichment call is a THROWAWAY
+    // connection (closed once it resolves) — a separate socket from the one
+    // `subscribeLogs` opens below.
+    const statusPromise = service.getStatus();
+    await flush();
+    await completeHandshake(sockets[0]);
+    const statusReq = sockets[0].sent.find((m) => m.method === 'status');
+    sockets[0].serverSend({ type: 'res', id: statusReq!.id, ok: true, payload: {} });
+    expect((await statusPromise).state).toBe('running');
+
+    service.subscribeLogs(() => undefined);
+    await flush();
+    await completeHandshake(sockets[1]);
+    await flush();
+
+    expect(sockets[1].sent.some((m) => m.method === 'logs.tail')).toBe(true);
   });
 });
 
