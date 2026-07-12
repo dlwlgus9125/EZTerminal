@@ -1005,6 +1005,19 @@ app.on('ready', () => {
   ipcMain.on('openclaw:chat-reload', () => {
     void openClawChatView?.reload();
   });
+  // "브라우저로 열기" escape hatch (openclaw-stabilization M6) — resolves the
+  // SAME token'd chat URL the embedded view uses and hands it to the OS
+  // default browser instead, for when the WebContentsView embed misbehaves.
+  ipcMain.handle('openclaw:chat-open-external', async (): Promise<boolean> => {
+    const url = await openclaw.getChatUrl();
+    if (!url) return false;
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 
   createWindow();
 });

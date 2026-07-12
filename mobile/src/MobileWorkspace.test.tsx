@@ -42,6 +42,10 @@ class FakeSocket implements WsLike {
     const data = JSON.stringify(msg);
     for (const h of this.handlers.message) h({ data } as never);
   }
+
+  sentKinds(): string[] {
+    return this.sent.map((s) => (JSON.parse(s) as { kind: string }).kind);
+  }
 }
 
 function makeAuthedTransport(): { transport: WsEzTerminalTransport; socket: FakeSocket } {
@@ -152,5 +156,32 @@ describe('MobileWorkspace — zero-tab OpenClaw entry (openclaw-stabilization M3
     act(() => el.querySelector<HTMLButtonElement>('[data-testid="btn-toggle-openclaw"]')!.click());
 
     expect(el.querySelector('[data-testid="mobile-openclaw-view"]')).toBeTruthy();
+  });
+});
+
+describe('MobileWorkspace — background pause (openclaw-stabilization M6)', () => {
+  // jsdom's `document.visibilityState` is a read-only getter — shadow it
+  // with an own property (per-test, reset in afterEach) to simulate the
+  // Capacitor WebView backgrounding/foregrounding the app.
+  function setPageVisible(visible: boolean): void {
+    Object.defineProperty(document, 'visibilityState', { value: visible ? 'visible' : 'hidden', configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+  }
+
+  afterEach(() => setPageVisible(true));
+
+  it('releases the entry-button status subscription while backgrounded and re-acquires it when foregrounded', () => {
+    localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
+    const { transport, socket } = makeAuthedTransport();
+    renderWorkspace(transport);
+    expect(socket.sentKinds().filter((k) => k === 'openclaw-status-subscribe')).toHaveLength(1);
+
+    setPageVisible(false);
+    expect(socket.sentKinds().filter((k) => k === 'openclaw-status-unsubscribe')).toHaveLength(1);
+
+    setPageVisible(true);
+    expect(socket.sentKinds().filter((k) => k === 'openclaw-status-subscribe')).toHaveLength(2);
   });
 });

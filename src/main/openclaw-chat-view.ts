@@ -32,6 +32,7 @@ import { shell, WebContentsView, type BrowserWindow, type Rectangle } from 'elec
 export interface OpenClawChatViewState {
   readonly hasError: boolean;
   readonly errorCode?: number;
+  readonly loading: boolean;
 }
 
 export interface OpenClawChatViewManagerDeps {
@@ -52,6 +53,9 @@ export class OpenClawChatViewManager {
   private desiredVisible = false;
   private desiredBounds: Rectangle = EMPTY_BOUNDS;
   private hasError = false;
+  /** True from did-start-loading until the load settles (openclaw-
+   * stabilization M6 — see OpenClawChatViewState's doc). */
+  private loading = false;
   /** The origin (scheme+host+port) the CURRENT view was created/last
    * recreated with — see `ensureView`/`reload`'s origin-change recreation
    * (openclaw-stabilization M5): a `gateway.port` config-set + restart
@@ -160,13 +164,22 @@ export class OpenClawChatViewManager {
     view.webContents.on('did-fail-load', (_event, errorCode, _desc, _validatedUrl, isMainFrame) => {
       if (!isMainFrame) return; // a sub-frame/asset failure isn't "the gateway is unreachable"
       this.hasError = true;
+      this.loading = false;
       this.applyVisibility();
-      this.deps.onStateChange({ hasError: true, errorCode });
+      this.deps.onStateChange({ hasError: true, errorCode, loading: this.loading });
     });
     view.webContents.on('did-finish-load', () => {
       this.hasError = false;
+      this.loading = false;
       this.applyVisibility();
-      this.deps.onStateChange({ hasError: false });
+      this.deps.onStateChange({ hasError: false, loading: this.loading });
+    });
+    // M6: fires on every navigation this view starts (the initial loadURL
+    // below AND every later webContents.reload()) — a single listener here
+    // covers both without needing a manual flag flip at each call site.
+    view.webContents.on('did-start-loading', () => {
+      this.loading = true;
+      this.deps.onStateChange({ hasError: this.hasError, loading: this.loading });
     });
 
     try {
@@ -220,6 +233,7 @@ export class OpenClawChatViewManager {
     if (!view) return;
     this.view = null;
     this.hasError = false;
+    this.loading = false;
     this.currentOrigin = null;
     if (this.win && !this.win.isDestroyed()) {
       try {

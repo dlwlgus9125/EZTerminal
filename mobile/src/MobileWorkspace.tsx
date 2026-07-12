@@ -16,6 +16,7 @@ import { ThemeMenu } from './ThemeMenu';
 import { applyTheme, loadCustomThemes, loadFont, loadTheme, saveTheme } from './theme';
 import { initialTabsState, tabsReducer } from './tabs';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+import { usePageVisible } from './use-page-visible';
 
 // theme-effects-font Wave 3 boot init — MODULE TOP LEVEL, not inside the
 // component: main.tsx's own top-level `applyTheme(loadTheme())` runs AFTER
@@ -89,6 +90,13 @@ export function MobileWorkspace({
   const effectiveOpenClawVisible =
     openclawMode === 'on' ? true : openclawMode === 'off' ? false : openclawAvailable;
 
+  // Background pause (openclaw-stabilization M6): the status push otherwise
+  // keeps flowing over WS every 4s while the app sits backgrounded, burning
+  // battery for nobody. Combined into the acquire/release effect below —
+  // the M3/M4 refcount (see ws-ezterminal.ts's `openclawStatusRefcount` doc)
+  // makes releasing on hide and re-acquiring on show safe.
+  const pageVisible = usePageVisible();
+
   // Status subscription (for the entry-button/header dot) is owned HERE, at
   // workspace level, for as long as OpenClaw is effectively visible —
   // independent of whether the full MobileOpenClawView is open. The
@@ -97,14 +105,14 @@ export function MobileWorkspace({
   // subscription (while the view itself is open) don't fight over the same
   // boolean (see ws-ezterminal.ts's `openclawStatusRefcount` doc).
   useEffect(() => {
-    if (!effectiveOpenClawVisible) return;
+    if (!effectiveOpenClawVisible || !pageVisible) return;
     const unsubscribe = transport.onOpenClawStatus(setOpenclawState);
     transport.setOpenClawStatusSubscribed(true);
     return () => {
       unsubscribe();
       transport.setOpenClawStatusSubscribed(false);
     };
-  }, [effectiveOpenClawVisible, transport]);
+  }, [effectiveOpenClawVisible, pageVisible, transport]);
 
   // File explorer (M4): the best-effort cwd snapshot each session's
   // MobileSessionView reports via `onCwdChange` — read ONCE when Files opens

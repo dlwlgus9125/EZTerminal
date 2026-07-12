@@ -870,4 +870,9 @@ export interface EzTerminalDesktopApi {
   /** The placeholder's "재연결" button, shown while `hasError` is true. */
   reloadOpenClawChatView: () => void;
   onOpenClawChatViewState: (listener: (state: OpenClawChatViewState) => void) => () => void;
+  /** "브라우저로 열기" escape hatch (openclaw-stabilization M6) — opens the
+   * SAME chat URL the embedded WebContentsView uses in the OS default
+   * browser (`shell.openExternal`), for when the embed misbehaves. `false`
+   * if no chat token is available yet. */
+  openOpenClawChatExternal: () => Promise<boolean>;
 }

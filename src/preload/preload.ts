@@ -280,6 +280,7 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.on('openclaw:chat-view-state', handler);
     return () => ipcRenderer.removeListener('openclaw:chat-view-state', handler);
   },
+  openOpenClawChatExternal: (): Promise<boolean> => ipcRenderer.invoke('openclaw:chat-open-external'),
 };
 
 contextBridge.exposeInMainWorld(DESKTOP_BRIDGE_KEY, desktopApi);

@@ -91,12 +91,18 @@ export interface OpenClawChatBounds {
   readonly height: number;
 }
 
-/** Pushed by `OpenClawChatViewManager` on did-fail-load/did-finish-load — see
- * openclaw-chat-view.ts's module doc for why the view force-hides itself
- * while `hasError` is true. */
+/** Pushed by `OpenClawChatViewManager` on did-start-loading/did-fail-load/
+ * did-finish-load — see openclaw-chat-view.ts's module doc for why the view
+ * force-hides itself while `hasError` is true. `loading` (openclaw-
+ * stabilization M6) is true from did-start-loading until the load settles
+ * (did-finish-load or did-fail-load) — the placeholder shows a "불러오는
+ * 중" line while it's true and the gateway is running, since the native
+ * view paints nothing (and nothing else in the placeholder) during that
+ * window. */
 export interface OpenClawChatViewState {
   readonly hasError: boolean;
   readonly errorCode?: number;
+  readonly loading: boolean;
 }
 
 /** Sentinel for "present in the allowlist but absent from openclaw.json" — M0
