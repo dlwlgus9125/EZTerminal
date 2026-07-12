@@ -7,6 +7,15 @@
 import type { EffectParamsSettings, LayoutEnvelope, RollbarSettings, StartupPref, ThemeName } from './layout-schema';
 import type { FileListResult, FileOpResult, FileReadTextResult } from './files';
 import type { ThemeMod } from './theme-schema';
+import type {
+  OpenClawAgentSession,
+  OpenClawCoreConfig,
+  OpenClawLifecycleAction,
+  OpenClawLifecycleResult,
+  OpenClawLogLine,
+  OpenClawSetConfigResult,
+  OpenClawStatus,
+} from './openclaw';
 
 /** The single key under which the preload bridge is exposed on `window`. */
 export const BRIDGE_KEY = 'ezterminal' as const;
@@ -798,4 +807,20 @@ export interface EzTerminalDesktopApi {
    * `clampInterferenceParams` on both read and set. */
   getEffectParams: () => Promise<EffectParamsSettings>;
   setEffectParams: (params: EffectParamsSettings) => Promise<void>;
+
+  // ── OpenClaw management (openclaw-management M1) ────────────────────────
+  // `getChatUrl`/the raw token are deliberately ABSENT from this surface —
+  // the token never crosses to the renderer (main owns the WebContentsView's
+  // `#token=` URL assembly, M3); `isOpenClawChatAvailable` is the only signal
+  // the UI needs to decide whether to offer the chat panel/CTA.
+  getOpenClawStatus: (force?: boolean) => Promise<OpenClawStatus>;
+  runOpenClawLifecycle: (action: OpenClawLifecycleAction) => Promise<OpenClawLifecycleResult>;
+  listOpenClawSessions: () => Promise<readonly OpenClawAgentSession[]>;
+  getOpenClawConfig: () => Promise<OpenClawCoreConfig>;
+  setOpenClawConfig: (key: string, value: string) => Promise<OpenClawSetConfigResult>;
+  isOpenClawChatAvailable: () => Promise<boolean>;
+  /** Gates the main-side status/log push loops (mirrors `setStatsPanelVisible`). */
+  setOpenClawDrawerOpen: (open: boolean) => void;
+  onOpenClawStatus: (listener: (status: OpenClawStatus) => void) => () => void;
+  onOpenClawLog: (listener: (line: OpenClawLogLine) => void) => () => void;
 }

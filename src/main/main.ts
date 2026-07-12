@@ -28,6 +28,7 @@ import { LogFile, pruneCrashDumps } from './diagnostics';
 import { SystemStatsService } from './system-stats-service';
 import { StatsVisibility } from './stats-visibility';
 import { RemoteTokenStore } from './remote-token-store';
+import { OpenClawService } from './openclaw-service';
 import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
 import {
   startRemoteBridge,
@@ -40,6 +41,7 @@ import {
 import { formatConnectionInfo } from './remote-connection-info';
 import type { EffectParamsSettings, RollbarSettings, StartupPref, ThemeName } from '../shared/layout-schema';
 import type { InterpreterToMain, MainToInterpreter, RunStartedInfo, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
+import type { OpenClawLifecycleAction } from '../shared/openclaw';
 
 // The main process owns the interpreter utilityProcess lifetime (architecture
 // §1). Per-command MessagePort brokering + session/run correlation live in the
@@ -97,6 +99,11 @@ let packetCaptureRegistry: PacketCaptureRegistry | null = null;
 
 // Mobile remote-control WS bridge (M0) — created once on 'ready', stopped on quit.
 let remoteBridgeHandle: RemoteBridgeHandle | null = null;
+
+// OpenClaw management service (openclaw-management M1) — created once on
+// 'ready'; referenced only for before-quit dispose() below (all its IPC
+// handlers close over a local const, see the 'ready' handler).
+let openClawService: OpenClawService | null = null;
 
 // Defense-in-depth CSP for the raw-HTML injection sink in TextBlock (the ANSI →
 // HTML external output, sanitized upstream by ansi_up). Strict: only same-origin
@@ -434,6 +441,7 @@ app.on('ready', () => {
     systemStatsService?.stop();
     packetCaptureRegistry?.kill();
     void remoteBridgeHandle?.stop();
+    openClawService?.dispose();
   });
 
   // Session lifecycle (Codex B1/B5). create-session is the ONLY way a shell session
@@ -710,6 +718,53 @@ app.on('ready', () => {
     });
     await bridgeOp;
     return remoteBridgeHandle !== null;
+  });
+
+  // ── OpenClaw management (openclaw-management M1) ─────────────────────────
+  // Electron-free service (see openclaw-service.ts's module doc for the M0
+  // Stage-0 latency findings this is built around) — IPC here is a thin
+  // adapter, same shape as the file explorer's FileService wiring above.
+  // The chat token/URL never cross to the renderer (M3 owns the
+  // WebContentsView main-side) — only a boolean "is a token available" is
+  // exposed via `openclaw:chat-available`.
+  const openclaw = new OpenClawService();
+  openClawService = openclaw;
+  ipcMain.handle('openclaw:get-status', (_event, force?: boolean) => openclaw.getStatus(force));
+  ipcMain.handle('openclaw:lifecycle', (_event, action: OpenClawLifecycleAction) => openclaw.runLifecycle(action));
+  ipcMain.handle('openclaw:list-sessions', () => openclaw.listAgentSessions());
+  ipcMain.handle('openclaw:get-config', () => openclaw.getCoreConfig());
+  ipcMain.handle('openclaw:set-config', (_event, key: string, value: string) => openclaw.setCoreConfig(key, value));
+  ipcMain.handle('openclaw:chat-available', async () => (await openclaw.getChatToken()) !== null);
+
+  // Status/log push is gated by drawer visibility (renderer-driven), not
+  // always-on — mirrors the stats overlay's `stats:panel-visible` gating.
+  // Broadcasts to every window, same as session-added/run-started above.
+  let openclawUnsubscribeStatus: (() => void) | null = null;
+  let openclawUnsubscribeLogs: (() => void) | null = null;
+  ipcMain.on('openclaw:set-drawer-open', (_event, open: boolean) => {
+    if (open) {
+      if (!openclawUnsubscribeStatus) {
+        openclawUnsubscribeStatus = openclaw.subscribeStatus((status) => {
+          for (const win of BrowserWindow.getAllWindows()) {
+            if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+            win.webContents.send('openclaw:status', status);
+          }
+        });
+      }
+      if (!openclawUnsubscribeLogs) {
+        openclawUnsubscribeLogs = openclaw.subscribeLogs((line) => {
+          for (const win of BrowserWindow.getAllWindows()) {
+            if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+            win.webContents.send('openclaw:log', line);
+          }
+        });
+      }
+    } else {
+      openclawUnsubscribeStatus?.();
+      openclawUnsubscribeStatus = null;
+      openclawUnsubscribeLogs?.();
+      openclawUnsubscribeLogs = null;
+    }
   });
 
   createWindow();
