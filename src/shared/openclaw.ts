@@ -4,10 +4,14 @@
  * panel (M3). `OpenClawService` (src/main/openclaw-service.ts) is the sole
  * producer; everything here is a plain data shape, no behavior.
  */
+import type { OpenClawMode } from './layout-schema';
 
 /**
  * `not-installed`: the `openclaw` CLI doesn't resolve on PATH.
  * `stopped`/`running`: HTTP liveness probe against the gateway's own port.
+ * A `running` observation is held through up to 2 transient probe timeouts
+ * (M1 status debounce) before flipping to `stopped` — a connection-refused
+ * failure is treated as definitive and reported immediately instead.
  * `starting`: a `runLifecycle('start'|'restart')` call is in flight.
  * `unknown`: the probe itself failed in an unexpected way (not a clean
  * connection-refused) — distinct from `stopped` so the UI doesn't claim
@@ -19,11 +23,7 @@ export interface OpenClawStatus {
   readonly state: OpenClawStatusState;
   /** From the WS `status` RPC's `runtimeVersion` — only present while `running`. */
   readonly version?: string;
-  /** Not obtainable from the fast HTTP/WS path (only `gateway status --json
-   * --no-probe`, a 9-10s CLI call per M0 ⑥) — left undefined on the hot path. */
-  readonly pid?: number;
   readonly port: number;
-  readonly configPath?: string;
 }
 
 /** A subset of `sessions.list`'s per-session fields (WS RPC, M0 ④) — the raw
@@ -91,12 +91,18 @@ export interface OpenClawChatBounds {
   readonly height: number;
 }
 
-/** Pushed by `OpenClawChatViewManager` on did-fail-load/did-finish-load — see
- * openclaw-chat-view.ts's module doc for why the view force-hides itself
- * while `hasError` is true. */
+/** Pushed by `OpenClawChatViewManager` on did-start-loading/did-fail-load/
+ * did-finish-load — see openclaw-chat-view.ts's module doc for why the view
+ * force-hides itself while `hasError` is true. `loading` (openclaw-
+ * stabilization M6) is true from did-start-loading until the load settles
+ * (did-finish-load or did-fail-load) — the placeholder shows a "불러오는
+ * 중" line while it's true and the gateway is running, since the native
+ * view paints nothing (and nothing else in the placeholder) during that
+ * window. */
 export interface OpenClawChatViewState {
   readonly hasError: boolean;
   readonly errorCode?: number;
+  readonly loading: boolean;
 }
 
 /** Sentinel for "present in the allowlist but absent from openclaw.json" — M0
@@ -106,3 +112,14 @@ export interface OpenClawChatViewState {
 export const OPENCLAW_CONFIG_UNSET = 'unset' as const;
 
 export type OpenClawCoreConfig = Record<OpenClawConfigKey, string>;
+
+/** Desktop OpenClaw visibility (openclaw-stabilization M2) — `mode` is the
+ * persisted tri-state setting (LayoutStore.getOpenClawMode); `visible` is the
+ * resolved effective visibility ('auto' resolves through
+ * OpenClawService.isInstalled()). Returned by the one-shot `openclaw:get-
+ * visibility` IPC call and pushed on every `settings:set-openclaw-mode` call
+ * via `openclaw:visibility-changed`. */
+export interface OpenClawVisibility {
+  readonly mode: OpenClawMode;
+  readonly visible: boolean;
+}

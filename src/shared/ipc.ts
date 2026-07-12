@@ -4,7 +4,14 @@
  * T1 vertical slice: Renderer → main broker → utilityProcess interpreter →
  * framed streaming back via dedicated MessagePort → renderer. (architecture §3)
  */
-import type { EffectParamsSettings, LayoutEnvelope, RollbarSettings, StartupPref, ThemeName } from './layout-schema';
+import type {
+  EffectParamsSettings,
+  LayoutEnvelope,
+  OpenClawMode,
+  RollbarSettings,
+  StartupPref,
+  ThemeName,
+} from './layout-schema';
 import type { FileListResult, FileOpResult, FileReadTextResult } from './files';
 import type { ThemeMod } from './theme-schema';
 import type {
@@ -19,6 +26,7 @@ import type {
   OpenClawLogLine,
   OpenClawSetConfigResult,
   OpenClawStatus,
+  OpenClawVisibility,
 } from './openclaw';
 
 /** The single key under which the preload bridge is exposed on `window`. */
@@ -830,6 +838,18 @@ export interface EzTerminalDesktopApi {
   /** `gateway install`/`gateway uninstall` (task #9, autostart toggle). */
   runOpenClawAutostart: (action: OpenClawAutostartAction) => Promise<OpenClawAutostartResult>;
 
+  // ── OpenClaw desktop visibility (openclaw-stabilization M2) ──────────────
+  // The tri-state setting gating whether ANY OpenClaw UI shows on desktop.
+  getOpenClawMode: () => Promise<OpenClawMode>;
+  setOpenClawMode: (mode: OpenClawMode) => Promise<void>;
+  /** One-shot resolved `{mode, visible}` — 'auto' resolves through the CLI
+   * install check (isInstalled), same as `getOpenClawStatus`'s not-installed
+   * detection. */
+  getOpenClawVisibility: () => Promise<OpenClawVisibility>;
+  /** Pushed on every `setOpenClawMode` call (any window), matching
+   * `onOpenClawStatus`'s subscription shape. */
+  onOpenClawVisibilityChanged: (listener: (visibility: OpenClawVisibility) => void) => () => void;
+
   // ── OpenClaw chat panel (openclaw-management M3) ────────────────────────
   // The main-owned WebContentsView paints ABOVE the renderer's DOM — this
   // surface is how OpenClawChatPanel.tsx's placeholder drives it, never the
@@ -850,4 +870,9 @@ export interface EzTerminalDesktopApi {
   /** The placeholder's "재연결" button, shown while `hasError` is true. */
   reloadOpenClawChatView: () => void;
   onOpenClawChatViewState: (listener: (state: OpenClawChatViewState) => void) => () => void;
+  /** "브라우저로 열기" escape hatch (openclaw-stabilization M6) — opens the
+   * SAME chat URL the embedded WebContentsView uses in the OS default
+   * browser (`shell.openExternal`), for when the embed misbehaves. `false`
+   * if no chat token is available yet. */
+  openOpenClawChatExternal: () => Promise<boolean>;
 }

@@ -1,7 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import type { SessionInfo } from '../../src/shared/ipc';
+import type { OpenClawStatus } from '../../src/shared/openclaw';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+
+/** Maps an OpenClaw status state (or `undefined` — not pushed yet) to the 🤖
+ * entry button's status-dot color class (M4): green=running, gray=stopped/
+ * not-installed, yellow=starting/unknown/not-yet-known. A coarser 3-color
+ * grouping than the full status tab's own `openclaw-status-dot--<state>`
+ * classes (MobileOpenClawView.tsx) — deliberately not reused, since those
+ * grade 'unknown' as red (an alarm), which reads wrong on a small compact
+ * badge that also has to represent "haven't heard yet". Exported so
+ * MobileWorkspace's own workspace-header 🤖 button applies the identical dot. */
+export function openclawEntryDotClass(state: OpenClawStatus['state'] | undefined): string {
+  const modifier = state === 'running' ? 'running' : state === 'stopped' || state === 'not-installed' ? 'stopped' : 'pending';
+  return `openclaw-entry-dot openclaw-entry-dot--${modifier}`;
+}
 
 // SessionSwitcher — the session manager listing every session currently live
 // on the desktop bridge (`list-sessions`), with create/destroy/open-as-tab.
@@ -22,12 +36,20 @@ export function SessionSwitcher({
   onSelect,
   onDisconnect,
   onCloseSheet,
+  onOpenClaw,
+  openclawState,
 }: {
   variant: 'page' | 'sheet';
   transport: WsEzTerminalTransport;
   onSelect: (sessionId: string, cwd: string) => void;
   onDisconnect: () => void;
   onCloseSheet?: () => void;
+  /** OpenClaw entry point (openclaw-stabilization M4) — only passed by the
+   * zero-tab 'page' variant (MobileWorkspace), gated there on effective
+   * OpenClaw visibility; the 'sheet' variant never passes these (the
+   * workspace-header's own 🤖 button already covers that surface once tabs exist). */
+  onOpenClaw?: () => void;
+  openclawState?: OpenClawStatus['state'];
 }): JSX.Element {
   const [sessions, setSessions] = useState<readonly SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,6 +96,18 @@ export function SessionSwitcher({
     <div className="session-switcher" data-testid="session-switcher">
       <header className="session-switcher-head">
         <h2>Sessions</h2>
+        {onOpenClaw && (
+          <button
+            type="button"
+            className="btn openclaw-btn"
+            onClick={onOpenClaw}
+            aria-label="OpenClaw"
+            data-testid="btn-toggle-openclaw"
+          >
+            🤖
+            <span className={openclawEntryDotClass(openclawState)} data-testid="openclaw-entry-dot" />
+          </button>
+        )}
         <button className="btn" onClick={onDisconnect} data-testid="disconnect-btn">
           Disconnect
         </button>

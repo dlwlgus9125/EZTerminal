@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 
+import type { OpenClawMode } from '../../src/shared/layout-schema';
 import { EFFECT_CATALOG, type EffectId } from '../../src/renderer/effects';
 import {
   applyInterferenceParams,
@@ -55,14 +56,28 @@ function readConnectionUrl(): string {
 // `--term-*` styling). Reached only from the authed MobileWorkspace, so
 // "Connection" always reflects a live session — there is no disconnected
 // state to render here.
+const OPENCLAW_MODE_LABEL: Record<OpenClawMode, string> = {
+  auto: 'Auto',
+  on: 'On',
+  off: 'Off',
+};
+
 interface MobileSettingsViewProps {
   readonly onClose: () => void;
   readonly onDisconnect: () => void;
+  /** OpenClaw tri-state visibility (openclaw-stabilization M3) — lifted to
+   * MobileWorkspace (like `currentTheme`/`handleThemeSelect`, ThemeMenu's own
+   * precedent), since the mode also drives the entry button/dot elsewhere in
+   * the workspace, not just this settings screen. */
+  readonly openclawMode: OpenClawMode;
+  readonly onOpenClawModeChange: (mode: OpenClawMode) => void;
 }
 
 export function MobileSettingsView({
   onClose,
   onDisconnect,
+  openclawMode,
+  onOpenClawModeChange,
 }: MobileSettingsViewProps): JSX.Element {
   const [uiScale, setUiScale] = useState(() => loadUiScale());
   const [connectionUrl] = useState(() => readConnectionUrl());
@@ -306,6 +321,25 @@ export function MobileSettingsView({
           {declaredEffects.filter(isInterferenceEffectId).map((id) => (
             <EffectParamSliders key={id} effectId={id} params={interference} onChange={changeEffectParams} />
           ))}
+        </section>
+
+        <section className="status-section">
+          <h2 className="status-section-title">OpenClaw</h2>
+          <div className="status-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {(['auto', 'on', 'off'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                className="btn"
+                aria-pressed={openclawMode === mode}
+                onClick={() => onOpenClawModeChange(mode)}
+                data-testid={`settings-openclaw-mode-${mode}`}
+              >
+                {openclawMode === mode ? '✓ ' : ''}
+                {OPENCLAW_MODE_LABEL[mode]}
+              </button>
+            ))}
+          </div>
         </section>
 
         <section className="status-section">

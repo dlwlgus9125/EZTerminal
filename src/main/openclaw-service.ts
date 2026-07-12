@@ -68,11 +68,22 @@ import {
 const DEFAULT_PORT = 18789;
 const DEFAULT_HOST = '127.0.0.1';
 
-const HTTP_LIVENESS_TIMEOUT_MS = 3000;
+const HTTP_LIVENESS_TIMEOUT_MS = 5000;
 const RPC_CONNECT_TIMEOUT_MS = 5000;
 const RPC_CALL_TIMEOUT_MS = 10_000;
 const RPC_INITIAL_BACKOFF_MS = 500;
 const RPC_MAX_BACKOFF_MS = 5000;
+
+// M1 (openclaw-management stabilization): a single timed-out/errored probe no
+// longer flips `running` -> `stopped` — the gateway can go briefly
+// unresponsive (e.g. a busy cron job) without actually being down. A
+// `refused` failure (the OS rejects the connection outright) is still treated
+// as definitive since a stopped gateway refuses instantly.
+const STATUS_FAILURE_THRESHOLD = 3;
+
+// M2 (openclaw-stabilization): TTL for a NEGATIVE `isInstalled()` result only
+// — see isInstalled's doc for why a positive one never expires.
+const INSTALL_RECHECK_MS = 30_000;
 
 const STATUS_POLL_INTERVAL_MS = 4000;
 const LOG_POLL_INTERVAL_MS = 2000;
@@ -101,6 +112,11 @@ export type SpawnFn = (
 
 export interface HttpGetResult {
   readonly ok: boolean;
+  /** Failure classification (absent when `ok` is true). `refused` is a
+   * definitive "not running" signal (the OS rejected the connection
+   * outright); `timeout`/`error` are ambiguous — the gateway may just be
+   * momentarily busy — and get debounced in `getStatus`. */
+  readonly reason?: 'timeout' | 'refused' | 'error';
 }
 
 export type HttpGetFn = (url: string) => Promise<HttpGetResult>;
@@ -135,9 +151,11 @@ function defaultHttpGet(url: string): Promise<HttpGetResult> {
     });
     req.on('timeout', () => {
       req.destroy();
-      resolve({ ok: false });
+      resolve({ ok: false, reason: 'timeout' });
     });
-    req.on('error', () => resolve({ ok: false }));
+    req.on('error', (err: NodeJS.ErrnoException) =>
+      resolve({ ok: false, reason: err.code === 'ECONNREFUSED' ? 'refused' : 'error' }),
+    );
   });
 }
 
@@ -396,10 +414,22 @@ export class OpenClawService {
   private readonly port: number;
 
   private installedCache: boolean | null = null;
+  // M2: timestamp of the last NEGATIVE isInstalled() resolution — see
+  // isInstalled's doc. Unused while installedCache is `true` or `null`.
+  private installedCacheAt: number | null = null;
   private configPathPromise: Promise<string> | null = null;
 
   private lifecycleOp: Promise<void> = Promise.resolve();
   private busyAction: OpenClawLifecycleAction | null = null;
+
+  // M1 status debounce — see STATUS_FAILURE_THRESHOLD's comment.
+  private wasRunning = false;
+  private probeFailureStreak = 0;
+  // Coalesces concurrent getStatus() callers (the renderer's one-shot IPC
+  // getStatus can overlap the internal poll loop) onto a single in-flight
+  // probe — otherwise two concurrent failing probes would each advance
+  // probeFailureStreak, shortening the intended debounce window.
+  private statusProbe: Promise<OpenClawStatus> | null = null;
 
   private rpc: OpenClawRpcConnection | null = null;
   private rpcRefCount = 0;
@@ -431,34 +461,76 @@ export class OpenClawService {
   // ── Status ────────────────────────────────────────────────────────────
 
   async getStatus(force = false): Promise<OpenClawStatus> {
-    if (force) this.installedCache = null;
-    if (!this.isInstalled()) return { state: 'not-installed', port: this.port };
+    if (force) {
+      this.installedCache = null;
+      this.installedCacheAt = null;
+    }
+    if (!this.statusProbe) {
+      this.statusProbe = this.probeStatus().finally(() => {
+        this.statusProbe = null;
+      });
+    }
+    return this.statusProbe;
+  }
 
-    let alive: boolean;
+  private async probeStatus(): Promise<OpenClawStatus> {
+    if (!(await this.isInstalled())) return { state: 'not-installed', port: this.port };
+
+    let probe: HttpGetResult;
     try {
-      alive = (await this.httpGet(`${this.baseUrl}/`)).ok;
+      probe = await this.httpGet(`${this.baseUrl}/`);
     } catch {
       return { state: 'unknown', port: this.port };
     }
-    if (!alive) {
-      const starting = this.busyAction === 'start' || this.busyAction === 'restart';
-      return { state: starting ? 'starting' : 'stopped', port: this.port };
+
+    if (probe.ok) {
+      this.wasRunning = true;
+      this.probeFailureStreak = 0;
+      const enrichment = await this.withRpc((rpc) => rpc.call('status'));
+      const version =
+        enrichment && typeof enrichment === 'object' && enrichment !== null && 'runtimeVersion' in enrichment
+          ? String((enrichment as { runtimeVersion: unknown }).runtimeVersion)
+          : undefined;
+      return { state: 'running', port: this.port, version };
     }
 
-    const enrichment = await this.withRpc((rpc) => rpc.call('status'));
-    const version =
-      enrichment && typeof enrichment === 'object' && enrichment !== null && 'runtimeVersion' in enrichment
-        ? String((enrichment as { runtimeVersion: unknown }).runtimeVersion)
-        : undefined;
-    return { state: 'running', port: this.port, version };
+    // `refused` is definitive (a stopped gateway refuses instantly) — report
+    // it right away. `timeout`/`error` are ambiguous, so a prior `running`
+    // observation is held through up to STATUS_FAILURE_THRESHOLD - 1
+    // transient failures before flipping to `stopped`.
+    if (probe.reason !== 'refused' && this.wasRunning) {
+      this.probeFailureStreak += 1;
+      if (this.probeFailureStreak < STATUS_FAILURE_THRESHOLD) {
+        return { state: 'running', port: this.port };
+      }
+    }
+    this.wasRunning = false;
+    this.probeFailureStreak = 0;
+    const starting = this.busyAction === 'start' || this.busyAction === 'restart';
+    return { state: starting ? 'starting' : 'stopped', port: this.port };
   }
 
-  private isInstalled(): boolean {
-    if (this.installedCache !== null) return this.installedCache;
+  /** PATH resolution only — no spawn (see the module doc). A `true` result
+   * caches forever (the CLI doesn't get uninstalled mid-session in any
+   * realistic scenario); a `false` result caches for only
+   * INSTALL_RECHECK_MS (M2), so a user who installs the CLI mid-session sees
+   * OpenClaw UI appear within ~30s of the next probe, without needing an
+   * app restart or an explicit `getStatus(force=true)`. */
+  async isInstalled(): Promise<boolean> {
+    if (this.installedCache === true) return true;
+    if (
+      this.installedCache === false &&
+      this.installedCacheAt !== null &&
+      this.now() - this.installedCacheAt < INSTALL_RECHECK_MS
+    ) {
+      return false;
+    }
     const cliName = envGet(this.env, 'EZTERMINAL_OPENCLAW_CLI') ?? 'openclaw';
     const resolver = new CommandResolver(this.env);
-    this.installedCache = resolver.resolve(cliName, []) !== null;
-    return this.installedCache;
+    const resolved = resolver.resolve(cliName, []) !== null;
+    this.installedCache = resolved;
+    this.installedCacheAt = resolved ? null : this.now();
+    return resolved;
   }
 
   subscribeStatus(listener: (status: OpenClawStatus) => void): () => void {
@@ -502,6 +574,12 @@ export class OpenClawService {
         result = await this.execCli(['gateway', action]).then(({ code, stderr }) =>
           code === 0 ? { ok: true } : { ok: false, stderr: stderr || `exit code ${code}` },
         );
+        // A user-initiated stop must show up as `stopped` immediately, not
+        // after riding out the debounce grace on the next poll.
+        if (action === 'stop' && result.ok) {
+          this.wasRunning = false;
+          this.probeFailureStreak = 0;
+        }
       } finally {
         this.busyAction = null;
         await this.pushStatusNow();
@@ -660,6 +738,24 @@ export class OpenClawService {
   }
 
   private async logTick(): Promise<void> {
+    // M5 (openclaw-stabilization reliability sweep): skip the RPC call
+    // entirely while the gateway isn't known-running — `wasRunning` (the M1
+    // debounce flag, updated by every `probeStatus()`) is the same signal
+    // status polling already trusts. Without this, an unconditional
+    // `withRpc` call here re-triggers `OpenClawRpcConnection.connect()` on
+    // EVERY tick once a failed attempt nulls its `connectPromise` — that
+    // bypasses `scheduleReconnect`'s own exponential-backoff timer entirely
+    // (a SEPARATE, correctly-capped mechanism owned by the persistent
+    // connection itself), producing an effective 2s reconnect-attempt storm
+    // while stopped. The timer keeps ticking either way (cheap no-op) —
+    // this only stops it from touching the network.
+    //
+    // Invariant this relies on: a concurrent status subscription keeps
+    // `wasRunning` fresh (every current surface guarantees one — the desktop
+    // drawer arms status alongside logs; mobile's view subscribes status for
+    // its whole lifetime). A logs-only surface would silently get no lines,
+    // or reintroduce the reconnect storm described above.
+    if (!this.wasRunning) return;
     const params = this.logCursor === undefined ? { limit: LOG_BACKFILL_LIMIT } : { cursor: this.logCursor, limit: LOG_POLL_LIMIT };
     const result = await this.withRpc((rpc) => rpc.call('logs.tail', params));
     if (!result || typeof result !== 'object') return;

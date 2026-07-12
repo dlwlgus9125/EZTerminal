@@ -99,6 +99,19 @@ export function isBuiltinTheme(name: string): boolean {
 export const ThemeNameSchema = z.string().min(1);
 export type ThemeName = z.infer<typeof ThemeNameSchema>;
 
+/** OpenClaw desktop visibility mode (openclaw-stabilization M2) — controls
+ * whether ANY OpenClaw UI is exposed on desktop. `auto` (default): visible
+ * only when the `openclaw` CLI is installed (OpenClawService.isInstalled()).
+ * `on`: always visible. `off`: fully hidden, and no OpenClaw background work
+ * (status polling, RPC) is initiated from the desktop UI; a remote client's
+ * status/log/lifecycle/config/chat-ticket requests are refused too (remote-
+ * bridge.ts's `openclawVisible()` gate) — but the OpenClaw proxy's own port
+ * still binds whenever `remoteEnabled` is on, independent of this mode. It
+ * just has nothing to serve without a ticket, and 'off' means none is ever
+ * minted. */
+export const OpenClawModeSchema = z.enum(['auto', 'on', 'off']);
+export type OpenClawMode = z.infer<typeof OpenClawModeSchema>;
+
 /** Wire shape for crt-rollbar line params (rollbar-params) — every field
  * optional, numbers unbounded here: renderer/effect-params.ts's
  * `clampRollbarParams` is the single place that clamps/defaults, both on
@@ -139,6 +152,9 @@ export const SettingsSchema = z.object({
   // Remote WS bridge on/off (v0.2.0 D2) — absent defaults to true (pre-existing
   // always-on behavior) in layout-store.
   remoteEnabled: z.boolean().optional(),
+  // OpenClaw desktop visibility mode (openclaw-stabilization M2) — absent
+  // defaults to 'auto' in layout-store (see OpenClawModeSchema above).
+  openclawMode: OpenClawModeSchema.optional(),
   // User font override (theme-effects-font M0) — a renderer/fonts.ts
   // FONT_CATALOG id; absent means "use the active theme's own fontFamily"
   // (resolveFontFamily). Bounded, not enum-validated: an unrecognized id

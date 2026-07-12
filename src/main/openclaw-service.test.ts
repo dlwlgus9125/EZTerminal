@@ -13,7 +13,16 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
 
-import { OpenClawService, parseLogLine, type ChildProcessLike, type OpenClawWsLike, type SpawnFn } from './openclaw-service';
+import {
+  OpenClawService,
+  parseLogLine,
+  type ChildProcessLike,
+  type HttpGetFn,
+  type HttpGetResult,
+  type OpenClawWsFactory,
+  type OpenClawWsLike,
+  type SpawnFn,
+} from './openclaw-service';
 import type { EnvLike } from '../interpreter/external/command-resolver';
 import type { OpenClawLogLine } from '../shared/openclaw';
 
@@ -78,6 +87,40 @@ function makeControllableSpawn(): {
     } as unknown as ChildProcessLike;
   };
   return { spawn, calls, closeNth: (index, code) => closers[index]?.(code) };
+}
+
+/** A queue-of-responses `httpGet` fake — each call pops the next queued
+ * result (repeating the last one once exhausted), letting a test script a
+ * probe sequence across successive `getStatus()` calls. */
+function makeHttpGetQueue(...results: HttpGetResult[]): HttpGetFn {
+  let i = 0;
+  return async () => results[Math.min(i++, results.length - 1)];
+}
+
+/** An `httpGet` fake whose FIRST call auto-resolves `{ok:true}` (so a test
+ * can cheaply establish `wasRunning`) and every call after that stays
+ * pending until the test calls `resolveFailure` — proving two concurrent
+ * `getStatus()` callers land on the SAME in-flight probe (only one new
+ * `httpGet` invocation) rather than each starting their own. */
+function makeHttpGetWithDeferredFailure(): {
+  httpGet: HttpGetFn;
+  callCount: () => number;
+  resolveFailure: (reason: 'timeout' | 'refused' | 'error') => void;
+} {
+  let count = 0;
+  let resolveFn: ((result: HttpGetResult) => void) | undefined;
+  const httpGet: HttpGetFn = () => {
+    count += 1;
+    if (count === 1) return Promise.resolve({ ok: true });
+    return new Promise<HttpGetResult>((resolve) => {
+      resolveFn = resolve;
+    });
+  };
+  return {
+    httpGet,
+    callCount: () => count,
+    resolveFailure: (reason) => resolveFn?.({ ok: false, reason }),
+  };
 }
 
 // ── Fake WS ──────────────────────────────────────────────────────────────
@@ -186,6 +229,151 @@ describe('OpenClawService — getStatus', () => {
     path = cliDir;
     expect((await service.getStatus()).state).toBe('not-installed'); // still cached
     expect((await service.getStatus(true)).state).toBe('stopped'); // forced re-probe finds it now
+  });
+});
+
+// ── isInstalled — M2 negative-cache TTL ─────────────────────────────────────
+
+describe('OpenClawService — isInstalled negative-cache TTL (M2)', () => {
+  it('re-checks a not-installed result after the TTL elapses and flips to installed', async () => {
+    let currentTime = 0;
+    let cliPath = '';
+    const service = new OpenClawService({
+      env: new Proxy({}, { get: (_t, k) => (k === 'PATH' ? cliPath : undefined) }),
+      now: () => currentTime,
+    });
+    expect(await service.isInstalled()).toBe(false);
+    cliPath = cliDir; // CLI appears on PATH mid-session
+    currentTime += 29_999;
+    expect(await service.isInstalled()).toBe(false); // still within the TTL window — cached
+    currentTime += 1; // 30_000ms total — TTL elapsed
+    expect(await service.isInstalled()).toBe(true); // re-resolved, finds it now
+  });
+
+  it('never re-resolves once installed — a positive result is sticky, no TTL', async () => {
+    let currentTime = 0;
+    let cliPath = cliDir;
+    const service = new OpenClawService({
+      env: new Proxy({}, { get: (_t, k) => (k === 'PATH' ? cliPath : undefined) }),
+      now: () => currentTime,
+    });
+    expect(await service.isInstalled()).toBe(true);
+    cliPath = ''; // CLI "disappears" from PATH
+    currentTime += 1_000_000; // well past the negative-cache TTL
+    expect(await service.isInstalled()).toBe(true); // sticky — never re-resolved
+  });
+});
+
+// ── getStatus — M1 debounce (transient probe failures don't flip running ->
+//    stopped; a `refused` failure still does, immediately) ────────────────
+
+describe('OpenClawService — getStatus debounce (M1)', () => {
+  // Every case here only cares about `state`, not the WS-enriched `version`
+  // — fail the RPC connect synchronously so `running` results resolve
+  // without any real socket I/O (same pattern as the listAgentSessions
+  // "RPC call fails entirely" case below).
+  const noWs = () => {
+    throw new Error('no socket');
+  };
+
+  it('holds `running` through up to 2 consecutive timeout/error probe failures', async () => {
+    const httpGet = makeHttpGetQueue({ ok: true }, { ok: false, reason: 'timeout' }, { ok: false, reason: 'timeout' });
+    const service = new OpenClawService({ env: cliEnv, httpGet, wsFactory: noWs });
+    expect((await service.getStatus()).state).toBe('running');
+    expect((await service.getStatus()).state).toBe('running'); // 1st timeout — still running
+    expect((await service.getStatus()).state).toBe('running'); // 2nd timeout — still running
+  });
+
+  it('flips to `stopped` on the 3rd consecutive timeout/error probe failure', async () => {
+    const httpGet = makeHttpGetQueue(
+      { ok: true },
+      { ok: false, reason: 'timeout' },
+      { ok: false, reason: 'timeout' },
+      { ok: false, reason: 'timeout' },
+    );
+    const service = new OpenClawService({ env: cliEnv, httpGet, wsFactory: noWs });
+    expect((await service.getStatus()).state).toBe('running');
+    expect((await service.getStatus()).state).toBe('running');
+    expect((await service.getStatus()).state).toBe('running');
+    expect((await service.getStatus()).state).toBe('stopped');
+  });
+
+  it('treats a `refused` failure as definitive — flips to `stopped` immediately, no debounce grace', async () => {
+    const httpGet = makeHttpGetQueue({ ok: true }, { ok: false, reason: 'refused' });
+    const service = new OpenClawService({ env: cliEnv, httpGet, wsFactory: noWs });
+    expect((await service.getStatus()).state).toBe('running');
+    expect((await service.getStatus()).state).toBe('stopped');
+  });
+
+  it('resets the failure streak on a successful probe', async () => {
+    const httpGet = makeHttpGetQueue(
+      { ok: true },
+      { ok: false, reason: 'timeout' },
+      { ok: false, reason: 'timeout' },
+      { ok: true },
+      { ok: false, reason: 'timeout' },
+      { ok: false, reason: 'timeout' },
+    );
+    const service = new OpenClawService({ env: cliEnv, httpGet, wsFactory: noWs });
+    expect((await service.getStatus()).state).toBe('running');
+    expect((await service.getStatus()).state).toBe('running'); // timeout 1/2
+    expect((await service.getStatus()).state).toBe('running'); // timeout 2/2
+    expect((await service.getStatus()).state).toBe('running'); // success — streak reset
+    expect((await service.getStatus()).state).toBe('running'); // timeout 1/2 again
+    expect((await service.getStatus()).state).toBe('running'); // timeout 2/2 again — would be `stopped` without the reset
+  });
+
+  it('reports `stopped` on the very first probe timeout when there is no prior running observation (cold start)', async () => {
+    const httpGet = makeHttpGetQueue({ ok: false, reason: 'timeout' });
+    const service = new OpenClawService({ env: cliEnv, httpGet, wsFactory: noWs });
+    expect((await service.getStatus()).state).toBe('stopped');
+  });
+
+  it("runLifecycle('stop') resets the debounce state — the next probe timeout reports `stopped` immediately", async () => {
+    const { spawn } = makeExitSpawn(0);
+    const httpGet = makeHttpGetQueue({ ok: true }, { ok: false, reason: 'timeout' });
+    const service = new OpenClawService({ env: cliEnv, spawn, httpGet, wsFactory: noWs });
+    expect((await service.getStatus()).state).toBe('running');
+    expect(await service.runLifecycle('stop')).toEqual({ ok: true });
+    expect((await service.getStatus()).state).toBe('stopped'); // would be `running` (streak 1/2) without the reset
+  });
+
+  it('coalesces concurrent getStatus() calls onto a single in-flight probe — a shared failure only advances the streak by 1', async () => {
+    const { httpGet, callCount, resolveFailure } = makeHttpGetWithDeferredFailure();
+    const service = new OpenClawService({ env: cliEnv, httpGet, wsFactory: noWs });
+
+    // Establish `running` first (the fake's 1st call auto-resolves ok:true).
+    expect((await service.getStatus()).state).toBe('running');
+    expect(callCount()).toBe(1);
+
+    // Two callers racing (e.g. the renderer's one-shot IPC getStatus landing
+    // mid-poll-loop) must share ONE in-flight probe, not start two.
+    const p1 = service.getStatus();
+    const p2 = service.getStatus();
+    // M2: isInstalled() is now itself async (a cached/positive result still
+    // resolves via a microtask), so the shared probe's httpGet call lands one
+    // tick later than the synchronous getStatus() calls above — flush lets it
+    // fire before asserting the call count.
+    await flush();
+    expect(callCount()).toBe(2); // exactly one NEW httpGet call for both callers
+    resolveFailure('timeout');
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.state).toBe('running');
+    expect(r2.state).toBe('running');
+
+    // That shared failure must count as exactly ONE streak advance — 2 more
+    // sequential failures are needed to flip to `stopped`, not 1.
+    const p3 = service.getStatus();
+    await flush(); // M2: same one-tick-later httpGet call as above
+    resolveFailure('timeout');
+    expect((await p3).state).toBe('running');
+    expect(callCount()).toBe(3);
+
+    const p4 = service.getStatus();
+    await flush(); // M2: same one-tick-later httpGet call as above
+    resolveFailure('timeout');
+    expect((await p4).state).toBe('stopped');
+    expect(callCount()).toBe(4);
   });
 });
 
@@ -432,12 +620,29 @@ describe('parseLogLine', () => {
 
 describe('OpenClawService — subscribeLogs', () => {
   it('shares ONE RPC connection across multiple listeners and tears it down at zero subscribers', async () => {
-    const { wsFactory, sockets } = makeWsFactory();
+    const { wsFactory: realWsFactory, sockets } = makeWsFactory();
+    // M5 (S2): logTick now gates on `wasRunning` — seed it via a real status
+    // probe first, using a wsFactory that fails FAST on that probe's own
+    // (throwaway) enrichment connection so it never touches `sockets`, then
+    // falls through to the real tracked factory for subscribeLogs below —
+    // every `sockets[N]` index the rest of this test asserts on is
+    // unaffected.
+    let seeded = false;
+    const wsFactory: OpenClawWsFactory = () => {
+      if (!seeded) {
+        seeded = true;
+        throw new Error('seed status probe — no real socket needed');
+      }
+      return realWsFactory();
+    };
     const service = new OpenClawService({
       env: cliEnv,
+      httpGet: async () => ({ ok: true }),
       wsFactory,
       readFile: async () => JSON.stringify({ gateway: { auth: { token: 'tok' } } }),
     });
+    expect((await service.getStatus()).state).toBe('running');
+
     const linesA: OpenClawLogLine[] = [];
     const linesB: OpenClawLogLine[] = [];
     const unsubA = service.subscribeLogs((l) => linesA.push(l));
@@ -467,6 +672,55 @@ describe('OpenClawService — subscribeLogs', () => {
     expect(sockets[0].closed).toBe(false); // one subscriber remains
     unsubB();
     expect(sockets[0].closed).toBe(true); // refcount hit zero — connection closed
+  });
+});
+
+// ── subscribeLogs gated on running (M5) ──────────────────────────────────
+
+describe('OpenClawService — log poll gated on running (M5)', () => {
+  it('while the gateway has never been observed running, a log tick does not call logs.tail (even once the shared connection itself is up)', async () => {
+    const { wsFactory, sockets } = makeWsFactory();
+    const service = new OpenClawService({
+      env: cliEnv,
+      wsFactory,
+      readFile: async () => JSON.stringify({ gateway: { auth: { token: 'tok' } } }),
+    });
+
+    service.subscribeLogs(() => undefined);
+    await flush(); // the first tick (scheduled at delay 0) runs — wasRunning is still false
+    await completeHandshake(sockets[0]);
+    await flush();
+
+    expect(sockets[0].sent.some((m) => m.method === 'logs.tail')).toBe(false);
+  });
+
+  it('once the gateway is known-running (a prior successful probe), a subsequent log tick DOES call logs.tail', async () => {
+    const { wsFactory, sockets } = makeWsFactory();
+    const service = new OpenClawService({
+      env: cliEnv,
+      httpGet: async () => ({ ok: true }),
+      wsFactory,
+      readFile: async () => JSON.stringify({ gateway: { auth: { token: 'tok' } } }),
+    });
+
+    // Establish `wasRunning` via an ordinary status probe BEFORE subscribing
+    // to logs — that's the debounce flag logTick now gates on. No subscriber
+    // exists yet, so this probe's own WS enrichment call is a THROWAWAY
+    // connection (closed once it resolves) — a separate socket from the one
+    // `subscribeLogs` opens below.
+    const statusPromise = service.getStatus();
+    await flush();
+    await completeHandshake(sockets[0]);
+    const statusReq = sockets[0].sent.find((m) => m.method === 'status');
+    sockets[0].serverSend({ type: 'res', id: statusReq!.id, ok: true, payload: {} });
+    expect((await statusPromise).state).toBe('running');
+
+    service.subscribeLogs(() => undefined);
+    await flush();
+    await completeHandshake(sockets[1]);
+    await flush();
+
+    expect(sockets[1].sent.some((m) => m.method === 'logs.tail')).toBe(true);
   });
 });
 

@@ -235,6 +235,23 @@ const desktopApi: EzTerminalDesktopApi = {
     action: import('../shared/openclaw').OpenClawAutostartAction,
   ): Promise<import('../shared/openclaw').OpenClawAutostartResult> => ipcRenderer.invoke('openclaw:autostart', action),
 
+  // OpenClaw desktop visibility (openclaw-stabilization M2): thin invoke/send
+  // wrappers, same shape as the management wrappers above.
+  getOpenClawMode: (): Promise<import('../shared/layout-schema').OpenClawMode> =>
+    ipcRenderer.invoke('settings:get-openclaw-mode'),
+  setOpenClawMode: (mode: import('../shared/layout-schema').OpenClawMode): Promise<void> =>
+    ipcRenderer.invoke('settings:set-openclaw-mode', mode),
+  getOpenClawVisibility: (): Promise<import('../shared/openclaw').OpenClawVisibility> =>
+    ipcRenderer.invoke('openclaw:get-visibility'),
+  onOpenClawVisibilityChanged: (
+    listener: (visibility: import('../shared/openclaw').OpenClawVisibility) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, visibility: import('../shared/openclaw').OpenClawVisibility): void =>
+      listener(visibility);
+    ipcRenderer.on('openclaw:visibility-changed', handler);
+    return () => ipcRenderer.removeListener('openclaw:visibility-changed', handler);
+  },
+
   // OpenClaw chat panel (openclaw-management M3): fire-and-forget sends into
   // OpenClawChatViewManager, same shape as the drawer wrappers above.
   setOpenClawChatPanelMounted: (mounted: boolean): void => {
@@ -263,6 +280,7 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.on('openclaw:chat-view-state', handler);
     return () => ipcRenderer.removeListener('openclaw:chat-view-state', handler);
   },
+  openOpenClawChatExternal: (): Promise<boolean> => ipcRenderer.invoke('openclaw:chat-open-external'),
 };
 
 contextBridge.exposeInMainWorld(DESKTOP_BRIDGE_KEY, desktopApi);

@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
 
@@ -123,7 +124,22 @@ test('CLI absent: not-installed guidance card, zero error dialogs (AC6)', async 
   // absolute name as a direct probe (no PATH search), so this deterministically
   // reports "not installed" regardless of whether a real `openclaw` happens to
   // be on this machine's PATH.
-  const app = await launchApp(undefined, {
+  //
+  // openclaw-stabilization M2: desktop visibility defaults to `openclawMode:
+  // 'auto'`, which hides the OpenClaw button/drawer entirely once isInstalled()
+  // is false — exactly this test's CLI-absent setup. This scenario is
+  // specifically about the drawer's OWN not-installed guidance card, so a
+  // fresh userData dir is pre-seeded with `openclawMode: 'on'` (forcing the
+  // drawer visible regardless of install state) — mirrors layout-persistence.
+  // spec.ts's pattern of writing a JSON file directly into a temp userData dir
+  // before launch.
+  const dir = mkdtempSync(path.join(tmpdir(), 'ezterm-openclaw-not-installed-e2e-'));
+  writeFileSync(
+    path.join(dir, 'settings.json'),
+    JSON.stringify({ schemaVersion: 1, startup: { mode: 'last' }, openclawMode: 'on' }),
+    'utf8',
+  );
+  const app = await launchApp(dir, {
     EZTERMINAL_OPENCLAW_CLI: path.join(SCREENSHOT_DIR, `does-not-exist-${Date.now()}.cmd`),
   });
   let dialogCount = 0;

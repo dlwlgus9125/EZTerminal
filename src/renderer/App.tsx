@@ -109,6 +109,28 @@ export function App(): JSX.Element {
   const versions = window.ezterminal?.versions;
   const apiRef = useRef<DockviewApi | null>(null);
 
+  // ── OpenClaw desktop visibility (openclaw-stabilization M2) ───────────────
+  // Tri-state `openclawMode` setting resolved main-side into one effective
+  // boolean (main.ts's resolveOpenClawVisibility) — gates the header button,
+  // drawer, and openOpenClawChat below. Starts `true` (same "flash before
+  // settle" tradeoff as `theme`'s boot fetch further down) until the first
+  // getOpenClawVisibility() round trip or an onOpenClawVisibilityChanged push
+  // (Settings panel toggle, any window) resolves it. Declared this early
+  // (ahead of openOpenClawChat right below) so its useCallback can depend on
+  // the current value, not just the stable setter.
+  const [openclawVisible, setOpenclawVisible] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    void window.ezterminalDesktop?.getOpenClawVisibility().then((v) => {
+      if (alive && v) setOpenclawVisible(v.visible);
+    });
+    const unsub = window.ezterminalDesktop?.onOpenClawVisibilityChanged((v) => setOpenclawVisible(v.visible));
+    return () => {
+      alive = false;
+      unsub?.();
+    };
+  }, []);
+
   // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
   // sessionId -> panelId for every panel this window has bound (created OR
   // adopted) a session for. Two jobs: (1) self-filter `onSessionAdded`, an
@@ -237,6 +259,10 @@ export function App(): JSX.Element {
   // openPanel above, this never mints a new id (the schema requires the
   // fixed id 'openclaw-chat', see layout-schema.ts's PanelSchema doc).
   const openOpenClawChat = useCallback((): void => {
+    // Mode 'off' (or 'auto' with the CLI not installed) — no OpenClaw UI at
+    // all (openclaw-stabilization M2); the button/drawer that would call this
+    // are themselves hidden, but guard directly too (e.g. a stale closure).
+    if (!openclawVisible) return;
     // Close the drawer first: the [채팅 열기] button lives INSIDE the OpenClaw
     // drawer, but the drawer feeds `chatOverlayOpen`, which the chat panel ANDs
     // into the WebContentsView's effective visibility (z-order rule). Leaving
@@ -256,7 +282,7 @@ export function App(): JSX.Element {
       title: 'OpenClaw Chat',
       renderer: 'always',
     });
-  }, []);
+  }, [openclawVisible]);
 
   // Split the pane the user last focused. Omitting `direction` would default to
   // 'within' (a tab, not a split), so it is always explicit.
@@ -278,6 +304,12 @@ export function App(): JSX.Element {
   const restoreGenRef = useRef(0);
   const savesSuppressedRef = useRef(true);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Flips true once the STARTUP restore transaction (onReady below) has
+  // settled — the OpenClaw visibility gating effect (near openclawOpen's
+  // declaration) waits on this so it never races a persisted layout that's
+  // still mid-restore when getOpenClawVisibility() resolves (openclaw-
+  // stabilization M2).
+  const [layoutReady, setLayoutReady] = useState(false);
 
   const scheduleSave = useCallback((): void => {
     const api = apiRef.current;
@@ -380,6 +412,19 @@ export function App(): JSX.Element {
   // ── OpenClaw management drawer (openclaw-management M2) ───────────────────
   // Same right-slot mutual exclusion as stats/pairing/settings above.
   const [openclawOpen, setOpenclawOpen] = useState(false);
+
+  // Visibility gating (openclaw-stabilization M2): fires whenever effective
+  // visibility is false with the startup restore already settled — covers
+  // BOTH a runtime Settings-panel toggle to 'off' (drawer/chat panel open at
+  // the time) AND a persisted layout that happened to contain the
+  // openclaw-chat panel from a prior session while mode is now 'off'/the CLI
+  // is now absent. Closing the panel here relies on OpenClawChatPanel's own
+  // unmount cleanup to destroy the main-owned WebContentsView.
+  useEffect(() => {
+    if (!layoutReady || openclawVisible) return;
+    setOpenclawOpen(false);
+    apiRef.current?.getPanel('openclaw-chat')?.api.close();
+  }, [layoutReady, openclawVisible]);
 
   // ── File explorer drawer (file-explorer plan, M1) ─────────────────────────
   // Left-edge overlay — unlike stats/pairing above, it does not share their
@@ -780,6 +825,7 @@ export function App(): JSX.Element {
         if (apiRef.current !== api) return;
         api.onDidLayoutChange(() => scheduleSave());
         scheduleSave(); // persist the restored/initial state
+        setLayoutReady(true);
       });
       void refreshPresets();
     },
@@ -998,20 +1044,22 @@ export function App(): JSX.Element {
         >
           ⚙️
         </button>
-        <button
-          className="btn btn-split"
-          onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
-          onClick={() => {
-            setOpenclawOpen((open) => !open);
-            setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
-            setPairingOpen(false);
-            setSettingsOpen(false);
-          }}
-          title="OpenClaw management"
-          data-testid="btn-toggle-openclaw"
-        >
-          OpenClaw
-        </button>
+        {openclawVisible && (
+          <button
+            className="btn btn-split"
+            onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
+            onClick={() => {
+              setOpenclawOpen((open) => !open);
+              setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
+              setPairingOpen(false);
+              setSettingsOpen(false);
+            }}
+            title="OpenClaw management"
+            data-testid="btn-toggle-openclaw"
+          >
+            OpenClaw
+          </button>
+        )}
         {versions && (
           <span className="versions" title="runtime versions">
             electron {versions.electron}
@@ -1081,7 +1129,7 @@ export function App(): JSX.Element {
             onOpenTerminalAt={onOpenTerminalAt}
           />
         )}
-        {openclawOpen && (
+        {openclawVisible && openclawOpen && (
           <OpenClawPanel onClose={() => setOpenclawOpen(false)} onOpenChat={openOpenClawChat} />
         )}
       </div>

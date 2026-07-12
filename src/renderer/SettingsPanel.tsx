@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { ThemeName } from '../shared/layout-schema';
+import type { OpenClawMode, ThemeName } from '../shared/layout-schema';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import type { InterferenceParams, RollbarParams } from './effect-params';
 import { EffectParamSliders, isInterferenceEffectId } from './EffectParamSliders';
@@ -70,6 +70,7 @@ export function SettingsPanel({
   const [remotePort, setRemotePort] = useState<number | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [openclawMode, setOpenclawModeState] = useState<OpenClawMode | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -79,6 +80,9 @@ export function SettingsPanel({
     void window.ezterminal.getRemoteConnectionInfo().then((info) => {
       if (alive) setRemotePort(info.port);
     });
+    void window.ezterminalDesktop?.getOpenClawMode().then((mode) => {
+      if (alive) setOpenclawModeState(mode);
+    });
     return () => {
       alive = false;
     };
@@ -87,6 +91,15 @@ export function SettingsPanel({
   const handleRemoteToggle = useCallback((e: React.ChangeEvent<HTMLInputElement>): void => {
     const next = e.target.checked;
     void window.ezterminal.setRemoteEnabled(next).then((running) => setRemoteEnabled(running));
+  }, []);
+
+  // OpenClaw visibility mode (openclaw-stabilization M2): the visibility-
+  // changed push (main.ts's `openclaw:visibility-changed`) updates App's
+  // gating on every window independently — this just fires the set and
+  // reflects the new mode locally.
+  const handleOpenclawModeChange = useCallback((mode: OpenClawMode): void => {
+    setOpenclawModeState(mode);
+    void window.ezterminalDesktop?.setOpenClawMode(mode);
   }, []);
 
   const handleImportFile = useCallback(
@@ -350,6 +363,46 @@ export function SettingsPanel({
             <div className="status-metric">
               WS bridge on port {remotePort} — {remoteEnabled ? 'running' : 'off'}
             </div>
+          </>
+        )}
+      </section>
+
+      <section className="status-section">
+        <h2 className="status-section-title">OpenClaw</h2>
+        {openclawMode === null ? (
+          <div className="status-loading">Loading…</div>
+        ) : (
+          <>
+            <label className="settings-radio-row">
+              <input
+                type="radio"
+                name="openclaw-mode"
+                checked={openclawMode === 'auto'}
+                onChange={() => handleOpenclawModeChange('auto')}
+                data-testid="settings-openclaw-mode-auto"
+              />
+              <span>Auto-detect (visible when the CLI is installed)</span>
+            </label>
+            <label className="settings-radio-row">
+              <input
+                type="radio"
+                name="openclaw-mode"
+                checked={openclawMode === 'on'}
+                onChange={() => handleOpenclawModeChange('on')}
+                data-testid="settings-openclaw-mode-on"
+              />
+              <span>Always on</span>
+            </label>
+            <label className="settings-radio-row">
+              <input
+                type="radio"
+                name="openclaw-mode"
+                checked={openclawMode === 'off'}
+                onChange={() => handleOpenclawModeChange('off')}
+                data-testid="settings-openclaw-mode-off"
+              />
+              <span>Always off</span>
+            </label>
           </>
         )}
       </section>

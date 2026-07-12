@@ -40,14 +40,16 @@ import {
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
 import type { FileReadStream } from './file-service';
 import type { InterpreterBroker, RemoteInterpreter, RemoteMessageChannel, RemotePort } from './interpreter-broker';
-import type {
-  OpenClawAgentSession,
-  OpenClawCoreConfig,
-  OpenClawLifecycleAction,
-  OpenClawLifecycleResult,
-  OpenClawLogLine,
-  OpenClawSetConfigResult,
-  OpenClawStatus,
+import {
+  OPENCLAW_CONFIG_ALLOWLIST,
+  OPENCLAW_CONFIG_UNSET,
+  type OpenClawAgentSession,
+  type OpenClawCoreConfig,
+  type OpenClawLifecycleAction,
+  type OpenClawLifecycleResult,
+  type OpenClawLogLine,
+  type OpenClawSetConfigResult,
+  type OpenClawStatus,
 } from '../shared/openclaw';
 
 /** Non-standard WS close code: auth was missing/wrong on this connection. */
@@ -230,6 +232,15 @@ export interface RemoteOpenClawSource {
   getCoreConfig(): Promise<OpenClawCoreConfig>;
   setCoreConfig(key: string, value: string): Promise<OpenClawSetConfigResult>;
   mintChatTicket(): Promise<OpenClawChatTicketResult>;
+  /** Effective OpenClaw visibility RIGHT NOW (openclaw-stabilization M3) —
+   * synchronous, unlike every other member above: main.ts keeps this
+   * resolved eagerly (recomputed at bridge boot and on every
+   * `settings:set-openclaw-mode`), so every openclaw-* arm below can gate
+   * itself without an async round trip per message. */
+  isVisible(): boolean;
+  /** Fires whenever desktop visibility changes (the tri-state mode was
+   * toggled) — relayed to every authed connection as `openclaw-availability`. */
+  subscribeVisibility(listener: (visible: boolean) => void): () => void;
 }
 
 export interface RemoteBridgeOptions {
@@ -289,6 +300,10 @@ export function attachConnection(
   let openclawLogsUnsub: (() => void) | null = null;
   let pendingOpenClawLogLines: OpenClawLogLine[] = [];
   let openclawLogFlushTimer: ReturnType<typeof setInterval> | null = null;
+  /** M3 gate: `false` when there's no `openclawSource` at all (existing
+   * "no wiring" no-op convention) OR the desktop's tri-state mode currently
+   * resolves to hidden. */
+  const openclawVisible = (): boolean => options.openclawSource?.isVisible() ?? false;
 
   const send = (msg: ServerToClientMessage): void => {
     if (ws.readyState === WS_OPEN) ws.send(JSON.stringify(msg));
@@ -382,10 +397,20 @@ export function attachConnection(
     }
   });
 
+  // OpenClaw availability (M3): same unconditional-broadcast shape as the
+  // session/run mirroring above — `visible` changes with the desktop's
+  // tri-state mode, not per-connection state, so there's nothing to gate this
+  // subscription on besides `authed`.
+  const unsubOpenClawVisibility =
+    options.openclawSource?.subscribeVisibility((visible) => {
+      if (authed) send({ kind: 'openclaw-availability', visible });
+    }) ?? (() => undefined);
+
   ws.on('close', () => {
     unsubSessionAdded();
     unsubSessionRemoved();
     unsubRunStarted();
+    unsubOpenClawVisibility();
     for (const port of runs.values()) port.close();
     runs.clear();
     if (statsVisible) {
@@ -426,6 +451,9 @@ export function attachConnection(
           authed = true;
           hooks?.onAuthenticated?.();
           send({ kind: 'auth-ok' });
+          // OpenClaw availability (M3): initial state, right after auth —
+          // `subscribeVisibility` above only covers CHANGES from here on.
+          if (options.openclawSource) send({ kind: 'openclaw-availability', visible: options.openclawSource.isVisible() });
         } else {
           send({ kind: 'auth-fail' });
           ws.close(AUTH_CLOSE_CODE);
@@ -725,10 +753,16 @@ export function attachConnection(
       // ── OpenClaw management (openclaw-management M4) ────────────────────
       // Every arm below guards `if (!options.openclawSource) break;` — silent
       // no-op, same convention as stats/packets/file-* above when their
-      // source is absent.
+      // source is absent. Additionally (M3): when the desktop's effective
+      // visibility is false, subscriptions are ignored (no listener attached,
+      // no reply) and request/reply arms reply with their own existing
+      // "unavailable" shape (mirrors what mobile already renders on a dropped
+      // connection, see ws-ezterminal.ts's `endConnection`) rather than
+      // touching `openclawSource` at all.
 
       case 'openclaw-status-subscribe': {
         if (!options.openclawSource) break;
+        if (!openclawVisible()) break; // hidden — subscription ignored
         if (openclawStatusSubscribed) break; // idempotent — already on
         openclawStatusSubscribed = true;
         openclawStatusUnsub = options.openclawSource.subscribeStatus((status) => {
@@ -744,15 +778,26 @@ export function attachConnection(
       case 'openclaw-lifecycle': {
         if (!options.openclawSource) break;
         const { requestId, action } = msg;
+        if (!openclawVisible()) {
+          send({ kind: 'openclaw-lifecycle-result', requestId, result: { ok: false, stderr: 'openclaw disabled' } });
+          break;
+        }
         options.openclawSource
           .runLifecycle(action)
           .then((result) => send({ kind: 'openclaw-lifecycle-result', requestId, result }))
-          .catch(() => {});
+          .catch((err: unknown) => {
+            send({
+              kind: 'openclaw-lifecycle-result',
+              requestId,
+              result: { ok: false, stderr: err instanceof Error ? err.message : String(err) },
+            });
+          });
         break;
       }
 
       case 'openclaw-logs-subscribe': {
         if (!options.openclawSource) break;
+        if (!openclawVisible()) break; // hidden — subscription ignored
         if (openclawLogsSubscribed) break; // idempotent — already on
         openclawLogsSubscribed = true;
         openclawLogsUnsub = options.openclawSource.subscribeLogs((line) => {
@@ -774,26 +819,52 @@ export function attachConnection(
       case 'openclaw-sessions-get': {
         if (!options.openclawSource) break;
         const { requestId } = msg;
+        if (!openclawVisible()) {
+          send({ kind: 'openclaw-sessions-reply', requestId, sessions: [] });
+          break;
+        }
         options.openclawSource
           .listAgentSessions()
           .then((sessions) => send({ kind: 'openclaw-sessions-reply', requestId, sessions }))
-          .catch(() => {});
+          .catch(() => send({ kind: 'openclaw-sessions-reply', requestId, sessions: [] }));
         break;
       }
 
       case 'openclaw-config-get': {
         if (!options.openclawSource) break;
         const { requestId } = msg;
+        if (!openclawVisible()) {
+          send({
+            kind: 'openclaw-config-reply',
+            requestId,
+            config: Object.fromEntries(OPENCLAW_CONFIG_ALLOWLIST.map((key) => [key, OPENCLAW_CONFIG_UNSET])) as OpenClawCoreConfig,
+          });
+          break;
+        }
         options.openclawSource
           .getCoreConfig()
           .then((config) => send({ kind: 'openclaw-config-reply', requestId, config }))
-          .catch(() => {});
+          .catch(() =>
+            send({
+              kind: 'openclaw-config-reply',
+              requestId,
+              config: Object.fromEntries(OPENCLAW_CONFIG_ALLOWLIST.map((key) => [key, OPENCLAW_CONFIG_UNSET])) as OpenClawCoreConfig,
+            }),
+          );
         break;
       }
 
       case 'openclaw-config-set': {
         if (!options.openclawSource) break;
         const { requestId, key, value } = msg;
+        if (!openclawVisible()) {
+          send({
+            kind: 'openclaw-config-set-reply',
+            requestId,
+            result: { ok: false, restartRequired: false, error: 'openclaw disabled' },
+          });
+          break;
+        }
         // `setCoreConfig` REJECTS for a non-allowlisted key (defense against a
         // hostile/buggy client, see OpenClawService's own doc) — that must
         // surface as an `ok:false` reply, never crash this connection handler.
@@ -813,6 +884,10 @@ export function attachConnection(
       case 'openclaw-chat-ticket': {
         if (!options.openclawSource) break;
         const { requestId } = msg;
+        if (!openclawVisible()) {
+          send({ kind: 'openclaw-chat-ticket-reply', requestId, ticket: null, proxyPort: 0, token: null });
+          break;
+        }
         options.openclawSource
           .mintChatTicket()
           .then((result) => {

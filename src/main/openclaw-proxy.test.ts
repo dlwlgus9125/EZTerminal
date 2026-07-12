@@ -234,6 +234,43 @@ describe('openclaw-proxy — M5 amendment ① source-IP-bound session', () => {
   });
 });
 
+describe('openclaw-proxy — M5/S3 cookie session TTL', () => {
+  let upstream: Awaited<ReturnType<typeof startFakeUpstream>>;
+  let proxy: OpenClawProxyHandle;
+
+  afterEach(async () => {
+    await proxy?.stop();
+    upstream?.wss.close();
+    await new Promise<void>((resolve) => upstream.server.close(() => resolve()));
+  });
+
+  it('the session cookie alone (past the shorter IP-session TTL) still authorizes a request within its own 24h TTL', async () => {
+    upstream = await startFakeUpstream();
+    let currentTime = 1_000_000;
+    proxy = await startOpenClawProxy({ port: 0, upstreamOrigin: upstream.origin, now: () => currentTime });
+    const ticket = proxy.mintTicket();
+    const redemption = await rawGet(`http://127.0.0.1:${proxy.port}`, `/?t=${ticket}`);
+    const cookie = extractCookie(redemption.headers['set-cookie']);
+
+    currentTime += 10 * 60_000 + 1; // past the 10-minute IP-session TTL — the IP binding alone would now fail
+    const res = await rawGet(`http://127.0.0.1:${proxy.port}`, '/', { cookie: cookie ?? '' });
+    expect(res.status).toBe(200);
+  });
+
+  it('the session cookie expires after its 24h TTL — a request with that (still well-formed) cookie is rejected with 403', async () => {
+    upstream = await startFakeUpstream();
+    let currentTime = 1_000_000;
+    proxy = await startOpenClawProxy({ port: 0, upstreamOrigin: upstream.origin, now: () => currentTime });
+    const ticket = proxy.mintTicket();
+    const redemption = await rawGet(`http://127.0.0.1:${proxy.port}`, `/?t=${ticket}`);
+    const cookie = extractCookie(redemption.headers['set-cookie']);
+
+    currentTime += 24 * 60 * 60_000 + 1; // past the 24h session TTL (also well past the IP-session TTL)
+    const res = await rawGet(`http://127.0.0.1:${proxy.port}`, '/', { cookie: cookie ?? '' });
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('openclaw-proxy — header rewrites (M0 spike parity)', () => {
   let upstream: Awaited<ReturnType<typeof startFakeUpstream>>;
   let proxy: OpenClawProxyHandle;

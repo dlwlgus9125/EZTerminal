@@ -8,6 +8,7 @@ import {
   type OpenClawStatus,
 } from '../../src/shared/openclaw';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+import { usePageVisible } from './use-page-visible';
 
 type OpenClawTab = 'status' | 'logs' | 'settings' | 'chat';
 
@@ -56,23 +57,40 @@ const STATE_LABEL: Record<OpenClawStatus['state'], string> = {
 export function MobileOpenClawView({
   transport,
   onClose,
+  openclawAvailable,
 }: {
   transport: WsEzTerminalTransport;
   onClose: () => void;
+  /** Desktop's effective OpenClaw availability push (openclaw-stabilization
+   * review fix) — a dep-only signal, not read directly: see the status/logs
+   * effects below for why this view needs it too, not just MobileWorkspace's
+   * own entry-dot subscription. */
+  openclawAvailable: boolean;
 }): JSX.Element {
   const [tab, setTab] = useState<OpenClawTab>('status');
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
   const [busyAction, setBusyAction] = useState<OpenClawLifecycleAction | null>(null);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
 
+  // Background pause (openclaw-stabilization M6) — released while the app is
+  // backgrounded, re-acquired on foreground; see use-page-visible.ts's doc.
+  const pageVisible = usePageVisible();
+
+  // `openclawAvailable` is a dep even though this effect doesn't read it:
+  // this view can stay mounted (open) across a desktop hidden->visible flip
+  // while mode='on', and the bridge silently drops a status-subscribe sent
+  // while hidden (remote-bridge.ts's `openclawVisible()` gate never attaches
+  // it) — without this dep the subscription would never re-send once desktop
+  // becomes visible again (same gap MobileWorkspace's own status effect has).
   useEffect(() => {
+    if (!pageVisible) return;
     const unsubscribe = transport.onOpenClawStatus((s) => setStatus(s));
     transport.setOpenClawStatusSubscribed(true);
     return () => {
       unsubscribe();
       transport.setOpenClawStatusSubscribed(false);
     };
-  }, [transport]);
+  }, [pageVisible, openclawAvailable, transport]);
 
   const runLifecycle = useCallback(
     (action: OpenClawLifecycleAction) => {
@@ -80,7 +98,14 @@ export function MobileOpenClawView({
       setLifecycleError(null);
       void transport.runOpenClawLifecycle(action).then((result) => {
         setBusyAction(null);
-        if (!result.ok) setLifecycleError(result.stderr || '작업을 완료하지 못했습니다.');
+        if (result.ok) {
+          // A successful restart applies whatever config change was pending
+          // (openclaw-stabilization M6's one-tap "지금 재시작") — clear the
+          // banner regardless of which button triggered the restart.
+          if (action === 'restart') setRestartBanner(false);
+        } else {
+          setLifecycleError(result.stderr || '작업을 완료하지 못했습니다.');
+        }
       });
     },
     [transport],
@@ -95,10 +120,18 @@ export function MobileOpenClawView({
   // ── Logs tab (M4): subscribes only while this tab is active. ─────────────
   const [logs, setLogs] = useState<OpenClawLogLine[]>([]);
   const logsActive = tab === 'logs';
+  // Background pause (M6): combine tab-gating with page visibility — the tab
+  // being active isn't enough on its own once the app is backgrounded.
+  const logsSubscribed = logsActive && pageVisible;
   const logsEndRef = useRef<HTMLDivElement | null>(null);
 
+  // `openclawAvailable` dep — same self-healing reasoning as the status
+  // effect above: a desktop hidden->visible flip while this tab stays active
+  // must re-send `openclaw-logs-subscribe`, or the bridge's silent hidden-
+  // drop (remote-bridge.ts's `openclawVisible()` gate) leaves the log tail
+  // dead until the tab is re-opened.
   useEffect(() => {
-    if (!logsActive) return;
+    if (!logsSubscribed) return;
     setLogs([]);
     const unsubscribe = transport.onOpenClawLogLines((lines) => {
       setLogs((current) => {
@@ -111,7 +144,7 @@ export function MobileOpenClawView({
       unsubscribe();
       transport.setOpenClawLogsSubscribed(false);
     };
-  }, [logsActive, transport]);
+  }, [logsSubscribed, openclawAvailable, transport]);
 
   useEffect(() => {
     if (!logsActive) return;
@@ -139,9 +172,17 @@ export function MobileOpenClawView({
 
   const saveConfig = useCallback(
     (key: 'agents.defaults.model' | 'gateway.port', value: string, which: 'model' | 'port') => {
+      const trimmed = value.trim();
+      // Config save contract (openclaw-stabilization M6, matches the desktop
+      // drawer): an empty/whitespace field is never sent (no change) — say
+      // so inline instead of silently no-op'ing.
+      if (!trimmed) {
+        setConfigError('변경할 값을 입력하세요.');
+        return;
+      }
       setConfigSaving(which);
       setConfigError(null);
-      void transport.setOpenClawConfig(key, value).then((result) => {
+      void transport.setOpenClawConfig(key, trimmed).then((result) => {
         setConfigSaving(null);
         if (result.ok) {
           setRestartBanner(true);
@@ -351,6 +392,22 @@ export function MobileOpenClawView({
             {restartBanner && (
               <div className="openclaw-guidance" data-testid="openclaw-restart-banner">
                 적용하려면 게이트웨이를 재시작하세요.
+                <div className="openclaw-lifecycle-buttons">
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy}
+                    onClick={() => runLifecycle('restart')}
+                    data-testid="openclaw-restart-now"
+                  >
+                    {busyAction === 'restart' ? '재시작하는 중…' : '지금 재시작'}
+                  </button>
+                </div>
+                {lifecycleError && (
+                  <div className="openclaw-guidance openclaw-guidance--error" data-testid="openclaw-restart-error">
+                    {lifecycleError}
+                  </div>
+                )}
               </div>
             )}
             {configError && (

@@ -27,6 +27,7 @@ import {
   validateLayoutEnvelope,
   type EffectParamsSettings,
   type LayoutEnvelope,
+  type OpenClawMode,
   type PresetsFile,
   type RollbarSettings,
   type SettingsFile,
@@ -206,6 +207,18 @@ export class LayoutStore {
 
   async setRemoteEnabled(remoteEnabled: boolean): Promise<void> {
     await this.updateSettings((current) => ({ ...current, remoteEnabled }), 'remoteEnabled');
+  }
+
+  async getOpenClawMode(): Promise<OpenClawMode> {
+    // Default 'auto' (openclaw-stabilization M2): visible only when the
+    // `openclaw` CLI is installed — unlike remoteEnabled above, this needs no
+    // explicit opt-in, since 'auto' never surfaces OpenClaw UI/background
+    // work on a machine that doesn't have the CLI in the first place.
+    return (await this.loadSettingsFile()).openclawMode ?? 'auto';
+  }
+
+  async setOpenClawMode(openclawMode: OpenClawMode): Promise<void> {
+    await this.updateSettings((current) => ({ ...current, openclawMode }), 'openclawMode');
   }
 
   /** The persisted FONT_CATALOG id (theme-effects-font M3) — undefined means

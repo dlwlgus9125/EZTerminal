@@ -288,7 +288,16 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   // map precedent as `pendingFileOps` above) — a dropped connection resolves
   // every in-flight entry with a "connection lost" result, never left pending.
   private readonly openclawStatusListeners = new Set<(status: OpenClawStatus) => void>();
-  private openclawStatusSubscribed = false;
+  /** REFCOUNT, not a boolean (openclaw-stabilization M3): MobileWorkspace
+   * (for the entry-button status dot) and MobileOpenClawView (while it's
+   * open) both call `setOpenClawStatusSubscribed` independently on the SAME
+   * transport instance — a boolean would let the view's unmount-time
+   * `setOpenClawStatusSubscribed(false)` cancel the workspace's own still-
+   * wanted subscription. Clamped at 0, same "combine independent
+   * acquire/release callers" shape as `StatsVisibility` (src/main/stats-
+   * visibility.ts) on the desktop side, just inlined here rather than a
+   * separate class (only one subscription to combine, not N remote viewers). */
+  private openclawStatusRefcount = 0;
   private readonly openclawLogListeners = new Set<(lines: readonly OpenClawLogLine[]) => void>();
   private openclawLogsSubscribed = false;
   private readonly pendingOpenClawLifecycle = new Map<string, (result: OpenClawLifecycleResult) => void>();
@@ -296,6 +305,15 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly pendingOpenClawConfigGet = new Map<string, (config: OpenClawCoreConfig) => void>();
   private readonly pendingOpenClawConfigSet = new Map<string, (result: OpenClawSetConfigResult) => void>();
   private readonly pendingOpenClawChatTicket = new Map<string, (reply: OpenClawChatTicket) => void>();
+
+  // OpenClaw availability (M3) — pushed unconditionally (no subscribe
+  // message, unlike status/logs above) right after auth and on every desktop
+  // mode change. `openclawAvailable` is `undefined` until the first push
+  // arrives (or after a disconnect resets it — see `endConnection`); `onOpen
+  // ClawAvailability` folds that to `false` on replay, same "unknown reads as
+  // not-visible" contract MobileWorkspace's effective-visibility derivation uses.
+  private openclawAvailable: boolean | undefined;
+  private readonly openclawAvailabilityListeners = new Set<(visible: boolean) => void>();
 
   constructor(options: WsEzTerminalOptions) {
     this.url = options.url;
@@ -536,11 +554,17 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return () => this.openclawStatusListeners.delete(listener);
   }
 
-  /** Tell the bridge whether THIS connection wants the OpenClaw status push
-   * — mirrors `setStatsPanelVisible`'s replay-on-reconnect shape exactly. */
+  /** Tell the bridge whether THIS caller wants the OpenClaw status push —
+   * REFCOUNTED (see `openclawStatusRefcount`'s doc): only the 0->1 and 1->0
+   * transitions actually send a wire message; an already-subscribed second
+   * caller (or a not-yet-zero release) is a no-op on the wire, same
+   * "transition only" discipline as `StatsVisibility.recompute`. */
   setOpenClawStatusSubscribed(subscribed: boolean): void {
-    this.openclawStatusSubscribed = subscribed;
-    if (this.authed) this.send({ kind: subscribed ? 'openclaw-status-subscribe' : 'openclaw-status-unsubscribe' });
+    const wasSubscribed = this.openclawStatusRefcount > 0;
+    this.openclawStatusRefcount = Math.max(0, this.openclawStatusRefcount + (subscribed ? 1 : -1));
+    const isSubscribed = this.openclawStatusRefcount > 0;
+    if (wasSubscribed === isSubscribed) return;
+    if (this.authed) this.send({ kind: isSubscribed ? 'openclaw-status-subscribe' : 'openclaw-status-unsubscribe' });
   }
 
   /** Fires on every `openclaw-log-lines` push (coalesced batch of lines, see
@@ -587,6 +611,18 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       this.pendingOpenClawConfigSet.set(requestId, resolve);
       this.send({ kind: 'openclaw-config-set', requestId, key, value });
     });
+  }
+
+  /** Fires on every `openclaw-availability` push (openclaw-stabilization
+   * M3) — the desktop's effective OpenClaw visibility. REPLAYS the current
+   * cached value immediately to a new subscriber (same precedent as
+   * `onAuthChange` above), folding "haven't heard yet" to `false`. No
+   * subscribe/unsubscribe call needed (unlike `onOpenClawStatus`) — the
+   * bridge pushes this unconditionally to every authed connection. */
+  onOpenClawAvailability(listener: (visible: boolean) => void): () => void {
+    this.openclawAvailabilityListeners.add(listener);
+    listener(this.openclawAvailable ?? false);
+    return () => this.openclawAvailabilityListeners.delete(listener);
   }
 
   /** Mint a fresh chat ticket for the mobile chat embed (M5) — see
@@ -909,6 +945,15 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.pendingOpenClawConfigSet.clear();
     for (const resolve of this.pendingOpenClawChatTicket.values()) resolve({ ticket: null, proxyPort: 0, token: null });
     this.pendingOpenClawChatTicket.clear();
+    // OpenClaw availability (M3): a dropped connection can't know the
+    // desktop's current mode anymore — reset to "unknown" so a stale `true`
+    // doesn't keep an entry point visible while disconnected (mirrors
+    // `setAuthed(false)` above, which every effective-visibility consumer
+    // already reacts to alongside this).
+    if (this.openclawAvailable !== false) {
+      this.openclawAvailable = false;
+      for (const listener of this.openclawAvailabilityListeners) listener(false);
+    }
     if (this.stopped) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -944,7 +989,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         // `PacketMirror` replays the current status on its own.
         if (this.packetsSubscribed) this.send({ kind: 'packets-subscribe' });
         // OpenClaw management (M4): same replay shape for status/logs.
-        if (this.openclawStatusSubscribed) this.send({ kind: 'openclaw-status-subscribe' });
+        if (this.openclawStatusRefcount > 0) this.send({ kind: 'openclaw-status-subscribe' });
         if (this.openclawLogsSubscribed) this.send({ kind: 'openclaw-logs-subscribe' });
         break;
       case 'auth-fail':
@@ -1081,6 +1126,11 @@ export class WsEzTerminalTransport implements EzTerminalApi {
 
       case 'openclaw-status':
         for (const listener of this.openclawStatusListeners) listener(msg.status);
+        break;
+
+      case 'openclaw-availability':
+        this.openclawAvailable = msg.visible;
+        for (const listener of this.openclawAvailabilityListeners) listener(msg.visible);
         break;
 
       case 'openclaw-lifecycle-result': {

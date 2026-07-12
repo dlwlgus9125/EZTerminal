@@ -42,9 +42,9 @@ import {
   type RemoteStatsSource,
 } from './remote-bridge';
 import { formatConnectionInfo } from './remote-connection-info';
-import type { EffectParamsSettings, RollbarSettings, StartupPref, ThemeName } from '../shared/layout-schema';
+import type { EffectParamsSettings, OpenClawMode, RollbarSettings, StartupPref, ThemeName } from '../shared/layout-schema';
 import type { InterpreterToMain, MainToInterpreter, RunStartedInfo, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
-import type { OpenClawAutostartAction, OpenClawLifecycleAction } from '../shared/openclaw';
+import type { OpenClawAutostartAction, OpenClawLifecycleAction, OpenClawVisibility } from '../shared/openclaw';
 
 // The main process owns the interpreter utilityProcess lifetime (architecture
 // §1). Per-command MessagePort brokering + session/run correlation live in the
@@ -123,6 +123,30 @@ let openClawChatView: OpenClawChatViewManager | null = null;
 // createWindow() itself is defined outside 'ready', and openClawChatView's
 // attach() needs a handle to the window it should embed into.
 let mainWindowRef: BrowserWindow | null = null;
+
+/**
+ * OpenClaw desktop visibility (openclaw-stabilization M2): resolves the
+ * tri-state `openclawMode` setting into an effective on/off. 'auto' defers to
+ * `isInstalled` (OpenClawService.isInstalled(), TTL'd negative-cache); 'on'/
+ * 'off' are unconditional. A standalone function (not a closure over one
+ * OpenClawService instance) so the WS remote bridge (M3) can reuse it.
+ */
+async function resolveOpenClawVisibility(
+  mode: OpenClawMode,
+  isInstalled: () => Promise<boolean>,
+): Promise<boolean> {
+  if (mode === 'on') return true;
+  if (mode === 'off') return false;
+  return isInstalled();
+}
+
+// OpenClaw desktop visibility (openclaw-stabilization M5): in 'auto' mode,
+// `resolveOpenClawVisibility` above only ever reruns on boot or an explicit
+// mode toggle — nothing re-queries `isInstalled()` on its own, so installing
+// or uninstalling the openclaw CLI mid-session never updates gating until
+// one of those happens. This drives a periodic recheck (main.ts, near the
+// other openclaw wiring) that's a no-op outside 'auto' mode.
+const OPENCLAW_VISIBILITY_RECHECK_MS = 30_000;
 
 // Defense-in-depth CSP for the raw-HTML injection sink in TextBlock (the ANSI →
 // HTML external output, sanitized upstream by ansi_up). Strict: only same-origin
@@ -470,6 +494,7 @@ app.on('ready', () => {
     void openClawProxyHandle?.stop();
     openClawService?.dispose();
     openClawChatView?.destroy();
+    clearInterval(openclawVisibilityRecheckTimer);
   });
 
   // Session lifecycle (Codex B1/B5). create-session is the ONLY way a shell session
@@ -699,6 +724,16 @@ app.on('ready', () => {
   // seam — `mintChatTicket` is the one method genuinely composed from BOTH
   // sources (the service's token + the proxy's ticket), everything else is a
   // direct passthrough (method names match `OpenClawService`'s own exactly).
+  // OpenClaw availability (openclaw-stabilization M3) — `currentOpenClawVisible`
+  // is kept resolved EAGERLY (recomputed in `startBridge` below and on every
+  // `settings:set-openclaw-mode` call) so `remoteOpenClawSource.isVisible()`
+  // can stay synchronous (the bridge gates every openclaw-* arm on it, per
+  // connection, with no async round trip). `remoteOpenClawVisibilityListeners`
+  // mirrors `remoteStatsListeners` above — the bridge's per-connection
+  // `subscribeVisibility` adds/removes from it; notified below whenever the
+  // mode changes.
+  let currentOpenClawVisible = false;
+  const remoteOpenClawVisibilityListeners = new Set<(visible: boolean) => void>();
   const remoteOpenClawSource: RemoteOpenClawSource = {
     subscribeStatus: (listener) => openclaw.subscribeStatus(listener),
     runLifecycle: (action) => openclaw.runLifecycle(action),
@@ -711,6 +746,11 @@ app.on('ready', () => {
       const token = await openclaw.getChatToken();
       if (!token) return null;
       return { ticket: openClawProxyHandle.mintTicket(), proxyPort: openClawProxyHandle.port, token };
+    },
+    isVisible: () => currentOpenClawVisible,
+    subscribeVisibility: (listener) => {
+      remoteOpenClawVisibilityListeners.add(listener);
+      return () => remoteOpenClawVisibilityListeners.delete(listener);
     },
   };
   const remoteTokenStore = new RemoteTokenStore(path.join(app.getPath('userData')));
@@ -735,6 +775,10 @@ app.on('ready', () => {
   // (architecture decision (b) — the OpenClaw proxy's lifecycle matches
   // `remoteEnabled` exactly, never a separate always-on listener).
   const startBridge = async (): Promise<void> => {
+    // M3: resolve visibility BEFORE the WS server starts listening, so the
+    // very first connection's post-auth push (see remote-bridge.ts) is never
+    // stale — a client cannot connect until `startRemoteBridge` below runs.
+    currentOpenClawVisible = await resolveOpenClawVisibility(await layoutStore.getOpenClawMode(), () => openclaw.isInstalled());
     if (!openClawProxyHandle) {
       const status = await openclaw.getStatus();
       openClawProxyHandle = await startOpenClawProxy({
@@ -827,6 +871,64 @@ app.on('ready', () => {
   // on the same CLI lane as start/stop/restart (see OpenClawService.runAutostart).
   ipcMain.handle('openclaw:autostart', (_event, action: OpenClawAutostartAction) => openclaw.runAutostart(action));
 
+  // ── OpenClaw desktop visibility (openclaw-stabilization M2) ───────────────
+  // Tri-state setting gating whether ANY OpenClaw UI shows on desktop at all.
+  // Lives in settings.json (hence the `settings:*` channel naming, matching
+  // the generic settings block above) but is colocated here rather than
+  // there, since computing `visible` needs `openclaw` (constructed above).
+  //
+  // `applyOpenClawVisibility` is the single place that broadcasts a resolved
+  // {mode, visible} to every desktop window AND the mobile bridge's
+  // visibility listeners, keeping `currentOpenClawVisible` in sync with both.
+  // Shared by the explicit mode-toggle handler right below and the periodic
+  // 'auto'-mode recheck (M5) further down, so the two can never drift apart.
+  const applyOpenClawVisibility = (visibility: OpenClawVisibility): void => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('openclaw:visibility-changed', visibility);
+    }
+    // M3: same notification, mirrored to the mobile bridge — see
+    // `remoteOpenClawSource.subscribeVisibility` above.
+    currentOpenClawVisible = visibility.visible;
+    for (const listener of remoteOpenClawVisibilityListeners) listener(visibility.visible);
+  };
+  ipcMain.handle('settings:get-openclaw-mode', async () => {
+    await storeReady;
+    return layoutStore.getOpenClawMode();
+  });
+  ipcMain.handle('settings:set-openclaw-mode', async (_event, mode: OpenClawMode) => {
+    if (mode !== 'auto' && mode !== 'on' && mode !== 'off') return;
+    await storeReady;
+    await layoutStore.setOpenClawMode(mode);
+    applyOpenClawVisibility({
+      mode,
+      visible: await resolveOpenClawVisibility(mode, () => openclaw.isInstalled()),
+    });
+  });
+  ipcMain.handle('openclaw:get-visibility', async (): Promise<OpenClawVisibility> => {
+    await storeReady;
+    const mode = await layoutStore.getOpenClawMode();
+    return { mode, visible: await resolveOpenClawVisibility(mode, () => openclaw.isInstalled()) };
+  });
+  // M5: nothing re-queries `openclaw.isInstalled()` on its own once boot/the
+  // handler above have run, so in 'auto' mode installing/uninstalling the CLI
+  // while the app is running never updates gating until a mode toggle or
+  // restart (`isInstalled()`'s own negative-cache TTL is INSTALL_RECHECK_MS,
+  // M2 — this is what actually re-triggers a real lookup). Skipped entirely
+  // for 'on'/'off' (unconditional, nothing to recheck). Cheap: a PATH lookup
+  // via CommandResolver + fs stat, no gateway HTTP/WS traffic. `.unref()`'d
+  // so it never keeps the process alive on its own — same pattern as
+  // FileService's idle-upload sweep timer (file-service.ts).
+  const openclawVisibilityRecheckTimer = setInterval(() => {
+    void (async () => {
+      const mode = await layoutStore.getOpenClawMode();
+      if (mode !== 'auto') return;
+      const visible = await resolveOpenClawVisibility(mode, () => openclaw.isInstalled());
+      if (visible !== currentOpenClawVisible) applyOpenClawVisibility({ mode, visible });
+    })();
+  }, OPENCLAW_VISIBILITY_RECHECK_MS);
+  openclawVisibilityRecheckTimer.unref();
+
   // Status push is wanted by TWO independent UI surfaces: the drawer
   // (openclaw:set-drawer-open) and the M3 chat panel (openclaw:chat-panel-
   // mounted — sent for as long as the singleton dockview tab exists, NOT
@@ -902,7 +1004,20 @@ app.on('ready', () => {
     openClawChatView?.setVisible(isVisible);
   });
   ipcMain.on('openclaw:chat-reload', () => {
-    openClawChatView?.reload();
+    void openClawChatView?.reload();
+  });
+  // "브라우저로 열기" escape hatch (openclaw-stabilization M6) — resolves the
+  // SAME token'd chat URL the embedded view uses and hands it to the OS
+  // default browser instead, for when the WebContentsView embed misbehaves.
+  ipcMain.handle('openclaw:chat-open-external', async (): Promise<boolean> => {
+    const url = await openclaw.getChatUrl();
+    if (!url) return false;
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch {
+      return false;
+    }
   });
 
   createWindow();

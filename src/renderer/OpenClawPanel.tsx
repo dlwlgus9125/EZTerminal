@@ -170,18 +170,27 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
   const saveConfig = useCallback(async (): Promise<void> => {
     const api = window.ezterminalDesktop;
     if (!api) return;
+    const model = modelDraft.trim();
+    const port = portDraft.trim();
+    // Config save contract (openclaw-stabilization M6): an empty/whitespace
+    // field is never sent (no change) — if EVERY field is empty there is
+    // nothing to save, so say so instead of silently no-op'ing.
+    if (!model && !port) {
+      setConfigError('변경할 값을 입력하세요.');
+      return;
+    }
     setSavingConfig(true);
     setConfigError(null);
     try {
       const errors: string[] = [];
       let restartRequired = false;
-      if (modelDraft.trim()) {
-        const r = await api.setOpenClawConfig('agents.defaults.model', modelDraft.trim());
+      if (model) {
+        const r = await api.setOpenClawConfig('agents.defaults.model', model);
         if (!r.ok) errors.push(r.error ?? '기본 모델 저장 실패');
         restartRequired = restartRequired || r.restartRequired;
       }
-      if (portDraft.trim()) {
-        const r = await api.setOpenClawConfig('gateway.port', portDraft.trim());
+      if (port) {
+        const r = await api.setOpenClawConfig('gateway.port', port);
         if (!r.ok) errors.push(r.error ?? '포트 저장 실패');
         restartRequired = restartRequired || r.restartRequired;
       }
@@ -239,13 +248,7 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
           <span className="status-metric">{status ? STATE_LABEL[status.state] : '확인 중…'}</span>
         </div>
         {status?.version && <div className="openclaw-state-detail">버전 {status.version}</div>}
-        {status?.pid !== undefined && <div className="openclaw-state-detail">PID {status.pid}</div>}
         {status && <div className="openclaw-state-detail">포트 {status.port}</div>}
-        {status?.configPath && (
-          <div className="openclaw-state-detail openclaw-state-path" title={status.configPath}>
-            {status.configPath}
-          </div>
-        )}
       </section>
 
       {state === 'not-installed' ? (
@@ -309,6 +312,15 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
             >
               채팅 열기
             </button>
+            <button
+              type="button"
+              className="btn btn-split openclaw-chat-btn"
+              onClick={() => void window.ezterminalDesktop?.openOpenClawChatExternal()}
+              title="브라우저로 열기"
+              data-testid="btn-openclaw-open-chat-external"
+            >
+              브라우저로 열기
+            </button>
           </section>
 
           {state === 'stopped' && (
@@ -316,6 +328,12 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
               <div className="status-loading">
                 게이트웨이가 중지되어 있습니다. 시작 버튼을 눌러 세션과 로그를 확인하세요.
               </div>
+            </section>
+          )}
+
+          {state === 'unknown' && (
+            <section className="status-section" data-testid="openclaw-guidance">
+              <div className="status-loading">상태를 확인할 수 없습니다.</div>
             </section>
           )}
 

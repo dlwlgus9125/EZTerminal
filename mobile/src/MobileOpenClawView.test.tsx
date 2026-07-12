@@ -98,7 +98,7 @@ function renderView(transport: WsEzTerminalTransport, onClose: () => void): HTML
   document.body.appendChild(container);
   root = createRoot(container);
   act(() => {
-    root!.render(<MobileOpenClawView transport={transport} onClose={onClose} />);
+    root!.render(<MobileOpenClawView transport={transport} onClose={onClose} openclawAvailable={true} />);
   });
   return container;
 }
@@ -308,6 +308,134 @@ describe('MobileOpenClawView — settings tab', () => {
     });
 
     expect(el.querySelector('[data-testid="openclaw-restart-banner"]')).toBeTruthy();
+  });
+
+  it('saving an empty field shows an inline hint and does not send openclaw-config-set', async () => {
+    const { transport, socket } = makeAuthedTransport();
+    const el = renderView(transport, vi.fn());
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-tab-settings"]')!.click());
+    const getRequestId = (JSON.parse(socket.sent.at(-1)!) as { requestId: string }).requestId;
+    await act(async () => {
+      socket.triggerMessage({
+        kind: 'openclaw-config-reply',
+        requestId: getRequestId,
+        config: { 'agents.defaults.model': 'unset', 'gateway.port': 'unset' },
+      });
+      await flush();
+    });
+
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-config-save-model"]')!.click());
+
+    expect(socket.sentKinds()).not.toContain('openclaw-config-set');
+    expect(el.querySelector('[data-testid="openclaw-config-error"]')?.textContent).toContain('변경할 값을 입력하세요.');
+  });
+});
+
+describe('MobileOpenClawView — restart banner one-tap restart (openclaw-stabilization M6)', () => {
+  /** Drives the settings tab through a successful config save so the restart
+   * banner is showing, ready for the one-tap "지금 재시작" tests below. */
+  async function openSettingsWithRestartBanner(): Promise<{ socket: FakeSocket; el: HTMLDivElement }> {
+    const { transport, socket } = makeAuthedTransport();
+    const el = renderView(transport, vi.fn());
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-tab-settings"]')!.click());
+    const getRequestId = (JSON.parse(socket.sent.at(-1)!) as { requestId: string }).requestId;
+    await act(async () => {
+      socket.triggerMessage({
+        kind: 'openclaw-config-reply',
+        requestId: getRequestId,
+        config: { 'agents.defaults.model': 'openai/gpt-5.5', 'gateway.port': 'unset' },
+      });
+      await flush();
+    });
+    const modelInput = el.querySelector<HTMLInputElement>('[data-testid="openclaw-config-model"]')!;
+    act(() => setInputValue(modelInput, 'openai/gpt-6'));
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-config-save-model"]')!.click());
+    const setMsg = JSON.parse(socket.sent.at(-1)!) as { requestId: string };
+    await act(async () => {
+      socket.triggerMessage({
+        kind: 'openclaw-config-set-reply',
+        requestId: setMsg.requestId,
+        result: { ok: true, restartRequired: true },
+      });
+      await flush();
+    });
+    expect(el.querySelector('[data-testid="openclaw-restart-banner"]')).toBeTruthy();
+    return { socket, el };
+  }
+
+  it('clicking 지금 재시작 sends openclaw-lifecycle restart, disables the button while in flight, and clears the banner on success', async () => {
+    const { socket, el } = await openSettingsWithRestartBanner();
+
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-restart-now"]')!.click());
+    const lastMsg = JSON.parse(socket.sent.at(-1)!) as { kind: string; action: string; requestId: string };
+    expect(lastMsg.kind).toBe('openclaw-lifecycle');
+    expect(lastMsg.action).toBe('restart');
+    expect(el.querySelector<HTMLButtonElement>('[data-testid="openclaw-restart-now"]')!.disabled).toBe(true);
+
+    await act(async () => {
+      socket.triggerMessage({ kind: 'openclaw-lifecycle-result', requestId: lastMsg.requestId, result: { ok: true } });
+      await flush();
+    });
+
+    expect(el.querySelector('[data-testid="openclaw-restart-banner"]')).toBeFalsy();
+  });
+
+  it('a failed restart keeps the banner and shows stderr inline', async () => {
+    const { socket, el } = await openSettingsWithRestartBanner();
+
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-restart-now"]')!.click());
+    const lastMsg = JSON.parse(socket.sent.at(-1)!) as { requestId: string };
+
+    await act(async () => {
+      socket.triggerMessage({
+        kind: 'openclaw-lifecycle-result',
+        requestId: lastMsg.requestId,
+        result: { ok: false, stderr: 'gateway busy' },
+      });
+      await flush();
+    });
+
+    expect(el.querySelector('[data-testid="openclaw-restart-banner"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="openclaw-restart-error"]')?.textContent).toContain('gateway busy');
+  });
+});
+
+describe('MobileOpenClawView — background pause (openclaw-stabilization M6)', () => {
+  // jsdom's `document.visibilityState` is a read-only getter — shadow it
+  // with an own property (per-test, reset in afterEach) to simulate the
+  // Capacitor WebView backgrounding/foregrounding the app.
+  function setPageVisible(visible: boolean): void {
+    Object.defineProperty(document, 'visibilityState', { value: visible ? 'visible' : 'hidden', configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+  }
+
+  afterEach(() => setPageVisible(true));
+
+  it('releases the status subscription while backgrounded and re-acquires it when foregrounded', () => {
+    const { transport, socket } = makeAuthedTransport();
+    renderView(transport, vi.fn());
+    expect(socket.sentKinds().filter((k) => k === 'openclaw-status-subscribe')).toHaveLength(1);
+
+    setPageVisible(false);
+    expect(socket.sentKinds().filter((k) => k === 'openclaw-status-unsubscribe')).toHaveLength(1);
+
+    setPageVisible(true);
+    expect(socket.sentKinds().filter((k) => k === 'openclaw-status-subscribe')).toHaveLength(2);
+  });
+
+  it('combines tab-active with page visibility for the logs subscription: backgrounding unsubscribes, foregrounding resubscribes', () => {
+    const { transport, socket } = makeAuthedTransport();
+    const el = renderView(transport, vi.fn());
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-tab-logs"]')!.click());
+    expect(socket.sentKinds().filter((k) => k === 'openclaw-logs-subscribe')).toHaveLength(1);
+
+    setPageVisible(false);
+    expect(socket.sentKinds().filter((k) => k === 'openclaw-logs-unsubscribe')).toHaveLength(1);
+
+    setPageVisible(true);
+    expect(socket.sentKinds().filter((k) => k === 'openclaw-logs-subscribe')).toHaveLength(2);
   });
 });
 

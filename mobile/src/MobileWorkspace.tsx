@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
-import type { ThemeName } from '../../src/shared/layout-schema';
+import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
+import type { OpenClawStatus } from '../../src/shared/openclaw';
 import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
 import { setUserFontId } from '../../src/renderer/theme-runtime';
 import { MobileFileView } from './MobileFileView';
@@ -8,12 +9,14 @@ import { MobileOpenClawView } from './MobileOpenClawView';
 import { MobileSessionView } from './MobileSessionView';
 import { MobileSettingsView } from './MobileSettingsView';
 import { MobileStatsView } from './MobileStatsView';
-import { SessionSwitcher } from './SessionSwitcher';
+import { loadOpenClawMode, saveOpenClawMode } from './openclaw-mode';
+import { SessionSwitcher, openclawEntryDotClass } from './SessionSwitcher';
 import { TabStrip } from './TabStrip';
 import { ThemeMenu } from './ThemeMenu';
 import { applyTheme, loadCustomThemes, loadFont, loadTheme, saveTheme } from './theme';
 import { initialTabsState, tabsReducer } from './tabs';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+import { usePageVisible } from './use-page-visible';
 
 // theme-effects-font Wave 3 boot init — MODULE TOP LEVEL, not inside the
 // component: main.tsx's own top-level `applyTheme(loadTheme())` runs AFTER
@@ -64,6 +67,60 @@ export function MobileWorkspace({
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<ThemeName>(() => loadTheme());
+
+  // ── OpenClaw tri-state visibility + status dot (openclaw-stabilization
+  // M3/M4) ───────────────────────────────────────────────────────────────
+  const [openclawMode, setOpenclawMode] = useState<OpenClawMode>(() => loadOpenClawMode());
+  const [openclawAvailable, setOpenclawAvailable] = useState(false);
+  const [openclawState, setOpenclawState] = useState<OpenClawStatus | null>(null);
+
+  const handleOpenClawModeChange = useCallback((mode: OpenClawMode) => {
+    saveOpenClawMode(mode);
+    setOpenclawMode(mode);
+  }, []);
+
+  // `onOpenClawAvailability` is an unconditional push (no subscribe/
+  // unsubscribe control message, see ws-ezterminal.ts) — always listened for,
+  // independent of the derived visibility below (it's an INPUT to that
+  // derivation, so it can't itself be gated on it).
+  useEffect(() => {
+    return transport.onOpenClawAvailability(setOpenclawAvailable);
+  }, [transport]);
+
+  const effectiveOpenClawVisible =
+    openclawMode === 'on' ? true : openclawMode === 'off' ? false : openclawAvailable;
+
+  // Background pause (openclaw-stabilization M6): the status push otherwise
+  // keeps flowing over WS every 4s while the app sits backgrounded, burning
+  // battery for nobody. Combined into the acquire/release effect below —
+  // the M3/M4 refcount (see ws-ezterminal.ts's `openclawStatusRefcount` doc)
+  // makes releasing on hide and re-acquiring on show safe.
+  const pageVisible = usePageVisible();
+
+  // Status subscription (for the entry-button/header dot) is owned HERE, at
+  // workspace level, for as long as OpenClaw is effectively visible —
+  // independent of whether the full MobileOpenClawView is open. The
+  // transport's `setOpenClawStatusSubscribed` is REFCOUNTED specifically so
+  // this persistent subscription and MobileOpenClawView's own mount/unmount
+  // subscription (while the view itself is open) don't fight over the same
+  // boolean (see ws-ezterminal.ts's `openclawStatusRefcount` doc).
+  //
+  // `openclawAvailable` is listed as a dep even though it doesn't change
+  // `effectiveOpenClawVisible` under mode='on' (always true): the bridge
+  // silently drops a status-subscribe sent while desktop-hidden (remote-
+  // bridge.ts's `openclawVisible()` gate never attaches it), so without this
+  // dep a desktop hidden->visible flip during mode='on' would never re-send
+  // the subscribe — the entry dot would go stale forever. Listing it forces
+  // a cleanup+resubscribe on every availability transition (refcount-safe).
+  useEffect(() => {
+    if (!effectiveOpenClawVisible || !pageVisible) return;
+    const unsubscribe = transport.onOpenClawStatus(setOpenclawState);
+    transport.setOpenClawStatusSubscribed(true);
+    return () => {
+      unsubscribe();
+      transport.setOpenClawStatusSubscribed(false);
+    };
+  }, [effectiveOpenClawVisible, pageVisible, openclawAvailable, transport]);
 
   // File explorer (M4): the best-effort cwd snapshot each session's
   // MobileSessionView reports via `onCwdChange` — read ONCE when Files opens
@@ -137,7 +194,13 @@ export function MobileWorkspace({
   }
 
   if (view === 'openclaw') {
-    return <MobileOpenClawView transport={transport} onClose={() => setView('terminal')} />;
+    return (
+      <MobileOpenClawView
+        transport={transport}
+        onClose={() => setView('terminal')}
+        openclawAvailable={openclawAvailable}
+      />
+    );
   }
 
   if (view === 'settings') {
@@ -145,6 +208,8 @@ export function MobileWorkspace({
       <MobileSettingsView
         onClose={() => setView('terminal')}
         onDisconnect={onDisconnect}
+        openclawMode={openclawMode}
+        onOpenClawModeChange={handleOpenClawModeChange}
       />
     );
   }
@@ -173,6 +238,8 @@ export function MobileWorkspace({
         transport={transport}
         onSelect={openTab}
         onDisconnect={onDisconnect}
+        onOpenClaw={effectiveOpenClawVisible ? () => setView('openclaw') : undefined}
+        openclawState={effectiveOpenClawVisible ? (openclawState?.state ?? undefined) : undefined}
       />
     );
   }
@@ -231,15 +298,18 @@ export function MobileWorkspace({
         >
           🎨
         </button>
-        <button
-          type="button"
-          className="btn openclaw-btn"
-          onClick={() => setView('openclaw')}
-          aria-label="OpenClaw"
-          data-testid="btn-toggle-openclaw"
-        >
-          🤖
-        </button>
+        {effectiveOpenClawVisible && (
+          <button
+            type="button"
+            className="btn openclaw-btn"
+            onClick={() => setView('openclaw')}
+            aria-label="OpenClaw"
+            data-testid="btn-toggle-openclaw"
+          >
+            🤖
+            <span className={openclawEntryDotClass(openclawState?.state)} data-testid="openclaw-entry-dot" />
+          </button>
+        )}
         <button
           type="button"
           className="btn settings-btn"

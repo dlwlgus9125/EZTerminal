@@ -55,7 +55,7 @@ const STATE_LABEL: Record<OpenClawStatusState, string> = {
  */
 export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
-  const [viewState, setViewState] = useState<OpenClawChatViewState>({ hasError: false });
+  const [viewState, setViewState] = useState<OpenClawChatViewState>({ hasError: false, loading: false });
   const [busyLifecycle, setBusyLifecycle] = useState(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -102,17 +102,26 @@ export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
     };
   }, []);
 
-  // ── Request the view exactly once per stopped->running transition.
+  // ── Request the view exactly once per stopped->running transition. If an
+  // error is still latched from BEFORE this transition (viewState.hasError),
+  // a plain re-open is a no-op against the existing (errored) view — recover
+  // via the SAME reload path the 재연결 button uses instead, so the panel
+  // doesn't stay stuck behind the reconnect card forever once the gateway is
+  // healthy again (openclaw-stabilization M5).
   useEffect(() => {
     if (status?.state === 'running') {
       if (!openedRef.current) {
         openedRef.current = true;
-        window.ezterminalDesktop?.openOpenClawChatView();
+        if (viewState.hasError) {
+          window.ezterminalDesktop?.reloadOpenClawChatView();
+        } else {
+          window.ezterminalDesktop?.openOpenClawChatView();
+        }
       }
     } else {
       openedRef.current = false;
     }
-  }, [status?.state]);
+  }, [status?.state, viewState.hasError]);
 
   // ── Bounds reporting: rAF-throttled ResizeObserver + scroll/layout nudges.
   const reportBounds = useThrottledRaf(() => {
@@ -159,9 +168,14 @@ export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
     window.ezterminalDesktop?.reloadOpenClawChatView();
   }, []);
 
+  const openInBrowser = useCallback((): void => {
+    void window.ezterminalDesktop?.openOpenClawChatExternal();
+  }, []);
+
   const state = status?.state;
   const showGuidance = state !== 'running';
   const showReconnect = state === 'running' && viewState.hasError;
+  const showLoading = state === 'running' && viewState.loading && !viewState.hasError;
 
   return (
     <div className="openclaw-chat-panel" data-testid="openclaw-chat-panel" ref={containerRef}>
@@ -185,6 +199,14 @@ export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
               시작
             </button>
           )}
+          <button
+            type="button"
+            className="btn btn-split"
+            onClick={openInBrowser}
+            data-testid="openclaw-chat-open-external"
+          >
+            브라우저로 열기
+          </button>
         </div>
       )}
       {showReconnect && (
@@ -193,6 +215,19 @@ export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
           <button type="button" className="btn btn-split" onClick={reconnect} data-testid="openclaw-chat-reconnect-btn">
             재연결
           </button>
+          <button
+            type="button"
+            className="btn btn-split"
+            onClick={openInBrowser}
+            data-testid="openclaw-chat-open-external"
+          >
+            브라우저로 열기
+          </button>
+        </div>
+      )}
+      {showLoading && (
+        <div className="openclaw-chat-guidance" data-testid="openclaw-chat-loading">
+          <p className="openclaw-guidance-text">채팅을 불러오는 중…</p>
         </div>
       )}
     </div>
