@@ -848,6 +848,205 @@ body {
   flex: 1;
 }
 
+/* OpenClaw management drawer (openclaw-management M2) — reuses .status-drawer/
+   .status-section directly (same right-slot mutual-exclusion family as
+   Stats/Pairing/Settings above); the rules below are its own additions. */
+.openclaw-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.85rem;
+  border-bottom: 1px solid var(--term-border-faint);
+}
+
+.openclaw-drawer-header .status-section-title {
+  margin: 0;
+}
+
+.openclaw-state-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.openclaw-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--term-fg-faint);
+}
+
+.openclaw-state-running .openclaw-state-dot {
+  background: var(--term-green);
+}
+
+.openclaw-state-starting .openclaw-state-dot {
+  background: var(--term-amber);
+}
+
+.openclaw-state-stopped .openclaw-state-dot {
+  background: var(--term-fg-dim);
+}
+
+.openclaw-state-not-installed .openclaw-state-dot,
+.openclaw-state-unknown .openclaw-state-dot {
+  background: var(--term-red);
+}
+
+.openclaw-state-detail {
+  margin-top: 0.25rem;
+  font-size: 0.72rem;
+  color: var(--term-fg-dim);
+}
+
+.openclaw-state-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.openclaw-guidance-text {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  color: var(--term-fg);
+}
+
+.openclaw-guidance-cmd {
+  display: block;
+  margin-bottom: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--term-bg-inset);
+  border-radius: 3px;
+  font-size: 0.75rem;
+  color: var(--term-fg-bright);
+}
+
+.openclaw-guidance-link {
+  font-size: 0.75rem;
+  color: var(--term-blue);
+}
+
+.openclaw-lifecycle-buttons {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.openclaw-lifecycle-buttons .btn {
+  flex: 1;
+}
+
+.openclaw-chat-btn {
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+.openclaw-error-inline {
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--term-red);
+}
+
+.openclaw-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.openclaw-session-row {
+  padding: 0.4rem 0.5rem;
+  background: var(--term-bg-inset);
+  border-radius: 3px;
+}
+
+.openclaw-session-key {
+  font-size: 0.78rem;
+  color: var(--term-fg-bright);
+}
+
+.openclaw-session-updated {
+  margin-top: 0.15rem;
+  font-size: 0.68rem;
+  color: var(--term-fg-faint);
+}
+
+.openclaw-log-view {
+  height: 220px;
+  overflow-y: auto;
+  padding: 0.4rem;
+  background: var(--term-bg-inset);
+  border-radius: 3px;
+  font-family: var(--term-font, monospace);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.openclaw-log-line {
+  display: flex;
+  gap: 0.4rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.openclaw-log-time {
+  flex: 0 0 auto;
+  color: var(--term-fg-faint);
+}
+
+.openclaw-log-level {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.openclaw-log-message {
+  color: var(--term-fg);
+}
+
+.openclaw-log-level-info .openclaw-log-level,
+.openclaw-log-level-debug .openclaw-log-level {
+  color: var(--term-cyan);
+}
+
+.openclaw-log-level-warn .openclaw-log-level {
+  color: var(--term-amber);
+}
+
+.openclaw-log-level-error .openclaw-log-level {
+  color: var(--term-red);
+}
+
+.openclaw-log-resume {
+  width: 100%;
+  margin-top: 0.4rem;
+}
+
+.openclaw-config-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--term-fg);
+}
+
+.openclaw-restart-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--term-bg-inset);
+  border: 1px solid var(--term-amber);
+  border-radius: 3px;
+  font-size: 0.72rem;
+  color: var(--term-fg);
+}
+
+.openclaw-autostart-row {
+  margin-top: 0.5rem;
+  opacity: 0.6;
+}
+
 /* File explorer drawer (file-explorer plan, M1) — mirrors .status-drawer
    above but anchored to the LEFT edge (border-right instead of border-left),
    its own toggle slot (not part of the stats/pairing right-side mutual

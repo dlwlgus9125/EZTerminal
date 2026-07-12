@@ -21,6 +21,7 @@ import {
   type InterferenceParams,
 } from './effect-params';
 import { FileExplorerPanel } from './FileExplorerPanel';
+import { OpenClawPanel } from './OpenClawPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { StatusPanel } from './StatusPanel';
 import { TerminalPane } from './TerminalPane';
@@ -348,6 +349,10 @@ export function App(): JSX.Element {
 
   // ── Settings drawer (v0.2.0 M2) ───────────────────────────────────────────
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // ── OpenClaw management drawer (openclaw-management M2) ───────────────────
+  // Same right-slot mutual exclusion as stats/pairing/settings above.
+  const [openclawOpen, setOpenclawOpen] = useState(false);
 
   // ── File explorer drawer (file-explorer plan, M1) ─────────────────────────
   // Left-edge overlay — unlike stats/pairing above, it does not share their
@@ -918,6 +923,7 @@ export function App(): JSX.Element {
             setStatsOpen((open) => !open);
             setPairingOpen(false); // same status-drawer slot (right:0) — only one at a time
             setSettingsOpen(false);
+            setOpenclawOpen(false);
           }}
           title="Toggle system status panel"
           data-testid="btn-toggle-stats"
@@ -931,6 +937,7 @@ export function App(): JSX.Element {
             setPairingOpen((open) => !open);
             setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
             setSettingsOpen(false);
+            setOpenclawOpen(false);
           }}
           title="Show mobile pairing info"
           data-testid="btn-toggle-pairing"
@@ -944,11 +951,26 @@ export function App(): JSX.Element {
             setSettingsOpen((open) => !open);
             setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
             setPairingOpen(false);
+            setOpenclawOpen(false);
           }}
           title="Settings"
           data-testid="btn-toggle-settings"
         >
           ⚙️
+        </button>
+        <button
+          className="btn btn-split"
+          onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
+          onClick={() => {
+            setOpenclawOpen((open) => !open);
+            setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
+            setPairingOpen(false);
+            setSettingsOpen(false);
+          }}
+          title="OpenClaw management"
+          data-testid="btn-toggle-openclaw"
+        >
+          OpenClaw
         </button>
         {versions && (
           <span className="versions" title="runtime versions">
@@ -1017,6 +1039,7 @@ export function App(): JSX.Element {
             onOpenTerminalAt={onOpenTerminalAt}
           />
         )}
+        {openclawOpen && <OpenClawPanel onClose={() => setOpenclawOpen(false)} />}
       </div>
 
       {paletteOpen && (
