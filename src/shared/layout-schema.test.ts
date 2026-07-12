@@ -72,6 +72,34 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     expect(validateLayoutEnvelope(makeEnvelope(layout))).toBeNull();
   });
 
+  it('ACCEPTS an openclaw-chat panel (openclaw-management M3 — additive union member)', () => {
+    const layout = makeLayout();
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.id = 'openclaw-chat';
+    panel.contentComponent = 'openclaw-chat';
+    layout.panels = { 'openclaw-chat': panel };
+    const env = validateLayoutEnvelope(makeEnvelope(layout));
+    expect(env).not.toBeNull();
+    expect(env?.layout.panels['openclaw-chat'].contentComponent).toBe('openclaw-chat');
+  });
+
+  it('REJECTS a params payload on an openclaw-chat panel too (same strict-empty policy as terminal)', () => {
+    const layout = makeLayout();
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.id = 'openclaw-chat';
+    panel.contentComponent = 'openclaw-chat';
+    panel.params = { sessionId: 'stale-session' };
+    layout.panels = { 'openclaw-chat': panel };
+    expect(validateLayoutEnvelope(makeEnvelope(layout))).toBeNull();
+  });
+
+  it('an old terminal-only layout file (pre-M3) still parses unaffected', () => {
+    const env = validateLayoutEnvelope(makeEnvelope(makeLayout(['tab-1', 'tab-2'])));
+    expect(env).not.toBeNull();
+    expect(env?.layout.panels['tab-1'].contentComponent).toBe('terminal');
+    expect(env?.layout.panels['tab-2'].contentComponent).toBe('terminal');
+  });
+
   it('STRIPS floating/popout/edge groups instead of persisting them (Codex B4)', () => {
     const layout = makeLayout();
     layout.floatingGroups = [{ anything: true }];
@@ -90,6 +118,17 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     delete (layout.panels as Record<string, Record<string, unknown>>)['tab-1'].renderer;
     const env = validateLayoutEnvelope(makeEnvelope(layout));
     expect(env?.layout.panels['tab-1'].renderer).toBe('always');
+  });
+
+  it('sanitizer forces renderer:always on an openclaw-chat panel too (no hard-coded terminal assumption)', () => {
+    const layout = makeLayout();
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.id = 'openclaw-chat';
+    panel.contentComponent = 'openclaw-chat';
+    delete panel.renderer;
+    layout.panels = { 'openclaw-chat': panel };
+    const env = validateLayoutEnvelope(makeEnvelope(layout));
+    expect(env?.layout.panels['openclaw-chat'].renderer).toBe('always');
   });
 
   it('REJECTS a zero-panel layout (gate e2e shape f)', () => {
