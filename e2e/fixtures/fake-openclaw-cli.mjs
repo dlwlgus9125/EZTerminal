@@ -9,12 +9,16 @@
  * running/config — mirrors the real CLI's exit-code/message framing verified
  * in M0 (docs/research/2026-07-12-openclaw-stage0.md ①).
  *
- * Only `gateway start|stop|restart` invocations are argv-recorded into
- * `state.cliCalls` — `config get` runs TWO PROCESSES CONCURRENTLY
- * (OpenClawService.getCoreConfig's Promise.all over both allowlisted keys)
- * and never mutates `state.config`, so recording it too would race on this
- * lockless read-modify-write file without buying any assertion the e2e specs
- * need.
+ * Also honors `gateway install|uninstall` (task #9, autostart toggle) — same
+ * argv-recording as start/stop/restart, no state mutation (autostart is
+ * orthogonal to `state.running`).
+ *
+ * Only `gateway start|stop|restart|install|uninstall` invocations are argv-
+ * recorded into `state.cliCalls` — `config get` runs TWO PROCESSES
+ * CONCURRENTLY (OpenClawService.getCoreConfig's Promise.all over both
+ * allowlisted keys) and never mutates `state.config`, so recording it too
+ * would race on this lockless read-modify-write file without buying any
+ * assertion the e2e specs need.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -36,6 +40,14 @@ if (group === 'gateway' && (sub === 'start' || sub === 'stop' || sub === 'restar
   state.cliCalls = state.cliCalls ?? [];
   state.cliCalls.push({ argv, at: Date.now() });
   state.running = sub !== 'stop';
+  writeState(state);
+  process.exit(0);
+}
+
+if (group === 'gateway' && (sub === 'install' || sub === 'uninstall')) {
+  const state = readState();
+  state.cliCalls = state.cliCalls ?? [];
+  state.cliCalls.push({ argv, at: Date.now() });
   writeState(state);
   process.exit(0);
 }

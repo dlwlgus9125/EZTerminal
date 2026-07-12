@@ -153,3 +153,42 @@ test('CLI absent: not-installed guidance card, zero error dialogs (AC6)', async 
     await app.close();
   }
 });
+
+test('autostart: two-step confirm installs, fake CLI argv recorded (task #9)', async () => {
+  const state = buildFixtureState({ running: true });
+  const { dir, statePath, configPath } = writeFixtureFiles(state);
+  const cliShim = writeFakeCliShim(dir);
+  const gateway = await startFakeGateway(statePath);
+
+  const app = await launchApp(undefined, {
+    EZTERMINAL_OPENCLAW_CLI: cliShim,
+    EZTERMINAL_OPENCLAW_URL: `http://127.0.0.1:${gateway.port}`,
+    EZTERMINAL_OPENCLAW_CONFIG_PATH: configPath,
+    EZTERM_E2E_OPENCLAW_STATE: statePath,
+  });
+  try {
+    const window = await app.firstWindow();
+    await window.getByTestId('btn-toggle-openclaw').click();
+    await expect(window.getByTestId('openclaw-state')).toContainText('실행 중', { timeout: 10_000 });
+
+    // First click is a no-op confirm prompt, not the action itself.
+    await window.getByTestId('btn-openclaw-autostart-install').click();
+    await expect(window.getByTestId('btn-openclaw-autostart-install-confirm')).toBeVisible();
+
+    let finalState = JSON.parse(readFileSync(statePath, 'utf8')) as OpenClawFixtureState;
+    expect(finalState.cliCalls.find((c) => c.argv.includes('install'))).toBeUndefined();
+
+    await window.getByTestId('btn-openclaw-autostart-install-confirm').click();
+    await expect(window.getByTestId('openclaw-autostart-result')).toContainText('등록되었습니다', {
+      timeout: 10_000,
+    });
+
+    finalState = JSON.parse(readFileSync(statePath, 'utf8')) as OpenClawFixtureState;
+    const installCall = finalState.cliCalls.find((c) => c.argv.includes('install'));
+    expect(installCall).toBeDefined();
+    expect(installCall?.argv).toEqual(['gateway', 'install']);
+  } finally {
+    await app.close();
+    await gateway.stop();
+  }
+});
