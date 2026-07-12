@@ -11,6 +11,20 @@ import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
 type OpenClawTab = 'status' | 'logs' | 'settings' | 'chat';
 
+/** Chat tab (M5) states — `unavailable` covers both a `{null,0,null}` ticket
+ * reply (proxy/bridge down) and any other minting failure; `ready` carries
+ * the fully assembled Control UI URL. */
+type ChatState = { kind: 'loading' } | { kind: 'unavailable' } | { kind: 'ready'; url: string };
+
+/** Assembles the Control UI URL from a resolved chat ticket — see
+ * openclaw-proxy.ts's module doc: the `#token=` fragment is consumed
+ * client-side by the Control UI's own SPA and never reaches the proxy
+ * server. Exported for direct unit testing (same precedent as
+ * openclaw-proxy.ts's own small pure helpers). */
+export function buildChatUrl(host: string, proxyPort: number, ticket: string, token: string): string {
+  return `http://${host}:${proxyPort}/?t=${encodeURIComponent(ticket)}#token=${encodeURIComponent(token)}`;
+}
+
 /** Local rendering cap for the accumulated log tail — mirrors the wire's own
  * per-flush pending cap (remote-bridge.ts's `OPENCLAW_LOG_PENDING_CAP`), just
  * applied client-side to the whole session's accumulated lines. */
@@ -27,15 +41,18 @@ const STATE_LABEL: Record<OpenClawStatus['state'], string> = {
 };
 
 // MobileOpenClawView — full-screen OpenClaw management overlay (openclaw-
-// management M4). Modeled on MobileStatsView.tsx's structure (standalone
+// management M4/M5). Modeled on MobileStatsView.tsx's structure (standalone
 // tabbed view reusing the desktop's `status-*` CSS classes, imported
 // wholesale by main.tsx). Tabs: 상태(Status) | 로그(Logs) | 설정(Settings) |
 // 채팅(Chat). Status/Logs subscribe only while THIS view (and, for logs, that
 // specific tab) is visible — same acquire-on-mount/release-on-unmount
 // discipline as MobileStatsView's stats subscription. Guidance states
-// (not-installed/stopped) are informational cards with a CTA, never an error
-// toast (mirrors the desktop drawer's "안내 상태" requirement) — the Chat tab
-// is a placeholder only; M5 wires it to `transport.getOpenClawChatTicket()`.
+// (not-installed/stopped/gateway-not-running) are informational cards with a
+// CTA, never an error toast (mirrors the desktop drawer's "안내 상태"
+// requirement) — the Chat tab (M5) embeds the OpenClaw Control UI in an
+// `<iframe>` via a fresh, single-use ticket (`transport.getOpenClawChatTicket()`
+// + `openclaw-proxy.ts`'s ticket+cookie flow) minted on every tab activation
+// and every explicit reload; it never reuses one.
 export function MobileOpenClawView({
   transport,
   onClose,
@@ -135,6 +152,34 @@ export function MobileOpenClawView({
     },
     [transport],
   );
+
+  // ── Chat tab (M5): the gateway must be RUNNING before a ticket is worth
+  // minting (status comes from the same subscription the Status tab already
+  // holds), so a guidance+Start CTA (reusing `runLifecycle`/`canStart` above)
+  // covers every non-running state instead of a ticket round trip that would
+  // just come back unavailable. `chatReloadNonce` is bumped by both the
+  // unavailable card's retry button and the loaded frame's reload button —
+  // either always mints a BRAND NEW ticket (never reuses one; tickets are
+  // single-use/60s TTL, see openclaw-proxy.ts's module doc), same as
+  // activating the tab fresh does.
+  const chatActive = tab === 'chat';
+  const gatewayRunning = status?.state === 'running';
+  const [chatState, setChatState] = useState<ChatState>({ kind: 'loading' });
+  const [chatReloadNonce, setChatReloadNonce] = useState(0);
+
+  useEffect(() => {
+    if (!chatActive || !gatewayRunning) return;
+    setChatState({ kind: 'loading' });
+    void transport.getOpenClawChatTicket().then((reply) => {
+      if (!reply.ticket || !reply.token || !reply.proxyPort) {
+        setChatState({ kind: 'unavailable' });
+        return;
+      }
+      setChatState({ kind: 'ready', url: buildChatUrl(transport.connectedHost, reply.proxyPort, reply.ticket, reply.token) });
+    });
+  }, [chatActive, gatewayRunning, chatReloadNonce, transport]);
+
+  const reloadChat = useCallback(() => setChatReloadNonce((n) => n + 1), []);
 
   return (
     <div className="mobile-openclaw-view" data-testid="mobile-openclaw-view">
@@ -348,11 +393,59 @@ export function MobileOpenClawView({
         )}
 
         {tab === 'chat' && (
-          <section className="status-section" data-testid="openclaw-chat-section">
-            <h2 className="status-section-title">채팅</h2>
-            <div className="openclaw-guidance" data-testid="openclaw-chat-placeholder">
-              채팅은 M5에서 제공됩니다.
-            </div>
+          <section className="status-section openclaw-chat-section" data-testid="openclaw-chat-section">
+            {!status ? (
+              <div className="status-loading">확인 중…</div>
+            ) : !gatewayRunning ? (
+              <div className="openclaw-guidance" data-testid="openclaw-chat-guidance">
+                채팅을 사용하려면 OpenClaw 게이트웨이가 실행 중이어야 합니다 (현재: {STATE_LABEL[status.state]}).
+                <div className="openclaw-lifecycle-buttons">
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={!canStart}
+                    onClick={() => runLifecycle('start')}
+                    data-testid="openclaw-chat-start"
+                  >
+                    {busyAction === 'start' ? '시작하는 중…' : '시작'}
+                  </button>
+                </div>
+              </div>
+            ) : chatState.kind === 'loading' ? (
+              <div className="status-loading" data-testid="openclaw-chat-loading">채팅을 불러오는 중…</div>
+            ) : chatState.kind === 'unavailable' ? (
+              <div className="openclaw-guidance openclaw-guidance--error" data-testid="openclaw-chat-unavailable">
+                채팅을 열 수 없습니다. 원격 프록시 또는 게이트웨이 연결을 확인하세요.
+                <div className="openclaw-lifecycle-buttons">
+                  <button type="button" className="btn" onClick={reloadChat} data-testid="openclaw-chat-retry">
+                    다시 시도
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="openclaw-chat-frame-wrap">
+                <iframe
+                  key={chatState.url}
+                  className="openclaw-chat-frame"
+                  src={chatState.url}
+                  title="OpenClaw Control"
+                  data-testid="openclaw-chat-frame"
+                />
+                <div className="openclaw-chat-toolbar">
+                  <button type="button" className="btn" onClick={reloadChat} data-testid="openclaw-chat-reload">
+                    새로고침
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => window.open(chatState.url, '_blank')}
+                    data-testid="openclaw-chat-open-browser"
+                  >
+                    브라우저로 열기
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
         )}
       </div>

@@ -896,3 +896,38 @@ body,
   color: var(--term-fg, inherit);
   font-family: inherit;
 }
+
+/* Chat tab (M5) — fills the remaining body height like the logs tab; the
+ * loading/guidance/unavailable cards keep `.status-section`'s inherited
+ * padding, but the loaded frame bleeds full-edge via a negative margin that
+ * exactly cancels it (no safe-area handling of its own — `#root`'s own
+ * padding already covers insets, same precedent as the file view above). */
+.openclaw-chat-section {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.openclaw-chat-frame-wrap {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  margin: -0.6rem -0.85rem;
+}
+
+.openclaw-chat-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  background: var(--term-bg, #000);
+}
+
+.openclaw-chat-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--term-border-faint, #222);
+}

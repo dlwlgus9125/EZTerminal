@@ -1128,4 +1128,12 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   get isAuthed(): boolean {
     return this.authed;
   }
+
+  /** The hostname this transport is dialing (no scheme/port) — the chat tab
+   * (M5) derives the OpenClaw proxy's origin from it: same host, a different
+   * port (see `getOpenClawChatTicket()`'s doc). Empty string if `url` doesn't
+   * parse as `ws(s)://host[:port]`. */
+  get connectedHost(): string {
+    return this.url.match(/^wss?:\/\/([^/:?#]+)/i)?.[1] ?? '';
+  }
 }

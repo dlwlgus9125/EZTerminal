@@ -311,14 +311,135 @@ describe('MobileOpenClawView — settings tab', () => {
   });
 });
 
-describe('MobileOpenClawView — chat tab (M4 placeholder)', () => {
-  it('shows the M5 placeholder and sends no openclaw-chat-* wire message', () => {
+/** Every `openclaw-chat-ticket` request's `requestId`, in send order — used to
+ * assert a reload/retry mints a BRAND NEW ticket rather than reusing one. */
+function chatTicketRequestIds(socket: FakeSocket): string[] {
+  return socket.sent
+    .map((s) => JSON.parse(s) as { kind: string; requestId: string })
+    .filter((m) => m.kind === 'openclaw-chat-ticket')
+    .map((m) => m.requestId);
+}
+
+function replyToLastChatTicket(
+  socket: FakeSocket,
+  reply: { ticket: string | null; proxyPort: number; token: string | null },
+): void {
+  const requestId = chatTicketRequestIds(socket).at(-1)!;
+  socket.triggerMessage({ kind: 'openclaw-chat-ticket-reply', requestId, ...reply });
+}
+
+describe('MobileOpenClawView — chat tab (M5)', () => {
+  it('shows guidance + a Start CTA when the gateway is not running, without requesting a ticket', () => {
     const { transport, socket } = makeAuthedTransport();
     const el = renderView(transport, vi.fn());
+    act(() => {
+      socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'stopped', port: 18789 } });
+    });
 
     act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-tab-chat"]')!.click());
 
-    expect(el.querySelector('[data-testid="openclaw-chat-placeholder"]')?.textContent).toContain('M5');
-    expect(socket.sentKinds().some((k) => k.startsWith('openclaw-chat'))).toBe(false);
+    expect(chatTicketRequestIds(socket)).toHaveLength(0);
+    const guidance = el.querySelector('[data-testid="openclaw-chat-guidance"]');
+    expect(guidance?.textContent).toContain('중지됨');
+
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-chat-start"]')!.click());
+    const lastMsg = JSON.parse(socket.sent.at(-1)!) as { kind: string; action: string };
+    expect(lastMsg.kind).toBe('openclaw-lifecycle');
+    expect(lastMsg.action).toBe('start');
+  });
+
+  it('requests a ticket on activation while running, and assembles the iframe URL from the host, proxy port, ticket, and fragment token', async () => {
+    const { transport, socket } = makeAuthedTransport();
+    const el = renderView(transport, vi.fn());
+    act(() => {
+      socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } });
+    });
+
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-tab-chat"]')!.click());
+    expect(chatTicketRequestIds(socket)).toHaveLength(1);
+
+    await act(async () => {
+      replyToLastChatTicket(socket, { ticket: 'tick1', proxyPort: 7421, token: 'tok1' });
+      await flush();
+    });
+
+    const frame = el.querySelector<HTMLIFrameElement>('[data-testid="openclaw-chat-frame"]');
+    expect(frame?.src).toBe('http://x:7421/?t=tick1#token=tok1');
+  });
+
+  it('shows unavailable guidance on a {null,0,null} ticket reply, and retry mints a fresh ticket', async () => {
+    const { transport, socket } = makeAuthedTransport();
+    const el = renderView(transport, vi.fn());
+    act(() => {
+      socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } });
+    });
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-tab-chat"]')!.click());
+
+    await act(async () => {
+      replyToLastChatTicket(socket, { ticket: null, proxyPort: 0, token: null });
+      await flush();
+    });
+    expect(el.querySelector('[data-testid="openclaw-chat-unavailable"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="openclaw-chat-frame"]')).toBeFalsy();
+
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-chat-retry"]')!.click());
+    const requestIds = chatTicketRequestIds(socket);
+    expect(requestIds).toHaveLength(2);
+    expect(requestIds[0]).not.toBe(requestIds[1]);
+
+    await act(async () => {
+      replyToLastChatTicket(socket, { ticket: 'tick2', proxyPort: 7421, token: 'tok2' });
+      await flush();
+    });
+    expect(el.querySelector<HTMLIFrameElement>('[data-testid="openclaw-chat-frame"]')?.src).toBe(
+      'http://x:7421/?t=tick2#token=tok2',
+    );
+  });
+
+  it('reload on a loaded chat mints a brand-new ticket and swaps the iframe to it, never reusing the old one', async () => {
+    const { transport, socket } = makeAuthedTransport();
+    const el = renderView(transport, vi.fn());
+    act(() => {
+      socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } });
+    });
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-tab-chat"]')!.click());
+    await act(async () => {
+      replyToLastChatTicket(socket, { ticket: 'tick1', proxyPort: 7421, token: 'tok1' });
+      await flush();
+    });
+    expect(el.querySelector<HTMLIFrameElement>('[data-testid="openclaw-chat-frame"]')?.src).toBe(
+      'http://x:7421/?t=tick1#token=tok1',
+    );
+
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-chat-reload"]')!.click());
+    const requestIds = chatTicketRequestIds(socket);
+    expect(requestIds).toHaveLength(2);
+    expect(requestIds[0]).not.toBe(requestIds[1]);
+
+    await act(async () => {
+      replyToLastChatTicket(socket, { ticket: 'tick2', proxyPort: 7421, token: 'tok2' });
+      await flush();
+    });
+    expect(el.querySelector<HTMLIFrameElement>('[data-testid="openclaw-chat-frame"]')?.src).toBe(
+      'http://x:7421/?t=tick2#token=tok2',
+    );
+  });
+
+  it('"브라우저로 열기" opens the same assembled URL in a new tab', async () => {
+    const { transport, socket } = makeAuthedTransport();
+    const el = renderView(transport, vi.fn());
+    act(() => {
+      socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } });
+    });
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-tab-chat"]')!.click());
+    await act(async () => {
+      replyToLastChatTicket(socket, { ticket: 'tick1', proxyPort: 7421, token: 'tok1' });
+      await flush();
+    });
+
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-chat-open-browser"]')!.click());
+    expect(openSpy).toHaveBeenCalledWith('http://x:7421/?t=tick1#token=tok1', '_blank');
+    openSpy.mockRestore();
   });
 });
