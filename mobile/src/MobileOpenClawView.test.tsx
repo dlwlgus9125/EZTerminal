@@ -425,7 +425,7 @@ describe('MobileOpenClawView — chat tab (M5)', () => {
     );
   });
 
-  it('"브라우저로 열기" opens the same assembled URL in a new tab', async () => {
+  it('"브라우저로 열기" mints its OWN fresh ticket rather than reusing the iframe\'s (a single-use ticket already redeemed by the iframe would come back "invalid" in a second, separate browser context)', async () => {
     const { transport, socket } = makeAuthedTransport();
     const el = renderView(transport, vi.fn());
     act(() => {
@@ -439,7 +439,17 @@ describe('MobileOpenClawView — chat tab (M5)', () => {
 
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
     act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-chat-open-browser"]')!.click());
-    expect(openSpy).toHaveBeenCalledWith('http://x:7421/?t=tick1#token=tok1', '_blank');
+
+    const requestIds = chatTicketRequestIds(socket);
+    expect(requestIds).toHaveLength(2); // the iframe's ticket, then a separate one for this click
+    expect(requestIds[0]).not.toBe(requestIds[1]);
+    expect(openSpy).not.toHaveBeenCalled(); // the fresh ticket hasn't replied yet
+
+    await act(async () => {
+      replyToLastChatTicket(socket, { ticket: 'tick2', proxyPort: 7421, token: 'tok2' });
+      await flush();
+    });
+    expect(openSpy).toHaveBeenCalledWith('http://x:7421/?t=tick2#token=tok2', '_blank');
     openSpy.mockRestore();
   });
 });

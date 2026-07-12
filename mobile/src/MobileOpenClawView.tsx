@@ -181,6 +181,19 @@ export function MobileOpenClawView({
 
   const reloadChat = useCallback(() => setChatReloadNonce((n) => n + 1), []);
 
+  // "브라우저로 열기" opens in a SEPARATE top-level browsing context (external
+  // browser, its own cookie jar) — it must mint its OWN fresh ticket rather
+  // than reusing the iframe's `chatState.url`. A ticket is single-use: by
+  // the time the user reaches for this fallback, the iframe has already
+  // redeemed (and thus burned) whichever ticket produced that URL, so
+  // reusing it here would always come back "ticket invalid or expired".
+  const openInBrowser = useCallback(() => {
+    void transport.getOpenClawChatTicket().then((reply) => {
+      if (!reply.ticket || !reply.token || !reply.proxyPort) return;
+      window.open(buildChatUrl(transport.connectedHost, reply.proxyPort, reply.ticket, reply.token), '_blank');
+    });
+  }, [transport]);
+
   return (
     <div className="mobile-openclaw-view" data-testid="mobile-openclaw-view">
       <header className="mobile-openclaw-head">
@@ -438,7 +451,7 @@ export function MobileOpenClawView({
                   <button
                     type="button"
                     className="btn"
-                    onClick={() => window.open(chatState.url, '_blank')}
+                    onClick={openInBrowser}
                     data-testid="openclaw-chat-open-browser"
                   >
                     브라우저로 열기
