@@ -9,7 +9,7 @@ import {
   shell,
   utilityProcess,
 } from 'electron';
-import type { UtilityProcess, MessagePortMain } from 'electron';
+import type { UtilityProcess, MessagePortMain, Rectangle } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { networkInterfaces } from 'node:os';
@@ -29,6 +29,7 @@ import { SystemStatsService } from './system-stats-service';
 import { StatsVisibility } from './stats-visibility';
 import { RemoteTokenStore } from './remote-token-store';
 import { OpenClawService } from './openclaw-service';
+import { OpenClawChatViewManager } from './openclaw-chat-view';
 import { startOpenClawProxy, DEFAULT_OPENCLAW_PROXY_PORT, type OpenClawProxyHandle } from './openclaw-proxy';
 import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
 import {
@@ -43,7 +44,7 @@ import {
 import { formatConnectionInfo } from './remote-connection-info';
 import type { EffectParamsSettings, RollbarSettings, StartupPref, ThemeName } from '../shared/layout-schema';
 import type { InterpreterToMain, MainToInterpreter, RunStartedInfo, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
-import type { OpenClawLifecycleAction } from '../shared/openclaw';
+import type { OpenClawAutostartAction, OpenClawLifecycleAction } from '../shared/openclaw';
 
 // The main process owns the interpreter utilityProcess lifetime (architecture
 // §1). Per-command MessagePort brokering + session/run correlation live in the
@@ -112,6 +113,17 @@ let openClawProxyHandle: OpenClawProxyHandle | null = null;
 // handlers close over a local const, see the 'ready' handler).
 let openClawService: OpenClawService | null = null;
 
+// OpenClaw chat WebContentsView manager (openclaw-management M3) — created
+// once on 'ready', attached to the main window in createWindow() (needs a
+// module-level ref, mirrors mainWindowRef below), torn down on window
+// reload/close (packetCaptureRegistry teardown hygiene precedent) and quit.
+let openClawChatView: OpenClawChatViewManager | null = null;
+
+// The main BrowserWindow — module-level (like the refs above) because
+// createWindow() itself is defined outside 'ready', and openClawChatView's
+// attach() needs a handle to the window it should embed into.
+let mainWindowRef: BrowserWindow | null = null;
+
 // Defense-in-depth CSP for the raw-HTML injection sink in TextBlock (the ANSI →
 // HTML external output, sanitized upstream by ansi_up). Strict: only same-origin
 // scripts, no inline/eval scripts, no remote connections, no <object>/<base>/
@@ -143,6 +155,8 @@ const createWindow = (): void => {
       sandbox: true,
     },
   });
+  mainWindowRef = mainWindow;
+  openClawChatView?.attach(mainWindow);
 
   // ── Navigation hardening (SEC-HIGH-2) ─────────────────────────────────────
   // An OSC-8 link in external output (TextBlock <a href>) must never navigate the
@@ -188,12 +202,17 @@ const createWindow = (): void => {
     // Same reasoning for the packet-capture sub-view (Phase 2B): a reload
     // drops the renderer's port reference, so any live host is now orphaned.
     packetCaptureRegistry?.kill();
+    // Same reasoning again for the OpenClaw chat view (M3): a reload drops
+    // the renderer's bounds/visibility reporting, orphaning the WebContentsView.
+    openClawChatView?.destroy();
   });
 
   // Window destroy (Phase 2B): stop any live capture host — it must not
   // outlive the window whose renderer it was streaming packets to.
   mainWindow.on('closed', () => {
     packetCaptureRegistry?.kill();
+    openClawChatView?.destroy();
+    if (mainWindowRef === mainWindow) mainWindowRef = null;
   });
 
   // ── Per-command MessagePort brokering (architecture §3) ───────────────────
@@ -450,6 +469,7 @@ app.on('ready', () => {
     void remoteBridgeHandle?.stop();
     void openClawProxyHandle?.stop();
     openClawService?.dispose();
+    openClawChatView?.destroy();
   });
 
   // Session lifecycle (Codex B1/B5). create-session is the ONLY way a shell session
@@ -649,6 +669,20 @@ app.on('ready', () => {
   const openclaw = new OpenClawService();
   openClawService = openclaw;
 
+  // ── OpenClaw chat WebContentsView (openclaw-management M3) ────────────────
+  // See openclaw-chat-view.ts's module doc for the config verified live in
+  // the M0 spike. Attached to the window in createWindow(); state pushes
+  // (did-fail-load/did-finish-load) fan out to every window below.
+  openClawChatView = new OpenClawChatViewManager({
+    getChatUrl: () => openclaw.getChatUrl(),
+    onStateChange: (state) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+        win.webContents.send('openclaw:chat-view-state', state);
+      }
+    },
+  });
+
   // ── Mobile remote-control WS bridge (M0) + OpenClaw reverse proxy (M4) ──
   // Default OFF (opt-in — see LayoutStore.getRemoteEnabled): the bridge grants
   // a paired device full command + filesystem access, so the listener only
@@ -789,36 +823,86 @@ app.on('ready', () => {
   ipcMain.handle('openclaw:get-config', () => openclaw.getCoreConfig());
   ipcMain.handle('openclaw:set-config', (_event, key: string, value: string) => openclaw.setCoreConfig(key, value));
   ipcMain.handle('openclaw:chat-available', async () => (await openclaw.getChatToken()) !== null);
+  // autostart (openclaw-management #9) — `gateway install|uninstall`, serialized
+  // on the same CLI lane as start/stop/restart (see OpenClawService.runAutostart).
+  ipcMain.handle('openclaw:autostart', (_event, action: OpenClawAutostartAction) => openclaw.runAutostart(action));
 
-  // Status/log push is gated by drawer visibility (renderer-driven), not
-  // always-on — mirrors the stats overlay's `stats:panel-visible` gating.
-  // Broadcasts to every window, same as session-added/run-started above.
+  // Status push is wanted by TWO independent UI surfaces: the drawer
+  // (openclaw:set-drawer-open) and the M3 chat panel (openclaw:chat-panel-
+  // mounted — sent for as long as the singleton dockview tab exists, NOT
+  // gated on gateway running state: the panel needs status pushes WHILE
+  // stopped precisely to detect the stopped->running transition and only
+  // then request the WebContentsView, see `openclaw:chat-open` below) —
+  // each reports its own open/closed state, since either can be open while
+  // the other is closed, so a single shared boolean would let closing one
+  // kill pushes the other still needs. Logs stay drawer-only (the chat panel
+  // never shows them). Mirrors the stats overlay's `stats:panel-visible`
+  // gating; broadcasts to every window.
+  let openclawDrawerOpen = false;
+  let openclawChatPanelOpen = false;
   let openclawUnsubscribeStatus: (() => void) | null = null;
   let openclawUnsubscribeLogs: (() => void) | null = null;
-  ipcMain.on('openclaw:set-drawer-open', (_event, open: boolean) => {
-    if (open) {
-      if (!openclawUnsubscribeStatus) {
-        openclawUnsubscribeStatus = openclaw.subscribeStatus((status) => {
-          for (const win of BrowserWindow.getAllWindows()) {
-            if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
-            win.webContents.send('openclaw:status', status);
-          }
-        });
-      }
-      if (!openclawUnsubscribeLogs) {
-        openclawUnsubscribeLogs = openclaw.subscribeLogs((line) => {
-          for (const win of BrowserWindow.getAllWindows()) {
-            if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
-            win.webContents.send('openclaw:log', line);
-          }
-        });
-      }
-    } else {
-      openclawUnsubscribeStatus?.();
+  const syncOpenClawStatusSubscription = (): void => {
+    const wantStatus = openclawDrawerOpen || openclawChatPanelOpen;
+    if (wantStatus && !openclawUnsubscribeStatus) {
+      openclawUnsubscribeStatus = openclaw.subscribeStatus((status) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+          win.webContents.send('openclaw:status', status);
+        }
+      });
+    } else if (!wantStatus && openclawUnsubscribeStatus) {
+      openclawUnsubscribeStatus();
       openclawUnsubscribeStatus = null;
-      openclawUnsubscribeLogs?.();
+    }
+  };
+  const syncOpenClawLogSubscription = (): void => {
+    if (openclawDrawerOpen && !openclawUnsubscribeLogs) {
+      openclawUnsubscribeLogs = openclaw.subscribeLogs((line) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+          win.webContents.send('openclaw:log', line);
+        }
+      });
+    } else if (!openclawDrawerOpen && openclawUnsubscribeLogs) {
+      openclawUnsubscribeLogs();
       openclawUnsubscribeLogs = null;
     }
+  };
+  ipcMain.on('openclaw:set-drawer-open', (_event, open: boolean) => {
+    openclawDrawerOpen = Boolean(open);
+    syncOpenClawStatusSubscription();
+    syncOpenClawLogSubscription();
+  });
+  ipcMain.on('openclaw:chat-panel-mounted', (_event, mounted: boolean) => {
+    openclawChatPanelOpen = Boolean(mounted);
+    syncOpenClawStatusSubscription();
+  });
+
+  // ── OpenClaw chat WebContentsView IPC (openclaw-management M3) ───────────
+  // The placeholder panel (OpenClawChatPanel.tsx) reports its bounding rect
+  // and App.tsx's single effective-visibility derivation continuously; the
+  // manager itself decides lazy creation (see openclaw-chat-view.ts's module
+  // doc). `chat-open` is sent only once the panel observes status==='running'
+  // (requesting the view); `chat-close` is the panel's unmount, fully
+  // destroying the view (a closed singleton panel has no use for a live,
+  // hidden WebContentsView still holding a renderer process).
+  ipcMain.on('openclaw:chat-open', () => {
+    void openClawChatView?.ensureView();
+  });
+  ipcMain.on('openclaw:chat-close', () => {
+    openClawChatView?.destroy();
+  });
+  ipcMain.on('openclaw:chat-bounds', (_event, bounds: Rectangle) => {
+    if (bounds && typeof bounds === 'object') openClawChatView?.setBounds(bounds);
+  });
+  ipcMain.on('openclaw:chat-visible', (_event, visible: boolean) => {
+    const isVisible = Boolean(visible);
+    if (isVisible) void openClawChatView?.ensureView();
+    openClawChatView?.setVisible(isVisible);
+  });
+  ipcMain.on('openclaw:chat-reload', () => {
+    openClawChatView?.reload();
   });
 
   createWindow();

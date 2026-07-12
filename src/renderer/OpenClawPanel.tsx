@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   OPENCLAW_CONFIG_UNSET,
   type OpenClawAgentSession,
+  type OpenClawAutostartAction,
   type OpenClawCoreConfig,
   type OpenClawLifecycleAction,
   type OpenClawLogLine,
@@ -29,6 +30,9 @@ const STATE_LABEL: Record<OpenClawStatusState, string> = {
 
 interface OpenClawPanelProps {
   readonly onClose: () => void;
+  /** Opens (or focuses, if already open) the singleton chat dockview panel —
+   * see App.tsx's `openOpenClawChat` (openclaw-management M3). */
+  readonly onOpenChat: () => void;
 }
 
 /**
@@ -42,7 +46,7 @@ interface OpenClawPanelProps {
  * Guidance states (not-installed / stopped) replace the operational sections
  * with a calm CTA — never an error toast (AC6).
  */
-export function OpenClawPanel({ onClose }: OpenClawPanelProps): JSX.Element {
+export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.Element {
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
   const [sessions, setSessions] = useState<readonly OpenClawAgentSession[]>([]);
   const [logLines, setLogLines] = useState<OpenClawLogLine[]>([]);
@@ -59,6 +63,37 @@ export function OpenClawPanel({ onClose }: OpenClawPanelProps): JSX.Element {
 
   const [autoScroll, setAutoScroll] = useState(true);
   const logViewRef = useRef<HTMLDivElement | null>(null);
+
+  // ── Autostart toggle (task #9: `gateway install`/`gateway uninstall`) ────
+  // No fast way to know the CURRENT registration state (that's only in the
+  // 9-18s `gateway status --json` CLI call, M0 ⑥) — the UI stays
+  // state-agnostic (neutral copy + both actions) rather than lying with a
+  // stale/guessed toggle. Two-step click stands in for a confirm dialog
+  // without a blocking window.confirm (per the M3/#9 assignment's explicit
+  // "no window.confirm dialogs" constraint).
+  const [pendingAutostart, setPendingAutostart] = useState<OpenClawAutostartAction | null>(null);
+  const [autostartBusy, setAutostartBusy] = useState<OpenClawAutostartAction | null>(null);
+  const [autostartResult, setAutostartResult] = useState<string | null>(null);
+
+  const runAutostart = useCallback(async (action: OpenClawAutostartAction): Promise<void> => {
+    setPendingAutostart(null);
+    setAutostartBusy(action);
+    setAutostartResult(null);
+    try {
+      const result = await window.ezterminalDesktop?.runOpenClawAutostart(action);
+      if (result) {
+        setAutostartResult(
+          result.ok
+            ? action === 'install'
+              ? '자동 시작이 등록되었습니다.'
+              : '자동 시작이 해제되었습니다.'
+            : (result.stderr ?? `${action} 실패`),
+        );
+      }
+    } finally {
+      setAutostartBusy(null);
+    }
+  }, []);
 
   // ── Status seed + push (gated main-side by drawer-open, mirrors the stats
   // overlay's `setStatsPanelVisible`) ────────────────────────────────────────
@@ -268,8 +303,8 @@ export function OpenClawPanel({ onClose }: OpenClawPanelProps): JSX.Element {
             <button
               type="button"
               className="btn btn-split openclaw-chat-btn"
-              disabled
-              title="곧 제공"
+              onClick={onOpenChat}
+              title="채팅 열기"
               data-testid="btn-openclaw-open-chat"
             >
               채팅 열기
@@ -388,10 +423,55 @@ export function OpenClawPanel({ onClose }: OpenClawPanelProps): JSX.Element {
                 </button>
               </div>
             )}
-            <label className="settings-radio-row openclaw-autostart-row" title="곧 제공">
-              <input type="checkbox" disabled data-testid="openclaw-autostart-toggle" />
-              <span>시작 시 자동 실행 (곧 제공)</span>
-            </label>
+            <div className="openclaw-autostart-row" data-testid="openclaw-autostart-row">
+              <span>OS 시작 시 자동 실행</span>
+              <div className="openclaw-autostart-actions">
+                <button
+                  type="button"
+                  className="btn btn-split"
+                  disabled={autostartBusy !== null}
+                  onClick={() => setPendingAutostart((current) => (current === 'install' ? null : 'install'))}
+                  data-testid="btn-openclaw-autostart-install"
+                >
+                  {pendingAutostart === 'install' ? '확인?' : '등록'}
+                </button>
+                {pendingAutostart === 'install' && (
+                  <button
+                    type="button"
+                    className="btn btn-split"
+                    onClick={() => void runAutostart('install')}
+                    data-testid="btn-openclaw-autostart-install-confirm"
+                  >
+                    예, 등록
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-split"
+                  disabled={autostartBusy !== null}
+                  onClick={() => setPendingAutostart((current) => (current === 'uninstall' ? null : 'uninstall'))}
+                  data-testid="btn-openclaw-autostart-uninstall"
+                >
+                  {pendingAutostart === 'uninstall' ? '확인?' : '해제'}
+                </button>
+                {pendingAutostart === 'uninstall' && (
+                  <button
+                    type="button"
+                    className="btn btn-split"
+                    onClick={() => void runAutostart('uninstall')}
+                    data-testid="btn-openclaw-autostart-uninstall-confirm"
+                  >
+                    예, 해제
+                  </button>
+                )}
+              </div>
+              {autostartBusy && <div className="status-loading">처리 중…</div>}
+              {autostartResult && (
+                <div className="openclaw-error-inline" data-testid="openclaw-autostart-result">
+                  {autostartResult}
+                </div>
+              )}
+            </div>
           </section>
         </>
       )}

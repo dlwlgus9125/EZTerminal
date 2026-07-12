@@ -228,6 +228,53 @@ describe('OpenClawService — runLifecycle', () => {
   });
 });
 
+// ── runAutostart (task #9) ───────────────────────────────────────────────
+
+describe('OpenClawService — runAutostart', () => {
+  it('spawns `openclaw gateway install` with no extra flags and reports ok on exit 0', async () => {
+    const { spawn, calls } = makeExitSpawn(0);
+    const service = new OpenClawService({ env: cliEnv, spawn, httpGet: async () => ({ ok: false }) });
+    const result = await service.runAutostart('install');
+    expect(result).toEqual({ ok: true });
+    expect(calls[0]?.args).toEqual(['gateway', 'install']);
+  });
+
+  it('spawns `openclaw gateway uninstall` and reports ok on exit 0', async () => {
+    const { spawn, calls } = makeExitSpawn(0);
+    const service = new OpenClawService({ env: cliEnv, spawn, httpGet: async () => ({ ok: false }) });
+    const result = await service.runAutostart('uninstall');
+    expect(result).toEqual({ ok: true });
+    expect(calls[0]?.args).toEqual(['gateway', 'uninstall']);
+  });
+
+  it('reports stderr on a non-zero exit', async () => {
+    const { spawn } = makeExitSpawn(1, '', 'not installed');
+    const service = new OpenClawService({ env: cliEnv, spawn, httpGet: async () => ({ ok: false }) });
+    const result = await service.runAutostart('uninstall');
+    expect(result).toEqual({ ok: false, stderr: 'not installed' });
+  });
+
+  it('serializes on the SAME lane as runLifecycle — never races a concurrent start/stop/restart', async () => {
+    const { spawn, calls, closeNth } = makeControllableSpawn();
+    const service = new OpenClawService({ env: cliEnv, spawn, httpGet: async () => ({ ok: false }) });
+
+    const p1 = service.runLifecycle('start');
+    const p2 = service.runAutostart('install');
+    await flush();
+    expect(calls).toHaveLength(1); // autostart queued behind the in-flight lifecycle call
+
+    closeNth(0, 0);
+    await flush();
+    expect(calls).toHaveLength(2);
+
+    closeNth(1, 0);
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.ok).toBe(true);
+    expect(r2.ok).toBe(true);
+    expect(calls.map((c) => c.args)).toEqual([['gateway', 'start'], ['gateway', 'install']]);
+  });
+});
+
 // ── listAgentSessions ────────────────────────────────────────────────────
 
 describe('OpenClawService — listAgentSessions', () => {

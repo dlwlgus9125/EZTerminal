@@ -54,6 +54,8 @@ import {
   OPENCLAW_CONFIG_ALLOWLIST,
   OPENCLAW_CONFIG_UNSET,
   type OpenClawAgentSession,
+  type OpenClawAutostartAction,
+  type OpenClawAutostartResult,
   type OpenClawConfigKey,
   type OpenClawCoreConfig,
   type OpenClawLifecycleAction,
@@ -504,6 +506,22 @@ export class OpenClawService {
         this.busyAction = null;
         await this.pushStatusNow();
       }
+    });
+    await this.lifecycleOp;
+    return result;
+  }
+
+  // ── Autostart (task #9: `gateway install`/`gateway uninstall`) ──────────
+  // Shares `lifecycleOp`'s serialization lane with `runLifecycle` — installing
+  // the OS service must never race a concurrent start/stop/restart CLI spawn.
+  // Deliberately does NOT touch `busyAction` (that flag only means "gateway
+  // is starting up", which install/uninstall never causes).
+  async runAutostart(action: OpenClawAutostartAction): Promise<OpenClawAutostartResult> {
+    let result: OpenClawAutostartResult = { ok: false };
+    this.lifecycleOp = this.lifecycleOp.then(async () => {
+      result = await this.execCli(['gateway', action]).then(({ code, stderr }) =>
+        code === 0 ? { ok: true } : { ok: false, stderr: stderr || `exit code ${code}` },
+      );
     });
     await this.lifecycleOp;
     return result;

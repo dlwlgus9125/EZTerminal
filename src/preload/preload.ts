@@ -231,6 +231,38 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.on('openclaw:log', handler);
     return () => ipcRenderer.removeListener('openclaw:log', handler);
   },
+  runOpenClawAutostart: (
+    action: import('../shared/openclaw').OpenClawAutostartAction,
+  ): Promise<import('../shared/openclaw').OpenClawAutostartResult> => ipcRenderer.invoke('openclaw:autostart', action),
+
+  // OpenClaw chat panel (openclaw-management M3): fire-and-forget sends into
+  // OpenClawChatViewManager, same shape as the drawer wrappers above.
+  setOpenClawChatPanelMounted: (mounted: boolean): void => {
+    ipcRenderer.send('openclaw:chat-panel-mounted', mounted);
+  },
+  openOpenClawChatView: (): void => {
+    ipcRenderer.send('openclaw:chat-open');
+  },
+  closeOpenClawChatView: (): void => {
+    ipcRenderer.send('openclaw:chat-close');
+  },
+  setOpenClawChatBounds: (bounds: import('../shared/openclaw').OpenClawChatBounds): void => {
+    ipcRenderer.send('openclaw:chat-bounds', bounds);
+  },
+  setOpenClawChatVisible: (visible: boolean): void => {
+    ipcRenderer.send('openclaw:chat-visible', visible);
+  },
+  reloadOpenClawChatView: (): void => {
+    ipcRenderer.send('openclaw:chat-reload');
+  },
+  onOpenClawChatViewState: (
+    listener: (state: import('../shared/openclaw').OpenClawChatViewState) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, state: import('../shared/openclaw').OpenClawChatViewState): void =>
+      listener(state);
+    ipcRenderer.on('openclaw:chat-view-state', handler);
+    return () => ipcRenderer.removeListener('openclaw:chat-view-state', handler);
+  },
 };
 
 contextBridge.exposeInMainWorld(DESKTOP_BRIDGE_KEY, desktopApi);

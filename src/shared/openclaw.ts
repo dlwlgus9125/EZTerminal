@@ -55,6 +55,19 @@ export interface OpenClawLifecycleResult {
   readonly stderr?: string;
 }
 
+/** `gateway install`/`gateway uninstall` (task #9, autostart toggle) — distinct
+ * from `OpenClawLifecycleAction` because these register/remove the OS service
+ * (launchd/systemd/schtasks) rather than start/stop the running process, but
+ * share the same serialized CLI lane in OpenClawService (never races against
+ * a start/stop/restart). `--help` confirmed (2026-07-12) neither subcommand
+ * needs a confirmation flag to run non-interactively. */
+export type OpenClawAutostartAction = 'install' | 'uninstall';
+
+export interface OpenClawAutostartResult {
+  readonly ok: boolean;
+  readonly stderr?: string;
+}
+
 /** M0 ①: `config set` always requires a gateway restart to take effect
  * ("Updated <path>. Restart the gateway to apply.") — never a live reload. */
 export interface OpenClawSetConfigResult {
@@ -67,6 +80,24 @@ export interface OpenClawSetConfigResult {
  * connections, etc.) stays inside the Control UI embed (M3). */
 export const OPENCLAW_CONFIG_ALLOWLIST = ['agents.defaults.model', 'gateway.port'] as const;
 export type OpenClawConfigKey = (typeof OPENCLAW_CONFIG_ALLOWLIST)[number];
+
+/** Wire shape for the chat placeholder's reported bounding rect
+ * (openclaw-management M3) — window-content-relative pixels, the same
+ * coordinate space `WebContentsView.setBounds` expects. */
+export interface OpenClawChatBounds {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Pushed by `OpenClawChatViewManager` on did-fail-load/did-finish-load — see
+ * openclaw-chat-view.ts's module doc for why the view force-hides itself
+ * while `hasError` is true. */
+export interface OpenClawChatViewState {
+  readonly hasError: boolean;
+  readonly errorCode?: number;
+}
 
 /** Sentinel for "present in the allowlist but absent from openclaw.json" — M0
  * ①: `config get` exits 1 for an unset-but-schema-valid path (e.g. `gateway.port`

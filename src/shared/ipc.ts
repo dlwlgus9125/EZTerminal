@@ -9,6 +9,10 @@ import type { FileListResult, FileOpResult, FileReadTextResult } from './files';
 import type { ThemeMod } from './theme-schema';
 import type {
   OpenClawAgentSession,
+  OpenClawAutostartAction,
+  OpenClawAutostartResult,
+  OpenClawChatBounds,
+  OpenClawChatViewState,
   OpenClawCoreConfig,
   OpenClawLifecycleAction,
   OpenClawLifecycleResult,
@@ -823,4 +827,27 @@ export interface EzTerminalDesktopApi {
   setOpenClawDrawerOpen: (open: boolean) => void;
   onOpenClawStatus: (listener: (status: OpenClawStatus) => void) => () => void;
   onOpenClawLog: (listener: (line: OpenClawLogLine) => void) => () => void;
+  /** `gateway install`/`gateway uninstall` (task #9, autostart toggle). */
+  runOpenClawAutostart: (action: OpenClawAutostartAction) => Promise<OpenClawAutostartResult>;
+
+  // ── OpenClaw chat panel (openclaw-management M3) ────────────────────────
+  // The main-owned WebContentsView paints ABOVE the renderer's DOM — this
+  // surface is how OpenClawChatPanel.tsx's placeholder drives it, never the
+  // reverse. See openclaw-chat-view.ts's module doc for the full lifecycle.
+  /** The singleton dockview tab's mount/unmount — gates status push
+   * independently of the drawer (openclaw:chat-panel-mounted). */
+  setOpenClawChatPanelMounted: (mounted: boolean) => void;
+  /** Requests the view be created (only called once status === 'running'). */
+  openOpenClawChatView: () => void;
+  /** Tears the view down entirely — sent on the panel's unmount. */
+  closeOpenClawChatView: () => void;
+  /** Rate-limited by the caller (rAF-throttled ResizeObserver) — window-
+   * content-relative pixels. */
+  setOpenClawChatBounds: (bounds: OpenClawChatBounds) => void;
+  /** The single effective-visibility derivation (panel visible ∧ no drawer/
+   * palette overlay) — see App.tsx. */
+  setOpenClawChatVisible: (visible: boolean) => void;
+  /** The placeholder's "재연결" button, shown while `hasError` is true. */
+  reloadOpenClawChatView: () => void;
+  onOpenClawChatViewState: (listener: (state: OpenClawChatViewState) => void) => () => void;
 }
