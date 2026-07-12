@@ -4,9 +4,9 @@
  * (b)). Plain `node:http` (no framework); WS upgrades are spliced as raw
  * sockets, never parsed as WS frames — the M0 Stage-0 spike (docs/research/
  * 2026-07-12-openclaw-stage0.md ③) confirmed this minimal approach is
- * sufficient: the gateway does not reject on Origin at the HTTP/WS-upgrade
- * layer for a loopback/token-auth install, so no Origin-allowlist logic is
- * needed here — the ticket+cookie flow below is the sole control point.
+ * sufficient for the PIPE itself; two Origin/cookie assumptions from that
+ * spike did NOT hold up against a real cross-site embed and were amended
+ * after the M5 emulator live gate (see below).
  *
  * Auth flow: a phone that already authenticated to the mobile WS bridge
  * (remote-bridge.ts) asks it for a chat ticket (`openclaw-chat-ticket` — see
@@ -17,18 +17,55 @@
  * fragments to the server), so the real gateway auth token only ever exists
  * client-side, consumed by the Control UI's own SPA over its WS RPC
  * `connect`. This server only cares about the ticket: on a valid redemption
- * it mints an HttpOnly session cookie and 302-redirects to the clean URL
- * (dropping `?t=...`) — the browser retains the ORIGINAL fragment across
- * that redirect automatically (this server never writes one into
- * `Location`). Every subsequent request/WS upgrade is authorized by that
- * cookie alone, checked with `timingSafeEqual` (never a plain `===`/
- * `Set.has`), same discipline as remote-bridge.ts's `tokensMatch`.
+ * it mints an HttpOnly session cookie AND records the redeeming request's
+ * source IP as authorized (see "M5 amendment ①" below), then 302-redirects
+ * to the clean URL (dropping `?t=...`) — the browser retains the ORIGINAL
+ * fragment across that redirect automatically (this server never writes one
+ * into `Location`). Every subsequent request/WS upgrade is authorized by
+ * EITHER the cookie OR the source-IP binding, checked with `timingSafeEqual`
+ * for the cookie (never a plain `===`/`Set.has`), same discipline as
+ * remote-bridge.ts's `tokensMatch`.
  *
- * Three header rewrites (spike-confirmed sufficient, no others needed):
- * drop `X-Frame-Options` entirely, rewrite ONLY the `frame-ancestors` CSP
- * directive (every other directive — `script-src` hashes, `connect-src`,
- * etc. — passes through byte-identical), and rewrite the outbound `Host`
- * header to the upstream loopback origin.
+ * M5 amendment ① (source-IP-bound session, `isAuthorizedIp`): the M5
+ * emulator live gate (real Android WebView, real OpenClaw gateway) found
+ * that `SameSite=Lax` — the cookie's original, sole auth mechanism — is
+ * simply never SENT on a cross-site iframe subframe navigation (the mobile
+ * app's origin, `http://localhost`, differs from this proxy's LAN origin;
+ * Lax cookies are only sent on a cross-site TOP-LEVEL navigation), so the
+ * ticket-redemption redirect's own follow-up request arrived cookie-less and
+ * was rejected — even though the ticket itself had already been correctly
+ * validated and consumed. Binding the redeeming request's source IP
+ * (`req.socket.remoteAddress`, not spoofable within a TCP handshake) as a
+ * SHORT-lived (`IP_SESSION_TTL_MS`, unlike the cookie's indefinite-until-
+ * `stop()` lifetime) parallel authorization covers this: the phone (a single
+ * physical device on the LAN/tailnet, already authenticated twice over —
+ * once to the mobile WS bridge, once via the single-use ticket itself) keeps
+ * making authorized follow-up requests by IP alone, no cookie required. The
+ * cookie mechanism is NOT removed — a top-level navigation (the "브라우저로
+ * 열기" fallback) still gets and uses one same as before.
+ *
+ * M5 amendment ② (Origin rewrite to the gateway's own origin): even past
+ * amendment ①, the Control UI's own client-side WS RPC `connect` was
+ * rejected by the LIVE gateway with "Browser origin not allowed" — the real
+ * OpenClaw gateway DOES enforce `gateway.controlUi.allowedOrigins`
+ * (contradicting the M0 spike's loopback/token-auth-only assumption above),
+ * and this proxy's own LAN-facing origin is never going to be in that
+ * allowlist. Since this proxy already terminates and re-originates every
+ * forwarded request/WS upgrade, it rewrites the outbound `Origin` header (on
+ * BOTH plain HTTP requests and the WS upgrade handshake) to the upstream
+ * gateway's OWN origin — from the gateway's perspective the Control UI page
+ * it's serving is now presenting the same-origin `Origin` a normal same-host
+ * browser tab would. If the gateway's `controlUi.allowedOrigins` doesn't
+ * even include its own default origin, this rewrite cannot fix it — that's
+ * a gateway-config gap this proxy cannot solve in code (the fix is
+ * `openclaw config set gateway.controlUi.allowedOrigins ...` on the
+ * machine running the gateway).
+ *
+ * Three header rewrites beyond the two amendments above (spike-confirmed
+ * sufficient, no others needed): drop `X-Frame-Options` entirely, rewrite
+ * ONLY the `frame-ancestors` CSP directive (every other directive —
+ * `script-src` hashes, `connect-src`, etc. — passes through byte-identical),
+ * and rewrite the outbound `Host` header to the upstream loopback origin.
  */
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
@@ -51,6 +88,14 @@ const PROXY_HEADERS_TIMEOUT_MS = 10_000;
  * between messages without being dead) — bounds a half-open tunnel. */
 const PROXY_TUNNEL_IDLE_TIMEOUT_MS = 10 * 60_000;
 const SESSION_COOKIE_NAME = 'ez_openclaw_session';
+/** M5 amendment ① — source-IP-bound session TTL (see module doc). Short and
+ * fixed-window from redemption (not sliding), unlike the cookie's
+ * indefinite-until-`stop()` lifetime: long enough to cover one page load's
+ * asset requests plus a WS reconnect after a network blip (same order of
+ * magnitude as `PROXY_TUNNEL_IDLE_TIMEOUT_MS`), short enough that a stale
+ * binding doesn't linger — the mobile client re-tickets on every tab
+ * activate/reload/retry anyway (MobileOpenClawView.tsx's M5 design). */
+const IP_SESSION_TTL_MS = 10 * 60_000;
 
 export interface OpenClawProxyOptions {
   /** Listen port — pass `0` for an OS-assigned ephemeral port (tests). */
@@ -85,6 +130,17 @@ export function rewriteFrameAncestors(csp: string, allowedOrigin: string): strin
     /^frame-ancestors\b/i.test(d) ? `frame-ancestors 'self' ${allowedOrigin}` : d,
   );
   return rewritten.join('; ');
+}
+
+/** Strips the IPv4-mapped-IPv6 prefix (`::ffff:10.0.2.2` -> `10.0.2.2`) so
+ * the SAME physical client always binds/matches under one representation —
+ * a dual-stack listener (`0.0.0.0`, see `startOpenClawProxy` below) can
+ * report either form for the identical IPv4 peer depending on platform.
+ * Exported for direct unit testing (same precedent as `rewriteFrameAncestors`
+ * above). */
+export function normalizeIp(address: string | undefined): string | undefined {
+  if (!address) return undefined;
+  return address.startsWith('::ffff:') ? address.slice('::ffff:'.length) : address;
 }
 
 function parseCookies(header: string | undefined): Record<string, string> {
@@ -135,6 +191,9 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
 
   const tickets = new Map<string, { readonly expiresAt: number }>();
   const sessions = new Set<string>();
+  /** M5 amendment ① — source IP -> expiry, populated on every ticket
+   * redemption alongside (never instead of) the cookie session above. */
+  const ipSessions = new Map<string, number>();
   /** Inbound sockets (phone/browser -> this proxy), tracked via the server's
    * own 'connection' event — used for the connection cap AND `stop()`. */
   const activeSockets = new Set<Socket>();
@@ -168,6 +227,26 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
   const isValidSession = (candidate: string | undefined): boolean =>
     constantTimeMember(sessions, candidate, SESSION_BYTES);
 
+  /** M5 amendment ① — is `address` a source IP that redeemed a ticket within
+   * `IP_SESSION_TTL_MS`? Not `timingSafeEqual`-guarded like the cookie/ticket
+   * checks above: an IP address isn't a secret being compared against a
+   * stored secret (unlike a session token), so there's no meaningful timing
+   * side-channel to close here. */
+  const isAuthorizedIp = (address: string | undefined): boolean => {
+    const ip = normalizeIp(address);
+    if (!ip) return false;
+    const expiresAt = ipSessions.get(ip);
+    return expiresAt !== undefined && expiresAt >= now();
+  };
+
+  /** Combined auth check shared by `handleRequest` and `handleUpgrade` — the
+   * cookie session OR the M5 amendment ① IP-bound session, either suffices. */
+  const isAuthorized = (req: IncomingMessage): boolean => {
+    const cookies = parseCookies(req.headers.cookie);
+    if (isValidSession(cookies[SESSION_COOKIE_NAME])) return true;
+    return isAuthorizedIp(req.socket.remoteAddress);
+  };
+
   const handleRequest = (req: IncomingMessage, res: ServerResponse): void => {
     const parsedUrl = new URL(req.url ?? '/', 'http://proxy.local');
     const ticket = parsedUrl.searchParams.get('t');
@@ -180,6 +259,8 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
       }
       const session = randomBytes(SESSION_BYTES).toString('hex');
       sessions.add(session);
+      const redeemerIp = normalizeIp(req.socket.remoteAddress);
+      if (redeemerIp) ipSessions.set(redeemerIp, now() + IP_SESSION_TTL_MS);
       parsedUrl.searchParams.delete('t');
       const location = parsedUrl.pathname + parsedUrl.search;
       res.writeHead(302, {
@@ -190,8 +271,7 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
       return;
     }
 
-    const cookies = parseCookies(req.headers.cookie);
-    if (!isValidSession(cookies[SESSION_COOKIE_NAME])) {
+    if (!isAuthorized(req)) {
       res.writeHead(403, { 'content-type': 'text/plain' });
       res.end('unauthorized');
       return;
@@ -200,6 +280,9 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
     const outHeaders: http.OutgoingHttpHeaders = { ...req.headers };
     delete outHeaders.host;
     outHeaders.host = upstream.host;
+    // M5 amendment ② — see module doc: the Control UI's own WS RPC connect
+    // is otherwise rejected by the gateway's `controlUi.allowedOrigins`.
+    if (outHeaders.origin !== undefined) outHeaders.origin = upstream.origin;
 
     const proxyReq = http.request(
       {
@@ -229,8 +312,7 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
   };
 
   const handleUpgrade = (req: IncomingMessage, clientSocket: Socket, head: Buffer): void => {
-    const cookies = parseCookies(req.headers.cookie);
-    if (!isValidSession(cookies[SESSION_COOKIE_NAME])) {
+    if (!isAuthorized(req)) {
       clientSocket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       clientSocket.destroy();
       return;
@@ -241,6 +323,9 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
         string,
         string | string[]
       >;
+      // M5 amendment ② — see module doc: the Control UI's own WS RPC connect
+      // is otherwise rejected by the gateway's `controlUi.allowedOrigins`.
+      if (outHeaders.origin !== undefined) outHeaders.origin = upstream.origin;
       const headerLines = Object.entries(outHeaders)
         .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
         .join('\r\n');
@@ -278,6 +363,9 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
     const t = now();
     for (const [ticket, record] of tickets) {
       if (record.expiresAt < t) tickets.delete(ticket);
+    }
+    for (const [ip, expiresAt] of ipSessions) {
+      if (expiresAt < t) ipSessions.delete(ip);
     }
   }, TICKET_SWEEP_INTERVAL_MS);
   sweepTimer.unref?.();

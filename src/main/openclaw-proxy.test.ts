@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
 
-import { rewriteFrameAncestors, startOpenClawProxy, type OpenClawProxyHandle } from './openclaw-proxy';
+import { normalizeIp, rewriteFrameAncestors, startOpenClawProxy, type OpenClawProxyHandle } from './openclaw-proxy';
 
 const CSP_BASELINE =
   "default-src 'self'; script-src 'self' 'sha256-abc123'; style-src 'self'; connect-src 'self' ws: wss: https://api.openai.com; frame-ancestors 'none'";
@@ -18,11 +18,19 @@ interface FakeUpstream {
   readonly server: http.Server;
   readonly wss: WebSocketServer;
   readonly lastRequest: { method?: string; url?: string; headers?: http.IncomingHttpHeaders } | null;
+  /** Headers of the last WS upgrade handshake this fake gateway received —
+   * separate from `lastRequest` because an upgrade never reaches the plain
+   * `http.createServer` request handler (M5 amendment ② Origin-rewrite
+   * tests need to see what the proxy actually forwarded on the WS path). */
+  readonly lastUpgradeHeaders: http.IncomingHttpHeaders | null;
 }
 
 function startFakeUpstream(): Promise<FakeUpstream> {
   return new Promise((resolve) => {
-    const state: { lastRequest: FakeUpstream['lastRequest'] } = { lastRequest: null };
+    const state: { lastRequest: FakeUpstream['lastRequest']; lastUpgradeHeaders: http.IncomingHttpHeaders | null } = {
+      lastRequest: null,
+      lastUpgradeHeaders: null,
+    };
     const server = http.createServer((req: IncomingMessage, res: ServerResponse) => {
       state.lastRequest = { method: req.method, url: req.url, headers: req.headers };
       res.writeHead(200, {
@@ -33,19 +41,24 @@ function startFakeUpstream(): Promise<FakeUpstream> {
       res.end('<title>OpenClaw Control</title>');
     });
     const wss = new WebSocketServer({ server });
-    wss.on('connection', (ws) => {
+    wss.on('connection', (ws, req) => {
+      state.lastUpgradeHeaders = req.headers;
       ws.on('message', (data) => ws.send(`echo:${data.toString()}`));
     });
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address() as AddressInfo;
-      // `lastRequest` is a live getter over `state` (mutated by the request
-      // handler above), not a value snapshot taken here at bind time.
+      // `lastRequest`/`lastUpgradeHeaders` are live getters over `state`
+      // (mutated by the handlers above), not value snapshots taken here at
+      // bind time.
       resolve({
         origin: `http://127.0.0.1:${port}`,
         server,
         wss,
         get lastRequest() {
           return state.lastRequest;
+        },
+        get lastUpgradeHeaders() {
+          return state.lastUpgradeHeaders;
         },
       });
     });
@@ -159,6 +172,68 @@ describe('openclaw-proxy — ticket redemption + cookie auth', () => {
   });
 });
 
+describe('openclaw-proxy — M5 amendment ① source-IP-bound session', () => {
+  let upstream: Awaited<ReturnType<typeof startFakeUpstream>>;
+  let proxy: OpenClawProxyHandle;
+
+  afterEach(async () => {
+    await proxy?.stop();
+    upstream?.wss.close();
+    await new Promise<void>((resolve) => upstream.server.close(() => resolve()));
+  });
+
+  it('a ticket redemption authorizes a subsequent request from the SAME source IP with NO cookie at all — the cross-site-iframe case SameSite=Lax breaks', async () => {
+    upstream = await startFakeUpstream();
+    proxy = await startOpenClawProxy({ port: 0, upstreamOrigin: upstream.origin });
+    const ticket = proxy.mintTicket();
+
+    const redemption = await rawGet(`http://127.0.0.1:${proxy.port}`, `/?t=${ticket}`);
+    expect(redemption.status).toBe(302); // the ticket itself is still valid/consumed as before
+
+    const res = await rawGet(`http://127.0.0.1:${proxy.port}`, '/'); // no cookie header at all
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('OpenClaw Control');
+  });
+
+  it('the IP-bound session still works for a WS upgrade with no cookie', async () => {
+    upstream = await startFakeUpstream();
+    proxy = await startOpenClawProxy({ port: 0, upstreamOrigin: upstream.origin });
+    const ticket = proxy.mintTicket();
+    await rawGet(`http://127.0.0.1:${proxy.port}`, `/?t=${ticket}`);
+
+    const echoed = await new Promise<string>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${proxy.port}/`); // no cookie header
+      ws.on('open', () => ws.send('hello'));
+      ws.on('message', (data) => {
+        resolve(data.toString());
+        ws.close();
+      });
+      ws.on('error', reject);
+    });
+    expect(echoed).toBe('echo:hello');
+  });
+
+  it('the IP-bound session expires after its TTL — a cookie-less request past it is rejected again', async () => {
+    upstream = await startFakeUpstream();
+    let currentTime = 1_000_000;
+    proxy = await startOpenClawProxy({ port: 0, upstreamOrigin: upstream.origin, now: () => currentTime });
+    const ticket = proxy.mintTicket();
+    await rawGet(`http://127.0.0.1:${proxy.port}`, `/?t=${ticket}`);
+
+    currentTime += 10 * 60_000 + 1; // past the 10-minute IP-session TTL
+    const res = await rawGet(`http://127.0.0.1:${proxy.port}`, '/');
+    expect(res.status).toBe(403);
+  });
+
+  it('with no ticket EVER redeemed, a cookie-less request is still rejected (no ambient IP trust)', async () => {
+    upstream = await startFakeUpstream();
+    proxy = await startOpenClawProxy({ port: 0, upstreamOrigin: upstream.origin });
+
+    const res = await rawGet(`http://127.0.0.1:${proxy.port}`, '/');
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('openclaw-proxy — header rewrites (M0 spike parity)', () => {
   let upstream: Awaited<ReturnType<typeof startFakeUpstream>>;
   let proxy: OpenClawProxyHandle;
@@ -198,6 +273,28 @@ describe('openclaw-proxy — header rewrites (M0 spike parity)', () => {
     await rawGet(`http://127.0.0.1:${proxy.port}`, '/', { cookie: cookie ?? '' });
     expect(upstream.lastRequest?.headers?.host).toBe(new URL(upstream.origin).host);
   });
+
+  it('rewrites the outbound Origin header to the upstream\'s own origin (M5 amendment ②)', async () => {
+    upstream = await startFakeUpstream();
+    proxy = await startOpenClawProxy({ port: 0, upstreamOrigin: upstream.origin });
+    const ticket = proxy.mintTicket();
+    const redemption = await rawGet(`http://127.0.0.1:${proxy.port}`, `/?t=${ticket}`);
+    const cookie = extractCookie(redemption.headers['set-cookie']);
+
+    await rawGet(`http://127.0.0.1:${proxy.port}`, '/', { cookie: cookie ?? '', origin: 'http://10.0.2.2:7424' });
+    expect(upstream.lastRequest?.headers?.origin).toBe(upstream.origin);
+  });
+
+  it('leaves a request with no Origin header alone (never invents one)', async () => {
+    upstream = await startFakeUpstream();
+    proxy = await startOpenClawProxy({ port: 0, upstreamOrigin: upstream.origin });
+    const ticket = proxy.mintTicket();
+    const redemption = await rawGet(`http://127.0.0.1:${proxy.port}`, `/?t=${ticket}`);
+    const cookie = extractCookie(redemption.headers['set-cookie']);
+
+    await rawGet(`http://127.0.0.1:${proxy.port}`, '/', { cookie: cookie ?? '' });
+    expect(upstream.lastRequest?.headers?.origin).toBeUndefined();
+  });
 });
 
 describe('rewriteFrameAncestors (pure helper)', () => {
@@ -211,6 +308,21 @@ describe('rewriteFrameAncestors (pure helper)', () => {
     const csp = "default-src 'self'; style-src 'self'";
     const out = rewriteFrameAncestors(csp, 'http://127.0.0.1:7421');
     expect(out).toBe("default-src 'self'; style-src 'self'");
+  });
+});
+
+describe('normalizeIp (pure helper, M5 amendment ①)', () => {
+  it('strips the IPv4-mapped-IPv6 prefix', () => {
+    expect(normalizeIp('::ffff:10.0.2.2')).toBe('10.0.2.2');
+  });
+
+  it('leaves a plain IPv4/IPv6 address unchanged', () => {
+    expect(normalizeIp('10.0.2.2')).toBe('10.0.2.2');
+    expect(normalizeIp('::1')).toBe('::1');
+  });
+
+  it('passes undefined through as undefined', () => {
+    expect(normalizeIp(undefined)).toBeUndefined();
   });
 });
 
@@ -241,6 +353,26 @@ describe('openclaw-proxy — WS upgrade raw pipe', () => {
       ws.on('error', reject);
     });
     expect(echoed).toBe('echo:hello');
+  });
+
+  it('rewrites the Origin header on the WS upgrade handshake to the upstream\'s own origin (M5 amendment ②)', async () => {
+    upstream = await startFakeUpstream();
+    proxy = await startOpenClawProxy({ port: 0, upstreamOrigin: upstream.origin });
+    const ticket = proxy.mintTicket();
+    const redemption = await rawGet(`http://127.0.0.1:${proxy.port}`, `/?t=${ticket}`);
+    const cookie = extractCookie(redemption.headers['set-cookie']);
+
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${proxy.port}/`, {
+        headers: { cookie: cookie ?? '', origin: 'http://10.0.2.2:7424' },
+      });
+      ws.on('open', () => {
+        ws.close();
+        resolve();
+      });
+      ws.on('error', reject);
+    });
+    expect(upstream.lastUpgradeHeaders?.origin).toBe(upstream.origin);
   });
 
   it('rejects a WS upgrade with no valid session cookie', async () => {
