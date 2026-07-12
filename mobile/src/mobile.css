@@ -424,6 +424,40 @@ body,
   background: var(--term-bg-raised, #161616);
 }
 
+/* OpenClaw entry button + status dot (openclaw-stabilization M4) — shared by
+ * the workspace-header's own 🤖 button above and the zero-tab SessionSwitcher
+ * page header's (session-switcher-head) — same `.openclaw-btn`/`data-testid`
+ * on both, only one ever rendered at a time. `position: relative` anchors the
+ * badge; color grouping mirrors (but does not reuse) the full status tab's
+ * `openclaw-status-dot--<state>` classes — see SessionSwitcher.tsx's
+ * `openclawEntryDotClass` doc for why this collapses to 3 colors. */
+.openclaw-btn {
+  position: relative;
+}
+
+.openclaw-entry-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--term-fg-faint, #888);
+  pointer-events: none;
+}
+
+.openclaw-entry-dot--running {
+  background: var(--term-green, #29d398);
+}
+
+.openclaw-entry-dot--pending {
+  background: var(--term-amber, #e0c341);
+}
+
+.openclaw-entry-dot--stopped {
+  background: var(--term-fg-faint, #888);
+}
+
 /* Keep-alive: an inactive tab is hidden, never unmounted (see
  * MobileWorkspace.tsx's module doc) — display:none is toggled inline per tab. */
 .tab-page {

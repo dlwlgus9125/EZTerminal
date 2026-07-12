@@ -542,6 +542,18 @@ export interface OpenClawStatusMessage {
   readonly status: OpenClawStatus;
 }
 
+/** Effective OpenClaw visibility on the DESKTOP side (openclaw-stabilization
+ * M3) — sent once right after auth-ok, and again to every authed connection
+ * whenever the desktop's tri-state `openclawMode` changes, so a phone can
+ * show/hide its own OpenClaw entry points without polling. Unlike
+ * `openclaw-status`, there is no subscribe/unsubscribe pair for this one —
+ * every authed connection gets it unconditionally (see remote-bridge.ts's
+ * `RemoteOpenClawSource.subscribeVisibility`). */
+export interface OpenClawAvailabilityMessage {
+  readonly kind: 'openclaw-availability';
+  readonly visible: boolean;
+}
+
 export interface OpenClawLifecycleResultMessage {
   readonly kind: 'openclaw-lifecycle-result';
   readonly requestId: string;
@@ -607,6 +619,7 @@ export type ServerToClientMessage =
   | FileUploadAckMessage
   | FileUploadDoneMessage
   | OpenClawStatusMessage
+  | OpenClawAvailabilityMessage
   | OpenClawLifecycleResultMessage
   | OpenClawLogLinesMessage
   | OpenClawSessionsReply

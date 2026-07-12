@@ -1510,3 +1510,102 @@ describe('WsEzTerminalTransport — OpenClaw reconnect replay', () => {
     expect(sentKinds).not.toContain('openclaw-logs-subscribe');
   });
 });
+
+describe('WsEzTerminalTransport — OpenClaw availability (openclaw-stabilization M3)', () => {
+  it('onOpenClawAvailability replays false (unknown) before any push has arrived', () => {
+    const { createSocket } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+
+    const seen: boolean[] = [];
+    transport.onOpenClawAvailability((visible) => seen.push(visible));
+
+    expect(seen).toEqual([false]);
+  });
+
+  it('fires on an openclaw-availability push, and replays the cached value to a late subscriber', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    sockets[0].triggerMessage({ kind: 'openclaw-availability', visible: true });
+
+    const seen: boolean[] = [];
+    transport.onOpenClawAvailability((visible) => seen.push(visible));
+    expect(seen).toEqual([true]); // replayed the cached value immediately, no wire round trip needed
+
+    sockets[0].triggerMessage({ kind: 'openclaw-availability', visible: false });
+    expect(seen).toEqual([true, false]);
+  });
+
+  it('unsubscribe stops delivery', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const seen: boolean[] = [];
+    const unsubscribe = transport.onOpenClawAvailability((visible) => seen.push(visible));
+    seen.length = 0; // drop the initial replay
+
+    unsubscribe();
+    sockets[0].triggerMessage({ kind: 'openclaw-availability', visible: true });
+
+    expect(seen).toEqual([]);
+  });
+
+  it('resets the cached value to false on disconnect, notifying current subscribers immediately', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    sockets[0].triggerMessage({ kind: 'openclaw-availability', visible: true });
+
+    const seen: boolean[] = [];
+    transport.onOpenClawAvailability((visible) => seen.push(visible));
+    seen.length = 0; // drop the initial replay (true)
+
+    sockets[0].triggerClose();
+    expect(seen).toEqual([false]);
+
+    // A subscriber joining AFTER the reset also sees false, not a stale true.
+    const late: boolean[] = [];
+    transport.onOpenClawAvailability((visible) => late.push(visible));
+    expect(late).toEqual([false]);
+  });
+});
+
+describe('WsEzTerminalTransport — OpenClaw status subscription refcount (openclaw-stabilization M3)', () => {
+  it('two independent callers stay subscribed until BOTH release: an early release does not cancel the other', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    // Workspace-level subscription (persistent while OpenClaw is visible).
+    transport.setOpenClawStatusSubscribed(true);
+    expect(sockets[0].lastSent()).toEqual({ kind: 'openclaw-status-subscribe' });
+
+    // MobileOpenClawView mounts while it's open — a redundant acquire, no
+    // second wire message (already subscribed).
+    transport.setOpenClawStatusSubscribed(true);
+    expect(sockets[0].sent.filter((s) => JSON.parse(s).kind === 'openclaw-status-subscribe')).toHaveLength(1);
+
+    // MobileOpenClawView unmounts — must NOT unsubscribe on the wire, since
+    // the workspace-level subscription is still active.
+    transport.setOpenClawStatusSubscribed(false);
+    expect(sockets[0].sent.some((s) => JSON.parse(s).kind === 'openclaw-status-unsubscribe')).toBe(false);
+
+    // The workspace itself releases (OpenClaw hidden) — NOW it unsubscribes.
+    transport.setOpenClawStatusSubscribed(false);
+    expect(sockets[0].lastSent()).toEqual({ kind: 'openclaw-status-unsubscribe' });
+  });
+
+  it('a release without a matching acquire clamps at zero instead of going negative', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    transport.setOpenClawStatusSubscribed(false); // stray release, never subscribed
+    expect(sockets[0].sent.some((s) => JSON.parse(s).kind === 'openclaw-status-unsubscribe')).toBe(false);
+
+    transport.setOpenClawStatusSubscribed(true);
+    expect(sockets[0].lastSent()).toEqual({ kind: 'openclaw-status-subscribe' }); // still a clean 0->1
+  });
+});
