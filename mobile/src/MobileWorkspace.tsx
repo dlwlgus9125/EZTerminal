@@ -4,6 +4,7 @@ import type { ThemeName } from '../../src/shared/layout-schema';
 import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
 import { setUserFontId } from '../../src/renderer/theme-runtime';
 import { MobileFileView } from './MobileFileView';
+import { MobileOpenClawView } from './MobileOpenClawView';
 import { MobileSessionView } from './MobileSessionView';
 import { MobileSettingsView } from './MobileSettingsView';
 import { MobileStatsView } from './MobileStatsView';
@@ -59,7 +60,7 @@ export function MobileWorkspace({
   onDisconnect: () => void;
 }): JSX.Element {
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
-  const [view, setView] = useState<'terminal' | 'stats' | 'files' | 'settings'>('terminal');
+  const [view, setView] = useState<'terminal' | 'stats' | 'files' | 'settings' | 'openclaw'>('terminal');
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<ThemeName>(() => loadTheme());
@@ -133,6 +134,10 @@ export function MobileWorkspace({
 
   if (view === 'stats') {
     return <MobileStatsView onClose={() => setView('terminal')} />;
+  }
+
+  if (view === 'openclaw') {
+    return <MobileOpenClawView transport={transport} onClose={() => setView('terminal')} />;
   }
 
   if (view === 'settings') {
@@ -225,6 +230,15 @@ export function MobileWorkspace({
           data-testid="theme-btn"
         >
           🎨
+        </button>
+        <button
+          type="button"
+          className="btn openclaw-btn"
+          onClick={() => setView('openclaw')}
+          aria-label="OpenClaw"
+          data-testid="btn-toggle-openclaw"
+        >
+          🤖
         </button>
         <button
           type="button"

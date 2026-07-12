@@ -215,6 +215,7 @@ body,
 .connect-screen .btn,
 .mobile-stats-view .btn,
 .mobile-settings-view .btn,
+.mobile-openclaw-view .btn,
 .mobile-workspace .btn {
   min-height: 40px;
   padding: 10px 14px;
@@ -723,4 +724,175 @@ body,
 
 .mobile-upload-status--failed {
   color: var(--term-red, #ff4d5e);
+}
+
+/* ── OpenClaw management view (openclaw-management M4) — full-screen overlay,
+ * same shape as `.mobile-stats-view`/`.mobile-settings-view`; `.status-section`/
+ * `.status-section-title`/`.status-metric`/`.status-loading` come from the
+ * desktop's index.css, imported wholesale by main.tsx. ─────────────────────── */
+
+.mobile-openclaw-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.mobile-openclaw-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--term-border-faint, #222);
+}
+
+.mobile-openclaw-tabs {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+}
+
+.mobile-openclaw-tab {
+  flex: 1;
+  min-height: 40px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--term-border, #444);
+  background: var(--term-bg-inset, #1c1c1c);
+  color: var(--term-fg, inherit);
+  font-family: inherit;
+}
+
+.mobile-openclaw-tab--active {
+  border-color: var(--term-green, #29d398);
+  color: var(--term-fg-bright, inherit);
+  background: var(--term-bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+.mobile-openclaw-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* State dot (Status tab) — color keyed by OpenClawStatusState. */
+.openclaw-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1rem;
+}
+
+.openclaw-status-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--term-fg-faint, #888);
+}
+
+.openclaw-status-dot--running {
+  background: var(--term-green, #29d398);
+}
+
+.openclaw-status-dot--starting {
+  background: var(--term-amber, #e0c341);
+}
+
+.openclaw-status-dot--stopped,
+.openclaw-status-dot--not-installed {
+  background: var(--term-fg-faint, #888);
+}
+
+.openclaw-status-dot--unknown {
+  background: var(--term-red, #ff4d5e);
+}
+
+/* Guidance card — informational, never an error toast (the `--error`
+ * modifier only tints a genuine failure surfaced inline, e.g. a lifecycle
+ * action's stderr or a config-set rejection). */
+.openclaw-guidance {
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--term-border, #444);
+  background: var(--term-bg-inset, #1c1c1c);
+  font-size: 0.85rem;
+}
+
+.openclaw-guidance--error {
+  border-color: var(--term-red, #ff4d5e);
+  color: var(--term-red, #ff4d5e);
+}
+
+.openclaw-lifecycle-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Logs tab */
+.openclaw-logs-section {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.openclaw-log-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  font-family: var(--term-font, monospace);
+  font-size: 0.78rem;
+}
+
+.openclaw-log-line {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.openclaw-log-time {
+  flex: none;
+  color: var(--term-fg-faint, #888);
+}
+
+.openclaw-log-level {
+  flex: none;
+  min-width: 3.5em;
+  color: var(--term-fg-faint, #888);
+}
+
+.openclaw-log-line--warn .openclaw-log-level {
+  color: var(--term-amber, #e0c341);
+}
+
+.openclaw-log-line--error .openclaw-log-level {
+  color: var(--term-red, #ff4d5e);
+}
+
+.openclaw-log-line--debug .openclaw-log-level {
+  color: var(--term-fg-faint, #888);
+}
+
+/* Settings tab */
+.openclaw-config-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+.openclaw-config-row input {
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--term-border, #444);
+  background: var(--term-bg-inset, #1c1c1c);
+  color: var(--term-fg, inherit);
+  font-family: inherit;
 }
