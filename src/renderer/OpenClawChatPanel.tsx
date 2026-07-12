@@ -71,8 +71,14 @@ export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
     return () => disposable.dispose();
   }, [props.api]);
   useEffect(() => {
-    window.ezterminalDesktop?.setOpenClawChatVisible(panelVisible && !overlayOpen);
-  }, [panelVisible, overlayOpen]);
+    // Effective visibility must also require the gateway to be RUNNING: main
+    // lazily CREATES the WebContentsView on the first visible=true report, so
+    // signalling visible while stopped/not-installed would spawn a view behind
+    // the guidance placeholder (it stays alive even after status settles). Only
+    // when running should the native view exist and show.
+    const running = status?.state === 'running';
+    window.ezterminalDesktop?.setOpenClawChatVisible(panelVisible && !overlayOpen && running);
+  }, [panelVisible, overlayOpen, status?.state]);
 
   // ── Status: seed + subscribe. Independent of the drawer's own gate (main.ts
   // refcounts both — see openclaw:chat-panel-mounted). Sent for the panel's

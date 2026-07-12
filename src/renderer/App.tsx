@@ -237,6 +237,12 @@ export function App(): JSX.Element {
   // openPanel above, this never mints a new id (the schema requires the
   // fixed id 'openclaw-chat', see layout-schema.ts's PanelSchema doc).
   const openOpenClawChat = useCallback((): void => {
+    // Close the drawer first: the [채팅 열기] button lives INSIDE the OpenClaw
+    // drawer, but the drawer feeds `chatOverlayOpen`, which the chat panel ANDs
+    // into the WebContentsView's effective visibility (z-order rule). Leaving
+    // the drawer open would hide the freshly-opened chat view — a blank panel
+    // until the user manually closes the drawer.
+    setOpenclawOpen(false);
     const api = apiRef.current;
     if (!api) return;
     const existing = api.getPanel('openclaw-chat');

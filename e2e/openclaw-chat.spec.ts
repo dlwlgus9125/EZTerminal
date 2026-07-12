@@ -47,7 +47,7 @@ async function chatViewInfo(
   });
 }
 
-test('running: chat panel opens exactly one correctly-addressed WebContentsView, hidden behind the drawer, shown once closed (AC2)', async () => {
+test('running: opening chat from the drawer auto-closes the drawer and shows exactly one correctly-addressed WebContentsView (AC2)', async () => {
   const state = buildFixtureState({ running: true });
   const { dir, statePath, configPath } = writeFixtureFiles(state);
   const cliShim = writeFakeCliShim(dir);
@@ -77,16 +77,21 @@ test('running: chat panel opens exactly one correctly-addressed WebContentsView,
     expect(view.url.startsWith(`http://127.0.0.1:${gateway.port}`)).toBe(true);
     expect(view.title).toBe('OpenClaw Control');
 
-    // (b) The drawer is still open from clicking the chat button above — it
-    // sits above the dockview area, so the native view must be force-hidden
-    // (architecture decision (a)'s z-order rule) even though the panel itself
-    // reports isVisible from dockview's point of view.
-    await expect.poll(async () => (await chatViewInfo(app))[0]?.visible).toBe(false);
-    await window.screenshot({ path: path.join(SCREENSHOT_DIR, 'chat-drawer-open-hidden.png') });
+    // (b) The [채팅 열기] button lives INSIDE the drawer, and the drawer feeds
+    // the chat panel's z-order hide rule — so opening chat must AUTO-CLOSE the
+    // drawer, otherwise the freshly-opened view stays force-hidden behind it
+    // (the blank-panel bug: a user clicks 채팅 열기 and sees nothing). Assert
+    // the drawer is gone and the native view is visible with NO manual close.
+    await expect(window.getByTestId('openclaw-panel')).toHaveCount(0);
+    await expect.poll(async () => (await chatViewInfo(app))[0]?.visible, { timeout: 10_000 }).toBe(true);
+    await window.screenshot({ path: path.join(SCREENSHOT_DIR, 'chat-visible-on-open.png') });
 
+    // The z-order defense itself still holds: re-opening the drawer OVER the
+    // chat hides the native view again, and closing it restores it.
+    await window.getByTestId('btn-toggle-openclaw').click();
+    await expect.poll(async () => (await chatViewInfo(app))[0]?.visible, { timeout: 10_000 }).toBe(false);
     await window.getByTestId('openclaw-close').click();
     await expect.poll(async () => (await chatViewInfo(app))[0]?.visible, { timeout: 10_000 }).toBe(true);
-    await window.screenshot({ path: path.join(SCREENSHOT_DIR, 'chat-drawer-closed-visible.png') });
   } finally {
     await app.close();
     await gateway.stop();
