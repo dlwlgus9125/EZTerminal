@@ -49,6 +49,10 @@ async function openStory(
         transition-delay: 0s !important;
         transition-duration: 0s !important;
       }
+      html[data-effect-crt-rollbar="on"] body::after {
+        animation: none !important;
+        background-position: 0 35vh !important;
+      }
     `,
   });
 
@@ -83,6 +87,34 @@ async function expectNoAccessibilityViolations(page: Page): Promise<void> {
   expect(results.violations, "Story must satisfy WCAG 2.1 A/AA checks").toEqual(
     [],
   );
+}
+
+const headerControlTestIds = [
+  "workbench-brand-mark",
+  "btn-new-tab",
+  "btn-effect-profile",
+  "btn-command-center",
+  "btn-workspace-menu",
+  "btn-toggle-agents",
+] as const;
+
+async function expectHeaderControlsNotToOverlap(page: Page): Promise<void> {
+  const bounds = await Promise.all(
+    headerControlTestIds.map(async (testId) => {
+      const box = await page.getByTestId(testId).boundingBox();
+      expect(box, `${testId} must have measurable geometry`).not.toBeNull();
+      return { box: box!, testId };
+    }),
+  );
+
+  for (let index = 0; index < bounds.length - 1; index += 1) {
+    const current = bounds[index];
+    const next = bounds[index + 1];
+    expect(
+      current.box.x + current.box.width,
+      `${current.testId} must not overlap ${next.testId}`,
+    ).toBeLessThanOrEqual(next.box.x + 0.5);
+  }
 }
 
 const desktopCases = [
@@ -155,7 +187,7 @@ test.describe("desktop Storybook visual contracts", () => {
       } else {
         await expect(sidebar).toBeVisible();
         const expectedPosition =
-          visualCase.sidebarMode === "overlay" ? "fixed" : "relative";
+          visualCase.sidebarMode === "overlay" ? "absolute" : "relative";
         expect(
           await sidebar.evaluate(
             (element) => getComputedStyle(element).position,
@@ -165,6 +197,16 @@ test.describe("desktop Storybook visual contracts", () => {
         expect(
           await scrim.evaluate((element) => getComputedStyle(element).display),
         ).toBe(visualCase.sidebarMode === "overlay" ? "block" : "none");
+        if (visualCase.sidebarMode === "overlay") {
+          const bodyBox = await page.locator(".workbench-body").boundingBox();
+          const sidebarBox = await sidebar.boundingBox();
+          const scrimBox = await scrim.boundingBox();
+          expect(bodyBox).not.toBeNull();
+          expect(sidebarBox).not.toBeNull();
+          expect(scrimBox).not.toBeNull();
+          expect(sidebarBox!.y).toBeCloseTo(bodyBox!.y, 1);
+          expect(scrimBox!.y).toBeCloseTo(bodyBox!.y, 1);
+        }
       }
       if ("expectedState" in visualCase) {
         await expect(
@@ -173,6 +215,22 @@ test.describe("desktop Storybook visual contracts", () => {
       }
       await expect(page.getByTestId("btn-new-tab")).toBeVisible();
       await expect(page.getByTestId("btn-command-center")).toBeVisible();
+      await expect(page.getByRole("heading", { name: "EZTerminal" })).toBeVisible();
+      await expect(page.getByTestId("btn-effect-profile")).toBeVisible();
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+      if (visualCase.options.theme === "matrix") {
+        await expect(page.locator("html")).toHaveAttribute("data-effect-scanlines", "on");
+        await expect(page.locator("html")).toHaveAttribute("data-effect-phosphor-glow", "on");
+        if (visualCase.options.motion === "reduced") {
+          await expect(page.locator("html")).not.toHaveAttribute("data-effect-crt-rollbar", "on");
+        } else {
+          await expect(page.locator("html")).toHaveAttribute("data-effect-crt-rollbar", "on");
+        }
+      }
 
       await expectNoAccessibilityViolations(page);
       await expect(page).toHaveScreenshot(visualCase.screenshot, {
@@ -193,6 +251,90 @@ test.describe("desktop Storybook visual contracts", () => {
     await expectNoAccessibilityViolations(page);
     await expect(page).toHaveScreenshot(
       "desktop-1200x800-empty-matrix-en.png",
+      { animations: "disabled" },
+    );
+  });
+});
+
+test.describe("CRT signature header visual contracts", () => {
+  test("keeps scaled header controls disjoint at supported widths", async ({ page }) => {
+    const viewportHeights = new Map([
+      [800, 600],
+      [1024, 720],
+      [1200, 800],
+      [1440, 900],
+    ]);
+
+    for (const scale of [100, 150] as const) {
+      for (const width of [800, 1024, 1200, 1440] as const) {
+        await page.setViewportSize({ width, height: viewportHeights.get(width)! });
+        await openStory(page, "compositions-app-header--crt-signature", {
+          theme: "matrix",
+          locale: "en",
+          density: "compact",
+          motion: "reduced",
+          scale,
+        });
+        await expect(page.getByRole("heading", { name: "EZTerminal" })).toHaveText(
+          "EZTerminal",
+        );
+        await expectHeaderControlsNotToOverlap(page);
+      }
+    }
+  });
+
+  test("keeps the full signal wordmark at 800px and 150 percent scale", async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 600 });
+    await openStory(page, "compositions-app-header--crt-signature", {
+      theme: "matrix",
+      locale: "en",
+      density: "compact",
+      motion: "default",
+      scale: 150,
+    });
+    await expect(page.getByRole("heading", { name: "EZTerminal" })).toBeVisible();
+    await expect(
+      page.getByTestId("workbench-brand-mark").locator("[aria-hidden='true']").first(),
+    ).toBeVisible();
+    await expect(page.getByTestId("btn-effect-profile")).toHaveAttribute(
+      "data-profile",
+      "crt-signature",
+    );
+    await expect(page.getByTestId("btn-new-tab")).toHaveAttribute("title", /.+/);
+    await expect(page.getByTestId("btn-command-center")).toHaveAttribute(
+      "title",
+      /.+/,
+    );
+    await expect(page.getByTestId("btn-workspace-menu")).toHaveAttribute(
+      "title",
+      /.+/,
+    );
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await expectNoAccessibilityViolations(page);
+    await expect(page).toHaveScreenshot(
+      "desktop-800x600-header-matrix-150.png",
+      { animations: "disabled" },
+    );
+  });
+
+  test("shows the effect profiles as one accessible CRT utility", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openStory(page, "compositions-app-header--profile-menu-open", {
+      theme: "matrix",
+      locale: "en",
+      density: "adaptive",
+      motion: "default",
+    });
+    await expect(page.getByRole("menu", { name: "CRT effect profile" })).toBeVisible();
+    await expect(page.getByRole("menuitemradio")).toHaveCount(4);
+    await expect(page.locator("html")).toHaveAttribute("data-effect-crt-rollbar", "on");
+    await expectNoAccessibilityViolations(page);
+    await expect(page).toHaveScreenshot(
+      "desktop-matrix-effect-profile-menu.png",
       { animations: "disabled" },
     );
   });

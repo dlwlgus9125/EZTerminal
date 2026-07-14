@@ -32,11 +32,11 @@ export const EFFECT_CATALOG: Readonly<Record<EffectId, EffectCatalogEntry>> = {
   'phosphor-glow': { id: 'phosphor-glow', label: 'Phosphor Glow', defaultOn: true },
   flicker: { id: 'flicker', label: 'Flicker', defaultOn: false },
   'crt-curvature': { id: 'crt-curvature', label: 'CRT Curvature', defaultOn: false },
-  'crt-rollbar': { id: 'crt-rollbar', label: 'CRT Roll Bar', defaultOn: false },
+  'crt-rollbar': { id: 'crt-rollbar', label: 'CRT Roll Bar', defaultOn: true },
   'scanline-scroll': { id: 'scanline-scroll', label: 'Scanline Scroll', defaultOn: false },
   // Animated interference remains available in Advanced settings, but is
-  // opt-in. The default identity is intentionally limited to static scanlines
-  // and phosphor glow.
+  // opt-in. The default CRT Signature is limited to scanlines, phosphor glow,
+  // and the slow/low-opacity roll bar configured in effect-params.ts.
   'jitter-burst': { id: 'jitter-burst', label: 'Burst Jitter', defaultOn: false },
   'micro-jitter': { id: 'micro-jitter', label: 'Micro Jitter', defaultOn: false },
   'static-noise': { id: 'static-noise', label: 'Static Noise', defaultOn: false },

@@ -14,7 +14,7 @@ import { Button, Field, IconButton, Input, Select, Switch, Tooltip } from './ui'
 import { UI_SCALE_DEFAULT } from './ui-scale';
 import { useUiPreferences } from './ui-preferences';
 
-type SettingsCategory = 'general' | 'appearance' | 'terminal' | 'agents' | 'integrations' | 'about';
+export type SettingsCategory = 'general' | 'appearance' | 'terminal' | 'agents' | 'integrations' | 'about';
 
 const SETTINGS_CATEGORIES = [
   { id: 'general', labelKey: 'settings.general' },
@@ -59,6 +59,8 @@ const EFFECT_PARAM_LABEL_KEYS = {
  * exclusion group.
  */
 interface SettingsPanelProps {
+  readonly requestedCategory?: SettingsCategory;
+  readonly categoryRequestId?: number;
   readonly uiScale: number;
   readonly onChangeUiScale: (percent: number) => void;
   readonly scrollback: number;
@@ -95,6 +97,8 @@ interface SettingsPanelProps {
 }
 
 export function SettingsPanel({
+  requestedCategory = 'general',
+  categoryRequestId = 0,
   uiScale,
   onChangeUiScale,
   scrollback,
@@ -127,8 +131,12 @@ export function SettingsPanel({
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [openclawMode, setOpenclawModeState] = useState<OpenClawMode | null>(null);
-  const [category, setCategory] = useState<SettingsCategory>('general');
+  const [category, setCategory] = useState<SettingsCategory>(requestedCategory);
   const [preferenceError, setPreferenceError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCategory(requestedCategory);
+  }, [categoryRequestId, requestedCategory]);
 
   const updateUiPreference = (partial: Parameters<typeof updatePreferences>[0]): void => {
     setPreferenceError(null);

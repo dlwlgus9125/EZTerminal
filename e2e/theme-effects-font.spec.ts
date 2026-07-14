@@ -220,21 +220,27 @@ test('toggling an effect on the Matrix theme flips the data-effect attribute on 
   await app.close();
 });
 
-test('Matrix theme shows scanlines by default on desktop (EFFECT_CATALOG defaultOn wiring, no Settings interaction)', async () => {
+test('Matrix theme shows the CRT Signature by default on desktop (EFFECT_CATALOG defaultOn wiring, no Settings interaction)', async () => {
   const app = await launchApp();
-  const window = await app.firstWindow();
-  // Matrix IS the boot default now — no interaction at all before the
-  // defaultOn wiring must already have applied the effects.
-  await expect
-    .poll(() => window.evaluate(() => document.documentElement.getAttribute('data-theme')))
-    .toBe('matrix');
+  try {
+    const window = await app.firstWindow();
+    // Pin the policy independently of the host OS. Matrix is still the boot
+    // default and no Settings interaction is needed to activate the profile.
+    await window.emulateMedia({ reducedMotion: 'no-preference' });
+    await expect
+      .poll(() => window.evaluate(() => document.documentElement.getAttribute('data-theme')))
+      .toBe('matrix');
 
-  await expect
-    .poll(() => window.evaluate(() => document.documentElement.getAttribute('data-effect-scanlines')))
-    .toBe('on');
-  await expect
-    .poll(() => window.evaluate(() => document.documentElement.getAttribute('data-effect-phosphor-glow')))
-    .toBe('on');
-
-  await app.close();
+    await expect
+      .poll(() => window.evaluate(() => document.documentElement.getAttribute('data-effect-scanlines')))
+      .toBe('on');
+    await expect
+      .poll(() => window.evaluate(() => document.documentElement.getAttribute('data-effect-phosphor-glow')))
+      .toBe('on');
+    await expect
+      .poll(() => window.evaluate(() => document.documentElement.getAttribute('data-effect-crt-rollbar')))
+      .toBe('on');
+  } finally {
+    await app.close();
+  }
 });

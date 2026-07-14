@@ -1,5 +1,6 @@
 export { ActivityRail } from './ActivityRail';
 export { AppHeader } from './AppHeader';
+export { BrandMark, type BrandMarkProps } from './BrandMark';
 export { RemotePanel } from './RemotePanel';
 export { SidebarShell } from './SidebarShell';
 export { WorkspaceMenu } from './WorkspaceMenu';

@@ -71,6 +71,32 @@ The selected direction combines stable spatial navigation at wide widths with
 a single modal-style sidebar at narrow widths. It deliberately removes the
 current collection of unrelated header buttons and exclusive one-off drawers.
 
+### 3.1 Brand and CRT restoration decision
+
+The user-supplied `타이틀.PNG` is a visual reference for identity, not a raster
+asset shipped in the application. It establishes three required cues: the
+three-bar signal mark, the full `EZTerminal` name, and a green phosphor/scanline
+surface. The implementation remains code-native so text stays selectable,
+sharp at 100–150% scale, accessible, and responsive. The reference is
+user-owned, may be cropped to the title area, and remains current until the user
+supplies a replacement.
+
+Three restoration directions were evaluated:
+
+1. **Full legacy CRT restoration** — restores every animated legacy effect and
+   separate EFFECT/CRT hardware-style switches. This has the strongest nostalgia
+   but adds header clutter and makes flicker/jitter accessibility harder.
+2. **Signal Wordmark + CRT Signature — selected.** Restores the signal mark and
+   full wordmark, then exposes one compact `FX · <profile>` appearance control
+   backed by the existing effect engine and Settings controls.
+3. **Wordmark-only restoration** — restores only the title treatment. This is
+   clean but does not satisfy the requested EFFECT/CRT identity.
+
+The user delegated the detailed visual refinement after explicitly requesting
+that the title, EFFECT character, and CRT character be restored. Direction 2 is
+therefore the implementation decision: it preserves the approved workbench
+hierarchy while restoring a recognizable product signature.
+
 ## 4. Desktop application shell
 
 ### 4.1 Layout anatomy
@@ -110,6 +136,11 @@ The desktop header contains exactly these four product zones:
 3. **Workspace menu** — owns Split, Layout, and Presets.
 4. **Agent Attention** — opens/focuses attention work and includes the unread
    count in an accessible text label.
+
+Zone 1 includes the `BrandMark` (three-bar signal plus the visible full
+`EZTerminal` name) beside New Terminal. One compact `FX · <profile>` appearance
+utility may also live in this zone. It is a presentation control, not a fifth
+navigation zone; individual effect switches and parameters remain in Settings.
 
 Theme, Files, Stats, Pairing, Settings, OpenClaw, runtime versions, and the
 session connection dot do not appear as separate header actions. Runtime and
@@ -307,16 +338,46 @@ light foregrounds, crisp green accent/focus states, restrained borders, and
 semantic blue/success/amber/danger colors. Status meaning is never encoded only
 as green variants.
 
-Default effects are only:
+The code-native `BrandMark` uses an `aria-hidden` three-bar signal mark and a
+visible `EZTerminal` heading. Matrix uses the existing VT323 display face with
+the existing monospace fallback; other themes use the semantic heading font.
+Phosphor glow is applied only while the corresponding effect is enabled rather
+than being permanently baked into the wordmark.
+
+The Matrix default is the **CRT Signature** profile:
 
 - static scanlines;
-- restrained phosphor glow.
+- restrained phosphor glow;
+- one slow, low-opacity CRT roll band.
 
-Curvature, moving roll, flicker, jitter, scrolling texture, animated noise, and
-similar movement are Advanced opt-in effects and default off. Under
-`prefers-reduced-motion: reduce`, every continuous or flashing effect is
-disabled at runtime even if its saved toggle is on. Static scanlines and a
-non-animated glow may remain when they do not impair contrast.
+The compact header control offers four named profiles without creating a second
+effect implementation:
+
+- **Clean** — all effects off;
+- **Static** — scanlines and phosphor glow;
+- **CRT Signature** — Static plus the slow CRT roll band;
+- **Full CRT** — all effects declared by the active theme, including explicitly
+  opt-in flicker, jitter, scrolling texture, and noise.
+
+For a sparse custom theme, a profile is enabled only when the theme can produce
+that profile as a distinct canonical state; duplicate choices stay disabled.
+Any individually tuned combination is labelled **Custom**. Selecting a profile
+updates the same persisted toggles used by Settings; Settings remains the only
+place for individual switches and effect parameters. Under
+`prefers-reduced-motion: reduce`, continuous or flashing effects are disabled at
+runtime even when saved on, the profile control communicates that motion is
+paused by the system, and static scanlines/non-animated glow may remain. High
+Contrast removes decorative blur, scanlines, and low-contrast roll overlays.
+Flicker, jitter, and animated noise are never default-on.
+
+The header uses its own inline-size container so UI scale participates in the
+collapse decision. Shortcut hints and secondary action labels collapse at the
+equivalent of roughly `61em` of header content, whether that limit is reached by
+window width or 100–150% UI scale. The signal mark, full `EZTerminal` wordmark,
+and current FX profile remain visible; the supported desktop shell must not
+reduce the name to `EZT`. The mobile tab strip does not carry this cluster: it
+exposes appearance through More and uses the full wordmark only in suitable
+connection or empty-state surfaces.
 
 ## 8. Component system
 
@@ -342,7 +403,8 @@ announce state without becoming focus traps.
 
 Composition components use these primitives:
 
-- `AppHeader`, `ActivityRail`, `SidebarShell`, and `WorkspaceMenu`;
+- `AppHeader`, `BrandMark`, `EffectProfileMenu`, `ActivityRail`,
+  `SidebarShell`, and `WorkspaceMenu`;
 - `CommandCenter` and `QuickCommandShelf`;
 - `ExplorerPanel`, `AgentsPanel`, `MonitorPanel`, `RemotePanel`,
   `OpenClawPanel`, and `SettingsPanel`;
@@ -538,6 +600,13 @@ Required axes:
 - adaptive, compact, and comfortable density where behavior differs;
 - 100% and 150% scale;
 - default and reduced motion;
+- `BrandMark` in every built-in theme at full/compact desktop widths and at
+  100%/150% scale;
+- non-overlapping header controls at 800, 1024, 1200, and 1440px in both
+  100% and 150% scale, with narrow sidebar overlays anchored to the actual
+  workbench body rather than a fixed header-height guess;
+- Matrix CRT Signature with real effect attributes at 1440px, 800px/150%, and
+  reduced motion, using a deterministic animation phase for screenshots;
 - sidebar closed/open, wide reflow/narrow overlay, and loading/empty/error
   panel states.
 
@@ -567,6 +636,8 @@ coverage exists.
 The redesign is complete only when:
 
 - the desktop header has exactly four zones;
+- the full `EZTerminal` Signal Wordmark remains visible at every supported
+  desktop width and the single FX utility controls the shared effect state;
 - the activity rail and single responsive sidebar own all specified
   destinations without duplicates;
 - desktop settings match the six approved categories;

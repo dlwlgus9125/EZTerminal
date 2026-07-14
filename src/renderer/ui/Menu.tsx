@@ -32,6 +32,8 @@ interface MenuContextValue {
 }
 
 const MenuContext = createContext<MenuContextValue | null>(null);
+const MENU_ITEM_SELECTOR =
+  '[role="menuitem"]:not(:disabled), [role="menuitemcheckbox"]:not(:disabled), [role="menuitemradio"]:not(:disabled)';
 
 export interface MenuProps {
   readonly trigger: ReactElement<MenuTriggerProps>;
@@ -60,6 +62,7 @@ export function Menu({
   const rootRef = useRef<HTMLSpanElement>(null);
   const triggerRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const initialFocusRef = useRef<'first' | 'last'>('first');
   const triggerWithRef = trigger as ReactElement<MenuTriggerProps> & { ref?: Ref<HTMLElement> };
 
   const setOpen = useCallback((next: boolean): void => {
@@ -73,12 +76,12 @@ export function Menu({
 
   useEffect(() => {
     if (!isOpen) return;
+    const initialFocus = initialFocusRef.current;
+    initialFocusRef.current = 'first';
     requestAnimationFrame(() => {
-      menuRef.current
-        ?.querySelector<HTMLElement>(
-          '[role="menuitem"]:not(:disabled), [role="menuitemcheckbox"]:not(:disabled)',
-        )
-        ?.focus();
+      const items = menuRef.current?.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR);
+      const item = initialFocus === 'last' && items ? items[items.length - 1] : items?.[0];
+      item?.focus();
     });
     const handlePointerDown = (event: PointerEvent): void => {
       const target = event.target;
@@ -90,9 +93,7 @@ export function Menu({
 
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     const items = Array.from(
-      event.currentTarget.querySelectorAll<HTMLButtonElement>(
-        '[role="menuitem"]:not(:disabled), [role="menuitemcheckbox"]:not(:disabled)',
-      ),
+      event.currentTarget.querySelectorAll<HTMLButtonElement>(MENU_ITEM_SELECTOR),
     );
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -128,13 +129,17 @@ export function Menu({
     'aria-controls': menuId,
     onClick: (event: ReactMouseEvent<HTMLElement>) => {
       triggerProps.onClick?.(event);
-      if (!event.defaultPrevented && !triggerProps.disabled) setOpen(!isOpen);
+      if (!event.defaultPrevented && !triggerProps.disabled) {
+        if (!isOpen) initialFocusRef.current = 'first';
+        setOpen(!isOpen);
+      }
     },
     onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
       triggerProps.onKeyDown?.(event);
       if (event.defaultPrevented || triggerProps.disabled) return;
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
+        initialFocusRef.current = event.key === 'ArrowUp' ? 'last' : 'first';
         setOpen(true);
       }
     },
@@ -203,6 +208,43 @@ export interface MenuCheckboxItemProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onChange' | 'onClick' | 'role'> {
   readonly checked: boolean;
   readonly onCheckedChange: (checked: boolean) => void;
+}
+
+export interface MenuRadioItemProps
+  extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick' | 'role'> {
+  readonly checked: boolean;
+  readonly onSelect: () => void;
+}
+
+export function MenuRadioItem({
+  checked,
+  children,
+  className,
+  disabled = false,
+  onSelect,
+  ...props
+}: MenuRadioItemProps): JSX.Element {
+  const menu = useContext(MenuContext);
+  if (!menu) throw new Error('MenuRadioItem must be used inside Menu');
+  return (
+    <button
+      type="button"
+      role="menuitemradio"
+      aria-checked={checked}
+      className={classNames('ez-ui-menu-item', className)}
+      disabled={disabled}
+      tabIndex={-1}
+      onClick={() => {
+        if (disabled) return;
+        onSelect();
+        menu.close();
+      }}
+      {...props}
+    >
+      <span className="ez-ui-menu-item__icon">{checked && <Check aria-hidden="true" />}</span>
+      <span className="ez-ui-menu-item__label">{children}</span>
+    </button>
+  );
 }
 
 export function MenuCheckboxItem({

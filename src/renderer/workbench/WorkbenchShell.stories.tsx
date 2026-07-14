@@ -1,13 +1,27 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
+import { mergeEffectProfileToggles, type EffectProfileId } from "../effect-profiles";
+import { applyEffects, type EffectId } from "../effects";
 import { AppI18nProvider } from "../i18n";
 import { Button, EmptyState, ErrorState, LoadingState, Status } from "../ui";
 import { ActivityRail } from "./ActivityRail";
 import { AppHeader } from "./AppHeader";
 import { SidebarShell } from "./SidebarShell";
 import type { SidebarDestination } from "./types";
+import "../index.css";
 import "./workbench.css";
+
+const MATRIX_STORY_EFFECTS = [
+  "scanlines",
+  "phosphor-glow",
+  "crt-rollbar",
+  "scanline-scroll",
+  "flicker",
+  "jitter-burst",
+  "micro-jitter",
+  "static-noise",
+] as const satisfies readonly EffectId[];
 
 type PanelState = "content" | "loading" | "empty" | "error";
 
@@ -102,16 +116,40 @@ function WorkbenchShellStory({
   const [destination, setDestination] = useState<SidebarDestination | null>(
     initialDestination,
   );
+  const [effectProfile, setEffectProfile] = useState<EffectProfileId>("crt-signature");
+  const matrixTheme = document.documentElement.dataset.theme === "matrix";
+  useEffect(() => {
+    if (!matrixTheme) {
+      applyEffects(new Set());
+      return;
+    }
+    const toggles = mergeEffectProfileToggles({ effects: MATRIX_STORY_EFFECTS }, {}, effectProfile);
+    applyEffects(
+      new Set(
+        Object.entries(toggles)
+          .filter(([, enabled]) => enabled)
+          .map(([id]) => id as EffectId),
+      ),
+    );
+    return () => applyEffects(new Set());
+  }, [effectProfile, matrixTheme]);
   const copy = COPY[locale];
   return (
     <AppI18nProvider locale={locale} languages={[locale]}>
       <main className="ez-story-workbench" lang={locale}>
         <AppHeader
           attentionCount={3}
+          activeThemeEffects={matrixTheme ? MATRIX_STORY_EFFECTS : []}
           commandCenterOpen={false}
+          effectProfile={matrixTheme ? effectProfile : "clean"}
+          motionEffectsRequested={
+            matrixTheme && (effectProfile === "crt-signature" || effectProfile === "full-crt")
+          }
           onNewTerminal={() => undefined}
           onOpenAttention={() => setDestination("agents")}
           onOpenCommandCenter={() => undefined}
+          onOpenEffectSettings={() => setDestination("settings")}
+          onSelectEffectProfile={setEffectProfile}
           onWorkspaceOpenChange={() => undefined}
           workspaceOpen={false}
         />

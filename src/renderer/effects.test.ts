@@ -56,11 +56,11 @@ describe('EFFECT_CATALOG', () => {
     );
   });
 
-  it('defaults only the static Matrix identity effects on', () => {
+  it('defaults the restrained Matrix CRT Signature effects on', () => {
     const defaultsOn = Object.values(EFFECT_CATALOG)
       .filter((entry) => entry.defaultOn)
       .map((entry) => entry.id);
-    expect(defaultsOn).toEqual(['scanlines', 'phosphor-glow']);
+    expect(defaultsOn).toEqual(['scanlines', 'phosphor-glow', 'crt-rollbar']);
   });
 });
 

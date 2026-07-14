@@ -1,24 +1,37 @@
-import { BellRing, ChevronDown, Command, Plus } from 'lucide-react';
+import { BellRing, ChevronDown, Command, PanelsTopLeft, Plus } from 'lucide-react';
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 
+import type { EffectProfileId, ResolvedEffectProfileId } from '../effect-profiles';
 import { useAppTranslation } from '../i18n';
 import { Badge, Button } from '../ui';
+import { BrandMark } from './BrandMark';
+import { EffectProfileMenu } from './EffectProfileMenu';
 
 export function AppHeader({
   attentionCount,
+  activeThemeEffects,
   commandCenterOpen,
+  effectProfile,
+  motionEffectsRequested,
   onNewTerminal,
   onOpenAttention,
   onOpenCommandCenter,
+  onOpenEffectSettings,
+  onSelectEffectProfile,
   onWorkspaceOpenChange,
   workspaceMenu,
   workspaceOpen,
 }: {
   readonly attentionCount: number;
+  readonly activeThemeEffects: readonly string[];
   readonly commandCenterOpen: boolean;
+  readonly effectProfile: ResolvedEffectProfileId;
+  readonly motionEffectsRequested: boolean;
   readonly onNewTerminal: () => void;
   readonly onOpenAttention: () => void;
   readonly onOpenCommandCenter: () => void;
+  readonly onOpenEffectSettings: () => void;
+  readonly onSelectEffectProfile: (profile: EffectProfileId) => void;
   readonly onWorkspaceOpenChange: (open: boolean) => void;
   readonly workspaceMenu?: ReactNode;
   readonly workspaceOpen: boolean;
@@ -71,15 +84,24 @@ export function AppHeader({
   return (
     <header className="workbench-header" data-testid="workbench-header">
       <div className="workbench-header-zone workbench-header-zone--new">
-        <h1 className="workbench-wordmark" aria-label={t('common.appName')}>EZT</h1>
+        <BrandMark />
         <Button
           variant="primary"
+          className="workbench-new-terminal"
           leadingIcon={<Plus />}
           onClick={onNewTerminal}
           data-testid="btn-new-tab"
+          title={t('header.newTerminal')}
         >
           {t('header.newTerminal')}
         </Button>
+        <EffectProfileMenu
+          activeThemeEffects={activeThemeEffects}
+          motionEffectsRequested={motionEffectsRequested}
+          profile={effectProfile}
+          onSelectProfile={onSelectEffectProfile}
+          onOpenAdvanced={onOpenEffectSettings}
+        />
       </div>
       <div className="workbench-header-zone">
         <Button
@@ -89,6 +111,7 @@ export function AppHeader({
           aria-haspopup="dialog"
           onClick={onOpenCommandCenter}
           data-testid="btn-command-center"
+          title={t('header.commandCenter')}
         >
           {t('header.commandCenter')}
           <kbd className="workbench-shortcut">Ctrl P</kbd>
@@ -102,6 +125,7 @@ export function AppHeader({
         <Button
           ref={workspaceButtonRef}
           variant="ghost"
+          leadingIcon={<PanelsTopLeft />}
           trailingIcon={<ChevronDown />}
           aria-expanded={workspaceOpen}
           aria-haspopup="dialog"
@@ -113,6 +137,7 @@ export function AppHeader({
             onWorkspaceOpenChange(true);
           }}
           data-testid="btn-workspace-menu"
+          title={t('header.workspace')}
         >
           {t('header.workspace')}
         </Button>

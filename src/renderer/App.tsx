@@ -37,7 +37,8 @@ import {
 } from '../shared/close-risk';
 import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from '../shared/workspace-search';
 import { AgentHub, countAgentAttention } from './AgentHub';
-import { EFFECT_CATALOG, type EffectId } from './effects';
+import { EFFECT_CATALOG, MOVING_EFFECT_IDS, resolveActiveEffects, type EffectId } from './effects';
+import { mergeEffectProfileToggles, resolveEffectProfile, type EffectProfileId } from './effect-profiles';
 import {
   DEFAULT_INTERFERENCE_PARAMS,
   DEFAULT_ROLLBAR_PARAMS,
@@ -65,7 +66,7 @@ import {
 import { RichFileViewerOverlay } from './RichFileViewerOverlay';
 import { RecentPanelSwitcher, type RecentPanelSwitcherItem } from './RecentPanelSwitcher';
 import { RiskyCloseDialog } from './RiskyCloseDialog';
-import { SettingsPanel } from './SettingsPanel';
+import { SettingsPanel, type SettingsCategory } from './SettingsPanel';
 import { StatusPanel } from './StatusPanel';
 import { TerminalPane } from './TerminalPane';
 import { WorkspaceTab } from './WorkspaceTab';
@@ -112,9 +113,9 @@ import { DEFAULT_TERMINAL_RUNTIME_OPTIONS, type TerminalRuntimeOptions } from '.
 // platformDefaults): mirrors the effect catalog's own guidance exactly, so a
 // theme's declared effects (e.g. Matrix's scanlines+phosphor-glow) are ON by
 // default on desktop unless the user has explicitly toggled one off.
-const DESKTOP_EFFECT_DEFAULTS: Partial<Record<EffectId, boolean>> = Object.fromEntries(
+const DESKTOP_EFFECT_DEFAULTS = Object.fromEntries(
   Object.values(EFFECT_CATALOG).map((entry) => [entry.id, entry.defaultOn]),
-);
+) as Record<EffectId, boolean>;
 
 const CLOSE_RISK_I18N_KEY = {
   'ssh-prompt': 'safetyDialog.risks.sshPrompt',
@@ -775,6 +776,10 @@ export function App(): JSX.Element {
   // One adaptive sidebar owns every navigation destination. At >=1200px it
   // reflows the workspace; below that breakpoint the same shell overlays it.
   const [sidebarDestination, setSidebarDestination] = useState<SidebarDestination | null>(null);
+  const [settingsCategoryRequest, setSettingsCategoryRequest] = useState<{
+    readonly category: SettingsCategory;
+    readonly id: number;
+  }>({ category: 'general', id: 0 });
   const setSidebarOpen = useCallback((destination: SidebarDestination, update: OpenStateUpdate): void => {
     setSidebarDestination((current) => {
       const wasOpen = current === destination;
@@ -1338,13 +1343,38 @@ export function App(): JSX.Element {
     (id: string, on: boolean): void => {
       const next = { ...effectTogglesRef.current, [id]: on };
       setEffectToggles(next);
-      void window.ezterminalDesktop?.setEffectToggles(next);
+      void window.ezterminalDesktop?.setEffectToggles(next).catch(() => undefined);
       applyThemeVarsAndEffects(theme, {
         effectToggles: next,
         platformDefaults: DESKTOP_EFFECT_DEFAULTS,
       });
     },
     [theme, setEffectToggles],
+  );
+
+  const effectProfile = useMemo(
+    () => resolveEffectProfile(activeThemeDef, effectToggles, DESKTOP_EFFECT_DEFAULTS),
+    [activeThemeDef, effectToggles],
+  );
+  const motionEffectsRequested = useMemo(
+    () =>
+      [...resolveActiveEffects(activeThemeDef, effectToggles, DESKTOP_EFFECT_DEFAULTS)].some((id) =>
+        MOVING_EFFECT_IDS.has(id),
+      ),
+    [activeThemeDef, effectToggles],
+  );
+
+  const onSelectEffectProfile = useCallback(
+    (profile: EffectProfileId): void => {
+      const next = mergeEffectProfileToggles(activeThemeDef, effectTogglesRef.current, profile);
+      setEffectToggles(next);
+      void window.ezterminalDesktop?.setEffectToggles(next).catch(() => undefined);
+      applyThemeVarsAndEffects(theme, {
+        effectToggles: next,
+        platformDefaults: DESKTOP_EFFECT_DEFAULTS,
+      });
+    },
+    [activeThemeDef, setEffectToggles, theme],
   );
 
   const onChangeRollbar = useCallback(
@@ -2371,6 +2401,8 @@ export function App(): JSX.Element {
       <OpenClawPanel onClose={() => setSidebarDestination(null)} onOpenChat={openOpenClawChat} />
     ) : sidebarDestination === 'settings' ? (
       <SettingsPanel
+        requestedCategory={settingsCategoryRequest.category}
+        categoryRequestId={settingsCategoryRequest.id}
         uiScale={uiScale}
         onChangeUiScale={changeUiScale}
         scrollback={scrollback}
@@ -2401,10 +2433,21 @@ export function App(): JSX.Element {
     <main className="app">
       <AppHeader
         attentionCount={Math.max(attentionCount, unreadAgentIds.size)}
+        activeThemeEffects={activeThemeDef.effects ?? []}
         commandCenterOpen={quickOpenMode !== null}
+        effectProfile={effectProfile}
+        motionEffectsRequested={motionEffectsRequested}
         onNewTerminal={addTab}
         onOpenAttention={() => setAgentsOpen((open) => !open)}
         onOpenCommandCenter={() => openQuickOpen('all')}
+        onOpenEffectSettings={() => {
+          setSettingsCategoryRequest((current) => ({
+            category: 'appearance',
+            id: current.id + 1,
+          }));
+          setSidebarDestination('settings');
+        }}
+        onSelectEffectProfile={onSelectEffectProfile}
         onWorkspaceOpenChange={(open) => {
           setPresetsOpen(open);
           setSavingPreset(false);
@@ -2458,7 +2501,15 @@ export function App(): JSX.Element {
           active={sidebarDestination}
           attentionCount={attentionCount}
           openclawVisible={openclawVisible}
-          onSelect={(destination) => setSidebarOpen(destination, (open) => !open)}
+          onSelect={(destination) => {
+            if (destination === 'settings' && sidebarDestination !== 'settings') {
+              setSettingsCategoryRequest((current) => ({
+                category: 'general',
+                id: current.id + 1,
+              }));
+            }
+            setSidebarOpen(destination, (open) => !open);
+          }}
         />
         {sidebarDestination && sidebarContent && (
           <SidebarShell

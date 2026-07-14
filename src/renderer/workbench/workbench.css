@@ -1,6 +1,8 @@
 .workbench-header {
   position: relative;
   z-index: var(--ui-z-sticky);
+  container-name: workbench-header;
+  container-type: inline-size;
   min-height: 52px;
   flex: 0 0 auto;
   display: grid;
@@ -28,12 +30,243 @@
   justify-self: end;
 }
 
-.workbench-wordmark {
+/* Code-native signal wordmark. The inset panel carries the reference image's
+   compact CRT-display character while every colour remains theme-semantic. */
+.workbench-brand-mark {
+  position: relative;
+  isolation: isolate;
+  flex: 0 0 auto;
+  min-width: max-content;
+  min-height: var(--ui-control-height-sm);
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  overflow: hidden;
   margin: 0;
+  padding-inline: var(--ui-space-2);
+  border: 1px solid color-mix(in srgb, var(--ui-border-subtle) 78%, transparent);
+  border-radius: var(--ui-radius-2);
+  color: var(--ui-text-primary);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--ui-accent) 7%, transparent), transparent 52%),
+    var(--ui-surface-inset);
   font: 400 var(--ui-font-size-20)/1 var(--ui-font-heading);
-  letter-spacing: 0.08em;
+  letter-spacing: var(--ui-letter-spacing-heading);
+  white-space: nowrap;
+}
+
+.workbench-brand-mark__signal,
+.workbench-brand-mark__name {
+  position: relative;
+  z-index: 1;
+}
+
+.workbench-brand-mark__signal {
+  inline-size: 1rem;
+  block-size: 1rem;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
   color: var(--ui-accent);
-  text-shadow: 0 0 10px color-mix(in srgb, var(--ui-accent) 42%, transparent);
+}
+
+.workbench-brand-mark__signal-bar {
+  inline-size: 3px;
+  border-radius: 1px 1px 0 0;
+  background: currentColor;
+}
+
+.workbench-brand-mark__signal-bar:nth-child(1) {
+  block-size: 42%;
+}
+
+.workbench-brand-mark__signal-bar:nth-child(2) {
+  block-size: 68%;
+}
+
+.workbench-brand-mark__signal-bar:nth-child(3) {
+  block-size: 94%;
+}
+
+.workbench-brand-mark__name {
+  color: var(--ui-text-primary);
+}
+
+[data-theme='matrix'] .workbench-brand-mark__name {
+  font-family: 'VT323', 'Share Tech Mono', var(--ui-font-heading), monospace;
+  letter-spacing: 0.075em;
+}
+
+/* This local layer makes the brand panel read like the supplied CRT crop. It
+   follows the same effect attributes as the global renderer and never catches
+   pointer input. */
+.workbench-brand-mark::after {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2px,
+    color-mix(in srgb, var(--ui-canvas) 78%, transparent) 2px,
+    color-mix(in srgb, var(--ui-canvas) 78%, transparent) 3px,
+    transparent 3px,
+    transparent 4px
+  );
+}
+
+html[data-effect-scanlines='on'] .workbench-brand-mark::after {
+  opacity: 0.3;
+}
+
+html[data-effect-phosphor-glow='on'] .workbench-brand-mark {
+  border-color: color-mix(in srgb, var(--ui-accent) 46%, var(--ui-border-subtle));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--ui-accent) 5%, transparent),
+    inset 0 0 12px color-mix(in srgb, var(--ui-accent) 10%, transparent),
+    0 0 8px color-mix(in srgb, var(--ui-accent) 12%, transparent);
+}
+
+html[data-effect-phosphor-glow='on'] .workbench-brand-mark__name {
+  text-shadow:
+    0 0 2px color-mix(in srgb, var(--ui-text-primary) 32%, transparent),
+    0 0 7px color-mix(in srgb, var(--ui-accent) 42%, transparent);
+}
+
+html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
+  box-shadow: 0 0 5px color-mix(in srgb, var(--ui-accent) 48%, transparent);
+}
+
+.effect-profile-menu {
+  flex: 0 0 auto;
+}
+
+.effect-profile-trigger.ez-ui-button {
+  border: 1px solid var(--ui-border-subtle);
+  color: var(--ui-text-secondary);
+  background: var(--ui-surface-inset);
+  font-family: var(--ui-font-terminal);
+  letter-spacing: 0.04em;
+}
+
+.effect-profile-trigger.ez-ui-button:hover,
+.effect-profile-trigger.ez-ui-button[aria-expanded='true'] {
+  border-color: var(--ui-border-strong);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-hover);
+}
+
+.effect-profile-trigger[data-profile='static'],
+.effect-profile-trigger[data-profile='crt-signature'],
+.effect-profile-trigger[data-profile='full-crt'] {
+  color: var(--ui-accent);
+}
+
+.effect-profile-trigger .ez-ui-button__label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--ui-space-1);
+}
+
+.effect-profile-trigger__fx {
+  font-size: var(--ui-font-size-12);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.effect-profile-trigger__separator {
+  color: var(--ui-border-strong);
+}
+
+.effect-profile-trigger__value {
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-12);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.effect-profile-menu .ez-ui-menu__content {
+  width: min(19rem, calc(100vw - 1rem));
+}
+
+.effect-profile-menu .ez-ui-menu-item {
+  min-height: 3rem;
+  align-items: start;
+  padding-block: var(--ui-space-2);
+}
+
+.effect-profile-menu .ez-ui-menu-item__label {
+  overflow: visible;
+  white-space: normal;
+}
+
+.effect-profile-option {
+  display: grid;
+  gap: 2px;
+}
+
+.effect-profile-option__name {
+  color: var(--ui-text-primary);
+  font-weight: 650;
+}
+
+.effect-profile-option__description {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-12);
+  line-height: 1.35;
+}
+
+.effect-profile-motion-note {
+  margin: var(--ui-space-1) var(--ui-space-2);
+  padding: var(--ui-space-2);
+  border-inline-start: 2px solid var(--ui-warning);
+  color: var(--ui-text-secondary);
+  background: color-mix(in srgb, var(--ui-warning) 7%, transparent);
+  font-size: var(--ui-font-size-12);
+  line-height: 1.4;
+}
+
+/* The full product name remains visible throughout the supported desktop
+   range. Space is recovered from optional header labels before the brand. */
+@media (min-width: 800px) and (max-width: 1199px) {
+  .workbench-brand-mark {
+    gap: var(--ui-space-1);
+    padding-inline: var(--ui-space-1) var(--ui-space-2);
+    letter-spacing: 0.035em;
+  }
+
+  .workbench-brand-mark__signal {
+    inline-size: 0.875rem;
+  }
+}
+
+@media (forced-colors: active) {
+  .workbench-brand-mark {
+    border-color: CanvasText !important;
+    color: CanvasText;
+    background: Canvas;
+    box-shadow: none !important;
+  }
+
+  .workbench-brand-mark__signal {
+    color: Highlight;
+  }
+
+  .workbench-brand-mark__name {
+    color: CanvasText;
+    text-shadow: none !important;
+  }
+
+  .workbench-brand-mark::after {
+    display: none;
+  }
 }
 
 .workbench-shortcut {
@@ -355,10 +588,14 @@
 }
 
 @media (max-width: 1199px) {
+  .workbench-shortcut {
+    display: none;
+  }
+
   .workbench-sidebar-scrim {
-    position: fixed;
+    position: absolute;
     z-index: var(--ui-z-sidebar-scrim);
-    inset: 52px 0 0 52px;
+    inset: 0 0 0 52px;
     display: block;
     width: auto;
     height: auto;
@@ -368,9 +605,9 @@
   }
 
   .workbench-sidebar.ez-ui-panel {
-    position: fixed;
+    position: absolute;
     z-index: var(--ui-z-sidebar);
-    inset: 52px auto 0 52px;
+    inset: 0 auto 0 52px;
     width: min(440px, calc(100vw - 52px)) !important;
     max-width: calc(100vw - 52px);
     height: auto;
@@ -389,11 +626,6 @@
     padding-inline: var(--ui-space-2);
   }
 
-  .workbench-wordmark,
-  .workbench-shortcut {
-    display: none;
-  }
-
   .workbench-header .ez-ui-button {
     padding-inline: var(--ui-space-2);
   }
@@ -407,9 +639,53 @@
   }
 }
 
+@container workbench-header (max-width: 61em) {
+  .workbench-shortcut {
+    display: none;
+  }
+
+  .workbench-new-terminal .ez-ui-button__label,
+  .workbench-header-zone:not(.workbench-header-zone--new):not(.workbench-header-zone--attention)
+    > .ez-ui-button
+    .ez-ui-button__label {
+    width: 0;
+    overflow: hidden;
+    font-size: 0;
+  }
+
+  .effect-profile-trigger__fx,
+  .effect-profile-trigger__separator {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .workbench-brand-mark,
+  .workbench-brand-mark::after,
+  .workbench-brand-mark__name,
+  .workbench-brand-mark__signal-bar {
+    animation: none !important;
+    transition: none !important;
+  }
+
   .workbench-header *,
   .workbench-body * {
     scroll-behavior: auto !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .effect-profile-trigger.ez-ui-button,
+  .effect-profile-trigger.ez-ui-button:hover,
+  .effect-profile-trigger.ez-ui-button[aria-expanded='true'] {
+    border-color: ButtonText;
+    color: ButtonText;
+    background: ButtonFace;
+  }
+
+  .effect-profile-motion-note {
+    border-color: Highlight;
+    color: CanvasText;
+    background: Canvas;
   }
 }

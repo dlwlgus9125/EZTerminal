@@ -10,6 +10,7 @@ import {
   MenuCheckboxItem,
   MenuItem,
   MenuLabel,
+  MenuRadioItem,
   MenuSeparator,
   Popover,
   Status,
@@ -76,6 +77,7 @@ export const KeyboardTabs: Story = {
 function MenuExample(): JSX.Element {
   const [selected, setSelected] = useState('No action selected');
   const [pinned, setPinned] = useState(false);
+  const [profile, setProfile] = useState<'static' | 'crt'>('crt');
   return (
     <div className="ez-story-stack">
       <Menu
@@ -85,6 +87,10 @@ function MenuExample(): JSX.Element {
         <MenuLabel>Pane</MenuLabel>
         <MenuItem icon={Copy} onSelect={() => setSelected('Duplicated pane')}>Duplicate</MenuItem>
         <MenuCheckboxItem checked={pinned} onCheckedChange={setPinned}>Pin pane</MenuCheckboxItem>
+        <MenuSeparator />
+        <MenuLabel>Effect profile</MenuLabel>
+        <MenuRadioItem checked={profile === 'static'} onSelect={() => setProfile('static')}>Static</MenuRadioItem>
+        <MenuRadioItem checked={profile === 'crt'} onSelect={() => setProfile('crt')}>CRT Signature</MenuRadioItem>
         <MenuSeparator />
         <MenuItem icon={Settings} onSelect={() => setSelected('Opened settings')}>Settings</MenuItem>
         <MenuItem icon={Trash2} destructive onSelect={() => setSelected('Closed pane')}>Close pane</MenuItem>

@@ -27,7 +27,11 @@ describe('application i18n', () => {
     expect(korean.t('recentPanels.statuses.sshPrompt')).toBe('SSH 프롬프트');
     expect(korean.t('recentPanels.agentStatus', { status: '대기 중' })).toBe('에이전트 대기 중');
     expect(korean.t('terminalContext.shortcut', { shortcut: 'F2' })).toBe('단축키 F2');
+    expect(korean.t('header.effectsTrigger', { profile: 'CRT' })).toBe('효과: CRT');
+    expect(korean.t('header.profileCustom')).toBe('사용자 설정');
+    expect(korean.t('header.motionPaused')).toBe('시스템 설정에 따라 움직이는 효과가 일시 정지됨');
     expect(english.t('header.newTerminal')).toBe('New Terminal');
+    expect(english.t('header.effectsTrigger', { profile: 'CRT' })).toBe('Effects: CRT');
     expect(english.t('monitor.showPackets')).toBe('Show packets');
     expect(english.t('openClaw.state.running')).toBe('Running');
     expect(english.t('safetyDialog.applyPresetTitle', { name: 'focus' })).toBe('Apply preset “focus”?');

@@ -15,6 +15,7 @@ import {
   LoadingState,
   Menu,
   MenuItem,
+  MenuRadioItem,
   Popover,
   Switch,
   Tab,
@@ -150,6 +151,56 @@ describe('keyboard navigation and overlays', () => {
     expect(second).toHaveBeenCalledTimes(1);
     expect(container.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it('includes mutually exclusive radio items in initial focus and arrow navigation', () => {
+    const selectStatic = vi.fn();
+    const selectCrt = vi.fn();
+    render(
+      <Menu trigger={<button type="button">Effects</button>} label="Effect profile">
+        <MenuRadioItem checked={false} onSelect={selectStatic}>
+          Static
+        </MenuRadioItem>
+        <MenuRadioItem checked onSelect={selectCrt}>
+          CRT
+        </MenuRadioItem>
+      </Menu>,
+    );
+    const trigger = container.querySelector<HTMLButtonElement>('button')!;
+    act(() => trigger.click());
+    const items = container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]');
+    expect(document.activeElement).toBe(items[0]);
+    expect(items[1].getAttribute('aria-checked')).toBe('true');
+    press(items[0], 'ArrowDown');
+    press(items[1], 'Enter');
+    expect(selectCrt).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('opens with ArrowUp on the last enabled item and ArrowDown on the first enabled item', () => {
+    render(
+      <Menu trigger={<button type="button">Effects</button>} label="Effect profile">
+        <MenuRadioItem checked={false} onSelect={vi.fn()}>
+          Static
+        </MenuRadioItem>
+        <MenuRadioItem checked onSelect={vi.fn()}>
+          CRT
+        </MenuRadioItem>
+        <MenuRadioItem checked={false} disabled onSelect={vi.fn()}>
+          Unavailable
+        </MenuRadioItem>
+      </Menu>,
+    );
+    const trigger = container.querySelector<HTMLButtonElement>('button')!;
+
+    trigger.focus();
+    press(trigger, 'ArrowUp');
+    expect(document.activeElement?.textContent).toBe('CRT');
+    press(document.activeElement!, 'Escape');
+    expect(document.activeElement).toBe(trigger);
+
+    press(trigger, 'ArrowDown');
+    expect(document.activeElement?.textContent).toBe('Static');
   });
 
   it('exposes popover state and returns focus to its trigger on Escape', () => {

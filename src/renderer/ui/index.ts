@@ -34,10 +34,12 @@ export {
   MenuCheckboxItem,
   MenuItem,
   MenuLabel,
+  MenuRadioItem,
   MenuSeparator,
   type MenuCheckboxItemProps,
   type MenuItemProps,
   type MenuProps,
+  type MenuRadioItemProps,
 } from './Menu';
 export { ActionSheet, Dialog, type ActionSheetProps, type DialogProps } from './Dialog';
 export { PanelShell, type PanelShellProps } from './PanelShell';
