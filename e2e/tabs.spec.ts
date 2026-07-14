@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
+import { readXtermBuffer } from './xterm-buffer';
 
 // Track A M3: dockview tabs. Each tab is an independent TerminalPane with its own
 // shell session (cwd/env/variables/history). Inactive tabs stay MOUNTED
@@ -87,7 +88,7 @@ test('tabs: a live PTY survives a tab switch (renderer:always keeps the pane mou
   await runInVisible(window, `!node ${ECHO_FIXTURE}`);
   await expect(window.locator('[data-testid="pty-block"]:visible')).toBeVisible();
   await expect
-    .poll(() => window.locator('.pty-block:visible .xterm-rows').innerText(), { timeout: 15_000 })
+    .poll(() => readXtermBuffer(window.locator('[data-testid="pty-block"]:visible')), { timeout: 15_000 })
     .toContain('READY');
 
   // Open a second tab (Tab 1 goes hidden but stays mounted), then switch back.
@@ -99,7 +100,7 @@ test('tabs: a live PTY survives a tab switch (renderer:always keeps the pane mou
   // PTY child is still running (survived the switch).
   await expect(window.locator('[data-testid="pty-block"]:visible')).toBeVisible();
   await expect
-    .poll(() => window.locator('.pty-block:visible .xterm-rows').innerText(), { timeout: 15_000 })
+    .poll(() => readXtermBuffer(window.locator('[data-testid="pty-block"]:visible')), { timeout: 15_000 })
     .toContain('READY');
   await expect(window.locator('[data-testid="block-status"]:visible')).toHaveText('running');
 

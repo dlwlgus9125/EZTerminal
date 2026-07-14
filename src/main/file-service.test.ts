@@ -321,6 +321,43 @@ describe('FileService.trashEntry', () => {
 });
 
 describe('FileService.openReadStream', () => {
+  it('preview mode classifies an image by signature and streams only validated bytes', async () => {
+    const dir = await makeDir();
+    const file = path.join(dir, 'actually-an-image.bin');
+    const png = Buffer.alloc(32);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    png.set([0, 0, 0, 20, 0, 0, 0, 10], 16);
+    await fs.writeFile(file, png);
+
+    const stream = await makeService().openReadStream(file, 'preview');
+    expect(stream.ok).toBe(true);
+    if (!stream.ok) return;
+    expect(stream.meta).toMatchObject({
+      fileSize: png.length,
+      sendBytes: png.length,
+      isText: false,
+      preview: { kind: 'image', name: 'actually-an-image.bin', mime: 'image/png', width: 20, height: 10 },
+    });
+    const chunk = await stream.next();
+    expect(Buffer.from(chunk.data)).toEqual(png);
+    await stream.close();
+  });
+
+  it('preview mode sends PDF metadata without streaming PDF bytes', async () => {
+    const dir = await makeDir();
+    const file = path.join(dir, 'report.data');
+    await fs.writeFile(file, '%PDF-1.7\nbody');
+
+    const stream = await makeService().openReadStream(file, 'preview');
+    expect(stream.ok).toBe(true);
+    if (!stream.ok) return;
+    expect(stream.meta).toMatchObject({
+      sendBytes: 0,
+      preview: { kind: 'pdf', name: 'report.data', mime: 'application/pdf' },
+    });
+    await stream.close();
+  });
+
   it("text mode on a binary file returns isText:false, sendBytes:0", async () => {
     const dir = await makeDir();
     const buf = Buffer.alloc(100, 0x41);
@@ -353,6 +390,29 @@ describe('FileService.openReadStream', () => {
     }
     await stream.close();
     expect(Buffer.concat(parts)).toEqual(data);
+  });
+
+  it('fails a pre-aborted open and aborts an established stream idempotently', async () => {
+    const dir = await makeDir();
+    const file = path.join(dir, 'abort.txt');
+    await fs.writeFile(file, 'content');
+    const service = makeService();
+
+    const beforeOpen = new AbortController();
+    beforeOpen.abort();
+    await expect(service.openReadStream(file, 'raw', undefined, beforeOpen.signal)).resolves.toMatchObject({
+      ok: false,
+      error: 'file read cancelled',
+    });
+
+    const afterOpen = new AbortController();
+    const stream = await service.openReadStream(file, 'raw', undefined, afterOpen.signal);
+    expect(stream.ok).toBe(true);
+    if (!stream.ok) return;
+    afterOpen.abort();
+    await expect(stream.next()).rejects.toThrow(/cancelled/);
+    await expect(stream.close()).resolves.toBeUndefined();
+    await expect(stream.close()).resolves.toBeUndefined();
   });
 
   it('raw mode rejects a file over the 50MiB download cap', async () => {
@@ -390,5 +450,68 @@ describe('FileService.openReadStream', () => {
     await fs.writeFile(notADir, 'x');
     const result = await makeService().openReadStream(path.join(notADir, 'child.txt'), 'raw');
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('FileService.readFilePreview', () => {
+  it('reads an authorized pre-opened handle instead of reopening a swapped path', async () => {
+    const dir = await makeDir();
+    const file = path.join(dir, 'terminal.txt');
+    await fs.writeFile(file, 'authorized');
+    const handle = await fs.open(file, 'r');
+    await fs.rename(file, `${file}.old`);
+    await fs.writeFile(file, 'replacement');
+
+    const result = await makeService().readFilePreview(file, handle);
+
+    expect(result).toMatchObject({ ok: true, kind: 'text', content: 'authorized' });
+  });
+
+  it('returns Markdown text with the existing truncation contract', async () => {
+    const dir = await makeDir();
+    const file = path.join(dir, 'README.md');
+    await fs.writeFile(file, '# Hello\n');
+
+    const result = await makeService().readFilePreview(file);
+    expect(result).toMatchObject({
+      ok: true,
+      kind: 'text',
+      name: 'README.md',
+      mime: 'text/markdown',
+      content: '# Hello\n',
+      truncated: false,
+    });
+  });
+
+  it('returns bounded supported image bytes and dimensions', async () => {
+    const dir = await makeDir();
+    const file = path.join(dir, 'not-trusted-by-extension.bin');
+    const png = Buffer.alloc(32);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    png.set([0, 0, 0, 20, 0, 0, 0, 10], 16);
+    await fs.writeFile(file, png);
+
+    const result = await makeService().readFilePreview(file);
+    expect(result).toMatchObject({ ok: true, kind: 'image', mime: 'image/png', width: 20, height: 10 });
+    if (result.ok && result.kind === 'image') expect(Buffer.from(result.bytes)).toEqual(png);
+  });
+
+  it('returns only PDF metadata and rejects arbitrary binary content', async () => {
+    const dir = await makeDir();
+    const pdf = path.join(dir, 'report.data');
+    await fs.writeFile(pdf, '%PDF-1.7\nbody');
+    expect(await makeService().readFilePreview(pdf)).toMatchObject({
+      ok: true,
+      kind: 'pdf',
+      mime: 'application/pdf',
+    });
+
+    const binary = path.join(dir, 'blob.data');
+    await fs.writeFile(binary, new Uint8Array([1, 0, 2, 3]));
+    expect(await makeService().readFilePreview(binary)).toMatchObject({
+      ok: true,
+      kind: 'unsupported',
+      reason: 'binary',
+    });
   });
 });

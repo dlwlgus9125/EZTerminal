@@ -1,8 +1,12 @@
+import { Browser } from '@capacitor/browser';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../../src/shared/files';
+import type { FilePreviewResult } from '../../src/shared/file-preview';
+import { normalizeExternalHttpUrl } from '../../src/shared/external-url';
 import { uint8ArrayToBase64 } from '../../src/shared/remote-protocol';
+import { FilePreviewContent } from '../../src/renderer/FilePreviewContent';
 import { useLongPress } from './long-press';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 import { createUploadQueue, type UploadItem } from './upload-queue';
@@ -43,9 +47,9 @@ interface MobileFileViewProps {
 }
 
 interface ViewingFile {
-  readonly name: string;
-  readonly content: string;
-  readonly truncated: boolean;
+  readonly entry: FileEntry;
+  readonly path: string;
+  readonly result: FilePreviewResult;
 }
 
 interface DownloadProgress {
@@ -148,6 +152,18 @@ export function MobileFileView({
     [rootsMode, currentPath],
   );
 
+  const loadPreview = useCallback(
+    async (entry: FileEntry, fullPath: string): Promise<void> => {
+      setBinaryNotice(null);
+      const result = await transport.readFilePreview(fullPath);
+      if (!result.ok) setError(result.error);
+      else setError(null);
+      setViewing({ entry, path: fullPath, result });
+      console.log('[ez-e2e] files:viewer-open', entry.name);
+    },
+    [transport],
+  );
+
   const openEntry = useCallback(
     async (entry: FileEntry): Promise<void> => {
       const fullPath = fullPathFor(entry);
@@ -155,20 +171,9 @@ export function MobileFileView({
         await loadPath(fullPath);
         return;
       }
-      setBinaryNotice(null);
-      const result = await transport.readTextFile(fullPath);
-      if (!result.ok) {
-        setError(result.error);
-        return;
-      }
-      if (!result.isText) {
-        setBinaryNotice(`${entry.name} is a binary file`);
-        return;
-      }
-      setViewing({ name: entry.name, content: result.content, truncated: result.truncated });
-      console.log('[ez-e2e] files:viewer-open', entry.name);
+      await loadPreview(entry, fullPath);
     },
-    [transport, fullPathFor, loadPath],
+    [fullPathFor, loadPath, loadPreview],
   );
 
   const handleUp = useCallback(() => {
@@ -358,16 +363,31 @@ export function MobileFileView({
           <button type="button" className="btn" onClick={() => setViewing(null)} data-testid="viewer-back">
             ‹ Back
           </button>
-          <div className="mobile-file-viewer-title">{viewing.name}</div>
+          <div className="mobile-file-viewer-title">{viewing.result.ok ? viewing.result.name : viewing.entry.name}</div>
+          <button type="button" className="btn" onClick={() => onPastePath(viewing.path)} data-testid="viewer-insert">
+            Insert
+          </button>
+          <button type="button" className="btn" onClick={() => void handleDownload(viewing.entry)} data-testid="viewer-download">
+            Download
+          </button>
+          {!viewing.result.ok && (
+            <button type="button" className="btn" onClick={() => void loadPreview(viewing.entry, viewing.path)}>
+              Retry
+            </button>
+          )}
         </header>
-        {viewing.truncated && (
+        {viewing.result.ok && viewing.result.kind === 'text' && viewing.result.truncated && (
           <div className="mobile-file-truncated" data-testid="viewer-truncated">
             File truncated to the first 1 MiB.
           </div>
         )}
-        <pre className="mobile-file-viewer-content" data-testid="viewer-content">
-          {viewing.content}
-        </pre>
+        <FilePreviewContent
+          result={viewing.result}
+          openExternalHttpUrl={(value) => {
+            const url = normalizeExternalHttpUrl(value);
+            if (url) void Browser.open({ url });
+          }}
+        />
       </div>
     );
   }

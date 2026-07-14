@@ -27,18 +27,22 @@ import { CommandRegistry } from './registry';
 import type { CommandDef, EvalContext, Invocation } from './types';
 import {
   compareForSort,
+  boolValue,
   datetimeValue,
   filesizeValue,
   listStreamData,
   numberValue,
   recordValue,
   scriptStreamData,
+  sshAliasStreamData,
+  sshForwardCommandData,
   sshStreamData,
   stringValue,
   toRowIterable,
   valueData,
 } from './value';
 import type { PipelineData, RecordValue, RuntimeValue } from './value';
+import type { WorktreeInfo, WorktreeRequest, WorktreeResult } from '../../shared/worktree';
 
 // ── arg helpers ────────────────────────────────────────────────────────────────
 
@@ -316,7 +320,7 @@ function runScriptHandler(_input: PipelineData, inv: Invocation, ctx: EvalContex
 const DEFAULT_SSH_PORT = 22;
 
 /**
- * `ssh-connect user@host [--key <path>] [--port <n>]` — parses the target and
+ * `ssh-connect user@host|alias [--key <path>] [--port <n>]` — parses the target and
  * returns an `SshStreamData` marker. The actual connect/auth/shell lifecycle
  * happens in `runSshSession` (interpreter layer): TOFU host-key verification
  * and credential prompts precede a `schema{pty}` that behaves exactly like a
@@ -326,25 +330,29 @@ function sshConnectHandler(_input: PipelineData, inv: Invocation, ctx: EvalConte
   const [targetExpr] = inv.positionals;
   const target = coerceArg(targetExpr, ctx, 'ssh-connect');
   const at = target.indexOf('@');
-  if (at <= 0 || at === target.length - 1) {
-    throw new EvalError(`ssh-connect: expected user@host, got '${target}'`, targetExpr.span);
+  if (at === 0 || at === target.length - 1) {
+    throw new EvalError(`ssh-connect: expected user@host or a config alias, got '${target}'`, targetExpr.span);
   }
-  const user = target.slice(0, at);
-  const host = target.slice(at + 1);
 
   const keyFlag = inv.flags.get('key');
   const keyPath = keyFlag === undefined ? undefined : requireStringFlag(keyFlag, 'key');
 
   const portFlag = inv.flags.get('port');
-  let port = DEFAULT_SSH_PORT;
+  let portOverride: number | undefined;
   if (portFlag !== undefined) {
     if (portFlag === true || portFlag.kind !== 'number' || !Number.isInteger(portFlag.value) || portFlag.value < 1 || portFlag.value > 65535) {
       throw new EvalError('ssh-connect: --port must be an integer between 1 and 65535');
     }
-    port = portFlag.value;
+    portOverride = portFlag.value;
   }
 
-  return sshStreamData(host, port, user, keyPath);
+  if (at > 0) {
+    const user = target.slice(0, at);
+    const host = target.slice(at + 1);
+    return sshStreamData(host, portOverride ?? DEFAULT_SSH_PORT, user, keyPath);
+  }
+
+  return sshAliasStreamData(target, portOverride, keyPath);
 }
 
 /** Narrow a resolved flag value to a non-empty string, or raise a clear error. */
@@ -353,6 +361,164 @@ function requireStringFlag(value: RuntimeValue | true, name: string): string {
     throw new EvalError(`ssh-connect: --${name} must be a string`);
   }
   return value.value;
+}
+
+function requireForwardPort(raw: string, kind: 'local' | 'remote'): number {
+  const value = Number(raw);
+  const minimum = kind === 'local' ? 0 : 1;
+  if (!/^\d+$/.test(raw) || !Number.isInteger(value) || value < minimum || value > 65535) {
+    throw new EvalError(`ssh-forward-start: ${kind} port must be an integer between ${minimum} and 65535`);
+  }
+  return value;
+}
+
+function sshForwardStartHandler(_input: PipelineData, inv: Invocation, ctx: EvalContext): PipelineData {
+  const [connectionExpr, remoteHostExpr, remotePortExpr] = inv.positionals;
+  const connectionId = coerceArg(connectionExpr, ctx, 'ssh-forward-start');
+  const remoteHost = coerceArg(remoteHostExpr, ctx, 'ssh-forward-start');
+  const remotePort = requireForwardPort(coerceArg(remotePortExpr, ctx, 'ssh-forward-start'), 'remote');
+  const localPortFlag = inv.flags.get('local-port');
+  let localPort = 0;
+  if (localPortFlag !== undefined) {
+    if (localPortFlag === true || localPortFlag.kind !== 'number') {
+      throw new EvalError('ssh-forward-start: --local-port must be a number');
+    }
+    localPort = requireForwardPort(String(localPortFlag.value), 'local');
+  }
+  return sshForwardCommandData({ action: 'start', connectionId, remoteHost, remotePort, localPort });
+}
+
+function sshForwardListHandler(_input: PipelineData, inv: Invocation, ctx: EvalContext): PipelineData {
+  const [connectionExpr] = inv.positionals;
+  return sshForwardCommandData({
+    action: 'list',
+    connectionId: coerceArg(connectionExpr, ctx, 'ssh-forward-list'),
+  });
+}
+
+function sshForwardStopHandler(_input: PipelineData, inv: Invocation, ctx: EvalContext): PipelineData {
+  const [connectionExpr, forwardExpr] = inv.positionals;
+  return sshForwardCommandData({
+    action: 'stop',
+    connectionId: coerceArg(connectionExpr, ctx, 'ssh-forward-stop'),
+    forwardId: coerceArg(forwardExpr, ctx, 'ssh-forward-stop'),
+  });
+}
+
+// ── worktree (main-owned Git service, structured output) ──────────────────
+
+const WORKTREE_COLUMNS = [
+  { name: 'status', type: 'string' as const },
+  { name: 'action', type: 'string' as const },
+  { name: 'worktreeId', type: 'string' as const },
+  { name: 'repoId', type: 'string' as const },
+  { name: 'path', type: 'string' as const },
+  { name: 'branch', type: 'string' as const },
+  { name: 'head', type: 'string' as const },
+  { name: 'main', type: 'bool' as const },
+  { name: 'locked', type: 'bool' as const },
+  { name: 'managed', type: 'bool' as const },
+  { name: 'prunable', type: 'bool' as const },
+  { name: 'error', type: 'string' as const },
+  { name: 'message', type: 'string' as const },
+];
+
+function worktreeRow(
+  action: WorktreeRequest['action'],
+  status: string,
+  info?: WorktreeInfo,
+  error = '',
+  message = '',
+): RecordValue {
+  return recordValue({
+    status: stringValue(status),
+    action: stringValue(action),
+    worktreeId: stringValue(info?.worktreeId ?? ''),
+    repoId: stringValue(info?.repoId ?? ''),
+    path: stringValue(info?.path ?? ''),
+    branch: stringValue(info?.branch ?? ''),
+    head: stringValue(info?.head ?? ''),
+    main: boolValue(info?.main ?? false),
+    locked: boolValue(info?.locked ?? false),
+    managed: boolValue(info?.managed ?? false),
+    prunable: boolValue(info?.prunable ?? false),
+    error: stringValue(error),
+    message: stringValue(message),
+  });
+}
+
+function stringFlag(inv: Invocation, name: string): string | undefined {
+  const value = inv.flags.get(name);
+  if (value === undefined) return undefined;
+  if (value === true || value.kind !== 'string' || value.value.trim().length === 0) {
+    throw new EvalError(`worktree: --${name} must be a non-empty string`);
+  }
+  return value.value;
+}
+
+function worktreeRequest(inv: Invocation, ctx: EvalContext): WorktreeRequest {
+  const [actionExpr, ...argExprs] = inv.positionals;
+  const action = coerceArg(actionExpr, ctx, 'worktree');
+  const args = argExprs.map((expr) => coerceArg(expr, ctx, 'worktree'));
+  switch (action) {
+    case 'list':
+      if (args.length !== 0) throw new EvalError('worktree list: expected no arguments');
+      if (inv.flags.size > 0) throw new EvalError('worktree list: flags are only valid with create');
+      return { action, cwd: ctx.cwd };
+    case 'create':
+      if (args.length !== 1) throw new EvalError('worktree create: expected <branch>');
+      return {
+        action,
+        cwd: ctx.cwd,
+        branch: args[0],
+        base: stringFlag(inv, 'base'),
+        root: stringFlag(inv, 'root'),
+        allowDirtyBase: inv.flags.get('allow-dirty-base') === true,
+      };
+    case 'open':
+    case 'remove':
+      if (args.length !== 1) throw new EvalError(`worktree ${action}: expected <worktree-id>`);
+      if (inv.flags.size > 0) throw new EvalError(`worktree ${action}: flags are only valid with create`);
+      return { action, cwd: ctx.cwd, worktreeId: args[0] };
+    default:
+      throw new EvalError(`worktree: unknown action '${action}' (expected list, create, open, or remove)`);
+  }
+}
+
+function worktreeRows(request: WorktreeRequest, result: WorktreeResult): readonly RecordValue[] {
+  if (!result.ok) {
+    return [worktreeRow(request.action, 'error', result.worktree, result.error, result.message)];
+  }
+  switch (request.action) {
+    case 'list':
+      return result.worktrees.map((info) => worktreeRow(request.action, 'ok', info));
+    case 'create':
+      return [worktreeRow(request.action, 'created', result.opened)];
+    case 'open':
+      return [worktreeRow(request.action, 'opened', result.opened)];
+    case 'remove':
+      return [
+        recordValue({
+          ...worktreeRow(request.action, 'removed').fields,
+          worktreeId: stringValue(request.worktreeId),
+        }),
+      ];
+  }
+}
+
+function worktreeHandler(_input: PipelineData, inv: Invocation, ctx: EvalContext): PipelineData {
+  if (!ctx.executeWorktree) throw new EvalError('worktree: service is unavailable');
+  const request = worktreeRequest(inv, ctx);
+  async function* rows(): AsyncGenerator<RecordValue> {
+    ctx.signal.throwIfAborted();
+    const result = await ctx.executeWorktree!(request);
+    ctx.signal.throwIfAborted();
+    if (request.action === 'open' && result.ok && result.opened) {
+      ctx.onWorktreeOpened?.(result.opened);
+    }
+    yield* worktreeRows(request, result);
+  }
+  return listStreamData(rows(), { columns: WORKTREE_COLUMNS });
 }
 
 // ── definitions + registry ───────────────────────────────────────────────────────
@@ -442,12 +608,62 @@ export const BUILTIN_DEFS: readonly CommandDef[] = [
     positionals: [{ name: 'target', required: true }],
     flags: [
       { name: 'key', type: 'string', description: 'path to a private key file' },
-      { name: 'port', type: 'number', description: 'SSH port (default 22)' },
+      { name: 'port', type: 'number', description: 'SSH port override (direct default: 22)' },
     ],
     inputKind: 'none',
     outputKind: 'value',
     streaming: true,
     handler: sshConnectHandler,
+  },
+  {
+    name: 'ssh-forward-start',
+    positionals: [
+      { name: 'connection-id', required: true },
+      { name: 'remote-host', required: true },
+      { name: 'remote-port', required: true },
+    ],
+    flags: [{ name: 'local-port', type: 'number', description: 'loopback port; 0 chooses an ephemeral port' }],
+    inputKind: 'none',
+    outputKind: 'list-stream',
+    streaming: false,
+    handler: sshForwardStartHandler,
+  },
+  {
+    name: 'ssh-forward-list',
+    positionals: [{ name: 'connection-id', required: true }],
+    flags: [],
+    inputKind: 'none',
+    outputKind: 'list-stream',
+    streaming: false,
+    handler: sshForwardListHandler,
+  },
+  {
+    name: 'ssh-forward-stop',
+    positionals: [
+      { name: 'connection-id', required: true },
+      { name: 'forward-id', required: true },
+    ],
+    flags: [],
+    inputKind: 'none',
+    outputKind: 'list-stream',
+    streaming: false,
+    handler: sshForwardStopHandler,
+  },
+  {
+    name: 'worktree',
+    positionals: [
+      { name: 'action', required: true },
+      { name: 'args', required: false, variadic: true },
+    ],
+    flags: [
+      { name: 'base', type: 'string', description: 'commit/ref used when creating a branch' },
+      { name: 'root', type: 'string', description: 'absolute safe parent for the generated worktree' },
+      { name: 'allow-dirty-base', type: 'boolean', description: 'acknowledge a dirty current worktree' },
+    ],
+    inputKind: 'none',
+    outputKind: 'list-stream',
+    streaming: false,
+    handler: worktreeHandler,
   },
 ];
 

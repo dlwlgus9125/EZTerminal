@@ -182,9 +182,9 @@ test('presets: save/apply (fresh sessions, no leaks) and startup preset wins ove
   const before = [await sessionIdOf(w, 0), await sessionIdOf(w, 1), await sessionIdOf(w, 2)];
 
   // Apply the preset: confirm dialog accepted → back to 2 panes, ALL sessions new.
-  w.on('dialog', (dialog) => void dialog.accept());
   await w.getByTestId('btn-presets').click();
   await w.getByTestId('preset-apply-duo').click();
+  await w.getByTestId('risky-close-confirm').click();
   await expect(panes(w)).toHaveCount(2, { timeout: 15_000 });
   const after = [await sessionIdOf(w, 0), await sessionIdOf(w, 1)];
   for (const id of after) expect(before).not.toContain(id);

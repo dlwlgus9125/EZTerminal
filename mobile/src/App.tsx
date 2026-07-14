@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ConnectScreen, type SavedConnection } from './ConnectScreen';
+import { ConnectionCredentialStore } from './connection-credential-store';
 import { MobileWorkspace } from './MobileWorkspace';
-import { WsEzTerminalTransport } from './transport/ws-ezterminal';
-
-const STORAGE_KEY = 'ezterminal-mobile-connection';
+import {
+  classifyConnectionHealth,
+  type ConnectionHealthSnapshot,
+} from './transport/connection-health';
+import { WsEzTerminalTransport, type RemoteConnectionState } from './transport/ws-ezterminal';
 
 // The transport retries indefinitely with backoff AND self-heals a stuck/half-
 // open attempt via its own auth watchdog (by design — a flappy link, or a host
@@ -17,33 +20,6 @@ const STORAGE_KEY = 'ezterminal-mobile-connection';
 // only way to recover.)
 const CONNECT_TIMEOUT_MS = 6000;
 
-function loadSaved(): SavedConnection | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      typeof (parsed as SavedConnection).url === 'string' &&
-      typeof (parsed as SavedConnection).token === 'string'
-    ) {
-      return parsed as SavedConnection;
-    }
-    return null;
-  } catch {
-    return null; // corrupt/quota-denied localStorage — just skip the autofill
-  }
-}
-
-function persistConnection(conn: SavedConnection): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(conn));
-  } catch {
-    // best-effort — a private-browsing/quota failure only costs autofill next time
-  }
-}
-
 // App — the mobile shell's top-level state machine: disconnected (show
 // ConnectScreen) -> connecting -> connected (MobileWorkspace, M5's tabbed
 // authed shell). Replaces the desktop's dockview host (App.tsx there) —
@@ -51,10 +27,35 @@ function persistConnection(conn: SavedConnection): void {
 export function App(): JSX.Element {
   const [transport, setTransport] = useState<WsEzTerminalTransport | null>(null);
   const [authed, setAuthed] = useState(false);
+  const [hasConnected, setHasConnected] = useState(false);
+  const [connectionState, setConnectionState] = useState<RemoteConnectionState>('disconnected');
+  const [connectionHealth, setConnectionHealth] = useState<ConnectionHealthSnapshot | null>(null);
+  const [connectionClock, setConnectionClock] = useState(() => Date.now());
+  const [diagnosticCopyState, setDiagnosticCopyState] = useState<'copied' | 'failed' | null>(null);
   const [connectFailed, setConnectFailed] = useState(false);
   const [sessionDead, setSessionDead] = useState(false);
+  const [savedConnection, setSavedConnection] = useState<SavedConnection | null>(null);
+  const [credentialsLoaded, setCredentialsLoaded] = useState(false);
+  const [credentialWarning, setCredentialWarning] = useState<string | null>(null);
+  const [currentConnection, setCurrentConnection] = useState<SavedConnection | null>(null);
   const transportRef = useRef<WsEzTerminalTransport | null>(null);
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingCredentialRef = useRef<SavedConnection | null>(null);
+  const credentialStoreRef = useRef<ConnectionCredentialStore | null>(null);
+  if (credentialStoreRef.current === null) credentialStoreRef.current = new ConnectionCredentialStore();
+
+  useEffect(() => {
+    let alive = true;
+    void credentialStoreRef.current!.load().then((result) => {
+      if (!alive) return;
+      setSavedConnection(result.connection);
+      setCredentialWarning(result.warning);
+      setCredentialsLoaded(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const clearConnectTimeout = useCallback((): void => {
     if (connectTimeoutRef.current !== null) {
@@ -68,7 +69,16 @@ export function App(): JSX.Element {
       transportRef.current?.disconnect();
       clearConnectTimeout();
       setConnectFailed(false);
+      setHasConnected(false);
+      setConnectionState('connecting');
+      setConnectionHealth(null);
+      setDiagnosticCopyState(null);
       setSessionDead(false);
+      setCredentialWarning(null);
+
+      const connection = { url, token };
+      pendingCredentialRef.current = connection;
+      setCurrentConnection(connection);
 
       const t = new WsEzTerminalTransport({ url, token });
       transportRef.current = t;
@@ -80,7 +90,6 @@ export function App(): JSX.Element {
       // here deliberately (not a hole anywhere else in the mobile codebase).
       (window as unknown as { ezterminal: WsEzTerminalTransport }).ezterminal = t;
       setTransport(t);
-      persistConnection({ url, token });
 
       connectTimeoutRef.current = setTimeout(() => {
         connectTimeoutRef.current = null;
@@ -97,16 +106,49 @@ export function App(): JSX.Element {
     const unsubAuth = transport.onAuthChange((isAuthed) => {
       setAuthed(isAuthed);
       if (isAuthed) {
+        setHasConnected(true);
         clearConnectTimeout();
         setConnectFailed(false); // a later auto-reconnect clears the stale hint
+        const pending = pendingCredentialRef.current;
+        pendingCredentialRef.current = null;
+        if (pending) {
+          void credentialStoreRef.current!.save(pending).then(
+            () => {
+              setSavedConnection(pending);
+              setCredentialWarning(null);
+            },
+            () => setCredentialWarning('Connected, but credentials were not saved securely.'),
+          );
+        }
       }
+    });
+    const unsubConnectionState = transport.onConnectionStateChange((state) => {
+      setConnectionState(state);
+      if (state === 'auth-rejected' && !hasConnected) setConnectFailed(true);
+    });
+    const unsubConnectionHealth = transport.onConnectionHealthChange((snapshot) => {
+      setConnectionHealth(snapshot);
+      setConnectionClock(Date.now());
     });
     const unsubDead = transport.onSessionDead(() => setSessionDead(true));
     return () => {
       unsubAuth();
+      unsubConnectionState();
+      unsubConnectionHealth();
       unsubDead();
     };
-  }, [transport, clearConnectTimeout]);
+  }, [transport, clearConnectTimeout, hasConnected]);
+
+  useEffect(() => {
+    if (authed || !hasConnected) return;
+    (document.activeElement as HTMLElement | null)?.blur();
+  }, [authed, hasConnected]);
+
+  useEffect(() => {
+    if (authed || !hasConnected) return;
+    const timer = setInterval(() => setConnectionClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [authed, hasConnected]);
 
   const disconnect = useCallback(() => {
     clearConnectTimeout();
@@ -114,14 +156,46 @@ export function App(): JSX.Element {
     transportRef.current = null;
     setTransport(null);
     setAuthed(false);
+    setHasConnected(false);
+    setConnectionState('disconnected');
+    setConnectionHealth(null);
+    setDiagnosticCopyState(null);
   }, [clearConnectTimeout]);
 
-  if (!transport || !authed) {
+  const retryConnection = useCallback((): void => {
+    setDiagnosticCopyState(null);
+    transportRef.current?.retryNow();
+  }, []);
+
+  const copyConnectionDiagnostics = useCallback(async (): Promise<void> => {
+    const current = transportRef.current;
+    if (!current || !navigator.clipboard?.writeText) {
+      setDiagnosticCopyState('failed');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(current.getConnectionDiagnostics());
+      setDiagnosticCopyState('copied');
+    } catch {
+      setDiagnosticCopyState('failed');
+    }
+  }, []);
+
+  if (!credentialsLoaded && !transport) {
+    return (
+      <div className="connect-screen" data-testid="credential-loading">
+        <div className="connect-card" role="status">Loading secure credentials…</div>
+      </div>
+    );
+  }
+
+  if (!transport || !hasConnected) {
     return (
       <ConnectScreen
-        saved={loadSaved()}
-        connecting={transport !== null && !authed && !connectFailed}
+        saved={savedConnection}
+        connecting={transport !== null && !authed && !connectFailed && connectionState !== 'auth-rejected'}
         failed={connectFailed}
+        storageWarning={credentialWarning}
         onConnect={connect}
       />
     );
@@ -138,5 +212,67 @@ export function App(): JSX.Element {
     );
   }
 
-  return <MobileWorkspace transport={transport} onDisconnect={disconnect} />;
+  const connectionVerdict = connectionHealth
+    ? classifyConnectionHealth(connectionHealth, connectionClock)
+    : null;
+  const retrySeconds = connectionHealth?.nextRetryAt === null || connectionHealth?.nextRetryAt === undefined
+    ? null
+    : Math.max(0, Math.ceil((connectionHealth.nextRetryAt - connectionClock) / 1000));
+
+  return (
+    <div className="mobile-app-frame">
+      <div className={authed ? 'mobile-workspace-shell' : 'mobile-workspace-shell mobile-workspace-shell--reconnecting'}>
+        <MobileWorkspace
+          transport={transport}
+          connectionUrl={currentConnection?.url ?? savedConnection?.url ?? ''}
+          onDisconnect={disconnect}
+        />
+      </div>
+      {!authed && (
+        <div className="mobile-reconnect-scrim" data-testid="mobile-reconnect-scrim">
+          <div
+            className={`mobile-reconnect-card mobile-reconnect-card--${connectionVerdict?.kind ?? 'reconnecting'}`}
+            aria-labelledby="mobile-connection-health-title"
+            aria-describedby="mobile-connection-health-detail"
+          >
+            <strong id="mobile-connection-health-title" role="status" aria-live="polite">
+              {connectionVerdict?.label ?? 'Reconnecting…'}
+            </strong>
+            <span id="mobile-connection-health-detail">
+              {connectionVerdict?.detail ?? 'Active terminals are retained for up to five minutes.'}
+            </span>
+            {connectionVerdict?.hint && <span>{connectionVerdict.hint}</span>}
+            {retrySeconds !== null && (
+              <span aria-hidden="true" data-testid="mobile-retry-countdown">
+                Retrying in {retrySeconds}s
+              </span>
+            )}
+            <div className="mobile-reconnect-actions">
+              <button type="button" className="btn btn-run" onClick={retryConnection} data-testid="mobile-retry-now">
+                Retry now
+              </button>
+              <button type="button" className="btn" onClick={() => void copyConnectionDiagnostics()}>
+                Copy diagnostics
+              </button>
+              {connectionVerdict?.kind === 'auth-rejected' && (
+                <button type="button" className="btn btn-cancel" onClick={disconnect}>
+                  Pair again
+                </button>
+              )}
+            </div>
+            {diagnosticCopyState && (
+              <span role="status">
+                {diagnosticCopyState === 'copied' ? 'Diagnostics copied.' : 'Could not copy diagnostics.'}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      {credentialWarning && (
+        <div className="credential-warning" role="status" data-testid="credential-warning">
+          {credentialWarning}
+        </div>
+      )}
+    </div>
+  );
 }

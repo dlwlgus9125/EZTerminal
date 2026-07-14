@@ -11,7 +11,9 @@
 
 import type {
   ColumnInfo,
+  ExecutionKind,
   InterpreterFrame,
+  PtyRestoreWarningFrame,
   ResultRow,
   ResultShape,
 } from '../shared/ipc';
@@ -33,6 +35,20 @@ export type BlockStatus = 'running' | 'done' | 'error' | 'cancelled';
  */
 export type PtyRenderMode = 'plain' | 'xterm';
 
+/** Stable, non-secret renderer identity for a mounted PTY control surface.
+ * It is deliberately limited to registry keys: no command, cwd, endpoint, or
+ * actor identity crosses this seam. */
+export interface PtyControlTargetIdentity {
+  readonly panelId: string;
+  readonly sessionId: string;
+  readonly runId: string;
+}
+
+export interface BlockControllerOptions {
+  readonly mirror?: boolean;
+  readonly controlTarget?: PtyControlTargetIdentity;
+}
+
 /** An outstanding pre-schema `ssh-connect` prompt (E5) — password/passphrase
  * (masked input) or a TOFU host-key decision (fingerprint + accept/reject). */
 export interface SshPromptState {
@@ -46,6 +62,12 @@ export interface SshPromptState {
 /** Immutable view handed to React via useSyncExternalStore. */
 export interface BlockSnapshot {
   readonly status: BlockStatus;
+  /** Local vs SSH execution, or null when an older peer omitted the additive field. */
+  readonly executionKind: ExecutionKind | null;
+  readonly sshConnectionId: string | null;
+  readonly sshConnectionState: 'ready' | 'closed' | null;
+  /** Degraded late-attach restore status. No terminal content is included. */
+  readonly ptyRestoreWarning: PtyRestoreWarningFrame | null;
   readonly shape: ResultShape | null;
   readonly columns: readonly ColumnInfo[];
   readonly rowCount: number;
@@ -100,7 +122,20 @@ export const PTY_ACK_QUANTUM = 64 * 1024;
 
 /** PTY byte sink: `onFlushed` MUST be called once xterm has consumed `bytes`
  * (term.write's callback) — it drives the backpressure ack. */
-export type PtyDataSink = (bytes: Uint8Array, onFlushed: () => void) => void;
+export interface PtyDataSinkMetadata {
+  /** Render bytes into xterm, but do not repeat terminal-originated effects. */
+  readonly suppressSideEffects: boolean;
+}
+
+export type PtyDataSink = (
+  bytes: Uint8Array,
+  onFlushed: () => void,
+  metadata: PtyDataSinkMetadata,
+) => void;
+
+interface BufferedPtyData extends PtyDataSinkMetadata {
+  readonly bytes: Uint8Array;
+}
 
 /**
  * Plain-mode PTY sink (Phase 3): receives already ansi->html-converted chunks,
@@ -132,6 +167,7 @@ if (typeof window !== 'undefined') {
 
 export class BlockController {
   readonly command: string;
+  readonly controlTarget: PtyControlTargetIdentity | null;
   private readonly port: MessagePort;
   /** True for a non-initiating `attach-run` observer (mobile mirroring fix,
    * D4) — PtyBlock.tsx reads this to size its xterm from `ptyDims` instead of
@@ -140,6 +176,10 @@ export class BlockController {
 
   private readonly cache = new Map<number, ResultRow>();
   private status: BlockStatus = 'running';
+  private executionKind: ExecutionKind | null = null;
+  private sshConnectionId: string | null = null;
+  private sshConnectionState: 'ready' | 'closed' | null = null;
+  private ptyRestoreWarning: PtyRestoreWarningFrame | null = null;
   private shape: ResultShape | null = null;
   private columns: readonly ColumnInfo[] = [];
   private rowCount = 0;
@@ -167,7 +207,7 @@ export class BlockController {
    * the active (and lagging) consumer.
    */
   private ptyDataSink: PtyDataSink | null = null;
-  private ptyBuffer: Uint8Array[] = [];
+  private ptyBuffer: BufferedPtyData[] = [];
 
   /** Paste seam (mobile long-press menu): an xterm view registers
    * `term.paste` here so pasted text gets bracketed-paste framing and \n→\r
@@ -182,9 +222,10 @@ export class BlockController {
    * accumulates the converted output so a LATE-registering plain sink (e.g. the
    * block re-expanding after being collapsed) can replay it in one shot. */
   private ptyRenderMode: PtyRenderMode = 'plain';
-  private readonly plainAnsi = new AnsiHtmlStream();
+  private plainAnsi = new AnsiHtmlStream();
   private plainHtml = '';
   private plainSink: PlainDataSink | null = null;
+  private ptyReplayResetHandler: (() => void) | null = null;
 
   /** The PRIMARY's PTY grid size, mirrored via `pty-dims` frames (D3). */
   private ptyDims: { cols: number; rows: number } | null = null;
@@ -208,8 +249,9 @@ export class BlockController {
   private lastNotifyAt = 0;
   private notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(command: string, port: MessagePort, opts?: { readonly mirror?: boolean }) {
+  constructor(command: string, port: MessagePort, opts?: BlockControllerOptions) {
     this.command = command;
+    this.controlTarget = opts?.controlTarget ?? null;
     this.port = port;
     this.isMirror = opts?.mirror ?? false;
     this.hasControl = !this.isMirror;
@@ -265,7 +307,7 @@ export class BlockController {
     if (this.ptyBuffer.length > 0) {
       const buffered = this.ptyBuffer;
       this.ptyBuffer = [];
-      for (const bytes of buffered) this.deliverPtyData(bytes);
+      for (const entry of buffered) this.deliverPtyData(entry.bytes, entry.suppressSideEffects);
     }
     return () => {
       if (this.ptyDataSink === sink) this.ptyDataSink = null;
@@ -283,14 +325,46 @@ export class BlockController {
     };
   }
 
+  /** Register the imperative clear operation for the mounted plain/xterm view. */
+  setPtyReplayResetHandler(handler: () => void): () => void {
+    this.ptyReplayResetHandler = handler;
+    return () => {
+      if (this.ptyReplayResetHandler === handler) this.ptyReplayResetHandler = null;
+    };
+  }
+
+  private resetForPtyReplay(): void {
+    this.cache.clear();
+    this.status = 'running';
+    this.shape = null;
+    this.columns = [];
+    this.rowCount = 0;
+    this.exhausted = false;
+    this.errorMessage = null;
+    this.sshConnectionId = null;
+    this.sshConnectionState = null;
+    this.ptyRestoreWarning = null;
+    this.startCwd = null;
+    this.endCwd = null;
+    this.sshPrompt = null;
+    this.requestedKey = '';
+    this.ptyBuffer = [];
+    this.plainAnsi = new AnsiHtmlStream();
+    this.plainHtml = '';
+    this.ptyReceived = 0;
+    this.ptyConsumed = 0;
+    this.ptyAckedAt = 0;
+    this.ptyReplayResetHandler?.();
+  }
+
   /** Route bytes to the current render mode. Plain mode converts + acks
    * IMMEDIATELY (no async flush to wait on — there is no xterm yet) and always
    * retains the raw bytes for a future xterm replay if the block upgrades.
    * Xterm mode is unchanged from Phase 2: hand to the sink and ack once
    * xterm's `term.write` actually flushes it. */
-  private deliverPtyData(bytes: Uint8Array): void {
+  private deliverPtyData(bytes: Uint8Array, suppressSideEffects: boolean): void {
     if (this.ptyRenderMode === 'plain') {
-      this.ptyBuffer.push(bytes); // retained for a possible xterm replay later
+      this.ptyBuffer.push({ bytes, suppressSideEffects }); // retained for a possible xterm replay later
       const html = this.plainAnsi.push(bytes);
       if (html) {
         this.plainHtml += html;
@@ -302,14 +376,14 @@ export class BlockController {
     }
     const sink = this.ptyDataSink;
     if (!sink) {
-      this.ptyBuffer.push(bytes);
+      this.ptyBuffer.push({ bytes, suppressSideEffects });
       return;
     }
     const size = bytes.byteLength;
     sink(bytes, () => {
       this.ptyConsumed += size;
       this.maybeSendPtyAck();
-    });
+    }, { suppressSideEffects });
   }
 
   /** Send a cumulative `pty-ack` once at least one quantum of NEW bytes has
@@ -417,7 +491,7 @@ export class BlockController {
     // state (no version bump), or a TUI firehose would thrash rendering.
     if (frame.type === 'pty-data') {
       this.ptyReceived += frame.data.byteLength;
-      this.deliverPtyData(frame.data);
+      this.deliverPtyData(frame.data, frame.suppressSideEffects === true);
       return;
     }
     switch (frame.type) {
@@ -425,6 +499,7 @@ export class BlockController {
         // Status is already 'running'; capture the cwd this block ran in so its
         // prompt line can show it (terminal-style).
         this.startCwd = frame.cwd ?? this.startCwd;
+        this.executionKind = frame.executionKind ?? this.executionKind;
         break;
       case 'schema':
         this.shape = frame.shape;
@@ -476,6 +551,16 @@ export class BlockController {
       case 'pty-control':
         this.hasControl = frame.hasControl;
         break;
+      case 'ssh-connection':
+        this.sshConnectionId = frame.connectionId;
+        this.sshConnectionState = frame.state;
+        break;
+      case 'pty-replay-reset':
+        this.resetForPtyReplay();
+        break;
+      case 'pty-restore-warning':
+        this.ptyRestoreWarning = frame;
+        break;
     }
     // Only `progress` storms; every other frame is one-shot (or user-paced, like
     // `chunk` answering a viewport request) and notifies synchronously.
@@ -513,6 +598,10 @@ export class BlockController {
   private buildSnapshot(): BlockSnapshot {
     return {
       status: this.status,
+      executionKind: this.executionKind,
+      sshConnectionId: this.sshConnectionId,
+      sshConnectionState: this.sshConnectionState,
+      ptyRestoreWarning: this.ptyRestoreWarning,
       shape: this.shape,
       columns: this.columns,
       rowCount: this.rowCount,

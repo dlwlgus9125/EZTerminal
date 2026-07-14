@@ -219,6 +219,8 @@ export function runScriptSession(
           throw new EvalError('ez.run: nested run-script is not supported');
         case 'ssh-stream':
           throw new EvalError("ez.run: 'ssh-connect' sessions are not supported as rows");
+        case 'ssh-forward-command':
+          throw new EvalError("ez.run: 'ssh-forward-*' operations are not supported as rows");
       }
       if (!settled) ch.postMessage({ type: 'ez-run-result', id: msg.id, rows });
     } catch (err) {

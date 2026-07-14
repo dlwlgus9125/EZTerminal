@@ -43,6 +43,10 @@ export type RunGate =
 
 export class SessionRegistry {
   private readonly sessions = new Map<string, SessionRecord>();
+  private readonly mainOwnedEnvironmentNames = new Set([
+    'EZTERMINAL_SESSION_ID',
+    'EZTERMINAL_AGENT_HOOK_DESCRIPTOR',
+  ]);
 
   /**
    * @param newId       mints a fresh, unique session id (production: crypto.randomUUID).
@@ -57,6 +61,7 @@ export class SessionRegistry {
   create(cwd?: string): SessionInfo {
     const sessionId = this.newId();
     const shell = new ShellSession(cwd ?? this.defaultCwd());
+    for (const name of this.mainOwnedEnvironmentNames) shell.maskEnv(name);
     this.sessions.set(sessionId, {
       shell,
       state: 'live',
@@ -68,6 +73,20 @@ export class SessionRegistry {
 
   get(sessionId: string): SessionRecord | undefined {
     return this.sessions.get(sessionId);
+  }
+
+  /** Apply main-owned environment values before the first run in a newly
+   * created session. Unknown or already-destroyed sessions are ignored. */
+  setEnvironment(sessionId: string, environment: Readonly<Record<string, string>>): void {
+    const record = this.sessions.get(sessionId);
+    if (!record || record.state !== 'live') return;
+    for (const [name, value] of Object.entries(environment)) {
+      this.mainOwnedEnvironmentNames.add(name);
+      for (const [candidateId, candidate] of this.sessions) {
+        if (candidateId !== sessionId) candidate.shell.maskEnv(name);
+      }
+      record.shell.setEnv(name, value);
+    }
   }
 
   /** Idempotent teardown: abort + dispose every in-flight run, then drop the record (B2/B6). */

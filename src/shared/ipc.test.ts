@@ -6,6 +6,19 @@ import type {
   RendererControl,
   ResultShape,
 } from './ipc';
+import { isRecentPanelInputEvent } from './ipc';
+
+describe('recent panel desktop input event', () => {
+  it('accepts only the narrow cycle/commit/cancel union', () => {
+    expect(isRecentPanelInputEvent({ type: 'cycle', reverse: true })).toBe(true);
+    expect(isRecentPanelInputEvent({ type: 'commit' })).toBe(true);
+    expect(isRecentPanelInputEvent({ type: 'cancel', restoreFocus: false })).toBe(true);
+    expect(isRecentPanelInputEvent({ type: 'cycle', reverse: 'yes' })).toBe(false);
+    expect(isRecentPanelInputEvent({ type: 'cancel' })).toBe(false);
+    expect(isRecentPanelInputEvent({ type: 'commit', command: 'hidden payload' })).toBe(false);
+    expect(isRecentPanelInputEvent({ type: 'run', command: 'rm -rf' })).toBe(false);
+  });
+});
 
 // M2: the PTY protocol additions are type-level contracts; these assert they
 // narrow correctly (compile-time via the type annotations + runtime discriminant).
@@ -17,6 +30,17 @@ describe('IPC PTY protocol (Phase 2, additive)', () => {
       const bytes: Uint8Array = frame.data;
       expect(bytes.length).toBe(4);
     }
+  });
+
+  it('marks historical pty-data as render-only without changing live frames', () => {
+    const live: InterpreterFrame = { type: 'pty-data', data: new Uint8Array([1]) };
+    const replay: InterpreterFrame = {
+      type: 'pty-data',
+      data: new Uint8Array([2]),
+      suppressSideEffects: true,
+    };
+    expect(live).not.toHaveProperty('suppressSideEffects');
+    expect(replay).toMatchObject({ suppressSideEffects: true });
   });
 
   it('pty-input and pty-resize are members of RendererControl', () => {

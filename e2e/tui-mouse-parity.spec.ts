@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
+import { readXtermBuffer } from './xterm-buffer';
 
 // TUI scroll parity (2026-07-11): a real terminal routes the wheel by what the
 // full-screen program asked for — mouse reports when it enabled tracking
@@ -62,7 +63,7 @@ test('tui-mouse-parity: a mouse-tracking TUI (claude-like) gets SGR wheel report
 
   await expect(window.getByTestId('pane')).toHaveClass(/pane--tui-takeover/);
   await expect
-    .poll(() => window.locator('.pty-block .xterm-rows').innerText(), { timeout: 15_000 })
+    .poll(() => readXtermBuffer(window.getByTestId('pty-block')), { timeout: 15_000 })
     .toContain('MOUSE-MODE-READY');
 
   // The fixture's ?1002h/?1006h must have reached the xterm parser through
@@ -101,7 +102,7 @@ test('tui-mouse-parity: an alt-screen TUI without mouse (vim-like) keeps the whe
 
   await expect(window.getByTestId('pane')).toHaveClass(/pane--tui-takeover/);
   await expect
-    .poll(() => window.locator('.pty-block .xterm-rows').innerText(), { timeout: 15_000 })
+    .poll(() => readXtermBuffer(window.getByTestId('pty-block')), { timeout: 15_000 })
     .toContain('ALT-SCREEN-READY');
 
   await expect
@@ -125,7 +126,7 @@ test('tui-mouse-parity: an alt-screen TUI without mouse (vim-like) keeps the whe
   // The arrow must round-trip through ConPTY into the child: the fixture
   // echoes stdin as hex — 1b5b41 = ESC [ A.
   await expect
-    .poll(() => window.locator('.pty-block .xterm-rows').innerText(), { timeout: 10_000 })
+    .poll(() => readXtermBuffer(window.getByTestId('pty-block')), { timeout: 10_000 })
     .toContain('GOT:1b5b41');
 
   await window.getByTestId('block-cancel').click({ force: true });

@@ -1,15 +1,31 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Browser } from '@capacitor/browser';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { BlockController } from '../../src/renderer/block-controller';
 import { Block } from '../../src/renderer/Block';
 import { registerPaneInput, unregisterPaneInput } from '../../src/renderer/pane-registry';
 import { keyToPtyBytes } from '../../src/renderer/pty-keys';
 import { TerminalContextMenu, type TerminalContextMenuItem } from '../../src/renderer/TerminalContextMenu';
+import type { TerminalRuntimeOptions } from '../../src/renderer/xterm-runtime';
 import type { RunStartedInfo } from '../../src/shared/ipc';
+import type { FilePreviewResult } from '../../src/shared/file-preview';
+import type { TerminalFileLocationResult } from '../../src/shared/terminal-file-location';
+import { FilePreviewContent } from '../../src/renderer/FilePreviewContent';
+import { normalizeExternalHttpUrl } from '../../src/shared/external-url';
 import { beforeInputTextForPty } from './composer-input';
 import { useLongPress } from './long-press';
 import { appendToComposer, resolvePasteTarget } from './paste-routing';
+import { MobileQuickCommandSheet, type MobileQuickCommandSource } from './MobileQuickCommandSheet';
 import { TouchInputBar } from './TouchInputBar';
+
+const MOBILE_TERMINAL_RUNTIME_OPTIONS: TerminalRuntimeOptions = Object.freeze({
+  platform: 'mobile',
+  rendererPreference: 'dom',
+  openExternalHttpUrl: (value: string) => {
+    const url = normalizeExternalHttpUrl(value);
+    if (url) void Browser.open({ url });
+  },
+});
 
 // MobileSessionView — the mobile analogue of the desktop's TerminalPane.tsx.
 // Reuses `BlockController`/`Block.tsx` UNMODIFIED (same `_ezPort` window-
@@ -47,10 +63,16 @@ function nextRunId(): string {
 
 export function MobileSessionView({
   sessionId,
+  quickCommandSource,
+  quickCommandsSupported = false,
+  connected = true,
   onSessionDead,
   onCwdChange,
 }: {
   sessionId: string;
+  quickCommandSource?: MobileQuickCommandSource;
+  quickCommandsSupported?: boolean;
+  connected?: boolean;
   onSessionDead?: () => void;
   /** Best-effort cwd snapshot (file-explorer plan, M4) — mirrors desktop
    * TerminalPane's `setPaneCwd` call site (latest `end`, falling back to
@@ -64,6 +86,7 @@ export function MobileSessionView({
   const historyIndex = useRef<number | null>(null);
   const draftBeforeRecall = useRef('');
   const activeController = useRef<BlockController | null>(null);
+  const terminalPathSequenceRef = useRef(0);
   const [activeControllerForTouch, setActiveControllerForTouch] = useState<BlockController | null>(null);
   const [activeRunning, setActiveRunning] = useState(false);
   // Whether the active run is a RUNNING plain-mode `pty` block (M4, mirrors
@@ -81,6 +104,14 @@ export function MobileSessionView({
   const [activeTakeover, setActiveTakeover] = useState(false);
   const activeUnsub = useRef<(() => void) | null>(null);
   const [sessionDead, setSessionDead] = useState(false);
+  const [terminalPathAction, setTerminalPathAction] = useState<Extract<TerminalFileLocationResult, { ok: true }> | null>(null);
+  const [terminalPathPreview, setTerminalPathPreview] = useState<{
+    readonly path: string;
+    readonly result: FilePreviewResult;
+    readonly line?: number;
+    readonly column?: number;
+  } | null>(null);
+  const [terminalPathError, setTerminalPathError] = useState<string | null>(null);
   // Latest callback in a ref (not an effect dependency) so a fresh inline
   // closure from MobileWorkspace on every render doesn't churn the
   // subscribe/unsubscribe below.
@@ -89,10 +120,65 @@ export function MobileSessionView({
   const onCwdChangeRef = useRef(onCwdChange);
   onCwdChangeRef.current = onCwdChange;
 
+  const terminalRuntimeOptions = useMemo<TerminalRuntimeOptions>(() => ({
+    ...MOBILE_TERMINAL_RUNTIME_OPTIONS,
+    openTerminalFileLocation: (request) => {
+      terminalPathSequenceRef.current += 1;
+      const sequence = terminalPathSequenceRef.current;
+      void window.ezterminal.resolveTerminalFileLocation(request).then((result) => {
+        if (sequence !== terminalPathSequenceRef.current) return;
+        if (!result.ok) {
+          const messages = {
+            remote: 'Remote SSH paths cannot be previewed on this device.',
+            invalid: 'Invalid terminal file location.',
+            'outside-workspace': 'That file is outside the command workspace.',
+            missing: 'That file no longer exists.',
+            'not-file': 'That location is not a regular file.',
+            unreadable: 'That file cannot be read.',
+          } as const;
+          setTerminalPathError(messages[result.reason]);
+          return;
+        }
+        setTerminalPathError(null);
+        setTerminalPathAction(result);
+      }).catch(() => {
+        if (sequence === terminalPathSequenceRef.current) {
+          setTerminalPathError('That terminal file location could not be resolved.');
+        }
+      });
+    },
+  }), []);
+
+  const previewTerminalPath = useCallback(async (): Promise<void> => {
+    const location = terminalPathAction;
+    if (!location) return;
+    const sequence = terminalPathSequenceRef.current;
+    const result = await window.ezterminal.readFilePreview(location.path, location.capability).catch((): FilePreviewResult => ({
+      ok: false,
+      error: 'Could not load this file preview.',
+    }));
+    if (sequence !== terminalPathSequenceRef.current) return;
+    setTerminalPathAction(null);
+    setTerminalPathPreview({
+      path: location.path,
+      result,
+      line: location.line,
+      column: location.column,
+    });
+  }, [terminalPathAction]);
+
   const blockListRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const blocksRef = useRef<BlockEntry[]>([]);
   blocksRef.current = blocks;
+
+  // A transient disconnect keeps drafts and views mounted, but a previously
+  // focused xterm must not appear to accept bytes that cannot reach the host.
+  useEffect(() => {
+    if (connected) return;
+    const focused = document.activeElement as HTMLElement | null;
+    if (focused && blockListRef.current?.contains(focused)) focused.blur();
+  }, [connected]);
 
   const scrollBlockListToBottom = useCallback((): void => {
     const el = blockListRef.current;
@@ -197,9 +283,9 @@ export function MobileSessionView({
     [sessionId, scrollBlockListToBottom],
   );
 
-  const handleRun = useCallback(() => {
-    if (sessionDead || activeRunning) return;
-    const text = command.trim();
+  const runText = useCallback((requestedText: string) => {
+    if (!connected || sessionDead || activeRunning) return;
+    const text = requestedText.trim();
     if (!text) return;
     const runId = nextRunId();
 
@@ -237,7 +323,11 @@ export function MobileSessionView({
       window.removeEventListener('message', onWindowMessage);
       console.error('[mobile] runCommand failed:', err);
     });
-  }, [command, sessionId, sessionDead, activeRunning, bindActiveController]);
+  }, [connected, sessionId, sessionDead, activeRunning, bindActiveController]);
+
+  const handleRun = useCallback(() => {
+    runText(command);
+  }, [command, runText]);
 
   // Mirror a run this view did NOT start — shared by two triggers: the
   // edge-triggered `onRunStarted` broadcast below (a run beginning THIS
@@ -400,7 +490,11 @@ export function MobileSessionView({
   return (
     <div
       className={
-        activeTakeover ? 'pane mobile-session-view pane--tui-takeover' : 'pane mobile-session-view'
+        [
+          'pane mobile-session-view',
+          activeTakeover ? 'pane--tui-takeover' : '',
+          connected ? '' : 'mobile-session-view--offline',
+        ].filter(Boolean).join(' ')
       }
       data-testid="mobile-session-view"
     >
@@ -431,6 +525,7 @@ export function MobileSessionView({
               controller={entry.controller}
               onDismiss={() => handleDismiss(entry.id)}
               isTakeover={activeTakeover && activeController.current === entry.controller}
+              terminalRuntimeOptions={terminalRuntimeOptions}
             />
           ) : (
             <section key={entry.id} className="block" data-testid="block" data-status="running">
@@ -442,7 +537,56 @@ export function MobileSessionView({
 
       {menu && <TerminalContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
 
-      <TouchInputBar controller={activeControllerForTouch} />
+      {terminalPathError && (
+        <div className="terminal-path-mobile-error" role="status">
+          <span>{terminalPathError}</span>
+          <button type="button" className="btn btn-split" onClick={() => setTerminalPathError(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {terminalPathAction && (
+        <div className="mobile-file-sheet-backdrop" onClick={() => setTerminalPathAction(null)}>
+          <div className="mobile-file-sheet" role="dialog" aria-label="Terminal file actions" onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="mobile-file-sheet-item" onClick={() => void previewTerminalPath()}>
+              Preview
+            </button>
+            <button
+              type="button"
+              className="mobile-file-sheet-item"
+              onClick={() => {
+                void navigator.clipboard.writeText(terminalPathAction.path).then(
+                  () => setTerminalPathAction(null),
+                  () => setTerminalPathError('Could not copy this path.'),
+                );
+              }}
+            >
+              Copy path
+            </button>
+            <button type="button" className="mobile-file-sheet-item" onClick={() => setTerminalPathAction(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {terminalPathPreview && (
+        <div className="terminal-path-preview mobile-file-viewer" role="dialog" aria-label="Terminal file preview">
+          <header className="mobile-file-head">
+            <button type="button" className="btn btn-split" onClick={() => setTerminalPathPreview(null)}>Back</button>
+            <strong className="mobile-file-viewer-title" title={terminalPathPreview.path}>
+              {terminalPathPreview.path.split(/[/\\]/).pop() || terminalPathPreview.path}
+            </strong>
+          </header>
+          <FilePreviewContent
+            result={terminalPathPreview.result}
+            line={terminalPathPreview.line}
+            column={terminalPathPreview.column}
+            openExternalHttpUrl={MOBILE_TERMINAL_RUNTIME_OPTIONS.openExternalHttpUrl}
+          />
+        </div>
+      )}
+
+      <TouchInputBar controller={activeControllerForTouch} connected={connected} />
 
       <div className="cmd-row">
         <span className="prompt-sigil prompt-sigil--input" aria-hidden="true">
@@ -458,7 +602,7 @@ export function MobileSessionView({
           // can be driven from the physical/soft keyboard. Any other running
           // shape (xterm-upgraded, non-pty) keeps the input disabled, same
           // as before.
-          disabled={sessionDead || (activeRunning && !activePlainPty)}
+          disabled={sessionDead || (activeRunning && (!activePlainPty || !connected))}
           onChange={(e) => setCommand(e.target.value)}
           onKeyDown={(e) => {
             if (activePlainPty) {
@@ -524,11 +668,30 @@ export function MobileSessionView({
           aria-label="command input"
           data-testid="cmd-input"
         />
+        {quickCommandSource && (
+          <MobileQuickCommandSheet
+            source={quickCommandSource}
+            supported={quickCommandsSupported}
+            connected={connected}
+            insertDisabledReason={sessionDead ? 'This session has ended.' : undefined}
+            runDisabledReason={
+              sessionDead
+                ? 'This session has ended.'
+                : activeRunning
+                  ? 'Wait for the active command to finish.'
+                  : command.trim()
+                    ? 'Clear the current draft before running a saved command.'
+                    : undefined
+            }
+            onInsert={(text) => setCommand((previous) => appendToComposer(previous, text))}
+            onRun={runText}
+          />
+        )}
         <button
           type="button"
           className="btn btn-run"
           onClick={handleRun}
-          disabled={sessionDead || activeRunning}
+          disabled={!connected || sessionDead || activeRunning}
           data-testid="btn-run"
         >
           Run

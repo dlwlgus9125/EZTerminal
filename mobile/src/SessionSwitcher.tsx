@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import type { SessionInfo } from '../../src/shared/ipc';
+import { CLOSE_RISK_LABEL, classifyCloseRisk, type CloseRisk } from '../../src/shared/close-risk';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
@@ -53,17 +54,47 @@ export function SessionSwitcher({
 }): JSX.Element {
   const [sessions, setSessions] = useState<readonly SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [checkingSessionId, setCheckingSessionId] = useState<string | null>(null);
+  const [destroyPrompt, setDestroyPrompt] = useState<{
+    readonly sessionId: string;
+    readonly cwd: string;
+    readonly risk: CloseRisk;
+    readonly activeRunIds: readonly string[];
+  } | null>(null);
+  const destroyFocusRef = useRef<HTMLElement | null>(null);
+  const refreshGenerationRef = useRef(0);
+  const destroyGuardRef = useRef(false);
+  const destroyPromptSessionRef = useRef<string | null>(null);
+  const destroyDialogRef = useRef<HTMLDivElement | null>(null);
+  const destroyTitleId = useId();
+  const destroyDescriptionId = useId();
 
-  // M2 full mirroring: seed the list once via `listSessions()`, then stay
-  // live via `onSessionAdded`/`onSessionRemoved` (both unconditional
-  // broadcasts, including a session THIS connection's own create/destroy
-  // below just caused) instead of re-polling after every local action.
-  useEffect(() => {
-    let cancelled = false;
-    void transport.listSessions().then((list) => {
-      if (cancelled) return;
+  const refreshSessions = useCallback(async (): Promise<void> => {
+    const generation = ++refreshGenerationRef.current;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      if (!transport.isAuthed) throw new Error('Desktop is offline.');
+      const list = await transport.listSessions();
+      if (!transport.isAuthed) throw new Error('Connection was lost while loading sessions.');
+      if (generation !== refreshGenerationRef.current) return;
       setSessions(list);
-      setLoading(false);
+    } catch (error) {
+      if (generation !== refreshGenerationRef.current) return;
+      setLoadError(error instanceof Error ? error.message : 'Could not load sessions.');
+    } finally {
+      if (generation === refreshGenerationRef.current) setLoading(false);
+    }
+  }, [transport]);
+
+  // Seed authoritatively on every authenticated socket generation, then stay
+  // live via the existing broadcasts between reconnects.
+  useEffect(() => {
+    const unsubConnection = transport.onConnectionStateChange((state) => {
+      if (state === 'connected') void refreshSessions();
     });
     const unsubAdded = transport.onSessionAdded((session) => {
       setSessions((prev) =>
@@ -72,25 +103,148 @@ export function SessionSwitcher({
     });
     const unsubRemoved = transport.onSessionRemoved((sessionId) => {
       setSessions((prev) => prev.filter((s) => s.sessionId !== sessionId));
+      if (destroyPromptSessionRef.current === sessionId) {
+        destroyPromptSessionRef.current = null;
+        destroyGuardRef.current = false;
+        setDestroyPrompt(null);
+        requestAnimationFrame(() => {
+          document.querySelector<HTMLElement>('[data-testid="session-create"]')?.focus();
+        });
+      }
     });
     return () => {
-      cancelled = true;
+      refreshGenerationRef.current += 1;
+      unsubConnection();
       unsubAdded();
       unsubRemoved();
     };
+  }, [transport, refreshSessions]);
+
+  const createAndOpen = useCallback(async (): Promise<void> => {
+    if (creating) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const info = await transport.createSession();
+      onSelect(info.sessionId, info.cwd);
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : 'Could not create a session.');
+    } finally {
+      setCreating(false);
+    }
+  }, [creating, transport, onSelect]);
+
+  const restoreDestroyFocus = useCallback((): void => {
+    destroyGuardRef.current = false;
+    destroyPromptSessionRef.current = null;
+    setDestroyPrompt(null);
+    const previous = destroyFocusRef.current;
+    requestAnimationFrame(() => {
+      if (previous?.isConnected) previous.focus();
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!destroyPrompt) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        restoreDestroyFocus();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const controls = [...(destroyDialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), [href], input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+      ) ?? [])];
+      const first = controls[0];
+      const last = controls.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [destroyPrompt, restoreDestroyFocus]);
+
+  const destroy = useCallback(async (session: SessionInfo): Promise<void> => {
+    if (destroyGuardRef.current) return;
+    destroyGuardRef.current = true;
+    destroyFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setCheckingSessionId(session.sessionId);
+    try {
+      const [runs, activity] = await Promise.all([
+        transport.listRuns(),
+        transport.getAgentActivitySnapshot(),
+      ]);
+      const sessionRuns = runs.filter((item) => item.sessionId === session.sessionId);
+      const run = sessionRuns[0];
+      const activeRunIds = sessionRuns.map((item) => item.runId).sort();
+      const hasActiveAgent = activity.items.some(
+        (item) =>
+          item.sessionId === session.sessionId
+          && item.status !== 'done'
+          && item.status !== 'error',
+      );
+      const risk = classifyCloseRisk({
+        destroysSession: true,
+        isBusy: run !== undefined,
+        executionKind: run?.executionKind ?? null,
+        hasSshPrompt: false,
+        hasActiveAgent,
+      });
+      if (risk === null) {
+        const result = await transport.destroySessionGuarded(session.sessionId, activeRunIds);
+        if (result.ok) {
+          destroyGuardRef.current = false;
+        } else {
+          destroyPromptSessionRef.current = session.sessionId;
+          setDestroyPrompt({ sessionId: session.sessionId, cwd: session.cwd, risk: 'unknown', activeRunIds });
+        }
+      } else {
+        destroyPromptSessionRef.current = session.sessionId;
+        setDestroyPrompt({ sessionId: session.sessionId, cwd: session.cwd, risk, activeRunIds });
+      }
+    } catch {
+      destroyPromptSessionRef.current = session.sessionId;
+      setDestroyPrompt({ sessionId: session.sessionId, cwd: session.cwd, risk: 'unknown', activeRunIds: [] });
+    } finally {
+      setCheckingSessionId(null);
+    }
   }, [transport]);
 
-  const createAndOpen = useCallback(() => {
-    void transport.createSession().then((info) => onSelect(info.sessionId, info.cwd));
-  }, [transport, onSelect]);
-
-  const destroy = useCallback(
-    (sessionId: string) => {
-      // The list drops it via the onSessionRemoved subscription above (echo included).
-      transport.destroySession(sessionId);
-    },
-    [transport],
-  );
+  const confirmDestroy = useCallback(async (): Promise<void> => {
+    if (!destroyPrompt) return;
+    const { sessionId, activeRunIds: expectedActiveRunIds } = destroyPrompt;
+    const runs = await transport.listRuns().catch(() => []);
+    const latestActiveRunIds = runs
+      .filter((item) => item.sessionId === sessionId)
+      .map((item) => item.runId)
+      .sort();
+    if (
+      latestActiveRunIds.length !== expectedActiveRunIds.length
+      || latestActiveRunIds.some((runId, index) => runId !== expectedActiveRunIds[index])
+    ) {
+      setDestroyPrompt({ ...destroyPrompt, risk: 'unknown', activeRunIds: latestActiveRunIds });
+      return;
+    }
+    const result = await transport.destroySessionGuarded(sessionId, latestActiveRunIds);
+    if (!result.ok) {
+      setDestroyPrompt({ ...destroyPrompt, risk: 'unknown', activeRunIds: latestActiveRunIds });
+      return;
+    }
+    destroyGuardRef.current = false;
+    destroyPromptSessionRef.current = null;
+    setDestroyPrompt(null);
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('[data-testid="session-create"]')?.focus();
+    });
+  }, [destroyPrompt, transport]);
 
   const content = (
     <div className="session-switcher" data-testid="session-switcher">
@@ -115,6 +269,13 @@ export function SessionSwitcher({
 
       {loading ? (
         <p className="session-list-loading">Loading…</p>
+      ) : loadError ? (
+        <div className="session-list-error" role="alert">
+          <p>{loadError}</p>
+          <button type="button" className="btn" onClick={() => void refreshSessions()}>
+            Retry
+          </button>
+        </div>
       ) : (
         <ul className="session-list" data-testid="session-list">
           {sessions.map((s) => (
@@ -130,7 +291,8 @@ export function SessionSwitcher({
               <button
                 type="button"
                 className="btn btn-cancel"
-                onClick={() => destroy(s.sessionId)}
+                onClick={() => void destroy(s)}
+                disabled={checkingSessionId === s.sessionId}
                 aria-label="destroy session"
                 data-testid="session-destroy"
               >
@@ -145,11 +307,56 @@ export function SessionSwitcher({
       <button
         type="button"
         className="btn btn-run session-create"
-        onClick={createAndOpen}
+        onClick={() => void createAndOpen()}
+        disabled={creating || !transport.isAuthed}
         data-testid="session-create"
       >
-        + New Session
+        {creating ? 'Creating…' : '+ New Session'}
       </button>
+      {createError && <p className="session-create-error" role="alert">{createError}</p>}
+      {destroyPrompt && (
+        <div
+          className="session-destroy-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) restoreDestroyFocus();
+          }}
+          data-testid="session-destroy-backdrop"
+        >
+          <div
+            ref={destroyDialogRef}
+            className="session-destroy-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby={destroyTitleId}
+            aria-describedby={destroyDescriptionId}
+            data-testid="session-destroy-dialog"
+          >
+            <h2 id={destroyTitleId}>Destroy active session?</h2>
+            <p id={destroyDescriptionId}>
+              This destroys {CLOSE_RISK_LABEL[destroyPrompt.risk]} in {destroyPrompt.cwd}.
+            </p>
+            <div className="session-destroy-actions">
+              <button
+                type="button"
+                className="btn"
+                onClick={restoreDestroyFocus}
+                autoFocus
+                data-testid="session-destroy-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-cancel"
+                onClick={confirmDestroy}
+                data-testid="session-destroy-confirm"
+              >
+                Destroy session
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 

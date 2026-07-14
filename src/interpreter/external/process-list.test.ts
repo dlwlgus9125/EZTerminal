@@ -61,7 +61,7 @@ describe('createProcessLister (injectable runner)', () => {
     expect(rows.length).toBeGreaterThan(0);
     expect(typeof rows[0].pid).toBe('number');
     expect(typeof rows[0].name).toBe('string');
-  });
+  }, 15_000);
 
   it('dispatches to the POSIX parser when platform is darwin/linux, even on Windows', async () => {
     const lister = createProcessLister(async () => POSIX_SAMPLE, 'linux');

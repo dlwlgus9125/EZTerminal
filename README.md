@@ -8,7 +8,7 @@
 
 Block-based UI · themes &amp; CRT effects · system monitor · SSH · pair your phone as a remote
 
-![release](https://img.shields.io/badge/release-v0.8.0-brightgreen)
+![release](https://img.shields.io/badge/release-v0.9.0-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 ![built with](https://img.shields.io/badge/built%20with-Electron%20·%20React%20·%20TypeScript-9cf)
@@ -68,15 +68,70 @@ An independent shell session per tab, drag-to-rearrange splits, savable presets 
 across restarts. Windows Terminal-parity keys: copy / paste, context menus, configurable scrollback,
 and a `Ctrl+C` that stops the foreground program without killing the whole tree.
 
+Use `Ctrl/Cmd+P` for Quick Open across panes, command history, saved Quick Commands, workspace files,
+presets and agent launchers; `Ctrl/Cmd+Shift+P` narrows it to commands and actions. Full xterm blocks
+also support `Ctrl/Cmd+F` search, safe modifier-click web links, Unicode 11 and WebGL with DOM fallback.
+
 <img src="docs/screenshots/05-splits.png" width="840" alt="Split panes running independent sessions" />
 
 ### 📁 Files &amp; 🔐 SSH
 A built-in file explorer (desktop and mobile) and an SSH client with trust-on-first-use host-key
-verification.
+verification. Text and Markdown, bounded PNG/JPEG/GIF/WebP images and PDF metadata have safe previews;
+desktop files can be dragged into the active terminal as quoted paths without executing them.
+
+`ssh-connect` accepts either `user@host` or a safe OpenSSH config alias. An authenticated SSH block
+shows a copyable connection id that can be used for loopback-only local forwards:
+
+```bash
+ssh-connect production
+ssh-forward-start <connection-id> db.internal 5432 --local-port 0
+ssh-forward-list <connection-id>
+ssh-forward-stop <connection-id> <forward-id>
+```
+
+Terminal output paths become previews only after an explicit gesture: Ctrl/Cmd-click on desktop, or
+tap followed by Preview/Copy on Android. Resolution is restricted to the command's local workspace;
+remote SSH and out-of-workspace paths are not opened. Preview consumes a main-owned, short-lived,
+one-shot file-identity capability so the target cannot be swapped between resolution and open.
+
+### Git worktrees
+
+Worktree operations stay in the terminal and render as structured rows. `open` creates a normal
+terminal tab rooted at the validated worktree. Removal is intentionally conservative: only clean,
+idle, unlocked worktrees created by EZTerminal can be removed, without `--force`.
+
+```bash
+worktree list
+worktree create feature/name --base "HEAD"
+worktree open <worktree-id>
+worktree remove <worktree-id>
+```
+
+The Android client exposes only `list` and `open`; creation and removal remain desktop-only.
+
+### Agent attention
+Codex, Claude and configured CLI sessions surface working/waiting/approval/error state in terminal tabs
+and the Agent Hub. Optional provider hooks improve lifecycle accuracy, waiting agents accept an explicit
+one-line follow-up, and desktop notifications can focus the owning terminal without exposing prompts or
+transcripts. The paired Android client mirrors the same activity view.
 
 ### 📱 Mobile remote control
 Pair the Android app to run and mirror desktop sessions from your phone.
 **Off by default, token-gated and origin-checked** — see [SECURITY.md](SECURITY.md).
+The desktop bearer token uses OS-backed encryption on Windows, while saved Android credentials use
+Keystore-backed storage with no plaintext fallback. A transient network
+loss keeps the mounted workspace and may resume bounded active runs in place for up to five minutes;
+an invalid token stops retrying and asks the user to pair again.
+
+Desktop Settings also includes risk-aware pane-close confirmation and a default-off OSC 52 clipboard
+write option. After confirmation, the interpreter atomically compares the expected active run IDs and
+fails closed if state changed. Terminal-originated clipboard queries are never answered, writes are
+size/rate limited, and semantic attach replay renders OSC 52 without repeating clipboard side effects.
+
+Local PTY runs keep a bounded headless terminal snapshot for late mobile attach. Reconnect applies the
+serialized screen state and its exact output tail before live bytes are released; if that continuity
+cannot be proved, EZTerminal visibly falls back to the bounded recent-output ring. SSH runs currently
+fail closed for late attach instead of presenting an incomplete terminal.
 
 ## Download
 

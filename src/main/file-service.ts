@@ -37,6 +37,16 @@ import {
   type FileOpResult,
   type FileReadTextResult,
 } from '../shared/files';
+import {
+  IMAGE_PREVIEW_MAX_BYTES,
+  IMAGE_PREVIEW_SNIFF_BYTES,
+  looksLikePdf,
+  looksLikeSupportedImage,
+  parsePreviewImageInfo,
+  validatePreviewImage,
+  type FilePreviewResult,
+  type FilePreviewStreamMetadata,
+} from '../shared/file-preview';
 
 export interface FileServiceOptions {
   /** Prod: `(p) => shell.trashItem(p)`, injected by main.ts (M1). Rejection
@@ -51,6 +61,7 @@ export interface FileReadStreamMeta {
   readonly sendBytes: number;
   readonly isText: boolean;
   readonly truncated: boolean;
+  readonly preview?: FilePreviewStreamMetadata;
 }
 
 export interface FileReadStream {
@@ -245,50 +256,191 @@ export class FileService {
     }
   }
 
+  /**
+   * Rich, read-only preview using magic bytes as the authority. Raster images
+   * are bounded before allocation; PDF data never crosses into the renderer;
+   * text keeps the existing 1 MiB truncation contract. SVG intentionally
+   * falls through to text detection and is never rendered as an image.
+   */
+  async readFilePreview(filePath: string, authorizedHandle?: FileHandle): Promise<FilePreviewResult> {
+    const resolved = path.resolve(filePath);
+    const name = path.basename(resolved);
+    let handle: FileHandle;
+    try {
+      handle = authorizedHandle ?? await fs.open(resolved, 'r');
+    } catch (err) {
+      return { ok: false, error: errorMessage(err) };
+    }
+    try {
+      const fileSize = (await handle.stat()).size;
+      const sniffLength = Math.min(fileSize, IMAGE_PREVIEW_SNIFF_BYTES);
+      const sniff = Buffer.alloc(sniffLength);
+      if (sniffLength > 0) await handle.read(sniff, 0, sniffLength, 0);
+
+      const image = parsePreviewImageInfo(sniff);
+      if (image) {
+        const reason = validatePreviewImage(image, fileSize);
+        if (reason) return { ok: true, kind: 'unsupported', name, fileSize, reason };
+        // The size was checked before allocation. Recheck every read against
+        // the stat'd length so a short/raced file never exposes uninitialized
+        // bytes to the renderer.
+        const bytes = Buffer.alloc(fileSize);
+        let offset = 0;
+        while (offset < fileSize) {
+          const { bytesRead } = await handle.read(bytes, offset, fileSize - offset, offset);
+          if (bytesRead <= 0) break;
+          offset += bytesRead;
+        }
+        if (offset !== fileSize || offset > IMAGE_PREVIEW_MAX_BYTES) {
+          return { ok: true, kind: 'unsupported', name, fileSize, reason: 'invalid-image' };
+        }
+        return {
+          ok: true,
+          kind: 'image',
+          name,
+          mime: image.mime,
+          bytes: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+          width: image.width,
+          height: image.height,
+          fileSize,
+        };
+      }
+      if (looksLikeSupportedImage(sniff)) {
+        return { ok: true, kind: 'unsupported', name, fileSize, reason: 'invalid-image' };
+      }
+      if (looksLikePdf(sniff)) {
+        return { ok: true, kind: 'pdf', name, mime: 'application/pdf', fileSize };
+      }
+
+      const isText = await this.detectIsText(handle, resolved, fileSize);
+      if (!isText) return { ok: true, kind: 'unsupported', name, fileSize, reason: 'binary' };
+      const readLen = Math.min(fileSize, TEXT_VIEW_MAX_BYTES);
+      const buf = Buffer.alloc(readLen);
+      if (readLen > 0) await handle.read(buf, 0, readLen, 0);
+      const content = new TextDecoder('utf-8', { fatal: false }).decode(buf);
+      const extension = path.extname(resolved).toLowerCase();
+      return {
+        ok: true,
+        kind: 'text',
+        name,
+        mime: extension === '.md' || extension === '.markdown' ? 'text/markdown' : 'text/plain',
+        content,
+        truncated: fileSize > TEXT_VIEW_MAX_BYTES,
+        fileSize,
+      };
+    } catch (err) {
+      return { ok: false, error: errorMessage(err) };
+    } finally {
+      await handle.close();
+    }
+  }
+
   /** For the M3 bridge: streams a file in `FILE_CHUNK_BYTES` slices instead
    * of buffering it whole. `'text'` mode applies the same detection as
    * `readTextFile` (binary -> `sendBytes:0`, caller must not call `next()`);
-   * `'raw'` mode (downloads) skips detection but enforces the download cap. */
+   * `'preview'` mode adds the same magic-first classification as
+   * `readFilePreview`; `'raw'` mode (downloads) skips detection but enforces
+   * the download cap. */
   async openReadStream(
     filePath: string,
-    mode: 'text' | 'raw',
+    mode: 'text' | 'raw' | 'preview',
+    authorizedHandle?: FileHandle,
+    signal?: AbortSignal,
   ): Promise<{ ok: false; error: string } | ({ ok: true } & FileReadStream)> {
     const resolved = path.resolve(filePath);
     let handle: FileHandle;
     try {
-      handle = await fs.open(resolved, 'r');
+      handle = authorizedHandle ?? await fs.open(resolved, 'r');
     } catch (err) {
       return { ok: false, error: errorMessage(err) };
+    }
+    let closePromise: Promise<void> | null = null;
+    const closeHandle = async (): Promise<void> => {
+      closePromise ??= handle.close();
+      await closePromise;
+    };
+    const abortOpen = (): void => {
+      void closeHandle().catch(() => undefined);
+    };
+    signal?.addEventListener('abort', abortOpen, { once: true });
+    if (signal?.aborted) {
+      await closeHandle().catch(() => undefined);
+      signal.removeEventListener('abort', abortOpen);
+      return { ok: false, error: 'file read cancelled' };
     }
     let fileSize: number;
     let isText = true;
     let sendBytes: number;
     let truncated = false;
+    let preview: FilePreviewStreamMetadata | undefined;
     // A post-open failure here (file deleted/EPERM-raced between open and
     // stat) must not leak `handle` or reject this promise — same containment
     // pattern as readTextFile.
     try {
       fileSize = (await handle.stat()).size;
       sendBytes = fileSize;
-      if (mode === 'text') {
+      if (mode === 'preview') {
+        const name = path.basename(resolved);
+        const sniffLength = Math.min(fileSize, IMAGE_PREVIEW_SNIFF_BYTES);
+        const sniff = Buffer.alloc(sniffLength);
+        if (sniffLength > 0) await handle.read(sniff, 0, sniffLength, 0);
+        const image = parsePreviewImageInfo(sniff);
+        if (image) {
+          const reason = validatePreviewImage(image, fileSize);
+          if (reason) {
+            preview = { kind: 'unsupported', name, reason };
+            isText = false;
+            sendBytes = 0;
+          } else {
+            preview = { kind: 'image', name, mime: image.mime, width: image.width, height: image.height };
+            isText = false;
+            sendBytes = fileSize;
+          }
+        } else if (looksLikeSupportedImage(sniff)) {
+          preview = { kind: 'unsupported', name, reason: 'invalid-image' };
+          isText = false;
+          sendBytes = 0;
+        } else if (looksLikePdf(sniff)) {
+          preview = { kind: 'pdf', name, mime: 'application/pdf' };
+          isText = false;
+          sendBytes = 0;
+        } else {
+          isText = await this.detectIsText(handle, resolved, fileSize);
+          if (isText) {
+            const extension = path.extname(resolved).toLowerCase();
+            preview = {
+              kind: 'text',
+              name,
+              mime: extension === '.md' || extension === '.markdown' ? 'text/markdown' : 'text/plain',
+            };
+            sendBytes = Math.min(fileSize, TEXT_VIEW_MAX_BYTES);
+            truncated = fileSize > TEXT_VIEW_MAX_BYTES;
+          } else {
+            preview = { kind: 'unsupported', name, reason: 'binary' };
+            sendBytes = 0;
+          }
+        }
+      } else if (mode === 'text') {
         isText = await this.detectIsText(handle, resolved, fileSize);
         sendBytes = isText ? Math.min(fileSize, TEXT_VIEW_MAX_BYTES) : 0;
         truncated = isText && fileSize > TEXT_VIEW_MAX_BYTES;
       } else if (fileSize > DOWNLOAD_MAX_FILE_BYTES) {
-        await handle.close();
+        await closeHandle();
+        signal?.removeEventListener('abort', abortOpen);
         return { ok: false, error: `file exceeds the ${DOWNLOAD_MAX_FILE_BYTES}-byte download limit` };
       }
     } catch (err) {
-      await handle.close();
+      await closeHandle().catch(() => undefined);
+      signal?.removeEventListener('abort', abortOpen);
       return { ok: false, error: errorMessage(err) };
     }
 
     let sent = 0;
-    let closed = false;
     return {
       ok: true,
-      meta: { fileSize, sendBytes, isText, truncated },
+      meta: { fileSize, sendBytes, isText, truncated, ...(preview ? { preview } : {}) },
       next: async () => {
+        if (signal?.aborted || closePromise) throw new Error('file read cancelled');
         const len = Math.min(FILE_CHUNK_BYTES, sendBytes - sent);
         const buf = Buffer.alloc(len);
         if (len > 0) await handle.read(buf, 0, len, sent);
@@ -297,9 +449,8 @@ export class FileService {
         return { offset, data: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength), done: sent >= sendBytes };
       },
       close: async () => {
-        if (closed) return;
-        closed = true;
-        await handle.close();
+        signal?.removeEventListener('abort', abortOpen);
+        await closeHandle();
       },
     };
   }

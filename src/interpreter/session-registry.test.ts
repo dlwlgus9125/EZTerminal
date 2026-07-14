@@ -5,12 +5,14 @@
  * serialized within a session (B4), and sessions are isolated (own cwd/env/vars/history).
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 
 import { evaluate, parse } from './core';
 import type { EvalContext } from './core';
 import type { ShellSession } from './shell-session';
 import { SessionRegistry, type Execution } from './session-registry';
+
+afterEach(() => vi.unstubAllEnvs());
 
 /** Deterministic id generator (production uses crypto.randomUUID). */
 function ids(): () => string {
@@ -44,6 +46,24 @@ describe('SessionRegistry — create / get', () => {
     const { sessionId } = reg.create();
     expect(reg.get(sessionId)?.state).toBe('live');
     expect(reg.get('missing')).toBeUndefined();
+  });
+
+  it('applies main-owned environment only to the addressed live session', () => {
+    vi.stubEnv('EZTERMINAL_SESSION_ID', 'parent-session');
+    vi.stubEnv('EZTERMINAL_AGENT_HOOK_DESCRIPTOR', 'parent-descriptor');
+    vi.stubEnv('PRIVATE_DESCRIPTOR', 'parent-private');
+    const reg = new SessionRegistry(ids(), () => 'C:\\start');
+    const a = reg.create();
+    const b = reg.create();
+    reg.setEnvironment(a.sessionId, { EZTERMINAL_SESSION_ID: a.sessionId, PRIVATE_DESCRIPTOR: 'secret' });
+    expect(reg.get(a.sessionId)?.shell.env).toMatchObject({
+      EZTERMINAL_SESSION_ID: a.sessionId,
+      PRIVATE_DESCRIPTOR: 'secret',
+    });
+    expect(reg.get(b.sessionId)?.shell.env.EZTERMINAL_SESSION_ID).toBeUndefined();
+    expect(reg.get(b.sessionId)?.shell.env.EZTERMINAL_AGENT_HOOK_DESCRIPTOR).toBeUndefined();
+    expect(reg.get(b.sessionId)?.shell.env.PRIVATE_DESCRIPTOR).toBeUndefined();
+    expect(() => reg.setEnvironment('missing', { X: 'ignored' })).not.toThrow();
   });
 });
 

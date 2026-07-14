@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
+import { readXtermBuffer } from './xterm-buffer';
 
 // Track A follow-up ①: split panes. A split opens another self-contained TerminalPane in
 // a NEW dockview grid group, so multiple panes are visible AT ONCE (unlike tabs, where
@@ -77,7 +78,7 @@ test('splits: a live PTY renders in a split pane while the sibling stays a norma
   // the 0×0 refit guard did NOT suppress the split pane's fit).
   await expect(pane1.getByTestId('pty-block')).toBeVisible();
   await expect
-    .poll(() => pane1.locator('.pty-block .xterm-rows').innerText(), { timeout: 15_000 })
+    .poll(() => readXtermBuffer(pane1.getByTestId('pty-block')), { timeout: 15_000 })
     .toContain('READY');
 
   // The sibling pane stayed a normal (non-PTY) pane.

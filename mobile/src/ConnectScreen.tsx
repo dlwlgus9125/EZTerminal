@@ -7,18 +7,20 @@ export interface SavedConnection {
 
 // ConnectScreen — the mobile-only entry screen (no desktop analogue): host URL
 // + token entry, pre-filled from the last successful connection (App.tsx
-// persists it to localStorage). Token pairing itself (viewing/rotating the
+// persists it in Android secure storage). Token pairing itself (viewing/rotating the
 // desktop's token) is the desktop pairing panel's job (M4) — this screen only
 // consumes whatever the user types or scans in.
 export function ConnectScreen({
   saved,
   connecting,
   failed,
+  storageWarning,
   onConnect,
 }: {
   saved: SavedConnection | null;
   connecting: boolean;
   failed: boolean;
+  storageWarning?: string | null;
   onConnect: (url: string, token: string) => void;
 }): JSX.Element {
   const [url, setUrl] = useState(saved?.url ?? '');
@@ -56,6 +58,11 @@ export function ConnectScreen({
         {failed && (
           <p className="connect-error" data-testid="connect-error">
             Connection failed — check the URL and token.
+          </p>
+        )}
+        {storageWarning && (
+          <p className="connect-error" role="status" data-testid="credential-storage-warning">
+            {storageWarning}
           </p>
         )}
         <button

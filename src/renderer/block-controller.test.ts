@@ -43,6 +43,16 @@ describe('BlockController — windowing / prune / dedup', () => {
     expect(port.started).toBe(true);
   });
 
+  it('tracks the additive execution kind and keeps older start frames unknown', () => {
+    const old = make();
+    old.port.deliver({ type: 'start', commandText: 'echo old' });
+    expect(old.controller.getSnapshot().executionKind).toBeNull();
+
+    const ssh = make();
+    ssh.port.deliver({ type: 'start', commandText: 'ssh-connect host', executionKind: 'ssh' });
+    expect(ssh.controller.getSnapshot().executionKind).toBe('ssh');
+  });
+
   it('caches delivered chunk rows and exposes them by absolute index', () => {
     const { port, controller } = make();
     port.deliver({ type: 'schema', shape: 'table', columns: [{ name: 'n', type: 'number' }] });
@@ -197,6 +207,30 @@ describe('BlockController — PTY block, xterm mode (Phase 2 + Phase 3 upgraded)
     expect(received).toEqual([1, 2, 3]); // live after registration
   });
 
+  it('preserves replay side-effect suppression through the pre-mount buffer and sink', () => {
+    const { port, controller } = make();
+    port.deliver({ type: 'schema', shape: 'pty', columns: [] });
+    port.deliver({
+      type: 'pty-data',
+      data: new Uint8Array([1]),
+      suppressSideEffects: true,
+    });
+    port.deliver({ type: 'pty-render-upgrade' });
+    port.deliver({ type: 'pty-data', data: new Uint8Array([2]) });
+
+    const received: Array<{ byte: number; suppressSideEffects: boolean }> = [];
+    controller.setPtyDataSink((bytes, _onFlushed, metadata) => {
+      received.push({ byte: bytes[0], suppressSideEffects: metadata.suppressSideEffects });
+    });
+    port.deliver({ type: 'pty-data', data: new Uint8Array([3]) });
+
+    expect(received).toEqual([
+      { byte: 1, suppressSideEffects: true },
+      { byte: 2, suppressSideEffects: false },
+      { byte: 3, suppressSideEffects: false },
+    ]);
+  });
+
   it('unsubscribing the sink stops delivery', () => {
     const { port, controller } = make();
     upgrade(port);
@@ -220,6 +254,41 @@ describe('BlockController — PTY block, xterm mode (Phase 2 + Phase 3 upgraded)
     const { port, controller } = make();
     port.deliver({ type: 'schema', shape: 'pty', columns: [] });
     expect(controller.getSnapshot().shape).toBe('pty');
+  });
+
+  it('preserves a restore warning until the next replay reset', () => {
+    const { port, controller } = make({ mirror: true });
+    port.deliver({
+      type: 'pty-restore-warning',
+      reason: 'serializer-failed',
+      fallback: 'raw-ring',
+      snapshotEpoch: 3,
+      streamEpoch: 5,
+    });
+    expect(controller.getSnapshot().ptyRestoreWarning).toEqual({
+      type: 'pty-restore-warning',
+      reason: 'serializer-failed',
+      fallback: 'raw-ring',
+      snapshotEpoch: 3,
+      streamEpoch: 5,
+    });
+
+    port.deliver({ type: 'pty-replay-reset' });
+    expect(controller.getSnapshot().ptyRestoreWarning).toBeNull();
+  });
+
+  it('applies replay reset before warning and subsequent PTY data', () => {
+    const { port, controller } = make({ mirror: true });
+    const order: string[] = [];
+    controller.setPtyReplayResetHandler(() => order.push('reset'));
+    controller.setPlainDataSink(() => order.push('data'));
+
+    port.deliver({ type: 'pty-replay-reset' });
+    port.deliver({ type: 'pty-restore-warning', reason: 'semantic-gap', fallback: 'raw-ring' });
+    order.push(controller.getSnapshot().ptyRestoreWarning ? 'warning' : 'missing-warning');
+    port.deliver({ type: 'pty-data', data: new Uint8Array([0x78]) });
+
+    expect(order).toEqual(['reset', 'warning', 'data']);
   });
 });
 

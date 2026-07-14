@@ -50,6 +50,14 @@ export class SessionDirectory {
     }
   }
 
+  /** Refresh only an existing interpreter-owned session. A late settle after
+   * destruction must not resurrect a directory entry. */
+  updateCwd(sessionId: string, cwd: string): void {
+    const current = this.sessions.get(sessionId);
+    if (!current) return;
+    this.sessions.set(sessionId, { cwd, createdAt: current.createdAt });
+  }
+
   /** Oldest-created first. */
   list(): SessionInfo[] {
     return [...this.sessions.entries()]

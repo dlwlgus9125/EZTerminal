@@ -48,26 +48,55 @@
  * `packets-subscribe` (mirroring `stats-visible`'s replay) WITHOUT a second
  * handoff — the server's `PacketMirror` replays the current status on its own.
  */
-import type {
-  EzTerminalApi,
-  InterpreterFrame,
-  RemoteConnectionInfo,
-  RendererControl,
-  RunStartedInfo,
-  RuntimeVersions,
-  SessionInfo,
-  SystemStatsSnapshot,
+import {
+  MAX_GUARDED_DESTROY_RUN_IDS,
+  type DestroySessionGuardResult,
+  type EzTerminalApi,
+  type GuardedSessionDestroyRequest,
+  type InterpreterFrame,
+  type RemoteConnectionInfo,
+  type RendererControl,
+  type RunStartedInfo,
+  type RuntimeVersions,
+  type SessionInfo,
+  type SystemStatsSnapshot,
 } from '../../../src/shared/ipc';
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult, type FileReadTextResult } from '../../../src/shared/files';
+import type {
+  FilePreviewResult,
+  FilePreviewStreamMetadata,
+} from '../../../src/shared/file-preview';
 import type { StartupPref, ThemeName } from '../../../src/shared/layout-schema';
+import type {
+  TerminalFileLocationRequest,
+  TerminalFileLocationResult,
+} from '../../../src/shared/terminal-file-location';
+import type {
+  WorktreeAction,
+  WorktreeInfo,
+  WorktreeRequest,
+  WorktreeResult,
+} from '../../../src/shared/worktree';
+import {
+  EMPTY_AGENT_ACTIVITY_SNAPSHOT,
+  type AgentActivitySnapshot,
+  type AgentFollowupResult,
+} from '../../../src/shared/agent';
 import {
   base64ToUint8Array,
   decodeFrame,
+  REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   uint8ArrayToBase64,
   type ClientToServerMessage,
+  type RemoteCapability,
   type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../../../src/shared/remote-protocol';
+import {
+  MAX_QUICK_COMMANDS,
+  QuickCommandSchema,
+  type QuickCommand,
+} from '../../../src/shared/quick-command';
 import {
   OPENCLAW_CONFIG_ALLOWLIST,
   OPENCLAW_CONFIG_UNSET,
@@ -79,11 +108,25 @@ import {
   type OpenClawSetConfigResult,
   type OpenClawStatus,
 } from '../../../src/shared/openclaw';
+import {
+  classifyEndpoint,
+  type ConnectionHealthSnapshot,
+  type RemoteConnectionState,
+} from './connection-health';
+
+export type { ConnectionHealthSnapshot, RemoteConnectionState } from './connection-health';
 
 /** Generic result of one `file-read` round trip (M4) — `readTextFile`/
  * `downloadFile` each reshape this into their own public return type. */
 type FileReadResult =
-  | { readonly ok: true; readonly fileSize: number; readonly isText: boolean; readonly truncated: boolean; readonly bytes: Uint8Array }
+  | {
+      readonly ok: true;
+      readonly fileSize: number;
+      readonly isText: boolean;
+      readonly truncated: boolean;
+      readonly bytes: Uint8Array;
+      readonly preview?: FilePreviewStreamMetadata;
+    }
   | { readonly ok: false; readonly error: string };
 
 /** Tracks one in-flight `file-read` request between `file-read-meta` and the
@@ -95,6 +138,7 @@ interface FileReadAssembly {
   fileSize: number;
   isText: boolean;
   truncated: boolean;
+  preview: FilePreviewStreamMetadata | null;
   readonly onProgress?: (received: number, total: number) => void;
   readonly resolve: (result: FileReadResult) => void;
 }
@@ -120,6 +164,8 @@ export interface OpenClawChatTicket {
 //    structurally; tests inject a fake) ──────────────────────────────────────
 
 export interface WsLike {
+  /** Browser WebSocket readiness when exposed by the injected implementation. */
+  readonly readyState?: number;
   send(data: string): void;
   close(): void;
   addEventListener(type: 'open', listener: () => void): void;
@@ -132,6 +178,26 @@ export type CreateSocket = (url: string) => WsLike;
 
 const DEFAULT_INITIAL_BACKOFF_MS = 500;
 const DEFAULT_MAX_BACKOFF_MS = 8000;
+const WS_OPEN = 1;
+const RESUME_RETRY_INITIAL_MS = 250;
+const RESUME_RETRY_MAX_MS = 4000;
+const RESUME_RETRY_MAX_ATTEMPTS = 5;
+const MAX_GUARDED_DESTROY_ID_LENGTH = 256;
+
+function isGuardedDestroyId(value: unknown): value is string {
+  return (
+    typeof value === 'string'
+    && value.length > 0
+    && value.length <= MAX_GUARDED_DESTROY_ID_LENGTH
+  );
+}
+
+/** Read-only desktop Quick Command snapshot. An older host is distinguished
+ * from a temporary transport/store failure so the mobile affordance can stay
+ * hidden instead of presenting a permanently failing action. */
+export type RemoteQuickCommandsResult =
+  | { readonly ok: true; readonly commands: readonly QuickCommand[] }
+  | { readonly ok: false; readonly error: 'unsupported' | 'offline' | 'unavailable' };
 /**
  * How long a single connection attempt may sit un-authenticated before it is
  * abandoned and retried. Covers BOTH "the socket never opened" (unreachable
@@ -201,6 +267,20 @@ export interface WsEzTerminalOptions {
   readonly authTimeoutMs?: number;
 }
 
+interface RunPortRecord {
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly port: FakeMessagePort;
+  /** True only for this transport's initiating run, never an attach mirror. */
+  readonly initiatedHere: boolean;
+}
+
+interface ResumeRetryState {
+  readonly generation: number;
+  attempts: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
 export class WsEzTerminalTransport implements EzTerminalApi {
   /** Not meaningful for a remote WS client — no local Electron/Chrome/Node process. */
   readonly versions: RuntimeVersions = { electron: 'n/a', chrome: 'n/a', node: 'n/a' };
@@ -220,11 +300,28 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   /** Per-attempt auth watchdog — self-heals a stuck/half-open connection. */
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  private everAuthed = false;
+  private generation = 0;
+  private connectionState: RemoteConnectionState = 'connecting';
+  private reconnectAttempts = 0;
+  private nextRetryAt: number | null = null;
+  private lastConnectedAt: number | null = null;
+  private reattachPrioritySessionId: string | null = null;
 
-  private readonly ports = new Map<string, FakeMessagePort>();
+  /** Stable renderer-side ports. They deliberately survive transient sockets;
+   * `resume-run` rebinds the same BlockController/xterm after authentication. */
+  private readonly ports = new Map<string, RunPortRecord>();
+  /** Capacity can be transient while another mirror releases its PTY slot.
+   * Retry only within the current authenticated generation, with a bounded
+   * exponential backoff so a permanently busy run cannot spin forever. */
+  private readonly resumeRetries = new Map<string, ResumeRetryState>();
   private readonly pendingCreates = new Map<
     string,
     { resolve: (session: SessionInfo) => void; reject: (err: Error) => void }
+  >();
+  private readonly pendingGuardedDestroys = new Map<
+    string,
+    (result: DestroySessionGuardResult) => void
   >();
   /** `list-sessions` has no request/response correlation id on the wire (M0) —
    * concurrent callers are served FIFO as `session-list` replies arrive. */
@@ -236,6 +333,19 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   /** Mobile-only (M2 ConnectScreen): fires on every authed transition, including
    * an immediate replay of the CURRENT state to a listener that just subscribed. */
   private readonly authListeners = new Set<(authed: boolean) => void>();
+  private readonly connectionStateListeners = new Set<(state: RemoteConnectionState) => void>();
+  private readonly connectionHealthListeners = new Set<(snapshot: ConnectionHealthSnapshot) => void>();
+  private remoteCapabilities = new Set<RemoteCapability>();
+  private readonly pendingQuickCommands = new Map<
+    string,
+    (result: RemoteQuickCommandsResult) => void
+  >();
+  private readonly connectionDiagnostics: Array<{
+    readonly at: string;
+    readonly event: 'connect' | 'connected' | 'retry-scheduled' | 'retry-now' | 'auth-rejected' | 'disconnected';
+    readonly state: RemoteConnectionState;
+    readonly attempt: number;
+  }> = [];
 
   // Session mirroring (M2): full mirroring across desktop tabs + mobile. These
   // three broadcasts are origin-agnostic (fire for sessions/runs THIS
@@ -244,6 +354,15 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly sessionAddedListeners = new Set<(session: SessionInfo) => void>();
   private readonly sessionRemovedListeners = new Set<(sessionId: string) => void>();
   private readonly runStartedListeners = new Set<(info: RunStartedInfo) => void>();
+
+  private agentSnapshot: AgentActivitySnapshot = EMPTY_AGENT_ACTIVITY_SNAPSHOT;
+  /** Revisions are process-local to the desktop. The first snapshot from each
+   * newly-created socket is therefore an authoritative epoch seed even when
+   * its revision is below the cache retained across reconnects. */
+  private awaitingAgentSeed = true;
+  private readonly agentSnapshotListeners = new Set<(snapshot: AgentActivitySnapshot) => void>();
+  private readonly pendingAgentSnapshots = new Map<string, (snapshot: AgentActivitySnapshot) => void>();
+  private readonly pendingAgentFollowups = new Map<string, (result: AgentFollowupResult) => void>();
 
   /** The desired stats-visible state, remembered across reconnects — see the
    * 'auth-ok' replay in `handleServerMessage`. */
@@ -269,6 +388,15 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   // use for an expected failure, so callers need no separate try/catch path.
   private readonly pendingFileList = new Map<string, (result: FileListResult) => void>();
   private readonly pendingFileRoots = new Map<string, (roots: string[]) => void>();
+  private readonly pendingTerminalFileLocations = new Map<string, (result: TerminalFileLocationResult) => void>();
+  private readonly pendingWorktrees = new Map<
+    string,
+    { readonly action: WorktreeAction; readonly resolve: (result: WorktreeResult) => void }
+  >();
+  private readonly worktreeOpenListeners = new Set<(worktree: WorktreeInfo) => void>();
+  /** Survives socket generations so attach replay repairs a lost intent
+   * without opening a second tab when the original frame was already seen. */
+  private readonly handledWorktreeOpenIntents = new Set<string>();
   private readonly pendingFileOps = new Map<string, (result: FileOpResult) => void>();
   private readonly pendingFileReads = new Map<string, FileReadAssembly>();
 
@@ -330,6 +458,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   /** Stop reconnecting and close the live socket (app backgrounding/teardown). */
   disconnect(): void {
     this.stopped = true;
+    // This is a user-authorized disconnect, not a transient radio handoff.
+    // Tell main to close live run ports instead of placing them in the lease.
+    if (this.authed) this.send({ kind: 'release-runs' });
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -337,13 +468,23 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.clearWatchdog();
     this.socket?.close();
     this.socket = null;
+    this.nextRetryAt = null;
+    this.remoteCapabilities.clear();
+    this.setAuthed(false);
+    this.setConnectionState('disconnected');
+    this.recordConnectionDiagnostic('disconnected');
+    this.resolvePendingRequestsUnavailable();
+    this.failAndClearPorts('Disconnected from EZTerminal');
   }
 
   /** Mobile-only (not part of `EzTerminalApi`): drives the SessionSwitcher drawer (M2). */
   listSessions(): Promise<readonly SessionInfo[]> {
     return new Promise((resolve) => {
-      this.pendingListSessions.push(resolve);
-      this.send({ kind: 'list-sessions' });
+      if (!this.tryStartFifoRequest(
+        { kind: 'list-sessions' },
+        this.pendingListSessions,
+        resolve,
+      )) resolve([]);
     });
   }
 
@@ -352,8 +493,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   createSession(cwd?: string): Promise<SessionInfo> {
     return new Promise((resolve, reject) => {
       const requestId = this.newId();
-      this.pendingCreates.set(requestId, { resolve, reject });
-      this.send({ kind: 'create-session', requestId, cwd });
+      const pending = { resolve, reject };
+      if (!this.tryStartMapRequest(
+        { kind: 'create-session', requestId, cwd },
+        this.pendingCreates,
+        requestId,
+        pending,
+      )) reject(new Error('Not connected to EZTerminal'));
     });
   }
 
@@ -361,11 +507,66 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.send({ kind: 'destroy-session', sessionId });
   }
 
+  destroySessionGuarded(
+    sessionId: string,
+    expectedActiveRunIds: readonly string[],
+  ): Promise<DestroySessionGuardResult> {
+    if (
+      !this.authed
+      || !isGuardedDestroyId(sessionId)
+      || !Array.isArray(expectedActiveRunIds)
+      || expectedActiveRunIds.length > MAX_GUARDED_DESTROY_RUN_IDS
+      || !expectedActiveRunIds.every(isGuardedDestroyId)
+      || new Set(expectedActiveRunIds).size !== expectedActiveRunIds.length
+    ) {
+      return Promise.resolve({ ok: false, reason: 'unavailable' });
+    }
+    const requestId = this.newId();
+    if (!isGuardedDestroyId(requestId)) {
+      return Promise.resolve({ ok: false, reason: 'unavailable' });
+    }
+    return new Promise((resolve) => {
+      if (!this.tryStartMapRequest(
+        {
+          kind: 'destroy-session-guarded',
+          requestId,
+          sessionId,
+          expectedActiveRunIds,
+        },
+        this.pendingGuardedDestroys,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, reason: 'unavailable' });
+    });
+  }
+
+  destroySessionsGuarded(
+    sessions: readonly GuardedSessionDestroyRequest[],
+  ): Promise<DestroySessionGuardResult> {
+    if (sessions.length === 0) return Promise.resolve({ ok: true });
+    if (sessions.length === 1) {
+      return this.destroySessionGuarded(
+        sessions[0].sessionId,
+        sessions[0].expectedActiveRunIds,
+      );
+    }
+    // Mobile has no preset/layout replacement surface and the WS protocol
+    // intentionally exposes only a single-session guarded destroy. Never
+    // emulate an atomic batch with sequential requests.
+    return Promise.resolve({ ok: false, reason: 'unavailable' });
+  }
+
   runCommand(commandText: string, runId: string, sessionId: string): Promise<void> {
     const port = new FakeMessagePort((control) => {
       this.send({ kind: 'control', runId, control });
+      if (control.type === 'close') {
+        this.clearResumeRetry(runId);
+        this.ports.delete(runId);
+      }
     });
-    this.ports.set(runId, port);
+    this.clearResumeRetry(runId);
+    this.ports.get(runId)?.port.close();
+    this.ports.set(runId, { sessionId, runId, port, initiatedHere: true });
     this.send({ kind: 'run-command', runId, sessionId, commandText });
     // Mirrors preload.ts's `_ezPort` handoff (see module doc for why this is a
     // synthetic dispatchEvent rather than a real window.postMessage transfer).
@@ -406,8 +607,11 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * gap fix) — mirrors `listSessions()`'s FIFO wire shape above. */
   listRuns(): Promise<readonly RunStartedInfo[]> {
     return new Promise((resolve) => {
-      this.pendingListRuns.push(resolve);
-      this.send({ kind: 'list-runs' });
+      if (!this.tryStartFifoRequest(
+        { kind: 'list-runs' },
+        this.pendingListRuns,
+        resolve,
+      )) resolve([]);
     });
   }
 
@@ -418,13 +622,89 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   attachRun(sessionId: string, runId: string): Promise<void> {
     const port = new FakeMessagePort((control) => {
       this.send({ kind: 'control', runId, control });
+      if (control.type === 'close') {
+        this.clearResumeRetry(runId);
+        this.ports.delete(runId);
+      }
     });
-    this.ports.set(runId, port);
+    this.clearResumeRetry(runId);
+    this.ports.get(runId)?.port.close();
+    this.ports.set(runId, { sessionId, runId, port, initiatedHere: false });
     this.send({ kind: 'attach-run', sessionId, runId });
     const event = new MessageEvent('message', { data: { _ezAttachPort: runId }, source: window });
     Object.defineProperty(event, 'ports', { value: [port], enumerable: true, configurable: true });
     window.dispatchEvent(event);
     return Promise.resolve();
+  }
+
+  executeWorktree(request: WorktreeRequest): Promise<WorktreeResult> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      const pending = { action: request.action, resolve };
+      if (!this.tryStartMapRequest(
+        { kind: 'worktree-request', requestId, request },
+        this.pendingWorktrees,
+        requestId,
+        pending,
+      )) {
+        resolve({
+          ok: false,
+          action: request.action,
+          error: 'IO_ERROR',
+          message: 'Not connected to EZTerminal.',
+        });
+      }
+    });
+  }
+
+  /** Mobile UI seam: a validated open selects a fresh ordinary terminal tab. */
+  onWorktreeOpenRequested(listener: (worktree: WorktreeInfo) => void): () => void {
+    this.worktreeOpenListeners.add(listener);
+    return () => this.worktreeOpenListeners.delete(listener);
+  }
+
+  private emitWorktreeOpen(worktree: WorktreeInfo): void {
+    for (const listener of this.worktreeOpenListeners) listener(worktree);
+  }
+
+  private acceptWorktreeOpenIntent(intentId: string): boolean {
+    if (this.handledWorktreeOpenIntents.has(intentId)) return false;
+    this.handledWorktreeOpenIntents.add(intentId);
+    if (this.handledWorktreeOpenIntents.size > 256) {
+      const oldest = this.handledWorktreeOpenIntents.values().next().value as string | undefined;
+      if (oldest) this.handledWorktreeOpenIntents.delete(oldest);
+    }
+    return true;
+  }
+
+  getAgentActivitySnapshot(): Promise<AgentActivitySnapshot> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-snapshot-get', requestId },
+        this.pendingAgentSnapshots,
+        requestId,
+        resolve,
+      )) resolve(this.agentSnapshot);
+    });
+  }
+
+  onAgentActivitySnapshot(listener: (snapshot: AgentActivitySnapshot) => void): () => void {
+    this.agentSnapshotListeners.add(listener);
+    listener(this.agentSnapshot);
+    return () => this.agentSnapshotListeners.delete(listener);
+  }
+
+  sendAgentFollowup(activityId: string, text: string): Promise<AgentFollowupResult> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-followup', requestId, activityId, text },
+        this.pendingAgentFollowups,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'delivery-failed' });
+    });
   }
 
   /** Mobile-only (not part of `EzTerminalApi`): drives the ConnectScreen's
@@ -445,8 +725,12 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return new Promise((resolve) => {
       // Copy to a mutable array — the wire reply is `readonly` but this method's
       // `EzTerminalApi` signature (unlike mobile-only `listSessions`) is not.
-      this.pendingStatsHistory.push((snapshots) => resolve([...snapshots]));
-      this.send({ kind: 'stats-history' });
+      const pending = (snapshots: readonly SystemStatsSnapshot[]): void => resolve([...snapshots]);
+      if (!this.tryStartFifoRequest(
+        { kind: 'stats-history' },
+        this.pendingStatsHistory,
+        pending,
+      )) resolve([]);
     });
   }
 
@@ -584,32 +868,58 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   runOpenClawLifecycle(action: OpenClawLifecycleAction): Promise<OpenClawLifecycleResult> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      this.pendingOpenClawLifecycle.set(requestId, resolve);
-      this.send({ kind: 'openclaw-lifecycle', requestId, action });
+      if (!this.tryStartMapRequest(
+        { kind: 'openclaw-lifecycle', requestId, action },
+        this.pendingOpenClawLifecycle,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, stderr: 'Not connected to EZTerminal' });
     });
   }
 
   getOpenClawSessions(): Promise<readonly OpenClawAgentSession[]> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      this.pendingOpenClawSessions.set(requestId, resolve);
-      this.send({ kind: 'openclaw-sessions-get', requestId });
+      if (!this.tryStartMapRequest(
+        { kind: 'openclaw-sessions-get', requestId },
+        this.pendingOpenClawSessions,
+        requestId,
+        resolve,
+      )) resolve([]);
     });
   }
 
   getOpenClawConfig(): Promise<OpenClawCoreConfig> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      this.pendingOpenClawConfigGet.set(requestId, resolve);
-      this.send({ kind: 'openclaw-config-get', requestId });
+      if (!this.tryStartMapRequest(
+        { kind: 'openclaw-config-get', requestId },
+        this.pendingOpenClawConfigGet,
+        requestId,
+        resolve,
+      )) {
+        resolve(Object.fromEntries(
+          OPENCLAW_CONFIG_ALLOWLIST.map((key) => [key, OPENCLAW_CONFIG_UNSET]),
+        ) as OpenClawCoreConfig);
+      }
     });
   }
 
   setOpenClawConfig(key: string, value: string): Promise<OpenClawSetConfigResult> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      this.pendingOpenClawConfigSet.set(requestId, resolve);
-      this.send({ kind: 'openclaw-config-set', requestId, key, value });
+      if (!this.tryStartMapRequest(
+        { kind: 'openclaw-config-set', requestId, key, value },
+        this.pendingOpenClawConfigSet,
+        requestId,
+        resolve,
+      )) {
+        resolve({
+          ok: false,
+          restartRequired: false,
+          error: 'Not connected to EZTerminal',
+        });
+      }
     });
   }
 
@@ -630,8 +940,12 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   getOpenClawChatTicket(): Promise<OpenClawChatTicket> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      this.pendingOpenClawChatTicket.set(requestId, resolve);
-      this.send({ kind: 'openclaw-chat-ticket', requestId });
+      if (!this.tryStartMapRequest(
+        { kind: 'openclaw-chat-ticket', requestId },
+        this.pendingOpenClawChatTicket,
+        requestId,
+        resolve,
+      )) resolve({ ticket: null, proxyPort: 0, token: null });
     });
   }
 
@@ -646,6 +960,21 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   }
   getRemoteToken(): Promise<string> {
     return Promise.resolve(this.token);
+  }
+  getRemoteSecurityStatus(): Promise<{ readonly state: 'ready' | 'error'; readonly error: string | null }> {
+    return Promise.resolve({ state: 'ready', error: null });
+  }
+
+  resolveTerminalFileLocation(request: TerminalFileLocationRequest): Promise<TerminalFileLocationResult> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'terminal-file-location', requestId, request },
+        this.pendingTerminalFileLocations,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, reason: 'unreadable' });
+    });
   }
   rotateRemoteToken(): Promise<string> {
     return Promise.resolve(this.token);
@@ -679,16 +1008,24 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   listFiles(path: string): Promise<FileListResult> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      this.pendingFileList.set(requestId, resolve);
-      this.send({ kind: 'file-list', requestId, path });
+      if (!this.tryStartMapRequest(
+        { kind: 'file-list', requestId, path },
+        this.pendingFileList,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'Not connected to EZTerminal' });
     });
   }
 
   listFileRoots(): Promise<string[]> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      this.pendingFileRoots.set(requestId, resolve);
-      this.send({ kind: 'file-roots', requestId });
+      if (!this.tryStartMapRequest(
+        { kind: 'file-roots', requestId },
+        this.pendingFileRoots,
+        requestId,
+        resolve,
+      )) resolve([]);
     });
   }
 
@@ -703,27 +1040,159 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     });
   }
 
+  /** Mobile-only richer lifecycle signal used by reconnect/auth overlays. */
+  onConnectionStateChange(listener: (state: RemoteConnectionState) => void): () => void {
+    this.connectionStateListeners.add(listener);
+    listener(this.connectionState);
+    return () => this.connectionStateListeners.delete(listener);
+  }
+
+  /** Structured, redacted connection status for mobile recovery UI. */
+  onConnectionHealthChange(listener: (snapshot: ConnectionHealthSnapshot) => void): () => void {
+    this.connectionHealthListeners.add(listener);
+    listener(this.getConnectionHealthSnapshot());
+    return () => this.connectionHealthListeners.delete(listener);
+  }
+
+  /** Whether the paired desktop advertised the optional read-only command
+   * snapshot. The last known value survives a transient radio handoff so an
+   * already-visible picker can render an explicit offline state. */
+  get supportsRemoteQuickCommands(): boolean {
+    return this.remoteCapabilities.has(REMOTE_CAPABILITY_QUICK_COMMANDS_READ);
+  }
+
+  listRemoteQuickCommands(): Promise<RemoteQuickCommandsResult> {
+    if (!this.supportsRemoteQuickCommands) {
+      return Promise.resolve({ ok: false, error: 'unsupported' });
+    }
+    if (!this.authed) return Promise.resolve({ ok: false, error: 'offline' });
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'quick-commands-list', requestId },
+        this.pendingQuickCommands,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'offline' });
+    });
+  }
+
+  /** Cancel the current wait/attempt and start exactly one fresh socket. */
+  retryNow(): boolean {
+    if (this.connectionState === 'connected' || this.connectionState === 'disconnected') return false;
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.clearWatchdog();
+    const previous = this.socket;
+    this.socket = null;
+    try {
+      previous?.close();
+    } catch {
+      // A failed close cannot block the new generation; every old handler is
+      // guarded by socket identity.
+    }
+    this.stopped = false;
+    this.setAuthed(false);
+    this.reconnectAttempts += 1;
+    this.nextRetryAt = null;
+    this.setConnectionState(this.everAuthed ? 'reconnecting' : 'connecting');
+    this.recordConnectionDiagnostic('retry-now');
+    this.emitConnectionHealth();
+    this.connect();
+    return true;
+  }
+
+  /** Copy-safe diagnostics: no URL, token, cwd, commands, or terminal data. */
+  getConnectionDiagnostics(): string {
+    const snapshot = this.getConnectionHealthSnapshot();
+    return [
+      'EZTerminal connection diagnostics',
+      `state=${snapshot.state}`,
+      `attempt=${snapshot.attempt}`,
+      `endpointKind=${snapshot.endpointKind}`,
+      `lastConnectedAt=${snapshot.lastConnectedAt === null ? 'never' : new Date(snapshot.lastConnectedAt).toISOString()}`,
+      `nextRetryAt=${snapshot.nextRetryAt === null ? 'none' : new Date(snapshot.nextRetryAt).toISOString()}`,
+      ...this.connectionDiagnostics.map((entry) => (
+        `${entry.at} event=${entry.event} state=${entry.state} attempt=${entry.attempt}`
+      )),
+    ].join('\n');
+  }
+
+  /** Resume the visible session first so its terminal becomes interactive first. */
+  setReattachPriority(sessionId: string | null): void {
+    this.reattachPrioritySessionId = sessionId;
+  }
+
+  readFilePreview(path: string, terminalCapability?: string): Promise<FilePreviewResult> {
+    return this.requestFileRead(path, 'preview', undefined, terminalCapability).then((result) => {
+      if (!result.ok) return { ok: false, error: result.error };
+      const preview = result.preview;
+      if (!preview) return { ok: false, error: 'preview metadata missing from desktop response' };
+      switch (preview.kind) {
+        case 'text':
+          return {
+            ok: true,
+            kind: 'text',
+            name: preview.name,
+            mime: preview.mime,
+            content: new TextDecoder('utf-8', { fatal: false }).decode(result.bytes),
+            truncated: result.truncated,
+            fileSize: result.fileSize,
+          };
+        case 'image':
+          return {
+            ok: true,
+            kind: 'image',
+            name: preview.name,
+            mime: preview.mime,
+            bytes: result.bytes,
+            width: preview.width,
+            height: preview.height,
+            fileSize: result.fileSize,
+          };
+        case 'pdf':
+          return { ok: true, ...preview, fileSize: result.fileSize };
+        case 'unsupported':
+          return { ok: true, ...preview, fileSize: result.fileSize };
+      }
+    });
+  }
+
   createFolder(dirPath: string, name: string): Promise<FileOpResult> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      this.pendingFileOps.set(requestId, resolve);
-      this.send({ kind: 'file-mkdir', requestId, dirPath, name });
+      if (!this.tryStartMapRequest(
+        { kind: 'file-mkdir', requestId, dirPath, name },
+        this.pendingFileOps,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'Not connected to EZTerminal' });
     });
   }
 
   renameFile(path: string, newName: string): Promise<FileOpResult> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      this.pendingFileOps.set(requestId, resolve);
-      this.send({ kind: 'file-rename', requestId, path, newName });
+      if (!this.tryStartMapRequest(
+        { kind: 'file-rename', requestId, path, newName },
+        this.pendingFileOps,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'Not connected to EZTerminal' });
     });
   }
 
   trashFile(path: string): Promise<FileOpResult> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      this.pendingFileOps.set(requestId, resolve);
-      this.send({ kind: 'file-trash', requestId, path });
+      if (!this.tryStartMapRequest(
+        { kind: 'file-trash', requestId, path },
+        this.pendingFileOps,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'Not connected to EZTerminal' });
     });
   }
 
@@ -768,8 +1237,12 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   ): Promise<{ finalName: string }> {
     const requestId = this.newId();
     const begin = await new Promise<UploadBeginResult>((resolve) => {
-      this.pendingUploadBegins.set(requestId, resolve);
-      this.send({ kind: 'file-upload-begin', requestId, dirPath, name, size: bytes.length });
+      if (!this.tryStartMapRequest(
+        { kind: 'file-upload-begin', requestId, dirPath, name, size: bytes.length },
+        this.pendingUploadBegins,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'Not connected to EZTerminal' });
     });
     if (!begin.ok) throw new Error(begin.error);
     const { uploadId } = begin;
@@ -778,8 +1251,12 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     while (offset < bytes.length) {
       const chunk = bytes.subarray(offset, Math.min(offset + FILE_CHUNK_BYTES, bytes.length));
       const ack = await new Promise<UploadAckResult>((resolve) => {
-        this.pendingUploadAcks.set(uploadId, resolve);
-        this.send({ kind: 'file-upload-chunk', uploadId, offset, data: uint8ArrayToBase64(chunk) });
+        if (!this.tryStartMapRequest(
+          { kind: 'file-upload-chunk', uploadId, offset, data: uint8ArrayToBase64(chunk) },
+          this.pendingUploadAcks,
+          uploadId,
+          resolve,
+        )) resolve({ ok: false, error: 'Not connected to EZTerminal' });
       });
       if (!ack.ok) throw new Error(ack.error);
       offset += chunk.length;
@@ -787,8 +1264,12 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     }
 
     const done = await new Promise<UploadDoneResult>((resolve) => {
-      this.pendingUploadDones.set(uploadId, resolve);
-      this.send({ kind: 'file-upload-commit', uploadId });
+      if (!this.tryStartMapRequest(
+        { kind: 'file-upload-commit', uploadId },
+        this.pendingUploadDones,
+        uploadId,
+        resolve,
+      )) resolve({ ok: false, error: 'Not connected to EZTerminal' });
     });
     if (!done.ok) throw new Error(done.error);
     return { finalName: done.finalName };
@@ -800,28 +1281,45 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * remote-protocol.ts's streaming contract) until `done`. */
   private requestFileRead(
     path: string,
-    mode: 'text' | 'raw',
+    mode: 'text' | 'raw' | 'preview',
     onProgress?: (received: number, total: number) => void,
+    terminalCapability?: string,
   ): Promise<FileReadResult> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      this.pendingFileReads.set(requestId, {
+      const pending: FileReadAssembly = {
         buffer: null,
         fileSize: 0,
         isText: true,
         truncated: false,
+        preview: null,
         onProgress,
         resolve,
-      });
-      this.send({ kind: 'file-read', requestId, path, mode });
+      };
+      if (!this.tryStartMapRequest(
+        {
+          kind: 'file-read',
+          requestId,
+          path,
+          mode,
+          ...(terminalCapability === undefined ? {} : { terminalCapability }),
+        },
+        this.pendingFileReads,
+        requestId,
+        pending,
+      )) resolve({ ok: false, error: 'Not connected to EZTerminal' });
     });
   }
 
   // ── connection lifecycle ─────────────────────────────────────────────────
 
   private connect(): void {
+    this.nextRetryAt = null;
+    this.recordConnectionDiagnostic('connect');
+    this.emitConnectionHealth();
     const socket = this.createSocket(this.url);
     this.socket = socket;
+    this.awaitingAgentSeed = true;
     // Bound this attempt: if it doesn't reach `auth-ok` in time (never opened,
     // or opened but the auth round-trip stalled — a half-open link never fires
     // 'close'), abandon it and let the backoff loop try a fresh socket.
@@ -872,39 +1370,102 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     for (const listener of this.authListeners) listener(value);
   }
 
-  /**
-   * A connection attempt ended (real 'close' or watchdog abandon). Idempotent
-   * per attempt: only the CURRENT socket ends once — a second call for the same
-   * socket (watchdog closed it, then its real 'close' fires) is a no-op, so the
-   * backoff/reconnect is never scheduled twice.
-   */
-  private endConnection(socket: WsLike): void {
-    if (this.socket !== socket) return;
-    this.clearWatchdog();
-    this.setAuthed(false);
-    this.socket = null;
-    // No frames can arrive for these runs anymore — tell every open block so it
-    // doesn't sit showing "running" forever, then drop them (mirrors a real
-    // MessagePort going away: no further send/receive).
-    for (const port of this.ports.values()) {
-      port.deliver({ type: 'error', message: 'Connection to EZTerminal lost' });
+  private setConnectionState(state: RemoteConnectionState): void {
+    if (this.connectionState === state) {
+      this.emitConnectionHealth();
+      return;
+    }
+    this.connectionState = state;
+    for (const listener of this.connectionStateListeners) listener(state);
+    this.emitConnectionHealth();
+  }
+
+  private getConnectionHealthSnapshot(): ConnectionHealthSnapshot {
+    return {
+      state: this.connectionState,
+      attempt: this.reconnectAttempts,
+      nextRetryAt: this.nextRetryAt,
+      lastConnectedAt: this.lastConnectedAt,
+      endpointKind: classifyEndpoint(this.url),
+    };
+  }
+
+  private emitConnectionHealth(): void {
+    const snapshot = this.getConnectionHealthSnapshot();
+    for (const listener of this.connectionHealthListeners) listener(snapshot);
+  }
+
+  private recordConnectionDiagnostic(
+    event: 'connect' | 'connected' | 'retry-scheduled' | 'retry-now' | 'auth-rejected' | 'disconnected',
+  ): void {
+    this.connectionDiagnostics.push({
+      at: new Date().toISOString(),
+      event,
+      state: this.connectionState,
+      attempt: this.reconnectAttempts,
+    });
+    if (this.connectionDiagnostics.length > 100) {
+      this.connectionDiagnostics.splice(0, this.connectionDiagnostics.length - 100);
+    }
+  }
+
+  private failAndClearPorts(message: string): void {
+    this.clearAllResumeRetries();
+    for (const record of this.ports.values()) {
+      record.port.deliver({ type: 'error', message });
+      record.port.close();
     }
     this.ports.clear();
-    // M1 mirror-active-runs: no reply is ever coming for these now — resolve
-    // every in-flight `listRuns()` call with `[]` rather than leaving it
-    // pending forever (mirrors the file-explorer pending drains below; the
-    // pre-existing `pendingListSessions` hang-on-close is untouched — a
-    // separate, already-known issue, see remote-protocol.ts's module doc).
+  }
+
+  /** Settle every request/reply waiter that belonged to the ending socket.
+   * Shared by transient close, auth rejection, and explicit disconnect so no
+   * public Promise can remain orphaned when `disconnect()` nulls the socket
+   * before its eventual close event reaches `endConnection`. */
+  private resolvePendingRequestsUnavailable(): void {
+    for (const resolve of this.pendingQuickCommands.values()) {
+      resolve({ ok: false, error: 'offline' });
+    }
+    this.pendingQuickCommands.clear();
+    for (const pending of this.pendingCreates.values()) {
+      pending.reject(new Error('Connection to EZTerminal lost'));
+    }
+    this.pendingCreates.clear();
+    for (const resolve of this.pendingGuardedDestroys.values()) {
+      resolve({ ok: false, reason: 'unavailable' });
+    }
+    this.pendingGuardedDestroys.clear();
+    for (const resolve of this.pendingListSessions) resolve([]);
+    this.pendingListSessions.length = 0;
     for (const resolve of this.pendingListRuns) resolve([]);
     this.pendingListRuns.length = 0;
-    // File explorer (M4): no reply is ever coming for these now — resolve
-    // every in-flight request rather than leaving its promise pending forever.
+    for (const resolve of this.pendingStatsHistory) resolve([]);
+    this.pendingStatsHistory.length = 0;
+    for (const pending of this.pendingWorktrees.values()) {
+      pending.resolve({
+        ok: false,
+        action: pending.action,
+        error: 'IO_ERROR',
+        message: 'Connection to EZTerminal lost.',
+      });
+    }
+    this.pendingWorktrees.clear();
+    for (const resolve of this.pendingAgentSnapshots.values()) resolve(this.agentSnapshot);
+    this.pendingAgentSnapshots.clear();
+    for (const resolve of this.pendingAgentFollowups.values()) {
+      resolve({ ok: false, error: 'delivery-failed' });
+    }
+    this.pendingAgentFollowups.clear();
     for (const resolve of this.pendingFileList.values()) {
       resolve({ ok: false, error: 'Connection to EZTerminal lost' });
     }
     this.pendingFileList.clear();
     for (const resolve of this.pendingFileRoots.values()) resolve([]);
     this.pendingFileRoots.clear();
+    for (const resolve of this.pendingTerminalFileLocations.values()) {
+      resolve({ ok: false, reason: 'unreadable' });
+    }
+    this.pendingTerminalFileLocations.clear();
     for (const resolve of this.pendingFileOps.values()) {
       resolve({ ok: false, error: 'Connection to EZTerminal lost' });
     }
@@ -913,8 +1474,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       assembly.resolve({ ok: false, error: 'Connection to EZTerminal lost' });
     }
     this.pendingFileReads.clear();
-    // Upload (M5): same "resolve with a connection-lost result" treatment —
-    // `uploadFile` throws on `ok:false`, which is what rejects its promise.
     for (const resolve of this.pendingUploadBegins.values()) {
       resolve({ ok: false, error: 'Connection to EZTerminal lost' });
     }
@@ -927,8 +1486,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve({ ok: false, error: 'Connection to EZTerminal lost' });
     }
     this.pendingUploadDones.clear();
-    // OpenClaw management (M4): same "resolve with a connection-lost result"
-    // treatment as the file/upload maps above — never left pending forever.
     for (const resolve of this.pendingOpenClawLifecycle.values()) {
       resolve({ ok: false, stderr: 'Connection to EZTerminal lost' });
     }
@@ -943,8 +1500,30 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve({ ok: false, restartRequired: false, error: 'Connection to EZTerminal lost' });
     }
     this.pendingOpenClawConfigSet.clear();
-    for (const resolve of this.pendingOpenClawChatTicket.values()) resolve({ ticket: null, proxyPort: 0, token: null });
+    for (const resolve of this.pendingOpenClawChatTicket.values()) {
+      resolve({ ticket: null, proxyPort: 0, token: null });
+    }
     this.pendingOpenClawChatTicket.clear();
+  }
+
+  /**
+   * A connection attempt ended (real 'close' or watchdog abandon). Idempotent
+   * per attempt: only the CURRENT socket ends once — a second call for the same
+   * socket (watchdog closed it, then its real 'close' fires) is a no-op, so the
+   * backoff/reconnect is never scheduled twice.
+   */
+  private endConnection(socket: WsLike): void {
+    if (this.socket !== socket) return;
+    this.clearAllResumeRetries();
+    this.clearWatchdog();
+    this.setAuthed(false);
+    this.socket = null;
+    // No frames can arrive for these runs anymore — tell every open block so it
+    // doesn't sit showing "running" forever, then drop them (mirrors a real
+    // MessagePort going away: no further send/receive).
+    // Stable local ports survive transient sockets; the next authenticated
+    // generation resumes them against the bridge's bounded run lease.
+    this.resolvePendingRequestsUnavailable();
     // OpenClaw availability (M3): a dropped connection can't know the
     // desktop's current mode anymore — reset to "unknown" so a stale `true`
     // doesn't keep an entry point visible while disconnected (mirrors
@@ -954,16 +1533,136 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       this.openclawAvailable = false;
       for (const listener of this.openclawAvailabilityListeners) listener(false);
     }
-    if (this.stopped) return;
+    if (this.stopped || this.connectionState === 'auth-rejected') return;
+    this.reconnectAttempts += 1;
+    const retryDelay = this.backoffMs;
+    this.nextRetryAt = Date.now() + retryDelay;
+    this.setConnectionState('reconnecting');
+    this.recordConnectionDiagnostic('retry-scheduled');
+    this.emitConnectionHealth();
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
-    }, this.backoffMs);
+    }, retryDelay);
     this.backoffMs = Math.min(this.backoffMs * 2, this.maxBackoffMs);
   }
 
+  /** Request/reply envelopes never enter a pending collection unless they can
+   * be written to the current authenticated OPEN socket. A synchronous send
+   * failure rolls the registration back before the caller is failed locally,
+   * so a later socket generation cannot have a stale waiter steal its reply. */
+  private tryStartRequest(
+    msg: ClientToServerMessage,
+    register: () => void,
+    rollback: () => void,
+  ): boolean {
+    const socket = this.socket;
+    if (
+      this.stopped
+      || !this.authed
+      || !socket
+      || (socket.readyState !== undefined && socket.readyState !== WS_OPEN)
+    ) return false;
+    register();
+    try {
+      socket.send(JSON.stringify(msg));
+      return true;
+    } catch {
+      rollback();
+      return false;
+    }
+  }
+
+  private tryStartMapRequest<K, V>(
+    msg: ClientToServerMessage,
+    pending: Map<K, V>,
+    key: K,
+    value: V,
+  ): boolean {
+    if (pending.has(key)) return false;
+    return this.tryStartRequest(
+      msg,
+      () => pending.set(key, value),
+      () => {
+        if (pending.get(key) === value) pending.delete(key);
+      },
+    );
+  }
+
+  private tryStartFifoRequest<T>(
+    msg: ClientToServerMessage,
+    pending: T[],
+    value: T,
+  ): boolean {
+    return this.tryStartRequest(
+      msg,
+      () => pending.push(value),
+      () => {
+        const index = pending.indexOf(value);
+        if (index >= 0) pending.splice(index, 1);
+      },
+    );
+  }
+
+  /** Raw one-way/control path. Auth handshake uses its captured socket
+   * directly; release-runs and control semantics intentionally stay unchanged. */
   private send(msg: ClientToServerMessage): void {
-    this.socket?.send(JSON.stringify(msg));
+    try {
+      this.socket?.send(JSON.stringify(msg));
+    } catch {
+      // A close can race one-way traffic. Request/reply calls use the
+      // rollback-aware helpers above; one-way traffic is best-effort and must
+      // never prevent disconnect cleanup or escape into the mobile UI.
+    }
+  }
+
+  private clearResumeRetry(runId: string): void {
+    const retry = this.resumeRetries.get(runId);
+    if (retry?.timer !== null && retry?.timer !== undefined) clearTimeout(retry.timer);
+    this.resumeRetries.delete(runId);
+  }
+
+  private clearAllResumeRetries(): void {
+    for (const retry of this.resumeRetries.values()) {
+      if (retry.timer !== null) clearTimeout(retry.timer);
+    }
+    this.resumeRetries.clear();
+  }
+
+  private scheduleResumeRetry(record: RunPortRecord, generation: number): void {
+    if (!this.authed || generation !== this.generation || this.ports.get(record.runId) !== record) return;
+
+    const previous = this.resumeRetries.get(record.runId);
+    if (previous?.generation === generation && previous.timer !== null) return;
+    const retry = previous?.generation === generation
+      ? previous
+      : { generation, attempts: 0, timer: null };
+
+    if (retry.attempts >= RESUME_RETRY_MAX_ATTEMPTS) {
+      if (retry.attempts === RESUME_RETRY_MAX_ATTEMPTS) {
+        retry.attempts += 1; // exhausted sentinel: do not re-report on duplicate busy replies
+        this.resumeRetries.set(record.runId, retry);
+        record.port.deliver({ type: 'error', message: 'This run stayed busy and could not be resumed' });
+      }
+      return;
+    }
+
+    const delay = Math.min(RESUME_RETRY_INITIAL_MS * (2 ** retry.attempts), RESUME_RETRY_MAX_MS);
+    retry.attempts += 1;
+    retry.timer = setTimeout(() => {
+      retry.timer = null;
+      if (!this.authed || generation !== this.generation || this.ports.get(record.runId) !== record) {
+        this.clearResumeRetry(record.runId);
+        return;
+      }
+      this.send({
+        kind: 'resume-run',
+        sessionId: record.sessionId,
+        runId: record.runId,
+        generation,
+      });
+    }, delay);
+    this.resumeRetries.set(record.runId, retry);
   }
 
   private handleServerMessage(data: string): void {
@@ -975,8 +1674,45 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     }
     switch (msg.kind) {
       case 'auth-ok':
+        if (this.authed) break;
+        this.remoteCapabilities = new Set(
+          Array.isArray(msg.capabilities)
+            ? msg.capabilities.filter(
+                (capability): capability is RemoteCapability => (
+                  capability === REMOTE_CAPABILITY_QUICK_COMMANDS_READ
+                ),
+              )
+            : [],
+        );
+        this.clearAllResumeRetries();
         this.clearWatchdog(); // connected — this attempt is no longer "stuck"
-        this.setAuthed(true);
+        {
+          const isReconnect = this.everAuthed;
+          this.everAuthed = true;
+          this.generation += 1;
+          this.reconnectAttempts = 0;
+          this.nextRetryAt = null;
+          this.lastConnectedAt = Date.now();
+          this.setAuthed(true);
+          this.setConnectionState('connected');
+          this.recordConnectionDiagnostic('connected');
+          this.emitConnectionHealth();
+          if (isReconnect) {
+            const records = [...this.ports.values()].sort((a, b) => {
+              const aPriority = a.sessionId === this.reattachPrioritySessionId ? 0 : 1;
+              const bPriority = b.sessionId === this.reattachPrioritySessionId ? 0 : 1;
+              return aPriority - bPriority;
+            });
+            for (const record of records) {
+              this.send({
+                kind: 'resume-run',
+                sessionId: record.sessionId,
+                runId: record.runId,
+                generation: this.generation,
+              });
+            }
+          }
+        }
         // A fully successful (re)connect resets the backoff — a flappy link
         // that keeps briefly reconnecting shouldn't creep toward the cap.
         this.backoffMs = this.initialBackoffMs;
@@ -993,7 +1729,16 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         if (this.openclawLogsSubscribed) this.send({ kind: 'openclaw-logs-subscribe' });
         break;
       case 'auth-fail':
+        this.remoteCapabilities.clear();
         this.setAuthed(false);
+        this.stopped = true;
+        this.nextRetryAt = null;
+        this.setConnectionState('auth-rejected');
+        this.recordConnectionDiagnostic('auth-rejected');
+        this.emitConnectionHealth();
+        this.resolvePendingRequestsUnavailable();
+        this.clearWatchdog();
+        this.socket?.close();
         break;
       case 'session-created': {
         const pending = this.pendingCreates.get(msg.requestId);
@@ -1003,6 +1748,27 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         }
         break;
       }
+      case 'quick-commands-list-reply': {
+        const resolve = this.pendingQuickCommands.get(msg.requestId);
+        this.pendingQuickCommands.delete(msg.requestId);
+        if (!resolve) break;
+        if (!msg.ok) {
+          resolve({ ok: false, error: 'unavailable' });
+          break;
+        }
+        const commands = msg.commands
+          .slice(0, MAX_QUICK_COMMANDS)
+          .flatMap((command) => {
+            const parsed = QuickCommandSchema.safeParse(command);
+            return parsed.success ? [parsed.data] : [];
+          });
+        resolve({ ok: true, commands });
+        break;
+      }
+      case 'session-destroy-result':
+        this.pendingGuardedDestroys.get(msg.requestId)?.(msg.result);
+        this.pendingGuardedDestroys.delete(msg.requestId);
+        break;
       case 'session-list':
         this.pendingListSessions.shift()?.(msg.sessions);
         break;
@@ -1010,8 +1776,53 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         this.pendingListRuns.shift()?.(msg.runs);
         break;
       case 'frame': {
-        const port = this.ports.get(msg.runId);
-        port?.deliver(decodeFrame(msg.frame));
+        const record = this.ports.get(msg.runId);
+        if (!record) break;
+        const frame = decodeFrame(msg.frame);
+        if (frame.type === 'worktree-open') {
+          if (record.initiatedHere && this.acceptWorktreeOpenIntent(frame.intentId)) {
+            this.emitWorktreeOpen(frame.worktree);
+          }
+          break;
+        }
+        record.port.deliver(frame);
+        break;
+      }
+      case 'resume-run-ready': {
+        if (msg.generation !== this.generation) break;
+        const record = this.ports.get(msg.runId);
+        if (!record || record.sessionId !== msg.sessionId) break;
+        this.clearResumeRetry(msg.runId);
+        record.port.deliver({ type: 'pty-replay-reset' });
+        break;
+      }
+      case 'resume-run-busy': {
+        if (msg.generation !== this.generation) break;
+        const record = this.ports.get(msg.runId);
+        if (!record || record.sessionId !== msg.sessionId) break;
+        if (msg.retryable) {
+          this.scheduleResumeRetry(record, msg.generation);
+          break;
+        }
+        this.clearResumeRetry(msg.runId);
+        this.ports.delete(msg.runId);
+        record.port.deliver({
+          type: 'error',
+          message: msg.reason === 'unsupported'
+            ? 'Active SSH runs cannot be resumed on this device'
+            : 'This run could not be resumed',
+        });
+        record.port.close();
+        break;
+      }
+      case 'resume-run-missing': {
+        if (msg.generation !== this.generation) break;
+        const record = this.ports.get(msg.runId);
+        if (!record || record.sessionId !== msg.sessionId) break;
+        this.clearResumeRetry(msg.runId);
+        this.ports.delete(msg.runId);
+        record.port.deliver({ type: 'error', message: 'This run expired before it could be resumed' });
+        record.port.close();
         break;
       }
       case 'session-dead':
@@ -1025,8 +1836,30 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         break;
       case 'run-started':
         for (const listener of this.runStartedListeners) {
-          listener({ sessionId: msg.sessionId, runId: msg.runId, commandText: msg.commandText });
+          listener({
+            sessionId: msg.sessionId,
+            runId: msg.runId,
+            commandText: msg.commandText,
+            executionKind: msg.executionKind,
+          });
         }
+        break;
+      case 'agent-snapshot': {
+        const accept = this.awaitingAgentSeed || msg.snapshot.revision > this.agentSnapshot.revision;
+        this.awaitingAgentSeed = false;
+        if (accept) {
+          this.agentSnapshot = msg.snapshot;
+          for (const listener of this.agentSnapshotListeners) listener(msg.snapshot);
+        }
+        if (msg.requestId) {
+          this.pendingAgentSnapshots.get(msg.requestId)?.(this.agentSnapshot);
+          this.pendingAgentSnapshots.delete(msg.requestId);
+        }
+        break;
+      }
+      case 'agent-followup-reply':
+        this.pendingAgentFollowups.get(msg.requestId)?.(msg.result);
+        this.pendingAgentFollowups.delete(msg.requestId);
         break;
       case 'stats-update':
         for (const listener of this.statsListeners) listener(msg.snapshot);
@@ -1034,6 +1867,15 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       case 'stats-history':
         this.pendingStatsHistory.shift()?.(msg.snapshots);
         break;
+      case 'worktree-reply': {
+        const pending = this.pendingWorktrees.get(msg.requestId);
+        if (pending?.action === 'open' && msg.result.ok && msg.result.action === 'open' && msg.result.opened) {
+          this.emitWorktreeOpen(msg.result.opened);
+        }
+        pending?.resolve(msg.result);
+        this.pendingWorktrees.delete(msg.requestId);
+        break;
+      }
       case 'packet-frame':
         this.packetPort?.deliver(msg.frame);
         break;
@@ -1046,6 +1888,11 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       case 'file-roots-reply':
         this.pendingFileRoots.get(msg.requestId)?.([...msg.roots]);
         this.pendingFileRoots.delete(msg.requestId);
+        break;
+
+      case 'terminal-file-location-reply':
+        this.pendingTerminalFileLocations.get(msg.requestId)?.(msg.result);
+        this.pendingTerminalFileLocations.delete(msg.requestId);
         break;
 
       case 'file-op-reply':
@@ -1071,6 +1918,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
             isText: msg.isText,
             truncated: msg.truncated,
             bytes: new Uint8Array(0),
+            ...(msg.preview ? { preview: msg.preview } : {}),
           });
           break;
         }
@@ -1078,6 +1926,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         assembly.fileSize = msg.fileSize;
         assembly.isText = msg.isText;
         assembly.truncated = msg.truncated;
+        assembly.preview = msg.preview ?? null;
         break;
       }
 
@@ -1096,6 +1945,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
             isText: assembly.isText,
             truncated: assembly.truncated,
             bytes: assembly.buffer,
+            ...(assembly.preview ? { preview: assembly.preview } : {}),
           });
         } else {
           this.send({ kind: 'file-read-ack', requestId: msg.requestId, offset: received });
@@ -1177,6 +2027,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   /** Test/debug seam: is the current socket authenticated? */
   get isAuthed(): boolean {
     return this.authed;
+  }
+
+  get currentConnectionState(): RemoteConnectionState {
+    return this.connectionState;
   }
 
   /** The hostname this transport is dialing (no scheme/port) — the chat tab

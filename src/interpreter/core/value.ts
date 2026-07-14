@@ -16,6 +16,7 @@
  * count. Phase-1 uses 1024-based multipliers (kb = 1024, mb = 1024^2, ...).
  */
 
+import type { SshForwardAction } from '../../shared/ssh-forward';
 import { EvalError } from './errors';
 
 // ── JSON wire shape (what gets serialized into chunk frames) ───────────────────
@@ -375,12 +376,37 @@ export interface ScriptStreamData {
  * closure) because connecting requires an async main round-trip (known_hosts)
  * the pure core has no business owning.
  */
-export interface SshStreamData {
+/** A fully specified legacy/direct `user@host` connection. `targetKind` is
+ * optional so older in-flight values remain structurally compatible. */
+export interface DirectSshStreamData {
   readonly kind: 'ssh-stream';
+  readonly targetKind?: 'direct';
   readonly host: string;
   readonly port: number;
   readonly user: string;
   readonly keyPath?: string;
+  readonly meta?: PipelineMeta;
+  readonly cleanup?: CleanupHook;
+}
+
+/** A bare OpenSSH config alias, resolved immediately before connecting. */
+export interface SshAliasStreamData {
+  readonly kind: 'ssh-stream';
+  readonly targetKind: 'alias';
+  readonly alias: string;
+  readonly portOverride?: number;
+  readonly keyPathOverride?: string;
+  readonly meta?: PipelineMeta;
+  readonly cleanup?: CleanupHook;
+}
+
+export type SshStreamData = DirectSshStreamData | SshAliasStreamData;
+
+/** A main-owned local-forward operation, resolved asynchronously by the
+ * interpreter process after pure builtin evaluation. */
+export interface SshForwardCommandData {
+  readonly kind: 'ssh-forward-command';
+  readonly request: SshForwardAction;
   readonly meta?: PipelineMeta;
   readonly cleanup?: CleanupHook;
 }
@@ -391,14 +417,27 @@ export type PipelineData =
   | ByteStreamData
   | PtyStreamData
   | ScriptStreamData
-  | SshStreamData;
+  | SshStreamData
+  | SshForwardCommandData;
 
 export function scriptStreamData(scriptPath: string, args: readonly string[]): ScriptStreamData {
   return { kind: 'script-stream', scriptPath, args };
 }
 
-export function sshStreamData(host: string, port: number, user: string, keyPath?: string): SshStreamData {
+export function sshStreamData(host: string, port: number, user: string, keyPath?: string): DirectSshStreamData {
   return { kind: 'ssh-stream', host, port, user, keyPath };
+}
+
+export function sshAliasStreamData(
+  alias: string,
+  portOverride?: number,
+  keyPathOverride?: string,
+): SshAliasStreamData {
+  return { kind: 'ssh-stream', targetKind: 'alias', alias, portOverride, keyPathOverride };
+}
+
+export function sshForwardCommandData(request: SshForwardAction): SshForwardCommandData {
+  return { kind: 'ssh-forward-command', request };
 }
 
 export function listStreamData(
@@ -468,6 +507,9 @@ export function toRowIterable(data: PipelineData): AsyncIterable<RecordValue> {
   }
   if (data.kind === 'script-stream') {
     throw new EvalError('a run-script result cannot be piped as rows directly (v1)');
+  }
+  if (data.kind === 'ssh-forward-command') {
+    throw new EvalError('an SSH forward operation cannot be piped as rows directly');
   }
   if (data.kind === 'ssh-stream') {
     throw new EvalError('an ssh-connect session cannot be consumed as rows');

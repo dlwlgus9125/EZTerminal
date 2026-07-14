@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../shared/files';
+import type { FilePreviewResult } from '../shared/file-preview';
+import { quoteEzArgument } from '../shared/quote-ez-argument';
 import { FileContextMenu, type FileContextMenuItem } from './FileContextMenu';
-import { FileViewerOverlay } from './FileViewerOverlay';
+import { setInternalPathDrag } from './FileDropOverlay';
 import { getPaneCwd, insertIntoPaneInput } from './pane-registry';
+import { RichFileViewerOverlay } from './RichFileViewerOverlay';
 
 interface FileExplorerPanelProps {
   readonly activePanelId: string | null | undefined;
@@ -13,9 +16,8 @@ interface FileExplorerPanelProps {
 }
 
 interface ViewingFile {
-  readonly name: string;
-  readonly content: string;
-  readonly truncated: boolean;
+  readonly path: string;
+  readonly result: FilePreviewResult;
 }
 
 interface ContextMenuState {
@@ -111,6 +113,14 @@ export function FileExplorerPanel({
     [rootsMode, currentPath],
   );
 
+  const loadPreview = useCallback(async (fullPath: string): Promise<void> => {
+    setBinaryNotice(null);
+    const result = await window.ezterminal.readFilePreview(fullPath);
+    if (!result.ok) setError(result.error);
+    else setError(null);
+    setViewing({ path: fullPath, result });
+  }, []);
+
   const openEntry = useCallback(
     async (entry: FileEntry): Promise<void> => {
       const fullPath = fullPathFor(entry);
@@ -118,19 +128,9 @@ export function FileExplorerPanel({
         await loadPath(fullPath);
         return;
       }
-      setBinaryNotice(null);
-      const result = await window.ezterminal.readTextFile(fullPath);
-      if (!result.ok) {
-        setError(result.error);
-        return;
-      }
-      if (!result.isText) {
-        setBinaryNotice(`${entry.name} is a binary file`);
-        return;
-      }
-      setViewing({ name: entry.name, content: result.content, truncated: result.truncated });
+      await loadPreview(fullPath);
     },
-    [fullPathFor, loadPath],
+    [fullPathFor, loadPath, loadPreview],
   );
 
   const handleUp = useCallback(() => {
@@ -157,7 +157,7 @@ export function FileExplorerPanel({
 
   const handlePastePath = useCallback(
     (fullPath: string): void => {
-      if (!insertIntoPaneInput(activePanelId ?? '', fullPath)) showToast('No active terminal');
+      if (!insertIntoPaneInput(activePanelId ?? '', quoteEzArgument(fullPath))) showToast('No active terminal');
     },
     [activePanelId, showToast],
   );
@@ -405,6 +405,8 @@ export function FileExplorerPanel({
               key={entry.name}
               className="file-entry"
               data-testid="file-entry"
+              draggable
+              onDragStart={(event) => setInternalPathDrag(event.dataTransfer, [fullPathFor(entry)])}
               onClick={() => void openEntry(entry)}
               onContextMenu={(e) => {
                 e.preventDefault();
@@ -434,11 +436,15 @@ export function FileExplorerPanel({
       )}
 
       {viewing && (
-        <FileViewerOverlay
-          name={viewing.name}
-          content={viewing.content}
-          truncated={viewing.truncated}
+        <RichFileViewerOverlay
+          path={viewing.path}
+          result={viewing.result}
           onClose={() => setViewing(null)}
+          onInsert={() => handlePastePath(viewing.path)}
+          onRetry={() => void loadPreview(viewing.path)}
+          onOpen={() => void window.ezterminal.openFileInApp(viewing.path)}
+          onReveal={() => void window.ezterminal.revealFileInExplorer(viewing.path)}
+          openExternalHttpUrl={(url) => void window.ezterminalDesktop?.openExternalHttpUrl(url)}
         />
       )}
 

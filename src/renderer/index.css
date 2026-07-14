@@ -476,12 +476,9 @@ html[data-effect-phosphor-glow='on'] .block-status::before {
 /* == PTY / AGENT TUI GLOW == bg/fg for the xterm surface come from
    THEMES.matrix.xterm (themes.ts). This adds the phosphor bloom so Claude Code /
    Codex output glows green too, WITHOUT touching the agent's own ANSI colours.
-   xterm 6 uses the DOM renderer (.xterm-rows) by default; the canvas rule is a
-   safety net if a canvas/webgl addon is ever added — WT-parity M5 evaluated
-   web-links/unicode11/webgl addons and deferred all three: no stable addon
-   release targets @xterm/xterm@6.0.0 yet (npm only has betas tracking xterm
-   6.1.0-beta), and the 5.x-era stable addons throw on activate() against
-   xterm 6, aborting the terminal mount. The canvas filter isn't a text-shadow,
+   xterm 6 uses the DOM renderer as the compatibility fallback and the stable
+   WebGL addon in desktop Auto mode; Unicode 11, Search, and Web Links are
+   managed by xterm-runtime.ts. The canvas filter isn't a text-shadow,
    so it stays Matrix identity; the two glow rules below are the phosphor-glow
    effect. */
 html[data-effect-phosphor-glow='on'] .xterm .xterm-rows {
@@ -1744,6 +1741,511 @@ body {
 .block-status--error   { color: var(--term-red); }
 .block-status--cancelled { color: var(--term-amber); }
 
+/* Agent Attention Hub ----------------------------------------------------- */
+
+.agent-hub {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-ssh-forward-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.settings-ssh-forward-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.4rem;
+  border: 1px solid var(--term-border-faint);
+  border-radius: 3px;
+  background: var(--term-bg-inset);
+}
+
+.settings-ssh-forward-detail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 0.72rem;
+  color: var(--term-fg-dim);
+}
+
+.settings-ssh-forward-detail code,
+.settings-ssh-forward-detail span,
+.settings-ssh-forward-detail small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-ssh-forward-detail code {
+  color: var(--term-fg-bright);
+}
+
+.file-source-line {
+  display: block;
+  min-height: 1lh;
+}
+
+.file-source-line--selected {
+  background: color-mix(in srgb, var(--term-amber) 20%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--term-amber) 55%, transparent);
+}
+
+.file-source-line mark {
+  background: var(--term-amber);
+  color: var(--term-bg);
+}
+
+.terminal-path-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 180;
+  display: flex;
+  max-width: min(520px, calc(100vw - 32px));
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--term-border);
+  background: var(--term-bg-raised, var(--term-bg));
+  color: var(--term-fg);
+}
+
+.rich-file-viewer {
+  width: min(920px, calc(100vw - 48px));
+  height: min(760px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+}
+
+.file-viewer-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.file-preview-markdown,
+.file-preview-image-wrap,
+.file-preview-state {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  color: var(--term-fg);
+}
+
+.file-preview-markdown {
+  font-family: system-ui, sans-serif;
+  line-height: 1.55;
+  user-select: text;
+}
+
+.file-preview-markdown pre,
+.file-preview-markdown code {
+  font-family: var(--term-font, monospace);
+}
+
+.file-preview-markdown pre {
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--term-border-faint);
+  background: var(--term-bg-inset);
+}
+
+.file-preview-markdown a {
+  color: var(--term-cyan);
+  text-decoration: underline;
+}
+
+.file-preview-markdown table {
+  border-collapse: collapse;
+}
+
+.file-preview-markdown th,
+.file-preview-markdown td {
+  padding: 4px 8px;
+  border: 1px solid var(--term-border);
+}
+
+.file-preview-blocked-image {
+  display: inline-block;
+  padding: 4px 7px;
+  border: 1px dashed var(--term-border);
+  color: var(--term-fg-faint);
+  font-family: var(--term-font, monospace);
+  font-size: 11px;
+}
+
+.file-preview-image-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--term-bg);
+}
+
+.file-preview-image {
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: calc(100% - 28px);
+  object-fit: contain;
+}
+
+.file-preview-meta {
+  color: var(--term-fg-faint);
+  font-size: 11px;
+}
+
+.file-preview-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  color: var(--term-fg-dim);
+}
+
+.file-preview-state--error {
+  color: var(--term-red);
+}
+
+.file-drop-overlay {
+  position: absolute;
+  inset: 12px;
+  z-index: 169;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 2px dashed var(--term-green);
+  background: color-mix(in srgb, var(--term-bg) 88%, transparent);
+  color: var(--term-fg-bright);
+  pointer-events: none;
+}
+
+.file-drop-overlay small {
+  max-width: 520px;
+  color: var(--term-fg-dim);
+  text-align: center;
+}
+
+.file-drop-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  z-index: 171;
+  max-width: min(520px, calc(100% - 32px));
+  padding: 8px 12px;
+  transform: translateX(-50%);
+  border: 1px solid var(--term-amber);
+  background: var(--term-bg-raised);
+  color: var(--term-amber);
+}
+
+.agent-hub-head {
+  min-height: 48px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--term-border);
+}
+
+.agent-hub-title {
+  margin: 0;
+  color: var(--term-fg-bright);
+  font-size: 14px;
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.agent-hub-summary,
+.agent-age {
+  color: var(--term-fg-faint);
+  font-size: 11px;
+}
+
+.agent-hub-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px 16px;
+}
+
+.agent-group + .agent-group {
+  margin-top: 16px;
+}
+
+.agent-list {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-row {
+  padding: 9px;
+  border: 1px solid var(--term-border-faint);
+  background: var(--term-bg-inset);
+}
+
+.agent-row[data-status='blocked'],
+.agent-row[data-status='error'] {
+  border-color: color-mix(in srgb, var(--term-red) 55%, var(--term-border));
+}
+
+.agent-row[data-status='waiting'] {
+  border-color: color-mix(in srgb, var(--term-amber) 55%, var(--term-border));
+}
+
+.agent-row-main,
+.agent-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.agent-row-actions {
+  margin-top: 7px;
+  justify-content: space-between;
+}
+
+.agent-status-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: var(--term-fg-faint);
+}
+
+.agent-status-dot--starting { background: var(--term-fg-faint); }
+.agent-status-dot--working { background: var(--term-blue); }
+.agent-status-dot--waiting { background: var(--term-amber); }
+.agent-status-dot--blocked,
+.agent-status-dot--error { background: var(--term-red); }
+.agent-status-dot--done { background: var(--term-green); }
+
+.agent-provider {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid var(--term-border);
+  color: var(--term-cyan);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.agent-cwd {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--term-fg);
+}
+
+.agent-status {
+  font-size: 11px;
+  color: var(--term-fg-dim);
+}
+
+.agent-status--blocked,
+.agent-status--error { color: var(--term-red); }
+.agent-status--waiting { color: var(--term-amber); }
+.agent-status--working { color: var(--term-blue); }
+.agent-status--done { color: var(--term-green); }
+
+.agent-followup {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.agent-followup-input {
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid var(--term-border);
+  background: var(--term-bg);
+  color: var(--term-fg-bright);
+  font: inherit;
+}
+
+.agent-followup-input:focus {
+  outline: 1px solid var(--term-green);
+  border-color: var(--term-green);
+}
+
+.agent-followup-error {
+  grid-column: 1 / -1;
+  color: var(--term-red);
+  font-size: 11px;
+}
+
+.agent-empty,
+.agent-offline {
+  margin: 12px;
+  padding: 12px;
+  border: 1px solid var(--term-border-faint);
+  color: var(--term-fg-faint);
+  line-height: 1.5;
+}
+
+.agent-offline {
+  color: var(--term-amber);
+  border-color: var(--term-amber);
+}
+
+.agent-live-region {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.agent-header-button {
+  position: relative;
+}
+
+.agent-aware-tab {
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.agent-aware-tab > .agent-status-dot {
+  margin-left: 8px;
+}
+
+.agent-aware-tab > .dv-default-tab {
+  min-width: 0;
+  flex: 1;
+}
+
+.workspace-tab-rename {
+  box-sizing: border-box;
+  width: min(14rem, calc(100% - 12px));
+  min-width: 4rem;
+  height: 24px;
+  margin: 0 6px;
+  padding: 2px 6px;
+  color: var(--term-fg-bright);
+  background: var(--term-bg);
+  border: 1px solid var(--term-blue);
+  border-radius: 3px;
+  font: inherit;
+  outline: 1px solid color-mix(in srgb, var(--term-blue) 40%, transparent);
+}
+
+.agent-unread-badge {
+  min-width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--term-red);
+  color: var(--term-bg);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.agent-integration-list,
+.settings-agent-profile {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-integration-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--term-border-faint);
+}
+
+.agent-integration-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  color: var(--term-fg-dim);
+  font-size: 11px;
+}
+
+.agent-integration-copy strong {
+  color: var(--term-fg-bright);
+  font-size: 12px;
+}
+
+.settings-agent-warning,
+.settings-agent-message {
+  color: var(--term-amber);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.settings-agent-subtitle {
+  margin: 12px 0 6px;
+  color: var(--term-fg);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.settings-agent-generic-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-agent-profile {
+  margin-bottom: 8px;
+  padding: 8px;
+  border: 1px solid var(--term-border-faint);
+  background: var(--term-bg-inset);
+}
+
+.settings-agent-profile input[type='text'],
+.settings-agent-profile > input {
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid var(--term-border);
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-status-dot,
+  .agent-row {
+    transition: none;
+  }
+}
+
 .block-status--running::before {
   animation: status-pulse 1.1s ease-in-out infinite;
 }
@@ -1775,6 +2277,16 @@ body {
 
 .block-body {
   padding: 0 0.6rem;
+}
+
+.pty-restore-warning {
+  margin: 0.25rem 0;
+  padding: 0.35rem 0.55rem;
+  border-left: 2px solid var(--term-amber);
+  background: color-mix(in srgb, var(--term-amber) 10%, transparent);
+  color: var(--term-amber);
+  font-size: 0.75rem;
+  line-height: 1.35;
 }
 
 .block-pending {
@@ -1826,10 +2338,13 @@ body {
 }
 .pane--tui-takeover .block--takeover .block-body {
   flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
 }
 .pane--tui-takeover .block--takeover .pty-block {
-  height: 100%;
+  flex: 1 1 auto;
+  height: auto;
   margin: 0;
   /* Touch: a drag over the takeover TUI is terminal scrolling (PtyBlock.tsx's
      touch→wheel bridge), never browser/list panning — suppress native touch
@@ -1851,7 +2366,9 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  z-index: 2;
+  /* xterm's WebGL link/decor/overview canvases use layers through z-index 8.
+     This title-bar overlay must remain the hit target over all of them. */
+  z-index: 10;
   opacity: 0;
   border-bottom: 1px solid var(--term-border);
   transition: opacity 120ms ease;
@@ -1886,6 +2403,114 @@ body {
   overflow: auto;
 }
 
+/* Block-local xterm search. It overlays terminal content so opening Find never
+ * resizes a live TUI or changes the PTY grid. */
+.terminal-find-bar {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.6rem;
+  /* Explicit terminal controls sit above both xterm's layers and the takeover
+     title-bar overlay. */
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 1.2rem);
+  padding: 4px;
+  background: var(--term-bg-raised);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.terminal-find-input {
+  min-width: 90px;
+  width: clamp(110px, 22vw, 240px);
+  height: 28px;
+  padding: 0 8px;
+  color: var(--term-fg-bright);
+  background: var(--term-bg);
+  border: 1px solid var(--term-border-faint);
+  border-radius: 3px;
+  font: 0.78rem var(--term-font);
+}
+
+.terminal-find-input:focus {
+  outline: none;
+  border-color: var(--term-green);
+}
+
+.terminal-find-count {
+  min-width: 58px;
+  color: var(--term-fg-dim);
+  font-size: 0.7rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.terminal-find-action {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--term-fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: 0.75rem var(--term-font);
+  cursor: pointer;
+}
+
+.terminal-find-action:hover:not(:disabled),
+.terminal-find-action:focus-visible,
+.terminal-find-action--active {
+  color: var(--term-fg-bright);
+  border-color: var(--term-green);
+}
+
+.terminal-find-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+@media (pointer: coarse) {
+  .terminal-find-bar {
+    top: max(0.45rem, env(safe-area-inset-top));
+  }
+
+  .terminal-find-input,
+  .terminal-find-action {
+    min-height: 44px;
+  }
+
+  .terminal-find-action {
+    width: 44px;
+  }
+}
+
+@media (max-width: 520px) {
+  .terminal-find-bar {
+    left: 0.6rem;
+    width: auto;
+  }
+
+  .terminal-find-input {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 70px;
+  }
+
+  .terminal-find-count {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-find-bar,
+  .terminal-find-action {
+    transition: none;
+  }
+}
+
 /* Take-control chip (control handoff, M8b): shown on a non-controlling but
  * RUNNING pty view — claiming moves PTY resize authority to this device
  * instead of leaving it pinned to whoever spawned the run. A subtle dark
@@ -1895,7 +2520,7 @@ body {
   position: absolute;
   top: 0.5rem;
   right: 0.5rem;
-  z-index: 3;
+  z-index: 11;
   min-height: 32px;
   padding: 0.3rem 0.7rem;
   font-family: var(--term-font);
@@ -1933,6 +2558,10 @@ body {
   gap: 0.15rem;
 }
 .terminal-context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
   text-align: left;
   padding: 0.25rem 0.5rem;
   font-size: 0.78rem;
@@ -1943,6 +2572,11 @@ body {
   color: var(--term-fg);
   cursor: pointer;
 }
+.terminal-context-menu-item kbd {
+  color: var(--term-fg-dim);
+  font: inherit;
+  font-size: 0.68rem;
+}
 .terminal-context-menu-item:hover:not(:disabled) {
   border-color: var(--term-green);
   color: var(--term-fg-bright);
@@ -1950,6 +2584,73 @@ body {
 .terminal-context-menu-item:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Compact PTY control ownership status. It stays at the terminal edge instead
+   of becoming a central modal and every state also has visible text. */
+.pty-control-chip {
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 12px);
+  min-height: 24px;
+  padding: 3px 5px 3px 7px;
+  color: var(--term-fg);
+  background: color-mix(in srgb, var(--term-bg-raised) 92%, transparent);
+  border: 1px solid var(--term-amber);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 35%);
+  font-size: 0.68rem;
+}
+
+.pty-block > .pty-control-chip {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+
+/* In takeover mode the transparent, hit-testable block header occupies the
+   top edge at z-index 10. Keep ownership actions at the opposite edge so the
+   hidden Cancel button cannot intercept Take control. */
+.pane--tui-takeover .block--takeover .pty-block > .pty-control-chip {
+  top: auto;
+  bottom: 6px;
+}
+
+.pty-plain-block > .pty-control-chip {
+  margin: 4px 0;
+}
+
+.pty-control-chip__label,
+.pty-control-chip__status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pty-control-chip__action {
+  min-height: 24px;
+  padding: 2px 7px;
+  color: var(--term-fg-bright);
+  background: var(--term-bg-inset);
+  border: 1px solid var(--term-border);
+  border-radius: 999px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pty-control-chip__action:hover,
+.pty-control-chip__action:focus-visible {
+  border-color: var(--term-green);
+  outline: none;
+}
+
+@media (pointer: coarse) {
+  .pty-control-chip,
+  .pty-control-chip__action {
+    min-height: 44px;
+  }
 }
 
 /* ── PTY plain view (Phase 3 adaptive-render default) ──────────────────────── */
@@ -2166,4 +2867,224 @@ body {
 .btn-cancel:hover:not(:disabled) {
   border-color: var(--term-red);
   background: rgba(240, 85, 106, 0.1);
+}
+
+.risky-close-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.68);
+}
+
+.risky-close-dialog {
+  width: min(440px, 100%);
+  padding: 20px;
+  border: 1px solid var(--term-border);
+  border-radius: 8px;
+  background: var(--term-bg-raised);
+  color: var(--term-fg);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+}
+
+.risky-close-dialog h2 {
+  margin: 0 0 10px;
+  color: var(--term-fg-bright);
+  font-size: 1rem;
+}
+
+.risky-close-dialog p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Ctrl+Tab MRU pane switcher. It never accepts pointer input or DOM focus:
+   capture-phase keyboard handling keeps the terminal focused until Ctrl is
+   released, while the live region exposes the preview to screen readers. */
+.recent-panel-switcher-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 175;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: min(10vh, 76px) 16px 16px;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.34);
+}
+
+.recent-panel-switcher {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 96px);
+  overflow: hidden;
+  color: var(--term-fg);
+  background: var(--term-bg-raised);
+  border: 1px solid var(--term-border);
+  border-radius: 5px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.58);
+  font-family: var(--term-font);
+}
+
+.recent-panel-switcher-head,
+.recent-panel-switcher-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  color: var(--term-fg-dim);
+  border-color: var(--term-border-faint);
+  font-size: 0.68rem;
+}
+
+.recent-panel-switcher-head {
+  color: var(--term-fg-bright);
+  border-bottom: 1px solid var(--term-border-faint);
+  font-weight: 600;
+}
+
+.recent-panel-switcher-head kbd {
+  padding: 1px 5px;
+  color: var(--term-cyan);
+  background: var(--term-bg-inset);
+  border: 1px solid var(--term-border);
+  border-radius: 3px;
+  font: inherit;
+  font-weight: 400;
+}
+
+.recent-panel-switcher-list {
+  max-height: min(536px, calc(100vh - 164px));
+  overflow: hidden;
+  padding: 5px;
+  outline: none;
+}
+
+.recent-panel-switcher-row {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+}
+
+.recent-panel-switcher-row--selected {
+  background: var(--term-bg-hover);
+  border-color: var(--term-blue);
+  box-shadow: inset 3px 0 0 var(--term-blue);
+}
+
+.recent-panel-switcher-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 3px;
+}
+
+.recent-panel-switcher-title,
+.recent-panel-switcher-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-panel-switcher-title {
+  color: var(--term-fg-bright);
+  font-size: 0.8rem;
+}
+
+.recent-panel-switcher-detail {
+  color: var(--term-fg-dim);
+  font-size: 0.68rem;
+}
+
+.recent-panel-switcher-statuses {
+  max-width: 46%;
+  flex: 0 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.recent-panel-switcher-status {
+  padding: 1px 4px;
+  overflow: hidden;
+  color: var(--term-cyan);
+  border: 1px solid var(--term-border);
+  border-radius: 3px;
+  font-size: 0.61rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-panel-switcher-foot {
+  justify-content: flex-start;
+  border-top: 1px solid var(--term-border-faint);
+}
+
+.recent-panel-switcher-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 600px) {
+  .recent-panel-switcher-overlay {
+    padding-inline: 10px;
+  }
+
+  .recent-panel-switcher {
+    width: calc(100vw - 20px);
+  }
+
+  .recent-panel-switcher-statuses {
+    max-width: 40%;
+  }
+}
+
+@media (forced-colors: active) {
+  .recent-panel-switcher,
+  .recent-panel-switcher-row--selected,
+  .recent-panel-switcher-status {
+    border-color: CanvasText;
+  }
+
+  .recent-panel-switcher-row--selected {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+.risky-close-details {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  color: var(--term-fg-dim);
+}
+
+.risky-close-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.risky-close-confirm {
+  color: var(--term-red);
+  border-color: rgba(240, 85, 106, 0.45);
+}
+
+.risky-close-confirm:hover:not(:disabled) {
+  border-color: var(--term-red);
+  background: rgba(240, 85, 106, 0.12);
 }

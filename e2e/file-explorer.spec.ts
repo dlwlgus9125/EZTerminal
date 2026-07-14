@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { quoteEzArgument } from '../src/shared/quote-ez-argument';
 import { launchApp } from './launch-app';
 
 // file-explorer plan, M1: the desktop left-edge drawer + read-only text viewer.
@@ -77,7 +78,7 @@ test('clicking a text file opens the read-only viewer with its content', async (
   await app.close();
 });
 
-test('clicking a binary file shows a notice instead of opening the viewer', async () => {
+test('clicking a binary file opens an explicit unsupported preview state', async () => {
   const app = await launchApp();
   const window = await app.firstWindow();
   await window.getByTestId('btn-toggle-files').click();
@@ -88,8 +89,9 @@ test('clicking a binary file shows a notice instead of opening the viewer', asyn
   await pathInput.press('Enter');
 
   await window.getByTestId('file-entry').filter({ hasText: 'binary.bin' }).click();
-  await expect(window.getByTestId('file-binary-notice')).toBeVisible();
-  await expect(window.getByTestId('file-viewer-overlay')).toHaveCount(0);
+  const viewer = window.getByTestId('file-viewer-overlay');
+  await expect(viewer).toBeVisible();
+  await expect(viewer).toContainText('This binary file cannot be previewed safely.');
 
   await app.close();
 });
@@ -260,7 +262,7 @@ test('ctx-open-terminal opens a new terminal pane whose session starts at that d
   await app.close();
 });
 
-test('ctx-paste-path inserts the entry\'s full path into the active terminal input', async () => {
+test('ctx-paste-path inserts a parser-safe quoted path into the active terminal input', async () => {
   const app = await launchApp();
   const window = await app.firstWindow();
   await openDrawerAtFixture(window);
@@ -269,7 +271,7 @@ test('ctx-paste-path inserts the entry\'s full path into the active terminal inp
   await window.getByTestId('ctx-paste-path').click();
 
   const expectedPath = path.join(fixtureDir, 'plain.txt');
-  await expect(window.getByTestId('cmd-input')).toHaveValue(expectedPath);
+  await expect(window.getByTestId('cmd-input')).toHaveValue(quoteEzArgument(expectedPath));
 
   await app.close();
 });

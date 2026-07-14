@@ -81,6 +81,8 @@ afterEach(() => {
   root = null;
   container?.remove();
   container = null;
+  delete (window as unknown as { ezterminal?: WsEzTerminalTransport }).ezterminal;
+  Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true });
 });
 
 // MobileWorkspace mounts with zero tabs (initialTabsState), so every test
@@ -205,5 +207,74 @@ describe('MobileWorkspace — dead status subscription self-heals on availabilit
     });
 
     expect(socket.sentKinds().filter((k) => k === 'openclaw-status-subscribe')).toHaveLength(2);
+  });
+});
+
+describe('MobileWorkspace - worktree open', () => {
+  it('creates and selects a normal terminal tab rooted at the validated path', async () => {
+    const { transport, socket } = makeAuthedTransport();
+    Object.defineProperty(window, 'ezterminal', { value: transport, configurable: true });
+    const el = renderWorkspace(transport);
+    const worktree = {
+      worktreeId: 'wt-1',
+      repoId: 'repo-1',
+      path: '/safe/feature',
+      branch: 'feature',
+      head: 'abc123',
+      main: false,
+      locked: false,
+      managed: true,
+      prunable: false,
+    } as const;
+
+    let openPromise!: ReturnType<WsEzTerminalTransport['executeWorktree']>;
+    act(() => {
+      openPromise = transport.executeWorktree({ action: 'open', cwd: '/repo', worktreeId: 'wt-1' });
+    });
+    const openRequest = socket.sent
+      .map((value) => JSON.parse(value) as { kind: string; requestId?: string })
+      .findLast((message) => message.kind === 'worktree-request');
+    if (!openRequest?.requestId) throw new Error('worktree request not sent');
+
+    await act(async () => {
+      socket.triggerMessage({
+        kind: 'worktree-reply',
+        requestId: openRequest.requestId,
+        result: { ok: true, action: 'open', worktrees: [worktree], opened: worktree },
+      });
+      await openPromise;
+    });
+    const createRequest = socket.sent
+      .map((value) => JSON.parse(value) as { kind: string; requestId?: string; cwd?: string })
+      .findLast((message) => message.kind === 'create-session');
+    expect(createRequest).toMatchObject({ kind: 'create-session', cwd: '/safe/feature' });
+    if (!createRequest?.requestId) throw new Error('session create request not sent');
+
+    await act(async () => {
+      socket.triggerMessage({
+        kind: 'session-created',
+        requestId: createRequest.requestId,
+        session: { sessionId: 'session-wt', cwd: '/safe/feature' },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(el.querySelector('[data-testid="mobile-session-view"]')).toBeTruthy();
+    expect(el.querySelectorAll('[data-testid="tab-pill"]')).toHaveLength(1);
+    expect(el.querySelector('[data-testid="workspace-more-btn"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="stats-btn"]')).toBeNull();
+    expect(el.querySelector('[data-testid="theme-btn"]')).toBeNull();
+    expect(el.querySelector('[data-testid="settings-btn"]')).toBeNull();
+    expect(el.querySelector('[data-testid="menu-btn"]')?.classList.contains('workspace-wide-action')).toBe(true);
+    expect(el.querySelector('[data-testid="files-btn"]')?.classList.contains('workspace-wide-action')).toBe(true);
+
+    Object.defineProperty(window, 'innerWidth', { value: 360, configurable: true });
+    act(() => window.dispatchEvent(new Event('resize')));
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="workspace-more-btn"]')!.click());
+    expect(el.querySelector('[data-testid="more-sessions"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="more-files"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="more-stats"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="more-theme"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="more-settings"]')).toBeTruthy();
   });
 });

@@ -60,4 +60,14 @@ describe('SessionDirectory', () => {
 
     expect(removed).toEqual(['s1']);
   });
+
+  it('updates an existing cwd without resurrecting a removed session', () => {
+    const dir = new SessionDirectory();
+    dir.add({ sessionId: 's-cwd', cwd: '/initial' });
+    dir.updateCwd('s-cwd', '/after-cd');
+    expect(dir.list()).toEqual([{ sessionId: 's-cwd', cwd: '/after-cd' }]);
+    dir.remove('s-cwd');
+    dir.updateCwd('s-cwd', '/late-settle');
+    expect(dir.list()).toEqual([]);
+  });
 });

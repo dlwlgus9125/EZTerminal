@@ -173,16 +173,14 @@ test('crt-rollbar never adds a document scrollbar — the overlay stays inside t
     document.head.appendChild(s);
   });
 
-  // The document must not become vertically scrollable: the overlay is confined
-  // to the viewport, so it contributes no scrollable area and scrollTop stays 0.
-  const moved = await window.evaluate(() => {
+  // The document must not become vertically scrollable: compare the semantic
+  // extents directly. At fractional Windows DPR, Chromium may clamp scrollTop
+  // to one physical pixel (for example 0.8 CSS px) even when these are equal.
+  const extent = await window.evaluate(() => {
     const el = document.scrollingElement as HTMLElement;
-    el.scrollTop = 99999;
-    const top = el.scrollTop;
-    el.scrollTop = 0;
-    return top;
+    return { scrollHeight: el.scrollHeight, clientHeight: el.clientHeight };
   });
-  expect(moved).toBe(0);
+  expect(extent.scrollHeight).toBeLessThanOrEqual(extent.clientHeight);
 
   await app.close();
 });

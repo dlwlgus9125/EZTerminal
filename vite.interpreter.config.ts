@@ -17,6 +17,16 @@ import { defineConfig } from 'vite';
 // packageAfterPrune recursive copier keeps `require('ssh2')` intact.
 // https://vitejs.dev/config
 export default defineConfig({
+  // @xterm/headless 6.0.0 publishes its Node build under lib-headless, but its
+  // package.json `module` field points at the nonexistent lib/xterm.mjs.
+  // Node's CJS resolver falls back to `main`; Vite does not. Pin the package's
+  // real ESM artifact so the semantic-restore model is bundled into the
+  // interpreter utilityProcess instead of becoming a runtime external.
+  resolve: {
+    alias: {
+      '@xterm/headless': '@xterm/headless/lib-headless/xterm-headless.mjs',
+    },
+  },
   build: {
     rollupOptions: {
       external: ['node-pty', 'ssh2'],

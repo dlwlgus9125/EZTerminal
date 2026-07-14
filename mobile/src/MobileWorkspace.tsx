@@ -2,17 +2,25 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 
 import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
+import { EMPTY_AGENT_ACTIVITY_SNAPSHOT, type AgentActivitySnapshot } from '../../src/shared/agent';
+import { AgentHub, countAgentAttention } from '../../src/renderer/AgentHub';
+import { quoteEzArgument } from '../../src/shared/quote-ez-argument';
 import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
 import { setUserFontId } from '../../src/renderer/theme-runtime';
 import { MobileFileView } from './MobileFileView';
+import { MobileHeaderMoreActions } from './MobileHeaderMoreActions';
 import { MobileOpenClawView } from './MobileOpenClawView';
 import { MobileSessionView } from './MobileSessionView';
 import { MobileSettingsView } from './MobileSettingsView';
 import { MobileStatsView } from './MobileStatsView';
 import { loadOpenClawMode, saveOpenClawMode } from './openclaw-mode';
-import { SessionSwitcher, openclawEntryDotClass } from './SessionSwitcher';
+import { SessionSwitcher } from './SessionSwitcher';
 import { TabStrip } from './TabStrip';
 import { ThemeMenu } from './ThemeMenu';
+import {
+  ACTIVE_MOBILE_TAB_CHANGE_EVENT,
+  OPEN_TERMINAL_KEY_SETTINGS_EVENT,
+} from './terminal-accessory-layout';
 import { applyTheme, loadCustomThemes, loadFont, loadTheme, saveTheme } from './theme';
 import { initialTabsState, tabsReducer } from './tabs';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
@@ -57,16 +65,53 @@ setUserFontId(loadFont());
 // a convenience surface used only once tabs already exist.
 export function MobileWorkspace({
   transport,
+  connectionUrl = '',
   onDisconnect,
 }: {
   transport: WsEzTerminalTransport;
+  connectionUrl?: string;
   onDisconnect: () => void;
 }): JSX.Element {
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
-  const [view, setView] = useState<'terminal' | 'stats' | 'files' | 'settings' | 'openclaw'>('terminal');
+  const [view, setView] = useState<'terminal' | 'agents' | 'stats' | 'files' | 'settings' | 'openclaw'>('terminal');
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const [moreActionsOpen, setMoreActionsOpen] = useState(false);
+  const [wideHeader, setWideHeader] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 600);
   const [currentTheme, setCurrentTheme] = useState<ThemeName>(() => loadTheme());
+  const [agentSnapshot, setAgentSnapshot] = useState<AgentActivitySnapshot>(EMPTY_AGENT_ACTIVITY_SNAPSHOT);
+  const [connected, setConnected] = useState(false);
+  const moreButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    const update = (): void => setWideHeader(window.innerWidth >= 600);
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  useEffect(() => {
+    const openTerminalKeySettings = (): void => {
+      setMoreActionsOpen(false);
+      setView('settings');
+    };
+    window.addEventListener(OPEN_TERMINAL_KEY_SETTINGS_EVENT, openTerminalKeySettings);
+    return () => window.removeEventListener(OPEN_TERMINAL_KEY_SETTINGS_EVENT, openTerminalKeySettings);
+  }, []);
+
+  useEffect(() => transport.onAuthChange(setConnected), [transport]);
+
+  useEffect(() => {
+    let alive = true;
+    const apply = (snapshot: AgentActivitySnapshot): void => {
+      if (alive) setAgentSnapshot((current) => snapshot.revision >= current.revision ? snapshot : current);
+    };
+    const unsubscribe = transport.onAgentActivitySnapshot(apply);
+    void transport.getAgentActivitySnapshot().then(apply).catch(() => undefined);
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
+  }, [transport]);
 
   // ── OpenClaw tri-state visibility + status dot (openclaw-stabilization
   // M3/M4) ───────────────────────────────────────────────────────────────
@@ -142,6 +187,15 @@ export function MobileWorkspace({
     setView('terminal');
   }, []);
 
+  useEffect(() => {
+    return transport.onWorktreeOpenRequested((worktree) => {
+      void transport
+        .createSession(worktree.path)
+        .then((info) => openTab(info.sessionId, info.cwd))
+        .catch((err: unknown) => console.error('[mobile] worktree tab creation failed:', err));
+    });
+  }, [openTab, transport]);
+
   const activateTab = useCallback((sessionId: string) => {
     dispatch({ type: 'activate', sessionId });
   }, []);
@@ -174,7 +228,7 @@ export function MobileWorkspace({
   // MobileSessionView registers (keyed by sessionId).
   const onPastePath = useCallback((path: string) => {
     if (!tabsState.activeSessionId) return;
-    insertIntoPaneInput(tabsState.activeSessionId, path);
+    insertIntoPaneInput(tabsState.activeSessionId, quoteEzArgument(path));
   }, [tabsState.activeSessionId]);
 
   // Fires on every active-tab change, however it happened (open, explicit
@@ -184,13 +238,35 @@ export function MobileWorkspace({
   // reflect the tab that is ACTUALLY active now, not just the action taken.
   useEffect(() => {
     if (!tabsState.activeSessionId) return;
+    window.dispatchEvent(new Event(ACTIVE_MOBILE_TAB_CHANGE_EVENT));
     console.log('[ez-e2e] tab-active:', tabsState.activeSessionId);
     const id = requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
     return () => cancelAnimationFrame(id);
   }, [tabsState.activeSessionId]);
 
+  useEffect(() => {
+    transport.setReattachPriority(tabsState.activeSessionId);
+    return () => transport.setReattachPriority(null);
+  }, [tabsState.activeSessionId, transport]);
+
   if (view === 'stats') {
     return <MobileStatsView onClose={() => setView('terminal')} />;
+  }
+
+  if (view === 'agents') {
+    return (
+      <AgentHub
+        mobile
+        snapshot={agentSnapshot}
+        disconnected={!connected}
+        onClose={() => setView('terminal')}
+        onSendFollowup={(activityId, text) => transport.sendAgentFollowup(activityId, text)}
+        onFocusSession={(sessionId) => {
+          const activity = agentSnapshot.items.find((item) => item.sessionId === sessionId);
+          openTab(sessionId, activity?.cwd ?? '');
+        }}
+      />
+    );
   }
 
   if (view === 'openclaw') {
@@ -206,6 +282,7 @@ export function MobileWorkspace({
   if (view === 'settings') {
     return (
       <MobileSettingsView
+        connectionUrl={connectionUrl}
         onClose={() => setView('terminal')}
         onDisconnect={onDisconnect}
         openclawMode={openclawMode}
@@ -257,6 +334,7 @@ export function MobileWorkspace({
           type="button"
           className="btn workspace-new-tab-btn"
           onClick={quickNewTab}
+          disabled={!connected}
           aria-label="New tab"
           data-testid="tab-add-btn"
         >
@@ -264,8 +342,9 @@ export function MobileWorkspace({
         </button>
         <button
           type="button"
-          className="btn workspace-menu-btn"
+          className="btn workspace-menu-btn workspace-wide-action"
           onClick={() => setSwitcherOpen(true)}
+          disabled={!connected}
           aria-label="Sessions"
           data-testid="menu-btn"
         >
@@ -273,8 +352,9 @@ export function MobileWorkspace({
         </button>
         <button
           type="button"
-          className="btn files-btn"
+          className="btn files-btn workspace-wide-action"
           onClick={() => setView('files')}
+          disabled={!connected}
           aria-label="Files"
           data-testid="files-btn"
         >
@@ -282,42 +362,35 @@ export function MobileWorkspace({
         </button>
         <button
           type="button"
-          className="btn stats-btn"
-          onClick={() => setView('stats')}
-          aria-label="Stats"
-          data-testid="stats-btn"
+          className="btn agents-btn"
+          onClick={() => setView('agents')}
+          aria-label="Agents"
+          data-testid="agents-btn"
         >
-          📊
+          Agents
+          {countAgentAttention(agentSnapshot) > 0 && (
+            <span className="agent-unread-badge">{countAgentAttention(agentSnapshot)}</span>
+          )}
         </button>
         <button
+          ref={moreButtonRef}
           type="button"
-          className="btn theme-btn"
-          onClick={() => setThemeMenuOpen(true)}
-          aria-label="Theme"
-          data-testid="theme-btn"
+          className="btn workspace-more-btn"
+          onClick={() => setMoreActionsOpen(true)}
+          aria-label={
+            effectiveOpenClawVisible && (!openclawState || openclawState.state === 'starting' || openclawState.state === 'unknown')
+              ? 'More actions, OpenClaw status pending'
+              : 'More actions'
+          }
+          aria-haspopup="dialog"
+          aria-expanded={moreActionsOpen}
+          aria-controls={moreActionsOpen ? 'workspace-more-actions' : undefined}
+          data-testid="workspace-more-btn"
         >
-          🎨
-        </button>
-        {effectiveOpenClawVisible && (
-          <button
-            type="button"
-            className="btn openclaw-btn"
-            onClick={() => setView('openclaw')}
-            aria-label="OpenClaw"
-            data-testid="btn-toggle-openclaw"
-          >
-            🤖
-            <span className={openclawEntryDotClass(openclawState?.state)} data-testid="openclaw-entry-dot" />
-          </button>
-        )}
-        <button
-          type="button"
-          className="btn settings-btn"
-          onClick={() => setView('settings')}
-          aria-label="Settings"
-          data-testid="settings-btn"
-        >
-          ⚙️
+          ⋯
+          {effectiveOpenClawVisible
+            && (!openclawState || openclawState.state === 'starting' || openclawState.state === 'unknown')
+            && <span className="workspace-more-status-dot" aria-hidden="true" />}
         </button>
       </header>
 
@@ -329,6 +402,9 @@ export function MobileWorkspace({
         >
           <MobileSessionView
             sessionId={tab.sessionId}
+            quickCommandSource={transport}
+            quickCommandsSupported={transport.supportsRemoteQuickCommands}
+            connected={connected}
             onSessionDead={() => handleSessionDead(tab.sessionId)}
             onCwdChange={handleCwdChange}
           />
@@ -343,6 +419,26 @@ export function MobileWorkspace({
           onDisconnect={onDisconnect}
           onCloseSheet={() => setSwitcherOpen(false)}
         />
+      )}
+
+      {moreActionsOpen && (
+        <div id="workspace-more-actions">
+          <MobileHeaderMoreActions
+            wide={wideHeader}
+            connected={connected}
+            themeName={currentTheme}
+            openclawVisible={effectiveOpenClawVisible}
+            openclawState={openclawState?.state}
+            triggerRef={moreButtonRef}
+            onClose={() => setMoreActionsOpen(false)}
+            onOpenSessions={() => setSwitcherOpen(true)}
+            onOpenFiles={() => setView('files')}
+            onOpenStats={() => setView('stats')}
+            onOpenTheme={() => setThemeMenuOpen(true)}
+            onOpenClaw={() => setView('openclaw')}
+            onOpenSettings={() => setView('settings')}
+          />
+        </div>
       )}
 
       <ThemeMenu

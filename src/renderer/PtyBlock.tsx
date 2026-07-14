@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 
 import type { BlockController } from './block-controller';
@@ -9,10 +8,30 @@ import { getActiveScrollback } from './scrollback';
 import { getUserFontId } from './theme-runtime';
 import { getActiveTheme } from './themes';
 import { getActiveUiScale } from './ui-scale';
-import { TerminalContextMenu, type TerminalContextMenuItem } from './TerminalContextMenu';
+import { PtyControlChip } from './PtyControlChip';
+import {
+  isTerminalContextMenuKey,
+  mayRestoreTerminalContextMenuFocus,
+  TerminalContextMenu,
+  type TerminalContextMenuCloseDetail,
+  type TerminalContextMenuItem,
+} from './TerminalContextMenu';
+import { TerminalFindBar } from './TerminalFindBar';
+import { findTerminalFileLinkAtOffset } from '../shared/terminal-file-location';
+import {
+  acceptOsc52ClipboardWrite,
+  Osc52WriteGate,
+  TerminalSideEffectSuppression,
+} from './osc52';
 import { QUERY_CARRY_CHARS, containsTerminalQuery } from './pty-query-gate';
 import { TouchScrollAccumulator } from './touch-scroll';
 import { attachXtermImeHygiene } from './xterm-ime-hygiene';
+import {
+  DEFAULT_TERMINAL_RUNTIME_OPTIONS,
+  XtermRuntime,
+  type TerminalRuntimeOptions,
+  type TerminalSearchResults,
+} from './xterm-runtime';
 
 // PtyBlock — the render surface for a `pty`-shape block. Execution is ALWAYS a
 // live PTY (any single, non-piped external command, or `!cmd`); render is
@@ -23,12 +42,20 @@ import { attachXtermImeHygiene } from './xterm-ime-hygiene';
 // see pty-session.ts's TuiSignalDetector). This top-level component just reads
 // the mode and dispatches — each mode's mount/teardown lives in its own
 // sub-component so switching modes is an ordinary React remount.
-export function PtyBlock({ controller }: { controller: BlockController }): JSX.Element {
+export interface PtyBlockProps {
+  readonly controller: BlockController;
+  readonly runtimeOptions?: TerminalRuntimeOptions;
+}
+
+export function PtyBlock({
+  controller,
+  runtimeOptions = DEFAULT_TERMINAL_RUNTIME_OPTIONS,
+}: PtyBlockProps): JSX.Element {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   if (snapshot.ptyRenderMode === 'xterm') {
-    return <PtyXtermView controller={controller} />;
+    return <PtyXtermView controller={controller} runtimeOptions={runtimeOptions} />;
   }
-  return <PtyPlainView controller={controller} />;
+  return <PtyPlainView controller={controller} runtimeOptions={runtimeOptions} />;
 }
 
 // ── xterm view (control handoff, M8b: control is now DYNAMIC) ───────────────
@@ -47,10 +74,91 @@ function computeBaseFontSize(): number {
   return Math.round((activeTheme.fontSize * getActiveUiScale()) / 100);
 }
 
-function PtyXtermView({ controller }: { controller: BlockController }): JSX.Element {
+const EMPTY_SEARCH_RESULTS: TerminalSearchResults = Object.freeze({ resultIndex: -1, resultCount: 0 });
+
+interface TerminalMenuInvocation {
+  readonly x: number;
+  readonly y: number;
+  readonly invoker: HTMLElement | null;
+  readonly originPane: Element | null;
+}
+
+function captureTerminalMenuInvocation(
+  host: HTMLElement,
+  x: number,
+  y: number,
+): TerminalMenuInvocation {
+  const originPane = host.closest('.pane');
+  const active = document.activeElement;
+  return {
+    x,
+    y,
+    invoker: active instanceof HTMLElement && originPane?.contains(active) ? active : null,
+    originPane,
+  };
+}
+
+function keyboardTerminalMenuInvocation(host: HTMLElement): TerminalMenuInvocation {
+  const rect = host.getBoundingClientRect();
+  return captureTerminalMenuInvocation(
+    host,
+    rect.left + Math.min(24, Math.max(8, rect.width / 2)),
+    rect.top + Math.min(24, Math.max(8, rect.height / 2)),
+  );
+}
+
+function closeTerminalMenu(
+  invocation: TerminalMenuInvocation,
+  detail: TerminalContextMenuCloseDetail,
+  clear: () => void,
+  fallbackFocus: () => void,
+): void {
+  const shouldRestore = mayRestoreTerminalContextMenuFocus(invocation.originPane, detail);
+  clear();
+  if (!shouldRestore) return;
+  requestAnimationFrame(() => {
+    if (!mayRestoreTerminalContextMenuFocus(invocation.originPane, detail)) return;
+    const active = document.activeElement;
+    if (
+      active !== null
+      && active !== document.body
+      && active !== invocation.invoker
+      && !active.closest('.terminal-context-menu')
+    ) {
+      return;
+    }
+    if (invocation.invoker?.isConnected) invocation.invoker.focus();
+    else fallbackFocus();
+  });
+}
+
+function PtyXtermView({
+  controller,
+  runtimeOptions,
+}: {
+  controller: BlockController;
+  runtimeOptions: TerminalRuntimeOptions;
+}): JSX.Element {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const runtimeRef = useRef<XtermRuntime | null>(null);
+  const openExternalHttpUrlRef = useRef(runtimeOptions.openExternalHttpUrl);
+  openExternalHttpUrlRef.current = runtimeOptions.openExternalHttpUrl;
+  const rendererPreferenceRef = useRef(runtimeOptions.rendererPreference);
+  rendererPreferenceRef.current = runtimeOptions.rendererPreference;
+  const allowOsc52ClipboardRef = useRef(Boolean(runtimeOptions.allowOsc52Clipboard));
+  allowOsc52ClipboardRef.current = Boolean(runtimeOptions.allowOsc52Clipboard);
+  const writeClipboardTextRef = useRef(runtimeOptions.writeClipboardText);
+  writeClipboardTextRef.current = runtimeOptions.writeClipboardText;
+  const openTerminalFileLocationRef = useRef(runtimeOptions.openTerminalFileLocation);
+  openTerminalFileLocationRef.current = runtimeOptions.openTerminalFileLocation;
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
+  const [findResults, setFindResults] = useState<TerminalSearchResults>(EMPTY_SEARCH_RESULTS);
+  const linkHandlingEnabled = Boolean(runtimeOptions.openExternalHttpUrl);
+  const terminalFileLinksEnabled = Boolean(runtimeOptions.openTerminalFileLocation);
 
   // Latest-value ref (M8b): the mount effect's callbacks (ResizeObserver,
   // ez:refit, the pty-data sink's auto-reply gate) are created once and must
@@ -63,7 +171,12 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
 
   // Right-click context menu (WT-parity M2) — position of the triggering
   // `contextmenu` event, or null when closed.
-  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [menuPos, setMenuPos] = useState<TerminalMenuInvocation | null>(null);
+  const openKeyboardMenuRef = useRef<() => void>(() => {});
+  openKeyboardMenuRef.current = () => {
+    const host = containerRef.current;
+    if (host) setMenuPos(keyboardTerminalMenuInvocation(host));
+  };
 
   // The mount effect (re)creates these per mount, closing over that mount's
   // `term`/`fit`/`el` — routed through refs so the hasControl/ptyDims effects
@@ -91,20 +204,49 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
 
     const initialTheme = getActiveTheme();
     const term = new Terminal({
+      allowProposedApi: true,
       fontFamily: resolveFontFamily(getUserFontId(), initialTheme),
       fontSize: computeBaseFontSize(),
       cursorBlink: true,
       scrollback: getActiveScrollback(),
       theme: initialTheme.xterm,
     });
+    const osc52Gate = new Osc52WriteGate();
+    const sideEffectSuppression = new TerminalSideEffectSuppression();
+    const osc52Disposable = term.parser.registerOscHandler(52, (payload) => {
+      if (!allowOsc52ClipboardRef.current || !writeClipboardTextRef.current) return true;
+      const text = acceptOsc52ClipboardWrite(payload, osc52Gate, sideEffectSuppression.active);
+      if (text === null) return true;
+      void Promise.resolve(writeClipboardTextRef.current(text)).catch(() => undefined);
+      return true;
+    });
     termRef.current = term;
 
     // FitAddon is ALWAYS loaded now (M8b) — a non-controlling view can later
     // claim control and needs it to report its own size at that point
     // (`fitAndReport` below); while not in control it is simply never called.
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.open(el);
+    const runtime = new XtermRuntime(
+      term,
+      el,
+      {
+        platform: runtimeOptions.platform,
+        rendererPreference: rendererPreferenceRef.current,
+        openExternalHttpUrl: linkHandlingEnabled
+          ? (url) => openExternalHttpUrlRef.current?.(url)
+          : undefined,
+        openTerminalFileLocation: terminalFileLinksEnabled
+          ? (request, event) => openTerminalFileLocationRef.current?.(request, event)
+          : undefined,
+        getTerminalFileContext: () => {
+          const current = controller.getSnapshot();
+          return { cwd: current.startCwd, executionKind: current.executionKind };
+        },
+      },
+      { onSearchResults: setFindResults },
+    );
+    runtime.open();
+    runtimeRef.current = runtime;
+    const fit = runtime.fitAddon;
     // e2e/diagnostic seam (same spirit as block-controller's window.__ezPtyFlow):
     // expose the live Terminal on its container so tests can read PUBLIC xterm
     // state (modes.mouseTrackingMode, buffer.active.type) without new IPC.
@@ -116,6 +258,23 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     // Ctrl+Shift+V pastes (term.paste applies bracketed-paste framing itself
     // when the child enabled it).
     term.attachCustomKeyEventHandler((e) => {
+      if (e.type === 'keydown' && isTerminalContextMenuKey(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        openKeyboardMenuRef.current();
+        return false;
+      }
+      if (
+        e.type === 'keydown' &&
+        e.code === 'KeyF' &&
+        (e.ctrlKey || e.metaKey) &&
+        !e.altKey &&
+        !e.shiftKey
+      ) {
+        e.preventDefault();
+        setFindOpen(true);
+        return false;
+      }
       if (e.type !== 'keydown' || !e.ctrlKey || !e.shiftKey) return true;
       if (e.code === 'KeyC') {
         if (term.hasSelection()) void navigator.clipboard.writeText(term.getSelection());
@@ -228,22 +387,44 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     let mirrorWritesInFlight = 0;
     let queryCarry = '';
     const latin1 = new TextDecoder('latin1');
-    const unsink = controller.setPtyDataSink((bytes, onFlushed) => {
+    const writeToXterm = (
+      bytes: Uint8Array,
+      onFlushed: () => void,
+      suppressSideEffects: boolean,
+      suppressMirrorAutoReplies: boolean,
+    ): void => {
+      const releaseSideEffectSuppression = suppressSideEffects
+        ? sideEffectSuppression.enter()
+        : null;
+      if (suppressMirrorAutoReplies) mirrorWritesInFlight++;
+      try {
+        term.write(bytes, () => {
+          if (suppressMirrorAutoReplies) mirrorWritesInFlight--;
+          releaseSideEffectSuppression?.();
+          onFlushed();
+        });
+      } catch (error) {
+        if (suppressMirrorAutoReplies) mirrorWritesInFlight--;
+        releaseSideEffectSuppression?.();
+        throw error;
+      }
+    };
+    const unsink = controller.setPtyDataSink((bytes, onFlushed, metadata) => {
       if (hasControlRef.current) {
-        term.write(bytes, onFlushed);
+        writeToXterm(bytes, onFlushed, metadata.suppressSideEffects, false);
         return;
       }
       const text = queryCarry + latin1.decode(bytes);
       queryCarry = text.slice(-QUERY_CARRY_CHARS);
       if (!containsTerminalQuery(text)) {
-        term.write(bytes, onFlushed);
+        writeToXterm(bytes, onFlushed, metadata.suppressSideEffects, false);
         return;
       }
-      mirrorWritesInFlight++;
-      term.write(bytes, () => {
-        mirrorWritesInFlight--;
-        onFlushed();
-      });
+      writeToXterm(bytes, onFlushed, metadata.suppressSideEffects, true);
+    });
+    const unregisterReplayReset = controller.setPtyReplayResetHandler(() => {
+      term.reset();
+      runtime.clearSearch();
     });
     // Keystrokes / pasted text → PTY child (attach ports support input too).
     const dataDisposable = term.onData((data) => {
@@ -345,6 +526,7 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
       const activeTheme = getActiveTheme();
       term.options.theme = { ...activeTheme.xterm };
       term.options.fontFamily = resolveFontFamily(getUserFontId(), activeTheme);
+      runtime.refreshSearchDecorations();
       if (hasControlRef.current) {
         term.options.fontSize = computeBaseFontSize();
         fitAndReport();
@@ -376,11 +558,25 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
       imeHygiene.dispose();
       dataDisposable.dispose();
       unsink();
+      unregisterReplayReset();
+      osc52Disposable.dispose();
+      runtimeRef.current = null;
+      runtime.dispose();
       delete (el as HTMLDivElement & { __ezTerm?: Terminal }).__ezTerm;
       term.dispose();
       termRef.current = null;
     };
-  }, [controller]);
+  }, [controller, linkHandlingEnabled, runtimeOptions.platform, terminalFileLinksEnabled]);
+
+  // Switching renderer policy never remounts xterm or loses its scrollback.
+  useEffect(() => {
+    runtimeRef.current?.setRendererPreference(runtimeOptions.rendererPreference);
+  }, [runtimeOptions.rendererPreference]);
+
+  useEffect(() => {
+    if (!findOpen) return;
+    runtimeRef.current?.find(findQuery, 'next', findCaseSensitive, true);
+  }, [findCaseSensitive, findOpen, findQuery]);
 
   // Control transition (control handoff, M8b): gaining control restores the
   // base font size and reports OUR size to the interpreter — a claim's whole
@@ -404,6 +600,22 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
     applyMirrorLayoutRef.current();
   }, [snapshot.ptyDims]);
 
+  const closeFind = (): void => {
+    runtimeRef.current?.clearSearch();
+    setFindQuery('');
+    setFindResults(EMPTY_SEARCH_RESULTS);
+    setFindOpen(false);
+    requestAnimationFrame(() => termRef.current?.focus());
+  };
+
+  const findNext = (): void => {
+    runtimeRef.current?.find(findQuery, 'next', findCaseSensitive);
+  };
+
+  const findPrevious = (): void => {
+    runtimeRef.current?.find(findQuery, 'previous', findCaseSensitive);
+  };
+
   const menuItems: TerminalContextMenuItem[] = [
     {
       action: 'copy',
@@ -426,6 +638,7 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
       },
     },
     { action: 'select-all', label: 'Select All', onClick: () => termRef.current?.selectAll() },
+    { action: 'find', label: 'Find', onClick: () => setFindOpen(true) },
   ];
 
   return (
@@ -433,35 +646,62 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
       ref={containerRef}
       className={snapshot.hasControl ? 'pty-block' : 'pty-block pty-block--mirror'}
       data-testid="pty-block"
-      onMouseDown={() => termRef.current?.focus()}
+      onMouseDown={(event) => {
+        if (!(event.target as Element).closest(
+          '.terminal-find-bar, .terminal-context-menu, .pty-control-chip',
+        )) {
+          termRef.current?.focus();
+        }
+      }}
+      onKeyDown={(event) => {
+        if (
+          event.defaultPrevented
+          || !isTerminalContextMenuKey(event.nativeEvent)
+          || (event.target as Element).closest('.terminal-context-menu')
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        openKeyboardMenuRef.current();
+      }}
       onContextMenu={(e) => {
         // Touch devices get the mobile long-press menu instead
         // (MobileSessionView.tsx, WT-parity M3) — a right-click context menu
         // is a fine-pointer affordance, so skip it here to avoid a double menu.
         if (window.matchMedia?.('(pointer: coarse)').matches) return;
         e.preventDefault();
-        setMenuPos({ x: e.clientX, y: e.clientY });
+        setMenuPos(captureTerminalMenuInvocation(e.currentTarget, e.clientX, e.clientY));
       }}
     >
-      {!snapshot.hasControl && snapshot.status === 'running' && (
-        <button
-          type="button"
-          className="pty-take-control"
-          data-testid="pty-take-control"
-          onClick={() => controller.claimControl()}
-        >
-          Take control
-        </button>
+      <PtyControlChip
+        controller={controller}
+        hostRef={containerRef}
+        onRestoreFocus={() => termRef.current?.focus()}
+      />
+      {findOpen && (
+        <TerminalFindBar
+          query={findQuery}
+          caseSensitive={findCaseSensitive}
+          results={findResults}
+          onQueryChange={setFindQuery}
+          onCaseSensitiveChange={setFindCaseSensitive}
+          onNext={findNext}
+          onPrevious={findPrevious}
+          onClose={closeFind}
+        />
       )}
       {menuPos && (
         <TerminalContextMenu
           x={menuPos.x}
           y={menuPos.y}
           items={menuItems}
-          onClose={() => {
-            setMenuPos(null);
-            termRef.current?.focus(); // refocus the terminal after the menu closes
-          }}
+          onClose={(detail) => closeTerminalMenu(
+            menuPos,
+            detail,
+            () => setMenuPos(null),
+            () => termRef.current?.focus(),
+          )}
         />
       )}
     </div>
@@ -470,12 +710,37 @@ function PtyXtermView({ controller }: { controller: BlockController }): JSX.Elem
 
 // ── plain view (Phase 3 adaptive render default) ─────────────────────────────
 
-function PtyPlainView({ controller }: { controller: BlockController }): JSX.Element {
+function textOffsetAtPoint(root: HTMLElement, x: number, y: number): number | null {
+  const position = document.caretPositionFromPoint?.(x, y);
+  const legacyDocument = document as Document & {
+    caretRangeFromPoint?: (pointX: number, pointY: number) => Range | null;
+  };
+  const legacyRange = position ? null : legacyDocument.caretRangeFromPoint?.(x, y);
+  const node = position?.offsetNode ?? legacyRange?.startContainer;
+  const offset = position?.offset ?? legacyRange?.startOffset;
+  if (!node || offset === undefined || !root.contains(node)) return null;
+  const range = document.createRange();
+  range.selectNodeContents(root);
+  try {
+    range.setEnd(node, offset);
+  } catch {
+    return null;
+  }
+  return range.toString().length;
+}
+
+function PtyPlainView({
+  controller,
+  runtimeOptions,
+}: {
+  controller: BlockController;
+  runtimeOptions: TerminalRuntimeOptions;
+}): JSX.Element {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const containerRef = useRef<HTMLDivElement>(null);
   const outputRef = useRef<HTMLPreElement>(null);
   // Right-click context menu (WT-parity M2) — same pattern as PtyXtermView's.
-  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [menuPos, setMenuPos] = useState<TerminalMenuInvocation | null>(null);
 
   // Mount: wire the plain sink (input focus now lives on cmd-input — M1 focus
   // retention routes plain-PTY keystrokes there, TerminalPane.tsx's
@@ -485,9 +750,16 @@ function PtyPlainView({ controller }: { controller: BlockController }): JSX.Elem
   // of React state to avoid render-thrash (B2 e2e: large plain output must
   // complete without a UI stall or ack deadlock).
   useEffect(() => {
-    return controller.setPlainDataSink((html) => {
+    const unsink = controller.setPlainDataSink((html) => {
       outputRef.current?.insertAdjacentHTML('beforeend', html);
     });
+    const unregisterReplayReset = controller.setPtyReplayResetHandler(() => {
+      if (outputRef.current) outputRef.current.textContent = '';
+    });
+    return () => {
+      unsink();
+      unregisterReplayReset();
+    };
   }, [controller]);
 
   // On exit (status leaves 'running'): re-focus this pane's cmd-input. Now a
@@ -501,6 +773,33 @@ function PtyPlainView({ controller }: { controller: BlockController }): JSX.Elem
     if (!cmdInput) return;
     const raf = requestAnimationFrame(() => cmdInput.focus());
     return () => cancelAnimationFrame(raf);
+  }, [snapshot.status]);
+
+  useEffect(() => {
+    if (snapshot.status !== 'running') return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!isTerminalContextMenuKey(event)) return;
+      const host = containerRef.current;
+      const originPane = host?.closest('.pane');
+      const active = document.activeElement;
+      if (
+        !host
+        || !originPane
+        || !(active instanceof Element)
+        || (!host.contains(active) && !active.matches('.cmd-input'))
+        || active.closest('.pane') !== originPane
+        || active.closest('.terminal-context-menu')
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setMenuPos(keyboardTerminalMenuInvocation(host));
+    };
+    // Capture before TerminalPane's composer handler so Shift+F10 is never
+    // translated to the PTY's ordinary F10 byte sequence.
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [snapshot.status]);
 
   // Paste (WT-parity M2): routed straight through the controller this view
@@ -557,10 +856,41 @@ function PtyPlainView({ controller }: { controller: BlockController }): JSX.Elem
         // is a fine-pointer affordance, so skip it here to avoid a double menu.
         if (window.matchMedia?.('(pointer: coarse)').matches) return;
         e.preventDefault();
-        setMenuPos({ x: e.clientX, y: e.clientY });
+        setMenuPos(captureTerminalMenuInvocation(e.currentTarget, e.clientX, e.clientY));
       }}
     >
-      <pre ref={outputRef} className="text-block" data-testid="text-output" />
+      <PtyControlChip
+        controller={controller}
+        hostRef={containerRef}
+        onRestoreFocus={() => {
+          const pane = containerRef.current?.closest('.pane');
+          pane?.querySelector<HTMLInputElement>('.cmd-input')?.focus();
+        }}
+      />
+      <pre
+        ref={outputRef}
+        className="text-block"
+        data-testid="text-output"
+        onClick={(event) => {
+          if (!runtimeOptions.openTerminalFileLocation) return;
+          if (runtimeOptions.platform === 'desktop' && !event.ctrlKey && !event.metaKey) return;
+          const output = outputRef.current;
+          if (!output) return;
+          const offset = textOffsetAtPoint(output, event.clientX, event.clientY);
+          if (offset === null) return;
+          const match = findTerminalFileLinkAtOffset(output.textContent ?? '', offset);
+          if (!match) return;
+          const context = controller.getSnapshot();
+          if (!context.startCwd || context.executionKind !== 'local') return;
+          runtimeOptions.openTerminalFileLocation({
+            path: match.path,
+            cwd: context.startCwd,
+            executionKind: context.executionKind,
+            ...(match.line === undefined ? {} : { line: match.line }),
+            ...(match.column === undefined ? {} : { column: match.column }),
+          }, event.nativeEvent);
+        }}
+      />
       {snapshot.status === 'running' && (
         <span className="pty-plain-waiting" data-testid="pty-plain-waiting" aria-hidden="true">
           ▍
@@ -571,7 +901,15 @@ function PtyPlainView({ controller }: { controller: BlockController }): JSX.Elem
           x={menuPos.x}
           y={menuPos.y}
           items={menuItems}
-          onClose={() => setMenuPos(null)}
+          onClose={(detail) => closeTerminalMenu(
+            menuPos,
+            detail,
+            () => setMenuPos(null),
+            () => {
+              const pane = containerRef.current?.closest('.pane');
+              pane?.querySelector<HTMLInputElement>('.cmd-input')?.focus();
+            },
+          )}
         />
       )}
     </div>

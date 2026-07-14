@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
+import { readXtermBuffer } from './xterm-buffer';
 
 // Regression lock (scroll-fixer investigation — see .omc/research or session
 // handoff for the full diagnostic writeup): a user reported "can't scroll up
@@ -29,8 +30,7 @@ test('tui-scrollback: wheel-up over a takeover xterm reveals earlier scrollback 
   const pane = window.getByTestId('pane');
   await expect(pane).toHaveClass(/pane--tui-takeover/);
   const ptyBlock = window.getByTestId('pty-block');
-  const rows = window.locator('.pty-block .xterm-rows');
-  await expect.poll(() => rows.innerText(), { timeout: 15_000 }).toContain('BOTTOM-MARKER');
+  await expect.poll(() => readXtermBuffer(ptyBlock), { timeout: 15_000 }).toContain('BOTTOM-MARKER');
 
   const box = await ptyBlock.boundingBox();
   expect(box).not.toBeNull();
@@ -42,8 +42,8 @@ test('tui-scrollback: wheel-up over a takeover xterm reveals earlier scrollback 
 
   // Scrolled away from the bottom: BOTTOM-MARKER is no longer the visible tail,
   // and earlier numbered lines are now on screen.
-  await expect.poll(() => rows.innerText(), { timeout: 5_000 }).not.toContain('BOTTOM-MARKER');
-  await expect(rows).toContainText(/LINE-\d{3}/);
+  await expect.poll(() => readXtermBuffer(ptyBlock), { timeout: 5_000 }).not.toContain('BOTTOM-MARKER');
+  await expect.poll(() => readXtermBuffer(ptyBlock)).toMatch(/LINE-\d{3}/);
 
   await window.getByTestId('block-cancel').click();
   await app.close();
@@ -60,8 +60,7 @@ test('tui-scrollback: a scrolled-up view is not yanked back to the bottom by con
   const pane = window.getByTestId('pane');
   await expect(pane).toHaveClass(/pane--tui-takeover/);
   const ptyBlock = window.getByTestId('pty-block');
-  const rows = window.locator('.pty-block .xterm-rows');
-  await expect.poll(() => rows.innerText(), { timeout: 15_000 }).toContain('LINE-060');
+  await expect.poll(() => readXtermBuffer(ptyBlock), { timeout: 15_000 }).toContain('LINE-060');
 
   const box = await ptyBlock.boundingBox();
   expect(box).not.toBeNull();
@@ -70,12 +69,12 @@ test('tui-scrollback: a scrolled-up view is not yanked back to the bottom by con
     // eslint-disable-next-line no-await-in-loop
     await window.mouse.wheel(0, -300);
   }
-  const scrolledTopLine = (await rows.innerText()).split('\n')[0];
+  const scrolledTopLine = (await readXtermBuffer(ptyBlock)).split('\n')[0];
 
   // The fixture keeps streaming new lines every 150ms; a naive "always follow
   // new output" implementation would snap back to the bottom here.
   await window.waitForTimeout(1500);
-  const topLineAfterMoreStreaming = (await rows.innerText()).split('\n')[0];
+  const topLineAfterMoreStreaming = (await readXtermBuffer(ptyBlock)).split('\n')[0];
   expect(topLineAfterMoreStreaming).toBe(scrolledTopLine);
 
   await window.getByTestId('block-cancel').click();

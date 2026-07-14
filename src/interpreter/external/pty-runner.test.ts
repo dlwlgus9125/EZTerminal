@@ -18,6 +18,14 @@ function makeFakeKillTree() {
 function makeFakeIPty() {
   const dataListeners: Array<(d: unknown) => void> = [];
   const exitListeners: Array<(e: { exitCode: number }) => void> = [];
+  const errorListeners: Array<(e: NodeJS.ErrnoException) => void> = [];
+  const inputSocketErrorListeners: Array<(e: NodeJS.ErrnoException) => void> = [];
+  let resizeError: Error | null = null;
+  // Mirrors node-pty's WindowsTerminal listener: recoverable output-socket
+  // errors are re-thrown unless the consumer installed its own error listener.
+  errorListeners.push((error) => {
+    if (errorListeners.length < 2) throw error;
+  });
   const calls = {
     file: '',
     args: { kind: 'argv', argv: [] } as PtyArgs,
@@ -40,10 +48,21 @@ function makeFakeIPty() {
       exitListeners.push(l);
       return { dispose() {} };
     },
+    on: (eventName: string, listener: (e: NodeJS.ErrnoException) => void) => {
+      if (eventName === 'error') errorListeners.push(listener);
+    },
+    _agent: {
+      inSocket: {
+        on: (eventName: string, listener: (e: NodeJS.ErrnoException) => void) => {
+          if (eventName === 'error') inputSocketErrorListeners.push(listener);
+        },
+      },
+    },
     write: (d: string) => {
       calls.writes.push(d);
     },
     resize: (c: number, r: number) => {
+      if (resizeError) throw resizeError;
       calls.resizes.push([c, r]);
     },
     kill: () => {
@@ -66,6 +85,14 @@ function makeFakeIPty() {
     ipty,
     emitData: (d: unknown) => dataListeners.forEach((l) => l(d)),
     emitExit: (code: number) => exitListeners.forEach((l) => l({ exitCode: code })),
+    emitError: (error: NodeJS.ErrnoException) => errorListeners.forEach((l) => l(error)),
+    emitInputSocketError: (error: NodeJS.ErrnoException) => {
+      if (inputSocketErrorListeners.length === 0) throw error;
+      inputSocketErrorListeners.forEach((listener) => listener(error));
+    },
+    failResizeWith: (error: Error) => {
+      resizeError = error;
+    },
   };
 }
 
@@ -98,6 +125,27 @@ describe('runPty (node-pty adapter)', () => {
     fake.emitData('str'); // string fallback path
     expect(Buffer.from(received[0]).toString('utf8')).toBe('hi');
     expect(Buffer.from(received[1]).toString('utf8')).toBe('str');
+  });
+
+  it('installs a consumer error listener so a recoverable Windows socket EAGAIN cannot crash the interpreter', () => {
+    const fake = makeFakeIPty();
+    runPty('node', ptyArgv([]), emptyOpts(), fake.spawn);
+    const error = Object.assign(new Error('write EAGAIN'), {
+      code: 'EAGAIN',
+      errno: -4088,
+      syscall: 'write',
+    });
+
+    expect(() => fake.emitError(error)).not.toThrow();
+    expect(() => fake.emitInputSocketError(error)).not.toThrow();
+  });
+
+  it('ignores a resize racing node-pty native exit before the public onExit callback', () => {
+    const fake = makeFakeIPty();
+    const handle = runPty('node', ptyArgv([]), emptyOpts(), fake.spawn);
+    fake.failResizeWith(new Error('Cannot resize a pty that has already exited'));
+
+    expect(() => handle.resize(120, 40)).not.toThrow();
   });
 
   it('write/resize delegate to the IPty; kill terminates via killTree, not proc.kill() directly (Windows crash workaround)', () => {

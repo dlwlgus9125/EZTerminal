@@ -19,6 +19,11 @@
 import type { MessagePortMain } from 'electron';
 import { randomUUID } from 'node:crypto';
 
+import {
+  MAX_GUARDED_DESTROY_RUN_IDS,
+  MAX_GUARDED_DESTROY_SESSIONS,
+} from '../shared/ipc';
+
 import type {
   InterpreterFrame,
   RendererControl,
@@ -27,19 +32,33 @@ import type {
   CancelledFrame,
   EndFrame,
   ErrorFrame,
+  ExecutionKind,
   ProgressFrame,
+  PtyRestoreWarningFrame,
+  RunAttachRejectReason,
   RunStartedInfo,
   SchemaFrame,
+  SshConnectionFrame,
   StartFrame,
+  WorktreeOpenFrame,
 } from '../shared/ipc';
-import { readFile } from 'node:fs/promises';
-
+import type { SshForwardAction, SshForwardResult } from '../shared/ssh-forward';
+import { SshForwardError } from '../shared/ssh-forward';
+import type {
+  WorktreeRequest,
+  WorktreeRequestOrigin,
+  WorktreeResult,
+} from '../shared/worktree';
 import { evaluate, parse } from './core';
 import { describeError, runBlock, type BlockHandle } from './block-runner';
 import { runPtySession, clampDim, type PtySession, type PtyAttachHandle } from './pty-session';
 import { runScriptSession, type HostChannel, type HostToInterpreterMsg, type ScriptSession, type SpawnHost } from './script-runner';
 import { runSshSession, type KnownHostCheckResult, type SshSession, type SshSessionDeps } from './ssh-session';
+import { runSshForwardCommand, type SshForwardCommandSession } from './ssh-forward-command';
+import { bridgeSshForwardStream, rejectSshForwardStream, type SshForwardPort } from './ssh-forward-stream-bridge';
 import { createSshClient } from './external/ssh-client';
+import { resolveSshConfigAlias } from './external/ssh-config-resolver';
+import { readSshPrivateKeyFile } from './external/ssh-file-reader';
 import { createExternalResolver } from './external/external-command';
 import { createProcessLister } from './external/process-list';
 import { ShellSession } from './shell-session';
@@ -106,6 +125,7 @@ class ExecutionSession implements Execution {
   private ptySession: PtySession | null = null;
   private scriptSession: ScriptSession | null = null;
   private sshSession: SshSession | null = null;
+  private sshForwardCommandSession: SshForwardCommandSession | null = null;
   private primaryPort: MessagePortMain | null = null;
   // The port currently holding PTY resize authority (control handoff, M8a).
   // Starts as the primary (set alongside it in `run()`) so pre-M8a behavior
@@ -137,16 +157,24 @@ class ExecutionSession implements Execution {
   // its mirror renders at the current authority's size instead of guessing
   // (see `PtyDimsFrame`'s doc, ipc.ts).
   private lastDims: { cols: number; rows: number } | null = null;
+  private lastSshConnection: SshConnectionFrame | null = null;
+  private lastWorktreeOpen: WorktreeOpenFrame | null = null;
 
   constructor(
     private readonly shell: ShellSession,
+    private readonly requestOrigin: WorktreeRequestOrigin,
+    private readonly sessionId: string,
+    private readonly runId: string,
     private readonly hooks: ExecutionHooks = {},
   ) {}
 
-  run(commandText: string, port: MessagePortMain): void {
+  run(commandText: string, port: MessagePortMain): ExecutionKind {
     this.primaryPort = port;
     this.controlPort = port;
     const { signal } = this.ac;
+    const startCwd = this.shell.cwd;
+    let executionKind: ExecutionKind = 'local';
+    let startSent = false;
     const send = (frame: InterpreterFrame): void => {
       if (this.disposed) return;
       // Attach the session cwd onto the terminal `end` frame so the renderer's
@@ -164,8 +192,6 @@ class ExecutionSession implements Execution {
 
     this.wirePort(port, /* isPrimary */ true);
 
-    send({ type: 'start', commandText, cwd: this.shell.cwd });
-
     // Record the executed command line on the durable session — the authoritative
     // history the `history` builtin reads (recorded before parse, like a real shell,
     // so a command appears in history even if it fails to parse/evaluate).
@@ -173,8 +199,25 @@ class ExecutionSession implements Execution {
 
     try {
       const statement = parse(commandText);
-      const ctx = this.shell.createContext(signal, createExternalResolver(), listProcesses);
+      const ctx = this.shell.createContext(
+        signal,
+        createExternalResolver(),
+        listProcesses,
+        (request) => requestWorktree(
+          request,
+          this.requestOrigin,
+          signal,
+          this.sessionId,
+          this.runId,
+        ),
+        this.requestOrigin === 'mobile'
+          ? (worktree) => send({ type: 'worktree-open', intentId: randomUUID(), worktree })
+          : undefined,
+      );
       const data = evaluate(statement, ctx);
+      executionKind = data.kind === 'ssh-stream' ? 'ssh' : 'local';
+      send({ type: 'start', commandText, cwd: startCwd, executionKind });
+      startSent = true;
       // A `!cmd` interactive program is a live PTY/TUI, not a paged result — it
       // bypasses the ResultStore/window machinery and runs through runPtySession.
       if (data.kind === 'pty-stream') {
@@ -190,17 +233,46 @@ class ExecutionSession implements Execution {
         // Same PTY_INITIAL_COLS/ROWS grid: runSshSession's shell() call defaults
         // to the same 80x24 when not passed explicit initialCols/initialRows.
         this.lastDims = { cols: PTY_INITIAL_COLS, rows: PTY_INITIAL_ROWS };
-        this.sshSession = runSshSession(data, send, signal, sshSessionDeps);
+        const connectionId = randomUUID();
+        this.sshSession = runSshSession(
+          data,
+          send,
+          signal,
+          sshSessionDeps,
+          PTY_INITIAL_COLS,
+          PTY_INITIAL_ROWS,
+          connectionId,
+          {
+            onReady: (session) => registerSshConnection(session),
+            onClosed: (id) => {
+              unregisterSshConnection(id);
+              send({ type: 'ssh-connection', connectionId: id, state: 'closed' });
+            },
+          },
+        );
+      } else if (data.kind === 'ssh-forward-command') {
+        this.sshForwardCommandSession = runSshForwardCommand(
+          data,
+          send,
+          signal,
+          (request, requestSignal) => requestSshForward(
+            request,
+            this.requestOrigin,
+            requestSignal,
+          ),
+        );
       } else {
         this.handle = runBlock(data, send, signal);
       }
     } catch (err) {
       // Synchronous parse/evaluate failure: there is nothing to page, so emit the
       // terminal frame and dispose immediately.
+      if (!startSent) send({ type: 'start', commandText, cwd: startCwd, executionKind: 'local' });
       if (signal.aborted) send({ type: 'cancelled' });
       else send({ type: 'error', message: describeError(err) });
       this.dispose();
     }
+    return executionKind;
   }
 
   /**
@@ -213,10 +285,30 @@ class ExecutionSession implements Execution {
    * a terminal `error` frame instead of silently doing nothing — same shape
    * as `rejectRun` for an unknown `run`.
    */
-  attach(port: MessagePortMain): void {
+  attach(port: MessagePortMain): { readonly accepted: true } | { readonly accepted: false; readonly reason: RunAttachRejectReason } {
     if (this.disposed) {
       rejectRun(port, 'run already ended');
-      return;
+      return { accepted: false, reason: 'run-ended' };
+    }
+    // SSH output currently has no independent replayable transport. Silently
+    // attaching would grant input/control to a mirror that receives no PTY
+    // bytes, so fail closed without touching the primary SSH channel.
+    if (this.sshSession) {
+      try {
+        port.postMessage({
+          type: 'pty-restore-warning',
+          reason: 'ssh-late-attach-unsupported',
+          fallback: 'none',
+        } satisfies PtyRestoreWarningFrame);
+        port.postMessage({
+          type: 'error',
+          message: 'Late attach is not supported for SSH runs',
+        } satisfies InterpreterFrame);
+        port.close();
+      } catch {
+        // The requesting mirror already disconnected; the primary stays live.
+      }
+      return { accepted: false, reason: 'ssh-unsupported' };
     }
     let ptyHandle: PtyAttachHandle | null = null;
     if (this.ptySession) {
@@ -228,33 +320,68 @@ class ExecutionSession implements Execution {
         }
       });
       if (!ptyHandle) {
-        rejectRun(port, 'too many mirror viewers for this run');
-        return;
+        const ended = this.lastTerminal !== null;
+        rejectRun(port, ended ? 'run already ended' : 'too many mirror viewers for this run');
+        return { accepted: false, reason: ended ? 'run-ended' : 'mirror-capacity' };
       }
     }
     const state: AttachPortState = { port, ptyHandle };
     this.attachPorts.set(port, state);
     this.wirePort(port, /* isPrimary */ false);
-    if (this.lastStart) port.postMessage(this.lastStart);
-    if (this.lastSchema) port.postMessage(this.lastSchema);
-    if (this.ptyRenderUpgraded) port.postMessage({ type: 'pty-render-upgrade' } satisfies InterpreterFrame);
-    // Dims BEFORE the ring replay: the mirror must know the PRIMARY's grid
-    // size before it renders any replayed bytes, or cursor-addressing bytes
-    // sized for that grid would be interpreted against xterm's 80x24 default.
-    if (this.lastDims) {
-      port.postMessage({ type: 'pty-dims', ...this.lastDims } satisfies InterpreterFrame);
+    try {
+      if (this.lastStart) port.postMessage(this.lastStart);
+      if (this.lastSchema) port.postMessage(this.lastSchema);
+      if (this.lastSshConnection) port.postMessage(this.lastSshConnection);
+      // Replayed for reconnect safety. Ordinary attach mirrors receive it too,
+      // but only the initiating mobile transport acts on it, keyed by intentId.
+      if (this.lastWorktreeOpen) port.postMessage(this.lastWorktreeOpen);
+      if (this.ptyRenderUpgraded) {
+        port.postMessage({ type: 'pty-render-upgrade' } satisfies InterpreterFrame);
+      }
+      // Dims BEFORE the restore: serialized cursor addressing is only valid at
+      // the authoritative PTY grid used by the headless model.
+      if (this.lastDims) {
+        port.postMessage({ type: 'pty-dims', ...this.lastDims } satisfies InterpreterFrame);
+      }
+      port.postMessage({ type: 'pty-control', hasControl: false } satisfies InterpreterFrame);
+      if (ptyHandle?.warning) port.postMessage(ptyHandle.warning);
+      if (ptyHandle && ptyHandle.replay.byteLength > 0) {
+        port.postMessage({
+          type: 'pty-data',
+          data: ptyHandle.replay,
+          // Reconstruct the terminal screen without re-running historical
+          // OSC side effects (notably clipboard writes) in the new renderer.
+          suppressSideEffects: true,
+        } satisfies InterpreterFrame);
+      }
+      if (this.lastProgress) port.postMessage(this.lastProgress);
+      if (this.lastTerminal) port.postMessage(this.lastTerminal);
+
+      // Always release, including an empty replay. This is the only transition
+      // that allows live bytes queued during attach to reach the new mirror.
+      const releaseFailure = ptyHandle?.releaseLive() ?? null;
+      if (releaseFailure) {
+        port.postMessage(releaseFailure);
+        port.postMessage({
+          type: 'error',
+          message: 'Terminal restore queue overflowed; reconnect the session',
+        } satisfies InterpreterFrame);
+        ptyHandle?.detach();
+        this.attachPorts.delete(port);
+        port.close();
+        return { accepted: false, reason: 'restore-failed' };
+      }
+    } catch {
+      ptyHandle?.detach();
+      this.attachPorts.delete(port);
+      try {
+        port.close();
+      } catch {
+        // Already closed.
+      }
+      return { accepted: false, reason: 'transport-failed' };
     }
-    // A fresh attacher is never the control port (control handoff, M8a) — say
-    // so explicitly rather than leaving it to infer resize-authority state.
-    port.postMessage({ type: 'pty-control', hasControl: false } satisfies InterpreterFrame);
-    if (ptyHandle && ptyHandle.replay.byteLength > 0) {
-      port.postMessage({ type: 'pty-data', data: ptyHandle.replay } satisfies InterpreterFrame);
-    }
-    if (this.lastProgress) port.postMessage(this.lastProgress);
-    // Replay LAST, if the run already finished before this attach — a late
-    // observer must still learn that (the real terminal frame only ever fired
-    // once, in the past; the port stays open afterward for paging/scrollback).
-    if (this.lastTerminal) port.postMessage(this.lastTerminal);
+    return { accepted: true };
   }
 
   /** {@link Execution}: signal cancellation (streams stop, external procs are killed). */
@@ -277,6 +404,7 @@ class ExecutionSession implements Execution {
     this.ptySession?.dispose();
     this.scriptSession?.dispose();
     this.sshSession?.dispose();
+    this.sshForwardCommandSession?.dispose();
     this.settle();
     try {
       this.primaryPort?.close();
@@ -422,6 +550,12 @@ class ExecutionSession implements Execution {
       case 'pty-render-upgrade':
         this.ptyRenderUpgraded = true;
         break;
+      case 'ssh-connection':
+        this.lastSshConnection = frame;
+        break;
+      case 'worktree-open':
+        this.lastWorktreeOpen = frame;
+        break;
       case 'end':
       case 'error':
       case 'cancelled':
@@ -463,6 +597,7 @@ class ExecutionSession implements Execution {
       case 'setViewport':
         this.handle?.handleControl(control);
         this.scriptSession?.handleControl(control);
+        this.sshForwardCommandSession?.handleControl(control);
         break;
       case 'pty-input':
         this.ptySession?.write(control.data);
@@ -527,6 +662,38 @@ const registry = new SessionRegistry(() => randomUUID());
 // resurrected (same discipline as `run`'s own session check, B1).
 const executionsByRunId = new Map<string, { execution: ExecutionSession; info: RunStartedInfo }>();
 
+function guardedSessionMatches(sessionId: string, expectedActiveRunIds: readonly string[]): boolean {
+  if (!registry.get(sessionId)) return true; // idempotent missing-session success
+  const actual = [...executionsByRunId.entries()]
+    .filter(([, entry]) => entry.info.sessionId === sessionId && entry.execution.running)
+    .map(([runId]) => runId)
+    .sort();
+  const expected = [...new Set(expectedActiveRunIds)].sort();
+  return actual.length === expected.length
+    && actual.every((runId, index) => runId === expected[index]);
+}
+
+function isGuardedDestroyId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256;
+}
+
+function isGuardedSessionRequest(value: unknown): value is {
+  readonly sessionId: string;
+  readonly expectedActiveRunIds: readonly string[];
+} {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as { sessionId?: unknown; expectedActiveRunIds?: unknown };
+  if (
+    !isGuardedDestroyId(candidate.sessionId)
+    || !Array.isArray(candidate.expectedActiveRunIds)
+    || candidate.expectedActiveRunIds.length > MAX_GUARDED_DESTROY_RUN_IDS
+    || !candidate.expectedActiveRunIds.every(isGuardedDestroyId)
+  ) {
+    return false;
+  }
+  return new Set(candidate.expectedActiveRunIds).size === candidate.expectedActiveRunIds.length;
+}
+
 // The `ps` process source — created ONCE (Windows `tasklist`), injected into each
 // per-command EvalContext so the pure core never imports child_process (§7).
 const listProcesses = createProcessLister();
@@ -572,8 +739,128 @@ const sshSessionDeps: SshSessionDeps = {
   createClient: createSshClient,
   checkKnownHost,
   addKnownHost,
-  readKeyFile: (path) => readFile(path),
+  readKeyFile: readSshPrivateKeyFile,
+  resolveAlias: (alias, portOverride, keyPathOverride, signal) =>
+    resolveSshConfigAlias({ alias, portOverride, keyPathOverride, signal }),
 };
+
+// Live authenticated SSH transports, keyed by the stable id announced to the
+// terminal. Entries are never resurrected: a closed id is removed permanently.
+const sshConnections = new Map<string, SshSession>();
+
+function registerSshConnection(session: SshSession): void {
+  sshConnections.set(session.connectionId, session);
+  process.parentPort.postMessage({
+    type: 'ssh-connection-state',
+    connectionId: session.connectionId,
+    state: 'ready',
+  } satisfies InterpreterToMain);
+}
+
+function unregisterSshConnection(connectionId: string): void {
+  sshConnections.delete(connectionId);
+  process.parentPort.postMessage({
+    type: 'ssh-connection-state',
+    connectionId,
+    state: 'closed',
+  } satisfies InterpreterToMain);
+}
+
+const SSH_FORWARD_REQUEST_TIMEOUT_MS = 15_000;
+const pendingSshForwardRequests = new Map<string, {
+  resolve: (result: SshForwardResult) => void;
+  reject: (error: Error) => void;
+  signal: AbortSignal;
+  onAbort: () => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+
+function requestSshForward(
+  request: SshForwardAction,
+  origin: WorktreeRequestOrigin,
+  signal: AbortSignal,
+): Promise<SshForwardResult> {
+  if (signal.aborted) return Promise.reject(Object.assign(new Error('SSH forward request cancelled'), { name: 'AbortError' }));
+  return new Promise<SshForwardResult>((resolve, reject) => {
+    const requestId = randomUUID();
+    const onAbort = (): void => {
+      const pending = pendingSshForwardRequests.get(requestId);
+      if (!pending) return;
+      pendingSshForwardRequests.delete(requestId);
+      clearTimeout(pending.timer);
+      process.parentPort.postMessage({ type: 'ssh-forward-request-cancel', requestId } satisfies InterpreterToMain);
+      reject(Object.assign(new Error('SSH forward request cancelled'), { name: 'AbortError' }));
+    };
+    const timer = setTimeout(() => {
+      const pending = pendingSshForwardRequests.get(requestId);
+      if (!pending) return;
+      pendingSshForwardRequests.delete(requestId);
+      signal.removeEventListener('abort', onAbort);
+      process.parentPort.postMessage({ type: 'ssh-forward-request-cancel', requestId } satisfies InterpreterToMain);
+      reject(new SshForwardError('INTERPRETER_UNAVAILABLE', 'SSH forwarding service did not respond'));
+    }, SSH_FORWARD_REQUEST_TIMEOUT_MS);
+    pendingSshForwardRequests.set(requestId, { resolve, reject, signal, onAbort, timer });
+    signal.addEventListener('abort', onAbort, { once: true });
+    process.parentPort.postMessage({
+      type: 'ssh-forward-request',
+      requestId,
+      request,
+      origin,
+    } satisfies InterpreterToMain);
+  });
+}
+
+const pendingWorktreeRequests = new Map<string, {
+  resolve: (result: WorktreeResult) => void;
+  reject: (error: Error) => void;
+  signal: AbortSignal;
+  onAbort: () => void;
+}>();
+
+function requestWorktree(
+  request: WorktreeRequest,
+  origin: WorktreeRequestOrigin,
+  signal: AbortSignal,
+  sessionId: string,
+  runId: string,
+): Promise<WorktreeResult> {
+  if (signal.aborted) {
+    return Promise.reject(Object.assign(new Error('Worktree request cancelled'), { name: 'AbortError' }));
+  }
+  return new Promise<WorktreeResult>((resolve, reject) => {
+    const requestId = randomUUID();
+    const onAbort = (): void => {
+      const pending = pendingWorktreeRequests.get(requestId);
+      if (!pending) return;
+      pendingWorktreeRequests.delete(requestId);
+      process.parentPort.postMessage({ type: 'worktree-action-cancel', requestId } satisfies InterpreterToMain);
+      reject(Object.assign(new Error('Worktree request cancelled'), { name: 'AbortError' }));
+    };
+    pendingWorktreeRequests.set(requestId, { resolve, reject, signal, onAbort });
+    signal.addEventListener('abort', onAbort, { once: true });
+    process.parentPort.postMessage({
+      type: 'worktree-action-request',
+      requestId,
+      request,
+      origin,
+      sessionId,
+      runId,
+    } satisfies InterpreterToMain);
+  });
+}
+
+function announceRunSettled(sessionId: string, runId: string, cwd?: string): void {
+  try {
+    process.parentPort.postMessage({
+      type: 'session-run-settled',
+      sessionId,
+      runId,
+      ...(cwd === undefined ? {} : { cwd }),
+    } satisfies InterpreterToMain);
+  } catch {
+    // Main/interpreter teardown won the race; broker exit clears every lease.
+  }
+}
 
 /** Reject a `run` for a missing/destroyed/busy session with a terminal error frame. */
 function rejectRun(port: MessagePortMain, message: string): void {
@@ -673,46 +960,149 @@ process.parentPort.on('message', (event: ElectronMsgEvent) => {
       process.parentPort.postMessage(reply);
       break;
     }
-    case 'destroy-session':
-      registry.destroy(msg.sessionId);
+    case 'set-session-environment':
+      registry.setEnvironment(msg.sessionId, msg.environment);
       break;
+    case 'destroy-session': {
+      const guarded = msg.requestId !== undefined || msg.expectedActiveRunIds !== undefined;
+      if (guarded) {
+        let destroyed = false;
+        const beforeDeadline = msg.deadlineAt === undefined || Date.now() <= msg.deadlineAt;
+        if (
+          msg.requestId !== undefined
+          && isGuardedSessionRequest({
+            sessionId: msg.sessionId,
+            expectedActiveRunIds: msg.expectedActiveRunIds,
+          })
+          && beforeDeadline
+          && guardedSessionMatches(msg.sessionId, msg.expectedActiveRunIds!)
+        ) {
+          registry.destroy(msg.sessionId);
+          destroyed = true;
+        }
+        if (msg.requestId !== undefined) {
+          process.parentPort.postMessage({
+            type: 'session-destroy-result',
+            requestId: msg.requestId,
+            sessionIds: [msg.sessionId],
+            destroyed,
+          } satisfies InterpreterToMain);
+        }
+      } else {
+        registry.destroy(msg.sessionId);
+      }
+      break;
+    }
+    case 'destroy-sessions-guarded': {
+      const validEnvelope = (
+        typeof msg.requestId === 'string'
+        && msg.requestId.length > 0
+        && Array.isArray(msg.sessions)
+        && msg.sessions.length > 0
+        && msg.sessions.length <= MAX_GUARDED_DESTROY_SESSIONS
+        && msg.sessions.every(isGuardedSessionRequest)
+      );
+      const sessionIds = validEnvelope ? msg.sessions.map((entry) => entry.sessionId) : [];
+      const identitiesUnique = new Set(sessionIds).size === sessionIds.length;
+      const beforeDeadline = Number.isFinite(msg.deadlineAt) && Date.now() <= msg.deadlineAt;
+      const destroyed = (
+        validEnvelope
+        && identitiesUnique
+        && beforeDeadline
+        && msg.sessions.every((entry) => guardedSessionMatches(
+          entry.sessionId,
+          entry.expectedActiveRunIds,
+        ))
+      );
+      if (destroyed) {
+        for (const sessionId of sessionIds) registry.destroy(sessionId);
+      }
+      process.parentPort.postMessage({
+        type: 'session-destroy-result',
+        requestId: msg.requestId,
+        sessionIds,
+        destroyed,
+      } satisfies InterpreterToMain);
+      break;
+    }
     case 'run': {
       // Cast: TS types event.ports as DOM MessagePort[], but in a utilityProcess
       // they are actually MessagePortMain objects at runtime.
       const port = event.ports[0] as unknown as MessagePortMain;
+      if (executionsByRunId.has(msg.runId)) {
+        rejectRun(port, 'run id already exists');
+        announceRunSettled(msg.sessionId, msg.runId, registry.get(msg.sessionId)?.shell.cwd);
+        break;
+      }
       const gate = registry.canRun(msg.sessionId);
       if (!gate.ok) {
         rejectRun(port, gate.reason);
+        announceRunSettled(msg.sessionId, msg.runId, registry.get(msg.sessionId)?.shell.cwd);
         break;
       }
       const { record } = gate;
-      const execution = new ExecutionSession(record.shell, {
-        onSettled: () => registry.settle(record, execution),
-        onDisposed: () => {
-          registry.remove(record, execution);
-          executionsByRunId.delete(msg.runId);
+      const execution = new ExecutionSession(
+        record.shell,
+        msg.requestOrigin ?? 'desktop',
+        msg.sessionId,
+        msg.runId,
+        {
+          onSettled: () => {
+            registry.settle(record, execution);
+            announceRunSettled(msg.sessionId, msg.runId, record.shell.cwd);
+          },
+          onDisposed: () => {
+            registry.remove(record, execution);
+            if (executionsByRunId.get(msg.runId)?.execution === execution) {
+              executionsByRunId.delete(msg.runId);
+            }
+          },
         },
-      });
+      );
       registry.begin(record, execution);
-      const info: RunStartedInfo = { sessionId: msg.sessionId, runId: msg.runId, commandText: msg.commandText };
-      executionsByRunId.set(msg.runId, { execution, info });
-      execution.run(msg.commandText, port);
+      const entry: { execution: ExecutionSession; info: RunStartedInfo } = {
+        execution,
+        info: { sessionId: msg.sessionId, runId: msg.runId, commandText: msg.commandText, executionKind: 'local' },
+      };
+      executionsByRunId.set(msg.runId, entry);
+      const executionKind = execution.run(msg.commandText, port);
+      const announcedInfo: RunStartedInfo = { ...entry.info, executionKind };
+      entry.info = announcedInfo;
       // M2 mirroring: announce the run so main can fan out `run-started` to
       // every OTHER surface (desktop windows / WS clients) as a mirroring cue.
       process.parentPort.postMessage({
         type: 'run-started',
-        ...info,
+        ...announcedInfo,
       } satisfies InterpreterToMain);
       break;
     }
     case 'attach-run': {
       const port = event.ports[0] as unknown as MessagePortMain;
       const entry = executionsByRunId.get(msg.runId);
+      let result: { readonly accepted: true } | { readonly accepted: false; readonly reason: RunAttachRejectReason };
       if (!entry) {
         rejectRun(port, `run ${msg.runId} does not exist`);
-        break;
+        result = { accepted: false, reason: 'run-not-found' };
+      } else if (entry.info.sessionId !== msg.sessionId) {
+        rejectRun(port, `run ${msg.runId} does not exist`);
+        result = { accepted: false, reason: 'session-mismatch' };
+      } else {
+        result = entry.execution.attach(port);
       }
-      entry.execution.attach(port);
+      if (msg.requestId) {
+        process.parentPort.postMessage(result.accepted
+          ? {
+              type: 'run-attach-result',
+              requestId: msg.requestId,
+              accepted: true,
+            } satisfies InterpreterToMain
+          : {
+              type: 'run-attach-result',
+              requestId: msg.requestId,
+              accepted: false,
+              reason: result.reason,
+            } satisfies InterpreterToMain);
+      }
       break;
     }
     case 'list-runs': {
@@ -752,6 +1142,60 @@ process.parentPort.on('message', (event: ElectronMsgEvent) => {
         existingFingerprint: msg.existingFingerprint,
         knownHostsPath: msg.knownHostsPath,
       });
+      break;
+    }
+    case 'ssh-forward-response': {
+      const pending = pendingSshForwardRequests.get(msg.requestId);
+      if (!pending) break;
+      pendingSshForwardRequests.delete(msg.requestId);
+      clearTimeout(pending.timer);
+      pending.signal.removeEventListener('abort', pending.onAbort);
+      pending.resolve(msg.result);
+      break;
+    }
+    case 'ssh-forward-stream-open': {
+      const port = event.ports[0] as unknown as SshForwardPort;
+      const session = sshConnections.get(msg.connectionId);
+      if (!session) {
+        rejectSshForwardStream(
+          port,
+          new SshForwardError('CONNECTION_NOT_FOUND', `SSH connection ${msg.connectionId} is not active`),
+        );
+        break;
+      }
+      void bridgeSshForwardStream(session, {
+        sourceHost: msg.sourceHost,
+        sourcePort: msg.sourcePort,
+        remoteHost: msg.remoteHost,
+        remotePort: msg.remotePort,
+      }, port).catch((error: unknown) => {
+        // Defense in depth: the bridge contains all known port/channel throws,
+        // but an unforeseen async rejection must still never become an
+        // unhandled rejection in the shared interpreter utility process.
+        let failure = new SshForwardError('STREAM_OPEN_FAILED', 'SSH forward stream failed');
+        try {
+          failure = error instanceof SshForwardError
+            ? error
+            : new SshForwardError(
+                'STREAM_OPEN_FAILED',
+                error instanceof Error ? error.message : String(error),
+              );
+        } catch {
+          // Keep the cloneable fallback when a thrown value cannot stringify.
+        }
+        rejectSshForwardStream(
+          port,
+          failure,
+        );
+      });
+      break;
+    }
+    case 'worktree-action-response': {
+      const pending = pendingWorktreeRequests.get(msg.requestId);
+      if (!pending) break;
+      pendingWorktreeRequests.delete(msg.requestId);
+      pending.signal.removeEventListener('abort', pending.onAbort);
+      pending.resolve(msg.result);
       break;
     }
     default:

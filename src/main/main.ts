@@ -1,15 +1,19 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   crashReporter,
   ipcMain,
   Menu,
   MessageChannelMain,
+  Notification,
+  safeStorage,
   session,
   shell,
   utilityProcess,
 } from 'electron';
 import type { UtilityProcess, MessagePortMain, Rectangle } from 'electron';
+import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { networkInterfaces } from 'node:os';
@@ -32,6 +36,17 @@ import { OpenClawService } from './openclaw-service';
 import { OpenClawChatViewManager } from './openclaw-chat-view';
 import { startOpenClawProxy, DEFAULT_OPENCLAW_PROXY_PORT, type OpenClawProxyHandle } from './openclaw-proxy';
 import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
+import { SshForwardService } from './ssh-forward-service';
+import { sshForwardFailure, type SshForwardResult } from '../shared/ssh-forward';
+import { AgentActivityService, type AgentActivityTransition } from './agent-activity-service';
+import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
+import { AgentHookInstaller } from './agent-hook-installer';
+import { AgentSettingsStore } from './agent-settings-store';
+import { QuickCommandStore } from './quick-command-store';
+import { WorkspaceFileSearchService } from './workspace-file-search-service';
+import { WorktreeService } from './worktree-service';
+import { AsyncMutationGate } from './async-mutation-gate';
+import { SessionWorktreeGuard } from './session-worktree-guard';
 import {
   startRemoteBridge,
   DEFAULT_REMOTE_BRIDGE_PORT,
@@ -39,12 +54,44 @@ import {
   type RemoteFileSource,
   type RemoteOpenClawSource,
   type RemotePacketSource,
+  type RemoteQuickCommandSource,
   type RemoteStatsSource,
 } from './remote-bridge';
 import { formatConnectionInfo } from './remote-connection-info';
-import type { EffectParamsSettings, OpenClawMode, RollbarSettings, StartupPref, ThemeName } from '../shared/layout-schema';
-import type { InterpreterToMain, MainToInterpreter, RunStartedInfo, SessionInfo, SystemStatsSnapshot } from '../shared/ipc';
+import {
+  TerminalRendererPreferenceSchema,
+  type EffectParamsSettings,
+  type OpenClawMode,
+  type RollbarSettings,
+  type StartupPref,
+  type ThemeName,
+} from '../shared/layout-schema';
+import {
+  MAX_GUARDED_DESTROY_RUN_IDS,
+  MAX_GUARDED_DESTROY_SESSIONS,
+} from '../shared/ipc';
+import type {
+  DestroySessionGuardResult,
+  GuardedSessionDestroyRequest,
+  InterpreterToMain,
+  MainToInterpreter,
+  RunStartedInfo,
+  SessionInfo,
+  SystemStatsSnapshot,
+} from '../shared/ipc';
 import type { OpenClawAutostartAction, OpenClawLifecycleAction, OpenClawVisibility } from '../shared/openclaw';
+import type { AgentFollowupResult } from '../shared/agent';
+import { normalizeExternalHttpUrl } from '../shared/external-url';
+import { classifyRecentPanelInput } from './recent-panel-input';
+import type { WorkspaceFileSearchRequest } from '../shared/workspace-search';
+import { isWorktreeRequest, type WorktreeInfo, type WorktreeResult } from '../shared/worktree';
+import type { TerminalFileLocationRequest } from '../shared/terminal-file-location';
+import { resolveTerminalFileLocation } from './terminal-path-resolver';
+import { TerminalFileCapabilityStore } from './terminal-file-capability';
+
+const osc52LastWrite = new WeakMap<object, number>();
+const OSC52_MAIN_MAX_BYTES = 64 * 1024;
+const OSC52_MAIN_MIN_INTERVAL_MS = 1_000;
 
 // The main process owns the interpreter utilityProcess lifetime (architecture
 // §1). Per-command MessagePort brokering + session/run correlation live in the
@@ -91,6 +138,11 @@ let interpreter: UtilityProcess | null = null;
 // adapters over this ONE instance; it owns the create-session/list-runs
 // correlation state, the run/attach port brokering, and the session/run dispatch.
 let broker: InterpreterBroker | null = null;
+
+// Loopback-only local forwarding over existing authenticated SSH sessions.
+// The service owns listener/socket lifetimes and is disposed with the app or
+// immediately when the interpreter exits.
+let sshForwardService: SshForwardService | null = null;
 
 // Status overlay panel stats collector — created once on 'ready' (status-overlay-panel).
 let systemStatsService: SystemStatsService | null = null;
@@ -177,10 +229,35 @@ const createWindow = (): void => {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      navigateOnDragDrop: false,
     },
   });
   mainWindowRef = mainWindow;
   openClawChatView?.attach(mainWindow);
+
+  // Chromium reserves Ctrl+Tab before a renderer KeyboardEvent exists (the
+  // real Electron E2E observes ControlLeft but no Tab keydown). Capture only
+  // that chord here, suppress its native handling, and forward a data-free
+  // cycle/commit/cancel union through the isolated desktop bridge. All other
+  // keyboard input, including terminal Ctrl chords, stays on the normal path.
+  let recentPanelInputActive = false;
+  const sendRecentPanelInput = (input: import('../shared/ipc').RecentPanelInputEvent): void => {
+    if (!mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send('recent-panels:input', input);
+    }
+  };
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    const decision = classifyRecentPanelInput(recentPanelInputActive, input);
+    recentPanelInputActive = decision.active;
+    if (!decision.event) return;
+    if (decision.preventDefault) event.preventDefault();
+    sendRecentPanelInput(decision.event);
+  });
+  mainWindow.on('blur', () => {
+    if (!recentPanelInputActive) return;
+    recentPanelInputActive = false;
+    sendRecentPanelInput({ type: 'cancel', restoreFocus: false });
+  });
 
   // ── Navigation hardening (SEC-HIGH-2) ─────────────────────────────────────
   // An OSC-8 link in external output (TextBlock <a href>) must never navigate the
@@ -196,7 +273,8 @@ const createWindow = (): void => {
     if (!isAppUrl(url, MAIN_WINDOW_VITE_DEV_SERVER_URL, appRendererUrl)) event.preventDefault();
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/i.test(url)) void shell.openExternal(url);
+    const external = normalizeExternalHttpUrl(url);
+    if (external) void shell.openExternal(external);
     return { action: 'deny' };
   });
 
@@ -222,6 +300,7 @@ const createWindow = (): void => {
   // running against a renderer that no longer thinks the panel is open
   // (status-overlay-panel: panelVisible lifecycle).
   mainWindow.webContents.on('did-navigate', () => {
+    recentPanelInputActive = false;
     systemStatsService?.setPanelVisible(false);
     // Same reasoning for the packet-capture sub-view (Phase 2B): a reload
     // drops the renderer's port reference, so any live host is now orphaned.
@@ -291,6 +370,35 @@ app.on('ready', () => {
   const storeReady = layoutStore.init().catch((err) => {
     console.error('[main] layout store init failed:', err);
   });
+  const quickCommandStore = new QuickCommandStore(path.join(app.getPath('userData')));
+  const quickCommandsReady = quickCommandStore.init().catch((err) => {
+    console.error('[main] quick command store init failed:', err);
+  });
+  const workspaceFileSearch = new WorkspaceFileSearchService();
+  quickCommandStore.subscribe((commands) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('quick-commands:changed', commands);
+    }
+  });
+
+  // Agent activity persistence + loopback hook relay. The relay binds only to
+  // 127.0.0.1 and its bearer descriptor is injected into interpreter shell
+  // sessions below; it never crosses preload or the mobile bridge.
+  const agentSettingsStore = new AgentSettingsStore(path.join(app.getPath('userData')));
+  let agentActivityService: AgentActivityService | null = null;
+  let agentRelayReady = false;
+  const agentHookRelay = new AgentHookRelay(app.getPath('userData'), (event) => {
+    agentActivityService?.handleHookEvent(event);
+  });
+  const agentInfrastructureReady = Promise.all([agentSettingsStore.init(), agentHookRelay.start()])
+    .then(() => {
+      agentRelayReady = true;
+    })
+    .catch((err) => {
+      console.error('[main] agent hook infrastructure init failed:', err);
+    });
+  const agentHookInstaller = new AgentHookInstaller(app.getPath('home'), agentHookRelay.scriptPath);
 
   // ── Status overlay panel stats (status-overlay-panel + mobile M1) ─────────
   // The service always ticks its graph loop (CPU/MEM ring buffer, app
@@ -328,9 +436,54 @@ app.on('ready', () => {
   // `revealFileInExplorer` stay here (Electron `shell`, desktop-only) rather
   // than in FileService, which stays electron-free.
   const fileService = new FileService({ trashItem: (p) => shell.trashItem(p) });
+  const terminalCapabilitiesBySender = new WeakMap<object, TerminalFileCapabilityStore>();
+  const terminalCapabilitiesFor = (sender: object): TerminalFileCapabilityStore => {
+    let store = terminalCapabilitiesBySender.get(sender);
+    if (!store) {
+      store = new TerminalFileCapabilityStore();
+      terminalCapabilitiesBySender.set(sender, store);
+    }
+    return store;
+  };
+  const sessionWorktreeMutationGate = new AsyncMutationGate();
+  const sessionWorktreeRunGuard = new SessionWorktreeGuard();
+  const worktreeService = new WorktreeService({
+    userDataDir: app.getPath('userData'),
+    getSessionCwds: () => broker?.listSessions().map((item) => item.cwd) ?? [],
+    mutationGate: sessionWorktreeMutationGate,
+    runGuard: sessionWorktreeRunGuard,
+  });
+  const notifyDesktopWorktreeOpen = (worktree: WorktreeInfo): void => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('worktrees:open-requested', worktree);
+    }
+  };
+  const pendingWorktreeActions = new Map<string, AbortController>();
+  ipcMain.handle('worktrees:execute', async (event, request: unknown): Promise<WorktreeResult> => {
+    if (!isWorktreeRequest(request)) {
+      return {
+        ok: false,
+        action: 'list',
+        error: 'INVALID_REQUEST',
+        message: 'Invalid worktree request.',
+      };
+    }
+    const result = await worktreeService.execute(request, 'desktop');
+    if (request.action === 'open' && result.ok && result.opened && !event.sender.isDestroyed()) {
+      event.sender.send('worktrees:open-requested', result.opened);
+    }
+    return result;
+  });
   ipcMain.handle('files:list', (_event, path: string) => fileService.listDirectory(path));
   ipcMain.handle('files:roots', () => fileService.listRoots());
   ipcMain.handle('files:read-text', (_event, path: string) => fileService.readTextFile(path));
+  ipcMain.handle('files:read-preview', async (event, path: string, capability?: unknown) => {
+    if (capability === undefined) return fileService.readFilePreview(path);
+    const authorized = await terminalCapabilitiesFor(event.sender).consumeAndOpen(capability, path);
+    if (!authorized.ok) return { ok: false as const, error: 'Terminal preview authorization expired or the file changed.' };
+    return fileService.readFilePreview(path, authorized.handle);
+  });
   ipcMain.handle('files:mkdir', (_event, dirPath: string, name: string) =>
     fileService.createFolder(dirPath, name),
   );
@@ -344,6 +497,44 @@ app.on('ready', () => {
   });
   ipcMain.handle('files:reveal', (_event, path: string) => {
     shell.showItemInFolder(path);
+  });
+  ipcMain.handle('external:open-http-url', async (_event, value: unknown): Promise<boolean> => {
+    if (typeof value !== 'string') return false;
+    const url = normalizeExternalHttpUrl(value);
+    if (!url) return false;
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  ipcMain.handle('quick-commands:list', async () => {
+    await quickCommandsReady;
+    return quickCommandStore.list();
+  });
+  ipcMain.handle('quick-commands:create', async (_event, input: unknown) => {
+    await quickCommandsReady;
+    return quickCommandStore.create(input);
+  });
+  ipcMain.handle('quick-commands:update', async (_event, id: unknown, input: unknown) => {
+    await quickCommandsReady;
+    return typeof id === 'string'
+      ? quickCommandStore.update(id, input)
+      : { ok: false, error: 'not-found', message: 'quick command not found' } as const;
+  });
+  ipcMain.handle('quick-commands:delete', async (_event, id: unknown) => {
+    await quickCommandsReady;
+    return typeof id === 'string'
+      ? quickCommandStore.delete(id)
+      : { ok: false, error: 'not-found', message: 'quick command not found' } as const;
+  });
+  ipcMain.handle('workspace-files:search', (_event, request: WorkspaceFileSearchRequest) =>
+    workspaceFileSearch.search(request),
+  );
+  ipcMain.on('workspace-files:cancel', (_event, requestId: unknown) => {
+    if (typeof requestId === 'string') workspaceFileSearch.cancel(requestId);
   });
 
   // ── Packet capture (Phase 2B, off-by-default sub-view) + mobile tee (M3) ──
@@ -445,6 +636,124 @@ app.on('ready', () => {
     await storeReady;
     if (typeof scrollback === 'number') await layoutStore.setScrollback(scrollback);
   });
+  ipcMain.handle('settings:get-terminal-renderer', async () => {
+    await storeReady;
+    return layoutStore.getTerminalRenderer();
+  });
+  ipcMain.handle('settings:set-terminal-renderer', async (_event, preference: unknown) => {
+    const parsed = TerminalRendererPreferenceSchema.safeParse(preference);
+    if (!parsed.success) return;
+    await storeReady;
+    await layoutStore.setTerminalRenderer(parsed.data);
+  });
+  ipcMain.handle('settings:get-confirm-risky-pane-close', async () => {
+    await storeReady;
+    return layoutStore.getConfirmRiskyPaneClose();
+  });
+  ipcMain.handle('settings:set-confirm-risky-pane-close', async (_event, enabled: unknown) => {
+    if (typeof enabled !== 'boolean') return;
+    await storeReady;
+    await layoutStore.setConfirmRiskyPaneClose(enabled);
+  });
+  ipcMain.handle('settings:get-allow-osc52-clipboard', async () => {
+    await storeReady;
+    return layoutStore.getAllowOsc52Clipboard();
+  });
+  ipcMain.handle('settings:set-allow-osc52-clipboard', async (_event, enabled: unknown) => {
+    if (typeof enabled !== 'boolean') return;
+    await storeReady;
+    await layoutStore.setAllowOsc52Clipboard(enabled);
+  });
+  ipcMain.handle('terminal:write-osc52-clipboard', async (event, text: unknown): Promise<boolean> => {
+    if (typeof text !== 'string' || Buffer.byteLength(text, 'utf8') > OSC52_MAIN_MAX_BYTES) return false;
+    await storeReady;
+    if (!(await layoutStore.getAllowOsc52Clipboard())) return false;
+    const now = Date.now();
+    const previous = osc52LastWrite.get(event.sender) ?? Number.NEGATIVE_INFINITY;
+    if (now - previous < OSC52_MAIN_MIN_INTERVAL_MS) return false;
+    osc52LastWrite.set(event.sender, now);
+    clipboard.writeText(text);
+    return true;
+  });
+  ipcMain.handle('terminal:resolve-file-location', (event, request: TerminalFileLocationRequest) =>
+    resolveTerminalFileLocation(request, terminalCapabilitiesFor(event.sender)));
+  ipcMain.handle('ssh-forwards:list', () => sshForwardService?.listAll() ?? []);
+  ipcMain.handle(
+    'ssh-forwards:stop',
+    async (_event, connectionId: unknown, forwardId: unknown): Promise<SshForwardResult> => {
+      if (typeof connectionId !== 'string' || typeof forwardId !== 'string') {
+        return sshForwardFailure(new Error('invalid SSH forward stop request'));
+      }
+      try {
+        if (!sshForwardService) throw new Error('SSH forwarding service is unavailable');
+        return { ok: true, forwards: [await sshForwardService.stop(connectionId, forwardId)] };
+      } catch (error) {
+        return sshForwardFailure(error);
+      }
+    },
+  );
+  ipcMain.handle(
+    'destroy-sessions-guarded',
+    (_event, sessions: unknown): Promise<DestroySessionGuardResult> => {
+      if (
+        !Array.isArray(sessions)
+        || sessions.length === 0
+        || sessions.length > MAX_GUARDED_DESTROY_SESSIONS
+        || sessions.some((entry) => {
+          if (typeof entry !== 'object' || entry === null) return true;
+          const candidate = entry as Partial<GuardedSessionDestroyRequest>;
+          return (
+            typeof candidate.sessionId !== 'string'
+            || candidate.sessionId.length === 0
+            || candidate.sessionId.length > 256
+            || !Array.isArray(candidate.expectedActiveRunIds)
+            || candidate.expectedActiveRunIds.length > MAX_GUARDED_DESTROY_RUN_IDS
+            || candidate.expectedActiveRunIds.some(
+              (runId) => typeof runId !== 'string' || runId.length === 0 || runId.length > 256,
+            )
+          );
+        })
+        || new Set(sessions.map((entry) => (entry as GuardedSessionDestroyRequest).sessionId)).size !== sessions.length
+      ) {
+        return Promise.resolve({ ok: false, reason: 'unavailable' });
+      }
+      return broker?.destroySessionsGuarded(sessions as GuardedSessionDestroyRequest[])
+        ?? Promise.resolve({ ok: false, reason: 'unavailable' });
+    },
+  );
+
+  ipcMain.handle('agents:get-snapshot', () => agentActivityService?.getSnapshot() ?? { revision: 0, items: [] });
+  ipcMain.handle('agents:followup', (_event, activityId: string, text: string): AgentFollowupResult => {
+    if (typeof activityId !== 'string' || typeof text !== 'string') return { ok: false, error: 'invalid-text' };
+    return agentActivityService?.sendFollowup(activityId, text) ?? { ok: false, error: 'delivery-failed' };
+  });
+  ipcMain.handle('agents:list-integrations', async () => {
+    await agentInfrastructureReady;
+    return agentHookInstaller.list();
+  });
+  ipcMain.handle('agents:set-integration-enabled', async (_event, provider: unknown, enabled: unknown) => {
+    await agentInfrastructureReady;
+    if (!isAgentIntegrationProvider(provider) || typeof enabled !== 'boolean') {
+      throw new Error('invalid agent integration request');
+    }
+    if (enabled && !agentRelayReady) {
+      return {
+        ok: false,
+        error: 'io-error',
+        message: 'The local agent hook relay is unavailable; no hook configuration was changed.',
+        status: await agentHookInstaller.status(provider),
+      } as const;
+    }
+    return agentHookInstaller.mutate(provider, enabled);
+  });
+  ipcMain.handle('agents:get-settings', async () => {
+    await agentInfrastructureReady;
+    return agentSettingsStore.get();
+  });
+  ipcMain.handle('agents:set-settings', async (_event, settings: unknown) => {
+    await agentInfrastructureReady;
+    return agentSettingsStore.set(settings);
+  });
 
   // ── Custom themes + font/effects settings (theme-effects-font M3) ────────
   // theme-store.ts owns its own fs (the themes dir, independent of layoutStore's
@@ -494,6 +803,13 @@ app.on('ready', () => {
     void openClawProxyHandle?.stop();
     openClawService?.dispose();
     openClawChatView?.destroy();
+    agentActivityService?.dispose();
+    void agentSettingsStore.flush();
+    void quickCommandStore.flush();
+    workspaceFileSearch.dispose();
+    void sshForwardService?.dispose();
+    sshForwardService = null;
+    void agentHookRelay.stop();
     clearInterval(openclawVisibilityRecheckTimer);
   });
 
@@ -501,15 +817,32 @@ app.on('ready', () => {
   // comes into being — the interpreter mints the authoritative {sessionId, cwd} and
   // replies via `session-created`, correlated by requestId. A pane awaits this before
   // it can run commands. The broker owns the correlation state + the session directory.
-  ipcMain.handle('create-session', (_event, cwd?: string): Promise<SessionInfo> =>
-    broker ? broker.createSession(cwd) : Promise.reject(new Error('interpreter not running')),
-  );
+  ipcMain.handle('create-session', async (_event, cwd?: string): Promise<SessionInfo> => {
+    await agentInfrastructureReady;
+    return broker ? broker.createSession(cwd) : Promise.reject(new Error('interpreter not running'));
+  });
 
   // Destroy a session when its pane/tab closes (fire-and-forget; interpreter aborts
   // the session's in-flight runs and drops it — idempotent, Codex B2/B6).
   ipcMain.on('destroy-session', (_event, sessionId: string) => {
     broker?.destroySession(sessionId);
   });
+  ipcMain.handle(
+    'destroy-session-guarded',
+    (_event, sessionId: unknown, expectedActiveRunIds: unknown): Promise<DestroySessionGuardResult> => {
+      if (
+        typeof sessionId !== 'string'
+        || sessionId.length === 0
+        || !Array.isArray(expectedActiveRunIds)
+        || expectedActiveRunIds.length > MAX_GUARDED_DESTROY_RUN_IDS
+        || expectedActiveRunIds.some((runId) => typeof runId !== 'string' || runId.length === 0 || runId.length > 256)
+      ) {
+        return Promise.resolve({ ok: false, reason: 'unavailable' });
+      }
+      return broker?.destroySessionGuarded(sessionId, expectedActiveRunIds as string[])
+        ?? Promise.resolve({ ok: false, reason: 'unavailable' });
+    },
+  );
 
   // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
   // list-sessions is a straight passthrough to the broker's directory;
@@ -531,7 +864,7 @@ app.on('ready', () => {
   // registry are untouched — attach is view+input, not a second writer).
   ipcMain.on('attach-run', (event, payload: { sessionId: string; runId: string }) => {
     if (!broker) return;
-    const port1 = broker.attachRun(payload.runId);
+    const port1 = broker.attachRun(payload.sessionId, payload.runId);
     if (!port1) return;
     event.sender.postMessage('attach-port', { runId: payload.runId }, [port1 as unknown as MessagePortMain]);
   });
@@ -570,8 +903,66 @@ app.on('ready', () => {
   broker = new InterpreterBroker({
     interpreter: interpreter as unknown as BrokerInterpreter,
     createMessageChannel: () => new MessageChannelMain(),
+    mutationGate: sessionWorktreeMutationGate,
+    runGuard: sessionWorktreeRunGuard,
+    validateSessionCwd: async (cwd) => {
+      try {
+        return (await stat(cwd)).isDirectory();
+      } catch {
+        return false;
+      }
+    },
+    sessionEnvironment: (sessionId) => {
+      if (!agentRelayReady) return {} as Readonly<Record<string, string>>;
+      return {
+        EZTERMINAL_SESSION_ID: sessionId,
+        EZTERMINAL_AGENT_HOOK_DESCRIPTOR: agentHookRelay.environmentDescriptor,
+      };
+    },
   });
   console.log('[main] interpreter broker ready');
+
+  sshForwardService = new SshForwardService({
+    interpreter: interpreter as unknown as BrokerInterpreter,
+    createMessageChannel: () => new MessageChannelMain(),
+    onInterpreterExited: (listener) => broker?.onInterpreterExited(listener) ?? (() => undefined),
+  });
+  console.log('[main] SSH forwarding service ready');
+
+  agentActivityService = new AgentActivityService({
+    broker,
+    getSettings: () => agentSettingsStore.current,
+  });
+  agentActivityService.onSnapshot((snapshot) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('agents:snapshot', snapshot);
+    }
+  });
+  const liveAgentNotifications = new Set<Notification>();
+  agentActivityService.onTransition((transition: AgentActivityTransition) => {
+    const { activity } = transition;
+    if (activity.status !== 'waiting' && activity.status !== 'blocked' && activity.status !== 'error') return;
+    if (!agentSettingsStore.current.notifications[activity.status]) return;
+    const windows = BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed());
+    if (windows.some((win) => win.isFocused()) || !Notification.isSupported()) return;
+    const notification = new Notification({
+      title: `${activity.provider} agent ${activity.status}`,
+      body: activity.cwd || 'EZTerminal session',
+      silent: false,
+    });
+    liveAgentNotifications.add(notification);
+    notification.on('close', () => liveAgentNotifications.delete(notification));
+    notification.on('click', () => {
+      const win = mainWindowRef ?? windows[0];
+      if (!win || win.isDestroyed()) return;
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+      win.webContents.send('agents:reveal-session', activity.sessionId);
+    });
+    notification.show();
+  });
 
   // ── Session/run fan-out to every desktop window (M2 mirroring) ────────────
   // The broker is the sole session `add`/`remove` caller; these subscriptions
@@ -601,6 +992,7 @@ app.on('ready', () => {
         sessionId: info.sessionId,
         runId: info.runId,
         commandText: info.commandText,
+        executionKind: info.executionKind,
       });
     }
   });
@@ -664,6 +1056,48 @@ app.on('ready', () => {
         .catch((err: unknown) => {
           console.error('[main] known-host-add failed:', err);
         });
+    } else if (msg?.type === 'worktree-action-request') {
+      const origin = msg.origin === 'desktop' ? 'desktop' : 'mobile';
+      if (!isWorktreeRequest(msg.request)) {
+        interpreter?.postMessage({
+          type: 'worktree-action-response',
+          requestId: msg.requestId,
+          result: {
+            ok: false,
+            action: 'list',
+            error: 'INVALID_REQUEST',
+            message: 'Invalid worktree request.',
+          },
+        } satisfies MainToInterpreter);
+        return;
+      }
+      const controller = new AbortController();
+      pendingWorktreeActions.get(msg.requestId)?.abort();
+      pendingWorktreeActions.set(msg.requestId, controller);
+      void worktreeService
+        .execute(msg.request, origin, controller.signal, {
+          sessionId: msg.sessionId,
+          runId: msg.runId,
+        })
+        .then((result) => {
+          if (controller.signal.aborted || pendingWorktreeActions.get(msg.requestId) !== controller) return;
+          if (origin === 'desktop' && msg.request.action === 'open' && result.ok && result.opened) {
+            notifyDesktopWorktreeOpen(result.opened);
+          }
+          interpreter?.postMessage({
+            type: 'worktree-action-response',
+            requestId: msg.requestId,
+            result,
+          } satisfies MainToInterpreter);
+        })
+        .finally(() => {
+          if (pendingWorktreeActions.get(msg.requestId) === controller) {
+            pendingWorktreeActions.delete(msg.requestId);
+          }
+        });
+    } else if (msg?.type === 'worktree-action-cancel') {
+      pendingWorktreeActions.get(msg.requestId)?.abort();
+      pendingWorktreeActions.delete(msg.requestId);
     }
   });
 
@@ -671,6 +1105,8 @@ app.on('ready', () => {
     console.log(`[main] interpreter exited with code ${String(code)}`);
     mainLog?.line(`interpreter exited with code ${String(code)} (all sessions dead)`);
     interpreter = null;
+    for (const controller of pendingWorktreeActions.values()) controller.abort();
+    pendingWorktreeActions.clear();
     // Shared-fate (Codex B8, extended for E4): ONE utilityProcess backs every
     // session, so its death kills them all — including every live script-host,
     // which would otherwise become an orphaned process (design §6.1). Tell every
@@ -753,10 +1189,50 @@ app.on('ready', () => {
       return () => remoteOpenClawVisibilityListeners.delete(listener);
     },
   };
-  const remoteTokenStore = new RemoteTokenStore(path.join(app.getPath('userData')));
-  const remoteTokenReady = remoteTokenStore.init().catch((err) => {
-    console.error('[main] remote token store init failed:', err);
+  const remoteTokenStore = new RemoteTokenStore(path.join(app.getPath('userData')), {
+    protector: process.platform === 'win32'
+      ? {
+          encrypt: (plaintext) => {
+            if (!safeStorage.isEncryptionAvailable()) {
+              throw new Error('Windows credential encryption is unavailable.');
+            }
+            return safeStorage.encryptString(plaintext);
+          },
+          decrypt: (ciphertext) => {
+            if (!safeStorage.isEncryptionAvailable()) {
+              throw new Error('Windows credential encryption is unavailable.');
+            }
+            return safeStorage.decryptString(ciphertext);
+          },
+        }
+      : undefined,
+    requireProtector: process.platform === 'win32',
   });
+  let remoteTokenSecure = false;
+  let remoteSecurityError: string | null = null;
+  let remoteTokenInit: Promise<void> | null = null;
+  const ensureRemoteTokenSecurity = (): Promise<void> => {
+    if (remoteTokenSecure) return Promise.resolve();
+    if (remoteTokenInit === null) {
+      remoteTokenInit = (async () => {
+        await remoteTokenStore.init();
+        // Mint/load and fully harden the token before any listener can bind.
+        await remoteTokenStore.getToken();
+        remoteTokenSecure = true;
+        remoteSecurityError = null;
+      })()
+        .catch((err) => {
+          remoteTokenSecure = false;
+          remoteSecurityError = 'The remote access token could not be stored securely. Remote access remains off.';
+          console.error('[main] remote token security readiness failed:', err);
+          throw err;
+        })
+        .finally(() => {
+          remoteTokenInit = null;
+        });
+    }
+    return remoteTokenInit ?? Promise.resolve();
+  };
   const remoteBridgePort = Number(process.env.EZTERMINAL_REMOTE_PORT) || DEFAULT_REMOTE_BRIDGE_PORT;
   const remoteStatsSource: RemoteStatsSource = {
     getHistory: () => systemStatsService?.getHistory() ?? [],
@@ -770,11 +1246,19 @@ app.on('ready', () => {
   const remotePacketSource: RemotePacketSource = {
     subscribe: (listener) => packetMirror?.subscribe(listener) ?? (() => undefined),
   };
+  const remoteQuickCommandSource: RemoteQuickCommandSource = {
+    list: async () => {
+      await quickCommandsReady;
+      return quickCommandStore.list();
+    },
+  };
   // Gated on `remoteEnabled` (v0.2.0 D2): a closure so both boot and the
   // runtime toggle below start the SAME shape of bridge + proxy, in lockstep
   // (architecture decision (b) — the OpenClaw proxy's lifecycle matches
   // `remoteEnabled` exactly, never a separate always-on listener).
   const startBridge = async (): Promise<void> => {
+    await ensureRemoteTokenSecurity();
+    await agentInfrastructureReady;
     // M3: resolve visibility BEFORE the WS server starts listening, so the
     // very first connection's post-auth push (see remote-bridge.ts) is never
     // stale — a client cannot connect until `startRemoteBridge` below runs.
@@ -788,17 +1272,17 @@ app.on('ready', () => {
     }
     remoteBridgeHandle = startRemoteBridge({
       port: remoteBridgePort,
-      getToken: async () => {
-        await remoteTokenReady;
-        return remoteTokenStore.getToken();
-      },
+      getToken: () => remoteTokenStore.getToken(),
       broker: broker!,
       statsSource: remoteStatsSource,
       packetSource: remotePacketSource,
       // `satisfies` forces a structural check here — the same `fileService`
       // instance backs the desktop IPC handlers above and the mobile bridge.
       fileSource: fileService satisfies RemoteFileSource,
+      worktreeSource: worktreeService,
+      quickCommandSource: remoteQuickCommandSource,
       openclawSource: remoteOpenClawSource,
+      agentSource: agentActivityService ?? undefined,
     });
   };
   // `app.on('ready', ...)` isn't async, so the boot gate is a fire-and-forget
@@ -806,7 +1290,9 @@ app.on('ready', () => {
   void (async () => {
     await storeReady;
     if (await layoutStore.getRemoteEnabled()) await startBridge();
-  })();
+  })().catch((err) => {
+    console.error('[main] remote bridge remained off:', err);
+  });
 
   // Runtime on/off toggle (v0.2.0 D2): every start/stop chains off `bridgeOp`
   // so rapid toggles from the renderer never overlap (e.g. a stop still
@@ -819,12 +1305,39 @@ app.on('ready', () => {
     return formatConnectionInfo(networkInterfaces(), remoteBridgePort);
   });
   ipcMain.handle('remote:get-token', async () => {
-    await remoteTokenReady;
+    await ensureRemoteTokenSecurity();
     return remoteTokenStore.getToken();
   });
+  ipcMain.handle('remote:get-security-status', async () => {
+    try {
+      await ensureRemoteTokenSecurity();
+    } catch {
+      // The status payload is the renderer-safe error channel.
+    }
+    return {
+      state: remoteSecurityError === null ? 'ready' : 'error',
+      error: remoteSecurityError,
+    } as const;
+  });
   ipcMain.handle('remote:rotate-token', async () => {
-    await remoteTokenReady;
-    return remoteTokenStore.rotateToken();
+    await ensureRemoteTokenSecurity();
+    try {
+      return await remoteTokenStore.rotateToken();
+    } catch (err) {
+      remoteTokenSecure = false;
+      remoteSecurityError = 'The new remote access token could not be stored securely. Remote access was stopped.';
+      if (remoteBridgeHandle) {
+        const handle = remoteBridgeHandle;
+        remoteBridgeHandle = null;
+        await handle.stop();
+      }
+      if (openClawProxyHandle) {
+        const proxyHandle = openClawProxyHandle;
+        openClawProxyHandle = null;
+        await proxyHandle.stop();
+      }
+      throw err;
+    }
   });
   ipcMain.handle('remote:get-enabled', async () => {
     await storeReady;
@@ -834,13 +1347,15 @@ app.on('ready', () => {
     if (typeof enabled !== 'boolean') return remoteBridgeHandle !== null;
     await storeReady;
     await layoutStore.setRemoteEnabled(enabled);
-    bridgeOp = bridgeOp.then(async () => {
+    const operation = bridgeOp.then(async () => {
       if (enabled) {
         if (!remoteBridgeHandle) await startBridge();
-      } else if (remoteBridgeHandle) {
-        const handle = remoteBridgeHandle;
-        remoteBridgeHandle = null;
-        await handle.stop();
+      } else {
+        if (remoteBridgeHandle) {
+          const handle = remoteBridgeHandle;
+          remoteBridgeHandle = null;
+          await handle.stop();
+        }
         // Proxy lifecycle in lockstep with the bridge (architecture decision
         // (b)) — never left running once remote control is turned off.
         if (openClawProxyHandle) {
@@ -850,7 +1365,10 @@ app.on('ready', () => {
         }
       }
     });
-    await bridgeOp;
+    // A failed security/start attempt must reject this caller without wedging
+    // the serialized lane; a later toggle is allowed to retry after repair.
+    bridgeOp = operation.catch(() => undefined);
+    await operation;
     return remoteBridgeHandle !== null;
   });
 

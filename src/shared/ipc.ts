@@ -10,10 +10,30 @@ import type {
   OpenClawMode,
   RollbarSettings,
   StartupPref,
+  TerminalRendererPreference,
   ThemeName,
 } from './layout-schema';
 import type { FileListResult, FileOpResult, FileReadTextResult } from './files';
+import type { FilePreviewResult } from './file-preview';
+import type { QuickCommand, QuickCommandInput, QuickCommandMutationResult } from './quick-command';
+import type { WorkspaceFileSearchRequest, WorkspaceFileSearchResult } from './workspace-search';
+import type { TerminalFileLocationRequest, TerminalFileLocationResult } from './terminal-file-location';
+import type { SSH_FORWARD_BIND_HOST, SshForwardAction, SshForwardInfo, SshForwardResult } from './ssh-forward';
+import type {
+  WorktreeInfo,
+  WorktreeRequest,
+  WorktreeRequestOrigin,
+  WorktreeResult,
+} from './worktree';
 import type { ThemeMod } from './theme-schema';
+import type {
+  AgentActivitySnapshot,
+  AgentFollowupResult,
+  AgentIntegrationMutationResult,
+  AgentIntegrationProvider,
+  AgentIntegrationStatus,
+  AgentSettings,
+} from './agent';
 import type {
   OpenClawAgentSession,
   OpenClawAutostartAction,
@@ -42,6 +62,30 @@ export interface RuntimeVersions {
   readonly node: string;
 }
 
+/**
+ * Desktop-native Ctrl+Tab events. Chromium consumes Ctrl+Tab before a renderer
+ * keydown is dispatched, so main captures only this chord and forwards this
+ * narrow, data-free union through the isolated preload bridge.
+ */
+export type RecentPanelInputEvent =
+  | { readonly type: 'cycle'; readonly reverse: boolean }
+  | { readonly type: 'commit' }
+  | { readonly type: 'cancel'; readonly restoreFocus: boolean };
+
+export function isRecentPanelInputEvent(value: unknown): value is RecentPanelInputEvent {
+  if (typeof value !== 'object' || value === null) return false;
+  const event = value as Partial<RecentPanelInputEvent>;
+  const keys = Object.keys(event).sort();
+  if (event.type === 'cycle') {
+    return typeof event.reverse === 'boolean' && keys.join(',') === 'reverse,type';
+  }
+  if (event.type === 'commit') return keys.join(',') === 'type';
+  if (event.type === 'cancel') {
+    return typeof event.restoreFocus === 'boolean' && keys.join(',') === 'restoreFocus,type';
+  }
+  return false;
+}
+
 // ── Interpreter → Renderer frames ────────────────────────────────────────────
 // Each command gets its own dedicated MessagePort. Interpreter sends these
 // frames over it. Chunks are BATCHED arrays of rows — never one-message-per-row,
@@ -65,10 +109,15 @@ export interface ColumnInfo {
   readonly type: string;
 }
 
+/** Execution transport selected for a run. Optional on wire frames for compatibility. */
+export type ExecutionKind = 'local' | 'ssh';
+
 export interface StartFrame {
   readonly type: 'start';
   /** Echoes back the raw command text for correlation. */
   readonly commandText: string;
+  /** Additive: absent when replaying frames from an older interpreter. */
+  readonly executionKind?: ExecutionKind;
   /**
    * Session cwd when the command STARTED — the terminal-style prompt path for this
    * block. Optional/additive: older frames without it fall back to a bare prompt.
@@ -117,6 +166,9 @@ export interface ProgressFrame {
 
 export interface EndFrame {
   readonly type: 'end';
+  /** Process exit code when the underlying runner exposes one. Older and
+   * non-process runners may omit it. */
+  readonly exitCode?: number;
   /**
    * Session cwd AFTER the command ran — reflects a `cd` so the renderer's live
    * prompt updates. Optional/additive (older frames simply omit it).
@@ -143,6 +195,38 @@ export interface CancelledFrame {
 export interface PtyDataFrame {
   readonly type: 'pty-data';
   readonly data: Uint8Array;
+  /** Historical terminal output being rendered for state reconstruction.
+   * Consumers must render it but must not repeat terminal-originated effects
+   * such as OSC 52 clipboard writes. Absent means ordinary live output. */
+  readonly suppressSideEffects?: true;
+}
+
+/**
+ * Local mobile reconnect marker. It is emitted immediately before an attach
+ * port replays the authoritative PTY buffer, so the existing xterm/plain view
+ * can clear stale scrollback without being remounted.
+ */
+export interface PtyReplayResetFrame {
+  readonly type: 'pty-replay-reset';
+}
+
+/** Stable, content-free reason why a late PTY attach used a degraded restore
+ * path. Snapshot/tail bytes continue to use `pty-data`, keeping the remote
+ * base64 codec unchanged. */
+export type PtyRestoreWarningReason =
+  | 'semantic-gap'
+  | 'serializer-failed'
+  | 'snapshot-too-large'
+  | 'resize-pending'
+  | 'replay-queue-overflow'
+  | 'ssh-late-attach-unsupported';
+
+export interface PtyRestoreWarningFrame {
+  readonly type: 'pty-restore-warning';
+  readonly reason: PtyRestoreWarningReason;
+  readonly fallback: 'raw-ring' | 'none';
+  readonly snapshotEpoch?: number;
+  readonly streamEpoch?: number;
 }
 
 /**
@@ -160,6 +244,23 @@ export interface SshPromptFrame {
   readonly message: string;
   readonly fingerprint?: string;
   readonly host?: string;
+}
+
+/** Stable id of the authenticated SSH transport backing this terminal. */
+export interface SshConnectionFrame {
+  readonly type: 'ssh-connection';
+  readonly connectionId: string;
+  readonly state: 'ready' | 'closed';
+}
+
+/** A mobile-origin `worktree open` completed main-side validation. Only the
+ * originating run port acts on it; mirrors keep rendering the structured row. */
+export interface WorktreeOpenFrame {
+  readonly type: 'worktree-open';
+  /** Stable across attach replay so the initiating mobile transport can
+   * deduplicate a frame it already acted on before reconnecting. */
+  readonly intentId: string;
+  readonly worktree: WorktreeInfo;
 }
 
 /**
@@ -220,7 +321,11 @@ export type InterpreterFrame =
   | ErrorFrame
   | CancelledFrame
   | PtyDataFrame
+  | PtyReplayResetFrame
+  | PtyRestoreWarningFrame
   | SshPromptFrame
+  | SshConnectionFrame
+  | WorktreeOpenFrame
   | PtyRenderUpgradeFrame
   | PtyDimsFrame
   | PtyControlFrame;
@@ -340,6 +445,9 @@ export interface RunMessage {
    * find this same execution, and lets the interpreter announce `run-started`
    * back to main correlated to it. */
   readonly runId: string;
+  /** Absent means desktop for backward compatibility. RemoteBridge sets
+   * `mobile`, which keeps mutating worktree actions denied end-to-end. */
+  readonly requestOrigin?: WorktreeRequestOrigin;
 }
 
 /** Create a new shell session. Interpreter mints the id + resolves the cwd (Codex B5). */
@@ -351,11 +459,49 @@ export interface CreateSessionMessage {
   readonly cwd?: string;
 }
 
+/** Main-owned internal environment injected immediately after creation and
+ * before createSession resolves. It never crosses the renderer or remote API. */
+export interface SetSessionEnvironmentMessage {
+  readonly type: 'set-session-environment';
+  readonly sessionId: string;
+  readonly environment: Readonly<Record<string, string>>;
+}
+
 /** Destroy a session: abort its in-flight runs, release resources, drop the record. */
 export interface DestroySessionMessage {
   readonly type: 'destroy-session';
   readonly sessionId: string;
+  /** Present only for a renderer/mobile guarded close. The interpreter compares
+   * this snapshot atomically with its live foreground runs before destroying. */
+  readonly expectedActiveRunIds?: readonly string[];
+  /** Correlates the guarded result. Omitted for trusted, unconditional teardown. */
+  readonly requestId?: string;
+  /** Main-side ACK deadline. An interpreter that receives the guarded request
+   * after this time must reject it instead of performing an unobservable late
+   * teardown. Omitted only for legacy/tests and unconditional teardown. */
+  readonly deadlineAt?: number;
 }
+
+export interface GuardedSessionDestroyRequest {
+  readonly sessionId: string;
+  readonly expectedActiveRunIds: readonly string[];
+}
+
+/** Atomic multi-session close used when replacing a desktop layout. The
+ * interpreter validates every snapshot before destroying any session. */
+export interface DestroySessionsGuardedMessage {
+  readonly type: 'destroy-sessions-guarded';
+  readonly requestId: string;
+  readonly sessions: readonly GuardedSessionDestroyRequest[];
+  readonly deadlineAt: number;
+}
+
+export type DestroySessionGuardResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: 'state-changed' | 'unavailable' };
+
+export const MAX_GUARDED_DESTROY_RUN_IDS = 8;
+export const MAX_GUARDED_DESTROY_SESSIONS = 16;
 
 /**
  * Attach a NON-INITIATING observer port to an existing run (M2 mirroring —
@@ -367,8 +513,22 @@ export interface DestroySessionMessage {
  */
 export interface AttachRunMessage {
   readonly type: 'attach-run';
+  /** Present when main must know that the observer was accepted before it
+   * releases another liveness-holding port (mobile reconnect takeover). */
+  readonly requestId?: string;
+  /** Session ownership is checked even though run ids are globally unique. */
+  readonly sessionId: string;
   readonly runId: string;
 }
+
+export type RunAttachRejectReason =
+  | 'run-not-found'
+  | 'session-mismatch'
+  | 'run-ended'
+  | 'mirror-capacity'
+  | 'ssh-unsupported'
+  | 'restore-failed'
+  | 'transport-failed';
 
 /**
  * Ask the interpreter for every currently-active run (M1 mirror-active-runs
@@ -443,16 +603,86 @@ export interface KnownHostAddMessage {
   readonly fingerprint: string;
 }
 
+/** Interpreter -> main: authenticated SSH connection lifecycle. `closed` is
+ * terminal in v1; there is no implicit reauthentication or id reuse. */
+export interface SshConnectionStateMessage {
+  readonly type: 'ssh-connection-state';
+  readonly connectionId: string;
+  readonly state: 'ready' | 'closed';
+}
+
+/** Interpreter builtin -> main forwarding-service RPC. */
+export interface SshForwardRequestMessage {
+  readonly type: 'ssh-forward-request';
+  readonly requestId: string;
+  readonly request: SshForwardAction;
+  /** Main-owned authorization context; mobile may inspect but not mutate listeners. */
+  readonly origin: WorktreeRequestOrigin;
+}
+
+export interface SshForwardRequestCancelMessage {
+  readonly type: 'ssh-forward-request-cancel';
+  readonly requestId: string;
+}
+
+/** Main -> interpreter: correlated start/list/stop result. */
+export interface SshForwardResponseMessage {
+  readonly type: 'ssh-forward-response';
+  readonly requestId: string;
+  readonly result: SshForwardResult;
+}
+
+/** Main -> interpreter: one accepted loopback socket requests an ssh2
+ * direct-tcpip channel. Carries a dedicated MessagePort in event.ports[0]. */
+export interface SshForwardStreamOpenMessage {
+  readonly type: 'ssh-forward-stream-open';
+  readonly streamId: string;
+  readonly connectionId: string;
+  readonly sourceHost: typeof SSH_FORWARD_BIND_HOST;
+  readonly sourcePort: number;
+  readonly remoteHost: string;
+  readonly remotePort: number;
+}
+
+/** Interpreter builtin -> main-owned WorktreeService RPC. */
+export interface WorktreeActionRequestMessage {
+  readonly type: 'worktree-action-request';
+  readonly requestId: string;
+  readonly request: WorktreeRequest;
+  readonly origin: WorktreeRequestOrigin;
+  /** Interpreter-authored identity of the run awaiting this request. Main
+   * uses it only to exempt that exact run from the removal barrier. */
+  readonly sessionId: string;
+  readonly runId: string;
+}
+
+export interface WorktreeActionCancelMessage {
+  readonly type: 'worktree-action-cancel';
+  readonly requestId: string;
+}
+
+/** Main -> interpreter correlated worktree result. */
+export interface WorktreeActionResponseMessage {
+  readonly type: 'worktree-action-response';
+  readonly requestId: string;
+  readonly result: WorktreeResult;
+}
+
 export type MainToInterpreter =
   | RunMessage
   | CreateSessionMessage
+  | SetSessionEnvironmentMessage
   | DestroySessionMessage
+  | DestroySessionsGuardedMessage
   | AttachRunMessage
   | ListRunsMessage
   | ScriptHostReadyMessage
   | ScriptHostErrorMessage
   | ScriptHostExitMessage
-  | KnownHostVerdictMessage;
+  | KnownHostVerdictMessage
+  | SshForwardResponseMessage
+  | SshForwardStreamOpenMessage
+  | WorktreeActionResponseMessage;
 
 /** Interpreter's reply to `create-session` — the authoritative session id + cwd. */
 export interface SessionCreatedMessage {
@@ -481,6 +711,44 @@ export interface RunListMessage {
   readonly runs: readonly RunStartedInfo[];
 }
 
+/** A foreground run reached its terminal boundary. The cwd is the
+ * interpreter-owned ShellSession value after the command (including cd).
+ * Main releases the run lease and refreshes its session directory together. */
+export interface SessionRunSettledMessage {
+  readonly type: 'session-run-settled';
+  readonly sessionId: string;
+  readonly runId: string;
+  /** Absent only when the interpreter rejected the run before finding a live session. */
+  readonly cwd?: string;
+}
+
+/** Interpreter acknowledgement for a guarded session destroy. `destroyed`
+ * also means the session was already absent, preserving idempotent close. */
+export interface SessionDestroyResultMessage {
+  readonly type: 'session-destroy-result';
+  readonly requestId: string;
+  /** Echoed independently of main's short-lived correlation entry so a
+   * successful late ACK can reconcile the main-side SessionDirectory. */
+  readonly sessionIds: readonly string[];
+  readonly destroyed: boolean;
+}
+
+/** Interpreter acknowledgement for an attach carrying `requestId`. Frames may
+ * already be queued on the transferred port, but main must not start/release
+ * takeover resources until this authoritative result arrives. */
+export type RunAttachResultMessage =
+  | {
+      readonly type: 'run-attach-result';
+      readonly requestId: string;
+      readonly accepted: true;
+    }
+  | {
+      readonly type: 'run-attach-result';
+      readonly requestId: string;
+      readonly accepted: false;
+      readonly reason: RunAttachRejectReason;
+    };
+
 /** main -> interpreter: the host forked; its RPC port arrives via event.ports[0]. */
 export interface ScriptHostReadyMessage {
   readonly type: 'script-host-ready';
@@ -503,12 +771,20 @@ export interface ScriptHostExitMessage {
 
 export type InterpreterToMain =
   | SessionCreatedMessage
+  | SessionRunSettledMessage
   | InterpreterRunStartedMessage
   | RunListMessage
+  | SessionDestroyResultMessage
+  | RunAttachResultMessage
   | SpawnScriptHostMessage
   | KillScriptHostMessage
   | KnownHostCheckMessage
-  | KnownHostAddMessage;
+  | KnownHostAddMessage
+  | SshConnectionStateMessage
+  | SshForwardRequestMessage
+  | SshForwardRequestCancelMessage
+  | WorktreeActionRequestMessage
+  | WorktreeActionCancelMessage;
 
 /** The authoritative session identity returned by `createSession`. */
 export interface SessionInfo {
@@ -534,6 +810,8 @@ export interface RunStartedInfo {
   readonly sessionId: string;
   readonly runId: string;
   readonly commandText: string;
+  /** Additive: absent when announced by an older desktop interpreter. */
+  readonly executionKind?: ExecutionKind;
 }
 
 // ── System stats overlay panel (status-overlay-panel, rev6/Option A″) ───────
@@ -637,6 +915,12 @@ export interface RemoteConnectionInfo {
   readonly port: number;
 }
 
+/** Fail-closed readiness of the desktop token store. */
+export interface RemoteSecurityStatus {
+  readonly state: 'ready' | 'error';
+  readonly error: string | null;
+}
+
 // ── Preload bridge API ────────────────────────────────────────────────────────
 
 export interface EzTerminalApi {
@@ -654,6 +938,17 @@ export interface EzTerminalApi {
    * Idempotent and fire-and-forget.
    */
   destroySession: (sessionId: string) => void;
+  /** Destroy only if the interpreter still has exactly the foreground runs
+   * observed by the closing surface. A state change fails closed. */
+  destroySessionGuarded: (
+    sessionId: string,
+    expectedActiveRunIds: readonly string[],
+  ) => Promise<DestroySessionGuardResult>;
+  /** Atomically validate and destroy all creator sessions before replacing a
+   * saved layout. Either every session is destroyed or none is. */
+  destroySessionsGuarded: (
+    sessions: readonly GuardedSessionDestroyRequest[],
+  ) => Promise<DestroySessionGuardResult>;
   /**
    * Start executing `commandText` in `sessionId`. `runId` is a caller-supplied unique
    * token used to correlate the brokered port back to *this* run. Main echoes `runId`
@@ -735,6 +1030,8 @@ export interface EzTerminalApi {
   getRemoteConnectionInfo: () => Promise<RemoteConnectionInfo>;
   /** The remote bridge's current persisted auth token. */
   getRemoteToken: () => Promise<string>;
+  /** Whether the token file passed platform permission/ACL verification. */
+  getRemoteSecurityStatus: () => Promise<RemoteSecurityStatus>;
   /** Mint + persist a new token — existing connections keep working (the bridge
    * only re-checks the token on new connections); new connections need it. */
   rotateRemoteToken: () => Promise<string>;
@@ -753,6 +1050,10 @@ export interface EzTerminalApi {
   listFileRoots: () => Promise<string[]>;
   /** Read a file for the read-only viewer — binary files come back `isText:false`. */
   readTextFile: (path: string) => Promise<FileReadTextResult>;
+  /** Read a bounded, magic-classified rich preview (text/Markdown/image/PDF metadata). */
+  readFilePreview: (path: string, terminalCapability?: string) => Promise<FilePreviewResult>;
+  /** Explicit terminal-link resolution; main owns realpath containment policy. */
+  resolveTerminalFileLocation: (request: TerminalFileLocationRequest) => Promise<TerminalFileLocationResult>;
   createFolder: (dirPath: string, name: string) => Promise<FileOpResult>;
   renameFile: (path: string, newName: string) => Promise<FileOpResult>;
   /** Moves to the OS trash only — never a permanent delete. */
@@ -787,6 +1088,17 @@ export interface EzTerminalApi {
    * arrives asynchronously via a persistent `attach-port` window message.
    */
   attachRun: (sessionId: string, runId: string) => Promise<void>;
+
+  // ── Agent Activity (desktop + connected mobile) ─────────────────────────
+  /** Level-triggered seed; snapshots never contain prompts, transcripts or tool input. */
+  getAgentActivitySnapshot: () => Promise<AgentActivitySnapshot>;
+  /** Revisioned activity push. Returns an unsubscribe. */
+  onAgentActivitySnapshot: (listener: (snapshot: AgentActivitySnapshot) => void) => () => void;
+  /** Deliver one trimmed line to a waiting agent PTY. Never auto-submits approvals. */
+  sendAgentFollowup: (activityId: string, text: string) => Promise<AgentFollowupResult>;
+
+  /** Main-owned Git worktree operations. Mobile is restricted to list/open. */
+  executeWorktree: (request: WorktreeRequest) => Promise<WorktreeResult>;
 }
 
 // ── Desktop-only preload bridge API (theme-effects-font M3) ──────────────────
@@ -797,6 +1109,40 @@ export interface EzTerminalApi {
 // shared/window.d.ts) so every call site guards with `?.`.
 
 export interface EzTerminalDesktopApi {
+  /** Native Ctrl+Tab/escape/release input captured before Chromium consumes it. */
+  onRecentPanelInput: (listener: (event: RecentPanelInputEvent) => void) => () => void;
+  /** Desktop renderer seam used by `worktree open` to select a fresh terminal
+   * rooted at the validated registered worktree. */
+  onWorktreeOpenRequested: (listener: (worktree: WorktreeInfo) => void) => () => void;
+  /** xterm renderer preference. `auto` tries WebGL and safely falls back to DOM. */
+  getTerminalRendererPreference: () => Promise<TerminalRendererPreference>;
+  setTerminalRendererPreference: (preference: TerminalRendererPreference) => Promise<void>;
+  /** Whether creator-owned panes ask before destroying an active/risky session. */
+  getConfirmRiskyPaneClose: () => Promise<boolean>;
+  setConfirmRiskyPaneClose: (enabled: boolean) => Promise<void>;
+  getAllowOsc52Clipboard: () => Promise<boolean>;
+  setAllowOsc52Clipboard: (enabled: boolean) => Promise<void>;
+  /** Main rechecks opt-in, size and rate limits before touching the OS clipboard. */
+  writeOsc52Clipboard: (text: string) => Promise<boolean>;
+  /** Active loopback-only listeners, for the compact Settings summary. */
+  listSshForwards: () => Promise<readonly SshForwardInfo[]>;
+  stopSshForward: (connectionId: string, forwardId: string) => Promise<SshForwardResult>;
+  /** Validate and open only credential-free HTTP(S) URLs in the OS browser. */
+  openExternalHttpUrl: (url: string) => Promise<boolean>;
+  /** Electron's safe File -> absolute path bridge used by the global drop target. */
+  getPathForFile: (file: File) => string | null;
+
+  // Quick Open and main-owned Quick Commands.
+  listQuickCommands: () => Promise<readonly QuickCommand[]>;
+  createQuickCommand: (input: QuickCommandInput) => Promise<QuickCommandMutationResult>;
+  updateQuickCommand: (id: string, input: QuickCommandInput) => Promise<QuickCommandMutationResult>;
+  deleteQuickCommand: (id: string) => Promise<QuickCommandMutationResult>;
+  onQuickCommandsChanged: (listener: (commands: readonly QuickCommand[]) => void) => () => void;
+  searchWorkspaceFiles: (
+    request: Omit<WorkspaceFileSearchRequest, 'signal'>,
+  ) => Promise<WorkspaceFileSearchResult>;
+  cancelWorkspaceFileSearch: (requestId: string) => void;
+
   /** Custom theme mods folder-scanned from `.ezterminal/themes/*.json` at
    * startup (main/theme-store.ts) — already validated (`ThemeMod`, not raw JSON). */
   getAvailableThemes: () => Promise<ThemeMod[]>;
@@ -819,6 +1165,18 @@ export interface EzTerminalDesktopApi {
    * `clampInterferenceParams` on both read and set. */
   getEffectParams: () => Promise<EffectParamsSettings>;
   setEffectParams: (params: EffectParamsSettings) => Promise<void>;
+
+  // ── Agent hook integration/settings (desktop-only) ──────────────────────
+  listAgentIntegrations: () => Promise<readonly AgentIntegrationStatus[]>;
+  setAgentIntegrationEnabled: (
+    provider: AgentIntegrationProvider,
+    enabled: boolean,
+  ) => Promise<AgentIntegrationMutationResult>;
+  getAgentSettings: () => Promise<AgentSettings>;
+  /** Null means validation rejected the payload and nothing was persisted. */
+  setAgentSettings: (settings: AgentSettings) => Promise<AgentSettings | null>;
+  /** OS notification click asks the owning renderer to reveal this session. */
+  onAgentSessionReveal: (listener: (sessionId: string) => void) => () => void;
 
   // ── OpenClaw management (openclaw-management M1) ────────────────────────
   // `getChatUrl`/the raw token are deliberately ABSENT from this surface —

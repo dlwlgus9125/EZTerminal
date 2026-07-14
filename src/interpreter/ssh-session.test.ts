@@ -2,9 +2,10 @@ import { utils as ssh2Utils } from 'ssh2';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { InterpreterFrame } from '../shared/ipc';
-import { sshStreamData, type SshStreamData } from './core';
+import { SSH_FORWARD_PENDING_OPEN_CAP } from '../shared/ssh-forward';
+import { sshAliasStreamData, sshStreamData, type DirectSshStreamData } from './core';
 import { runSshSession, type SshSessionDeps } from './ssh-session';
-import type { SshAuthMethod, SshChannelLike, SshClientLike, SshConnectOptions } from './external/ssh-client';
+import type { SshAuthMethod, SshChannelLike, SshClientLike, SshConnectOptions, SshForwardChannelLike } from './external/ssh-client';
 
 // `parsePrivateKey` (external/ssh-client.ts) calls the REAL ssh2 key parser, not
 // a fake — so the credential-resolution tests need genuinely valid (test-only)
@@ -22,7 +23,7 @@ function collect() {
   return { frames, emit: (f: InterpreterFrame) => frames.push(f) };
 }
 
-function sshData(overrides: Partial<SshStreamData> = {}): SshStreamData {
+function sshData(overrides: Partial<DirectSshStreamData> = {}): DirectSshStreamData {
   return { ...sshStreamData('example.com', 22, 'alice'), ...overrides };
 }
 
@@ -73,13 +74,21 @@ function makeFakeChannel() {
 /** A fake ssh2 Client the test drives directly. `shellChannel` controls what
  * `shell()` hands back; `fireReady`/`fireError`/`fireClose` simulate the
  * corresponding client events. */
-function makeFakeClient(opts: { shellChannel?: ReturnType<typeof makeFakeChannel>['channel'] } = {}) {
+function makeFakeClient(opts: {
+  shellChannel?: ReturnType<typeof makeFakeChannel>['channel'];
+  forwardChannel?: SshForwardChannelLike;
+} = {}) {
   const listeners: { ready: Array<() => void>; error: Array<(err: Error) => void>; close: Array<() => void> } = {
     ready: [],
     error: [],
     close: [],
   };
-  const calls = { connectedWith: null as SshConnectOptions | null, ended: 0, shellCalls: 0 };
+  const calls = {
+    connectedWith: null as SshConnectOptions | null,
+    ended: 0,
+    shellCalls: 0,
+    forwardOut: [] as Array<{ sourceHost: string; sourcePort: number; remoteHost: string; remotePort: number }>,
+  };
   const client: SshClientLike = {
     connect(options) {
       calls.connectedWith = options;
@@ -88,6 +97,11 @@ function makeFakeClient(opts: { shellChannel?: ReturnType<typeof makeFakeChannel
       calls.shellCalls += 1;
       if (opts.shellChannel) callback(undefined, opts.shellChannel);
       else callback(new Error('no channel configured'), undefined as unknown as SshChannelLike);
+    },
+    forwardOut(sourceHost, sourcePort, remoteHost, remotePort, callback) {
+      calls.forwardOut.push({ sourceHost, sourcePort, remoteHost, remotePort });
+      if (opts.forwardChannel) callback(undefined, opts.forwardChannel);
+      else callback(new Error('forwardOut not stubbed'), undefined as never);
     },
     on: ((event: string, listener: (...args: unknown[]) => void) => {
       if (event === 'ready') listeners.ready.push(listener as () => void);
@@ -201,6 +215,135 @@ async function driveToShellOpen(
   fakeClient.fireReady();
   await flush();
 }
+
+describe('runSshSession — config alias resolution', () => {
+  it('resolves a bare alias before connect and keys TOFU by the resolved host and port', async () => {
+    const ac = new AbortController();
+    const resolveAlias = vi.fn(async () => ({
+      alias: 'production',
+      host: 'prod.internal',
+      port: 2202,
+      user: 'deploy',
+    }));
+    const { deps, fakeClient, knownHostChecks } = makeDeps({ resolveAlias });
+    const { frames, emit } = collect();
+
+    const session = runSshSession(sshAliasStreamData('production', 2202), emit, ac.signal, deps);
+    await flush();
+    expect(resolveAlias).toHaveBeenCalledWith('production', 2202, undefined, ac.signal);
+    expect(fakeClient.calls.connectedWith).toMatchObject({ host: 'prod.internal', port: 2202, username: 'deploy' });
+
+    await driveHandshake(session, frames, fakeClient, 'secret');
+    expect(knownHostChecks).toHaveLength(1);
+    expect(knownHostChecks[0]).toMatchObject({ host: 'prod.internal', port: 2202 });
+  });
+
+  it('never invokes alias resolution for a legacy direct target', async () => {
+    const ac = new AbortController();
+    const resolveAlias = vi.fn();
+    const { deps, fakeClient } = makeDeps({ resolveAlias });
+    const { emit } = collect();
+    runSshSession(sshData(), emit, ac.signal, deps);
+    await flush();
+    expect(resolveAlias).not.toHaveBeenCalled();
+    expect(fakeClient.calls.connectedWith).toMatchObject({ host: 'example.com', port: 22, username: 'alice' });
+  });
+});
+
+describe('runSshSession — stable connection id and direct-tcpip forwarding', () => {
+  it('announces one id, opens a forward on the authenticated client, and destroys it on connection close', async () => {
+    const shell = makeFakeChannel();
+    const forwardListeners = new Map<string, Array<(...args: never[]) => void>>();
+    let forwardDestroyed = 0;
+    const forwardChannel = {
+      on(event: string, listener: (...args: never[]) => void): void {
+        const values = forwardListeners.get(event) ?? [];
+        values.push(listener);
+        forwardListeners.set(event, values);
+      },
+      write: () => true,
+      pause: () => {},
+      resume: () => {},
+      end: () => {},
+      destroy: () => { forwardDestroyed += 1; },
+    } as SshForwardChannelLike;
+    const clientWithChannel = makeFakeClient({ shellChannel: shell.channel, forwardChannel });
+    const lifecycle = { onReady: vi.fn(), onClosed: vi.fn() };
+    const { deps } = makeDeps({ createClient: () => clientWithChannel.client });
+    const { frames, emit } = collect();
+    const ac = new AbortController();
+    const session = runSshSession(sshData(), emit, ac.signal, deps, 80, 24, 'conn-fixed', lifecycle);
+
+    await driveToShellOpen(session, frames, clientWithChannel);
+    expect(session.connectionId).toBe('conn-fixed');
+    expect(session.ready).toBe(true);
+    expect(frames).toContainEqual({ type: 'ssh-connection', connectionId: 'conn-fixed', state: 'ready' });
+    expect(lifecycle.onReady).toHaveBeenCalledWith(session);
+
+    await expect(session.openForward('127.0.0.1', 50000, 'db.internal', 5432)).resolves.toBe(forwardChannel);
+    expect(clientWithChannel.calls.forwardOut).toEqual([
+      { sourceHost: '127.0.0.1', sourcePort: 50000, remoteHost: 'db.internal', remotePort: 5432 },
+    ]);
+
+    session.dispose();
+    expect(session.ready).toBe(false);
+    expect(forwardDestroyed).toBe(1);
+    expect(lifecycle.onClosed).toHaveBeenCalledOnce();
+    await expect(session.openForward('127.0.0.1', 50000, 'db.internal', 5432)).rejects.toMatchObject({
+      code: 'CONNECTION_CLOSED',
+    });
+  });
+
+  it('bounds unresolved forwardOut callbacks and destroys a channel that opens after cancellation', async () => {
+    const shell = makeFakeChannel();
+    const deferredClient = makeFakeClient({ shellChannel: shell.channel });
+    const callbacks: Array<Parameters<SshClientLike['forwardOut']>[4]> = [];
+    deferredClient.client.forwardOut = (
+      _sourceHost,
+      _sourcePort,
+      _remoteHost,
+      _remotePort,
+      callback,
+    ) => { callbacks.push(callback); };
+    const { deps } = makeDeps({ createClient: () => deferredClient.client });
+    const { frames, emit } = collect();
+    const session = runSshSession(sshData(), emit, new AbortController().signal, deps);
+    await driveToShellOpen(session, frames, deferredClient);
+
+    const firstAbort = new AbortController();
+    const opens: Array<Promise<unknown>> = [
+      session.openForward('127.0.0.1', 50000, 'db.internal', 5432, firstAbort.signal),
+    ];
+    for (let index = 1; index < SSH_FORWARD_PENDING_OPEN_CAP; index += 1) {
+      opens.push(session.openForward('127.0.0.1', 50000 + index, 'db.internal', 5432));
+    }
+    expect(callbacks).toHaveLength(SSH_FORWARD_PENDING_OPEN_CAP);
+    await expect(
+      session.openForward('127.0.0.1', 51000, 'db.internal', 5432),
+    ).rejects.toMatchObject({ code: 'STREAM_LIMIT_REACHED' });
+
+    firstAbort.abort();
+    await expect(opens[0]).rejects.toMatchObject({ code: 'CANCELLED' });
+    await expect(
+      session.openForward('127.0.0.1', 51001, 'db.internal', 5432),
+    ).rejects.toMatchObject({ code: 'STREAM_LIMIT_REACHED' });
+
+    let destroyed = 0;
+    const late = {
+      on: () => {},
+      write: () => true,
+      pause: () => {},
+      resume: () => {},
+      end: () => {},
+      destroy: () => { destroyed += 1; },
+    } as SshForwardChannelLike;
+    callbacks[0](undefined, late);
+    expect(destroyed).toBe(1);
+
+    session.dispose();
+    await Promise.allSettled(opens.slice(1));
+  });
+});
 
 describe('runSshSession — credential resolution (via authHandler, AFTER host verification)', () => {
   it('no keyPath: prompts for a password, then resolves a password auth method', async () => {

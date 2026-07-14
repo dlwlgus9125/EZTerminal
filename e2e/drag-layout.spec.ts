@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
+import { readXtermBuffer } from './xterm-buffer';
 
 // Track A follow-up ②: drag layout editor. disableDnd is removed so a user can drag a
 // tab to split / rearrange panes; disableFloatingGroups blocks the Shift+drag detached-
@@ -31,7 +32,7 @@ test('drag-layout: moving a pane preserves its live PTY session (re-parents, nev
   await panes.nth(0).getByTestId('btn-run').click();
   await expect(panes.nth(0).getByTestId('pty-block')).toBeVisible();
   await expect
-    .poll(() => window.locator('.pty-block:visible .xterm-rows').innerText(), { timeout: 15_000 })
+    .poll(() => readXtermBuffer(window.locator('[data-testid="pty-block"]:visible')), { timeout: 15_000 })
     .toContain('READY');
 
   // Split right so there is a second group to move the PTY pane into.
@@ -62,7 +63,7 @@ test('drag-layout: moving a pane preserves its live PTY session (re-parents, nev
   await clickTab(window, 'Terminal 1');
   await expect(window.locator('[data-testid="pty-block"]:visible')).toBeVisible();
   await expect
-    .poll(() => window.locator('.pty-block:visible .xterm-rows').innerText(), { timeout: 15_000 })
+    .poll(() => readXtermBuffer(window.locator('[data-testid="pty-block"]:visible')), { timeout: 15_000 })
     .toContain('READY');
   await expect(window.locator('[data-testid="block-status"]:visible')).toHaveText('running');
 

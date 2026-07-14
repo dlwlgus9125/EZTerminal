@@ -11,6 +11,7 @@ export function ConnectionInfoPanel(): JSX.Element {
   const [urls, setUrls] = useState<readonly string[] | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [remoteEnabled, setRemoteEnabled] = useState<boolean | null>(null);
+  const [securityError, setSecurityError] = useState<string | null | undefined>(undefined);
   const [justRotated, setJustRotated] = useState(false);
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
@@ -19,8 +20,19 @@ export function ConnectionInfoPanel(): JSX.Element {
     void window.ezterminal.getRemoteConnectionInfo().then((info) => {
       if (alive) setUrls(info.urls);
     });
-    void window.ezterminal.getRemoteToken().then((t) => {
-      if (alive) setToken(t);
+    void window.ezterminal.getRemoteSecurityStatus().then((status) => {
+      if (!alive) return;
+      setSecurityError(status.error);
+      if (status.state === 'ready') {
+        void window.ezterminal.getRemoteToken().then(
+          (t) => {
+            if (alive) setToken(t);
+          },
+          () => {
+            if (alive) setSecurityError('The remote access token is unavailable. Remote access remains off.');
+          },
+        );
+      }
     });
     void window.ezterminal.getRemoteEnabled().then((v) => {
       if (alive) setRemoteEnabled(v);
@@ -31,10 +43,14 @@ export function ConnectionInfoPanel(): JSX.Element {
   }, []);
 
   const handleRotate = useCallback(() => {
-    void window.ezterminal.rotateRemoteToken().then((t) => {
-      setToken(t);
-      setJustRotated(true);
-    });
+    void window.ezterminal.rotateRemoteToken().then(
+      (t) => {
+        setToken(t);
+        setJustRotated(true);
+        setSecurityError(null);
+      },
+      () => setSecurityError('The new token could not be stored securely. Remote access was stopped.'),
+    );
   }, []);
 
   const handleCopy = useCallback((text: string) => {
@@ -44,7 +60,7 @@ export function ConnectionInfoPanel(): JSX.Element {
     });
   }, []);
 
-  const loading = urls === null || token === null || remoteEnabled === null;
+  const loading = urls === null || remoteEnabled === null || securityError === undefined || (securityError === null && token === null);
 
   return (
     <div className="status-drawer" data-testid="connection-info-panel">
@@ -52,6 +68,10 @@ export function ConnectionInfoPanel(): JSX.Element {
         <h2 className="status-section-title">Mobile Pairing</h2>
         {loading ? (
           <div className="status-loading">Loading…</div>
+        ) : securityError ? (
+          <div className="status-loading" role="alert" data-testid="pairing-security-error">
+            {securityError}
+          </div>
         ) : !remoteEnabled ? (
           <div className="status-loading" data-testid="pairing-remote-disabled">
             Remote access is disabled — enable it in Settings
@@ -70,7 +90,7 @@ export function ConnectionInfoPanel(): JSX.Element {
             ))}
             <div className="status-metric" data-testid="connection-token">
               Token: <code>{token}</code>{' '}
-              <button className="btn btn-split" onClick={() => handleCopy(token)}>
+              <button className="btn btn-split" onClick={() => handleCopy(token!)}>
                 {copiedText === token ? 'Copied' : 'Copy'}
               </button>
             </div>

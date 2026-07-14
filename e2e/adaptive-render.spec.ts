@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
+import { readXtermBuffer } from './xterm-buffer';
 
 // M3: adaptive render — execution is always PTY (M2); render branches on the
 // interpreter's TuiSignalDetector (pty-session.ts). All fixtures here are
@@ -48,7 +49,7 @@ const CTRLC_SURVIVOR_CMD_SHIM = path.resolve(__dirname, 'fixtures', 'ctrlc-survi
 
 /** Concatenated text currently rendered in the xterm grid (post-upgrade). */
 async function terminalText(window: Page): Promise<string> {
-  return window.locator('.pty-block .xterm-rows').innerText();
+  return readXtermBuffer(window.getByTestId('pty-block'));
 }
 
 /** Concatenated text currently rendered in the plain PTY view (pre-upgrade). */
@@ -245,7 +246,7 @@ test('AC-1 focus retention: cmd-input keeps focus through a plain run and is imm
 
   const cmdInput = window.getByTestId('cmd-input');
   await cmdInput.click();
-  await cmdInput.fill('echo hi');
+  await cmdInput.fill('node --version');
   // Enter (not a Run-button click) is the real flow this fixes: cmd-input
   // already has focus from typing, and it is no longer disabled for the
   // duration of the run (M1 — disabled is activeTakeover-gated, not
@@ -271,7 +272,7 @@ test('click-to-refocus: clicking the screen area returns focus to cmd-input', as
 
   const cmdInput = window.getByTestId('cmd-input');
   await cmdInput.click();
-  await cmdInput.fill('echo hi');
+  await cmdInput.fill('node --version');
   await cmdInput.press('Enter');
   await expect(window.getByTestId('block-status')).toHaveText('done', { timeout: 15_000 });
   await expect(cmdInput).toHaveValue(''); // command cleared on submit
@@ -297,13 +298,13 @@ test('mode-key-map guard: Arrow/Enter mean history-recall+run when idle, PTY inp
   const cmdInput = window.getByTestId('cmd-input');
 
   // Idle baseline: run one throwaway command so ArrowUp has history to recall.
-  await cmdInput.fill('echo idle-marker');
+  await cmdInput.fill('node --version');
   await cmdInput.press('Enter');
   await expect(window.getByTestId('block-status')).toHaveText('done', { timeout: 15_000 });
 
   await cmdInput.fill('');
   await cmdInput.press('ArrowUp');
-  await expect(cmdInput).toHaveValue('echo idle-marker'); // idle: Arrow recalls history
+  await expect(cmdInput).toHaveValue('node --version'); // idle: Arrow recalls history
 
   // Start a plain PTY run and wait for its input prompt. Scoped to the LATEST
   // block: the idle run above left its own (finished) `text-output`/

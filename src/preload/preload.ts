@@ -1,9 +1,11 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import {
   BRIDGE_KEY,
   DESKTOP_BRIDGE_KEY,
+  isRecentPanelInputEvent,
   type EzTerminalApi,
   type EzTerminalDesktopApi,
+  type RecentPanelInputEvent,
   type RunStartedInfo,
   type SessionInfo,
   type SystemStatsSnapshot,
@@ -73,6 +75,12 @@ const api: EzTerminalApi = {
     ipcRenderer.send('destroy-session', sessionId);
   },
 
+  destroySessionGuarded: (sessionId, expectedActiveRunIds) =>
+    ipcRenderer.invoke('destroy-session-guarded', sessionId, expectedActiveRunIds),
+
+  destroySessionsGuarded: (sessions) =>
+    ipcRenderer.invoke('destroy-sessions-guarded', sessions),
+
   runCommand: (commandText: string, runId: string, sessionId: string): Promise<void> => {
     // The port arrives asynchronously via the persistent 'cmd-port' listener above,
     // keyed by runId; the renderer registers its own window 'message' listener before
@@ -111,6 +119,21 @@ const api: EzTerminalApi = {
     ipcRenderer.send('attach-run', { sessionId, runId });
     return Promise.resolve();
   },
+
+  getAgentActivitySnapshot: () => ipcRenderer.invoke('agents:get-snapshot'),
+  onAgentActivitySnapshot: (
+    listener: (snapshot: import('../shared/agent').AgentActivitySnapshot) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, snapshot: import('../shared/agent').AgentActivitySnapshot): void =>
+      listener(snapshot);
+    ipcRenderer.on('agents:snapshot', handler);
+    return () => ipcRenderer.removeListener('agents:snapshot', handler);
+  },
+  sendAgentFollowup: (
+    activityId: string,
+    text: string,
+  ): Promise<import('../shared/agent').AgentFollowupResult> =>
+    ipcRenderer.invoke('agents:followup', activityId, text),
 
   // Layout persistence (Track A ③): thin invoke wrappers — main validates all.
   loadLayout: () => ipcRenderer.invoke('layout:load'),
@@ -162,6 +185,7 @@ const api: EzTerminalApi = {
   // everything (LAN IPs, token store access).
   getRemoteConnectionInfo: () => ipcRenderer.invoke('remote:get-connection-info'),
   getRemoteToken: () => ipcRenderer.invoke('remote:get-token'),
+  getRemoteSecurityStatus: () => ipcRenderer.invoke('remote:get-security-status'),
   rotateRemoteToken: () => ipcRenderer.invoke('remote:rotate-token'),
   getRemoteEnabled: () => ipcRenderer.invoke('remote:get-enabled'),
   setRemoteEnabled: (enabled: boolean) => ipcRenderer.invoke('remote:set-enabled', enabled),
@@ -171,11 +195,16 @@ const api: EzTerminalApi = {
   listFiles: (path: string) => ipcRenderer.invoke('files:list', path),
   listFileRoots: () => ipcRenderer.invoke('files:roots'),
   readTextFile: (path: string) => ipcRenderer.invoke('files:read-text', path),
+  readFilePreview: (path: string, terminalCapability?: string) =>
+    ipcRenderer.invoke('files:read-preview', path, terminalCapability),
+  resolveTerminalFileLocation: (request) => ipcRenderer.invoke('terminal:resolve-file-location', request),
   createFolder: (dirPath: string, name: string) => ipcRenderer.invoke('files:mkdir', dirPath, name),
   renameFile: (path: string, newName: string) => ipcRenderer.invoke('files:rename', path, newName),
   trashFile: (path: string) => ipcRenderer.invoke('files:trash', path),
   openFileInApp: (path: string) => ipcRenderer.invoke('files:open-path', path),
   revealFileInExplorer: (path: string) => ipcRenderer.invoke('files:reveal', path),
+  executeWorktree: (request: import('../shared/worktree').WorktreeRequest) =>
+    ipcRenderer.invoke('worktrees:execute', request),
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
@@ -185,6 +214,77 @@ contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
 // for why: mobile has no implementation of these, and folding them into the
 // shared EzTerminalApi would force mobile's transport to stub every one).
 const desktopApi: EzTerminalDesktopApi = {
+  onRecentPanelInput: (
+    listener: (event: RecentPanelInputEvent) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, input: unknown): void => {
+      if (isRecentPanelInputEvent(input)) listener(input);
+    };
+    ipcRenderer.on('recent-panels:input', handler);
+    return () => ipcRenderer.removeListener('recent-panels:input', handler);
+  },
+  onWorktreeOpenRequested: (
+    listener: (worktree: import('../shared/worktree').WorktreeInfo) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: unknown,
+      worktree: import('../shared/worktree').WorktreeInfo,
+    ): void => listener(worktree);
+    ipcRenderer.on('worktrees:open-requested', handler);
+    return () => ipcRenderer.removeListener('worktrees:open-requested', handler);
+  },
+  getTerminalRendererPreference: (): Promise<import('../shared/layout-schema').TerminalRendererPreference> =>
+    ipcRenderer.invoke('settings:get-terminal-renderer'),
+  setTerminalRendererPreference: (
+    preference: import('../shared/layout-schema').TerminalRendererPreference,
+  ): Promise<void> => ipcRenderer.invoke('settings:set-terminal-renderer', preference),
+  getConfirmRiskyPaneClose: (): Promise<boolean> =>
+    ipcRenderer.invoke('settings:get-confirm-risky-pane-close'),
+  setConfirmRiskyPaneClose: (enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke('settings:set-confirm-risky-pane-close', enabled),
+  getAllowOsc52Clipboard: (): Promise<boolean> =>
+    ipcRenderer.invoke('settings:get-allow-osc52-clipboard'),
+  setAllowOsc52Clipboard: (enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke('settings:set-allow-osc52-clipboard', enabled),
+  writeOsc52Clipboard: (text: string): Promise<boolean> =>
+    ipcRenderer.invoke('terminal:write-osc52-clipboard', text),
+  listSshForwards: (): Promise<readonly import('../shared/ssh-forward').SshForwardInfo[]> =>
+    ipcRenderer.invoke('ssh-forwards:list'),
+  stopSshForward: (
+    connectionId: string,
+    forwardId: string,
+  ): Promise<import('../shared/ssh-forward').SshForwardResult> =>
+    ipcRenderer.invoke('ssh-forwards:stop', connectionId, forwardId),
+  openExternalHttpUrl: (url: string): Promise<boolean> =>
+    ipcRenderer.invoke('external:open-http-url', url),
+  getPathForFile: (file: File): string | null => {
+    try {
+      const resolved = webUtils.getPathForFile(file);
+      return resolved || null;
+    } catch {
+      return null;
+    }
+  },
+  listQuickCommands: (): Promise<readonly import('../shared/quick-command').QuickCommand[]> =>
+    ipcRenderer.invoke('quick-commands:list'),
+  createQuickCommand: (input: import('../shared/quick-command').QuickCommandInput) =>
+    ipcRenderer.invoke('quick-commands:create', input),
+  updateQuickCommand: (id: string, input: import('../shared/quick-command').QuickCommandInput) =>
+    ipcRenderer.invoke('quick-commands:update', id, input),
+  deleteQuickCommand: (id: string) => ipcRenderer.invoke('quick-commands:delete', id),
+  onQuickCommandsChanged: (listener): (() => void) => {
+    const handler = (
+      _event: unknown,
+      commands: readonly import('../shared/quick-command').QuickCommand[],
+    ): void => listener(commands);
+    ipcRenderer.on('quick-commands:changed', handler);
+    return () => ipcRenderer.removeListener('quick-commands:changed', handler);
+  },
+  searchWorkspaceFiles: (request) => ipcRenderer.invoke('workspace-files:search', request),
+  cancelWorkspaceFileSearch: (requestId: string): void => {
+    ipcRenderer.send('workspace-files:cancel', requestId);
+  },
+
   getAvailableThemes: (): Promise<ThemeMod[]> => ipcRenderer.invoke('theme:get-available'),
   importTheme: (json: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('theme:import', json),
@@ -202,6 +302,25 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.invoke('settings:get-effect-params'),
   setEffectParams: (params: import('../shared/layout-schema').EffectParamsSettings): Promise<void> =>
     ipcRenderer.invoke('settings:set-effect-params', params),
+
+  listAgentIntegrations: (): Promise<readonly import('../shared/agent').AgentIntegrationStatus[]> =>
+    ipcRenderer.invoke('agents:list-integrations'),
+  setAgentIntegrationEnabled: (
+    provider: import('../shared/agent').AgentIntegrationProvider,
+    enabled: boolean,
+  ): Promise<import('../shared/agent').AgentIntegrationMutationResult> =>
+    ipcRenderer.invoke('agents:set-integration-enabled', provider, enabled),
+  getAgentSettings: (): Promise<import('../shared/agent').AgentSettings> =>
+    ipcRenderer.invoke('agents:get-settings'),
+  setAgentSettings: (
+    settings: import('../shared/agent').AgentSettings,
+  ): Promise<import('../shared/agent').AgentSettings | null> =>
+    ipcRenderer.invoke('agents:set-settings', settings),
+  onAgentSessionReveal: (listener: (sessionId: string) => void): (() => void) => {
+    const handler = (_event: unknown, sessionId: string): void => listener(sessionId);
+    ipcRenderer.on('agents:reveal-session', handler);
+    return () => ipcRenderer.removeListener('agents:reveal-session', handler);
+  },
 
   // OpenClaw management (openclaw-management M1): thin invoke/send wrappers —
   // main's OpenClawService is the sole authority, same shape as the file

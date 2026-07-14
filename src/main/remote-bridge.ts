@@ -25,11 +25,21 @@
  * doesn't keep a `statsSource`/packet-mirror acquire alive forever.
  */
 import { timingSafeEqual } from 'node:crypto';
+import type { FileHandle } from 'node:fs/promises';
 
 import { WebSocketServer, type WebSocket } from 'ws';
 
-import type { InterpreterFrame, PacketRow, SystemStatsSnapshot } from '../shared/ipc';
 import {
+  MAX_GUARDED_DESTROY_RUN_IDS,
+  type DestroySessionGuardResult,
+  type InterpreterFrame,
+  type PacketRow,
+  type RendererControl,
+  type RunAttachRejectReason,
+  type SystemStatsSnapshot,
+} from '../shared/ipc';
+import {
+  REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   base64ToUint8Array,
   encodeFrame,
   uint8ArrayToBase64,
@@ -37,9 +47,24 @@ import {
   type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../shared/remote-protocol';
+import {
+  MAX_QUICK_COMMANDS,
+  QuickCommandSchema,
+  type QuickCommand,
+} from '../shared/quick-command';
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
 import type { FileReadStream } from './file-service';
+import type { AgentActivitySnapshot, AgentFollowupResult } from '../shared/agent';
+import {
+  isWorktreeRequest,
+  type WorktreeRequest,
+  type WorktreeRequestOrigin,
+  type WorktreeResult,
+} from '../shared/worktree';
 import type { InterpreterBroker, RemoteInterpreter, RemoteMessageChannel, RemotePort } from './interpreter-broker';
+import { RemoteRunLeaseRegistry } from './remote-run-lease';
+import { resolveTerminalFileLocation } from './terminal-path-resolver';
+import { TerminalFileCapabilityStore } from './terminal-file-capability';
 import {
   OPENCLAW_CONFIG_ALLOWLIST,
   OPENCLAW_CONFIG_UNSET,
@@ -72,6 +97,11 @@ const MAX_INBOUND_FRAME_BYTES = 1024 * 1024;
  * server refuses new sockets (WS close 1013 "Try Again Later") so a socket
  * flood can't exhaust the main process. */
 const MAX_REMOTE_CONNECTIONS = 64;
+/** Opening and ready file reads both consume a per-connection slot. */
+export const MAX_REMOTE_FILE_READS = 16;
+/** Opening operations remain counted after socket close until the source
+ * settles, preventing reconnect churn from accumulating slow filesystem work. */
+export const MAX_REMOTE_PENDING_FILE_OPENS = 16;
 /** A socket that hasn't authenticated within this window is terminated, so an
  * unauthenticated client can't sit holding a connection slot indefinitely
  * (which, with `MAX_REMOTE_CONNECTIONS`, would otherwise starve real clients). */
@@ -104,6 +134,235 @@ export function tokensMatch(candidate: unknown, token: string): boolean {
   const a = Buffer.from(candidate);
   const b = Buffer.from(token);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+type UnknownRecord = Record<string, unknown>;
+type WorktreeDispatchMessage = {
+  readonly kind: 'worktree-request';
+  readonly requestId: string;
+  readonly request?: unknown;
+};
+type FileReadDispatchMessage = {
+  readonly kind: 'file-read';
+  readonly requestId?: unknown;
+  readonly path?: unknown;
+  readonly mode?: unknown;
+  readonly terminalCapability?: unknown;
+};
+type RemoteFileReadRecord = {
+  stream: FileReadStream | null;
+  readonly abortController: AbortController;
+  closed: boolean;
+  inFlight: boolean;
+  /** Cumulative byte offset required from the next ACK. `null` means no ACK
+   * is currently admissible (opening, pulling, or terminal). */
+  expectedAckOffset: number | null;
+  nextOffset: number;
+  sendBytes: number;
+};
+type DispatchableClientMessage =
+  | Exclude<ClientToServerMessage, { readonly kind: 'worktree-request' | 'file-read' }>
+  | WorktreeDispatchMessage
+  | FileReadDispatchMessage;
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === 'string';
+}
+
+function isOptionalNumber(value: unknown): value is number | undefined {
+  return value === undefined || isFiniteNumber(value);
+}
+
+const MAX_GUARDED_DESTROY_ID_LENGTH = 256;
+
+function isGuardedDestroyId(value: unknown): value is string {
+  return (
+    typeof value === 'string'
+    && value.length > 0
+    && value.length <= MAX_GUARDED_DESTROY_ID_LENGTH
+  );
+}
+
+function isGuardedDestroyRequest(value: UnknownRecord): boolean {
+  if (
+    !isGuardedDestroyId(value.requestId)
+    || !isGuardedDestroyId(value.sessionId)
+    || !Array.isArray(value.expectedActiveRunIds)
+    || value.expectedActiveRunIds.length > MAX_GUARDED_DESTROY_RUN_IDS
+  ) {
+    return false;
+  }
+  const runIds = value.expectedActiveRunIds;
+  return (
+    runIds.every(isGuardedDestroyId)
+    && new Set(runIds).size === runIds.length
+  );
+}
+
+/** Runtime boundary for the nested control union. The bridge itself reads
+ * `control.type`, while the interpreter reads the variant fields, so both the
+ * discriminant and the minimum fields for that variant are checked here. */
+function isRendererControl(value: unknown): value is RendererControl {
+  if (!isRecord(value) || typeof value.type !== 'string') return false;
+  switch (value.type) {
+    case 'cancel':
+    case 'close':
+    case 'pty-claim-control':
+      return true;
+    case 'requestRows':
+    case 'setViewport':
+      return isFiniteNumber(value.start) && isFiniteNumber(value.count);
+    case 'pty-input':
+      return typeof value.data === 'string';
+    case 'pty-resize':
+      return isFiniteNumber(value.cols) && isFiniteNumber(value.rows);
+    case 'pty-ack':
+      return isFiniteNumber(value.bytes);
+    case 'ssh-prompt-response':
+      return (
+        typeof value.promptId === 'string' &&
+        isOptionalString(value.value) &&
+        (value.accept === undefined || typeof value.accept === 'boolean')
+      );
+    default:
+      return false;
+  }
+}
+
+function isTerminalFileLocationRequest(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.path === 'string' &&
+    typeof value.cwd === 'string' &&
+    (value.executionKind === 'local' || value.executionKind === 'ssh') &&
+    isOptionalNumber(value.line) &&
+    isOptionalNumber(value.column)
+  );
+}
+
+/** Validate enough of every authenticated client envelope that the selected
+ * switch arm can safely dereference its fields. Worktree and file-read keep
+ * their existing arm-local validation/reply behavior, so only their safe
+ * outer correlation shape is required here. */
+function isDispatchableClientMessage(value: unknown): value is DispatchableClientMessage {
+  if (!isRecord(value) || typeof value.kind !== 'string') return false;
+  switch (value.kind) {
+    case 'list-sessions':
+    case 'list-runs':
+    case 'release-runs':
+    case 'stats-history':
+    case 'packets-subscribe':
+    case 'packets-unsubscribe':
+    case 'openclaw-status-subscribe':
+    case 'openclaw-status-unsubscribe':
+    case 'openclaw-logs-subscribe':
+    case 'openclaw-logs-unsubscribe':
+      return true;
+    case 'auth':
+      return typeof value.token === 'string';
+    case 'create-session':
+      return typeof value.requestId === 'string' && isOptionalString(value.cwd);
+    case 'destroy-session':
+      return typeof value.sessionId === 'string';
+    case 'destroy-session-guarded':
+      return isGuardedDestroyRequest(value);
+    case 'run-command':
+      return (
+        typeof value.runId === 'string' &&
+        typeof value.sessionId === 'string' &&
+        typeof value.commandText === 'string'
+      );
+    case 'control':
+      return typeof value.runId === 'string' && isRendererControl(value.control);
+    case 'attach-run':
+      return typeof value.sessionId === 'string' && typeof value.runId === 'string';
+    case 'resume-run':
+      return (
+        typeof value.sessionId === 'string' &&
+        typeof value.runId === 'string' &&
+        isFiniteNumber(value.generation)
+      );
+    case 'stats-visible':
+      return typeof value.visible === 'boolean';
+    case 'agent-snapshot-get':
+      return typeof value.requestId === 'string';
+    case 'agent-followup':
+      return (
+        typeof value.requestId === 'string' &&
+        typeof value.activityId === 'string' &&
+        typeof value.text === 'string'
+      );
+    case 'worktree-request':
+      return typeof value.requestId === 'string';
+    case 'file-list':
+      return typeof value.requestId === 'string' && typeof value.path === 'string';
+    case 'file-roots':
+      return typeof value.requestId === 'string';
+    case 'terminal-file-location':
+      return typeof value.requestId === 'string' && isTerminalFileLocationRequest(value.request);
+    case 'file-read':
+      return true;
+    case 'file-read-ack':
+      return typeof value.requestId === 'string' && isFiniteNumber(value.offset);
+    case 'file-read-cancel':
+      return typeof value.requestId === 'string';
+    case 'file-mkdir':
+      return (
+        typeof value.requestId === 'string' &&
+        typeof value.dirPath === 'string' &&
+        typeof value.name === 'string'
+      );
+    case 'file-rename':
+      return (
+        typeof value.requestId === 'string' &&
+        typeof value.path === 'string' &&
+        typeof value.newName === 'string'
+      );
+    case 'file-trash':
+      return typeof value.requestId === 'string' && typeof value.path === 'string';
+    case 'file-upload-begin':
+      return (
+        typeof value.requestId === 'string' &&
+        typeof value.dirPath === 'string' &&
+        typeof value.name === 'string' &&
+        isFiniteNumber(value.size)
+      );
+    case 'file-upload-chunk':
+      return (
+        typeof value.uploadId === 'string' &&
+        isFiniteNumber(value.offset) &&
+        typeof value.data === 'string'
+      );
+    case 'file-upload-commit':
+    case 'file-upload-abort':
+      return typeof value.uploadId === 'string';
+    case 'openclaw-lifecycle':
+      return (
+        typeof value.requestId === 'string' &&
+        (value.action === 'start' || value.action === 'stop' || value.action === 'restart')
+      );
+    case 'openclaw-sessions-get':
+    case 'openclaw-config-get':
+    case 'openclaw-chat-ticket':
+    case 'quick-commands-list':
+      return typeof value.requestId === 'string';
+    case 'openclaw-config-set':
+      return (
+        typeof value.requestId === 'string' &&
+        typeof value.key === 'string' &&
+        typeof value.value === 'string'
+      );
+    default:
+      return false;
+  }
 }
 
 /** Per-connection packet-frame coalescing (M3): the host already flushes at
@@ -188,7 +447,9 @@ export interface RemoteFileSource {
   listRoots(): Promise<string[]>;
   openReadStream(
     filePath: string,
-    mode: 'text' | 'raw',
+    mode: 'text' | 'raw' | 'preview',
+    authorizedHandle?: FileHandle,
+    signal?: AbortSignal,
   ): Promise<{ ok: false; error: string } | ({ ok: true } & FileReadStream)>;
   createFolder(dirPath: string, name: string): Promise<FileOpResult>;
   renameEntry(entryPath: string, newName: string): Promise<FileOpResult>;
@@ -243,6 +504,52 @@ export interface RemoteOpenClawSource {
   subscribeVisibility(listener: (visible: boolean) => void): () => void;
 }
 
+const pendingFileOpensBySource = new WeakMap<RemoteFileSource, Set<AbortController>>();
+
+function pendingFileOpensFor(source: RemoteFileSource): Set<AbortController> {
+  let pending = pendingFileOpensBySource.get(source);
+  if (!pending) {
+    pending = new Set();
+    pendingFileOpensBySource.set(source, pending);
+  }
+  return pending;
+}
+
+function isDefinitiveAttachMiss(reason: RunAttachRejectReason): boolean {
+  return reason === 'run-not-found' || reason === 'session-mismatch' || reason === 'run-ended';
+}
+
+function describeResumeBusy(reason: RunAttachRejectReason): {
+  readonly reason: 'capacity' | 'unsupported' | 'unavailable';
+  readonly retryable: boolean;
+} {
+  if (reason === 'mirror-capacity') return { reason: 'capacity', retryable: true };
+  if (reason === 'ssh-unsupported') return { reason: 'unsupported', retryable: false };
+  return { reason: 'unavailable', retryable: !isDefinitiveAttachMiss(reason) };
+}
+
+/** Shared AgentActivityService surface. No hook configuration or bearer data
+ * is exposed to remote clients; only sanitized snapshots and waiting followup. */
+export interface RemoteAgentSource {
+  getSnapshot(): AgentActivitySnapshot;
+  onSnapshot(listener: (snapshot: AgentActivitySnapshot) => void): () => void;
+  sendFollowup(activityId: string, text: string): AgentFollowupResult;
+}
+
+/** Main-owned Git worktree service. The bridge always supplies the `mobile`
+ * origin so the service itself remains the authority that denies mutations. */
+export interface RemoteWorktreeSource {
+  execute(
+    request: WorktreeRequest,
+    origin: WorktreeRequestOrigin,
+  ): Promise<WorktreeResult>;
+}
+
+/** Read-only projection of the main-owned Quick Command store. */
+export interface RemoteQuickCommandSource {
+  list(): Promise<readonly QuickCommand[]>;
+}
+
 export interface RemoteBridgeOptions {
   readonly port: number;
   readonly getToken: () => Promise<string> | string;
@@ -258,6 +565,25 @@ export interface RemoteBridgeOptions {
   readonly fileSource?: RemoteFileSource;
   /** Optional so existing fixtures/tests without OpenClaw wiring keep working. */
   readonly openclawSource?: RemoteOpenClawSource;
+  readonly agentSource?: RemoteAgentSource;
+  /** Optional so older bridge fixtures remain valid. */
+  readonly worktreeSource?: RemoteWorktreeSource;
+  /** Optional capability: old hosts omit it and mobile hides the surface. */
+  readonly quickCommandSource?: RemoteQuickCommandSource;
+  /** Shared across websocket generations so transiently orphaned runs resume. */
+  readonly runLeases?: RemoteRunLeaseRegistry;
+}
+
+const defaultRunLeases = new WeakMap<InterpreterBroker, RemoteRunLeaseRegistry>();
+
+function leasesFor(options: RemoteBridgeOptions): RemoteRunLeaseRegistry {
+  if (options.runLeases) return options.runLeases;
+  let leases = defaultRunLeases.get(options.broker);
+  if (!leases) {
+    leases = new RemoteRunLeaseRegistry();
+    defaultRunLeases.set(options.broker, leases);
+  }
+  return leases;
 }
 
 /**
@@ -271,7 +597,12 @@ export function attachConnection(
   hooks?: { onAuthenticated?: () => void },
 ): void {
   let authed = false;
-  const runs = new Map<string, RemotePort>();
+  let releaseRunsOnClose = false;
+  let connectionClosed = false;
+  const runLeases = leasesFor(options);
+  const terminalCapabilities = new TerminalFileCapabilityStore();
+  const runs = new Map<string, { readonly sessionId: string; readonly port: RemotePort }>();
+  const pendingLeaseResumes = new Map<string, { readonly sessionId: string; readonly runId: string }>();
   // This connection's own stats subscription (independent of the desktop panel
   // and of every other connection — statsSource.acquire()/release() combine
   // them all via refcount, see StatsVisibility).
@@ -288,7 +619,8 @@ export function attachConnection(
   // File explorer (M3): open read streams keyed by the client's `requestId`,
   // and uploadIds this connection currently owns (for close-teardown abort —
   // FileService's own idle sweep is a backstop, not relied on here).
-  const fileReads = new Map<string, FileReadStream>();
+  const fileReads = new Map<string, RemoteFileReadRecord>();
+  const pendingFileOpens = options.fileSource ? pendingFileOpensFor(options.fileSource) : null;
   const fileUploads = new Set<string>();
   // OpenClaw management (M4): this connection's own status/logs subscription
   // state — same shape as stats/packets above (refcounted on the service
@@ -306,18 +638,130 @@ export function attachConnection(
   const openclawVisible = (): boolean => options.openclawSource?.isVisible() ?? false;
 
   const send = (msg: ServerToClientMessage): void => {
-    if (ws.readyState === WS_OPEN) ws.send(JSON.stringify(msg));
+    if (ws.readyState !== WS_OPEN) return;
+    try {
+      ws.send(JSON.stringify(msg));
+    } catch {
+      // A close can race the readyState check. The socket close path owns all
+      // pending cleanup; transport exceptions must not escape into main.
+    }
+  };
+
+  const closeFileRead = async (requestId: string, record: RemoteFileReadRecord): Promise<void> => {
+    if (record.closed) return;
+    record.closed = true;
+    record.abortController.abort();
+    record.expectedAckOffset = null;
+    if (fileReads.get(requestId) === record) fileReads.delete(requestId);
+    const stream = record.stream;
+    record.stream = null;
+    if (stream) await stream.close().catch(() => undefined);
+  };
+
+  const failFileRead = (requestId: string, record: RemoteFileReadRecord, error: string): void => {
+    if (fileReads.get(requestId) === record && !record.closed) {
+      send({ kind: 'file-read-meta', requestId, ok: false, error });
+    }
+    void closeFileRead(requestId, record);
+  };
+
+  const releasePendingResumeLeases = (): void => {
+    for (const pending of pendingLeaseResumes.values()) {
+      runLeases.release(pending.sessionId, pending.runId);
+    }
+    pendingLeaseResumes.clear();
+  };
+
+  const resumeRun = async (sessionId: string, runId: string, generation: number): Promise<void> => {
+    const pendingKey = `${sessionId}\0${runId}`;
+    const leaseWasPresent = runLeases.has(sessionId, runId);
+    if (leaseWasPresent) pendingLeaseResumes.set(pendingKey, { sessionId, runId });
+    const attached = await options.broker.attachRunChecked(sessionId, runId);
+    if (leaseWasPresent) pendingLeaseResumes.delete(pendingKey);
+
+    if (!attached.accepted) {
+      if (releaseRunsOnClose && leaseWasPresent) runLeases.release(sessionId, runId);
+      if (connectionClosed || releaseRunsOnClose) return;
+      if (!leaseWasPresent && isDefinitiveAttachMiss(attached.reason)) {
+        send({ kind: 'resume-run-missing', sessionId, runId, generation });
+        return;
+      }
+      const busy = describeResumeBusy(attached.reason);
+      send({ kind: 'resume-run-busy', sessionId, runId, generation, ...busy });
+      return;
+    }
+
+    const port1 = attached.port;
+    // Keep the liveness-holding lease parked until the replacement attach is
+    // authoritative. Taking it earlier creates a last-port-close race and
+    // re-parking it on every busy retry would accumulate port listeners.
+    const orphan = runLeases.take(sessionId, runId);
+    if (releaseRunsOnClose) {
+      port1.close();
+      orphan?.close();
+      return;
+    }
+    if (connectionClosed) {
+      runLeases.park(sessionId, runId, port1);
+      port1.start();
+      orphan?.close();
+      return;
+    }
+
+    const record = { sessionId, port: port1 };
+    runs.get(runId)?.port.close();
+    runs.set(runId, record);
+    port1.on('message', (event) => {
+      send({ kind: 'frame', runId, frame: encodeFrame(event.data as InterpreterFrame) });
+    });
+    port1.on('close', () => {
+      if (runs.get(runId) === record) runs.delete(runId);
+    });
+    // Reset the stable renderer before starting the replay queue. If no lease
+    // existed, the old server-side socket may still be half-open, so explicitly
+    // take PTY control rather than waiting for its eventual close.
+    send({ kind: 'resume-run-ready', sessionId, runId, generation });
+    if (!orphan) port1.postMessage({ type: 'pty-claim-control' });
+    port1.start();
+    orphan?.close();
   };
 
   /** Pull one chunk from an open read stream and send it — called once right
    * after `file-read-meta` and again on every `file-read-ack` (the one-in-
    * flight-chunk contract documented in remote-protocol.ts). */
-  const sendNextReadChunk = async (requestId: string, stream: FileReadStream): Promise<void> => {
-    const { offset, data, done } = await stream.next();
-    send({ kind: 'file-read-chunk', requestId, offset, data: uint8ArrayToBase64(data), done });
-    if (done) {
-      fileReads.delete(requestId);
-      await stream.close();
+  const sendNextReadChunk = async (requestId: string, record: RemoteFileReadRecord): Promise<void> => {
+    const stream = record.stream;
+    if (
+      !stream
+      || record.closed
+      || record.inFlight
+      || record.expectedAckOffset !== null
+      || fileReads.get(requestId) !== record
+    ) return;
+    record.inFlight = true;
+    try {
+      const { offset, data, done } = await stream.next();
+      if (record.closed || fileReads.get(requestId) !== record) return;
+      const nextOffset = offset + data.length;
+      if (
+        !Number.isSafeInteger(offset)
+        || offset !== record.nextOffset
+        || data.length <= 0
+        || nextOffset > record.sendBytes
+        || (done && nextOffset !== record.sendBytes)
+        || (!done && nextOffset >= record.sendBytes)
+      ) {
+        failFileRead(requestId, record, 'invalid file read stream state');
+        return;
+      }
+      record.nextOffset = nextOffset;
+      send({ kind: 'file-read-chunk', requestId, offset, data: uint8ArrayToBase64(data), done });
+      if (done) await closeFileRead(requestId, record);
+      else record.expectedAckOffset = nextOffset;
+    } catch {
+      failFileRead(requestId, record, 'file read failed');
+    } finally {
+      record.inFlight = false;
     }
   };
 
@@ -393,7 +837,13 @@ export function attachConnection(
     // runId is caller-minted, so unlike session-added there's no "learn my own
     // id first" race — a plain broadcast is enough.
     if (authed) {
-      send({ kind: 'run-started', sessionId: info.sessionId, runId: info.runId, commandText: info.commandText });
+      send({
+        kind: 'run-started',
+        sessionId: info.sessionId,
+        runId: info.runId,
+        commandText: info.commandText,
+        executionKind: info.executionKind,
+      });
     }
   });
 
@@ -405,13 +855,24 @@ export function attachConnection(
     options.openclawSource?.subscribeVisibility((visible) => {
       if (authed) send({ kind: 'openclaw-availability', visible });
     }) ?? (() => undefined);
+  const unsubAgentSnapshot =
+    options.agentSource?.onSnapshot((snapshot) => {
+      if (authed) send({ kind: 'agent-snapshot', snapshot });
+    }) ?? (() => undefined);
 
   ws.on('close', () => {
+    connectionClosed = true;
+    terminalCapabilities.clear();
+    if (releaseRunsOnClose) releasePendingResumeLeases();
     unsubSessionAdded();
     unsubSessionRemoved();
     unsubRunStarted();
     unsubOpenClawVisibility();
-    for (const port of runs.values()) port.close();
+    unsubAgentSnapshot();
+    for (const [runId, record] of runs) {
+      if (releaseRunsOnClose) record.port.close();
+      else runLeases.park(record.sessionId, runId, record.port);
+    }
     runs.clear();
     if (statsVisible) {
       statsVisible = false;
@@ -423,8 +884,7 @@ export function attachConnection(
     // File explorer (M3): a dropped connection is the only owner of its open
     // reads/uploads — close every stream and abort every upload rather than
     // leaving a `.ezpart` file or an fd open until the idle sweep gets to it.
-    for (const stream of fileReads.values()) void stream.close();
-    fileReads.clear();
+    for (const [requestId, record] of fileReads) void closeFileRead(requestId, record);
     for (const uploadId of fileUploads) void options.fileSource?.abortUpload(uploadId);
     fileUploads.clear();
     // OpenClaw management (M4): same teardown discipline as stats/packets above.
@@ -434,33 +894,48 @@ export function attachConnection(
 
   ws.on('message', (data, isBinary) => {
     if (isBinary) return; // never sent by a compliant client — ignore
-    let msg: ClientToServerMessage;
+    let parsed: unknown;
     try {
-      msg = JSON.parse(data.toString()) as ClientToServerMessage;
+      parsed = JSON.parse(data.toString()) as unknown;
     } catch {
       return;
     }
 
     if (!authed) {
-      if (msg.kind !== 'auth') {
+      if (!isRecord(parsed) || parsed.kind !== 'auth') {
         ws.close(AUTH_CLOSE_CODE);
         return;
       }
+      if (typeof parsed.token !== 'string') {
+        send({ kind: 'auth-fail', reason: 'invalid-token' });
+        ws.close(AUTH_CLOSE_CODE);
+        return;
+      }
+      const candidateToken = parsed.token;
       void Promise.resolve(options.getToken()).then((token) => {
-        if (tokensMatch(msg.token, token)) {
+        if (tokensMatch(candidateToken, token)) {
           authed = true;
           hooks?.onAuthenticated?.();
-          send({ kind: 'auth-ok' });
+          send({
+            kind: 'auth-ok',
+            ...(options.quickCommandSource
+              ? { capabilities: [REMOTE_CAPABILITY_QUICK_COMMANDS_READ] as const }
+              : {}),
+          });
+          if (options.agentSource) send({ kind: 'agent-snapshot', snapshot: options.agentSource.getSnapshot() });
           // OpenClaw availability (M3): initial state, right after auth —
           // `subscribeVisibility` above only covers CHANGES from here on.
           if (options.openclawSource) send({ kind: 'openclaw-availability', visible: options.openclawSource.isVisible() });
         } else {
-          send({ kind: 'auth-fail' });
+          send({ kind: 'auth-fail', reason: 'invalid-token' });
           ws.close(AUTH_CLOSE_CODE);
         }
       });
       return;
     }
+
+    if (!isDispatchableClientMessage(parsed)) return;
+    const msg = parsed;
 
     switch (msg.kind) {
       case 'list-sessions':
@@ -499,17 +974,57 @@ export function attachConnection(
         options.broker.destroySession(msg.sessionId);
         break;
 
+      case 'destroy-session-guarded': {
+        const { requestId, sessionId, expectedActiveRunIds } = msg;
+        void (async (): Promise<void> => {
+          let result: DestroySessionGuardResult;
+          try {
+            result = await options.broker.destroySessionGuarded(sessionId, expectedActiveRunIds);
+          } catch {
+            result = { ok: false, reason: 'unavailable' };
+          }
+          send({ kind: 'session-destroy-result', requestId, result });
+        })();
+        break;
+      }
+
+      case 'quick-commands-list': {
+        const { requestId } = msg;
+        const source = options.quickCommandSource;
+        if (!source) {
+          send({ kind: 'quick-commands-list-reply', requestId, ok: false, error: 'unavailable' });
+          break;
+        }
+        source.list().then((commands) => {
+          if (!authed) return;
+          const safeCommands = commands
+            .slice(0, MAX_QUICK_COMMANDS)
+            .flatMap((command) => {
+              const parsed = QuickCommandSchema.safeParse(command);
+              return parsed.success ? [parsed.data] : [];
+            });
+          send({ kind: 'quick-commands-list-reply', requestId, ok: true, commands: safeCommands });
+        }).catch(() => {
+          if (authed) send({ kind: 'quick-commands-list-reply', requestId, ok: false, error: 'unavailable' });
+        });
+        break;
+      }
+
       case 'run-command': {
-        const { runId } = msg;
+        const { runId, sessionId } = msg;
         // Broker mints the port pair + posts port2 to the interpreter; a `null`
         // return (dead interpreter) means no port to relay — skip, don't throw.
-        const port1 = options.broker.runCommand(msg.sessionId, runId, msg.commandText);
+        const port1 = options.broker.runCommand(msg.sessionId, runId, msg.commandText, 'mobile');
         if (!port1) break;
-        runs.set(runId, port1);
+        const record = { sessionId, port: port1 };
+        runs.get(runId)?.port.close();
+        runs.set(runId, record);
         port1.on('message', (event) => {
           send({ kind: 'frame', runId, frame: encodeFrame(event.data as InterpreterFrame) });
         });
-        port1.on('close', () => runs.delete(runId));
+        port1.on('close', () => {
+          if (runs.get(runId) === record) runs.delete(runId);
+        });
         port1.start();
         break;
       }
@@ -519,25 +1034,42 @@ export function attachConnection(
       // `run-command` above (a `control` for this `runId` already forwards
       // correctly with no further changes needed).
       case 'attach-run': {
-        const { runId } = msg;
+        const { runId, sessionId } = msg;
         // Same null-guard as run-command: a dead interpreter yields no port.
-        const port1 = options.broker.attachRun(runId);
+        const port1 = options.broker.attachRun(sessionId, runId);
         if (!port1) break;
-        runs.set(runId, port1);
+        const record = { sessionId, port: port1 };
+        runs.get(runId)?.port.close();
+        runs.set(runId, record);
         port1.on('message', (event) => {
           send({ kind: 'frame', runId, frame: encodeFrame(event.data as InterpreterFrame) });
         });
-        port1.on('close', () => runs.delete(runId));
+        port1.on('close', () => {
+          if (runs.get(runId) === record) runs.delete(runId);
+        });
         port1.start();
         break;
       }
 
+      case 'resume-run': {
+        const { sessionId, runId, generation } = msg;
+        void resumeRun(sessionId, runId, generation);
+        break;
+      }
+
+      case 'release-runs':
+        releaseRunsOnClose = true;
+        releasePendingResumeLeases();
+        for (const record of runs.values()) record.port.close();
+        runs.clear();
+        break;
+
       case 'control': {
-        const port = runs.get(msg.runId);
-        if (!port) break;
-        port.postMessage(msg.control);
+        const record = runs.get(msg.runId);
+        if (!record) break;
+        record.port.postMessage(msg.control);
         if (msg.control.type === 'close') {
-          port.close();
+          record.port.close();
           runs.delete(msg.runId);
         }
         break;
@@ -562,6 +1094,25 @@ export function attachConnection(
 
       case 'stats-history':
         send({ kind: 'stats-history', snapshots: options.statsSource?.getHistory() ?? [] });
+        break;
+
+      case 'agent-snapshot-get':
+        send({
+          kind: 'agent-snapshot',
+          requestId: msg.requestId,
+          snapshot: options.agentSource?.getSnapshot() ?? { revision: 0, items: [] },
+        });
+        break;
+
+      case 'agent-followup':
+        send({
+          kind: 'agent-followup-reply',
+          requestId: msg.requestId,
+          result: options.agentSource?.sendFollowup(msg.activityId, msg.text) ?? {
+            ok: false,
+            error: 'delivery-failed',
+          },
+        });
         break;
 
       case 'packets-subscribe': {
@@ -608,6 +1159,59 @@ export function attachConnection(
         break;
       }
 
+      case 'terminal-file-location':
+        void resolveTerminalFileLocation(msg.request, terminalCapabilities).then((result) => {
+          send({ kind: 'terminal-file-location-reply', requestId: msg.requestId, result });
+        });
+        break;
+
+      case 'worktree-request': {
+        const { requestId } = msg;
+        if (!isWorktreeRequest(msg.request)) {
+          send({
+            kind: 'worktree-reply',
+            requestId,
+            result: {
+              ok: false,
+              action: 'list',
+              error: 'INVALID_REQUEST',
+              message: 'Invalid worktree request.',
+            },
+          });
+          break;
+        }
+        const request = msg.request;
+        if (!options.worktreeSource) {
+          send({
+            kind: 'worktree-reply',
+            requestId,
+            result: {
+              ok: false,
+              action: request.action,
+              error: 'IO_ERROR',
+              message: 'Worktree service is unavailable.',
+            },
+          });
+          break;
+        }
+        void options.worktreeSource
+          .execute(request, 'mobile')
+          .then((result) => send({ kind: 'worktree-reply', requestId, result }))
+          .catch(() => {
+            send({
+              kind: 'worktree-reply',
+              requestId,
+              result: {
+                ok: false,
+                action: request.action,
+                error: 'IO_ERROR',
+                message: 'Worktree operation failed.',
+              },
+            });
+          });
+        break;
+      }
+
       case 'file-mkdir': {
         if (!options.fileSource) break;
         const { requestId } = msg;
@@ -636,65 +1240,172 @@ export function attachConnection(
       }
 
       case 'file-read': {
-        if (!options.fileSource) break;
+        const fileSource = options.fileSource;
+        if (!fileSource) break;
         const { requestId } = msg;
-        void options.fileSource.openReadStream(msg.path, msg.mode).then(async (result) => {
-          if (!result.ok) {
-            send({ kind: 'file-read-meta', requestId, ok: false, error: result.error });
-            return;
+        if (
+          typeof requestId !== 'string' ||
+          typeof msg.path !== 'string' ||
+          (msg.mode !== 'text' && msg.mode !== 'raw' && msg.mode !== 'preview') ||
+          (msg.terminalCapability !== undefined && typeof msg.terminalCapability !== 'string')
+        ) {
+          if (typeof requestId === 'string') {
+            send({ kind: 'file-read-meta', requestId, ok: false, error: 'invalid file-read request' });
           }
-          const { meta } = result;
-          send({
-            kind: 'file-read-meta',
-            requestId,
-            ok: true,
-            fileSize: meta.fileSize,
-            sendBytes: meta.sendBytes,
-            isText: meta.isText,
-            truncated: meta.truncated,
-          });
-          if (meta.sendBytes <= 0) {
-            await result.close(); // binary in 'text' mode, or a genuinely empty file
-            return;
+          break;
+        }
+        const { path: filePath, mode, terminalCapability } = msg;
+        const existing = fileReads.get(requestId);
+        if (existing) {
+          // One id has one owner for its entire opening+streaming lifetime.
+          // Ambiguous reuse cancels the original and rejects the duplicate.
+          void closeFileRead(requestId, existing);
+          send({ kind: 'file-read-meta', requestId, ok: false, error: 'duplicate file-read request id' });
+          break;
+        }
+        if (
+          fileReads.size >= MAX_REMOTE_FILE_READS
+          || !pendingFileOpens
+          || pendingFileOpens.size >= MAX_REMOTE_PENDING_FILE_OPENS
+        ) {
+          send({ kind: 'file-read-meta', requestId, ok: false, error: 'too many active file reads' });
+          break;
+        }
+        const abortController = new AbortController();
+        const record: RemoteFileReadRecord = {
+          stream: null,
+          abortController,
+          closed: false,
+          inFlight: false,
+          expectedAckOffset: null,
+          nextOffset: 0,
+          sendBytes: 0,
+        };
+        // Reserve synchronously, before capability consumption/opening awaits.
+        fileReads.set(requestId, record);
+        pendingFileOpens.add(abortController);
+        const isCurrent = (): boolean => (
+          !connectionClosed
+          && !record.closed
+          && fileReads.get(requestId) === record
+        );
+        void (async () => {
+          let authorizedHandle: FileHandle | undefined;
+          try {
+            if (!isCurrent()) return;
+            if (terminalCapability !== undefined) {
+              if (mode !== 'preview') {
+                failFileRead(requestId, record, 'invalid terminal preview request');
+                return;
+              }
+              const authorized = await terminalCapabilities.consumeAndOpen(terminalCapability, filePath);
+              if (!authorized.ok) {
+                failFileRead(requestId, record, 'Terminal preview authorization expired or the file changed.');
+                return;
+              }
+              authorizedHandle = authorized.handle;
+              if (!isCurrent()) {
+                await authorizedHandle.close().catch(() => undefined);
+                return;
+              }
+            }
+
+            const result = await fileSource.openReadStream(
+              filePath,
+              mode,
+              authorizedHandle,
+              abortController.signal,
+            );
+            if (!isCurrent()) {
+              if (result.ok) await result.close().catch(() => undefined);
+              else await authorizedHandle?.close().catch(() => undefined);
+              return;
+            }
+            if (!result.ok) {
+              await authorizedHandle?.close().catch(() => undefined);
+              failFileRead(requestId, record, result.error);
+              return;
+            }
+            const { meta } = result;
+            record.stream = result;
+            record.sendBytes = meta.sendBytes;
+            send({
+              kind: 'file-read-meta',
+              requestId,
+              ok: true,
+              fileSize: meta.fileSize,
+              sendBytes: meta.sendBytes,
+              isText: meta.isText,
+              truncated: meta.truncated,
+              ...(meta.preview ? { preview: meta.preview } : {}),
+            });
+            if (meta.sendBytes <= 0) {
+              await closeFileRead(requestId, record); // binary in text mode, or empty
+              return;
+            }
+            await sendNextReadChunk(requestId, record);
+          } catch {
+            await authorizedHandle?.close().catch(() => undefined);
+            failFileRead(requestId, record, 'file read failed');
+          } finally {
+            pendingFileOpens.delete(abortController);
           }
-          fileReads.set(requestId, result);
-          await sendNextReadChunk(requestId, result);
-        });
+        })();
         break;
       }
 
       case 'file-read-ack': {
-        const stream = fileReads.get(msg.requestId);
-        if (!stream) break;
-        void sendNextReadChunk(msg.requestId, stream);
+        const record = fileReads.get(msg.requestId);
+        if (!record || record.closed || !record.stream) break;
+        if (
+          !Number.isSafeInteger(msg.offset)
+          || record.expectedAckOffset === null
+          || msg.offset !== record.expectedAckOffset
+        ) {
+          failFileRead(msg.requestId, record, 'invalid or duplicate file read acknowledgement');
+          break;
+        }
+        record.expectedAckOffset = null;
+        void sendNextReadChunk(msg.requestId, record);
         break;
       }
 
       case 'file-read-cancel': {
-        const stream = fileReads.get(msg.requestId);
-        if (!stream) break;
-        fileReads.delete(msg.requestId);
-        void stream.close();
+        const record = fileReads.get(msg.requestId);
+        if (!record) break;
+        void closeFileRead(msg.requestId, record);
         break;
       }
 
       case 'file-upload-begin': {
-        if (!options.fileSource) break;
+        const fileSource = options.fileSource;
+        if (!fileSource) break;
         const { requestId } = msg;
-        void options.fileSource.beginUpload(msg.dirPath, msg.name, msg.size).then((result) => {
-          if (!result.ok) {
-            send({ kind: 'file-upload-begin-reply', requestId, ok: false, error: result.error });
-            return;
-          }
-          fileUploads.add(result.uploadId);
-          send({
-            kind: 'file-upload-begin-reply',
-            requestId,
-            ok: true,
-            uploadId: result.uploadId,
-            finalName: result.finalName,
+        void fileSource.beginUpload(msg.dirPath, msg.name, msg.size)
+          .then(async (result) => {
+            if (!result.ok) {
+              send({ kind: 'file-upload-begin-reply', requestId, ok: false, error: result.error });
+              return;
+            }
+            if (connectionClosed) {
+              // beginUpload may finish after close teardown enumerated the
+              // tracked ids. Abort this late fd/.ezpart directly instead of
+              // leaving it for FileService's idle sweep.
+              await fileSource.abortUpload(result.uploadId).catch(() => undefined);
+              return;
+            }
+            fileUploads.add(result.uploadId);
+            send({
+              kind: 'file-upload-begin-reply',
+              requestId,
+              ok: true,
+              uploadId: result.uploadId,
+              finalName: result.finalName,
+            });
+          })
+          .catch(() => {
+            send({ kind: 'file-upload-begin-reply', requestId, ok: false, error: 'file upload failed' });
           });
-        });
         break;
       }
 
@@ -931,6 +1642,8 @@ export interface RemoteBridgeHandle {
  * encrypted overlay (Tailscale/WireGuard); see SECURITY.md.
  */
 export function startRemoteBridge(options: RemoteBridgeOptions): RemoteBridgeHandle {
+  const runLeases = leasesFor(options);
+  const connectionOptions = options.runLeases ? options : { ...options, runLeases };
   const wss = new WebSocketServer({
     port: options.port,
     host: '0.0.0.0',
@@ -961,7 +1674,7 @@ export function startRemoteBridge(options: RemoteBridgeOptions): RemoteBridgeHan
     missedPongs.set(ws, 0);
     ws.on('pong', () => missedPongs.set(ws, 0));
     ws.on('close', () => clearTimeout(authTimer));
-    attachConnection(ws as unknown as RemoteWs, options, {
+    attachConnection(ws as unknown as RemoteWs, connectionOptions, {
       onAuthenticated: () => clearTimeout(authTimer),
     });
   });
@@ -983,6 +1696,7 @@ export function startRemoteBridge(options: RemoteBridgeOptions): RemoteBridgeHan
         clearInterval(heartbeat);
         for (const ws of wss.clients) ws.terminate();
         wss.close((err) => {
+          runLeases.dispose();
           if (err) console.error('[remote-bridge] error closing WebSocketServer:', err);
           resolve();
         });

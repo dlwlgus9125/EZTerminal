@@ -4,6 +4,7 @@ import type { InterpreterFrame } from '../shared/ipc';
 import { ptyStreamData, type PtyHandle, type PtyStreamData } from './core';
 import {
   DecPrivateModeTracker,
+  PTY_ATTACH_REPLAY_QUEUE_BYTES,
   PTY_HIGH_WATER,
   PTY_LOW_WATER,
   PTY_SCROLLBACK_RING_BYTES,
@@ -89,7 +90,16 @@ describe('runPtySession', () => {
     runPtySession(fake.data, emit, new AbortController().signal, 80, 24);
     fake.emitExit(0);
     expect(frames.filter((f) => f.type === 'end')).toHaveLength(1);
+    expect(frames.find((f) => f.type === 'end')).toEqual({ type: 'end', exitCode: 0 });
     expect(frames.filter((f) => f.type === 'cancelled')).toHaveLength(0);
+  });
+
+  it('preserves a nonzero PTY exit code in the terminal frame', () => {
+    const fake = makeFakePty();
+    const { frames, emit } = collect();
+    runPtySession(fake.data, emit, new AbortController().signal, 80, 24);
+    fake.emitExit(17);
+    expect(frames.find((f) => f.type === 'end')).toEqual({ type: 'end', exitCode: 17 });
   });
 
   it('data is ordered before the terminal end frame', () => {
@@ -436,7 +446,7 @@ describe('runPtySession — late-attach DEC mode resync (TUI scroll parity)', ()
     expect(replay.slice(replay.indexOf('X'))).not.toContain(`${ESC}[?1003h`);
   });
 
-  it('an early attach (ring intact) gets preamble + originals — idempotent reapply', () => {
+  it('an early attach uses the semantic stream without a duplicate DEC preamble', () => {
     const fake = makeFakePty();
     const { emit } = collect();
     const session = runPtySession(fake.data, emit, new AbortController().signal, 80, 24);
@@ -444,6 +454,51 @@ describe('runPtySession — late-attach DEC mode resync (TUI scroll parity)', ()
 
     const handle = session.attach(() => {});
     const replay = Buffer.from(handle!.replay).toString('latin1');
-    expect(replay).toBe(`${ESC}[?1002h${ESC}[?1002h`); // preamble + ring copy
+    expect(replay).toBe(`${ESC}[?1002h`);
+    expect(handle!.warning).toBeUndefined();
+  });
+
+  it('gates live bytes until replay is released, including when replay is empty', () => {
+    const fake = makeFakePty();
+    const session = runPtySession(fake.data, collect().emit, new AbortController().signal, 80, 24);
+    const live: string[] = [];
+    const handle = session.attach((bytes) => live.push(Buffer.from(bytes).toString('utf8')));
+    expect(handle).not.toBeNull();
+    expect(handle!.replay.byteLength).toBe(0);
+
+    fake.emitData(enc('live'));
+    expect(live).toEqual([]);
+    expect(handle!.releaseLive()).toBeNull();
+    expect(live).toEqual(['live']);
+  });
+
+  it('fails only the attacher when the bounded replay gate overflows', () => {
+    const fake = makeFakePty();
+    const session = runPtySession(fake.data, collect().emit, new AbortController().signal, 80, 24);
+    const handle = session.attach(() => {});
+    fake.emitData(new Uint8Array(PTY_ATTACH_REPLAY_QUEUE_BYTES + 1));
+
+    expect(handle!.releaseLive()).toEqual({
+      type: 'pty-restore-warning',
+      reason: 'replay-queue-overflow',
+      fallback: 'none',
+    });
+    // The original PTY remains usable after the mirror is dropped.
+    session.write('still-live');
+    expect(fake.calls.writes).toContain('still-live');
+  });
+
+  it('reports a content-free raw-ring warning when semantic tail bounds are exceeded', () => {
+    const fake = makeFakePty();
+    const session = runPtySession(fake.data, collect().emit, new AbortController().signal, 80, 24);
+    fake.emitData(new Uint8Array(PTY_SCROLLBACK_RING_BYTES + 1).fill(0x58));
+    const handle = session.attach(() => {});
+
+    expect(handle!.warning).toMatchObject({
+      type: 'pty-restore-warning',
+      reason: 'semantic-gap',
+      fallback: 'raw-ring',
+    });
+    expect(handle!.warning).not.toHaveProperty('message');
   });
 });

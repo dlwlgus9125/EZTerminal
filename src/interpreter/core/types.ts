@@ -7,6 +7,7 @@
 
 import type { Command, Expression } from './ast';
 import type { PipelineData, RuntimeValue } from './value';
+import type { WorktreeInfo, WorktreeRequest, WorktreeResult } from '../../shared/worktree';
 
 /**
  * Durable shell-session state owned by the interpreter process (architecture §2).
@@ -77,6 +78,11 @@ export interface EvalContext {
    * child_process; injectable in tests. When absent, `ps` is a hard error.
    */
   readonly listProcesses?: () => Promise<readonly ProcessInfo[]>;
+  /** Main-owned Git worktree authority. Builtins expose only structured
+   * requests; the core never invokes Git or touches the registry itself. */
+  readonly executeWorktree?: (request: WorktreeRequest) => Promise<WorktreeResult>;
+  /** UI intent emitted only after main validates an `open` result. */
+  readonly onWorktreeOpened?: (worktree: WorktreeInfo) => void;
 }
 
 /** Declared input a command accepts; `any` skips the check. */

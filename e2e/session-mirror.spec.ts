@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { launchApp } from './launch-app';
 import { TestWsClient } from './ws-client';
+import { readXtermBuffer } from './xterm-buffer';
 
 const ECHO_FIXTURE = path.resolve(__dirname, 'fixtures', 'pty-echo.js');
 
@@ -69,9 +70,63 @@ test('session mirroring: WS create-session/run-command/destroy-session reflect o
     client.send({ kind: 'run-command', runId, sessionId, commandText: `echo ${marker}` });
     await expect(mirroredPane).toContainText(marker, { timeout: 10_000 });
 
+    // A session can intentionally have more than one desktop viewer. Mount a
+    // second exact pane so external removal must close the whole binding set,
+    // not only whichever pane happened to bind last.
+    await win.evaluate((adoptSessionId) => {
+      type EzDockApi = {
+        addPanel(opts: {
+          id: string;
+          component: string;
+          title: string;
+          renderer: string;
+          params: Record<string, unknown>;
+          position: { referencePanel: string; direction: string };
+        }): unknown;
+      };
+      const dock = (globalThis as unknown as { __ezDock?: EzDockApi }).__ezDock;
+      if (!dock) throw new Error('__ezDock test seam missing');
+      dock.addPanel({
+        id: 'tab-remote-second-view',
+        component: 'terminal',
+        title: 'Second remote view',
+        renderer: 'always',
+        params: { adoptSessionId },
+        position: { referencePanel: 'tab-1', direction: 'right' },
+      });
+    }, sessionId);
+    await expect(mirroredPane).toHaveCount(2, { timeout: 2_000 });
+
     // ── AC4 (remove): WS destroy-session -> the desktop tab disappears within 2s ──
     client.send({ kind: 'destroy-session', sessionId });
     await expect(mirroredPane).toHaveCount(0, { timeout: 2_000 });
+    await expect(win.getByTestId('pane')).toHaveCount(1);
+
+    // Regression: a remote session may disappear after Dockview adds its
+    // mirror panel but before TerminalPane's asynchronous list/adopt bind
+    // settles. Repeating the add/remove edge makes that window likely and,
+    // most importantly, verifies that no late fallback creator survives as an
+    // unsolicited desktop pane.
+    const transientSessionIds: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const transientRequestId = randomUUID();
+      client.send({ kind: 'create-session', requestId: transientRequestId });
+      const transientCreated = await client.waitFor(
+        (msg) => msg.kind === 'session-created' && msg.requestId === transientRequestId,
+      );
+      if (transientCreated.kind !== 'session-created') throw new Error('unreachable');
+      transientSessionIds.push(transientCreated.session.sessionId);
+      client.send({ kind: 'destroy-session', sessionId: transientCreated.session.sessionId });
+    }
+
+    // Let every renderer setTimeout(0), listSessions reply, and cancellation
+    // cleanup drain before asserting the stable end state.
+    await win.waitForTimeout(500);
+    for (const transientSessionId of transientSessionIds) {
+      await expect(
+        win.locator(`[data-testid="pane"][data-session-id="${transientSessionId}"]`),
+      ).toHaveCount(0);
+    }
     await expect(win.getByTestId('pane')).toHaveCount(1);
   } finally {
     client.close();
@@ -180,9 +235,10 @@ test('session mirroring: a non-controlling mirror can claim PTY control, moving 
 
   await pane0.getByTestId('cmd-input').fill(`!node ${ECHO_FIXTURE}`);
   await pane0.getByTestId('btn-run').click();
-  await expect(pane0.getByTestId('pty-block')).toBeVisible();
+  const primaryPty = pane0.getByTestId('pty-block');
+  await expect(primaryPty).toBeVisible();
   await expect
-    .poll(() => pane0.locator('.pty-block .xterm-rows').innerText(), { timeout: 15_000 })
+    .poll(() => readXtermBuffer(primaryPty), { timeout: 15_000 })
     .toContain('READY');
 
   // The primary starts IN control — no take-control chip on it.

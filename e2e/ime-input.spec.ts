@@ -18,6 +18,7 @@ import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { launchApp } from './launch-app';
+import { readXtermBuffer } from './xterm-buffer';
 
 const IME_ECHO_FIXTURE = path.resolve(__dirname, 'fixtures', 'ime-echo.js');
 
@@ -27,13 +28,13 @@ async function startImeEchoRun(window: Page): Promise<void> {
   await window.getByTestId('btn-run').click();
   await expect(window.getByTestId('pty-block')).toBeVisible({ timeout: 15_000 });
   await expect
-    .poll(() => window.locator('.pty-block .xterm-rows').innerText(), { timeout: 15_000 })
+    .poll(() => readXtermBuffer(window.getByTestId('pty-block')), { timeout: 15_000 })
     .toContain('IME-READY');
 }
 
-/** Rendered screen text (viewport rows) — RX<"..."> lines land here. */
+/** Current xterm viewport text — RX<"..."> lines land here. */
 function screenText(window: Page): Promise<string> {
-  return window.locator('.pty-block .xterm-rows').innerText();
+  return readXtermBuffer(window.getByTestId('pty-block'));
 }
 
 function countOccurrences(haystack: string, needle: string): number {

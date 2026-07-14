@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Agent Attention Hub for Codex, Claude and configured CLI sessions, including tab status, explicit waiting follow-up, optional provider hooks, desktop notifications and connected-mobile parity.
+- Quick Open (`Ctrl/Cmd+P`) and command mode (`Ctrl/Cmd+Shift+P`) across panes, history, persisted Quick Commands, workspace files, presets, app actions and agent launchers.
+- xterm search, safe HTTP(S) links, Unicode 11, and desktop WebGL rendering with automatic DOM fallback and a compatibility setting.
+- Rich desktop/mobile file previews for text, safe Markdown, bounded raster images and PDF metadata, plus quoted desktop path drag-and-drop.
+- Secure remote-pairing credential storage: OS-encrypted Windows bearer tokens with atomic schema-v1 migration and DACL defense in depth, hardened POSIX token files, and Android Keystore-backed saved connections with verified plaintext migration.
+- Five-minute bounded mobile run leases with in-place reconnect, active-session-first resume, authentication-rejection handling and explicit lease release on Disconnect.
+- Risk-aware terminal/session close confirmation, default-off and rate-limited OSC 52 clipboard writes, and explicit workspace-contained terminal file-location previews.
+- Safe OpenSSH config aliases for `ssh-connect`, main-owned Git worktree list/create/open/remove commands, and bounded semantic PTY restore with visible raw-fallback diagnostics.
+- Loopback-only SSH local forwards tied to an authenticated connection id, terminal commands, lifecycle cleanup, backpressure, resource limits and compact Settings controls.
+
+### Security
+- Preview classification is magic-first, SVG is never treated as a raster image, PDF bytes are not embedded, Markdown raw HTML/remote images are blocked, and external URLs are validated again in main before opening.
+- Agent snapshots exclude prompts, transcripts and tool input; the hook relay is loopback-only, bearer-authenticated, bounded and allowlisted.
+- Confirmed risky closes succeed only when the interpreter atomically matches the expected active run IDs; concurrent state changes fail closed.
+- Preset replacement preflights Dockview topology before teardown, blocks unresolved session bindings and new command submissions, revalidates immediately before synchronous apply, and suppresses duplicate post-ACK session destruction.
+- OSC 52 is write-only, disabled by default, UTF-8/base64 validated and independently size/rate checked in renderer and main; semantic attach replay suppresses its side effects.
+- Terminal paths are realpath-contained, reject remote SSH paths, and open through a main-owned short-lived one-shot file-identity capability to prevent resolve/open races.
+- SSH config resolution copies only inert allowlisted fields into a private temporary config; applicable Match/exec/proxy/canonical/forward directives fail closed and no shell is invoked.
+- Worktree removal is limited to clean, idle, unlocked EZTerminal-owned registrations and never uses force or a recursive filesystem fallback. Mobile can list/open but cannot mutate worktrees or SSH listeners.
+- SSH forwards bind exactly to `127.0.0.1`, are connection-owned and bounded, and are destroyed with the SSH connection, interpreter or application.
+- Semantic PTY restore retains output only, enforces snapshot/tail/queue bounds, exposes degraded raw-ring recovery, and rejects unsupported SSH late attach.
+
 수동 관리 (semver). 릴리스 절차: `docs/release/README.md`.
 
 ## [0.9.0] - 2026-07-13

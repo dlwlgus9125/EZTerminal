@@ -119,6 +119,33 @@ export function runPty(
     useConptyDll: true,
   });
 
+  // node-pty's WindowsTerminal installs one output-socket `error` listener and
+  // deliberately rethrows non-EIO errors when the consumer has not installed a
+  // second listener. On Node 24 + bundled ConPTY, a naturally exiting child can
+  // surface `write EAGAIN` during pipe teardown. Without this public-runtime
+  // listener that recoverable race terminates the entire shared interpreter
+  // utility process before node-pty's subsequent `close`/`onExit` event arrives.
+  // `IPty` omits EventEmitter methods from its declaration, but every node-pty
+  // Terminal implementation exposes `on` at runtime (Terminal.prototype.on).
+  const errorAwareProc = proc as IPty & {
+    on?: (eventName: string, listener: (error: NodeJS.ErrnoException) => void) => void;
+    _agent?: {
+      inSocket?: {
+        on?: (eventName: string, listener: (error: NodeJS.ErrnoException) => void) => void;
+      };
+    };
+  };
+  const handleTerminalSocketError = (error: NodeJS.ErrnoException): void => {
+    if (error.code === 'EAGAIN' || error.code === 'EIO') return;
+    console.error(`[pty] terminal socket error: ${error.code ?? error.name}`);
+  };
+  errorAwareProc.on?.('error', handleTerminalSocketError);
+  // node-pty exposes only the ConPTY output socket through Terminal.on(); its
+  // private input socket can emit the same asynchronous EAGAIN after a final
+  // focus/input write. Guard it at the dependency boundary as well. Optional
+  // access keeps this safe if a future node-pty release changes the internals.
+  errorAwareProc._agent?.inSocket?.on?.('error', handleTerminalSocketError);
+
   // Tracks whether the child has already exited, so killOnce's taskkill
   // fallback timer (below) knows not to fire a redundant proc.kill().
   let exited = false;
@@ -185,7 +212,22 @@ export function runPty(
       proc.write(data);
     },
     resize(cols, rows) {
-      proc.resize(cols, rows);
+      try {
+        proc.resize(cols, rows);
+      } catch (error) {
+        // Bundled ConPTY can mark the native agent exited just before its
+        // public onExit event reaches us. A late xterm fit/ResizeObserver call
+        // in that window is a harmless stale resize, not an interpreter-fatal
+        // programming error.
+        if (
+          exited
+          || (error instanceof Error
+            && error.message === 'Cannot resize a pty that has already exited')
+        ) {
+          return;
+        }
+        throw error;
+      }
     },
     pause() {
       proc.pause();

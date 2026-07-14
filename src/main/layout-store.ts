@@ -32,6 +32,7 @@ import {
   type RollbarSettings,
   type SettingsFile,
   type StartupPref,
+  type TerminalRendererPreference,
   type ThemeName,
 } from '../shared/layout-schema';
 import { JsonFile } from './json-file';
@@ -196,6 +197,36 @@ export class LayoutStore {
 
   async setScrollback(scrollback: number): Promise<void> {
     await this.updateSettings((current) => ({ ...current, scrollback }), 'scrollback');
+  }
+
+  async getTerminalRenderer(): Promise<TerminalRendererPreference> {
+    return (await this.loadSettingsFile()).terminalRenderer ?? 'auto';
+  }
+
+  async setTerminalRenderer(terminalRenderer: TerminalRendererPreference): Promise<void> {
+    await this.updateSettings((current) => ({ ...current, terminalRenderer }), 'terminalRenderer');
+  }
+
+  async getConfirmRiskyPaneClose(): Promise<boolean> {
+    return (await this.loadSettingsFile()).confirmRiskyPaneClose ?? true;
+  }
+
+  async setConfirmRiskyPaneClose(confirmRiskyPaneClose: boolean): Promise<void> {
+    await this.updateSettings(
+      (current) => ({ ...current, confirmRiskyPaneClose }),
+      'confirmRiskyPaneClose',
+    );
+  }
+
+  async getAllowOsc52Clipboard(): Promise<boolean> {
+    return (await this.loadSettingsFile()).allowOsc52Clipboard ?? false;
+  }
+
+  async setAllowOsc52Clipboard(allowOsc52Clipboard: boolean): Promise<void> {
+    await this.updateSettings(
+      (current) => ({ ...current, allowOsc52Clipboard }),
+      'allowOsc52Clipboard',
+    );
   }
 
   async getRemoteEnabled(): Promise<boolean> {

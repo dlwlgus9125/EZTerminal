@@ -1,31 +1,62 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket as RealWebSocket } from 'ws';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   attachConnection,
   AUTH_CLOSE_CODE,
+  MAX_REMOTE_FILE_READS,
+  MAX_REMOTE_PENDING_FILE_OPENS,
   isRemoteOriginAllowed,
   startRemoteBridge,
   tokensMatch,
   type OpenClawChatTicketResult,
   type RemoteBridgeOptions,
+  type RemoteAgentSource,
   type RemoteFileSource,
   type RemoteMessageChannel,
   type RemoteOpenClawSource,
   type RemotePacketSource,
   type RemotePort,
+  type RemoteQuickCommandSource,
   type RemoteStatsSource,
   type RemoteWs,
 } from './remote-bridge';
 import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
+import { RemoteRunLeaseRegistry } from './remote-run-lease';
+import { SessionWorktreeGuard } from './session-worktree-guard';
 import type { FileReadStream } from './file-service';
-import type { InterpreterToMain, MainToInterpreter, PacketRow, SystemStatsSnapshot } from '../shared/ipc';
+import { FileService } from './file-service';
+import type {
+  InterpreterToMain,
+  MainToInterpreter,
+  PacketRow,
+  RunAttachRejectReason,
+  SystemStatsSnapshot,
+} from '../shared/ipc';
+import { MAX_GUARDED_DESTROY_RUN_IDS } from '../shared/ipc';
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
 import { uint8ArrayToBase64, type RemotePacketFrame, type ServerToClientMessage } from '../shared/remote-protocol';
 import type { OpenClawAgentSession, OpenClawLifecycleResult, OpenClawLogLine, OpenClawStatus } from '../shared/openclaw';
+import type { AgentActivitySnapshot, AgentFollowupResult } from '../shared/agent';
+import type { WorktreeRequest } from '../shared/worktree';
 
 const TOKEN = 'the-secret-token';
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+async function waitForSent(
+  ws: FakeWs,
+  predicate: (message: ServerToClientMessage) => boolean,
+): Promise<ServerToClientMessage> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const message = ws.sent.find(predicate);
+    if (message) return message;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('timed out waiting for remote bridge message');
+}
 
 // ── Fakes ────────────────────────────────────────────────────────────────────
 
@@ -186,6 +217,27 @@ class FakePacketSource implements RemotePacketSource {
   /** Test helper: simulate the mirror relaying a frame to every subscriber. */
   emit(frame: RemotePacketFrame): void {
     for (const l of this.listeners) l(frame);
+  }
+}
+
+class FakeAgentSource implements RemoteAgentSource {
+  snapshot: AgentActivitySnapshot = { revision: 1, items: [] };
+  readonly sendFollowup = vi.fn((): AgentFollowupResult => ({ ok: true }));
+  private readonly listeners = new Set<(snapshot: AgentActivitySnapshot) => void>();
+
+  getSnapshot(): AgentActivitySnapshot {
+    return this.snapshot;
+  }
+  onSnapshot(listener: (snapshot: AgentActivitySnapshot) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  emit(snapshot: AgentActivitySnapshot): void {
+    this.snapshot = snapshot;
+    for (const listener of this.listeners) listener(snapshot);
+  }
+  get listenerCount(): number {
+    return this.listeners.size;
   }
 }
 
@@ -359,6 +411,29 @@ async function authed(ws: FakeWs, options: RemoteBridgeOptions): Promise<void> {
   await flush();
 }
 
+function latestAttachRequestId(interpreter: FakeInterpreter): string {
+  const request = [...interpreter.posted].reverse().find((entry) => entry.message.type === 'attach-run')?.message;
+  if (request?.type !== 'attach-run' || !request.requestId) throw new Error('no checked attach request');
+  return request.requestId;
+}
+
+function acceptLatestAttach(interpreter: FakeInterpreter): void {
+  interpreter.emit({
+    type: 'run-attach-result',
+    requestId: latestAttachRequestId(interpreter),
+    accepted: true,
+  });
+}
+
+function rejectLatestAttach(interpreter: FakeInterpreter, reason: RunAttachRejectReason): void {
+  interpreter.emit({
+    type: 'run-attach-result',
+    requestId: latestAttachRequestId(interpreter),
+    accepted: false,
+    reason,
+  });
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe('RemoteBridge — auth gate', () => {
@@ -368,7 +443,7 @@ describe('RemoteBridge — auth gate', () => {
     attachConnection(ws, options);
     ws.clientSend({ kind: 'auth', token: 'wrong' });
     await flush();
-    expect(ws.sent).toContainEqual({ kind: 'auth-fail' });
+    expect(ws.sent).toContainEqual({ kind: 'auth-fail', reason: 'invalid-token' });
     expect(ws.closeCode).toBe(AUTH_CLOSE_CODE);
   });
 
@@ -401,6 +476,178 @@ describe('RemoteBridge — auth gate', () => {
     // once auth completes, only 'auth-ok' should have been sent, no session-list.
     expect(ws.sent.filter((m) => m.kind === 'session-list')).toHaveLength(0);
     expect(interpreter.posted).toHaveLength(0);
+  });
+
+  it.each([
+    ['null', null],
+    ['array', []],
+    ['object without kind', {}],
+    ['auth without token', { kind: 'auth' }],
+    ['auth with a non-string token', { kind: 'auth', token: 123 }],
+  ])('closes malformed pre-auth JSON safely: %s', (_label, payload) => {
+    const ws = new FakeWs();
+    const { options } = makeOptions();
+    attachConnection(ws, options);
+
+    expect(() => ws.clientSend(payload)).not.toThrow();
+    expect(ws.closeCode).toBe(AUTH_CLOSE_CODE);
+  });
+
+  it('never throws when pre-auth null is repeated after the socket is already closing', () => {
+    const ws = new FakeWs();
+    const { options } = makeOptions();
+    attachConnection(ws, options);
+
+    expect(() => {
+      ws.clientSend(null);
+      ws.clientSend(null);
+      ws.clientSend(null);
+    }).not.toThrow();
+    expect(ws.closeCode).toBe(AUTH_CLOSE_CODE);
+  });
+
+  it('ignores repeated null and malformed major messages after authentication', async () => {
+    const ws = new FakeWs();
+    const fileSource = makeFileSource();
+    const openclawSource = new FakeOpenClawSource();
+    const { options, interpreter, channels } = makeOptions({ fileSource, openclawSource });
+    await authed(ws, options);
+    ws.clientSend({ kind: 'run-command', runId: 'run-1', sessionId: 'sess-1', commandText: '!bash' });
+    expect(channels).toHaveLength(1);
+    const interpreterPosts = interpreter.posted.length;
+
+    expect(() => {
+      ws.clientSend(null);
+      ws.clientSend(null);
+      ws.clientSend([]);
+      ws.clientSend({});
+      ws.clientSend({ kind: 'unknown-message' });
+      ws.clientSend({ kind: 'auth', token: 123 });
+      ws.clientSend({ kind: 'run-command', runId: 'bad', sessionId: null, commandText: {} });
+      ws.clientSend({ kind: 'control', runId: 'run-1', control: null });
+      ws.clientSend({ kind: 'control', runId: 'run-1', control: { type: 'pty-input', data: 7 } });
+      ws.clientSend({ kind: 'resume-run', sessionId: 'sess-1', runId: 'run-1', generation: '2' });
+      ws.clientSend({ kind: 'terminal-file-location', requestId: 'loc', request: null });
+      ws.clientSend({ kind: 'file-upload-chunk', uploadId: 'up-1', offset: 0, data: null });
+      ws.clientSend({ kind: 'openclaw-config-set', requestId: 'cfg', key: 'x', value: null });
+    }).not.toThrow();
+
+    expect(ws.readyState).toBe(1);
+    expect(ws.closeCode).toBeUndefined();
+    expect(channels).toHaveLength(1);
+    expect(channels[0].port1.posted).toEqual([]);
+    expect(interpreter.posted).toHaveLength(interpreterPosts);
+    expect(fileSource.writeUploadChunk).not.toHaveBeenCalled();
+    expect(openclawSource.setCoreConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe('RemoteBridge terminal file capabilities', () => {
+  it('binds a capability to one connection, consumes it once, and rejects a swapped file', async () => {
+    const base = await fs.mkdtemp(path.join(os.tmpdir(), 'ez-remote-terminal-cap-'));
+    const root = path.join(base, 'workspace');
+    const file = path.join(root, 'src', 'a.txt');
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, 'inside');
+    const fileService = new FileService({ trashItem: vi.fn(async () => undefined) });
+    const openReadStream = vi.spyOn(fileService, 'openReadStream');
+    const first = new FakeWs();
+    const second = new FakeWs();
+    const { options } = makeOptions({ fileSource: fileService });
+
+    try {
+      await authed(first, options);
+      await authed(second, options);
+      first.clientSend({
+        kind: 'terminal-file-location',
+        requestId: 'resolve-1',
+        request: { path: './src/a.txt', cwd: root, executionKind: 'local' },
+      });
+      const resolvedReply = await waitForSent(
+        first,
+        (message) => message.kind === 'terminal-file-location-reply' && message.requestId === 'resolve-1',
+      );
+      if (resolvedReply.kind !== 'terminal-file-location-reply' || !resolvedReply.result.ok) {
+        throw new Error('terminal path did not resolve');
+      }
+      const resolved = resolvedReply.result;
+
+      second.clientSend({
+        kind: 'file-read',
+        requestId: 'cross-connection',
+        path: resolved.path,
+        mode: 'preview',
+        terminalCapability: resolved.capability,
+      });
+      const crossReply = await waitForSent(
+        second,
+        (message) => message.kind === 'file-read-meta' && message.requestId === 'cross-connection',
+      );
+      expect(crossReply).toMatchObject({ kind: 'file-read-meta', ok: false });
+      expect(openReadStream).not.toHaveBeenCalled();
+
+      first.clientSend({
+        kind: 'file-read',
+        requestId: 'authorized',
+        path: resolved.path,
+        mode: 'preview',
+        terminalCapability: resolved.capability,
+      });
+      const authorizedReply = await waitForSent(
+        first,
+        (message) => message.kind === 'file-read-meta' && message.requestId === 'authorized',
+      );
+      expect(authorizedReply).toMatchObject({ kind: 'file-read-meta', ok: true });
+      expect(openReadStream).toHaveBeenCalledTimes(1);
+      expect(openReadStream.mock.calls[0][2]).toBeDefined();
+
+      first.clientSend({
+        kind: 'file-read',
+        requestId: 'replay',
+        path: resolved.path,
+        mode: 'preview',
+        terminalCapability: resolved.capability,
+      });
+      const replayReply = await waitForSent(
+        first,
+        (message) => message.kind === 'file-read-meta' && message.requestId === 'replay',
+      );
+      expect(replayReply).toMatchObject({ kind: 'file-read-meta', ok: false });
+      expect(openReadStream).toHaveBeenCalledTimes(1);
+
+      first.clientSend({
+        kind: 'terminal-file-location',
+        requestId: 'resolve-2',
+        request: { path: './src/a.txt', cwd: root, executionKind: 'local' },
+      });
+      const swappedReply = await waitForSent(
+        first,
+        (message) => message.kind === 'terminal-file-location-reply' && message.requestId === 'resolve-2',
+      );
+      if (swappedReply.kind !== 'terminal-file-location-reply' || !swappedReply.result.ok) {
+        throw new Error('second terminal path did not resolve');
+      }
+      await fs.rename(file, `${file}.old`);
+      await fs.writeFile(file, 'replacement');
+      first.clientSend({
+        kind: 'file-read',
+        requestId: 'swapped',
+        path: swappedReply.result.path,
+        mode: 'preview',
+        terminalCapability: swappedReply.result.capability,
+      });
+      const deniedSwap = await waitForSent(
+        first,
+        (message) => message.kind === 'file-read-meta' && message.requestId === 'swapped',
+      );
+      expect(deniedSwap).toMatchObject({ kind: 'file-read-meta', ok: false });
+      expect(openReadStream).toHaveBeenCalledTimes(1);
+    } finally {
+      first.close();
+      second.close();
+      fileService.dispose();
+      await fs.rm(base, { recursive: true, force: true });
+    }
   });
 });
 
@@ -541,6 +788,103 @@ describe('RemoteBridge — session directory + create/destroy round trip', () =>
       transfer: undefined,
     });
   });
+
+  it('guarded destroy relays an accepted authoritative result with the client requestId', async () => {
+    const ws = new FakeWs();
+    const { options, interpreter, broker } = makeOptions();
+    await authed(ws, options);
+    ws.clientSend({ kind: 'create-session', requestId: 'seed', cwd: '/tmp' });
+    interpreter.emit({ type: 'session-created', requestId: 'id-1', sessionId: 'sess-1', cwd: '/tmp' });
+    await flush();
+
+    ws.clientSend({
+      kind: 'destroy-session-guarded',
+      requestId: 'client-close-1',
+      sessionId: 'sess-1',
+      expectedActiveRunIds: ['run-b', 'run-a'],
+    });
+    expect(interpreter.posted.at(-1)?.message).toEqual({
+      type: 'destroy-session',
+      requestId: 'id-2',
+      sessionId: 'sess-1',
+      expectedActiveRunIds: ['run-a', 'run-b'],
+      deadlineAt: expect.any(Number),
+    });
+
+    interpreter.emit({ type: 'session-destroy-result', requestId: 'id-2', sessionIds: ['sess-1'], destroyed: true });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'session-destroy-result',
+      requestId: 'client-close-1',
+      result: { ok: true },
+    });
+    expect(broker.listSessions()).toEqual([]);
+  });
+
+  it('guarded destroy relays state-changed without removing the session', async () => {
+    const ws = new FakeWs();
+    const { options, interpreter, broker } = makeOptions();
+    await authed(ws, options);
+    ws.clientSend({ kind: 'create-session', requestId: 'seed', cwd: '/tmp' });
+    interpreter.emit({ type: 'session-created', requestId: 'id-1', sessionId: 'sess-1', cwd: '/tmp' });
+    await flush();
+
+    ws.clientSend({
+      kind: 'destroy-session-guarded',
+      requestId: 'client-close-2',
+      sessionId: 'sess-1',
+      expectedActiveRunIds: [],
+    });
+    interpreter.emit({ type: 'session-destroy-result', requestId: 'id-2', sessionIds: ['sess-1'], destroyed: false });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'session-destroy-result',
+      requestId: 'client-close-2',
+      result: { ok: false, reason: 'state-changed' },
+    });
+    expect(broker.listSessions()).toEqual([{ sessionId: 'sess-1', cwd: '/tmp' }]);
+  });
+
+  it('ignores malformed guarded destroy envelopes at the runtime boundary', async () => {
+    const ws = new FakeWs();
+    const { options, broker, interpreter } = makeOptions();
+    await authed(ws, options);
+    const guarded = vi.spyOn(broker, 'destroySessionGuarded');
+    const base = {
+      kind: 'destroy-session-guarded',
+      requestId: 'close-1',
+      sessionId: 'sess-1',
+      expectedActiveRunIds: [],
+    };
+    const malformed: unknown[] = [
+      { ...base, requestId: 1 },
+      { ...base, requestId: '' },
+      { ...base, requestId: 'x'.repeat(257) },
+      { ...base, sessionId: '' },
+      { ...base, sessionId: 'x'.repeat(257) },
+      { ...base, expectedActiveRunIds: 'run-1' },
+      { ...base, expectedActiveRunIds: [1] },
+      { ...base, expectedActiveRunIds: [''] },
+      { ...base, expectedActiveRunIds: ['x'.repeat(257)] },
+      { ...base, expectedActiveRunIds: ['run-1', 'run-1'] },
+      {
+        ...base,
+        expectedActiveRunIds: Array.from(
+          { length: MAX_GUARDED_DESTROY_RUN_IDS + 1 },
+          (_, index) => `run-${index}`,
+        ),
+      },
+    ];
+
+    for (const message of malformed) ws.clientSend(message);
+    await flush();
+
+    expect(guarded).not.toHaveBeenCalled();
+    expect(interpreter.posted).toEqual([]);
+    expect(ws.sent.some((message) => message.kind === 'session-destroy-result')).toBe(false);
+  });
 });
 
 describe('RemoteBridge — list-runs (M1 mirror-active-runs)', () => {
@@ -591,6 +935,29 @@ describe('RemoteBridge — list-runs (M1 mirror-active-runs)', () => {
 });
 
 describe('RemoteBridge — run-command frame/control multiplexing', () => {
+  it('relays a worktree-barrier run rejection as a terminal error frame', async () => {
+    const interpreter = new FakeInterpreter();
+    const runGuard = new SessionWorktreeGuard();
+    const broker = new InterpreterBroker({
+      interpreter,
+      runGuard,
+      createMessageChannel: makeFakeChannel,
+    });
+    const ws = new FakeWs();
+    await authed(ws, { port: 0, getToken: () => TOKEN, broker });
+
+    await runGuard.withRemovalBarrier(() => {
+      ws.clientSend({ kind: 'run-command', runId: 'blocked', sessionId: 'sess-1', commandText: 'ls' });
+    });
+
+    expect(ws.sent).toContainEqual({
+      kind: 'frame',
+      runId: 'blocked',
+      frame: { type: 'error', message: 'Run could not start while a worktree mutation is in progress' },
+    });
+    expect(interpreter.posted).toEqual([]);
+  });
+
   it('relays an interpreter frame to the WS tagged with the correct runId', async () => {
     const ws = new FakeWs();
     const { options, interpreter, channels } = makeOptions();
@@ -598,7 +965,13 @@ describe('RemoteBridge — run-command frame/control multiplexing', () => {
 
     ws.clientSend({ kind: 'run-command', runId: 'run-1', sessionId: 'sess-1', commandText: 'ls' });
     expect(interpreter.posted).toHaveLength(1);
-    expect(interpreter.posted[0].message).toEqual({ type: 'run', commandText: 'ls', sessionId: 'sess-1', runId: 'run-1' });
+    expect(interpreter.posted[0].message).toEqual({
+      type: 'run',
+      commandText: 'ls',
+      sessionId: 'sess-1',
+      runId: 'run-1',
+      requestOrigin: 'mobile',
+    });
     expect(channels).toHaveLength(1);
     expect(channels[0].port1.started).toBe(true);
 
@@ -611,22 +984,27 @@ describe('RemoteBridge — run-command frame/control multiplexing', () => {
     });
   });
 
-  it('encodes a pty-data frame as base64 on relay', async () => {
+  it('encodes pty-data as base64 and preserves replay side-effect suppression', async () => {
     const ws = new FakeWs();
     const { options, channels } = makeOptions();
     await authed(ws, options);
     ws.clientSend({ kind: 'run-command', runId: 'run-1', sessionId: 'sess-1', commandText: '!bash' });
 
-    channels[0].port2.postMessage({ type: 'pty-data', data: new Uint8Array([104, 105]) }); // "hi"
+    channels[0].port2.postMessage({
+      type: 'pty-data',
+      data: new Uint8Array([104, 105]),
+      suppressSideEffects: true,
+    }); // "hi"
 
     const frameMsg = ws.sent.find((m) => m.kind === 'frame') as {
       kind: 'frame';
       runId: string;
-      frame: { type: string; data: string };
+      frame: { type: string; data: string; suppressSideEffects?: true };
     };
     expect(frameMsg.frame.type).toBe('pty-data');
     expect(typeof frameMsg.frame.data).toBe('string');
     expect(frameMsg.frame.data).not.toBeInstanceOf(Uint8Array);
+    expect(frameMsg.frame.suppressSideEffects).toBe(true);
   });
 
   it('relays a WS control message to the run\'s port', async () => {
@@ -693,9 +1071,10 @@ describe('RemoteBridge — run-command frame/control multiplexing', () => {
 });
 
 describe('RemoteBridge — connection teardown', () => {
-  it('closing the WS closes every open run port; the broker keeps its single interpreter listener across connections', async () => {
+  it('parks transient runs, resumes with ready-before-replay, and explicitly releases them', async () => {
     const ws = new FakeWs();
-    const { options, interpreter, channels } = makeOptions();
+    const leases = new RemoteRunLeaseRegistry({ ttlMs: 60_000 });
+    const { options, interpreter, channels } = makeOptions({ runLeases: leases });
     // The broker attaches exactly ONE interpreter message listener (#1) at
     // construction — attachConnection adds none (AC(d): constant across N conns).
     expect(interpreter.listenerCount).toBe(1);
@@ -713,9 +1092,147 @@ describe('RemoteBridge — connection teardown', () => {
 
     ws.close();
 
-    expect(channels.every((c) => c.port1.closed)).toBe(true);
+    expect(channels.every((c) => !c.port1.closed)).toBe(true);
+    expect(leases.size).toBe(2);
+
+    ws2.clientSend({ kind: 'resume-run', sessionId: 'sess-1', runId: 'run-1', generation: 2 });
+    expect(channels).toHaveLength(3);
+    expect(leases.size).toBe(2);
+    expect(channels[0].port1.closed).toBe(false);
+    expect(ws2.sent.some((message) => message.kind === 'resume-run-ready')).toBe(false);
+
+    acceptLatestAttach(interpreter);
+    await flush();
+
+    expect(ws2.sent).toContainEqual({
+      kind: 'resume-run-ready',
+      sessionId: 'sess-1',
+      runId: 'run-1',
+      generation: 2,
+    });
+    expect(channels[2].port1.started).toBe(true);
+    expect(channels[0].port1.closed).toBe(true);
+    channels[2].port2.postMessage({ type: 'schema', shape: 'pty', columns: [] });
+    channels[2].port2.postMessage({
+      type: 'pty-restore-warning',
+      reason: 'semantic-gap',
+      fallback: 'raw-ring',
+    });
+    channels[2].port2.postMessage({ type: 'pty-data', data: new Uint8Array([1]) });
+    const readyIndex = ws2.sent.findIndex((message) => message.kind === 'resume-run-ready');
+    const replayIndex = ws2.sent.findIndex(
+      (message) => message.kind === 'frame' && message.frame.type === 'schema',
+    );
+    const warningIndex = ws2.sent.findIndex(
+      (message) => message.kind === 'frame' && message.frame.type === 'pty-restore-warning',
+    );
+    const dataIndex = ws2.sent.findIndex(
+      (message) => message.kind === 'frame' && message.frame.type === 'pty-data',
+    );
+    expect(replayIndex).toBeGreaterThan(readyIndex);
+    expect(warningIndex).toBeGreaterThan(replayIndex);
+    expect(dataIndex).toBeGreaterThan(warningIndex);
+
+    ws2.clientSend({ kind: 'release-runs' });
+    expect(channels[2].port1.closed).toBe(true);
+    leases.dispose();
+    expect(channels[1].port1.closed).toBe(true);
     // Still exactly one — the broker's listener outlives any single connection.
     expect(interpreter.listenerCount).toBe(1);
+  });
+
+  it('keeps a parked lease authoritative when checked attach is busy', async () => {
+    const ws = new FakeWs();
+    const leases = new RemoteRunLeaseRegistry({ ttlMs: 60_000 });
+    const { options, interpreter, channels } = makeOptions({ runLeases: leases });
+    await authed(ws, options);
+    ws.clientSend({ kind: 'run-command', runId: 'run-1', sessionId: 'sess-1', commandText: '!bash' });
+    ws.close();
+    expect(leases.size).toBe(1);
+
+    const resumed = new FakeWs();
+    await authed(resumed, options);
+    resumed.clientSend({ kind: 'resume-run', sessionId: 'sess-1', runId: 'run-1', generation: 2 });
+    expect(channels[0].port1.closed).toBe(false);
+
+    rejectLatestAttach(interpreter, 'mirror-capacity');
+    await flush();
+
+    expect(resumed.sent).toContainEqual({
+      kind: 'resume-run-busy',
+      sessionId: 'sess-1',
+      runId: 'run-1',
+      generation: 2,
+      reason: 'capacity',
+      retryable: true,
+    });
+    expect(leases.size).toBe(1);
+    expect(channels[0].port1.closed).toBe(false);
+    expect(channels[1].port1.closed).toBe(true);
+    leases.dispose();
+  });
+
+  it('claims PTY control when an authoritative resume succeeds without a lease', async () => {
+    const first = new FakeWs();
+    const { options, interpreter, channels } = makeOptions();
+    await authed(first, options);
+    first.clientSend({ kind: 'run-command', runId: 'run-1', sessionId: 'sess-1', commandText: '!bash' });
+
+    const resumed = new FakeWs();
+    await authed(resumed, options);
+    resumed.clientSend({ kind: 'resume-run', sessionId: 'sess-1', runId: 'run-1', generation: 2 });
+    acceptLatestAttach(interpreter);
+    await flush();
+
+    expect(resumed.sent).toContainEqual({
+      kind: 'resume-run-ready',
+      sessionId: 'sess-1',
+      runId: 'run-1',
+      generation: 2,
+    });
+    expect(channels[1].port1.posted).toContainEqual({ type: 'pty-claim-control' });
+    expect(channels[0].port1.closed).toBe(false);
+  });
+
+  it('reports missing only after a definitive lease-less attach rejection', async () => {
+    const ws = new FakeWs();
+    const { options, interpreter, channels } = makeOptions();
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'resume-run', sessionId: 'sess-1', runId: 'gone', generation: 1 });
+    expect(ws.sent.some((message) => message.kind === 'resume-run-missing')).toBe(false);
+    rejectLatestAttach(interpreter, 'run-not-found');
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'resume-run-missing',
+      sessionId: 'sess-1',
+      runId: 'gone',
+      generation: 1,
+    });
+    expect(channels[0].port1.closed).toBe(true);
+  });
+
+  it('release-runs closes a lease even while its replacement ACK is pending', async () => {
+    const first = new FakeWs();
+    const leases = new RemoteRunLeaseRegistry({ ttlMs: 60_000 });
+    const { options, interpreter, channels } = makeOptions({ runLeases: leases });
+    await authed(first, options);
+    first.clientSend({ kind: 'run-command', runId: 'run-1', sessionId: 'sess-1', commandText: '!bash' });
+    first.close();
+
+    const resumed = new FakeWs();
+    await authed(resumed, options);
+    resumed.clientSend({ kind: 'resume-run', sessionId: 'sess-1', runId: 'run-1', generation: 2 });
+    resumed.clientSend({ kind: 'release-runs' });
+    expect(leases.size).toBe(0);
+    expect(channels[0].port1.closed).toBe(true);
+
+    acceptLatestAttach(interpreter);
+    await flush();
+
+    expect(channels[1].port1.closed).toBe(true);
+    expect(resumed.sent.some((message) => message.kind === 'resume-run-ready')).toBe(false);
   });
 });
 
@@ -1046,7 +1563,12 @@ describe('RemoteBridge — file explorer (M3)', () => {
     ws.clientSend({ kind: 'file-read', requestId: 'r1', path: 'C:\\a.txt', mode: 'text' });
     await flush();
 
-    expect(fileSource.openReadStream).toHaveBeenCalledWith('C:\\a.txt', 'text');
+    expect(fileSource.openReadStream).toHaveBeenCalledWith(
+      'C:\\a.txt',
+      'text',
+      undefined,
+      expect.any(AbortSignal),
+    );
     expect(ws.sent).toContainEqual({
       kind: 'file-read-meta',
       requestId: 'r1',
@@ -1254,6 +1776,28 @@ describe('RemoteBridge — file explorer (M3)', () => {
     ws.close();
 
     expect(fileSource.abortUpload).toHaveBeenCalledWith('up-1');
+  });
+
+  it('aborts an upload whose begin resolves only after the ws closed', async () => {
+    type BeginResult = Awaited<ReturnType<RemoteFileSource['beginUpload']>>;
+    let resolveBegin!: (result: BeginResult) => void;
+    const fileSource = makeFileSource({
+      beginUpload: vi.fn(() => new Promise<BeginResult>((resolve) => { resolveBegin = resolve; })),
+    });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-upload-begin', requestId: 'late', dirPath: 'C:\\x', name: 'x.bin', size: 5 });
+    ws.close();
+    resolveBegin({ ok: true, uploadId: 'late-upload', finalName: 'x.bin' });
+    await flush();
+
+    expect(fileSource.abortUpload).toHaveBeenCalledTimes(1);
+    expect(fileSource.abortUpload).toHaveBeenCalledWith('late-upload');
+    expect(ws.sent).not.toContainEqual(expect.objectContaining({
+      kind: 'file-upload-begin-reply', requestId: 'late', ok: true,
+    }));
   });
 
   it('without a fileSource option, every file-* message is a silent no-op (no reply, no crash)', async () => {
@@ -1778,6 +2322,342 @@ describe('RemoteBridge — OpenClaw availability (openclaw-stabilization M3)', (
 
     expect(openclawSource.mintChatTicket).not.toHaveBeenCalled();
     expect(ws.sent).toContainEqual({ kind: 'openclaw-chat-ticket-reply', requestId: 'r1', ticket: null, proxyPort: 0, token: null });
+  });
+});
+
+describe('RemoteBridge — Agent Activity parity', () => {
+  it('pushes the auth snapshot, relays revisions, and correlates snapshot/followup replies', async () => {
+    const agentSource = new FakeAgentSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ agentSource });
+    await authed(ws, options);
+    expect(ws.sent).toContainEqual({ kind: 'agent-snapshot', snapshot: { revision: 1, items: [] } });
+    expect(agentSource.listenerCount).toBe(1);
+
+    const activity = {
+      id: 'activity-1',
+      sessionId: 'session-1',
+      provider: 'codex' as const,
+      cwd: '/repo',
+      status: 'waiting' as const,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    agentSource.emit({ revision: 2, items: [activity] });
+    expect(ws.sent).toContainEqual({ kind: 'agent-snapshot', snapshot: { revision: 2, items: [activity] } });
+
+    ws.clientSend({ kind: 'agent-snapshot-get', requestId: 'snap-1' });
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-snapshot',
+      requestId: 'snap-1',
+      snapshot: { revision: 2, items: [activity] },
+    });
+    ws.clientSend({ kind: 'agent-followup', requestId: 'follow-1', activityId: 'activity-1', text: 'continue' });
+    expect(agentSource.sendFollowup).toHaveBeenCalledWith('activity-1', 'continue');
+    expect(ws.sent).toContainEqual({ kind: 'agent-followup-reply', requestId: 'follow-1', result: { ok: true } });
+
+    ws.close();
+    expect(agentSource.listenerCount).toBe(0);
+  });
+});
+
+describe('RemoteBridge — file explorer read ownership', () => {
+  it('fails closed on a duplicate active file-read request id without opening a second stream', async () => {
+    const { stream, closeSpy } = makeFakeReadStream(
+      { fileSize: 2, sendBytes: 2, isText: true, truncated: false },
+      [new Uint8Array([1]), new Uint8Array([2])],
+    );
+    const openReadStream = vi.fn(async () => stream);
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource: makeFileSource({ openReadStream }) });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-read', requestId: 'duplicate', path: '/a', mode: 'text' });
+    await flush();
+    ws.clientSend({ kind: 'file-read', requestId: 'duplicate', path: '/b', mode: 'text' });
+    await flush();
+
+    expect(openReadStream).toHaveBeenCalledTimes(1);
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'file-read-meta', requestId: 'duplicate', ok: false,
+    }));
+  });
+
+  it('reserves a file-read id before open completes and closes the late stream after cancellation', async () => {
+    let resolveOpen!: (stream: { ok: true } & FileReadStream) => void;
+    const { stream, closeSpy } = makeFakeReadStream(
+      { fileSize: 2, sendBytes: 2, isText: true, truncated: false },
+      [new Uint8Array([1]), new Uint8Array([2])],
+    );
+    const openReadStream = vi.fn(() => new Promise<{ ok: true } & FileReadStream>((resolve) => {
+      resolveOpen = resolve;
+    }));
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource: makeFileSource({ openReadStream }) });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-read', requestId: 'opening', path: '/a', mode: 'text' });
+    ws.clientSend({ kind: 'file-read', requestId: 'opening', path: '/b', mode: 'text' });
+    expect(openReadStream).toHaveBeenCalledTimes(1);
+    ws.clientSend({ kind: 'file-read-cancel', requestId: 'opening' });
+    resolveOpen(stream);
+    await flush();
+
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+    expect(ws.sent.some((message) => (
+      message.kind === 'file-read-chunk' && message.requestId === 'opening'
+    ))).toBe(false);
+  });
+
+  it('contains a rejection while closing a stream that opened after cancellation', async () => {
+    let resolveOpen!: (stream: { ok: true } & FileReadStream) => void;
+    const close = vi.fn(async () => { throw new Error('late close failed'); });
+    const stream = {
+      ok: true as const,
+      meta: { fileSize: 1, sendBytes: 1, isText: true, truncated: false },
+      next: vi.fn(async () => ({ offset: 0, data: new Uint8Array([1]), done: true })),
+      close,
+    };
+    const openReadStream = vi.fn(() => new Promise<{ ok: true } & FileReadStream>((resolve) => {
+      resolveOpen = resolve;
+    }));
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource: makeFileSource({ openReadStream }) });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'file-read', requestId: 'late-close', path: '/a', mode: 'text' });
+    ws.clientSend({ kind: 'file-read-cancel', requestId: 'late-close' });
+    resolveOpen(stream);
+    await flush();
+
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps unresolved opens in a source-wide cap across reconnects and aborts them on close', async () => {
+    type OpenResult = Awaited<ReturnType<RemoteFileSource['openReadStream']>>;
+    const resolvers: Array<(result: OpenResult) => void> = [];
+    const signals: AbortSignal[] = [];
+    const openReadStream = vi.fn((
+      _path: string,
+      _mode: 'text' | 'raw' | 'preview',
+      _handle?: unknown,
+      signal?: AbortSignal,
+    ) => new Promise<OpenResult>((resolve) => {
+      resolvers.push(resolve);
+      if (signal) signals.push(signal);
+    }));
+    const fileSource = makeFileSource({ openReadStream });
+    const { options } = makeOptions({ fileSource });
+    const first = new FakeWs();
+    await authed(first, options);
+
+    for (let index = 0; index < MAX_REMOTE_PENDING_FILE_OPENS; index += 1) {
+      first.clientSend({ kind: 'file-read', requestId: `slow-${index}`, path: `/slow-${index}`, mode: 'text' });
+    }
+    await flush();
+    expect(openReadStream).toHaveBeenCalledTimes(MAX_REMOTE_PENDING_FILE_OPENS);
+    first.close();
+    expect(signals).toHaveLength(MAX_REMOTE_PENDING_FILE_OPENS);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+
+    const second = new FakeWs();
+    await authed(second, options);
+    second.clientSend({ kind: 'file-read', requestId: 'reconnect-slow', path: '/slow', mode: 'text' });
+    expect(openReadStream).toHaveBeenCalledTimes(MAX_REMOTE_PENDING_FILE_OPENS);
+    expect(second.sent).toContainEqual(expect.objectContaining({
+      kind: 'file-read-meta', requestId: 'reconnect-slow', ok: false,
+    }));
+
+    for (const resolve of resolvers.splice(0)) resolve({ ok: false, error: 'cancelled' });
+    await flush();
+    second.clientSend({ kind: 'file-read', requestId: 'after-settle', path: '/ok', mode: 'text' });
+    await flush();
+    expect(openReadStream).toHaveBeenCalledTimes(MAX_REMOTE_PENDING_FILE_OPENS + 1);
+    resolvers.pop()?.({ ok: false, error: 'cancelled' });
+    second.close();
+  });
+
+  it('serializes file-read ACKs and fails closed on a duplicate offset', async () => {
+    let resolveSecond!: (value: { offset: number; data: Uint8Array; done: boolean }) => void;
+    const close = vi.fn(async () => undefined);
+    const next = vi.fn()
+      .mockResolvedValueOnce({ offset: 0, data: new Uint8Array([1]), done: false })
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
+    const stream = {
+      ok: true as const,
+      meta: { fileSize: 2, sendBytes: 2, isText: true, truncated: false },
+      next,
+      close,
+    };
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource: makeFileSource({ openReadStream: vi.fn(async () => stream) }) });
+    await authed(ws, options);
+    ws.clientSend({ kind: 'file-read', requestId: 'r1', path: '/a', mode: 'text' });
+    await flush();
+
+    ws.clientSend({ kind: 'file-read-ack', requestId: 'r1', offset: 1 });
+    ws.clientSend({ kind: 'file-read-ack', requestId: 'r1', offset: 1 });
+    await flush();
+
+    expect(next).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledTimes(1);
+    resolveSecond({ offset: 1, data: new Uint8Array([2]), done: true });
+    await flush();
+    expect(ws.sent.filter((message) => message.kind === 'file-read-chunk')).toHaveLength(1);
+  });
+
+  it('caps active file reads per connection and releases them on close', async () => {
+    const closes: Array<ReturnType<typeof vi.fn>> = [];
+    const openReadStream = vi.fn(async () => {
+      const { stream, closeSpy } = makeFakeReadStream(
+        { fileSize: 2, sendBytes: 2, isText: true, truncated: false },
+        [new Uint8Array([1]), new Uint8Array([2])],
+      );
+      closes.push(closeSpy);
+      return stream;
+    });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource: makeFileSource({ openReadStream }) });
+    await authed(ws, options);
+
+    for (let index = 0; index <= MAX_REMOTE_FILE_READS; index += 1) {
+      ws.clientSend({ kind: 'file-read', requestId: `r-${index}`, path: `/f-${index}`, mode: 'text' });
+    }
+    await flush();
+
+    expect(openReadStream).toHaveBeenCalledTimes(MAX_REMOTE_FILE_READS);
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'file-read-meta', requestId: `r-${MAX_REMOTE_FILE_READS}`, ok: false,
+    }));
+    ws.close();
+    expect(closes).toHaveLength(MAX_REMOTE_FILE_READS);
+    expect(closes.every((close) => close.mock.calls.length === 1)).toBe(true);
+  });
+});
+
+describe('RemoteBridge - Git worktrees', () => {
+  it('correlates list/open replies and always identifies the caller as mobile', async () => {
+    const execute = vi.fn(async (request: WorktreeRequest) => ({
+      ok: true as const,
+      action: request.action,
+      worktrees: [],
+    }));
+    const ws = new FakeWs();
+    const { options } = makeOptions({ worktreeSource: { execute } });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'worktree-request', requestId: 'wt-list', request: { action: 'list', cwd: '/repo' } });
+    ws.clientSend({
+      kind: 'worktree-request',
+      requestId: 'wt-open',
+      request: { action: 'open', cwd: '/repo', worktreeId: 'wt-1' },
+    });
+    await flush();
+
+    expect(execute).toHaveBeenNthCalledWith(1, { action: 'list', cwd: '/repo' }, 'mobile');
+    expect(execute).toHaveBeenNthCalledWith(2, { action: 'open', cwd: '/repo', worktreeId: 'wt-1' }, 'mobile');
+    expect(ws.sent).toContainEqual({
+      kind: 'worktree-reply',
+      requestId: 'wt-list',
+      result: { ok: true, action: 'list', worktrees: [] },
+    });
+    expect(ws.sent).toContainEqual({
+      kind: 'worktree-reply',
+      requestId: 'wt-open',
+      result: { ok: true, action: 'open', worktrees: [] },
+    });
+  });
+
+  it('rejects malformed requests at the bridge without reaching the service', async () => {
+    const execute = vi.fn();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ worktreeSource: { execute } });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'worktree-request', requestId: 'bad', request: { action: 'remove', cwd: '/repo' } });
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(ws.sent).toContainEqual({
+      kind: 'worktree-reply',
+      requestId: 'bad',
+      result: {
+        ok: false,
+        action: 'list',
+        error: 'INVALID_REQUEST',
+        message: 'Invalid worktree request.',
+      },
+    });
+  });
+});
+
+describe('RemoteBridge - read-only Quick Commands capability', () => {
+  const command = {
+    id: '11111111-1111-4111-8111-111111111111',
+    name: 'Check status',
+    command: 'git status --short',
+    description: 'Show concise repository status',
+    createdAt: '2026-07-14T00:00:00.000Z',
+    updatedAt: '2026-07-14T00:00:00.000Z',
+  } as const;
+
+  it('advertises the capability and returns only schema-valid commands', async () => {
+    const quickCommandSource: RemoteQuickCommandSource = {
+      list: vi.fn(async () => [
+        command,
+        { ...command, id: 'not-a-uuid', name: 'Invalid' },
+      ] as never),
+    };
+    const ws = new FakeWs();
+    const { options } = makeOptions({ quickCommandSource });
+    await authed(ws, options);
+
+    expect(ws.sent).toContainEqual({ kind: 'auth-ok', capabilities: ['quick-commands-read'] });
+
+    ws.clientSend({ kind: 'quick-commands-list', requestId: 'qc-1' });
+    await flush();
+
+    expect(quickCommandSource.list).toHaveBeenCalledTimes(1);
+    expect(ws.sent).toContainEqual({
+      kind: 'quick-commands-list-reply',
+      requestId: 'qc-1',
+      ok: true,
+      commands: [command],
+    });
+  });
+
+  it('keeps older hosts capability-free and reports unavailable if probed', async () => {
+    const ws = new FakeWs();
+    const { options } = makeOptions();
+    await authed(ws, options);
+
+    expect(ws.sent).toContainEqual({ kind: 'auth-ok' });
+    ws.clientSend({ kind: 'quick-commands-list', requestId: 'qc-unsupported' });
+
+    expect(ws.sent).toContainEqual({
+      kind: 'quick-commands-list-reply',
+      requestId: 'qc-unsupported',
+      ok: false,
+      error: 'unavailable',
+    });
+  });
+
+  it('contains source failures within a correlated unavailable reply', async () => {
+    const ws = new FakeWs();
+    const { options } = makeOptions({
+      quickCommandSource: { list: vi.fn(async () => { throw new Error('store unavailable'); }) },
+    });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'quick-commands-list', requestId: 'qc-error' });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'quick-commands-list-reply',
+      requestId: 'qc-error',
+      ok: false,
+      error: 'unavailable',
+    });
   });
 });
 

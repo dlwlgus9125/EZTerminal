@@ -16,7 +16,7 @@ import type { EvalContext, ProcessInfo, RuntimeValue, SessionState } from './cor
 
 export class ShellSession implements SessionState {
   private currentCwd: string;
-  private readonly envOverrides = new Map<string, string>();
+  private readonly envOverrides = new Map<string, string | undefined>();
   private readonly variables = new Map<string, RuntimeValue>();
   /** Executed command lines, oldest first — the authoritative session history. */
   private readonly commandHistory: string[] = [];
@@ -34,7 +34,10 @@ export class ShellSession implements SessionState {
   get env(): Record<string, string | undefined> {
     if (this.envOverrides.size === 0) return process.env;
     const merged: Record<string, string | undefined> = { ...process.env };
-    for (const [name, value] of this.envOverrides) merged[name] = value;
+    for (const [name, value] of this.envOverrides) {
+      if (value === undefined) delete merged[name];
+      else merged[name] = value;
+    }
     return merged;
   }
 
@@ -52,6 +55,13 @@ export class ShellSession implements SessionState {
 
   setEnv(name: string, value: string): void {
     this.envOverrides.set(name, value);
+  }
+
+  /** Hide a parent-process value until main explicitly injects this session's
+   * own value. This prevents nested EZTerminal instances from inheriting a
+   * parent agent/session identity. */
+  maskEnv(name: string): void {
+    this.envOverrides.set(name, undefined);
   }
 
   /** Append an executed command line to the session history (`history` builtin). */
@@ -72,6 +82,8 @@ export class ShellSession implements SessionState {
     signal: AbortSignal,
     resolveExternal?: EvalContext['resolveExternal'],
     listProcesses?: () => Promise<readonly ProcessInfo[]>,
+    executeWorktree?: EvalContext['executeWorktree'],
+    onWorktreeOpened?: EvalContext['onWorktreeOpened'],
   ): EvalContext {
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const session = this;
@@ -86,6 +98,8 @@ export class ShellSession implements SessionState {
       session,
       resolveExternal,
       listProcesses,
+      executeWorktree,
+      onWorktreeOpened,
     };
   }
 }

@@ -9,7 +9,7 @@
  *   - a SLOW mirror can never stall/gate the primary port (no head-of-line
  *     blocking) — its own lag only ever affects itself.
  *
- * PROPOSED CONTRACT (pending worker-main confirmation — see team message):
+ * ATTACH CONTRACT:
  *   pty-session.ts exports, in addition to its existing surface:
  *     - `PTY_SCROLLBACK_RING_BYTES` (bounded ring capacity, oldest bytes drop first)
  *     - `PTY_ATTACH_CAP` (max concurrent attach subscribers; the next attach() is rejected)
@@ -20,9 +20,10 @@
  *     `attach(onData: (bytes: Uint8Array) => void): PtyAttachHandle | null`
  *   returning `null` once `PTY_ATTACH_CAP` subscribers are already attached
  *   (or once the session has already settled/disposed). `PtyAttachHandle` is
- *   `{ replay: Uint8Array; ack(bytes: number): void; detach(): void }` —
- *   `replay` is the ring's contents AT attach time; live bytes stream via
- *   `onData` afterward, dropped (not queued) whenever this subscriber's own
+ *   `{ replay; releaseLive(); ack(); detach() }`. `replay` is the semantic
+ *   snapshot/tail (or bounded raw fallback) at attach time. `releaseLive()`
+ *   opens the gate only after replay is posted; live bytes are bounded while
+ *   the gate is closed, then dropped whenever this subscriber's own
  *   unacked-byte count is over `PTY_ATTACH_HIGH_WATER`, resuming once it acks
  *   back down to `PTY_ATTACH_LOW_WATER`.
  *
@@ -86,6 +87,7 @@ describe('runPtySession — mirroring attach (M2 T2.2d/e, Critic C4)', () => {
     const handle = session.attach((bytes) => live.push(bytes));
     expect(handle).not.toBeNull();
     expect(handle!.replay).toEqual(chunk(10, 1));
+    expect(handle!.releaseLive()).toBeNull();
 
     fake.emitData(chunk(5, 2));
     expect(live).toEqual([chunk(5, 2)]);
@@ -135,6 +137,7 @@ describe('runPtySession — mirroring attach (M2 T2.2d/e, Critic C4)', () => {
     const live: Uint8Array[] = [];
     const handle = session.attach((bytes) => live.push(bytes));
     expect(handle).not.toBeNull();
+    expect(handle!.releaseLive()).toBeNull();
 
     fake.emitData(chunk(PTY_ATTACH_HIGH_WATER + 1, 3)); // crosses THIS subscriber's own high-water
     const deliveredAtStall = live.length;
@@ -147,11 +150,46 @@ describe('runPtySession — mirroring attach (M2 T2.2d/e, Critic C4)', () => {
     expect(live.at(-1)).toEqual(chunk(1024, 4)); // flowing again once caught up
   });
 
+  it('counts a large replay in the cumulative ACK coordinate before resuming partial live output', () => {
+    const fake = makeFakePty();
+    const { emit } = collect();
+    const session = runPtySession(fake.data, emit as never, new AbortController().signal, 80, 24);
+
+    fake.emitData(chunk(128 * 1024, 2));
+    const live: Uint8Array[] = [];
+    const handle = session.attach((bytes) => live.push(bytes));
+    expect(handle).not.toBeNull();
+    const replayBytes = handle!.replay.byteLength;
+    expect(replayBytes).toBeGreaterThan(0);
+    expect(replayBytes).toBeLessThan(PTY_ATTACH_HIGH_WATER + 1 - PTY_ATTACH_LOW_WATER);
+    expect(handle!.releaseLive()).toBeNull();
+
+    const liveBytes = PTY_ATTACH_HIGH_WATER + 1;
+    fake.emitData(chunk(liveBytes, 3));
+    const deliveredAtStall = live.length;
+    fake.emitData(chunk(1, 4));
+    expect(live.length).toBe(deliveredAtStall);
+
+    // The renderer has consumed all replay but only this much live output.
+    // Its wire ACK is replay+live. Actual live lag is LOW+replay, so the
+    // subscriber must remain paused even though a live-only interpretation of
+    // the same ACK would incorrectly put it exactly at LOW.
+    const partiallyConsumedLive = liveBytes - PTY_ATTACH_LOW_WATER - replayBytes;
+    handle!.ack(replayBytes + partiallyConsumedLive);
+    fake.emitData(chunk(1, 5));
+    expect(live.length).toBe(deliveredAtStall);
+
+    // Once the true live lag reaches LOW, delivery resumes.
+    handle!.ack(replayBytes + liveBytes - PTY_ATTACH_LOW_WATER);
+    fake.emitData(chunk(1, 6));
+    expect(live.at(-1)).toEqual(chunk(1, 6));
+  });
+
   it("an unacked attach subscriber never triggers the PRIMARY port's own pause (independent counters, no head-of-line block)", () => {
     const fake = makeFakePty();
     const { emit } = collect();
     const session = runPtySession(fake.data, emit as never, new AbortController().signal, 80, 24);
-    session.attach(() => {}); // never acks — immediately falls behind its own high-water
+    session.attach(() => {})!.releaseLive(); // never acks — immediately falls behind its own high-water
 
     fake.emitData(chunk(PTY_HIGH_WATER + 1)); // crosses only the PRIMARY's own high-water
     // Same single-pause invariant as the no-attach case (pty-session.test.ts)

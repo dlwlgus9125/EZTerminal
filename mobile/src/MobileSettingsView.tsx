@@ -32,24 +32,7 @@ import {
   saveRollbar,
 } from './theme';
 import { loadUiScale, saveUiScale } from './ui-scale';
-
-const CONNECTION_STORAGE_KEY = 'ezterminal-mobile-connection';
-
-/** Best-effort read of the saved connection's server URL for display only
- * (see App.tsx's `loadSaved`/`STORAGE_KEY` for the persisted shape) — any
- * parse failure just shows the empty-state dash, same as App.tsx's own
- * corrupt-value handling. */
-function readConnectionUrl(): string {
-  try {
-    const raw = localStorage.getItem(CONNECTION_STORAGE_KEY);
-    if (!raw) return '';
-    const parsed: unknown = JSON.parse(raw);
-    const url = (parsed as { url?: unknown } | null)?.url;
-    return typeof url === 'string' ? url : '';
-  } catch {
-    return '';
-  }
-}
+import { TerminalAccessorySettings } from './TerminalAccessorySettings';
 
 // MobileSettingsView — full-screen settings overlay (v0.2.0 M4). Modeled on
 // MobileStatsView.tsx's structure (standalone view, own header, `.btn`/
@@ -63,6 +46,7 @@ const OPENCLAW_MODE_LABEL: Record<OpenClawMode, string> = {
 };
 
 interface MobileSettingsViewProps {
+  readonly connectionUrl?: string;
   readonly onClose: () => void;
   readonly onDisconnect: () => void;
   /** OpenClaw tri-state visibility (openclaw-stabilization M3) — lifted to
@@ -74,13 +58,13 @@ interface MobileSettingsViewProps {
 }
 
 export function MobileSettingsView({
+  connectionUrl = '',
   onClose,
   onDisconnect,
   openclawMode,
   onOpenClawModeChange,
 }: MobileSettingsViewProps): JSX.Element {
   const [uiScale, setUiScale] = useState(() => loadUiScale());
-  const [connectionUrl] = useState(() => readConnectionUrl());
 
   // clamp -> applyUiScale (live) -> saveUiScale (persist) -> state, per plan D1/D5.
   const setScale = useCallback((percent: number) => {
@@ -164,6 +148,8 @@ export function MobileSettingsView({
       </header>
 
       <div className="mobile-settings-body">
+        <TerminalAccessorySettings />
+
         <section className="status-section">
           <h2 className="status-section-title">UI Scale</h2>
           <div className="settings-scale-stepper">

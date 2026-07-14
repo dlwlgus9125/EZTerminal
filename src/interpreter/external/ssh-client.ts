@@ -35,6 +35,20 @@ export interface SshPseudoTtyOptions {
   readonly rows: number;
 }
 
+/** One ssh2 direct-tcpip channel used by a local forward. */
+export interface SshForwardChannelLike {
+  on(event: 'data', listener: (chunk: Buffer) => void): void;
+  on(event: 'drain', listener: () => void): void;
+  on(event: 'end', listener: () => void): void;
+  on(event: 'close', listener: () => void): void;
+  on(event: 'error', listener: (error: Error) => void): void;
+  write(data: Buffer): boolean;
+  pause(): void;
+  resume(): void;
+  end(): void;
+  destroy(): void;
+}
+
 /** Verifies the RAW host public key (no `hostHash`, so we control fingerprinting). */
 export type SshHostVerifier = (key: Buffer, verify: (valid: boolean) => void) => void;
 
@@ -72,6 +86,13 @@ export interface SshConnectOptions {
 export interface SshClientLike {
   connect(options: SshConnectOptions): void;
   shell(pty: SshPseudoTtyOptions, callback: (err: Error | undefined, channel: SshChannelLike) => void): void;
+  forwardOut(
+    sourceHost: string,
+    sourcePort: number,
+    remoteHost: string,
+    remotePort: number,
+    callback: (err: Error | undefined, channel: SshForwardChannelLike) => void,
+  ): void;
   on(event: 'ready', listener: () => void): void;
   on(event: 'error', listener: (err: Error) => void): void;
   on(event: 'close', listener: () => void): void;

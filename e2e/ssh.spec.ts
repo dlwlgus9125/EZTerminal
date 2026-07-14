@@ -6,6 +6,7 @@ import { Server, utils as ssh2Utils } from 'ssh2';
 import type { Connection, ServerChannel } from 'ssh2';
 
 import { launchApp } from './launch-app';
+import { readXtermBuffer } from './xterm-buffer';
 
 // E5: `ssh-connect` — hermetic e2e against a REAL ssh2 `Server` on 127.0.0.1
 // (design §5 / gate B4): no system sshd, no network, no real credentials.
@@ -20,7 +21,7 @@ function tempUserData(): string {
 
 /** Concatenated text currently rendered in the xterm grid (mirrors pty.spec.ts). */
 async function terminalText(window: Page): Promise<string> {
-  return window.locator('.pty-block .xterm-rows').innerText();
+  return readXtermBuffer(window.getByTestId('pty-block'));
 }
 
 const HOST_KEY_A = ssh2Utils.generateKeyPairSync('ed25519', {}).private;

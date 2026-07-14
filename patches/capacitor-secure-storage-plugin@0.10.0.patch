@@ -1,0 +1,39 @@
+diff --git a/android/src/main/java/com/whitestein/securestorage/PasswordStorageHelper.java b/android/src/main/java/com/whitestein/securestorage/PasswordStorageHelper.java
+index 1ee07cb..5ba28f1 100644
+--- a/android/src/main/java/com/whitestein/securestorage/PasswordStorageHelper.java
++++ b/android/src/main/java/com/whitestein/securestorage/PasswordStorageHelper.java
+@@ -48,23 +48,27 @@ public class PasswordStorageHelper {
+     private PasswordStorageImpl passwordStorage = null;
+ 
+     public PasswordStorageHelper(Context context) {
+-        if (android.os.Build.VERSION.SDK_INT < 18) {
+-            passwordStorage = new PasswordStorageHelper_SDK16();
+-        } else {
+-            passwordStorage = new PasswordStorageHelper_SDK18();
++        // EZTerminal stores a bearer token here. Never fall back to the
++        // plugin's base64-only SDK16 SharedPreferences backend, including
++        // when AndroidKeyStore initialization fails on a newer device.
++        if (android.os.Build.VERSION.SDK_INT < 18) {
++            throw new IllegalStateException("AndroidKeyStore requires API 18 or newer");
+         }
++        passwordStorage = new PasswordStorageHelper_SDK18();
+ 
+         boolean isInitialized = false;
++        RuntimeException initializationError = null;
+ 
+         try {
+             isInitialized = passwordStorage.init(context);
+         } catch (Exception ex) {
+             Log.e(LOG_TAG, "PasswordStorage initialisation error:" + ex.getMessage(), ex);
++            initializationError = new IllegalStateException("AndroidKeyStore initialization failed", ex);
+         }
+ 
+-        if (!isInitialized && passwordStorage instanceof PasswordStorageHelper_SDK18) {
+-            passwordStorage = new PasswordStorageHelper_SDK16();
+-            passwordStorage.init(context);
++        if (!isInitialized) {
++            if (initializationError != null) throw initializationError;
++            throw new IllegalStateException("AndroidKeyStore initialization failed");
+         }
+     }
+ 

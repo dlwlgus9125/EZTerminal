@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
+import { readXtermBuffer } from './xterm-buffer';
 
 // theme-effects-font M3 (Wave 3 desktop): custom theme mods (folder-scan +
 // Import via the Settings drawer), the Font picker, and per-effect toggles.
@@ -44,7 +45,17 @@ function hexToRgb(hex: string): string {
 
 /** Concatenated text currently rendered in the xterm grid (post-upgrade) — mirrors pty.spec.ts. */
 async function terminalText(window: Page): Promise<string> {
-  return window.locator('.pty-block .xterm-rows').innerText();
+  return readXtermBuffer(window.getByTestId('pty-block'));
+}
+
+/** Public test seam owned by PtyBlock; works for both DOM and WebGL renderers. */
+async function terminalFontFamily(window: Page): Promise<string> {
+  return window.getByTestId('pty-block').evaluate((el) => {
+    const host = el as HTMLElement & {
+      __ezTerm?: { options: { fontFamily?: string } };
+    };
+    return host.__ezTerm?.options.fontFamily ?? '';
+  });
 }
 
 /** Force an xterm-backed pty block open (`!node <fixture>`) and wait for its startup output. */
@@ -126,9 +137,7 @@ test('selecting a font from the picker changes the terminal fontFamily live', as
   await window.getByTestId('settings-font-select').selectOption('fira-code');
 
   await expect
-    .poll(() =>
-      window.locator('.pty-block .xterm-rows').evaluate((el) => getComputedStyle(el).fontFamily),
-    )
+    .poll(() => terminalFontFamily(window))
     .toContain('Fira Code');
 
   await app.close();
@@ -173,7 +182,7 @@ test('a font selected in the picker is applied to a pane opened AFTER the select
   await openXtermBlock(window);
 
   await expect
-    .poll(() => window.locator('.pty-block .xterm-rows').evaluate((el) => getComputedStyle(el).fontFamily))
+    .poll(() => terminalFontFamily(window))
     .toContain('Fira Code');
 
   await app.close();

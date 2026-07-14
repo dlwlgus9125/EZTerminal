@@ -3,9 +3,21 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { BlockController } from './block-controller';
 import { Block } from './Block';
 import { formatCwd } from './format-cwd';
-import { registerPaneInput, removePaneCwd, setPaneCwd, unregisterPaneInput } from './pane-registry';
+import {
+  registerPane,
+  type PaneActionResult,
+  type PaneSnapshot,
+} from './pane-registry';
+import { focusPaneSurface } from './pane-focus';
 import { keyToPtyBytes } from './pty-keys';
+import { QuickCommandShelf } from './QuickCommandShelf';
+import type {
+  PaneInstanceToken,
+  SessionPaneLease,
+} from './session-panel-tracker';
+import type { TerminalRuntimeOptions } from './xterm-runtime';
 import type { RunStartedInfo, SessionInfo } from '../shared/ipc';
+import type { QuickCommand } from '../shared/quick-command';
 
 // A TerminalPane is one independent shell surface: its own shell session (cwd/env/
 // variables/history), its own stack of command Blocks, and its own pinned prompt.
@@ -39,6 +51,9 @@ interface TerminalPaneProps {
   /** This pane's dockview panel id — the pane-registry key the file-explorer
    * drawer (M1) uses to read this pane's live cwd when it opens. */
   readonly panelId: string;
+  /** Exact Dockview panel API object. Unlike panelId, this identity is never
+   * reused by a layout replacement. Tests without Dockview may omit it. */
+  readonly paneInstanceToken?: PaneInstanceToken;
   /** Starting cwd for a pane opened via the file-explorer's "open terminal
    * here" action (M2); undefined for a plain new tab/split (interpreter default). */
   readonly initialCwd?: string;
@@ -52,22 +67,34 @@ interface TerminalPaneProps {
    * see the mount effect. Undefined for a plain new tab/split.
    */
   readonly adoptSessionId?: string;
-  /** C6 sessionId-report channel: fires once this pane's sessionId is known
-   * (created OR adopted), so App.tsx can self-filter the `onSessionAdded`
-   * broadcast (which fires for sessions this window itself just bound too)
-   * and find the right panel to close on `onSessionRemoved`. */
-  readonly onSessionBound?: (panelId: string, sessionId: string) => void;
-  /** Companion to `onSessionBound` — fires on unmount so App.tsx can forget
-   * the mapping (this panel no longer represents any session). */
-  readonly onSessionUnbound?: (panelId: string) => void;
+  /** Exact lifecycle lease: pending adoption is registered at mount, actual
+   * binding is recorded once known, and cleanup releases both identities. */
+  readonly mountSessionPane?: (
+    panelId: string,
+    instanceToken: PaneInstanceToken,
+    requestedAdoptSessionId?: string,
+  ) => SessionPaneLease;
+  readonly terminalRuntimeOptions?: TerminalRuntimeOptions;
+  /** Preset replacement owns a short global mutation lease. The boolean is
+   * for rendering; the callback is the synchronous submission authority so a
+   * React commit delay cannot open a run race. */
+  readonly commandSubmissionLocked?: boolean;
+  readonly isCommandSubmissionLocked?: () => boolean;
+  readonly quickCommands?: readonly QuickCommand[];
+  readonly onManageQuickCommands?: () => void;
 }
 
 export function TerminalPane({
   panelId,
+  paneInstanceToken,
   initialCwd,
   adoptSessionId,
-  onSessionBound,
-  onSessionUnbound,
+  mountSessionPane,
+  terminalRuntimeOptions,
+  commandSubmissionLocked = false,
+  isCommandSubmissionLocked,
+  quickCommands = [],
+  onManageQuickCommands,
 }: TerminalPaneProps): JSX.Element {
   const [command, setCommand] = useState('');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
@@ -110,14 +137,18 @@ export function TerminalPane({
   const [sessionDead, setSessionDead] = useState(false);
   // M2 adopt mode: true once bound to an EXISTING session (vs. one this pane
   // created, including the C5 fallback below) — decides destroy-vs-detach on
-  // unmount. Latest onSessionBound/onSessionUnbound in refs (not effect deps)
-  // so a fresh inline closure from App on every render doesn't churn the
-  // mount effect (mirrors MobileSessionView's onSessionDeadRef pattern).
+  // unmount. The latest lease factory stays in a ref so callback identity
+  // changes do not churn the session mount effect.
   const isAdoptedRef = useRef(false);
-  const onSessionBoundRef = useRef(onSessionBound);
-  onSessionBoundRef.current = onSessionBound;
-  const onSessionUnboundRef = useRef(onSessionUnbound);
-  onSessionUnboundRef.current = onSessionUnbound;
+  const sessionBindingPendingRef = useRef(true);
+  // Completion marker set only after guarded destruction was acknowledged (or
+  // shared-fate interpreter death was observed). It never grants advance
+  // authorization to destroy a future run.
+  const handledSessionDestroyRef = useRef<string | null>(null);
+  const mountSessionPaneRef = useRef(mountSessionPane);
+  mountSessionPaneRef.current = mountSessionPane;
+  const fallbackPaneInstanceTokenRef = useRef<PaneInstanceToken>({});
+  const exactPaneInstanceToken = paneInstanceToken ?? fallbackPaneInstanceTokenRef.current;
 
   // The session's current working directory, shown in the live prompt. Seeded from
   // the session's startup cwd, then tracked from the active block's frames (latest
@@ -164,7 +195,7 @@ export function TerminalPane({
   // to call it from inside an async `listRuns()` continuation that fires
   // long before `attachToRun` exists in this file's top-to-bottom order —
   // always reaches the current one. Same "latest callback in a ref" idiom as
-  // `onSessionBoundRef`/`onSessionUnboundRef` above.
+  // the pane lease factory above.
   const attachToRunRef = useRef<((info: RunStartedInfo) => void) | null>(null);
 
   // Bind this pane to a session on mount — either ADOPT an existing one (M2,
@@ -179,16 +210,32 @@ export function TerminalPane({
   // pane torn down mid-restore during the fromJSON N-panel mount burst — the
   // late resolution must destroy/ignore the orphan instead of adopting it.
   useEffect(() => {
+    // React StrictMode runs setup -> cleanup -> setup on the same ref object.
+    // Cleanup clears the flag, so every setup must explicitly reacquire the
+    // binding-pending state before it can issue list/create requests.
+    sessionBindingPendingRef.current = true;
     let cancelled = false;
+    let boundSessionId: string | null = null;
+    let boundAdopted = false;
+    const paneLease = mountSessionPaneRef.current?.(
+      panelId,
+      exactPaneInstanceToken,
+      adoptSessionId,
+    );
 
     const bindSession = (info: SessionInfo, adopted: boolean): void => {
+      if (paneLease && !paneLease.bind(info.sessionId)) {
+        if (!adopted) void window.ezterminal?.destroySession?.(info.sessionId);
+        return;
+      }
+      sessionBindingPendingRef.current = false;
       isAdoptedRef.current = adopted;
+      boundAdopted = adopted;
       sessionIdRef.current = info.sessionId;
       setSessionId(info.sessionId);
       setCurrentCwd((prev) => prev ?? info.cwd);
-      setPaneCwd(panelId, info.cwd);
       if (!adopted) liveSessionCount += 1;
-      onSessionBoundRef.current?.(panelId, info.sessionId);
+      boundSessionId = info.sessionId;
 
       // M4 attach-on-bind: catch up on any run already in progress in this
       // session — covers the adopt-a-session-with-a-running-TUI gap (Ctrl+R
@@ -217,7 +264,9 @@ export function TerminalPane({
           }
           bindSession(info, false);
         })
-        .catch(() => undefined);
+        .catch(() => {
+          if (!cancelled) sessionBindingPendingRef.current = false;
+        });
     };
 
     if (adoptSessionId) {
@@ -246,27 +295,26 @@ export function TerminalPane({
 
     return () => {
       cancelled = true;
-      if (sessionIdRef.current) {
-        if (!isAdoptedRef.current) {
-          window.ezterminal?.destroySession?.(sessionIdRef.current);
+      sessionBindingPendingRef.current = false;
+      if (boundSessionId) {
+        if (!boundAdopted) {
+          if (handledSessionDestroyRef.current !== boundSessionId) {
+            // An ordinary unmount is allowed to tear down only while idle. The
+            // interpreter rejects `[]` if any foreground run exists. A close or
+            // preset that already received its guarded ACK marks completion and
+            // deliberately skips this redundant second request.
+            void window.ezterminal?.destroySessionGuarded?.(
+              boundSessionId,
+              [],
+            );
+          }
           liveSessionCount -= 1;
         }
-        onSessionUnboundRef.current?.(panelId);
-        sessionIdRef.current = null;
+        if (sessionIdRef.current === boundSessionId) sessionIdRef.current = null;
       }
-      removePaneCwd(panelId);
+      paneLease?.dispose();
     };
-  }, [panelId, initialCwd, adoptSessionId]);
-
-  // Paste-path-into-terminal (M2, file-explorer context menu): registers a
-  // sink that appends text to the live command draft, space-separated unless
-  // the draft is empty or already ends in whitespace.
-  useEffect(() => {
-    registerPaneInput(panelId, (text) => {
-      setCommand((prev) => (prev === '' || /\s$/.test(prev) ? `${prev}${text}` : `${prev} ${text}`));
-    });
-    return () => unregisterPaneInput(panelId);
-  }, [panelId]);
+  }, [panelId, exactPaneInstanceToken, initialCwd, adoptSessionId]);
 
   // The interpreter is shared by all sessions in Phase 1, so its death kills this one
   // too — latch dead to stop accepting runs (Codex B8). Also release a stuck TUI
@@ -297,6 +345,19 @@ export function TerminalPane({
   // is a cheap, guaranteed backstop.
   useEffect(() => {
     window.dispatchEvent(new Event('ez:refit'));
+  }, [activeTakeover]);
+
+  // The pane owns both takeover visibility and the command input's disabled
+  // state, so it also owns the reliable focus handoff when takeover ends.
+  // Focusing from the child PTY view can race this commit and no-op while the
+  // input is still disabled; the parent effect runs after that state is live.
+  const previousTakeoverRef = useRef(activeTakeover);
+  useEffect(() => {
+    const wasActive = previousTakeoverRef.current;
+    previousTakeoverRef.current = activeTakeover;
+    if (!wasActive || activeTakeover) return;
+    const raf = requestAnimationFrame(() => cmdInputRef.current?.focus());
+    return () => cancelAnimationFrame(raf);
   }, [activeTakeover]);
 
   // Dispose every controller on unmount so the interpreter releases its stores. This
@@ -333,22 +394,25 @@ export function TerminalPane({
         const cwd = snap.endCwd ?? snap.startCwd;
         if (cwd) {
           setCurrentCwd(cwd);
-          setPaneCwd(panelId, cwd);
         }
         if (stickToBottom.current) requestAnimationFrame(scrollBlockListToBottom);
       };
       activeUnsub.current = controller.subscribe(onActiveChange);
       onActiveChange();
     },
-    [panelId, scrollBlockListToBottom],
+    [scrollBlockListToBottom],
   );
 
-  const handleRun = useCallback(() => {
+  const runText = useCallback((requestedText: string): PaneActionResult => {
     // Gate: need a live session (B1/B5), and serialize foreground runs — one command
     // at a time per session (B4); the backend rejects a concurrent run defensively.
-    if (!sessionId || sessionDead || activeRunning) return;
-    const text = command.trim();
-    if (!text) return;
+    if (isCommandSubmissionLocked?.()) return { ok: false, reason: 'unavailable' };
+    if (!sessionId) return { ok: false, reason: 'unavailable' };
+    if (sessionDead) return { ok: false, reason: 'dead' };
+    if (activeRunning) return { ok: false, reason: 'busy' };
+    const text = requestedText.trim();
+    if (!text) return { ok: false, reason: 'empty' };
+    const runSessionId = sessionId;
     const runId = nextRunId();
 
     // Submitting a command re-engages terminal-style following, even if the user had
@@ -381,7 +445,9 @@ export function TerminalPane({
         console.error('[renderer] cmd-port message arrived with no port');
         return;
       }
-      const controller = new BlockController(text, port);
+      const controller = new BlockController(text, port, {
+        controlTarget: { panelId, sessionId: runSessionId, runId },
+      });
       bindActiveController(controller);
       setBlocks((prev) =>
         prev.map((entry) => (entry.id === runId ? { ...entry, controller } : entry)),
@@ -390,11 +456,97 @@ export function TerminalPane({
 
     window.addEventListener('message', onWindowMessage);
 
-    window.ezterminal.runCommand(text, runId, sessionId).catch((err: unknown) => {
+    window.ezterminal.runCommand(text, runId, runSessionId).catch((err: unknown) => {
       window.removeEventListener('message', onWindowMessage);
       console.error('[renderer] runCommand failed:', err);
     });
-  }, [command, sessionId, sessionDead, activeRunning, bindActiveController]);
+    return { ok: true };
+  }, [
+    sessionId,
+    sessionDead,
+    activeRunning,
+    bindActiveController,
+    isCommandSubmissionLocked,
+    panelId,
+  ]);
+
+  const handleRun = useCallback((): void => {
+    runText(command);
+  }, [command, runText]);
+
+  // One aggregate pane handle replaces the historical cwd/input maps. The
+  // effect refreshes the handle whenever its observable snapshot changes;
+  // registry consumers receive one revision notification and always query a
+  // coherent snapshot/actions pair.
+  useEffect(() => {
+    const getSnapshot = (): PaneSnapshot => {
+      const active = activeController.current?.getSnapshot();
+      const isBusy = active?.status === 'running';
+      const activePty = Boolean(isBusy && active?.shape === 'pty');
+      return {
+        panelId,
+        sessionId: sessionIdRef.current,
+        cwd: currentCwd ?? '',
+        history,
+        draft: command,
+        isBusy,
+        isDead: sessionDead,
+        sessionBindingPending: sessionBindingPendingRef.current,
+        destroysSessionOnClose: sessionIdRef.current !== null && !isAdoptedRef.current,
+        activeRunIds: blocksRef.current
+          .filter((entry) => entry.controller?.getSnapshot().status === 'running')
+          .map((entry) => entry.id),
+        executionKind: active?.executionKind ?? null,
+        hasSshPrompt: active?.sshPrompt !== null && active?.sshPrompt !== undefined,
+        activePty,
+        activeCommand: activePty ? (activeController.current?.command ?? null) : null,
+      };
+    };
+    const dispose = registerPane(panelId, {
+      getSnapshot,
+      markSessionDestroyHandled: (destroyedSessionId): boolean => {
+        const snapshot = getSnapshot();
+        if (
+          !snapshot.destroysSessionOnClose
+          || snapshot.sessionId === null
+          || snapshot.sessionId !== destroyedSessionId
+        ) {
+          return false;
+        }
+        handledSessionDestroyRef.current = destroyedSessionId;
+        return true;
+      },
+      insertText: (text): PaneActionResult => {
+        if (sessionDead) return { ok: false, reason: 'dead' };
+        setCommand((previous) =>
+          previous === '' || /\s$/.test(previous) ? `${previous}${text}` : `${previous} ${text}`,
+        );
+        requestAnimationFrame(() => cmdInputRef.current?.focus());
+        return { ok: true };
+      },
+      runText: (text): PaneActionResult => {
+        if (command.trim() !== '') return { ok: false, reason: 'draft-not-empty' };
+        return runText(text);
+      },
+      pasteToPty: (text): PaneActionResult => {
+        const controller = activeController.current;
+        const snapshot = controller?.getSnapshot();
+        if (!controller || snapshot?.status !== 'running' || snapshot.shape !== 'pty') {
+          return { ok: false, reason: 'not-pty' };
+        }
+        controller.pasteText(text);
+        return { ok: true };
+      },
+      focus: (): void => {
+        const active = activeController.current?.getSnapshot();
+        focusPaneSurface(
+          cmdInputRef.current,
+          active?.status === 'running' && active.shape === 'pty',
+        );
+      },
+    });
+    return dispose;
+  }, [panelId, sessionId, currentCwd, history, command, activeRunning, sessionDead, runText]);
 
   // Mirror a run this pane did NOT start: adds a pending block, brokers the
   // `_ezAttachPort` handoff `attachRun` triggers, and binds the resulting
@@ -420,7 +572,10 @@ export function TerminalPane({
           console.error('[renderer] attach-port message arrived with no port');
           return;
         }
-        const controller = new BlockController(info.commandText, port, { mirror: true });
+        const controller = new BlockController(info.commandText, port, {
+          mirror: true,
+          controlTarget: { panelId, sessionId: info.sessionId, runId: info.runId },
+        });
         bindActiveController(controller);
         setBlocks((prev) =>
           prev.map((entry) => (entry.id === info.runId ? { ...entry, controller } : entry)),
@@ -434,7 +589,7 @@ export function TerminalPane({
         console.error('[renderer] attachRun failed:', err);
       });
     },
-    [bindActiveController],
+    [bindActiveController, panelId],
   );
   attachToRunRef.current = attachToRun;
 
@@ -495,6 +650,7 @@ export function TerminalPane({
               controller={entry.controller}
               onDismiss={() => handleDismiss(entry.id)}
               isTakeover={activeTakeover && activeController.current === entry.controller}
+              terminalRuntimeOptions={terminalRuntimeOptions}
             />
           ) : (
             <section key={entry.id} className="block" data-testid="block" data-status="running">
@@ -590,10 +746,37 @@ export function TerminalPane({
           aria-label="command input"
           data-testid="cmd-input"
         />
+        {onManageQuickCommands && (
+          <QuickCommandShelf
+            commands={quickCommands}
+            insertDisabledReason={sessionDead ? 'This terminal pane has ended.' : undefined}
+            runDisabledReason={
+              !sessionId
+                ? 'The terminal session is still starting.'
+                : sessionDead
+                  ? 'This terminal pane has ended.'
+                  : activeRunning
+                    ? 'Wait for the active command to finish.'
+                    : command.trim()
+                      ? 'Clear the current draft before running a saved command.'
+                      : commandSubmissionLocked
+                        ? 'Layout recovery is in progress.'
+                        : undefined
+            }
+            onInsert={(text) => {
+              setCommand((previous) => (
+                previous === '' || /\s$/.test(previous) ? `${previous}${text}` : `${previous} ${text}`
+              ));
+              requestAnimationFrame(() => cmdInputRef.current?.focus());
+            }}
+            onRun={runText}
+            onManage={onManageQuickCommands}
+          />
+        )}
         <button
           className="btn btn-run"
           onClick={handleRun}
-          disabled={!sessionId || sessionDead || activeRunning}
+          disabled={!sessionId || sessionDead || activeRunning || commandSubmissionLocked}
           data-testid="btn-run"
         >
           Run

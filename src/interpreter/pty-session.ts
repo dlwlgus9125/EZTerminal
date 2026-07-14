@@ -17,6 +17,8 @@
 
 import type { PtyStreamData } from './core';
 import type { Emit } from './block-runner';
+import type { PtyRestoreWarningFrame } from '../shared/ipc';
+import { PtySemanticRestoreBuffer } from './pty-restore-buffer';
 
 /** Clamp terminal dimensions to a sane range before applying to the PTY. Also
  * used by ssh-session.ts (same PTY-grid contract, post-channel). */
@@ -53,6 +55,8 @@ export const PTY_ATTACH_CAP = 4;
  * `PTY_HIGH_WATER`/`PTY_LOW_WATER` above, which are untouched by attach traffic. */
 export const PTY_ATTACH_HIGH_WATER = 1024 * 1024;
 export const PTY_ATTACH_LOW_WATER = 256 * 1024;
+/** Live output held while an attach port receives snapshot + tail. */
+export const PTY_ATTACH_REPLAY_QUEUE_BYTES = 1024 * 1024;
 
 /** Returned by {@link PtySession.attach}. `replay` is the ring's contents AT
  * attach time; live bytes stream via the `onData` callback passed to `attach`
@@ -61,6 +65,9 @@ export const PTY_ATTACH_LOW_WATER = 256 * 1024;
  * `PTY_ATTACH_LOW_WATER`. */
 export interface PtyAttachHandle {
   readonly replay: Uint8Array;
+  readonly warning?: PtyRestoreWarningFrame;
+  /** Open the live gate after metadata/warning/replay have been posted. */
+  releaseLive(): PtyRestoreWarningFrame | null;
   /** Cumulative bytes this subscriber has flushed — same monotonic-ack shape as `PtySession.ack`. */
   ack(bytes: number): void;
   /** Stop receiving further live data and free the subscriber slot. Idempotent. */
@@ -229,15 +236,23 @@ export function runPtySession(
     sent: number;
     acked: number;
     paused: boolean;
+    released: boolean;
+    detached: boolean;
+    pending: Uint8Array[];
+    pendingBytes: number;
+    overflowed: boolean;
   }
   const attachSubscribers = new Set<AttachSubscriber>();
   const ring: Uint8Array[] = [];
   let ringBytes = 0;
 
   const appendToRing = (data: Uint8Array): void => {
-    ring.push(data);
-    ringBytes += data.byteLength;
-    while (ringBytes > PTY_SCROLLBACK_RING_BYTES && ring.length > 1) {
+    const bounded = data.byteLength > PTY_SCROLLBACK_RING_BYTES
+      ? data.slice(data.byteLength - PTY_SCROLLBACK_RING_BYTES)
+      : data;
+    ring.push(bounded);
+    ringBytes += bounded.byteLength;
+    while (ringBytes > PTY_SCROLLBACK_RING_BYTES) {
       const dropped = ring.shift();
       if (dropped) ringBytes -= dropped.byteLength;
     }
@@ -253,7 +268,35 @@ export function runPtySession(
     return out;
   };
 
+  const concatChunks = (chunks: readonly Uint8Array[]): Uint8Array => {
+    const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+    const out = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return out;
+  };
+
+  const deliverToSubscriber = (sub: AttachSubscriber, bytes: Uint8Array): void => {
+    if (sub.detached || sub.paused) return;
+    sub.onData(bytes);
+    sub.sent += bytes.byteLength;
+    if (sub.sent - sub.acked > PTY_ATTACH_HIGH_WATER) sub.paused = true;
+  };
+
+  const flushPending = (sub: AttachSubscriber): void => {
+    while (!sub.detached && !sub.paused && sub.pending.length > 0) {
+      const bytes = sub.pending.shift();
+      if (!bytes) break;
+      sub.pendingBytes -= bytes.byteLength;
+      deliverToSubscriber(sub, bytes);
+    }
+  };
+
   const pty = data.spawn(clampDim(cols), clampDim(rows));
+  const semanticRestore = new PtySemanticRestoreBuffer(clampDim(cols), clampDim(rows));
 
   // Schema first so the renderer mounts the pty block before any data arrives.
   emit({ type: 'schema', columns: [], shape: 'pty' });
@@ -295,6 +338,7 @@ export function runPtySession(
     settled = true;
     resumeThenKill();
     emit({ type: 'cancelled' });
+    semanticRestore.dispose();
     cleanup();
   };
 
@@ -306,16 +350,26 @@ export function runPtySession(
       emit({ type: 'pty-render-upgrade' });
     }
     modeTracker.feed(bytes);
-    emit({ type: 'pty-data', data: bytes });
+    semanticRestore.feed(bytes);
     appendToRing(bytes);
+    emit({ type: 'pty-data', data: bytes });
     // Tee to every attach subscriber independently — a paused one just misses
     // this chunk (dropped, not queued); it never affects the primary's own
     // pause below or any OTHER subscriber's delivery (no head-of-line block).
     for (const sub of attachSubscribers) {
+      if (!sub.released) {
+        if (sub.overflowed) continue;
+        sub.pending.push(bytes);
+        sub.pendingBytes += bytes.byteLength;
+        if (sub.pendingBytes > PTY_ATTACH_REPLAY_QUEUE_BYTES) {
+          sub.overflowed = true;
+          sub.pending = [];
+          sub.pendingBytes = 0;
+        }
+        continue;
+      }
       if (sub.paused) continue;
-      sub.onData(bytes);
-      sub.sent += bytes.byteLength;
-      if (sub.sent - sub.acked > PTY_ATTACH_HIGH_WATER) sub.paused = true;
+      deliverToSubscriber(sub, bytes);
     }
     if (!paused && sent - acked > PTY_HIGH_WATER) {
       paused = true;
@@ -323,10 +377,11 @@ export function runPtySession(
     }
   });
 
-  pty.onExit(() => {
+  pty.onExit((exitCode) => {
     if (settled) return;
     settled = true;
-    emit({ type: 'end' });
+    emit({ type: 'end', exitCode });
+    semanticRestore.dispose();
     cleanup();
   });
 
@@ -338,7 +393,12 @@ export function runPtySession(
       if (!settled) pty.write(input);
     },
     resize(c: number, r: number): void {
-      if (!settled) pty.resize(clampDim(c), clampDim(r));
+      if (!settled) {
+        const nextCols = clampDim(c);
+        const nextRows = clampDim(r);
+        semanticRestore.resize(nextCols, nextRows);
+        pty.resize(nextCols, nextRows);
+      }
     },
     ack(bytes: number): void {
       if (settled || !Number.isFinite(bytes)) return;
@@ -349,39 +409,88 @@ export function runPtySession(
       }
     },
     dispose(): void {
+      semanticRestore.dispose();
+      for (const sub of attachSubscribers) {
+        sub.detached = true;
+        sub.pending = [];
+        sub.pendingBytes = 0;
+      }
+      attachSubscribers.clear();
       if (settled) return;
       settled = true;
       resumeThenKill();
       cleanup();
-      attachSubscribers.clear();
     },
     attach(onData: (bytes: Uint8Array) => void): PtyAttachHandle | null {
       if (settled) return null;
       if (attachSubscribers.size >= PTY_ATTACH_CAP) return null;
-      const sub: AttachSubscriber = { onData, sent: 0, acked: 0, paused: false };
+      const sub: AttachSubscriber = {
+        onData,
+        sent: 0,
+        acked: 0,
+        paused: false,
+        released: false,
+        detached: false,
+        pending: [],
+        pendingBytes: 0,
+        overflowed: false,
+      };
       attachSubscribers.add(sub);
-      // Late-attach mode resync: prepend the tracked DEC private-mode state so
-      // a mirror whose ring replay no longer contains the original DECSETs
-      // (evicted by heavy TUI redraws) still reconstructs alt-screen / mouse /
-      // paste modes. For an early attacher the ring still holds the originals
-      // and reapplying them is idempotent; the ring's own later transitions
-      // replay after the preamble, so the final state always matches the child.
-      const preamble = modeTracker.preamble();
-      const ringData = concatRing();
-      let replay = ringData;
-      if (preamble.byteLength > 0) {
-        replay = new Uint8Array(preamble.byteLength + ringData.byteLength);
-        replay.set(preamble, 0);
-        replay.set(ringData, preamble.byteLength);
+      const capture = semanticRestore.capture();
+      let replay: Uint8Array;
+      let warning: PtyRestoreWarningFrame | undefined;
+      if (capture.mode === 'semantic') {
+        replay = concatChunks([capture.snapshot, ...capture.tail]);
+      } else {
+        // Safe fallback preserves the previous bounded raw-ring behavior and
+        // prepends current DEC modes so the degraded mirror is still usable.
+        replay = concatChunks([modeTracker.preamble(), concatRing()]);
+        warning = {
+          type: 'pty-restore-warning',
+          reason: capture.reason,
+          fallback: 'raw-ring',
+          snapshotEpoch: capture.snapshotEpoch,
+          streamEpoch: capture.replayEpoch,
+        };
       }
+      // The renderer resets its cumulative PTY counters before reconnect, then
+      // consumes `replay` and live bytes in one shared ACK coordinate. Mirror
+      // pacing must use that same coordinate: otherwise replay bytes in an ACK
+      // would be mistaken for not-yet-consumed live output and release a slow
+      // subscriber up to `replay.byteLength` too early.
+      sub.sent = replay.byteLength;
+      sub.paused = sub.sent - sub.acked > PTY_ATTACH_HIGH_WATER;
       return {
         replay,
+        ...(warning ? { warning } : {}),
+        releaseLive(): PtyRestoreWarningFrame | null {
+          if (sub.detached) return null;
+          if (sub.overflowed) {
+            sub.detached = true;
+            attachSubscribers.delete(sub);
+            return {
+              type: 'pty-restore-warning',
+              reason: 'replay-queue-overflow',
+              fallback: 'none',
+            };
+          }
+          sub.released = true;
+          flushPending(sub);
+          return null;
+        },
         ack(bytes: number): void {
-          if (settled || !Number.isFinite(bytes)) return;
+          if (settled || sub.detached || !Number.isFinite(bytes)) return;
           if (bytes > sub.acked) sub.acked = Math.min(bytes, sub.sent);
-          if (sub.paused && sub.sent - sub.acked <= PTY_ATTACH_LOW_WATER) sub.paused = false;
+          if (sub.paused && sub.sent - sub.acked <= PTY_ATTACH_LOW_WATER) {
+            sub.paused = false;
+            flushPending(sub);
+          }
         },
         detach(): void {
+          if (sub.detached) return;
+          sub.detached = true;
+          sub.pending = [];
+          sub.pendingBytes = 0;
           attachSubscribers.delete(sub);
         },
       };

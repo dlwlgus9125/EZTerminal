@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
+import { readXtermBuffer } from './xterm-buffer';
 
 // Terminal-feel pass T1: while a pane's active block is a RUNNING xterm `pty`
 // (auto-upgraded OR `!cmd`-forced), it takes over the pane like a real terminal
@@ -40,7 +41,7 @@ test('tui-takeover: a forced-xterm (`!cmd`) block takes over the pane while runn
   const ptyBlock = window.getByTestId('pty-block');
   await expect(ptyBlock).toBeVisible();
   await expect
-    .poll(() => window.locator('.pty-block .xterm-rows').innerText(), { timeout: 15_000 })
+    .poll(() => readXtermBuffer(ptyBlock), { timeout: 15_000 })
     .toContain('READY');
 
   // The prior block and the pinned prompt are hidden — still in the DOM (CSS
@@ -88,7 +89,7 @@ test('tui-takeover: a sigil-free auto-upgrade (ink-style trigger) also takes ove
   const pane = window.getByTestId('pane');
   await expect(pane).toHaveClass(/pane--tui-takeover/);
   await expect
-    .poll(() => window.locator('.pty-block .xterm-rows').innerText(), { timeout: 15_000 })
+    .poll(() => readXtermBuffer(window.getByTestId('pty-block')), { timeout: 15_000 })
     .toContain('INK-STYLE-READY');
   await expect(window.getByTestId('block-status')).toHaveText('running');
 

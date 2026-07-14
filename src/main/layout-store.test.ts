@@ -209,6 +209,36 @@ describe('LayoutStore — uiScale + remoteEnabled (v0.2.0 M1)', () => {
     expect(await store.getScrollback()).toBe(20000);
   });
 
+  it('defaults terminal rendering to auto and preserves the compatibility choice', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    expect(await store.getTerminalRenderer()).toBe('auto');
+    await store.setTerminalRenderer('dom');
+    expect(await store.getTerminalRenderer()).toBe('dom');
+    await store.setTheme('light');
+    expect(await store.getTerminalRenderer()).toBe('dom');
+  });
+
+  it('defaults risky pane close confirmation on and round-trips an opt-out', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    expect(await store.getConfirmRiskyPaneClose()).toBe(true);
+    await store.setConfirmRiskyPaneClose(false);
+    expect(await store.getConfirmRiskyPaneClose()).toBe(false);
+    await store.setTheme('light');
+    expect(await store.getConfirmRiskyPaneClose()).toBe(false);
+  });
+
+  it('keeps OSC 52 clipboard writes opt-in and persists an explicit choice', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    expect(await store.getAllowOsc52Clipboard()).toBe(false);
+    await store.setAllowOsc52Clipboard(true);
+    expect(await store.getAllowOsc52Clipboard()).toBe(true);
+    await store.setTheme('light');
+    expect(await store.getAllowOsc52Clipboard()).toBe(true);
+  });
+
   it('interleaved setTheme/setUiScale/setRemoteEnabled all preserve each other (shared settings.json)', async () => {
     const store = new LayoutStore(makeDir());
     await store.init();

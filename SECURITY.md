@@ -27,11 +27,22 @@ client is, by design, a remote terminal:
   minted per install and stored under the app's `userData`. The token is
   compared in constant time (`timingSafeEqual`) and can be **rotated** from the
   pairing panel, which immediately invalidates any leaked copy.
+- **Fail-closed credential storage.** The desktop token file is atomically
+  replaced and verified as mode `0600` on POSIX. On Windows, Electron
+  `safeStorage` encrypts the bearer token with OS-backed protection before any
+  file write; a current-user + SYSTEM protected DACL remains defense in depth.
+  Existing schema-v1 plaintext is replaced with ciphertext before the bridge
+  can use it. Android saves paired credentials through
+  AndroidKeyStore and does not fall back to plaintext/base64 preferences;
+  legacy plaintext is deleted only after a secure read-back succeeds.
 - **Origin-checked.** The server rejects browser cross-origin connections
   (Cross-Site WebSocket Hijacking / DNS-rebinding defense); only the mobile
   WebView origin and non-browser clients may connect.
 - **Bounded.** Inbound frames are size-capped, concurrent connections are
   limited, and a socket that does not authenticate promptly is dropped.
+  Unexpected disconnects retain at most 32 run ports for five minutes, drain
+  output under backpressure, and require the same token before resuming. An
+  explicit Disconnect releases those leases; an invalid token stops retries.
 
 ### What you must do
 
@@ -56,3 +67,23 @@ The Electron app follows current hardening guidance: `contextIsolation` and
 and Electron fuses (`RunAsNode`/inspector disabled, ASAR integrity). External
 programs are spawned with argument arrays (never a shell string), and SSH host
 keys are verified (TOFU) before any credential is sent.
+
+After a risky-close confirmation, the interpreter atomically compares the
+expected active run IDs and refuses the close if session state changed.
+Terminal-originated OSC 52 clipboard writes are disabled by default, write-only,
+strictly decoded and independently size/rate limited in renderer and main;
+semantic attach replay renders OSC 52 without repeating clipboard side effects.
+Terminal file links require an explicit action and a main-owned realpath
+containment check, then preview through a short-lived one-shot file-identity
+capability so a resolve/open race cannot substitute another file. OpenSSH
+aliases are resolved from an inert allowlist and
+applicable command/proxy/forward directives fail closed. Git worktree deletion
+is restricted to clean, idle EZTerminal-owned worktrees without force, while
+SSH local forwarding binds only to `127.0.0.1`, is resource-bounded, and is
+torn down with its authenticated SSH connection.
+
+Late-attach terminal restoration models PTY **output only** in a bounded
+headless xterm instance; user input is never retained or replayed. Snapshot,
+tail and pending-operation limits fall back to a bounded raw-output ring with
+an explicit warning. SSH late attach is rejected until an equivalent safe
+replay transport exists.

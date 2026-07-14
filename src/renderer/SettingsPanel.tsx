@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { OpenClawMode, ThemeName } from '../shared/layout-schema';
+import type { OpenClawMode, TerminalRendererPreference, ThemeName } from '../shared/layout-schema';
+import { AgentIntegrationSettings } from './AgentIntegrationSettings';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import type { InterferenceParams, RollbarParams } from './effect-params';
 import { EffectParamSliders, isInterferenceEffectId } from './EffectParamSliders';
 import { FONT_CATALOG } from './fonts';
 import { SCROLLBACK_MAX, SCROLLBACK_MIN } from './scrollback';
+import { SshForwardSettings } from './SshForwardSettings';
 import type { ThemeDefinition } from './themes';
 import { UI_SCALE_DEFAULT } from './ui-scale';
 
@@ -22,6 +24,12 @@ interface SettingsPanelProps {
   readonly onChangeUiScale: (percent: number) => void;
   readonly scrollback: number;
   readonly onChangeScrollback: (lines: number) => void;
+  readonly terminalRendererPreference: TerminalRendererPreference;
+  readonly onChangeTerminalRendererPreference: (preference: TerminalRendererPreference) => void;
+  readonly confirmRiskyPaneClose: boolean;
+  readonly onChangeConfirmRiskyPaneClose: (enabled: boolean) => void;
+  readonly allowOsc52Clipboard: boolean;
+  readonly onChangeAllowOsc52Clipboard: (enabled: boolean) => void;
   readonly theme: ThemeName;
   readonly onSelectTheme: (name: ThemeName) => void;
   readonly availableThemes: readonly ThemeDefinition[];
@@ -52,6 +60,12 @@ export function SettingsPanel({
   onChangeUiScale,
   scrollback,
   onChangeScrollback,
+  terminalRendererPreference,
+  onChangeTerminalRendererPreference,
+  confirmRiskyPaneClose,
+  onChangeConfirmRiskyPaneClose,
+  allowOsc52Clipboard,
+  onChangeAllowOsc52Clipboard,
   theme,
   onSelectTheme,
   availableThemes,
@@ -68,6 +82,7 @@ export function SettingsPanel({
 }: SettingsPanelProps): JSX.Element {
   const [remoteEnabled, setRemoteEnabled] = useState<boolean | null>(null);
   const [remotePort, setRemotePort] = useState<number | null>(null);
+  const [remoteSecurityError, setRemoteSecurityError] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [openclawMode, setOpenclawModeState] = useState<OpenClawMode | null>(null);
@@ -80,6 +95,12 @@ export function SettingsPanel({
     void window.ezterminal.getRemoteConnectionInfo().then((info) => {
       if (alive) setRemotePort(info.port);
     });
+    void window.ezterminal.getRemoteSecurityStatus().then((status) => {
+      if (alive) {
+        setRemoteSecurityError(status.error);
+        if (status.state === 'error') setRemoteEnabled(false);
+      }
+    });
     void window.ezterminalDesktop?.getOpenClawMode().then((mode) => {
       if (alive) setOpenclawModeState(mode);
     });
@@ -90,7 +111,14 @@ export function SettingsPanel({
 
   const handleRemoteToggle = useCallback((e: React.ChangeEvent<HTMLInputElement>): void => {
     const next = e.target.checked;
-    void window.ezterminal.setRemoteEnabled(next).then((running) => setRemoteEnabled(running));
+    setRemoteSecurityError(null);
+    void window.ezterminal.setRemoteEnabled(next).then(
+      (running) => setRemoteEnabled(running),
+      () => {
+        setRemoteEnabled(false);
+        setRemoteSecurityError('Remote access could not start because its token is not stored securely.');
+      },
+    );
   }, []);
 
   // OpenClaw visibility mode (openclaw-stabilization M2): the visibility-
@@ -184,6 +212,19 @@ export function SettingsPanel({
           }}
           data-testid="settings-scrollback-input"
         />
+      </section>
+
+      <section className="status-section">
+        <h2 className="status-section-title">Terminal Renderer</h2>
+        <select
+          className="settings-theme-select"
+          value={terminalRendererPreference}
+          onChange={(event) => onChangeTerminalRendererPreference(event.target.value as TerminalRendererPreference)}
+          data-testid="settings-terminal-renderer"
+        >
+          <option value="auto">Auto (WebGL with safe fallback)</option>
+          <option value="dom">Compatibility (DOM)</option>
+        </select>
       </section>
 
       <section className="status-section">
@@ -346,6 +387,11 @@ export function SettingsPanel({
       </section>
 
       <section className="status-section">
+        <h2 className="status-section-title">Agent Integrations</h2>
+        <AgentIntegrationSettings />
+      </section>
+
+      <section className="status-section">
         <h2 className="status-section-title">Remote Access</h2>
         {remoteLoading ? (
           <div className="status-loading">Loading…</div>
@@ -363,9 +409,16 @@ export function SettingsPanel({
             <div className="status-metric">
               WS bridge on port {remotePort} — {remoteEnabled ? 'running' : 'off'}
             </div>
+            {remoteSecurityError && (
+              <div className="status-loading" role="alert" data-testid="settings-remote-security-error">
+                {remoteSecurityError}
+              </div>
+            )}
           </>
         )}
       </section>
+
+      <SshForwardSettings />
 
       <section className="status-section">
         <h2 className="status-section-title">OpenClaw</h2>
@@ -405,6 +458,27 @@ export function SettingsPanel({
             </label>
           </>
         )}
+      </section>
+      <section className={'status-section'}>
+        <h2 className={'status-section-title'}>Session Safety</h2>
+        <label className={'settings-radio-row'}>
+          <input
+            type={'checkbox'}
+            checked={confirmRiskyPaneClose}
+            onChange={(event) => onChangeConfirmRiskyPaneClose(event.target.checked)}
+            data-testid={'settings-confirm-risky-pane-close'}
+          />
+          <span>Confirm before closing a pane with active work</span>
+        </label>
+        <label className={'settings-radio-row'}>
+          <input
+            type={'checkbox'}
+            checked={allowOsc52Clipboard}
+            onChange={(event) => onChangeAllowOsc52Clipboard(event.target.checked)}
+            data-testid={'settings-allow-osc52-clipboard'}
+          />
+          <span>Allow terminal OSC 52 clipboard writes</span>
+        </label>
       </section>
     </div>
   );

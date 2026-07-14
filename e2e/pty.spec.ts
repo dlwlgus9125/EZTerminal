@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
+import { readXtermBuffer } from './xterm-buffer';
 
 // M5: full-screen TUI round-trip in real Electron. `!node <fixture>` launches an
 // interactive program inside an xterm `pty` block; we assert output renders, typed
@@ -16,7 +17,7 @@ const ECHO_CMD_FIXTURE = path.resolve(__dirname, 'fixtures', 'pty-echo.cmd');
 
 /** Concatenated text currently rendered in the xterm grid (post-upgrade). */
 async function terminalText(window: Page): Promise<string> {
-  return window.locator('.pty-block .xterm-rows').innerText();
+  return readXtermBuffer(window.getByTestId('pty-block'));
 }
 
 /** Concatenated text currently rendered in the plain PTY view (M3, pre-upgrade). */

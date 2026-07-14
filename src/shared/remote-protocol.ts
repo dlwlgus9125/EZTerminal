@@ -22,6 +22,7 @@
  * in a later milestone (M3) — until then a client sending them gets no reply.
  */
 import type {
+  DestroySessionGuardResult,
   InterpreterFrame,
   PacketBatchFrame,
   PacketCaptureStatus,
@@ -32,6 +33,10 @@ import type {
   SystemStatsSnapshot,
 } from './ipc';
 import type { FileListResult, FileOpResult } from './files';
+import type { FilePreviewStreamMetadata } from './file-preview';
+import type { AgentActivitySnapshot, AgentFollowupResult } from './agent';
+import type { TerminalFileLocationRequest, TerminalFileLocationResult } from './terminal-file-location';
+import type { WorktreeRequest, WorktreeResult } from './worktree';
 import type {
   OpenClawAgentSession,
   OpenClawCoreConfig,
@@ -41,6 +46,10 @@ import type {
   OpenClawSetConfigResult,
   OpenClawStatus,
 } from './openclaw';
+import type { QuickCommand } from './quick-command';
+
+export const REMOTE_CAPABILITY_QUICK_COMMANDS_READ = 'quick-commands-read' as const;
+export type RemoteCapability = typeof REMOTE_CAPABILITY_QUICK_COMMANDS_READ;
 
 // ── Uint8Array <-> base64 (isomorphic: relies only on global atob/btoa, no
 //    Node Buffer — this module is shared with the browser-side mobile
@@ -71,6 +80,7 @@ export function base64ToUint8Array(base64: string): Uint8Array {
 export interface WirePtyDataFrame {
   readonly type: 'pty-data';
   readonly data: string;
+  readonly suppressSideEffects?: true;
 }
 
 /** Same union as `InterpreterFrame`, except `pty-data` carries base64 text. */
@@ -78,14 +88,18 @@ export type WireInterpreterFrame = Exclude<InterpreterFrame, PtyDataFrame> | Wir
 
 export function encodeFrame(frame: InterpreterFrame): WireInterpreterFrame {
   if (frame.type === 'pty-data') {
-    return { type: 'pty-data', data: uint8ArrayToBase64(frame.data) };
+    return frame.suppressSideEffects
+      ? { type: 'pty-data', data: uint8ArrayToBase64(frame.data), suppressSideEffects: true }
+      : { type: 'pty-data', data: uint8ArrayToBase64(frame.data) };
   }
   return frame;
 }
 
 export function decodeFrame(frame: WireInterpreterFrame): InterpreterFrame {
   if (frame.type === 'pty-data') {
-    return { type: 'pty-data', data: base64ToUint8Array(frame.data) };
+    return frame.suppressSideEffects
+      ? { type: 'pty-data', data: base64ToUint8Array(frame.data), suppressSideEffects: true }
+      : { type: 'pty-data', data: base64ToUint8Array(frame.data) };
   }
   return frame;
 }
@@ -120,6 +134,16 @@ export interface DestroySessionRequest {
   readonly sessionId: string;
 }
 
+/** Atomically destroy a session only while its foreground run set still
+ * matches the mobile client's last observation. The bridge enforces the same
+ * bounded identifier contract as the desktop IPC boundary. */
+export interface DestroySessionGuardedRequest {
+  readonly kind: 'destroy-session-guarded';
+  readonly requestId: string;
+  readonly sessionId: string;
+  readonly expectedActiveRunIds: readonly string[];
+}
+
 export interface RunCommandRequest {
   readonly kind: 'run-command';
   /** Client-minted id correlating every `frame`/`control` for this run. */
@@ -152,6 +176,20 @@ export interface AttachRunRequest {
   readonly runId: string;
 }
 
+/** Rebind a stable mobile-side port to a run parked by RemoteRunLeaseRegistry. */
+export interface ResumeRunRequest {
+  readonly kind: 'resume-run';
+  readonly sessionId: string;
+  readonly runId: string;
+  /** Client connection generation; echoed so stale replies are harmless. */
+  readonly generation: number;
+}
+
+/** Explicit disconnect releases this connection's run ports instead of leasing them. */
+export interface ReleaseRunsMessage {
+  readonly kind: 'release-runs';
+}
+
 /** Tell main whether THIS connection wants the 1Hz stats push (mirrors `setStatsPanelVisible`). */
 export interface StatsVisibleMessage {
   readonly kind: 'stats-visible';
@@ -170,6 +208,24 @@ export interface PacketsSubscribeMessage {
 
 export interface PacketsUnsubscribeMessage {
   readonly kind: 'packets-unsubscribe';
+}
+
+export interface AgentSnapshotRequest {
+  readonly kind: 'agent-snapshot-get';
+  readonly requestId: string;
+}
+
+export interface AgentFollowupRequest {
+  readonly kind: 'agent-followup';
+  readonly requestId: string;
+  readonly activityId: string;
+  readonly text: string;
+}
+
+export interface WorktreeRequestMessage {
+  readonly kind: 'worktree-request';
+  readonly requestId: string;
+  readonly request: WorktreeRequest;
 }
 
 // ── File explorer (file-explorer plan, M3) ───────────────────────────────────
@@ -204,13 +260,22 @@ export interface FileRootsRequest {
   readonly requestId: string;
 }
 
-/** `'text'` = the read-only viewer (`FileService`'s 1MiB cap + text/binary
- * detection); `'raw'` = a phone download (50MiB cap, no detection). */
+export interface TerminalFileLocationRequestMessage {
+  readonly kind: 'terminal-file-location';
+  readonly requestId: string;
+  readonly request: TerminalFileLocationRequest;
+}
+
+/** `'text'` = legacy read-only viewer; `'preview'` = magic-classified rich
+ * preview; `'raw'` = a phone download (50MiB cap, no detection). */
 export interface FileReadRequest {
   readonly kind: 'file-read';
   readonly requestId: string;
   readonly path: string;
-  readonly mode: 'text' | 'raw';
+  readonly mode: 'text' | 'raw' | 'preview';
+  /** Required only for a preview launched from a terminal link. General file
+   * explorer reads omit it and retain their existing behavior. */
+  readonly terminalCapability?: string;
 }
 
 /** Client ack for one `file-read-chunk` — see the streaming contract above:
@@ -335,21 +400,34 @@ export interface OpenClawChatTicketRequest {
   readonly requestId: string;
 }
 
+/** Capability-gated, read-only Quick Command snapshot for paired mobile. */
+export interface QuickCommandsListRequest {
+  readonly kind: 'quick-commands-list';
+  readonly requestId: string;
+}
+
 export type ClientToServerMessage =
   | AuthMessage
   | ListSessionsMessage
   | ListRunsMessage
   | CreateSessionRequest
   | DestroySessionRequest
+  | DestroySessionGuardedRequest
   | RunCommandRequest
   | ControlMessage
   | AttachRunRequest
+  | ResumeRunRequest
+  | ReleaseRunsMessage
   | StatsVisibleMessage
   | StatsHistoryRequest
   | PacketsSubscribeMessage
   | PacketsUnsubscribeMessage
+  | AgentSnapshotRequest
+  | AgentFollowupRequest
+  | WorktreeRequestMessage
   | FileListRequest
   | FileRootsRequest
+  | TerminalFileLocationRequestMessage
   | FileReadRequest
   | FileReadAckMessage
   | FileReadCancelMessage
@@ -368,16 +446,20 @@ export type ClientToServerMessage =
   | OpenClawSessionsGetRequest
   | OpenClawConfigGetRequest
   | OpenClawConfigSetRequest
-  | OpenClawChatTicketRequest;
+  | OpenClawChatTicketRequest
+  | QuickCommandsListRequest;
 
 // ── Server -> client envelopes ───────────────────────────────────────────────
 
 export interface AuthOkMessage {
   readonly kind: 'auth-ok';
+  /** Omitted by older hosts and when no optional remote surface is wired. */
+  readonly capabilities?: readonly RemoteCapability[];
 }
 
 export interface AuthFailMessage {
   readonly kind: 'auth-fail';
+  readonly reason?: 'invalid-token';
 }
 
 export interface SessionListMessage {
@@ -395,6 +477,14 @@ export interface SessionCreatedReply {
   readonly kind: 'session-created';
   readonly requestId: string;
   readonly session: SessionInfo;
+}
+
+/** Correlated result of a guarded session destroy. `state-changed` keeps the
+ * mobile confirmation open; `unavailable` fails closed on backend loss. */
+export interface SessionDestroyResultMessage {
+  readonly kind: 'session-destroy-result';
+  readonly requestId: string;
+  readonly result: DestroySessionGuardResult;
 }
 
 /** Relays one `InterpreterFrame` (wire-encoded) for `runId`. */
@@ -429,6 +519,44 @@ export interface RunStartedMessage extends RunStartedInfo {
 export interface SessionDeadMessage {
   readonly kind: 'session-dead';
   readonly logPath?: string | null;
+}
+
+export interface ResumeRunReadyMessage {
+  readonly kind: 'resume-run-ready';
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly generation: number;
+}
+
+export interface ResumeRunMissingMessage {
+  readonly kind: 'resume-run-missing';
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly generation: number;
+}
+
+/** The run still exists (or its liveness lease was preserved), but a fresh
+ * observer could not be installed. Retryable failures are bounded client-side. */
+export interface ResumeRunBusyMessage {
+  readonly kind: 'resume-run-busy';
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly generation: number;
+  readonly reason: 'capacity' | 'unsupported' | 'unavailable';
+  readonly retryable: boolean;
+}
+
+/** Snapshot push (requestId absent) or reply to agent-snapshot-get. */
+export interface AgentSnapshotMessage {
+  readonly kind: 'agent-snapshot';
+  readonly snapshot: AgentActivitySnapshot;
+  readonly requestId?: string;
+}
+
+export interface AgentFollowupReply {
+  readonly kind: 'agent-followup-reply';
+  readonly requestId: string;
+  readonly result: AgentFollowupResult;
 }
 
 /** One 1Hz stats push while this connection has `stats-visible:true`. */
@@ -469,6 +597,12 @@ export interface FileRootsReply {
   readonly roots: readonly string[];
 }
 
+export interface TerminalFileLocationReply {
+  readonly kind: 'terminal-file-location-reply';
+  readonly requestId: string;
+  readonly result: TerminalFileLocationResult;
+}
+
 /** `ok:false` OR `isText:false` ENDS the exchange — no `file-read-chunk` ever
  * follows either case (mirrors `FileService.openReadStream`'s meta, plus the
  * failure branch `openReadStream` itself returns). */
@@ -481,6 +615,7 @@ export type FileReadMetaMessage =
       readonly sendBytes: number;
       readonly isText: boolean;
       readonly truncated: boolean;
+      readonly preview?: FilePreviewStreamMetadata;
     }
   | {
       readonly kind: 'file-read-meta';
@@ -596,22 +731,50 @@ export interface OpenClawChatTicketReply {
   readonly token: string | null;
 }
 
+export type QuickCommandsListReply =
+  | {
+      readonly kind: 'quick-commands-list-reply';
+      readonly requestId: string;
+      readonly ok: true;
+      readonly commands: readonly QuickCommand[];
+    }
+  | {
+      readonly kind: 'quick-commands-list-reply';
+      readonly requestId: string;
+      readonly ok: false;
+      readonly error: 'unavailable';
+    };
+
+export interface WorktreeReplyMessage {
+  readonly kind: 'worktree-reply';
+  readonly requestId: string;
+  readonly result: WorktreeResult;
+}
+
 export type ServerToClientMessage =
   | AuthOkMessage
   | AuthFailMessage
   | SessionListMessage
   | RunListMessage
   | SessionCreatedReply
+  | SessionDestroyResultMessage
   | FrameMessage
+  | ResumeRunReadyMessage
+  | ResumeRunMissingMessage
+  | ResumeRunBusyMessage
   | SessionAddedMessage
   | SessionRemovedMessage
   | RunStartedMessage
   | SessionDeadMessage
+  | AgentSnapshotMessage
+  | AgentFollowupReply
+  | WorktreeReplyMessage
   | StatsUpdateMessage
   | StatsHistoryReply
   | PacketFrameMessage
   | FileListReply
   | FileRootsReply
+  | TerminalFileLocationReply
   | FileReadMetaMessage
   | FileReadChunkMessage
   | FileOpReply
@@ -625,4 +788,5 @@ export type ServerToClientMessage =
   | OpenClawSessionsReply
   | OpenClawConfigReply
   | OpenClawConfigSetReply
-  | OpenClawChatTicketReply;
+  | OpenClawChatTicketReply
+  | QuickCommandsListReply;

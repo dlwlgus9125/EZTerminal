@@ -112,6 +112,9 @@ export type ThemeName = z.infer<typeof ThemeNameSchema>;
 export const OpenClawModeSchema = z.enum(['auto', 'on', 'off']);
 export type OpenClawMode = z.infer<typeof OpenClawModeSchema>;
 
+export const TerminalRendererPreferenceSchema = z.enum(['auto', 'dom']);
+export type TerminalRendererPreference = z.infer<typeof TerminalRendererPreferenceSchema>;
+
 /** Wire shape for crt-rollbar line params (rollbar-params) — every field
  * optional, numbers unbounded here: renderer/effect-params.ts's
  * `clampRollbarParams` is the single place that clamps/defaults, both on
@@ -149,6 +152,14 @@ export const SettingsSchema = z.object({
   uiScale: z.number().int().min(80).max(150).optional(),
   // Scrollback buffer size in lines (WT-parity M5) — absent defaults to 5000 in layout-store.
   scrollback: z.number().int().min(100).max(100000).optional(),
+  // xterm renderer preference. WebGL is best-effort under 'auto'; 'dom' is
+  // the explicit compatibility mode. Mobile ignores this and always uses DOM.
+  terminalRenderer: TerminalRendererPreferenceSchema.optional(),
+  // Creator-owned pane close confirmation. Mobile session destruction is
+  // intentionally always guarded and does not read this desktop preference.
+  confirmRiskyPaneClose: z.boolean().optional(),
+  // Terminal-originated OSC 52 writes are privileged and default off.
+  allowOsc52Clipboard: z.boolean().optional(),
   // Remote WS bridge on/off (v0.2.0 D2) — absent defaults to true (pre-existing
   // always-on behavior) in layout-store.
   remoteEnabled: z.boolean().optional(),

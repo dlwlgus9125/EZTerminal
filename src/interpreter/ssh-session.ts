@@ -31,8 +31,16 @@ import type { SshStreamData } from './core';
 import type { Emit } from './block-runner';
 import { describeError } from './block-runner';
 import { PTY_HIGH_WATER, PTY_LOW_WATER, clampDim } from './pty-session';
+import {
+  SSH_FORWARD_PENDING_OPEN_CAP,
+  SSH_FORWARD_STREAM_OPEN_TIMEOUT_MS,
+  SshForwardError,
+  validateSshRemoteHost,
+  validateSshRemotePort,
+} from '../shared/ssh-forward';
+import type { ResolvedSshAlias } from './external/ssh-config-resolver';
 import { hostKeyFingerprint, hostKeyType, parsePrivateKey } from './external/ssh-client';
-import type { SshAuthMethod, SshChannelLike, SshClientLike, SshHostVerifier } from './external/ssh-client';
+import type { SshAuthMethod, SshChannelLike, SshClientLike, SshForwardChannelLike, SshHostVerifier } from './external/ssh-client';
 
 /** Every pre-channel wait (prompt or connect-to-ready) races this timeout (design §7 B1). */
 export const SSH_STEP_TIMEOUT_MS = 60_000;
@@ -55,6 +63,14 @@ export interface SshSessionDeps {
   addKnownHost(host: string, port: number, keyType: string, fingerprint: string): void;
   /** Reads the `--key` file. Injectable so tests avoid real fs. */
   readKeyFile(path: string): Promise<Buffer>;
+  /** Resolve a bare config alias from a sanitized OpenSSH config. Direct
+   * `user@host` sessions never call this dependency. */
+  resolveAlias?(
+    alias: string,
+    portOverride?: number,
+    keyPathOverride?: string,
+    signal?: AbortSignal,
+  ): Promise<ResolvedSshAlias>;
 }
 
 export interface SshPromptResponse {
@@ -64,6 +80,8 @@ export interface SshPromptResponse {
 }
 
 export interface SshSession {
+  readonly connectionId: string;
+  readonly ready: boolean;
   /** Route the renderer's answer to the outstanding `ssh-prompt`. A stale/unknown
    * `promptId` (duplicate, or an answer to an already-resolved prompt) is a no-op. */
   handlePromptResponse(response: SshPromptResponse): void;
@@ -73,8 +91,22 @@ export interface SshSession {
   resize(cols: number, rows: number): void;
   /** Post-channel: cumulative byte-ack (same contract as PtySession.ack). */
   ack(bytes: number): void;
+  /** Open one direct-tcpip channel over this authenticated transport. This
+   * never prompts, reconnects, or reuses credentials. */
+  openForward(
+    sourceHost: string,
+    sourcePort: number,
+    remoteHost: string,
+    remotePort: number,
+    signal?: AbortSignal,
+  ): Promise<SshForwardChannelLike>;
   /** Tear down: end the connection, drop any outstanding prompt. Idempotent. */
   dispose(): void;
+}
+
+export interface SshSessionLifecycle {
+  onReady?(session: SshSession): void;
+  onClosed?(connectionId: string): void;
 }
 
 /** Distinguishes "the abort signal fired" from any other rejection reason inside {@link raceStep}. */
@@ -87,11 +119,18 @@ export function runSshSession(
   deps: SshSessionDeps,
   initialCols = 80,
   initialRows = 24,
+  connectionId: string = randomUUID(),
+  lifecycle: SshSessionLifecycle = {},
 ): SshSession {
   let settled = false;
   let client: SshClientLike | null = null;
   let channel: SshChannelLike | null = null;
   let channelOpen = false;
+  let connectionReady = false;
+  let connectionClosedNotified = false;
+  const forwardChannels = new Set<SshForwardChannelLike>();
+  const pendingForwardRejects = new Set<(error: Error) => void>();
+  let pendingForwardCallbacks = 0;
   let activePrompt: { promptId: string; resolve: (v: { value?: string; accept?: boolean }) => void } | null = null;
   // Pending raceStep()s that want to hear about a pre-channel client error/close.
   const stepErrorListeners = new Set<(err: Error) => void>();
@@ -102,6 +141,18 @@ export function runSshSession(
   let paused = false;
 
   function teardown(): void {
+    for (const reject of pendingForwardRejects) {
+      reject(new SshForwardError('CONNECTION_CLOSED', `SSH connection ${connectionId} closed`));
+    }
+    pendingForwardRejects.clear();
+    for (const forward of forwardChannels) {
+      try {
+        forward.destroy();
+      } catch {
+        // Already closed.
+      }
+    }
+    forwardChannels.clear();
     try {
       channel?.resume(); // resume-then-close: never leave a paused socket mid-teardown.
     } catch {
@@ -116,6 +167,11 @@ export function runSshSession(
       client?.end();
     } catch {
       // Already gone.
+    }
+    if (!connectionClosedNotified) {
+      connectionClosedNotified = true;
+      connectionReady = false;
+      lifecycle.onClosed?.(connectionId);
     }
   }
 
@@ -136,7 +192,8 @@ export function runSshSession(
   }
 
   /** Post-channel terminal event (channel close / client close / client error) — always `end`,
-   * matching runPtySession's existing convention (a wire EndFrame carries no exit code). */
+   * the optional EndFrame exitCode is omitted because this close seam does
+   * not expose a reliable status. */
   function settleEnd(): void {
     if (settled) return;
     settled = true;
@@ -204,7 +261,7 @@ export function runSshSession(
   }
 
   /** The `hostVerifier` ssh2 calls during `connect()` with the RAW host key — TOFU (design §3). */
-  function makeHostVerifier(): SshHostVerifier {
+  function makeHostVerifier(target: ResolvedSshAlias): SshHostVerifier {
     return (key, verify) => {
       void (async (): Promise<void> => {
         try {
@@ -212,7 +269,7 @@ export function runSshSession(
           const fingerprint = hostKeyFingerprint(key);
           const { verdict, existingFingerprint, knownHostsPath } = await raceStep<KnownHostCheckResult>(
             (resolve, reject) => {
-              deps.checkKnownHost(data.host, data.port, keyType, fingerprint).then(resolve, reject);
+              deps.checkKnownHost(target.host, target.port, keyType, fingerprint).then(resolve, reject);
             },
           );
           if (settled) {
@@ -226,11 +283,11 @@ export function runSshSession(
           if (verdict === 'mismatch') {
             verify(false);
             settleError(
-              `ssh-connect: HOST KEY MISMATCH for ${data.host}:${data.port} — the server's key changed. ` +
+              `ssh-connect: HOST KEY MISMATCH for ${target.host}:${target.port} — the server's key changed. ` +
                 'This can mean the server was reinstalled, or that the connection is being intercepted.\n' +
                 `  previously trusted: ${existingFingerprint ?? '(unknown)'}\n` +
                 `  now presented:      ${fingerprint}\n` +
-                `If this change is expected, remove the ${data.host}:${data.port} entry from ` +
+                `If this change is expected, remove the ${target.host}:${target.port} entry from ` +
                 `${knownHostsPath} and reconnect.`,
             );
             return;
@@ -238,19 +295,19 @@ export function runSshSession(
           // unknown host — ask the renderer to confirm the fingerprint (TOFU).
           const answer = await promptStep(
             'hostkey',
-            `The authenticity of host '${data.host}:${data.port}' can't be established.`,
-            { fingerprint, host: data.host },
+            `The authenticity of host '${target.host}:${target.port}' can't be established.`,
+            { fingerprint, host: target.host },
           );
           if (settled) {
             verify(false);
             return;
           }
           if (answer.accept) {
-            deps.addKnownHost(data.host, data.port, keyType, fingerprint);
+            deps.addKnownHost(target.host, target.port, keyType, fingerprint);
             verify(true);
           } else {
             verify(false);
-            settleError(`ssh-connect: host key for ${data.host}:${data.port} was not accepted`);
+            settleError(`ssh-connect: host key for ${target.host}:${target.port} was not accepted`);
           }
         } catch (err) {
           if (err instanceof CancelledError) settleCancelled();
@@ -274,8 +331,8 @@ export function runSshSession(
     });
     // Auxiliary per the SSH spec (may never fire) — close() is the reliable signal.
     ch.on('exit', () => {
-      // Nothing to normalize into the wire frame: EndFrame carries no exit code,
-      // matching runPtySession's existing PtyHandle.onExit contract.
+      // The channel close event remains the reliable terminal signal. This
+      // adapter does not currently retain SSH's optional exit status.
     });
     ch.on('close', () => settleEnd());
   }
@@ -286,12 +343,12 @@ export function runSshSession(
    * hostVerify -> auth). `--key` reads the file and prompts for a passphrase
    * only if it's actually encrypted; otherwise prompts for a password.
    */
-  async function resolveAuthMethod(): Promise<SshAuthMethod> {
-    if (!data.keyPath) {
-      const answer = await promptStep('password', `Password for ${data.user}@${data.host}:`);
-      return { type: 'password', username: data.user, password: answer.value ?? '' };
+  async function resolveAuthMethod(target: ResolvedSshAlias): Promise<SshAuthMethod> {
+    if (!target.keyPath) {
+      const answer = await promptStep('password', `Password for ${target.user}@${target.host}:`);
+      return { type: 'password', username: target.user, password: answer.value ?? '' };
     }
-    const keyPath = data.keyPath;
+    const keyPath = target.keyPath;
     const buffer = await deps.readKeyFile(keyPath);
     let parsed = parsePrivateKey(buffer);
     let passphrase: string | undefined;
@@ -307,10 +364,21 @@ export function runSshSession(
           : `ssh-connect: invalid private key ${keyPath}: ${parsed.message}`,
       );
     }
-    return { type: 'publickey', username: data.user, key: buffer, passphrase };
+    return { type: 'publickey', username: target.user, key: buffer, passphrase };
   }
 
   async function connectFlow(): Promise<void> {
+    const target: ResolvedSshAlias = data.targetKind === 'alias'
+      ? await raceStep((resolve, reject) => {
+          if (!deps.resolveAlias) {
+            reject(new Error('ssh-connect: SSH config aliases are unavailable'));
+            return;
+          }
+          deps.resolveAlias(data.alias, data.portOverride, data.keyPathOverride, signal).then(resolve, reject);
+        })
+      : { alias: `${data.user}@${data.host}`, host: data.host, port: data.port, user: data.user, keyPath: data.keyPath };
+
+    if (settled) return;
     client = deps.createClient();
     const activeClient = client;
     activeClient.on('error', (err) => {
@@ -346,10 +414,10 @@ export function runSshSession(
       activeClient.on('ready', () => resolve());
       try {
         activeClient.connect({
-          host: data.host,
-          port: data.port,
-          username: data.user,
-          hostVerifier: makeHostVerifier(),
+          host: target.host,
+          port: target.port,
+          username: target.user,
+          hostVerifier: makeHostVerifier(target),
           readyTimeout: SSH_STEP_TIMEOUT_MS,
           authHandler: (_authsLeft, partialSuccess, next) => {
             if (authAttempted || partialSuccess) {
@@ -358,7 +426,7 @@ export function runSshSession(
               return;
             }
             authAttempted = true;
-            resolveAuthMethod().then(next, (err: unknown) => {
+            resolveAuthMethod(target).then(next, (err: unknown) => {
               if (!settled) {
                 if (err instanceof CancelledError) settleCancelled();
                 else settleError(describeError(err));
@@ -398,18 +466,16 @@ export function runSshSession(
     // before any data, so it never depends on the remote shell happening to
     // emit a TuiSignalDetector trigger.
     emit({ type: 'pty-render-upgrade' });
+    connectionReady = true;
+    emit({ type: 'ssh-connection', connectionId, state: 'ready' });
+    lifecycle.onReady?.(session);
   }
 
-  if (signal.aborted) {
-    settleCancelled();
-  } else {
-    connectFlow().catch((err: unknown) => {
-      if (err instanceof CancelledError) settleCancelled();
-      else settleError(describeError(err));
-    });
-  }
-
-  return {
+  const session: SshSession = {
+    connectionId,
+    get ready(): boolean {
+      return connectionReady && !settled;
+    },
     handlePromptResponse(response): void {
       if (!activePrompt || activePrompt.promptId !== response.promptId) return;
       const { resolve } = activePrompt;
@@ -432,6 +498,101 @@ export function runSshSession(
         channel?.resume();
       }
     },
+    openForward(sourceHost, sourcePort, remoteHost, remotePort, openSignal): Promise<SshForwardChannelLike> {
+      try {
+        validateSshRemoteHost(remoteHost);
+        validateSshRemotePort(remotePort);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+      if (sourceHost !== '127.0.0.1' || !Number.isInteger(sourcePort) || sourcePort < 0 || sourcePort > 65535) {
+        return Promise.reject(new SshForwardError('STREAM_OPEN_FAILED', 'SSH forward source endpoint is invalid'));
+      }
+      if (settled || connectionClosedNotified) {
+        return Promise.reject(new SshForwardError('CONNECTION_CLOSED', `SSH connection ${connectionId} is closed`));
+      }
+      if (!connectionReady || !client) {
+        return Promise.reject(new SshForwardError('CONNECTION_NOT_READY', `SSH connection ${connectionId} is not ready`));
+      }
+      if (openSignal?.aborted) {
+        return Promise.reject(new SshForwardError('CANCELLED', 'SSH direct-tcpip open was cancelled'));
+      }
+      if (pendingForwardCallbacks >= SSH_FORWARD_PENDING_OPEN_CAP) {
+        return Promise.reject(new SshForwardError(
+          'STREAM_LIMIT_REACHED',
+          'Too many SSH direct-tcpip channels are waiting to open',
+        ));
+      }
+      const activeClient = client;
+      return new Promise<SshForwardChannelLike>((resolve, reject) => {
+        let promiseSettled = false;
+        pendingForwardCallbacks += 1;
+        const finishReject = (error: Error): void => {
+          if (promiseSettled) return;
+          promiseSettled = true;
+          pendingForwardRejects.delete(finishReject);
+          openSignal?.removeEventListener('abort', onAbort);
+          clearTimeout(timer);
+          reject(error);
+        };
+        const onAbort = (): void => {
+          finishReject(new SshForwardError('CANCELLED', 'SSH direct-tcpip open was cancelled'));
+        };
+        const timer = setTimeout(() => {
+          finishReject(new SshForwardError('STREAM_OPEN_FAILED', 'SSH direct-tcpip open timed out'));
+        }, SSH_FORWARD_STREAM_OPEN_TIMEOUT_MS);
+        pendingForwardRejects.add(finishReject);
+        openSignal?.addEventListener('abort', onAbort, { once: true });
+        if (openSignal?.aborted) {
+          pendingForwardCallbacks = Math.max(0, pendingForwardCallbacks - 1);
+          onAbort();
+          return;
+        }
+        try {
+          activeClient.forwardOut(sourceHost, sourcePort, remoteHost, remotePort, (error, opened) => {
+            pendingForwardCallbacks = Math.max(0, pendingForwardCallbacks - 1);
+            pendingForwardRejects.delete(finishReject);
+            openSignal?.removeEventListener('abort', onAbort);
+            clearTimeout(timer);
+            if (promiseSettled) {
+              if (opened) {
+                try {
+                  opened.destroy();
+                } catch {
+                  // The late channel was already closed remotely.
+                }
+              }
+              return;
+            }
+            promiseSettled = true;
+            if (error) {
+              reject(new SshForwardError('STREAM_OPEN_FAILED', `SSH direct-tcpip open failed: ${error.message}`));
+              return;
+            }
+            if (settled || connectionClosedNotified) {
+              try {
+                opened.destroy();
+              } catch {
+                // Already closed.
+              }
+              reject(new SshForwardError('CONNECTION_CLOSED', `SSH connection ${connectionId} is closed`));
+              return;
+            }
+            forwardChannels.add(opened);
+            const forget = (): void => { forwardChannels.delete(opened); };
+            opened.on('close', forget);
+            opened.on('error', forget);
+            resolve(opened);
+          });
+        } catch (error) {
+          pendingForwardCallbacks = Math.max(0, pendingForwardCallbacks - 1);
+          finishReject(new SshForwardError(
+            'STREAM_OPEN_FAILED',
+            `SSH direct-tcpip open failed: ${error instanceof Error ? error.message : String(error)}`,
+          ));
+        }
+      });
+    },
     dispose(): void {
       if (settled) return;
       settled = true;
@@ -439,4 +600,15 @@ export function runSshSession(
       teardown();
     },
   };
+
+  if (signal.aborted) {
+    settleCancelled();
+  } else {
+    connectFlow().catch((err: unknown) => {
+      if (err instanceof CancelledError) settleCancelled();
+      else settleError(describeError(err));
+    });
+  }
+
+  return session;
 }
