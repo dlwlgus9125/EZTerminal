@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { WebSocket } from 'ws';
+import { createServer } from 'node:net';
 
 import { launchApp } from './launch-app';
 import { TestWsClient } from './ws-client';
@@ -12,18 +13,39 @@ import { TestWsClient } from './ws-client';
 // does — this port is dedicated to this spec so it never collides with
 // another instance's default-port bridge.
 const REMOTE_PORT = 17421;
-// `EZTERMINAL_OPENCLAW_PROXY_PORT` does the same for the OpenClaw reverse
-// proxy that `startBridge` binds alongside the remote bridge (main.ts
-// ~:721/784) — toggling remote ON here also binds that proxy, and without
-// an isolated port it collides with a real running desktop instance's
-// proxy on the default port (openclaw-proxy.ts's DEFAULT_OPENCLAW_PROXY_PORT, 7421).
-const OPENCLAW_PROXY_PORT = 17423;
+test('remote runtime: bind failure preserves desired state, reports EADDRINUSE, and retry recovers', async () => {
+  const occupiedPort = 17422;
+  const blocker = createServer();
+  await new Promise<void>((resolve, reject) => {
+    blocker.once('error', reject);
+    blocker.listen(occupiedPort, '0.0.0.0', resolve);
+  });
+  const app = await launchApp(undefined, { EZTERMINAL_REMOTE_PORT: String(occupiedPort) });
+
+  try {
+    const win = await app.firstWindow();
+    const failed = await win.evaluate(() => window.ezterminal.setRemoteEnabled(true));
+    expect(failed).toMatchObject({
+      desiredEnabled: true,
+      state: 'error',
+      port: occupiedPort,
+      errorCode: 'EADDRINUSE',
+    });
+    expect(await win.evaluate(() => window.ezterminal.getRemoteEnabled())).toBe(true);
+
+    await new Promise<void>((resolve, reject) => blocker.close((error) => (error ? reject(error) : resolve())));
+    const recovered = await win.evaluate(() => window.ezterminal.retryRemoteRuntime());
+    expect(recovered).toMatchObject({ desiredEnabled: true, state: 'running', port: occupiedPort });
+  } finally {
+    if (blocker.listening) {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
+    await app.close();
+  }
+});
 
 test('remote toggle: enabling binds; disabling closes the live client and refuses new ones; re-enabling rebinds cleanly', async () => {
-  const app = await launchApp(undefined, {
-    EZTERMINAL_REMOTE_PORT: String(REMOTE_PORT),
-    EZTERMINAL_OPENCLAW_PROXY_PORT: String(OPENCLAW_PROXY_PORT),
-  });
+  const app = await launchApp(undefined, { EZTERMINAL_REMOTE_PORT: String(REMOTE_PORT) });
   const win = await app.firstWindow();
   await expect(win.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 

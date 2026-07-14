@@ -9,8 +9,15 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AppI18nProvider } from '../../src/renderer/i18n';
-import { MobileOpenClawView } from './MobileOpenClawView';
+import {
+  buildChatUrl,
+  MobileOpenClawView,
+  OPENCLAW_CHAT_FRAME_TIMEOUT_MS,
+} from './MobileOpenClawView';
 import { WsEzTerminalTransport, type CreateSocket, type WsLike } from './transport/ws-ezterminal';
+
+const browserOpen = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+vi.mock('@capacitor/browser', () => ({ Browser: { open: browserOpen } }));
 
 // Silences React's "not configured to support act()" warning for this file's
 // synchronous createRoot().render() calls below.
@@ -113,6 +120,15 @@ afterEach(() => {
   root = null;
   container?.remove();
   container = null;
+  browserOpen.mockClear();
+});
+
+describe('buildChatUrl', () => {
+  it('brackets an unbracketed IPv6 host and escapes ticket credentials', () => {
+    expect(buildChatUrl('2001:db8::1', 7421, 'ticket one', 'token#one')).toBe(
+      'http://[2001:db8::1]:7421/?t=ticket%20one#token=token%23one',
+    );
+  });
 });
 
 describe('MobileOpenClawView — status tab', () => {
@@ -592,19 +608,72 @@ describe('MobileOpenClawView — chat tab (M5)', () => {
       await flush();
     });
 
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
     act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-chat-open-browser"]')!.click());
 
     const requestIds = chatTicketRequestIds(socket);
     expect(requestIds).toHaveLength(2); // the iframe's ticket, then a separate one for this click
     expect(requestIds[0]).not.toBe(requestIds[1]);
-    expect(openSpy).not.toHaveBeenCalled(); // the fresh ticket hasn't replied yet
+    expect(browserOpen).not.toHaveBeenCalled(); // the fresh ticket hasn't replied yet
 
     await act(async () => {
       replyToLastChatTicket(socket, { ticket: 'tick2', proxyPort: 7421, token: 'tok2' });
       await flush();
     });
-    expect(openSpy).toHaveBeenCalledWith('http://x:7421/?t=tick2#token=tok2', '_blank');
-    openSpy.mockRestore();
+    expect(browserOpen).toHaveBeenCalledWith({ url: 'http://x:7421/?t=tick2#token=tok2' });
+  });
+
+  it('keeps the frame hidden until load and converts a bounded frame wait into inline recovery', async () => {
+    vi.useFakeTimers();
+    try {
+      const { transport, socket } = makeAuthedTransport();
+      const el = renderView(transport, vi.fn());
+      act(() => {
+        socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } });
+      });
+      act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-tab-chat"]')!.click());
+      await act(async () => {
+        replyToLastChatTicket(socket, { ticket: 'tick1', proxyPort: 7421, token: 'tok1' });
+        await Promise.resolve();
+      });
+
+      const loading = el.querySelector('[data-testid="openclaw-chat-frame-loading"]');
+      const frame = el.querySelector('[data-testid="openclaw-chat-frame"]');
+      const frameStage = loading?.closest('.openclaw-chat-frame-stage');
+      expect(loading).toBeTruthy();
+      expect(frame?.classList).toContain('openclaw-chat-frame--loading');
+      expect(frameStage).toBeTruthy();
+      expect(frameStage?.contains(frame ?? null)).toBe(true);
+      expect(frameStage?.nextElementSibling?.classList).toContain('openclaw-chat-toolbar');
+
+      await act(async () => vi.advanceTimersByTimeAsync(OPENCLAW_CHAT_FRAME_TIMEOUT_MS));
+      const error = el.querySelector<HTMLElement>('[data-testid="openclaw-chat-unavailable"]');
+      expect(error?.dataset.errorReason).toBe('frame-timeout');
+      expect(el.querySelector('[data-testid="openclaw-chat-frame"]')).toBeNull();
+      transport.disconnect();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('tears down the chat frame while backgrounded and mints a fresh ticket on resume', async () => {
+    const setPageVisible = (visible: boolean): void => {
+      Object.defineProperty(document, 'visibilityState', { value: visible ? 'visible' : 'hidden', configurable: true });
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+    };
+    const { transport, socket } = makeAuthedTransport();
+    const el = renderView(transport, vi.fn());
+    act(() => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } }));
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-tab-chat"]')!.click());
+    await act(async () => {
+      replyToLastChatTicket(socket, { ticket: 'tick1', proxyPort: 7421, token: 'tok1' });
+      await flush();
+    });
+    expect(el.querySelector('[data-testid="openclaw-chat-frame"]')).toBeTruthy();
+
+    setPageVisible(false);
+    expect(el.querySelector('[data-testid="openclaw-chat-frame"]')).toBeNull();
+    setPageVisible(true);
+    expect(chatTicketRequestIds(socket)).toHaveLength(2);
+    setPageVisible(true);
   });
 });

@@ -55,6 +55,7 @@ import {
   type GuardedSessionDestroyRequest,
   type InterpreterFrame,
   type RemoteConnectionInfo,
+  type RemoteRuntimeStatus,
   type RendererControl,
   type RunStartedInfo,
   type RuntimeVersions,
@@ -88,6 +89,7 @@ import {
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   uint8ArrayToBase64,
   type ClientToServerMessage,
+  type OpenClawChatTicketFailureReason,
   type RemoteCapability,
   type RemotePacketFrame,
   type ServerToClientMessage,
@@ -154,10 +156,23 @@ type UploadDoneResult = { ok: true; finalName: string } | { ok: false; error: st
 /** Reply shape for `getOpenClawChatTicket()` (openclaw-management M4/M5) —
  * mirrors `OpenClawChatTicketReply` on the wire; `ticket`/`token` are `null`
  * when no ticket could be minted (see remote-protocol.ts's doc). */
-export interface OpenClawChatTicket {
-  readonly ticket: string | null;
-  readonly proxyPort: number;
-  readonly token: string | null;
+export type OpenClawChatFailureReason = OpenClawChatTicketFailureReason;
+
+export type OpenClawChatTicket =
+  | { readonly ok: true; readonly ticket: string; readonly proxyPort: number; readonly token: string }
+  | { readonly ok: false; readonly reason: OpenClawChatFailureReason };
+
+const OPENCLAW_TICKET_TIMEOUT_MS = 20_000;
+const OPENCLAW_CONFIG_TIMEOUT_MS = 25_000;
+const OPENCLAW_LIFECYCLE_TIMEOUT_MS = 40_000;
+
+function isOpenClawChatFailureReason(value: unknown): value is OpenClawChatFailureReason {
+  return value === 'gateway-stopped'
+    || value === 'gateway-unreachable'
+    || value === 'token-unavailable'
+    || value === 'proxy-unavailable'
+    || value === 'insecure-auth-required'
+    || value === 'timeout';
 }
 
 // ── DI seam over the browser `WebSocket` (real instances satisfy this
@@ -265,6 +280,10 @@ export interface WsEzTerminalOptions {
   readonly maxBackoffMs?: number;
   /** Test seam: how long an attempt may stay un-authed before retry. */
   readonly authTimeoutMs?: number;
+  /** Test seams for bounded OpenClaw request/reply operations. */
+  readonly openClawTicketTimeoutMs?: number;
+  readonly openClawConfigTimeoutMs?: number;
+  readonly openClawLifecycleTimeoutMs?: number;
 }
 
 interface RunPortRecord {
@@ -292,6 +311,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly initialBackoffMs: number;
   private readonly maxBackoffMs: number;
   private readonly authTimeoutMs: number;
+  private readonly openClawTicketTimeoutMs: number;
+  private readonly openClawConfigTimeoutMs: number;
+  private readonly openClawLifecycleTimeoutMs: number;
 
   private socket: WsLike | null = null;
   private authed = false;
@@ -451,6 +473,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.initialBackoffMs = options.initialBackoffMs ?? DEFAULT_INITIAL_BACKOFF_MS;
     this.maxBackoffMs = options.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
     this.authTimeoutMs = options.authTimeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
+    this.openClawTicketTimeoutMs = options.openClawTicketTimeoutMs ?? OPENCLAW_TICKET_TIMEOUT_MS;
+    this.openClawConfigTimeoutMs = options.openClawConfigTimeoutMs ?? OPENCLAW_CONFIG_TIMEOUT_MS;
+    this.openClawLifecycleTimeoutMs = options.openClawLifecycleTimeoutMs ?? OPENCLAW_LIFECYCLE_TIMEOUT_MS;
     this.backoffMs = this.initialBackoffMs;
     this.connect();
   }
@@ -868,11 +893,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   runOpenClawLifecycle(action: OpenClawLifecycleAction): Promise<OpenClawLifecycleResult> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      if (!this.tryStartMapRequest(
+      if (!this.tryStartTimedMapRequest(
         { kind: 'openclaw-lifecycle', requestId, action },
         this.pendingOpenClawLifecycle,
         requestId,
         resolve,
+        this.openClawLifecycleTimeoutMs,
+        { ok: false, code: 'timeout', stderr: 'OpenClaw lifecycle request timed out' },
       )) resolve({ ok: false, stderr: 'Not connected to EZTerminal' });
     });
   }
@@ -880,11 +907,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   getOpenClawSessions(): Promise<readonly OpenClawAgentSession[]> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      if (!this.tryStartMapRequest(
+      if (!this.tryStartTimedMapRequest(
         { kind: 'openclaw-sessions-get', requestId },
         this.pendingOpenClawSessions,
         requestId,
         resolve,
+        this.openClawConfigTimeoutMs,
+        [],
       )) resolve([]);
     });
   }
@@ -892,11 +921,15 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   getOpenClawConfig(): Promise<OpenClawCoreConfig> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      if (!this.tryStartMapRequest(
+      if (!this.tryStartTimedMapRequest(
         { kind: 'openclaw-config-get', requestId },
         this.pendingOpenClawConfigGet,
         requestId,
         resolve,
+        this.openClawConfigTimeoutMs,
+        Object.fromEntries(
+          OPENCLAW_CONFIG_ALLOWLIST.map((key) => [key, OPENCLAW_CONFIG_UNSET]),
+        ) as OpenClawCoreConfig,
       )) {
         resolve(Object.fromEntries(
           OPENCLAW_CONFIG_ALLOWLIST.map((key) => [key, OPENCLAW_CONFIG_UNSET]),
@@ -908,11 +941,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   setOpenClawConfig(key: string, value: string): Promise<OpenClawSetConfigResult> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      if (!this.tryStartMapRequest(
+      if (!this.tryStartTimedMapRequest(
         { kind: 'openclaw-config-set', requestId, key, value },
         this.pendingOpenClawConfigSet,
         requestId,
         resolve,
+        this.openClawConfigTimeoutMs,
+        { ok: false, restartRequired: false, code: 'timeout', error: 'OpenClaw config request timed out' },
       )) {
         resolve({
           ok: false,
@@ -940,12 +975,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   getOpenClawChatTicket(): Promise<OpenClawChatTicket> {
     return new Promise((resolve) => {
       const requestId = this.newId();
-      if (!this.tryStartMapRequest(
+      if (!this.tryStartTimedMapRequest(
         { kind: 'openclaw-chat-ticket', requestId },
         this.pendingOpenClawChatTicket,
         requestId,
         resolve,
-      )) resolve({ ticket: null, proxyPort: 0, token: null });
+        this.openClawTicketTimeoutMs,
+        { ok: false, reason: 'timeout' },
+      )) resolve({ ok: false, reason: 'gateway-unreachable' });
     });
   }
 
@@ -987,8 +1024,19 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   getRemoteEnabled(): Promise<boolean> {
     return Promise.resolve(true);
   }
-  setRemoteEnabled(): Promise<boolean> {
-    return Promise.resolve(true);
+  getRemoteRuntimeStatus(): Promise<RemoteRuntimeStatus> {
+    return Promise.resolve({ desiredEnabled: true, state: 'running', port: 0, errorCode: null, error: null });
+  }
+  setRemoteEnabled(_enabled: boolean): Promise<RemoteRuntimeStatus> {
+    void _enabled;
+    return this.getRemoteRuntimeStatus();
+  }
+  retryRemoteRuntime(): Promise<RemoteRuntimeStatus> {
+    return this.getRemoteRuntimeStatus();
+  }
+  onRemoteRuntimeStatus(listener: (status: RemoteRuntimeStatus) => void): () => void {
+    void this.getRemoteRuntimeStatus().then(listener);
+    return () => undefined;
   }
 
   // ── File explorer (file-explorer plan, M4) ────────────────────────────────
@@ -1501,7 +1549,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     }
     this.pendingOpenClawConfigSet.clear();
     for (const resolve of this.pendingOpenClawChatTicket.values()) {
-      resolve({ ticket: null, proxyPort: 0, token: null });
+      resolve({ ok: false, reason: 'gateway-unreachable' });
     }
     this.pendingOpenClawChatTicket.clear();
   }
@@ -1587,6 +1635,30 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         if (pending.get(key) === value) pending.delete(key);
       },
     );
+  }
+
+  private tryStartTimedMapRequest<K, R>(
+    msg: ClientToServerMessage,
+    pending: Map<K, (result: R) => void>,
+    key: K,
+    resolve: (result: R) => void,
+    timeoutMs: number,
+    timeoutResult: R,
+  ): boolean {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const settle = (result: R): void => {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      resolve(result);
+    };
+    const started = this.tryStartMapRequest(msg, pending, key, settle);
+    if (!started) return false;
+    timer = setTimeout(() => {
+      if (pending.get(key) !== settle) return;
+      pending.delete(key);
+      settle(timeoutResult);
+    }, Math.max(0, timeoutMs));
+    return true;
   }
 
   private tryStartFifoRequest<T>(
@@ -2018,7 +2090,15 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       case 'openclaw-chat-ticket-reply': {
         const resolve = this.pendingOpenClawChatTicket.get(msg.requestId);
         this.pendingOpenClawChatTicket.delete(msg.requestId);
-        resolve?.({ ticket: msg.ticket, proxyPort: msg.proxyPort, token: msg.token });
+        const reply = msg as typeof msg & { readonly reason?: unknown };
+        if (msg.ticket && msg.token && msg.proxyPort > 0) {
+          resolve?.({ ok: true, ticket: msg.ticket, proxyPort: msg.proxyPort, token: msg.token });
+        } else {
+          resolve?.({
+            ok: false,
+            reason: isOpenClawChatFailureReason(reply.reason) ? reply.reason : 'proxy-unavailable',
+          });
+        }
         break;
       }
     }
@@ -2038,6 +2118,12 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * port (see `getOpenClawChatTicket()`'s doc). Empty string if `url` doesn't
    * parse as `ws(s)://host[:port]`. */
   get connectedHost(): string {
-    return this.url.match(/^wss?:\/\/([^/:?#]+)/i)?.[1] ?? '';
+    try {
+      const parsed = new URL(this.url);
+      if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') return '';
+      return parsed.hostname;
+    } catch {
+      return '';
+    }
   }
 }

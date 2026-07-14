@@ -1,22 +1,19 @@
 name: Release
 
-# Tag-driven release train (B-M2): full verification -> signed (if secret
-# present) Squirrel artifacts -> DRAFT GitHub Release a human publishes.
-# Requires a GitHub remote; the Squirrel auto-update feed (B-M4) additionally
-# requires the repo to be PUBLIC (user decision pending).
+# Tag-driven release train: full desktop/mobile verification, protected
+# Android signing, then a draft GitHub Release that a human publishes.
 on:
+  workflow_dispatch:
   push:
-    tags: ['v*']
+    tags: ["v*"]
 
 jobs:
   release:
-    # Pinned to windows-2022 (VS2022): windows-latest now ships VS18, which the `cap`
-    # dependency's @electron/node-gyp (v10) can't parse ("unknown version undefined")
-    # → node-gyp finds no C++ toolchain and `pnpm install` dies compiling cap.
     runs-on: windows-2022
-    timeout-minutes: 50
+    timeout-minutes: 90
+    environment: internal-release
     permissions:
-      contents: write # create the draft release
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -29,56 +26,190 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
       - run: pnpm install --frozen-lockfile
 
-      - name: Verify tag matches package.json version
+      - name: Export and verify release version contract
         shell: pwsh
         run: |
-          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          if ("v$v" -ne "${{ github.ref_name }}") {
-            throw "tag ${{ github.ref_name }} does not match package.json version v$v"
+          $rootVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $mobileVersion = (Get-Content mobile/package.json -Raw | ConvertFrom-Json).version
+          $gradle = Get-Content mobile/android/app/build.gradle -Raw
+          $versionNameMatch = [regex]::Match($gradle, 'versionName\s+"([^"]+)"')
+          $versionCodeMatch = [regex]::Match($gradle, 'versionCode\s+(\d+)')
+          if (-not $versionNameMatch.Success -or -not $versionCodeMatch.Success) {
+            throw 'Could not read Android versionName/versionCode from app/build.gradle.'
           }
+          $androidVersionName = $versionNameMatch.Groups[1].Value
+          $androidVersionCode = [int]$versionCodeMatch.Groups[1].Value
+          if ($rootVersion -ne $mobileVersion -or $rootVersion -ne $androidVersionName) {
+            throw "Root, mobile, and Android versions must match: root=$rootVersion mobile=$mobileVersion android=$androidVersionName."
+          }
+          if ($androidVersionCode -lt 1) {
+            throw 'Android versionCode must be a positive integer.'
+          }
+          if ("${{ github.event_name }}" -eq 'push' -and "v$rootVersion" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} does not match v$rootVersion."
+          }
+          "EZTERMINAL_VERSION=$rootVersion" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "ANDROID_VERSION_CODE=$androidVersionCode" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "ANDROID_RELEASE_BASENAME=EZTerminal-Android-$rootVersion-vc$androidVersionCode" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
 
-      - run: pnpm typecheck
-      - run: pnpm lint
-      - run: pnpm test
-      - run: pnpm e2e
+      - name: Desktop typecheck
+        run: pnpm typecheck
+      - name: Desktop lint
+        run: pnpm lint
+      - name: Desktop unit tests
+        run: pnpm test
+      - name: Desktop end-to-end tests
+        run: pnpm e2e
 
-      # Optional code signing (B-M3): store the .pfx as base64 in
-      # WINDOWS_SIGN_PFX_BASE64 (+ WINDOWS_SIGN_CERT_PASSWORD). Absent secret ->
-      # unsigned build, same as local dev (docs/release/signing.md).
-      - name: Materialize signing cert (no-op without secret)
+      - name: Mobile lint
+        working-directory: mobile
+        run: pnpm lint
+      - name: Mobile typecheck
+        working-directory: mobile
+        run: pnpm typecheck
+      - name: Mobile unit tests
+        working-directory: mobile
+        run: pnpm test
+      - name: Mobile production build
+        working-directory: mobile
+        run: pnpm build
+      - name: Sync Capacitor Android project
+        working-directory: mobile
+        run: pnpm cap:sync
+      - name: Verify Capacitor Android files are current
+        shell: pwsh
+        run: |
+          $status = @(git status --porcelain --untracked-files=all -- mobile/android)
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Could not inspect the Android project after Capacitor sync.'
+          }
+          if ($status.Count -ne 0) {
+            $status | ForEach-Object { Write-Host $_ }
+            throw 'pnpm --dir mobile cap:sync changed tracked or untracked Android files. Commit the generated updates.'
+          }
+      - name: Android release lint and unit tests
+        working-directory: mobile/android
+        run: .\gradlew.bat lintRelease testReleaseUnitTest --no-daemon --stacktrace
+
+      # Windows signing remains optional for the existing internal Windows
+      # release path. Android signing below is mandatory and fail-closed.
+      - name: Materialize Windows signing certificate
         shell: pwsh
         env:
           PFX_B64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
         run: |
+          if ([bool]$env:PFX_B64 -xor [bool]$env:PFX_PASSWORD) {
+            throw 'Windows signing certificate and password must be configured together.'
+          }
           if ($env:PFX_B64) {
-            $path = Join-Path $env:RUNNER_TEMP 'sign.pfx'
+            $path = Join-Path $env:RUNNER_TEMP 'ezterminal-windows-sign.pfx'
             [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:PFX_B64))
             "WINDOWS_SIGN_CERT_FILE=$path" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
-            Write-Host 'Signing enabled for this release build.'
+            Write-Host 'Windows signing enabled for this release build.'
           } else {
-            Write-Host 'No signing secret - producing an UNSIGNED release build.'
+            Write-Host 'No Windows signing secret; the Windows artifact will be unsigned.'
           }
 
-      # make runs the full package internally, so the packaged smoke below
-      # reuses (and therefore tests) the exact exe that ships — signed when the
-      # secret is present.
-      - run: pnpm make
+      - name: Build Windows release
+        run: pnpm make
         env:
           WINDOWS_SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
-      - run: pnpm guard:native
-      - run: pnpm test:e2e:packaged
+      - name: Verify packaged native modules
+        run: pnpm guard:native
+      - name: Verify packaged packet capture native module
+        run: pnpm guard:native-cap
+      - name: Verify PTY routing invariants
+        run: pnpm guard:pty-routing
+      - name: Packaged app smoke tests
+        run: pnpm test:e2e:packaged
+
+      - name: Materialize protected Android keystore
+        shell: pwsh
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          $required = @(
+            $env:KEYSTORE_B64,
+            $env:KEYSTORE_PASSWORD,
+            $env:KEY_ALIAS,
+            $env:KEY_PASSWORD
+          )
+          if ($required.Where({ [string]::IsNullOrWhiteSpace($_) }).Count -ne 0) {
+            throw 'All protected Android signing secrets are required for a release.'
+          }
+          $path = Join-Path $env:RUNNER_TEMP 'ezterminal-android-internal.keystore'
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:KEYSTORE_B64))
+          "ANDROID_KEYSTORE_PATH=$path" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host 'Protected Android keystore materialized in RUNNER_TEMP.'
+
+      - name: Assemble signed Android release APK
+        working-directory: mobile/android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: .\gradlew.bat assembleRelease --no-daemon --stacktrace
+
+      - name: Verify and stage Android release APK
+        shell: pwsh
+        env:
+          ENVIRONMENT_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          $pinnedCert = (Get-Content mobile/android/signing-certificate.sha256 -Raw).Trim()
+          if ($pinnedCert -notmatch '^[0-9a-fA-F]{64}$') {
+            throw 'The repository-pinned Android signing fingerprint is invalid.'
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:ENVIRONMENT_CERT_SHA256)) {
+            $environmentCert = $env:ENVIRONMENT_CERT_SHA256 -replace '[^0-9a-fA-F]', ''
+            if ($environmentCert -ne $pinnedCert) {
+              throw 'The protected environment fingerprint differs from the repository-pinned continuity certificate.'
+            }
+          }
+          ./mobile/android/scripts/verify-apk.ps1 `
+            -ApkPath mobile/android/app/build/outputs/apk/release/app-release.apk `
+            -MetadataPath mobile/android/app/build/outputs/apk/release/output-metadata.json `
+            -ExpectedVersionName $env:EZTERMINAL_VERSION `
+            -ExpectedVersionCode ([int]$env:ANDROID_VERSION_CODE) `
+            -ExpectedCertSha256 $pinnedCert `
+            -OutputPath "release-assets/$env:ANDROID_RELEASE_BASENAME.apk" `
+            -RequireSignature
+
+      - name: Upload signed Android release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ANDROID_RELEASE_BASENAME }}
+          path: |
+            release-assets/${{ env.ANDROID_RELEASE_BASENAME }}.apk
+            release-assets/${{ env.ANDROID_RELEASE_BASENAME }}.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Draft GitHub Release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             out/make/squirrel.windows/x64/EZTerminal-Setup.exe
             out/make/squirrel.windows/x64/RELEASES
             out/make/squirrel.windows/x64/*.nupkg
+            release-assets/${{ env.ANDROID_RELEASE_BASENAME }}.apk
+            release-assets/${{ env.ANDROID_RELEASE_BASENAME }}.apk.sha256
 
       - name: Upload Playwright artifacts on failure
         if: failure()
@@ -90,3 +221,11 @@ jobs:
             playwright-report/
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Remove temporary signing material
+        if: always()
+        shell: pwsh
+        run: |
+          @($env:ANDROID_KEYSTORE_PATH, $env:WINDOWS_SIGN_CERT_FILE) |
+            Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+            ForEach-Object { Remove-Item -LiteralPath $_ -Force }

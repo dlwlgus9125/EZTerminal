@@ -58,15 +58,19 @@ import {
   type OpenClawAutostartResult,
   type OpenClawConfigKey,
   type OpenClawCoreConfig,
+  type OpenClawEndpoint,
   type OpenClawLifecycleAction,
   type OpenClawLifecycleResult,
   type OpenClawLogLine,
+  type OpenClawInsecureAuthStatus,
   type OpenClawSetConfigResult,
   type OpenClawStatus,
 } from '../shared/openclaw';
 
 const DEFAULT_PORT = 18789;
 const DEFAULT_HOST = '127.0.0.1';
+const ENDPOINT_UNAVAILABLE_ERROR = 'EZTERMINAL_OPENCLAW_URL must be a valid http origin';
+const MUTATION_BUSY_ERROR = 'OpenClaw lifecycle operation is already running';
 
 const HTTP_LIVENESS_TIMEOUT_MS = 5000;
 const RPC_CONNECT_TIMEOUT_MS = 5000;
@@ -89,6 +93,20 @@ const STATUS_POLL_INTERVAL_MS = 4000;
 const LOG_POLL_INTERVAL_MS = 2000;
 const LOG_BACKFILL_LIMIT = 50;
 const LOG_POLL_LIMIT = 200;
+const CLI_OUTPUT_LIMIT_BYTES = 1024 * 1024;
+const CLI_KILL_GRACE_MS = 2000;
+
+interface OpenClawCliTimeouts {
+  readonly config: number;
+  readonly lifecycle: number;
+  readonly autostart: number;
+}
+
+const DEFAULT_CLI_TIMEOUTS: OpenClawCliTimeouts = {
+  config: 20_000,
+  lifecycle: 30_000,
+  autostart: 60_000,
+};
 
 const OPENCLAW_CLIENT_VERSION = '1.0.0';
 // eslint-disable-next-line no-control-regex -- deliberately matching ESC (0x1B) that starts an ANSI SGR code
@@ -98,8 +116,10 @@ const ANSI_PATTERN = /\[[0-9;]*m/g;
 //    these structurally, fakes in tests need implement nothing more) ─────────
 
 export interface ChildProcessLike {
+  readonly pid?: number;
   readonly stdout?: { on(event: 'data', cb: (chunk: Buffer) => void): void } | null;
   readonly stderr?: { on(event: 'data', cb: (chunk: Buffer) => void): void } | null;
+  kill?(signal?: NodeJS.Signals | number): boolean;
   on(event: 'error', cb: (err: Error) => void): void;
   on(event: 'close', cb: (code: number | null) => void): void;
 }
@@ -138,10 +158,43 @@ export interface OpenClawServiceDeps {
   readFile?: (path: string) => Promise<string>;
   env?: EnvLike;
   now?: () => number;
+  cliTimeouts?: Partial<OpenClawCliTimeouts>;
+  killProcess?: (child: ChildProcessLike) => void;
 }
 
 const defaultSpawn: SpawnFn = (file, args, options) =>
   crossSpawn(file, args, options) as unknown as ChildProcessLike;
+
+function defaultKillProcess(child: ChildProcessLike): void {
+  if (process.platform === 'win32' && child.pid) {
+    try {
+      const killer = crossSpawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
+      killer.on('error', () => {
+        try {
+          child.kill?.();
+        } catch {
+          // The process may already have exited between timeout and kill.
+        }
+      });
+      return;
+    } catch {
+      // Fall through to the direct child-process signal.
+    }
+  }
+  try {
+    child.kill?.('SIGTERM');
+  } catch {
+    return;
+  }
+  const forceTimer = setTimeout(() => {
+    try {
+      child.kill?.('SIGKILL');
+    } catch {
+      // Already exited.
+    }
+  }, CLI_KILL_GRACE_MS);
+  forceTimer.unref?.();
+}
 
 function defaultHttpGet(url: string): Promise<HttpGetResult> {
   return new Promise((resolve) => {
@@ -392,13 +445,29 @@ class OpenClawRpcConnection {
 
 // ── OpenClawService ────────────────────────────────────────────────────────
 
-function extractPort(url: string): number {
+function createEndpoint(
+  rawUrl: string,
+  generation: number,
+  source: OpenClawEndpoint['source'],
+): OpenClawEndpoint | null {
   try {
-    const parsed = new URL(url);
-    const port = Number(parsed.port);
-    return Number.isFinite(port) && port > 0 ? port : DEFAULT_PORT;
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:') return null;
+    parsed.pathname = '';
+    parsed.search = '';
+    parsed.hash = '';
+    const origin = parsed.origin;
+    const port = parsed.port ? Number(parsed.port) : 80;
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) return null;
+    return {
+      origin,
+      wsUrl: origin.replace(/^http/, 'ws'),
+      port,
+      generation,
+      source,
+    };
   } catch {
-    return DEFAULT_PORT;
+    return null;
   }
 }
 
@@ -409,9 +478,14 @@ export class OpenClawService {
   private readonly wsFactory: OpenClawWsFactory;
   private readonly readFileFn: (path: string) => Promise<string>;
   private readonly now: () => number;
-  private readonly baseUrl: string;
-  private readonly wsUrl: string;
-  private readonly port: number;
+  private readonly cliTimeouts: OpenClawCliTimeouts;
+  private readonly killProcess: (child: ChildProcessLike) => void;
+  private endpoint: OpenClawEndpoint;
+  private readonly endpointLockedByEnv: boolean;
+  private readonly endpointUnavailableReason: string | null;
+  private pendingPort: number | null = null;
+  private endpointInitialization: Promise<void> | null = null;
+  private readonly endpointListeners = new Set<(endpoint: OpenClawEndpoint) => void>();
 
   private installedCache: boolean | null = null;
   // M2: timestamp of the last NEGATIVE isInstalled() resolution — see
@@ -419,7 +493,7 @@ export class OpenClawService {
   private installedCacheAt: number | null = null;
   private configPathPromise: Promise<string> | null = null;
 
-  private lifecycleOp: Promise<void> = Promise.resolve();
+  private mutationBusy = false;
   private busyAction: OpenClawLifecycleAction | null = null;
 
   // M1 status debounce — see STATUS_FAILURE_THRESHOLD's comment.
@@ -451,37 +525,126 @@ export class OpenClawService {
     this.wsFactory = deps.wsFactory ?? defaultWsFactory;
     this.readFileFn = deps.readFile ?? defaultReadFile;
     this.now = deps.now ?? Date.now;
+    this.cliTimeouts = { ...DEFAULT_CLI_TIMEOUTS, ...deps.cliTimeouts };
+    this.killProcess = deps.killProcess ?? defaultKillProcess;
 
     const urlOverride = envGet(this.env, 'EZTERMINAL_OPENCLAW_URL');
-    this.baseUrl = urlOverride ?? `http://${DEFAULT_HOST}:${DEFAULT_PORT}`;
-    this.port = extractPort(this.baseUrl);
-    this.wsUrl = this.baseUrl.replace(/^http/, 'ws');
+    const defaultEndpoint = createEndpoint(`http://${DEFAULT_HOST}:${DEFAULT_PORT}`, 0, 'default');
+    if (!defaultEndpoint) throw new Error('invalid built-in OpenClaw endpoint');
+    const environmentEndpoint = urlOverride ? createEndpoint(urlOverride, 0, 'environment') : null;
+    this.endpointLockedByEnv = Boolean(urlOverride);
+    this.endpointUnavailableReason = urlOverride && !environmentEndpoint ? ENDPOINT_UNAVAILABLE_ERROR : null;
+    // Keep a well-formed endpoint object for the existing Interface, but it
+    // is only an inert placeholder while endpointUnavailableReason is set.
+    // Every network and mutation surface below fails closed before using it.
+    this.endpoint = environmentEndpoint ?? defaultEndpoint;
+  }
+
+  getEndpoint(): OpenClawEndpoint {
+    return this.endpoint;
+  }
+
+  onEndpointChanged(listener: (endpoint: OpenClawEndpoint) => void): () => void {
+    this.endpointListeners.add(listener);
+    return () => {
+      this.endpointListeners.delete(listener);
+    };
+  }
+
+  private activatePort(port: number, source: OpenClawEndpoint['source']): void {
+    if (this.endpointLockedByEnv) return;
+    const current = new URL(this.endpoint.origin);
+    current.port = String(port);
+    const next = createEndpoint(current.origin, this.endpoint.generation + 1, source);
+    if (!next || next.origin === this.endpoint.origin) {
+      this.pendingPort = null;
+      return;
+    }
+    this.endpoint = next;
+    this.pendingPort = null;
+    this.wasRunning = false;
+    this.probeFailureStreak = 0;
+    this.statusProbe = null;
+    this.logCursor = undefined;
+    this.logBackfillDone = false;
+    if (this.rpc) {
+      this.rpc.close();
+      this.rpc = null;
+      if (this.rpcRefCount > 0) {
+        this.rpc = new OpenClawRpcConnection(this.wsFactory, next.wsUrl, () => this.getChatToken());
+        this.rpc.enablePersistent();
+      }
+    }
+    for (const listener of this.endpointListeners) {
+      try {
+        listener(next);
+      } catch (error) {
+        console.error('[OpenClawService] endpoint listener failed:', error);
+      }
+    }
+  }
+
+  /** Resolve the configured gateway port before the first network/chat read. */
+  private ensureEndpointInitialized(): Promise<void> {
+    if (this.endpointLockedByEnv || this.endpointUnavailableReason) return Promise.resolve();
+    if (!this.endpointInitialization) {
+      this.endpointInitialization = (async () => {
+        try {
+          const configPath = await this.resolveConfigPath();
+          const text = await this.readFileFn(configPath);
+          const parsed = JSON.parse(text) as { gateway?: { port?: unknown } };
+          const rawPort = parsed.gateway?.port;
+          const configuredPort = typeof rawPort === 'number'
+            ? rawPort
+            : typeof rawPort === 'string'
+              ? Number(rawPort)
+              : Number.NaN;
+          if (
+            this.pendingPort === null
+            && Number.isSafeInteger(configuredPort)
+            && configuredPort >= 1
+            && configuredPort <= 65_535
+          ) {
+            this.activatePort(configuredPort, 'config');
+          }
+        } catch {
+          // Missing/malformed config retains the built-in default endpoint.
+        }
+      })();
+    }
+    return this.endpointInitialization;
   }
 
   // ── Status ────────────────────────────────────────────────────────────
 
   async getStatus(force = false): Promise<OpenClawStatus> {
+    if (this.endpointUnavailableReason) return { state: 'unknown', port: this.endpoint.port };
+    await this.ensureEndpointInitialized();
     if (force) {
       this.installedCache = null;
       this.installedCacheAt = null;
     }
     if (!this.statusProbe) {
-      this.statusProbe = this.probeStatus().finally(() => {
-        this.statusProbe = null;
+      const endpoint = this.endpoint;
+      const probe = this.probeStatus(endpoint);
+      this.statusProbe = probe;
+      void probe.finally(() => {
+        if (this.statusProbe === probe) this.statusProbe = null;
       });
     }
     return this.statusProbe;
   }
 
-  private async probeStatus(): Promise<OpenClawStatus> {
-    if (!(await this.isInstalled())) return { state: 'not-installed', port: this.port };
+  private async probeStatus(endpoint: OpenClawEndpoint): Promise<OpenClawStatus> {
+    if (!(await this.isInstalled())) return { state: 'not-installed', port: endpoint.port };
 
     let probe: HttpGetResult;
     try {
-      probe = await this.httpGet(`${this.baseUrl}/`);
+      probe = await this.httpGet(`${endpoint.origin}/`);
     } catch {
-      return { state: 'unknown', port: this.port };
+      return { state: 'unknown', port: endpoint.port };
     }
+    if (endpoint.generation !== this.endpoint.generation) return this.probeStatus(this.endpoint);
 
     if (probe.ok) {
       this.wasRunning = true;
@@ -491,7 +654,7 @@ export class OpenClawService {
         enrichment && typeof enrichment === 'object' && enrichment !== null && 'runtimeVersion' in enrichment
           ? String((enrichment as { runtimeVersion: unknown }).runtimeVersion)
           : undefined;
-      return { state: 'running', port: this.port, version };
+      return { state: 'running', port: endpoint.port, version };
     }
 
     // `refused` is definitive (a stopped gateway refuses instantly) — report
@@ -501,13 +664,13 @@ export class OpenClawService {
     if (probe.reason !== 'refused' && this.wasRunning) {
       this.probeFailureStreak += 1;
       if (this.probeFailureStreak < STATUS_FAILURE_THRESHOLD) {
-        return { state: 'running', port: this.port };
+        return { state: 'running', port: endpoint.port };
       }
     }
     this.wasRunning = false;
     this.probeFailureStreak = 0;
     const starting = this.busyAction === 'start' || this.busyAction === 'restart';
-    return { state: starting ? 'starting' : 'stopped', port: this.port };
+    return { state: starting ? 'starting' : 'stopped', port: endpoint.port };
   }
 
   /** PATH resolution only — no spawn (see the module doc). A `true` result
@@ -551,7 +714,7 @@ export class OpenClawService {
     if (this.statusTimer || this.statusListeners.size === 0) return;
     const tick = (): void => {
       void this.getStatus().then((status) => {
-        for (const listener of this.statusListeners) listener(status);
+        this.notifyStatusListeners(status);
         if (this.statusListeners.size > 0) this.statusTimer = setTimeout(tick, STATUS_POLL_INTERVAL_MS);
       });
     };
@@ -561,32 +724,58 @@ export class OpenClawService {
   private async pushStatusNow(): Promise<void> {
     if (this.statusListeners.size === 0) return;
     const status = await this.getStatus();
-    for (const listener of this.statusListeners) listener(status);
+    this.notifyStatusListeners(status);
+  }
+
+  private notifyStatusListeners(status: OpenClawStatus): void {
+    for (const listener of this.statusListeners) {
+      try {
+        listener(status);
+      } catch (error) {
+        // Observers are adapters owned by callers. Their failure must not
+        // break service polling or change a successful lifecycle result.
+        console.error('[OpenClawService] status listener failed:', error);
+      }
+    }
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────
 
   async runLifecycle(action: OpenClawLifecycleAction): Promise<OpenClawLifecycleResult> {
-    let result: OpenClawLifecycleResult = { ok: false };
-    this.lifecycleOp = this.lifecycleOp.then(async () => {
-      this.busyAction = action;
-      try {
-        result = await this.execCli(['gateway', action]).then(({ code, stderr }) =>
-          code === 0 ? { ok: true } : { ok: false, stderr: stderr || `exit code ${code}` },
-        );
-        // A user-initiated stop must show up as `stopped` immediately, not
-        // after riding out the debounce grace on the next poll.
-        if (action === 'stop' && result.ok) {
-          this.wasRunning = false;
-          this.probeFailureStreak = 0;
-        }
-      } finally {
-        this.busyAction = null;
-        await this.pushStatusNow();
+    if (this.endpointUnavailableReason) {
+      return { ok: false, code: 'unavailable', stderr: this.endpointUnavailableReason };
+    }
+    if (this.mutationBusy) {
+      return { ok: false, code: 'busy', stderr: MUTATION_BUSY_ERROR };
+    }
+    this.mutationBusy = true;
+    this.busyAction = action;
+    try {
+      const result = await this.execCli(['gateway', action], this.cliTimeouts.lifecycle, 'lifecycle').then(
+        ({ code, stderr, timedOut }) =>
+          code === 0
+            ? { ok: true as const }
+            : {
+                ok: false as const,
+                code: timedOut ? ('timeout' as const) : ('cli-failed' as const),
+                stderr: stderr || `exit code ${code}`,
+              },
+      );
+      // A user-initiated stop must show up as `stopped` immediately, not
+      // after riding out the debounce grace on the next poll.
+      if (action === 'stop' && result.ok) {
+        this.wasRunning = false;
+        this.probeFailureStreak = 0;
       }
-    });
-    await this.lifecycleOp;
-    return result;
+      if ((action === 'start' || action === 'restart') && result.ok && this.pendingPort !== null) {
+        this.activatePort(this.pendingPort, 'config');
+      }
+      return result;
+    } finally {
+      this.busyAction = null;
+      this.mutationBusy = false;
+      await this.pushStatusNow();
+    }
   }
 
   // ── Autostart (task #9: `gateway install`/`gateway uninstall`) ──────────
@@ -595,14 +784,27 @@ export class OpenClawService {
   // Deliberately does NOT touch `busyAction` (that flag only means "gateway
   // is starting up", which install/uninstall never causes).
   async runAutostart(action: OpenClawAutostartAction): Promise<OpenClawAutostartResult> {
-    let result: OpenClawAutostartResult = { ok: false };
-    this.lifecycleOp = this.lifecycleOp.then(async () => {
-      result = await this.execCli(['gateway', action]).then(({ code, stderr }) =>
-        code === 0 ? { ok: true } : { ok: false, stderr: stderr || `exit code ${code}` },
+    if (this.endpointUnavailableReason) {
+      return { ok: false, code: 'unavailable', stderr: this.endpointUnavailableReason };
+    }
+    if (this.mutationBusy) {
+      return { ok: false, code: 'busy', stderr: MUTATION_BUSY_ERROR };
+    }
+    this.mutationBusy = true;
+    try {
+      return await this.execCli(['gateway', action], this.cliTimeouts.autostart, 'autostart').then(
+        ({ code, stderr, timedOut }) =>
+          code === 0
+            ? { ok: true as const }
+            : {
+                ok: false as const,
+                code: timedOut ? ('timeout' as const) : ('cli-failed' as const),
+                stderr: stderr || `exit code ${code}`,
+              },
       );
-    });
-    await this.lifecycleOp;
-    return result;
+    } finally {
+      this.mutationBusy = false;
+    }
   }
 
   // ── Sessions ──────────────────────────────────────────────────────────
@@ -626,11 +828,22 @@ export class OpenClawService {
     const entries = await Promise.all(
       OPENCLAW_CONFIG_ALLOWLIST.map(async (key) => [key, await this.cliConfigGet(key)] as const),
     );
-    return Object.fromEntries(entries) as OpenClawCoreConfig;
+    const config = Object.fromEntries(entries) as OpenClawCoreConfig;
+    if (!this.endpointLockedByEnv && this.pendingPort === null) {
+      const configuredPort = Number(config['gateway.port']);
+      if (Number.isSafeInteger(configuredPort) && configuredPort >= 1 && configuredPort <= 65_535) {
+        this.activatePort(configuredPort, 'config');
+      }
+    }
+    return config;
   }
 
   private async cliConfigGet(key: OpenClawConfigKey): Promise<string> {
-    const { code, stdout } = await this.execCli(['config', 'get', key, '--json']);
+    const { code, stdout } = await this.execCli(
+      ['config', 'get', key, '--json'],
+      this.cliTimeouts.config,
+      'config',
+    );
     // M0 ①: exit 1 ("Config path not found: ...") is the UNSET signal, not an
     // error — every allowlisted field can legitimately be absent from the file.
     if (code !== 0) return OPENCLAW_CONFIG_UNSET;
@@ -649,16 +862,83 @@ export class OpenClawService {
       // enforced HERE, not just in the UI that normally constrains it.
       throw new Error(`setCoreConfig: '${key}' is not an allowlisted config key`);
     }
-    const { code, stderr } = await this.execCli(['config', 'set', key, value, '--strict-json']);
-    if (code !== 0) return { ok: false, restartRequired: false, error: stderr || 'config set failed' };
+    if (this.endpointUnavailableReason) {
+      return {
+        ok: false,
+        restartRequired: false,
+        code: 'unavailable',
+        error: this.endpointUnavailableReason,
+      };
+    }
+    const trimmed = value.trim();
+    let encodedValue: string;
+    if (key === 'agents.defaults.model') {
+      if (!trimmed) {
+        return {
+          ok: false,
+          restartRequired: false,
+          code: 'invalid-value',
+          error: 'agents.defaults.model must not be empty',
+        };
+      }
+      encodedValue = JSON.stringify(trimmed);
+    } else {
+      if (!/^\d+$/.test(trimmed)) {
+        return {
+          ok: false,
+          restartRequired: false,
+          code: 'invalid-value',
+          error: 'gateway.port must be an integer between 1 and 65535',
+        };
+      }
+      const port = Number(trimmed);
+      if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+        return {
+          ok: false,
+          restartRequired: false,
+          code: 'invalid-value',
+          error: 'gateway.port must be an integer between 1 and 65535',
+        };
+      }
+      encodedValue = String(port);
+    }
+    if (this.mutationBusy) {
+      return {
+        ok: false,
+        restartRequired: false,
+        code: 'busy',
+        error: MUTATION_BUSY_ERROR,
+      };
+    }
+    this.mutationBusy = true;
+    try {
+      const { code, stderr, timedOut } = await this.execCli(
+        ['config', 'set', key, encodedValue, '--strict-json'],
+        this.cliTimeouts.config,
+        'config',
+      );
+      if (code !== 0) {
+        return {
+          ok: false,
+          restartRequired: false,
+          code: timedOut ? 'timeout' : 'cli-failed',
+          error: stderr || 'config set failed',
+        };
+      }
+      if (key === 'gateway.port' && !this.endpointLockedByEnv) this.pendingPort = Number(encodedValue);
     // M0 ①: every successful `config set` requires a gateway restart to apply
     // — there is no live-reload path.
-    return { ok: true, restartRequired: true };
+      return { ok: true, restartRequired: true };
+    } finally {
+      this.mutationBusy = false;
+    }
   }
 
   // ── Chat token/URL ────────────────────────────────────────────────────
 
   async getChatToken(): Promise<string | null> {
+    if (this.endpointUnavailableReason) return null;
+    await this.ensureEndpointInitialized();
     try {
       const configPath = await this.resolveConfigPath();
       const text = await this.readFileFn(configPath);
@@ -673,7 +953,7 @@ export class OpenClawService {
   async getChatUrl(): Promise<string | null> {
     const token = await this.getChatToken();
     if (!token) return null;
-    return `${this.baseUrl}/#token=${encodeURIComponent(token)}`;
+    return `${this.endpoint.origin}/#token=${encodeURIComponent(token)}`;
   }
 
   /**
@@ -698,7 +978,11 @@ export class OpenClawService {
       await this.readFileFn(defaultPath);
       return defaultPath;
     } catch {
-      const { code, stdout } = await this.execCli(['config', 'file']);
+      const { code, stdout } = await this.execCli(
+        ['config', 'file'],
+        this.cliTimeouts.config,
+        'config',
+      );
       const resolved = stdout.trim();
       return code === 0 && resolved ? resolved : defaultPath;
     }
@@ -773,7 +1057,8 @@ export class OpenClawService {
   // ── RPC connection lifecycle ──────────────────────────────────────────
 
   private acquireRpc(): void {
-    if (!this.rpc) this.rpc = new OpenClawRpcConnection(this.wsFactory, this.wsUrl, () => this.getChatToken());
+    if (this.endpointUnavailableReason) return;
+    if (!this.rpc) this.rpc = new OpenClawRpcConnection(this.wsFactory, this.endpoint.wsUrl, () => this.getChatToken());
     this.rpcRefCount += 1;
     this.rpc.enablePersistent();
   }
@@ -790,8 +1075,9 @@ export class OpenClawService {
    * otherwise opens a throwaway one for this call and closes it after.
    * Returns `undefined` on any failure — enrichment is always best-effort. */
   private async withRpc(fn: (rpc: OpenClawRpcConnection) => Promise<unknown>): Promise<unknown> {
+    if (this.endpointUnavailableReason) return undefined;
     const owned = this.rpc !== null;
-    const rpc = this.rpc ?? new OpenClawRpcConnection(this.wsFactory, this.wsUrl, () => this.getChatToken());
+    const rpc = this.rpc ?? new OpenClawRpcConnection(this.wsFactory, this.endpoint.wsUrl, () => this.getChatToken());
     try {
       await rpc.connect();
       return await fn(rpc);
@@ -804,24 +1090,72 @@ export class OpenClawService {
 
   // ── CLI spawn ─────────────────────────────────────────────────────────
 
-  private async execCli(args: readonly string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  private async execCli(
+    args: readonly string[],
+    timeoutMs: number,
+    commandLabel: 'config' | 'lifecycle' | 'autostart',
+  ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
     const cliName = envGet(this.env, 'EZTERMINAL_OPENCLAW_CLI') ?? 'openclaw';
     const resolver = new CommandResolver(this.env);
     const spec = resolver.resolve(cliName, args);
-    if (!spec) return { code: -1, stdout: '', stderr: `${cliName}: command not found` };
+    if (!spec) return { code: -1, stdout: '', stderr: `${cliName}: command not found`, timedOut: false };
     return new Promise((resolve) => {
-      const child = this.spawnFn(spec.file, spec.args, { shell: spec.shell, windowsHide: true });
-      let stdout = '';
-      let stderr = '';
+      let child: ChildProcessLike;
+      try {
+        child = this.spawnFn(spec.file, spec.args, { shell: spec.shell, windowsHide: true });
+      } catch (error) {
+        resolve({ code: -1, stdout: '', stderr: String(error), timedOut: false });
+        return;
+      }
+      let settled = false;
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+      const append = (chunks: Buffer[], used: number, chunk: Buffer): number => {
+        const remaining = CLI_OUTPUT_LIMIT_BYTES - used;
+        if (remaining <= 0) return used;
+        const kept = chunk.subarray(0, remaining);
+        chunks.push(kept);
+        return used + kept.length;
+      };
+      const finish = (code: number, timedOut: boolean, overrideError?: string): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const stdout = Buffer.concat(stdoutChunks).toString('utf8');
+        const capturedStderr = Buffer.concat(stderrChunks).toString('utf8');
+        resolve({ code, stdout, stderr: overrideError ?? capturedStderr, timedOut });
+      };
+      const timer = setTimeout(() => {
+        this.killProcess(child);
+        finish(-1, true, `OpenClaw ${commandLabel} command timed out`);
+      }, Math.max(1, timeoutMs));
+      timer.unref?.();
       child.stdout?.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString('utf8');
+        stdoutBytes = append(stdoutChunks, stdoutBytes, chunk);
       });
       child.stderr?.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString('utf8');
+        stderrBytes = append(stderrChunks, stderrBytes, chunk);
       });
-      child.on('error', (err) => resolve({ code: -1, stdout, stderr: stderr || String(err) }));
-      child.on('close', (code) => resolve({ code: code ?? -1, stdout, stderr }));
+      child.on('error', (err) => finish(-1, false, Buffer.concat(stderrChunks).toString('utf8') || String(err)));
+      child.on('close', (code) => finish(code ?? -1, false));
     });
+  }
+
+  async getInsecureAuthStatus(): Promise<OpenClawInsecureAuthStatus> {
+    if (this.endpointUnavailableReason) return 'error';
+    try {
+      const configPath = await this.resolveConfigPath();
+      const text = await this.readFileFn(configPath);
+      const parsed = JSON.parse(text) as { gateway?: { controlUi?: { allowInsecureAuth?: unknown } } };
+      const value = parsed.gateway?.controlUi?.allowInsecureAuth;
+      if (value === true) return 'enabled';
+      if (value === false) return 'disabled';
+      return 'unset';
+    } catch {
+      return 'error';
+    }
   }
 
   // ── Disposal ──────────────────────────────────────────────────────────
@@ -840,6 +1174,7 @@ export class OpenClawService {
     }
     this.statusListeners.clear();
     this.logListeners.clear();
+    this.endpointListeners.clear();
     this.rpcRefCount = 0;
     this.rpc?.close();
     this.rpc = null;

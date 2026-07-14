@@ -561,7 +561,7 @@ body,
 }
 
 .mobile-agent-hub .agent-hub-head {
-  padding-top: max(10px, env(safe-area-inset-top));
+  padding-top: 10px;
 }
 
 .mobile-agent-hub .agent-hub-body {
@@ -1260,6 +1260,13 @@ body,
   margin: -0.6rem -0.85rem;
 }
 
+.openclaw-chat-frame-stage {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
 .openclaw-chat-frame {
   flex: 1;
   min-height: 0;
@@ -1273,6 +1280,27 @@ body,
   gap: 8px;
   padding: 8px 12px;
   border-top: 1px solid var(--term-border-faint, #222);
+}
+
+.openclaw-chat-frame--loading {
+  visibility: hidden;
+}
+
+.openclaw-chat-frame-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  background: var(--term-bg, #000);
+}
+
+.openclaw-chat-error-code {
+  display: block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  color: inherit;
+  font-size: 0.75rem;
 }
 
 .mobile-stats-tab-panel,

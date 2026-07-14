@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import type { RemoteRuntimeStatus } from '../shared/ipc';
 import { useAppTranslation } from './i18n';
 
 type PairingError =
@@ -19,7 +20,7 @@ export function ConnectionInfoPanel(): JSX.Element {
   const { t } = useAppTranslation();
   const [urls, setUrls] = useState<readonly string[] | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [remoteEnabled, setRemoteEnabled] = useState<boolean | null>(null);
+  const [remoteStatus, setRemoteStatus] = useState<RemoteRuntimeStatus | null>(null);
   const [securityError, setSecurityError] = useState<PairingError>(undefined);
   const [justRotated, setJustRotated] = useState(false);
   const [copiedText, setCopiedText] = useState<string | null>(null);
@@ -43,11 +44,15 @@ export function ConnectionInfoPanel(): JSX.Element {
         );
       }
     });
-    void window.ezterminal.getRemoteEnabled().then((v) => {
-      if (alive) setRemoteEnabled(v);
+    void window.ezterminal.getRemoteRuntimeStatus().then((status) => {
+      if (alive) setRemoteStatus(status);
+    });
+    const unsubscribeRuntime = window.ezterminal.onRemoteRuntimeStatus((status) => {
+      if (alive) setRemoteStatus(status);
     });
     return () => {
       alive = false;
+      unsubscribeRuntime();
     };
   }, []);
 
@@ -69,7 +74,14 @@ export function ConnectionInfoPanel(): JSX.Element {
     });
   }, []);
 
-  const loading = urls === null || remoteEnabled === null || securityError === undefined || (securityError === null && token === null);
+  const handleRetry = useCallback(() => {
+    void window.ezterminal.retryRemoteRuntime().then(setRemoteStatus);
+  }, []);
+
+  const loading = urls === null
+    || remoteStatus === null
+    || securityError === undefined
+    || (remoteStatus?.state === 'running' && securityError === null && token === null);
   const securityErrorText = securityError?.kind === 'external'
     ? securityError.message
     : securityError?.kind === 'token-unavailable'
@@ -88,7 +100,20 @@ export function ConnectionInfoPanel(): JSX.Element {
           <div className="status-loading" role="alert" data-testid="pairing-security-error">
             {securityErrorText}
           </div>
-        ) : !remoteEnabled ? (
+        ) : remoteStatus.state === 'error' ? (
+          <div className="status-loading" role="alert" data-testid="pairing-runtime-error">
+            {remoteStatus.error ?? t('remote.runtimeUnavailable')}{' '}
+            {remoteStatus.desiredEnabled && (
+              <button className="btn btn-split" onClick={handleRetry} data-testid="pairing-runtime-retry">
+                {t('common.retry')}
+              </button>
+            )}
+          </div>
+        ) : remoteStatus.state === 'starting' || remoteStatus.state === 'stopping' ? (
+          <div className="status-loading" data-testid="pairing-runtime-transition">
+            {remoteStatus.state === 'starting' ? t('remote.starting') : t('remote.stopping')}
+          </div>
+        ) : remoteStatus.state !== 'running' ? (
           <div className="status-loading" data-testid="pairing-remote-disabled">
             {t('remote.disabled')}
           </div>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Capacitor splash bitmaps are screen artwork with orientation-specific
+         aspect ratios, not density-scaled launcher icons. Keep the generated
+         images unchanged and suppress only the inapplicable icon rules. -->
+    <issue id="IconDipSize">
+        <ignore path="src/main/res/drawable-land-xxxhdpi/splash.png" />
+    </issue>
+    <issue id="IconDuplicatesConfig">
+        <ignore path="src/main/res/drawable/splash.png" />
+    </issue>
+    <issue id="IconLocation">
+        <ignore path="src/main/res/drawable/splash.png" />
+    </issue>
+
+    <!-- Capacitor and Android asset tooling resolve these resources from
+         dependency code, generated config, or merged resource names. Lint's
+         app-module-only reference graph cannot see those consumers. -->
+    <issue id="UnusedResources">
+        <ignore regexp="R\.layout\.activity_main appears to be unused" />
+        <ignore regexp="R\.xml\.config appears to be unused" />
+        <ignore regexp="R\.drawable\.ic_launcher_background appears to be unused" />
+        <ignore regexp="R\.drawable\.ic_launcher_foreground appears to be unused" />
+        <ignore regexp="R\.color\.ic_launcher_background appears to be unused" />
+        <ignore regexp="R\.string\.package_name appears to be unused" />
+        <ignore regexp="R\.string\.custom_url_scheme appears to be unused" />
+        <ignore regexp="R\.style\.AppTheme_NoActionBar appears to be unused" />
+    </issue>
+</lint>

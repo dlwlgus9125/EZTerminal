@@ -275,6 +275,49 @@ desktop stylesheet. Desktop shell/Dockview/sidebar rules and mobile shell/page/
 sheet rules live in platform-specific files so selectors cannot accidentally
 override one another.
 
+### 5.4 Mobile layer history and recoverable operations
+
+The authenticated mobile shell owns browser history through one serialized
+navigation controller. Auxiliary pages, action sheets, and dialogs register a
+typed layer with that controller; they do not install independent `popstate`
+listeners or call `history.back()` during component cleanup.
+
+- Opening a layer pushes one history entry.
+- Choosing a More-sheet destination atomically replaces the sheet layer with
+  the destination page. The sheet cleanup must not pop the new page.
+- An explicit close consumes its layer exactly once. Repeated open/close and
+  sheet-to-page transitions must not leave ghost entries.
+- Android Back closes the top sheet/dialog, then the auxiliary page, then
+  delegates to the application/platform default.
+- Closing a transient layer restores its invoker. A sheet action that opens a
+  page intentionally transfers focus into the page and skips invoker restore.
+
+Remote and OpenClaw operations use contextual recovery rather than toast-only
+feedback or a separate diagnostics route:
+
+| Operation | Pending | Recoverable failure | Success |
+| --- | --- | --- | --- |
+| Remote listener | Stable inline `Starting` state; duplicate toggles disabled | Distinguish token security, address-in-use, and bind failure; retain the desired setting and offer Retry | Show QR and endpoint only after the listener is running |
+| OpenClaw availability | Bounded check with the page still dismissible | Distinguish unavailable, gateway stopped, gateway unreachable, and timeout | Show live service state and available actions |
+| Lifecycle/config mutation | Keep the initiating control and value visible; disable duplicate mutation | Show busy, invalid value, CLI failure, or timeout beside the control with Retry | Refresh the affected value/status without replacing the page |
+| Chat ticket/frame | Stable loading surface with a bounded deadline | Distinguish proxy, token, gateway, insecure-auth, and frame-load failures; Retry always mints a fresh ticket | Reveal the frame only after its current generation loads |
+| External browser | Button enters a bounded busy state | Native-browser failure remains beside the button | Open through the Capacitor Browser integration with a fresh ticket |
+
+The desktop OpenClaw visibility preference is not a mobile API authorization
+control. Mobile `auto` shows the destination only when available, `on` keeps a
+diagnostic destination visible even when unavailable, and `off` hides it.
+
+When the app is backgrounded, the OpenClaw frame and its subscriptions are
+released. Foreground recovery obtains a fresh ticket and never reuses an
+expired frame URL. The connect screen and terminal/session runtime remain
+eager; auxiliary pages may be code-split, but every tap must render feedback in
+the next frame so lazy loading never appears unresponsive.
+
+Safe-area ownership is singular: the mobile root applies platform insets, the
+workbench fills that inherited content box with `height: 100%`, and headers do
+not add the top inset again. Folded, unfolded, and landscape layouts preserve
+the 44px touch target contract.
+
 ## 6. Responsive and density behavior
 
 The product supports an `adaptive` default density plus explicit `compact` and

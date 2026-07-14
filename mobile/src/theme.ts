@@ -86,8 +86,8 @@ function writeCustomThemeMods(mods: readonly Record<string, unknown>[]): void {
  * `validateThemeMod` pipeline Import uses (defense-in-depth against a
  * tampered/corrupt localStorage entry, not just trust-on-read) and registers
  * each one that still passes. MUST run before the first `applyTheme(loadTheme())`
- * — see MobileWorkspace.tsx's module-top-level call for why that ordering is
- * guaranteed — or a persisted custom theme id would resolve to nothing yet
+ * — see main.tsx's eager bootstrap calls for why that ordering is guaranteed —
+ * or a persisted custom theme id would resolve to nothing yet
  * registered and silently fall back to 'dark' (AC-T4). */
 export function loadCustomThemes(): void {
   for (const mod of readCustomThemeMods()) {

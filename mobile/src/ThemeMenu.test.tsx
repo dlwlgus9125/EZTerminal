@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ThemeMenu } from './ThemeMenu';
+import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,7 +34,11 @@ beforeEach(() => {
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
-  act(() => root.render(<Harness />));
+  act(() => root.render(
+    <MobileNavigationHistoryProvider>
+      <Harness />
+    </MobileNavigationHistoryProvider>,
+  ));
   act(() => host.querySelector<HTMLButtonElement>('[data-testid="theme-trigger"]')!.click());
 });
 
@@ -55,7 +60,10 @@ describe('ThemeMenu action sheet', () => {
   });
 
   it('uses Android Back to close and return focus to its trigger', async () => {
-    act(() => window.dispatchEvent(new PopStateEvent('popstate')));
+    act(() => {
+      window.history.replaceState({}, '');
+      window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+    });
     await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
 
     expect(host.querySelector('[data-testid="theme-menu"]')).toBeNull();

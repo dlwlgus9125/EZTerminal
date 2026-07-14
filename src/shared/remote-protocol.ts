@@ -723,12 +723,22 @@ export interface OpenClawConfigSetReply {
  * too. The client assembles the chat URL itself from the host it already
  * dials (`http://<host>:<proxyPort>/?t=<ticket>#token=<token>`) — this
  * server never guesses which of its own reachable IPs the client used. */
+export type OpenClawChatTicketFailureReason =
+  | 'gateway-stopped'
+  | 'gateway-unreachable'
+  | 'token-unavailable'
+  | 'proxy-unavailable'
+  | 'insecure-auth-required'
+  | 'timeout';
+
 export interface OpenClawChatTicketReply {
   readonly kind: 'openclaw-chat-ticket-reply';
   readonly requestId: string;
   readonly ticket: string | null;
   readonly proxyPort: number;
   readonly token: string | null;
+  /** Present on failure; optional on the wire so older saved fixtures remain readable. */
+  readonly reason?: OpenClawChatTicketFailureReason;
 }
 
 export type QuickCommandsListReply =

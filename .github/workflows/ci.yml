@@ -17,7 +17,7 @@ jobs:
     # dependency's @electron/node-gyp (v10) can't parse ("unknown version undefined")
     # → node-gyp finds no C++ toolchain and `pnpm install` dies compiling cap.
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -30,11 +30,41 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
       # pnpm.onlyBuiltDependencies in package.json allowlists electron /
       # electron-winstaller / node-pty / cap build scripts. cap compiles from source
       # (node-gyp) against its bundled WinPcap SDK; .npmrc clang=false routes it to
       # MSVC. wpcap.dll (Npcap) is only needed at runtime for live capture, not to build.
       - run: pnpm install --frozen-lockfile
+
+      - name: Export and verify version contract
+        shell: pwsh
+        run: |
+          $rootVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $mobileVersion = (Get-Content mobile/package.json -Raw | ConvertFrom-Json).version
+          $gradle = Get-Content mobile/android/app/build.gradle -Raw
+          $versionNameMatch = [regex]::Match($gradle, 'versionName\s+"([^"]+)"')
+          $versionCodeMatch = [regex]::Match($gradle, 'versionCode\s+(\d+)')
+          if (-not $versionNameMatch.Success -or -not $versionCodeMatch.Success) {
+            throw 'Could not read Android versionName/versionCode from app/build.gradle.'
+          }
+          $androidVersionName = $versionNameMatch.Groups[1].Value
+          $androidVersionCode = [int]$versionCodeMatch.Groups[1].Value
+          if ($rootVersion -ne $mobileVersion -or $rootVersion -ne $androidVersionName) {
+            throw "Root, mobile, and Android versions must match: root=$rootVersion mobile=$mobileVersion android=$androidVersionName."
+          }
+          if ($androidVersionCode -lt 1) {
+            throw 'Android versionCode must be a positive integer.'
+          }
+          "EZTERMINAL_VERSION=$rootVersion" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "ANDROID_VERSION_CODE=$androidVersionCode" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "ANDROID_DEBUG_ARTIFACT_NAME=android-debug-$rootVersion-vc$androidVersionCode" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Desktop typecheck
         run: pnpm typecheck
@@ -55,6 +85,45 @@ jobs:
       - name: Mobile production build
         working-directory: mobile
         run: pnpm build
+
+      - name: Sync Capacitor Android project
+        working-directory: mobile
+        run: pnpm cap:sync
+      - name: Verify Capacitor Android files are current
+        shell: pwsh
+        run: |
+          $status = @(git status --porcelain --untracked-files=all -- mobile/android)
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Could not inspect the Android project after Capacitor sync.'
+          }
+          if ($status.Count -ne 0) {
+            $status | ForEach-Object { Write-Host $_ }
+            throw 'pnpm --dir mobile cap:sync changed tracked or untracked Android files. Commit the generated updates.'
+          }
+      - name: Android lint, unit tests, and debug artifacts
+        working-directory: mobile/android
+        run: .\gradlew.bat lintDebug testDebugUnitTest assembleDebug assembleDebugAndroidTest --no-daemon --stacktrace
+      - name: Verify debug APK contract and signature
+        shell: pwsh
+        run: |
+          ./mobile/android/scripts/verify-apk.ps1 `
+            -ApkPath mobile/android/app/build/outputs/apk/debug/app-debug.apk `
+            -MetadataPath mobile/android/app/build/outputs/apk/debug/output-metadata.json `
+            -ExpectedVersionName $env:EZTERMINAL_VERSION `
+            -ExpectedVersionCode ([int]$env:ANDROID_VERSION_CODE) `
+            -RequireSignature
+      - name: Upload Android debug and instrumentation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ANDROID_DEBUG_ARTIFACT_NAME }}
+          path: |
+            mobile/android/app/build/outputs/apk/debug/app-debug.apk
+            mobile/android/app/build/outputs/apk/debug/output-metadata.json
+            mobile/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            mobile/android/app/build/reports/lint-results-debug.html
+            mobile/android/app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Install Chromium for Storybook checks
         run: pnpm exec playwright install chromium

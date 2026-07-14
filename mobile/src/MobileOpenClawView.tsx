@@ -1,3 +1,4 @@
+import { Browser } from '@capacitor/browser';
 import { X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -8,7 +9,10 @@ import {
   type OpenClawLogLine,
   type OpenClawStatus,
 } from '../../src/shared/openclaw';
-import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+import type {
+  OpenClawChatFailureReason,
+  WsEzTerminalTransport,
+} from './transport/ws-ezterminal';
 import { usePageVisible } from './use-page-visible';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { Tab, TabList, TabPanel, Tabs } from '../../src/renderer/ui/Tabs';
@@ -18,7 +22,14 @@ type OpenClawTab = 'status' | 'logs' | 'settings' | 'chat';
 /** Chat tab (M5) states — `unavailable` covers both a `{null,0,null}` ticket
  * reply (proxy/bridge down) and any other minting failure; `ready` carries
  * the fully assembled Control UI URL. */
-type ChatState = { kind: 'loading' } | { kind: 'unavailable' } | { kind: 'ready'; url: string };
+type ChatErrorReason = OpenClawChatFailureReason | 'invalid-host' | 'frame-timeout' | 'frame-error';
+type ChatState =
+  | { readonly kind: 'loading' }
+  | { readonly kind: 'frame-loading'; readonly url: string; readonly generation: number }
+  | { readonly kind: 'ready'; readonly url: string; readonly generation: number }
+  | { readonly kind: 'unavailable'; readonly reason: ChatErrorReason };
+
+export const OPENCLAW_CHAT_FRAME_TIMEOUT_MS = 20_000;
 
 /** Assembles the Control UI URL from a resolved chat ticket — see
  * openclaw-proxy.ts's module doc: the `#token=` fragment is consumed
@@ -26,7 +37,8 @@ type ChatState = { kind: 'loading' } | { kind: 'unavailable' } | { kind: 'ready'
  * server. Exported for direct unit testing (same precedent as
  * openclaw-proxy.ts's own small pure helpers). */
 export function buildChatUrl(host: string, proxyPort: number, ticket: string, token: string): string {
-  return `http://${host}:${proxyPort}/?t=${encodeURIComponent(ticket)}#token=${encodeURIComponent(token)}`;
+  const formattedHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+  return `http://${formattedHost}:${proxyPort}/?t=${encodeURIComponent(ticket)}#token=${encodeURIComponent(token)}`;
 }
 
 /** Local rendering cap for the accumulated log tail — mirrors the wire's own
@@ -213,20 +225,65 @@ export function MobileOpenClawView({
   const gatewayRunning = status?.state === 'running';
   const [chatState, setChatState] = useState<ChatState>({ kind: 'loading' });
   const [chatReloadNonce, setChatReloadNonce] = useState(0);
+  const chatGenerationRef = useRef(0);
+  const browserGenerationRef = useRef(0);
+  const [browserBusy, setBrowserBusy] = useState(false);
+  const [browserError, setBrowserError] = useState<ChatErrorReason | 'browser-open-failed' | null>(null);
 
   useEffect(() => {
-    if (!chatActive || !gatewayRunning) return;
+    const generation = chatGenerationRef.current + 1;
+    chatGenerationRef.current = generation;
+    if (!chatActive || !gatewayRunning || !pageVisible) {
+      setChatState({ kind: 'loading' });
+      return;
+    }
+    let cancelled = false;
     setChatState({ kind: 'loading' });
-    void transport.getOpenClawChatTicket().then((reply) => {
-      if (!reply.ticket || !reply.token || !reply.proxyPort) {
-        setChatState({ kind: 'unavailable' });
-        return;
-      }
-      setChatState({ kind: 'ready', url: buildChatUrl(transport.connectedHost, reply.proxyPort, reply.ticket, reply.token) });
-    });
-  }, [chatActive, gatewayRunning, chatReloadNonce, transport]);
+    setBrowserError(null);
+    void transport.getOpenClawChatTicket()
+      .then((reply) => {
+        if (cancelled || generation !== chatGenerationRef.current) return;
+        if (!reply.ok) {
+          setChatState({ kind: 'unavailable', reason: reply.reason });
+          return;
+        }
+        const host = transport.connectedHost;
+        if (!host) {
+          setChatState({ kind: 'unavailable', reason: 'invalid-host' });
+          return;
+        }
+        setChatState({
+          kind: 'frame-loading',
+          generation,
+          url: buildChatUrl(host, reply.proxyPort, reply.ticket, reply.token),
+        });
+      })
+      .catch(() => {
+        if (!cancelled && generation === chatGenerationRef.current) {
+          setChatState({ kind: 'unavailable', reason: 'gateway-unreachable' });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [chatActive, gatewayRunning, chatReloadNonce, pageVisible, transport]);
 
-  const reloadChat = useCallback(() => setChatReloadNonce((n) => n + 1), []);
+  useEffect(() => {
+    if (chatState.kind !== 'frame-loading') return;
+    const { generation, url } = chatState;
+    const timer = setTimeout(() => {
+      if (generation !== chatGenerationRef.current) return;
+      setChatState((current) => current.kind === 'frame-loading' && current.url === url
+        ? { kind: 'unavailable', reason: 'frame-timeout' }
+        : current);
+    }, OPENCLAW_CHAT_FRAME_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [chatState]);
+
+  const reloadChat = useCallback(() => {
+    setBrowserError(null);
+    setChatReloadNonce((n) => n + 1);
+  }, []);
 
   // "브라우저로 열기" opens in a SEPARATE top-level browsing context (external
   // browser, its own cookie jar) — it must mint its OWN fresh ticket rather
@@ -235,11 +292,36 @@ export function MobileOpenClawView({
   // redeemed (and thus burned) whichever ticket produced that URL, so
   // reusing it here would always come back "ticket invalid or expired".
   const openInBrowser = useCallback(() => {
-    void transport.getOpenClawChatTicket().then((reply) => {
-      if (!reply.ticket || !reply.token || !reply.proxyPort) return;
-      window.open(buildChatUrl(transport.connectedHost, reply.proxyPort, reply.ticket, reply.token), '_blank');
-    });
+    const generation = browserGenerationRef.current + 1;
+    browserGenerationRef.current = generation;
+    setBrowserBusy(true);
+    setBrowserError(null);
+    void transport.getOpenClawChatTicket()
+      .then(async (reply) => {
+        if (generation !== browserGenerationRef.current) return;
+        if (!reply.ok) {
+          setBrowserError(reply.reason);
+          return;
+        }
+        const host = transport.connectedHost;
+        if (!host) {
+          setBrowserError('invalid-host');
+          return;
+        }
+        await Browser.open({ url: buildChatUrl(host, reply.proxyPort, reply.ticket, reply.token) });
+      })
+      .catch(() => {
+        if (generation === browserGenerationRef.current) setBrowserError('browser-open-failed');
+      })
+      .finally(() => {
+        if (generation === browserGenerationRef.current) setBrowserBusy(false);
+      });
   }, [transport]);
+
+  useEffect(() => () => {
+    chatGenerationRef.current += 1;
+    browserGenerationRef.current += 1;
+  }, []);
 
   return (
     <Tabs
@@ -498,23 +580,61 @@ export function MobileOpenClawView({
             ) : chatState.kind === 'loading' ? (
               <div className="status-loading" data-testid="openclaw-chat-loading">{t('mobile.openClaw.loadingChat')}</div>
             ) : chatState.kind === 'unavailable' ? (
-              <div className="openclaw-guidance openclaw-guidance--error" data-testid="openclaw-chat-unavailable">
+              <div
+                className="openclaw-guidance openclaw-guidance--error"
+                data-error-reason={chatState.reason}
+                data-testid="openclaw-chat-unavailable"
+              >
                 {t('mobile.openClaw.chatUnavailable')}
+                <code className="openclaw-chat-error-code">{chatState.reason}</code>
                 <div className="openclaw-lifecycle-buttons">
                   <button type="button" className="btn" onClick={reloadChat} data-testid="openclaw-chat-retry">
                     {t('common.retry')}
                   </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={browserBusy}
+                    onClick={openInBrowser}
+                    data-testid="openclaw-chat-open-browser"
+                  >
+                    {browserBusy ? t('mobile.openClaw.loadingChat') : t('mobile.openClaw.openBrowser')}
+                  </button>
                 </div>
+                {browserError && <code className="openclaw-chat-error-code">{browserError}</code>}
               </div>
             ) : (
               <div className="openclaw-chat-frame-wrap">
-                <iframe
-                  key={chatState.url}
-                  className="openclaw-chat-frame"
-                  src={chatState.url}
-                  title="OpenClaw Control"
-                  data-testid="openclaw-chat-frame"
-                />
+                <div className="openclaw-chat-frame-stage">
+                  {chatState.kind === 'frame-loading' && (
+                    <div
+                      className="status-loading openclaw-chat-frame-loading"
+                      role="status"
+                      data-testid="openclaw-chat-frame-loading"
+                    >
+                      {t('mobile.openClaw.loadingChat')}
+                    </div>
+                  )}
+                  <iframe
+                    key={chatState.url}
+                    className={chatState.kind === 'frame-loading'
+                      ? 'openclaw-chat-frame openclaw-chat-frame--loading'
+                      : 'openclaw-chat-frame'}
+                    src={chatState.url}
+                    title="OpenClaw Control"
+                    onLoad={() => setChatState((current) => (
+                      current.kind === 'frame-loading' && current.url === chatState.url
+                        ? { kind: 'ready', url: current.url, generation: current.generation }
+                        : current
+                    ))}
+                    onError={() => setChatState((current) => (
+                      current.kind === 'frame-loading' && current.url === chatState.url
+                        ? { kind: 'unavailable', reason: 'frame-error' }
+                        : current
+                    ))}
+                    data-testid="openclaw-chat-frame"
+                  />
+                </div>
                 <div className="openclaw-chat-toolbar">
                   <button type="button" className="btn" onClick={reloadChat} data-testid="openclaw-chat-reload">
                     {t('mobile.openClaw.reload')}
@@ -522,12 +642,23 @@ export function MobileOpenClawView({
                   <button
                     type="button"
                     className="btn"
+                    disabled={browserBusy}
                     onClick={openInBrowser}
                     data-testid="openclaw-chat-open-browser"
                   >
-                    {t('mobile.openClaw.openBrowser')}
+                    {browserBusy ? t('mobile.openClaw.loadingChat') : t('mobile.openClaw.openBrowser')}
                   </button>
                 </div>
+                {browserError && (
+                  <div
+                    className="openclaw-guidance openclaw-guidance--error"
+                    data-error-reason={browserError}
+                    data-testid="openclaw-browser-error"
+                  >
+                    {t('mobile.openClaw.chatUnavailable')}
+                    <code className="openclaw-chat-error-code">{browserError}</code>
+                  </div>
+                )}
               </div>
             )}
             </section>

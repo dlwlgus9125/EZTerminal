@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileHeaderMoreActions } from './MobileHeaderMoreActions';
+import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -54,7 +55,13 @@ afterEach(() => {
 });
 
 function openSheet(props: HarnessProps): void {
-  act(() => root.render(<StrictMode><Harness {...props} /></StrictMode>));
+  act(() => root.render(
+    <StrictMode>
+      <MobileNavigationHistoryProvider>
+        <Harness {...props} />
+      </MobileNavigationHistoryProvider>
+    </StrictMode>,
+  ));
   act(() => container.querySelector<HTMLButtonElement>('[data-testid="trigger"]')!.click());
 }
 
@@ -97,7 +104,10 @@ describe('MobileHeaderMoreActions', () => {
 
   it('treats a history pop as Android Back dismissal', async () => {
     openSheet({ wide: false, connected: true });
-    act(() => window.dispatchEvent(new PopStateEvent('popstate')));
+    act(() => {
+      window.history.replaceState({}, '');
+      window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+    });
     await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     expect(container.querySelector('[data-testid="workspace-more-sheet"]')).toBeNull();
   });

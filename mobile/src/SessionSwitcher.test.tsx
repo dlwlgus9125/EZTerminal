@@ -8,6 +8,7 @@ import type {
   SessionInfo,
 } from '../../src/shared/ipc';
 import type { AgentActivity } from '../../src/shared/agent';
+import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
 import { SessionSwitcher } from './SessionSwitcher';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
@@ -72,12 +73,14 @@ async function renderSwitcher(transport: WsEzTerminalTransport): Promise<HTMLDiv
   root = createRoot(container);
   await act(async () => {
     root!.render(
-      <SessionSwitcher
-        variant="page"
-        transport={transport}
-        onSelect={vi.fn()}
-        onDisconnect={vi.fn()}
-      />,
+      <MobileNavigationHistoryProvider>
+        <SessionSwitcher
+          variant="page"
+          transport={transport}
+          onSelect={vi.fn()}
+          onDisconnect={vi.fn()}
+        />
+      </MobileNavigationHistoryProvider>,
     );
     await Promise.resolve();
   });
@@ -167,7 +170,10 @@ describe('SessionSwitcher risky destruction', () => {
     destroyButton.focus();
     await clickAndFlush(destroyButton);
 
-    act(() => window.dispatchEvent(new PopStateEvent('popstate')));
+    act(() => {
+      window.history.replaceState({}, '');
+      window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+    });
     await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
 
     expect(element.querySelector('[role="alertdialog"]')).toBeNull();

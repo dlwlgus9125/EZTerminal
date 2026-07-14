@@ -922,6 +922,16 @@ export interface RemoteSecurityStatus {
   readonly error: string | null;
 }
 
+/** Desired setting and independently observed listener lifecycle. */
+export interface RemoteRuntimeStatus {
+  readonly desiredEnabled: boolean;
+  readonly state: 'off' | 'starting' | 'running' | 'stopping' | 'error';
+  /** Configured port while stopped/error; actual bound port while running. */
+  readonly port: number;
+  readonly errorCode: string | null;
+  readonly error: string | null;
+}
+
 // ── Preload bridge API ────────────────────────────────────────────────────────
 
 export interface EzTerminalApi {
@@ -1036,11 +1046,16 @@ export interface EzTerminalApi {
   /** Mint + persist a new token — existing connections keep working (the bridge
    * only re-checks the token on new connections); new connections need it. */
   rotateRemoteToken: () => Promise<string>;
-  /** Whether the remote bridge is enabled (persisted, defaults to true). */
+  /** Persisted desired state (legacy convenience; defaults to false). */
   getRemoteEnabled: () => Promise<boolean>;
-  /** Persist the on/off toggle and start/stop the bridge accordingly (serialized
-   * against overlapping toggles main-side). Returns the resulting running state. */
-  setRemoteEnabled: (enabled: boolean) => Promise<boolean>;
+  /** Desired setting plus the independently observed listener lifecycle. */
+  getRemoteRuntimeStatus: () => Promise<RemoteRuntimeStatus>;
+  /** Persist desired state and reconcile the real listener. */
+  setRemoteEnabled: (enabled: boolean) => Promise<RemoteRuntimeStatus>;
+  /** Retry listener startup without changing the persisted desired state. */
+  retryRemoteRuntime: () => Promise<RemoteRuntimeStatus>;
+  /** Runtime state transitions pushed by main. */
+  onRemoteRuntimeStatus: (listener: (status: RemoteRuntimeStatus) => void) => () => void;
 
   // ── File explorer (file-explorer plan, M1) ────────────────────────────────
   // Desktop drawer thin passthroughs to main's `FileService`. `''` for a path

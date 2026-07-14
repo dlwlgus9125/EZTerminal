@@ -87,7 +87,7 @@ async function main(): Promise<void> {
     await connectAndAuth(token);
 
     console.log('[smoke] creating a session...');
-    await tap(await waitForText('+ New Session'));
+    await tap(await waitForText('New terminal'));
 
     console.log('[smoke] running cmd /c echo hello...');
     // NOTE: `echo` is NOT a command in EZTerminal's structured shell — there is

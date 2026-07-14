@@ -445,7 +445,7 @@ describe('WsEzTerminalTransport — createSession / destroySession / listSession
     await expect(openClawSessions).resolves.toEqual([]);
     await expect(config).resolves.toEqual({ 'agents.defaults.model': 'unset', 'gateway.port': 'unset' });
     await expect(configSet).resolves.toEqual({ ok: false, restartRequired: false, error: expect.any(String) });
-    await expect(ticket).resolves.toEqual({ ticket: null, proxyPort: 0, token: null });
+    await expect(ticket).resolves.toEqual({ ok: false, reason: 'gateway-unreachable' });
   });
 
   it('fails FIFO and map requests started after explicit disconnect without sending or retaining waiters', async () => {
@@ -2575,7 +2575,75 @@ describe('WsEzTerminalTransport — OpenClaw management (M4)', () => {
       proxyPort: 7421,
       token: 'gw-token',
     });
-    await expect(promise).resolves.toEqual({ ticket: 'tick-1', proxyPort: 7421, token: 'gw-token' });
+    await expect(promise).resolves.toEqual({
+      ok: true,
+      ticket: 'tick-1',
+      proxyPort: 7421,
+      token: 'gw-token',
+    });
+  });
+
+  it('preserves a typed ticket failure reason from the desktop bridge', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.getOpenClawChatTicket();
+    sockets[0].triggerMessage({
+      kind: 'openclaw-chat-ticket-reply',
+      requestId: 'req-1',
+      ticket: null,
+      proxyPort: 0,
+      token: null,
+      reason: 'insecure-auth-required',
+    });
+
+    await expect(promise).resolves.toEqual({ ok: false, reason: 'insecure-auth-required' });
+  });
+
+  it('times out a ticket request, ignores its late reply, and allows a fresh retry', async () => {
+    vi.useFakeTimers();
+    try {
+      let id = 0;
+      const { createSocket, sockets } = makeCreateSocket();
+      const transport = new WsEzTerminalTransport({
+        url: 'ws://x',
+        token: 'tok',
+        createSocket,
+        newId: () => `req-${++id}`,
+        openClawTicketTimeoutMs: 25,
+      });
+      sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+      const timedOut = transport.getOpenClawChatTicket();
+      await vi.advanceTimersByTimeAsync(25);
+      await expect(timedOut).resolves.toEqual({ ok: false, reason: 'timeout' });
+
+      const retry = transport.getOpenClawChatTicket();
+      sockets[0].triggerMessage({
+        kind: 'openclaw-chat-ticket-reply',
+        requestId: 'req-1',
+        ticket: 'late',
+        proxyPort: 7421,
+        token: 'late-token',
+      });
+      sockets[0].triggerMessage({
+        kind: 'openclaw-chat-ticket-reply',
+        requestId: 'req-2',
+        ticket: 'fresh',
+        proxyPort: 7421,
+        token: 'fresh-token',
+      });
+      await expect(retry).resolves.toEqual({
+        ok: true,
+        ticket: 'fresh',
+        proxyPort: 7421,
+        token: 'fresh-token',
+      });
+      transport.disconnect();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a socket close resolves every in-flight OpenClaw request instead of leaving it pending forever', async () => {
@@ -2601,7 +2669,22 @@ describe('WsEzTerminalTransport — OpenClaw management (M4)', () => {
     await expect(sessionsPromise).resolves.toEqual([]);
     await expect(configPromise).resolves.toEqual({ 'agents.defaults.model': 'unset', 'gateway.port': 'unset' });
     await expect(configSetPromise).resolves.toEqual({ ok: false, restartRequired: false, error: expect.any(String) });
-    await expect(ticketPromise).resolves.toEqual({ ticket: null, proxyPort: 0, token: null });
+    await expect(ticketPromise).resolves.toEqual({ ok: false, reason: 'gateway-unreachable' });
+  });
+});
+
+describe('WsEzTerminalTransport — connected host parsing', () => {
+  it('uses URL parsing for DNS, IPv4, and bracketed IPv6 endpoints', () => {
+    for (const [url, host] of [
+      ['wss://desktop.example.ts.net:7420/path', 'desktop.example.ts.net'],
+      ['ws://192.0.2.4:7420', '192.0.2.4'],
+      ['ws://[2001:db8::1]:7420', '[2001:db8::1]'],
+    ] as const) {
+      const { createSocket } = makeCreateSocket();
+      const transport = new WsEzTerminalTransport({ url, token: 'tok', createSocket });
+      expect(transport.connectedHost).toBe(host);
+      transport.disconnect();
+    }
   });
 });
 

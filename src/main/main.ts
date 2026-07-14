@@ -50,13 +50,13 @@ import { SessionWorktreeGuard } from './session-worktree-guard';
 import {
   startRemoteBridge,
   DEFAULT_REMOTE_BRIDGE_PORT,
-  type RemoteBridgeHandle,
   type RemoteFileSource,
   type RemoteOpenClawSource,
   type RemotePacketSource,
   type RemoteQuickCommandSource,
   type RemoteStatsSource,
 } from './remote-bridge';
+import { RemoteRuntimeController, RemoteRuntimeStartError } from './remote-runtime';
 import { formatConnectionInfo } from './remote-connection-info';
 import {
   TerminalRendererPreferenceSchema,
@@ -76,6 +76,7 @@ import type {
   InterpreterToMain,
   MainToInterpreter,
   RunStartedInfo,
+  RemoteRuntimeStatus,
   SessionInfo,
   SystemStatsSnapshot,
 } from '../shared/ipc';
@@ -114,6 +115,25 @@ if (started) {
 // by test harnesses; production never defines it.
 if (process.env.EZTERMINAL_USER_DATA_DIR) {
   app.setPath('userData', process.env.EZTERMINAL_USER_DATA_DIR);
+}
+
+// Production is single-instance so a second desktop cannot silently steal the
+// fixed remote/proxy ports or present a different pairing token. Test harnesses
+// that intentionally launch isolated instances must opt out explicitly.
+const allowMultipleInstances = process.env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES === '1';
+if (!started && !allowMultipleInstances) {
+  const primaryInstance = app.requestSingleInstanceLock();
+  if (!primaryInstance) {
+    app.quit();
+  } else {
+    app.on('second-instance', () => {
+      const mainWindow = mainWindowRef ?? BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    });
+  }
 }
 
 // ── Local-only crash capture (B-M5) ──────────────────────────────────────────
@@ -157,12 +177,11 @@ let systemStatsService: SystemStatsService | null = null;
 // must be a module-level `let`, not a local const inside the 'ready' handler.
 let packetCaptureRegistry: PacketCaptureRegistry | null = null;
 
-// Mobile remote-control WS bridge (M0) — created once on 'ready', stopped on quit.
-let remoteBridgeHandle: RemoteBridgeHandle | null = null;
+// Desired setting + observed mobile remote-control listener lifecycle.
+let remoteRuntimeController: RemoteRuntimeController | null = null;
 
-// OpenClaw reverse proxy (openclaw-management M4) — lifecycle in lockstep
-// with remoteBridgeHandle above (both chained through the same `bridgeOp`
-// serialization); stopped on quit. Never touches the gateway itself.
+// OpenClaw reverse proxy (openclaw-management M4) — started lazily by the
+// first authenticated chat-ticket request, independently of the core bridge.
 let openClawProxyHandle: OpenClawProxyHandle | null = null;
 
 // OpenClaw management service (openclaw-management M1) — created once on
@@ -833,8 +852,9 @@ app.on('ready', () => {
     void layoutStore.flush();
     systemStatsService?.stop();
     packetCaptureRegistry?.kill();
-    void remoteBridgeHandle?.stop();
-    void openClawProxyHandle?.stop();
+    void remoteRuntimeController?.shutdown();
+    void stopOpenClawProxy();
+    unsubscribeOpenClawEndpoint();
     openClawService?.dispose();
     openClawChatView?.destroy();
     agentActivityService?.dispose();
@@ -1183,27 +1203,65 @@ app.on('ready', () => {
   // a paired device full command + filesystem access, so the listener only
   // binds once the user enables it in Settings. When enabled it binds 0.0.0.0
   // (LAN + Tailscale reachable), token-gated and origin-checked. The OpenClaw
-  // proxy (mobile chat embed's tunnel to the gateway, architecture decision
-  // (b)) shares the SAME enable/disable lifecycle — see `startBridge`/the
-  // `remote:set-enabled` handler below, both chained through `bridgeOp`.
+  // proxy (mobile chat embed's tunnel to the gateway) starts lazily only for
+  // chat, so its port/upstream failure cannot take terminal/session/file remote
+  // control down with it.
   // The bridge adapts to the SAME broker instance the local IPC handlers use,
   // so both transports share one interpreter listener + one session directory.
   const openClawProxyPort = Number(process.env.EZTERMINAL_OPENCLAW_PROXY_PORT) || DEFAULT_OPENCLAW_PROXY_PORT;
   // Adapts `openclaw` (an OpenClawService instance) + `openClawProxyHandle`
-  // (started/stopped in lockstep, see `startBridge` below) to the bridge's DI
-  // seam — `mintChatTicket` is the one method genuinely composed from BOTH
+  // (started lazily below) to the bridge's DI seam — `mintChatTicket` is the
+  // one method genuinely composed from BOTH
   // sources (the service's token + the proxy's ticket), everything else is a
   // direct passthrough (method names match `OpenClawService`'s own exactly).
   // OpenClaw availability (openclaw-stabilization M3) — `currentOpenClawVisible`
-  // is kept resolved EAGERLY (recomputed in `startBridge` below and on every
+  // is kept resolved eagerly (before listener start and on every
   // `settings:set-openclaw-mode` call) so `remoteOpenClawSource.isVisible()`
-  // can stay synchronous (the bridge gates every openclaw-* arm on it, per
-  // connection, with no async round trip). `remoteOpenClawVisibilityListeners`
+  // can stay synchronous for the mobile presentation hint without gating
+  // authenticated remote APIs. `remoteOpenClawVisibilityListeners`
   // mirrors `remoteStatsListeners` above — the bridge's per-connection
   // `subscribeVisibility` adds/removes from it; notified below whenever the
   // mode changes.
   let currentOpenClawVisible = false;
   const remoteOpenClawVisibilityListeners = new Set<(visible: boolean) => void>();
+  let openClawProxyStart: Promise<OpenClawProxyHandle | null> | null = null;
+  const ensureOpenClawProxy = (): Promise<OpenClawProxyHandle | null> => {
+    if (openClawProxyHandle) return Promise.resolve(openClawProxyHandle);
+    if (openClawProxyStart) return openClawProxyStart;
+    openClawProxyStart = (async () => {
+      try {
+        const endpoint = openclaw.getEndpoint();
+        const handle = await startOpenClawProxy({
+          port: openClawProxyPort,
+          upstreamOrigin: endpoint.origin,
+        });
+        // Endpoint discovery/config may have advanced while the listener was
+        // binding. Retarget before exposing the handle.
+        handle.setUpstreamOrigin(openclaw.getEndpoint().origin);
+        openClawProxyHandle = handle;
+        return handle;
+      } catch (error) {
+        console.error('[main] OpenClaw proxy remained off:', error);
+        return null;
+      } finally {
+        openClawProxyStart = null;
+      }
+    })();
+    return openClawProxyStart;
+  };
+  const stopOpenClawProxy = async (): Promise<void> => {
+    if (openClawProxyStart) await openClawProxyStart;
+    const handle = openClawProxyHandle;
+    openClawProxyHandle = null;
+    if (handle) await handle.stop();
+  };
+  const unsubscribeOpenClawEndpoint = openclaw.onEndpointChanged((endpoint) => {
+    try {
+      openClawProxyHandle?.setUpstreamOrigin(endpoint.origin);
+    } catch (error) {
+      console.error('[main] OpenClaw proxy retarget failed:', error);
+    }
+  });
   const remoteOpenClawSource: RemoteOpenClawSource = {
     subscribeStatus: (listener) => openclaw.subscribeStatus(listener),
     runLifecycle: (action) => openclaw.runLifecycle(action),
@@ -1212,10 +1270,25 @@ app.on('ready', () => {
     getCoreConfig: () => openclaw.getCoreConfig(),
     setCoreConfig: (key, value) => openclaw.setCoreConfig(key, value),
     mintChatTicket: async () => {
-      if (!openClawProxyHandle) return null;
+      if (remoteRuntimeController?.currentStatus.state !== 'running') {
+        return { ticket: null, reason: 'proxy-unavailable' };
+      }
+      const status = await openclaw.getStatus();
+      if (status.state === 'unknown') return { ticket: null, reason: 'gateway-unreachable' };
+      if (status.state !== 'running') return { ticket: null, reason: 'gateway-stopped' };
+      const insecureAuth = await openclaw.getInsecureAuthStatus();
+      if (insecureAuth === 'disabled' || insecureAuth === 'unset') {
+        return { ticket: null, reason: 'insecure-auth-required' };
+      }
+      if (insecureAuth === 'error') return { ticket: null, reason: 'token-unavailable' };
       const token = await openclaw.getChatToken();
-      if (!token) return null;
-      return { ticket: openClawProxyHandle.mintTicket(), proxyPort: openClawProxyHandle.port, token };
+      if (!token) return { ticket: null, reason: 'token-unavailable' };
+      const proxy = await ensureOpenClawProxy();
+      if (!proxy || remoteRuntimeController?.currentStatus.state !== 'running') {
+        if (proxy) await stopOpenClawProxy();
+        return { ticket: null, reason: 'proxy-unavailable' };
+      }
+      return { ticket: proxy.mintTicket(), proxyPort: proxy.port, token };
     },
     isVisible: () => currentOpenClawVisible,
     subscribeVisibility: (listener) => {
@@ -1286,52 +1359,53 @@ app.on('ready', () => {
       return quickCommandStore.list();
     },
   };
-  // Gated on `remoteEnabled` (v0.2.0 D2): a closure so both boot and the
-  // runtime toggle below start the SAME shape of bridge + proxy, in lockstep
-  // (architecture decision (b) — the OpenClaw proxy's lifecycle matches
-  // `remoteEnabled` exactly, never a separate always-on listener).
-  const startBridge = async (): Promise<void> => {
-    await ensureRemoteTokenSecurity();
-    await agentInfrastructureReady;
-    // M3: resolve visibility BEFORE the WS server starts listening, so the
-    // very first connection's post-auth push (see remote-bridge.ts) is never
-    // stale — a client cannot connect until `startRemoteBridge` below runs.
-    currentOpenClawVisible = await resolveOpenClawVisibility(await layoutStore.getOpenClawMode(), () => openclaw.isInstalled());
-    if (!openClawProxyHandle) {
-      const status = await openclaw.getStatus();
-      openClawProxyHandle = await startOpenClawProxy({
-        port: openClawProxyPort,
-        upstreamOrigin: `http://127.0.0.1:${status.port}`,
-      });
+  const publishRemoteRuntimeStatus = (status: RemoteRuntimeStatus): void => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('remote:runtime-status', status);
     }
-    remoteBridgeHandle = startRemoteBridge({
-      port: remoteBridgePort,
-      getToken: () => remoteTokenStore.getToken(),
-      broker: broker!,
-      statsSource: remoteStatsSource,
-      packetSource: remotePacketSource,
-      // `satisfies` forces a structural check here — the same `fileService`
-      // instance backs the desktop IPC handlers above and the mobile bridge.
-      fileSource: fileService satisfies RemoteFileSource,
-      worktreeSource: worktreeService,
-      quickCommandSource: remoteQuickCommandSource,
-      openclawSource: remoteOpenClawSource,
-      agentSource: agentActivityService ?? undefined,
-    });
   };
-  // `app.on('ready', ...)` isn't async, so the boot gate is a fire-and-forget
-  // IIFE rather than a top-level await.
-  void (async () => {
-    await storeReady;
-    if (await layoutStore.getRemoteEnabled()) await startBridge();
-  })().catch((err) => {
-    console.error('[main] remote bridge remained off:', err);
+  const runtime = new RemoteRuntimeController({
+    port: remoteBridgePort,
+    readDesiredEnabled: async () => {
+      await storeReady;
+      return layoutStore.getRemoteEnabled();
+    },
+    writeDesiredEnabled: async (enabled) => {
+      await storeReady;
+      await layoutStore.setRemoteEnabled(enabled);
+    },
+    start: async () => {
+      try {
+        await ensureRemoteTokenSecurity();
+      } catch {
+        throw new RemoteRuntimeStartError('REMOTE_TOKEN_UNAVAILABLE', 'remote token unavailable');
+      }
+      await agentInfrastructureReady;
+      // Keep the presentation hint current before auth; it no longer gates
+      // any authenticated OpenClaw request.
+      currentOpenClawVisible = await resolveOpenClawVisibility(
+        await layoutStore.getOpenClawMode(),
+        () => openclaw.isInstalled(),
+      );
+      return startRemoteBridge({
+        port: remoteBridgePort,
+        getToken: () => remoteTokenStore.getToken(),
+        broker: broker!,
+        statsSource: remoteStatsSource,
+        packetSource: remotePacketSource,
+        fileSource: fileService satisfies RemoteFileSource,
+        worktreeSource: worktreeService,
+        quickCommandSource: remoteQuickCommandSource,
+        openclawSource: remoteOpenClawSource,
+        agentSource: agentActivityService ?? undefined,
+      });
+    },
+    onStatus: publishRemoteRuntimeStatus,
+    onError: (error) => console.error('[main] remote runtime operation failed:', error),
   });
-
-  // Runtime on/off toggle (v0.2.0 D2): every start/stop chains off `bridgeOp`
-  // so rapid toggles from the renderer never overlap (e.g. a stop still
-  // draining its `wss.close` callback while a second toggle races the same port).
-  let bridgeOp: Promise<void> = Promise.resolve();
+  remoteRuntimeController = runtime;
+  void runtime.initialize();
 
   // Desktop pairing panel (M4): connection info/token are read-only display +
   // an explicit rotate action, same invoke shape as the settings handlers above.
@@ -1360,51 +1434,24 @@ app.on('ready', () => {
     } catch (err) {
       remoteTokenSecure = false;
       remoteSecurityError = 'The new remote access token could not be stored securely. Remote access was stopped.';
-      if (remoteBridgeHandle) {
-        const handle = remoteBridgeHandle;
-        remoteBridgeHandle = null;
-        await handle.stop();
-      }
-      if (openClawProxyHandle) {
-        const proxyHandle = openClawProxyHandle;
-        openClawProxyHandle = null;
-        await proxyHandle.stop();
-      }
+      await runtime.stopWithError('REMOTE_TOKEN_UNAVAILABLE', remoteSecurityError);
+      await stopOpenClawProxy().catch((error) => console.error('[main] OpenClaw proxy stop failed:', error));
       throw err;
     }
   });
   ipcMain.handle('remote:get-enabled', async () => {
-    await storeReady;
-    return layoutStore.getRemoteEnabled();
+    return (await runtime.getStatus()).desiredEnabled;
   });
+  ipcMain.handle('remote:get-runtime-status', () => runtime.getStatus());
   ipcMain.handle('remote:set-enabled', async (_event, enabled: boolean) => {
-    if (typeof enabled !== 'boolean') return remoteBridgeHandle !== null;
-    await storeReady;
-    await layoutStore.setRemoteEnabled(enabled);
-    const operation = bridgeOp.then(async () => {
-      if (enabled) {
-        if (!remoteBridgeHandle) await startBridge();
-      } else {
-        if (remoteBridgeHandle) {
-          const handle = remoteBridgeHandle;
-          remoteBridgeHandle = null;
-          await handle.stop();
-        }
-        // Proxy lifecycle in lockstep with the bridge (architecture decision
-        // (b)) — never left running once remote control is turned off.
-        if (openClawProxyHandle) {
-          const proxyHandle = openClawProxyHandle;
-          openClawProxyHandle = null;
-          await proxyHandle.stop();
-        }
-      }
-    });
-    // A failed security/start attempt must reject this caller without wedging
-    // the serialized lane; a later toggle is allowed to retry after repair.
-    bridgeOp = operation.catch(() => undefined);
-    await operation;
-    return remoteBridgeHandle !== null;
+    if (typeof enabled !== 'boolean') return runtime.getStatus();
+    const status = await runtime.setDesiredEnabled(enabled);
+    if (!enabled) {
+      await stopOpenClawProxy().catch((error) => console.error('[main] OpenClaw proxy stop failed:', error));
+    }
+    return status;
   });
+  ipcMain.handle('remote:retry-runtime', () => runtime.retry());
 
   // ── OpenClaw management (openclaw-management M1) ─────────────────────────
   // `openclaw`/`openClawService` are constructed earlier (see the mobile

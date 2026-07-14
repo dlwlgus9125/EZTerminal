@@ -20,7 +20,11 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { _electron as electron, type ElectronApplication } from '@playwright/test';
+import {
+  _electron as electron,
+  type ElectronApplication,
+} from '@playwright/test';
+import { WebSocket, type RawData } from 'ws';
 
 export const ROOT = path.resolve(import.meta.dirname, '..', '..');
 export const MAIN_ENTRY = path.join(ROOT, '.vite', 'build', 'main.js');
@@ -36,7 +40,8 @@ export const APK_PATH = path.join(
   'app-debug.apk',
 );
 export const APP_ID = 'com.ezterminal.remote';
-export const REMOTE_PORT = Number(process.env.EZTERMINAL_REMOTE_PORT) || 7420;
+export const REMOTE_PORT = Number(process.env.EZTERMINAL_REMOTE_PORT) || 17420;
+export const OPENCLAW_PROXY_PORT = Number(process.env.EZTERMINAL_OPENCLAW_PROXY_PORT) || 17421;
 // 10.0.2.2 is the Android emulator's fixed alias for the HOST machine's localhost.
 export const EMULATOR_HOST_URL = `ws://10.0.2.2:${REMOTE_PORT}`;
 const DUMP_DEVICE_PATH = '/sdcard/ez_e2e_dump.xml';
@@ -168,6 +173,279 @@ export function center(bounds: readonly [number, number, number, number]): Point
 export async function tap(p: Point): Promise<void> {
   runAdb(['shell', 'input', 'tap', String(p.x), String(p.y)]);
   await sleep(400);
+}
+
+interface CdpTarget {
+  readonly type?: string;
+  readonly url?: string;
+  readonly webSocketDebuggerUrl?: string;
+}
+
+interface CdpPendingRequest {
+  readonly resolve: (value: unknown) => void;
+  readonly reject: (error: Error) => void;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
+let webViewCdp: WebSocket | null = null;
+let webViewCdpRequestId = 0;
+let webViewForwardPort: number | null = null;
+let webViewDeviceGeometry: {
+  readonly bounds: readonly [number, number, number, number];
+  readonly viewportWidth: number;
+  readonly viewportHeight: number;
+} | null = null;
+const webViewCdpPending = new Map<number, CdpPendingRequest>();
+
+function resetWebViewCdp(error?: Error): void {
+  const socket = webViewCdp;
+  webViewCdp = null;
+  if (socket && socket.readyState !== WebSocket.CLOSED) socket.terminate();
+  for (const pending of webViewCdpPending.values()) {
+    clearTimeout(pending.timer);
+    pending.reject(error ?? new Error('Android WebView DevTools connection closed'));
+  }
+  webViewCdpPending.clear();
+  webViewDeviceGeometry = null;
+  if (webViewForwardPort !== null) {
+    try {
+      runAdb(['forward', '--remove', `tcp:${webViewForwardPort}`]);
+    } catch {
+      // The device may already be gone during best-effort E2E cleanup.
+    }
+    webViewForwardPort = null;
+  }
+}
+
+/** Releases the page-level DevTools client so a completed Node E2E process
+ * can exit cleanly. The adb forward itself owns no Node event-loop resources. */
+export function closeWebViewDevtools(): void {
+  resetWebViewCdp();
+}
+
+async function resolveWebViewCdp(): Promise<WebSocket> {
+  if (webViewCdp?.readyState === WebSocket.OPEN) return webViewCdp;
+  resetWebViewCdp();
+  const sockets = runAdb(['shell', 'cat', '/proc/net/unix']);
+  const socketNames = [...new Set(
+    [...sockets.matchAll(/@(webview_devtools_remote(?:_\d+)?)/g)].map((match) => match[1]),
+  )].reverse();
+  if (socketNames.length === 0) {
+    throw new Error('Android WebView DevTools socket is not available (use a debug APK)');
+  }
+
+  let port = 0;
+  let target: CdpTarget | undefined;
+  let discoveryError: unknown;
+  for (const socketName of socketNames) {
+    const forwarded = runAdb(['forward', 'tcp:0', `localabstract:${socketName}`]).trim();
+    const candidatePort = Number(forwarded);
+    if (!Number.isSafeInteger(candidatePort) || candidatePort <= 0) {
+      discoveryError = new Error(`adb did not allocate a WebView DevTools port: ${JSON.stringify(forwarded)}`);
+      continue;
+    }
+    try {
+      const response = await fetch(`http://127.0.0.1:${candidatePort}/json/list`, {
+        signal: AbortSignal.timeout(2_000),
+      });
+      if (!response.ok) throw new Error(`target discovery failed (${response.status})`);
+      const targets = await response.json() as CdpTarget[];
+      const candidateTarget = targets.find(
+        (candidate) => candidate.type === 'page' && candidate.url?.startsWith('http://localhost'),
+      );
+      if (!candidateTarget?.webSocketDebuggerUrl) throw new Error('target is not the EZTerminal WebView');
+      port = candidatePort;
+      target = candidateTarget;
+      webViewForwardPort = candidatePort;
+      break;
+    } catch (error) {
+      discoveryError = error;
+      try {
+        runAdb(['forward', '--remove', `tcp:${candidatePort}`]);
+      } catch {
+        // Continue probing any other live WebView socket.
+      }
+    }
+  }
+  if (!target?.webSocketDebuggerUrl || port <= 0) {
+    throw new Error(`No inspectable EZTerminal WebView page appeared: ${String(discoveryError)}`);
+  }
+
+  const debuggerUrl = new URL(target.webSocketDebuggerUrl);
+  debuggerUrl.hostname = '127.0.0.1';
+  debuggerUrl.port = String(port);
+  const client = new WebSocket(debuggerUrl);
+  await new Promise<void>((resolve, reject) => {
+    const onOpen = (): void => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error: Error): void => {
+      cleanup();
+      reject(error);
+    };
+    const cleanup = (): void => {
+      client.off('open', onOpen);
+      client.off('error', onError);
+    };
+    client.on('open', onOpen);
+    client.on('error', onError);
+  });
+  client.on('message', (raw: RawData) => {
+    let message: {
+      readonly id?: number;
+      readonly error?: { readonly message?: string };
+      readonly result?: {
+        readonly result?: { readonly value?: unknown; readonly description?: string };
+        readonly exceptionDetails?: { readonly text?: string };
+      };
+    };
+    try {
+      message = JSON.parse(raw.toString()) as typeof message;
+    } catch {
+      return;
+    }
+    if (typeof message.id !== 'number') return;
+    const pending = webViewCdpPending.get(message.id);
+    if (!pending) return;
+    webViewCdpPending.delete(message.id);
+    clearTimeout(pending.timer);
+    const protocolError = message.error?.message
+      ?? message.result?.exceptionDetails?.text;
+    if (protocolError) pending.reject(new Error(protocolError));
+    else pending.resolve(message.result?.result?.value);
+  });
+  client.on('close', () => resetWebViewCdp());
+  client.on('error', (error) => resetWebViewCdp(error));
+  webViewCdp = client;
+  return client;
+}
+
+async function evaluateWebView<T>(expression: string): Promise<T> {
+  const client = await resolveWebViewCdp();
+  const id = webViewCdpRequestId + 1;
+  webViewCdpRequestId = id;
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      webViewCdpPending.delete(id);
+      reject(new Error('Android WebView DevTools evaluation timed out'));
+    }, 5_000);
+    webViewCdpPending.set(id, {
+      resolve: (value) => resolve(value as T),
+      reject,
+      timer,
+    });
+    client.send(JSON.stringify({
+      id,
+      method: 'Runtime.evaluate',
+      params: { expression, returnByValue: true, awaitPromise: true },
+    }), (error) => {
+      if (!error) return;
+      const pending = webViewCdpPending.get(id);
+      if (!pending) return;
+      webViewCdpPending.delete(id);
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    });
+  });
+}
+
+export interface WebViewHistorySnapshot {
+  readonly length: number;
+  readonly state: unknown;
+  readonly url: string;
+}
+
+export function getWebViewHistorySnapshot(): Promise<WebViewHistorySnapshot> {
+  return evaluateWebView<WebViewHistorySnapshot>(
+    '({ length: window.history.length, state: window.history.state, url: window.location.href })',
+  );
+}
+
+function visibleTestIdExpression(testId: string): string {
+  return `(() => {
+    const nodes = [...document.querySelectorAll('[data-testid]')]
+      .filter((node) => node.getAttribute('data-testid') === ${JSON.stringify(testId)});
+    const element = nodes.at(-1);
+    if (!(element instanceof HTMLElement)) return null;
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    if (rect.width <= 0 || rect.height <= 0 || style.display === 'none' || style.visibility === 'hidden') return null;
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
+  })()`;
+}
+
+/** Locates a DOM test id through CDP, then performs a real device-level tap
+ * at its center. This reaches fixed WebView overlays that UIAutomator omits
+ * while still validating Android touch dispatch rather than calling click(). */
+export async function tapTestId(testId: string, timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  for (;;) {
+    try {
+      const geometry = await evaluateWebView<{
+        readonly x: number;
+        readonly y: number;
+        readonly viewportWidth: number;
+        readonly viewportHeight: number;
+      } | null>(visibleTestIdExpression(testId));
+      if (!geometry) throw new Error('element is not visible');
+      if (
+        !webViewDeviceGeometry
+        || webViewDeviceGeometry.viewportWidth !== geometry.viewportWidth
+        || webViewDeviceGeometry.viewportHeight !== geometry.viewportHeight
+      ) {
+        const webView = tryDumpUi().find((node) => node.className === 'android.webkit.WebView');
+        webViewDeviceGeometry = webView
+          ? {
+              bounds: webView.bounds,
+              viewportWidth: geometry.viewportWidth,
+              viewportHeight: geometry.viewportHeight,
+            }
+          : null;
+      }
+      if (!webViewDeviceGeometry || geometry.viewportWidth <= 0 || geometry.viewportHeight <= 0) {
+        throw new Error('Android WebView device bounds are unavailable');
+      }
+      const [left, top, right, bottom] = webViewDeviceGeometry.bounds;
+      await tap({
+        x: Math.round(left + geometry.x * ((right - left) / geometry.viewportWidth)),
+        y: Math.round(top + geometry.y * ((bottom - top) / geometry.viewportHeight)),
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (Date.now() > deadline) {
+        throw new Error(`Timed out tapping data-testid=${JSON.stringify(testId)}: ${String(lastError)}`);
+      }
+      await sleep(300);
+    }
+  }
+}
+
+export async function waitForTestId(testId: string, timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const geometry = await evaluateWebView<unknown | null>(visibleTestIdExpression(testId));
+    if (geometry) return;
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for data-testid=${JSON.stringify(testId)}`);
+    await sleep(250);
+  }
+}
+
+export async function waitForTestIdHidden(testId: string, timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const geometry = await evaluateWebView<unknown | null>(visibleTestIdExpression(testId));
+    if (!geometry) return;
+    if (Date.now() > deadline) throw new Error(`Timed out hiding data-testid=${JSON.stringify(testId)}`);
+    await sleep(250);
+  }
 }
 
 export async function typeText(text: string): Promise<void> {
@@ -396,6 +674,9 @@ export async function launchDesktop(): Promise<{ app: ElectronApplication; token
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
   env.EZTERMINAL_USER_DATA_DIR = userDataDir;
+  env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES = '1';
+  env.EZTERMINAL_REMOTE_PORT = String(REMOTE_PORT);
+  env.EZTERMINAL_OPENCLAW_PROXY_PORT = String(OPENCLAW_PROXY_PORT);
   const app = await electron.launch({ args: [MAIN_ENTRY], env });
   const win = await app.firstWindow();
   await win.waitForLoadState('domcontentloaded');
@@ -412,7 +693,7 @@ export async function launchDesktop(): Promise<{ app: ElectronApplication; token
  * Drives the phone from a cold/unknown app state into the authed
  * MobileWorkspace: installs the debug APK fresh, clears any stale app data,
  * launches the Activity, fills the connect form with `EMULATOR_HOST_URL` +
- * `token`, and retries tapping `Connect` until `'+ New Session'` shows (a
+ * `token`, and retries tapping `Connect` until `New terminal` shows (a
  * first attempt sometimes races App.tsx's 6s CONNECT_TIMEOUT_MS on a
  * just-booted app — a bare retry succeeds once whatever warmup cost caused
  * the miss is already paid).
@@ -442,10 +723,10 @@ export async function connectAndAuth(token: string): Promise<void> {
     await tap(await waitForText('Connect'));
     try {
       const outcome = await waitForAnyText(
-        ['+ New Session', 'Connection failed — check the URL and token.'],
+        ['New terminal', 'Connection failed — check the URL and token.'],
         10000,
       );
-      connected = outcome === '+ New Session';
+      connected = outcome === 'New terminal';
     } catch {
       // Neither outcome showed up in time (e.g. the tap itself didn't
       // register) — fall through and retry the tap.

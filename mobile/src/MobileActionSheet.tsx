@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useId, useRef, type ReactNode, type RefObject } from 'react';
 
 import { useAppTranslation } from '../../src/renderer/i18n';
+import { useMobileNavigationHistory } from './MobileNavigationHistory';
 
 const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-const activeHistoryMarkers = new Set<string>();
 
 export function MobileActionSheet({
   title,
@@ -39,14 +39,20 @@ export function MobileActionSheet({
   const { t } = useAppTranslation();
   const titleId = useId();
   const descriptionId = useId();
+  const layerId = `mobile-sheet-${useId()}`;
   const sheetRef = useRef<HTMLDivElement | null>(null);
+  const navigation = useMobileNavigationHistory();
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
-  const dismiss = useCallback(() => {
+  const finishDismiss = useCallback(() => {
     onCloseRef.current();
     requestAnimationFrame(() => returnFocusRef?.current?.focus());
   }, [returnFocusRef]);
+
+  const dismiss = useCallback(() => {
+    navigation.closeLayer(layerId, 'ui');
+  }, [layerId, navigation]);
 
   useEffect(() => {
     const sheet = sheetRef.current;
@@ -55,41 +61,8 @@ export function MobileActionSheet({
   }, [focusKey]);
 
   useEffect(() => {
-    const marker = `ezterminal-sheet-${titleId}`;
-    let historyMarkerPushed = false;
-    let closedFromHistory = false;
-    activeHistoryMarkers.add(marker);
-    try {
-      if (window.history.state?.ezterminalSheet !== marker) {
-        window.history.pushState({ ...window.history.state, ezterminalSheet: marker }, '');
-      }
-      historyMarkerPushed = true;
-    } catch {
-      // History can be unavailable in an embedded/test context; Escape and the
-      // explicit Cancel action remain complete dismissal paths.
-    }
-
-    const onPopState = (): void => {
-      closedFromHistory = true;
-      dismiss();
-    };
-    window.addEventListener('popstate', onPopState);
-    return () => {
-      window.removeEventListener('popstate', onPopState);
-      activeHistoryMarkers.delete(marker);
-      // StrictMode immediately runs an effect setup/cleanup/setup probe. Delay
-      // removal of the synthetic history entry until that probe has had a
-      // chance to re-register the same stable marker.
-      queueMicrotask(() => {
-        if (
-          historyMarkerPushed
-          && !closedFromHistory
-          && !activeHistoryMarkers.has(marker)
-          && window.history.state?.ezterminalSheet === marker
-        ) window.history.back();
-      });
-    };
-  }, [dismiss, titleId]);
+    return navigation.pushLayer({ id: layerId, kind: 'sheet', onBack: finishDismiss });
+  }, [finishDismiss, layerId, navigation]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (event.key === 'Escape') {

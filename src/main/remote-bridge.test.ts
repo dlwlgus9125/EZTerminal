@@ -255,7 +255,10 @@ class FakeOpenClawSource implements RemoteOpenClawSource {
   readonly listAgentSessions = vi.fn(async (): Promise<readonly OpenClawAgentSession[]> => []);
   readonly getCoreConfig = vi.fn(async () => ({ 'agents.defaults.model': 'unset', 'gateway.port': 'unset' }));
   readonly setCoreConfig = vi.fn(async () => ({ ok: true, restartRequired: true }));
-  readonly mintChatTicket = vi.fn(async (): Promise<OpenClawChatTicketResult> => null);
+  readonly mintChatTicket = vi.fn(async (): Promise<OpenClawChatTicketResult> => ({
+    ticket: null,
+    reason: 'proxy-unavailable',
+  }));
 
   subscribeStatus(listener: (status: OpenClawStatus) => void): () => void {
     this.statusListeners.add(listener);
@@ -2125,8 +2128,8 @@ describe('RemoteBridge — OpenClaw management (M4)', () => {
     });
   });
 
-  it('openclaw-chat-ticket replies with nulls/0 when no ticket could be minted', async () => {
-    const openclawSource = new FakeOpenClawSource(); // mintChatTicket defaults to resolving null
+  it('openclaw-chat-ticket preserves a typed failure reason when no ticket could be minted', async () => {
+    const openclawSource = new FakeOpenClawSource();
     const ws = new FakeWs();
     const { options } = makeOptions({ openclawSource });
     await authed(ws, options);
@@ -2140,6 +2143,28 @@ describe('RemoteBridge — OpenClaw management (M4)', () => {
       ticket: null,
       proxyPort: 0,
       token: null,
+      reason: 'proxy-unavailable',
+    });
+  });
+
+  it('bounds a chat-ticket source that never settles and replies with timeout', async () => {
+    const openclawSource = new FakeOpenClawSource();
+    openclawSource.mintChatTicket.mockImplementationOnce(() => new Promise(() => undefined));
+    const ws = new FakeWs();
+    const { options } = makeOptions({ openclawSource });
+    await authed(ws, options);
+    vi.useFakeTimers();
+
+    ws.clientSend({ kind: 'openclaw-chat-ticket', requestId: 'timeout-ticket' });
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(ws.sent).toContainEqual({
+      kind: 'openclaw-chat-ticket-reply',
+      requestId: 'timeout-ticket',
+      ticket: null,
+      proxyPort: 0,
+      token: null,
+      reason: 'timeout',
     });
   });
 
@@ -2231,7 +2256,7 @@ describe('RemoteBridge — OpenClaw availability (openclaw-stabilization M3)', (
     expect(openclawSource.visibilityListenerCount).toBe(0);
   });
 
-  it('when hidden, openclaw-status-subscribe/openclaw-logs-subscribe are ignored (no listener, no reply)', async () => {
+  it('desktop visibility does not gate remote OpenClaw subscriptions', async () => {
     const openclawSource = new FakeOpenClawSource();
     openclawSource.visible = false;
     const ws = new FakeWs();
@@ -2242,86 +2267,57 @@ describe('RemoteBridge — OpenClaw availability (openclaw-stabilization M3)', (
     ws.clientSend({ kind: 'openclaw-status-subscribe' });
     ws.clientSend({ kind: 'openclaw-logs-subscribe' });
 
-    expect(openclawSource.statusListenerCount).toBe(0);
-    expect(openclawSource.logListenerCount).toBe(0);
+    expect(openclawSource.statusListenerCount).toBe(1);
+    expect(openclawSource.logListenerCount).toBe(1);
     expect(ws.sent).toHaveLength(0);
   });
 
-  it('when hidden, openclaw-lifecycle replies ok:false without calling runLifecycle', async () => {
+  it('desktop visibility does not gate remote OpenClaw request/reply operations', async () => {
     const openclawSource = new FakeOpenClawSource();
     openclawSource.visible = false;
+    openclawSource.runLifecycle.mockResolvedValueOnce({ ok: true });
+    openclawSource.listAgentSessions.mockResolvedValueOnce([{ key: 'k1', sessionId: 's1' }]);
+    openclawSource.getCoreConfig.mockResolvedValueOnce({
+      'agents.defaults.model': 'openai/gpt-5.5',
+      'gateway.port': '18789',
+    });
+    openclawSource.setCoreConfig.mockResolvedValueOnce({ ok: true, restartRequired: true });
+    openclawSource.mintChatTicket.mockResolvedValueOnce({ ticket: 'ticket-1', proxyPort: 7421, token: 'token-1' });
     const ws = new FakeWs();
     const { options } = makeOptions({ openclawSource });
     await authed(ws, options);
 
     ws.clientSend({ kind: 'openclaw-lifecycle', requestId: 'r1', action: 'start' });
+    ws.clientSend({ kind: 'openclaw-sessions-get', requestId: 'r2' });
+    ws.clientSend({ kind: 'openclaw-config-get', requestId: 'r3' });
+    ws.clientSend({ kind: 'openclaw-config-set', requestId: 'r4', key: 'agents.defaults.model', value: 'x' });
+    ws.clientSend({ kind: 'openclaw-chat-ticket', requestId: 'r5' });
+    await flush();
 
-    expect(openclawSource.runLifecycle).not.toHaveBeenCalled();
-    expect(ws.sent).toContainEqual({
-      kind: 'openclaw-lifecycle-result',
-      requestId: 'r1',
-      result: { ok: false, stderr: 'openclaw disabled' },
-    });
-  });
-
-  it('when hidden, openclaw-config-get replies with every allowlisted key unset, without calling getCoreConfig', async () => {
-    const openclawSource = new FakeOpenClawSource();
-    openclawSource.visible = false;
-    const ws = new FakeWs();
-    const { options } = makeOptions({ openclawSource });
-    await authed(ws, options);
-
-    ws.clientSend({ kind: 'openclaw-config-get', requestId: 'r1' });
-
-    expect(openclawSource.getCoreConfig).not.toHaveBeenCalled();
+    expect(openclawSource.runLifecycle).toHaveBeenCalledWith('start');
+    expect(openclawSource.listAgentSessions).toHaveBeenCalledOnce();
+    expect(openclawSource.getCoreConfig).toHaveBeenCalledOnce();
+    expect(openclawSource.setCoreConfig).toHaveBeenCalledWith('agents.defaults.model', 'x');
+    expect(openclawSource.mintChatTicket).toHaveBeenCalledOnce();
+    expect(ws.sent).toContainEqual({ kind: 'openclaw-lifecycle-result', requestId: 'r1', result: { ok: true } });
+    expect(ws.sent).toContainEqual({ kind: 'openclaw-sessions-reply', requestId: 'r2', sessions: [{ key: 'k1', sessionId: 's1' }] });
     expect(ws.sent).toContainEqual({
       kind: 'openclaw-config-reply',
-      requestId: 'r1',
-      config: { 'agents.defaults.model': 'unset', 'gateway.port': 'unset' },
+      requestId: 'r3',
+      config: { 'agents.defaults.model': 'openai/gpt-5.5', 'gateway.port': '18789' },
     });
-  });
-
-  it('when hidden, openclaw-sessions-get replies with an empty sessions array, without calling listAgentSessions', async () => {
-    const openclawSource = new FakeOpenClawSource();
-    openclawSource.visible = false;
-    const ws = new FakeWs();
-    const { options } = makeOptions({ openclawSource });
-    await authed(ws, options);
-
-    ws.clientSend({ kind: 'openclaw-sessions-get', requestId: 'r1' });
-
-    expect(openclawSource.listAgentSessions).not.toHaveBeenCalled();
-    expect(ws.sent).toContainEqual({ kind: 'openclaw-sessions-reply', requestId: 'r1', sessions: [] });
-  });
-
-  it('when hidden, openclaw-config-set replies ok:false without calling setCoreConfig', async () => {
-    const openclawSource = new FakeOpenClawSource();
-    openclawSource.visible = false;
-    const ws = new FakeWs();
-    const { options } = makeOptions({ openclawSource });
-    await authed(ws, options);
-
-    ws.clientSend({ kind: 'openclaw-config-set', requestId: 'r1', key: 'agents.defaults.model', value: 'x' });
-
-    expect(openclawSource.setCoreConfig).not.toHaveBeenCalled();
     expect(ws.sent).toContainEqual({
       kind: 'openclaw-config-set-reply',
-      requestId: 'r1',
-      result: { ok: false, restartRequired: false, error: 'openclaw disabled' },
+      requestId: 'r4',
+      result: { ok: true, restartRequired: true },
     });
-  });
-
-  it('when hidden, openclaw-chat-ticket replies with nulls/0 without calling mintChatTicket', async () => {
-    const openclawSource = new FakeOpenClawSource();
-    openclawSource.visible = false;
-    const ws = new FakeWs();
-    const { options } = makeOptions({ openclawSource });
-    await authed(ws, options);
-
-    ws.clientSend({ kind: 'openclaw-chat-ticket', requestId: 'r1' });
-
-    expect(openclawSource.mintChatTicket).not.toHaveBeenCalled();
-    expect(ws.sent).toContainEqual({ kind: 'openclaw-chat-ticket-reply', requestId: 'r1', ticket: null, proxyPort: 0, token: null });
+    expect(ws.sent).toContainEqual({
+      kind: 'openclaw-chat-ticket-reply',
+      requestId: 'r5',
+      ticket: 'ticket-1',
+      proxyPort: 7421,
+      token: 'token-1',
+    });
   });
 });
 
@@ -2674,9 +2670,38 @@ describe('startRemoteBridge — real WS server lifecycle (v0.2.0 D2)', () => {
     });
   }
 
+  it('returns a promise that settles only after the listener is accepting connections', async () => {
+    const { options } = makeOptions({ port: TEST_PORT });
+    const started = startRemoteBridge(options);
+    const isPromise = started instanceof Promise;
+    const handle = await started;
+    const client = await connect(TEST_PORT);
+
+    client.close();
+    await handle.stop();
+    expect(isPromise).toBe(true);
+  });
+
+  it('rejects with EADDRINUSE and leaves no false-positive handle when bind fails', async () => {
+    const { options } = makeOptions({ port: TEST_PORT });
+    const owner = await startRemoteBridge(options);
+    let contender: Awaited<ReturnType<typeof startRemoteBridge>> | undefined;
+    let bindError: unknown;
+
+    try {
+      contender = await startRemoteBridge(options);
+    } catch (error) {
+      bindError = error;
+    }
+
+    expect(bindError).toMatchObject({ code: 'EADDRINUSE' });
+    await contender?.stop();
+    await owner.stop();
+  });
+
   it('stop() terminates connected clients (their close fires) and releases the port for an immediate same-port restart', async () => {
     const { options } = makeOptions({ port: TEST_PORT });
-    const handle = startRemoteBridge(options);
+    const handle = await startRemoteBridge(options);
     const client = await connect(TEST_PORT);
 
     const clientClosed = new Promise<void>((resolve) => client.once('close', () => resolve()));
@@ -2686,7 +2711,7 @@ describe('startRemoteBridge — real WS server lifecycle (v0.2.0 D2)', () => {
     // Immediate restart on the SAME port must not throw EADDRINUSE: stop()
     // only resolves once wss.close's callback fires, guaranteeing the
     // previous listening socket is released first.
-    const handle2 = startRemoteBridge(options);
+    const handle2 = await startRemoteBridge(options);
     const client2 = await connect(TEST_PORT);
     client2.close();
     await handle2.stop();

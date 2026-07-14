@@ -59,9 +59,11 @@ import {
   runAdb,
   sleep,
   tap,
+  tapTestId,
   tryDumpUi,
   waitForAnyNodeText,
   waitForLabel,
+  waitForTestId,
   waitForText,
 } from './lib.ts';
 
@@ -70,18 +72,17 @@ import {
  * `waitForLabel` doc for why the sheet itself can't be dump-located. MUST run
  * before any `wm size`/`wm density` change (the row coords don't survive a
  * geometry change). */
-const THEME_ROW_Y: Record<string, number> = {
-  Dark: 1727,
-  Light: 1874,
-  'High Contrast': 2021,
-  Matrix: 2168,
+const THEME_TEST_ID: Record<string, string> = {
+  Dark: 'dark',
+  Light: 'light',
+  'High Contrast': 'high-contrast',
+  Matrix: 'matrix',
 };
 
 async function selectTheme(label: string): Promise<void> {
-  await tap(await waitForLabel('Theme')); // opens the sheet (the button itself IS dump-visible)
-  await sleep(1000); // sheet mount settle
-  await tap({ x: 540, y: THEME_ROW_Y[label] });
-  await sleep(400);
+  await tapTestId('workspace-more-btn');
+  await tapTestId('more-theme');
+  await tapTestId(`theme-option-${THEME_TEST_ID[label]}`);
 }
 
 /**
@@ -111,7 +112,6 @@ async function selectTheme(label: string): Promise<void> {
  * lib.ts) and correct this constant — treat it exactly like THEME_ROW_Y,
  * just not yet measured against a live device.
  */
-const DOWNLOAD_ACTION_ROW_Y_ESTIMATE = 2251;
 
 /** True once a `[ez-e2e] stats:` logcat line reports at least one CPU core —
  * i.e. a real snapshot has arrived (not just the initial "측정 중…" state). */
@@ -147,7 +147,7 @@ async function main(): Promise<void> {
 
     // ── b. TABS ──────────────────────────────────────────────────────────
     console.log('[parity] creating tab A...');
-    await tap(await waitForText('+ New Session'));
+    await tap(await waitForText('New terminal'));
     const tabAMarker = await pollLogcat('[ez-e2e] tab-active:', 10000);
     const tabAId = tabAMarker.split('tab-active:')[1].trim();
 
@@ -161,7 +161,6 @@ async function main(): Promise<void> {
     console.log('[parity] creating tab B via header New tab...');
     await tap(await waitForLabel('New tab'));
     const tabBMarker = await pollLogcat('[ez-e2e] tab-active:', 10000, (l) => !l.includes(tabAId));
-    const tabBId = tabBMarker.split('tab-active:')[1].trim();
 
     // Pre-capture pill coords BEFORE Run — each uiautomator dump costs 1-3s,
     // and `ping localhost` only streams a few seconds (default 4 pings).
@@ -202,7 +201,9 @@ async function main(): Promise<void> {
 
     // ── c. STATS ─────────────────────────────────────────────────────────
     console.log('[parity] opening stats...');
-    await tap(await waitForLabel('Stats'));
+    await tapTestId('workspace-more-btn');
+    await tapTestId('more-stats');
+    await waitForTestId('mobile-stats-view');
     await pollLogcat('[ez-e2e] stats:', 20000, hasCoreCount);
     await pollLogcat('[ez-e2e] stats:', 30000, (l) => /conns=\d+/.test(l));
     console.log('[parity] step OK: stats cores + conns (refcount proof)');
@@ -212,7 +213,7 @@ async function main(): Promise<void> {
     await tap(await waitForText('확인'));
     await pollLogcat('[ez-e2e] packets: idle', 15000);
     console.log('[parity] step OK: packets idle (view-only, desktop not capturing)');
-    await tap(await waitForLabel('Close stats'));
+    await tapTestId('mobile-stats-close');
 
     // ── d. THEME (default resolution ONLY — see THEME_ROW_Y's doc) ──────
     console.log('[parity] cycling themes...');
@@ -269,7 +270,7 @@ async function main(): Promise<void> {
     // upload/download verification) does not depend on which one broke.
     console.log('[parity] reconnecting for the files step...');
     await connectAndAuth(token);
-    await tap(await waitForText('+ New Session'));
+    await tap(await waitForText('New terminal'));
     await pollLogcat('[ez-e2e] tab-active:', 10000);
     console.log('[parity] step OK: reconnected with a fresh tab');
 
@@ -291,7 +292,9 @@ async function main(): Promise<void> {
 
     try {
       console.log('[parity] opening Files and navigating to the fixture dir...');
-      await tap(await waitForLabel('Files'));
+      await tapTestId('workspace-more-btn');
+      await tapTestId('more-files');
+      await waitForTestId('mobile-file-view');
       // VERIFIED TRAP (first live run): adb `input text` swallows backslashes
       // outright (same mangling class as the `.`/`-` note above), so the
       // Windows path can never pass fillReliably's exact read-back check.
@@ -314,7 +317,7 @@ async function main(): Promise<void> {
       const fileRowPoint = await waitForAnyNodeText(readFixtureName);
       await longPress(fileRowPoint, 700); // > 500ms LongPressTracker default
       await sleep(500);
-      await tap({ x: 540, y: DOWNLOAD_ACTION_ROW_Y_ESTIMATE });
+      await tapTestId('sheet-download');
       await pollLogcat('[ez-e2e] files:download-done', 20000, (l) => l.includes(readFixtureName));
       console.log('[parity] step OK: files:download-done');
 
@@ -361,7 +364,7 @@ async function main(): Promise<void> {
     // known-clean state), so reconnecting here needs no precondition check.
     console.log('[parity] reconnecting for fold-geometry checks...');
     await connectAndAuth(token);
-    await tap(await waitForText('+ New Session'));
+    await tap(await waitForText('New terminal'));
     await pollLogcat('[ez-e2e] tab-active:', 10000);
     console.log('[parity] step OK: reconnected with a fresh tab');
 
@@ -370,14 +373,19 @@ async function main(): Promise<void> {
     // API 35 emulator — a real fold keeps the process alive, but the harness
     // must tolerate the emulator's harsher behavior). Recover by re-tapping
     // Connect and reopening a tab until the workspace ('Stats') is reachable.
-    async function ensureWorkspace(): Promise<void> {
+    const ensureWorkspace = async (): Promise<void> => {
       const deadline = Date.now() + 45000;
       for (;;) {
         const nodes = tryDumpUi();
         const find = (label: string) =>
           nodes.find((n) => (n.text === label || n.desc === label) && n.clickable);
-        if (find('Stats')) return;
-        const newSession = find('+ New Session');
+        try {
+          await waitForTestId('workspace-more-btn', 750);
+          return;
+        } catch {
+          // The app may still be reconnecting or showing ConnectScreen.
+        }
+        const newSession = find('New terminal');
         if (newSession) {
           await tap(center(newSession.bounds));
           await sleep(800);
@@ -394,7 +402,7 @@ async function main(): Promise<void> {
         }
         await sleep(700);
       }
-    }
+    };
 
     const profiles = [
       { name: 'cover', size: '1080x2520', density: '420' },
@@ -409,9 +417,10 @@ async function main(): Promise<void> {
       // Tapping 'Stats' both proves the workspace UI (header + tab strip)
       // survived the geometry change AND opens the stats view for the marker
       // poll below — a broken layout would make this wait time out.
-      await tap(await waitForLabel('Stats'));
+      await tapTestId('workspace-more-btn');
+      await tapTestId('more-stats');
       await pollLogcat('[ez-e2e] stats:', 20000, hasCoreCount);
-      await tap(await waitForLabel('Close stats'));
+      await tapTestId('mobile-stats-close');
       console.log(`[parity] step OK: ${profile.name} geometry reachable + stats live`);
     }
 
@@ -420,7 +429,7 @@ async function main(): Promise<void> {
     runAdb(['shell', 'settings', 'put', 'system', 'user_rotation', '1']);
     await sleep(1500);
     await ensureWorkspace();
-    await waitForLabel('Stats'); // still reachable post-rotation
+    await waitForTestId('workspace-more-btn'); // still reachable post-rotation
     runAdb(['shell', 'settings', 'put', 'system', 'user_rotation', '0']);
     await sleep(1000);
     console.log('[parity] step OK: rotation smoke');

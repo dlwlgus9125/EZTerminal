@@ -187,14 +187,20 @@ describe('MobileWorkspace — zero-tab OpenClaw entry', () => {
     expect(state()).toBe('stopped');
   });
 
-  it('tapping the entry button opens the OpenClaw view', () => {
+  it('tapping the entry button opens the lazy OpenClaw view with immediate feedback', async () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport } = makeAuthedTransport();
     const el = renderWorkspace(transport);
     openMore(el);
 
     act(() => el.querySelector<HTMLButtonElement>('[data-testid="more-openclaw"]')!.click());
-
+    expect(el.querySelector('[data-testid="mobile-page-shell"]')).toBeTruthy();
+    await act(async () => {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (el.querySelector('[data-testid="mobile-openclaw-view"]')) break;
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      }
+    });
     expect(el.querySelector('[data-testid="mobile-openclaw-view"]')).toBeTruthy();
   });
 });

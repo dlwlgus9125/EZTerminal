@@ -2,6 +2,7 @@ import { Minus, Plus } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { OpenClawMode, TerminalRendererPreference, ThemeName } from '../shared/layout-schema';
+import type { RemoteRuntimeStatus } from '../shared/ipc';
 import { AgentIntegrationSettings } from './AgentIntegrationSettings';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import type { InterferenceParams, RollbarParams } from './effect-params';
@@ -125,8 +126,7 @@ export function SettingsPanel({
 }: SettingsPanelProps): JSX.Element {
   const { t } = useAppTranslation();
   const { preferences: uiPreferences, updatePreferences } = useUiPreferences();
-  const [remoteEnabled, setRemoteEnabled] = useState<boolean | null>(null);
-  const [remotePort, setRemotePort] = useState<number | null>(null);
+  const [remoteStatus, setRemoteStatus] = useState<RemoteRuntimeStatus | null>(null);
   const [remoteSecurityError, setRemoteSecurityError] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
@@ -145,16 +145,15 @@ export function SettingsPanel({
 
   useEffect(() => {
     let alive = true;
-    void window.ezterminal.getRemoteEnabled().then((v) => {
-      if (alive) setRemoteEnabled(v);
+    void window.ezterminal.getRemoteRuntimeStatus().then((status) => {
+      if (alive) setRemoteStatus(status);
     });
-    void window.ezterminal.getRemoteConnectionInfo().then((info) => {
-      if (alive) setRemotePort(info.port);
+    const unsubscribeRuntime = window.ezterminal.onRemoteRuntimeStatus((status) => {
+      if (alive) setRemoteStatus(status);
     });
     void window.ezterminal.getRemoteSecurityStatus().then((status) => {
       if (alive) {
         setRemoteSecurityError(status.error);
-        if (status.state === 'error') setRemoteEnabled(false);
       }
     });
     void window.ezterminalDesktop?.getOpenClawMode().then((mode) => {
@@ -162,6 +161,7 @@ export function SettingsPanel({
     });
     return () => {
       alive = false;
+      unsubscribeRuntime();
     };
   }, []);
 
@@ -169,11 +169,18 @@ export function SettingsPanel({
     const next = e.target.checked;
     setRemoteSecurityError(null);
     void window.ezterminal.setRemoteEnabled(next).then(
-      (running) => setRemoteEnabled(running),
+      (status) => setRemoteStatus(status),
       () => {
-        setRemoteEnabled(false);
         setRemoteSecurityError(t('settings.remoteStartFailed'));
       },
+    );
+  }, [t]);
+
+  const handleRemoteRetry = useCallback((): void => {
+    setRemoteSecurityError(null);
+    void window.ezterminal.retryRemoteRuntime().then(
+      (status) => setRemoteStatus(status),
+      () => setRemoteSecurityError(t('settings.remoteStartFailed')),
     );
   }, [t]);
 
@@ -199,7 +206,17 @@ export function SettingsPanel({
     [onImportTheme, t],
   );
 
-  const remoteLoading = remoteEnabled === null || remotePort === null;
+  const remoteLoading = remoteStatus === null;
+  const remoteTransitioning = remoteStatus?.state === 'starting' || remoteStatus?.state === 'stopping';
+  const remoteStateLabel = remoteStatus?.state === 'running'
+    ? t('settings.running')
+    : remoteStatus?.state === 'starting'
+      ? t('settings.starting')
+      : remoteStatus?.state === 'stopping'
+        ? t('settings.stopping')
+        : remoteStatus?.state === 'error'
+          ? t('settings.error')
+          : t('settings.off');
   const systemDefaultFontId = FONT_CATALOG.find((f) => f.systemDefault)?.id ?? FONT_CATALOG[0].id;
 
   // Scrollback input (WT-parity M5 fix): a local text draft so typing a
@@ -504,21 +521,27 @@ export function SettingsPanel({
         ) : (
           <>
             <Switch
-              checked={remoteEnabled}
+              checked={remoteStatus.desiredEnabled}
               onChange={handleRemoteToggle}
+              disabled={remoteTransitioning}
               label={t('settings.enableRemoteAccess')}
               data-testid="settings-remote-toggle"
             />
             <div className="status-metric">
               {t('settings.bridgeStatus', {
-                port: remotePort,
-                state: remoteEnabled ? t('settings.running') : t('settings.off'),
+                port: remoteStatus.port,
+                state: remoteStateLabel,
               })}
             </div>
-            {remoteSecurityError && (
+            {(remoteSecurityError ?? remoteStatus.error) && (
               <div className="status-loading" role="alert" data-testid="settings-remote-security-error">
-                {remoteSecurityError}
+                {remoteSecurityError ?? remoteStatus.error}
               </div>
+            )}
+            {remoteStatus.state === 'error' && remoteStatus.desiredEnabled && (
+              <Button onClick={handleRemoteRetry} data-testid="settings-remote-retry">
+                {t('common.retry')}
+              </Button>
             )}
           </>
         )}

@@ -26,6 +26,16 @@ export interface OpenClawStatus {
   readonly port: number;
 }
 
+export interface OpenClawEndpoint {
+  readonly origin: string;
+  readonly wsUrl: string;
+  readonly port: number;
+  readonly generation: number;
+  readonly source: 'environment' | 'config' | 'default';
+}
+
+export type OpenClawInsecureAuthStatus = 'enabled' | 'disabled' | 'unset' | 'error';
+
 /** A subset of `sessions.list`'s per-session fields (WS RPC, M0 ④) — the raw
  * payload carries far more (thinking levels, delivery context, ...); this is
  * what the drawer/mobile session list actually renders. */
@@ -50,8 +60,16 @@ export interface OpenClawLogLine {
 
 export type OpenClawLifecycleAction = 'start' | 'stop' | 'restart';
 
+export type OpenClawOperationErrorCode =
+  | 'busy'
+  | 'timeout'
+  | 'invalid-value'
+  | 'cli-failed'
+  | 'unavailable';
+
 export interface OpenClawLifecycleResult {
   readonly ok: boolean;
+  readonly code?: OpenClawOperationErrorCode;
   readonly stderr?: string;
 }
 
@@ -65,6 +83,7 @@ export type OpenClawAutostartAction = 'install' | 'uninstall';
 
 export interface OpenClawAutostartResult {
   readonly ok: boolean;
+  readonly code?: OpenClawOperationErrorCode;
   readonly stderr?: string;
 }
 
@@ -73,6 +92,7 @@ export interface OpenClawAutostartResult {
 export interface OpenClawSetConfigResult {
   readonly ok: boolean;
   readonly restartRequired: boolean;
+  readonly code?: OpenClawOperationErrorCode;
   readonly error?: string;
 }
 

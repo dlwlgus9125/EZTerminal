@@ -1,14 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 
 import { ConnectScreen, type SavedConnection } from './ConnectScreen';
 import { ConnectionCredentialStore } from './connection-credential-store';
-import { MobileWorkspace } from './MobileWorkspace';
 import {
   classifyConnectionHealth,
   type ConnectionHealthSnapshot,
 } from './transport/connection-health';
 import { WsEzTerminalTransport, type RemoteConnectionState } from './transport/ws-ezterminal';
 import { useAppTranslation } from '../../src/renderer/i18n';
+
+const MobileWorkspace = lazy(async () => ({
+  default: (await import('./MobileWorkspace')).MobileWorkspace,
+}));
 
 // The transport retries indefinitely with backoff AND self-heals a stuck/half-
 // open attempt via its own auth watchdog (by design — a flappy link, or a host
@@ -239,11 +242,15 @@ export function App(): JSX.Element {
   return (
     <div className="mobile-app-frame">
       <div className={authed ? 'mobile-workspace-shell' : 'mobile-workspace-shell mobile-workspace-shell--reconnecting'}>
-        <MobileWorkspace
-          transport={transport}
-          connectionUrl={currentConnection?.url ?? savedConnection?.url ?? ''}
-          onDisconnect={disconnect}
-        />
+        <Suspense
+          fallback={<div className="status-loading mobile-workspace-loading" role="status">{t('common.loading')}</div>}
+        >
+          <MobileWorkspace
+            transport={transport}
+            connectionUrl={currentConnection?.url ?? savedConnection?.url ?? ''}
+            onDisconnect={disconnect}
+          />
+        </Suspense>
       </div>
       {!authed && (
         <div className="mobile-reconnect-scrim" data-testid="mobile-reconnect-scrim">

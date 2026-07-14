@@ -111,6 +111,8 @@ const MAX_OPENCLAW_PROXY_CONNECTIONS = 64;
 /** Mirrors remote-bridge.ts's `AUTH_DEADLINE_MS` intent: fail fast on a
  * slow/incomplete request rather than holding a connection slot open. */
 const PROXY_HEADERS_TIMEOUT_MS = 10_000;
+const PROXY_UPSTREAM_TIMEOUT_MS = 15_000;
+const PROXY_WS_CONNECT_TIMEOUT_MS = 10_000;
 /** Idle timeout for an established WS tunnel (chat/log streams can go quiet
  * between messages without being dead) — bounds a half-open tunnel. */
 const PROXY_TUNNEL_IDLE_TIMEOUT_MS = 10 * 60_000;
@@ -141,6 +143,9 @@ export interface OpenClawProxyOptions {
   readonly upstreamOrigin: string;
   /** Test seam: defaults to `Date.now`. */
   readonly now?: () => number;
+  /** Test seams; production uses bounded defaults. */
+  readonly upstreamTimeoutMs?: number;
+  readonly wsConnectTimeoutMs?: number;
 }
 
 export interface OpenClawProxyHandle {
@@ -148,6 +153,8 @@ export interface OpenClawProxyHandle {
   readonly port: number;
   /** Mint a fresh, single-use, 60s-TTL ticket — see the module doc's auth flow. */
   mintTicket(): string;
+  /** Retarget future traffic without rebinding the LAN-facing listener. */
+  setUpstreamOrigin(origin: string): void;
   /** Closes the listener and terminates every open connection (including
    * live WS tunnels) — resolves once the port is released. Never touches
    * the upstream gateway. */
@@ -231,7 +238,14 @@ function constantTimeSessionMatch(
 
 export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenClawProxyHandle> {
   const now = options.now ?? Date.now;
-  const upstream = new URL(options.upstreamOrigin);
+  const parseUpstream = (origin: string): URL => {
+    const parsed = new URL(origin);
+    if (parsed.protocol !== 'http:') throw new Error('OpenClaw proxy upstream must use http');
+    return new URL(parsed.origin);
+  };
+  let upstream = parseUpstream(options.upstreamOrigin);
+  const upstreamTimeoutMs = options.upstreamTimeoutMs ?? PROXY_UPSTREAM_TIMEOUT_MS;
+  const wsConnectTimeoutMs = options.wsConnectTimeoutMs ?? PROXY_WS_CONNECT_TIMEOUT_MS;
 
   const tickets = new Map<string, { readonly expiresAt: number }>();
   /** M5/S3 — cookie session -> expiresAt (`SESSION_TTL_MS`, fixed-window
@@ -247,7 +261,19 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
   /** Outbound sockets (this proxy -> the gateway) opened per WS upgrade —
    * see `handleUpgrade`'s comment for why `stop()` must also destroy these. */
   const upstreamSockets = new Set<Socket>();
+  const upstreamRequests = new Set<http.ClientRequest>();
   let resolvedPort = options.port;
+
+  const setUpstreamOrigin = (origin: string): void => {
+    const next = parseUpstream(origin);
+    if (next.origin === upstream.origin) return;
+    upstream = next;
+    tickets.clear();
+    sessions.clear();
+    ipSessions.clear();
+    for (const request of upstreamRequests) request.destroy(new Error('OpenClaw upstream changed'));
+    for (const socket of upstreamSockets) socket.destroy();
+  };
 
   /** Single-use: deletes the ticket on ANY redemption attempt (valid or
    * not), so a reused ticket always fails the same way an unknown one does
@@ -324,18 +350,19 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
       return;
     }
 
+    const requestUpstream = upstream;
     const outHeaders: http.OutgoingHttpHeaders = { ...req.headers };
     delete outHeaders.host;
-    outHeaders.host = upstream.host;
+    outHeaders.host = requestUpstream.host;
     // M5 amendment ② — see module doc: the Control UI's own WS RPC connect
     // is otherwise rejected by the gateway's `controlUi.allowedOrigins`.
-    if (outHeaders.origin !== undefined) outHeaders.origin = upstream.origin;
+    if (outHeaders.origin !== undefined) outHeaders.origin = requestUpstream.origin;
 
     const proxyReq = http.request(
       {
-        protocol: upstream.protocol,
-        hostname: upstream.hostname,
-        port: upstream.port,
+        protocol: requestUpstream.protocol,
+        hostname: requestUpstream.hostname,
+        port: requestUpstream.port,
         method: req.method,
         path: req.url,
         headers: outHeaders,
@@ -351,8 +378,15 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
         upstreamRes.pipe(res);
       },
     );
+    upstreamRequests.add(proxyReq);
+    proxyReq.once('close', () => upstreamRequests.delete(proxyReq));
+    let upstreamTimedOut = false;
+    proxyReq.setTimeout(upstreamTimeoutMs, () => {
+      upstreamTimedOut = true;
+      proxyReq.destroy(new Error('OpenClaw upstream timeout'));
+    });
     proxyReq.on('error', () => {
-      if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' });
+      if (!res.headersSent) res.writeHead(upstreamTimedOut ? 504 : 502, { 'content-type': 'text/plain' });
       res.end();
     });
     req.pipe(proxyReq);
@@ -365,14 +399,18 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
       return;
     }
 
-    const upstreamSocket = net.connect(Number(upstream.port), upstream.hostname, () => {
-      const outHeaders: Record<string, string | string[]> = { ...req.headers, host: upstream.host } as Record<
+    const requestUpstream = upstream;
+    let connected = false;
+    const upstreamSocket = net.connect(Number(requestUpstream.port || 80), requestUpstream.hostname, () => {
+      connected = true;
+      clearTimeout(connectTimer);
+      const outHeaders: Record<string, string | string[]> = { ...req.headers, host: requestUpstream.host } as Record<
         string,
         string | string[]
       >;
       // M5 amendment ② — see module doc: the Control UI's own WS RPC connect
       // is otherwise rejected by the gateway's `controlUi.allowedOrigins`.
-      if (outHeaders.origin !== undefined) outHeaders.origin = upstream.origin;
+      if (outHeaders.origin !== undefined) outHeaders.origin = requestUpstream.origin;
       const headerLines = Object.entries(outHeaders)
         .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
         .join('\r\n');
@@ -389,6 +427,14 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
     // (and, in a test, block the fake upstream's own `server.close()`).
     upstreamSockets.add(upstreamSocket);
     upstreamSocket.once('close', () => upstreamSockets.delete(upstreamSocket));
+    const connectTimer = setTimeout(() => {
+      if (connected) return;
+      if (!clientSocket.destroyed) clientSocket.write('HTTP/1.1 504 Gateway Timeout\r\n\r\n');
+      upstreamSocket.destroy();
+      clientSocket.destroy();
+    }, wsConnectTimeoutMs);
+    connectTimer.unref?.();
+    upstreamSocket.once('close', () => clearTimeout(connectTimer));
     upstreamSocket.setTimeout(PROXY_TUNNEL_IDLE_TIMEOUT_MS, () => upstreamSocket.destroy());
     clientSocket.setTimeout(PROXY_TUNNEL_IDLE_TIMEOUT_MS, () => clientSocket.destroy());
     upstreamSocket.on('error', () => clientSocket.destroy());
@@ -439,6 +485,7 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
       resolvedPort = typeof address === 'object' && address ? address.port : options.port;
       resolve({
         port: resolvedPort,
+        setUpstreamOrigin,
         mintTicket: () => {
           const ticket = randomBytes(TICKET_BYTES).toString('hex');
           tickets.set(ticket, { expiresAt: now() + TICKET_TTL_MS });
@@ -449,6 +496,7 @@ export function startOpenClawProxy(options: OpenClawProxyOptions): Promise<OpenC
             clearInterval(sweepTimer);
             for (const socket of activeSockets) socket.destroy();
             for (const socket of upstreamSockets) socket.destroy();
+            for (const request of upstreamRequests) request.destroy();
             server.close(() => res());
           }),
       });

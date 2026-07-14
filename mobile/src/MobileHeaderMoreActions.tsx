@@ -4,6 +4,7 @@ import { flushSync } from 'react-dom';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobileActionSheet } from './MobileActionSheet';
+import { useMobileNavigationHistory } from './MobileNavigationHistory';
 
 interface MoreActionProps {
   readonly label: string;
@@ -63,9 +64,12 @@ export function MobileHeaderMoreActions({
   readonly onOpenSettings: () => void;
 }): JSX.Element {
   const { t } = useAppTranslation();
+  const navigation = useMobileNavigationHistory();
   const choose = (action: () => void): void => {
-    flushSync(onClose);
-    action();
+    navigation.replaceTopLayer(() => {
+      flushSync(onClose);
+      action();
+    });
   };
   const remoteState = connected ? undefined : t('state.offline');
 

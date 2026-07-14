@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileFileView } from './MobileFileView';
+import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -35,13 +36,15 @@ beforeEach(async () => {
   root = createRoot(host);
   await act(async () => {
     root.render(
-      <MobileFileView
-        transport={makeTransport()}
-        initialPath="/work"
-        onClose={vi.fn()}
-        onOpenTerminalAt={vi.fn()}
-        onPastePath={vi.fn()}
-      />,
+      <MobileNavigationHistoryProvider>
+        <MobileFileView
+          transport={makeTransport()}
+          initialPath="/work"
+          onClose={vi.fn()}
+          onOpenTerminalAt={vi.fn()}
+          onPastePath={vi.fn()}
+        />
+      </MobileNavigationHistoryProvider>,
     );
     await Promise.resolve();
   });
@@ -79,7 +82,10 @@ describe('MobileFileView accessibility', () => {
     expect(descriptionId && document.getElementById(descriptionId)).not.toBeNull();
     expect(document.activeElement).toBe(host.querySelector('[data-testid="delete-confirm-cancel"]'));
 
-    act(() => window.dispatchEvent(new PopStateEvent('popstate')));
+    act(() => {
+      window.history.replaceState({}, '');
+      window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+    });
     await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     expect(host.querySelector('[data-testid="mobile-delete-confirm-dialog"]')).toBeNull();
     expect(document.activeElement).toBe(row);

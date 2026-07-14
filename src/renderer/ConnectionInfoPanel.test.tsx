@@ -24,7 +24,14 @@ describe('ConnectionInfoPanel security readiness', () => {
         state: 'error',
         error: 'The remote access token could not be stored securely. Remote access remains off.',
       }),
-      getRemoteEnabled: async () => true,
+      getRemoteRuntimeStatus: async () => ({
+        desiredEnabled: true,
+        state: 'error',
+        port: 7420,
+        errorCode: 'REMOTE_TOKEN_UNAVAILABLE',
+        error: 'The remote access token is unavailable.',
+      }),
+      onRemoteRuntimeStatus: () => () => undefined,
     } as unknown as EzTerminalApi;
     Object.defineProperty(window, 'ezterminal', { configurable: true, value: api });
     const container = document.createElement('div');
@@ -38,6 +45,49 @@ describe('ConnectionInfoPanel security readiness', () => {
 
     expect(container.querySelector('[data-testid="pairing-security-error"]')?.textContent).toMatch(/stored securely/);
     expect(getRemoteToken).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it('shows bind failure and retry instead of pairing data until the listener is running', async () => {
+    const retryRemoteRuntime = vi.fn(async () => ({
+      desiredEnabled: true,
+      state: 'running' as const,
+      port: 7420,
+      errorCode: null,
+      error: null,
+    }));
+    const api = {
+      getRemoteConnectionInfo: async () => ({ urls: ['ws://127.0.0.1:7420'], port: 7420 }),
+      getRemoteToken: async () => 'pairing-token',
+      getRemoteSecurityStatus: async () => ({ state: 'ready' as const, error: null }),
+      getRemoteRuntimeStatus: async () => ({
+        desiredEnabled: true,
+        state: 'error' as const,
+        port: 7420,
+        errorCode: 'EADDRINUSE',
+        error: 'Port 7420 is already in use.',
+      }),
+      retryRemoteRuntime,
+      onRemoteRuntimeStatus: () => () => undefined,
+    } as unknown as EzTerminalApi;
+    Object.defineProperty(window, 'ezterminal', { configurable: true, value: api });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<ConnectionInfoPanel />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="pairing-runtime-error"]')?.textContent).toContain('7420');
+    expect(container.querySelector('[data-testid="connection-url"]')).toBeNull();
+    await act(async () => {
+      (container.querySelector('[data-testid="pairing-runtime-retry"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(retryRemoteRuntime).toHaveBeenCalledOnce();
     act(() => root.unmount());
   });
 });

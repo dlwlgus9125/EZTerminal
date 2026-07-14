@@ -77,8 +77,8 @@ import {
   runAdb,
   sleep,
   tap,
+  tapTestId,
   waitForAnyText,
-  waitForLabel,
   waitForText,
 } from './lib.ts';
 
@@ -101,11 +101,9 @@ const CUSTOM_THEME_JSON = JSON.stringify({
  * typing — the textarea grows once the JSON is in it, shifting anything
  * below, so this tap must land BEFORE typing).
  * MUST run before any `wm size`/`wm density` change (none in this file). */
-const THEME_SHEET_IMPORT_TEXTAREA = { x: 540, y: 2060 };
 /** Import button — measured with the textarea already holding CUSTOM_THEME_JSON
  * (multi-line, so the button sits lower than it would behind an empty/placeholder
  * textarea). */
-const THEME_SHEET_IMPORT_BUTTON = { x: 138, y: 2177 };
 /** The imported theme's row after Import succeeds. Built-ins occupy the first
  * 4 rows (THEME_ORDER); registered custom themes are appended after them
  * (`listThemes()`), so a single import makes it the 5th/last row. The sheet
@@ -114,7 +112,6 @@ const THEME_SHEET_IMPORT_BUTTON = { x: 138, y: 2177 };
  * whole list up by one pitch and the new row lands exactly where the last
  * built-in (Matrix) sat before the import. Verified live via the
  * `[ez-e2e] theme: e2e-neon` logcat marker after tapping this exact point. */
-const THEME_SHEET_CUSTOM_ROW = { x: 540, y: 1868 };
 
 /** `adb shell input text` forwards its argument through the DEVICE's shell
  * before `input text` ever sees it, so unescaped shell metacharacters get
@@ -150,10 +147,10 @@ async function reconnectWithoutClearing(token: string): Promise<void> {
     await tap(await waitForText('Connect'));
     try {
       const outcome = await waitForAnyText(
-        ['+ New Session', 'Connection failed — check the URL and token.'],
+        ['New terminal', 'Connection failed — check the URL and token.'],
         10000,
       );
-      connected = outcome === '+ New Session';
+      connected = outcome === 'New terminal';
     } catch {
       // Neither outcome showed up in time — fall through and retry the tap.
     }
@@ -175,7 +172,7 @@ async function main(): Promise<void> {
 
   try {
     await connectAndAuth(token);
-    await tap(await waitForText('+ New Session'));
+    await tap(await waitForText('New terminal'));
     await pollLogcat('[ez-e2e] tab-active:', 10000);
     console.log('[theme-e2e] step OK: connected with a fresh tab');
 
@@ -184,9 +181,9 @@ async function main(): Promise<void> {
     // section): the ThemeMenu sheet is dump-invisible in full, so none of
     // waitForText/waitForLabel/fillReliably can see inside it.
     console.log('[theme-e2e] opening the theme sheet and importing a custom theme...');
-    await tap(await waitForLabel('Theme')); // opens the sheet (the button itself IS dump-visible)
-    await sleep(1000); // sheet mount settle (parity.ts's selectTheme uses the same delay)
-    await tap(THEME_SHEET_IMPORT_TEXTAREA);
+    await tapTestId('workspace-more-btn');
+    await tapTestId('more-theme');
+    await tapTestId('theme-menu-import-textarea');
     await sleep(600); // focus settle (fillReliably uses the same delay after its tap)
     runAdb(['shell', 'input', 'text', escapeForAdbInputText(CUSTOM_THEME_JSON)]);
     await sleep(300);
@@ -200,18 +197,19 @@ async function main(): Promise<void> {
     // dismissKeyboard doc warning for contexts with no guaranteed focus.
     runAdb(['shell', 'input', 'keyevent', '4']); // KEYCODE_BACK — closes IME only
     await sleep(1000); // keyboard-close animation settle (dismissKeyboard uses the same delay)
-    await tap(THEME_SHEET_IMPORT_BUTTON);
+    await tapTestId('theme-menu-import-btn');
     await sleep(500);
     console.log('[theme-e2e] step OK: import submitted (sheet is dump-invisible — verified by the next tap + logcat marker, not a direct assertion here)');
 
     console.log('[theme-e2e] selecting the imported theme (now the 5th/last row)...');
-    await tap(THEME_SHEET_CUSTOM_ROW);
+    await tapTestId(`theme-option-${CUSTOM_THEME_ID}`);
     await pollLogcat(`[ez-e2e] theme: ${CUSTOM_THEME_ID}`, 10000);
     console.log('[theme-e2e] step OK: imported theme appears in the list and applied');
 
     // ── b. FONT + c. EFFECTS ────────────────────────────────────────────
     console.log('[theme-e2e] opening Settings...');
-    await tap(await waitForLabel('Settings'));
+    await tapTestId('workspace-more-btn');
+    await tapTestId('more-settings');
 
     console.log('[theme-e2e] checking the Scanlines toggle is present and OFF by default...');
     await waitForText('Scanlines');
@@ -236,8 +234,9 @@ async function main(): Promise<void> {
 
     // ── d(i). FONT + EFFECTS PERSISTENCE (remount, no process kill) ─────
     console.log('[theme-e2e] closing and reopening Settings to check the localStorage round-trip...');
-    await tap(await waitForLabel('Close settings'));
-    await tap(await waitForLabel('Settings'));
+    await tapTestId('mobile-settings-close');
+    await tapTestId('workspace-more-btn');
+    await tapTestId('more-settings');
     await waitForText('✓ Fira Code');
     await waitForText('✓ Scanlines');
     console.log('[theme-e2e] step OK: font + effect toggle survive a Settings remount');

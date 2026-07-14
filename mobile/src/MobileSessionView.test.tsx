@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FilePreviewResult } from '../../src/shared/file-preview';
 import type { TerminalFileLocationResult } from '../../src/shared/terminal-file-location';
+import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
 import { MobileTerminalPathOverlay } from './MobileSessionView';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -68,7 +69,11 @@ beforeEach(() => {
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
-  act(() => root.render(<Harness />));
+  act(() => root.render(
+    <MobileNavigationHistoryProvider>
+      <Harness />
+    </MobileNavigationHistoryProvider>,
+  ));
   act(() => host.querySelector<HTMLButtonElement>('[data-testid="path-trigger"]')!.click());
 });
 
@@ -85,7 +90,10 @@ describe('MobileSessionView terminal path overlays', () => {
     expect(actionSheet?.getAttribute('aria-modal')).toBe('true');
     expect(document.activeElement).toBe(host.querySelector('[data-testid="terminal-path-preview-action"]'));
 
-    act(() => window.dispatchEvent(new PopStateEvent('popstate')));
+    act(() => {
+      window.history.replaceState({}, '');
+      window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+    });
     await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
 
     expect(host.querySelector('[data-testid="terminal-path-action-sheet"]')).toBeNull();
@@ -93,16 +101,19 @@ describe('MobileSessionView terminal path overlays', () => {
   });
 
   it('reuses the sheet history marker for full-screen preview and closes preview first', async () => {
-    const historyMarker = window.history.state?.ezterminalSheet;
+    const historyMarker = window.history.state?.ezterminalNavigation?.layerId;
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="terminal-path-preview-action"]')!.click());
 
     const preview = host.querySelector<HTMLElement>('[data-testid="terminal-path-preview"]');
     expect(preview?.classList.contains('mobile-action-sheet--fullscreen')).toBe(true);
     expect(preview?.textContent).toContain('second line');
-    expect(window.history.state?.ezterminalSheet).toBe(historyMarker);
+    expect(window.history.state?.ezterminalNavigation?.layerId).toBe(historyMarker);
     expect(document.activeElement).toBe(host.querySelector('[data-testid="terminal-path-preview-back"]'));
 
-    act(() => window.dispatchEvent(new PopStateEvent('popstate')));
+    act(() => {
+      window.history.replaceState({}, '');
+      window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+    });
     await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
 
     expect(host.querySelector('[data-testid="terminal-path-preview"]')).toBeNull();

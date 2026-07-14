@@ -1,6 +1,9 @@
 import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from 'react';
 
-const activePageMarkers = new Set<string>();
+import {
+  MobileNavigationHistoryProvider,
+  useMobileNavigationHistory,
+} from './MobileNavigationHistory';
 
 /**
  * Keeps terminal-owned React/xterm state alive while opaque auxiliary pages
@@ -18,9 +21,33 @@ export function MobileWorkbenchCoordinator({
   readonly overlays?: ReactNode;
   readonly onRequestTerminal: () => void;
 }): JSX.Element {
+  return (
+    <MobileNavigationHistoryProvider>
+      <MobileWorkbenchLayers
+        terminal={terminal}
+        page={page}
+        overlays={overlays}
+        onRequestTerminal={onRequestTerminal}
+      />
+    </MobileNavigationHistoryProvider>
+  );
+}
+
+function MobileWorkbenchLayers({
+  terminal,
+  page,
+  overlays,
+  onRequestTerminal,
+}: {
+  readonly terminal: ReactNode;
+  readonly page?: ReactNode;
+  readonly overlays?: ReactNode;
+  readonly onRequestTerminal: () => void;
+}): JSX.Element {
   const terminalLayerRef = useRef<HTMLDivElement | null>(null);
-  const markerId = useId();
+  const pageLayerId = `mobile-page-${useId()}`;
   const pageActive = page !== undefined && page !== null;
+  const navigation = useMobileNavigationHistory();
   const requestTerminalRef = useRef(onRequestTerminal);
   requestTerminalRef.current = onRequestTerminal;
 
@@ -33,43 +60,12 @@ export function MobileWorkbenchCoordinator({
 
   useEffect(() => {
     if (!pageActive) return;
-    const marker = `ezterminal-page-${markerId}`;
-    let pushed = false;
-    let closedFromHistory = false;
-    activePageMarkers.add(marker);
-
-    try {
-      if (window.history.state?.ezterminalPage !== marker) {
-        window.history.pushState({ ...window.history.state, ezterminalPage: marker }, '');
-      }
-      pushed = true;
-    } catch {
-      // Embedded/test contexts may not expose navigation history. Explicit
-      // Back controls remain the complete fallback.
-    }
-
-    const onPopState = (): void => {
-      // A sheet pushes its own history entry on top of the active page. When
-      // Android Back removes only that sheet entry, the page marker is still
-      // current and the page must remain mounted behind the dismissing sheet.
-      if (window.history.state?.ezterminalPage === marker) return;
-      closedFromHistory = true;
-      requestTerminalRef.current();
-    };
-    window.addEventListener('popstate', onPopState);
-    return () => {
-      window.removeEventListener('popstate', onPopState);
-      activePageMarkers.delete(marker);
-      queueMicrotask(() => {
-        if (
-          pushed
-          && !closedFromHistory
-          && !activePageMarkers.has(marker)
-          && window.history.state?.ezterminalPage === marker
-        ) window.history.back();
-      });
-    };
-  }, [markerId, pageActive]);
+    return navigation.pushLayer({
+      id: pageLayerId,
+      kind: 'page',
+      onBack: () => requestTerminalRef.current(),
+    });
+  }, [navigation, pageActive, pageLayerId]);
 
   return (
     <div className="mobile-workbench-coordinator" data-page-active={pageActive ? 'true' : 'false'}>

@@ -9,13 +9,22 @@ import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
 import { MobileUiPreferencesProvider } from './MobileUiPreferencesProvider';
-import { applyTheme, loadTheme } from './theme';
+import { applyTheme, loadCustomThemes, loadFont, loadTheme } from './theme';
 import { loadUiScale } from './ui-scale';
+import { setUserFontId } from '../../src/renderer/theme-runtime';
 import { applyUiScale } from '../../src/renderer/ui-scale';
 import '../../src/renderer/mobile-shared.css';
 import '../../src/renderer/ui/styles.css';
 import './mobile.css';
 import './workbench.css';
+
+// Keep theme/font hydration in this eager entrypoint. MobileWorkspace is lazy,
+// so putting these side effects in that chunk would make the first loadTheme()
+// run before persisted custom themes are registered and silently select the
+// fallback theme instead. The font seed likewise belongs to boot state rather
+// than an authenticated-workspace module lifetime.
+loadCustomThemes();
+setUserFontId(loadFont());
 
 // Mobile picks its own theme independent of the desktop bridge (M4 scope,
 // localStorage-only — see theme.ts's module doc).

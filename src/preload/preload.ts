@@ -6,6 +6,7 @@ import {
   type EzTerminalApi,
   type EzTerminalDesktopApi,
   type RecentPanelInputEvent,
+  type RemoteRuntimeStatus,
   type RunStartedInfo,
   type SessionInfo,
   type SystemStatsSnapshot,
@@ -188,7 +189,14 @@ const api: EzTerminalApi = {
   getRemoteSecurityStatus: () => ipcRenderer.invoke('remote:get-security-status'),
   rotateRemoteToken: () => ipcRenderer.invoke('remote:rotate-token'),
   getRemoteEnabled: () => ipcRenderer.invoke('remote:get-enabled'),
+  getRemoteRuntimeStatus: () => ipcRenderer.invoke('remote:get-runtime-status'),
   setRemoteEnabled: (enabled: boolean) => ipcRenderer.invoke('remote:set-enabled', enabled),
+  retryRemoteRuntime: () => ipcRenderer.invoke('remote:retry-runtime'),
+  onRemoteRuntimeStatus: (listener: (status: RemoteRuntimeStatus) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: RemoteRuntimeStatus): void => listener(status);
+    ipcRenderer.on('remote:runtime-status', handler);
+    return () => ipcRenderer.removeListener('remote:runtime-status', handler);
+  },
 
   // File explorer (file-explorer plan, M1): thin invoke wrappers — main's
   // FileService is the sole fs authority.

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 
 import {
@@ -21,6 +21,7 @@ import {
   type HttpGetResult,
   type OpenClawWsFactory,
   type OpenClawWsLike,
+  type OpenClawServiceDeps,
   type SpawnFn,
 } from './openclaw-service';
 import type { EnvLike } from '../interpreter/external/command-resolver';
@@ -34,7 +35,13 @@ let cliEnv: EnvLike;
 beforeAll(() => {
   cliDir = mkdtempSync(path.join(tmpdir(), 'ezterm-openclaw-cli-'));
   writeFileSync(path.join(cliDir, 'openclaw.cmd'), '');
-  cliEnv = { PATH: cliDir, PATHEXT: '.COM;.EXE;.BAT;.CMD' };
+  const configPath = path.join(cliDir, 'openclaw.json');
+  writeFileSync(configPath, '{}');
+  cliEnv = {
+    PATH: cliDir,
+    PATHEXT: '.COM;.EXE;.BAT;.CMD',
+    EZTERMINAL_OPENCLAW_CONFIG_PATH: configPath,
+  };
 });
 
 afterAll(() => {
@@ -230,6 +237,56 @@ describe('OpenClawService — getStatus', () => {
     expect((await service.getStatus()).state).toBe('not-installed'); // still cached
     expect((await service.getStatus(true)).state).toBe('stopped'); // forced re-probe finds it now
   });
+
+  it('fails closed when an HTTPS env override cannot be served by the HTTP-only mobile proxy', async () => {
+    const httpGet = vi.fn(async (): Promise<HttpGetResult> => ({ ok: true }));
+    const spawn = vi.fn(() => {
+      throw new Error('unsupported endpoints must not spawn the CLI');
+    }) as unknown as SpawnFn;
+    const wsFactory = vi.fn(() => {
+      throw new Error('unsupported endpoints must not open a socket');
+    }) as unknown as OpenClawWsFactory;
+    const readFile = vi.fn(async () => JSON.stringify({ gateway: { auth: { token: 'secret' } } }));
+    const service = new OpenClawService({
+      env: { ...cliEnv, EZTERMINAL_OPENCLAW_URL: 'https://gateway.example:443' },
+      httpGet,
+      spawn,
+      wsFactory,
+      readFile,
+    });
+
+    expect(service.getEndpoint()).toMatchObject({
+      origin: 'http://127.0.0.1:18789',
+      source: 'default',
+    });
+    await expect(service.getStatus()).resolves.toEqual({ state: 'unknown', port: 18789 });
+    await expect(service.runLifecycle('start')).resolves.toEqual({
+      ok: false,
+      code: 'unavailable',
+      stderr: 'EZTERMINAL_OPENCLAW_URL must be a valid http origin',
+    });
+    await expect(service.runAutostart('install')).resolves.toEqual({
+      ok: false,
+      code: 'unavailable',
+      stderr: 'EZTERMINAL_OPENCLAW_URL must be a valid http origin',
+    });
+    await expect(service.setCoreConfig('gateway.port', '19099')).resolves.toEqual({
+      ok: false,
+      restartRequired: false,
+      code: 'unavailable',
+      error: 'EZTERMINAL_OPENCLAW_URL must be a valid http origin',
+    });
+    await expect(service.getChatToken()).resolves.toBeNull();
+    await expect(service.getChatUrl()).resolves.toBeNull();
+    await expect(service.getInsecureAuthStatus()).resolves.toBe('error');
+    await expect(service.listAgentSessions()).resolves.toEqual([]);
+
+    expect(httpGet).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+    expect(wsFactory).not.toHaveBeenCalled();
+    expect(readFile).not.toHaveBeenCalled();
+    service.dispose();
+  });
 });
 
 // ── isInstalled — M2 negative-cache TTL ─────────────────────────────────────
@@ -392,7 +449,7 @@ describe('OpenClawService — runLifecycle', () => {
     const { spawn } = makeExitSpawn(1, '', 'gateway already stopped');
     const service = new OpenClawService({ env: cliEnv, spawn, httpGet: async () => ({ ok: false }) });
     const result = await service.runLifecycle('stop');
-    expect(result).toEqual({ ok: false, stderr: 'gateway already stopped' });
+    expect(result).toEqual({ ok: false, code: 'cli-failed', stderr: 'gateway already stopped' });
   });
 
   it('serializes overlapping calls — the second never starts until the first closes', async () => {
@@ -400,19 +457,49 @@ describe('OpenClawService — runLifecycle', () => {
     const service = new OpenClawService({ env: cliEnv, spawn, httpGet: async () => ({ ok: false }) });
 
     const p1 = service.runLifecycle('start');
-    const p2 = service.runLifecycle('stop');
     await flush();
-    expect(calls).toHaveLength(1); // second is queued behind the first, not interleaved
+    const p2 = service.runLifecycle('stop');
+    const r2 = await Promise.race([
+      p2,
+      new Promise<'did-not-settle'>((resolve) => setTimeout(() => resolve('did-not-settle'), 100)),
+    ]);
+    expect(r2).toEqual({ ok: false, code: 'busy', stderr: 'OpenClaw lifecycle operation is already running' });
+    expect(calls).toHaveLength(1);
 
     closeNth(0, 0);
+    const r1 = await p1;
+    expect(r1.ok).toBe(true);
+    expect(calls.map((c) => c.args)).toEqual([['gateway', 'start']]);
+  });
+
+  it('rejects a config mutation while lifecycle owns the global mutation gate, then recovers', async () => {
+    const { spawn, calls, closeNth } = makeControllableSpawn();
+    const service = new OpenClawService({ env: cliEnv, spawn, httpGet: async () => ({ ok: false }) });
+
+    const lifecycle = service.runLifecycle('start');
+    await flush();
+    const config = service.setCoreConfig('gateway.port', '19099');
+    const configResult = await Promise.race([
+      config,
+      new Promise<'did-not-settle'>((resolve) => setTimeout(() => resolve('did-not-settle'), 25)),
+    ]);
+
+    for (let i = 0; i < calls.length; i += 1) closeNth(i, 0);
+    await Promise.allSettled([lifecycle, config]);
+
+    expect(configResult).toEqual({
+      ok: false,
+      restartRequired: false,
+      code: 'busy',
+      error: 'OpenClaw lifecycle operation is already running',
+    });
+    expect(calls).toHaveLength(1);
+
+    const recovered = service.setCoreConfig('gateway.port', '19099');
     await flush();
     expect(calls).toHaveLength(2);
-
     closeNth(1, 0);
-    const [r1, r2] = await Promise.all([p1, p2]);
-    expect(r1.ok).toBe(true);
-    expect(r2.ok).toBe(true);
-    expect(calls.map((c) => c.args)).toEqual([['gateway', 'start'], ['gateway', 'stop']]);
+    await expect(recovered).resolves.toEqual({ ok: true, restartRequired: true });
   });
 });
 
@@ -439,7 +526,7 @@ describe('OpenClawService — runAutostart', () => {
     const { spawn } = makeExitSpawn(1, '', 'not installed');
     const service = new OpenClawService({ env: cliEnv, spawn, httpGet: async () => ({ ok: false }) });
     const result = await service.runAutostart('uninstall');
-    expect(result).toEqual({ ok: false, stderr: 'not installed' });
+    expect(result).toEqual({ ok: false, code: 'cli-failed', stderr: 'not installed' });
   });
 
   it('serializes on the SAME lane as runLifecycle — never races a concurrent start/stop/restart', async () => {
@@ -447,19 +534,19 @@ describe('OpenClawService — runAutostart', () => {
     const service = new OpenClawService({ env: cliEnv, spawn, httpGet: async () => ({ ok: false }) });
 
     const p1 = service.runLifecycle('start');
-    const p2 = service.runAutostart('install');
     await flush();
-    expect(calls).toHaveLength(1); // autostart queued behind the in-flight lifecycle call
+    const p2 = service.runAutostart('install');
+    const r2 = await Promise.race([
+      p2,
+      new Promise<'did-not-settle'>((resolve) => setTimeout(() => resolve('did-not-settle'), 100)),
+    ]);
+    expect(r2).toEqual({ ok: false, code: 'busy', stderr: 'OpenClaw lifecycle operation is already running' });
+    expect(calls).toHaveLength(1);
 
     closeNth(0, 0);
-    await flush();
-    expect(calls).toHaveLength(2);
-
-    closeNth(1, 0);
-    const [r1, r2] = await Promise.all([p1, p2]);
+    const r1 = await p1;
     expect(r1.ok).toBe(true);
-    expect(r2.ok).toBe(true);
-    expect(calls.map((c) => c.args)).toEqual([['gateway', 'start'], ['gateway', 'install']]);
+    expect(calls.map((c) => c.args)).toEqual([['gateway', 'start']]);
   });
 });
 
@@ -536,11 +623,114 @@ describe('OpenClawService — core config', () => {
     expect(result).toEqual({ ok: true, restartRequired: true });
   });
 
-  it('setCoreConfig surfaces stderr and restartRequired:false on failure', async () => {
+  it('owns the global mutation gate against lifecycle and duplicate config calls, then releases it', async () => {
+    const { spawn, calls, closeNth } = makeControllableSpawn();
+    const service = new OpenClawService({ env: cliEnv, spawn, httpGet: async () => ({ ok: false }) });
+
+    const configOwner = service.setCoreConfig('agents.defaults.model', 'openai/gpt-6');
+    await flush();
+    const lifecycleContender = service.runLifecycle('restart');
+    const configContender = service.setCoreConfig('gateway.port', '19099');
+    const [lifecycleResult, configResult] = await Promise.all([
+      Promise.race([
+        lifecycleContender,
+        new Promise<'did-not-settle'>((resolve) => setTimeout(() => resolve('did-not-settle'), 25)),
+      ]),
+      Promise.race([
+        configContender,
+        new Promise<'did-not-settle'>((resolve) => setTimeout(() => resolve('did-not-settle'), 25)),
+      ]),
+    ]);
+
+    for (let i = 0; i < calls.length; i += 1) closeNth(i, 0);
+    await Promise.allSettled([configOwner, lifecycleContender, configContender]);
+
+    expect(lifecycleResult).toEqual({
+      ok: false,
+      code: 'busy',
+      stderr: 'OpenClaw lifecycle operation is already running',
+    });
+    expect(configResult).toEqual({
+      ok: false,
+      restartRequired: false,
+      code: 'busy',
+      error: 'OpenClaw lifecycle operation is already running',
+    });
+    expect(calls).toHaveLength(1);
+
+    const recovered = service.runAutostart('install');
+    await flush();
+    expect(calls).toHaveLength(2);
+    closeNth(1, 0);
+    await expect(recovered).resolves.toEqual({ ok: true });
+  });
+
+  it('serializes model values as one strict JSON string argument', async () => {
+    const { spawn, calls } = makeExitSpawn(0);
+    const service = new OpenClawService({ env: cliEnv, spawn });
+
+    await expect(service.setCoreConfig('agents.defaults.model', ' openai/gpt-6 ')).resolves.toEqual({
+      ok: true,
+      restartRequired: true,
+    });
+    expect(calls[0]?.args).toEqual([
+      'config',
+      'set',
+      'agents.defaults.model',
+      JSON.stringify('openai/gpt-6'),
+      '--strict-json',
+    ]);
+  });
+
+  it('rejects an invalid gateway port before spawning the CLI', async () => {
+    const spawn = vi.fn<SpawnFn>();
+    const service = new OpenClawService({ env: cliEnv, spawn });
+
+    await expect(service.setCoreConfig('gateway.port', '65536')).resolves.toEqual({
+      ok: false,
+      restartRequired: false,
+      code: 'invalid-value',
+      error: 'gateway.port must be an integer between 1 and 65535',
+    });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('setCoreConfig surfaces stderr and restartRequired:false on CLI failure', async () => {
     const { spawn } = makeExitSpawn(1, '', 'invalid value');
     const service = new OpenClawService({ env: cliEnv, spawn });
-    const result = await service.setCoreConfig('gateway.port', 'not-a-port');
-    expect(result).toEqual({ ok: false, restartRequired: false, error: 'invalid value' });
+    const result = await service.setCoreConfig('gateway.port', '19099');
+    expect(result).toEqual({ ok: false, restartRequired: false, code: 'cli-failed', error: 'invalid value' });
+  });
+
+  it('bounds a stuck config command and terminates its process', async () => {
+    let killed = false;
+    const spawn: SpawnFn = () =>
+      ({
+        stdout: { on: () => undefined },
+        stderr: { on: () => undefined },
+        on: () => undefined,
+      }) as unknown as ChildProcessLike;
+    const service = new OpenClawService({
+      env: cliEnv,
+      spawn,
+      cliTimeouts: { config: 5 },
+      killProcess: () => {
+        killed = true;
+      },
+    } as OpenClawServiceDeps);
+
+    const result = await Promise.race([
+      service.setCoreConfig('agents.defaults.model', 'openai/gpt-6'),
+      new Promise<'did-not-settle'>((resolve) => setTimeout(() => resolve('did-not-settle'), 100)),
+    ]);
+
+    expect(result).toEqual({
+      ok: false,
+      restartRequired: false,
+      code: 'timeout',
+      error: 'OpenClaw config command timed out',
+    });
+    expect(killed).toBe(true);
   });
 });
 
@@ -548,6 +738,84 @@ describe('OpenClawService — core config', () => {
 
 describe('OpenClawService — chat token', () => {
   const FAKE_TOKEN = 'abc123-fake-secret-token-value';
+
+  it('discovers a configured non-default gateway port before the first status and chat calls', async () => {
+    const httpGet = vi.fn(async (): Promise<HttpGetResult> => ({ ok: false, reason: 'refused' }));
+    const spawn = vi.fn<SpawnFn>();
+    const service = new OpenClawService({
+      env: cliEnv,
+      spawn,
+      httpGet,
+      readFile: async () => JSON.stringify({
+        gateway: {
+          port: 19099,
+          auth: { token: FAKE_TOKEN },
+        },
+      }),
+    });
+
+    await expect(service.getStatus()).resolves.toEqual({ state: 'stopped', port: 19099 });
+    expect(httpGet).toHaveBeenCalledWith('http://127.0.0.1:19099/');
+    await expect(service.getChatUrl()).resolves.toBe(`http://127.0.0.1:19099/#token=${FAKE_TOKEN}`);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('activates a staged gateway port only after a successful restart', async () => {
+    const { spawn } = makeExitSpawn(0);
+    const service = new OpenClawService({
+      env: cliEnv,
+      spawn,
+      readFile: async () => JSON.stringify({ gateway: { auth: { token: FAKE_TOKEN } } }),
+      httpGet: async () => ({ ok: false, reason: 'refused' }),
+    });
+    const changed: number[] = [];
+    const dynamic = service as OpenClawService & {
+      getEndpoint(): { port: number; origin: string; generation: number };
+      onEndpointChanged(listener: (endpoint: { port: number }) => void): () => void;
+    };
+    const unsubscribe = dynamic.onEndpointChanged((endpoint) => changed.push(endpoint.port));
+
+    expect(dynamic.getEndpoint().port).toBe(18789);
+    await expect(service.setCoreConfig('gateway.port', '19099')).resolves.toMatchObject({ ok: true });
+    expect(dynamic.getEndpoint().port).toBe(18789);
+
+    await expect(service.runLifecycle('restart')).resolves.toEqual({ ok: true });
+    expect(dynamic.getEndpoint()).toMatchObject({ port: 19099, origin: 'http://127.0.0.1:19099', generation: 1 });
+    expect(changed).toEqual([19099]);
+    expect(await service.getChatUrl()).toBe(`http://127.0.0.1:19099/#token=${FAKE_TOKEN}`);
+
+    unsubscribe();
+  });
+
+  it('isolates endpoint observers so one throw cannot reject restart or skip later observers', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { spawn } = makeExitSpawn(0);
+      const service = new OpenClawService({
+        env: cliEnv,
+        spawn,
+        readFile: async () => JSON.stringify({ gateway: { auth: { token: FAKE_TOKEN } } }),
+        httpGet: async () => ({ ok: false, reason: 'refused' }),
+      });
+      const healthyObserver = vi.fn();
+      service.onEndpointChanged(() => {
+        throw new Error('observer failed');
+      });
+      service.onEndpointChanged(healthyObserver);
+
+      await expect(service.setCoreConfig('gateway.port', '19099')).resolves.toMatchObject({ ok: true });
+      await expect(service.runLifecycle('restart')).resolves.toEqual({ ok: true });
+
+      expect(healthyObserver).toHaveBeenCalledOnce();
+      expect(healthyObserver).toHaveBeenCalledWith(expect.objectContaining({ port: 19099 }));
+      expect(consoleError).toHaveBeenCalledWith(
+        '[OpenClawService] endpoint listener failed:',
+        expect.any(Error),
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
 
   it('extracts the token from the config file directly (never via the CLI)', async () => {
     const spawn: SpawnFn = () => {
@@ -560,6 +828,22 @@ describe('OpenClawService — chat token', () => {
     });
     expect(await service.getChatToken()).toBe(FAKE_TOKEN);
     expect(await service.getChatUrl()).toBe(`http://127.0.0.1:18789/#token=${FAKE_TOKEN}`);
+  });
+
+  it('diagnoses insecure Control UI auth without mutating config', async () => {
+    const spawn = vi.fn<SpawnFn>();
+    const service = new OpenClawService({
+      env: cliEnv,
+      spawn,
+      readFile: async () =>
+        JSON.stringify({
+          gateway: { auth: { token: FAKE_TOKEN }, controlUi: { allowInsecureAuth: false } },
+        }),
+    });
+    const diagnostic = service as OpenClawService & { getInsecureAuthStatus(): Promise<string> };
+
+    await expect(diagnostic.getInsecureAuthStatus()).resolves.toBe('disabled');
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it('returns null when the config file is unreadable, rather than throwing', async () => {
@@ -596,6 +880,64 @@ describe('OpenClawService — chat token', () => {
 });
 
 // ── parseLogLine ─────────────────────────────────────────────────────────
+
+describe('OpenClawService status observer isolation', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('does not let a throwing observer reject an otherwise successful lifecycle action', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { spawn } = makeExitSpawn(0);
+    const service = new OpenClawService({
+      env: cliEnv,
+      spawn,
+      readFile: async () => '{}',
+      httpGet: async () => ({ ok: false, reason: 'refused' }),
+      wsFactory: () => {
+        throw new Error('no socket');
+      },
+    });
+    const throwingObserver = vi.fn(() => {
+      throw new Error('observer failed');
+    });
+    const healthyObserver = vi.fn();
+    service.subscribeStatus(throwingObserver);
+    service.subscribeStatus(healthyObserver);
+
+    await expect(service.runLifecycle('start')).resolves.toEqual({ ok: true });
+    expect(throwingObserver).toHaveBeenCalledTimes(1);
+    expect(healthyObserver).toHaveBeenCalledTimes(1);
+    service.dispose();
+  });
+
+  it('continues notifying later observers and scheduling polls after one observer throws', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const service = new OpenClawService({
+      env: cliEnv,
+      readFile: async () => '{}',
+      httpGet: async () => ({ ok: false, reason: 'refused' }),
+      wsFactory: () => {
+        throw new Error('no socket');
+      },
+    });
+    const throwingObserver = vi.fn(() => {
+      throw new Error('observer failed');
+    });
+    const healthyObserver = vi.fn();
+    service.subscribeStatus(throwingObserver);
+    service.subscribeStatus(healthyObserver);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(healthyObserver).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(healthyObserver).toHaveBeenCalledTimes(2);
+    service.dispose();
+  });
+});
 
 describe('parseLogLine', () => {
   it('parses a tslog JSON entry and strips embedded ANSI codes from the message', () => {

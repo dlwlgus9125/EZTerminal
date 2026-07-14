@@ -44,6 +44,7 @@ import {
   encodeFrame,
   uint8ArrayToBase64,
   type ClientToServerMessage,
+  type OpenClawChatTicketFailureReason,
   type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../shared/remote-protocol';
@@ -468,10 +469,12 @@ export interface RemoteFileSource {
   abortUpload(uploadId: string): Promise<void>;
 }
 
-/** Result of a chat-ticket mint (openclaw-management M4/M5) — `null` when no
- * ticket could be minted (proxy not running, or no gateway token available;
- * `mintChatTicket` never throws for this expected case). */
-export type OpenClawChatTicketResult = { readonly ticket: string; readonly proxyPort: number; readonly token: string } | null;
+/** Typed result of a chat-ticket mint (openclaw-management M4/M5). */
+export type OpenClawChatTicketResult =
+  | { readonly ticket: string; readonly proxyPort: number; readonly token: string }
+  | { readonly ticket: null; readonly reason: OpenClawChatTicketFailureReason };
+
+const OPENCLAW_CHAT_TICKET_TIMEOUT_MS = 15_000;
 
 /**
  * DI seam over `OpenClawService` (src/main/openclaw-service.ts) + the proxy's
@@ -493,11 +496,8 @@ export interface RemoteOpenClawSource {
   getCoreConfig(): Promise<OpenClawCoreConfig>;
   setCoreConfig(key: string, value: string): Promise<OpenClawSetConfigResult>;
   mintChatTicket(): Promise<OpenClawChatTicketResult>;
-  /** Effective OpenClaw visibility RIGHT NOW (openclaw-stabilization M3) —
-   * synchronous, unlike every other member above: main.ts keeps this
-   * resolved eagerly (recomputed at bridge boot and on every
-   * `settings:set-openclaw-mode`), so every openclaw-* arm below can gate
-   * itself without an async round trip per message. */
+  /** Effective desktop presentation visibility right now. This is only an
+   * availability hint pushed to mobile; it does not authorize remote APIs. */
   isVisible(): boolean;
   /** Fires whenever desktop visibility changes (the tri-state mode was
    * toggled) — relayed to every authed connection as `openclaw-availability`. */
@@ -632,11 +632,6 @@ export function attachConnection(
   let openclawLogsUnsub: (() => void) | null = null;
   let pendingOpenClawLogLines: OpenClawLogLine[] = [];
   let openclawLogFlushTimer: ReturnType<typeof setInterval> | null = null;
-  /** M3 gate: `false` when there's no `openclawSource` at all (existing
-   * "no wiring" no-op convention) OR the desktop's tri-state mode currently
-   * resolves to hidden. */
-  const openclawVisible = (): boolean => options.openclawSource?.isVisible() ?? false;
-
   const send = (msg: ServerToClientMessage): void => {
     if (ws.readyState !== WS_OPEN) return;
     try {
@@ -1464,16 +1459,12 @@ export function attachConnection(
       // ── OpenClaw management (openclaw-management M4) ────────────────────
       // Every arm below guards `if (!options.openclawSource) break;` — silent
       // no-op, same convention as stats/packets/file-* above when their
-      // source is absent. Additionally (M3): when the desktop's effective
-      // visibility is false, subscriptions are ignored (no listener attached,
-      // no reply) and request/reply arms reply with their own existing
-      // "unavailable" shape (mirrors what mobile already renders on a dropped
-      // connection, see ws-ezterminal.ts's `endConnection`) rather than
-      // touching `openclawSource` at all.
+      // source is absent. Desktop presentation visibility is deliberately not
+      // an authorization gate: an authenticated mobile client can manage
+      // OpenClaw even while the desktop panel is hidden.
 
       case 'openclaw-status-subscribe': {
         if (!options.openclawSource) break;
-        if (!openclawVisible()) break; // hidden — subscription ignored
         if (openclawStatusSubscribed) break; // idempotent — already on
         openclawStatusSubscribed = true;
         openclawStatusUnsub = options.openclawSource.subscribeStatus((status) => {
@@ -1489,10 +1480,6 @@ export function attachConnection(
       case 'openclaw-lifecycle': {
         if (!options.openclawSource) break;
         const { requestId, action } = msg;
-        if (!openclawVisible()) {
-          send({ kind: 'openclaw-lifecycle-result', requestId, result: { ok: false, stderr: 'openclaw disabled' } });
-          break;
-        }
         options.openclawSource
           .runLifecycle(action)
           .then((result) => send({ kind: 'openclaw-lifecycle-result', requestId, result }))
@@ -1508,7 +1495,6 @@ export function attachConnection(
 
       case 'openclaw-logs-subscribe': {
         if (!options.openclawSource) break;
-        if (!openclawVisible()) break; // hidden — subscription ignored
         if (openclawLogsSubscribed) break; // idempotent — already on
         openclawLogsSubscribed = true;
         openclawLogsUnsub = options.openclawSource.subscribeLogs((line) => {
@@ -1530,10 +1516,6 @@ export function attachConnection(
       case 'openclaw-sessions-get': {
         if (!options.openclawSource) break;
         const { requestId } = msg;
-        if (!openclawVisible()) {
-          send({ kind: 'openclaw-sessions-reply', requestId, sessions: [] });
-          break;
-        }
         options.openclawSource
           .listAgentSessions()
           .then((sessions) => send({ kind: 'openclaw-sessions-reply', requestId, sessions }))
@@ -1544,14 +1526,6 @@ export function attachConnection(
       case 'openclaw-config-get': {
         if (!options.openclawSource) break;
         const { requestId } = msg;
-        if (!openclawVisible()) {
-          send({
-            kind: 'openclaw-config-reply',
-            requestId,
-            config: Object.fromEntries(OPENCLAW_CONFIG_ALLOWLIST.map((key) => [key, OPENCLAW_CONFIG_UNSET])) as OpenClawCoreConfig,
-          });
-          break;
-        }
         options.openclawSource
           .getCoreConfig()
           .then((config) => send({ kind: 'openclaw-config-reply', requestId, config }))
@@ -1568,14 +1542,6 @@ export function attachConnection(
       case 'openclaw-config-set': {
         if (!options.openclawSource) break;
         const { requestId, key, value } = msg;
-        if (!openclawVisible()) {
-          send({
-            kind: 'openclaw-config-set-reply',
-            requestId,
-            result: { ok: false, restartRequired: false, error: 'openclaw disabled' },
-          });
-          break;
-        }
         // `setCoreConfig` REJECTS for a non-allowlisted key (defense against a
         // hostile/buggy client, see OpenClawService's own doc) — that must
         // surface as an `ok:false` reply, never crash this connection handler.
@@ -1595,23 +1561,57 @@ export function attachConnection(
       case 'openclaw-chat-ticket': {
         if (!options.openclawSource) break;
         const { requestId } = msg;
-        if (!openclawVisible()) {
-          send({ kind: 'openclaw-chat-ticket-reply', requestId, ticket: null, proxyPort: 0, token: null });
-          break;
-        }
-        options.openclawSource
+        let settled = false;
+        const timeout = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          send({
+            kind: 'openclaw-chat-ticket-reply',
+            requestId,
+            ticket: null,
+            proxyPort: 0,
+            token: null,
+            reason: 'timeout',
+          });
+        }, OPENCLAW_CHAT_TICKET_TIMEOUT_MS);
+        timeout.unref?.();
+        void options.openclawSource
           .mintChatTicket()
           .then((result) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            if (result.ticket === null) {
+              send({
+                kind: 'openclaw-chat-ticket-reply',
+                requestId,
+                ticket: null,
+                proxyPort: 0,
+                token: null,
+                reason: result.reason,
+              });
+              return;
+            }
             send({
               kind: 'openclaw-chat-ticket-reply',
               requestId,
-              ticket: result?.ticket ?? null,
-              proxyPort: result?.proxyPort ?? 0,
-              token: result?.token ?? null,
+              ticket: result.ticket,
+              proxyPort: result.proxyPort,
+              token: result.token,
             });
           })
           .catch(() => {
-            send({ kind: 'openclaw-chat-ticket-reply', requestId, ticket: null, proxyPort: 0, token: null });
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            send({
+              kind: 'openclaw-chat-ticket-reply',
+              requestId,
+              ticket: null,
+              proxyPort: 0,
+              token: null,
+              reason: 'proxy-unavailable',
+            });
           });
         break;
       }
@@ -1624,6 +1624,8 @@ export function attachConnection(
 }
 
 export interface RemoteBridgeHandle {
+  /** Actual bound port (useful when tests or future callers request port 0). */
+  readonly port: number;
   /** Terminates every connected client (fires each socket's 'close', see
    * attachConnection's per-connection teardown) then closes the listening
    * socket — resolves only once the port is actually released, so an
@@ -1641,7 +1643,7 @@ export interface RemoteBridgeHandle {
  * transport itself is plain `ws://` — intended for a trusted LAN or an
  * encrypted overlay (Tailscale/WireGuard); see SECURITY.md.
  */
-export function startRemoteBridge(options: RemoteBridgeOptions): RemoteBridgeHandle {
+export async function startRemoteBridge(options: RemoteBridgeOptions): Promise<RemoteBridgeHandle> {
   const runLeases = leasesFor(options);
   const connectionOptions = options.runLeases ? options : { ...options, runLeases };
   const wss = new WebSocketServer({
@@ -1650,10 +1652,23 @@ export function startRemoteBridge(options: RemoteBridgeOptions): RemoteBridgeHan
     maxPayload: MAX_INBOUND_FRAME_BYTES,
     verifyClient: (info: { origin?: string }) => isRemoteOriginAllowed(info.origin),
   });
-  // A bind failure (e.g. EADDRINUSE from a stale listener) must not crash main.
-  wss.on('error', (err) => {
-    console.error('[remote-bridge] WebSocketServer error:', err);
+  // `WebSocketServer` begins binding in its constructor but reports the result
+  // asynchronously. Do not hand a handle to main until the listener is real;
+  // an EADDRINUSE/EACCES is part of the start operation, not a background log.
+  await new Promise<void>((resolve, reject) => {
+    const onListening = (): void => {
+      wss.off('error', onBindError);
+      resolve();
+    };
+    const onBindError = (error: Error): void => {
+      wss.off('listening', onListening);
+      reject(error);
+    };
+    wss.once('listening', onListening);
+    wss.once('error', onBindError);
   });
+  // Errors after a successful bind are unexpected but must remain contained.
+  wss.on('error', (err) => console.error('[remote-bridge] WebSocketServer error:', err));
 
   // Heartbeat sweep (attachConnection itself is untouched — fakes/tests never
   // see this): counts consecutive missed pongs per socket, terminating once a
@@ -1690,9 +1705,14 @@ export function startRemoteBridge(options: RemoteBridgeOptions): RemoteBridgeHan
     }
   }, HEARTBEAT_INTERVAL_MS);
 
+  const address = wss.address();
+  const boundPort = typeof address === 'object' && address !== null ? address.port : options.port;
+  let stopPromise: Promise<void> | null = null;
   return {
-    stop: () =>
-      new Promise((resolve) => {
+    port: boundPort,
+    stop: () => {
+      if (stopPromise) return stopPromise;
+      stopPromise = new Promise((resolve) => {
         clearInterval(heartbeat);
         for (const ws of wss.clients) ws.terminate();
         wss.close((err) => {
@@ -1700,6 +1720,8 @@ export function startRemoteBridge(options: RemoteBridgeOptions): RemoteBridgeHan
           if (err) console.error('[remote-bridge] error closing WebSocketServer:', err);
           resolve();
         });
-      }),
+      });
+      return stopPromise;
+    },
   };
 }

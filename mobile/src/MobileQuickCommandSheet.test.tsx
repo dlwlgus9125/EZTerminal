@@ -6,6 +6,7 @@ import {
   MobileQuickCommandSheet,
   type MobileQuickCommandSource,
 } from './MobileQuickCommandSheet';
+import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
 import type { QuickCommand } from '../../src/shared/quick-command';
 import type { RemoteQuickCommandsResult } from './transport/ws-ezterminal';
 
@@ -52,14 +53,16 @@ function renderSheet({
   runDisabledReason?: string;
 }): void {
   act(() => root.render(
-    <MobileQuickCommandSheet
-      source={source}
-      supported={supported}
-      connected={connected}
-      onInsert={onInsert}
-      onRun={onRun}
-      runDisabledReason={runDisabledReason}
-    />,
+    <MobileNavigationHistoryProvider>
+      <MobileQuickCommandSheet
+        source={source}
+        supported={supported}
+        connected={connected}
+        onInsert={onInsert}
+        onRun={onRun}
+        runDisabledReason={runDisabledReason}
+      />
+    </MobileNavigationHistoryProvider>,
   ));
 }
 

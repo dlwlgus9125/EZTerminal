@@ -28,6 +28,9 @@ export function launchApp(
     if (value !== undefined) env[key] = value;
   }
   env.EZTERMINAL_USER_DATA_DIR = dir;
+  // Production is single-instance. Playwright intentionally launches many
+  // isolated app instances, so the harness must opt out explicitly.
+  env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES = '1';
   Object.assign(env, extraEnv);
   // The broad legacy E2E suite asserts English copy. Keep its browser locale
   // deterministic across developer and CI machines; locale-specific product

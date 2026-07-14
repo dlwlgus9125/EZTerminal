@@ -25,7 +25,7 @@ interface FakeUpstream {
   readonly lastUpgradeHeaders: http.IncomingHttpHeaders | null;
 }
 
-function startFakeUpstream(): Promise<FakeUpstream> {
+function startFakeUpstream(options: { hang?: boolean } = {}): Promise<FakeUpstream> {
   return new Promise((resolve) => {
     const state: { lastRequest: FakeUpstream['lastRequest']; lastUpgradeHeaders: http.IncomingHttpHeaders | null } = {
       lastRequest: null,
@@ -33,6 +33,7 @@ function startFakeUpstream(): Promise<FakeUpstream> {
     };
     const server = http.createServer((req: IncomingMessage, res: ServerResponse) => {
       state.lastRequest = { method: req.method, url: req.url, headers: req.headers };
+      if (options.hang) return;
       res.writeHead(200, {
         'x-frame-options': 'DENY',
         'content-security-policy': CSP_BASELINE,
@@ -169,6 +170,55 @@ describe('openclaw-proxy — ticket redemption + cookie auth', () => {
 
     const res = await rawGet(`http://127.0.0.1:${proxy.port}`, '/', { cookie: 'ez_openclaw_session=not-a-real-session' });
     expect(res.status).toBe(403);
+  });
+});
+
+describe('openclaw-proxy dynamic upstream', () => {
+  const upstreams: FakeUpstream[] = [];
+  let proxy: OpenClawProxyHandle | undefined;
+
+  afterEach(async () => {
+    await proxy?.stop();
+    for (const upstream of upstreams.splice(0)) {
+      upstream.wss.close();
+      await new Promise<void>((resolve) => upstream.server.close(() => resolve()));
+    }
+  });
+
+  it('retargets new tickets without replacing the listener', async () => {
+    const first = await startFakeUpstream();
+    const second = await startFakeUpstream();
+    upstreams.push(first, second);
+    proxy = await startOpenClawProxy({ port: 0, upstreamOrigin: first.origin });
+    const originalPort = proxy.port;
+    const dynamic = proxy as OpenClawProxyHandle & { setUpstreamOrigin(origin: string): void };
+
+    dynamic.setUpstreamOrigin(second.origin);
+    const ticket = proxy.mintTicket();
+    const redemption = await rawGet(`http://127.0.0.1:${proxy.port}`, `/?t=${ticket}`);
+    const cookie = extractCookie(redemption.headers['set-cookie']);
+    const response = await rawGet(`http://127.0.0.1:${proxy.port}`, '/', { cookie: cookie ?? '' });
+
+    expect(response.status).toBe(200);
+    expect(proxy.port).toBe(originalPort);
+    expect(first.lastRequest).toBeNull();
+    expect(second.lastRequest?.url).toBe('/');
+  });
+
+  it('returns 504 when an authorized upstream request exceeds its deadline', async () => {
+    const hanging = await startFakeUpstream({ hang: true });
+    upstreams.push(hanging);
+    proxy = await startOpenClawProxy({
+      port: 0,
+      upstreamOrigin: hanging.origin,
+      upstreamTimeoutMs: 10,
+    });
+    const ticket = proxy.mintTicket();
+    const redemption = await rawGet(`http://127.0.0.1:${proxy.port}`, `/?t=${ticket}`);
+    const cookie = extractCookie(redemption.headers['set-cookie']);
+
+    const response = await rawGet(`http://127.0.0.1:${proxy.port}`, '/', { cookie: cookie ?? '' });
+    expect(response.status).toBe(504);
   });
 });
 

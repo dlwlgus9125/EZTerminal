@@ -1,45 +1,38 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Bot, Ellipsis, Files, List, Plus } from 'lucide-react';
 
 import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
 import { EMPTY_AGENT_ACTIVITY_SNAPSHOT, type AgentActivitySnapshot } from '../../src/shared/agent';
-import { AgentHub, countAgentAttention } from '../../src/renderer/AgentHub';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { quoteEzArgument } from '../../src/shared/quote-ez-argument';
 import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
-import { setUserFontId } from '../../src/renderer/theme-runtime';
 import { Button, IconButton } from '../../src/renderer/ui/Button';
-import { MobileFileView } from './MobileFileView';
 import { MobileHeaderMoreActions } from './MobileHeaderMoreActions';
-import { MobileOpenClawView } from './MobileOpenClawView';
 import { MobileSessionView } from './MobileSessionView';
-import { MobileSettingsView } from './MobileSettingsView';
-import { MobileStatsView } from './MobileStatsView';
 import { MobileWorkbenchCoordinator } from './MobileWorkbenchCoordinator';
 import { loadOpenClawMode, saveOpenClawMode } from './openclaw-mode';
-import { SessionSwitcher } from './SessionSwitcher';
 import { mobileTerminalPanelId, mobileTerminalTabId, TabStrip } from './TabStrip';
 import { ThemeMenu } from './ThemeMenu';
 import {
   ACTIVE_MOBILE_TAB_CHANGE_EVENT,
   OPEN_TERMINAL_KEY_SETTINGS_EVENT,
 } from './terminal-accessory-layout';
-import { applyTheme, loadCustomThemes, loadFont, loadTheme, saveTheme } from './theme';
+import { applyTheme, loadTheme, saveTheme } from './theme';
 import { initialTabsState, tabsReducer } from './tabs';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 import { usePageVisible } from './use-page-visible';
 
-// theme-effects-font Wave 3 boot init — MODULE TOP LEVEL, not inside the
-// component: main.tsx's own top-level `applyTheme(loadTheme())` runs AFTER
-// its full import graph is evaluated (App.tsx statically imports this file),
-// so a bare call here beats that later statement — the same trick main.tsx
-// itself relies on for its own boot-time applyTheme call. loadCustomThemes()
-// registers any persisted custom theme mod so a persisted custom theme id
-// resolves instead of silently falling back to 'dark' (AC-T4); setUserFontId
-// seeds the persisted font override so PtyBlock's first render already uses it.
-loadCustomThemes();
-setUserFontId(loadFont());
+const AgentHub = lazy(async () => ({ default: (await import('../../src/renderer/AgentHub')).AgentHub }));
+const MobileFileView = lazy(async () => ({ default: (await import('./MobileFileView')).MobileFileView }));
+const MobileOpenClawView = lazy(async () => ({ default: (await import('./MobileOpenClawView')).MobileOpenClawView }));
+const MobileSettingsView = lazy(async () => ({ default: (await import('./MobileSettingsView')).MobileSettingsView }));
+const MobileStatsView = lazy(async () => ({ default: (await import('./MobileStatsView')).MobileStatsView }));
+const SessionSwitcher = lazy(async () => ({ default: (await import('./SessionSwitcher')).SessionSwitcher }));
+
+function countAgentAttention(snapshot: AgentActivitySnapshot): number {
+  return snapshot.items.filter((item) => item.status === 'blocked' || item.status === 'error' || item.status === 'waiting').length;
+}
 
 // MobileWorkspace — the authed shell (M5, mobile-parity plan D5). Replaces
 // App.tsx's old direct SessionSwitcher <-> MobileSessionView switching: this
@@ -260,6 +253,12 @@ export function MobileWorkspace({
     ?? activeSession?.cwd
     ?? '';
 
+  const auxiliaryPageFallback = (
+    <div className="status-loading mobile-auxiliary-page-loading" role="status" data-testid="mobile-auxiliary-page-loading">
+      {t('common.loading')}
+    </div>
+  );
+
   let page: JSX.Element | undefined;
   if (view === 'sessions') {
     page = (
@@ -319,7 +318,7 @@ export function MobileWorkspace({
   return (
     <MobileWorkbenchCoordinator
       onRequestTerminal={() => setView('terminal')}
-      page={page}
+      page={page ? <Suspense fallback={auxiliaryPageFallback}>{page}</Suspense> : undefined}
       terminal={<div className="mobile-workspace" data-testid="mobile-workspace">
       <header className="workspace-header">
         <TabStrip
