@@ -1,377 +1,544 @@
-# EZTerminal Orca-Inspired Productivity Surfaces
+# EZTerminal Adaptive Workbench UI/UX Specification
 
-## Product surface and audience
+## 1. Normative status
 
-EZTerminal is a dense operational terminal for developers who run structured
-commands, long-lived PTY programs, and coding agents on desktop, with a paired
-Android client for observing and controlling existing desktop sessions. The
-design must keep terminal output primary, make attention states discoverable
-without becoming a dashboard, and never turn selection, hover, preview, or
-drop gestures into implicit execution.
+This document is the source of truth for the commercial-readiness UI/UX
+redesign of the EZTerminal Electron desktop client and connected Android web
+client. Product UI implementation, stories, tests, and screenshots must agree
+with it. When code and this document disagree, update this document through an
+explicit product decision before changing the implementation contract.
 
-The scope of this artifact is the approved first delivery:
+The delivery is one complete release. Internal implementation may be staged,
+but partially migrated navigation, duplicate destinations, or mixed component
+systems are not a shippable state.
 
-- Agent Attention Hub for Codex, Claude, and generic CLI lifecycle fallback.
-- xterm search, safe web links, Unicode 11, and desktop WebGL fallback.
-- Desktop Quick Open/Commands.
-- Rich file preview on desktop and connected mobile, plus desktop file drop.
+In scope:
 
-The approved second delivery extends the same terminal-first direction with:
+- Desktop and Android information architecture, navigation, panels, layout,
+  responsive behavior, visual language, accessibility, and localization.
+- A shared semantic design system and platform-specific application shells.
+- Backward-compatible desktop settings and custom-theme evolution.
+- Storybook, accessibility checks, deterministic visual regression, and CI
+  quality gates.
 
-- Hardened desktop/mobile pairing credentials and transient mobile reconnect.
-- Destructive terminal close confirmation, opt-in OSC 52 clipboard writes, and
-  workspace-contained terminal file-location links.
-- Safe OpenSSH alias resolution, Git worktree commands, semantic terminal
-  restore, and loopback-only SSH local-forward status/control.
+Out of scope:
 
-The approved third delivery reduces interaction friction without adding a new
-product area:
+- Backend, terminal protocol, pairing/security, command semantics, and process
+  lifecycle changes.
+- A product tour, analytics/telemetry, Figma deliverables, raster illustrations,
+  generated imagery, remote fonts, or new vendor branding.
 
-- MRU pane switching, accessible terminal/tab context menus, and persistent
-  terminal titles.
-- A responsive mobile header and configurable terminal accessory-key deck.
-- Tiered connection recovery feedback and bounded input-control reclaim.
-- Direct desktop Quick Commands access plus capability-gated, read-only mobile
-  access. Focus-follows-mouse remains explicitly out of scope.
+## 2. Product, audience, and experience principles
 
-## Direction decision
+EZTerminal is a terminal-first operational workbench for developers running
+long-lived shells, structured commands, SSH sessions, and coding agents. The
+desktop is the authoring and control surface; the Android client is a durable
+companion for observing and controlling the same work without losing terminal
+state when auxiliary pages open.
 
-Three directions were considered during planning:
+Every UI decision follows these principles, in order:
 
-1. **Integrated terminal chrome (selected):** status dots on existing tabs, a
-   collapsible right Agent Hub, a centered Quick Open overlay, and an expanded
-   existing file viewer. This preserves maximum terminal locality and reuses
-   the established drawers and overlays.
-2. **Consolidated left activity rail (rejected):** agents, files, and commands
-   share a permanent icon rail. It creates stronger navigation but competes
-   with the existing File Explorer and reduces small-window terminal width.
-3. **Dashboard/dock tab (rejected):** agent activity becomes a normal Dockview
-   tab. It offers more room but hides attention behind tab navigation and makes
-   a lightweight status feature feel like a separate product area.
+1. **Terminal remains primary.** Chrome supports the work and never turns the
+   application into a dashboard.
+2. **One destination, several efficient entry points.** Navigation may expose a
+   destination in the rail and Command Center, but must not create duplicate
+   implementations or conflicting state.
+3. **Explicit action over surprise.** Selection, preview, insertion, drop, and
+   navigation never imply command execution.
+4. **State survives navigation.** Terminal controllers, drafts, scroll position,
+   xterm geometry, reconnect state, and selection are durable across auxiliary
+   UI transitions.
+5. **Matrix identity with professional restraint.** CRT character belongs in
+   the visual surface; legibility and reduced-motion preferences take priority.
+6. **Keyboard, pointer, touch, and assistive technology are first-class.** A
+   flow is incomplete if one input mode cannot finish it.
+7. **Korean and English are equal product languages.** Layouts tolerate both,
+   and system language selection is deterministic.
 
-The user selected option 1. No Figma or external mock is normative; this
-repo-owned document is the source of truth. If a future mock conflicts with
-it, this document must be updated before implementation follows the mock.
+## 3. Direction decision
 
-For the third delivery, three compatible directions were considered:
+Three product directions were evaluated:
 
-1. **Keyboard continuity:** MRU switching and semantic context menus reduce
-   pane-navigation and command-discovery cost without changing terminal input.
-2. **Mobile density and reachability:** 44px accessory keys and a responsive
-   More sheet preserve one-handed access at 360px without adding a dashboard.
-3. **Recovery and continuation:** connection tiers, explicit retry, control
-   reclaim, and safe Quick Command insertion connect an interruption to the
-   next user action without queuing or automatically executing input.
+1. **Adaptive Workbench — selected.** A compact four-zone desktop header, a
+   stable activity rail, one responsive sidebar shell, and a persistent mobile
+   terminal layer create clear hierarchy without stealing terminal area.
+2. **Permanent multi-column dashboard — rejected.** It exposes more at once but
+   reduces terminal width and makes secondary telemetry feel primary.
+3. **Overlay-first minimal shell — rejected.** It maximizes canvas area but hides
+   destinations, weakens spatial memory, and makes repeated workflows slower.
 
-The user approved the combined direction for UX-01 through UX-07. UX-08
-focus-follows-mouse was rejected because implicit focus can redirect terminal
-keystrokes. All seven approved items borrow Orca concepts only; no Orca source
-is a normative implementation artifact.
+The selected direction combines stable spatial navigation at wide widths with
+a single modal-style sidebar at narrow widths. It deliberately removes the
+current collection of unrelated header buttons and exclusive one-off drawers.
 
-## Screen inventory and information architecture
+## 4. Desktop application shell
 
-### Desktop
+### 4.1 Layout anatomy
 
-- **Terminal workspace:** unchanged primary surface. Each Dockview tab may
-  show one agent-status dot. The header gains an Agents control with unread
-  count. File Explorer remains an independent left drawer.
-- **Agent Hub:** non-modal 300px right drawer occupying the same exclusive slot
-  as Status, Pairing, Settings, and OpenClaw. Sections are ordered Attention
-  (`blocked`, `error`, `waiting`), Active (`starting`, `working`), then Recent
-  (`done`). Rows expose provider, cwd basename/full-path tooltip, status, age,
-  and Focus/Open. Waiting rows expose a one-line follow-up composer; blocked
-  rows only open the terminal for approval.
-- **Quick Open:** centered modal overlay. `Ctrl/Cmd+P` opens All mode and
-  `Ctrl/Cmd+Shift+P` opens Commands mode. One input searches panes, in-memory
-  history, saved Quick Commands, files below the active cwd, app actions,
-  presets, and agent launch items. A secondary Manage Quick Commands editor
-  owns create/update/delete.
-- **File viewer:** existing overlay upgraded to text, safe Markdown, supported
-  raster images, PDF metadata/actions, and unsupported/error states. Desktop
-  actions are Insert, Open in default app, Reveal, Retry, and Close where
-  applicable.
-- **Terminal find bar:** scoped to one full xterm block. It is visually attached
-  to the block rather than the application header.
-- **Settings:** adds Agent Integrations/Notifications and Terminal Renderer.
+At widths of 1200px and above:
 
-### Connected Android client
+```text
+┌──────────────────────────────────────────────────────────────────────────┐
+│ New Terminal │ Command Center │ Workspace ▾              │ Attention 3 │
+├────┬──────────────────┬──────────────────────────────────────────────────┤
+│Rail│ SidebarShell     │ Terminal workspace / Dockview                   │
+│    │ 280–440px        │                                                  │
+│    │ default 320px    │                                                  │
+│    │ resizable        │                                                  │
+├────┴──────────────────┴──────────────────────────────────────────────────┤
+│ Existing terminal/composer-owned status and feedback                    │
+└──────────────────────────────────────────────────────────────────────────┘
+```
 
-- **Agent Hub:** full-screen view entered from the mobile header badge. It
-  mirrors the desktop grouping, supports Focus/Open and waiting follow-up, and
-  has explicit disconnected/reconnecting states. It does not configure desktop
-  hook files and has no background push notification surface.
-- **File viewer:** existing full-screen viewer gains safe Markdown, raster
-  images, PDF metadata, unsupported/error states, Insert, Download, Retry, and
-  Back.
-- **Terminal:** Search, safe links, and Unicode 11 are available; renderer is
-  always DOM. No mobile Quick Open or file drag surface is added.
+Below 1200px, `SidebarShell` becomes one overlay over the terminal workspace
+with a scrim. Only one sidebar destination may be open. Escape and scrim click
+close it and restore focus to its invoker. The activity rail remains the stable
+entry point where space permits; at the smallest supported desktop width it may
+collapse to icon-only controls but must not become a second drawer.
 
-### Second-delivery additions
+The supported desktop viewports are 800×600, 1024×720, 1200×800, and 1440×900.
+No viewport may develop document-level horizontal scrolling.
 
-- **Desktop terminal tabs:** the existing tab close action opens one compact
-  destructive confirmation only when the creator-owned session still has a
-  running command, active agent, SSH prompt, or SSH shell. Mirror-only tabs
-  close immediately. Cancel is the initial focus. On Confirm, the interpreter
-  atomically compares the expected active run IDs and fails closed if they
-  changed while the dialog was open. Preset replacement first preflights the
-  layout in a detached inert Dockview, then holds a short command-submission
-  lock through one atomic creator-session batch. An unresolved pane/session
-  binding blocks the operation; the final creator check and `fromJSON` run in
-  the same task. Acknowledged sessions are marked complete so pane unmount does
-  not send a duplicate destroy request.
-- **Mobile reconnect layer:** after the first successful pairing,
-  `MobileWorkspace` remains mounted under a non-modal reconnect scrim. The
-  active terminal stays visible but dimmed, input controls are disabled, and
-  a live region reports reconnect, authentication rejection, lease expiry, or
-  recovery. The initial Connect screen is not reused for transient outages.
-- **Terminal path action:** desktop exposes file locations only through
-  Ctrl/Cmd-click. Mobile opens a bottom action sheet with Preview, Copy path,
-  and Cancel. The existing rich preview switches Markdown to source view when
-  an exact line/column was requested and highlights that location. Preview
-  consumes a main-owned, short-lived one-shot file-identity capability so the
-  resolved target cannot be substituted before open.
-- **Settings additions:** existing Settings gains two ordinary rows for
-  “Confirm before closing a running terminal” and “Allow OSC 52 clipboard
-  writes”. Pairing shows a blocking storage/permission error when credentials
-  cannot be protected. A compact SSH forwards section lists connection id,
-  loopback endpoint, destination, state, and Stop; it does not become a new
-  rail or dashboard.
-- **Worktrees:** create/list/open/remove remain terminal commands whose table
-  output uses existing block rendering. Opening creates a normal terminal tab;
-  no repository management screen is introduced. Mobile exposes only list and
-  open.
-- **Terminal restore feedback:** successful delta/semantic restore is quiet.
-  A truncated raw fallback adds one inline warning above the affected PTY;
-  missing or expired runs end visibly instead of being silently recreated.
-  Historical OSC 52 is rendered with side effects suppressed.
-- **SSH connection identity:** an active SSH block may show its short
-  connection id with a Copy action so a local terminal can issue explicit
-  forwarding commands. Interactive SSH reconnect and tunnel state remain
-  visibly separate.
+### 4.2 Header: exactly four zones
 
-### Third-delivery additions
+The desktop header contains exactly these four product zones:
 
-- **Desktop pane switcher:** `Ctrl+Tab` opens an eight-row MRU overlay;
-  repeated chords preview, modifier release commits, and Escape/window blur
-  cancels. Rows show title/cwd and textual run, draft, agent-attention, or
-  offline state. The chord never reaches the PTY.
-- **Desktop context menus and titles:** terminal and tab menus use menu
-  semantics, roving keyboard focus, shortcut labels, and deterministic focus
-  restoration. Tab rename is inline, IME-safe, capped at 80 characters, and
-  persisted through the existing layout title field. Risky Close continues to
-  use the existing atomic guard.
-- **Mobile terminal header:** below 600px, direct actions are TabStrip, New,
-  Agents, and More; from 600px, Sessions and Files are also direct. More owns
-  Stats, Theme, optional OpenClaw, and Settings. Remote-only rows disable while
-  offline; local settings remain usable.
-- **Mobile accessory keys:** the current eight-key layout remains the default.
-  Settings may show/hide/reorder built-in keys and reset the layout. Only
-  arrows, Backspace, and Delete repeat; arbitrary text macros and implicit
-  Enter are not supported.
-- **Connection recovery:** the mounted workspace stays visible while a banner
-  progresses from connecting/reconnecting to warning, unreachable, or
-  authentication failure. Retry starts exactly one fresh dial. Diagnostic
-  events are bounded and exclude endpoint text, credentials, cwd, commands,
-  terminal output, and drafts.
-- **Input control:** a compact, non-obscuring chip identifies view-only PTYs.
-  Desktop can reclaim every mounted eligible controller with bounded
-  concurrency and a partial-result summary; mobile reclaims only its current
-  run. No action steals focus from another active composer.
-- **Quick Commands shelf:** desktop exposes the existing saved commands beside
-  the composer. Primary interaction inserts text; Run is always a distinct
-  action using the existing busy/draft/control gate. Mobile receives a bounded
-  read-only list only when the paired host advertises support, keeps command
-  text in memory only, and never replays it after reconnect.
+1. **New Terminal** — the primary creation action. A split-button may expose
+   safe creation variants without adding adjacent header controls.
+2. **Command Center** — opens the unified command/search surface for files,
+   panes, saved Quick Commands, layouts, presets, settings, and destinations.
+3. **Workspace menu** — owns Split, Layout, and Presets.
+4. **Agent Attention** — opens/focuses attention work and includes the unread
+   count in an accessible text label.
 
-Primary flows are terminal -> attention badge -> Agent Hub -> Focus session;
-terminal -> Quick Open -> insert/preview/activate; and File Explorer/OS drag ->
-preview or explicit path insertion. Escape returns overlays to their invoker;
-closing a right drawer returns focus to the workspace.
+Theme, Files, Stats, Pairing, Settings, OpenClaw, runtime versions, and the
+session connection dot do not appear as separate header actions. Runtime and
+connection diagnostics belong in their relevant panel or transient status
+feedback, not in global navigation.
 
-## UX state matrix
+### 4.3 Activity Rail
 
-| Journey | Loading / long-running | Empty | Error / permission | Offline / cancellation | Success |
-| --- | --- | --- | --- | --- | --- |
-| Agent Hub | Initial snapshot skeleton; live age labels | "No agent activity" with integration shortcut | Hook drift/managed config guidance; failed follow-up inline | Mobile reconnect banner; pending follow-up fails without retrying | Status transition announced; Focus selects exact pane |
-| Hook integration | Inspecting provider config | Provider executable/config absent | Invalid JSON is never overwritten; Codex trust review is explained | Install can be cancelled before write | Installed/removed state and backup path shown |
-| Quick Open | File source shows a small indexing row after query input | Empty All mode shows recent/useful items; no-match message | Disabled execution row explains busy/dead/non-empty draft | Escape closes without action; stale searches discarded | Action closes only after a completed explicit operation |
-| Quick Command editor | Save button busy during atomic write | Empty list has Add action | Field-level name/command/description validation; corrupt store quarantined | Cancel discards editor draft | Saved row is selected and change broadcast updates open windows |
-| Terminal search | Incremental result count | `0 results` | Addon failure hides search affordance without breaking PTY | Escape clears highlights/refocuses terminal | Current/total result announced |
-| WebGL renderer | Auto initialization has no blocking UI | N/A | Falls back to DOM and exposes compatibility status in Settings | Context loss stays DOM until remount | Active renderer is visible diagnostically |
-| File preview | Progress for chunked image transfer | Zero-byte text renders empty content | Oversize, dimensions, unsupported, read and decode errors have explicit messages | Mobile disconnect cancels transfer; Retry starts a new request | Blob URL lives only while the selected preview is open |
-| File drop | Drop target highlight only | N/A | Too many paths, busy/dead pane, non-agent PTY each produce toast | Drag leave removes highlight; drop never auto-runs | Quoted paths are inserted/pasted without newline |
-| Credential migration | Native store read and legacy cleanup progress | No saved host shows ordinary Connect form | Keystore/safeStorage/DACL/mode failure names Retry or reset; never suggests localStorage fallback | Cancellation leaves legacy data untouched and blocks autofill | Secure read-back succeeds before legacy token deletion; Windows schema-v1 token is encrypted before bridge use |
-| Mobile reconnect | Workspace stays mounted; active session resumes first | No resumable runs keeps tabs but marks ended blocks | Invalid token stops retry and requests pairing; lease expiry identifies ended runs | Explicit Disconnect releases leases and returns to Connect | Same tab/xterm identity resumes with no queued input |
-| Risky close | Runtime/agent state is rechecked before confirmation; preset layout is detached-preflighted | Idle or mirror-only pane closes immediately | Unknown/pending binding, invalid preset topology, or changed active-run IDs fail closed | Cancel restores prior focus with no partial bulk close; preset apply failure is surfaced | Confirm atomically matches expected runs; preset batch holds the run gate through the synchronous final apply |
-| OSC 52 | No progress UI; writes are rate-limited | Disabled is the default | Invalid, query, oversized, replayed, or clipboard failure has no terminal reply | Toggle takes effect without remount | Valid enabled live desktop write updates clipboard once |
-| Terminal file location | Resolution occurs only after explicit action | Missing link target leaves terminal unchanged | Outside-root, device, remote SSH, missing, directory, or a stale/consumed capability shows a concise toast | Mobile sheet Cancel has no effect | One-shot file identity opens the existing preview at highlighted line/column |
-| SSH alias | Resolver may show a short connecting status | No matching alias explains direct syntax | Match/exec/proxy/forward, timeout, missing OpenSSH and malformed config fail before connect | Cancel follows the existing SSH prompt path | Resolved allowlisted host enters existing TOFU/auth flow |
-| Worktree command | Git mutation row stays running until bounded process exits | List returns the normal empty table | Dirty/in-use/unmanaged/locked states return stable remediation codes | No partial close or recursive cleanup on failure | Open selects a new terminal rooted at the registered worktree |
-| Terminal state restore | Reattach is gated while snapshot and tail are applied | No snapshot falls back to recent-output state | Gap, epoch mismatch, serializer limit, or queue overflow requests resync | View detach never implies hidden process input | Cursor/grid/modes match the authoritative model |
-| SSH local forward | Starting/reconnecting/auth-required are explicit states | No forwards shows one compact empty row | Port collision, remote reject, host-key change, and auth-required remain visible | Stop closes listener and streams before removing row | Active row exposes only `127.0.0.1:port` |
-| MRU pane switching | No loading; the overlay is built from the current registry | Zero/one pane is a no-op | Stale pane ids are removed before commit | Escape or blur restores the original pane | Modifier release activates one pane and restores terminal/composer focus |
-| Context menu / rename | No loading | Unavailable actions are omitted or disabled with a reason | Clipboard or stale-target errors use existing status feedback | Escape cancels and restores the invoker; blank rename restores generated title | Rename persists through the existing layout title field |
-| Mobile accessory keys | Stored preference is read without blocking the default layout | All hidden retains Manage and Reset | Corrupt data resets to default; write failure keeps a session-only layout with Retry | Offline/view-only keys disable; repeat stops on cancel, background, tab change, or disconnect | One tap emits exactly one built-in byte sequence |
-| Mobile header / More | No blocking loading state | Optional actions are omitted | Failed action remains visible with an inline/alert message | Android Back, Escape, or backdrop closes and restores More focus | Selected view opens after the sheet closes |
-| Connection recovery | Connecting/retrying exposes attempt tier and next retry visually | Session list has an explicit no-sessions state | Warning, unreachable, auth-failed, list error, and create error have distinct recovery actions | Workspace/drafts remain mounted; no input queue or automatic replay | One successful handshake resets attempts and authoritatively refreshes sessions |
-| Input-control reclaim | Pending targets disable duplicate actions | No eligible controller hides the chip/action | Timed-out or ended targets produce a partial result and failed-only Retry | Offline disables reclaim; user typing elsewhere retains focus | Successful targets report control within two seconds |
-| Quick Commands shelf | Mobile fetch occurs only when the sheet opens or reconnects | Desktop offers Manage; mobile says to add commands on desktop | Fetch error offers Retry; unsupported hosts hide the affordance | Offline Insert changes draft only; Run disables; closing clears mobile command text | Insert preserves the draft; explicit Run passes the existing execution gate |
+Top-to-bottom order is fixed:
 
-## Design system and tokens
+1. Explorer
+2. Agents
+3. Monitor
+4. Remote
+5. OpenClaw, only when the integration is available
 
-The existing repo-owned `--term-*` variables, `.btn` primitives, drawer
-chrome, inputs, overlays, Dockview styling, font selection, and four theme
-definitions remain authoritative. New surfaces must not introduce fixed theme
-colors when a semantic token exists.
+Settings is pinned at the bottom. Each control has a Lucide icon, tooltip, and
+localized accessible name. Selection is conveyed by shape/border and text or
+accessible state, never color alone.
 
-- Color roles: `--term-green` success/working action, `--term-blue` active,
-  `--term-amber` waiting/warning, `--term-red` blocked/error,
-  `--term-cyan` section accent, existing fg/bg/border roles for structure.
-- Typography: existing terminal font and density. Headings use existing
-  uppercase/letter-spacing conventions; no new font assets.
-- Spacing: 4px micro, 8px control, 12px row, 16px section rhythm.
-- Radius/shadow: reuse existing button/input/overlay values; terminal visuals
-  stay restrained and primarily border-separated.
-- Motion: 120-160ms color/opacity transitions only. Disable nonessential
-  transitions under `prefers-reduced-motion`.
-- Layering: drawers retain the current 155 layer, file viewer uses 160, Quick
-  Open uses 170, and context/tooltips must remain above their owning surface.
+The rail controls one `SidebarShell`; individual features must not create
+parallel left drawers, right rails, or mutually exclusive bespoke containers.
 
-Agent status uses shape plus text/accessible label, never color alone. Provider
-identity uses text badges (`Codex`, `Claude`, `CLI`); vendor logos are not used.
+### 4.4 Sidebar destinations
 
-## Component taxonomy
+- **Explorer** contains the existing file navigation and preview entry points.
+- **Agents** contains grouped agent attention, active work, recent activity,
+  follow-up entry, focus/open, and integration guidance.
+- **Monitor** combines the old Stats and Packet/traffic surfaces. Expensive
+  stats polling starts only while Monitor is selected and visible, and stops
+  when it is hidden.
+- **Remote** combines pairing/remote-access state and SSH tunnel management.
+- **OpenClaw** contains integration navigation. On wide layouts, its native
+  `WebContentsView` participates in reflow and must not set the application
+  `chatOverlayOpen` occlusion state. Only the narrow overlay form is occluding.
+- **Settings** uses the same shell and the category structure in section 4.6.
 
-- **Primitives:** existing Button/Input/Badge/Toast conventions, `StatusDot`,
-  `ProgressLine`, `EmptyState`, `InlineError`.
-- **Navigation:** header Agents control, Dockview tab status decorator, mobile
-  Agent entry, exclusive `RightRail` state.
-- **Agent composition:** `AgentHub`, `AgentActivityGroup`, `AgentActivityRow`,
-  `AgentFollowupComposer`, `AgentIntegrationSettings`.
-- **Quick composition:** `QuickOpenModal`, `QuickOpenInput`, grouped result
-  list/row, source badge, disabled-reason footer, `QuickCommandEditor`.
-- **Terminal composition:** `XtermRuntime` adapter, `TerminalFindBar`, link
-  hover decoration, renderer setting row.
-- **File composition:** discriminated `FilePreview`, `MarkdownPreview`,
-  `ImagePreview`, `PdfPreview`, `UnsupportedPreview`, `FileDropTarget`.
-- **Adapters:** `PaneRegistry`, `ExternalLinkAdapter`, Agent snapshot transport,
-  preview stream transport. These keep platform checks out of components.
-- **Second-delivery feedback:** `ReconnectScrim`, `RiskyCloseDialog`,
-  `TerminalPathActionSheet`, `TerminalRestoreNotice`, `CredentialSecurityError`.
-- **Second-delivery adapters:** `CredentialStore`, `TerminalPathResolver`,
-  `RemoteRunLease`, `TerminalStateRelay`, `WorktreeService`,
-  `SshConnectionRuntime`, and `SshForwardService`. Security and platform
-  policy stay outside React components.
-- **Third-delivery primitives:** `MenuSurface`, `MobileActionSheet`,
-  `ConnectionHealthBanner`, `ControlOwnershipChip`, and the existing Button,
-  Input, Badge, Toast, and dialog conventions.
-- **Third-delivery composition:** `RecentPaneSwitcher`, tab rename editor,
-  `TerminalAccessoryToolbar`, `MobileHeaderMoreActions`,
-  `QuickCommandShelf`, and `MobileQuickCommandSheet`.
-- **Third-delivery adapters:** renderer MRU model, accessory preference store,
-  connection-health classifier/event ring, mounted-controller enumerator, and
-  capability-gated Quick Command list transport.
+Every destination defines loading, empty, error, offline, and success states.
+Closing the shell returns focus to the activity-rail item or Command Center
+result that opened it.
 
-## Responsive and overflow rules
+### 4.5 Command Center and duplicate entry policy
 
-- Desktop supports 800x600 and larger. The right rail stays 300px; terminal
-  content owns the remaining width and may collapse before the rail changes
-  width. At widths below 720px, Quick Open uses 8px viewport insets and a
-  maximum height of `calc(100vh - 16px)`; otherwise it is at most 680px wide
-  and 70vh high.
-- Agent/provider badges and status never shrink. Cwd and descriptions ellipsize
-  on one line with a full-value tooltip. Quick results keep primary text to one
-  line and optional detail to one line.
-- Mobile views are full-screen and safe-area aware. Interactive targets are at
-  least 44x44px, follow-up text does not horizontally scroll the viewport, and
-  image previews use contain sizing rather than cropping.
-- The reconnect scrim never changes the terminal's measured dimensions. Mobile
-  action sheets respect the bottom safe area and use 44x44px minimum actions.
-  Forward/worktree identifiers ellipsize visually but remain copyable in full.
-- At 360px the mobile header exposes at most New, Agents, and More beside the
-  flexible TabStrip; the active tab retains at least 96px. At 600px Sessions
-  and Files return to the header. No breakpoint may create page-level
-  horizontal overflow.
-- Accessory keys, tab close, More rows, control chips, and Quick Command actions
-  have a minimum 44x44px hit area. Accessory and command strips may scroll
-  internally while the page remains fixed.
+Command Center is the keyboard-first global entry surface. It searches or
+navigates to existing functionality; it does not own duplicate feature state.
 
-## Accessibility
+Representative destination ownership:
 
-- Quick Open is a labelled modal with a focus trap, active-descendant result
-  semantics, arrow navigation, Home/End, Enter variants, and focus restoration.
-- Agent Hub is non-modal. Rows have explicit provider/status labels; status and
-  unread changes use a polite live region without announcing elapsed-time
-  updates. Follow-up validation is connected with `aria-describedby`.
-- Terminal Find captures only its documented shortcuts; Escape restores xterm
-  focus and clears highlights. Search counts use a polite live region.
-- Preview controls are keyboard reachable, images expose filename-derived alt
-  text, Markdown heading/link semantics remain intact, and unsupported states
-  are readable without icons.
-- All focus rings use existing high-contrast tokens. Every theme must preserve
-  readable status text and a visible focused control. Reduced-motion settings
-  remove decorative transitions.
-- Destructive close dialogs are labelled, focus-trapped, default to Cancel,
-  and restore the invoking tab/action focus. Reconnect and terminal-restore
-  changes use polite live regions; repeated retries and elapsed time are not
-  repeatedly announced. Path action sheets expose a labelled Cancel action and
-  do not treat a terminal tap as execution.
-- The MRU overlay exposes one selected option through active-descendant or an
-  equivalent listbox relationship and announces selection only when useful;
-  modifier repeats never become terminal input.
-- Context menus support Arrow keys, Home/End, Enter/Space, Escape, Shift+F10,
-  and the Menu key. Closing a menu or mobile sheet restores its invoker unless
-  the chosen action explicitly moves focus to a terminal.
-- The accessory deck is a labelled toolbar. Reorder supports buttons or
-  accessibility actions in addition to drag, and every key has a semantic
-  name rather than a symbol-only accessible name.
-- Connection retry countdowns are visual only; screen readers announce tier
-  changes once rather than each second. Control-reclaim partial results and
-  Quick Command validation use text plus icon, never color alone.
+| Capability | Primary home | Additional entry |
+| --- | --- | --- |
+| Theme | Settings → Appearance | Command Center action |
+| Files | Explorer | Command Center file search |
+| Split/Layout/Presets | Workspace menu | Command Center action |
+| Quick Commands | Composer shelf | Command Center manager/search |
+| Agents/Monitor/Remote/OpenClaw/Settings | Activity Rail | Command Center navigation |
 
-## Asset and security policy
+The current unused `CommandPalette.tsx` is not revived. The final Command
+Center is one maintained implementation with labelled modal semantics,
+keyboard navigation, active result indication, focus trapping, stale-search
+cancellation, and focus restoration.
 
-No generated imagery, vendor logo, remote font, or new binary asset is needed.
-Use existing text/icons and CSS. Markdown raw HTML is disabled, remote/relative
-images do not auto-load, external links accept only validated HTTP(S), SVG is
-never rendered as an image, and preview Blob URLs are revoked on switch/close.
-Drop and result-selection gestures never imply execution, upload, or submit.
-Terminal output is also untrusted: OSC 52 is disabled by default and
-write-only, and semantic replay suppresses its side effects. Path links require
-an explicit gesture, a main-side workspace check, and a short-lived one-shot
-file-identity capability. Confirmed risky closes atomically match the expected
-active run IDs in the interpreter. SSH config commands are never evaluated
-from the renderer, worktree remove has no force/fallback delete, and SSH
-forwarding binds exactly to IPv4
-loopback. No credential, clipboard payload, terminal snapshot, or SSH secret is
-rendered into diagnostic UI or stored in visual artifacts.
+### 4.6 Settings information architecture
 
-## Visual QA and implementation sequence
+Settings categories are:
 
-The repo has browser/Electron E2E but no checked-in Storybook, screenshot
-baseline, or visual-diff lane, so these remain advisory rather than hard gates.
-The required order is existing tokens/primitives -> shared adapters and state
-components -> desktop screens -> mobile screens -> interaction E2E.
+1. General
+2. Appearance
+3. Terminal & Safety
+4. Agents
+5. Integrations
+6. About & Diagnostics
 
-Manual visual review covers all installed themes at 800x600 and 1024x720, and
-Android at 360x800 and 412x915. It verifies drawer exclusion, modal layering,
-keyboard focus, long paths, empty/error/loading states, touch targets, reduced
-motion, and DOM/WebGL terminal parity. Existing component tests and Playwright
-flows are the automated user-visible oracle; screenshots in `docs/screenshots`
-are reference-only and are not freshness-gated.
+Appearance owns theme, UI density, terminal font, and CRT effect controls.
+General owns language. Terminal & Safety owns terminal-specific behavior and
+existing safety choices. Pairing, OpenClaw, and provider-specific configuration
+are organized under Integrations instead of receiving independent settings
+drawers. Runtime versions, renderer state, effective-theme correction details,
+and diagnostic metadata live in About & Diagnostics.
 
-Second-delivery review additionally covers close-dialog focus restoration,
-reconnect without xterm resize/remount, path action-sheet safe areas, exact
-line highlighting, credential-error recovery, truncated terminal restore, and
-SSH forward states. These follow the same component/Playwright/manual lane;
-the delivery does not introduce Storybook or a screenshot baseline.
+## 5. Mobile application shell
 
-Third-delivery implementation order is MRU switcher -> menu/title primitive ->
-mobile action-sheet/header -> accessory deck -> connection health -> control
-reclaim -> Quick Commands transport/surfaces. Review additionally covers
-Ctrl+Tab leakage into xterm, keyboard-only menus, 360px header overflow,
-long-press repeat cancellation, reconnect without xterm remount, partial
-control reclaim, old-host capability fallback, and the absence of automatic
-Quick Command execution. Storybook and screenshot baselines remain advisory;
-component tests, Playwright, packaged Electron smoke, and Android development
-device/emulator checks are the required observable oracle.
+### 5.1 Persistent workbench structure
+
+After authentication, the DOM structure is composed as siblings:
+
+```text
+MobileWorkbenchCoordinator
+├── TerminalLayer          (always mounted)
+├── MobilePageShell        (opaque auxiliary page)
+└── SheetDialogHost        (sheets, menus, dialogs)
+```
+
+Opening Sessions, Files, Agents, Settings, or another auxiliary page never
+unmounts the terminal layer and never applies `display: none` to the terminal
+root. While an opaque auxiliary page is active, the terminal layer is inert and
+`aria-hidden="true"`; it retains drafts, controllers, xterm geometry, scroll
+position, selection, and reconnect state. Returning to Terminal restores the
+previous usable focus without recreating the session view.
+
+Android Back precedence is:
+
+1. close the top sheet or dialog;
+2. leave the auxiliary page and reveal Terminal;
+3. use the platform/application default behavior.
+
+### 5.2 Responsive mobile header
+
+Below 600px, the direct header actions are:
+
+- flexible TabStrip
+- New
+- Agents
+- More
+
+At 600px and above, Sessions and Files become direct actions in addition to the
+same controls. Other destinations remain in More. There is no bottom navigation
+bar. If there are zero terminal tabs, the shell still exposes New, Settings,
+pairing/connection recovery, and all locally usable actions.
+
+All touch targets are at least 44×44 CSS pixels. Supported viewports are
+360×800, 412×915, 600×960, and 915×412. The page itself never scrolls
+horizontally; tab and accessory strips may scroll internally.
+
+The mobile viewport must permit user zoom. `maximum-scale=1` and
+`user-scalable=no` are prohibited.
+
+### 5.3 Mobile CSS boundary
+
+Mobile consumes shared semantic tokens, reset/accessibility utilities, terminal
+runtime styling, and effect definitions. It does not import the complete
+desktop stylesheet. Desktop shell/Dockview/sidebar rules and mobile shell/page/
+sheet rules live in platform-specific files so selectors cannot accidentally
+override one another.
+
+## 6. Responsive and density behavior
+
+The product supports an `adaptive` default density plus explicit `compact` and
+`comfortable` user preferences. Adaptive resolves from platform and viewport;
+it is not persisted as a series of per-component exceptions.
+
+- Compact desktop control height: 32px.
+- Comfortable desktop control height: 40px.
+- Touch minimum: 44px, regardless of density.
+- Sidebar width: 280–440px, default 320px, persisted on desktop.
+- Long Korean/English labels wrap only where the component contract allows;
+  navigation labels and paths otherwise ellipsize with a full-value tooltip.
+- At 150% browser/UI scale, the supported viewports retain all primary actions
+  and do not overlap the terminal or safe areas.
+
+## 7. Design tokens and visual language
+
+### 7.1 Token ownership
+
+Application chrome uses semantic `--ui-*` tokens. Existing `--term-*` tokens
+remain the compatibility bridge for xterm, terminal output surfaces, and v1
+custom themes. New buttons, panels, menus, settings, and typography must not use
+`--term-*` directly and must not embed theme-specific hex values.
+
+Required semantic color roles include:
+
+- canvas, surface, raised surface, inset surface, overlay and scrim;
+- primary, secondary, muted and inverse text;
+- subtle and strong borders;
+- accent and on-accent;
+- focus, info, success, warning, and danger.
+
+Fixed scales:
+
+| Role | Scale |
+| --- | --- |
+| Type | 12, 13, 14, 16, 20px |
+| Space | 4, 8, 12, 16, 24, 32px |
+| Radius | 2, 4, 8px |
+| Controls | 32, 40, 44px touch minimum |
+
+Z-index values are semantic tokens for base, sticky chrome, sidebar scrim,
+sidebar, popover, dialog, toast, and tooltip. Components do not invent local
+z-index ladders.
+
+### 7.2 Typography
+
+- Retro display typography is limited to the wordmark, short headings, and
+  compact labels where character is useful.
+- Body text, settings, help, and Korean use the local system UI stack.
+- Terminal, code, commands, paths, identifiers, and diagnostic values use the
+  configured monospace stack.
+- Korean text is not forced uppercase and does not inherit excessive display
+  letter spacing.
+- No Pretendard or other new font asset is added.
+
+### 7.3 Matrix/CRT identity
+
+The default Matrix presentation uses a near-black green-tinted canvas, readable
+light foregrounds, crisp green accent/focus states, restrained borders, and
+semantic blue/success/amber/danger colors. Status meaning is never encoded only
+as green variants.
+
+Default effects are only:
+
+- static scanlines;
+- restrained phosphor glow.
+
+Curvature, moving roll, flicker, jitter, scrolling texture, animated noise, and
+similar movement are Advanced opt-in effects and default off. Under
+`prefers-reduced-motion: reduce`, every continuous or flashing effect is
+disabled at runtime even if its saved toggle is on. Static scanlines and a
+non-animated glow may remain when they do not impair contrast.
+
+## 8. Component system
+
+The shared primitive contract consists of:
+
+- `Button`, `IconButton`, and `SplitButton`;
+- `Field`, `Input`, `Select`, and `Switch`;
+- `Tabs`;
+- `Menu` and `Popover`;
+- `Dialog` and mobile `ActionSheet`;
+- `PanelShell`;
+- `Badge` and `Status`;
+- `Tooltip`;
+- `Toast`;
+- `EmptyState`, `LoadingState`, and `ErrorState`;
+- `VisuallyHidden`.
+
+Each interactive primitive defines default, hover, active, keyboard-focus,
+disabled, and loading states. Danger and selected states are variants of the
+same primitive rather than one-off CSS classes. Icon-only controls always have
+an accessible name and tooltip. Loading controls retain their label width and
+announce state without becoming focus traps.
+
+Composition components use these primitives:
+
+- `AppHeader`, `ActivityRail`, `SidebarShell`, and `WorkspaceMenu`;
+- `CommandCenter` and `QuickCommandShelf`;
+- `ExplorerPanel`, `AgentsPanel`, `MonitorPanel`, `RemotePanel`,
+  `OpenClawPanel`, and `SettingsPanel`;
+- `MobileWorkbenchCoordinator`, `MobileHeader`, `MobilePageShell`, and
+  `SheetDialogHost`.
+
+All product icons come from `lucide-react` SVG components. Emoji, Unicode
+symbols used as icons, icon-font glyphs, and mixed text-glyph controls are
+removed. Lucide's ISC license is recorded in `THIRD_PARTY_NOTICES`.
+
+## 9. Localization
+
+Localization uses `i18next` and `react-i18next` with typed resources. English is
+the canonical key shape; Korean must satisfy the same complete resource shape.
+UI language preference is `system | ko | en`.
+
+- `system` resolves to Korean when the first applicable browser language starts
+  with `ko`; otherwise it resolves to English.
+- `<html lang>` updates whenever the effective locale changes.
+- The native Electron application menu refreshes to the effective locale.
+- Korean and English use concise, formal product language.
+- Dates, counts, and relative time use `Intl` with the effective locale.
+
+Commands, command output, file paths, provider/product names, protocol fields,
+status enums, persisted identifiers, and test IDs are not translated.
+
+Desktop persists optional `locale`, `density`, and `sidebarWidth` fields in the
+existing settings schema without incrementing schema version 1. Reads and
+writes use one atomic desktop UI-preferences API so partial changes cannot
+overwrite concurrent fields. Mobile preferences are local to the mobile device
+and are not added to the paired-session protocol.
+
+## 10. Custom-theme compatibility and contrast correction
+
+The theme contract is:
+
+```ts
+interface UiThemeColors {
+  canvas: string;
+  surface: string;
+  surfaceRaised: string;
+  surfaceInset: string;
+  textPrimary: string;
+  textSecondary: string;
+  textMuted: string;
+  textInverse: string;
+  borderSubtle: string;
+  borderStrong: string;
+  accent: string;
+  onAccent: string;
+  focus: string;
+  info: string;
+  success: string;
+  warning: string;
+  danger: string;
+}
+
+interface ThemeAdjustment {
+  role: keyof UiThemeColors | 'terminalForeground' | 'terminalCursor';
+  before: string;
+  after: string;
+  requiredRatio: number;
+  achievedRatio: number;
+}
+
+interface ResolvedTheme {
+  requestedId: string;
+  effectiveId: string;
+  theme: ThemeDefinition;
+  adjustments: readonly ThemeAdjustment[];
+  fallbackReason?: 'missing-custom-theme' | 'invalid-custom-theme';
+}
+```
+
+`ThemeMod` becomes a discriminated union of the existing schema-version-1
+shape and a schema-version-2 shape with explicit `ui` colors. Version 1 remains
+readable indefinitely and is never silently rewritten. Its `--term-*`, xterm,
+font, effect, and swatch data remain intact; known terminal values seed the UI
+palette. Version 2 is the latest authoring format.
+
+At runtime, functional color pairs are checked and minimally corrected when
+needed. The source theme file and requested theme ID are preserved. Settings
+and diagnostics show each effective before/after adjustment. A missing or
+invalid requested custom theme keeps its requested ID but uses Matrix as the
+effective fallback so restoring the file restores the user's choice.
+
+Hard thresholds:
+
+- normal text against its surface: 4.5:1;
+- focus indicators, interactive borders, and functional icons against adjacent
+  colors: 3:1;
+- terminal foreground against background: 4.5:1;
+- terminal cursor against background: 3:1.
+
+All built-in themes pass these thresholds without runtime adjustment. Automated
+tests hard-fail a built-in theme regression.
+
+## 11. Core UX state contract
+
+| Surface | Loading / progress | Empty | Error / offline | Success / focus outcome |
+| --- | --- | --- | --- | --- |
+| SidebarShell | Stable panel skeleton; no terminal resize loop | Destination-specific explanation and primary action | Inline recovery; narrow overlay remains dismissible | Selection persists; close returns invoker focus |
+| Explorer | Bounded directory progress | Empty directory guidance | Permission/read/reconnect error with Retry | Selection opens existing safe preview flow |
+| Agents | Snapshot skeleton; ages update without live announcements | No agent activity and integration shortcut | Hook/provider/offline guidance; no silent retry of input | Focus selects exact pane and restores terminal/composer focus |
+| Monitor | Poll only while visible | No packets/stats yet | Classed collection error without blocking terminal | Live values update without layout shift |
+| Remote | Pair/tunnel progress is explicit | No paired client/tunnel | Auth, lease, tunnel and offline failures are distinct | Successful state identifies the usable endpoint/session |
+| OpenClaw | Native view loading belongs inside panel | Integration unavailable guidance | Recoverable load error; narrow overlay remains closable | Wide view reflows; narrow view owns occlusion |
+| Settings | Local values render immediately | Not applicable | Save failure keeps edited value and offers Retry | Atomic preference save; focus remains on control |
+| Command Center | Stale searches are discarded | Recent/useful actions or no-match message | Disabled result explains why | Explicit action closes only when its operation completes |
+| Mobile auxiliary page | Terminal remains mounted underneath | Page-specific empty state | Offline/local capabilities are distinguished | Back reveals the same terminal instance |
+| Dialog / ActionSheet | Duplicate submission disabled | Not applicable | Error remains within labelled surface | Close restores invoker unless action intentionally moves focus |
+
+Toasts are reserved for brief completed feedback. Recoverable errors that need
+action stay next to the failed operation. Skeletons preserve final geometry.
+
+## 12. Accessibility hard gates
+
+- Every flow is operable by keyboard alone on desktop and by touch plus Android
+  Back on mobile.
+- Visible focus meets 3:1 contrast and is never removed without an equivalent.
+- Modal dialogs and Command Center trap focus; non-modal sidebars do not.
+- Menus support Arrow keys, Home/End, Enter/Space, Escape, Shift+F10, and the
+  Menu key where applicable, with deterministic focus restoration.
+- Status, selection, error, and attention never rely on color alone.
+- Live regions announce meaningful state transitions once; elapsed time,
+  animation frames, retry countdown ticks, and stats polling are not announced.
+- Labels, descriptions, errors, and disabled reasons are programmatically
+  connected. Icons are hidden from accessibility APIs when adjacent text owns
+  the meaning.
+- Touch targets are at least 44×44px; desktop targets meet the selected density
+  contract.
+- Browser zoom is permitted, text survives 200% zoom, and layouts are verified
+  at the required 150% product QA axis.
+- Reduced motion disables moving CRT effects and nonessential transitions.
+- Product Storybook stories use `parameters.a11y.test = 'error'`; unreviewed
+  accessibility violations are release blockers.
+
+## 13. Visual QA and automated coverage
+
+Storybook 10.4 uses the React+Vite framework with addon-a11y and addon-vitest.
+Stories cover every shared primitive and major shell/panel composition in
+default, hover/focus where deterministic, disabled, loading, empty, error,
+success, long-label, and overflow states.
+
+Playwright provides deterministic `toHaveScreenshot()` baselines and
+`@axe-core/playwright` page checks. Fonts, locale, timezone, device scale,
+fixtures, animation, caret, and time-sensitive content are fixed in the visual
+environment. Product accessibility errors hard-fail CI.
+
+Required axes:
+
+- desktop: 800×600, 1024×720, 1200×800, 1440×900;
+- mobile: 360×800, 412×915, 600×960, 915×412;
+- Matrix in Korean and English for all product stories;
+- all built-in themes in a token/component gallery;
+- adaptive, compact, and comfortable density where behavior differs;
+- 100% and 150% scale;
+- default and reduced motion;
+- sidebar closed/open, wide reflow/narrow overlay, and loading/empty/error
+  panel states.
+
+CI builds Storybook and runs its component/accessibility checks, desktop visual
+tests, mobile typecheck/test/build/lint, and mobile visual tests in addition to
+the existing desktop unit, integration, packaged Electron, and E2E lanes.
+
+## 14. Migration and cleanup contract
+
+Implementation order is:
+
+1. semantic tokens, typography, effects, and shared primitives;
+2. localization, desktop/mobile preferences, and theme resolution;
+3. desktop shell, navigation, sidebar destinations, and settings;
+4. mobile persistent coordinator, responsive header, pages, sheets, and CSS
+   boundary;
+5. Storybook, accessibility, screenshots, and CI;
+6. remove legacy components/selectors only after reference searches are zero;
+7. run the complete regression matrix.
+
+During migration, adapters may preserve existing feature APIs, but new screens
+must not fork business logic. `CommandPalette.tsx`, the obsolete
+`FileViewerOverlay.tsx`, independent old drawers/rails, emoji icon controls, and
+legacy CSS are deleted only when their live references are zero and equivalent
+coverage exists.
+
+The redesign is complete only when:
+
+- the desktop header has exactly four zones;
+- the activity rail and single responsive sidebar own all specified
+  destinations without duplicates;
+- desktop settings match the six approved categories;
+- mobile terminal DOM identity survives every auxiliary-page round trip;
+- both breakpoints expose the approved mobile actions and zero tabs remains
+  navigable;
+- all new chrome uses semantic tokens and Lucide icons;
+- Korean/English, density, theme v1/v2 compatibility, contrast correction, and
+  reduced motion meet this contract;
+- old duplicate surfaces and unused code are removed;
+- Storybook, axe, visual regression, desktop checks, mobile checks, packaged
+  smoke, and full E2E all pass.
