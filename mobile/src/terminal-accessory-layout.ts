@@ -19,11 +19,18 @@ export interface TerminalAccessoryLayout {
 }
 
 export type TerminalAccessoryPersistence = 'saved' | 'recovered' | 'session-only';
+export type TerminalAccessoryMessageCode =
+  | 'unavailable'
+  | 'read-failed'
+  | 'invalid-reset'
+  | 'invalid-session'
+  | 'save-failed'
+  | 'retry-failed';
 
 export interface TerminalAccessoryLayoutSnapshot {
   readonly layout: TerminalAccessoryLayout;
   readonly persistence: TerminalAccessoryPersistence;
-  readonly message: string | null;
+  readonly messageCode: TerminalAccessoryMessageCode | null;
 }
 
 interface StorageLike {
@@ -163,7 +170,7 @@ export function createTerminalAccessoryLayoutStore(
       return {
         layout: defaultTerminalAccessoryLayout(),
         persistence: 'session-only',
-        message: 'Key preferences are unavailable. Changes apply to this session only.',
+        messageCode: 'unavailable',
       };
     }
     let raw: string | null;
@@ -173,13 +180,13 @@ export function createTerminalAccessoryLayoutStore(
       return {
         layout: defaultTerminalAccessoryLayout(),
         persistence: 'session-only',
-        message: 'Key preferences could not be read. Changes apply to this session only.',
+        messageCode: 'read-failed',
       };
     }
-    if (raw === null) return { layout: defaultTerminalAccessoryLayout(), persistence: 'saved', message: null };
+    if (raw === null) return { layout: defaultTerminalAccessoryLayout(), persistence: 'saved', messageCode: null };
     try {
       const layout = normalizeTerminalAccessoryLayout(JSON.parse(raw));
-      if (layout) return { layout, persistence: 'saved', message: null };
+      if (layout) return { layout, persistence: 'saved', messageCode: null };
     } catch {
       // The recovery below deliberately replaces malformed data with defaults.
     }
@@ -188,9 +195,7 @@ export function createTerminalAccessoryLayoutStore(
     return {
       layout,
       persistence: saved ? 'recovered' : 'session-only',
-      message: saved
-        ? 'Invalid key preferences were reset to the default layout.'
-        : 'Invalid key preferences were reset for this session, but could not be saved.',
+      messageCode: saved ? 'invalid-reset' : 'invalid-session',
     };
   };
 
@@ -209,7 +214,7 @@ export function createTerminalAccessoryLayoutStore(
     snapshot = {
       layout: normalized,
       persistence: saved ? 'saved' : 'session-only',
-      message: saved ? null : 'The layout changed for this session, but could not be saved.',
+      messageCode: saved ? null : 'save-failed',
     };
     emit();
   };
@@ -228,7 +233,7 @@ export function createTerminalAccessoryLayoutStore(
       snapshot = {
         layout: current.layout,
         persistence: saved ? 'saved' : 'session-only',
-        message: saved ? null : 'Key preferences still could not be saved.',
+        messageCode: saved ? null : 'retry-failed',
       };
       emit();
     },

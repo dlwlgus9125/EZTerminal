@@ -1,15 +1,30 @@
+import { X } from 'lucide-react';
 import { useCallback, useEffect, useRef } from 'react';
 
 import { formatCwd } from '../../src/renderer/format-cwd';
+import { useAppTranslation } from '../../src/renderer/i18n';
+import { Tab as UiTab, TabList, Tabs } from '../../src/renderer/ui/Tabs';
 import { decideTabSwipe } from './tab-swipe';
 import type { Tab } from './tabs';
 
 /** Pills are compact — a much shorter budget than the terminal prompt's 44. */
 const PILL_CWD_MAX = 18;
 
+function safeSessionId(sessionId: string): string {
+  return sessionId.replace(/[^a-zA-Z0-9_-]/g, '-');
+}
+
+export function mobileTerminalTabId(sessionId: string): string {
+  return `mobile-terminal-tab-${safeSessionId(sessionId)}`;
+}
+
+export function mobileTerminalPanelId(sessionId: string): string {
+  return `mobile-terminal-panel-${safeSessionId(sessionId)}`;
+}
+
 // TabStrip — horizontally scrollable row of open-session pills (M5,
 // mobile-parity plan D5). Pure display + activate/close; MobileWorkspace owns
-// the actual tab state (tabsReducer) and the `+`/☰/📊/🎨 buttons that sit
+// the actual tab state (tabsReducer) and the adjacent workspace action buttons
 // beside this strip in the workspace header. Swipe (touchstart/touchend) is
 // handled HERE ONLY — never on the block list, which needs its own vertical
 // scroll/drag gestures uncontested. `.tab-strip` is also horizontally
@@ -28,6 +43,7 @@ export function TabStrip({
   onActivate: (sessionId: string) => void;
   onClose: (sessionId: string) => void;
 }): JSX.Element {
+  const { t } = useAppTranslation();
   const stripRef = useRef<HTMLDivElement | null>(null);
   const touchStart = useRef<{ x: number; y: number; scrollLeft: number } | null>(null);
 
@@ -60,7 +76,7 @@ export function TabStrip({
   );
 
   // Keep the active pill visible when it changes out from under the strip
-  // (e.g. activated from the ☰ session list rather than a swipe/tap here).
+  // (e.g. activated from the session list rather than a swipe/tap here).
   // Optional-call guards jsdom, which has no scrollIntoView.
   useEffect(() => {
     stripRef.current?.querySelector('.tab-pill--active')?.scrollIntoView?.({
@@ -77,32 +93,47 @@ export function TabStrip({
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      {tabs.map((tab) => (
-        <div
-          key={tab.sessionId}
-          className={tab.sessionId === activeSessionId ? 'tab-pill tab-pill--active' : 'tab-pill'}
-          data-testid="tab-pill"
-        >
-          <button
-            type="button"
-            className="tab-pill-label"
-            onClick={() => onActivate(tab.sessionId)}
-            title={tab.cwd}
-            data-testid="tab-pill-open"
-          >
-            {formatCwd(tab.cwd, PILL_CWD_MAX)}
-          </button>
-          <button
-            type="button"
-            className="tab-pill-close"
-            onClick={() => onClose(tab.sessionId)}
-            aria-label="Close tab"
-            data-testid="tab-pill-close"
-          >
-            ✕
-          </button>
-        </div>
-      ))}
+      <Tabs
+        value={activeSessionId ?? ''}
+        onValueChange={onActivate}
+        className="tab-strip-tabs"
+      >
+        <TabList className="tab-strip-list" label={t('mobile.sessions')}>
+          {tabs.map((tab) => (
+            <div
+              key={tab.sessionId}
+              className={tab.sessionId === activeSessionId ? 'tab-pill tab-pill--active' : 'tab-pill'}
+              role="presentation"
+              data-testid="tab-pill"
+            >
+              <UiTab
+                value={tab.sessionId}
+                id={mobileTerminalTabId(tab.sessionId)}
+                aria-controls={mobileTerminalPanelId(tab.sessionId)}
+                className="tab-pill-label"
+                title={tab.cwd}
+                data-testid="tab-pill-open"
+              >
+                {formatCwd(tab.cwd, PILL_CWD_MAX)}
+              </UiTab>
+              <button
+                type="button"
+                className="tab-pill-close"
+                onClick={() => onClose(tab.sessionId)}
+                onKeyDown={(event) => {
+                  if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+                    event.stopPropagation();
+                  }
+                }}
+                aria-label={t('mobile.closeTab')}
+                data-testid="tab-pill-close"
+              >
+                <X aria-hidden="true" size={14} />
+              </button>
+            </div>
+          ))}
+        </TabList>
+      </Tabs>
     </div>
   );
 }

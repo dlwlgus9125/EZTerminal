@@ -22,6 +22,11 @@
  *    root must never reach fromJSON at all.
  */
 import { z } from 'zod';
+import {
+  SidebarWidthSchema,
+  UiDensitySchema,
+  UiLocalePreferenceSchema,
+} from './ui-preferences';
 
 export const LAYOUT_SCHEMA_VERSION = 1 as const;
 
@@ -186,6 +191,11 @@ export const SettingsSchema = z.object({
   // CRT-interference params (crt-interference) — same loose-wire policy as
   // `rollbar`, one blob for all four parameterized effects.
   effectParams: EffectParamsSchema.optional(),
+  // Adaptive Workbench UI preferences. Additive optional fields keep the
+  // settings envelope at schemaVersion 1 and preserve every pre-redesign file.
+  locale: UiLocalePreferenceSchema.optional(),
+  density: UiDensitySchema.optional(),
+  sidebarWidth: SidebarWidthSchema.optional(),
 });
 export type StartupPref = z.infer<typeof StartupPrefSchema>;
 export type SettingsFile = z.infer<typeof SettingsSchema>;

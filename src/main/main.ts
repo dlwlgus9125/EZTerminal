@@ -88,6 +88,11 @@ import { isWorktreeRequest, type WorktreeInfo, type WorktreeResult } from '../sh
 import type { TerminalFileLocationRequest } from '../shared/terminal-file-location';
 import { resolveTerminalFileLocation } from './terminal-path-resolver';
 import { TerminalFileCapabilityStore } from './terminal-file-capability';
+import {
+  UiPreferencesPatchSchema,
+  resolveUiLocale,
+  type UiLocalePreference,
+} from '../shared/ui-preferences';
 
 const osc52LastWrite = new WeakMap<object, number>();
 const OSC52_MAIN_MAX_BYTES = 64 * 1024;
@@ -199,6 +204,12 @@ async function resolveOpenClawVisibility(
 // one of those happens. This drives a periodic recheck (main.ts, near the
 // other openclaw wiring) that's a no-op outside 'auto' mode.
 const OPENCLAW_VISIBILITY_RECHECK_MS = 30_000;
+
+/** Rebuild the terminal-safe native menu when the UI language changes. */
+function applyNativeMenuLocale(preference: UiLocalePreference): void {
+  const locale = resolveUiLocale(preference, app.getPreferredSystemLanguages());
+  Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate(locale)));
+}
 
 // Defense-in-depth CSP for the raw-HTML injection sink in TextBlock (the ANSI →
 // HTML external output, sanitized upstream by ansi_up). Strict: only same-origin
@@ -355,7 +366,7 @@ app.on('ready', () => {
   // Terminal-safe application menu (WT-parity M1): replaces Electron's default
   // menu, whose reload/close accelerators would otherwise steal Ctrl+R /
   // Ctrl+Shift+R / Ctrl+W / F5 from the terminal — see app-menu.ts.
-  Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate()));
+  applyNativeMenuLocale('system');
 
   // Diagnostics (B-M5): error log under userData, dump retention keep-last-10
   // (proposed default). Local only — see crashReporter.start above.
@@ -370,6 +381,12 @@ app.on('ready', () => {
   const storeReady = layoutStore.init().catch((err) => {
     console.error('[main] layout store init failed:', err);
   });
+  // Replace the system-language bootstrap menu with the persisted choice as
+  // soon as settings are available. The renderer does not need to be mounted.
+  void storeReady
+    .then(() => layoutStore.getUiPreferences())
+    .then((preferences) => applyNativeMenuLocale(preferences.locale))
+    .catch((err) => console.error('[main] native menu locale load failed:', err));
   const quickCommandStore = new QuickCommandStore(path.join(app.getPath('userData')));
   const quickCommandsReady = quickCommandStore.init().catch((err) => {
     console.error('[main] quick command store init failed:', err);
@@ -611,6 +628,23 @@ app.on('ready', () => {
   ipcMain.handle('settings:set-startup', async (_event, pref: StartupPref) => {
     await storeReady;
     await layoutStore.setStartup(pref);
+  });
+  ipcMain.handle('settings:get-ui-preferences', async () => {
+    await storeReady;
+    return layoutStore.getUiPreferences();
+  });
+  ipcMain.handle('settings:set-ui-preferences', async (_event, preferences: unknown) => {
+    await storeReady;
+    const parsed = UiPreferencesPatchSchema.safeParse(preferences);
+    if (!parsed.success) return layoutStore.getUiPreferences();
+    const persisted = await layoutStore.setUiPreferences(parsed.data);
+    applyNativeMenuLocale(persisted.locale);
+    return persisted;
+  });
+  ipcMain.handle('settings:refresh-native-menu-locale', async () => {
+    await storeReady;
+    const preferences = await layoutStore.getUiPreferences();
+    applyNativeMenuLocale(preferences.locale);
   });
   ipcMain.handle('settings:get-theme', async () => {
     await storeReady;

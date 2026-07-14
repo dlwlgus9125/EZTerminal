@@ -8,18 +8,19 @@ import type {
   AgentStatus,
 } from '../shared/agent';
 import { formatCwd } from './format-cwd';
+import { useAppTranslation } from './i18n';
 
 const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'waiting']);
 const ACTIVE = new Set<AgentStatus>(['starting', 'working']);
 
-const STATUS_LABEL: Record<AgentStatus, string> = {
-  starting: 'Starting',
-  working: 'Working',
-  waiting: 'Waiting',
-  blocked: 'Needs approval',
-  done: 'Done',
-  error: 'Error',
-};
+const STATUS_LABEL_KEY = {
+  starting: 'agentHub.status.starting',
+  working: 'agentHub.status.working',
+  waiting: 'agentHub.status.waiting',
+  blocked: 'agentHub.status.blocked',
+  done: 'agentHub.status.done',
+  error: 'agentHub.status.error',
+} as const satisfies Record<AgentStatus, string>;
 
 const PROVIDER_LABEL: Record<AgentProvider, string> = {
   codex: 'Codex',
@@ -27,14 +28,18 @@ const PROVIDER_LABEL: Record<AgentProvider, string> = {
   generic: 'CLI',
 };
 
-function ageLabel(updatedAt: number, now: number): string {
+function ageLabel(
+  updatedAt: number,
+  now: number,
+  formatter: Intl.RelativeTimeFormat,
+): string {
   const seconds = Math.max(0, Math.floor((now - updatedAt) / 1000));
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) return formatter.format(-seconds, 'second');
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60) return formatter.format(-minutes, 'minute');
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
+  if (hours < 24) return formatter.format(-hours, 'hour');
+  return formatter.format(-Math.floor(hours / 24), 'day');
 }
 
 function sortRecent(a: AgentActivity, b: AgentActivity): number {
@@ -58,10 +63,17 @@ export function AgentHub({
   mobile = false,
   disconnected = false,
 }: AgentHubProps): JSX.Element {
+  const { t, i18n } = useAppTranslation();
   const [now, setNow] = useState(() => Date.now());
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const relativeTime = useMemo(
+    () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),
+    [locale],
+  );
+  const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
@@ -101,19 +113,23 @@ export function AgentHub({
       return;
     }
     const message = result.error === 'not-waiting'
-      ? 'The agent is no longer waiting.'
+      ? t('agentHub.errorNotWaiting')
       : result.error === 'invalid-text'
-        ? 'Use one line of 1-8192 characters.'
+        ? t('agentHub.errorInvalidText')
         : result.error === 'session-ended'
-          ? 'The terminal session has ended.'
-          : 'Could not deliver the follow-up.';
+          ? t('agentHub.errorSessionEnded')
+          : t('agentHub.errorDeliveryFailed');
     setErrors((previous) => ({ ...previous, [item.id]: message }));
   };
 
-  const renderGroup = (title: string, items: readonly AgentActivity[]): JSX.Element | null => {
+  const renderGroup = (
+    group: 'attention' | 'active' | 'recent',
+    title: string,
+    items: readonly AgentActivity[],
+  ): JSX.Element | null => {
     if (items.length === 0) return null;
     return (
-      <section className="agent-group" data-testid={`agent-group-${title.toLowerCase()}`}>
+      <section className="agent-group" data-testid={`agent-group-${group}`}>
         <h2 className="status-section-title">{title}</h2>
         <div className="agent-list">
           {items.map((item) => (
@@ -123,18 +139,20 @@ export function AgentHub({
                 <span className="agent-provider">{PROVIDER_LABEL[item.provider]}</span>
                 <span className="agent-cwd" title={item.cwd}>{formatCwd(item.cwd)}</span>
                 <time className="agent-age" dateTime={new Date(item.updatedAt).toISOString()}>
-                  {ageLabel(item.updatedAt, now)}
+                  {ageLabel(item.updatedAt, now, relativeTime)}
                 </time>
               </div>
               <div className="agent-row-actions">
-                <span className={`agent-status agent-status--${item.status}`}>{STATUS_LABEL[item.status]}</span>
+                <span className={`agent-status agent-status--${item.status}`}>
+                  {t(STATUS_LABEL_KEY[item.status])}
+                </span>
                 <button
                   type="button"
                   className="btn btn-split agent-focus"
                   onClick={() => onFocusSession(item.sessionId)}
                   data-testid="agent-focus"
                 >
-                  {item.status === 'blocked' ? 'Review' : 'Focus'}
+                  {item.status === 'blocked' ? t('agentHub.review') : t('agentHub.focus')}
                 </button>
               </div>
               {item.status === 'waiting' && (
@@ -150,9 +168,9 @@ export function AgentHub({
                     value={drafts[item.id] ?? ''}
                     maxLength={8192}
                     disabled={disconnected || sendingId === item.id}
-                    aria-label={`Follow up with ${PROVIDER_LABEL[item.provider]}`}
+                    aria-label={t('agentHub.followupWith', { provider: PROVIDER_LABEL[item.provider] })}
                     aria-describedby={errors[item.id] ? `agent-error-${item.id}` : undefined}
-                    placeholder="Send a follow-up…"
+                    placeholder={t('agentHub.followupPlaceholder')}
                     onChange={(event) => {
                       const value = event.target.value.replace(/[\r\n]+/g, ' ');
                       setDrafts((previous) => ({ ...previous, [item.id]: value }));
@@ -162,9 +180,9 @@ export function AgentHub({
                     type="submit"
                     className="btn btn-split"
                     disabled={disconnected || sendingId !== null || !(drafts[item.id] ?? '').trim()}
-                    aria-label="Send follow-up"
+                    aria-label={t('agentHub.sendFollowup')}
                   >
-                    Send
+                    {t('agentHub.send')}
                   </button>
                   {errors[item.id] && (
                     <div className="agent-followup-error" id={`agent-error-${item.id}`} role="alert">
@@ -184,30 +202,38 @@ export function AgentHub({
     <div
       className={mobile ? 'mobile-agent-hub' : 'status-drawer agent-hub'}
       data-testid="agent-hub"
-      aria-label="Agent activity"
+      aria-label={t('agentHub.activity')}
     >
       <header className="agent-hub-head">
         <div>
-          <h1 className="agent-hub-title">Agents</h1>
-          <span className="agent-hub-summary">{snapshot.items.length} tracked</span>
+          <h1 className="agent-hub-title">{t('rail.agents')}</h1>
+          <span className="agent-hub-summary">
+            {t('agentHub.tracked', { value: numberFormatter.format(snapshot.items.length) })}
+          </span>
         </div>
         {onClose && (
-          <button type="button" className="btn btn-split" onClick={onClose} aria-label="Close Agent Hub">
-            Close
+          <button type="button" className="btn btn-split" onClick={onClose} aria-label={t('agentHub.closeHub')}>
+            {t('common.close')}
           </button>
         )}
       </header>
-      {disconnected && <div className="agent-offline" role="status">Reconnecting to desktop…</div>}
+      {disconnected && <div className="agent-offline" role="status">{t('agentHub.reconnecting')}</div>}
       <div className="agent-live-region" aria-live="polite" aria-atomic="true">
-        {groups.attention.length > 0 ? `${groups.attention.length} agents need attention` : ''}
+        {groups.attention.length === 1
+          ? t('agentHub.oneNeedsAttention')
+          : groups.attention.length > 1
+            ? t('agentHub.manyNeedAttention', {
+              value: numberFormatter.format(groups.attention.length),
+            })
+            : ''}
       </div>
       {snapshot.items.length === 0 ? (
-        <div className="agent-empty">No agent activity yet. Launch Codex, Claude, or a configured CLI in a terminal.</div>
+        <div className="agent-empty">{t('agentHub.empty')}</div>
       ) : (
         <div className="agent-hub-body">
-          {renderGroup('Attention', groups.attention)}
-          {renderGroup('Active', groups.active)}
-          {renderGroup('Recent', groups.recent)}
+          {renderGroup('attention', t('agentHub.groups.attention'), groups.attention)}
+          {renderGroup('active', t('agentHub.groups.active'), groups.active)}
+          {renderGroup('recent', t('agentHub.groups.recent'), groups.recent)}
         </div>
       )}
     </div>

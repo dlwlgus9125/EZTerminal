@@ -290,4 +290,23 @@ describe('JsonFile — writeAtomic Windows-lock retry', () => {
       spy.mockRestore();
     }
   });
+
+  it('rejects after both rename attempts fail and removes the temporary file', async () => {
+    const dir = makeDir();
+    const file = new JsonFile(dir, 'data.json');
+    await file.init();
+    const spy = vi.spyOn(fsPromises, 'rename').mockRejectedValue(new Error('EPERM: persistent lock'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      await expect(file.enqueue(() => file.writeAtomic(JSON.stringify({ ok: false }))))
+        .rejects.toThrow('EPERM: persistent lock');
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(existsSync(`${file.path}.tmp`)).toBe(false);
+      expect(existsSync(file.path)).toBe(false);
+    } finally {
+      log.mockRestore();
+      spy.mockRestore();
+    }
+  });
 });

@@ -1,7 +1,10 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { DesktopUiPreferencesProvider } from './ui-preferences';
 import './index.css';
+import './ui/styles.css';
+import './workbench/workbench.css';
 
 const container = document.getElementById('root');
 if (!container) {
@@ -10,6 +13,8 @@ if (!container) {
 
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <DesktopUiPreferencesProvider>
+      <App />
+    </DesktopUiPreferencesProvider>
   </StrictMode>,
 );

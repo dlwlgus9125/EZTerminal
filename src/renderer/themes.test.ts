@@ -6,8 +6,10 @@ import {
   THEME_ORDER,
   getActiveTheme,
   getActiveThemeName,
+  getResolvedTheme,
   listThemes,
   registerTheme,
+  resolveTheme,
   type ThemeDefinition,
 } from './themes';
 
@@ -51,7 +53,16 @@ describe('themes — built-ins', () => {
     expect(THEMES.dark.swatch).toEqual({ bg: '#0c0c0c', accent: '#29d398' });
     expect(THEMES.light.swatch).toEqual({ bg: '#f5f5f5', accent: '#0e8a4b' });
     expect(THEMES['high-contrast'].swatch).toEqual({ bg: '#000000', accent: '#00ff66' });
-    expect(THEMES.matrix.swatch).toEqual({ bg: '#010301', accent: '#5fe7ac' });
+    expect(THEMES.matrix.swatch).toEqual({ bg: '#010301', accent: '#35e58f' });
+  });
+
+  it('all built-ins satisfy the functional contrast contract without runtime correction', () => {
+    for (const id of THEME_ORDER) {
+      const resolved = resolveTheme(id);
+      expect(resolved.effectiveId).toBe(id);
+      expect(resolved.adjustments, id).toEqual([]);
+      expect(resolved.theme).toBe(THEMES[id]);
+    }
   });
 });
 
@@ -83,17 +94,25 @@ describe('themes — registry', () => {
     document.documentElement.dataset.theme = 'neon';
     const active = getActiveTheme();
     expect(active.id).toBe('neon');
-    expect(active.xterm).toEqual({ background: '#ff00ff', foreground: '#00ffff' });
+    expect(active.xterm.background).toBe('#ff00ff');
+    expect(active.xterm.foreground).not.toBe(THEMES.dark.xterm.foreground);
     expect(active.xterm).not.toEqual(THEMES.dark.xterm);
+    expect(getResolvedTheme().adjustments.some((adjustment) => adjustment.role === 'terminalForeground')).toBe(true);
   });
 
   it('getActiveTheme() falls back to dark for an absent data-theme', () => {
     expect(getActiveTheme()).toBe(THEMES.dark);
   });
 
-  it('getActiveTheme() falls back to dark for an unknown data-theme', () => {
+  it('preserves an unknown requested id while using Matrix as the effective fallback', () => {
     document.documentElement.dataset.theme = 'never-registered';
-    expect(getActiveTheme()).toBe(THEMES.dark);
+    expect(getActiveTheme()).toBe(THEMES.matrix);
+    expect(getResolvedTheme()).toMatchObject({
+      requestedId: 'never-registered',
+      effectiveId: 'matrix',
+      fallbackReason: 'missing-custom-theme',
+    });
+    expect(getActiveThemeName()).toBe('never-registered');
   });
 
   it('getActiveTheme() resolves a built-in by attribute', () => {

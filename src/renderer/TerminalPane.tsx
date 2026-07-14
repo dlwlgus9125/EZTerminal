@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { BlockController } from './block-controller';
 import { Block } from './Block';
 import { formatCwd } from './format-cwd';
+import { useAppTranslation } from './i18n';
 import {
   registerPane,
   type PaneActionResult,
@@ -96,6 +97,7 @@ export function TerminalPane({
   quickCommands = [],
   onManageQuickCommands,
 }: TerminalPaneProps): JSX.Element {
+  const { t } = useAppTranslation();
   const [command, setCommand] = useState('');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   // Submitted commands (oldest first) for ↑/↓ recall. The renderer submits these,
@@ -654,7 +656,7 @@ export function TerminalPane({
             />
           ) : (
             <section key={entry.id} className="block" data-testid="block" data-status="running">
-              <div className="block-pending">starting…</div>
+              <div className="block-pending">{t('terminalPane.starting')}</div>
             </section>
           ),
         )}
@@ -743,24 +745,24 @@ export function TerminalPane({
             if (e.data) activeController.current?.sendPtyInput(e.data);
             setCommand(''); // clear what the browser composed into the input
           }}
-          aria-label="command input"
+          aria-label={t('terminalPane.commandInput')}
           data-testid="cmd-input"
         />
         {onManageQuickCommands && (
           <QuickCommandShelf
             commands={quickCommands}
-            insertDisabledReason={sessionDead ? 'This terminal pane has ended.' : undefined}
+            insertDisabledReason={sessionDead ? t('terminalPane.ended') : undefined}
             runDisabledReason={
               !sessionId
-                ? 'The terminal session is still starting.'
+                ? t('terminalPane.sessionStarting')
                 : sessionDead
-                  ? 'This terminal pane has ended.'
+                  ? t('terminalPane.ended')
                   : activeRunning
-                    ? 'Wait for the active command to finish.'
+                    ? t('terminalPane.waitForCommand')
                     : command.trim()
-                      ? 'Clear the current draft before running a saved command.'
+                      ? t('terminalPane.clearDraft')
                       : commandSubmissionLocked
-                        ? 'Layout recovery is in progress.'
+                        ? t('terminalPane.layoutRecovery')
                         : undefined
             }
             onInsert={(text) => {
@@ -779,7 +781,7 @@ export function TerminalPane({
           disabled={!sessionId || sessionDead || activeRunning || commandSubmissionLocked}
           data-testid="btn-run"
         >
-          Run
+          {t('terminalPane.run')}
         </button>
         <button
           className="btn btn-cancel"
@@ -787,7 +789,7 @@ export function TerminalPane({
           disabled={!activeRunning}
           data-testid="btn-cancel"
         >
-          Cancel
+          {t('common.cancel')}
         </button>
       </div>
     </div>

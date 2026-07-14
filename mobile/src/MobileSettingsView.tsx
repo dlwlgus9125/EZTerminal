@@ -1,7 +1,10 @@
+import { Check, Minus, Plus, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
 
 import type { OpenClawMode } from '../../src/shared/layout-schema';
-import { EFFECT_CATALOG, type EffectId } from '../../src/renderer/effects';
+import { UiDensitySchema, UiLocalePreferenceSchema } from '../../src/shared/ui-preferences';
+import { useAppTranslation } from '../../src/renderer/i18n';
+import type { EffectId } from '../../src/renderer/effects';
 import {
   applyInterferenceParams,
   applyRollbarParams,
@@ -10,7 +13,11 @@ import {
   type InterferenceParams,
   type RollbarParams,
 } from '../../src/renderer/effect-params';
-import { EffectParamSliders, isInterferenceEffectId } from '../../src/renderer/EffectParamSliders';
+import {
+  EffectParamSliders,
+  isInterferenceEffectId,
+  type InterferenceEffectId,
+} from '../../src/renderer/EffectParamSliders';
 import { FONT_CATALOG } from '../../src/renderer/fonts';
 import { applyThemeVarsAndEffects, setUserFontId } from '../../src/renderer/theme-runtime';
 import { getActiveTheme, getActiveThemeName } from '../../src/renderer/themes';
@@ -33,17 +40,30 @@ import {
 } from './theme';
 import { loadUiScale, saveUiScale } from './ui-scale';
 import { TerminalAccessorySettings } from './TerminalAccessorySettings';
+import { useMobileUiPreferences } from './MobileUiPreferencesProvider';
 
 // MobileSettingsView — full-screen settings overlay (v0.2.0 M4). Modeled on
 // MobileStatsView.tsx's structure (standalone view, own header, `.btn`/
 // `--term-*` styling). Reached only from the authed MobileWorkspace, so
 // "Connection" always reflects a live session — there is no disconnected
 // state to render here.
-const OPENCLAW_MODE_LABEL: Record<OpenClawMode, string> = {
-  auto: 'Auto',
-  on: 'On',
-  off: 'Off',
-};
+const EFFECT_LABEL_KEY = {
+  scanlines: 'mobile.settingsView.effectScanlines',
+  'phosphor-glow': 'mobile.settingsView.effectPhosphorGlow',
+  flicker: 'mobile.settingsView.effectFlicker',
+  'crt-curvature': 'mobile.settingsView.effectCrtCurvature',
+  'crt-rollbar': 'mobile.settingsView.effectCrtRollbar',
+  'scanline-scroll': 'mobile.settingsView.effectScanlineScroll',
+  'jitter-burst': 'mobile.settingsView.effectJitterBurst',
+  'micro-jitter': 'mobile.settingsView.effectMicroJitter',
+  'static-noise': 'mobile.settingsView.effectStaticNoise',
+} as const satisfies Record<EffectId, string>;
+
+const OPENCLAW_MODE_LABEL_KEY = {
+  auto: 'mobile.settingsView.modeAuto',
+  on: 'mobile.settingsView.modeOn',
+  off: 'mobile.settingsView.modeOff',
+} as const satisfies Record<OpenClawMode, string>;
 
 interface MobileSettingsViewProps {
   readonly connectionUrl?: string;
@@ -64,7 +84,25 @@ export function MobileSettingsView({
   openclawMode,
   onOpenClawModeChange,
 }: MobileSettingsViewProps): JSX.Element {
+  const { t } = useAppTranslation();
+  const { preferences, setPreferences } = useMobileUiPreferences();
+  const [preferenceSaveFailed, setPreferenceSaveFailed] = useState(false);
   const [uiScale, setUiScale] = useState(() => loadUiScale());
+  const formatEffectParamLabel = useCallback((effectId: InterferenceEffectId, key: string, value: number): string => {
+    const labelKey = {
+      'jitter-burst:period': 'mobile.settingsView.burstPeriod',
+      'jitter-burst:duration': 'mobile.settingsView.burstLength',
+      'jitter-burst:intensity': 'mobile.settingsView.intensity',
+      'micro-jitter:speed': 'mobile.settingsView.jitterSpeed',
+      'micro-jitter:amplitude': 'mobile.settingsView.amplitude',
+      'static-noise:density': 'mobile.settingsView.grainDensity',
+      'static-noise:opacity': 'mobile.settingsView.noiseOpacity',
+      'static-noise:speed': 'mobile.settingsView.shuffleSpeed',
+      'flicker:frequency': 'mobile.settingsView.frequency',
+      'flicker:depth': 'mobile.settingsView.depth',
+    } as const;
+    return t(labelKey[`${effectId}:${key}` as keyof typeof labelKey], { value });
+  }, [t]);
 
   // clamp -> applyUiScale (live) -> saveUiScale (persist) -> state, per plan D1/D5.
   const setScale = useCallback((percent: number) => {
@@ -139,28 +177,73 @@ export function MobileSettingsView({
           type="button"
           className="btn"
           onClick={onClose}
-          aria-label="Close settings"
+          aria-label={t('mobile.settingsView.close')}
           data-testid="mobile-settings-close"
         >
-          ✕
+          <X aria-hidden="true" size={18} />
         </button>
-        <h2 className="mobile-settings-title">Settings</h2>
+        <h2 className="mobile-settings-title">{t('settings.title')}</h2>
       </header>
 
       <div className="mobile-settings-body">
+        <section className="status-section">
+          <h2 className="status-section-title">{t('settings.language')}</h2>
+          <p>{t('settings.languageDescription')}</p>
+          <select
+            className="mobile-file-path-input"
+            value={preferences.locale}
+            onChange={(event) => {
+              const parsed = UiLocalePreferenceSchema.safeParse(event.target.value);
+              if (parsed.success) {
+                setPreferenceSaveFailed(!setPreferences({ ...preferences, locale: parsed.data }));
+              }
+            }}
+            data-testid="settings-language"
+          >
+            <option value="system">{t('settings.systemLanguage')}</option>
+            <option value="ko">{t('settings.korean')}</option>
+            <option value="en">{t('settings.english')}</option>
+          </select>
+        </section>
+
+        <section className="status-section">
+          <h2 className="status-section-title">{t('settings.density')}</h2>
+          <select
+            className="mobile-file-path-input"
+            value={preferences.density}
+            onChange={(event) => {
+              const parsed = UiDensitySchema.safeParse(event.target.value);
+              if (parsed.success) {
+                setPreferenceSaveFailed(!setPreferences({ ...preferences, density: parsed.data }));
+              }
+            }}
+            data-testid="settings-density"
+          >
+            <option value="adaptive">{t('settings.adaptive')}</option>
+            <option value="compact">{t('settings.compact')}</option>
+            <option value="comfortable">{t('settings.comfortable')}</option>
+          </select>
+        </section>
+
+        {preferenceSaveFailed && (
+          <div className="settings-theme-import-error" role="alert">
+            {t('settings.preferenceSaveFailed')}
+          </div>
+        )}
+
         <TerminalAccessorySettings />
 
         <section className="status-section">
-          <h2 className="status-section-title">UI Scale</h2>
+          <h2 className="status-section-title">{t('mobile.settingsView.uiScale')}</h2>
           <div className="settings-scale-stepper">
             <button
               type="button"
               className="btn"
               onClick={dec}
-              aria-label="Decrease UI scale"
+              aria-label={t('mobile.settingsView.decreaseScale')}
               data-testid="settings-scale-dec"
             >
-              −
+              <Minus aria-hidden="true" size={18} />
             </button>
             <span className="settings-scale-value" data-testid="settings-scale-value">
               {uiScale}%
@@ -169,25 +252,25 @@ export function MobileSettingsView({
               type="button"
               className="btn"
               onClick={inc}
-              aria-label="Increase UI scale"
+              aria-label={t('mobile.settingsView.increaseScale')}
               data-testid="settings-scale-inc"
             >
-              +
+              <Plus aria-hidden="true" size={18} />
             </button>
             <button
               type="button"
               className="btn"
               onClick={reset}
-              aria-label="Reset UI scale"
+              aria-label={t('mobile.settingsView.resetScale')}
               data-testid="settings-scale-reset"
             >
-              Reset
+              {t('common.reset')}
             </button>
           </div>
         </section>
 
         <section className="status-section">
-          <h2 className="status-section-title">Font</h2>
+          <h2 className="status-section-title">{t('mobile.settingsView.font')}</h2>
           <div className="status-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {FONT_CATALOG.map((font) => (
               <button
@@ -198,7 +281,7 @@ export function MobileSettingsView({
                 onClick={() => selectFont(font.id)}
                 data-testid={`settings-font-${font.id}`}
               >
-                {fontId === font.id ? '✓ ' : ''}
+                {fontId === font.id && <Check aria-hidden="true" size={16} />}
                 {font.label}
               </button>
             ))}
@@ -206,10 +289,10 @@ export function MobileSettingsView({
         </section>
 
         <section className="status-section">
-          <h2 className="status-section-title">Effects</h2>
+          <h2 className="status-section-title">{t('mobile.settingsView.effects')}</h2>
           {declaredEffects.length === 0 ? (
             <div className="status-metric" data-testid="settings-effects-empty">
-              No effects for this theme
+              {t('mobile.settingsView.noEffects')}
             </div>
           ) : (
             <div className="status-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -224,8 +307,8 @@ export function MobileSettingsView({
                     onClick={() => toggleEffect(id)}
                     data-testid={`settings-effect-${id}`}
                   >
-                    {on ? '✓ ' : ''}
-                    {EFFECT_CATALOG[id].label}
+                    {on && <Check aria-hidden="true" size={16} />}
+                    {t(EFFECT_LABEL_KEY[id])}
                   </button>
                 );
               })}
@@ -234,7 +317,7 @@ export function MobileSettingsView({
           {declaredEffects.includes('crt-rollbar') && (
             <div className="settings-rollbar-params" data-testid="settings-rollbar-params">
               <label className="settings-rollbar-row">
-                <span>Line thickness: {rollbar.thickness}px</span>
+                <span>{t('mobile.settingsView.lineThickness', { value: rollbar.thickness })}</span>
                 <input
                   type="range"
                   min={1}
@@ -246,7 +329,7 @@ export function MobileSettingsView({
                 />
               </label>
               <label className="settings-rollbar-row">
-                <span>Line spacing: {rollbar.gap}%</span>
+                <span>{t('mobile.settingsView.lineSpacing', { value: rollbar.gap })}</span>
                 <input
                   type="range"
                   min={1}
@@ -258,7 +341,7 @@ export function MobileSettingsView({
                 />
               </label>
               <label className="settings-rollbar-row">
-                <span>Line color</span>
+                <span>{t('mobile.settingsView.lineColor')}</span>
                 <input
                   type="color"
                   value={rollbar.color}
@@ -267,7 +350,7 @@ export function MobileSettingsView({
                 />
               </label>
               <label className="settings-rollbar-row">
-                <span>Roll speed: {rollbar.speed}</span>
+                <span>{t('mobile.settingsView.rollSpeed', { value: rollbar.speed })}</span>
                 <input
                   type="range"
                   min={1}
@@ -279,7 +362,7 @@ export function MobileSettingsView({
                 />
               </label>
               <label className="settings-rollbar-row">
-                <span>Bar opacity: {rollbar.opacity}%</span>
+                <span>{t('mobile.settingsView.barOpacity', { value: rollbar.opacity })}</span>
                 <input
                   type="range"
                   min={0}
@@ -291,7 +374,7 @@ export function MobileSettingsView({
                 />
               </label>
               <label className="settings-rollbar-row">
-                <span>Line gradient: {rollbar.softness}%</span>
+                <span>{t('mobile.settingsView.lineGradient', { value: rollbar.softness })}</span>
                 <input
                   type="range"
                   min={0}
@@ -305,12 +388,19 @@ export function MobileSettingsView({
             </div>
           )}
           {declaredEffects.filter(isInterferenceEffectId).map((id) => (
-            <EffectParamSliders key={id} effectId={id} params={interference} onChange={changeEffectParams} />
+            <EffectParamSliders
+              key={id}
+              effectId={id}
+              params={interference}
+              onChange={changeEffectParams}
+              formatLabel={formatEffectParamLabel}
+              flashLabel={t('mobile.settingsView.noiseFlash')}
+            />
           ))}
         </section>
 
         <section className="status-section">
-          <h2 className="status-section-title">OpenClaw</h2>
+          <h2 className="status-section-title">{t('mobile.settingsView.openClaw')}</h2>
           <div className="status-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {(['auto', 'on', 'off'] as const).map((mode) => (
               <button
@@ -321,20 +411,20 @@ export function MobileSettingsView({
                 onClick={() => onOpenClawModeChange(mode)}
                 data-testid={`settings-openclaw-mode-${mode}`}
               >
-                {openclawMode === mode ? '✓ ' : ''}
-                {OPENCLAW_MODE_LABEL[mode]}
+                {openclawMode === mode && <Check aria-hidden="true" size={16} />}
+                {t(OPENCLAW_MODE_LABEL_KEY[mode])}
               </button>
             ))}
           </div>
         </section>
 
         <section className="status-section">
-          <h2 className="status-section-title">Connection</h2>
+          <h2 className="status-section-title">{t('mobile.settingsView.connection')}</h2>
           <div className="status-metric" data-testid="settings-connection-url">
             {connectionUrl || '—'}
           </div>
           <div className="status-metric" data-testid="settings-connection-status">
-            Connected
+            {t('state.connected')}
           </div>
           <button
             type="button"
@@ -342,7 +432,7 @@ export function MobileSettingsView({
             onClick={onDisconnect}
             data-testid="settings-disconnect-btn"
           >
-            Disconnect
+            {t('mobile.settingsView.disconnect')}
           </button>
         </section>
       </div>

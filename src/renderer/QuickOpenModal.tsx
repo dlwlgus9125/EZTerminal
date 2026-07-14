@@ -17,17 +17,11 @@ import {
   type QuickCommand,
   type QuickCommandInput,
 } from '../shared/quick-command';
+import { useAppTranslation } from './i18n';
 import './quick-open.css';
 
 export type QuickOpenMode = 'all' | 'commands';
-export type QuickOpenRowKind =
-  | 'pane'
-  | 'file'
-  | 'history'
-  | 'quick-command'
-  | 'action'
-  | 'preset'
-  | 'agent';
+export type QuickOpenRowKind = 'pane' | 'file' | 'history' | 'quick-command' | 'action' | 'preset' | 'agent';
 export type QuickOpenActionVariant = 'enter' | 'shift-enter' | 'mod-enter';
 
 export interface QuickOpenRow {
@@ -88,16 +82,6 @@ export interface QuickOpenModalProps {
   readonly quickCommandManager?: QuickCommandManagerConfig;
 }
 
-const KIND_LABEL: Record<QuickOpenRowKind, string> = {
-  pane: 'Pane',
-  file: 'File',
-  history: 'History',
-  'quick-command': 'Quick',
-  action: 'Action',
-  preset: 'Preset',
-  agent: 'Agent',
-};
-
 const KIND_GROUP: Record<QuickOpenRowKind, string> = {
   pane: 'Open panes',
   file: 'Files',
@@ -108,15 +92,21 @@ const KIND_GROUP: Record<QuickOpenRowKind, string> = {
   agent: 'Agents',
 };
 
-export function groupQuickOpenRows(rows: readonly QuickOpenRow[]): QuickOpenRowGroup[] {
+export function groupQuickOpenRows(
+  rows: readonly QuickOpenRow[],
+  kindGroups: Readonly<Record<QuickOpenRowKind, string>> = KIND_GROUP,
+): QuickOpenRowGroup[] {
   const groups = new Map<string, QuickOpenRow[]>();
   for (const row of rows) {
-    const label = row.groupLabel ?? KIND_GROUP[row.kind];
+    const label = row.groupLabel ?? kindGroups[row.kind];
     const group = groups.get(label);
     if (group) group.push(row);
     else groups.set(label, [row]);
   }
-  return [...groups].map(([label, groupedRows]) => ({ label, rows: groupedRows }));
+  return [...groups].map(([label, groupedRows]) => ({
+    label,
+    rows: groupedRows,
+  }));
 }
 
 export type QuickCommandDraftValidation =
@@ -133,10 +123,7 @@ export function validateQuickCommandDraft(draft: {
   const fieldErrors: QuickCommandFieldErrors = {};
   for (const issue of parsed.error.issues) {
     const field = issue.path[0];
-    if (
-      (field === 'name' || field === 'command' || field === 'description')
-      && fieldErrors[field] === undefined
-    ) {
+    if ((field === 'name' || field === 'command' || field === 'description') && fieldErrors[field] === undefined) {
       fieldErrors[field] = issue.message;
     }
   }
@@ -159,7 +146,10 @@ function focusableElements(container: HTMLElement): HTMLElement[] {
 
 interface IndexedGroup {
   readonly label: string;
-  readonly rows: readonly { readonly row: QuickOpenRow; readonly index: number }[];
+  readonly rows: readonly {
+    readonly row: QuickOpenRow;
+    readonly index: number;
+  }[];
 }
 
 function indexGroups(groups: readonly QuickOpenRowGroup[]): IndexedGroup[] {
@@ -177,14 +167,15 @@ export function QuickOpenModal({
   rows,
   emptyRows = [],
   loading = false,
-  loadingLabel = 'Searching sources…',
-  emptyMessage = 'No recent items',
-  noResultsMessage = 'No matching items',
+  loadingLabel,
+  emptyMessage,
+  noResultsMessage,
   actionMessage = null,
   onAction,
   onClose,
   quickCommandManager,
 }: QuickOpenModalProps): JSX.Element {
+  const { t } = useAppTranslation();
   const [view, setView] = useState<'results' | 'manage'>('results');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -196,7 +187,19 @@ export function QuickOpenModal({
   const listId = `${instanceId}-list`;
 
   const displayedRows = query.trim() === '' ? emptyRows : rows;
-  const groups = useMemo(() => groupQuickOpenRows(displayedRows), [displayedRows]);
+  const groups = useMemo(
+    () =>
+      groupQuickOpenRows(displayedRows, {
+        pane: t('commandCenter.groups.panes'),
+        file: t('commandCenter.groups.files'),
+        history: t('commandCenter.groups.history'),
+        'quick-command': t('commandCenter.groups.quickCommands'),
+        action: t('commandCenter.groups.actions'),
+        preset: t('commandCenter.groups.presets'),
+        agent: t('commandCenter.groups.agents'),
+      }),
+    [displayedRows, t],
+  );
   const indexedGroups = useMemo(() => indexGroups(groups), [groups]);
   const flatRows = useMemo(() => indexedGroups.flatMap((group) => group.rows.map(({ row }) => row)), [indexedGroups]);
   const rowSignature = flatRows.map((row) => `${row.kind}:${row.id}`).join('\0');
@@ -257,11 +260,8 @@ export function QuickOpenModal({
     } else if (event.key === 'Enter') {
       event.preventDefault();
       event.stopPropagation();
-      const variant: QuickOpenActionVariant = event.ctrlKey || event.metaKey
-        ? 'mod-enter'
-        : event.shiftKey
-          ? 'shift-enter'
-          : 'enter';
+      const variant: QuickOpenActionVariant =
+        event.ctrlKey || event.metaKey ? 'mod-enter' : event.shiftKey ? 'shift-enter' : 'enter';
       activate(selectedRow, variant);
     }
   };
@@ -308,23 +308,32 @@ export function QuickOpenModal({
         <header className="quick-open-header">
           <div className="quick-open-heading">
             <span className="quick-open-mode" aria-hidden="true">
-              {view === 'manage' ? 'Manage' : mode === 'commands' ? 'Commands' : 'All'}
+              {view === 'manage'
+                ? t('commandCenter.manageMode')
+                : mode === 'commands'
+                  ? t('commandCenter.commandsMode')
+                  : t('commandCenter.allMode')}
             </span>
-            <h1 id={titleId}>{view === 'manage' ? 'Quick Commands' : 'Quick Open'}</h1>
+            <h1 id={titleId}>{view === 'manage' ? t('quickCommands.title') : t('commandCenter.title')}</h1>
           </div>
           <div className="quick-open-header-actions">
             {view === 'results' && quickCommandManager && (
               <button type="button" className="btn quick-open-manage" onClick={() => setView('manage')}>
-                Manage Quick Commands
+                {t('quickCommands.manage')}
               </button>
             )}
             {view === 'manage' && (
               <button type="button" className="btn" onClick={() => setView('results')}>
-                Back
+                {t('common.back')}
               </button>
             )}
-            <button type="button" className="btn quick-open-close" onClick={onClose} aria-label="Close Quick Open">
-              Close
+            <button
+              type="button"
+              className="btn quick-open-close"
+              onClick={onClose}
+              aria-label={t('commandCenter.close')}
+            >
+              {t('common.close')}
             </button>
           </div>
         </header>
@@ -337,8 +346,12 @@ export function QuickOpenModal({
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
               onKeyDown={onSearchKeyDown}
-              placeholder={mode === 'commands' ? 'Search commands and actions…' : 'Search panes, files, commands, and agents…'}
-              aria-label={mode === 'commands' ? 'Search commands' : 'Search Quick Open'}
+              placeholder={
+                mode === 'commands'
+                  ? t('commandCenter.searchCommandsPlaceholder')
+                  : t('commandCenter.searchAllPlaceholder')
+              }
+              aria-label={mode === 'commands' ? t('commandCenter.searchCommands') : t('commandCenter.searchAll')}
               role="combobox"
               aria-expanded="true"
               aria-controls={listId}
@@ -348,7 +361,7 @@ export function QuickOpenModal({
               spellCheck={false}
               data-testid="quick-open-input"
             />
-            <div className="quick-open-list" id={listId} role="listbox" aria-label="Quick Open results">
+            <div className="quick-open-list" id={listId} role="listbox" aria-label={t('commandCenter.results')}>
               {indexedGroups.map((group, groupIndex) => (
                 <section
                   className="quick-open-group"
@@ -377,10 +390,18 @@ export function QuickOpenModal({
                         onMouseMove={() => setSelectedIndex(index)}
                         onClick={() => activate(row, 'enter')}
                       >
-                        <span className="quick-open-source">{row.sourceLabel ?? KIND_LABEL[row.kind]}</span>
+                        <span className="quick-open-source">
+                          {row.sourceLabel ?? t(`commandCenter.kinds.${row.kind}`)}
+                        </span>
                         <span className="quick-open-row-copy">
-                          <span className="quick-open-row-title" title={row.title}>{row.title}</span>
-                          {row.detail && <span className="quick-open-row-detail" title={row.detail}>{row.detail}</span>}
+                          <span className="quick-open-row-title" title={row.title}>
+                            {row.title}
+                          </span>
+                          {row.detail && (
+                            <span className="quick-open-row-detail" title={row.detail}>
+                              {row.detail}
+                            </span>
+                          )}
                           {row.disabledReason && (
                             <span className="quick-open-row-disabled-reason">{row.disabledReason}</span>
                           )}
@@ -394,19 +415,27 @@ export function QuickOpenModal({
               {loading && (
                 <div className="quick-open-loading" role="status" aria-live="polite" data-testid="quick-open-loading">
                   <span className="quick-open-loading-mark" aria-hidden="true" />
-                  {loadingLabel}
+                  {loadingLabel ?? t('commandCenter.searchingSources')}
                 </div>
               )}
               {!loading && flatRows.length === 0 && (
                 <div className="quick-open-empty" role="status" data-testid="quick-open-empty">
-                  {query.trim() === '' ? emptyMessage : noResultsMessage}
+                  {query.trim() === ''
+                    ? (emptyMessage ?? t('commandCenter.empty'))
+                    : (noResultsMessage ?? t('commandCenter.noMatchingItems'))}
                 </div>
               )}
             </div>
             <footer className="quick-open-footer">
-              <span><kbd>Enter</kbd> open/insert</span>
-              <span><kbd>Shift</kbd>+<kbd>Enter</kbd> alternate</span>
-              <span><kbd>Ctrl/Cmd</kbd>+<kbd>Enter</kbd> run</span>
+              <span>
+                <kbd>Enter</kbd> {t('commandCenter.hints.openInsert')}
+              </span>
+              <span>
+                <kbd>Shift</kbd>+<kbd>Enter</kbd> {t('commandCenter.hints.alternate')}
+              </span>
+              <span>
+                <kbd>Ctrl/Cmd</kbd>+<kbd>Enter</kbd> {t('commandCenter.hints.run')}
+              </span>
               {(actionMessage || selectedRow?.disabledReason) && (
                 <span className="quick-open-footer-reason" role="status">
                   {actionMessage ?? selectedRow?.disabledReason}
@@ -431,10 +460,14 @@ interface DraftState {
 const EMPTY_DRAFT: DraftState = { name: '', command: '', description: '' };
 
 function QuickCommandEditor({ manager }: { readonly manager: QuickCommandManagerConfig }): JSX.Element {
+  const { t } = useAppTranslation();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<DraftState>(EMPTY_DRAFT);
   const [fieldErrors, setFieldErrors] = useState<QuickCommandFieldErrors>({});
-  const [message, setMessage] = useState<{ readonly kind: 'error' | 'success'; readonly text: string } | null>(null);
+  const [message, setMessage] = useState<{
+    readonly kind: 'error' | 'success';
+    readonly text: string;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -472,8 +505,22 @@ function QuickCommandEditor({ manager }: { readonly manager: QuickCommandManager
     if (saving) return;
     const validated = validateQuickCommandDraft(draft);
     if (!validated.ok) {
-      setFieldErrors(validated.fieldErrors);
-      setMessage({ kind: 'error', text: 'Fix the highlighted fields.' });
+      setFieldErrors({
+        ...(validated.fieldErrors.name
+          ? { name: t('quickCommands.nameInvalid', { max: MAX_QUICK_COMMAND_NAME_CHARS }) }
+          : {}),
+        ...(validated.fieldErrors.command
+          ? { command: t('quickCommands.commandInvalid', { max: MAX_QUICK_COMMAND_CHARS }) }
+          : {}),
+        ...(validated.fieldErrors.description
+          ? {
+              description: t('quickCommands.descriptionInvalid', {
+                max: MAX_QUICK_COMMAND_DESCRIPTION_CHARS,
+              }),
+            }
+          : {}),
+      });
+      setMessage({ kind: 'error', text: t('quickCommands.fixFields') });
       return;
     }
 
@@ -482,11 +529,9 @@ function QuickCommandEditor({ manager }: { readonly manager: QuickCommandManager
     setMessage(null);
     let result: QuickCommandManageResult;
     try {
-      result = editingId
-        ? await manager.onUpdate(editingId, validated.input)
-        : await manager.onCreate(validated.input);
+      result = editingId ? await manager.onUpdate(editingId, validated.input) : await manager.onCreate(validated.input);
     } catch {
-      result = { ok: false, message: 'Could not save the Quick Command.' };
+      result = { ok: false, message: t('quickCommands.saveFailed') };
     }
     setSaving(false);
     if (!result.ok) {
@@ -494,7 +539,10 @@ function QuickCommandEditor({ manager }: { readonly manager: QuickCommandManager
       setMessage({ kind: 'error', text: result.message });
       return;
     }
-    setMessage({ kind: 'success', text: editingId ? 'Quick Command updated.' : 'Quick Command created.' });
+    setMessage({
+      kind: 'success',
+      text: editingId ? t('quickCommands.updated') : t('quickCommands.created'),
+    });
     if (!editingId) setDraft(EMPTY_DRAFT);
   };
 
@@ -511,7 +559,7 @@ function QuickCommandEditor({ manager }: { readonly manager: QuickCommandManager
     try {
       result = await manager.onDelete(id);
     } catch {
-      result = { ok: false, message: 'Could not delete the Quick Command.' };
+      result = { ok: false, message: t('quickCommands.deleteFailed') };
     }
     setDeletingId(null);
     setConfirmDeleteId(null);
@@ -520,7 +568,7 @@ function QuickCommandEditor({ manager }: { readonly manager: QuickCommandManager
       return;
     }
     if (editingId === id) startCreate();
-    setMessage({ kind: 'success', text: 'Quick Command deleted.' });
+    setMessage({ kind: 'success', text: t('quickCommands.deleted') });
   };
 
   const fieldErrorId = (field: QuickCommandField): string | undefined =>
@@ -528,13 +576,15 @@ function QuickCommandEditor({ manager }: { readonly manager: QuickCommandManager
 
   return (
     <div className="quick-command-editor" data-testid="quick-command-editor">
-      <aside className="quick-command-editor-list" aria-label="Saved Quick Commands">
+      <aside className="quick-command-editor-list" aria-label={t('quickCommands.savedAria')}>
         <div className="quick-command-editor-list-head">
-          <h2>Saved</h2>
-          <button type="button" className="btn" onClick={startCreate}>New</button>
+          <h2>{t('quickCommands.saved')}</h2>
+          <button type="button" className="btn" onClick={startCreate}>
+            {t('quickCommands.new')}
+          </button>
         </div>
         {manager.commands.length === 0 ? (
-          <div className="quick-command-editor-empty">No saved Quick Commands.</div>
+          <div className="quick-command-editor-empty">{t('quickCommands.empty')}</div>
         ) : (
           manager.commands.map((command) => (
             <div
@@ -551,9 +601,19 @@ function QuickCommandEditor({ manager }: { readonly manager: QuickCommandManager
                 className="btn quick-command-editor-delete"
                 disabled={deletingId !== null}
                 onClick={() => void remove(command.id)}
-                aria-label={`${confirmDeleteId === command.id ? 'Confirm delete' : 'Delete'} ${command.name}`}
+                aria-label={
+                  confirmDeleteId === command.id
+                    ? t('quickCommands.confirmDeleteNamed', {
+                        name: command.name,
+                      })
+                    : t('quickCommands.deleteNamed', { name: command.name })
+                }
               >
-                {deletingId === command.id ? 'Deleting…' : confirmDeleteId === command.id ? 'Confirm' : 'Delete'}
+                {deletingId === command.id
+                  ? t('quickCommands.deleting')
+                  : confirmDeleteId === command.id
+                    ? t('common.confirm')
+                    : t('quickCommands.delete')}
               </button>
             </div>
           ))
@@ -561,8 +621,8 @@ function QuickCommandEditor({ manager }: { readonly manager: QuickCommandManager
       </aside>
 
       <form className="quick-command-editor-form" onSubmit={(event) => void save(event)} noValidate>
-        <h2>{editingId ? 'Edit Quick Command' : 'New Quick Command'}</h2>
-        <label htmlFor={`${formId}-name`}>Name</label>
+        <h2>{editingId ? t('quickCommands.edit') : t('quickCommands.new')}</h2>
+        <label htmlFor={`${formId}-name`}>{t('quickCommands.name')}</label>
         <input
           ref={nameRef}
           id={`${formId}-name`}
@@ -572,9 +632,13 @@ function QuickCommandEditor({ manager }: { readonly manager: QuickCommandManager
           aria-describedby={fieldErrorId('name')}
           onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
         />
-        {fieldErrors.name && <span id={`${formId}-name-error`} className="quick-command-field-error">{fieldErrors.name}</span>}
+        {fieldErrors.name && (
+          <span id={`${formId}-name-error`} className="quick-command-field-error">
+            {fieldErrors.name}
+          </span>
+        )}
 
-        <label htmlFor={`${formId}-command`}>Command</label>
+        <label htmlFor={`${formId}-command`}>{t('quickCommands.command')}</label>
         <input
           id={`${formId}-command`}
           value={draft.command}
@@ -584,20 +648,31 @@ function QuickCommandEditor({ manager }: { readonly manager: QuickCommandManager
           onChange={(event) => setDraft((current) => ({ ...current, command: event.target.value }))}
         />
         {fieldErrors.command && (
-          <span id={`${formId}-command-error`} className="quick-command-field-error">{fieldErrors.command}</span>
+          <span id={`${formId}-command-error`} className="quick-command-field-error">
+            {fieldErrors.command}
+          </span>
         )}
 
-        <label htmlFor={`${formId}-description`}>Description <span>(optional)</span></label>
+        <label htmlFor={`${formId}-description`}>
+          {t('quickCommands.description')} <span>{t('quickCommands.optional')}</span>
+        </label>
         <input
           id={`${formId}-description`}
           value={draft.description}
           maxLength={MAX_QUICK_COMMAND_DESCRIPTION_CHARS}
           aria-invalid={fieldErrors.description ? 'true' : undefined}
           aria-describedby={fieldErrorId('description')}
-          onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
+          onChange={(event) =>
+            setDraft((current) => ({
+              ...current,
+              description: event.target.value,
+            }))
+          }
         />
         {fieldErrors.description && (
-          <span id={`${formId}-description-error`} className="quick-command-field-error">{fieldErrors.description}</span>
+          <span id={`${formId}-description-error`} className="quick-command-field-error">
+            {fieldErrors.description}
+          </span>
         )}
 
         {message && (
@@ -609,9 +684,15 @@ function QuickCommandEditor({ manager }: { readonly manager: QuickCommandManager
           </div>
         )}
         <div className="quick-command-editor-form-actions">
-          <button type="button" className="btn" onClick={startCreate} disabled={saving}>Clear</button>
+          <button type="button" className="btn" onClick={startCreate} disabled={saving}>
+            {t('quickCommands.clear')}
+          </button>
           <button type="submit" className="btn btn-run" disabled={saving}>
-            {saving ? 'Saving…' : editingId ? 'Save changes' : 'Create'}
+            {saving
+              ? t('quickCommands.saving')
+              : editingId
+                ? t('quickCommands.saveChanges')
+                : t('quickCommands.create')}
           </button>
         </div>
       </form>

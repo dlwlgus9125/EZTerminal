@@ -17,6 +17,7 @@ import {
   type TerminalContextMenuItem,
 } from './TerminalContextMenu';
 import { TerminalFindBar } from './TerminalFindBar';
+import { useAppTranslation } from './i18n';
 import { findTerminalFileLinkAtOffset } from '../shared/terminal-file-location';
 import {
   acceptOsc52ClipboardWrite,
@@ -139,6 +140,7 @@ function PtyXtermView({
   controller: BlockController;
   runtimeOptions: TerminalRuntimeOptions;
 }): JSX.Element {
+  const { t } = useAppTranslation();
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -619,7 +621,7 @@ function PtyXtermView({
   const menuItems: TerminalContextMenuItem[] = [
     {
       action: 'copy',
-      label: 'Copy',
+      label: t('terminalContext.copy'),
       disabled: !termRef.current?.hasSelection(),
       onClick: () => {
         const term = termRef.current;
@@ -628,7 +630,7 @@ function PtyXtermView({
     },
     {
       action: 'paste',
-      label: 'Paste',
+      label: t('terminalContext.paste'),
       onClick: () => {
         const term = termRef.current;
         if (!term) return;
@@ -637,8 +639,8 @@ function PtyXtermView({
         });
       },
     },
-    { action: 'select-all', label: 'Select All', onClick: () => termRef.current?.selectAll() },
-    { action: 'find', label: 'Find', onClick: () => setFindOpen(true) },
+    { action: 'select-all', label: t('terminalContext.selectAll'), onClick: () => termRef.current?.selectAll() },
+    { action: 'find', label: t('terminalFind.label'), onClick: () => setFindOpen(true) },
   ];
 
   return (
@@ -696,6 +698,8 @@ function PtyXtermView({
           x={menuPos.x}
           y={menuPos.y}
           items={menuItems}
+          ariaLabel={t('terminalContext.actionsLabel')}
+          shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
           onClose={(detail) => closeTerminalMenu(
             menuPos,
             detail,
@@ -736,6 +740,7 @@ function PtyPlainView({
   controller: BlockController;
   runtimeOptions: TerminalRuntimeOptions;
 }): JSX.Element {
+  const { t } = useAppTranslation();
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const containerRef = useRef<HTMLDivElement>(null);
   const outputRef = useRef<HTMLPreElement>(null);
@@ -811,7 +816,7 @@ function PtyPlainView({
   const menuItems: TerminalContextMenuItem[] = [
     {
       action: 'copy',
-      label: 'Copy',
+      label: t('terminalContext.copy'),
       disabled: window.getSelection()?.isCollapsed ?? true,
       onClick: () => {
         const text = window.getSelection()?.toString();
@@ -820,7 +825,7 @@ function PtyPlainView({
     },
     {
       action: 'paste',
-      label: 'Paste',
+      label: t('terminalContext.paste'),
       onClick: () => {
         void navigator.clipboard.readText().then((text) => {
           if (text) controller.sendPtyInput(text);
@@ -829,7 +834,7 @@ function PtyPlainView({
     },
     {
       action: 'select-all',
-      label: 'Select All',
+      label: t('terminalContext.selectAll'),
       onClick: () => {
         const el = outputRef.current;
         const sel = window.getSelection();
@@ -901,6 +906,8 @@ function PtyPlainView({
           x={menuPos.x}
           y={menuPos.y}
           items={menuItems}
+          ariaLabel={t('terminalContext.actionsLabel')}
+          shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
           onClose={(detail) => closeTerminalMenu(
             menuPos,
             detail,

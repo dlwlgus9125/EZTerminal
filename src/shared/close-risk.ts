@@ -49,13 +49,6 @@ export function planPaneClose(
   return { kind: 'confirm', risk };
 }
 
-export const CLOSE_RISK_LABEL: Readonly<Record<CloseRisk, string>> = {
-  'ssh-prompt': 'an SSH authentication prompt',
-  'active-agent': 'an active agent workflow',
-  'ssh-active': 'an active SSH connection',
-  'running-command': 'a running command',
-  unknown: 'activity that could not be identified',
-};
 
 export function countCloseRisks(risks: readonly CloseRisk[]): Readonly<Record<CloseRisk, number>> {
   const counts: Record<CloseRisk, number> = {

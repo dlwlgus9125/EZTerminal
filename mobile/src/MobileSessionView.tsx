@@ -1,5 +1,5 @@
 import { Browser } from '@capacitor/browser';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 
 import { BlockController } from '../../src/renderer/block-controller';
 import { Block } from '../../src/renderer/Block';
@@ -12,9 +12,11 @@ import type { FilePreviewResult } from '../../src/shared/file-preview';
 import type { TerminalFileLocationResult } from '../../src/shared/terminal-file-location';
 import { FilePreviewContent } from '../../src/renderer/FilePreviewContent';
 import { normalizeExternalHttpUrl } from '../../src/shared/external-url';
+import { useAppTranslation } from '../../src/renderer/i18n';
 import { beforeInputTextForPty } from './composer-input';
 import { useLongPress } from './long-press';
 import { appendToComposer, resolvePasteTarget } from './paste-routing';
+import { MobileActionSheet } from './MobileActionSheet';
 import { MobileQuickCommandSheet, type MobileQuickCommandSource } from './MobileQuickCommandSheet';
 import { TouchInputBar } from './TouchInputBar';
 
@@ -41,7 +43,7 @@ const MOBILE_TERMINAL_RUNTIME_OPTIONS: TerminalRuntimeOptions = Object.freeze({
 //
 // M5: this is now one of possibly several tabs MobileWorkspace keeps mounted
 // (display:none when inactive, never unmounted — see MobileWorkspace.tsx's
-// module doc). The header ('‹ Sessions', cwd, 📊/🎨 buttons + ThemeMenu) moved
+// module doc). The session/header actions and ThemeMenu moved
 // up to MobileWorkspace, which owns tabs/stats/theme for the whole authed
 // shell; this view only owns the block list + input row + its own session-
 // dead banner, and surfaces death upward via `onSessionDead` so the workspace
@@ -51,6 +53,107 @@ interface BlockEntry {
   readonly id: string;
   readonly command: string;
   controller: BlockController | null;
+}
+
+type ResolvedTerminalPath = Extract<TerminalFileLocationResult, { ok: true }>;
+
+interface TerminalPathPreview {
+  readonly path: string;
+  readonly result: FilePreviewResult;
+  readonly line?: number;
+  readonly column?: number;
+}
+
+export function MobileTerminalPathOverlay({
+  action,
+  preview,
+  returnFocusRef,
+  onCloseAction,
+  onPreview,
+  onCopyError,
+  onClosePreview,
+}: {
+  readonly action: ResolvedTerminalPath | null;
+  readonly preview: TerminalPathPreview | null;
+  readonly returnFocusRef: RefObject<HTMLElement>;
+  readonly onCloseAction: () => void;
+  readonly onPreview: () => void;
+  readonly onCopyError: () => void;
+  readonly onClosePreview: () => void;
+}): JSX.Element | null {
+  const { t } = useAppTranslation();
+  const activePath = preview?.path ?? action?.path;
+  if (!activePath) return null;
+
+  const closePreviewAndRestoreFocus = (): void => {
+    onClosePreview();
+    requestAnimationFrame(() => returnFocusRef.current?.focus());
+  };
+
+  return (
+    <MobileActionSheet
+      title={preview ? t('mobile.terminalView.filePreview') : t('mobile.terminalView.fileActions')}
+      description={preview ? undefined : activePath}
+      onClose={preview ? onClosePreview : onCloseAction}
+      returnFocusRef={returnFocusRef}
+      closeLabel={t('common.cancel')}
+      focusKey={preview ? `preview:${activePath}` : `actions:${activePath}`}
+      showCloseButton={!preview}
+      variant={preview ? 'fullscreen' : 'sheet'}
+      className={preview ? 'terminal-path-preview mobile-file-viewer' : undefined}
+      contentClassName={preview ? 'terminal-path-preview-content' : undefined}
+      testId={preview ? 'terminal-path-preview' : 'terminal-path-action-sheet'}
+      backdropTestId={preview ? 'terminal-path-preview-backdrop' : 'terminal-path-action-sheet-backdrop'}
+    >
+      {preview ? (
+        <>
+          <header className="mobile-file-head">
+            <button
+              type="button"
+              className="btn btn-split"
+              onClick={closePreviewAndRestoreFocus}
+              data-testid="terminal-path-preview-back"
+            >
+              {t('common.back')}
+            </button>
+            <strong className="mobile-file-viewer-title" title={preview.path}>
+              {preview.path.split(/[/\\]/).pop() || preview.path}
+            </strong>
+          </header>
+          <FilePreviewContent
+            result={preview.result}
+            line={preview.line}
+            column={preview.column}
+            openExternalHttpUrl={MOBILE_TERMINAL_RUNTIME_OPTIONS.openExternalHttpUrl}
+          />
+        </>
+      ) : action ? (
+        <>
+          <button
+            type="button"
+            className="mobile-action-sheet-row"
+            onClick={onPreview}
+            data-testid="terminal-path-preview-action"
+          >
+            {t('mobile.terminalView.preview')}
+          </button>
+          <button
+            type="button"
+            className="mobile-action-sheet-row"
+            onClick={() => {
+              void navigator.clipboard.writeText(action.path).then(() => {
+                onCloseAction();
+                requestAnimationFrame(() => returnFocusRef.current?.focus());
+              }, onCopyError);
+            }}
+            data-testid="terminal-path-copy-action"
+          >
+            {t('mobile.terminalView.copyPath')}
+          </button>
+        </>
+      ) : null}
+    </MobileActionSheet>
+  );
 }
 
 // Module-scoped so runIds are unique across every mounted view — mirrors
@@ -80,6 +183,7 @@ export function MobileSessionView({
    * reads it ONCE at open, never live-follows it. */
   onCwdChange?: (sessionId: string, cwd: string) => void;
 }): JSX.Element {
+  const { t } = useAppTranslation();
   const [command, setCommand] = useState('');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   const [history, setHistory] = useState<string[]>([]);
@@ -97,21 +201,17 @@ export function MobileSessionView({
   const [activePlainPty, setActivePlainPty] = useState(false);
   // TUI takeover (TUI scroll parity, M2 — mirrors desktop TerminalPane's
   // `activeTakeover`): while the active run is a RUNNING xterm `pty`, the
-  // shared `pane--tui-takeover` CSS (index.css) hides sibling blocks and the
+  // shared `pane--tui-takeover` CSS (mobile-shared.css) hides sibling blocks and the
   // composer row and stretches the TUI to fill this view, so a touch drag
   // can't collide with block-list scrolling (PtyBlock's touch→wheel bridge
   // is gated to exactly this state).
   const [activeTakeover, setActiveTakeover] = useState(false);
   const activeUnsub = useRef<(() => void) | null>(null);
   const [sessionDead, setSessionDead] = useState(false);
-  const [terminalPathAction, setTerminalPathAction] = useState<Extract<TerminalFileLocationResult, { ok: true }> | null>(null);
-  const [terminalPathPreview, setTerminalPathPreview] = useState<{
-    readonly path: string;
-    readonly result: FilePreviewResult;
-    readonly line?: number;
-    readonly column?: number;
-  } | null>(null);
+  const [terminalPathAction, setTerminalPathAction] = useState<ResolvedTerminalPath | null>(null);
+  const [terminalPathPreview, setTerminalPathPreview] = useState<TerminalPathPreview | null>(null);
   const [terminalPathError, setTerminalPathError] = useState<string | null>(null);
+  const terminalPathReturnFocusRef = useRef<HTMLElement | null>(null);
   // Latest callback in a ref (not an effect dependency) so a fresh inline
   // closure from MobileWorkspace on every render doesn't churn the
   // subscribe/unsubscribe below.
@@ -122,19 +222,24 @@ export function MobileSessionView({
 
   const terminalRuntimeOptions = useMemo<TerminalRuntimeOptions>(() => ({
     ...MOBILE_TERMINAL_RUNTIME_OPTIONS,
-    openTerminalFileLocation: (request) => {
+    openTerminalFileLocation: (request, event) => {
+      const eventTarget = event.target instanceof HTMLElement ? event.target : null;
+      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      terminalPathReturnFocusRef.current = eventTarget?.closest<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      ) ?? activeElement;
       terminalPathSequenceRef.current += 1;
       const sequence = terminalPathSequenceRef.current;
       void window.ezterminal.resolveTerminalFileLocation(request).then((result) => {
         if (sequence !== terminalPathSequenceRef.current) return;
         if (!result.ok) {
           const messages = {
-            remote: 'Remote SSH paths cannot be previewed on this device.',
-            invalid: 'Invalid terminal file location.',
-            'outside-workspace': 'That file is outside the command workspace.',
-            missing: 'That file no longer exists.',
-            'not-file': 'That location is not a regular file.',
-            unreadable: 'That file cannot be read.',
+            remote: t('mobile.terminalView.remotePath'),
+            invalid: t('mobile.terminalView.invalidLocation'),
+            'outside-workspace': t('mobile.terminalView.outsideWorkspace'),
+            missing: t('mobile.terminalView.missing'),
+            'not-file': t('mobile.terminalView.notFile'),
+            unreadable: t('mobile.terminalView.unreadable'),
           } as const;
           setTerminalPathError(messages[result.reason]);
           return;
@@ -143,11 +248,11 @@ export function MobileSessionView({
         setTerminalPathAction(result);
       }).catch(() => {
         if (sequence === terminalPathSequenceRef.current) {
-          setTerminalPathError('That terminal file location could not be resolved.');
+          setTerminalPathError(t('mobile.terminalView.resolveFailed'));
         }
       });
     },
-  }), []);
+  }), [t]);
 
   const previewTerminalPath = useCallback(async (): Promise<void> => {
     const location = terminalPathAction;
@@ -155,7 +260,7 @@ export function MobileSessionView({
     const sequence = terminalPathSequenceRef.current;
     const result = await window.ezterminal.readFilePreview(location.path, location.capability).catch((): FilePreviewResult => ({
       ok: false,
-      error: 'Could not load this file preview.',
+      error: t('mobile.terminalView.previewLoadFailed'),
     }));
     if (sequence !== terminalPathSequenceRef.current) return;
     setTerminalPathAction(null);
@@ -165,7 +270,7 @@ export function MobileSessionView({
       line: location.line,
       column: location.column,
     });
-  }, [terminalPathAction]);
+  }, [t, terminalPathAction]);
 
   const blockListRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -443,7 +548,7 @@ export function MobileSessionView({
   const menuItems: TerminalContextMenuItem[] = [
     {
       action: 'paste',
-      label: 'Paste',
+      label: t('mobile.terminalView.paste'),
       onClick: () => {
         navigator.clipboard
           .readText()
@@ -465,7 +570,7 @@ export function MobileSessionView({
     },
     {
       action: 'copy',
-      label: 'Copy',
+      label: t('mobile.terminalView.copy'),
       disabled: window.getSelection()?.isCollapsed ?? true,
       onClick: () => {
         const text = window.getSelection()?.toString();
@@ -474,7 +579,7 @@ export function MobileSessionView({
     },
     {
       action: 'select-all',
-      label: 'Select All',
+      label: t('mobile.terminalView.selectAll'),
       onClick: () => {
         const el = blockListRef.current;
         const sel = window.getSelection();
@@ -500,7 +605,7 @@ export function MobileSessionView({
     >
       {sessionDead && (
         <div className="mobile-session-dead-banner" data-testid="session-dead-banner">
-          Connection lost.
+          {t('mobile.terminalView.connectionLost')}
         </div>
       )}
 
@@ -529,7 +634,7 @@ export function MobileSessionView({
             />
           ) : (
             <section key={entry.id} className="block" data-testid="block" data-status="running">
-              <div className="block-pending">starting…</div>
+              <div className="block-pending">{t('mobile.terminalView.starting')}</div>
             </section>
           ),
         )}
@@ -540,51 +645,19 @@ export function MobileSessionView({
       {terminalPathError && (
         <div className="terminal-path-mobile-error" role="status">
           <span>{terminalPathError}</span>
-          <button type="button" className="btn btn-split" onClick={() => setTerminalPathError(null)}>Dismiss</button>
+          <button type="button" className="btn btn-split" onClick={() => setTerminalPathError(null)}>{t('mobile.terminalView.dismiss')}</button>
         </div>
       )}
 
-      {terminalPathAction && (
-        <div className="mobile-file-sheet-backdrop" onClick={() => setTerminalPathAction(null)}>
-          <div className="mobile-file-sheet" role="dialog" aria-label="Terminal file actions" onClick={(event) => event.stopPropagation()}>
-            <button type="button" className="mobile-file-sheet-item" onClick={() => void previewTerminalPath()}>
-              Preview
-            </button>
-            <button
-              type="button"
-              className="mobile-file-sheet-item"
-              onClick={() => {
-                void navigator.clipboard.writeText(terminalPathAction.path).then(
-                  () => setTerminalPathAction(null),
-                  () => setTerminalPathError('Could not copy this path.'),
-                );
-              }}
-            >
-              Copy path
-            </button>
-            <button type="button" className="mobile-file-sheet-item" onClick={() => setTerminalPathAction(null)}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {terminalPathPreview && (
-        <div className="terminal-path-preview mobile-file-viewer" role="dialog" aria-label="Terminal file preview">
-          <header className="mobile-file-head">
-            <button type="button" className="btn btn-split" onClick={() => setTerminalPathPreview(null)}>Back</button>
-            <strong className="mobile-file-viewer-title" title={terminalPathPreview.path}>
-              {terminalPathPreview.path.split(/[/\\]/).pop() || terminalPathPreview.path}
-            </strong>
-          </header>
-          <FilePreviewContent
-            result={terminalPathPreview.result}
-            line={terminalPathPreview.line}
-            column={terminalPathPreview.column}
-            openExternalHttpUrl={MOBILE_TERMINAL_RUNTIME_OPTIONS.openExternalHttpUrl}
-          />
-        </div>
-      )}
+      <MobileTerminalPathOverlay
+        action={terminalPathAction}
+        preview={terminalPathPreview}
+        returnFocusRef={terminalPathReturnFocusRef}
+        onCloseAction={() => setTerminalPathAction(null)}
+        onPreview={() => void previewTerminalPath()}
+        onCopyError={() => setTerminalPathError(t('mobile.terminalView.copyFailed'))}
+        onClosePreview={() => setTerminalPathPreview(null)}
+      />
 
       <TouchInputBar controller={activeControllerForTouch} connected={connected} />
 
@@ -665,7 +738,7 @@ export function MobileSessionView({
             if (e.data) activeController.current?.sendPtyInput(e.data);
             setCommand(''); // clear what the browser composed into the input
           }}
-          aria-label="command input"
+          aria-label={t('mobile.terminalView.commandInput')}
           data-testid="cmd-input"
         />
         {quickCommandSource && (
@@ -673,14 +746,14 @@ export function MobileSessionView({
             source={quickCommandSource}
             supported={quickCommandsSupported}
             connected={connected}
-            insertDisabledReason={sessionDead ? 'This session has ended.' : undefined}
+            insertDisabledReason={sessionDead ? t('mobile.terminalView.sessionEnded') : undefined}
             runDisabledReason={
               sessionDead
-                ? 'This session has ended.'
+                ? t('mobile.terminalView.sessionEnded')
                 : activeRunning
-                  ? 'Wait for the active command to finish.'
+                  ? t('mobile.terminalView.waitForCommand')
                   : command.trim()
-                    ? 'Clear the current draft before running a saved command.'
+                    ? t('mobile.terminalView.clearDraft')
                     : undefined
             }
             onInsert={(text) => setCommand((previous) => appendToComposer(previous, text))}
@@ -694,7 +767,7 @@ export function MobileSessionView({
           disabled={!connected || sessionDead || activeRunning}
           data-testid="btn-run"
         >
-          Run
+          {t('mobile.terminalView.run')}
         </button>
         <button
           type="button"
@@ -703,7 +776,7 @@ export function MobileSessionView({
           disabled={!activeRunning}
           data-testid="btn-cancel"
         >
-          Cancel
+          {t('common.cancel')}
         </button>
       </div>
     </div>

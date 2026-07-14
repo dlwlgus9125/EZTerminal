@@ -1,3 +1,4 @@
+import { X } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import {
@@ -11,6 +12,8 @@ import {
 } from '../../src/renderer/status-shared';
 import type { PacketRow, SystemStatsSnapshot } from '../../src/shared/ipc';
 import type { RemotePacketFrame, RemotePacketStatus } from '../../src/shared/remote-protocol';
+import { useAppTranslation } from '../../src/renderer/i18n';
+import { Tab, TabList, TabPanel, Tabs } from '../../src/renderer/ui/Tabs';
 
 type StatsTab = 'summary' | 'conns' | 'capture';
 
@@ -23,13 +26,14 @@ const PACKET_ACK_KEY = 'ezterminal.packetAckSeen';
 // M2: first phone-visible stats wiring; M3: real 캡처 tab). NOT a straight
 // port of the desktop's `StatusPanel.tsx` (that's a 300px drawer docked
 // beside dockview) — this is a standalone tabbed view (요약|연결|캡처), but it
-// reuses the SAME `status-*` CSS classes from the desktop's index.css
-// (imported wholesale by mobile/src/main.tsx) so the CPU/MEM/NET/DISK/PROC
+// reuses the shared `status-*` CSS classes from renderer/mobile-shared.css
+// (loaded by mobile/src/main.tsx) so the CPU/MEM/NET/DISK/PROC
 // markup renders exactly like the desktop panel. The 캡처 tab mirrors the
 // desktop's packet sub-view (StatusPanel.tsx), adapted to be VIEW-ONLY: the
 // desktop owns start/stop, so a `'idle'` status here means "no capture is
 // running to view", not an error.
 export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Element {
+  const { t } = useAppTranslation();
   const [tab, setTab] = useState<StatsTab>('summary');
   const [history, setHistory] = useState<SystemStatsSnapshot[]>([]);
 
@@ -156,42 +160,45 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
   const netMax = Math.max(1, ...netRxValues, ...netTxValues);
 
   return (
-    <div className="mobile-stats-view" data-testid="mobile-stats-view">
+    <Tabs
+      value={tab}
+      onValueChange={(value) => setTab(value as StatsTab)}
+      className="mobile-stats-view"
+      data-testid="mobile-stats-view"
+    >
       <header className="mobile-stats-head">
-        <button type="button" className="btn" onClick={onClose} aria-label="Close stats" data-testid="mobile-stats-close">
-          ✕
+        <button type="button" className="btn" onClick={onClose} aria-label={t('mobile.stats.close')} data-testid="mobile-stats-close">
+          <X aria-hidden="true" size={18} />
         </button>
-        <div className="mobile-stats-tabs" role="tablist">
-          <button
-            type="button"
+        <TabList className="mobile-stats-tabs" label={t('mobile.moreActions.stats')}>
+          <Tab
+            value="summary"
             className={tab === 'summary' ? 'mobile-stats-tab mobile-stats-tab--active' : 'mobile-stats-tab'}
-            onClick={() => setTab('summary')}
             data-testid="stats-tab-summary"
           >
-            요약
-          </button>
-          <button
-            type="button"
+            {t('mobile.stats.summary')}
+          </Tab>
+          <Tab
+            value="conns"
             className={tab === 'conns' ? 'mobile-stats-tab mobile-stats-tab--active' : 'mobile-stats-tab'}
-            onClick={() => setTab('conns')}
             data-testid="stats-tab-conns"
           >
-            연결
-          </button>
-          <button
-            type="button"
+            {t('mobile.stats.connections')}
+          </Tab>
+          <Tab
+            value="capture"
             className={tab === 'capture' ? 'mobile-stats-tab mobile-stats-tab--active' : 'mobile-stats-tab'}
-            onClick={() => setTab('capture')}
             data-testid="stats-tab-capture"
           >
-            캡처
-          </button>
-        </div>
+            {t('mobile.stats.capture')}
+          </Tab>
+        </TabList>
       </header>
 
       <div className="mobile-stats-body">
-        {tab === 'summary' && (
-          <div className="mobile-stats-grid">
+        <TabPanel value="summary" className="mobile-stats-tab-panel">
+          {tab === 'summary' && (
+            <div className="mobile-stats-grid">
             <section className="status-section" data-testid="status-section-cpu">
               <h2 className="status-section-title">CPU</h2>
               {latest ? (
@@ -230,7 +237,7 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
                   )}
                 </>
               ) : (
-                <div className="status-loading">측정 중…</div>
+                <div className="status-loading">{t('mobile.stats.measuring')}</div>
               )}
             </section>
 
@@ -246,7 +253,7 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
                     <div className="status-mem-detail" data-testid="status-mem-detail">
                       <div className="status-disk-row">
                         <div className="status-disk-label">
-                          <span>Used</span>
+                          <span>{t('mobile.stats.used')}</span>
                           <span>{formatBytes(latest.mem.usedBytes)}</span>
                         </div>
                         <div className="status-disk-bar">
@@ -259,16 +266,16 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
                         </div>
                       </div>
                       <div className="status-disk-label">
-                        <span>Available</span>
+                        <span>{t('mobile.stats.available')}</span>
                         <span>{formatBytes(latest.memDetail.availableBytes)}</span>
                       </div>
                       <div className="status-disk-label">
-                        <span>Cached</span>
+                        <span>{t('mobile.stats.cached')}</span>
                         <span>{formatBytes(latest.memDetail.cachedBytes)}</span>
                       </div>
                       <div className="status-disk-row">
                         <div className="status-disk-label">
-                          <span>PageFile</span>
+                          <span>{t('mobile.stats.pageFile')}</span>
                           <span>
                             {formatBytes(latest.memDetail.swapUsedBytes)} /{' '}
                             {formatBytes(latest.memDetail.swapTotalBytes)}
@@ -294,7 +301,7 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
                   )}
                 </>
               ) : (
-                <div className="status-loading">측정 중…</div>
+                <div className="status-loading">{t('mobile.stats.measuring')}</div>
               )}
             </section>
 
@@ -311,7 +318,7 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
                   </div>
                 </>
               ) : (
-                <div className="status-loading">측정 중…</div>
+                <div className="status-loading">{t('mobile.stats.measuring')}</div>
               )}
             </section>
 
@@ -335,7 +342,7 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
                   })}
                 </div>
               ) : (
-                <div className="status-loading">측정 중…</div>
+                <div className="status-loading">{t('mobile.stats.measuring')}</div>
               )}
             </section>
 
@@ -345,7 +352,7 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
                 <table className="status-proc-table">
                   <thead>
                     <tr>
-                      <th>이름</th>
+                      <th>{t('mobile.stats.name')}</th>
                       <th>CPU%</th>
                       <th>MEM</th>
                     </tr>
@@ -361,23 +368,25 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
                   </tbody>
                 </table>
               ) : (
-                <div className="status-loading">측정 중…</div>
+                <div className="status-loading">{t('mobile.stats.measuring')}</div>
               )}
             </section>
-          </div>
-        )}
+            </div>
+          )}
+        </TabPanel>
 
-        {tab === 'conns' && (
-          <section className="status-section" data-testid="status-section-conns">
-            <h2 className="status-section-title">연결</h2>
+        <TabPanel value="conns" className="mobile-stats-tab-panel">
+          {tab === 'conns' && (
+            <section className="status-section" data-testid="status-section-conns">
+            <h2 className="status-section-title">{t('mobile.stats.connections')}</h2>
             {latest?.conns ? (
               <table className="status-proc-table">
                 <thead>
                   <tr>
-                    <th>프로세스</th>
-                    <th>프로토콜</th>
-                    <th>로컬→피어</th>
-                    <th>상태</th>
+                    <th>{t('mobile.stats.process')}</th>
+                    <th>{t('mobile.stats.protocol')}</th>
+                    <th>{t('mobile.stats.localPeer')}</th>
+                    <th>{t('mobile.stats.state')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -394,22 +403,23 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
                 </tbody>
               </table>
             ) : (
-              <div className="status-loading">측정 중…</div>
+              <div className="status-loading">{t('mobile.stats.measuring')}</div>
             )}
-          </section>
-        )}
+            </section>
+          )}
+        </TabPanel>
 
-        {tab === 'capture' && (
-          <section className="status-section" data-testid="status-section-capture">
+        <TabPanel value="capture" className="mobile-stats-tab-panel">
+          {tab === 'capture' && (
+            <section className="status-section" data-testid="status-section-capture">
             <h2 className="status-section-title">
-              패킷 캡처
+              {t('mobile.stats.packetCapture')}
               {packetStatus === 'capturing' && <span data-testid="packets-live"> ● LIVE</span>}
             </h2>
             {packetAckPending ? (
               <div className="status-packet-ack">
                 <p>
-                  패킷 프리뷰는 로컬 네트워크 트래픽의 메타데이터(시각·주소·포트·프로토콜·크기)만
-                  표시합니다. 내용(페이로드)은 표시되거나 저장되지 않습니다.
+                  {t('mobile.stats.packetPrivacy')}
                 </p>
                 <button
                   type="button"
@@ -417,43 +427,43 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
                   data-testid="status-packet-ack-confirm"
                   onClick={handlePacketAckConfirm}
                 >
-                  확인
+                  {t('common.confirm')}
                 </button>
               </div>
             ) : (
               <>
                 {packetStatus === 'idle' && (
                   <div className="status-loading" data-testid="stats-capture-idle">
-                    데스크톱에서 패킷 캡처가 꺼져 있습니다 (보기 전용)
+                    {t('mobile.stats.captureIdle')}
                   </div>
                 )}
                 {packetStatus === 'npcap-missing' && (
                   <div className="status-packet-status">
-                    Npcap 필요 —{' '}
+                    {t('mobile.stats.npcapRequired')}{' '}
                     <a href="https://npcap.com" target="_blank" rel="noreferrer">
                       npcap.com
                     </a>
                   </div>
                 )}
                 {packetStatus === 'access-denied' && (
-                  <div className="status-packet-status">관리자 권한으로 실행해야 캡처할 수 있습니다.</div>
+                  <div className="status-packet-status">{t('mobile.stats.accessDenied')}</div>
                 )}
                 {packetStatus === 'error' && (
-                  <div className="status-packet-status">패킷 캡처 오류가 발생했습니다.</div>
+                  <div className="status-packet-status">{t('mobile.stats.captureError')}</div>
                 )}
                 {(packetStatus === null || packetStatus === 'capturing') && packetRows.length === 0 && (
                   <div className="status-loading">
-                    {packetStatus === 'capturing' ? '캡처 중…' : '연결 중…'}
+                    {packetStatus === 'capturing' ? t('mobile.stats.capturing') : t('mobile.stats.connecting')}
                   </div>
                 )}
                 {packetRows.length > 0 && (
                   <table className="status-proc-table">
                     <thead>
                       <tr>
-                        <th>시각</th>
+                        <th>{t('mobile.stats.time')}</th>
                         <th>src→dst</th>
-                        <th>프로토콜</th>
-                        <th>길이</th>
+                        <th>{t('mobile.stats.protocol')}</th>
+                        <th>{t('mobile.stats.length')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -472,9 +482,10 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
                 )}
               </>
             )}
-          </section>
-        )}
+            </section>
+          )}
+        </TabPanel>
       </div>
-    </div>
+    </Tabs>
   );
 }

@@ -1,7 +1,10 @@
-import { useCallback, useRef, useState } from 'react';
+import { Check } from 'lucide-react';
+import { useCallback, useRef, useState, type RefObject } from 'react';
 
 import type { ThemeName } from '../../src/shared/layout-schema';
 import { listThemes } from '../../src/renderer/themes';
+import { useAppTranslation } from '../../src/renderer/i18n';
+import { MobileActionSheet } from './MobileActionSheet';
 import { importCustomTheme } from './theme';
 
 // ThemeMenu — a bottom-sheet theme picker (mobile-only; the desktop cycles
@@ -17,12 +20,15 @@ export function ThemeMenu({
   current,
   onSelect,
   onClose,
+  returnFocusRef,
 }: {
   open: boolean;
   current: ThemeName;
   onSelect: (name: ThemeName) => void;
   onClose: () => void;
+  returnFocusRef?: RefObject<HTMLElement>;
 }): JSX.Element | null {
+  const { t } = useAppTranslation();
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -33,22 +39,27 @@ export function ThemeMenu({
       setImportText('');
       setImportError(null);
     } else {
-      setImportError(result.error ?? 'Invalid theme');
+      setImportError(t('mobile.themeMenu.invalid'));
     }
-  }, []);
+  }, [t]);
+
+  const selectTheme = useCallback((theme: ThemeName): void => {
+    onSelect(theme);
+    onClose();
+    requestAnimationFrame(() => returnFocusRef?.current?.focus());
+  }, [onClose, onSelect, returnFocusRef]);
 
   if (!open) return null;
 
   const themes = listThemes();
 
   return (
-    <div className="theme-menu-backdrop" data-testid="theme-menu-backdrop" onClick={onClose}>
-      <div
-        className="theme-menu-sheet"
-        data-testid="theme-menu"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="theme-menu-title">Theme</h3>
+    <MobileActionSheet
+      title={t('mobile.themeMenu.title')}
+      onClose={onClose}
+      returnFocusRef={returnFocusRef}
+      testId="theme-menu"
+    >
         <ul className="theme-menu-list">
           {themes.map((theme) => {
             // Built-ins carry an explicit `swatch` (theme-effects-font Wave 1) so
@@ -67,10 +78,8 @@ export function ThemeMenu({
                   className={
                     theme.id === current ? 'theme-menu-option theme-menu-option--active' : 'theme-menu-option'
                   }
-                  onClick={() => {
-                    onSelect(theme.id);
-                    onClose();
-                  }}
+                  onClick={() => selectTheme(theme.id)}
+                  aria-pressed={theme.id === current}
                   data-testid={`theme-option-${theme.id}`}
                 >
                   <span className="theme-menu-swatch" style={{ background: swatch.bg }} aria-hidden="true">
@@ -79,7 +88,7 @@ export function ThemeMenu({
                   <span className="theme-menu-label">{theme.name}</span>
                   {theme.id === current && (
                     <span className="theme-menu-check" aria-hidden="true">
-                      ✓
+                      <Check size={16} />
                     </span>
                   )}
                 </button>
@@ -88,11 +97,11 @@ export function ThemeMenu({
           })}
         </ul>
 
-        <div className="theme-menu-import" onClick={(e) => e.stopPropagation()}>
+        <div className="theme-menu-import">
           <textarea
             className="mobile-file-path-input"
             style={{ width: '100%', minHeight: 60, resize: 'vertical' }}
-            placeholder="Paste theme JSON…"
+            placeholder={t('mobile.themeMenu.pasteJson')}
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
             data-testid="theme-menu-import-textarea"
@@ -104,7 +113,7 @@ export function ThemeMenu({
               onClick={() => runImport(importText)}
               data-testid="theme-menu-import-btn"
             >
-              Import
+              {t('mobile.themeMenu.import')}
             </button>
             <button
               type="button"
@@ -112,7 +121,7 @@ export function ThemeMenu({
               onClick={() => fileInputRef.current?.click()}
               data-testid="theme-menu-import-file-btn"
             >
-              From file
+              {t('mobile.themeMenu.fromFile')}
             </button>
           </div>
           <input
@@ -134,7 +143,6 @@ export function ThemeMenu({
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </MobileActionSheet>
   );
 }

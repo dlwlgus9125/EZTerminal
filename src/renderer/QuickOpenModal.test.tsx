@@ -204,7 +204,7 @@ describe('QuickOpenModal results', () => {
     root = createRoot(container);
     act(() => root!.render(<Closable />));
     const input = container.querySelector<HTMLInputElement>('[data-testid="quick-open-input"]')!;
-    const close = container.querySelector<HTMLButtonElement>('[aria-label="Close Quick Open"]')!;
+    const close = container.querySelector<HTMLButtonElement>('.quick-open-close')!;
     expect(document.activeElement).toBe(input);
 
     key(input, 'Tab');
@@ -316,4 +316,3 @@ describe('Quick Command manager', () => {
     expect(config.onDelete).toHaveBeenCalledWith(saved.id);
   });
 });
-

@@ -1,6 +1,6 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   DestroySessionGuardResult,
@@ -16,6 +16,8 @@ import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 const SESSION: SessionInfo = { sessionId: 'session-1', cwd: '/work' };
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
+
+beforeEach(() => window.history.replaceState({}, ''));
 
 function makeTransport(
   runs: readonly RunStartedInfo[],
@@ -87,6 +89,7 @@ afterEach(() => {
   root = null;
   container?.remove();
   container = null;
+  window.history.replaceState({}, '');
 });
 
 describe('SessionSwitcher recovery states', () => {
@@ -149,6 +152,25 @@ describe('SessionSwitcher risky destruction', () => {
       cancel.click();
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     });
+    expect(document.activeElement).toBe(destroyButton);
+  });
+
+  it('uses Android Back to dismiss the shared destroy sheet and restore focus', async () => {
+    const { transport } = makeTransport([{
+      sessionId: SESSION.sessionId,
+      runId: 'run-1',
+      commandText: 'build',
+      executionKind: 'local',
+    }]);
+    const element = await renderSwitcher(transport);
+    const destroyButton = element.querySelector<HTMLButtonElement>('[data-testid="session-destroy"]')!;
+    destroyButton.focus();
+    await clickAndFlush(destroyButton);
+
+    act(() => window.dispatchEvent(new PopStateEvent('popstate')));
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+
+    expect(element.querySelector('[role="alertdialog"]')).toBeNull();
     expect(document.activeElement).toBe(destroyButton);
   });
 

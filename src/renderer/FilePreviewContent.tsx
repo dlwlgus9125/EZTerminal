@@ -10,14 +10,38 @@ export interface FilePreviewContentProps {
   readonly openExternalHttpUrl?: (url: string) => void;
   readonly line?: number;
   readonly column?: number;
+  readonly labels?: Partial<FilePreviewLabels>;
 }
 
-function unsupportedMessage(reason: Extract<FilePreviewResult, { kind: 'unsupported' }>['reason']): string {
+export interface FilePreviewLabels {
+  readonly imageTooLarge: string;
+  readonly imageDimensions: string;
+  readonly invalidImage: string;
+  readonly binaryUnsupported: string;
+  readonly pdfDocument: string;
+  readonly pdfDisabled: string;
+  readonly imageNotLoaded: (source: string) => string;
+}
+
+const DEFAULT_LABELS: FilePreviewLabels = {
+  imageTooLarge: 'Image exceeds the 20 MiB preview limit.',
+  imageDimensions: 'Image dimensions exceed the safe preview limit.',
+  invalidImage: 'The image header is incomplete or invalid.',
+  binaryUnsupported: 'This binary file cannot be previewed safely.',
+  pdfDocument: 'PDF document',
+  pdfDisabled: 'Preview embedding is disabled. Use the explicit open or download action.',
+  imageNotLoaded: (source) => `Image not loaded: ${source}`,
+};
+
+function unsupportedMessage(
+  reason: Extract<FilePreviewResult, { kind: 'unsupported' }>['reason'],
+  labels: FilePreviewLabels,
+): string {
   switch (reason) {
-    case 'image-too-large': return 'Image exceeds the 20 MiB preview limit.';
-    case 'image-dimensions': return 'Image dimensions exceed the safe preview limit.';
-    case 'invalid-image': return 'The image header is incomplete or invalid.';
-    default: return 'This binary file cannot be previewed safely.';
+    case 'image-too-large': return labels.imageTooLarge;
+    case 'image-dimensions': return labels.imageDimensions;
+    case 'invalid-image': return labels.invalidImage;
+    default: return labels.binaryUnsupported;
   }
 }
 
@@ -75,18 +99,19 @@ function LocatedTextPreview({ content, line, column }: { content: string; line: 
   );
 }
 
-export function FilePreviewContent({ result, openExternalHttpUrl, line, column }: FilePreviewContentProps): JSX.Element {
+export function FilePreviewContent({ result, openExternalHttpUrl, line, column, labels }: FilePreviewContentProps): JSX.Element {
+  const text = { ...DEFAULT_LABELS, ...labels };
   if (!result.ok) {
     return <div className="file-preview-state file-preview-state--error" role="alert">{result.error}</div>;
   }
   if (result.kind === 'unsupported') {
-    return <div className="file-preview-state">{unsupportedMessage(result.reason)}</div>;
+    return <div className="file-preview-state">{unsupportedMessage(result.reason, text)}</div>;
   }
   if (result.kind === 'pdf') {
     return (
       <div className="file-preview-state">
-        <strong>PDF document</strong>
-        <span>Preview embedding is disabled. Use the explicit open or download action.</span>
+        <strong>{text.pdfDocument}</strong>
+        <span>{text.pdfDisabled}</span>
       </div>
     );
   }
@@ -105,7 +130,7 @@ export function FilePreviewContent({ result, openExternalHttpUrl, line, column }
         components={{
           img: ({ alt, src }) => (
             <span className="file-preview-blocked-image">
-              Image not loaded: {alt || src || 'remote/relative image'}
+              {text.imageNotLoaded(alt || src || '—')}
             </span>
           ),
           a: ({ href, children }) => {

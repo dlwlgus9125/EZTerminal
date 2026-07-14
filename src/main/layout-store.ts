@@ -36,6 +36,11 @@ import {
   type ThemeName,
 } from '../shared/layout-schema';
 import { JsonFile } from './json-file';
+import {
+  DEFAULT_UI_PREFERENCES,
+  type UiPreferences,
+  type UiPreferencesPatch,
+} from '../shared/ui-preferences';
 
 const LAYOUT_FILE = 'layout.json';
 const PRESETS_FILE = 'presets.json';
@@ -91,7 +96,9 @@ export class LayoutStore {
     const hadPending = this.pendingLayout !== undefined;
     this.pendingLayout = rawLayout;
     if (hadPending) return; // the queued drain will pick up the newest value
-    void this.layoutFile.enqueue(() => this.drainLayoutSaves());
+    void this.layoutFile.enqueue(() => this.drainLayoutSaves()).catch((error) => {
+      console.error('[layout-store] layout save failed:', error);
+    });
   }
 
   private async drainLayoutSaves(): Promise<void> {
@@ -173,6 +180,29 @@ export class LayoutStore {
 
   async setStartup(pref: StartupPref): Promise<void> {
     await this.updateSettings((current) => ({ ...current, startup: pref }), 'startup pref');
+  }
+
+  /** Read the three Adaptive Workbench preferences as one coherent snapshot. */
+  async getUiPreferences(): Promise<UiPreferences> {
+    const settings = await this.loadSettingsFile();
+    return {
+      locale: settings.locale ?? DEFAULT_UI_PREFERENCES.locale,
+      density: settings.density ?? DEFAULT_UI_PREFERENCES.density,
+      sidebarWidth: settings.sidebarWidth ?? DEFAULT_UI_PREFERENCES.sidebarWidth,
+    };
+  }
+
+  /** Atomically merge a partial UI preference update and return its snapshot. */
+  async setUiPreferences(preferences: UiPreferencesPatch): Promise<UiPreferences> {
+    const settings = await this.updateSettings(
+      (current) => ({ ...current, ...preferences }),
+      'ui preferences',
+    );
+    return {
+      locale: settings.locale ?? DEFAULT_UI_PREFERENCES.locale,
+      density: settings.density ?? DEFAULT_UI_PREFERENCES.density,
+      sidebarWidth: settings.sidebarWidth ?? DEFAULT_UI_PREFERENCES.sidebarWidth,
+    };
   }
 
   async getTheme(): Promise<ThemeName> {
@@ -299,7 +329,9 @@ export class LayoutStore {
   private async updateSettings(
     mutate: (current: SettingsFile) => SettingsFile,
     label: string,
-  ): Promise<void> {
-    await this.settingsFile.update(validateSettings, emptySettings(), mutate, label);
+  ): Promise<SettingsFile> {
+    const updated = await this.settingsFile.update(validateSettings, emptySettings(), mutate, label);
+    if (!updated) throw new Error(`Invalid settings update: ${label}`);
+    return updated;
   }
 }

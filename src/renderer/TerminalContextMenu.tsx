@@ -21,6 +21,7 @@ interface TerminalContextMenuProps {
   readonly items: readonly TerminalContextMenuItem[];
   readonly onClose: (detail: TerminalContextMenuCloseDetail) => void;
   readonly ariaLabel?: string;
+  readonly shortcutLabel?: (shortcut: string) => string;
   readonly testId?: string;
   readonly itemTestIdPrefix?: string;
 }
@@ -64,6 +65,7 @@ export function TerminalContextMenu({
   items,
   onClose,
   ariaLabel = 'Terminal actions',
+  shortcutLabel = (shortcut) => `Shortcut ${shortcut}`,
   testId = 'terminal-context-menu',
   itemTestIdPrefix = 'term-ctx',
 }: TerminalContextMenuProps): JSX.Element {
@@ -198,7 +200,7 @@ export function TerminalContextMenu({
           onClick={(event) => activate(index, event.currentTarget)}
         >
           <span>{item.label}</span>
-          {item.shortcut && <kbd aria-label={`Shortcut ${item.shortcut}`}>{item.shortcut}</kbd>}
+          {item.shortcut && <kbd aria-label={shortcutLabel(item.shortcut)}>{item.shortcut}</kbd>}
         </button>
       ))}
     </div>

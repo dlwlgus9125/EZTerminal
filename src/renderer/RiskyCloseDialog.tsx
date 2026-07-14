@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef } from 'react';
 
+import { useAppTranslation } from './i18n';
+
 export interface RiskyCloseDialogProps {
   readonly title: string;
   readonly description: string;
@@ -17,6 +19,7 @@ export function RiskyCloseDialog({
   onCancel,
   onConfirm,
 }: RiskyCloseDialogProps): JSX.Element {
+  const { t } = useAppTranslation();
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLDivElement | null>(null);
@@ -90,7 +93,7 @@ export function RiskyCloseDialog({
             autoFocus
             data-testid={'risky-close-cancel'}
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             type={'button'}

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useAppTranslation } from '../../src/renderer/i18n';
 
 export interface SavedConnection {
   readonly url: string;
@@ -23,6 +24,7 @@ export function ConnectScreen({
   storageWarning?: string | null;
   onConnect: (url: string, token: string) => void;
 }): JSX.Element {
+  const { t } = useAppTranslation();
   const [url, setUrl] = useState(saved?.url ?? '');
   const [token, setToken] = useState(saved?.token ?? '');
 
@@ -36,9 +38,9 @@ export function ConnectScreen({
   return (
     <div className="connect-screen" data-testid="connect-screen">
       <div className="connect-card">
-        <h1 className="connect-title">EZTerminal Remote</h1>
+        <h1 className="connect-title">{t('mobile.connect.title')}</h1>
         <label className="connect-field">
-          <span>Server URL</span>
+          <span>{t('mobile.connect.serverUrl')}</span>
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -47,7 +49,7 @@ export function ConnectScreen({
           />
         </label>
         <label className="connect-field">
-          <span>Token</span>
+          <span>{t('mobile.connect.token')}</span>
           <input
             type="password"
             value={token}
@@ -57,7 +59,7 @@ export function ConnectScreen({
         </label>
         {failed && (
           <p className="connect-error" data-testid="connect-error">
-            Connection failed — check the URL and token.
+            {t('mobile.connect.failed')}
           </p>
         )}
         {storageWarning && (
@@ -71,7 +73,7 @@ export function ConnectScreen({
           disabled={connecting}
           data-testid="connect-submit"
         >
-          {connecting ? 'Connecting…' : 'Connect'}
+          {connecting ? t('mobile.connect.connecting') : t('mobile.connect.connect')}
         </button>
       </div>
     </div>

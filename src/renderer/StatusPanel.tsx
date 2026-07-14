@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { PacketCaptureFrame, PacketCaptureStatus, PacketRow, SystemStatsSnapshot } from '../shared/ipc';
 import {
@@ -6,10 +6,10 @@ import {
   PACKET_ROW_CAP,
   Sparkline,
   formatBytes,
-  formatPacketTime,
   formatRate,
   mergeSnapshot,
 } from './status-shared';
+import { useAppTranslation } from './i18n';
 
 /** One-time local acknowledgement that packet metadata will be shown — never the packet data itself. */
 const PACKET_ACK_KEY = 'ezterminal.packetAckSeen';
@@ -18,7 +18,18 @@ const PACKET_ACK_KEY = 'ezterminal.packetAckSeen';
  * only while the panel is visible — main gates their collection accordingly, so
  * those fields read null here until the panel-open-only collectors report in). */
 export function StatusPanel(): JSX.Element {
+  const { t, i18n } = useAppTranslation();
   const [history, setHistory] = useState<SystemStatsSnapshot[]>([]);
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const timeFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }),
+    [locale],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -132,7 +143,12 @@ export function StatusPanel(): JSX.Element {
   const netMax = Math.max(1, ...netRxValues, ...netTxValues);
 
   return (
-    <div className="status-drawer" data-testid="status-panel">
+    <div
+      className="status-drawer"
+      data-testid="status-panel"
+      role="region"
+      aria-label={t('monitor.label')}
+    >
       <section className="status-section" data-testid="status-section-cpu">
         <h2 className="status-section-title">CPU</h2>
         {latest ? (
@@ -171,7 +187,7 @@ export function StatusPanel(): JSX.Element {
             )}
           </>
         ) : (
-          <div className="status-loading">측정 중…</div>
+          <div className="status-loading">{t('monitor.measuring')}</div>
         )}
       </section>
 
@@ -187,7 +203,7 @@ export function StatusPanel(): JSX.Element {
               <div className="status-mem-detail" data-testid="status-mem-detail">
                 <div className="status-disk-row">
                   <div className="status-disk-label">
-                    <span>Used</span>
+                    <span>{t('monitor.used')}</span>
                     <span>{formatBytes(latest.mem.usedBytes)}</span>
                   </div>
                   <div className="status-disk-bar">
@@ -200,16 +216,16 @@ export function StatusPanel(): JSX.Element {
                   </div>
                 </div>
                 <div className="status-disk-label">
-                  <span>Available</span>
+                  <span>{t('monitor.available')}</span>
                   <span>{formatBytes(latest.memDetail.availableBytes)}</span>
                 </div>
                 <div className="status-disk-label">
-                  <span>Cached</span>
+                  <span>{t('monitor.cached')}</span>
                   <span>{formatBytes(latest.memDetail.cachedBytes)}</span>
                 </div>
                 <div className="status-disk-row">
                   <div className="status-disk-label">
-                    <span>PageFile</span>
+                    <span>{t('monitor.pageFile')}</span>
                     <span>
                       {formatBytes(latest.memDetail.swapUsedBytes)} /{' '}
                       {formatBytes(latest.memDetail.swapTotalBytes)}
@@ -235,7 +251,7 @@ export function StatusPanel(): JSX.Element {
             )}
           </>
         ) : (
-          <div className="status-loading">측정 중…</div>
+          <div className="status-loading">{t('monitor.measuring')}</div>
         )}
       </section>
 
@@ -252,7 +268,7 @@ export function StatusPanel(): JSX.Element {
             </div>
           </>
         ) : (
-          <div className="status-loading">측정 중…</div>
+          <div className="status-loading">{t('monitor.measuring')}</div>
         )}
         <button
           type="button"
@@ -261,61 +277,60 @@ export function StatusPanel(): JSX.Element {
           aria-pressed={packetOpen}
           onClick={handlePacketToggle}
         >
-          패킷 {packetOpen ? '끄기' : '보기'}
+          {packetOpen ? t('monitor.hidePackets') : t('monitor.showPackets')}
         </button>
         {packetOpen && (
           <div className="status-packet-view" data-testid="status-packet-view">
             {packetAckPending ? (
               <div className="status-packet-ack">
-                <p>
-                  패킷 프리뷰는 로컬 네트워크 트래픽의 메타데이터(시각·주소·포트·프로토콜·크기)만
-                  표시합니다. 내용(페이로드)은 표시되거나 저장되지 않습니다.
-                </p>
+                <p>{t('monitor.packetPrivacy')}</p>
                 <button
                   type="button"
                   className="btn"
                   data-testid="status-packet-ack-confirm"
                   onClick={handlePacketAckConfirm}
                 >
-                  확인
+                  {t('common.confirm')}
                 </button>
               </div>
             ) : (
               <>
                 {packetStatus === 'npcap-missing' && (
                   <div className="status-packet-status">
-                    Npcap 필요 —{' '}
+                    {t('monitor.npcapRequired')}{' '}
                     <a href="https://npcap.com" target="_blank" rel="noreferrer">
                       npcap.com
                     </a>
                   </div>
                 )}
                 {packetStatus === 'access-denied' && (
-                  <div className="status-packet-status">관리자 권한으로 실행해야 캡처할 수 있습니다.</div>
+                  <div className="status-packet-status">{t('monitor.adminRequired')}</div>
                 )}
                 {packetStatus === 'error' && (
-                  <div className="status-packet-status">패킷 캡처 오류가 발생했습니다.</div>
+                  <div className="status-packet-status">{t('monitor.packetCaptureError')}</div>
                 )}
                 {(packetStatus === null || packetStatus === 'capturing') &&
                   packetRows.length === 0 && (
                     <div className="status-loading">
-                      {packetStatus === 'capturing' ? '캡처 중…' : '연결 중…'}
+                      {packetStatus === 'capturing'
+                        ? t('monitor.capturing')
+                        : t('monitor.connecting')}
                     </div>
                   )}
                 {packetRows.length > 0 && (
-                  <table className="status-proc-table">
+                  <table className="status-proc-table" aria-label={t('monitor.packetTable')}>
                     <thead>
                       <tr>
-                        <th>시각</th>
-                        <th>src→dst</th>
-                        <th>프로토콜</th>
-                        <th>길이</th>
+                        <th>{t('monitor.time')}</th>
+                        <th>{t('monitor.route')}</th>
+                        <th>{t('monitor.protocol')}</th>
+                        <th>{t('monitor.length')}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {packetRows.map((r, i) => (
                         <tr key={`${r.at}-${i}`}>
-                          <td>{formatPacketTime(r.at)}</td>
+                          <td>{timeFormatter.format(new Date(r.at))}</td>
                           <td>
                             {r.src} → {r.dst}
                           </td>
@@ -333,15 +348,15 @@ export function StatusPanel(): JSX.Element {
       </section>
 
       <section className="status-section" data-testid="status-section-conns">
-        <h2 className="status-section-title">연결</h2>
+        <h2 className="status-section-title">{t('monitor.connections')}</h2>
         {latest?.conns ? (
-          <table className="status-proc-table">
+          <table className="status-proc-table" aria-label={t('monitor.connectionTable')}>
             <thead>
               <tr>
-                <th>프로세스</th>
-                <th>프로토콜</th>
-                <th>로컬→피어</th>
-                <th>상태</th>
+                <th>{t('monitor.process')}</th>
+                <th>{t('monitor.protocol')}</th>
+                <th>{t('monitor.localPeer')}</th>
+                <th>{t('monitor.state')}</th>
               </tr>
             </thead>
             <tbody>
@@ -358,7 +373,7 @@ export function StatusPanel(): JSX.Element {
             </tbody>
           </table>
         ) : (
-          <div className="status-loading">측정 중…</div>
+          <div className="status-loading">{t('monitor.measuring')}</div>
         )}
       </section>
 
@@ -385,17 +400,17 @@ export function StatusPanel(): JSX.Element {
             })}
           </div>
         ) : (
-          <div className="status-loading">측정 중…</div>
+          <div className="status-loading">{t('monitor.measuring')}</div>
         )}
       </section>
 
       <section className="status-section" data-testid="status-section-proc">
         <h2 className="status-section-title">PROC</h2>
         {latest?.procs ? (
-          <table className="status-proc-table">
+          <table className="status-proc-table" aria-label={t('monitor.processTable')}>
             <thead>
               <tr>
-                <th>이름</th>
+                <th>{t('monitor.name')}</th>
                 <th>CPU%</th>
                 <th>MEM</th>
               </tr>
@@ -411,7 +426,7 @@ export function StatusPanel(): JSX.Element {
             </tbody>
           </table>
         ) : (
-          <div className="status-loading">측정 중…</div>
+          <div className="status-loading">{t('monitor.measuring')}</div>
         )}
       </section>
     </div>

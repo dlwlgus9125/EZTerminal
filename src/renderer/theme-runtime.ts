@@ -1,6 +1,7 @@
 import { isBuiltinTheme } from '../shared/layout-schema';
 import type { ThemeMod } from '../shared/theme-schema';
 import { EFFECT_CATALOG, applyEffects, resolveActiveEffects, type EffectId } from './effects';
+import { seedUiThemeColors, uiThemeColorsToCssVars } from './theme-contrast';
 import { getActiveTheme, THEMES, type ThemeDefinition } from './themes';
 
 // Theme runtime (theme-effects-font M2/Wave 2) — the platform-agnostic apply-path
@@ -20,7 +21,7 @@ const THEME_VARS_STYLE_ID = 'ez-theme-vars';
 // built-in's — same "old settings.json without a field still works" spirit as
 // fonts.ts's resolveFontFamily fallback.
 export function themeModToDefinition(mod: ThemeMod): ThemeDefinition {
-  return {
+  const definition: ThemeDefinition = {
     id: mod.id,
     name: mod.name,
     cssVars: mod.cssVars,
@@ -29,6 +30,10 @@ export function themeModToDefinition(mod: ThemeMod): ThemeDefinition {
     fontSize: mod.fontSize ?? THEMES.dark.fontSize,
     effects: mod.effects,
     swatch: mod.swatch,
+  };
+  return {
+    ...definition,
+    ui: mod.schemaVersion === 2 ? mod.ui : seedUiThemeColors(definition, THEMES.dark.ui!),
   };
 }
 
@@ -72,7 +77,11 @@ export function applyThemeVarsAndEffects(
   if (isBuiltinTheme(themeName)) {
     styleEl.textContent = '';
   } else {
-    const decls = Object.entries(theme.cssVars)
+    const effectiveVars = {
+      ...theme.cssVars,
+      ...(theme.ui ? uiThemeColorsToCssVars(theme.ui) : {}),
+    };
+    const decls = Object.entries(effectiveVars)
       .map(([key, value]) => `${key}:${value};`)
       .join('');
     // CSS.escape guards against a hostile id breaking out of this selector —

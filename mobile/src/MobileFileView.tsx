@@ -1,5 +1,6 @@
 import { Browser } from '@capacitor/browser';
 import { Directory, Filesystem } from '@capacitor/filesystem';
+import { ArrowUp, File as FileIcon, Folder, FolderPlus, RefreshCw, Upload, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../../src/shared/files';
@@ -7,7 +8,9 @@ import type { FilePreviewResult } from '../../src/shared/file-preview';
 import { normalizeExternalHttpUrl } from '../../src/shared/external-url';
 import { uint8ArrayToBase64 } from '../../src/shared/remote-protocol';
 import { FilePreviewContent } from '../../src/renderer/FilePreviewContent';
+import { useAppTranslation } from '../../src/renderer/i18n';
 import { useLongPress } from './long-press';
+import { MobileActionSheet } from './MobileActionSheet';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 import { createUploadQueue, type UploadItem } from './upload-queue';
 
@@ -75,6 +78,7 @@ export function MobileFileView({
   onOpenTerminalAt,
   onPastePath,
 }: MobileFileViewProps): JSX.Element {
+  const { t } = useAppTranslation();
   const [currentPath, setCurrentPath] = useState<string | null>(null);
   const [parent, setParent] = useState<string | null>(null);
   const [entries, setEntries] = useState<readonly FileEntry[]>([]);
@@ -191,11 +195,11 @@ export function MobileFileView({
   const handleCopy = useCallback(
     (text: string): void => {
       navigator.clipboard.writeText(text).then(
-        () => showToast('Copied'),
-        () => showToast('Copy failed'),
+        () => showToast(t('mobile.filesView.copied')),
+        () => showToast(t('mobile.filesView.copyFailed')),
       );
     },
-    [showToast],
+    [showToast, t],
   );
 
   const startNewFolder = useCallback((): void => {
@@ -262,11 +266,12 @@ export function MobileFileView({
     mutatingRef.current = true;
     try {
       const result = await transport.trashFile(deleteTarget.fullPath);
-      setDeleteTarget(null);
       if (!result.ok) {
         setError(result.error);
         return;
       }
+      setDeleteTarget(null);
+      setSheetEntry(null);
       if (currentPath !== null) await loadPath(currentPath);
     } finally {
       mutatingRef.current = false;
@@ -280,7 +285,7 @@ export function MobileFileView({
       try {
         const granted = await ensureFilesystemPermission();
         if (!granted) {
-          showToast('Storage permission denied');
+          showToast(t('mobile.filesView.permissionDenied'));
           return;
         }
         const { name, bytes } = await transport.downloadFile(fullPath, (received, total) => {
@@ -293,14 +298,14 @@ export function MobileFileView({
           recursive: true,
         });
         console.log('[ez-e2e] files:download-done', name, bytes.length);
-        showToast(`Saved ${name}`);
+        showToast(t('mobile.filesView.saved', { name }));
       } catch (err) {
-        showToast(err instanceof Error ? err.message : 'Download failed');
+        showToast(err instanceof Error ? err.message : t('mobile.filesView.downloadFailed'));
       } finally {
         setDownloadProgress(null);
       }
     },
-    [transport, fullPathFor, showToast],
+    [transport, fullPathFor, showToast, t],
   );
 
   // ── Upload (M5) ────────────────────────────────────────────────────────────
@@ -352,37 +357,51 @@ export function MobileFileView({
   // hook per-row inside `.map()` would violate the rules of hooks once the
   // row count changes (rename/delete/new-folder all change it).
   const pressedEntryRef = useRef<FileEntry | null>(null);
+  const sheetReturnFocusRef = useRef<HTMLElement | null>(null);
   const longPress = useLongPress(() => {
     if (pressedEntryRef.current) setSheetEntry(pressedEntryRef.current);
   });
+  const closeEntrySheetAndRestoreFocus = useCallback((): void => {
+    setSheetEntry(null);
+    requestAnimationFrame(() => sheetReturnFocusRef.current?.focus());
+  }, []);
 
   if (viewing) {
     return (
       <div className="mobile-file-viewer" data-testid="mobile-file-viewer">
         <header className="mobile-file-head">
           <button type="button" className="btn" onClick={() => setViewing(null)} data-testid="viewer-back">
-            ‹ Back
+            ‹ {t('mobile.filesView.back')}
           </button>
           <div className="mobile-file-viewer-title">{viewing.result.ok ? viewing.result.name : viewing.entry.name}</div>
           <button type="button" className="btn" onClick={() => onPastePath(viewing.path)} data-testid="viewer-insert">
-            Insert
+            {t('mobile.filesView.insert')}
           </button>
           <button type="button" className="btn" onClick={() => void handleDownload(viewing.entry)} data-testid="viewer-download">
-            Download
+            {t('mobile.filesView.download')}
           </button>
           {!viewing.result.ok && (
             <button type="button" className="btn" onClick={() => void loadPreview(viewing.entry, viewing.path)}>
-              Retry
+              {t('common.retry')}
             </button>
           )}
         </header>
         {viewing.result.ok && viewing.result.kind === 'text' && viewing.result.truncated && (
           <div className="mobile-file-truncated" data-testid="viewer-truncated">
-            File truncated to the first 1 MiB.
+            {t('mobile.filesView.truncated')}
           </div>
         )}
         <FilePreviewContent
           result={viewing.result}
+          labels={{
+            imageTooLarge: t('mobile.filesView.imageTooLarge'),
+            imageDimensions: t('mobile.filesView.imageDimensions'),
+            invalidImage: t('mobile.filesView.invalidImage'),
+            binaryUnsupported: t('mobile.filesView.binaryUnsupported'),
+            pdfDocument: t('mobile.filesView.pdfDocument'),
+            pdfDisabled: t('mobile.filesView.pdfDisabled'),
+            imageNotLoaded: (source) => t('mobile.filesView.imageNotLoaded', { source }),
+          }}
           openExternalHttpUrl={(value) => {
             const url = normalizeExternalHttpUrl(value);
             if (url) void Browser.open({ url });
@@ -400,10 +419,10 @@ export function MobileFileView({
           className="btn"
           onClick={handleUp}
           disabled={rootsMode}
-          aria-label="Up"
+          aria-label={t('mobile.filesView.up')}
           data-testid="mobile-file-up"
         >
-          ↑
+          <ArrowUp aria-hidden="true" size={18} />
         </button>
         <input
           className="mobile-file-path-input"
@@ -412,36 +431,36 @@ export function MobileFileView({
           onKeyDown={(e) => {
             if (e.key === 'Enter') void loadPath(pathInput);
           }}
-          aria-label="current folder path"
+          aria-label={t('mobile.filesView.currentFolder')}
           data-testid="mobile-file-path-input"
         />
         <button
           type="button"
           className="btn"
           onClick={handleRefresh}
-          aria-label="Refresh"
+          aria-label={t('mobile.filesView.refresh')}
           data-testid="mobile-file-refresh"
         >
-          ⟳
+          <RefreshCw aria-hidden="true" size={18} />
         </button>
         <button
           type="button"
           className="btn"
           onClick={startNewFolder}
-          aria-label="New folder"
+          aria-label={t('mobile.filesView.newFolder')}
           data-testid="mobile-file-new-folder-btn"
         >
-          ＋
+          <FolderPlus aria-hidden="true" size={18} />
         </button>
         <button
           type="button"
           className="btn"
           onClick={() => fileInputRef.current?.click()}
           disabled={currentPath === null}
-          aria-label="Upload"
+          aria-label={t('mobile.filesView.upload')}
           data-testid="mobile-file-upload-btn"
         >
-          ⇧
+          <Upload aria-hidden="true" size={18} />
         </button>
         <input
           ref={fileInputRef}
@@ -455,8 +474,8 @@ export function MobileFileView({
           }}
           data-testid="mobile-file-upload-input"
         />
-        <button type="button" className="btn" onClick={onClose} aria-label="Close" data-testid="mobile-file-close">
-          ✕
+        <button type="button" className="btn" onClick={onClose} aria-label={t('common.close')} data-testid="mobile-file-close">
+          <X aria-hidden="true" size={18} />
         </button>
       </header>
 
@@ -486,14 +505,14 @@ export function MobileFileView({
             <div key={item.id} className="mobile-upload-row" data-testid="mobile-upload-item">
               {/* Surfaces a server-side collision auto-rename ("report (1).txt") once done. */}
               <span className="mobile-upload-name">{item.status === 'done' ? item.finalName : item.name}</span>
-              {item.status === 'pending' && <span className="mobile-upload-status">Waiting…</span>}
+              {item.status === 'pending' && <span className="mobile-upload-status">{t('mobile.filesView.waiting')}</span>}
               {item.status === 'uploading' && (
                 <span className="mobile-upload-status">
                   {formatSize(item.receivedBytes)} / {formatSize(item.size)}
                 </span>
               )}
               {item.status === 'done' && (
-                <span className="mobile-upload-status mobile-upload-status--done">Done</span>
+                <span className="mobile-upload-status mobile-upload-status--done">{t('mobile.filesView.done')}</span>
               )}
               {item.status === 'failed' && (
                 <span className="mobile-upload-status mobile-upload-status--failed">{item.error}</span>
@@ -535,168 +554,188 @@ export function MobileFileView({
               />
             </div>
           ) : (
-            <div
+            <button
+              type="button"
               key={entry.name}
-              className="mobile-file-row"
+              className="mobile-file-row mobile-file-entry-action"
               data-testid="mobile-file-entry"
               onClick={() => void openEntry(entry)}
               onPointerDown={(e) => {
                 pressedEntryRef.current = entry;
+                sheetReturnFocusRef.current = e.currentTarget;
                 longPress.onPointerDown(e);
               }}
               onPointerMove={longPress.onPointerMove}
               onPointerUp={longPress.onPointerUp}
               onPointerCancel={longPress.onPointerCancel}
-              onContextMenu={longPress.onContextMenu}
+              onContextMenu={(event) => {
+                longPress.onContextMenu(event);
+                pressedEntryRef.current = entry;
+                sheetReturnFocusRef.current = event.currentTarget;
+                setSheetEntry(entry);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+                event.preventDefault();
+                pressedEntryRef.current = entry;
+                sheetReturnFocusRef.current = event.currentTarget;
+                setSheetEntry(entry);
+              }}
             >
               <span className="mobile-file-icon" aria-hidden="true">
-                {entry.kind === 'dir' ? '▸' : '▪'}
+                {entry.kind === 'dir' ? <Folder size={16} /> : <FileIcon size={16} />}
               </span>
               <span className="mobile-file-name">{entry.name}</span>
               {entry.kind === 'file' && <span className="mobile-file-size">{formatSize(entry.size)}</span>}
-            </div>
+            </button>
           ),
         )}
       </div>
 
-      {sheetEntry && (
-        <div
-          className="mobile-file-sheet-backdrop"
-          data-testid="mobile-file-sheet-backdrop"
-          onClick={() => setSheetEntry(null)}
+      {(sheetEntry || deleteTarget) && (
+        <MobileActionSheet
+          title={deleteTarget ? t('mobile.filesView.delete') : sheetEntry?.name ?? ''}
+          description={deleteTarget ? t('mobile.filesView.trashPrompt', { name: deleteTarget.name }) : undefined}
+          onClose={() => {
+            setDeleteTarget(null);
+            setSheetEntry(null);
+          }}
+          returnFocusRef={sheetReturnFocusRef}
+          focusKey={deleteTarget ? `delete:${deleteTarget.fullPath}` : `actions:${sheetEntry?.name ?? ''}`}
+          role={deleteTarget ? 'alertdialog' : 'dialog'}
+          showCloseButton={!deleteTarget}
+          testId={deleteTarget ? 'mobile-delete-confirm-dialog' : 'mobile-file-sheet'}
+          backdropTestId={deleteTarget ? 'mobile-delete-confirm' : 'mobile-file-sheet-backdrop'}
         >
-          <div className="mobile-file-sheet" data-testid="mobile-file-sheet" onClick={(e) => e.stopPropagation()}>
+          {deleteTarget ? (
+            <>
+              <button
+                type="button"
+                className="mobile-action-sheet-row"
+                onClick={() => {
+                  setDeleteTarget(null);
+                  closeEntrySheetAndRestoreFocus();
+                }}
+                data-testid="delete-confirm-cancel"
+              >
+                <span className="mobile-action-sheet-row-label">{t('common.cancel')}</span>
+              </button>
+              <button
+                type="button"
+                className="mobile-action-sheet-row mobile-action-sheet-row--danger"
+                onClick={() => void confirmDelete()}
+                data-testid="delete-confirm-yes"
+              >
+                <span className="mobile-action-sheet-row-label">{t('mobile.filesView.delete')}</span>
+              </button>
+            </>
+          ) : sheetEntry ? (
+            <>
             <button
               type="button"
-              className="mobile-file-sheet-item"
+              className="mobile-action-sheet-row"
               onClick={() => {
                 handleCopy(fullPathFor(sheetEntry));
-                setSheetEntry(null);
+                closeEntrySheetAndRestoreFocus();
               }}
               data-testid="sheet-copy-path"
             >
-              Copy path
+              {t('mobile.filesView.copyPath')}
             </button>
             <button
               type="button"
-              className="mobile-file-sheet-item"
+              className="mobile-action-sheet-row"
               onClick={() => {
                 handleCopy(sheetEntry.name);
-                setSheetEntry(null);
+                closeEntrySheetAndRestoreFocus();
               }}
               data-testid="sheet-copy-name"
             >
-              Copy name
+              {t('mobile.filesView.copyName')}
             </button>
             <button
               type="button"
-              className="mobile-file-sheet-item"
+              className="mobile-action-sheet-row"
               onClick={() => {
                 handleRefresh();
-                setSheetEntry(null);
+                closeEntrySheetAndRestoreFocus();
               }}
               data-testid="sheet-refresh"
             >
-              Refresh
+              {t('mobile.filesView.refresh')}
             </button>
             <button
               type="button"
-              className="mobile-file-sheet-item"
+              className="mobile-action-sheet-row"
               onClick={() => {
                 startNewFolder();
                 setSheetEntry(null);
               }}
               data-testid="sheet-new-folder"
             >
-              New folder
+              {t('mobile.filesView.newFolder')}
             </button>
             <button
               type="button"
-              className="mobile-file-sheet-item"
+              className="mobile-action-sheet-row"
               onClick={() => {
                 startRename(sheetEntry);
                 setSheetEntry(null);
               }}
               data-testid="sheet-rename"
             >
-              Rename
+              {t('mobile.filesView.rename')}
             </button>
             <button
               type="button"
-              className="mobile-file-sheet-item"
+              className="mobile-action-sheet-row mobile-action-sheet-row--danger"
               onClick={() => {
                 requestDelete(sheetEntry);
-                setSheetEntry(null);
               }}
               data-testid="sheet-delete"
             >
-              Delete
+              {t('mobile.filesView.delete')}
             </button>
             {sheetEntry.kind === 'dir' && (
               <button
                 type="button"
-                className="mobile-file-sheet-item"
+                className="mobile-action-sheet-row"
                 onClick={() => {
                   onOpenTerminalAt(fullPathFor(sheetEntry));
-                  setSheetEntry(null);
+                  closeEntrySheetAndRestoreFocus();
                 }}
                 data-testid="sheet-open-terminal"
               >
-                Open terminal here
+                {t('mobile.filesView.openTerminalHere')}
               </button>
             )}
             <button
               type="button"
-              className="mobile-file-sheet-item"
+              className="mobile-action-sheet-row"
               onClick={() => {
                 onPastePath(fullPathFor(sheetEntry));
-                setSheetEntry(null);
+                closeEntrySheetAndRestoreFocus();
               }}
               data-testid="sheet-paste-path"
             >
-              Paste path into input
+              {t('mobile.filesView.pastePath')}
             </button>
             {sheetEntry.kind === 'file' && (
               <button
                 type="button"
-                className="mobile-file-sheet-item"
+                className="mobile-action-sheet-row"
                 onClick={() => {
                   void handleDownload(sheetEntry);
-                  setSheetEntry(null);
+                  closeEntrySheetAndRestoreFocus();
                 }}
                 data-testid="sheet-download"
               >
-                Download to phone
+                {t('mobile.filesView.downloadToPhone')}
               </button>
             )}
-          </div>
-        </div>
-      )}
-
-      {deleteTarget && (
-        <div className="mobile-file-sheet-backdrop" data-testid="mobile-delete-confirm">
-          <div className="mobile-file-confirm-box">
-            <p>Move {deleteTarget.name} to trash?</p>
-            <div className="mobile-file-confirm-actions">
-              <button
-                type="button"
-                className="btn"
-                onClick={() => void confirmDelete()}
-                data-testid="delete-confirm-yes"
-              >
-                Delete
-              </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => setDeleteTarget(null)}
-                data-testid="delete-confirm-cancel"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+            </>
+          ) : null}
+        </MobileActionSheet>
       )}
     </div>
   );

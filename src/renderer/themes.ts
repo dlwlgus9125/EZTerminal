@@ -1,5 +1,7 @@
 import type { ITheme } from '@xterm/xterm';
 import { isBuiltinTheme, type ThemeName } from '../shared/layout-schema';
+import type { UiThemeColors } from '../shared/theme-schema';
+import { resolveAccessibleTheme } from './theme-contrast';
 
 // Built-in themes (E1) — single source of truth for the renderer. Chrome colors
 // are applied by setting `data-theme` on <html> and letting index.css's
@@ -35,6 +37,10 @@ export interface ThemeDefinition {
   /** --term-* CSS variable overrides mirrored in index.css's [data-theme] block.
    * Empty for 'dark': its values ARE the :root defaults (no override needed). */
   readonly cssVars: Readonly<Record<string, string>>;
+  /** Semantic application chrome. Optional only for directly registered
+   * legacy definitions; resolution deterministically seeds it from terminal
+   * colors before the theme is applied. */
+  readonly ui?: UiThemeColors;
   readonly xterm: ITheme;
   readonly fontFamily: string;
   readonly fontSize: number;
@@ -46,6 +52,22 @@ export interface ThemeDefinition {
   readonly swatch?: { readonly bg: string; readonly accent: string };
 }
 
+export interface ThemeAdjustment {
+  readonly role: keyof UiThemeColors | 'terminalForeground' | 'terminalCursor';
+  readonly before: string;
+  readonly after: string;
+  readonly requiredRatio: number;
+  readonly achievedRatio: number;
+}
+
+export interface ResolvedTheme {
+  readonly requestedId: string;
+  readonly effectiveId: string;
+  readonly theme: ThemeDefinition;
+  readonly adjustments: readonly ThemeAdjustment[];
+  readonly fallbackReason?: 'missing-custom-theme' | 'invalid-custom-theme';
+}
+
 /** Cycle order for the theme button (E1) — also the theme picker's row order (M2). */
 export const THEME_ORDER: readonly ThemeName[] = ['dark', 'light', 'high-contrast', 'matrix'];
 
@@ -54,8 +76,32 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
     id: 'dark',
     name: 'Dark',
     cssVars: {},
+    ui: {
+      canvas: '#070a09',
+      surface: '#0c1110',
+      surfaceRaised: '#121917',
+      surfaceInset: '#040706',
+      textPrimary: '#ecf6f1',
+      textSecondary: '#b8c9c1',
+      textMuted: '#91a59b',
+      textInverse: '#07100c',
+      borderSubtle: '#2a3832',
+      borderStrong: '#637a70',
+      accent: '#2fe0a0',
+      onAccent: '#04110c',
+      focus: '#65f4c0',
+      info: '#56c8ff',
+      success: '#2fe0a0',
+      warning: '#f4c45e',
+      danger: '#ff6b7a',
+    },
     // Exactly the values PtyBlock hardcoded pre-E1 — pixel-identical default.
-    xterm: { background: '#0c0c0c', foreground: '#e6e6e6' },
+    xterm: {
+      background: '#0c0c0c',
+      foreground: '#e6e6e6',
+      cursor: '#e6e6e6',
+      cursorAccent: '#0c0c0c',
+    },
     fontFamily: FONT_FAMILY,
     fontSize: FONT_SIZE,
     swatch: { bg: '#0c0c0c', accent: '#29d398' },
@@ -80,6 +126,25 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
       '--term-cyan': '#0f7c8c',
       '--term-blue': '#1857c4',
       '--term-selection': 'rgba(14, 138, 75, 0.18)',
+    },
+    ui: {
+      canvas: '#f2f5f3',
+      surface: '#ffffff',
+      surfaceRaised: '#ffffff',
+      surfaceInset: '#e8eeeb',
+      textPrimary: '#14201a',
+      textSecondary: '#3f5047',
+      textMuted: '#5c6d64',
+      textInverse: '#ffffff',
+      borderSubtle: '#c9d2cd',
+      borderStrong: '#66776e',
+      accent: '#087847',
+      onAccent: '#ffffff',
+      focus: '#075fca',
+      info: '#075fca',
+      success: '#087847',
+      warning: '#8a5a00',
+      danger: '#b4233c',
     },
     // cursor/cursorAccent explicit (unlike dark): a default white cursor would
     // be invisible on this light background.
@@ -114,6 +179,25 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
       '--term-blue': '#66b2ff',
       '--term-selection': 'rgba(0, 255, 102, 0.35)',
     },
+    ui: {
+      canvas: '#000000',
+      surface: '#000000',
+      surfaceRaised: '#000000',
+      surfaceInset: '#000000',
+      textPrimary: '#ffffff',
+      textSecondary: '#ffffff',
+      textMuted: '#d0d0d0',
+      textInverse: '#000000',
+      borderSubtle: '#808080',
+      borderStrong: '#ffffff',
+      accent: '#00ff66',
+      onAccent: '#000000',
+      focus: '#00e5ff',
+      info: '#66b2ff',
+      success: '#00ff66',
+      warning: '#ffcc00',
+      danger: '#ff5c5c',
+    },
     xterm: {
       background: '#000000',
       foreground: '#ffffff',
@@ -135,28 +219,47 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
     name: 'Matrix',
     cssVars: {
       '--term-bg': '#010301',
-      '--term-bg-raised': '#071007',
+      '--term-bg-raised': '#071109',
       '--term-bg-inset': '#020402',
       '--term-bg-hover': 'rgba(41, 211, 152, 0.08)',
-      '--term-border': '#12492a',
-      '--term-border-faint': '#0a2a15',
-      '--term-fg': '#5fe7ac',
-      '--term-fg-bright': '#c7ffe4',
-      '--term-fg-dim': '#1c9d6c',
-      '--term-fg-faint': '#0f6a48',
-      '--term-green': '#29d398',
-      '--term-red': '#ff4d5e',
-      '--term-amber': '#f5c451',
-      '--term-cyan': '#1fb6c9',
-      '--term-blue': '#4db8ff',
-      '--term-selection': 'rgba(41, 211, 152, 0.25)',
+      '--term-border': '#3c8d61',
+      '--term-border-faint': '#1d5035',
+      '--term-fg': '#8af7bd',
+      '--term-fg-bright': '#d5ffe7',
+      '--term-fg-dim': '#5ac98f',
+      '--term-fg-faint': '#419b6d',
+      '--term-green': '#35e58f',
+      '--term-red': '#ff6b7a',
+      '--term-amber': '#ffd166',
+      '--term-cyan': '#62d8ff',
+      '--term-blue': '#66a8ff',
+      '--term-selection': 'rgba(53, 229, 143, 0.28)',
+    },
+    ui: {
+      canvas: '#010301',
+      surface: '#06110b',
+      surfaceRaised: '#0b1b12',
+      surfaceInset: '#020704',
+      textPrimary: '#b7fbd4',
+      textSecondary: '#78dba5',
+      textMuted: '#5cbd87',
+      textInverse: '#00150a',
+      borderSubtle: '#245b3d',
+      borderStrong: '#4bbd7a',
+      accent: '#35e58f',
+      onAccent: '#001c0d',
+      focus: '#8affba',
+      info: '#62d8ff',
+      success: '#35e58f',
+      warning: '#ffd166',
+      danger: '#ff6b7a',
     },
     xterm: {
       background: '#010301',
-      foreground: '#5fe7ac',
-      cursor: '#7dffb0',
+      foreground: '#8af7bd',
+      cursor: '#8affba',
       cursorAccent: '#010301',
-      selectionBackground: 'rgba(41, 211, 152, 0.28)',
+      selectionBackground: 'rgba(53, 229, 143, 0.3)',
     },
     fontFamily: MATRIX_FONT_FAMILY,
     fontSize: MATRIX_FONT_SIZE,
@@ -170,7 +273,7 @@ export const THEMES: Readonly<Record<ThemeName, ThemeDefinition>> = {
       'micro-jitter',
       'static-noise',
     ],
-    swatch: { bg: '#010301', accent: '#5fe7ac' },
+    swatch: { bg: '#010301', accent: '#35e58f' },
   },
 };
 
@@ -201,25 +304,33 @@ export function listThemes(): ThemeDefinition[] {
   return [...THEME_ORDER.map((name) => THEMES[name]), ...customThemes.values()];
 }
 
-/**
- * THE single theme accessor (theme-effects-font M0) — resolves the DOM's raw
- * `data-theme` attribute against built-ins ∪ the custom registry, falling
- * back to 'dark' for an absent/unknown value (a deleted-mod-on-relaunch, or a
- * value set before its registerTheme() call has run). Both theming channels
- * should read through this: chrome CSS vars and the terminal (xterm).
- * PtyBlock.tsx resolves through this accessor too — the old
- * `THEMES[getActiveThemeName()]` indexing (unsound for a custom theme id) was
- * migrated away in the same wave that added this function.
- */
+/** Resolve against built-ins and the custom registry, applying contrast
+ * correction to an effective copy. Missing custom ids intentionally fall back
+ * to Matrix without replacing the requested/persisted identity. */
+export function resolveTheme(
+  requestedId: string,
+  missingReason: ResolvedTheme['fallbackReason'] = 'missing-custom-theme',
+): ResolvedTheme {
+  const builtin = isBuiltinTheme(requestedId) ? THEMES[requestedId] : undefined;
+  const registered = builtin ?? customThemes.get(requestedId);
+  const source = registered ?? THEMES.matrix;
+  const accessible = resolveAccessibleTheme(source, THEMES.dark.ui!);
+  return {
+    requestedId,
+    effectiveId: source.id,
+    theme: accessible.theme,
+    adjustments: accessible.adjustments,
+    ...(registered ? {} : { fallbackReason: missingReason }),
+  };
+}
+
+export function getResolvedTheme(): ResolvedTheme {
+  const requestedId = document.documentElement.dataset.theme;
+  return resolveTheme(requestedId ?? 'dark');
+}
+
 export function getActiveTheme(): ThemeDefinition {
-  const attr = document.documentElement.dataset.theme;
-  if (attr !== undefined) {
-    const builtin = THEMES[attr];
-    if (builtin) return builtin;
-    const custom = customThemes.get(attr);
-    if (custom) return custom;
-  }
-  return THEMES.dark;
+  return getResolvedTheme().theme;
 }
 
 /** Read the theme name currently applied to the document (App sets this

@@ -8,11 +8,14 @@ import { createRoot } from 'react-dom/client';
 // nothing to import at runtime).
 
 import { App } from './App';
+import { MobileUiPreferencesProvider } from './MobileUiPreferencesProvider';
 import { applyTheme, loadTheme } from './theme';
 import { loadUiScale } from './ui-scale';
 import { applyUiScale } from '../../src/renderer/ui-scale';
-import '../../src/renderer/index.css';
+import '../../src/renderer/mobile-shared.css';
+import '../../src/renderer/ui/styles.css';
 import './mobile.css';
+import './workbench.css';
 
 // Mobile picks its own theme independent of the desktop bridge (M4 scope,
 // localStorage-only — see theme.ts's module doc).
@@ -29,6 +32,8 @@ if (!container) {
 
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <MobileUiPreferencesProvider>
+      <App />
+    </MobileUiPreferencesProvider>
   </StrictMode>,
 );

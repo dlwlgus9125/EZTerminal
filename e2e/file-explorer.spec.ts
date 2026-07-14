@@ -127,7 +127,10 @@ test('Up navigates to the parent directory (fixture dir shows up as an entry)', 
   await window.getByTestId('file-up').click();
 
   const fixtureBaseName = path.basename(fixtureDir);
-  await expect(window.getByTestId('file-entry').filter({ hasText: fixtureBaseName })).toBeVisible();
+  await expect(pathInput).toHaveValue(path.dirname(fixtureDir), { timeout: 10_000 });
+  await expect(window.getByTestId('file-entry').filter({ hasText: fixtureBaseName })).toBeVisible({
+    timeout: 10_000,
+  });
 
   await app.close();
 });

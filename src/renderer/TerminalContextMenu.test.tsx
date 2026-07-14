@@ -22,12 +22,27 @@ import {
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
-function renderMenu(items: TerminalContextMenuItem[], onClose: () => void): HTMLDivElement {
+function renderMenu(
+  items: TerminalContextMenuItem[],
+  onClose: () => void,
+  labels?: {
+    readonly ariaLabel?: string;
+    readonly shortcutLabel?: (shortcut: string) => string;
+  },
+): HTMLDivElement {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
   act(() => {
-    root!.render(<TerminalContextMenu x={10} y={20} items={items} onClose={onClose} />);
+    root!.render(
+      <TerminalContextMenu
+        x={10}
+        y={20}
+        items={items}
+        onClose={onClose}
+        {...labels}
+      />,
+    );
   });
   return container;
 }
@@ -62,6 +77,20 @@ describe('TerminalContextMenu', () => {
     expect(el.querySelector('[data-testid="term-ctx-paste"]')?.textContent).toBe('Paste');
     expect(el.querySelector('[role="menu"]')).not.toBeNull();
     expect(el.querySelectorAll('[role="menuitem"]')).toHaveLength(2);
+  });
+
+  it('uses caller-provided accessible labels for the menu and shortcut', () => {
+    const el = renderMenu(
+      [{ action: 'rename', label: '이름 바꾸기', shortcut: 'F2', onClick: vi.fn() }],
+      vi.fn(),
+      {
+        ariaLabel: '터미널 작업',
+        shortcutLabel: (shortcut) => `단축키 ${shortcut}`,
+      },
+    );
+
+    expect(el.querySelector('[role="menu"]')?.getAttribute('aria-label')).toBe('터미널 작업');
+    expect(el.querySelector('kbd')?.getAttribute('aria-label')).toBe('단축키 F2');
   });
 
   it('focuses the first enabled item and roves with wraparound while skipping disabled items', () => {

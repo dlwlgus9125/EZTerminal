@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { useAppTranslation } from './i18n';
+
+type PairingError =
+  | { readonly kind: 'external'; readonly message: string }
+  | { readonly kind: 'token-unavailable' | 'rotate-failed' }
+  | null
+  | undefined;
+
 /**
  * Mobile pairing panel (M4): shows the LAN URL(s) + auth token a phone needs
  * to connect to this desktop's remote-control bridge, plus a rotate action.
@@ -8,10 +16,11 @@ import { useCallback, useEffect, useState } from 'react';
  * shape, different content.
  */
 export function ConnectionInfoPanel(): JSX.Element {
+  const { t } = useAppTranslation();
   const [urls, setUrls] = useState<readonly string[] | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [remoteEnabled, setRemoteEnabled] = useState<boolean | null>(null);
-  const [securityError, setSecurityError] = useState<string | null | undefined>(undefined);
+  const [securityError, setSecurityError] = useState<PairingError>(undefined);
   const [justRotated, setJustRotated] = useState(false);
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
@@ -22,14 +31,14 @@ export function ConnectionInfoPanel(): JSX.Element {
     });
     void window.ezterminal.getRemoteSecurityStatus().then((status) => {
       if (!alive) return;
-      setSecurityError(status.error);
+      setSecurityError(status.error ? { kind: 'external', message: status.error } : null);
       if (status.state === 'ready') {
         void window.ezterminal.getRemoteToken().then(
           (t) => {
             if (alive) setToken(t);
           },
           () => {
-            if (alive) setSecurityError('The remote access token is unavailable. Remote access remains off.');
+            if (alive) setSecurityError({ kind: 'token-unavailable' });
           },
         );
       }
@@ -49,7 +58,7 @@ export function ConnectionInfoPanel(): JSX.Element {
         setJustRotated(true);
         setSecurityError(null);
       },
-      () => setSecurityError('The new token could not be stored securely. Remote access was stopped.'),
+      () => setSecurityError({ kind: 'rotate-failed' }),
     );
   }, []);
 
@@ -61,50 +70,57 @@ export function ConnectionInfoPanel(): JSX.Element {
   }, []);
 
   const loading = urls === null || remoteEnabled === null || securityError === undefined || (securityError === null && token === null);
+  const securityErrorText = securityError?.kind === 'external'
+    ? securityError.message
+    : securityError?.kind === 'token-unavailable'
+      ? t('remote.tokenUnavailable')
+      : securityError?.kind === 'rotate-failed'
+        ? t('remote.rotateFailed')
+        : null;
 
   return (
     <div className="status-drawer" data-testid="connection-info-panel">
       <section className="status-section">
-        <h2 className="status-section-title">Mobile Pairing</h2>
+        <h2 className="status-section-title">{t('remote.pairingTitle')}</h2>
         {loading ? (
-          <div className="status-loading">Loading…</div>
+          <div className="status-loading">{t('common.loading')}</div>
         ) : securityError ? (
           <div className="status-loading" role="alert" data-testid="pairing-security-error">
-            {securityError}
+            {securityErrorText}
           </div>
         ) : !remoteEnabled ? (
           <div className="status-loading" data-testid="pairing-remote-disabled">
-            Remote access is disabled — enable it in Settings
+            {t('remote.disabled')}
           </div>
         ) : urls.length === 0 ? (
-          <div className="status-loading">No LAN network detected.</div>
+          <div className="status-loading">{t('remote.noLan')}</div>
         ) : (
           <>
             {urls.map((url) => (
               <div key={url} className="status-metric" data-testid="connection-url">
                 {url}{' '}
                 <button className="btn btn-split" onClick={() => handleCopy(url)}>
-                  {copiedText === url ? 'Copied' : 'Copy'}
+                  {copiedText === url ? t('remote.copied') : t('remote.copy')}
                 </button>
               </div>
             ))}
             <div className="status-metric" data-testid="connection-token">
-              Token: <code>{token}</code>{' '}
+              {t('remote.token')}: <code>{token}</code>{' '}
               <button className="btn btn-split" onClick={() => handleCopy(token!)}>
-                {copiedText === token ? 'Copied' : 'Copy'}
+                {copiedText === token ? t('remote.copied') : t('remote.copy')}
               </button>
             </div>
             <button
               className="btn btn-split"
               onClick={handleRotate}
-              title="Mint a new token — existing connections stay connected, only new connections need it"
+              title={t('remote.rotateTokenHint')}
               data-testid="btn-rotate-token"
             >
-              Rotate token
+              {t('remote.rotateToken')}
             </button>
             {justRotated && (
               <div className="status-loading">
-                New token applies to new connections only — already-connected devices keep working.
+                {t('remote.rotatedNotice')}
               </div>
             )}
           </>

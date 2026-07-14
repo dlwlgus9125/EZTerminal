@@ -62,7 +62,9 @@ test('running: opening chat from the drawer auto-closes the drawer and shows exa
   try {
     const window = await app.firstWindow();
     await window.getByTestId('btn-toggle-openclaw').click();
-    await expect(window.getByTestId('openclaw-state')).toContainText('실행 중', { timeout: 10_000 });
+    await expect(window.getByTestId('openclaw-state')).toHaveAttribute('data-state', 'running', {
+      timeout: 10_000,
+    });
 
     await window.getByTestId('btn-openclaw-open-chat').click();
     await expect(window.getByTestId('openclaw-chat-panel')).toBeVisible({ timeout: 10_000 });
@@ -90,7 +92,9 @@ test('running: opening chat from the drawer auto-closes the drawer and shows exa
     // chat hides the native view again, and closing it restores it.
     await window.getByTestId('btn-toggle-openclaw').click();
     await expect.poll(async () => (await chatViewInfo(app))[0]?.visible, { timeout: 10_000 }).toBe(false);
-    await window.getByTestId('openclaw-close').click();
+    // The single-sidebar workbench intentionally removes the drawer's duplicate
+    // close button. The active rail destination is the canonical close control.
+    await window.getByTestId('btn-toggle-openclaw').click();
     await expect.poll(async () => (await chatViewInfo(app))[0]?.visible, { timeout: 10_000 }).toBe(true);
   } finally {
     await app.close();
@@ -115,7 +119,9 @@ test('persistence round-trip: the chat panel restores after relaunch and re-requ
     const app1 = await launchApp(dir, extraEnv);
     const w1 = await app1.firstWindow();
     await w1.getByTestId('btn-toggle-openclaw').click();
-    await expect(w1.getByTestId('openclaw-state')).toContainText('실행 중', { timeout: 10_000 });
+    await expect(w1.getByTestId('openclaw-state')).toHaveAttribute('data-state', 'running', {
+      timeout: 10_000,
+    });
     await w1.getByTestId('btn-openclaw-open-chat').click();
     await expect(w1.getByTestId('openclaw-chat-panel')).toBeVisible({ timeout: 10_000 });
 
@@ -158,7 +164,9 @@ test('stopped: chat panel shows guidance placeholder, no WebContentsView is ever
   try {
     const window = await app.firstWindow();
     await window.getByTestId('btn-toggle-openclaw').click();
-    await expect(window.getByTestId('openclaw-state')).toContainText('중지됨', { timeout: 10_000 });
+    await expect(window.getByTestId('openclaw-state')).toHaveAttribute('data-state', 'stopped', {
+      timeout: 10_000,
+    });
 
     await window.getByTestId('btn-openclaw-open-chat').click();
     await expect(window.getByTestId('openclaw-chat-guidance')).toBeVisible({ timeout: 10_000 });

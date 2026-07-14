@@ -1,8 +1,7 @@
-/* Mobile-only layout — layered on top of the desktop's index.css (reused
- * wholesale for .block/.pane/.cmd-row/theme vars etc.). Nothing here
- * overrides a desktop rule; it only adds the screens/components that have no
- * desktop analogue (ConnectScreen, SessionSwitcher, TouchInputBar) and makes
- * touch targets comfortably larger than the mouse-sized desktop defaults. */
+/* Mobile-only layout layered on top of renderer/mobile-shared.css. That
+ * deliberate boundary exposes only the shared terminal, theme, status,
+ * Agent Hub, and file-preview foundations used here; desktop workbench and
+ * Dockview chrome are not bundled into the mobile client. */
 
 html,
 body,
@@ -159,7 +158,7 @@ body,
 }
 
 /* ── TUI takeover on mobile (TUI scroll parity, M2) ───────────────────────
- * The shared desktop takeover CSS (index.css) reveals the block-head only on
+ * The shared terminal takeover CSS reveals the block-head only on
  * :hover / :focus-within, which touch has no equivalent for — Cancel/✕ would
  * be unreachable. Keep the head in normal flow and always visible instead of
  * the desktop's absolute overlay: block--takeover is a flex column, so the
@@ -171,7 +170,7 @@ body,
 }
 
 /* Long-press menu (WT-parity M3) — touch-sized override of the shared
- * desktop `.terminal-context-menu-item` (src/renderer/index.css), same
+ * shared `.terminal-context-menu-item`, same
  * >=44px touch-target convention as `.mobile-file-sheet-item` above. */
 .mobile-session-view .terminal-context-menu-item {
   min-height: 44px;
@@ -238,14 +237,16 @@ body,
 .mobile-stats-view .btn,
 .mobile-settings-view .btn,
 .mobile-openclaw-view .btn,
-.mobile-workspace .btn {
+.mobile-workspace .btn,
+.mobile-file-view .btn,
+.mobile-file-viewer .btn,
+.mobile-action-sheet .btn {
   min-height: 44px;
   padding: 10px 14px;
 }
 
-/* ── Stats view (M2 temporary full-screen overlay — M5's MobileWorkspace will
- * own proper tab-bar integration; the `status-*` section classes it renders
- * with come from the desktop's index.css, imported wholesale by main.tsx) ── */
+/* ── Stats view. Shared `status-*` primitives come from the deliberate
+ * renderer/mobile-shared.css boundary. ──────────────────────────────────── */
 
 .mobile-stats-view {
   display: flex;
@@ -269,7 +270,7 @@ body,
 
 .mobile-stats-tab {
   flex: 1;
-  min-height: 40px;
+  min-height: 44px;
   padding: 8px;
   border-radius: 6px;
   border: 1px solid var(--term-border, #444);
@@ -302,10 +303,7 @@ body,
   gap: 12px;
 }
 
-/* ── Settings view (v0.2.0 M4 — full-screen overlay, same shape as
- * `.mobile-stats-view`; `.status-section`/`.status-section-title`/
- * `.status-metric` come from the desktop's index.css, imported wholesale by
- * main.tsx, so the sections render consistently with stats) ── */
+/* ── Settings view — full-screen page using the shared status primitives. ── */
 
 .mobile-settings-view {
   display: flex;
@@ -456,32 +454,6 @@ body,
 
 /* ── Theme menu (bottom sheet) ───────────────────────────────────────────── */
 
-.theme-menu-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 300;
-  display: flex;
-  align-items: flex-end;
-  background: rgba(0, 0, 0, 0.5);
-}
-
-.theme-menu-sheet {
-  width: 100%;
-  max-width: 720px;
-  margin-inline: auto;
-  background: var(--term-bg-raised, #161616);
-  border: 1px solid var(--term-border, #444);
-  border-bottom: none;
-  border-radius: 12px 12px 0 0;
-  padding: 16px;
-}
-
-.theme-menu-title {
-  margin: 0 0 12px;
-  font-size: 1rem;
-  color: var(--term-fg-bright, inherit);
-}
-
 .theme-menu-list {
   list-style: none;
   margin: 0;
@@ -544,32 +516,6 @@ body,
   height: 100%;
 }
 
-.workspace-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 6px 8px;
-  overflow: hidden;
-  border-bottom: 1px solid var(--term-border-faint, #222);
-  background: var(--term-bg-raised, #161616);
-}
-
-.workspace-header > .btn {
-  flex: none;
-  min-width: 44px;
-  padding-inline: 10px;
-}
-
-.workspace-wide-action {
-  display: none;
-}
-
-.workspace-more-btn {
-  position: relative;
-  font-size: 1.15rem;
-}
-
 .workspace-more-status-dot {
   position: absolute;
   top: 5px;
@@ -577,14 +523,8 @@ body,
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--term-amber, #e5b567);
+  background: var(--ui-warning);
   pointer-events: none;
-}
-
-@media (min-width: 600px) {
-  .workspace-wide-action {
-    display: inline-flex;
-  }
 }
 
 .credential-warning {
@@ -603,8 +543,6 @@ body,
 
 .agents-btn {
   position: relative;
-  padding-inline: 9px !important;
-  font-size: 0.75rem;
 }
 
 .agents-btn .agent-unread-badge {
@@ -688,7 +626,7 @@ body,
   display: flex;
   flex: 1;
   min-width: 96px;
-  gap: 6px;
+  gap: var(--ui-space-2);
   overflow-x: auto;
 }
 
@@ -696,37 +634,50 @@ body,
   display: flex;
   align-items: center;
   flex: none;
-  gap: 2px;
-  padding: 4px 4px 4px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--term-border, #444);
-  background: var(--term-bg-inset, #1c1c1c);
+  gap: var(--ui-space-1);
+  padding: var(--ui-space-1) var(--ui-space-1) var(--ui-space-1) var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-inset);
 }
 
 .tab-pill--active {
   min-width: 96px;
-  border-color: var(--term-green, #29d398);
+  border-color: var(--ui-accent);
+}
+
+.tab-strip-tabs,
+.tab-strip-list {
+  display: flex;
+  flex: none;
+  gap: var(--ui-space-2);
 }
 
 .tab-pill-label {
   min-height: 44px;
-  padding: 4px 2px;
-  font-size: 0.85rem;
+  padding: var(--ui-space-1);
+  font-size: var(--ui-font-size-sm);
   white-space: nowrap;
-  color: var(--term-fg, inherit);
-  background: transparent;
+  color: var(--ui-text-primary);
+  background: none;
   border: none;
-  font-family: inherit;
+  font-family: var(--ui-font-body);
 }
 
 .tab-pill-close {
   min-width: 44px;
   min-height: 44px;
-  padding: 2px 6px;
-  font-size: 0.8rem;
-  background: transparent;
+  padding: var(--ui-space-1) var(--ui-space-2);
+  font-size: var(--ui-font-size-xs);
+  background: none;
   border: none;
-  color: var(--term-fg, inherit);
+  color: var(--ui-text-secondary);
+}
+
+.tab-pill-label:focus-visible,
+.tab-pill-close:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
 }
 
 /* ── Session switcher: fixed bottom-sheet variant (the `☰` convenience
@@ -776,7 +727,7 @@ body,
 .mobile-file-path-input {
   flex: 1;
   min-width: 0;
-  min-height: 40px;
+  min-height: 44px;
   padding: 8px 10px;
   font-family: inherit;
   font-size: 0.9rem;
@@ -867,55 +818,97 @@ body,
   word-break: break-word;
 }
 
+.mobile-file-entry-action {
+  width: 100%;
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.mobile-file-entry-action:focus-visible {
+  position: relative;
+  outline: 2px solid var(--ui-focus);
+  outline-offset: -2px;
+}
+
 /* Reusable mobile modal sheet. The history marker in MobileActionSheet lets
  * Android's system Back dismiss it before the underlying workspace. */
 .mobile-action-sheet-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 310;
+  z-index: var(--ui-z-dialog);
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgb(0 0 0 / 55%);
+  background: var(--ui-backdrop);
+}
+
+.mobile-action-sheet-backdrop--fullscreen {
+  align-items: stretch;
+  background: var(--ui-canvas);
 }
 
 .mobile-action-sheet {
   width: min(100%, 720px);
   max-height: min(82vh, 720px);
   overflow-y: auto;
-  padding: 16px max(12px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom))
-    max(12px, env(safe-area-inset-left));
-  border: 1px solid var(--term-border, #444);
+  padding: var(--ui-space-4) max(var(--ui-space-3), env(safe-area-inset-right))
+    max(var(--ui-space-4), env(safe-area-inset-bottom))
+    max(var(--ui-space-3), env(safe-area-inset-left));
+  border: 1px solid var(--ui-border-strong);
   border-bottom: none;
-  border-radius: 12px 12px 0 0;
-  background: var(--term-bg-raised, #161616);
-  color: var(--term-fg, inherit);
+  border-radius: var(--ui-radius-lg) var(--ui-radius-lg) 0 0;
+  background: var(--ui-surface-raised);
+  color: var(--ui-text-primary);
+}
+
+.mobile-action-sheet--fullscreen {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 .mobile-action-sheet-title {
-  margin: 0 0 12px;
-  font-size: 1rem;
-  color: var(--term-fg-bright, inherit);
+  margin: 0 0 var(--ui-space-3);
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-heading);
+  font-size: var(--ui-font-size-lg);
+}
+
+.mobile-action-sheet-description {
+  margin: calc(-1 * var(--ui-space-1)) 0 var(--ui-space-3);
+  color: var(--ui-text-secondary);
+  line-height: var(--ui-line-height-normal);
+  overflow-wrap: anywhere;
 }
 
 .mobile-action-sheet-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--ui-space-2);
 }
 
 .mobile-action-sheet-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--ui-space-3);
   width: 100%;
   min-height: 52px;
-  padding: 8px 12px;
-  border: 1px solid var(--term-border-faint, #222);
-  border-radius: 8px;
-  background: var(--term-bg-inset, #1c1c1c);
-  color: var(--term-fg, inherit);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-primary);
   font: inherit;
   text-align: left;
 }
@@ -924,21 +917,26 @@ body,
   opacity: 0.55;
 }
 
+.mobile-action-sheet-row--danger {
+  border-color: var(--ui-danger);
+  color: var(--ui-danger);
+}
+
 .mobile-action-sheet-row-copy {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ui-space-1);
 }
 
 .mobile-action-sheet-row-label {
-  color: var(--term-fg-bright, inherit);
+  color: currentColor;
 }
 
 .mobile-action-sheet-row-hint,
 .mobile-action-sheet-row-state {
-  color: var(--term-fg-faint, #888);
-  font-size: 0.78rem;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
 }
 
 .mobile-action-sheet-row-state {
@@ -948,14 +946,14 @@ body,
 
 .mobile-action-sheet-cancel {
   justify-content: center;
-  margin-top: 10px;
+  margin-top: var(--ui-space-3);
 }
 
 .mobile-action-sheet:focus-visible,
 .mobile-action-sheet-row:focus-visible,
 .touch-key:focus-visible,
 .terminal-key-settings-row .btn:focus-visible {
-  outline: 2px solid var(--term-blue, #5ca8ff);
+  outline: 2px solid var(--ui-focus);
   outline-offset: 2px;
 }
 
@@ -975,72 +973,42 @@ body,
   font-size: 0.9rem;
 }
 
-/* Long-press action sheet — same bottom-sheet chrome/z-index as `.theme-menu-*`. */
-.mobile-file-sheet-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 300;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
-}
-
-.mobile-file-sheet {
-  width: 100%;
-  max-width: 720px;
-  margin-inline: auto;
-  background: var(--term-bg-raised, #161616);
-  border: 1px solid var(--term-border, #444);
-  border-bottom: none;
-  border-radius: 12px 12px 0 0;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.mobile-file-sheet-item {
-  min-height: 44px;
-  padding: 10px 14px;
-  text-align: left;
-  font-family: inherit;
-  font-size: 0.95rem;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--term-fg, inherit);
-}
-
-/* Delete confirmation reuses the sheet backdrop but centers a small card
-   instead of docking to the bottom. */
-.mobile-file-confirm-box {
-  margin: auto;
-  max-width: 320px;
-  padding: 20px;
-  border-radius: 12px;
-  background: var(--term-bg-raised, #161616);
-  border: 1px solid var(--term-border, #444);
-  text-align: center;
-}
-
-.mobile-file-confirm-box p {
-  margin: 0 0 16px;
-  font-size: 0.95rem;
-  color: var(--term-fg-bright, inherit);
-}
-
-.mobile-file-confirm-actions {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-}
-
 .terminal-path-preview {
   position: fixed;
   inset: 0;
-  z-index: 320;
-  background: var(--term-bg, #000);
+  z-index: var(--ui-z-dialog);
+  display: flex;
+  flex-direction: column;
+  background: var(--ui-canvas);
+}
+
+.terminal-path-preview > .mobile-action-sheet-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.terminal-path-preview-content {
+  flex: 1;
+  min-height: 0;
+  gap: 0;
+}
+
+.terminal-path-preview-content > .file-viewer-content,
+.terminal-path-preview-content > .file-preview-markdown,
+.terminal-path-preview-content > .file-preview-image-wrap,
+.terminal-path-preview-content > .file-preview-state {
+  min-height: 0;
+  flex: 1;
+  width: auto;
+  margin: 0;
+  overflow: auto;
 }
 
 .terminal-path-mobile-error {
@@ -1057,48 +1025,6 @@ body,
   border: 1px solid var(--term-red, #ff4d5e);
   background: var(--term-bg-raised, #161616);
   color: var(--term-fg, #eee);
-}
-
-.session-destroy-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 130;
-  display: grid;
-  place-items: center;
-  padding: 18px;
-  background: rgba(0, 0, 0, 0.7);
-}
-
-.session-destroy-dialog {
-  width: min(360px, 100%);
-  padding: 20px;
-  border-radius: 12px;
-  border: 1px solid var(--term-border, #444);
-  background: var(--term-bg-raised, #161616);
-  color: var(--term-fg, #ddd);
-}
-
-.session-destroy-dialog h2 {
-  margin: 0 0 10px;
-  font-size: 1.05rem;
-}
-
-.session-destroy-dialog p {
-  margin: 0;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.session-destroy-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 18px;
-}
-
-.files-btn {
-  font-size: 1.1rem;
-  padding: 8px 12px;
 }
 
 /* ── Upload (file-explorer plan, M5) ────────────────────────────────────── */
@@ -1145,10 +1071,8 @@ body,
   color: var(--term-red, #ff4d5e);
 }
 
-/* ── OpenClaw management view (openclaw-management M4) — full-screen overlay,
- * same shape as `.mobile-stats-view`/`.mobile-settings-view`; `.status-section`/
- * `.status-section-title`/`.status-metric`/`.status-loading` come from the
- * desktop's index.css, imported wholesale by main.tsx. ─────────────────────── */
+/* ── OpenClaw management view — full-screen page using the shared status
+ * primitives from renderer/mobile-shared.css. ───────────────────────────── */
 
 .mobile-openclaw-view {
   display: flex;
@@ -1172,7 +1096,7 @@ body,
 
 .mobile-openclaw-tab {
   flex: 1;
-  min-height: 40px;
+  min-height: 44px;
   padding: 8px;
   border-radius: 6px;
   border: 1px solid var(--term-border, #444);
@@ -1349,6 +1273,23 @@ body,
   gap: 8px;
   padding: 8px 12px;
   border-top: 1px solid var(--term-border-faint, #222);
+}
+
+.mobile-stats-tab-panel,
+.mobile-openclaw-tab-panel {
+  min-width: 0;
+  min-height: 0;
+}
+
+.mobile-openclaw-tab-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.mobile-stats-tab-panel[hidden],
+.mobile-openclaw-tab-panel[hidden] {
+  display: none;
 }
 
 /* Transient reconnect keeps the mounted workspace/xterm geometry untouched. */

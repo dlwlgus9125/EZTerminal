@@ -20,6 +20,11 @@ async function runIn(pane: ReturnType<Page['getByTestId']>, command: string): Pr
   await pane.getByTestId('btn-run').click();
 }
 
+async function splitFromWorkspace(window: Page, direction: 'right' | 'down'): Promise<void> {
+  await window.getByTestId('btn-workspace-menu').click();
+  await window.getByTestId(`btn-split-${direction}`).click();
+}
+
 test('splits: Split → creates two simultaneous independent sessions (cwd isolation)', async () => {
   const app = await launchApp();
   const window = await app.firstWindow();
@@ -35,7 +40,7 @@ test('splits: Split → creates two simultaneous independent sessions (cwd isola
   });
 
   // Split right → a second pane appears; BOTH visible at once (no tab switch).
-  await window.getByTestId('btn-split-right').click();
+  await splitFromWorkspace(window, 'right');
   await expect(panes).toHaveCount(2);
   const pane0 = panes.nth(0); // original, still C:\Windows
   const pane1 = panes.nth(1); // fresh split session
@@ -67,7 +72,7 @@ test('splits: a live PTY renders in a split pane while the sibling stays a norma
   await expect(panes).toHaveCount(1);
 
   // Split down, then run an interactive PTY program in the new (bottom) pane.
-  await window.getByTestId('btn-split-down').click();
+  await splitFromWorkspace(window, 'down');
   await expect(panes).toHaveCount(2);
   const pane0 = panes.nth(0);
   const pane1 = panes.nth(1);
@@ -95,7 +100,7 @@ test('splits: closing a split pane returns to one pane and tears down its sessio
   const panes = window.getByTestId('pane');
   await expect(panes).toHaveCount(1);
 
-  await window.getByTestId('btn-split-right').click();
+  await splitFromWorkspace(window, 'right');
   await expect(panes).toHaveCount(2);
 
   // Close the split (Terminal 2) via its group tab's close action (dockview auto-removes

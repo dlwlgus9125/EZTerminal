@@ -1,7 +1,9 @@
-import { useEffect } from 'react';
+import { useCallback } from 'react';
 
 import type { FilePreviewResult } from '../shared/file-preview';
 import { FilePreviewContent } from './FilePreviewContent';
+import { useAppTranslation } from './i18n';
+import { Dialog } from './ui/Dialog';
 
 export interface RichFileViewerOverlayProps {
   readonly path: string;
@@ -28,35 +30,38 @@ export function RichFileViewerOverlay({
   onReveal,
   openExternalHttpUrl,
 }: RichFileViewerOverlayProps): JSX.Element {
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+  const { t } = useAppTranslation();
+  const handleOpenChange = useCallback((open: boolean): void => {
+    if (!open) onClose();
   }, [onClose]);
 
   const name = result.ok ? result.name : (path.split(/[/\\]/).pop() || path);
   return (
-    <div className="file-viewer-overlay rich-file-viewer" data-testid="file-viewer-overlay" role="dialog" aria-label={`Preview ${name}`}>
-      <div className="file-viewer-header">
-        <span className="file-viewer-name" title={path}>{name}</span>
+    <Dialog
+      open
+      onOpenChange={handleOpenChange}
+      title={<span className="file-viewer-name" title={path}>{t('fileViewer.preview', { name })}</span>}
+      closeLabel={t('common.close')}
+      closeOnBackdrop={false}
+      size="lg"
+      className="rich-file-viewer"
+      testId="file-viewer-overlay"
+      closeButtonTestId="viewer-close"
+      footer={(
         <div className="file-viewer-actions">
-          <button className="btn btn-split" type="button" onClick={onInsert}>Insert</button>
-          {onOpen && <button className="btn btn-split" type="button" onClick={onOpen}>Open</button>}
-          {onReveal && <button className="btn btn-split" type="button" onClick={onReveal}>Reveal</button>}
-          {!result.ok && <button className="btn btn-split" type="button" onClick={onRetry}>Retry</button>}
-          <button className="btn btn-split" type="button" onClick={onClose} title="Close" data-testid="viewer-close">
-            Close
-          </button>
+          <button className="btn btn-split" type="button" onClick={onInsert}>{t('fileViewer.insert')}</button>
+          {onOpen && <button className="btn btn-split" type="button" onClick={onOpen}>{t('fileViewer.open')}</button>}
+          {onReveal && <button className="btn btn-split" type="button" onClick={onReveal}>{t('fileViewer.reveal')}</button>}
+          {!result.ok && <button className="btn btn-split" type="button" onClick={onRetry}>{t('common.retry')}</button>}
         </div>
-      </div>
+      )}
+    >
       {result.ok && result.kind === 'text' && result.truncated && (
         <div className="file-viewer-truncated" data-testid="viewer-truncated">
-          File truncated to the first 1 MiB.
+          {t('fileViewer.truncated')}
         </div>
       )}
       <FilePreviewContent result={result} line={line} column={column} openExternalHttpUrl={openExternalHttpUrl} />
-    </div>
+    </Dialog>
   );
 }

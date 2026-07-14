@@ -7,12 +7,25 @@ import {
   type AgentSettings,
   type GenericAgentProfile,
 } from '../shared/agent';
+import { useAppTranslation } from './i18n';
 
 const DEFAULT_SETTINGS: AgentSettings = {
   schemaVersion: AGENT_SETTINGS_SCHEMA_VERSION,
   notifications: { waiting: true, blocked: true, error: true },
   genericProfiles: [],
 };
+
+type AgentSettingsMessage =
+  | { readonly kind: 'unavailable' | 'invalid-profiles' | 'saved' | 'save-failed' }
+  | { readonly kind: 'hooks-installed' | 'hooks-removed'; readonly provider: string }
+  | { readonly kind: 'external'; readonly message: string }
+  | null;
+
+const NOTIFICATION_LABEL_KEYS = {
+  waiting: 'agentSettings.notifyWaiting',
+  blocked: 'agentSettings.notifyBlocked',
+  error: 'agentSettings.notifyError',
+} as const;
 
 function providerLabel(provider: AgentIntegrationProvider): string {
   return provider === 'codex' ? 'Codex' : 'Claude';
@@ -28,10 +41,11 @@ function newProfile(): GenericAgentProfile {
 }
 
 export function AgentIntegrationSettings(): JSX.Element {
+  const { t } = useAppTranslation();
   const [integrations, setIntegrations] = useState<readonly AgentIntegrationStatus[]>([]);
   const [settings, setSettings] = useState<AgentSettings>(DEFAULT_SETTINGS);
   const [busyProvider, setBusyProvider] = useState<AgentIntegrationProvider | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<AgentSettingsMessage>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     const desktop = window.ezterminalDesktop;
@@ -45,7 +59,7 @@ export function AgentIntegrationSettings(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    void refresh().catch(() => setMessage('Agent integration settings are unavailable.'));
+    void refresh().catch(() => setMessage({ kind: 'unavailable' }));
   }, [refresh]);
 
   const mutateIntegration = async (provider: AgentIntegrationProvider, enabled: boolean): Promise<void> => {
@@ -56,11 +70,14 @@ export function AgentIntegrationSettings(): JSX.Element {
     const result = await desktop.setAgentIntegrationEnabled(provider, enabled);
     setBusyProvider(null);
     if (result.ok) {
-      setMessage(`${providerLabel(provider)} hooks ${enabled ? 'installed' : 'removed'}.`);
+      setMessage({
+        kind: enabled ? 'hooks-installed' : 'hooks-removed',
+        provider: providerLabel(provider),
+      });
       await refresh();
       return;
     }
-    setMessage(result.message);
+    setMessage({ kind: 'external', message: result.message });
     setIntegrations((current) => current.map((item) => item.provider === provider ? result.status : item));
   };
 
@@ -69,13 +86,13 @@ export function AgentIntegrationSettings(): JSX.Element {
     try {
       const saved = await window.ezterminalDesktop?.setAgentSettings(next);
       if (!saved) {
-        setMessage('Check generic profile names and executable basenames for blanks or duplicates.');
+        setMessage({ kind: 'invalid-profiles' });
         return;
       }
       setSettings(saved);
-      setMessage('Agent settings saved.');
+      setMessage({ kind: 'saved' });
     } catch {
-      setMessage('Could not save agent settings.');
+      setMessage({ kind: 'save-failed' });
     }
   };
 
@@ -86,6 +103,22 @@ export function AgentIntegrationSettings(): JSX.Element {
     }));
   };
 
+  const messageText = message?.kind === 'external'
+    ? message.message
+    : message?.kind === 'hooks-installed'
+      ? t('agentSettings.hooksInstalled', { provider: message.provider })
+      : message?.kind === 'hooks-removed'
+        ? t('agentSettings.hooksRemoved', { provider: message.provider })
+        : message?.kind === 'unavailable'
+          ? t('agentSettings.unavailable')
+          : message?.kind === 'invalid-profiles'
+            ? t('agentSettings.invalidProfiles')
+            : message?.kind === 'saved'
+              ? t('agentSettings.saved')
+              : message?.kind === 'save-failed'
+                ? t('agentSettings.saveFailed')
+                : null;
+
   return (
     <>
       <div className="agent-integration-list">
@@ -93,9 +126,11 @@ export function AgentIntegrationSettings(): JSX.Element {
           <div className="agent-integration-row" key={integration.provider}>
             <div className="agent-integration-copy">
               <strong>{providerLabel(integration.provider)}</strong>
-              <span title={integration.configPath}>{integration.enabled ? 'Exact lifecycle hooks enabled' : 'Process lifecycle only'}</span>
-              {integration.drift && <span className="settings-agent-warning">Installed hook was modified; removal requires review.</span>}
-              {integration.needsTrust && <span className="settings-agent-warning">Review and trust Codex hooks with `/hooks`.</span>}
+              <span title={integration.configPath}>
+                {integration.enabled ? t('agentSettings.exactLifecycle') : t('agentSettings.processLifecycle')}
+              </span>
+              {integration.drift && <span className="settings-agent-warning">{t('agentSettings.hookModified')}</span>}
+              {integration.needsTrust && <span className="settings-agent-warning">{t('agentSettings.trustCodexHooks')}</span>}
               {integration.blockers.map((blocker) => <span className="settings-agent-warning" key={blocker}>{blocker}</span>)}
             </div>
             <button
@@ -109,13 +144,17 @@ export function AgentIntegrationSettings(): JSX.Element {
               onClick={() => void mutateIntegration(integration.provider, !integration.enabled)}
               data-testid={`agent-integration-${integration.provider}`}
             >
-              {busyProvider === integration.provider ? 'Working…' : integration.enabled ? 'Remove' : 'Install'}
+              {busyProvider === integration.provider
+                ? t('agentSettings.working')
+                : integration.enabled
+                  ? t('agentSettings.remove')
+                  : t('agentSettings.install')}
             </button>
           </div>
         ))}
       </div>
 
-      <h3 className="settings-agent-subtitle">Desktop notifications</h3>
+      <h3 className="settings-agent-subtitle">{t('agentSettings.desktopNotifications')}</h3>
       {(['waiting', 'blocked', 'error'] as const).map((event) => (
         <label className="settings-radio-row" key={event}>
           <input
@@ -126,12 +165,12 @@ export function AgentIntegrationSettings(): JSX.Element {
               notifications: { ...settings.notifications, [event]: change.target.checked },
             })}
           />
-          Notify when an agent is {event}
+          {t(NOTIFICATION_LABEL_KEYS[event])}
         </label>
       ))}
 
       <div className="settings-agent-generic-head">
-        <h3 className="settings-agent-subtitle">Generic CLI profiles</h3>
+        <h3 className="settings-agent-subtitle">{t('agentSettings.genericProfiles')}</h3>
         <button
           type="button"
           className="btn btn-split"
@@ -140,21 +179,21 @@ export function AgentIntegrationSettings(): JSX.Element {
             genericProfiles: [...current.genericProfiles, newProfile()],
           }))}
         >
-          Add
+          {t('agentSettings.add')}
         </button>
       </div>
       {settings.genericProfiles.map((profile) => (
         <div className="settings-agent-profile" key={profile.id}>
           <input
             value={profile.name}
-            aria-label="Generic agent name"
+            aria-label={t('agentSettings.genericName')}
             maxLength={80}
             onChange={(event) => patchProfile(profile.id, { name: event.target.value })}
           />
           <input
             value={profile.executable}
-            aria-label="Generic agent executable"
-            placeholder="executable basename"
+            aria-label={t('agentSettings.genericExecutable')}
+            placeholder={t('agentSettings.executablePlaceholder')}
             maxLength={128}
             onChange={(event) => patchProfile(profile.id, { executable: event.target.value })}
           />
@@ -164,7 +203,7 @@ export function AgentIntegrationSettings(): JSX.Element {
               checked={profile.enabled}
               onChange={(event) => patchProfile(profile.id, { enabled: event.target.checked })}
             />
-            Enabled
+            {t('agentSettings.enabled')}
           </label>
           <button
             type="button"
@@ -174,14 +213,14 @@ export function AgentIntegrationSettings(): JSX.Element {
               genericProfiles: current.genericProfiles.filter((candidate) => candidate.id !== profile.id),
             }))}
           >
-            Remove
+            {t('agentSettings.remove')}
           </button>
         </div>
       ))}
       <button type="button" className="btn btn-split" onClick={() => void persist(settings)}>
-        Save agent profiles
+        {t('agentSettings.saveProfiles')}
       </button>
-      {message && <div className="settings-agent-message" role="status">{message}</div>}
+      {messageText && <div className="settings-agent-message" role="status">{messageText}</div>}
     </>
   );
 }

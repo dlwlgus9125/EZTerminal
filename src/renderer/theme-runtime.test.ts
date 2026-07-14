@@ -1,8 +1,14 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, beforeEach } from 'vitest';
 
-import { applyThemeVarsAndEffects, ensureThemeVarsStyleEl, getUserFontId, setUserFontId } from './theme-runtime';
-import { registerTheme, type ThemeDefinition } from './themes';
+import {
+  applyThemeVarsAndEffects,
+  ensureThemeVarsStyleEl,
+  getUserFontId,
+  setUserFontId,
+  themeModToDefinition,
+} from './theme-runtime';
+import { THEMES, registerTheme, type ThemeDefinition } from './themes';
 
 // jsdom (unlike the real Chromium renderer this app ships in) doesn't implement
 // the `CSS.escape` global theme-runtime.ts relies on — polyfill it here (spec:
@@ -86,6 +92,7 @@ describe('applyThemeVarsAndEffects', () => {
     expect(text).toContain('[data-theme="neon-runtime"]');
     expect(text).toContain('--term-bg:#111111;');
     expect(text).toContain('--term-green:#00ff00;');
+    expect(text).toContain('--ui-canvas:#111111;');
   });
 
   it('writes empty textContent for a built-in theme (matrix)', () => {
@@ -133,6 +140,35 @@ describe('applyThemeVarsAndEffects', () => {
       platformDefaults: { 'crt-curvature': true },
     });
     expect(document.documentElement.getAttribute('data-effect-crt-curvature')).toBe('on');
+  });
+
+  it('applies Matrix variables under a missing custom id while preserving the requested selector', () => {
+    document.documentElement.dataset.theme = 'missing-custom-theme';
+    applyThemeVarsAndEffects('missing-custom-theme', { effectToggles: {}, platformDefaults: {} });
+    expect(styleText()).toContain('[data-theme="missing-custom-theme"]');
+    expect(styleText()).toContain(`--term-bg:${THEMES.matrix.cssVars['--term-bg']};`);
+    expect(styleText()).toContain(`--ui-canvas:${THEMES.matrix.ui!.canvas};`);
+  });
+
+  it('converts version 2 UI colors directly while version 1 remains seed-compatible', () => {
+    const v2 = themeModToDefinition({
+      schemaVersion: 2,
+      id: 'v2-runtime',
+      name: 'V2 Runtime',
+      cssVars: { '--term-bg': '#111111' },
+      xterm: { background: '#111111', foreground: '#eeeeee' },
+      ui: { ...THEMES.dark.ui!, accent: '#12ef98' },
+    });
+    expect(v2.ui!.accent).toBe('#12ef98');
+
+    const v1 = themeModToDefinition({
+      schemaVersion: 1,
+      id: 'v1-runtime',
+      name: 'V1 Runtime',
+      cssVars: { '--term-bg': '#101010', '--term-green': '#00cc77' },
+      xterm: { background: '#101010', foreground: '#eeeeee' },
+    });
+    expect(v1.ui).toMatchObject({ canvas: '#101010', accent: '#00cc77' });
   });
 });
 

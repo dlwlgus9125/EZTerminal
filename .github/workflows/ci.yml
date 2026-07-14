@@ -17,7 +17,7 @@ jobs:
     # dependency's @electron/node-gyp (v10) can't parse ("unknown version undefined")
     # → node-gyp finds no C++ toolchain and `pnpm install` dies compiling cap.
     runs-on: windows-2022
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -36,16 +36,49 @@ jobs:
       # MSVC. wpcap.dll (Npcap) is only needed at runtime for live capture, not to build.
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm typecheck
-      - run: pnpm lint
-      - run: pnpm test
+      - name: Desktop typecheck
+        run: pnpm typecheck
+      - name: Desktop lint
+        run: pnpm lint
+      - name: Desktop unit tests
+        run: pnpm test
+
+      - name: Mobile lint
+        working-directory: mobile
+        run: pnpm lint
+      - name: Mobile typecheck
+        working-directory: mobile
+        run: pnpm typecheck
+      - name: Mobile unit tests
+        working-directory: mobile
+        run: pnpm test
+      - name: Mobile production build
+        working-directory: mobile
+        run: pnpm build
+
+      - name: Install Chromium for Storybook checks
+        run: pnpm exec playwright install chromium
+      - name: Storybook interaction and accessibility tests
+        run: pnpm test:storybook
+      - name: Storybook production build
+        run: pnpm storybook:build
+      - name: Storybook visual regression and axe checks
+        run: pnpm test:visual
       # Fresh checkout has no .vite, so the e2e global-setup builds the real bundles
       # (locally a stale .vite is silently reused — CI closes that gap by construction).
-      - run: pnpm e2e
-      - run: pnpm package
-      - run: pnpm guard:native
+      - name: Electron end-to-end tests
+        run: pnpm e2e
+      - name: Package Electron app
+        run: pnpm package
+      - name: Verify packaged native modules
+        run: pnpm guard:native
+      - name: Verify packaged packet capture native module
+        run: pnpm guard:native-cap
+      - name: Verify PTY routing invariants
+        run: pnpm guard:pty-routing
       # global-setup re-runs guard:native and reuses the exe packaged above.
-      - run: pnpm test:e2e:packaged
+      - name: Packaged app smoke tests
+        run: pnpm test:e2e:packaged
 
       - name: Upload Playwright artifacts on failure
         if: failure()

@@ -2,6 +2,7 @@ import type { RefObject } from 'react';
 import { flushSync } from 'react-dom';
 
 import type { OpenClawStatus } from '../../src/shared/openclaw';
+import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobileActionSheet } from './MobileActionSheet';
 
 interface MoreActionProps {
@@ -61,18 +62,19 @@ export function MobileHeaderMoreActions({
   readonly onOpenClaw: () => void;
   readonly onOpenSettings: () => void;
 }): JSX.Element {
+  const { t } = useAppTranslation();
   const choose = (action: () => void): void => {
     flushSync(onClose);
     action();
   };
-  const remoteState = connected ? undefined : 'Offline';
+  const remoteState = connected ? undefined : t('state.offline');
 
   return (
-    <MobileActionSheet title="More actions" onClose={onClose} returnFocusRef={triggerRef} testId="workspace-more-sheet">
+    <MobileActionSheet title={t('mobile.moreActions.title')} onClose={onClose} returnFocusRef={triggerRef} testId="workspace-more-sheet">
       {!wide && (
         <MoreAction
-          label="Sessions"
-          hint="Open or create a desktop session"
+          label={t('mobile.sessions')}
+          hint={t('mobile.moreActions.sessionsHint')}
           disabled={!connected}
           state={remoteState}
           onSelect={() => choose(onOpenSessions)}
@@ -81,8 +83,8 @@ export function MobileHeaderMoreActions({
       )}
       {!wide && (
         <MoreAction
-          label="Files"
-          hint="Browse the active session directory"
+          label={t('mobile.files')}
+          hint={t('mobile.moreActions.filesHint')}
           disabled={!connected}
           state={remoteState}
           onSelect={() => choose(onOpenFiles)}
@@ -90,16 +92,16 @@ export function MobileHeaderMoreActions({
         />
       )}
       <MoreAction
-        label="Stats"
-        hint="View remote system metrics"
+        label={t('mobile.moreActions.stats')}
+        hint={t('mobile.moreActions.statsHint')}
         disabled={!connected}
         state={remoteState}
         onSelect={() => choose(onOpenStats)}
         testId="more-stats"
       />
       <MoreAction
-        label="Theme"
-        hint="Change the mobile appearance"
+        label={t('mobile.moreActions.theme')}
+        hint={t('mobile.moreActions.themeHint')}
         state={themeName}
         onSelect={() => choose(onOpenTheme)}
         testId="more-theme"
@@ -107,16 +109,16 @@ export function MobileHeaderMoreActions({
       {openclawVisible && (
         <MoreAction
           label="OpenClaw"
-          hint="Open the desktop OpenClaw service"
+          hint={t('mobile.moreActions.openClawHint')}
           disabled={!connected}
-          state={connected ? (openclawState ?? 'Checking') : 'Offline'}
+          state={connected ? (openclawState ?? t('mobile.moreActions.checking')) : t('state.offline')}
           onSelect={() => choose(onOpenClaw)}
           testId="more-openclaw"
         />
       )}
       <MoreAction
-        label="Settings"
-        hint="Mobile and connection preferences"
+        label={t('common.settings')}
+        hint={t('mobile.moreActions.settingsHint')}
         onSelect={() => choose(onOpenSettings)}
         testId="more-settings"
       />

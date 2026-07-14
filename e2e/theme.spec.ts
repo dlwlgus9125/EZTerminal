@@ -1,27 +1,31 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
 
-// E1: built-in themes with persistence. Matrix is the boot default; the theme
-// button cycles through THEME_ORDER (dark -> light -> high-contrast -> matrix
-// -> dark), applies immediately (data-theme attribute + the --term-* CSS vars
-// actually changing), and the choice persists to settings.json so it survives
-// a relaunch.
+// Built-in themes live in Settings > Appearance. Matrix is the boot default;
+// selecting a theme applies immediately and persists across relaunches.
 
 function tempUserData(): string {
   return mkdtempSync(path.join(tmpdir(), 'ezterm-theme-e2e-'));
 }
 
-test('theme button applies immediately and persists across relaunch', async () => {
+async function openThemeSettings(page: Page) {
+  await expect(page.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+  await page.getByTestId('btn-toggle-settings').click();
+  await page.getByTestId('settings-category-appearance').click();
+  return page.getByTestId('settings-theme-select');
+}
+
+test('theme selection applies immediately and persists across relaunch', async () => {
   const dir = tempUserData();
 
   const app1 = await launchApp(dir);
   const w1 = await app1.firstWindow();
-  const btn = w1.getByTestId('btn-theme');
-  await expect(btn).toHaveText('Theme: matrix');
+  const select = await openThemeSettings(w1);
+  await expect(select).toHaveValue('matrix');
   // The label reflects React state, which now boots as 'matrix' BEFORE the
   // async getTheme() round-trip sets data-theme — wait for the attribute so
   // the --term-bg read below sees matrix values, not the pre-boot defaults.
@@ -33,8 +37,8 @@ test('theme button applies immediately and persists across relaunch', async () =
     getComputedStyle(document.documentElement).getPropertyValue('--term-bg').trim(),
   );
 
-  await btn.click();
-  await expect(btn).toHaveText('Theme: dark');
+  await select.selectOption('dark');
+  await expect(select).toHaveValue('dark');
   await expect
     .poll(() => w1.evaluate(() => document.documentElement.getAttribute('data-theme')))
     .toBe('dark');
@@ -51,28 +55,27 @@ test('theme button applies immediately and persists across relaunch', async () =
   // must survive, not fall back to the matrix boot default.
   const app2 = await launchApp(dir);
   const w2 = await app2.firstWindow();
-  await expect(w2.getByTestId('btn-theme')).toHaveText('Theme: dark', { timeout: 15_000 });
+  const persistedSelect = await openThemeSettings(w2);
+  await expect(persistedSelect).toHaveValue('dark', { timeout: 15_000 });
   await expect
     .poll(() => w2.evaluate(() => document.documentElement.getAttribute('data-theme')))
     .toBe('dark');
   await app2.close();
 });
 
-test('theme cycles matrix -> dark -> light -> high-contrast -> matrix', async () => {
+test('all built-in themes are available in canonical order and selectable', async () => {
   const dir = tempUserData();
   const app = await launchApp(dir);
   const w = await app.firstWindow();
-  const btn = w.getByTestId('btn-theme');
-
-  await expect(btn).toHaveText('Theme: matrix');
-  await btn.click();
-  await expect(btn).toHaveText('Theme: dark');
-  await btn.click();
-  await expect(btn).toHaveText('Theme: light');
-  await btn.click();
-  await expect(btn).toHaveText('Theme: high-contrast');
-  await btn.click();
-  await expect(btn).toHaveText('Theme: matrix');
+  const select = await openThemeSettings(w);
+  expect(await select.locator('option').evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value)))
+    .toEqual(['dark', 'light', 'high-contrast', 'matrix']);
+  for (const theme of ['dark', 'light', 'high-contrast', 'matrix']) {
+    await select.selectOption(theme);
+    await expect
+      .poll(() => w.evaluate(() => document.documentElement.getAttribute('data-theme')))
+      .toBe(theme);
+  }
 
   await app.close();
 });

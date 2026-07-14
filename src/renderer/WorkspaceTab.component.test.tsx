@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IDockviewPanelHeaderProps } from 'dockview-react';
 
+import { AppI18nProvider } from './i18n';
 import { WorkspaceTab } from './WorkspaceTab';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -52,19 +53,24 @@ function fakeProps() {
   };
 }
 
-function renderTab(overrides: Partial<React.ComponentProps<typeof WorkspaceTab>> = {}) {
+function renderTab(
+  overrides: Partial<React.ComponentProps<typeof WorkspaceTab>> = {},
+  locale: 'en' | 'ko' = 'en',
+) {
   const { props, api } = fakeProps();
   const requestClose = vi.fn((close: () => void) => close());
   const onSplit = vi.fn();
   const onTitleChanged = vi.fn();
   act(() => root.render(
-    <WorkspaceTab
-      {...props}
-      requestClose={requestClose}
-      onSplit={onSplit}
-      onTitleChanged={onTitleChanged}
-      {...overrides}
-    />,
+    <AppI18nProvider locale={locale} languages={[locale]}>
+      <WorkspaceTab
+        {...props}
+        requestClose={requestClose}
+        onSplit={onSplit}
+        onTitleChanged={onTitleChanged}
+        {...overrides}
+      />
+    </AppI18nProvider>,
   ));
   return { api, requestClose, onSplit, onTitleChanged };
 }
@@ -96,6 +102,14 @@ describe('WorkspaceTab interactions', () => {
 
     act(() => document.querySelector<HTMLButtonElement>('[data-testid="tab-ctx-split-right"]')!.click());
     expect(onSplit).toHaveBeenCalledWith('tab-3', 'right');
+  });
+
+  it('announces the rename shortcut in Korean', () => {
+    renderTab({}, 'ko');
+    const menu = openContextMenu();
+
+    expect(menu.getAttribute('aria-label')).toBe('탭 작업');
+    expect(menu.querySelector('kbd')?.getAttribute('aria-label')).toBe('단축키 F2');
   });
 
   it('renames with F2/Enter and routes persistence through the caller', () => {

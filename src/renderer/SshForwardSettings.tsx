@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { SshForwardInfo } from '../shared/ssh-forward';
+import { useAppTranslation } from './i18n';
+
+type SshForwardError =
+  | { readonly kind: 'external'; readonly message: string }
+  | { readonly kind: 'status-unavailable' | 'stop-failed' }
+  | null;
 
 /** Compact, desktop-only status/control surface for loopback SSH forwards. */
 export function SshForwardSettings(): JSX.Element {
+  const { t } = useAppTranslation();
   const [forwards, setForwards] = useState<readonly SshForwardInfo[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<SshForwardError>(null);
   const [stopping, setStopping] = useState<string | null>(null);
   const mountedRef = useRef(true);
 
@@ -21,7 +28,7 @@ export function SshForwardSettings(): JSX.Element {
       setForwards(next);
       setError(null);
     } catch {
-      if (mountedRef.current) setError('SSH forward status is temporarily unavailable.');
+      if (mountedRef.current) setError({ kind: 'status-unavailable' });
     }
   }, []);
 
@@ -42,22 +49,30 @@ export function SshForwardSettings(): JSX.Element {
     setError(null);
     try {
       const result = await api.stopSshForward(forward.connectionId, forward.forwardId);
-      if (!result.ok && mountedRef.current) setError(result.error.message);
+      if (!result.ok && mountedRef.current) setError({ kind: 'external', message: result.error.message });
       await refresh();
     } catch {
-      if (mountedRef.current) setError('The SSH forward could not be stopped.');
+      if (mountedRef.current) setError({ kind: 'stop-failed' });
     } finally {
       if (mountedRef.current) setStopping(null);
     }
   }, [refresh, stopping]);
 
+  const errorText = error?.kind === 'external'
+    ? error.message
+    : error?.kind === 'status-unavailable'
+      ? t('remote.sshStatusUnavailable')
+      : error?.kind === 'stop-failed'
+        ? t('remote.sshStopFailed')
+        : null;
+
   return (
     <section className="status-section" data-testid="settings-ssh-forwards">
-      <h2 className="status-section-title">SSH Local Forwards</h2>
+      <h2 className="status-section-title">{t('remote.sshLocalForwards')}</h2>
       {forwards === null ? (
-        <div className="status-loading">Loading…</div>
+        <div className="status-loading">{t('common.loading')}</div>
       ) : forwards.length === 0 ? (
-        <div className="status-loading">No active loopback forwards.</div>
+        <div className="status-loading">{t('remote.noActiveForwards')}</div>
       ) : (
         <div className="settings-ssh-forward-list">
           {forwards.map((forward) => (
@@ -78,7 +93,7 @@ export function SshForwardSettings(): JSX.Element {
                 onClick={() => { void stop(forward); }}
                 data-testid={`settings-ssh-forward-stop-${forward.forwardId}`}
               >
-                {stopping === forward.forwardId ? 'Stopping…' : 'Stop'}
+                {stopping === forward.forwardId ? t('remote.stopping') : t('remote.stop')}
               </button>
             </div>
           ))}
@@ -86,7 +101,7 @@ export function SshForwardSettings(): JSX.Element {
       )}
       {error && (
         <div className="status-loading" role="alert" data-testid="settings-ssh-forward-error">
-          {error}
+          {errorText}
         </div>
       )}
     </section>

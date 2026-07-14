@@ -117,6 +117,66 @@ describe('LayoutStore — layout save/load (A-M2)', () => {
   });
 });
 
+describe('LayoutStore — atomic Adaptive Workbench preferences', () => {
+  it('returns approved defaults for an existing settings v1 file', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    expect(await store.getUiPreferences()).toEqual({
+      locale: 'system',
+      density: 'adaptive',
+      sidebarWidth: 320,
+    });
+  });
+
+  it('round-trips one snapshot and preserves unrelated settings', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    await store.setTheme('light');
+    await store.setUiPreferences({
+      locale: 'ko',
+      density: 'compact',
+      sidebarWidth: 404,
+    });
+    expect(await store.getUiPreferences()).toEqual({
+      locale: 'ko',
+      density: 'compact',
+      sidebarWidth: 404,
+    });
+    expect(await store.getTheme()).toBe('light');
+  });
+
+  it('preserves the preference snapshot through later settings writes', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    await store.setUiPreferences({
+      locale: 'en',
+      density: 'comfortable',
+      sidebarWidth: 360,
+    });
+    await store.setStartup({ mode: 'preset', presetName: 'focus' });
+    await store.setUiScale(125);
+    expect(await store.getUiPreferences()).toEqual({
+      locale: 'en',
+      density: 'comfortable',
+      sidebarWidth: 360,
+    });
+  });
+
+  it('atomically merges concurrent partial preference updates and returns each resulting snapshot', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+
+    const [afterLocale, afterDensity] = await Promise.all([
+      store.setUiPreferences({ locale: 'ko' }),
+      store.setUiPreferences({ density: 'compact' }),
+    ]);
+
+    expect(afterLocale).toEqual({ locale: 'ko', density: 'adaptive', sidebarWidth: 320 });
+    expect(afterDensity).toEqual({ locale: 'ko', density: 'compact', sidebarWidth: 320 });
+    expect(await store.getUiPreferences()).toEqual(afterDensity);
+  });
+});
+
 describe('LayoutStore — presets & startup (A-M2)', () => {
   it('saves, lists, gets, and deletes presets', async () => {
     const store = new LayoutStore(makeDir());

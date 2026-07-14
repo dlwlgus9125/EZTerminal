@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 
 export interface FileContextMenuItem {
   /** Used verbatim in `data-testid="ctx-<action>"` — keep these stable, e2e depends on them. */
@@ -24,9 +24,16 @@ interface FileContextMenuProps {
  */
 export function FileContextMenu({ x, y, items, onClose }: FileContextMenuProps): JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const restoreFocusRef = useRef(true);
   // Rendered at the raw cursor position first, then clamped to the viewport
   // once we know the menu's actual size (can't know it before first paint).
   const [pos, setPos] = useState({ left: x, top: y });
+
+  const close = useCallback((restoreFocus = true): void => {
+    restoreFocusRef.current = restoreFocus;
+    onClose();
+  }, [onClose]);
 
   useLayoutEffect(() => {
     const el = menuRef.current;
@@ -38,35 +45,86 @@ export function FileContextMenu({ x, y, items, onClose }: FileContextMenuProps):
   }, [x, y]);
 
   useEffect(() => {
-    const onDocMouseDown = (e: MouseEvent): void => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose();
+    previousFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const animationFrame = requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    });
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      if (!restoreFocusRef.current) return;
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (active === document.body || !(active instanceof HTMLElement) || !document.contains(active)) {
+          previousFocusRef.current?.focus();
+        }
+      });
     };
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose();
+  }, []);
+
+  useEffect(() => {
+    const onDocMouseDown = (e: MouseEvent): void => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) close(false);
     };
     document.addEventListener('mousedown', onDocMouseDown);
-    window.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('mousedown', onDocMouseDown);
-      window.removeEventListener('keydown', onKey);
     };
-  }, [onClose]);
+  }, [close]);
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    const menuItems = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    );
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+      return;
+    }
+    if (event.key === 'Tab') {
+      close(false);
+      return;
+    }
+    if ((event.key === 'Enter' || event.key === ' ') && document.activeElement instanceof HTMLButtonElement) {
+      event.preventDefault();
+      document.activeElement.click();
+      return;
+    }
+    if (menuItems.length === 0 || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const currentIndex = menuItems.indexOf(document.activeElement as HTMLButtonElement);
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? menuItems.length - 1
+        : event.key === 'ArrowDown'
+          ? (Math.max(currentIndex, -1) + 1) % menuItems.length
+          : (currentIndex <= 0 ? menuItems.length : currentIndex) - 1;
+    menuItems[nextIndex]?.focus();
+  };
 
   return (
     <div
       ref={menuRef}
       className="file-context-menu"
       data-testid="file-context-menu"
+      role="menu"
       style={{ left: pos.left, top: pos.top }}
+      onKeyDown={handleKeyDown}
     >
       {items.map((item) => (
         <button
           key={item.action}
+          type="button"
+          role="menuitem"
+          tabIndex={-1}
           className="file-context-menu-item"
           data-testid={`ctx-${item.action}`}
           onClick={() => {
             item.onSelect();
-            onClose();
+            close();
           }}
         >
           {item.label}

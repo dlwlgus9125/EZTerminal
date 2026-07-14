@@ -31,6 +31,7 @@ test('remote toggle: enabling binds; disabling closes the live client and refuse
 
   await win.getByTestId('btn-toggle-settings').click();
   await expect(win.getByTestId('settings-panel')).toBeVisible();
+  await win.getByTestId('settings-category-integrations').click();
 
   const toggle = win.getByTestId('settings-remote-toggle');
   // Remote control is OFF by default (opt-in, security review): the toggle

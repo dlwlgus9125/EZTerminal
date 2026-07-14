@@ -5,7 +5,7 @@
  * copy-pasted across LayoutStore / KnownHostsStore / RemoteTokenStore:
  *  - atomic write = `<file>.tmp` then rename (same-volume atomic on NTFS;
  *    rename replaces an existing target). One immediate retry on a transient
- *    Windows lock, then log + drop (the caller's next write retries naturally).
+ *    Windows lock, then cleanup + rejection so the caller can report failure.
  *  - stale `<file>.tmp` from a crash mid-write is deleted on init().
  *  - writes are serialized on a per-file chain so a read-modify-write never
  *    interleaves with another write to the same file.
@@ -92,19 +92,20 @@ export class JsonFile {
     empty: T,
     mutate: (current: T) => T,
     label: string,
-  ): Promise<void> {
-    await this.enqueue(async () => {
+  ): Promise<T | undefined> {
+    return this.enqueue(async () => {
       const next = mutate(await this.readValidated(validate, empty));
       if (validate(next) === null) {
         console.error(`[json-file] dropped invalid update of ${path.basename(this.target)} (${label})`);
-        return;
+        return undefined;
       }
       await this.writeAtomic(JSON.stringify(next));
+      return next;
     });
   }
 
   /** Atomic write: `<file>.tmp` then rename, one retry on a transient Windows
-   *  lock, then log + drop. Call inside an enqueued op. */
+   *  lock, then remove the temporary file and reject. Call inside an enqueued op. */
   async writeAtomic(data: string): Promise<void> {
     const tmp = `${this.target}.tmp`;
     try {
@@ -112,11 +113,12 @@ export class JsonFile {
       try {
         await fs.rename(tmp, this.target);
       } catch {
-        await fs.rename(tmp, this.target); // one retry (transient Windows lock), then drop
+        await fs.rename(tmp, this.target); // one retry (transient Windows lock), then propagate
       }
     } catch (err) {
       console.error(`[json-file] atomic write of ${path.basename(this.target)} failed:`, err);
       await fs.unlink(tmp).catch(() => undefined);
+      throw err;
     }
   }
 

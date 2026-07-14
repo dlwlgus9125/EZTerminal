@@ -1,3 +1,5 @@
+import { useAppTranslation } from './i18n';
+
 export interface RecentPanelSwitcherItem {
   readonly panelId: string;
   readonly title: string;
@@ -18,23 +20,24 @@ export function RecentPanelSwitcher({
   items,
   selectedPanelId,
 }: RecentPanelSwitcherProps): JSX.Element {
+  const { t } = useAppTranslation();
   const selected = items.find((item) => item.panelId === selectedPanelId) ?? items[0];
   const selectedId = selected ? optionId(selected.panelId) : undefined;
   const announcement = selected
     ? `${selected.title}, ${selected.detail}${selected.statuses.length > 0 ? `, ${selected.statuses.join(', ')}` : ''}`
-    : 'No pane selected';
+    : t('recentPanels.noSelection');
 
   return (
     <div className="recent-panel-switcher-overlay" data-testid="recent-panel-switcher">
-      <div className="recent-panel-switcher" aria-label="Recent panes">
+      <div className="recent-panel-switcher" aria-label={t('recentPanels.label')}>
         <div className="recent-panel-switcher-head">
-          <span>Recent panes</span>
+          <span>{t('recentPanels.label')}</span>
           <kbd>Ctrl+Tab</kbd>
         </div>
         <div
           className="recent-panel-switcher-list"
           role="listbox"
-          aria-label="Recent terminal panes"
+          aria-label={t('recentPanels.listLabel')}
           aria-activedescendant={selectedId}
           tabIndex={-1}
         >
@@ -65,7 +68,9 @@ export function RecentPanelSwitcher({
           })}
         </div>
         <div className="recent-panel-switcher-foot">
-          Release Ctrl to switch <span aria-hidden="true">·</span> Escape to cancel
+          {t('recentPanels.releaseToSwitch')}{' '}
+          <span aria-hidden="true">·</span>{' '}
+          {t('recentPanels.escapeToCancel')}
         </div>
       </div>
       <div

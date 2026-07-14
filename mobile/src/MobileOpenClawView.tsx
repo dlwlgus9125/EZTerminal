@@ -1,3 +1,4 @@
+import { X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
@@ -9,6 +10,8 @@ import {
 } from '../../src/shared/openclaw';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 import { usePageVisible } from './use-page-visible';
+import { useAppTranslation } from '../../src/renderer/i18n';
+import { Tab, TabList, TabPanel, Tabs } from '../../src/renderer/ui/Tabs';
 
 type OpenClawTab = 'status' | 'logs' | 'settings' | 'chat';
 
@@ -31,15 +34,13 @@ export function buildChatUrl(host: string, proxyPort: number, ticket: string, to
  * applied client-side to the whole session's accumulated lines. */
 const LOG_LINE_CAP = 500;
 
-/** Human labels for the state dot + guidance card (Korean, matching
- * MobileStatsView.tsx's full-screen-overlay language convention). */
-const STATE_LABEL: Record<OpenClawStatus['state'], string> = {
-  'not-installed': '미설치',
-  stopped: '중지됨',
-  starting: '시작하는 중…',
-  running: '실행 중',
-  unknown: '알 수 없음',
-};
+const STATE_LABEL_KEY = {
+  'not-installed': 'mobile.openClaw.stateNotInstalled',
+  stopped: 'mobile.openClaw.stateStopped',
+  starting: 'mobile.openClaw.stateStarting',
+  running: 'mobile.openClaw.stateRunning',
+  unknown: 'mobile.openClaw.stateUnknown',
+} as const;
 
 // MobileOpenClawView — full-screen OpenClaw management overlay (openclaw-
 // management M4/M5). Modeled on MobileStatsView.tsx's structure (standalone
@@ -67,6 +68,11 @@ export function MobileOpenClawView({
    * own entry-dot subscription. */
   openclawAvailable: boolean;
 }): JSX.Element {
+  const { t } = useAppTranslation();
+  const stateLabel = useCallback(
+    (value: OpenClawStatus['state']): string => t(STATE_LABEL_KEY[value]),
+    [t],
+  );
   const [tab, setTab] = useState<OpenClawTab>('status');
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
   const [busyAction, setBusyAction] = useState<OpenClawLifecycleAction | null>(null);
@@ -104,11 +110,11 @@ export function MobileOpenClawView({
           // banner regardless of which button triggered the restart.
           if (action === 'restart') setRestartBanner(false);
         } else {
-          setLifecycleError(result.stderr || '작업을 완료하지 못했습니다.');
+          setLifecycleError(result.stderr || t('mobile.openClaw.actionFailed'));
         }
       });
     },
-    [transport],
+    [t, transport],
   );
 
   const busy = busyAction !== null;
@@ -177,7 +183,7 @@ export function MobileOpenClawView({
       // drawer): an empty/whitespace field is never sent (no change) — say
       // so inline instead of silently no-op'ing.
       if (!trimmed) {
-        setConfigError('변경할 값을 입력하세요.');
+        setConfigError(t('mobile.openClaw.enterValue'));
         return;
       }
       setConfigSaving(which);
@@ -187,11 +193,11 @@ export function MobileOpenClawView({
         if (result.ok) {
           setRestartBanner(true);
         } else {
-          setConfigError(result.error || '설정을 저장하지 못했습니다.');
+          setConfigError(result.error || t('mobile.openClaw.saveFailed'));
         }
       });
     },
-    [transport],
+    [t, transport],
   );
 
   // ── Chat tab (M5): the gateway must be RUNNING before a ticket is worth
@@ -236,56 +242,58 @@ export function MobileOpenClawView({
   }, [transport]);
 
   return (
-    <div className="mobile-openclaw-view" data-testid="mobile-openclaw-view">
+    <Tabs
+      value={tab}
+      onValueChange={(value) => setTab(value as OpenClawTab)}
+      className="mobile-openclaw-view"
+      data-testid="mobile-openclaw-view"
+    >
       <header className="mobile-openclaw-head">
         <button
           type="button"
           className="btn"
           onClick={onClose}
-          aria-label="Close OpenClaw"
+          aria-label={t('mobile.openClaw.close')}
           data-testid="mobile-openclaw-close"
         >
-          ✕
+          <X aria-hidden="true" size={18} />
         </button>
-        <div className="mobile-openclaw-tabs" role="tablist">
-          <button
-            type="button"
+        <TabList className="mobile-openclaw-tabs" label="OpenClaw">
+          <Tab
+            value="status"
             className={tab === 'status' ? 'mobile-openclaw-tab mobile-openclaw-tab--active' : 'mobile-openclaw-tab'}
-            onClick={() => setTab('status')}
             data-testid="openclaw-tab-status"
           >
-            상태
-          </button>
-          <button
-            type="button"
+            {t('mobile.openClaw.status')}
+          </Tab>
+          <Tab
+            value="logs"
             className={tab === 'logs' ? 'mobile-openclaw-tab mobile-openclaw-tab--active' : 'mobile-openclaw-tab'}
-            onClick={() => setTab('logs')}
             data-testid="openclaw-tab-logs"
           >
-            로그
-          </button>
-          <button
-            type="button"
+            {t('mobile.openClaw.logs')}
+          </Tab>
+          <Tab
+            value="settings"
             className={tab === 'settings' ? 'mobile-openclaw-tab mobile-openclaw-tab--active' : 'mobile-openclaw-tab'}
-            onClick={() => setTab('settings')}
             data-testid="openclaw-tab-settings"
           >
-            설정
-          </button>
-          <button
-            type="button"
+            {t('mobile.openClaw.settings')}
+          </Tab>
+          <Tab
+            value="chat"
             className={tab === 'chat' ? 'mobile-openclaw-tab mobile-openclaw-tab--active' : 'mobile-openclaw-tab'}
-            onClick={() => setTab('chat')}
             data-testid="openclaw-tab-chat"
           >
-            채팅
-          </button>
-        </div>
+            {t('mobile.openClaw.chat')}
+          </Tab>
+        </TabList>
       </header>
 
       <div className="mobile-openclaw-body">
-        {tab === 'status' && (
-          <section className="status-section" data-testid="openclaw-status-section">
+        <TabPanel value="status" className="mobile-openclaw-tab-panel">
+          {tab === 'status' && (
+            <section className="status-section" data-testid="openclaw-status-section">
             <h2 className="status-section-title">OpenClaw</h2>
             {status ? (
               <>
@@ -294,30 +302,30 @@ export function MobileOpenClawView({
                     className={`openclaw-status-dot openclaw-status-dot--${status.state}`}
                     data-testid="openclaw-status-dot"
                   />
-                  <span data-testid="openclaw-status-label">{STATE_LABEL[status.state]}</span>
+                  <span data-testid="openclaw-status-label">{stateLabel(status.state)}</span>
                 </div>
                 {status.version && (
                   <div className="status-metric" data-testid="openclaw-status-version">
-                    버전 {status.version}
+                    {t('mobile.openClaw.version', { version: status.version })}
                   </div>
                 )}
                 <div className="status-metric" data-testid="openclaw-status-port">
-                  포트 {status.port}
+                  {t('mobile.openClaw.port', { port: status.port })}
                 </div>
 
                 {status.state === 'not-installed' && (
                   <div className="openclaw-guidance" data-testid="openclaw-guidance">
-                    OpenClaw CLI를 찾을 수 없습니다. 설치 후 다시 시도하세요.
+                    {t('mobile.openClaw.notInstalledGuide')}
                   </div>
                 )}
                 {status.state === 'stopped' && (
                   <div className="openclaw-guidance" data-testid="openclaw-guidance">
-                    OpenClaw 게이트웨이가 중지되어 있습니다. 시작하려면 아래 버튼을 누르세요.
+                    {t('mobile.openClaw.stoppedGuide')}
                   </div>
                 )}
                 {status.state === 'unknown' && (
                   <div className="openclaw-guidance" data-testid="openclaw-guidance">
-                    상태를 확인할 수 없습니다.
+                    {t('mobile.openClaw.unknownGuide')}
                   </div>
                 )}
 
@@ -329,7 +337,7 @@ export function MobileOpenClawView({
                     onClick={() => runLifecycle('start')}
                     data-testid="openclaw-btn-start"
                   >
-                    {busyAction === 'start' ? '시작하는 중…' : '시작'}
+                    {busyAction === 'start' ? t('mobile.openClaw.starting') : t('mobile.openClaw.start')}
                   </button>
                   <button
                     type="button"
@@ -338,7 +346,7 @@ export function MobileOpenClawView({
                     onClick={() => runLifecycle('stop')}
                     data-testid="openclaw-btn-stop"
                   >
-                    {busyAction === 'stop' ? '중지하는 중…' : '중지'}
+                    {busyAction === 'stop' ? t('mobile.openClaw.stopping') : t('mobile.openClaw.stop')}
                   </button>
                   <button
                     type="button"
@@ -347,7 +355,7 @@ export function MobileOpenClawView({
                     onClick={() => runLifecycle('restart')}
                     data-testid="openclaw-btn-restart"
                   >
-                    {busyAction === 'restart' ? '재시작하는 중…' : '재시작'}
+                    {busyAction === 'restart' ? t('mobile.openClaw.restarting') : t('mobile.openClaw.restart')}
                   </button>
                 </div>
                 {lifecycleError && (
@@ -357,17 +365,19 @@ export function MobileOpenClawView({
                 )}
               </>
             ) : (
-              <div className="status-loading">확인 중…</div>
+              <div className="status-loading">{t('mobile.openClaw.checking')}</div>
             )}
-          </section>
-        )}
+            </section>
+          )}
+        </TabPanel>
 
-        {tab === 'logs' && (
-          <section className="status-section openclaw-logs-section" data-testid="openclaw-logs-section">
-            <h2 className="status-section-title">로그</h2>
+        <TabPanel value="logs" className="mobile-openclaw-tab-panel">
+          {tab === 'logs' && (
+            <section className="status-section openclaw-logs-section" data-testid="openclaw-logs-section">
+            <h2 className="status-section-title">{t('mobile.openClaw.logs')}</h2>
             <div className="openclaw-log-list" data-testid="openclaw-log-list">
               {logs.length === 0 ? (
-                <div className="status-loading">로그를 기다리는 중…</div>
+                <div className="status-loading">{t('mobile.openClaw.waitingLogs')}</div>
               ) : (
                 logs.map((line, i) => (
                   <div
@@ -383,15 +393,17 @@ export function MobileOpenClawView({
               )}
               <div ref={logsEndRef} />
             </div>
-          </section>
-        )}
+            </section>
+          )}
+        </TabPanel>
 
-        {tab === 'settings' && (
-          <section className="status-section" data-testid="openclaw-settings-section">
-            <h2 className="status-section-title">설정</h2>
+        <TabPanel value="settings" className="mobile-openclaw-tab-panel">
+          {tab === 'settings' && (
+            <section className="status-section" data-testid="openclaw-settings-section">
+            <h2 className="status-section-title">{t('mobile.openClaw.settings')}</h2>
             {restartBanner && (
               <div className="openclaw-guidance" data-testid="openclaw-restart-banner">
-                적용하려면 게이트웨이를 재시작하세요.
+                {t('mobile.openClaw.restartGuide')}
                 <div className="openclaw-lifecycle-buttons">
                   <button
                     type="button"
@@ -400,7 +412,7 @@ export function MobileOpenClawView({
                     onClick={() => runLifecycle('restart')}
                     data-testid="openclaw-restart-now"
                   >
-                    {busyAction === 'restart' ? '재시작하는 중…' : '지금 재시작'}
+                    {busyAction === 'restart' ? t('mobile.openClaw.restarting') : t('mobile.openClaw.restartNow')}
                   </button>
                 </div>
                 {lifecycleError && (
@@ -418,11 +430,11 @@ export function MobileOpenClawView({
             {config ? (
               <>
                 <label className="openclaw-config-row">
-                  <span>기본 모델</span>
+                  <span>{t('mobile.openClaw.defaultModel')}</span>
                   <input
                     type="text"
                     value={modelDraft}
-                    placeholder="(설정되지 않음)"
+                    placeholder={t('mobile.openClaw.unset')}
                     onChange={(e) => setModelDraft(e.target.value)}
                     data-testid="openclaw-config-model"
                   />
@@ -433,15 +445,15 @@ export function MobileOpenClawView({
                     onClick={() => saveConfig('agents.defaults.model', modelDraft, 'model')}
                     data-testid="openclaw-config-save-model"
                   >
-                    {configSaving === 'model' ? '저장하는 중…' : '저장'}
+                    {configSaving === 'model' ? t('mobile.openClaw.saving') : t('mobile.openClaw.save')}
                   </button>
                 </label>
                 <label className="openclaw-config-row">
-                  <span>게이트웨이 포트</span>
+                  <span>{t('mobile.openClaw.gatewayPort')}</span>
                   <input
                     type="text"
                     value={portDraft}
-                    placeholder="(설정되지 않음)"
+                    placeholder={t('mobile.openClaw.unset')}
                     onChange={(e) => setPortDraft(e.target.value)}
                     data-testid="openclaw-config-port"
                   />
@@ -452,23 +464,25 @@ export function MobileOpenClawView({
                     onClick={() => saveConfig('gateway.port', portDraft, 'port')}
                     data-testid="openclaw-config-save-port"
                   >
-                    {configSaving === 'port' ? '저장하는 중…' : '저장'}
+                    {configSaving === 'port' ? t('mobile.openClaw.saving') : t('mobile.openClaw.save')}
                   </button>
                 </label>
               </>
             ) : (
-              <div className="status-loading">불러오는 중…</div>
+              <div className="status-loading">{t('common.loading')}</div>
             )}
-          </section>
-        )}
+            </section>
+          )}
+        </TabPanel>
 
-        {tab === 'chat' && (
-          <section className="status-section openclaw-chat-section" data-testid="openclaw-chat-section">
+        <TabPanel value="chat" className="mobile-openclaw-tab-panel">
+          {tab === 'chat' && (
+            <section className="status-section openclaw-chat-section" data-testid="openclaw-chat-section">
             {!status ? (
-              <div className="status-loading">확인 중…</div>
+              <div className="status-loading">{t('mobile.openClaw.checking')}</div>
             ) : !gatewayRunning ? (
               <div className="openclaw-guidance" data-testid="openclaw-chat-guidance">
-                채팅을 사용하려면 OpenClaw 게이트웨이가 실행 중이어야 합니다 (현재: {STATE_LABEL[status.state]}).
+                {t('mobile.openClaw.chatRequiresGateway', { state: stateLabel(status.state) })}
                 <div className="openclaw-lifecycle-buttons">
                   <button
                     type="button"
@@ -477,18 +491,18 @@ export function MobileOpenClawView({
                     onClick={() => runLifecycle('start')}
                     data-testid="openclaw-chat-start"
                   >
-                    {busyAction === 'start' ? '시작하는 중…' : '시작'}
+                    {busyAction === 'start' ? t('mobile.openClaw.starting') : t('mobile.openClaw.start')}
                   </button>
                 </div>
               </div>
             ) : chatState.kind === 'loading' ? (
-              <div className="status-loading" data-testid="openclaw-chat-loading">채팅을 불러오는 중…</div>
+              <div className="status-loading" data-testid="openclaw-chat-loading">{t('mobile.openClaw.loadingChat')}</div>
             ) : chatState.kind === 'unavailable' ? (
               <div className="openclaw-guidance openclaw-guidance--error" data-testid="openclaw-chat-unavailable">
-                채팅을 열 수 없습니다. 원격 프록시 또는 게이트웨이 연결을 확인하세요.
+                {t('mobile.openClaw.chatUnavailable')}
                 <div className="openclaw-lifecycle-buttons">
                   <button type="button" className="btn" onClick={reloadChat} data-testid="openclaw-chat-retry">
-                    다시 시도
+                    {t('common.retry')}
                   </button>
                 </div>
               </div>
@@ -503,7 +517,7 @@ export function MobileOpenClawView({
                 />
                 <div className="openclaw-chat-toolbar">
                   <button type="button" className="btn" onClick={reloadChat} data-testid="openclaw-chat-reload">
-                    새로고침
+                    {t('mobile.openClaw.reload')}
                   </button>
                   <button
                     type="button"
@@ -511,14 +525,15 @@ export function MobileOpenClawView({
                     onClick={openInBrowser}
                     data-testid="openclaw-chat-open-browser"
                   >
-                    브라우저로 열기
+                    {t('mobile.openClaw.openBrowser')}
                   </button>
                 </div>
               </div>
             )}
-          </section>
-        )}
+            </section>
+          )}
+        </TabPanel>
       </div>
-    </div>
+    </Tabs>
   );
 }

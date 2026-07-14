@@ -8,6 +8,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { AppI18nProvider } from '../../src/renderer/i18n';
 import { MobileOpenClawView } from './MobileOpenClawView';
 import { WsEzTerminalTransport, type CreateSocket, type WsLike } from './transport/ws-ezterminal';
 
@@ -98,7 +99,11 @@ function renderView(transport: WsEzTerminalTransport, onClose: () => void): HTML
   document.body.appendChild(container);
   root = createRoot(container);
   act(() => {
-    root!.render(<MobileOpenClawView transport={transport} onClose={onClose} openclawAvailable={true} />);
+    root!.render(
+      <AppI18nProvider locale="ko">
+        <MobileOpenClawView transport={transport} onClose={onClose} openclawAvailable={true} />
+      </AppI18nProvider>,
+    );
   });
   return container;
 }
@@ -115,6 +120,28 @@ describe('MobileOpenClawView — status tab', () => {
     const { transport } = makeAuthedTransport();
     const el = renderView(transport, vi.fn());
     expect(el.querySelector('[data-testid="openclaw-status-section"]')?.textContent).toContain('확인 중');
+  });
+
+  it('uses linked tab semantics and Arrow-key roving focus', () => {
+    const { transport } = makeAuthedTransport();
+    const el = renderView(transport, vi.fn());
+    const tabs = [...el.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    const panels = [...el.querySelectorAll<HTMLElement>('[role="tabpanel"]')];
+
+    expect(tabs).toHaveLength(4);
+    expect(panels).toHaveLength(4);
+    expect(tabs[0]?.getAttribute('aria-selected')).toBe('true');
+    expect(tabs[0]?.tabIndex).toBe(0);
+    expect(tabs[1]?.tabIndex).toBe(-1);
+    expect(document.getElementById(tabs[0]!.getAttribute('aria-controls')!)).toBe(panels[0]);
+
+    tabs[0]!.focus();
+    act(() => tabs[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
+
+    expect(document.activeElement).toBe(tabs[1]);
+    expect(tabs[1]?.getAttribute('aria-selected')).toBe('true');
+    expect(panels[0]?.hidden).toBe(true);
+    expect(panels[1]?.hidden).toBe(false);
   });
 
   it('subscribes to status on mount and unsubscribes on unmount', () => {
@@ -327,7 +354,7 @@ describe('MobileOpenClawView — settings tab', () => {
     act(() => el.querySelector<HTMLButtonElement>('[data-testid="openclaw-config-save-model"]')!.click());
 
     expect(socket.sentKinds()).not.toContain('openclaw-config-set');
-    expect(el.querySelector('[data-testid="openclaw-config-error"]')?.textContent).toContain('변경할 값을 입력하세요.');
+    expect(el.querySelector('[data-testid="openclaw-config-error"]')?.textContent).toContain('변경할 값을 입력해 주세요.');
   });
 });
 

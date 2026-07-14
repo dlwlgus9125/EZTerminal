@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { InterpreterFrame, RendererControl } from '../shared/ipc';
 import { BlockController } from './block-controller';
+import { AppI18nProvider } from './i18n';
 
 // This suite exercises only the plain PTY branch. Avoid xterm/WebGL's import-
 // time canvas probes, which jsdom intentionally does not implement.
@@ -85,6 +86,21 @@ function flushAnimationFrames(): void {
 }
 
 describe('plain PTY keyboard context menu', () => {
+  it('exposes the terminal action menu label in Korean', () => {
+    act(() => root.unmount());
+    root = createRoot(mount);
+    act(() => root.render(
+      <AppI18nProvider locale="ko" languages={['ko']}>
+        <PtyBlock controller={controller} />
+      </AppI18nProvider>,
+    ));
+
+    commandInput.focus();
+    dispatchMenuKey('ContextMenu');
+
+    expect(mount.querySelector('[role="menu"]')?.getAttribute('aria-label')).toBe('터미널 작업');
+  });
+
   it('opens from Shift+F10 and restores its command invoker after Escape', () => {
     const composerBubbleHandler = vi.fn();
     commandInput.addEventListener('keydown', composerBubbleHandler);

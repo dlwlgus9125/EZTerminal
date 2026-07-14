@@ -19,6 +19,11 @@ async function clickTab(w: Page, title: string): Promise<void> {
   await w.locator('.dv-tab', { hasText: title }).click();
 }
 
+async function splitRight(w: Page): Promise<void> {
+  await w.getByTestId('btn-workspace-menu').click();
+  await w.getByTestId('btn-split-right').click();
+}
+
 test('drag-layout: moving a pane preserves its live PTY session (re-parents, never remounts)', async () => {
   const app = await launchApp();
   const window = await app.firstWindow();
@@ -36,7 +41,7 @@ test('drag-layout: moving a pane preserves its live PTY session (re-parents, nev
     .toContain('READY');
 
   // Split right so there is a second group to move the PTY pane into.
-  await window.getByTestId('btn-split-right').click();
+  await splitRight(window);
   await expect(panes).toHaveCount(2);
 
   // Move the PTY panel (tab-1) into the other group (tab-2) — dockview's move engine, the

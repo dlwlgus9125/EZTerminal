@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { quoteEzArgument } from '../shared/quote-ez-argument';
+import { useAppTranslation } from './i18n';
 import { getPaneHandle } from './pane-registry';
 
 export const EZTERMINAL_PATHS_MIME = 'application/x-ezterminal-paths';
@@ -40,8 +41,14 @@ export interface FileDropOverlayProps {
 }
 
 export function FileDropOverlay({ activePanelId, agentSessionIds }: FileDropOverlayProps): JSX.Element | null {
+  const { t, i18n } = useAppTranslation();
   const [dragDepth, setDragDepth] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const maxDroppedPaths = useMemo(
+    () => new Intl.NumberFormat(locale).format(MAX_DROPPED_PATHS),
+    [locale],
+  );
   const activePanelIdRef = useRef(activePanelId);
   activePanelIdRef.current = activePanelId;
   const agentSessionsRef = useRef(agentSessionIds);
@@ -86,7 +93,7 @@ export function FileDropOverlay({ activePanelId, agentSessionIds }: FileDropOver
             for (const value of parsed) if (typeof value === 'string') paths.push(value);
           }
         } catch {
-          showToast('Dropped path data is invalid.');
+          showToast(t('fileDrop.invalidData'));
           return;
         }
       }
@@ -96,39 +103,39 @@ export function FileDropOverlay({ activePanelId, agentSessionIds }: FileDropOver
       }
       const unique = uniquePaths(paths);
       if (unique.length === 0) {
-        showToast('No local file paths were available.');
+        showToast(t('fileDrop.noPaths'));
         return;
       }
       if (unique.length > MAX_DROPPED_PATHS) {
-        showToast(`Drop at most ${MAX_DROPPED_PATHS} paths at once.`);
+        showToast(t('fileDrop.tooManyPaths', { value: maxDroppedPaths }));
         return;
       }
       const panelId = activePanelIdRef.current;
       const pane = panelId ? getPaneHandle(panelId) : undefined;
       if (!pane) {
-        showToast('No active terminal.');
+        showToast(t('fileDrop.noActiveTerminal'));
         return;
       }
       const snapshot = pane.getSnapshot();
       if (snapshot.isDead) {
-        showToast('The active terminal has ended.');
+        showToast(t('fileDrop.terminalEnded'));
         return;
       }
       if (snapshot.activePty) {
         if (!snapshot.sessionId || !agentSessionsRef.current.has(snapshot.sessionId)) {
-          showToast('Drop is disabled for a running non-agent terminal.');
+          showToast(t('fileDrop.nonAgentDisabled'));
           return;
         }
         const result = pane.pasteToPty(unique.map(quotePtyPath).join(' '));
-        if (!result.ok) showToast('Could not paste paths into the agent terminal.');
+        if (!result.ok) showToast(t('fileDrop.agentPasteFailed'));
         return;
       }
       if (snapshot.isBusy) {
-        showToast('Wait for the active command to finish.');
+        showToast(t('fileDrop.waitForCommand'));
         return;
       }
       const result = pane.insertText(unique.map(quoteEzArgument).join(' '));
-      if (!result.ok) showToast('Could not insert paths into the terminal.');
+      if (!result.ok) showToast(t('fileDrop.insertFailed'));
     };
 
     window.addEventListener('dragenter', onDragEnter, true);
@@ -142,15 +149,15 @@ export function FileDropOverlay({ activePanelId, agentSessionIds }: FileDropOver
       window.removeEventListener('drop', onDrop, true);
       if (toastTimer !== null) window.clearTimeout(toastTimer);
     };
-  }, []);
+  }, [maxDroppedPaths, t]);
 
   if (dragDepth <= 0 && !toast) return null;
   return (
     <>
       {dragDepth > 0 && (
         <div className="file-drop-overlay" aria-hidden="true" data-testid="file-drop-overlay">
-          <span>Drop paths into the active terminal</span>
-          <small>Files are never opened, uploaded, executed, or submitted automatically.</small>
+          <span>{t('fileDrop.prompt')}</span>
+          <small>{t('fileDrop.safety')}</small>
         </div>
       )}
       {toast && <div className="file-drop-toast" role="status">{toast}</div>}

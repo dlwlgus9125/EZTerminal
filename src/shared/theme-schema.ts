@@ -19,7 +19,9 @@ import { EFFECT_CATALOG } from '../renderer/effects';
  * bundles can pull it in cheaply.
  */
 
-export const THEME_SCHEMA_VERSION = 1 as const;
+/** Latest authoring format. Version 1 remains a supported import format. */
+export const THEME_SCHEMA_VERSION = 2 as const;
+export const LEGACY_THEME_SCHEMA_VERSION = 1 as const;
 
 /** Hard cap enforced BEFORE JSON.parse (see `validateThemeMod`) — a theme mod
  * is a small, hand-authored color palette; anything past this is either
@@ -76,6 +78,48 @@ const ColorValueSchema = z.string().refine(isColorValue, {
   message: 'must be a hex/rgb(a)/hsl(a)/named color literal',
 });
 
+/** Semantic application-chrome colors. Terminal colors deliberately remain
+ * in `cssVars`/`xterm`; the two surfaces have different compatibility needs. */
+export interface UiThemeColors {
+  canvas: string;
+  surface: string;
+  surfaceRaised: string;
+  surfaceInset: string;
+  textPrimary: string;
+  textSecondary: string;
+  textMuted: string;
+  textInverse: string;
+  borderSubtle: string;
+  borderStrong: string;
+  accent: string;
+  onAccent: string;
+  focus: string;
+  info: string;
+  success: string;
+  warning: string;
+  danger: string;
+}
+
+export const UiThemeColorsSchema: z.ZodType<UiThemeColors> = z.strictObject({
+  canvas: ColorValueSchema,
+  surface: ColorValueSchema,
+  surfaceRaised: ColorValueSchema,
+  surfaceInset: ColorValueSchema,
+  textPrimary: ColorValueSchema,
+  textSecondary: ColorValueSchema,
+  textMuted: ColorValueSchema,
+  textInverse: ColorValueSchema,
+  borderSubtle: ColorValueSchema,
+  borderStrong: ColorValueSchema,
+  accent: ColorValueSchema,
+  onAccent: ColorValueSchema,
+  focus: ColorValueSchema,
+  info: ColorValueSchema,
+  success: ColorValueSchema,
+  warning: ColorValueSchema,
+  danger: ColorValueSchema,
+});
+
 // ── id: the CSS-selector-safety-critical field ───────────────────────────────
 
 /** `--term-*` custom-property namespace — the only keys `cssVars` may set
@@ -108,8 +152,7 @@ const CssVarsSchema = z.record(
   ColorValueSchema,
 );
 
-export const ThemeModSchema = z.strictObject({
-  schemaVersion: z.literal(THEME_SCHEMA_VERSION),
+const ThemeModCommonShape = {
   id: ThemeIdSchema,
   name: z.string().min(1).max(128),
   cssVars: CssVarsSchema,
@@ -126,8 +169,26 @@ export const ThemeModSchema = z.strictObject({
   // typo'd effect id still registers with its colors intact.
   effects: z.array(z.string()).optional(),
   swatch: z.strictObject({ bg: ColorValueSchema, accent: ColorValueSchema }).optional(),
+} as const;
+
+/** Original custom-theme format. It remains readable without migration or
+ * mutation so a user's source file is never silently rewritten. */
+export const ThemeModV1Schema = z.strictObject({
+  schemaVersion: z.literal(LEGACY_THEME_SCHEMA_VERSION),
+  ...ThemeModCommonShape,
 });
 
+/** Current authoring format with an explicit, complete semantic UI palette. */
+export const ThemeModV2Schema = z.strictObject({
+  schemaVersion: z.literal(THEME_SCHEMA_VERSION),
+  ...ThemeModCommonShape,
+  ui: UiThemeColorsSchema,
+});
+
+export const ThemeModSchema = z.discriminatedUnion('schemaVersion', [ThemeModV1Schema, ThemeModV2Schema]);
+
+export type ThemeModV1 = z.infer<typeof ThemeModV1Schema>;
+export type ThemeModV2 = z.infer<typeof ThemeModV2Schema>;
 export type ThemeMod = z.infer<typeof ThemeModSchema>;
 
 const KNOWN_EFFECT_IDS = new Set<string>(Object.keys(EFFECT_CATALOG));

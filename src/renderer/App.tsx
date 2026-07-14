@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useEffect, useState } from 'react';
+import { X } from 'lucide-react';
 import {
   DockviewReact,
   type DockviewApi,
@@ -25,14 +26,9 @@ import {
 import type { FilePreviewResult } from '../shared/file-preview';
 import type { SessionInfo } from '../shared/ipc';
 import type { ThemeMod } from '../shared/theme-schema';
-import {
-  type QuickCommand,
-  type QuickCommandInput,
-  type QuickCommandMutationResult,
-} from '../shared/quick-command';
+import { type QuickCommand, type QuickCommandInput, type QuickCommandMutationResult } from '../shared/quick-command';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
 import {
-  CLOSE_RISK_LABEL,
   classifyCloseRisk,
   countCloseRisks,
   planPaneClose,
@@ -41,7 +37,6 @@ import {
 } from '../shared/close-risk';
 import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from '../shared/workspace-search';
 import { AgentHub, countAgentAttention } from './AgentHub';
-import { ConnectionInfoPanel } from './ConnectionInfoPanel';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import {
   DEFAULT_INTERFERENCE_PARAMS,
@@ -56,6 +51,7 @@ import {
 import { FileExplorerPanel } from './FileExplorerPanel';
 import { FileDropOverlay } from './FileDropOverlay';
 import { subsequenceMatch } from './fuzzy';
+import { useAppTranslation } from './i18n';
 import { OpenClawChatPanel, OpenClawOverlayContext } from './OpenClawChatPanel';
 import { OpenClawPanel } from './OpenClawPanel';
 import {
@@ -67,25 +63,28 @@ import {
   type QuickOpenRow,
 } from './QuickOpenModal';
 import { RichFileViewerOverlay } from './RichFileViewerOverlay';
-import {
-  RecentPanelSwitcher,
-  type RecentPanelSwitcherItem,
-} from './RecentPanelSwitcher';
+import { RecentPanelSwitcher, type RecentPanelSwitcherItem } from './RecentPanelSwitcher';
 import { RiskyCloseDialog } from './RiskyCloseDialog';
 import { SettingsPanel } from './SettingsPanel';
 import { StatusPanel } from './StatusPanel';
 import { TerminalPane } from './TerminalPane';
 import { WorkspaceTab } from './WorkspaceTab';
 import { preflightLayoutEnvelope } from './layout-preflight';
-import {
-  SessionPanelTracker,
-  type PaneInstanceToken,
-  type SessionPaneLease,
-} from './session-panel-tracker';
+import { SessionPanelTracker, type PaneInstanceToken, type SessionPaneLease } from './session-panel-tracker';
 import { applyThemeVarsAndEffects, setUserFontId, themeModToDefinition } from './theme-runtime';
 import { THEME_ORDER, THEMES, listThemes, registerTheme, type ThemeDefinition } from './themes';
 import { applyScrollback, clampScrollback, SCROLLBACK_DEFAULT } from './scrollback';
 import { applyUiScale, clampUiScale, UI_SCALE_DEFAULT } from './ui-scale';
+import { useUiPreferences } from './ui-preferences';
+import {
+  ActivityRail,
+  AppHeader,
+  RemotePanel,
+  SidebarShell,
+  WorkspaceMenu,
+  useSidebarReflow,
+  type SidebarDestination,
+} from './workbench';
 import {
   closePaneAfterGuardedSessionDestroy,
   getPaneHandle,
@@ -107,10 +106,7 @@ import {
   startRecentPanelSwitch,
   type RecentPanelSwitchSession,
 } from './recent-panel-switching';
-import {
-  DEFAULT_TERMINAL_RUNTIME_OPTIONS,
-  type TerminalRuntimeOptions,
-} from './xterm-runtime';
+import { DEFAULT_TERMINAL_RUNTIME_OPTIONS, type TerminalRuntimeOptions } from './xterm-runtime';
 
 // Desktop's per-effect default-on state (App.tsx's `applyTheme`/`onToggleEffect`
 // platformDefaults): mirrors the effect catalog's own guidance exactly, so a
@@ -119,6 +115,14 @@ import {
 const DESKTOP_EFFECT_DEFAULTS: Partial<Record<EffectId, boolean>> = Object.fromEntries(
   Object.values(EFFECT_CATALOG).map((entry) => [entry.id, entry.defaultOn]),
 );
+
+const CLOSE_RISK_I18N_KEY = {
+  'ssh-prompt': 'safetyDialog.risks.sshPrompt',
+  'active-agent': 'safetyDialog.risks.activeAgent',
+  'ssh-active': 'safetyDialog.risks.sshActive',
+  'running-command': 'safetyDialog.risks.runningCommand',
+  unknown: 'safetyDialog.risks.unknown',
+} as const satisfies Readonly<Record<CloseRisk, string>>;
 
 // App is the dockview host: one TerminalPane per tab or split pane. Each pane owns its
 // own shell session, so panes are fully isolated. Panes are created programmatically —
@@ -235,7 +239,10 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
   );
 }
 
-const components = { terminal: TerminalPanel, 'openclaw-chat': OpenClawChatPanel };
+const components = {
+  terminal: TerminalPanel,
+  'openclaw-chat': OpenClawChatPanel,
+};
 
 let tabCounter = 0;
 
@@ -243,15 +250,9 @@ let tabCounter = 0;
  * less than this before a hard kill are lost — accepted v1 window (gate Q2). */
 const SAVE_DEBOUNCE_MS = 300;
 
-type RightRail = 'agents' | 'stats' | 'pairing' | 'settings' | 'openclaw' | null;
 type OpenStateUpdate = boolean | ((open: boolean) => boolean);
 
-type QuickOpenBuiltinAction =
-  | 'new-tab'
-  | 'split-right'
-  | 'split-down'
-  | 'cycle-theme'
-  | 'save-preset';
+type QuickOpenBuiltinAction = 'new-tab' | 'split-right' | 'split-down' | 'cycle-theme' | 'save-preset';
 
 type QuickOpenTarget =
   | { readonly type: 'pane'; readonly panelId: string }
@@ -275,24 +276,6 @@ interface AgentLauncher {
   readonly command: string;
   readonly detail: string;
   readonly sourceLabel: string;
-}
-
-const PANE_ACTION_FAILURE_MESSAGE: Record<PaneActionFailure, string> = {
-  unavailable: 'No active terminal pane is available.',
-  busy: 'The active pane is busy. Wait for the current command to finish.',
-  dead: 'The active terminal pane has ended.',
-  'draft-not-empty': 'Clear the active pane draft before running a Quick Open command.',
-  'not-pty': 'The active pane is not accepting terminal input.',
-  empty: 'The selected command is empty.',
-};
-
-function quickCommandManageResult(result: QuickCommandMutationResult): QuickCommandManageResult {
-  if (result.ok) return { ok: true };
-  return {
-    ok: false,
-    message: result.message,
-    ...(result.error === 'duplicate-name' ? { fieldErrors: { name: result.message } } : {}),
-  };
 }
 
 function recentDistinctCommands(history: readonly string[]): string[] {
@@ -319,10 +302,6 @@ function workspaceFilePath(root: string, relativePath: string): string {
   return `${normalizedRoot}${separator}${normalizedRelative}`;
 }
 
-function paneActionMessage(result: PaneActionResult): string | null {
-  return result.ok ? null : PANE_ACTION_FAILURE_MESSAGE[result.reason];
-}
-
 /** Pick the startup layout: a named preset when configured, else the last
  * layout, falling back from a missing preset to the last layout (never fails
  * hard — a null return means "open the default single pane"). */
@@ -337,7 +316,36 @@ async function pickStartupLayout(): Promise<LayoutEnvelope | null> {
 }
 
 export function App(): JSX.Element {
-  const versions = window.ezterminal?.versions;
+  const { t } = useAppTranslation();
+  const paneActionMessage = useCallback(
+    (result: PaneActionResult): string | null => {
+      if (result.ok) return null;
+      const messages: Record<PaneActionFailure, string> = {
+        unavailable: t('commandCenter.paneFailure.unavailable'),
+        busy: t('commandCenter.paneFailure.busy'),
+        dead: t('commandCenter.paneFailure.dead'),
+        'draft-not-empty': t('commandCenter.paneFailure.draftNotEmpty'),
+        'not-pty': t('commandCenter.paneFailure.notPty'),
+        empty: t('commandCenter.paneFailure.empty'),
+      };
+      return messages[result.reason];
+    },
+    [t],
+  );
+  const quickCommandManageResult = useCallback(
+    (result: QuickCommandMutationResult): QuickCommandManageResult => {
+      if (result.ok) return { ok: true };
+      const message = t(`quickCommands.errors.${result.error}`);
+      return {
+        ok: false,
+        message,
+        ...(result.error === 'duplicate-name' ? { fieldErrors: { name: message } } : {}),
+      };
+    },
+    [t],
+  );
+  const { preferences: uiPreferences, updatePreferences } = useUiPreferences();
+  const sidebarReflow = useSidebarReflow();
   const apiRef = useRef<DockviewApi | null>(null);
   const [closeDialog, setCloseDialog] = useState<CloseDialogState | null>(null);
   const pendingPanelClosesRef = useRef(new Set<string>());
@@ -347,10 +355,13 @@ export function App(): JSX.Element {
   const scheduleSessionMirrorRef = useRef<((session: SessionInfo) => void) | null>(null);
   const deferredSessionRemovalsRef = useRef(new Set<string>());
   const scheduleSessionRemovalRef = useRef<((sessionId: string) => void) | null>(null);
-  const presetMutationValue = useMemo<PresetMutationContextValue>(() => ({
-    locked: presetApplyPending,
-    isLocked: () => presetApplyPendingRef.current,
-  }), [presetApplyPending]);
+  const presetMutationValue = useMemo<PresetMutationContextValue>(
+    () => ({
+      locked: presetApplyPending,
+      isLocked: () => presetApplyPendingRef.current,
+    }),
+    [presetApplyPending],
+  );
   const [quickPreview, setQuickPreview] = useState<QuickOpenFilePreview | null>(null);
   const quickPreviewSequenceRef = useRef(0);
   const [terminalPathMessage, setTerminalPathMessage] = useState<string | null>(null);
@@ -422,15 +433,11 @@ export function App(): JSX.Element {
   }
   const sessionPanelTracker = sessionPanelTrackerRef.current;
 
-  const mountSessionPane = useCallback((
-    panelId: string,
-    instanceToken: PaneInstanceToken,
-    requestedAdoptSessionId?: string,
-  ): SessionPaneLease => sessionPanelTracker.mountPane(
-    panelId,
-    instanceToken,
-    requestedAdoptSessionId,
-  ), [sessionPanelTracker]);
+  const mountSessionPane = useCallback(
+    (panelId: string, instanceToken: PaneInstanceToken, requestedAdoptSessionId?: string): SessionPaneLease =>
+      sessionPanelTracker.mountPane(panelId, instanceToken, requestedAdoptSessionId),
+    [sessionPanelTracker],
+  );
 
   const sessionBindingValue = useMemo<SessionBindingContextValue>(
     () => ({ mountPane: mountSessionPane }),
@@ -642,9 +649,9 @@ export function App(): JSX.Element {
       title: 'OpenClaw Chat',
       renderer: 'always',
     });
-  // setOpenclawOpen is a stable state adapter declared below this callback;
-  // reading it only when invoked avoids a render-order dependency.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // setOpenclawOpen is a stable state adapter declared below this callback;
+    // reading it only when invoked avoids a render-order dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openclawVisible]);
 
   // Split the pane the user last focused. Omitting `direction` would default to
@@ -715,8 +722,7 @@ export function App(): JSX.Element {
           if (opts.beforeApply && !opts.beforeApply()) return false;
           // Preset apply keeps a live backup: dockview's own revert does not
           // cover every failure window (gate B1), so we restore it ourselves.
-          const backup =
-            opts.restoreBackupOnFailure && api.panels.length > 0 ? api.toJSON() : null;
+          const backup = opts.restoreBackupOnFailure && api.panels.length > 0 ? api.toJSON() : null;
           try {
             // Re-seed BEFORE fromJSON: restored ids keep their original tab-N
             // names, and a later addPanel minting a duplicate id throws (F6).
@@ -762,35 +768,27 @@ export function App(): JSX.Element {
   // banner tells the user WHAT happened and where the local evidence lives.
   const [crashInfo, setCrashInfo] = useState<{ logPath: string | null } | null>(null);
   useEffect(() => {
-    const unsub = window.ezterminal?.onSessionDead?.((info) =>
-      setCrashInfo({ logPath: info?.logPath ?? null }),
-    );
+    const unsub = window.ezterminal?.onSessionDead?.((info) => setCrashInfo({ logPath: info?.logPath ?? null }));
     return () => unsub?.();
   }, []);
 
-  // ── Status overlay panel (status-overlay-panel) ──────────────────────────
-  // Starts closed (AC11). The effect fires on every toggle AND once on mount
-  // (statsOpen's initial value), which is exactly the "toggle + mount, both
-  // idempotent" resync the main process expects (rev6 architecture).
-  const [rightRail, setRightRail] = useState<RightRail>(null);
-  const setRailOpen = useCallback((rail: Exclude<RightRail, null>, update: OpenStateUpdate): void => {
-    setRightRail((current) => {
-      const wasOpen = current === rail;
+  // One adaptive sidebar owns every navigation destination. At >=1200px it
+  // reflows the workspace; below that breakpoint the same shell overlays it.
+  const [sidebarDestination, setSidebarDestination] = useState<SidebarDestination | null>(null);
+  const setSidebarOpen = useCallback((destination: SidebarDestination, update: OpenStateUpdate): void => {
+    setSidebarDestination((current) => {
+      const wasOpen = current === destination;
       const nextOpen = typeof update === 'function' ? update(wasOpen) : update;
-      if (nextOpen) return rail;
+      if (nextOpen) return destination;
       return wasOpen ? null : current;
     });
   }, []);
-  const statsOpen = rightRail === 'stats';
-  const pairingOpen = rightRail === 'pairing';
-  const settingsOpen = rightRail === 'settings';
-  const openclawOpen = rightRail === 'openclaw';
-  const agentsOpen = rightRail === 'agents';
-  const setStatsOpen = useCallback((update: OpenStateUpdate) => setRailOpen('stats', update), [setRailOpen]);
-  const setPairingOpen = useCallback((update: OpenStateUpdate) => setRailOpen('pairing', update), [setRailOpen]);
-  const setSettingsOpen = useCallback((update: OpenStateUpdate) => setRailOpen('settings', update), [setRailOpen]);
-  const setOpenclawOpen = useCallback((update: OpenStateUpdate) => setRailOpen('openclaw', update), [setRailOpen]);
-  const setAgentsOpen = useCallback((update: OpenStateUpdate) => setRailOpen('agents', update), [setRailOpen]);
+  const statsOpen = sidebarDestination === 'monitor';
+  const setOpenclawOpen = useCallback(
+    (update: OpenStateUpdate) => setSidebarOpen('openclaw', update),
+    [setSidebarOpen],
+  );
+  const setAgentsOpen = useCallback((update: OpenStateUpdate) => setSidebarOpen('agents', update), [setSidebarOpen]);
   useEffect(() => {
     window.ezterminal.setStatsPanelVisible(statsOpen);
   }, [statsOpen]);
@@ -813,18 +811,12 @@ export function App(): JSX.Element {
     if (!layoutReady || openclawVisible) return;
     setOpenclawOpen(false);
     apiRef.current?.getPanel('openclaw-chat')?.api.close();
-  // setOpenclawOpen is stable and intentionally declared after OpenClaw's
-  // visibility state to preserve the existing hook ordering.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // setOpenclawOpen is stable and intentionally declared after OpenClaw's
+    // visibility state to preserve the existing hook ordering.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutReady, openclawVisible]);
 
-  // ── File explorer drawer (file-explorer plan, M1) ─────────────────────────
-  // Left-edge overlay — unlike stats/pairing above, it does not share their
-  // right-slot mutual exclusion. `activePanelId` tracks dockview's active
-  // panel so the drawer can read that pane's live cwd via pane-registry when
-  // it opens (best-effort snapshot only, no live-following — see App.tsx's
-  // onDidActivePanelChange subscription in onReady below).
-  const [filesOpen, setFilesOpen] = useState(false);
+  // Explorer reads the active pane cwd when its shared sidebar destination opens.
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
   const recentPanelOrderRef = useRef<readonly string[]>([]);
   const recentPanelSwitchRef = useRef<RecentPanelSwitchSession | null>(null);
@@ -847,24 +839,24 @@ export function App(): JSX.Element {
     });
   }, []);
 
-  const cycleRecentPanel = useCallback((reverse: boolean): void => {
-    const api = apiRef.current;
-    const activePanelId = api?.activePanel?.id;
-    if (!api || !activePanelId) return;
-    const availablePanelIds = listSwitchablePanelIds(api);
-    const current = recentPanelSwitchRef.current;
-    if (current) {
-      const reconciled = reconcileRecentPanelSwitch(current, availablePanelIds);
-      updateRecentPanelSwitch(reconciled ? advanceRecentPanelSwitch(reconciled, reverse) : null);
-      return;
-    }
-    updateRecentPanelSwitch(startRecentPanelSwitch(
-      recentPanelOrderRef.current,
-      availablePanelIds,
-      activePanelId,
-      reverse,
-    ));
-  }, [updateRecentPanelSwitch]);
+  const cycleRecentPanel = useCallback(
+    (reverse: boolean): void => {
+      const api = apiRef.current;
+      const activePanelId = api?.activePanel?.id;
+      if (!api || !activePanelId) return;
+      const availablePanelIds = listSwitchablePanelIds(api);
+      const current = recentPanelSwitchRef.current;
+      if (current) {
+        const reconciled = reconcileRecentPanelSwitch(current, availablePanelIds);
+        updateRecentPanelSwitch(reconciled ? advanceRecentPanelSwitch(reconciled, reverse) : null);
+        return;
+      }
+      updateRecentPanelSwitch(
+        startRecentPanelSwitch(recentPanelOrderRef.current, availablePanelIds, activePanelId, reverse),
+      );
+    },
+    [updateRecentPanelSwitch],
+  );
 
   const commitRecentPanelSwitch = useCallback((): void => {
     const session = recentPanelSwitchRef.current;
@@ -875,12 +867,15 @@ export function App(): JSX.Element {
     activateAndFocusPanel(reconciled?.selectedPanelId ?? session.originPanelId);
   }, [activateAndFocusPanel, updateRecentPanelSwitch]);
 
-  const cancelRecentPanelSwitch = useCallback((restoreFocus: boolean): void => {
-    const session = recentPanelSwitchRef.current;
-    if (!session) return;
-    updateRecentPanelSwitch(null);
-    if (restoreFocus) activateAndFocusPanel(session.originPanelId);
-  }, [activateAndFocusPanel, updateRecentPanelSwitch]);
+  const cancelRecentPanelSwitch = useCallback(
+    (restoreFocus: boolean): void => {
+      const session = recentPanelSwitchRef.current;
+      if (!session) return;
+      updateRecentPanelSwitch(null);
+      if (restoreFocus) activateAndFocusPanel(session.originPanelId);
+    },
+    [activateAndFocusPanel, updateRecentPanelSwitch],
+  );
 
   // Agent Activity is a main-owned monotonic snapshot. Renderer state only
   // adds per-window unread bookkeeping and session-to-panel presentation.
@@ -891,14 +886,16 @@ export function App(): JSX.Element {
     let alive = true;
     const applySnapshot = (next: AgentActivitySnapshot): void => {
       if (!alive) return;
-      setAgentSnapshot((current) => next.revision >= current.revision ? next : current);
+      setAgentSnapshot((current) => (next.revision >= current.revision ? next : current));
       const previous = previousAgentStatusesRef.current;
       const nextStatuses = new Map(next.items.map((item) => [item.id, item.status] as const));
       setUnreadAgentIds((current) => {
-        const updated = new Set([...current].filter((id) => {
-          const status = nextStatuses.get(id);
-          return status === 'waiting' || status === 'blocked' || status === 'error';
-        }));
+        const updated = new Set(
+          [...current].filter((id) => {
+            const status = nextStatuses.get(id);
+            return status === 'waiting' || status === 'blocked' || status === 'error';
+          }),
+        );
         for (const item of next.items) {
           if (item.status !== 'waiting' && item.status !== 'blocked' && item.status !== 'error') continue;
           if (previous.get(item.id) !== item.status) updated.add(item.id);
@@ -908,41 +905,59 @@ export function App(): JSX.Element {
       previousAgentStatusesRef.current = nextStatuses;
     };
     const unsubscribe = window.ezterminal.onAgentActivitySnapshot(applySnapshot);
-    void window.ezterminal.getAgentActivitySnapshot().then(applySnapshot).catch(() => undefined);
+    void window.ezterminal
+      .getAgentActivitySnapshot()
+      .then(applySnapshot)
+      .catch(() => undefined);
     return () => {
       alive = false;
       unsubscribe?.();
     };
   }, []);
 
-  const focusAgentSession = useCallback((sessionId: string): void => {
-    const api = apiRef.current;
-    const candidates = sessionPanelTracker.getBound(sessionId).filter((binding) => (
-      api?.getPanel(binding.panelId)?.api === binding.instanceToken
-    ));
-    const activePanelId = api?.activePanel?.id;
-    const panelId = candidates.find((binding) => binding.panelId === activePanelId)?.panelId
-      ?? candidates[0]?.panelId;
-    if (panelId) {
-      api?.getPanel(panelId)?.api.setActive();
-      requestAnimationFrame(() => getPaneHandle(panelId)?.focus());
-    }
-    setUnreadAgentIds((current) => new Set(
-      [...current].filter((id) => agentSnapshot.items.find((item) => item.id === id)?.sessionId !== sessionId),
-    ));
-  }, [agentSnapshot, sessionPanelTracker]);
+  const focusAgentSession = useCallback(
+    (sessionId: string): void => {
+      const api = apiRef.current;
+      const candidates = sessionPanelTracker
+        .getBound(sessionId)
+        .filter((binding) => api?.getPanel(binding.panelId)?.api === binding.instanceToken);
+      const activePanelId = api?.activePanel?.id;
+      const panelId =
+        candidates.find((binding) => binding.panelId === activePanelId)?.panelId ?? candidates[0]?.panelId;
+      if (panelId) {
+        api?.getPanel(panelId)?.api.setActive();
+        requestAnimationFrame(() => getPaneHandle(panelId)?.focus());
+      }
+      setUnreadAgentIds(
+        (current) =>
+          new Set(
+            [...current].filter((id) => agentSnapshot.items.find((item) => item.id === id)?.sessionId !== sessionId),
+          ),
+      );
+    },
+    [agentSnapshot, sessionPanelTracker],
+  );
 
   useEffect(() => {
     if (!activePanelId) return;
-    setUnreadAgentIds((current) => new Set(
-      [...current].filter((id) => {
-        const activity = agentSnapshot.items.find((item) => item.id === id);
-        return !activity || !sessionPanelTracker.getBound(activity.sessionId).some((binding) => (
-          binding.panelId === activePanelId
-          && apiRef.current?.getPanel(binding.panelId)?.api === binding.instanceToken
-        ));
-      }),
-    ));
+    setUnreadAgentIds(
+      (current) =>
+        new Set(
+          [...current].filter((id) => {
+            const activity = agentSnapshot.items.find((item) => item.id === id);
+            return (
+              !activity ||
+              !sessionPanelTracker
+                .getBound(activity.sessionId)
+                .some(
+                  (binding) =>
+                    binding.panelId === activePanelId &&
+                    apiRef.current?.getPanel(binding.panelId)?.api === binding.instanceToken,
+                )
+            );
+          }),
+        ),
+    );
   }, [activePanelId, agentSnapshot, sessionPanelRevision, sessionPanelTracker]);
 
   useEffect(() => {
@@ -952,7 +967,14 @@ export function App(): JSX.Element {
   const agentTabStatuses = useMemo<ReadonlyMap<string, AgentStatus>>(() => {
     // The session map is ref-owned; its revision is the explicit memo invalidator.
     void sessionPanelRevision;
-    const rank: Record<AgentStatus, number> = { blocked: 0, error: 1, waiting: 2, working: 3, starting: 4, done: 5 };
+    const rank: Record<AgentStatus, number> = {
+      blocked: 0,
+      error: 1,
+      waiting: 2,
+      working: 3,
+      starting: 4,
+      done: 5,
+    };
     const result = new Map<string, AgentStatus>();
     for (const activity of agentSnapshot.items) {
       for (const binding of sessionPanelTracker.getBound(activity.sessionId)) {
@@ -967,112 +989,125 @@ export function App(): JSX.Element {
   }, [agentSnapshot, sessionPanelRevision, sessionPanelTracker]);
 
   const attentionCount = countAgentAttention(agentSnapshot);
-  const agentSessionIds = useMemo<ReadonlySet<string>>(() => new Set(
-    agentSnapshot.items
-      .filter((item) => item.status !== 'done' && item.status !== 'error')
-      .map((item) => item.sessionId),
-  ), [agentSnapshot]);
+  const agentSessionIds = useMemo<ReadonlySet<string>>(
+    () =>
+      new Set(
+        agentSnapshot.items
+          .filter((item) => item.status !== 'done' && item.status !== 'error')
+          .map((item) => item.sessionId),
+      ),
+    [agentSnapshot],
+  );
 
   const focusActivePane = useCallback((): void => {
     const panelId = apiRef.current?.activePanel?.id;
     if (panelId) requestAnimationFrame(() => getPaneHandle(panelId)?.focus());
   }, []);
 
-  const requestPanelClose = useCallback((
-    panelId: string,
-    component: string,
-    close: () => void,
-  ): void => {
-    if (component !== 'terminal') {
-      close();
-      return;
-    }
-    const retryAfterStateCheck = (): void => {
-      setCloseDialog((current) => current ?? {
-        title: 'Terminal state unavailable',
-        description: 'EZTerminal could not verify whether closing this pane would stop an active session. Close is blocked until its state can be checked.',
-        confirmLabel: 'Retry',
-        onConfirm: () => {
-          setCloseDialog(null);
-          requestAnimationFrame(() => requestPanelClose(panelId, component, close));
-        },
-      });
-    };
-    const closeAfterGuardedDestroy = (candidate: PaneSnapshot): void => {
-      if (pendingPanelClosesRef.current.has(panelId)) return;
-      pendingPanelClosesRef.current.add(panelId);
-      void closePaneAfterGuardedSessionDestroy(
-        candidate,
-        (sessionId, activeRunIds) => window.ezterminal.destroySessionGuarded(sessionId, activeRunIds),
-        () => getPaneHandle(panelId)?.getSnapshot() ?? null,
-        (sessionId) => getPaneHandle(panelId)?.markSessionDestroyHandled(sessionId) ?? false,
-        close,
-      ).then((outcome) => {
-        if (outcome === 'closed') {
-          focusActivePane();
-          return;
-        }
+  const requestPanelClose = useCallback(
+    (panelId: string, component: string, close: () => void): void => {
+      if (component !== 'terminal') {
+        close();
+        return;
+      }
+      const retryAfterStateCheck = (): void => {
+        setCloseDialog(
+          (current) =>
+            current ?? {
+              title: t('safetyDialog.terminalStateUnavailableTitle'),
+              description: t('safetyDialog.terminalStateUnavailableDescription'),
+              confirmLabel: t('common.retry'),
+              onConfirm: () => {
+                setCloseDialog(null);
+                requestAnimationFrame(() => requestPanelClose(panelId, component, close));
+              },
+            },
+        );
+      };
+      const closeAfterGuardedDestroy = (candidate: PaneSnapshot): void => {
+        if (pendingPanelClosesRef.current.has(panelId)) return;
+        pendingPanelClosesRef.current.add(panelId);
+        void closePaneAfterGuardedSessionDestroy(
+          candidate,
+          (sessionId, activeRunIds) => window.ezterminal.destroySessionGuarded(sessionId, activeRunIds),
+          () => getPaneHandle(panelId)?.getSnapshot() ?? null,
+          (sessionId) => getPaneHandle(panelId)?.markSessionDestroyHandled(sessionId) ?? false,
+          close,
+        )
+          .then((outcome) => {
+            if (outcome === 'closed') {
+              focusActivePane();
+              return;
+            }
+            retryAfterStateCheck();
+          })
+          .finally(() => {
+            pendingPanelClosesRef.current.delete(panelId);
+          });
+      };
+      const snapshot = getPaneHandle(panelId)?.getSnapshot();
+      if (!snapshot) {
         retryAfterStateCheck();
-      }).finally(() => {
-        pendingPanelClosesRef.current.delete(panelId);
-      });
-    };
-    const snapshot = getPaneHandle(panelId)?.getSnapshot();
-    if (!snapshot) {
-      retryAfterStateCheck();
-      return;
-    }
-    if (!snapshot.destroysSessionOnClose) {
-      close();
-      return;
-    }
-    const plan = planPaneClose({
-      destroysSession: true,
-      isBusy: snapshot.isBusy,
-      executionKind: snapshot.executionKind,
-      hasSshPrompt: snapshot.hasSshPrompt,
-      hasActiveAgent: snapshot.sessionId !== null && agentSessionIds.has(snapshot.sessionId),
-      isDead: snapshot.isDead,
-    }, confirmRiskyPaneClose);
-    if (plan.kind === 'close') {
-      closeAfterGuardedDestroy(snapshot);
-      return;
-    }
-    if (plan.kind === 'blocked') {
-      retryAfterStateCheck();
-      return;
-    }
-    const risk = plan.risk;
-    const expectedSessionId = snapshot.sessionId;
-    const expectedActiveRunIds = Object.freeze([...snapshot.activeRunIds]);
-    setCloseDialog((current) => current ?? {
-      title: 'Close active terminal?',
-      description: `Closing this pane destroys its session, including ${CLOSE_RISK_LABEL[risk]}.`,
-      confirmLabel: 'Close terminal',
-      onConfirm: () => {
-        const latest = getPaneHandle(panelId)?.getSnapshot();
-        setCloseDialog(null);
-        if (
-          !latest
-          || latest.sessionId !== expectedSessionId
-          || !sameActiveRunSet(latest.activeRunIds, expectedActiveRunIds)
-        ) {
-          requestAnimationFrame(() => requestPanelClose(panelId, component, close));
-          return;
-        }
-        if (!latest.destroysSessionOnClose) {
-          close();
-          focusActivePane();
-          return;
-        }
-        closeAfterGuardedDestroy(latest);
-      },
-    });
-  }, [agentSessionIds, confirmRiskyPaneClose, focusActivePane]);
-  const paneCloseContextValue = useMemo<PaneCloseContextValue>(
-    () => ({ requestPanelClose }),
-    [requestPanelClose],
+        return;
+      }
+      if (!snapshot.destroysSessionOnClose) {
+        close();
+        return;
+      }
+      const plan = planPaneClose(
+        {
+          destroysSession: true,
+          isBusy: snapshot.isBusy,
+          executionKind: snapshot.executionKind,
+          hasSshPrompt: snapshot.hasSshPrompt,
+          hasActiveAgent: snapshot.sessionId !== null && agentSessionIds.has(snapshot.sessionId),
+          isDead: snapshot.isDead,
+        },
+        confirmRiskyPaneClose,
+      );
+      if (plan.kind === 'close') {
+        closeAfterGuardedDestroy(snapshot);
+        return;
+      }
+      if (plan.kind === 'blocked') {
+        retryAfterStateCheck();
+        return;
+      }
+      const risk = plan.risk;
+      const expectedSessionId = snapshot.sessionId;
+      const expectedActiveRunIds = Object.freeze([...snapshot.activeRunIds]);
+      setCloseDialog(
+        (current) =>
+          current ?? {
+            title: t('safetyDialog.closeActiveTitle'),
+            description: t('safetyDialog.closeActiveDescription', {
+              risk: t(CLOSE_RISK_I18N_KEY[risk]),
+            }),
+            confirmLabel: t('safetyDialog.closeTerminal'),
+            onConfirm: () => {
+              const latest = getPaneHandle(panelId)?.getSnapshot();
+              setCloseDialog(null);
+              if (
+                !latest ||
+                latest.sessionId !== expectedSessionId ||
+                !sameActiveRunSet(latest.activeRunIds, expectedActiveRunIds)
+              ) {
+                requestAnimationFrame(() => requestPanelClose(panelId, component, close));
+                return;
+              }
+              if (!latest.destroysSessionOnClose) {
+                close();
+                focusActivePane();
+                return;
+              }
+              closeAfterGuardedDestroy(latest);
+            },
+          },
+      );
+    },
+    [agentSessionIds, confirmRiskyPaneClose, focusActivePane, t],
   );
+  const paneCloseContextValue = useMemo<PaneCloseContextValue>(() => ({ requestPanelClose }), [requestPanelClose]);
 
   // ── OpenClaw chat overlay visibility (openclaw-management M3) ────────────
   // Single derivation of "some DOM overlay sits above the dockview area right
@@ -1087,8 +1122,7 @@ export function App(): JSX.Element {
   // xterm instance (mirrors the existing 'ez:refit' pattern). A custom mod's
   // OWN cssVars/effects are applied by `applyThemeVarsAndEffects` (the shared
   // apply-path helper) right after the attribute is set, before that event.
-  const [terminalRendererPreference, setTerminalRendererPreference] =
-    useState<TerminalRendererPreference>('auto');
+  const [terminalRendererPreference, setTerminalRendererPreference] = useState<TerminalRendererPreference>('auto');
   useEffect(() => {
     let alive = true;
     void window.ezterminalDesktop?.getTerminalRendererPreference().then((preference) => {
@@ -1102,48 +1136,61 @@ export function App(): JSX.Element {
     setTerminalRendererPreference(preference);
     void window.ezterminalDesktop?.setTerminalRendererPreference(preference);
   }, []);
-  const terminalRuntimeOptions = useMemo<TerminalRuntimeOptions>(() => ({
-    platform: 'desktop',
-    rendererPreference: terminalRendererPreference,
-    openExternalHttpUrl: (url) => {
-      void window.ezterminalDesktop?.openExternalHttpUrl(url);
-    },
-    allowOsc52Clipboard,
-    writeClipboardText: async (text) => {
-      await window.ezterminalDesktop?.writeOsc52Clipboard(text);
-    },
-    openTerminalFileLocation: (request) => {
-      quickPreviewSequenceRef.current += 1;
-      const sequence = quickPreviewSequenceRef.current;
-      void window.ezterminal.resolveTerminalFileLocation(request).then(async (resolved) => {
-        if (sequence !== quickPreviewSequenceRef.current) return;
-        if (!resolved.ok) {
-          const messages = {
-            remote: 'Remote SSH paths cannot be opened on this device.',
-            invalid: 'That terminal file location is invalid.',
-            'outside-workspace': 'That file is outside the command workspace.',
-            missing: 'That terminal file no longer exists.',
-            'not-file': 'That terminal location is not a regular file.',
-            unreadable: 'That terminal file cannot be read.',
-          } as const;
-          setTerminalPathMessage(messages[resolved.reason]);
-          return;
-        }
-        setTerminalPathMessage(null);
-        const preview = await window.ezterminal.readFilePreview(resolved.path, resolved.capability).catch((): FilePreviewResult => ({
-          ok: false,
-          error: 'Could not load this file preview.',
-        }));
-        if (sequence === quickPreviewSequenceRef.current) {
-          setQuickPreview({ path: resolved.path, result: preview, line: resolved.line, column: resolved.column });
-        }
-      }).catch(() => {
-        if (sequence === quickPreviewSequenceRef.current) {
-          setTerminalPathMessage('That terminal file location could not be resolved.');
-        }
-      });
-    },
-  }), [allowOsc52Clipboard, terminalRendererPreference]);
+  const terminalRuntimeOptions = useMemo<TerminalRuntimeOptions>(
+    () => ({
+      platform: 'desktop',
+      rendererPreference: terminalRendererPreference,
+      openExternalHttpUrl: (url) => {
+        void window.ezterminalDesktop?.openExternalHttpUrl(url);
+      },
+      allowOsc52Clipboard,
+      writeClipboardText: async (text) => {
+        await window.ezterminalDesktop?.writeOsc52Clipboard(text);
+      },
+      openTerminalFileLocation: (request) => {
+        quickPreviewSequenceRef.current += 1;
+        const sequence = quickPreviewSequenceRef.current;
+        void window.ezterminal
+          .resolveTerminalFileLocation(request)
+          .then(async (resolved) => {
+            if (sequence !== quickPreviewSequenceRef.current) return;
+            if (!resolved.ok) {
+              const messages = {
+                remote: t('terminalFiles.remotePath'),
+                invalid: t('terminalFiles.invalidLocation'),
+                'outside-workspace': t('terminalFiles.outsideWorkspace'),
+                missing: t('terminalFiles.missing'),
+                'not-file': t('terminalFiles.notFile'),
+                unreadable: t('terminalFiles.unreadable'),
+              } as const;
+              setTerminalPathMessage(messages[resolved.reason]);
+              return;
+            }
+            setTerminalPathMessage(null);
+            const preview = await window.ezterminal
+              .readFilePreview(resolved.path, resolved.capability)
+              .catch((): FilePreviewResult => ({
+                ok: false,
+                error: t('terminalFiles.previewLoadFailed'),
+              }));
+            if (sequence === quickPreviewSequenceRef.current) {
+              setQuickPreview({
+                path: resolved.path,
+                result: preview,
+                line: resolved.line,
+                column: resolved.column,
+              });
+            }
+          })
+          .catch(() => {
+            if (sequence === quickPreviewSequenceRef.current) {
+              setTerminalPathMessage(t('terminalFiles.resolveFailed'));
+            }
+          });
+      },
+    }),
+    [allowOsc52Clipboard, t, terminalRendererPreference],
+  );
 
   const [theme, setThemeState] = useState<ThemeName>('matrix');
   const [availableThemes, setAvailableThemes] = useState<ThemeDefinition[]>(() => listThemes());
@@ -1210,11 +1257,11 @@ export function App(): JSX.Element {
   const onImportTheme = useCallback(
     async (json: string): Promise<{ ok: boolean; error?: string }> => {
       const result = await window.ezterminalDesktop?.importTheme(json);
-      if (!result) return { ok: false, error: 'Desktop theme import unavailable' };
+      if (!result) return { ok: false, error: t('settings.themeImportUnavailable') };
       if (result.ok) await refreshAvailableThemes();
       return result;
     },
-    [refreshAvailableThemes],
+    [refreshAvailableThemes, t],
   );
 
   // Boot ordering (FOUC fix): custom theme mods must be registered, and the
@@ -1292,7 +1339,10 @@ export function App(): JSX.Element {
       const next = { ...effectTogglesRef.current, [id]: on };
       setEffectToggles(next);
       void window.ezterminalDesktop?.setEffectToggles(next);
-      applyThemeVarsAndEffects(theme, { effectToggles: next, platformDefaults: DESKTOP_EFFECT_DEFAULTS });
+      applyThemeVarsAndEffects(theme, {
+        effectToggles: next,
+        platformDefaults: DESKTOP_EFFECT_DEFAULTS,
+      });
     },
     [theme, setEffectToggles],
   );
@@ -1385,10 +1435,7 @@ export function App(): JSX.Element {
 
   const refreshPresets = useCallback(async (): Promise<void> => {
     try {
-      const [names, startup] = await Promise.all([
-        window.ezterminal.listPresets(),
-        window.ezterminal.getStartup(),
-      ]);
+      const [names, startup] = await Promise.all([window.ezterminal.listPresets(), window.ezterminal.getStartup()]);
       setPresetNames(names);
       setStartupPreset(startup.mode === 'preset' ? (startup.presetName ?? null) : null);
     } catch {
@@ -1413,152 +1460,162 @@ export function App(): JSX.Element {
       const creatorPanes = listCreatorPaneSnapshots();
       const showPresetStateChanged = (): void => {
         setCloseDialog({
-          title: 'Terminal state changed',
-          description: 'The workspace was not replaced because one or more terminal sessions could not be verified. Review the active terminals and try again.',
-          confirmLabel: 'OK',
+          title: t('safetyDialog.terminalStateChangedTitle'),
+          description: t('safetyDialog.terminalStateChangedDescription'),
+          confirmLabel: t('common.ok'),
           onConfirm: () => setCloseDialog(null),
         });
       };
       const risks = creatorPanes
-        .map((pane) => classifyCloseRisk({
-          destroysSession: true,
-          isBusy: pane.isBusy,
-          executionKind: pane.executionKind,
-          hasSshPrompt: pane.hasSshPrompt,
-          hasActiveAgent: pane.sessionId !== null && agentSessionIds.has(pane.sessionId),
-          isDead: pane.isDead,
-        }))
+        .map((pane) =>
+          classifyCloseRisk({
+            destroysSession: true,
+            isBusy: pane.isBusy,
+            executionKind: pane.executionKind,
+            hasSshPrompt: pane.hasSshPrompt,
+            hasActiveAgent: pane.sessionId !== null && agentSessionIds.has(pane.sessionId),
+            isDead: pane.isDead,
+          }),
+        )
         .filter((risk): risk is CloseRisk => risk !== null);
       const counts = countCloseRisks(risks);
-      const details = (Object.keys(counts) as CloseRisk[])
+      const details: string[] = (Object.keys(counts) as CloseRisk[])
         .filter((risk) => counts[risk] > 0)
-        .map((risk) => `${counts[risk]} × ${CLOSE_RISK_LABEL[risk]}`);
+        .map((risk) => t('safetyDialog.riskCount', {
+          count: counts[risk],
+          risk: t(CLOSE_RISK_I18N_KEY[risk]),
+        }));
       if (creatorPanes.length > 0) {
-        details.unshift(`${creatorPanes.length} terminal session${creatorPanes.length === 1 ? '' : 's'} will be destroyed.`);
+        details.unshift(
+          creatorPanes.length === 1
+            ? t('safetyDialog.destroyedSession', { count: creatorPanes.length })
+            : t('safetyDialog.destroyedSessions', { count: creatorPanes.length }),
+        );
       }
-      setCloseDialog((current) => current ?? {
-        title: `Apply preset “${name}”?`,
-        description: 'The current workspace layout will be replaced.',
-        details,
-        confirmLabel: 'Apply preset',
-        onConfirm: () => {
-          if (presetApplyPendingRef.current) return;
-          const latestCreators = listCreatorPaneSnapshots();
-          if (
-            hasPendingSessionBinding()
-            || !hasExactCreatorPaneSet(creatorPanes, latestCreators)
-          ) {
-            showPresetStateChanged();
-            return;
-          }
-          presetApplyPendingRef.current = true;
-          setPresetApplyPending(true);
-          setCloseDialog(null);
-          setPresetsOpen(false);
-          void (async () => {
-            try {
-              // Resolve the preset before destroying anything so an unavailable
-              // bridge or missing preset cannot strand the current workspace.
-              const preset = await window.ezterminal.getPreset(name);
-              if (!preset) throw new Error('preset unavailable');
-              const creatorsAfterLoad = listCreatorPaneSnapshots();
-              if (
-                hasPendingSessionBinding()
-                || !hasExactCreatorPaneSet(latestCreators, creatorsAfterLoad)
-              ) {
+      setCloseDialog(
+        (current) =>
+          current ?? {
+            title: t('safetyDialog.applyPresetTitle', { name }),
+            description: t('safetyDialog.replaceWorkspaceDescription'),
+            details,
+            confirmLabel: t('safetyDialog.applyPreset'),
+            onConfirm: () => {
+              if (presetApplyPendingRef.current) return;
+              const latestCreators = listCreatorPaneSnapshots();
+              if (hasPendingSessionBinding() || !hasExactCreatorPaneSet(creatorPanes, latestCreators)) {
                 showPresetStateChanged();
                 return;
               }
-              // Schema validation happens in main, but dockview's nested grid
-              // deserializer has stronger runtime invariants. Exercise it on a
-              // detached inert instance before any irreversible shell teardown.
-              if (!preflightLayoutEnvelope(preset)) {
-                setCloseDialog({
-                  title: 'Preset layout invalid',
-                  description: 'The preset could not be safely prepared, so the current workspace and terminal sessions were left unchanged.',
-                  confirmLabel: 'OK',
-                  onConfirm: () => setCloseDialog(null),
-                });
-                return;
-              }
-              const liveCreators = creatorsAfterLoad.filter((pane) => !pane.isDead);
-              const result = liveCreators.length === 0
-                ? { ok: true as const }
-                : await window.ezterminal.destroySessionsGuarded(liveCreators.map((pane) => ({
-                    sessionId: pane.sessionId!,
-                    expectedActiveRunIds: pane.activeRunIds,
-                  })));
-              if (!result.ok) {
-                setCloseDialog({
-                  title: result.reason === 'state-changed' ? 'Terminal state changed' : 'Terminal state unavailable',
-                  description: 'The workspace was not replaced. Review the active terminals and try again.',
-                  confirmLabel: 'OK',
-                  onConfirm: () => setCloseDialog(null),
-                });
-                return;
-              }
-              // Mark completion only after the authoritative ACK (or known-dead
-              // shared-fate case). TerminalPane cleanup then skips a redundant
-              // second guarded destroy. A replacement identity is never marked.
-              for (const pane of creatorsAfterLoad) {
-                const handle = getPaneHandle(pane.panelId);
-                if (handle && !handle.markSessionDestroyHandled(pane.sessionId!)) {
-                  showPresetStateChanged();
-                  return;
+              presetApplyPendingRef.current = true;
+              setPresetApplyPending(true);
+              setCloseDialog(null);
+              setPresetsOpen(false);
+              void (async () => {
+                try {
+                  // Resolve the preset before destroying anything so an unavailable
+                  // bridge or missing preset cannot strand the current workspace.
+                  const preset = await window.ezterminal.getPreset(name);
+                  if (!preset) throw new Error('preset unavailable');
+                  const creatorsAfterLoad = listCreatorPaneSnapshots();
+                  if (hasPendingSessionBinding() || !hasExactCreatorPaneSet(latestCreators, creatorsAfterLoad)) {
+                    showPresetStateChanged();
+                    return;
+                  }
+                  // Schema validation happens in main, but dockview's nested grid
+                  // deserializer has stronger runtime invariants. Exercise it on a
+                  // detached inert instance before any irreversible shell teardown.
+                  if (!preflightLayoutEnvelope(preset)) {
+                    setCloseDialog({
+                      title: t('safetyDialog.presetLayoutInvalidTitle'),
+                      description: t('safetyDialog.presetLayoutInvalidDescription'),
+                      confirmLabel: t('common.ok'),
+                      onConfirm: () => setCloseDialog(null),
+                    });
+                    return;
+                  }
+                  const liveCreators = creatorsAfterLoad.filter((pane) => !pane.isDead);
+                  const result =
+                    liveCreators.length === 0
+                      ? { ok: true as const }
+                      : await window.ezterminal.destroySessionsGuarded(
+                          liveCreators.map((pane) => ({
+                            sessionId: pane.sessionId!,
+                            expectedActiveRunIds: pane.activeRunIds,
+                          })),
+                        );
+                  if (!result.ok) {
+                    setCloseDialog({
+                      title:
+                        result.reason === 'state-changed'
+                          ? t('safetyDialog.terminalStateChangedTitle')
+                          : t('safetyDialog.terminalStateUnavailableTitle'),
+                      description: t('safetyDialog.workspaceNotReplacedDescription'),
+                      confirmLabel: t('common.ok'),
+                      onConfirm: () => setCloseDialog(null),
+                    });
+                    return;
+                  }
+                  // Mark completion only after the authoritative ACK (or known-dead
+                  // shared-fate case). TerminalPane cleanup then skips a redundant
+                  // second guarded destroy. A replacement identity is never marked.
+                  for (const pane of creatorsAfterLoad) {
+                    const handle = getPaneHandle(pane.panelId);
+                    if (handle && !handle.markSessionDestroyHandled(pane.sessionId!)) {
+                      showPresetStateChanged();
+                      return;
+                    }
+                  }
+                  let finalStateValid = true;
+                  const applied = await runLayoutTransaction(() => Promise.resolve(preset), {
+                    quarantineOnCorrupt: false,
+                    restoreBackupOnFailure: true,
+                    beforeApply: () => {
+                      finalStateValid =
+                        !hasPendingSessionBinding() &&
+                        hasNoUnexpectedCreatorPanes(creatorsAfterLoad, listCreatorPaneSnapshots());
+                      if (!finalStateValid) showPresetStateChanged();
+                      return finalStateValid;
+                    },
+                  });
+                  if (!finalStateValid) return;
+                  if (!applied) {
+                    setCloseDialog({
+                      title: t('safetyDialog.presetApplyFailedTitle'),
+                      description: t('safetyDialog.presetApplyFailedDescription'),
+                      confirmLabel: t('common.ok'),
+                      onConfirm: () => setCloseDialog(null),
+                    });
+                    return;
+                  }
+                  scheduleSave();
+                  focusActivePane();
+                } catch {
+                  setCloseDialog({
+                    title: t('safetyDialog.presetUnavailableTitle'),
+                    description: t('safetyDialog.presetUnavailableDescription'),
+                    confirmLabel: t('common.ok'),
+                    onConfirm: () => setCloseDialog(null),
+                  });
+                } finally {
+                  presetApplyPendingRef.current = false;
+                  setPresetApplyPending(false);
+                  const deferredRemovals = [...deferredSessionRemovalsRef.current];
+                  deferredSessionRemovalsRef.current.clear();
+                  for (const sessionId of deferredRemovals) {
+                    scheduleSessionRemovalRef.current?.(sessionId);
+                  }
+                  const deferredAdds = [...deferredSessionAddsRef.current.values()];
+                  deferredSessionAddsRef.current.clear();
+                  for (const session of deferredAdds) {
+                    scheduleSessionMirrorRef.current?.(session);
+                  }
                 }
-              }
-              let finalStateValid = true;
-              const applied = await runLayoutTransaction(() => Promise.resolve(preset), {
-                quarantineOnCorrupt: false,
-                restoreBackupOnFailure: true,
-                beforeApply: () => {
-                  finalStateValid = !hasPendingSessionBinding()
-                    && hasNoUnexpectedCreatorPanes(
-                      creatorsAfterLoad,
-                      listCreatorPaneSnapshots(),
-                    );
-                  if (!finalStateValid) showPresetStateChanged();
-                  return finalStateValid;
-                },
-              });
-              if (!finalStateValid) return;
-              if (!applied) {
-                setCloseDialog({
-                  title: 'Preset apply failed',
-                  description: 'The preset layout could not be applied. A safe fallback layout was restored; review the terminal sessions before continuing.',
-                  confirmLabel: 'OK',
-                  onConfirm: () => setCloseDialog(null),
-                });
-                return;
-              }
-              scheduleSave();
-              focusActivePane();
-            } catch {
-              setCloseDialog({
-                title: 'Preset unavailable',
-                description: 'The workspace was not replaced because the preset could not be loaded.',
-                confirmLabel: 'OK',
-                onConfirm: () => setCloseDialog(null),
-              });
-            } finally {
-              presetApplyPendingRef.current = false;
-              setPresetApplyPending(false);
-              const deferredRemovals = [...deferredSessionRemovalsRef.current];
-              deferredSessionRemovalsRef.current.clear();
-              for (const sessionId of deferredRemovals) {
-                scheduleSessionRemovalRef.current?.(sessionId);
-              }
-              const deferredAdds = [...deferredSessionAddsRef.current.values()];
-              deferredSessionAddsRef.current.clear();
-              for (const session of deferredAdds) {
-                scheduleSessionMirrorRef.current?.(session);
-              }
-            }
-          })();
-        },
-      });
+              })();
+            },
+          },
+      );
     },
-    [agentSessionIds, focusActivePane, runLayoutTransaction, scheduleSave],
+    [agentSessionIds, focusActivePane, runLayoutTransaction, scheduleSave, t],
   );
 
   const toggleStartupPreset = useCallback(
@@ -1598,10 +1655,7 @@ export function App(): JSX.Element {
   const [agentIntegrations, setAgentIntegrations] = useState<readonly AgentIntegrationStatus[]>([]);
   const [genericAgentProfiles, setGenericAgentProfiles] = useState<readonly GenericAgentProfile[]>([]);
 
-  useEffect(
-    () => subscribePaneRegistry(() => bumpPaneRegistryRevision((revision) => revision + 1)),
-    [],
-  );
+  useEffect(() => subscribePaneRegistry(() => bumpPaneRegistryRevision((revision) => revision + 1)), []);
 
   const paneSnapshots = listPaneSnapshots();
   const activePaneSnapshot = paneSnapshots.find((pane) => pane.panelId === activePanelId) ?? null;
@@ -1614,24 +1668,37 @@ export function App(): JSX.Element {
       if (!panel) return [];
       const snapshot = snapshots.get(panelId);
       const statuses: string[] = [];
-      if (panelId === recentPanelSwitch.originPanelId) statuses.push('Current');
-      if (snapshot?.sessionBindingPending) statuses.push('Connecting');
-      if (snapshot?.isBusy) statuses.push('Busy');
-      if (snapshot?.draft.trim()) statuses.push('Draft');
-      if (snapshot?.hasSshPrompt) statuses.push('SSH prompt');
-      if (snapshot?.isDead) statuses.push('Ended');
+      if (panelId === recentPanelSwitch.originPanelId) statuses.push(t('recentPanels.statuses.current'));
+      if (snapshot?.sessionBindingPending) statuses.push(t('recentPanels.statuses.connecting'));
+      if (snapshot?.isBusy) statuses.push(t('recentPanels.statuses.busy'));
+      if (snapshot?.draft.trim()) statuses.push(t('recentPanels.statuses.draft'));
+      if (snapshot?.hasSshPrompt) statuses.push(t('recentPanels.statuses.sshPrompt'));
+      if (snapshot?.isDead) statuses.push(t('recentPanels.statuses.ended'));
       const agentStatus = agentTabStatuses.get(panelId);
-      if (agentStatus && agentStatus !== 'done') statuses.push(`Agent ${agentStatus}`);
-      if (crashInfo && panel.api.component === 'terminal') statuses.push('Interpreter unavailable');
-      return [{
-        panelId,
-        title: panel.api.title?.trim() || (panel.api.component === 'terminal' ? 'Terminal' : 'Workspace panel'),
-        detail: snapshot?.cwd.trim()
-          || (panel.api.component === 'terminal' ? 'Working directory unavailable' : 'Workspace panel'),
-        statuses,
-      }];
+      if (agentStatus && agentStatus !== 'done') {
+        statuses.push(t('recentPanels.agentStatus', { status: t(`agentHub.status.${agentStatus}`) }));
+      }
+      if (crashInfo && panel.api.component === 'terminal') {
+        statuses.push(t('recentPanels.statuses.interpreterUnavailable'));
+      }
+      return [
+        {
+          panelId,
+          title:
+            panel.api.title?.trim()
+            || (panel.api.component === 'terminal'
+              ? t('recentPanels.terminal')
+              : t('recentPanels.workspacePanel')),
+          detail:
+            snapshot?.cwd.trim() ||
+            (panel.api.component === 'terminal'
+              ? t('recentPanels.workingDirectoryUnavailable')
+              : t('recentPanels.workspacePanel')),
+          statuses,
+        },
+      ];
     });
-  }, [agentTabStatuses, crashInfo, paneSnapshots, recentPanelSwitch]);
+  }, [agentTabStatuses, crashInfo, paneSnapshots, recentPanelSwitch, t]);
 
   const closeQuickOpen = useCallback((): void => {
     setQuickOpenMode(null);
@@ -1643,12 +1710,14 @@ export function App(): JSX.Element {
   const refreshAgentLaunchers = useCallback(async (): Promise<void> => {
     const desktop = window.ezterminalDesktop;
     if (!desktop) return;
-    const integrations = typeof desktop.listAgentIntegrations === 'function'
-      ? desktop.listAgentIntegrations().catch(() => null)
-      : Promise.resolve(null);
-    const settings = typeof desktop.getAgentSettings === 'function'
-      ? desktop.getAgentSettings().catch(() => null)
-      : Promise.resolve(null);
+    const integrations =
+      typeof desktop.listAgentIntegrations === 'function'
+        ? desktop.listAgentIntegrations().catch(() => null)
+        : Promise.resolve(null);
+    const settings =
+      typeof desktop.getAgentSettings === 'function'
+        ? desktop.getAgentSettings().catch(() => null)
+        : Promise.resolve(null);
     const [nextIntegrations, nextSettings] = await Promise.all([integrations, settings]);
     if (nextIntegrations) setAgentIntegrations(nextIntegrations);
     if (nextSettings) setGenericAgentProfiles(nextSettings.genericProfiles);
@@ -1658,31 +1727,38 @@ export function App(): JSX.Element {
     void refreshAgentLaunchers();
   }, [refreshAgentLaunchers]);
 
-  const openQuickOpen = useCallback((mode: QuickOpenMode): void => {
-    quickPreviewSequenceRef.current += 1;
-    setQuickPreview(null);
-    setQuickOpenMode(mode);
-    setQuickOpenQuery('');
-    setQuickOpenActionMessage(null);
-    setFileSearchMessage(null);
-    void refreshPresets();
-    void refreshAgentLaunchers();
-  }, [refreshAgentLaunchers, refreshPresets]);
+  const openQuickOpen = useCallback(
+    (mode: QuickOpenMode): void => {
+      quickPreviewSequenceRef.current += 1;
+      setQuickPreview(null);
+      setQuickOpenMode(mode);
+      setQuickOpenQuery('');
+      setQuickOpenActionMessage(null);
+      setFileSearchMessage(null);
+      void refreshPresets();
+      void refreshAgentLaunchers();
+    },
+    [refreshAgentLaunchers, refreshPresets],
+  );
 
   useEffect(() => {
     const desktop = window.ezterminalDesktop;
     if (!desktop || typeof desktop.listQuickCommands !== 'function') return;
     let alive = true;
     let receivedPush = false;
-    const unsubscribe = typeof desktop.onQuickCommandsChanged === 'function'
-      ? desktop.onQuickCommandsChanged((commands) => {
-          receivedPush = true;
-          if (alive) setQuickCommands(commands);
-        })
-      : undefined;
-    void desktop.listQuickCommands().then((commands) => {
-      if (alive && !receivedPush) setQuickCommands(commands);
-    }).catch(() => undefined);
+    const unsubscribe =
+      typeof desktop.onQuickCommandsChanged === 'function'
+        ? desktop.onQuickCommandsChanged((commands) => {
+            receivedPush = true;
+            if (alive) setQuickCommands(commands);
+          })
+        : undefined;
+    void desktop
+      .listQuickCommands()
+      .then((commands) => {
+        if (alive && !receivedPush) setQuickCommands(commands);
+      })
+      .catch(() => undefined);
     return () => {
       alive = false;
       unsubscribe?.();
@@ -1690,81 +1766,90 @@ export function App(): JSX.Element {
   }, []);
 
   const upsertQuickCommand = useCallback((command: QuickCommand): void => {
-    setQuickCommands((current) => [
-      command,
-      ...current.filter((candidate) => candidate.id !== command.id),
-    ]);
+    setQuickCommands((current) => [command, ...current.filter((candidate) => candidate.id !== command.id)]);
   }, []);
 
-  const createQuickCommand = useCallback(async (input: QuickCommandInput): Promise<QuickCommandManageResult> => {
-    const desktop = window.ezterminalDesktop;
-    if (!desktop || typeof desktop.createQuickCommand !== 'function') {
-      return { ok: false, message: 'Quick Commands are unavailable in this window.' };
-    }
-    const result = await desktop.createQuickCommand(input);
-    if (result.ok) upsertQuickCommand(result.command);
-    return quickCommandManageResult(result);
-  }, [upsertQuickCommand]);
+  const createQuickCommand = useCallback(
+    async (input: QuickCommandInput): Promise<QuickCommandManageResult> => {
+      const desktop = window.ezterminalDesktop;
+      if (!desktop || typeof desktop.createQuickCommand !== 'function') {
+        return { ok: false, message: t('quickCommands.unavailable') };
+      }
+      const result = await desktop.createQuickCommand(input);
+      if (result.ok) upsertQuickCommand(result.command);
+      return quickCommandManageResult(result);
+    },
+    [quickCommandManageResult, t, upsertQuickCommand],
+  );
 
-  const updateQuickCommand = useCallback(async (
-    id: string,
-    input: QuickCommandInput,
-  ): Promise<QuickCommandManageResult> => {
-    const desktop = window.ezterminalDesktop;
-    if (!desktop || typeof desktop.updateQuickCommand !== 'function') {
-      return { ok: false, message: 'Quick Commands are unavailable in this window.' };
-    }
-    const result = await desktop.updateQuickCommand(id, input);
-    if (result.ok) upsertQuickCommand(result.command);
-    return quickCommandManageResult(result);
-  }, [upsertQuickCommand]);
+  const updateQuickCommand = useCallback(
+    async (id: string, input: QuickCommandInput): Promise<QuickCommandManageResult> => {
+      const desktop = window.ezterminalDesktop;
+      if (!desktop || typeof desktop.updateQuickCommand !== 'function') {
+        return { ok: false, message: t('quickCommands.unavailable') };
+      }
+      const result = await desktop.updateQuickCommand(id, input);
+      if (result.ok) upsertQuickCommand(result.command);
+      return quickCommandManageResult(result);
+    },
+    [quickCommandManageResult, t, upsertQuickCommand],
+  );
 
-  const deleteQuickCommand = useCallback(async (id: string): Promise<QuickCommandManageResult> => {
-    const desktop = window.ezterminalDesktop;
-    if (!desktop || typeof desktop.deleteQuickCommand !== 'function') {
-      return { ok: false, message: 'Quick Commands are unavailable in this window.' };
-    }
-    const result = await desktop.deleteQuickCommand(id);
-    if (result.ok) setQuickCommands((current) => current.filter((command) => command.id !== id));
-    return quickCommandManageResult(result);
-  }, []);
+  const deleteQuickCommand = useCallback(
+    async (id: string): Promise<QuickCommandManageResult> => {
+      const desktop = window.ezterminalDesktop;
+      if (!desktop || typeof desktop.deleteQuickCommand !== 'function') {
+        return { ok: false, message: t('quickCommands.unavailable') };
+      }
+      const result = await desktop.deleteQuickCommand(id);
+      if (result.ok) setQuickCommands((current) => current.filter((command) => command.id !== id));
+      return quickCommandManageResult(result);
+    },
+    [quickCommandManageResult, t],
+  );
 
-  const quickCommandManager = useMemo<QuickCommandManagerConfig | undefined>(() => (
-    window.ezterminalDesktop
-      ? {
-          commands: quickCommands,
-          onCreate: createQuickCommand,
-          onUpdate: updateQuickCommand,
-          onDelete: deleteQuickCommand,
-        }
-      : undefined
-  ), [createQuickCommand, deleteQuickCommand, quickCommands, updateQuickCommand]);
+  const quickCommandManager = useMemo<QuickCommandManagerConfig | undefined>(
+    () =>
+      window.ezterminalDesktop
+        ? {
+            commands: quickCommands,
+            onCreate: createQuickCommand,
+            onUpdate: updateQuickCommand,
+            onDelete: deleteQuickCommand,
+          }
+        : undefined,
+    [createQuickCommand, deleteQuickCommand, quickCommands, updateQuickCommand],
+  );
 
   const runAvailabilityNote = activePaneSnapshot?.isBusy
-    ? 'Run unavailable while the pane is busy'
+    ? t('commandCenter.runUnavailableBusy')
     : activePaneSnapshot?.draft.trim()
-      ? 'Run unavailable while the pane draft is not empty'
+      ? t('commandCenter.runUnavailableDraft')
       : null;
   const insertDisabledReason = !activePaneSnapshot
-    ? 'Select an active terminal pane first.'
+    ? t('commandCenter.selectPaneFirst')
     : activePaneSnapshot.isDead
-      ? 'The active terminal pane has ended.'
+      ? t('commandCenter.paneFailure.dead')
       : undefined;
 
-  const paneRows = useMemo<readonly AppQuickOpenRow[]>(() => paneSnapshots.map((pane) => {
-    const state: string[] = [];
-    if (pane.panelId === activePanelId) state.push('Active');
-    if (pane.isBusy) state.push('Busy');
-    if (pane.draft.trim()) state.push('Draft present');
-    if (pane.isDead) state.push('Ended');
-    return {
-      id: pane.panelId,
-      kind: 'pane',
-      title: apiRef.current?.getPanel(pane.panelId)?.api.title ?? 'Terminal',
-      detail: [pane.cwd || 'Working directory unavailable', ...state].join(' · '),
-      target: { type: 'pane', panelId: pane.panelId },
-    };
-  }), [activePanelId, paneSnapshots]);
+  const paneRows = useMemo<readonly AppQuickOpenRow[]>(
+    () =>
+      paneSnapshots.map((pane) => {
+        const state: string[] = [];
+        if (pane.panelId === activePanelId) state.push(t('commandCenter.paneState.active'));
+        if (pane.isBusy) state.push(t('commandCenter.paneState.busy'));
+        if (pane.draft.trim()) state.push(t('commandCenter.paneState.draft'));
+        if (pane.isDead) state.push(t('commandCenter.paneState.ended'));
+        return {
+          id: pane.panelId,
+          kind: 'pane',
+          title: apiRef.current?.getPanel(pane.panelId)?.api.title ?? t('mobile.terminal'),
+          detail: [pane.cwd || t('commandCenter.cwdUnavailable'), ...state].join(' · '),
+          target: { type: 'pane', panelId: pane.panelId },
+        };
+      }),
+    [activePanelId, paneSnapshots, t],
+  );
 
   const historyRows = useMemo<readonly AppQuickOpenRow[]>(() => {
     if (!activePaneSnapshot) return [];
@@ -1772,90 +1857,105 @@ export function App(): JSX.Element {
       id: `${activePaneSnapshot.panelId}-${index}`,
       kind: 'history',
       title: command,
-      detail: ['Active pane history', runAvailabilityNote].filter(Boolean).join(' · '),
+      detail: [t('commandCenter.activePaneHistory'), runAvailabilityNote].filter(Boolean).join(' · '),
       disabledReason: insertDisabledReason,
       target: { type: 'command', command },
     }));
-  }, [activePaneSnapshot, insertDisabledReason, runAvailabilityNote]);
+  }, [activePaneSnapshot, insertDisabledReason, runAvailabilityNote, t]);
 
   const sortedQuickCommands = useMemo(
     () => [...quickCommands].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     [quickCommands],
   );
-  const quickCommandRows = useMemo<readonly AppQuickOpenRow[]>(() => sortedQuickCommands.map((command) => ({
-    id: command.id,
-    kind: 'quick-command',
-    title: command.name,
-    detail: [command.description, command.command, runAvailabilityNote].filter(Boolean).join(' · '),
-    disabledReason: insertDisabledReason,
-    target: { type: 'command', command: command.command },
-  })), [insertDisabledReason, runAvailabilityNote, sortedQuickCommands]);
+  const quickCommandRows = useMemo<readonly AppQuickOpenRow[]>(
+    () =>
+      sortedQuickCommands.map((command) => ({
+        id: command.id,
+        kind: 'quick-command',
+        title: command.name,
+        detail: [command.description, command.command, runAvailabilityNote].filter(Boolean).join(' · '),
+        disabledReason: insertDisabledReason,
+        target: { type: 'command', command: command.command },
+      })),
+    [insertDisabledReason, runAvailabilityNote, sortedQuickCommands],
+  );
 
-  const actionRows = useMemo<readonly AppQuickOpenRow[]>(() => [
-    {
-      id: 'new-tab',
-      kind: 'action',
-      title: 'New tab',
-      detail: 'Open a new terminal tab',
-      target: { type: 'action', action: 'new-tab' },
-    },
-    {
-      id: 'split-right',
-      kind: 'action',
-      title: 'Split right',
-      detail: 'Open a terminal to the right of the active panel',
-      target: { type: 'action', action: 'split-right' },
-    },
-    {
-      id: 'split-down',
-      kind: 'action',
-      title: 'Split down',
-      detail: 'Open a terminal below the active panel',
-      target: { type: 'action', action: 'split-down' },
-    },
-    {
-      id: 'cycle-theme',
-      kind: 'action',
-      title: 'Cycle theme',
-      detail: 'Switch to the next installed theme',
-      target: { type: 'action', action: 'cycle-theme' },
-    },
-    {
-      id: 'save-preset',
-      kind: 'action',
-      title: 'Save layout as preset…',
-      detail: 'Save the current pane layout',
-      target: { type: 'action', action: 'save-preset' },
-    },
-  ], []);
+  const actionRows = useMemo<readonly AppQuickOpenRow[]>(
+    () => [
+      {
+        id: 'new-tab',
+        kind: 'action',
+        title: t('commandCenter.actions.newTab'),
+        detail: t('commandCenter.actions.newTabDetail'),
+        target: { type: 'action', action: 'new-tab' },
+      },
+      {
+        id: 'split-right',
+        kind: 'action',
+        title: t('workspace.splitRight'),
+        detail: t('commandCenter.actions.splitRightDetail'),
+        target: { type: 'action', action: 'split-right' },
+      },
+      {
+        id: 'split-down',
+        kind: 'action',
+        title: t('workspace.splitBelow'),
+        detail: t('commandCenter.actions.splitBelowDetail'),
+        target: { type: 'action', action: 'split-down' },
+      },
+      {
+        id: 'cycle-theme',
+        kind: 'action',
+        title: t('commandCenter.actions.cycleTheme'),
+        detail: t('commandCenter.actions.cycleThemeDetail'),
+        target: { type: 'action', action: 'cycle-theme' },
+      },
+      {
+        id: 'save-preset',
+        kind: 'action',
+        title: t('commandCenter.actions.savePreset'),
+        detail: t('commandCenter.actions.savePresetDetail'),
+        target: { type: 'action', action: 'save-preset' },
+      },
+    ],
+    [t],
+  );
 
-  const presetRows = useMemo<readonly AppQuickOpenRow[]>(() => presetNames.map((name) => ({
-    id: name,
-    kind: 'preset',
-    title: name,
-    detail: 'Apply layout preset',
-    target: { type: 'preset', name },
-  })), [presetNames]);
+  const presetRows = useMemo<readonly AppQuickOpenRow[]>(
+    () =>
+      presetNames.map((name) => ({
+        id: name,
+        kind: 'preset',
+        title: name,
+        detail: t('commandCenter.applyPreset'),
+        target: { type: 'preset', name },
+      })),
+    [presetNames, t],
+  );
 
   const agentLaunchers = useMemo<readonly AgentLauncher[]>(() => {
     const integrationDetail = (provider: 'codex' | 'claude'): string => {
       const integration = agentIntegrations.find((candidate) => candidate.provider === provider);
-      if (!integration) return 'Launch in the active terminal pane';
-      if (integration.enabled) return 'Lifecycle hook enabled';
-      if (integration.blockers.length > 0) return `Lifecycle hook unavailable: ${integration.blockers[0]}`;
-      return 'Lifecycle hook disabled';
+      if (!integration) return t('commandCenter.agents.launchInPane');
+      if (integration.enabled) return t('commandCenter.agents.hookEnabled');
+      if (integration.blockers.length > 0) {
+        return t('commandCenter.agents.hookUnavailable', {
+          reason: integration.blockers[0],
+        });
+      }
+      return t('commandCenter.agents.hookDisabled');
     };
     return [
       {
         id: 'codex',
-        title: 'Launch Codex',
+        title: t('commandCenter.agents.launchNamed', { name: 'Codex' }),
         command: 'codex',
         detail: integrationDetail('codex'),
         sourceLabel: 'Codex',
       },
       {
         id: 'claude',
-        title: 'Launch Claude',
+        title: t('commandCenter.agents.launchNamed', { name: 'Claude' }),
         command: 'claude',
         detail: integrationDetail('claude'),
         sourceLabel: 'Claude',
@@ -1864,23 +1964,29 @@ export function App(): JSX.Element {
         .filter((profile) => profile.enabled && profile.executable.trim())
         .map((profile) => ({
           id: `generic-${profile.id}`,
-          title: `Launch ${profile.name}`,
+          title: t('commandCenter.agents.launchNamed', { name: profile.name }),
           command: profile.executable,
-          detail: `Generic agent · ${profile.executable}`,
-          sourceLabel: 'Agent',
+          detail: t('commandCenter.agents.genericDetail', {
+            executable: profile.executable,
+          }),
+          sourceLabel: t('commandCenter.kinds.agent'),
         })),
     ];
-  }, [agentIntegrations, genericAgentProfiles]);
+  }, [agentIntegrations, genericAgentProfiles, t]);
 
-  const agentRows = useMemo<readonly AppQuickOpenRow[]>(() => agentLaunchers.map((agent) => ({
-    id: agent.id,
-    kind: 'agent',
-    title: agent.title,
-    detail: [agent.detail, runAvailabilityNote].filter(Boolean).join(' · '),
-    sourceLabel: agent.sourceLabel,
-    disabledReason: insertDisabledReason,
-    target: { type: 'command', command: agent.command },
-  })), [agentLaunchers, insertDisabledReason, runAvailabilityNote]);
+  const agentRows = useMemo<readonly AppQuickOpenRow[]>(
+    () =>
+      agentLaunchers.map((agent) => ({
+        id: agent.id,
+        kind: 'agent',
+        title: agent.title,
+        detail: [agent.detail, runAvailabilityNote].filter(Boolean).join(' · '),
+        sourceLabel: agent.sourceLabel,
+        disabledReason: insertDisabledReason,
+        target: { type: 'command', command: agent.command },
+      })),
+    [agentLaunchers, insertDisabledReason, runAvailabilityNote],
+  );
 
   useEffect(() => {
     setFileSearchRows([]);
@@ -1889,11 +1995,11 @@ export function App(): JSX.Element {
     const query = quickOpenQuery.trim();
     const desktop = window.ezterminalDesktop;
     if (
-      quickOpenMode !== 'all'
-      || !query
-      || !activeWorkspaceRoot
-      || !desktop
-      || typeof desktop.searchWorkspaceFiles !== 'function'
+      quickOpenMode !== 'all' ||
+      !query ||
+      !activeWorkspaceRoot ||
+      !desktop ||
+      typeof desktop.searchWorkspaceFiles !== 'function'
     ) {
       return;
     }
@@ -1904,26 +2010,34 @@ export function App(): JSX.Element {
     const timer = setTimeout(() => {
       fileSearchSequenceRef.current += 1;
       requestId = `quick-open-${Date.now()}-${fileSearchSequenceRef.current}`;
-      void desktop.searchWorkspaceFiles({ requestId, root: activeWorkspaceRoot, query }).then((result) => {
-        if (cancelled || result.requestId !== requestId) return;
-        setFileSearchLoading(false);
-        if (!result.ok) {
-          if (result.error !== 'cancelled') setFileSearchMessage(result.message);
-          return;
-        }
-        setFileSearchRows(result.matches.map((match) => ({
-          id: match.relativePath,
-          kind: 'file',
-          title: match.basename,
-          detail: match.relativePath,
-          target: { type: 'file', path: workspaceFilePath(result.root, match.relativePath) },
-        })));
-      }).catch(() => {
-        if (!cancelled) {
+      void desktop
+        .searchWorkspaceFiles({ requestId, root: activeWorkspaceRoot, query })
+        .then((result) => {
+          if (cancelled || result.requestId !== requestId) return;
           setFileSearchLoading(false);
-          setFileSearchMessage('Workspace file search failed.');
-        }
-      });
+          if (!result.ok) {
+            if (result.error !== 'cancelled') setFileSearchMessage(result.message);
+            return;
+          }
+          setFileSearchRows(
+            result.matches.map((match) => ({
+              id: match.relativePath,
+              kind: 'file',
+              title: match.basename,
+              detail: match.relativePath,
+              target: {
+                type: 'file',
+                path: workspaceFilePath(result.root, match.relativePath),
+              },
+            })),
+          );
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setFileSearchLoading(false);
+            setFileSearchMessage(t('commandCenter.workspaceSearchFailed'));
+          }
+        });
     }, WORKSPACE_FILE_SEARCH_DEBOUNCE_MS);
 
     return () => {
@@ -1933,138 +2047,148 @@ export function App(): JSX.Element {
         desktop.cancelWorkspaceFileSearch(requestId);
       }
     };
-  }, [activeWorkspaceRoot, quickOpenMode, quickOpenQuery]);
+  }, [activeWorkspaceRoot, quickOpenMode, quickOpenQuery, t]);
 
-  const localQuickOpenRows = useMemo<readonly AppQuickOpenRow[]>(() => (
-    quickOpenMode === 'all'
-      ? [...paneRows, ...historyRows, ...quickCommandRows, ...actionRows, ...presetRows, ...agentRows]
-      : [...historyRows, ...quickCommandRows, ...actionRows, ...presetRows, ...agentRows]
-  ), [actionRows, agentRows, historyRows, paneRows, presetRows, quickCommandRows, quickOpenMode]);
+  const localQuickOpenRows = useMemo<readonly AppQuickOpenRow[]>(
+    () =>
+      quickOpenMode === 'all'
+        ? [...paneRows, ...historyRows, ...quickCommandRows, ...actionRows, ...presetRows, ...agentRows]
+        : [...historyRows, ...quickCommandRows, ...actionRows, ...presetRows, ...agentRows],
+    [actionRows, agentRows, historyRows, paneRows, presetRows, quickCommandRows, quickOpenMode],
+  );
 
   const quickOpenRows = useMemo<readonly AppQuickOpenRow[]>(() => {
     const query = quickOpenQuery.trim();
     if (!query) return [];
-    const localMatches = localQuickOpenRows.filter((row) => (
-      subsequenceMatch(row.title, query)
-      || Boolean(row.detail && subsequenceMatch(row.detail, query))
-    ));
+    const localMatches = localQuickOpenRows.filter(
+      (row) => subsequenceMatch(row.title, query) || Boolean(row.detail && subsequenceMatch(row.detail, query)),
+    );
     return quickOpenMode === 'all' ? [...localMatches, ...fileSearchRows] : localMatches;
   }, [fileSearchRows, localQuickOpenRows, quickOpenMode, quickOpenQuery]);
 
   const quickOpenEmptyRows = useMemo<readonly AppQuickOpenRow[]>(() => {
-    const recentHistory = historyRows.slice(0, 5).map((row) => ({ ...row, groupLabel: 'Recent history' }));
-    const recentQuick = quickCommandRows.slice(0, 5).map((row) => ({ ...row, groupLabel: 'Recent Quick Commands' }));
+    const recentHistory = historyRows.slice(0, 5).map((row) => ({
+      ...row,
+      groupLabel: t('commandCenter.groups.recentHistory'),
+    }));
+    const recentQuick = quickCommandRows.slice(0, 5).map((row) => ({
+      ...row,
+      groupLabel: t('commandCenter.groups.recentQuickCommands'),
+    }));
     return quickOpenMode === 'all'
       ? [...paneRows, ...recentHistory, ...recentQuick, ...actionRows, ...presetRows, ...agentRows]
       : [...recentHistory, ...recentQuick, ...actionRows, ...presetRows, ...agentRows];
-  }, [actionRows, agentRows, historyRows, paneRows, presetRows, quickCommandRows, quickOpenMode]);
+  }, [actionRows, agentRows, historyRows, paneRows, presetRows, quickCommandRows, quickOpenMode, t]);
 
-  const loadQuickPreview = useCallback(async (path: string): Promise<void> => {
-    quickPreviewSequenceRef.current += 1;
-    const sequence = quickPreviewSequenceRef.current;
-    const result = await window.ezterminal.readFilePreview(path).catch((): FilePreviewResult => ({
-      ok: false,
-      error: 'Could not load this file preview.',
-    }));
-    if (sequence === quickPreviewSequenceRef.current) setQuickPreview({ path, result });
-  }, []);
+  const loadQuickPreview = useCallback(
+    async (path: string): Promise<void> => {
+      quickPreviewSequenceRef.current += 1;
+      const sequence = quickPreviewSequenceRef.current;
+      const result = await window.ezterminal.readFilePreview(path).catch((): FilePreviewResult => ({
+        ok: false,
+        error: t('terminalFiles.previewLoadFailed'),
+      }));
+      if (sequence === quickPreviewSequenceRef.current) setQuickPreview({ path, result });
+    },
+    [t],
+  );
 
   const closeQuickPreview = useCallback((): void => {
     quickPreviewSequenceRef.current += 1;
     setQuickPreview(null);
   }, []);
 
-  const applyTextToActivePane = useCallback((text: string, run: boolean): boolean => {
-    const handle = activePanelId ? getPaneHandle(activePanelId) : undefined;
-    if (!handle) {
-      setQuickOpenActionMessage(PANE_ACTION_FAILURE_MESSAGE.unavailable);
-      return false;
-    }
-    const result = run ? handle.runText(text) : handle.insertText(text);
-    const message = paneActionMessage(result);
-    if (message) {
-      setQuickOpenActionMessage(message);
-      return false;
-    }
-    closeQuickOpen();
-    return true;
-  }, [activePanelId, closeQuickOpen]);
-
-  const onQuickOpenAction = useCallback((
-    row: QuickOpenRow,
-    variant: QuickOpenActionVariant,
-  ): void => {
-    const target = (row as AppQuickOpenRow).target;
-    setQuickOpenActionMessage(null);
-    if (target.type === 'pane') {
-      apiRef.current?.getPanel(target.panelId)?.api.setActive();
-      requestAnimationFrame(() => getPaneHandle(target.panelId)?.focus());
-      closeQuickOpen();
-      return;
-    }
-    if (target.type === 'file') {
-      if (variant === 'shift-enter') {
-        applyTextToActivePane(quoteEzArgument(target.path), false);
-      } else if (variant === 'mod-enter') {
-        setQuickOpenActionMessage('Files can be previewed or inserted, but not run.');
-      } else {
-        closeQuickOpen();
-        void loadQuickPreview(target.path);
+  const applyTextToActivePane = useCallback(
+    (text: string, run: boolean): boolean => {
+      const handle = activePanelId ? getPaneHandle(activePanelId) : undefined;
+      if (!handle) {
+        setQuickOpenActionMessage(t('commandCenter.paneFailure.unavailable'));
+        return false;
       }
-      return;
-    }
-    if (target.type === 'command') {
-      applyTextToActivePane(target.command, variant === 'mod-enter');
-      return;
-    }
-    if (target.type === 'preset') {
+      const result = run ? handle.runText(text) : handle.insertText(text);
+      const message = paneActionMessage(result);
+      if (message) {
+        setQuickOpenActionMessage(message);
+        return false;
+      }
       closeQuickOpen();
-      void applyPreset(target.name);
-      return;
-    }
+      return true;
+    },
+    [activePanelId, closeQuickOpen, paneActionMessage, t],
+  );
 
-    closeQuickOpen();
-    switch (target.action) {
-      case 'new-tab':
-        addTab();
-        break;
-      case 'split-right':
-        splitActive('right');
-        break;
-      case 'split-down':
-        splitActive('below');
-        break;
-      case 'cycle-theme':
-        cycleTheme();
-        break;
-      case 'save-preset':
-        openSavePresetDialog();
-        break;
-    }
-  }, [
-    addTab,
-    applyPreset,
-    applyTextToActivePane,
-    closeQuickOpen,
-    cycleTheme,
-    loadQuickPreview,
-    openSavePresetDialog,
-    splitActive,
-  ]);
+  const onQuickOpenAction = useCallback(
+    (row: QuickOpenRow, variant: QuickOpenActionVariant): void => {
+      const target = (row as AppQuickOpenRow).target;
+      setQuickOpenActionMessage(null);
+      if (target.type === 'pane') {
+        apiRef.current?.getPanel(target.panelId)?.api.setActive();
+        requestAnimationFrame(() => getPaneHandle(target.panelId)?.focus());
+        closeQuickOpen();
+        return;
+      }
+      if (target.type === 'file') {
+        if (variant === 'shift-enter') {
+          applyTextToActivePane(quoteEzArgument(target.path), false);
+        } else if (variant === 'mod-enter') {
+          setQuickOpenActionMessage(t('commandCenter.fileCannotRun'));
+        } else {
+          closeQuickOpen();
+          void loadQuickPreview(target.path);
+        }
+        return;
+      }
+      if (target.type === 'command') {
+        applyTextToActivePane(target.command, variant === 'mod-enter');
+        return;
+      }
+      if (target.type === 'preset') {
+        closeQuickOpen();
+        void applyPreset(target.name);
+        return;
+      }
+
+      closeQuickOpen();
+      switch (target.action) {
+        case 'new-tab':
+          addTab();
+          break;
+        case 'split-right':
+          splitActive('right');
+          break;
+        case 'split-down':
+          splitActive('below');
+          break;
+        case 'cycle-theme':
+          cycleTheme();
+          break;
+        case 'save-preset':
+          openSavePresetDialog();
+          break;
+      }
+    },
+    [
+      addTab,
+      applyPreset,
+      applyTextToActivePane,
+      closeQuickOpen,
+      cycleTheme,
+      loadQuickPreview,
+      openSavePresetDialog,
+      splitActive,
+      t,
+    ],
+  );
 
   // OpenClaw chat overlay derivation (declared here since it depends on every
   // overlay flag above, several of which are declared later in the file than
   // its doc comment further up) — see that comment for the "why".
-  const chatOverlayOpen = agentsOpen
-    || statsOpen
-    || pairingOpen
-    || settingsOpen
-    || openclawOpen
-    || filesOpen
-    || presetsOpen
-    || quickOpenMode !== null
-    || quickPreview !== null
-    || closeDialog !== null;
+  const chatOverlayOpen =
+    (!sidebarReflow && sidebarDestination !== null) ||
+    presetsOpen ||
+    quickOpenMode !== null ||
+    quickPreview !== null ||
+    closeDialog !== null;
 
   const onReady = useCallback(
     (event: DockviewReadyEvent) => {
@@ -2108,9 +2232,9 @@ export function App(): JSX.Element {
       });
       api.onDidRemovePanel(() => {
         const availablePanelIds = listSwitchablePanelIds(api);
-        recentPanelOrderRef.current = recentPanelOrderRef.current.filter((panelId) => (
-          availablePanelIds.includes(panelId)
-        ));
+        recentPanelOrderRef.current = recentPanelOrderRef.current.filter((panelId) =>
+          availablePanelIds.includes(panelId),
+        );
         const switchSession = recentPanelSwitchRef.current;
         if (switchSession) {
           updateRecentPanelSwitch(reconcileRecentPanelSwitch(switchSession, availablePanelIds));
@@ -2123,17 +2247,16 @@ export function App(): JSX.Element {
 
       // e2e seam: deterministically persist NOW (cancel the debounce, save,
       // await main's write chain) instead of polling the file from the test.
-      (window as Window & { __ezLayoutFlush?: () => Promise<void> }).__ezLayoutFlush =
-        async () => {
-          const current = apiRef.current;
-          if (!current || savesSuppressedRef.current) return;
-          if (saveTimerRef.current !== null) {
-            clearTimeout(saveTimerRef.current);
-            saveTimerRef.current = null;
-          }
-          await window.ezterminal.saveLayout(current.toJSON());
-          await window.ezterminal.flushLayout();
-        };
+      (window as Window & { __ezLayoutFlush?: () => Promise<void> }).__ezLayoutFlush = async () => {
+        const current = apiRef.current;
+        if (!current || savesSuppressedRef.current) return;
+        if (saveTimerRef.current !== null) {
+          clearTimeout(saveTimerRef.current);
+          saveTimerRef.current = null;
+        }
+        await window.ezterminal.saveLayout(current.toJSON());
+        await window.ezterminal.flushLayout();
+      };
 
       void runLayoutTransaction(pickStartupLayout, {
         quarantineOnCorrupt: true,
@@ -2202,334 +2325,194 @@ export function App(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [openQuickOpen, splitActive]);
 
-  const quickCommandShelfValue = useMemo<QuickCommandShelfContextValue>(() => ({
-    commands: quickCommands,
-    onManage: () => openQuickOpen('commands'),
-  }), [openQuickOpen, quickCommands]);
+  const quickCommandShelfValue = useMemo<QuickCommandShelfContextValue>(
+    () => ({
+      commands: quickCommands,
+      onManage: () => openQuickOpen('commands'),
+    }),
+    [openQuickOpen, quickCommands],
+  );
 
-  const workspaceTabActionValue = useMemo<WorkspaceTabActionContextValue>(() => ({
-    split: (panelId, direction) => openPanel({ referencePanel: panelId, direction }),
-    titleChanged: scheduleSave,
-  }), [openPanel, scheduleSave]);
+  const workspaceTabActionValue = useMemo<WorkspaceTabActionContextValue>(
+    () => ({
+      split: (panelId, direction) => openPanel({ referencePanel: panelId, direction }),
+      titleChanged: scheduleSave,
+    }),
+    [openPanel, scheduleSave],
+  );
+
+  const sidebarTitle: Record<SidebarDestination, string> = {
+    explorer: t('rail.explorer'),
+    agents: t('rail.agents'),
+    monitor: t('rail.monitor'),
+    remote: t('rail.remote'),
+    openclaw: 'OpenClaw',
+    settings: t('rail.settings'),
+  };
+  const sidebarContent =
+    sidebarDestination === 'explorer' ? (
+      <FileExplorerPanel
+        activePanelId={activePanelId}
+        onClose={() => setSidebarDestination(null)}
+        onOpenTerminalAt={onOpenTerminalAt}
+      />
+    ) : sidebarDestination === 'agents' ? (
+      <AgentHub
+        snapshot={agentSnapshot}
+        onFocusSession={focusAgentSession}
+        onSendFollowup={(activityId, text) => window.ezterminal.sendAgentFollowup(activityId, text)}
+        onClose={() => setSidebarDestination(null)}
+      />
+    ) : sidebarDestination === 'monitor' ? (
+      <StatusPanel />
+    ) : sidebarDestination === 'remote' ? (
+      <RemotePanel />
+    ) : sidebarDestination === 'openclaw' && openclawVisible ? (
+      <OpenClawPanel onClose={() => setSidebarDestination(null)} onOpenChat={openOpenClawChat} />
+    ) : sidebarDestination === 'settings' ? (
+      <SettingsPanel
+        uiScale={uiScale}
+        onChangeUiScale={changeUiScale}
+        scrollback={scrollback}
+        onChangeScrollback={changeScrollback}
+        terminalRendererPreference={terminalRendererPreference}
+        onChangeTerminalRendererPreference={changeTerminalRendererPreference}
+        confirmRiskyPaneClose={confirmRiskyPaneClose}
+        onChangeConfirmRiskyPaneClose={changeConfirmRiskyPaneClose}
+        allowOsc52Clipboard={allowOsc52Clipboard}
+        onChangeAllowOsc52Clipboard={changeAllowOsc52Clipboard}
+        theme={theme}
+        onSelectTheme={selectTheme}
+        availableThemes={availableThemes}
+        onImportTheme={onImportTheme}
+        fontId={fontId}
+        onSelectFont={onSelectFont}
+        activeThemeEffects={activeThemeDef.effects ?? []}
+        effectToggles={effectToggles}
+        onToggleEffect={onToggleEffect}
+        rollbar={rollbar}
+        onChangeRollbar={onChangeRollbar}
+        interference={interference}
+        onChangeEffectParams={onChangeEffectParams}
+      />
+    ) : null;
 
   return (
     <main className="app">
-      <header className="app-head">
-        <span className="session-dot" aria-hidden="true" />
-        <h1 className="app-title">EZTerminal</h1>
-        <button
-          className="btn btn-new-tab"
-          onClick={addTab}
-          title="New terminal tab"
-          data-testid="btn-new-tab"
-        >
-          + Tab
-        </button>
-        <button
-          className="btn btn-split"
-          onClick={() => splitActive('right')}
-          title="Split right (Alt+Shift+=)"
-          data-testid="btn-split-right"
-        >
-          Split →
-        </button>
-        <button
-          className="btn btn-split"
-          onClick={() => splitActive('below')}
-          title="Split down (Alt+Shift+-)"
-          data-testid="btn-split-down"
-        >
-          Split ↓
-        </button>
-        <div className="preset-box">
-          <button
-            className="btn btn-split"
-            onClick={() => {
-              setPresetsOpen((open) => !open);
-              setSavingPreset(false);
-              void refreshPresets();
-            }}
-            title="Layout presets"
-            data-testid="btn-presets"
-          >
-            Presets ▾
-          </button>
-          {presetsOpen && (
-            <div className="preset-menu" data-testid="preset-menu">
-              {presetNames.length === 0 && <div className="preset-empty">No presets yet</div>}
-              {presetNames.map((name) => (
-                <div key={name} className="preset-row">
-                  <button
-                    className="preset-apply"
-                    onClick={() => void applyPreset(name)}
-                    title={`Apply "${name}" (closes current panes)`}
-                    data-testid={`preset-apply-${name}`}
-                  >
-                    {name}
-                  </button>
-                  <button
-                    className="preset-icon"
-                    onClick={() => void toggleStartupPreset(name)}
-                    title={
-                      startupPreset === name
-                        ? 'Startup preset — click to use last layout instead'
-                        : 'Open this preset at startup'
-                    }
-                    data-testid={`preset-star-${name}`}
-                  >
-                    {startupPreset === name ? '★' : '☆'}
-                  </button>
-                  <button
-                    className="preset-icon"
-                    onClick={() => void removePreset(name)}
-                    title="Delete preset"
-                    data-testid={`preset-del-${name}`}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-              <div className="preset-save-row">
-                {savingPreset ? (
-                  <>
-                    <input
-                      className="preset-name-input"
-                      value={presetNameDraft}
-                      onChange={(e) => setPresetNameDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') void saveCurrentAsPreset();
-                      }}
-                      placeholder="preset name"
-                      autoFocus
-                      data-testid="preset-name-input"
-                    />
-                    <button
-                      className="btn btn-split"
-                      onClick={() => void saveCurrentAsPreset()}
-                      data-testid="preset-save-confirm"
-                    >
-                      Save
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    className="btn btn-split"
-                    onClick={() => setSavingPreset(true)}
-                    data-testid="btn-save-preset"
-                  >
-                    Save current…
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-        <button
-          className="btn btn-split"
-          onClick={cycleTheme}
-          title="Cycle theme"
-          data-testid="btn-theme"
-        >
-          Theme: {theme}
-        </button>
-        <button
-          className="btn btn-split"
-          onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
-          onClick={() => setFilesOpen((open) => !open)}
-          title="Toggle file explorer"
-          data-testid="btn-toggle-files"
-        >
-          Files
-        </button>
-        <button
-          className="btn btn-split agent-header-button"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => setAgentsOpen((open) => !open)}
-          title={`${attentionCount} agents need attention`}
-          aria-expanded={agentsOpen}
-          data-testid="btn-toggle-agents"
-        >
-          Agents
-          {unreadAgentIds.size > 0 && (
-            <span className="agent-unread-badge" aria-label={`${unreadAgentIds.size} unread agent updates`}>
-              {unreadAgentIds.size > 99 ? '99+' : unreadAgentIds.size}
-            </span>
-          )}
-        </button>
-        <button
-          className="btn btn-split"
-          onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
-          onClick={() => {
-            setStatsOpen((open) => !open);
-            setPairingOpen(false); // same status-drawer slot (right:0) — only one at a time
-            setSettingsOpen(false);
-            setOpenclawOpen(false);
-          }}
-          title="Toggle system status panel"
-          data-testid="btn-toggle-stats"
-        >
-          Stats
-        </button>
-        <button
-          className="btn btn-split"
-          onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
-          onClick={() => {
-            setPairingOpen((open) => !open);
-            setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
-            setSettingsOpen(false);
-            setOpenclawOpen(false);
-          }}
-          title="Show mobile pairing info"
-          data-testid="btn-toggle-pairing"
-        >
-          Pairing
-        </button>
-        <button
-          className="btn btn-split"
-          onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
-          onClick={() => {
-            setSettingsOpen((open) => !open);
-            setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
-            setPairingOpen(false);
-            setOpenclawOpen(false);
-          }}
-          title="Settings"
-          data-testid="btn-toggle-settings"
-        >
-          ⚙️
-        </button>
-        {openclawVisible && (
-          <button
-            className="btn btn-split"
-            onMouseDown={(e) => e.preventDefault()} // must not steal focus from the terminal
-            onClick={() => {
-              setOpenclawOpen((open) => !open);
-              setStatsOpen(false); // same status-drawer slot (right:0) — only one at a time
-              setPairingOpen(false);
-              setSettingsOpen(false);
-            }}
-            title="OpenClaw management"
-            data-testid="btn-toggle-openclaw"
-          >
-            OpenClaw
-          </button>
-        )}
-        {versions && (
-          <span className="versions" title="runtime versions">
-            electron {versions.electron}
-            <span className="versions-sep" aria-hidden="true">·</span>
-            chromium {versions.chrome}
-            <span className="versions-sep" aria-hidden="true">·</span>
-            node {versions.node}
-          </span>
-        )}
-      </header>
+      <AppHeader
+        attentionCount={Math.max(attentionCount, unreadAgentIds.size)}
+        commandCenterOpen={quickOpenMode !== null}
+        onNewTerminal={addTab}
+        onOpenAttention={() => setAgentsOpen((open) => !open)}
+        onOpenCommandCenter={() => openQuickOpen('all')}
+        onWorkspaceOpenChange={(open) => {
+          setPresetsOpen(open);
+          setSavingPreset(false);
+          if (open) void refreshPresets();
+        }}
+        workspaceOpen={presetsOpen}
+        workspaceMenu={
+          presetsOpen ? (
+            <WorkspaceMenu
+              names={presetNames}
+              nameDraft={presetNameDraft}
+              saving={savingPreset}
+              startupPreset={startupPreset}
+              onNameDraftChange={setPresetNameDraft}
+              onSetSaving={setSavingPreset}
+              onSave={() => void saveCurrentAsPreset()}
+              onApply={(name) => void applyPreset(name)}
+              onToggleStartup={(name) => void toggleStartupPreset(name)}
+              onDelete={(name) => void removePreset(name)}
+              onSplitRight={() => {
+                setPresetsOpen(false);
+                splitActive('right');
+              }}
+              onSplitDown={() => {
+                setPresetsOpen(false);
+                splitActive('below');
+              }}
+            />
+          ) : undefined
+        }
+      />
 
       {crashInfo && (
         <div className="crash-banner" role="alert" data-testid="crash-banner">
-          <span>
-            Shell interpreter crashed — all sessions are dead. Restart the app to continue.
-          </span>
+          <span>{t('app.shellCrashed')}</span>
           {crashInfo.logPath && <code className="crash-banner-path">{crashInfo.logPath}</code>}
           <button
             className="btn btn-split"
             onClick={() => setCrashInfo(null)}
-            title="Dismiss"
+            title={t('common.close')}
+            aria-label={t('common.close')}
             data-testid="crash-banner-dismiss"
           >
-            ✕
+            <X aria-hidden="true" size={16} />
           </button>
         </div>
       )}
 
-      <div className="dock-host">
-        <SessionBindingContext.Provider value={sessionBindingValue}>
-          <OpenClawOverlayContext.Provider value={chatOverlayOpen}>
-            <AgentTabStatusContext.Provider value={agentTabStatuses}>
-              <PaneCloseContext.Provider value={paneCloseContextValue}>
-                <WorkspaceTabActionContext.Provider value={workspaceTabActionValue}>
-                  <QuickCommandShelfContext.Provider value={quickCommandShelfValue}>
-                    <TerminalRuntimeContext.Provider value={terminalRuntimeOptions}>
-                      <PresetMutationContext.Provider value={presetMutationValue}>
-                        <DockviewReact
-                          className="dockview-theme-dark ez-dock"
-                          components={components}
-                          defaultTabComponent={AgentAwareTab}
-                          onReady={onReady}
-                          disableFloatingGroups
-                        />
-                      </PresetMutationContext.Provider>
-                    </TerminalRuntimeContext.Provider>
-                  </QuickCommandShelfContext.Provider>
-                </WorkspaceTabActionContext.Provider>
-              </PaneCloseContext.Provider>
-            </AgentTabStatusContext.Provider>
-          </OpenClawOverlayContext.Provider>
-        </SessionBindingContext.Provider>
-        {agentsOpen && (
-          <AgentHub
-            snapshot={agentSnapshot}
-            onFocusSession={focusAgentSession}
-            onSendFollowup={(activityId, text) => window.ezterminal.sendAgentFollowup(activityId, text)}
-            onClose={() => setAgentsOpen(false)}
-          />
+      <div className="workbench-body">
+        <ActivityRail
+          active={sidebarDestination}
+          attentionCount={attentionCount}
+          openclawVisible={openclawVisible}
+          onSelect={(destination) => setSidebarOpen(destination, (open) => !open)}
+        />
+        {sidebarDestination && sidebarContent && (
+          <SidebarShell
+            key={sidebarDestination}
+            destination={sidebarDestination}
+            title={sidebarTitle[sidebarDestination]}
+            width={uiPreferences.sidebarWidth}
+            onWidthChange={(sidebarWidth) => {
+              void updatePreferences({ sidebarWidth }).catch(() => undefined);
+            }}
+            onClose={() => setSidebarDestination(null)}
+          >
+            {sidebarContent}
+          </SidebarShell>
         )}
-        {statsOpen && <StatusPanel />}
-        {pairingOpen && <ConnectionInfoPanel />}
-        {settingsOpen && (
-          <SettingsPanel
-            uiScale={uiScale}
-            onChangeUiScale={changeUiScale}
-            scrollback={scrollback}
-            onChangeScrollback={changeScrollback}
-            terminalRendererPreference={terminalRendererPreference}
-            onChangeTerminalRendererPreference={changeTerminalRendererPreference}
-            confirmRiskyPaneClose={confirmRiskyPaneClose}
-            onChangeConfirmRiskyPaneClose={changeConfirmRiskyPaneClose}
-            allowOsc52Clipboard={allowOsc52Clipboard}
-            onChangeAllowOsc52Clipboard={changeAllowOsc52Clipboard}
-            theme={theme}
-            onSelectTheme={selectTheme}
-            availableThemes={availableThemes}
-            onImportTheme={onImportTheme}
-            fontId={fontId}
-            onSelectFont={onSelectFont}
-            activeThemeEffects={activeThemeDef.effects ?? []}
-            effectToggles={effectToggles}
-            onToggleEffect={onToggleEffect}
-            rollbar={rollbar}
-            onChangeRollbar={onChangeRollbar}
-            interference={interference}
-            onChangeEffectParams={onChangeEffectParams}
-          />
-        )}
-        {closeDialog && (
-          <RiskyCloseDialog
-            title={closeDialog.title}
-            description={closeDialog.description}
-            details={closeDialog.details}
-            confirmLabel={closeDialog.confirmLabel}
-            onCancel={() => setCloseDialog(null)}
-            onConfirm={closeDialog.onConfirm}
-          />
-        )}
-        {filesOpen && (
-          <FileExplorerPanel
-            activePanelId={activePanelId}
-            onClose={() => setFilesOpen(false)}
-            onOpenTerminalAt={onOpenTerminalAt}
-          />
-        )}
-        {openclawVisible && openclawOpen && (
-          <OpenClawPanel onClose={() => setOpenclawOpen(false)} onOpenChat={openOpenClawChat} />
-        )}
-        <FileDropOverlay activePanelId={activePanelId} agentSessionIds={agentSessionIds} />
-        {recentPanelSwitch && recentPanelItems.length > 0 && (
-          <RecentPanelSwitcher
-            items={recentPanelItems}
-            selectedPanelId={recentPanelSwitch.selectedPanelId}
-          />
-        )}
+        <div className="dock-host">
+          <SessionBindingContext.Provider value={sessionBindingValue}>
+            <OpenClawOverlayContext.Provider value={chatOverlayOpen}>
+              <AgentTabStatusContext.Provider value={agentTabStatuses}>
+                <PaneCloseContext.Provider value={paneCloseContextValue}>
+                  <WorkspaceTabActionContext.Provider value={workspaceTabActionValue}>
+                    <QuickCommandShelfContext.Provider value={quickCommandShelfValue}>
+                      <TerminalRuntimeContext.Provider value={terminalRuntimeOptions}>
+                        <PresetMutationContext.Provider value={presetMutationValue}>
+                          <DockviewReact
+                            className="dockview-theme-dark ez-dock"
+                            components={components}
+                            defaultTabComponent={AgentAwareTab}
+                            onReady={onReady}
+                            disableFloatingGroups
+                          />
+                        </PresetMutationContext.Provider>
+                      </TerminalRuntimeContext.Provider>
+                    </QuickCommandShelfContext.Provider>
+                  </WorkspaceTabActionContext.Provider>
+                </PaneCloseContext.Provider>
+              </AgentTabStatusContext.Provider>
+            </OpenClawOverlayContext.Provider>
+          </SessionBindingContext.Provider>
+          {closeDialog && (
+            <RiskyCloseDialog
+              title={closeDialog.title}
+              description={closeDialog.description}
+              details={closeDialog.details}
+              confirmLabel={closeDialog.confirmLabel}
+              onCancel={() => setCloseDialog(null)}
+              onConfirm={closeDialog.onConfirm}
+            />
+          )}
+          <FileDropOverlay activePanelId={activePanelId} agentSessionIds={agentSessionIds} />
+          {recentPanelSwitch && recentPanelItems.length > 0 && (
+            <RecentPanelSwitcher items={recentPanelItems} selectedPanelId={recentPanelSwitch.selectedPanelId} />
+          )}
+        </div>
       </div>
 
       {quickOpenMode && (
@@ -2543,8 +2526,8 @@ export function App(): JSX.Element {
           rows={quickOpenRows}
           emptyRows={quickOpenEmptyRows}
           loading={fileSearchLoading}
-          loadingLabel="Searching workspace files…"
-          noResultsMessage="No matching panes, files, commands, presets, or agents"
+          loadingLabel={t('commandCenter.searchingWorkspace')}
+          noResultsMessage={t('commandCenter.noResults')}
           actionMessage={quickOpenActionMessage ?? fileSearchMessage}
           onAction={onQuickOpenAction}
           onClose={closeQuickOpen}
@@ -2572,7 +2555,9 @@ export function App(): JSX.Element {
       {terminalPathMessage && (
         <div className="terminal-path-toast" role="status" data-testid="terminal-path-toast">
           <span>{terminalPathMessage}</span>
-          <button type="button" className="btn btn-split" onClick={() => setTerminalPathMessage(null)}>Dismiss</button>
+          <button type="button" className="btn btn-split" onClick={() => setTerminalPathMessage(null)}>
+            {t('common.close')}
+          </button>
         </div>
       )}
     </main>

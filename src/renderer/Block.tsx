@@ -1,7 +1,9 @@
+import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import { useState, useSyncExternalStore } from 'react';
 
 import type { BlockController } from './block-controller';
 import { formatCwd } from './format-cwd';
+import { useAppTranslation } from './i18n';
 import { PtyBlock } from './PtyBlock';
 import { ResultTable } from './ResultTable';
 import { SshPromptCard } from './SshPromptCard';
@@ -14,21 +16,24 @@ import type { PtyRestoreWarningFrame } from '../shared/ipc';
 // as a virtualized table (structured) or a text block (scalars), with a per-block
 // status indicator (running / done / error / cancelled).
 
-const STATUS_LABEL: Record<string, string> = {
-  running: 'running',
-  done: 'done',
-  error: 'error',
-  cancelled: 'cancelled',
-};
+const STATUS_LABEL_KEY = {
+  running: 'block.status.running',
+  done: 'block.status.done',
+  error: 'block.status.error',
+  cancelled: 'block.status.cancelled',
+} as const;
 
-function restoreWarningMessage(warning: PtyRestoreWarningFrame): string {
+function restoreWarningKey(warning: PtyRestoreWarningFrame):
+  | 'block.restoreSshLateAttach'
+  | 'block.restoreQueueOverflow'
+  | 'block.restoreRawOutput' {
   if (warning.reason === 'ssh-late-attach-unsupported') {
-    return 'This SSH terminal cannot be restored on a late-attached device. The original session is still running.';
+    return 'block.restoreSshLateAttach';
   }
   if (warning.reason === 'replay-queue-overflow') {
-    return 'Terminal restore could not keep up with live output. Reconnect this session to try again.';
+    return 'block.restoreQueueOverflow';
   }
-  return 'Exact terminal state was unavailable; recent raw output was restored.';
+  return 'block.restoreRawOutput';
 }
 
 export function Block({
@@ -45,6 +50,7 @@ export function Block({
   /** Platform integration for renderer policy and safe external links. */
   terminalRuntimeOptions?: TerminalRuntimeOptions;
 }): JSX.Element {
+  const { t } = useAppTranslation();
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const [collapsed, setCollapsed] = useState(false);
 
@@ -61,10 +67,12 @@ export function Block({
           className="block-toggle"
           onClick={() => setCollapsed((c) => !c)}
           aria-expanded={!collapsed}
-          aria-label={collapsed ? 'expand output' : 'collapse output'}
+          aria-label={collapsed ? t('block.expandOutput') : t('block.collapseOutput')}
           data-testid="block-toggle"
         >
-          {collapsed ? '▸' : '▾'}
+          {collapsed
+            ? <ChevronRight aria-hidden="true" size={14} />
+            : <ChevronDown aria-hidden="true" size={14} />}
         </button>
         {startCwd && (
           <span className="block-cwd" title={startCwd} data-testid="block-cwd">
@@ -82,14 +90,20 @@ export function Block({
             {rowCount}
           </span>
         )}
-        <span className={`block-status block-status--${status}`} data-testid="block-status">
-          {STATUS_LABEL[status] ?? status}
+        <span
+          className={`block-status block-status--${status}`}
+          data-status={status}
+          data-testid="block-status"
+        >
+          {status in STATUS_LABEL_KEY
+            ? t(STATUS_LABEL_KEY[status as keyof typeof STATUS_LABEL_KEY])
+            : status}
         </span>
         {sshConnectionId && sshConnectionState === 'ready' && (
           <button
             type="button"
             className="btn btn-split block-ssh-connection"
-            title={`Copy SSH connection id ${sshConnectionId}`}
+            title={t('block.copySshConnectionId', { id: sshConnectionId })}
             onClick={() => void navigator.clipboard.writeText(sshConnectionId)}
             data-testid="block-ssh-connection"
           >
@@ -102,17 +116,17 @@ export function Block({
             onClick={() => controller.cancel()}
             data-testid="block-cancel"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
         )}
         {onDismiss && (
           <button
             className="btn block-dismiss"
             onClick={onDismiss}
-            aria-label="dismiss block"
+            aria-label={t('block.dismiss')}
             data-testid="block-dismiss"
           >
-            ✕
+            <X aria-hidden="true" size={16} />
           </button>
         )}
       </header>
@@ -129,14 +143,14 @@ export function Block({
               data-testid="pty-restore-warning"
               data-reason={snapshot.ptyRestoreWarning.reason}
             >
-              {restoreWarningMessage(snapshot.ptyRestoreWarning)}
+              {t(restoreWarningKey(snapshot.ptyRestoreWarning))}
             </div>
           )}
           {sshPrompt ? (
             <SshPromptCard controller={controller} prompt={sshPrompt} />
           ) : status === 'error' ? (
             <pre className="text-block text-block--error" data-testid="block-error">
-              {errorMessage ?? 'error'}
+              {errorMessage ?? t('block.status.error')}
             </pre>
           ) : shape === 'text' ? (
             <TextBlock controller={controller} />
@@ -145,7 +159,7 @@ export function Block({
           ) : shape === 'pty' ? (
             <PtyBlock controller={controller} runtimeOptions={terminalRuntimeOptions} />
           ) : (
-            <div className="block-pending">running…</div>
+            <div className="block-pending">{t('block.running')}</div>
           )}
         </div>
       )}

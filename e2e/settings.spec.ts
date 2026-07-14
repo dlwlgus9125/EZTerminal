@@ -26,15 +26,15 @@ test('settings drawer: UI scale stepper applies live and persists across relaunc
   await w1.getByTestId('btn-toggle-settings').click();
   await expect(w1.getByTestId('settings-panel')).toBeVisible();
 
-  // UI scale: 100% -> 110% -> 120%. Root font-size composes with the boot
-  // theme's own base px — matrix (the default) is 14px, so 14px * 1.2 = 16.8px.
+  // UI scale: 100% -> 110% -> 120%. Product chrome uses the canonical 16px
+  // semantic-token root, so the theme-independent result is 16px * 1.2 = 19.2px.
   await w1.getByTestId('settings-scale-inc').click();
   await expect(w1.getByTestId('settings-scale-value')).toHaveText('110%');
   await w1.getByTestId('settings-scale-inc').click();
   await expect(w1.getByTestId('settings-scale-value')).toHaveText('120%');
   await expect
     .poll(() => w1.evaluate(() => getComputedStyle(document.documentElement).fontSize))
-    .toBe('16.8px');
+    .toBe('19.2px');
 
   await app1.close();
 
@@ -45,7 +45,7 @@ test('settings drawer: UI scale stepper applies live and persists across relaunc
     .poll(() => w2.evaluate(() => getComputedStyle(document.documentElement).fontSize), {
       timeout: 15_000,
     })
-    .toBe('16.8px');
+    .toBe('19.2px');
   await app2.close();
 });
 

@@ -34,6 +34,15 @@ async function flushLayout(w: Page): Promise<void> {
   });
 }
 
+async function splitFromWorkspace(w: Page, direction: 'right' | 'down'): Promise<void> {
+  await w.getByTestId('btn-workspace-menu').click();
+  await w.getByTestId(`btn-split-${direction}`).click();
+}
+
+async function toggleWorkspaceMenu(w: Page): Promise<void> {
+  await w.getByTestId('btn-workspace-menu').click();
+}
+
 test('restart-restore: 3-pane layout comes back with ALL-NEW sessions (B1/B5)', async () => {
   const dir = tempUserData();
 
@@ -41,9 +50,9 @@ test('restart-restore: 3-pane layout comes back with ALL-NEW sessions (B1/B5)', 
   const app1 = await launchApp(dir);
   const w1 = await app1.firstWindow();
   await expect(panes(w1)).toHaveCount(1);
-  await w1.getByTestId('btn-split-right').click();
+  await splitFromWorkspace(w1, 'right');
   await expect(panes(w1)).toHaveCount(2);
-  await w1.getByTestId('btn-split-down').click();
+  await splitFromWorkspace(w1, 'down');
   await expect(panes(w1)).toHaveCount(3);
 
   const before = [
@@ -167,14 +176,14 @@ test('presets: save/apply (fresh sessions, no leaks) and startup preset wins ove
   await expect(panes(w)).toHaveCount(1);
 
   // Build a 2-pane layout and save it as the preset "duo".
-  await w.getByTestId('btn-split-right').click();
+  await splitFromWorkspace(w, 'right');
   await expect(panes(w)).toHaveCount(2);
-  await w.getByTestId('btn-presets').click();
+  await toggleWorkspaceMenu(w);
   await w.getByTestId('btn-save-preset').click();
   await w.getByTestId('preset-name-input').fill('duo');
   await w.getByTestId('preset-save-confirm').click();
   await expect(w.getByTestId('preset-apply-duo')).toBeVisible();
-  await w.getByTestId('btn-presets').click(); // close the menu
+  await toggleWorkspaceMenu(w); // close the menu
 
   // Mutate the layout past the preset (3 panes) and record live session ids.
   await w.getByTestId('btn-new-tab').click();
@@ -182,7 +191,7 @@ test('presets: save/apply (fresh sessions, no leaks) and startup preset wins ove
   const before = [await sessionIdOf(w, 0), await sessionIdOf(w, 1), await sessionIdOf(w, 2)];
 
   // Apply the preset: confirm dialog accepted → back to 2 panes, ALL sessions new.
-  await w.getByTestId('btn-presets').click();
+  await toggleWorkspaceMenu(w);
   await w.getByTestId('preset-apply-duo').click();
   await w.getByTestId('risky-close-confirm').click();
   await expect(panes(w)).toHaveCount(2, { timeout: 15_000 });
@@ -199,9 +208,9 @@ test('presets: save/apply (fresh sessions, no leaks) and startup preset wins ove
 
   // Startup preset: star "duo", then make the LAST layout 3 panes again —
   // on relaunch the preset must win (gate Q5 startup pref).
-  await w.getByTestId('btn-presets').click();
+  await toggleWorkspaceMenu(w);
   await w.getByTestId('preset-star-duo').click();
-  await expect(w.getByTestId('preset-star-duo')).toHaveText('★');
+  await expect(w.getByTestId('preset-star-duo')).toHaveAttribute('aria-pressed', 'true');
   await w.getByTestId('btn-new-tab').click();
   await expect(panes(w)).toHaveCount(3);
   await flushLayout(w);
@@ -219,7 +228,7 @@ test('unsupported feature buckets (edgeGroups) are stripped, restore still succe
   const app1 = await launchApp(dir);
   const w1 = await app1.firstWindow();
   await expect(panes(w1)).toHaveCount(1);
-  await w1.getByTestId('btn-split-right').click();
+  await splitFromWorkspace(w1, 'right');
   await expect(panes(w1)).toHaveCount(2);
   await flushLayout(w1);
   await app1.close();

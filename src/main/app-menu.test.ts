@@ -29,9 +29,9 @@ function walk(
   }
 }
 
-function collect(): MenuItemConstructorOptions[] {
+function collect(locale: 'ko' | 'en' = 'en'): MenuItemConstructorOptions[] {
   const all: MenuItemConstructorOptions[] = [];
-  walk(buildMenuTemplate(), (item) => all.push(item));
+  walk(buildMenuTemplate(locale), (item) => all.push(item));
   return all;
 }
 
@@ -65,5 +65,23 @@ describe('buildMenuTemplate — terminal-safe application menu (WT-parity M1)', 
   it('keeps toggleDevTools as a dev affordance', () => {
     const roles = collect().map((item) => item.role);
     expect(roles).toContain('toggleDevTools');
+  });
+
+  it('localizes every visible native menu label without changing safe roles', () => {
+    expect(buildMenuTemplate('en').map((item) => item.label)).toEqual([
+      'File',
+      'Edit',
+      'View',
+      'Window',
+    ]);
+    expect(buildMenuTemplate('ko').map((item) => item.label)).toEqual([
+      '파일',
+      '편집',
+      '보기',
+      '창',
+    ]);
+    expect(collect('ko').map((item) => item.role)).toEqual(
+      collect('en').map((item) => item.role),
+    );
   });
 });

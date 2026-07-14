@@ -1,4 +1,46 @@
 import type { MenuItemConstructorOptions } from 'electron';
+import type { ResolvedUiLocale } from '../shared/ui-preferences';
+
+const labels = {
+  en: {
+    file: 'File',
+    quit: 'Quit',
+    edit: 'Edit',
+    undo: 'Undo',
+    redo: 'Redo',
+    cut: 'Cut',
+    copy: 'Copy',
+    paste: 'Paste',
+    selectAll: 'Select All',
+    view: 'View',
+    devTools: 'Developer Tools',
+    resetZoom: 'Reset Zoom',
+    zoomIn: 'Zoom In',
+    zoomOut: 'Zoom Out',
+    fullscreen: 'Toggle Full Screen',
+    window: 'Window',
+    minimize: 'Minimize',
+  },
+  ko: {
+    file: '파일',
+    quit: '종료',
+    edit: '편집',
+    undo: '실행 취소',
+    redo: '다시 실행',
+    cut: '잘라내기',
+    copy: '복사',
+    paste: '붙여넣기',
+    selectAll: '모두 선택',
+    view: '보기',
+    devTools: '개발자 도구',
+    resetZoom: '확대/축소 초기화',
+    zoomIn: '확대',
+    zoomOut: '축소',
+    fullscreen: '전체 화면 전환',
+    window: '창',
+    minimize: '최소화',
+  },
+} as const;
 
 // Terminal-safe application menu (WT-parity M1). Electron's DEFAULT menu binds
 // role accelerators that make sense for a text-editor-shaped app but are
@@ -20,39 +62,40 @@ import type { MenuItemConstructorOptions } from 'electron';
 //
 // Pure function, no runtime `electron` import — only the TYPE is used above —
 // so this is unit-testable without an Electron runtime.
-export function buildMenuTemplate(): MenuItemConstructorOptions[] {
+export function buildMenuTemplate(locale: ResolvedUiLocale = 'en'): MenuItemConstructorOptions[] {
+  const text = labels[locale];
   return [
     {
-      label: 'File',
-      submenu: [{ role: 'quit' }],
+      label: text.file,
+      submenu: [{ label: text.quit, role: 'quit' }],
     },
     {
-      label: 'Edit',
+      label: text.edit,
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
+        { label: text.undo, role: 'undo' },
+        { label: text.redo, role: 'redo' },
         { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' },
+        { label: text.cut, role: 'cut' },
+        { label: text.copy, role: 'copy' },
+        { label: text.paste, role: 'paste' },
+        { label: text.selectAll, role: 'selectAll' },
       ],
     },
     {
-      label: 'View',
+      label: text.view,
       submenu: [
-        { role: 'toggleDevTools' },
+        { label: text.devTools, role: 'toggleDevTools' },
         { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
+        { label: text.resetZoom, role: 'resetZoom' },
+        { label: text.zoomIn, role: 'zoomIn' },
+        { label: text.zoomOut, role: 'zoomOut' },
         { type: 'separator' },
-        { role: 'togglefullscreen' },
+        { label: text.fullscreen, role: 'togglefullscreen' },
       ],
     },
     {
-      label: 'Window',
-      submenu: [{ role: 'minimize' }],
+      label: text.window,
+      submenu: [{ label: text.minimize, role: 'minimize' }],
     },
   ];
 }

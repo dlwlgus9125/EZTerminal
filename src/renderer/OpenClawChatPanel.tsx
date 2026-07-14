@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import type { IDockviewPanelProps } from 'dockview-react';
 
 import type { OpenClawChatViewState, OpenClawStatus, OpenClawStatusState } from '../shared/openclaw';
+import { useAppTranslation } from './i18n';
 
 /**
  * Whether any overlay that visually sits above the dockview area (drawer/
@@ -33,13 +34,13 @@ function useThrottledRaf(callback: () => void): () => void {
   }, []);
 }
 
-const STATE_LABEL: Record<OpenClawStatusState, string> = {
-  'not-installed': '설치 안 됨',
-  stopped: '중지됨',
-  starting: '시작 중…',
-  running: '실행 중',
-  unknown: '알 수 없음',
-};
+const STATE_LABEL_KEY = {
+  'not-installed': 'openClaw.state.notInstalled',
+  stopped: 'openClaw.state.stopped',
+  starting: 'openClaw.state.starting',
+  running: 'openClaw.state.running',
+  unknown: 'openClaw.state.unknown',
+} as const satisfies Record<OpenClawStatusState, string>;
 
 /**
  * Desktop chat dockview panel (openclaw-management M3) — a plain DOM
@@ -54,6 +55,7 @@ const STATE_LABEL: Record<OpenClawStatusState, string> = {
  * would otherwise obscure this UI.
  */
 export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
+  const { t } = useAppTranslation();
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
   const [viewState, setViewState] = useState<OpenClawChatViewState>({ hasError: false, loading: false });
   const [busyLifecycle, setBusyLifecycle] = useState(false);
@@ -178,13 +180,21 @@ export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
   const showLoading = state === 'running' && viewState.loading && !viewState.hasError;
 
   return (
-    <div className="openclaw-chat-panel" data-testid="openclaw-chat-panel" ref={containerRef}>
+    <div
+      className="openclaw-chat-panel"
+      data-testid="openclaw-chat-panel"
+      ref={containerRef}
+      role="region"
+      aria-label={t('openClaw.chatTitle')}
+    >
       {showGuidance && (
         <div className="openclaw-chat-guidance" data-testid="openclaw-chat-guidance">
           <p className="openclaw-guidance-text">
             {state === 'not-installed'
-              ? 'OpenClaw CLI가 설치되어 있지 않습니다.'
-              : `게이트웨이가 ${status ? STATE_LABEL[status.state] : '확인 중'}입니다.`}
+              ? t('openClaw.notInstalled')
+              : status
+                ? t('openClaw.gatewayState', { state: t(STATE_LABEL_KEY[status.state]) })
+                : t('openClaw.checking')}
           </p>
           {state === 'not-installed' ? (
             <code className="openclaw-guidance-cmd">npm i -g openclaw</code>
@@ -196,7 +206,7 @@ export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
               onClick={() => void startGateway()}
               data-testid="openclaw-chat-start"
             >
-              시작
+              {t('openClaw.start')}
             </button>
           )}
           <button
@@ -205,15 +215,15 @@ export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
             onClick={openInBrowser}
             data-testid="openclaw-chat-open-external"
           >
-            브라우저로 열기
+            {t('openClaw.openBrowser')}
           </button>
         </div>
       )}
       {showReconnect && (
         <div className="openclaw-chat-guidance" data-testid="openclaw-chat-reconnect">
-          <p className="openclaw-guidance-text">채팅 연결이 끊어졌습니다.</p>
+          <p className="openclaw-guidance-text">{t('openClaw.chatDisconnected')}</p>
           <button type="button" className="btn btn-split" onClick={reconnect} data-testid="openclaw-chat-reconnect-btn">
-            재연결
+            {t('openClaw.reconnect')}
           </button>
           <button
             type="button"
@@ -221,13 +231,13 @@ export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
             onClick={openInBrowser}
             data-testid="openclaw-chat-open-external"
           >
-            브라우저로 열기
+            {t('openClaw.openBrowser')}
           </button>
         </div>
       )}
       {showLoading && (
         <div className="openclaw-chat-guidance" data-testid="openclaw-chat-loading">
-          <p className="openclaw-guidance-text">채팅을 불러오는 중…</p>
+          <p className="openclaw-guidance-text">{t('openClaw.chatLoading')}</p>
         </div>
       )}
     </div>

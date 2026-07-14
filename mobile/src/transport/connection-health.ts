@@ -1,3 +1,5 @@
+import type { TFunction } from 'i18next';
+
 export type RemoteConnectionState =
   | 'connecting'
   | 'connected'
@@ -29,56 +31,71 @@ export interface ConnectionHealthVerdict {
   readonly hint?: string;
 }
 
+export type ConnectionHealthTranslator = TFunction<'translation'>;
+
 export const CONNECTION_WARNING_ATTEMPTS = 3;
 export const CONNECTION_UNREACHABLE_ATTEMPTS = 12;
 export const CONNECTION_STALE_MS = 60_000;
 
 export function classifyConnectionHealth(
   snapshot: ConnectionHealthSnapshot,
+  t: ConnectionHealthTranslator,
   now = Date.now(),
 ): ConnectionHealthVerdict {
   const hint = snapshot.endpointKind === 'tailscale'
-    ? 'Check that Tailscale is connected on this device.'
+    ? t('mobile.connect.tailscaleHint')
     : undefined;
 
   if (snapshot.state === 'connected') {
-    return { kind: 'connected', label: 'Connected', detail: 'The desktop connection is ready.' };
+    return {
+      kind: 'connected',
+      label: t('mobile.connect.connectedLabel'),
+      detail: t('mobile.connect.connectedDetail'),
+    };
   }
   if (snapshot.state === 'auth-rejected') {
     return {
       kind: 'auth-rejected',
-      label: 'Authentication rejected',
-      detail: 'Retry the saved credential once, or pair this device again.',
+      label: t('mobile.connect.authRejectedLabel'),
+      detail: t('mobile.connect.authRejectedDetail'),
     };
   }
   if (snapshot.state === 'disconnected') {
-    return { kind: 'disconnected', label: 'Disconnected', detail: 'The connection was closed.' };
+    return {
+      kind: 'disconnected',
+      label: t('mobile.connect.disconnectedLabel'),
+      detail: t('mobile.connect.disconnectedDetail'),
+    };
   }
   if (snapshot.state === 'connecting') {
-    return { kind: 'connecting', label: 'Connecting…', detail: 'Contacting the desktop host.' };
+    return {
+      kind: 'connecting',
+      label: t('mobile.connect.connecting'),
+      detail: t('mobile.connect.connectingDetail'),
+    };
   }
 
   const stale = snapshot.lastConnectedAt === null || now - snapshot.lastConnectedAt >= CONNECTION_STALE_MS;
   if (snapshot.attempt >= CONNECTION_UNREACHABLE_ATTEMPTS && stale) {
     return {
       kind: 'unreachable',
-      label: 'Can’t reach desktop',
-      detail: `Connection attempt ${snapshot.attempt} failed. Active terminals remain retained.`,
+      label: t('mobile.connect.unreachableLabel'),
+      detail: t('mobile.connect.unreachableDetail', { attempt: snapshot.attempt }),
       ...(hint ? { hint } : {}),
     };
   }
   if (snapshot.attempt >= CONNECTION_WARNING_ATTEMPTS) {
     return {
       kind: 'warning',
-      label: 'Can’t connect yet',
-      detail: `Connection attempt ${snapshot.attempt} failed. Retrying automatically.`,
+      label: t('mobile.connect.warningLabel'),
+      detail: t('mobile.connect.warningDetail', { attempt: snapshot.attempt }),
       ...(hint ? { hint } : {}),
     };
   }
   return {
     kind: 'reconnecting',
-    label: 'Reconnecting…',
-    detail: 'Active terminals are retained for up to five minutes.',
+    label: t('mobile.connect.reconnecting'),
+    detail: t('mobile.connect.retained'),
   };
 }
 

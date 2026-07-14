@@ -4,6 +4,7 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AppI18nProvider } from './i18n';
 import { RiskyCloseDialog } from './RiskyCloseDialog';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -11,10 +12,10 @@ import { RiskyCloseDialog } from './RiskyCloseDialog';
 let container: HTMLDivElement;
 let root: Root;
 
-function Harness(): JSX.Element {
+function Harness({ locale = 'en' }: { readonly locale?: 'en' | 'ko' }): JSX.Element {
   const [open, setOpen] = useState(false);
   return (
-    <>
+    <AppI18nProvider locale={locale} languages={[locale]}>
       <button type="button" data-testid="opener" onClick={() => setOpen(true)}>
         Open
       </button>
@@ -27,7 +28,7 @@ function Harness(): JSX.Element {
           onConfirm={() => setOpen(false)}
         />
       )}
-    </>
+    </AppI18nProvider>
   );
 }
 
@@ -86,5 +87,13 @@ describe('RiskyCloseDialog', () => {
     cancel.focus();
     act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true })));
     expect(document.activeElement).toBe(confirm);
+  });
+
+  it('localizes the safe Cancel action through the application i18n provider', () => {
+    act(() => root.render(<Harness locale="ko" />));
+    const opener = container.querySelector<HTMLButtonElement>('[data-testid="opener"]')!;
+    act(() => opener.click());
+
+    expect(container.querySelector('[data-testid="risky-close-cancel"]')?.textContent).toBe('취소');
   });
 });

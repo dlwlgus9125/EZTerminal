@@ -29,5 +29,8 @@ export function launchApp(
   }
   env.EZTERMINAL_USER_DATA_DIR = dir;
   Object.assign(env, extraEnv);
-  return electron.launch({ args: [MAIN_ENTRY], env });
+  // The broad legacy E2E suite asserts English copy. Keep its browser locale
+  // deterministic across developer and CI machines; locale-specific product
+  // behavior is covered separately by i18n, Storybook, and visual contracts.
+  return electron.launch({ args: [MAIN_ENTRY, '--lang=en-US'], env });
 }

@@ -66,6 +66,11 @@ async function openXtermBlock(window: Page): Promise<void> {
   await expect.poll(() => terminalText(window), { timeout: 15_000 }).toContain('READY');
 }
 
+async function openAppearanceSettings(window: Page): Promise<void> {
+  await window.getByTestId('btn-toggle-settings').click();
+  await window.getByTestId('settings-category-appearance').click();
+}
+
 test('custom theme mod folder-scanned at startup appears in the picker; selecting it applies cssVars and the xterm surface', async () => {
   const app = await launchApp(tempUserData(), { EZTERMINAL_THEMES_DIR: seededThemesDir() });
   const window = await app.firstWindow();
@@ -73,7 +78,7 @@ test('custom theme mod folder-scanned at startup appears in the picker; selectin
 
   await openXtermBlock(window);
 
-  await window.getByTestId('btn-toggle-settings').click();
+  await openAppearanceSettings(window);
   const themeSelect = window.getByTestId('settings-theme-select');
   await expect(themeSelect.locator('option', { hasText: 'Neon Mod' })).toHaveCount(1);
 
@@ -111,7 +116,7 @@ test('importing a theme mod via the Settings UI persists it and adds it to the p
   const window = await app.firstWindow();
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
-  await window.getByTestId('btn-toggle-settings').click();
+  await openAppearanceSettings(window);
   const themeSelect = window.getByTestId('settings-theme-select');
   await expect(themeSelect.locator('option', { hasText: 'Neon Mod' })).toHaveCount(0);
 
@@ -133,7 +138,7 @@ test('selecting a font from the picker changes the terminal fontFamily live', as
 
   await openXtermBlock(window);
 
-  await window.getByTestId('btn-toggle-settings').click();
+  await openAppearanceSettings(window);
   await window.getByTestId('settings-font-select').selectOption('fira-code');
 
   await expect
@@ -172,7 +177,7 @@ test('a font selected in the picker is applied to a pane opened AFTER the select
   const window = await app.firstWindow();
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
-  await window.getByTestId('btn-toggle-settings').click();
+  await openAppearanceSettings(window);
   await window.getByTestId('settings-font-select').selectOption('fira-code');
   await window.getByTestId('btn-toggle-settings').click(); // close the drawer — it overlays btn-run
 
@@ -193,7 +198,7 @@ test('toggling an effect on the Matrix theme flips the data-effect attribute on 
   const window = await app.firstWindow();
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
-  await window.getByTestId('btn-toggle-settings').click();
+  await openAppearanceSettings(window);
   await window.getByTestId('settings-theme-select').selectOption('matrix');
 
   const scanlinesToggle = window.getByTestId('settings-effect-scanlines');
@@ -220,8 +225,9 @@ test('Matrix theme shows scanlines by default on desktop (EFFECT_CATALOG default
   const window = await app.firstWindow();
   // Matrix IS the boot default now — no interaction at all before the
   // defaultOn wiring must already have applied the effects.
-  const themeBtn = window.getByTestId('btn-theme');
-  await expect(themeBtn).toHaveText('Theme: matrix');
+  await expect
+    .poll(() => window.evaluate(() => document.documentElement.getAttribute('data-theme')))
+    .toBe('matrix');
 
   await expect
     .poll(() => window.evaluate(() => document.documentElement.getAttribute('data-effect-scanlines')))

@@ -480,6 +480,43 @@ action stay next to the failed operation. Skeletons preserve final geometry.
 - Product Storybook stories use `parameters.a11y.test = 'error'`; unreviewed
   accessibility violations are release blockers.
 
+### 12.1 Explorer interaction accessibility decision
+
+The file Explorer uses the existing visual treatment and interaction outcomes,
+with a delegated accessibility hardening decision. Three approaches were
+considered:
+
+1. Keep pointer-only `div` rows and add click handlers only — rejected because
+   the rows remain absent from the keyboard and accessibility trees.
+2. Make every actionable row a semantic button-equivalent, retain the custom
+   cursor-positioned menu with the ARIA menu keyboard model, and render file
+   preview through the shared modal `Dialog` primitive — selected. This keeps
+   stable file actions and test identifiers while reusing the repository-owned
+   focus trap and restoration contract.
+3. Replace the Explorer with a tree/grid selection widget — rejected for this
+   release because Explorer currently models immediate open actions rather than
+   persistent selection, and the larger interaction rewrite would change its
+   navigation contract.
+
+Selected behavior:
+
+- A file or directory row is one focusable action. Enter and Space open it;
+  Shift+F10 and the Context Menu key open its existing item menu at the row.
+- The context menu exposes `menu`/`menuitem` semantics, focuses its first item
+  on open, wraps Arrow Up/Down, supports Home/End, activates with Enter/Space,
+  closes with Escape, and restores the invoking row when appropriate.
+- File preview is modal. It uses `Dialog` for `aria-modal`, focus containment,
+  Escape dismissal, and invoker focus restoration. Existing preview actions,
+  localized labels, and stable test IDs remain unchanged.
+- Loading, file-read error, truncated-file, and successful preview content keep
+  their current product states. This change adds no new token, asset, route,
+  breakpoint, or localization-resource requirement.
+- Verification is component-DOM keyboard/focus regression coverage plus the
+  existing File Explorer browser E2E. The current mockups are reference-only;
+  this document and repository primitives remain normative. Project-local
+  Storybook and visual tooling remain governed by the broader release QA lanes
+  in section 13.
+
 ## 13. Visual QA and automated coverage
 
 Storybook 10.4 uses the React+Vite framework with addon-a11y and addon-vitest.

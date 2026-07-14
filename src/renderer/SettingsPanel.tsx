@@ -1,3 +1,4 @@
+import { Minus, Plus } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { OpenClawMode, TerminalRendererPreference, ThemeName } from '../shared/layout-schema';
@@ -6,10 +7,48 @@ import { EFFECT_CATALOG, type EffectId } from './effects';
 import type { InterferenceParams, RollbarParams } from './effect-params';
 import { EffectParamSliders, isInterferenceEffectId } from './EffectParamSliders';
 import { FONT_CATALOG } from './fonts';
+import { useAppTranslation } from './i18n';
 import { SCROLLBACK_MAX, SCROLLBACK_MIN } from './scrollback';
-import { SshForwardSettings } from './SshForwardSettings';
 import type { ThemeDefinition } from './themes';
+import { Button, Field, IconButton, Input, Select, Switch, Tooltip } from './ui';
 import { UI_SCALE_DEFAULT } from './ui-scale';
+import { useUiPreferences } from './ui-preferences';
+
+type SettingsCategory = 'general' | 'appearance' | 'terminal' | 'agents' | 'integrations' | 'about';
+
+const SETTINGS_CATEGORIES = [
+  { id: 'general', labelKey: 'settings.general' },
+  { id: 'appearance', labelKey: 'settings.appearance' },
+  { id: 'terminal', labelKey: 'settings.terminalSafety' },
+  { id: 'agents', labelKey: 'settings.agents' },
+  { id: 'integrations', labelKey: 'settings.integrations' },
+  { id: 'about', labelKey: 'settings.diagnostics' },
+] as const satisfies readonly { readonly id: SettingsCategory; readonly labelKey: string }[];
+
+const EFFECT_LABEL_KEYS = {
+  scanlines: 'settings.effectScanlines',
+  'phosphor-glow': 'settings.effectPhosphorGlow',
+  flicker: 'settings.effectFlicker',
+  'crt-curvature': 'settings.effectCrtCurvature',
+  'crt-rollbar': 'settings.effectCrtRollbar',
+  'scanline-scroll': 'settings.effectScanlineScroll',
+  'jitter-burst': 'settings.effectJitterBurst',
+  'micro-jitter': 'settings.effectMicroJitter',
+  'static-noise': 'settings.effectStaticNoise',
+} as const satisfies Record<EffectId, string>;
+
+const EFFECT_PARAM_LABEL_KEYS = {
+  'jitter-burst.period': 'settings.burstPeriod',
+  'jitter-burst.duration': 'settings.burstLength',
+  'jitter-burst.intensity': 'settings.intensity',
+  'micro-jitter.speed': 'settings.jitterSpeed',
+  'micro-jitter.amplitude': 'settings.amplitude',
+  'static-noise.density': 'settings.grainDensity',
+  'static-noise.opacity': 'settings.noiseOpacity',
+  'static-noise.speed': 'settings.shuffleSpeed',
+  'flicker.frequency': 'settings.frequency',
+  'flicker.depth': 'settings.depth',
+} as const;
 
 /**
  * Settings drawer (v0.2.0 M2; theme/font/effects added in theme-effects-font
@@ -80,12 +119,21 @@ export function SettingsPanel({
   interference,
   onChangeEffectParams,
 }: SettingsPanelProps): JSX.Element {
+  const { t } = useAppTranslation();
+  const { preferences: uiPreferences, updatePreferences } = useUiPreferences();
   const [remoteEnabled, setRemoteEnabled] = useState<boolean | null>(null);
   const [remotePort, setRemotePort] = useState<number | null>(null);
   const [remoteSecurityError, setRemoteSecurityError] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [openclawMode, setOpenclawModeState] = useState<OpenClawMode | null>(null);
+  const [category, setCategory] = useState<SettingsCategory>('general');
+  const [preferenceError, setPreferenceError] = useState<string | null>(null);
+
+  const updateUiPreference = (partial: Parameters<typeof updatePreferences>[0]): void => {
+    setPreferenceError(null);
+    void updatePreferences(partial).catch(() => setPreferenceError(t('settings.preferenceSaveFailed')));
+  };
 
   useEffect(() => {
     let alive = true;
@@ -116,10 +164,10 @@ export function SettingsPanel({
       (running) => setRemoteEnabled(running),
       () => {
         setRemoteEnabled(false);
-        setRemoteSecurityError('Remote access could not start because its token is not stored securely.');
+        setRemoteSecurityError(t('settings.remoteStartFailed'));
       },
     );
-  }, []);
+  }, [t]);
 
   // OpenClaw visibility mode (openclaw-stabilization M2): the visibility-
   // changed push (main.ts's `openclaw:visibility-changed`) updates App's
@@ -137,10 +185,10 @@ export function SettingsPanel({
       if (!file) return;
       void file.text().then(async (text) => {
         const result = await onImportTheme(text);
-        setImportError(result.ok ? null : (result.error ?? 'Import failed'));
+        setImportError(result.ok ? null : (result.error ?? t('settings.themeImportFailed')));
       });
     },
-    [onImportTheme],
+    [onImportTheme, t],
   );
 
   const remoteLoading = remoteEnabled === null || remotePort === null;
@@ -159,88 +207,137 @@ export function SettingsPanel({
     else setScrollbackDraft(String(scrollback));
   };
 
+  const formatEffectParamLabel = useCallback((effectId: keyof InterferenceParams, key: string, value: number): string => {
+    const compositeKey = `${effectId}.${key}` as keyof typeof EFFECT_PARAM_LABEL_KEYS;
+    const labelKey = EFFECT_PARAM_LABEL_KEYS[compositeKey];
+    return labelKey ? t(labelKey, { value }) : String(value);
+  }, [t]);
+
   return (
-    <div className="status-drawer" data-testid="settings-panel">
-      <section className="status-section">
-        <h2 className="status-section-title">UI Scale</h2>
-        <div className="settings-scale-stepper">
+    <div className="status-drawer settings-workbench" data-testid="settings-panel">
+      <nav className="settings-category-nav" aria-label={t('settings.title')}>
+        {SETTINGS_CATEGORIES.map((item) => (
           <button
+            key={item.id}
             type="button"
-            className="btn btn-split"
-            onClick={() => onChangeUiScale(uiScale - 10)}
-            data-testid="settings-scale-dec"
+            className="settings-category-button"
+            aria-current={category === item.id ? 'page' : undefined}
+            onClick={() => setCategory(item.id)}
+            data-testid={`settings-category-${item.id}`}
           >
-            −
+            {t(item.labelKey)}
           </button>
+        ))}
+      </nav>
+      <div className="settings-category-content" data-active-category={category}>
+      <section className="status-section" hidden={category !== 'general'}>
+        <Field
+          className="settings-field-row"
+          label={t('settings.language')}
+          description={t('settings.languageDescription')}
+        >
+          <Select
+            value={uiPreferences.locale}
+            onChange={(event) => updateUiPreference({ locale: event.target.value as typeof uiPreferences.locale })}
+            data-testid="settings-locale"
+          >
+            <option value="system">{t('settings.systemLanguage')}</option>
+            <option value="ko">{t('settings.korean')}</option>
+            <option value="en">{t('settings.english')}</option>
+          </Select>
+        </Field>
+        <Field className="settings-field-row" label={t('settings.density')}>
+          <Select
+            value={uiPreferences.density}
+            onChange={(event) => updateUiPreference({ density: event.target.value as typeof uiPreferences.density })}
+            data-testid="settings-density"
+          >
+            <option value="adaptive">{t('settings.adaptive')}</option>
+            <option value="compact">{t('settings.compact')}</option>
+            <option value="comfortable">{t('settings.comfortable')}</option>
+          </Select>
+        </Field>
+        {preferenceError && <div className="settings-theme-import-error" role="alert">{preferenceError}</div>}
+      </section>
+      <section className="status-section" hidden={category !== 'general'}>
+        <h2 className="status-section-title">{t('settings.uiScale')}</h2>
+        <div className="settings-scale-stepper">
+          <Tooltip content={t('settings.decreaseScale')} side="bottom">
+            <IconButton
+              icon={Minus}
+              onClick={() => onChangeUiScale(uiScale - 10)}
+              aria-label={t('settings.decreaseScale')}
+              data-testid="settings-scale-dec"
+            />
+          </Tooltip>
           <span className="settings-scale-value" data-testid="settings-scale-value">
             {uiScale}%
           </span>
-          <button
-            type="button"
-            className="btn btn-split"
-            onClick={() => onChangeUiScale(uiScale + 10)}
-            data-testid="settings-scale-inc"
-          >
-            +
-          </button>
-          <button
-            type="button"
-            className="btn btn-split"
+          <Tooltip content={t('settings.increaseScale')} side="bottom">
+            <IconButton
+              icon={Plus}
+              onClick={() => onChangeUiScale(uiScale + 10)}
+              aria-label={t('settings.increaseScale')}
+              data-testid="settings-scale-inc"
+            />
+          </Tooltip>
+          <Button
             onClick={() => onChangeUiScale(UI_SCALE_DEFAULT)}
+            aria-label={t('common.reset')}
             data-testid="settings-scale-reset"
           >
-            Reset
-          </button>
+            {t('common.reset')}
+          </Button>
         </div>
       </section>
 
-      <section className="status-section">
-        <h2 className="status-section-title">Scrollback (lines)</h2>
-        <input
-          type="number"
-          className="settings-scrollback-input"
-          min={SCROLLBACK_MIN}
-          max={SCROLLBACK_MAX}
-          value={scrollbackDraft}
-          onChange={(e) => setScrollbackDraft(e.target.value)}
-          onBlur={commitScrollback}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              commitScrollback();
-              (e.target as HTMLInputElement).blur();
-            }
-          }}
-          data-testid="settings-scrollback-input"
-        />
+      <section className="status-section" hidden={category !== 'terminal'}>
+        <Field label={t('settings.scrollbackLines')}>
+          <Input
+            type="number"
+            min={SCROLLBACK_MIN}
+            max={SCROLLBACK_MAX}
+            value={scrollbackDraft}
+            onChange={(e) => setScrollbackDraft(e.target.value)}
+            onBlur={commitScrollback}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                commitScrollback();
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            data-testid="settings-scrollback-input"
+          />
+        </Field>
       </section>
 
-      <section className="status-section">
-        <h2 className="status-section-title">Terminal Renderer</h2>
-        <select
-          className="settings-theme-select"
-          value={terminalRendererPreference}
-          onChange={(event) => onChangeTerminalRendererPreference(event.target.value as TerminalRendererPreference)}
-          data-testid="settings-terminal-renderer"
-        >
-          <option value="auto">Auto (WebGL with safe fallback)</option>
-          <option value="dom">Compatibility (DOM)</option>
-        </select>
+      <section className="status-section" hidden={category !== 'terminal'}>
+        <Field label={t('settings.terminalRenderer')}>
+          <Select
+            value={terminalRendererPreference}
+            onChange={(event) => onChangeTerminalRendererPreference(event.target.value as TerminalRendererPreference)}
+            data-testid="settings-terminal-renderer"
+          >
+            <option value="auto">{t('settings.rendererAuto')}</option>
+            <option value="dom">{t('settings.rendererCompatibility')}</option>
+          </Select>
+        </Field>
       </section>
 
-      <section className="status-section">
-        <h2 className="status-section-title">Theme</h2>
-        <select
-          className="settings-theme-select"
-          value={theme}
-          onChange={(e) => onSelectTheme(e.target.value)}
-          data-testid="settings-theme-select"
-        >
-          {availableThemes.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
+      <section className="status-section" hidden={category !== 'appearance'}>
+        <Field label={t('settings.theme')}>
+          <Select
+            value={theme}
+            onChange={(e) => onSelectTheme(e.target.value)}
+            data-testid="settings-theme-select"
+          >
+            {availableThemes.map((themeDefinition) => (
+              <option key={themeDefinition.id} value={themeDefinition.id}>
+                {themeDefinition.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
         <div className="settings-theme-import">
           <input
             type="file"
@@ -250,14 +347,12 @@ export function SettingsPanel({
             onChange={handleImportFile}
             data-testid="settings-theme-import-file"
           />
-          <button
-            type="button"
-            className="btn btn-split"
+          <Button
             onClick={() => importInputRef.current?.click()}
             data-testid="settings-theme-import-btn"
           >
-            Import theme…
-          </button>
+            {t('settings.importTheme')}
+          </Button>
           {importError && (
             <div className="settings-theme-import-error" data-testid="settings-theme-import-error">
               {importError}
@@ -266,27 +361,27 @@ export function SettingsPanel({
         </div>
       </section>
 
-      <section className="status-section">
-        <h2 className="status-section-title">Font</h2>
-        <select
-          className="settings-font-select"
-          value={fontId ?? systemDefaultFontId}
-          onChange={(e) => onSelectFont(e.target.value)}
-          data-testid="settings-font-select"
-        >
-          {FONT_CATALOG.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.label}
-            </option>
-          ))}
-        </select>
+      <section className="status-section" hidden={category !== 'appearance'}>
+        <Field label={t('settings.terminalFont')}>
+          <Select
+            value={fontId ?? systemDefaultFontId}
+            onChange={(e) => onSelectFont(e.target.value)}
+            data-testid="settings-font-select"
+          >
+            {FONT_CATALOG.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
       </section>
 
-      <section className="status-section">
-        <h2 className="status-section-title">Effects</h2>
+      <section className="status-section" hidden={category !== 'appearance'}>
+        <h2 className="status-section-title">{t('settings.crtEffects')}</h2>
         {activeThemeEffects.length === 0 ? (
           <div className="status-loading" data-testid="settings-effects-empty">
-            No effects for this theme
+            {t('settings.noEffects')}
           </div>
         ) : (
           activeThemeEffects.map((id) => {
@@ -295,19 +390,16 @@ export function SettingsPanel({
             const on = effectToggles[id] ?? entry.defaultOn;
             return (
               <div key={id}>
-                <label className="settings-radio-row">
-                  <input
-                    type="checkbox"
-                    checked={on}
-                    onChange={(e) => onToggleEffect(id, e.target.checked)}
-                    data-testid={`settings-effect-${id}`}
-                  />
-                  <span>{entry.label}</span>
-                </label>
+                <Switch
+                  checked={on}
+                  onChange={(e) => onToggleEffect(id, e.target.checked)}
+                  label={t(EFFECT_LABEL_KEYS[entry.id])}
+                  data-testid={`settings-effect-${id}`}
+                />
                 {id === 'crt-rollbar' && (
                   <div className="settings-rollbar-params" data-testid="settings-rollbar-params">
                     <label className="settings-rollbar-row">
-                      <span>Line thickness: {rollbar.thickness}px</span>
+                      <span>{t('settings.lineThickness', { value: rollbar.thickness })}</span>
                       <input
                         type="range"
                         min={1}
@@ -319,7 +411,7 @@ export function SettingsPanel({
                       />
                     </label>
                     <label className="settings-rollbar-row">
-                      <span>Line spacing: {rollbar.gap}%</span>
+                      <span>{t('settings.lineSpacing', { value: rollbar.gap })}</span>
                       <input
                         type="range"
                         min={1}
@@ -331,7 +423,7 @@ export function SettingsPanel({
                       />
                     </label>
                     <label className="settings-rollbar-row">
-                      <span>Line color</span>
+                      <span>{t('settings.lineColor')}</span>
                       <input
                         type="color"
                         value={rollbar.color}
@@ -340,7 +432,7 @@ export function SettingsPanel({
                       />
                     </label>
                     <label className="settings-rollbar-row">
-                      <span>Roll speed: {rollbar.speed}</span>
+                      <span>{t('settings.rollSpeed', { value: rollbar.speed })}</span>
                       <input
                         type="range"
                         min={1}
@@ -352,7 +444,7 @@ export function SettingsPanel({
                       />
                     </label>
                     <label className="settings-rollbar-row">
-                      <span>Bar opacity: {rollbar.opacity}%</span>
+                      <span>{t('settings.barOpacity', { value: rollbar.opacity })}</span>
                       <input
                         type="range"
                         min={0}
@@ -364,7 +456,7 @@ export function SettingsPanel({
                       />
                     </label>
                     <label className="settings-rollbar-row">
-                      <span>Line gradient: {rollbar.softness}%</span>
+                      <span>{t('settings.lineGradient', { value: rollbar.softness })}</span>
                       <input
                         type="range"
                         min={0}
@@ -378,7 +470,13 @@ export function SettingsPanel({
                   </div>
                 )}
                 {isInterferenceEffectId(id) && (
-                  <EffectParamSliders effectId={id} params={interference} onChange={onChangeEffectParams} />
+                  <EffectParamSliders
+                    effectId={id}
+                    params={interference}
+                    onChange={onChangeEffectParams}
+                    formatLabel={formatEffectParamLabel}
+                    flashLabel={t('settings.noiseFlash')}
+                  />
                 )}
               </div>
             );
@@ -386,28 +484,28 @@ export function SettingsPanel({
         )}
       </section>
 
-      <section className="status-section">
-        <h2 className="status-section-title">Agent Integrations</h2>
+      <section className="status-section" hidden={category !== 'agents'}>
+        <h2 className="status-section-title">{t('settings.agentIntegrations')}</h2>
         <AgentIntegrationSettings />
       </section>
 
-      <section className="status-section">
-        <h2 className="status-section-title">Remote Access</h2>
+      <section className="status-section" hidden={category !== 'integrations'}>
+        <h2 className="status-section-title">{t('settings.remoteAccess')}</h2>
         {remoteLoading ? (
-          <div className="status-loading">Loading…</div>
+          <div className="status-loading">{t('common.loading')}</div>
         ) : (
           <>
-            <label className="settings-radio-row">
-              <input
-                type="checkbox"
-                checked={remoteEnabled}
-                onChange={handleRemoteToggle}
-                data-testid="settings-remote-toggle"
-              />
-              <span>Enable remote access</span>
-            </label>
+            <Switch
+              checked={remoteEnabled}
+              onChange={handleRemoteToggle}
+              label={t('settings.enableRemoteAccess')}
+              data-testid="settings-remote-toggle"
+            />
             <div className="status-metric">
-              WS bridge on port {remotePort} — {remoteEnabled ? 'running' : 'off'}
+              {t('settings.bridgeStatus', {
+                port: remotePort,
+                state: remoteEnabled ? t('settings.running') : t('settings.off'),
+              })}
             </div>
             {remoteSecurityError && (
               <div className="status-loading" role="alert" data-testid="settings-remote-security-error">
@@ -418,12 +516,10 @@ export function SettingsPanel({
         )}
       </section>
 
-      <SshForwardSettings />
-
-      <section className="status-section">
-        <h2 className="status-section-title">OpenClaw</h2>
+      <section className="status-section" hidden={category !== 'integrations'}>
+        <h2 className="status-section-title">{t('rail.openClaw')}</h2>
         {openclawMode === null ? (
-          <div className="status-loading">Loading…</div>
+          <div className="status-loading">{t('common.loading')}</div>
         ) : (
           <>
             <label className="settings-radio-row">
@@ -434,7 +530,7 @@ export function SettingsPanel({
                 onChange={() => handleOpenclawModeChange('auto')}
                 data-testid="settings-openclaw-mode-auto"
               />
-              <span>Auto-detect (visible when the CLI is installed)</span>
+              <span>{t('settings.openClawAuto')}</span>
             </label>
             <label className="settings-radio-row">
               <input
@@ -444,7 +540,7 @@ export function SettingsPanel({
                 onChange={() => handleOpenclawModeChange('on')}
                 data-testid="settings-openclaw-mode-on"
               />
-              <span>Always on</span>
+              <span>{t('settings.openClawAlwaysOn')}</span>
             </label>
             <label className="settings-radio-row">
               <input
@@ -454,32 +550,40 @@ export function SettingsPanel({
                 onChange={() => handleOpenclawModeChange('off')}
                 data-testid="settings-openclaw-mode-off"
               />
-              <span>Always off</span>
+              <span>{t('settings.openClawAlwaysOff')}</span>
             </label>
           </>
         )}
       </section>
-      <section className={'status-section'}>
-        <h2 className={'status-section-title'}>Session Safety</h2>
-        <label className={'settings-radio-row'}>
-          <input
-            type={'checkbox'}
-            checked={confirmRiskyPaneClose}
-            onChange={(event) => onChangeConfirmRiskyPaneClose(event.target.checked)}
-            data-testid={'settings-confirm-risky-pane-close'}
-          />
-          <span>Confirm before closing a pane with active work</span>
-        </label>
-        <label className={'settings-radio-row'}>
-          <input
-            type={'checkbox'}
-            checked={allowOsc52Clipboard}
-            onChange={(event) => onChangeAllowOsc52Clipboard(event.target.checked)}
-            data-testid={'settings-allow-osc52-clipboard'}
-          />
-          <span>Allow terminal OSC 52 clipboard writes</span>
-        </label>
+      <section className={'status-section'} hidden={category !== 'terminal'}>
+        <h2 className={'status-section-title'}>{t('settings.sessionSafety')}</h2>
+        <Switch
+          checked={confirmRiskyPaneClose}
+          onChange={(event) => onChangeConfirmRiskyPaneClose(event.target.checked)}
+          label={t('settings.confirmRiskyPaneClose')}
+          data-testid="settings-confirm-risky-pane-close"
+        />
+        <Switch
+          checked={allowOsc52Clipboard}
+          onChange={(event) => onChangeAllowOsc52Clipboard(event.target.checked)}
+          label={t('settings.allowOsc52Clipboard')}
+          data-testid="settings-allow-osc52-clipboard"
+        />
       </section>
+      <section className="status-section" hidden={category !== 'about'}>
+        <h2 className="status-section-title">{t('settings.about')}</h2>
+        <div className="settings-diagnostic-grid">
+          <span>{t('settings.electron')}</span>
+          <code>{window.ezterminal?.versions?.electron ?? t('common.unavailable')}</code>
+          <span>{t('settings.chromium')}</span>
+          <code>{window.ezterminal?.versions?.chrome ?? t('common.unavailable')}</code>
+          <span>{t('settings.node')}</span>
+          <code>{window.ezterminal?.versions?.node ?? t('common.unavailable')}</code>
+          <span>{t('settings.terminalRenderer')}</span>
+          <code>{terminalRendererPreference}</code>
+        </div>
+      </section>
+      </div>
     </div>
   );
 }

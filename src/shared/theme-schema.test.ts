@@ -1,6 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { MAX_THEME_MOD_BYTES, ThemeModSchema, validateThemeMod } from './theme-schema';
+import { MAX_THEME_MOD_BYTES, THEME_SCHEMA_VERSION, ThemeModSchema, validateThemeMod } from './theme-schema';
+
+const validUi = {
+  canvas: '#050505',
+  surface: '#101010',
+  surfaceRaised: '#181818',
+  surfaceInset: '#000000',
+  textPrimary: '#ffffff',
+  textSecondary: '#dddddd',
+  textMuted: '#aaaaaa',
+  textInverse: '#000000',
+  borderSubtle: '#555555',
+  borderStrong: '#999999',
+  accent: '#00d990',
+  onAccent: '#001008',
+  focus: '#6fffc8',
+  info: '#55bfff',
+  success: '#00d990',
+  warning: '#ffcc55',
+  danger: '#ff6677',
+};
 
 function validModJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -40,6 +60,15 @@ describe('validateThemeMod — accepts', () => {
       }),
     );
     expect(result.ok).toBe(true);
+  });
+
+  it('accepts version 2 with an explicit semantic UI palette', () => {
+    const result = validateThemeMod(validModJson({ schemaVersion: THEME_SCHEMA_VERSION, ui: validUi }));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.theme.schemaVersion).toBe(2);
+      if (result.theme.schemaVersion === 2) expect(result.theme.ui.accent).toBe('#00d990');
+    }
   });
 });
 
@@ -88,6 +117,13 @@ describe('validateThemeMod — rejects', () => {
 
   it('a schemaVersion mismatch', () => {
     expect(validateThemeMod(validModJson({ schemaVersion: 99 })).ok).toBe(false);
+  });
+
+  it('rejects version 2 without a complete ui palette', () => {
+    expect(validateThemeMod(validModJson({ schemaVersion: 2 })).ok).toBe(false);
+    expect(validateThemeMod(validModJson({ schemaVersion: 2, ui: { ...validUi, focus: undefined } })).ok).toBe(
+      false,
+    );
   });
 });
 

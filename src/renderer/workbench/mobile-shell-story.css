@@ -1,0 +1,103 @@
+.mobile-story-workspace {
+  color: var(--ui-text-primary);
+  background: var(--ui-canvas);
+}
+
+.mobile-story-tabs {
+  overflow: hidden;
+}
+
+.mobile-story-tabs button {
+  min-height: 44px;
+  max-width: 100%;
+  overflow: hidden;
+  padding-inline: var(--ui-space-3);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-4);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-selected);
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-story-terminal {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-4);
+  padding: var(--ui-space-4);
+}
+
+.mobile-story-session-header,
+.mobile-story-page > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ui-space-3);
+  padding-bottom: var(--ui-space-3);
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+
+.mobile-story-session-header h1,
+.mobile-story-page h1 {
+  margin: 0;
+  font: 600 var(--ui-font-size-16)/1.3 var(--ui-font-body);
+}
+
+.mobile-story-session-header p {
+  margin: var(--ui-space-1) 0 0;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-12);
+}
+
+.mobile-story-terminal pre {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: var(--ui-space-4);
+  overflow: auto;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-4);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-inset);
+  font: var(--ui-font-size-13)/1.6 var(--ui-font-terminal);
+  white-space: pre-wrap;
+}
+
+.mobile-story-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--ui-space-2);
+  align-items: end;
+}
+
+.mobile-story-page {
+  min-height: 100%;
+  display: grid;
+  align-content: start;
+  gap: var(--ui-space-4);
+  padding: calc(var(--ui-space-4) + env(safe-area-inset-top)) var(--ui-space-4) var(--ui-space-4);
+  color: var(--ui-text-primary);
+  background: var(--ui-canvas);
+}
+
+.mobile-story-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+  .mobile-story-terminal {
+    padding: var(--ui-space-3);
+  }
+
+  .mobile-story-command {
+    grid-template-columns: 1fr;
+  }
+}

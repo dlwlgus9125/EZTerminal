@@ -1,0 +1,1901 @@
+@import "./styles/ui-tokens.css";
+
+/*
+ * Deliberate mobile/shared boundary.
+ *
+ * This sheet contains only the renderer foundations consumed by the mobile
+ * client: terminal themes/effects, transcript and PTY surfaces, shared status
+ * metrics, Agent Hub, and file preview content. Desktop workbench, Dockview,
+ * drawers, title bars, menus, and overlays remain in index.css.
+ *
+ * @xterm's structural stylesheet stays component-owned by PtyBlock.tsx, so it
+ * is bundled only when the shared terminal component is loaded.
+ */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   EZTerminal — dark console aesthetic (Windows Terminal "Campbell" / Warp).
+   Monospace everywhere, prompt-driven command lines, terminal-tight density.
+   The structured block/table engine is unchanged; only its skin is.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Self-hosted font faces so the packaged renderer renders them: its build-time
+   CSP is `font-src 'self'` (see vite.renderer.config.ts), which blocks remote
+   Google Fonts, and offline builds can't reach them anyway. Vite fingerprints +
+   emits these woff2 from ./fonts into the bundle, served from 'self'. Latin
+   subset only. Share Tech Mono / VT323 are Matrix theme faces (E1+), declared
+   unconditionally but only referenced under [data-theme='matrix'], so the other
+   built-in themes never fetch them. JetBrains Mono / Fira Code are body-font
+   picker entries (fonts.ts FONT_CATALOG), selectable independent of theme. */
+@font-face {
+  font-family: "Share Tech Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/share-tech-mono-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "VT323";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/vt323-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Fira Code";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/fira-code-latin.woff2") format("woff2");
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Monospace stack — Cascadia ships with Windows Terminal, Consolas is always
+     present on Windows; generic monospace closes the fallback. */
+  --term-font:
+    "Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace;
+
+  /* Console surfaces, near-black with subtly layered depth. */
+  --term-bg: #0c0c0c; /* the console background */
+  --term-bg-raised: #151515; /* command line / input strip */
+  --term-bg-inset: #0a0a0a; /* table body, deepest plane */
+  --term-bg-hover: rgba(255, 255, 255, 0.04);
+
+  /* Hairline separators — block chrome stays thin, never card-like. */
+  --term-border: #242424;
+  --term-border-faint: #1a1a1a;
+
+  /* Foreground ramp. */
+  --term-fg: #cccccc; /* default text */
+  --term-fg-bright: #f2f2f2; /* command text, emphasis */
+  --term-fg-dim: #7f7f7f; /* metadata, counts */
+  --term-fg-faint: #565656; /* chrome glyphs, loading */
+
+  /* Classic terminal accents. */
+  --term-green: #29d398; /* success / done / prompt */
+  --term-red: #f0556a; /* error */
+  --term-amber: #e5b567; /* cancelled / warn */
+  --term-cyan: #56b6c2; /* table headers, paths */
+  --term-blue: #4d9fff; /* running / focus */
+
+  --term-selection: rgba(45, 211, 152, 0.22);
+
+  font-family: var(--term-font);
+  /* Keep rem-based product tokens on the canonical 16px scale. The persisted
+     UI scale still enlarges both chrome and terminal typography together. */
+  font-size: calc(16px * var(--ez-ui-scale, 1));
+  font-feature-settings:
+    "calt" 1,
+    "liga" 0; /* keep code legible, no fancy ligatures */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Built-in themes (E1) — applied via data-theme on <html>; :root above stays the
+   'dark' default (no churn). Values mirror src/renderer/themes.ts THEMES —
+   CSS can't import that file, so keep the two in sync by hand. */
+[data-theme="light"] {
+  color-scheme: light;
+  --term-bg: #f5f5f5;
+  --term-bg-raised: #ffffff;
+  --term-bg-inset: #ececec;
+  --term-bg-hover: rgba(0, 0, 0, 0.05);
+  --term-border: #d0d0d0;
+  --term-border-faint: #e2e2e2;
+  --term-fg: #1c1c1c;
+  --term-fg-bright: #000000;
+  --term-fg-dim: #5f5f5f;
+  --term-fg-faint: #8f8f8f;
+  --term-green: #0e8a4b;
+  --term-red: #c62839;
+  --term-amber: #9a6a00;
+  --term-cyan: #0f7c8c;
+  --term-blue: #1857c4;
+  --term-selection: rgba(14, 138, 75, 0.18);
+}
+
+[data-theme="high-contrast"] {
+  --term-bg: #000000;
+  --term-bg-raised: #000000;
+  --term-bg-inset: #000000;
+  --term-bg-hover: rgba(255, 255, 255, 0.15);
+  --term-border: #ffffff;
+  --term-border-faint: #808080;
+  --term-fg: #ffffff;
+  --term-fg-bright: #ffffff;
+  --term-fg-dim: #d0d0d0;
+  --term-fg-faint: #a0a0a0;
+  --term-green: #00ff66;
+  --term-red: #ff3b3b;
+  --term-amber: #ffcc00;
+  --term-cyan: #00e5ff;
+  --term-blue: #66b2ff;
+  --term-selection: rgba(0, 255, 102, 0.35);
+}
+
+/* == PALETTE == mirrors THEMES.matrix.cssVars in themes.ts (keep the two in sync).
+   Matrix supplies the terminal/display face without changing the semantic type
+   scale used by product chrome. */
+[data-theme="matrix"] {
+  color-scheme: dark;
+  --term-font:
+    "Share Tech Mono", "Cascadia Code", Consolas, "Courier New", monospace;
+
+  --term-bg: #010301;
+  --term-bg-raised: #071109;
+  --term-bg-inset: #020402;
+  --term-bg-hover: rgba(41, 211, 152, 0.08);
+
+  --term-border: #3c8d61;
+  --term-border-faint: #1d5035;
+
+  --term-fg: #8af7bd;
+  --term-fg-bright: #d5ffe7;
+  --term-fg-dim: #5ac98f;
+  --term-fg-faint: #419b6d;
+
+  --term-green: #35e58f;
+  --term-red: #ff6b7a;
+  --term-amber: #ffd166;
+  --term-cyan: #62d8ff;
+  --term-blue: #66a8ff;
+
+  --term-selection: rgba(53, 229, 143, 0.28);
+}
+
+/* == CRT GLOW (phosphor-glow effect) == a phosphor bloom on accents; a faint
+   one on body/output. Gated by data-effect-phosphor-glow, not theme, so any
+   theme can opt in — Matrix declares it default-on (effects.ts). */
+html[data-effect-phosphor-glow="on"] .app-title,
+html[data-effect-phosphor-glow="on"] .prompt-sigil,
+html[data-effect-phosphor-glow="on"] .block-command,
+html[data-effect-phosphor-glow="on"] .block-cwd,
+html[data-effect-phosphor-glow="on"] .prompt-cwd,
+html[data-effect-phosphor-glow="on"] .cmd-input,
+html[data-effect-phosphor-glow="on"] .vt-header,
+html[data-effect-phosphor-glow="on"] .status-section-title,
+html[data-effect-phosphor-glow="on"] .block-status,
+html[data-effect-phosphor-glow="on"] .status-metric {
+  text-shadow: 0 0 6px rgba(41, 211, 152, 0.4);
+}
+html[data-effect-phosphor-glow="on"] .text-block {
+  text-shadow: 0 0 4px rgba(41, 211, 152, 0.28);
+}
+/* == SCANLINES == one fixed CRT overlay over the whole window, anchored on
+   <html> — the one element both platforms share (desktop has .app, mobile has
+   #root) — so the same rule serves desktop and mobile. pointer-events: none
+   means it never intercepts clicks. Gated by data-effect-scanlines, not theme,
+   so any theme can opt in and the toggle can turn it off. */
+html[data-effect-scanlines="on"]::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 20, 8, 0.22) 3px,
+    rgba(0, 0, 0, 0) 4px
+  );
+}
+/* == FLICKER (upgraded, crt-interference) == brightness-only CRT flicker on
+   the CONTENT (#root opacity) — decoupled from scanlines (the old stub
+   animated the scanline overlay and silently required scanlines on) and
+   parameterized: frequency/depth come from flicker params (--fx-flicker-*,
+   effect-params.ts; fallbacks = defaults 15Hz / 7% -> 0.067s / 0.93, a
+   faster-but-shallower shimmer). Opacity, not filter:brightness — compositor-cheap, and
+   against the near-black body bg an opacity dip reads as a brightness dip.
+   COMPOSITION: micro-jitter also animates #root (transform); `animation` is
+   a per-element shorthand, so the both-on case needs the explicit combined
+   rule below (two separate rules would drop whichever loses the cascade). */
+html[data-effect-flicker="on"] #root {
+  animation: fx-flicker var(--fx-flicker-duration, 0.067s) steps(2, jump-none)
+    infinite;
+}
+html[data-effect-micro-jitter="on"][data-effect-flicker="on"] #root {
+  animation:
+    fx-micro-jitter var(--fx-micro-duration, 4s) step-end infinite,
+    fx-flicker var(--fx-flicker-duration, 0.067s) steps(2, jump-none) infinite;
+}
+@keyframes fx-flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: var(--fx-flicker-min, 0.93);
+  }
+}
+
+/* == CRT CURVATURE == a subtle vignette on its own ::before layer (scanlines
+   owns ::after, so the two effects compose without colliding). GPU-cheap:
+   opacity/gradient only, no filter/blur. */
+html[data-effect-crt-curvature="on"]::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 199;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 55%,
+    rgba(0, 0, 0, 0.35) 100%
+  );
+}
+
+/* == CRT ROLL BAR (crt-rollbar effect) == an ENDLESS CONVEYOR of horizontal
+   lines drifting top→bottom at a constant pitch — the old-CRT "vertical
+   hold" roll ("줄 내려가는"). No line count: as one line exits at the bottom
+   the next is already entering at the top, always --fx-rollbar-period apart
+   (the pitch, `gap`% of the viewport, set by effect-params.ts). SEAMLESS
+   because the overlay stays pinned to the viewport (inset:0) with a background
+   tile exactly one period tall, and the animation scrolls background-position
+   down by exactly one period per loop — the reset lands on an identical frame,
+   so the screen is never empty and the spacing never varies. Scrolling the
+   background (rather than translating an oversized element past the viewport)
+   keeps the overlay inside the viewport so it never adds a phantom document
+   scrollbar, matching the scanline-scroll effect below.
+   Thickness/color/speed/opacity/gradient-softness are the other params
+   (rollbar-params, Settings). EVERY line is identical (same color, same
+   soft fade within its own thickness). Fallbacks mirror
+   DEFAULT_ROLLBAR_PARAMS (thickness 120, gap 70% -> 70vh, speed 1 -> 16.80s per
+   period). On body::after (html::after/::before are taken by
+   scanlines/curvature), z-index above them. pointer-events:none. */
+html[data-effect-crt-rollbar="on"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 201;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--fx-rollbar-color, #2fd06d) 0%, transparent) 0,
+    var(--fx-rollbar-color, #2fd06d) var(--fx-rollbar-grad-in, 59.4px),
+    var(--fx-rollbar-color, #2fd06d) var(--fx-rollbar-grad-out, 60.6px),
+    color-mix(in srgb, var(--fx-rollbar-color, #2fd06d) 0%, transparent)
+      calc(var(--fx-rollbar-thickness, 120) * 1px),
+    transparent calc(var(--fx-rollbar-thickness, 120) * 1px),
+    transparent var(--fx-rollbar-period, 70vh)
+  );
+  background-size: 100% var(--fx-rollbar-period, 70vh);
+  opacity: var(--fx-rollbar-opacity, 0.2);
+  will-change: background-position;
+  animation: crt-rollbar-sweep var(--fx-rollbar-duration, 16.8s) linear infinite;
+}
+@keyframes crt-rollbar-sweep {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 var(--fx-rollbar-period, 70vh);
+  }
+}
+
+/* == SCANLINE SCROLL (scanline-scroll effect) == the horizontal scanline
+   pattern itself drifting continuously downward — distinct from the static
+   `scanlines` overlay, and independently toggleable. On body::before; animates
+   background-position only. */
+html[data-effect-scanline-scroll="on"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 198;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(120, 255, 190, 0.1) 3px,
+    rgba(0, 0, 0, 0) 4px
+  );
+  background-size: 100% 4px;
+  will-change: background-position;
+  animation: scanline-scroll-move 0.5s linear infinite;
+}
+@keyframes scanline-scroll-move {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 4px;
+  }
+}
+
+/* == CRT INTERFERENCE (jitter-burst / micro-jitter / static-noise) == the
+   "치직치직" reception-trouble set. All params come from effect-params.ts
+   (fallbacks mirror the defaults there).
+
+   ELEMENT BUDGET — html/body pseudos are all taken (scanlines html::after,
+   curvature html::before, scanline-scroll body::before, rollbar body::after),
+   and two transform animations on ONE element would collide (`animation` is
+   per-element; even comma-listed, two keyframes both writing `transform`
+   don't compose). Nested transforms DO compose, so ownership is split:
+     - jitter-burst  -> transform on `body` (rollbar/scanline-scroll pseudos
+       bump WITH the content — beam artifacts move on sync loss; the html-
+       level scanline mask + vignette stay put — they're the physical glass)
+     - micro-jitter  -> transform on `#root`
+     - flicker       -> opacity on `#root` (combined rule above when both on)
+     - noise overlays -> #root::before (burst flash) / #root::after (static)
+   Every element has exactly one animation-owning selector chain.
+
+   NOTE: transform/opacity on body/#root makes them containing blocks /
+   stacking contexts. #root's box == viewport on both platforms, so fixed
+   descendants (palette, context menu, drawers) keep their visual anchor —
+   and during a bump they jitter with the content, which is the point. The
+   z-202 noise overlays sit above scanlines(200)/rollbar(201) normally; when
+   a #root stacking context exists they cap at #root's own level instead —
+   both orderings look fine (all are translucent dark layers).
+
+   Displacements are integer px with step-end timing only: pure compositor
+   translations — no reflow, no xterm repaint, no subpixel text blur.
+
+   The burst keyframes below are the STATIC DEFAULTS (period 3s, 100ms burst
+   -> 3.33% window, intensity 1, flash on): effect-params.ts regenerates both
+   blocks into #ez-fx-keyframes (appended after this sheet, so it wins the
+   keyframes-name cascade) whenever params change — % stops can't be var()s. */
+:root {
+  /* One shared 128px grayscale fractal-noise tile (SVG feTurbulence), inline
+     data: URI — packaged CSP allows img-src data: (vite.renderer.config.ts),
+     no external asset. Used by both the static-noise overlay and the
+     jitter-burst flash. */
+  --fx-noise-texture: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='128'%20height='128'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.9'%20numOctaves='2'%20stitchTiles='stitch'/%3E%3CfeColorMatrix%20type='saturate'%20values='0'/%3E%3C/filter%3E%3Crect%20width='128'%20height='128'%20filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+html[data-effect-jitter-burst="on"] body {
+  will-change: transform;
+  animation: fx-jitter-burst var(--fx-burst-period, 3s) step-end infinite;
+}
+@keyframes fx-jitter-burst {
+  0% {
+    transform: translate(0px, 1px);
+  }
+  0.67% {
+    transform: translate(-1px, -1px);
+  }
+  1.33% {
+    transform: translate(0px, 1px);
+  }
+  2.00% {
+    transform: translate(0px, 0px);
+  }
+  2.67% {
+    transform: translate(0px, 0px);
+  }
+  3.33% {
+    transform: translate(0px, 0px);
+  }
+  100% {
+    transform: translate(0px, 0px);
+  }
+}
+html[data-effect-jitter-burst="on"] #root::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 202;
+  pointer-events: none;
+  background-image: var(--fx-noise-texture);
+  background-size: 128px 128px;
+  opacity: 0;
+  animation: fx-burst-flash var(--fx-burst-period, 3s) linear infinite;
+}
+@keyframes fx-burst-flash {
+  0% {
+    opacity: 0.25;
+  }
+  3.33% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+html[data-effect-micro-jitter="on"] #root {
+  will-change: transform;
+  animation: fx-micro-jitter var(--fx-micro-duration, 4s) step-end infinite;
+}
+/* 10 jumps per cycle at irregular stops — deterministic "random". Amplitude
+   scales every offset via the one var (rollbar's calc-inside-keyframes
+   precedent). 100% repeats 0% (invisible under step-end; kept for sanity). */
+@keyframes fx-micro-jitter {
+  0% {
+    transform: translate(0, var(--fx-micro-amp, 1px));
+  }
+  11% {
+    transform: translate(calc(var(--fx-micro-amp, 1px) * -1), 0);
+  }
+  23% {
+    transform: translate(0, calc(var(--fx-micro-amp, 1px) * -1));
+  }
+  37% {
+    transform: translate(var(--fx-micro-amp, 1px), var(--fx-micro-amp, 1px));
+  }
+  48% {
+    transform: translate(0, 0);
+  }
+  59% {
+    transform: translate(
+      calc(var(--fx-micro-amp, 1px) * -1),
+      calc(var(--fx-micro-amp, 1px) * -1)
+    );
+  }
+  71% {
+    transform: translate(var(--fx-micro-amp, 1px), 0);
+  }
+  84% {
+    transform: translate(0, var(--fx-micro-amp, 1px));
+  }
+  93% {
+    transform: translate(
+      calc(var(--fx-micro-amp, 1px) * -1),
+      var(--fx-micro-amp, 1px)
+    );
+  }
+  100% {
+    transform: translate(0, var(--fx-micro-amp, 1px));
+  }
+}
+
+html[data-effect-static-noise="on"] #root::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 202;
+  pointer-events: none;
+  background-image: var(--fx-noise-texture);
+  background-size: var(--fx-noise-size, 224px) var(--fx-noise-size, 224px);
+  opacity: var(--fx-noise-opacity, 0.1);
+  will-change: background-position;
+  animation: fx-noise-shuffle var(--fx-noise-duration, 0.5s) step-end infinite;
+}
+/* Tile-origin shuffle through fixed pseudo-random offsets = animated snow. */
+@keyframes fx-noise-shuffle {
+  0% {
+    background-position: 0% 0%;
+  }
+  12.5% {
+    background-position: 37% 61%;
+  }
+  25% {
+    background-position: 71% 13%;
+  }
+  37.5% {
+    background-position: 19% 83%;
+  }
+  50% {
+    background-position: 89% 41%;
+  }
+  62.5% {
+    background-position: 53% 7%;
+  }
+  75% {
+    background-position: 7% 29%;
+  }
+  87.5% {
+    background-position: 61% 97%;
+  }
+  100% {
+    background-position: 0% 0%;
+  }
+}
+
+/* == STATUS INDICATORS == dot → glyph. Colour AND shape encode the state, so it
+   reads for colour-blind users too. Only the ::before glyph changes — the text
+   node ('running' / 'done' / 'error' / 'cancelled') is untouched, so the e2e
+   assertions on block-status textContent still pass. Stronger glow + punchier
+   running pulse. Sizing is Matrix identity; the glow is the phosphor-glow
+   effect (split below so toggling it off doesn't revert glyph sizing). */
+[data-theme="matrix"] .block-status::before {
+  font-size: 0.9em;
+  margin-right: 0.45em;
+}
+html[data-effect-phosphor-glow="on"] .block-status::before {
+  text-shadow: 0 0 8px currentColor;
+}
+[data-theme="matrix"] .block-status--running::before {
+  content: "\25B6"; /* ▶ */
+  animation: matrix-status-pulse 0.9s ease-in-out infinite;
+}
+[data-theme="matrix"] .block-status--done::before {
+  content: "\2713"; /* ✓ */
+}
+[data-theme="matrix"] .block-status--error::before {
+  content: "\2715"; /* ✕ */
+}
+[data-theme="matrix"] .block-status--cancelled::before {
+  content: "\23F8"; /* ⏸ */
+}
+@keyframes matrix-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.3;
+    transform: scale(0.72);
+  }
+}
+
+/* == PTY / AGENT TUI GLOW == bg/fg for the xterm surface come from
+   THEMES.matrix.xterm (themes.ts). This adds the phosphor bloom so Claude Code /
+   Codex output glows green too, WITHOUT touching the agent's own ANSI colours.
+   xterm 6 uses the DOM renderer as the compatibility fallback and the stable
+   WebGL addon in desktop Auto mode; Unicode 11, Search, and Web Links are
+   managed by xterm-runtime.ts. The canvas filter isn't a text-shadow,
+   so it stays Matrix identity; the two glow rules below are the phosphor-glow
+   effect. */
+html[data-effect-phosphor-glow="on"] .xterm .xterm-rows {
+  text-shadow: 0 0 3px rgba(41, 211, 152, 0.4);
+}
+[data-theme="matrix"] .xterm .xterm-screen canvas {
+  filter: drop-shadow(0 0 2px rgba(41, 211, 152, 0.45));
+}
+/* Plain adaptive-render PTY view (ansi→html text). */
+html[data-effect-phosphor-glow="on"] .pty-plain-block .text-block {
+  text-shadow: 0 0 4px rgba(41, 211, 152, 0.32);
+}
+
+/* == RESULT TABLE == cyan headers already themed via vars; add the bloom. */
+html[data-effect-phosphor-glow="on"] .vt-cell--head {
+  text-shadow: 0 0 6px rgba(31, 182, 201, 0.4);
+}
+
+/* == RUN / CANCEL / ACCEPT buttons == a little extra phosphor on the primaries. */
+html[data-effect-phosphor-glow="on"] .btn-run,
+html[data-effect-phosphor-glow="on"] .ssh-prompt-actions .btn-run {
+  text-shadow: 0 0 6px rgba(41, 211, 152, 0.45);
+}
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--term-bg);
+  color: var(--term-fg);
+}
+
+::selection {
+  background: var(--term-selection);
+  color: var(--term-fg-bright);
+}
+
+/* Dark, slim terminal scrollbars throughout. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2e2e2e;
+  border: 2px solid var(--term-bg);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3d3d3d;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+/* One terminal surface: block list (fills, scrolls) + pinned prompt below. Fills its
+   dockview panel content box. min-height:0 lets the nested block-list scroll instead
+   of overflowing the pane. */
+.pane {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.status-section {
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid var(--term-border-faint);
+}
+
+.status-section-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--term-cyan);
+}
+
+.status-metric {
+  font-size: 0.82rem;
+  color: var(--term-fg-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-loading {
+  font-size: 0.75rem;
+  color: var(--term-fg-faint);
+}
+
+.sparkline {
+  display: block;
+  width: 100%;
+  height: 24px;
+  margin-top: 0.3rem;
+  color: var(--term-green);
+}
+
+.status-disk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.status-disk-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--term-fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-disk-bar {
+  height: 5px;
+  margin-top: 0.15rem;
+  background: var(--term-bg-inset);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.status-disk-bar-fill {
+  height: 100%;
+  background: var(--term-blue);
+}
+
+.status-core-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.3rem 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.status-core-grid--compact {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.2rem 0.35rem;
+}
+
+.status-core-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  color: var(--term-fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-mem-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.status-net-sparks {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.status-net-sparks .sparkline {
+  flex: 1 1 50%;
+  margin-top: 0;
+}
+
+.status-net-sparks .sparkline:last-child {
+  color: var(--term-blue);
+}
+
+.status-proc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-proc-table th {
+  text-align: left;
+  padding: 0.15rem 0.25rem;
+  color: var(--term-cyan);
+  font-weight: 600;
+}
+
+.status-proc-table td {
+  padding: 0.15rem 0.25rem;
+  color: var(--term-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 0;
+}
+
+.status-packet-toggle {
+  margin-top: 0.5rem;
+  width: 100%;
+}
+
+.status-packet-view {
+  margin-top: 0.5rem;
+}
+
+.status-packet-ack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--term-fg-dim);
+}
+
+.status-packet-status {
+  font-size: 0.72rem;
+  color: var(--term-amber);
+}
+
+.status-packet-status a {
+  color: var(--term-blue);
+}
+.settings-rollbar-params {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0.3rem 0 0.5rem 1.4rem;
+}
+
+.settings-rollbar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--term-fg);
+}
+
+.settings-rollbar-row span {
+  min-width: 8.5em;
+}
+
+.settings-rollbar-row input[type="range"] {
+  flex: 1;
+}
+.file-viewer-content {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0.75rem;
+  overflow: auto;
+  font-family: inherit;
+  font-size: 0.8rem;
+  color: var(--term-fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* ── block list — newest at bottom, input pinned below (Warp-like) ────────── */
+.block-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0.35rem 0 0.5rem;
+}
+
+/* Each command + its output. Minimal chrome: a thin top rule between blocks,
+   no heavy card border/background — output reads like terminal scrollback. */
+.block {
+  background: transparent;
+  border-top: 1px solid var(--term-border-faint);
+  padding: 0.05rem 0 0.2rem;
+  animation: block-in 150ms ease-out;
+}
+
+.block:first-child {
+  border-top: none;
+}
+
+@keyframes block-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The typed-prompt line at the top of a block. Sticky so the command line,
+   status indicator, and Cancel/Dismiss controls stay visible at the top of the
+   scroll container even while output streams and auto-scroll pins to the bottom.
+   This also prevents the rAF auto-scroll from yanking the Cancel button away from
+   a Playwright (or human) click that is already in progress. */
+.block-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.22rem 0.6rem;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--term-bg);
+}
+
+/* Collapse/cancel/dismiss are utility affordances, not part of the transcript
+   itself — keep them out of the way until the row is hovered (or focused, for
+   keyboard use) so the feed reads as output, not a row of buttons. Opacity
+   (not display/visibility) so they stay hit-testable — a click still lands
+   without a prior hover, exactly like a real mouse click does in practice. */
+.block-toggle,
+.block-cancel,
+.block-dismiss {
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.block:hover .block-toggle,
+.block:hover .block-cancel,
+.block:hover .block-dismiss,
+.block-toggle:focus-visible,
+.block-cancel:focus-visible,
+.block-dismiss:focus-visible {
+  opacity: 1;
+}
+
+.block-toggle {
+  background: transparent;
+  border: none;
+  color: var(--term-fg-faint);
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.1rem 0.15rem;
+}
+
+.block-toggle:hover {
+  color: var(--term-fg);
+}
+
+/* Dim cyan cwd path that precedes the prompt sigil on a block's command line. */
+.block-cwd {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 38%;
+  color: var(--term-cyan);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.7;
+}
+
+/* Green prompt sigil — the same glyph leads the block command and the input. */
+.prompt-sigil {
+  flex: 0 0 auto;
+  color: var(--term-green);
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.block-command {
+  flex: 1 1 auto;
+  font-family: var(--term-font);
+  font-size: 0.85rem;
+  color: var(--term-fg-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.block-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.72rem;
+  color: var(--term-fg-dim);
+}
+
+.block-count::before {
+  content: "";
+  display: inline-block;
+}
+
+/* Status — a colored dot + lowercase exit-style label, never a pill. The label
+   text node stays exactly "running"/"done"/"error"/"cancelled" (e2e asserts it);
+   the dot is a CSS ::before glyph and is not part of textContent. */
+.block-status {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--term-fg-dim);
+}
+
+.block-status::before {
+  content: "●";
+  font-size: 0.62em;
+  margin-right: 0.4em;
+  line-height: 1;
+  color: currentColor;
+}
+
+.block-status--running {
+  color: var(--term-blue);
+}
+.block-status--done {
+  color: var(--term-green);
+}
+.block-status--error {
+  color: var(--term-red);
+}
+.block-status--cancelled {
+  color: var(--term-amber);
+}
+.file-source-line {
+  display: block;
+  min-height: 1lh;
+}
+
+.file-source-line--selected {
+  background: color-mix(in srgb, var(--term-amber) 20%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--term-amber) 55%, transparent);
+}
+
+.file-source-line mark {
+  background: var(--term-amber);
+  color: var(--term-bg);
+}
+.file-preview-markdown,
+.file-preview-image-wrap,
+.file-preview-state {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  color: var(--term-fg);
+}
+
+.file-preview-markdown {
+  font-family: system-ui, sans-serif;
+  line-height: 1.55;
+  user-select: text;
+}
+
+.file-preview-markdown pre,
+.file-preview-markdown code {
+  font-family: var(--term-font, monospace);
+}
+
+.file-preview-markdown pre {
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--term-border-faint);
+  background: var(--term-bg-inset);
+}
+
+.file-preview-markdown a {
+  color: var(--term-cyan);
+  text-decoration: underline;
+}
+
+.file-preview-markdown table {
+  border-collapse: collapse;
+}
+
+.file-preview-markdown th,
+.file-preview-markdown td {
+  padding: 4px 8px;
+  border: 1px solid var(--term-border);
+}
+
+.file-preview-blocked-image {
+  display: inline-block;
+  padding: 4px 7px;
+  border: 1px dashed var(--term-border);
+  color: var(--term-fg-faint);
+  font-family: var(--term-font, monospace);
+  font-size: 11px;
+}
+
+.file-preview-image-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--term-bg);
+}
+
+.file-preview-image {
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: calc(100% - 28px);
+  object-fit: contain;
+}
+
+.file-preview-meta {
+  color: var(--term-fg-faint);
+  font-size: 11px;
+}
+
+.file-preview-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  color: var(--term-fg-dim);
+}
+
+.file-preview-state--error {
+  color: var(--term-red);
+}
+.agent-hub-head {
+  min-height: 48px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--term-border);
+}
+
+.agent-hub-title {
+  margin: 0;
+  color: var(--term-fg-bright);
+  font-size: 14px;
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.agent-hub-summary,
+.agent-age {
+  color: var(--term-fg-faint);
+  font-size: 11px;
+}
+
+.agent-hub-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px 16px;
+}
+
+.agent-group + .agent-group {
+  margin-top: 16px;
+}
+
+.agent-list {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-row {
+  padding: 9px;
+  border: 1px solid var(--term-border-faint);
+  background: var(--term-bg-inset);
+}
+
+.agent-row[data-status="blocked"],
+.agent-row[data-status="error"] {
+  border-color: color-mix(in srgb, var(--term-red) 55%, var(--term-border));
+}
+
+.agent-row[data-status="waiting"] {
+  border-color: color-mix(in srgb, var(--term-amber) 55%, var(--term-border));
+}
+
+.agent-row-main,
+.agent-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.agent-row-actions {
+  margin-top: 7px;
+  justify-content: space-between;
+}
+
+.agent-status-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: var(--term-fg-faint);
+}
+
+.agent-status-dot--starting {
+  background: var(--term-fg-faint);
+}
+.agent-status-dot--working {
+  background: var(--term-blue);
+}
+.agent-status-dot--waiting {
+  background: var(--term-amber);
+}
+.agent-status-dot--blocked,
+.agent-status-dot--error {
+  background: var(--term-red);
+}
+.agent-status-dot--done {
+  background: var(--term-green);
+}
+
+.agent-provider {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid var(--term-border);
+  color: var(--term-cyan);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.agent-cwd {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--term-fg);
+}
+
+.agent-status {
+  font-size: 11px;
+  color: var(--term-fg-dim);
+}
+
+.agent-status--blocked,
+.agent-status--error {
+  color: var(--term-red);
+}
+.agent-status--waiting {
+  color: var(--term-amber);
+}
+.agent-status--working {
+  color: var(--term-blue);
+}
+.agent-status--done {
+  color: var(--term-green);
+}
+
+.agent-followup {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.agent-followup-input {
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid var(--term-border);
+  background: var(--term-bg);
+  color: var(--term-fg-bright);
+  font: inherit;
+}
+
+.agent-followup-input:focus {
+  outline: 1px solid var(--term-green);
+  border-color: var(--term-green);
+}
+
+.agent-followup-error {
+  grid-column: 1 / -1;
+  color: var(--term-red);
+  font-size: 11px;
+}
+
+.agent-empty,
+.agent-offline {
+  margin: 12px;
+  padding: 12px;
+  border: 1px solid var(--term-border-faint);
+  color: var(--term-fg-faint);
+  line-height: 1.5;
+}
+
+.agent-offline {
+  color: var(--term-amber);
+  border-color: var(--term-amber);
+}
+
+.agent-live-region {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.agent-unread-badge {
+  min-width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--term-red);
+  color: var(--term-bg);
+  font-size: 10px;
+  font-weight: 700;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-status-dot,
+  .agent-row {
+    transition: none;
+  }
+}
+
+.block-status--running::before {
+  animation: status-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.block-cancel {
+  padding: 0.08rem 0.5rem;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.block-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--term-fg-faint);
+  cursor: pointer;
+  font-size: 0.78rem;
+  line-height: 1;
+  padding: 0.1rem 0.3rem;
+}
+
+.block-dismiss:hover {
+  color: var(--term-red);
+}
+
+.block-body {
+  padding: 0 0.6rem;
+}
+
+.pty-restore-warning {
+  margin: 0.25rem 0;
+  padding: 0.35rem 0.55rem;
+  border-left: 2px solid var(--term-amber);
+  background: color-mix(in srgb, var(--term-amber) 10%, transparent);
+  color: var(--term-amber);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.block-pending {
+  padding: 0.25rem 0.85rem;
+  color: var(--term-fg-dim);
+  font-size: 0.82rem;
+}
+
+/* Text output (scalars / external program streams). */
+.text-block {
+  margin: 0.15rem 0 0;
+  padding: 0.35rem 0;
+  font-family: var(--term-font);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--term-fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.text-block--error {
+  color: var(--term-red);
+}
+
+/* ── TUI pane takeover (terminal-feel pass T1) ─────────────────────────────
+   While a pane's active block is a RUNNING xterm `pty` (auto-upgraded or
+   `!cmd`-forced), it takes over the pane like a real terminal handing the
+   screen to a full-screen program: sibling blocks and the pinned cmd-input
+   are hidden (display:none — CSS only, nothing unmounts, so live PTYs/blocks
+   survive) and the takeover block stretches to fill the pane's remaining
+   height. Released the moment the block leaves 'running' (TerminalPane.tsx). */
+.pane--tui-takeover .block-list {
+  overflow: hidden;
+}
+.pane--tui-takeover .block:not(.block--takeover) {
+  display: none;
+}
+.pane--tui-takeover .cmd-row {
+  display: none;
+}
+.pane--tui-takeover .block--takeover {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  border-top: none;
+}
+.pane--tui-takeover .block--takeover .block-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.pane--tui-takeover .block--takeover .pty-block {
+  flex: 1 1 auto;
+  height: auto;
+  margin: 0;
+  /* Touch: a drag over the takeover TUI is terminal scrolling (PtyBlock.tsx's
+     touch→wheel bridge), never browser/list panning — suppress native touch
+     actions up front so Chrome doesn't race the non-passive touchmove
+     handler. Touch-only property: mouse selection/wheel are unaffected. */
+  touch-action: none;
+}
+
+/* The takeover block's own header (command echo + toggle/cancel/dismiss) reads
+   like a terminal's title bar once a full-screen TUI owns the pane — hidden by
+   default (so xterm gets the full pane height, not height minus a header row)
+   and revealed as a thin overlay only while the mouse is over the block's top
+   strip, or a control inside it holds focus. Opacity, not display: an
+   opacity:0 element is still hit-testable, so Playwright's click() still lands
+   on block-cancel (and a real mousemove reveals it first); :focus-within keeps
+   Tab access working the same way. */
+.pane--tui-takeover .block--takeover .block-head {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* xterm's WebGL link/decor/overview canvases use layers through z-index 8.
+     This title-bar overlay must remain the hit target over all of them. */
+  z-index: 10;
+  opacity: 0;
+  border-bottom: 1px solid var(--term-border);
+  transition: opacity 120ms ease;
+}
+.pane--tui-takeover .block--takeover .block-head:hover,
+.pane--tui-takeover .block--takeover .block-head:focus-within {
+  opacity: 1;
+}
+
+/* ── PTY / TUI block — a live xterm terminal for `!cmd` interactive programs ─── */
+.pty-block {
+  position: relative;
+  height: 360px;
+  margin: 0.15rem 0 0.35rem;
+  padding: 0.35rem 0.5rem;
+  background: var(--term-bg);
+  border: 1px solid var(--term-border-faint);
+  border-radius: 4px;
+  overflow: hidden;
+}
+/* xterm fills the block; FitAddon derives cols/rows from this box. */
+.pty-block .xterm,
+.pty-block .xterm-viewport,
+.pty-block .xterm-screen {
+  height: 100%;
+}
+/* Non-controlling view (control handoff, M8b — formerly "mirror mode", now
+ * DYNAMIC rather than fixed at construction): rendered shrunk-to-fit via
+ * PtyBlock.tsx's `applyMirrorLayout`, so this only needs to allow the rare
+ * overflow the correction loop's floor (6px) can still leave. */
+.pty-block--mirror {
+  overflow: auto;
+}
+
+/* Block-local xterm search. It overlays terminal content so opening Find never
+ * resizes a live TUI or changes the PTY grid. */
+.terminal-find-bar {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.6rem;
+  /* Explicit terminal controls sit above both xterm's layers and the takeover
+     title-bar overlay. */
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 1.2rem);
+  padding: 4px;
+  background: var(--term-bg-raised);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.terminal-find-input {
+  min-width: 90px;
+  width: clamp(110px, 22vw, 240px);
+  height: 28px;
+  padding: 0 8px;
+  color: var(--term-fg-bright);
+  background: var(--term-bg);
+  border: 1px solid var(--term-border-faint);
+  border-radius: 3px;
+  font: 0.78rem var(--term-font);
+}
+
+.terminal-find-input:focus {
+  outline: none;
+  border-color: var(--term-green);
+}
+
+.terminal-find-count {
+  min-width: 58px;
+  color: var(--term-fg-dim);
+  font-size: 0.7rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.terminal-find-action {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--term-fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: 0.75rem var(--term-font);
+  cursor: pointer;
+}
+
+.terminal-find-action:hover:not(:disabled),
+.terminal-find-action:focus-visible,
+.terminal-find-action--active {
+  color: var(--term-fg-bright);
+  border-color: var(--term-green);
+}
+
+.terminal-find-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+@media (pointer: coarse) {
+  .terminal-find-bar {
+    top: max(0.45rem, env(safe-area-inset-top));
+  }
+
+  .terminal-find-input,
+  .terminal-find-action {
+    min-height: 44px;
+  }
+
+  .terminal-find-action {
+    width: 44px;
+  }
+}
+
+@media (max-width: 520px) {
+  .terminal-find-bar {
+    left: 0.6rem;
+    width: auto;
+  }
+
+  .terminal-find-input {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 70px;
+  }
+
+  .terminal-find-count {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-find-bar,
+  .terminal-find-action {
+    transition: none;
+  }
+}
+
+/* Take-control chip (control handoff, M8b): shown on a non-controlling but
+ * RUNNING pty view — claiming moves PTY resize authority to this device
+ * instead of leaving it pinned to whoever spawned the run. A subtle dark
+ * overlay, not a web CTA; sized for a comfortable touch target (min 32px)
+ * since a phone mirror is the primary reason to claim control. */
+.pty-take-control {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 11;
+  min-height: 32px;
+  padding: 0.3rem 0.7rem;
+  font-family: var(--term-font);
+  font-size: 0.72rem;
+  color: var(--term-fg);
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.pty-take-control:hover {
+  color: var(--term-fg-bright);
+  border-color: var(--term-green);
+  background: rgba(0, 0, 0, 0.7);
+}
+
+/* Right-click copy/paste menu (WT-parity M2) — clones .file-context-menu's
+   chrome (fixed, cursor-positioned via `left`/`top` set inline by
+   TerminalContextMenu.tsx). z-index 165 (context-menu tier) keeps it above
+   dockview's drag sash (99) — a right-click near a pane border must not be
+   swallowed by the divider — and it is never shown together with the
+   file-explorer overlays. */
+.terminal-context-menu {
+  position: fixed;
+  z-index: 165;
+  min-width: 160px;
+  padding: 0.35rem;
+  background: var(--term-bg-raised);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.terminal-context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  text-align: left;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--term-fg);
+  cursor: pointer;
+}
+.terminal-context-menu-item kbd {
+  color: var(--term-fg-dim);
+  font: inherit;
+  font-size: 0.68rem;
+}
+.terminal-context-menu-item:hover:not(:disabled) {
+  border-color: var(--term-green);
+  color: var(--term-fg-bright);
+}
+.terminal-context-menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Compact PTY control ownership status. It stays at the terminal edge instead
+   of becoming a central modal and every state also has visible text. */
+.pty-control-chip {
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 12px);
+  min-height: 24px;
+  padding: 3px 5px 3px 7px;
+  color: var(--term-fg);
+  background: color-mix(in srgb, var(--term-bg-raised) 92%, transparent);
+  border: 1px solid var(--term-amber);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 35%);
+  font-size: 0.68rem;
+}
+
+.pty-block > .pty-control-chip {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+
+/* In takeover mode the transparent, hit-testable block header occupies the
+   top edge at z-index 10. Keep ownership actions at the opposite edge so the
+   hidden Cancel button cannot intercept Take control. */
+.pane--tui-takeover .block--takeover .pty-block > .pty-control-chip {
+  top: auto;
+  bottom: 6px;
+}
+
+.pty-plain-block > .pty-control-chip {
+  margin: 4px 0;
+}
+
+.pty-control-chip__label,
+.pty-control-chip__status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pty-control-chip__action {
+  min-height: 24px;
+  padding: 2px 7px;
+  color: var(--term-fg-bright);
+  background: var(--term-bg-inset);
+  border: 1px solid var(--term-border);
+  border-radius: 999px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pty-control-chip__action:hover,
+.pty-control-chip__action:focus-visible {
+  border-color: var(--term-green);
+  outline: none;
+}
+
+@media (pointer: coarse) {
+  .pty-control-chip,
+  .pty-control-chip__action {
+    min-height: 44px;
+  }
+}
+
+/* ── PTY plain view (Phase 3 adaptive-render default) ──────────────────────── */
+/* A wrapper around a normal .text-block — keyboard input routes through
+   cmd-input (TerminalPane.tsx's activePlainPty, M1) until/unless the block
+   upgrades to xterm; this element itself is output-only. */
+.pty-plain-waiting {
+  color: var(--term-fg-dim);
+  animation: pty-plain-blink 1s step-start infinite;
+}
+@keyframes pty-plain-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ── ssh-connect prompt card (E5) — password/passphrase or TOFU host-key ──── */
+.ssh-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.15rem 0 0.35rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--term-bg-inset);
+  border: 1px solid var(--term-border-faint);
+  border-radius: 4px;
+}
+
+.ssh-prompt-message {
+  margin: 0;
+  color: var(--term-fg);
+  font-size: 0.82rem;
+}
+
+.ssh-prompt-fingerprint {
+  margin: 0;
+  color: var(--term-amber);
+  font-family: var(--term-font);
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.ssh-prompt-input {
+  background: var(--term-bg);
+  border: 1px solid var(--term-border);
+  border-radius: 4px;
+  color: var(--term-fg-bright);
+  font-family: var(--term-font);
+  font-size: 0.85rem;
+  padding: 0.3rem 0.5rem;
+}
+
+.ssh-prompt-input:focus {
+  outline: none;
+  border-color: var(--term-green);
+}
+
+.ssh-prompt-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* ── virtualized table — styled as terminal output, not a web grid ────────── */
+.result-table {
+  font-family: var(--term-font);
+  font-size: 0.8rem;
+  margin-top: 0.15rem;
+  border: 1px solid var(--term-border-faint);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--term-bg-inset);
+}
+
+.vt-header {
+  display: flex;
+  background: var(--term-bg-raised);
+  border-bottom: 1px solid var(--term-border);
+  color: var(--term-cyan);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.vt-scroll {
+  background: var(--term-bg-inset);
+}
+
+.vt-row {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  border-bottom: 1px solid var(--term-border-faint);
+  transition: background 80ms ease;
+}
+
+.vt-row:hover {
+  background: var(--term-bg-hover);
+}
+
+.vt-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 0.7rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--term-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.vt-cell--head {
+  padding-top: 0.34rem;
+  padding-bottom: 0.34rem;
+  color: var(--term-cyan);
+}
+
+.vt-cell--loading {
+  color: var(--term-fg-faint);
+}
+
+/* ── command input — the live prompt line, pinned to the bottom ───────────── */
+.cmd-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.6rem;
+  /* Same surface as the feed above it (not a distinct raised toolbar) — the
+     live prompt reads as the next line of the transcript, just pinned. */
+  background: var(--term-bg);
+  border-top: 1px solid var(--term-border-faint);
+}
+
+/* Live cwd path in the input prompt — dim cyan, like a terminal's `cwd ❯`. */
+.prompt-cwd {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  color: var(--term-cyan);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.85;
+}
+
+.prompt-sigil--input {
+  font-size: 0.95rem;
+}
+
+.cmd-input {
+  flex: 1 1 auto;
+  background: transparent;
+  border: none;
+  color: var(--term-fg-bright);
+  font-family: var(--term-font);
+  font-size: 0.9rem;
+  padding: 0.15rem 0;
+  caret-color: var(--term-green);
+}
+
+.cmd-input:focus {
+  outline: none;
+}
+
+.cmd-input::placeholder {
+  color: var(--term-fg-faint);
+}
+
+/* Dim (not just inert) while a run is active — same disabled condition as
+   before, now visually distinct from the normal, editable prompt. */
+.cmd-input:disabled {
+  opacity: 0.45;
+}
+
+/* Subtle ghost buttons — terminal affordances, not web CTAs. */
+.btn {
+  padding: 0.28rem 0.85rem;
+  border-radius: 4px;
+  border: 1px solid var(--term-border);
+  background: transparent;
+  color: var(--term-fg-dim);
+  cursor: pointer;
+  font-family: var(--term-font);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--term-bg-hover);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-run {
+  color: var(--term-green);
+  border-color: rgba(41, 211, 152, 0.35);
+}
+
+.btn-run:hover:not(:disabled) {
+  border-color: var(--term-green);
+  background: rgba(41, 211, 152, 0.1);
+}
+
+.btn-cancel {
+  color: var(--term-red);
+  border-color: rgba(240, 85, 106, 0.3);
+}
+
+.btn-cancel:hover:not(:disabled) {
+  border-color: var(--term-red);
+  background: rgba(240, 85, 106, 0.1);
+}

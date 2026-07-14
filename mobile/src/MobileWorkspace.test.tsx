@@ -85,77 +85,115 @@ afterEach(() => {
   Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true });
 });
 
-// MobileWorkspace mounts with zero tabs (initialTabsState), so every test
-// below exercises the zero-tab SessionSwitcher('page') screen — the
-// OpenClaw entry point's ONLY home before any session/tab exists (M4).
-describe('MobileWorkspace — zero-tab OpenClaw entry (openclaw-stabilization M3/M4)', () => {
-  it('mode "on": shows the 🤖 entry button on the zero-tab screen regardless of availability', () => {
-    localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
+// Zero tabs retains the common mobile shell. OpenClaw lives in More, matching
+// the authenticated header at every tab count.
+describe('MobileWorkspace — zero-tab OpenClaw entry', () => {
+  const openMore = (el: HTMLElement): void => {
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="workspace-more-btn"]')!.click());
+  };
+
+  it('renders the header actions through the shared button primitives with stable accessible names', () => {
+    localStorage.setItem('ezterminal-mobile-openclaw-mode', 'off');
     const { transport } = makeAuthedTransport();
     const el = renderWorkspace(transport);
 
-    expect(el.querySelector('[data-testid="btn-toggle-openclaw"]')).toBeTruthy();
+    for (const [testId, label] of [
+      ['tab-add-btn', 'New tab'],
+      ['menu-btn', 'Sessions'],
+      ['files-btn', 'Files'],
+      ['agents-btn', 'Agents'],
+    ] as const) {
+      const button = el.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`);
+      expect(button?.classList.contains('ez-ui-button')).toBe(true);
+      expect(button?.classList.contains('btn')).toBe(false);
+      expect(button?.getAttribute('aria-label')).toBe(label);
+    }
+
+    const more = el.querySelector<HTMLButtonElement>('[data-testid="workspace-more-btn"]');
+    expect(more?.classList.contains('ez-ui-icon-button')).toBe(true);
+    expect(more?.classList.contains('btn')).toBe(false);
+    expect(more?.getAttribute('aria-label')).toBe('Open more options');
+    expect(more?.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(more?.getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('mode "off": hides the 🤖 entry button even if availability is pushed true', () => {
+  it('mode "on": shows OpenClaw in More regardless of availability', () => {
+    localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
+    const { transport } = makeAuthedTransport();
+    const el = renderWorkspace(transport);
+    openMore(el);
+
+    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeTruthy();
+  });
+
+  it('mode "off": hides OpenClaw from More even if availability is pushed true', () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'off');
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
     act(() => {
       socket.triggerMessage({ kind: 'openclaw-availability', visible: true });
     });
+    openMore(el);
 
-    expect(el.querySelector('[data-testid="btn-toggle-openclaw"]')).toBeFalsy();
+    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeFalsy();
   });
 
   it('mode "auto" + availability:true: shows the entry button', () => {
     // Nothing persisted -> defaults to 'auto' (openclaw-mode.ts).
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
-    expect(el.querySelector('[data-testid="btn-toggle-openclaw"]')).toBeFalsy(); // not yet available
+    openMore(el);
+    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeFalsy(); // not yet available
+    act(() => el.querySelector<HTMLButtonElement>('.mobile-action-sheet-cancel')!.click());
 
     act(() => {
       socket.triggerMessage({ kind: 'openclaw-availability', visible: true });
     });
+    openMore(el);
 
-    expect(el.querySelector('[data-testid="btn-toggle-openclaw"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeTruthy();
   });
 
   it('mode "auto" + no availability push (or availability:false): hides the entry button', () => {
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
-    expect(el.querySelector('[data-testid="btn-toggle-openclaw"]')).toBeFalsy();
 
     act(() => {
       socket.triggerMessage({ kind: 'openclaw-availability', visible: false });
     });
-    expect(el.querySelector('[data-testid="btn-toggle-openclaw"]')).toBeFalsy();
+    openMore(el);
+    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeFalsy();
   });
 
-  it('the status dot starts pending, then reflects a pushed openclaw-status', () => {
+  it('the More row starts pending, then reflects pushed OpenClaw status', () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
+    openMore(el);
 
-    expect(el.querySelector('[data-testid="openclaw-entry-dot"]')?.className).toContain('openclaw-entry-dot--pending');
+    const state = (): string | null => (
+      el.querySelector('[data-testid="more-openclaw"] .mobile-action-sheet-row-state')?.textContent ?? null
+    );
+    expect(state()).toBe('Checking');
 
     act(() => {
       socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } });
     });
-    expect(el.querySelector('[data-testid="openclaw-entry-dot"]')?.className).toContain('openclaw-entry-dot--running');
+    expect(state()).toBe('running');
 
     act(() => {
       socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'stopped', port: 18789 } });
     });
-    expect(el.querySelector('[data-testid="openclaw-entry-dot"]')?.className).toContain('openclaw-entry-dot--stopped');
+    expect(state()).toBe('stopped');
   });
 
   it('tapping the entry button opens the OpenClaw view', () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport } = makeAuthedTransport();
     const el = renderWorkspace(transport);
+    openMore(el);
 
-    act(() => el.querySelector<HTMLButtonElement>('[data-testid="btn-toggle-openclaw"]')!.click());
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="more-openclaw"]')!.click());
 
     expect(el.querySelector('[data-testid="mobile-openclaw-view"]')).toBeTruthy();
   });

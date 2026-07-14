@@ -1,0 +1,229 @@
+:root {
+  /* Semantic colour fallbacks. Theme runtime may override these per theme. */
+  --ui-canvas: #010301;
+  --ui-surface: #06110b;
+  --ui-surface-raised: #0b1b12;
+  --ui-surface-inset: #020704;
+  --ui-text-primary: #b7fbd4;
+  --ui-text-secondary: #78dba5;
+  --ui-text-muted: #5cbd87;
+  --ui-text-inverse: #00150a;
+  --ui-border-subtle: #245b3d;
+  --ui-border-strong: #4bbd7a;
+  --ui-accent: #35e58f;
+  --ui-on-accent: #001c0d;
+  --ui-focus: #8affba;
+  --ui-info: #62d8ff;
+  --ui-success: #35e58f;
+  --ui-warning: #ffd166;
+  --ui-danger: #ff6b7a;
+
+  /* Derived interaction colours stay coupled to semantic theme roles. */
+  --ui-surface-hover: color-mix(in srgb, var(--ui-accent) 8%, var(--ui-surface));
+  --ui-surface-active: color-mix(in srgb, var(--ui-accent) 14%, var(--ui-surface));
+  --ui-surface-selected: color-mix(in srgb, var(--ui-accent) 18%, var(--ui-surface));
+  --ui-backdrop: color-mix(in srgb, #000 72%, transparent);
+  --ui-accent-muted: color-mix(in srgb, var(--ui-accent) 16%, var(--ui-surface));
+  --ui-info-muted: color-mix(in srgb, var(--ui-info) 14%, var(--ui-surface));
+  --ui-success-muted: color-mix(in srgb, var(--ui-success) 14%, var(--ui-surface));
+  --ui-warning-muted: color-mix(in srgb, var(--ui-warning) 14%, var(--ui-surface));
+  --ui-danger-muted: color-mix(in srgb, var(--ui-danger) 14%, var(--ui-surface));
+
+  /* Typography. UI and terminal fonts deliberately have separate contracts. */
+  --ui-font-body: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --ui-font-heading: "Share Tech Mono", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --ui-font-terminal: var(--term-font, "Cascadia Code", "Cascadia Mono", Consolas, monospace);
+  --ui-font-size-xs: 0.75rem;
+  --ui-font-size-sm: 0.8125rem;
+  --ui-font-size-md: 0.875rem;
+  --ui-font-size-lg: 1rem;
+  --ui-font-size-xl: 1.25rem;
+  --ui-font-size-2xl: var(--ui-font-size-xl);
+  --ui-font-size-12: var(--ui-font-size-xs);
+  --ui-font-size-13: var(--ui-font-size-sm);
+  --ui-font-size-14: var(--ui-font-size-md);
+  --ui-font-size-16: var(--ui-font-size-lg);
+  --ui-font-size-20: var(--ui-font-size-xl);
+  --ui-line-height-tight: 1.2;
+  --ui-line-height-normal: 1.45;
+  --ui-line-height-relaxed: 1.6;
+  --ui-letter-spacing-heading: 0.055em;
+
+  /* Four-point spacing rhythm. */
+  --ui-space-0: 0;
+  --ui-space-1: 0.25rem;
+  --ui-space-2: 0.5rem;
+  --ui-space-3: 0.75rem;
+  --ui-space-4: 1rem;
+  --ui-space-6: 1.5rem;
+  --ui-space-8: 2rem;
+
+  --ui-radius-sm: 0.125rem;
+  --ui-radius-md: 0.25rem;
+  --ui-radius-lg: 0.5rem;
+  --ui-radius-pill: var(--ui-radius-lg);
+  --ui-radius-2: var(--ui-radius-sm);
+  --ui-radius-4: var(--ui-radius-md);
+  --ui-radius-8: var(--ui-radius-lg);
+
+  --ui-control-height-sm: 2rem;
+  --ui-control-height-md: 2rem;
+  --ui-control-height-lg: 2.5rem;
+  --ui-control-inline-padding-sm: var(--ui-space-2);
+  --ui-control-inline-padding-md: var(--ui-space-3);
+  --ui-control-inline-padding-lg: var(--ui-space-4);
+
+  --ui-shadow-raised: 0 0.5rem 1.5rem color-mix(in srgb, #000 38%, transparent);
+  --ui-shadow-overlay: 0 1rem 3rem color-mix(in srgb, #000 56%, transparent);
+  --ui-focus-ring: 0 0 0 1px var(--ui-canvas), 0 0 0 3px var(--ui-focus);
+
+  --ui-z-base: 0;
+  --ui-z-sticky: 100;
+  --ui-z-sidebar-scrim: 200;
+  --ui-z-sidebar: 300;
+  --ui-z-dropdown: 400;
+  --ui-z-popover: 500;
+  --ui-z-drawer: 600;
+  --ui-z-dialog: 700;
+  --ui-z-modal: var(--ui-z-dialog);
+  --ui-z-toast: 800;
+  --ui-z-tooltip: 900;
+
+  --ui-motion-fast: 120ms;
+  --ui-motion-normal: 160ms;
+  --ui-motion-slow: 240ms;
+  --ui-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ui-ease-emphasized: cubic-bezier(0.2, 0, 0, 1.2);
+}
+
+[data-theme='dark'] {
+  --ui-canvas: #070a09;
+  --ui-surface: #0c1110;
+  --ui-surface-raised: #121917;
+  --ui-surface-inset: #040706;
+  --ui-text-primary: #ecf6f1;
+  --ui-text-secondary: #b8c9c1;
+  --ui-text-muted: #91a59b;
+  --ui-text-inverse: #07100c;
+  --ui-border-subtle: #2a3832;
+  --ui-border-strong: #637a70;
+  --ui-accent: #2fe0a0;
+  --ui-on-accent: #04110c;
+  --ui-focus: #65f4c0;
+  --ui-info: #56c8ff;
+  --ui-success: #2fe0a0;
+  --ui-warning: #f4c45e;
+  --ui-danger: #ff6b7a;
+}
+
+[data-theme='light'] {
+  --ui-canvas: #f2f5f3;
+  --ui-surface: #ffffff;
+  --ui-surface-raised: #ffffff;
+  --ui-surface-inset: #e8eeeb;
+  --ui-text-primary: #14201a;
+  --ui-text-secondary: #3f5047;
+  --ui-text-muted: #5c6d64;
+  --ui-text-inverse: #ffffff;
+  --ui-border-subtle: #c9d2cd;
+  --ui-border-strong: #66776e;
+  --ui-accent: #087847;
+  --ui-on-accent: #ffffff;
+  --ui-focus: #075fca;
+  --ui-info: #075fca;
+  --ui-success: #087847;
+  --ui-warning: #8a5a00;
+  --ui-danger: #b4233c;
+}
+
+[data-theme='high-contrast'] {
+  --ui-canvas: #000000;
+  --ui-surface: #000000;
+  --ui-surface-raised: #000000;
+  --ui-surface-inset: #000000;
+  --ui-text-primary: #ffffff;
+  --ui-text-secondary: #ffffff;
+  --ui-text-muted: #d0d0d0;
+  --ui-text-inverse: #000000;
+  --ui-border-subtle: #808080;
+  --ui-border-strong: #ffffff;
+  --ui-accent: #00ff66;
+  --ui-on-accent: #000000;
+  --ui-focus: #00e5ff;
+  --ui-info: #66b2ff;
+  --ui-success: #00ff66;
+  --ui-warning: #ffcc00;
+  --ui-danger: #ff5c5c;
+}
+
+[data-theme='matrix'] {
+  --ui-canvas: #010301;
+  --ui-surface: #06110b;
+  --ui-surface-raised: #0b1b12;
+  --ui-surface-inset: #020704;
+  --ui-text-primary: #b7fbd4;
+  --ui-text-secondary: #78dba5;
+  --ui-text-muted: #5cbd87;
+  --ui-text-inverse: #00150a;
+  --ui-border-subtle: #245b3d;
+  --ui-border-strong: #4bbd7a;
+  --ui-accent: #35e58f;
+  --ui-on-accent: #001c0d;
+  --ui-focus: #8affba;
+  --ui-info: #62d8ff;
+  --ui-success: #35e58f;
+  --ui-warning: #ffd166;
+  --ui-danger: #ff6b7a;
+}
+
+/* Density is resolved once at the document boundary so every primitive follows
+   the same contract. Adaptive keeps the compact desktop rhythm while retaining
+   the 40px large action tier; explicit preferences make every desktop control
+   consistently compact or comfortable. */
+[data-density='compact'] {
+  --ui-control-height-sm: 2rem;
+  --ui-control-height-md: 2rem;
+  --ui-control-height-lg: 2rem;
+}
+
+[data-density='comfortable'] {
+  --ui-control-height-sm: 2.5rem;
+  --ui-control-height-md: 2.5rem;
+  --ui-control-height-lg: 2.5rem;
+}
+
+/* Derived roles must be recomputed on nested theme previews as well as the
+   document root; inherited custom properties otherwise retain the parent's
+   already-computed palette. */
+[data-theme] {
+  --ui-surface-hover: color-mix(in srgb, var(--ui-accent) 8%, var(--ui-surface));
+  --ui-surface-active: color-mix(in srgb, var(--ui-accent) 14%, var(--ui-surface));
+  --ui-surface-selected: color-mix(in srgb, var(--ui-accent) 18%, var(--ui-surface));
+  --ui-accent-muted: color-mix(in srgb, var(--ui-accent) 16%, var(--ui-surface));
+  --ui-info-muted: color-mix(in srgb, var(--ui-info) 14%, var(--ui-surface));
+  --ui-success-muted: color-mix(in srgb, var(--ui-success) 14%, var(--ui-surface));
+  --ui-warning-muted: color-mix(in srgb, var(--ui-warning) 14%, var(--ui-surface));
+  --ui-danger-muted: color-mix(in srgb, var(--ui-danger) 14%, var(--ui-surface));
+}
+
+:lang(ko) {
+  --ui-letter-spacing-heading: -0.012em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ui-motion-fast: 0ms;
+    --ui-motion-normal: 0ms;
+    --ui-motion-slow: 0ms;
+    --ui-ease-standard: linear;
+    --ui-ease-emphasized: linear;
+  }
+}
+
+@media (pointer: coarse) {
+  :root {
+    --ui-control-height-sm: 2.75rem;
+    --ui-control-height-md: 2.75rem;
+    --ui-control-height-lg: 2.75rem;
+  }
+}

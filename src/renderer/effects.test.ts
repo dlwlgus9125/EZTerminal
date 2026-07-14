@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it } from 'vitest';
 
-import { EFFECT_CATALOG, applyEffects, resolveActiveEffects, type EffectId } from './effects';
+import { EFFECT_CATALOG, MOVING_EFFECT_IDS, applyEffects, resolveActiveEffects, type EffectId } from './effects';
 import type { ThemeDefinition } from './themes';
 
 function theme(effects?: EffectId[]): ThemeDefinition {
@@ -56,12 +56,11 @@ describe('EFFECT_CATALOG', () => {
     );
   });
 
-  it('ships the tuned default-on interference set (v0.8.0 look) with micro-jitter still opt-in', () => {
-    expect(EFFECT_CATALOG.flicker.defaultOn).toBe(true);
-    expect(EFFECT_CATALOG['jitter-burst'].defaultOn).toBe(true);
-    expect(EFFECT_CATALOG['static-noise'].defaultOn).toBe(true);
-    expect(EFFECT_CATALOG['micro-jitter'].defaultOn).toBe(false);
-    expect(EFFECT_CATALOG['crt-curvature'].defaultOn).toBe(false);
+  it('defaults only the static Matrix identity effects on', () => {
+    const defaultsOn = Object.values(EFFECT_CATALOG)
+      .filter((entry) => entry.defaultOn)
+      .map((entry) => entry.id);
+    expect(defaultsOn).toEqual(['scanlines', 'phosphor-glow']);
   });
 });
 
@@ -116,5 +115,36 @@ describe('applyEffects', () => {
     expect(document.documentElement.getAttribute('data-effect-scanlines')).toBe('on');
     applyEffects(new Set());
     expect(document.documentElement.getAttribute('data-effect-scanlines')).toBeNull();
+  });
+
+  it('force-disables every moving effect while reduced motion is requested', () => {
+    let changeListener: (() => void) | undefined;
+    const mediaQuery = {
+      matches: true,
+      media: '(prefers-reduced-motion: reduce)',
+      onchange: null,
+      addEventListener: (_type: string, listener: EventListenerOrEventListenerObject) => {
+        changeListener = listener as () => void;
+      },
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => true,
+    } as MediaQueryList;
+    window.matchMedia = () => mediaQuery;
+
+    applyEffects(new Set(Object.keys(EFFECT_CATALOG) as EffectId[]));
+    expect(document.documentElement.getAttribute('data-effect-scanlines')).toBe('on');
+    expect(document.documentElement.getAttribute('data-effect-phosphor-glow')).toBe('on');
+    expect(document.documentElement.getAttribute('data-effect-crt-curvature')).toBe('on');
+    for (const id of MOVING_EFFECT_IDS) {
+      expect(document.documentElement.getAttribute(`data-effect-${id}`), id).toBeNull();
+    }
+
+    Object.defineProperty(mediaQuery, 'matches', { configurable: true, value: false });
+    changeListener?.();
+    for (const id of MOVING_EFFECT_IDS) {
+      expect(document.documentElement.getAttribute(`data-effect-${id}`), id).toBe('on');
+    }
   });
 });

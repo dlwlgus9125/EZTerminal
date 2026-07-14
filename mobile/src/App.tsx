@@ -8,6 +8,7 @@ import {
   type ConnectionHealthSnapshot,
 } from './transport/connection-health';
 import { WsEzTerminalTransport, type RemoteConnectionState } from './transport/ws-ezterminal';
+import { useAppTranslation } from '../../src/renderer/i18n';
 
 // The transport retries indefinitely with backoff AND self-heals a stuck/half-
 // open attempt via its own auth watchdog (by design — a flappy link, or a host
@@ -20,11 +21,23 @@ import { WsEzTerminalTransport, type RemoteConnectionState } from './transport/w
 // only way to recover.)
 const CONNECT_TIMEOUT_MS = 6000;
 
+const CREDENTIAL_WARNING_KEY = {
+  'Secure credential storage is available only in the Android app. Credentials will not be saved here.':
+    'mobile.connect.secureAndroidOnly',
+  'Android secure credential storage is unavailable.': 'mobile.connect.secureUnavailable',
+  'Stored connection credentials are invalid or unavailable.': 'mobile.connect.storedCredentialsInvalid',
+  'Plaintext credential cleanup is pending; enter the connection again.': 'mobile.connect.cleanupPending',
+  'Existing credentials could not be migrated to Android secure storage.': 'mobile.connect.migrationFailed',
+  'The old plaintext connection record is invalid and was not used.': 'mobile.connect.oldPlaintextInvalid',
+  'Plaintext credential cleanup could not be verified.': 'mobile.connect.cleanupUnverified',
+} as const;
+
 // App — the mobile shell's top-level state machine: disconnected (show
 // ConnectScreen) -> connecting -> connected (MobileWorkspace, M5's tabbed
 // authed shell). Replaces the desktop's dockview host (App.tsx there) —
 // nothing here is dockview-specific, so this file has no desktop analogue.
 export function App(): JSX.Element {
+  const { t } = useAppTranslation();
   const [transport, setTransport] = useState<WsEzTerminalTransport | null>(null);
   const [authed, setAuthed] = useState(false);
   const [hasConnected, setHasConnected] = useState(false);
@@ -117,7 +130,7 @@ export function App(): JSX.Element {
               setSavedConnection(pending);
               setCredentialWarning(null);
             },
-            () => setCredentialWarning('Connected, but credentials were not saved securely.'),
+            () => setCredentialWarning(t('mobile.connect.credentialsNotSaved')),
           );
         }
       }
@@ -137,7 +150,7 @@ export function App(): JSX.Element {
       unsubConnectionHealth();
       unsubDead();
     };
-  }, [transport, clearConnectTimeout, hasConnected]);
+  }, [transport, clearConnectTimeout, hasConnected, t]);
 
   useEffect(() => {
     if (authed || !hasConnected) return;
@@ -181,10 +194,15 @@ export function App(): JSX.Element {
     }
   }, []);
 
+  const localizedCredentialWarning = credentialWarning
+    ? t(CREDENTIAL_WARNING_KEY[credentialWarning as keyof typeof CREDENTIAL_WARNING_KEY]
+      ?? 'mobile.connect.credentialWarning')
+    : null;
+
   if (!credentialsLoaded && !transport) {
     return (
       <div className="connect-screen" data-testid="credential-loading">
-        <div className="connect-card" role="status">Loading secure credentials…</div>
+        <div className="connect-card" role="status">{t('mobile.connect.loadingCredentials')}</div>
       </div>
     );
   }
@@ -195,7 +213,7 @@ export function App(): JSX.Element {
         saved={savedConnection}
         connecting={transport !== null && !authed && !connectFailed && connectionState !== 'auth-rejected'}
         failed={connectFailed}
-        storageWarning={credentialWarning}
+        storageWarning={localizedCredentialWarning}
         onConnect={connect}
       />
     );
@@ -204,21 +222,20 @@ export function App(): JSX.Element {
   if (sessionDead) {
     return (
       <div className="mobile-error-screen" data-testid="mobile-error-screen">
-        <p>Connection to EZTerminal lost.</p>
+        <p>{t('mobile.connect.lost')}</p>
         <button type="button" className="btn btn-run" onClick={disconnect} data-testid="mobile-reconnect-btn">
-          Back to connect screen
+          {t('mobile.connect.backToConnect')}
         </button>
       </div>
     );
   }
 
   const connectionVerdict = connectionHealth
-    ? classifyConnectionHealth(connectionHealth, connectionClock)
+    ? classifyConnectionHealth(connectionHealth, t, connectionClock)
     : null;
   const retrySeconds = connectionHealth?.nextRetryAt === null || connectionHealth?.nextRetryAt === undefined
     ? null
     : Math.max(0, Math.ceil((connectionHealth.nextRetryAt - connectionClock) / 1000));
-
   return (
     <div className="mobile-app-frame">
       <div className={authed ? 'mobile-workspace-shell' : 'mobile-workspace-shell mobile-workspace-shell--reconnecting'}>
@@ -236,41 +253,43 @@ export function App(): JSX.Element {
             aria-describedby="mobile-connection-health-detail"
           >
             <strong id="mobile-connection-health-title" role="status" aria-live="polite">
-              {connectionVerdict?.label ?? 'Reconnecting…'}
+              {connectionVerdict?.label ?? t('mobile.connect.reconnecting')}
             </strong>
             <span id="mobile-connection-health-detail">
-              {connectionVerdict?.detail ?? 'Active terminals are retained for up to five minutes.'}
+              {connectionVerdict?.detail ?? t('mobile.connect.retained')}
             </span>
             {connectionVerdict?.hint && <span>{connectionVerdict.hint}</span>}
             {retrySeconds !== null && (
               <span aria-hidden="true" data-testid="mobile-retry-countdown">
-                Retrying in {retrySeconds}s
+                {t('mobile.connect.retryIn', { seconds: retrySeconds })}
               </span>
             )}
             <div className="mobile-reconnect-actions">
               <button type="button" className="btn btn-run" onClick={retryConnection} data-testid="mobile-retry-now">
-                Retry now
+                {t('mobile.connect.retryNow')}
               </button>
               <button type="button" className="btn" onClick={() => void copyConnectionDiagnostics()}>
-                Copy diagnostics
+                {t('mobile.connect.copyDiagnostics')}
               </button>
               {connectionVerdict?.kind === 'auth-rejected' && (
                 <button type="button" className="btn btn-cancel" onClick={disconnect}>
-                  Pair again
+                  {t('mobile.connect.pairAgain')}
                 </button>
               )}
             </div>
             {diagnosticCopyState && (
               <span role="status">
-                {diagnosticCopyState === 'copied' ? 'Diagnostics copied.' : 'Could not copy diagnostics.'}
+                {diagnosticCopyState === 'copied'
+                  ? t('mobile.connect.diagnosticsCopied')
+                  : t('mobile.connect.diagnosticsCopyFailed')}
               </span>
             )}
           </div>
         </div>
       )}
-      {credentialWarning && (
+      {localizedCredentialWarning && (
         <div className="credential-warning" role="status" data-testid="credential-warning">
-          {credentialWarning}
+          {localizedCredentialWarning}
         </div>
       )}
     </div>

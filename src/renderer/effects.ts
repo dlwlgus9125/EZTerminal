@@ -30,21 +30,31 @@ export interface EffectCatalogEntry {
 export const EFFECT_CATALOG: Readonly<Record<EffectId, EffectCatalogEntry>> = {
   scanlines: { id: 'scanlines', label: 'Scanlines', defaultOn: true },
   'phosphor-glow': { id: 'phosphor-glow', label: 'Phosphor Glow', defaultOn: true },
-  flicker: { id: 'flicker', label: 'Flicker', defaultOn: true },
+  flicker: { id: 'flicker', label: 'Flicker', defaultOn: false },
   'crt-curvature': { id: 'crt-curvature', label: 'CRT Curvature', defaultOn: false },
-  'crt-rollbar': { id: 'crt-rollbar', label: 'CRT Roll Bar', defaultOn: true },
-  'scanline-scroll': { id: 'scanline-scroll', label: 'Scanline Scroll', defaultOn: true },
-  // CRT interference set (crt-interference): tuned-subtle defaults ship ON
-  // (v0.8.0 default look) except micro-jitter, which stays strictly opt-in —
-  // a constant tremble is intrusive even at amplitude 1. Params live in
-  // effect-params.ts (InterferenceParams), which also parameterizes the
-  // upgraded flicker.
-  'jitter-burst': { id: 'jitter-burst', label: 'Burst Jitter', defaultOn: true },
+  'crt-rollbar': { id: 'crt-rollbar', label: 'CRT Roll Bar', defaultOn: false },
+  'scanline-scroll': { id: 'scanline-scroll', label: 'Scanline Scroll', defaultOn: false },
+  // Animated interference remains available in Advanced settings, but is
+  // opt-in. The default identity is intentionally limited to static scanlines
+  // and phosphor glow.
+  'jitter-burst': { id: 'jitter-burst', label: 'Burst Jitter', defaultOn: false },
   'micro-jitter': { id: 'micro-jitter', label: 'Micro Jitter', defaultOn: false },
-  'static-noise': { id: 'static-noise', label: 'Static Noise', defaultOn: true },
+  'static-noise': { id: 'static-noise', label: 'Static Noise', defaultOn: false },
 };
 
 const EFFECT_IDS = Object.keys(EFFECT_CATALOG) as EffectId[];
+
+/** Effects whose animation/movement must never run while the operating-system
+ * reduced-motion preference is active. Static scanlines, glow and curvature
+ * remain available. */
+export const MOVING_EFFECT_IDS: ReadonlySet<EffectId> = new Set([
+  'flicker',
+  'crt-rollbar',
+  'scanline-scroll',
+  'jitter-burst',
+  'micro-jitter',
+  'static-noise',
+]);
 
 /**
  * Which effects should actually be active right now: gated by (the active
@@ -73,7 +83,10 @@ export function resolveActiveEffects(
  * remove the attribute for everything else — the CSS worker's selectors key
  * off exactly this attribute (scanlines -> `::after`, crt-curvature ->
  * `::before`, phosphor-glow -> text-shadow, flicker -> an opacity keyframe). */
-export function applyEffects(active: Set<EffectId>): void {
+let requestedEffects = new Set<EffectId>();
+let reducedMotionQuery: MediaQueryList | undefined;
+
+function writeEffectAttributes(active: ReadonlySet<EffectId>): void {
   for (const id of EFFECT_IDS) {
     const attr = `data-effect-${id}`;
     if (active.has(id)) {
@@ -82,4 +95,28 @@ export function applyEffects(active: Set<EffectId>): void {
       document.documentElement.removeAttribute(attr);
     }
   }
+}
+
+function effectiveEffectsForMotionPreference(active: ReadonlySet<EffectId>): Set<EffectId> {
+  if (!reducedMotionQuery?.matches) return new Set(active);
+  return new Set([...active].filter((id) => !MOVING_EFFECT_IDS.has(id)));
+}
+
+function ensureReducedMotionQuery(): void {
+  if (reducedMotionQuery || typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+  reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const handleChange = (): void => {
+    writeEffectAttributes(effectiveEffectsForMotionPreference(requestedEffects));
+  };
+  if (typeof reducedMotionQuery.addEventListener === 'function') {
+    reducedMotionQuery.addEventListener('change', handleChange);
+  } else {
+    reducedMotionQuery.addListener(handleChange);
+  }
+}
+
+export function applyEffects(active: Set<EffectId>): void {
+  requestedEffects = new Set(active);
+  ensureReducedMotionQuery();
+  writeEffectAttributes(effectiveEffectsForMotionPreference(requestedEffects));
 }

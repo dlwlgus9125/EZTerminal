@@ -1,21 +1,25 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { Bot, Ellipsis, Files, List, Plus } from 'lucide-react';
 
 import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
 import { EMPTY_AGENT_ACTIVITY_SNAPSHOT, type AgentActivitySnapshot } from '../../src/shared/agent';
 import { AgentHub, countAgentAttention } from '../../src/renderer/AgentHub';
+import { useAppTranslation } from '../../src/renderer/i18n';
 import { quoteEzArgument } from '../../src/shared/quote-ez-argument';
 import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
 import { setUserFontId } from '../../src/renderer/theme-runtime';
+import { Button, IconButton } from '../../src/renderer/ui/Button';
 import { MobileFileView } from './MobileFileView';
 import { MobileHeaderMoreActions } from './MobileHeaderMoreActions';
 import { MobileOpenClawView } from './MobileOpenClawView';
 import { MobileSessionView } from './MobileSessionView';
 import { MobileSettingsView } from './MobileSettingsView';
 import { MobileStatsView } from './MobileStatsView';
+import { MobileWorkbenchCoordinator } from './MobileWorkbenchCoordinator';
 import { loadOpenClawMode, saveOpenClawMode } from './openclaw-mode';
 import { SessionSwitcher } from './SessionSwitcher';
-import { TabStrip } from './TabStrip';
+import { mobileTerminalPanelId, mobileTerminalTabId, TabStrip } from './TabStrip';
 import { ThemeMenu } from './ThemeMenu';
 import {
   ACTIVE_MOBILE_TAB_CHANGE_EVENT,
@@ -61,7 +65,7 @@ setUserFontId(loadFont());
 // screen (no workspace header above it) — it must stay in normal document
 // flow, not a fixed overlay, so Android's uiautomator accessibility dump can
 // see '+ New Session' with no real DOM access (see mobile/e2e/smoke.ts's
-// header comment). The `☰`-opened variant is a fixed bottom sheet instead,
+// header comment). The More-actions variant is a fixed bottom sheet instead,
 // a convenience surface used only once tabs already exist.
 export function MobileWorkspace({
   transport,
@@ -72,9 +76,9 @@ export function MobileWorkspace({
   connectionUrl?: string;
   onDisconnect: () => void;
 }): JSX.Element {
+  const { t } = useAppTranslation();
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
-  const [view, setView] = useState<'terminal' | 'agents' | 'stats' | 'files' | 'settings' | 'openclaw'>('terminal');
-  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [view, setView] = useState<'terminal' | 'sessions' | 'agents' | 'stats' | 'files' | 'settings' | 'openclaw'>('terminal');
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
   const [wideHeader, setWideHeader] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 600);
@@ -134,6 +138,8 @@ export function MobileWorkspace({
 
   const effectiveOpenClawVisible =
     openclawMode === 'on' ? true : openclawMode === 'off' ? false : openclawAvailable;
+  const openClawStatusPending = effectiveOpenClawVisible
+    && (!openclawState || openclawState.state === 'starting' || openclawState.state === 'unknown');
 
   // Background pause (openclaw-stabilization M6): the status push otherwise
   // keeps flowing over WS every 4s while the app sits backgrounded, burning
@@ -183,7 +189,6 @@ export function MobileWorkspace({
 
   const openTab = useCallback((sessionId: string, cwd: string) => {
     dispatch({ type: 'open', sessionId, cwd });
-    setSwitcherOpen(false);
     setView('terminal');
   }, []);
 
@@ -249,12 +254,26 @@ export function MobileWorkspace({
     return () => transport.setReattachPriority(null);
   }, [tabsState.activeSessionId, transport]);
 
-  if (view === 'stats') {
-    return <MobileStatsView onClose={() => setView('terminal')} />;
-  }
+  const activeSession = tabsState.tabs.find((tab) => tab.sessionId === tabsState.activeSessionId);
+  const initialFilePath =
+    (tabsState.activeSessionId && cwdMapRef.current.get(tabsState.activeSessionId))
+    ?? activeSession?.cwd
+    ?? '';
 
-  if (view === 'agents') {
-    return (
+  let page: JSX.Element | undefined;
+  if (view === 'sessions') {
+    page = (
+      <SessionSwitcher
+        variant="page"
+        transport={transport}
+        onSelect={openTab}
+        onDisconnect={onDisconnect}
+      />
+    );
+  } else if (view === 'stats') {
+    page = <MobileStatsView onClose={() => setView('terminal')} />;
+  } else if (view === 'agents') {
+    page = (
       <AgentHub
         mobile
         snapshot={agentSnapshot}
@@ -267,20 +286,16 @@ export function MobileWorkspace({
         }}
       />
     );
-  }
-
-  if (view === 'openclaw') {
-    return (
+  } else if (view === 'openclaw') {
+    page = (
       <MobileOpenClawView
         transport={transport}
         onClose={() => setView('terminal')}
         openclawAvailable={openclawAvailable}
       />
     );
-  }
-
-  if (view === 'settings') {
-    return (
+  } else if (view === 'settings') {
+    page = (
       <MobileSettingsView
         connectionUrl={connectionUrl}
         onClose={() => setView('terminal')}
@@ -289,18 +304,11 @@ export function MobileWorkspace({
         onOpenClawModeChange={handleOpenClawModeChange}
       />
     );
-  }
-
-  if (view === 'files') {
-    const activeSession = tabsState.tabs.find((t) => t.sessionId === tabsState.activeSessionId);
-    const initialPath =
-      (tabsState.activeSessionId && cwdMapRef.current.get(tabsState.activeSessionId)) ??
-      activeSession?.cwd ??
-      '';
-    return (
+  } else if (view === 'files') {
+    page = (
       <MobileFileView
         transport={transport}
-        initialPath={initialPath}
+        initialPath={initialFilePath}
         onClose={() => setView('terminal')}
         onOpenTerminalAt={onOpenTerminalAt}
         onPastePath={onPastePath}
@@ -308,21 +316,11 @@ export function MobileWorkspace({
     );
   }
 
-  if (tabsState.tabs.length === 0) {
-    return (
-      <SessionSwitcher
-        variant="page"
-        transport={transport}
-        onSelect={openTab}
-        onDisconnect={onDisconnect}
-        onOpenClaw={effectiveOpenClawVisible ? () => setView('openclaw') : undefined}
-        openclawState={effectiveOpenClawVisible ? (openclawState?.state ?? undefined) : undefined}
-      />
-    );
-  }
-
   return (
-    <div className="mobile-workspace" data-testid="mobile-workspace">
+    <MobileWorkbenchCoordinator
+      onRequestTerminal={() => setView('terminal')}
+      page={page}
+      terminal={<div className="mobile-workspace" data-testid="mobile-workspace">
       <header className="workspace-header">
         <TabStrip
           tabs={tabsState.tabs}
@@ -330,74 +328,108 @@ export function MobileWorkspace({
           onActivate={activateTab}
           onClose={closeTab}
         />
-        <button
+        <Button
           type="button"
-          className="btn workspace-new-tab-btn"
+          className="workspace-new-tab-btn"
+          size="sm"
+          variant="secondary"
+          leadingIcon={<Plus />}
           onClick={quickNewTab}
           disabled={!connected}
-          aria-label="New tab"
+          aria-label={t('mobile.newTab')}
           data-testid="tab-add-btn"
         >
-          +
-        </button>
-        <button
+          <span className="workspace-action-label">{t('mobile.newTerminal')}</span>
+        </Button>
+        <Button
           type="button"
-          className="btn workspace-menu-btn workspace-wide-action"
-          onClick={() => setSwitcherOpen(true)}
+          className="workspace-menu-btn workspace-wide-action"
+          size="sm"
+          variant="secondary"
+          leadingIcon={<List />}
+          onClick={() => setView('sessions')}
           disabled={!connected}
-          aria-label="Sessions"
+          aria-label={t('mobile.sessions')}
           data-testid="menu-btn"
         >
-          ☰
-        </button>
-        <button
+          <span className="workspace-action-label">{t('mobile.sessions')}</span>
+        </Button>
+        <Button
           type="button"
-          className="btn files-btn workspace-wide-action"
+          className="files-btn workspace-wide-action"
+          size="sm"
+          variant="secondary"
+          leadingIcon={<Files />}
           onClick={() => setView('files')}
           disabled={!connected}
-          aria-label="Files"
+          aria-label={t('mobile.files')}
           data-testid="files-btn"
         >
-          📁
-        </button>
-        <button
+          <span className="workspace-action-label">{t('mobile.files')}</span>
+        </Button>
+        <Button
           type="button"
-          className="btn agents-btn"
+          className="agents-btn"
+          size="sm"
+          variant="secondary"
+          leadingIcon={<Bot />}
           onClick={() => setView('agents')}
-          aria-label="Agents"
+          aria-label={t('mobile.agents')}
           data-testid="agents-btn"
         >
-          Agents
+          <span className="workspace-action-label">{t('mobile.agents')}</span>
           {countAgentAttention(agentSnapshot) > 0 && (
             <span className="agent-unread-badge">{countAgentAttention(agentSnapshot)}</span>
           )}
-        </button>
-        <button
-          ref={moreButtonRef}
-          type="button"
-          className="btn workspace-more-btn"
-          onClick={() => setMoreActionsOpen(true)}
-          aria-label={
-            effectiveOpenClawVisible && (!openclawState || openclawState.state === 'starting' || openclawState.state === 'unknown')
-              ? 'More actions, OpenClaw status pending'
-              : 'More actions'
-          }
-          aria-haspopup="dialog"
-          aria-expanded={moreActionsOpen}
-          aria-controls={moreActionsOpen ? 'workspace-more-actions' : undefined}
-          data-testid="workspace-more-btn"
-        >
-          ⋯
-          {effectiveOpenClawVisible
-            && (!openclawState || openclawState.state === 'starting' || openclawState.state === 'unknown')
-            && <span className="workspace-more-status-dot" aria-hidden="true" />}
-        </button>
+        </Button>
+        <span className="workspace-more-control">
+          <IconButton
+            ref={moreButtonRef}
+            type="button"
+            className="workspace-more-btn"
+            size="sm"
+            variant="secondary"
+            icon={Ellipsis}
+            onClick={() => setMoreActionsOpen(true)}
+            aria-label={openClawStatusPending ? t('mobile.openMorePending') : t('mobile.openMore')}
+            title={t('mobile.openMore')}
+            aria-haspopup="dialog"
+            aria-expanded={moreActionsOpen}
+            aria-controls={moreActionsOpen ? 'workspace-more-actions' : undefined}
+            data-testid="workspace-more-btn"
+          />
+          {openClawStatusPending && <span className="workspace-more-status-dot" aria-hidden="true" />}
+        </span>
       </header>
+
+      {tabsState.tabs.length === 0 && (
+        <div className="mobile-terminal-empty" data-testid="mobile-terminal-empty">
+          <div>
+            <h1>{t('mobile.noTerminalTabs')}</h1>
+            <p>{t('mobile.noTerminalTabsHint')}</p>
+          </div>
+          <div className="mobile-terminal-empty-actions">
+            <button type="button" className="btn btn-run" onClick={quickNewTab} disabled={!connected}>
+              <Plus aria-hidden="true" /> {t('mobile.newTerminal')}
+            </button>
+            <button type="button" className="btn" onClick={() => setView('sessions')}>
+              <List aria-hidden="true" /> {t('mobile.sessions')}
+            </button>
+            <button type="button" className="btn" onClick={() => setView('settings')}>
+              {t('common.settings')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {tabsState.tabs.map((tab) => (
         <div
           key={tab.sessionId}
+          id={mobileTerminalPanelId(tab.sessionId)}
           className="tab-page"
+          role="tabpanel"
+          aria-labelledby={mobileTerminalTabId(tab.sessionId)}
+          tabIndex={0}
           style={{ display: tab.sessionId === tabsState.activeSessionId ? undefined : 'none' }}
         >
           <MobileSessionView
@@ -411,16 +443,8 @@ export function MobileWorkspace({
         </div>
       ))}
 
-      {switcherOpen && (
-        <SessionSwitcher
-          variant="sheet"
-          transport={transport}
-          onSelect={openTab}
-          onDisconnect={onDisconnect}
-          onCloseSheet={() => setSwitcherOpen(false)}
-        />
-      )}
-
+      </div>}
+      overlays={<>
       {moreActionsOpen && (
         <div id="workspace-more-actions">
           <MobileHeaderMoreActions
@@ -431,7 +455,7 @@ export function MobileWorkspace({
             openclawState={openclawState?.state}
             triggerRef={moreButtonRef}
             onClose={() => setMoreActionsOpen(false)}
-            onOpenSessions={() => setSwitcherOpen(true)}
+            onOpenSessions={() => setView('sessions')}
             onOpenFiles={() => setView('files')}
             onOpenStats={() => setView('stats')}
             onOpenTheme={() => setThemeMenuOpen(true)}
@@ -446,7 +470,9 @@ export function MobileWorkspace({
         current={currentTheme}
         onSelect={handleThemeSelect}
         onClose={() => setThemeMenuOpen(false)}
+        returnFocusRef={moreButtonRef}
       />
-    </div>
+      </>}
+    />
   );
 }

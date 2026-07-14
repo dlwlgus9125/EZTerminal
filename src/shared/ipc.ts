@@ -48,6 +48,7 @@ import type {
   OpenClawStatus,
   OpenClawVisibility,
 } from './openclaw';
+import type { UiPreferences, UiPreferencesPatch } from './ui-preferences';
 
 /** The single key under which the preload bridge is exposed on `window`. */
 export const BRIDGE_KEY = 'ezterminal' as const;
@@ -1109,6 +1110,12 @@ export interface EzTerminalApi {
 // shared/window.d.ts) so every call site guards with `?.`.
 
 export interface EzTerminalDesktopApi {
+  /** Atomic Adaptive Workbench preferences persisted in desktop settings.json. */
+  getUiPreferences: () => Promise<UiPreferences>;
+  /** Main validates and atomically merges changed fields, then returns the snapshot. */
+  setUiPreferences: (preferences: UiPreferencesPatch) => Promise<UiPreferences>;
+  /** Rebuild the native menu after Chromium reports a system-language change. */
+  refreshNativeMenuLocale: () => Promise<void>;
   /** Native Ctrl+Tab/escape/release input captured before Chromium consumes it. */
   onRecentPanelInput: (listener: (event: RecentPanelInputEvent) => void) => () => void;
   /** Desktop renderer seam used by `worktree open` to select a fresh terminal

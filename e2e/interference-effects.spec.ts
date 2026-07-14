@@ -13,6 +13,7 @@ const NEW_EFFECT_IDS = ['jitter-burst', 'micro-jitter', 'static-noise', 'flicker
 async function openMatrixSettings(window: Page): Promise<void> {
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
   await window.getByTestId('btn-toggle-settings').click();
+  await window.getByTestId('settings-category-appearance').click();
   await window.getByTestId('settings-theme-select').selectOption('matrix');
 }
 
@@ -36,25 +37,19 @@ async function setSlider(window: Page, testId: string, value: number): Promise<v
   );
 }
 
-test('Matrix ships the tuned interference defaults: burst/noise/flicker ON, micro-jitter opt-in', async () => {
+test('Matrix keeps every moving interference effect opt-in', async () => {
   const app = await launchApp();
   const window = await app.firstWindow();
   await openMatrixSettings(window);
 
-  for (const id of ['jitter-burst', 'static-noise', 'flicker'] as const) {
+  for (const id of NEW_EFFECT_IDS) {
     const toggle = window.getByTestId(`settings-effect-${id}`);
     await expect(toggle).toBeVisible();
-    await expect(toggle).toBeChecked(); // defaultOn:true — the tuned v0.8.0 default look
-    await expect.poll(() => effectAttr(window, id)).toBe('on');
+    await expect(toggle).not.toBeChecked();
+    expect(await effectAttr(window, id)).toBeNull();
     // each parameterized effect exposes its slider group beneath the toggle
     await expect(window.getByTestId(`settings-fx-${id}-params`)).toBeVisible();
   }
-
-  const micro = window.getByTestId('settings-effect-micro-jitter');
-  await expect(micro).toBeVisible();
-  await expect(micro).not.toBeChecked(); // defaultOn:false — still strictly opt-in
-  expect(await effectAttr(window, 'micro-jitter')).toBeNull();
-  await expect(window.getByTestId('settings-fx-micro-jitter-params')).toBeVisible();
 
   await app.close();
 });
@@ -146,14 +141,12 @@ test('crt-rollbar never adds a document scrollbar — the overlay stays inside t
   const window = await app.firstWindow();
   await openMatrixSettings(window);
 
-  // Matrix ships crt-rollbar ON by default; confirm the fixed overlay is live.
+  // Moving effects are opt-in; enable the rollbar for this geometry guard.
+  await window.getByTestId('settings-effect-crt-rollbar').check();
   await expect.poll(() => effectAttr(window, 'crt-rollbar')).toBe('on');
 
-  // Isolate the rollbar: jitter-burst (also default-on) translates <body> by a
-  // few px during its bursts, which by itself makes the document scrollable by
-  // ~1px and would mask/mimic what we're measuring here. Turn it off so the
-  // only thing that could add scrollable area is the rollbar overlay.
-  await window.getByTestId('settings-effect-jitter-burst').uncheck();
+  // Keep burst jitter off so the only effect that could add scrollable area is
+  // the rollbar overlay.
   await expect.poll(() => effectAttr(window, 'jitter-burst')).toBeNull();
 
   // Freeze the sweep near the END of its cycle. A negative animation-delay sets

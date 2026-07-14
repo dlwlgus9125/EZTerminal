@@ -1,3 +1,4 @@
+import { ArrowUp, File as FileIcon, Folder, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../shared/files';
@@ -5,6 +6,7 @@ import type { FilePreviewResult } from '../shared/file-preview';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
 import { FileContextMenu, type FileContextMenuItem } from './FileContextMenu';
 import { setInternalPathDrag } from './FileDropOverlay';
+import { useAppTranslation } from './i18n';
 import { getPaneCwd, insertIntoPaneInput } from './pane-registry';
 import { RichFileViewerOverlay } from './RichFileViewerOverlay';
 
@@ -48,6 +50,7 @@ export function FileExplorerPanel({
   onClose,
   onOpenTerminalAt,
 }: FileExplorerPanelProps): JSX.Element {
+  const { t } = useAppTranslation();
   const [currentPath, setCurrentPath] = useState<string | null>(null);
   const [parent, setParent] = useState<string | null>(null);
   const [entries, setEntries] = useState<readonly FileEntry[]>([]);
@@ -150,16 +153,18 @@ export function FileExplorerPanel({
 
   const handleCopy = useCallback(
     (text: string): void => {
-      void navigator.clipboard.writeText(text).then(() => showToast('Copied'));
+      void navigator.clipboard.writeText(text).then(() => showToast(t('fileExplorer.copied')));
     },
-    [showToast],
+    [showToast, t],
   );
 
   const handlePastePath = useCallback(
     (fullPath: string): void => {
-      if (!insertIntoPaneInput(activePanelId ?? '', quoteEzArgument(fullPath))) showToast('No active terminal');
+      if (!insertIntoPaneInput(activePanelId ?? '', quoteEzArgument(fullPath))) {
+        showToast(t('fileExplorer.noActiveTerminal'));
+      }
     },
-    [activePanelId, showToast],
+    [activePanelId, showToast, t],
   );
 
   const handleRefresh = useCallback((): void => {
@@ -248,53 +253,53 @@ export function FileExplorerPanel({
       if (entry === null) {
         if (currentPath === null) return [];
         return [
-          { action: 'refresh', label: 'Refresh', onSelect: handleRefresh },
-          { action: 'new-folder', label: 'New folder', onSelect: startNewFolder },
+          { action: 'refresh', label: t('fileExplorer.refresh'), onSelect: handleRefresh },
+          { action: 'new-folder', label: t('fileExplorer.newFolder'), onSelect: startNewFolder },
           {
             action: 'open-terminal',
-            label: 'Open terminal here',
+            label: t('fileExplorer.openTerminalHere'),
             onSelect: () => onOpenTerminalAt(currentPath),
           },
-          { action: 'copy-path', label: 'Copy path', onSelect: () => handleCopy(currentPath) },
+          { action: 'copy-path', label: t('fileExplorer.copyPath'), onSelect: () => handleCopy(currentPath) },
         ];
       }
       const fullPath = fullPathFor(entry);
       const common: FileContextMenuItem[] = [
-        { action: 'copy-path', label: 'Copy path', onSelect: () => handleCopy(fullPath) },
-        { action: 'copy-name', label: 'Copy name', onSelect: () => handleCopy(entry.name) },
+        { action: 'copy-path', label: t('fileExplorer.copyPath'), onSelect: () => handleCopy(fullPath) },
+        { action: 'copy-name', label: t('fileExplorer.copyName'), onSelect: () => handleCopy(entry.name) },
       ];
       if (entry.kind === 'dir') {
         return [
           ...common,
           {
             action: 'open-terminal',
-            label: 'Open terminal here',
+            label: t('fileExplorer.openTerminalHere'),
             onSelect: () => onOpenTerminalAt(fullPath),
           },
           {
             action: 'paste-path',
-            label: 'Paste path into terminal',
+            label: t('fileExplorer.pastePath'),
             onSelect: () => handlePastePath(fullPath),
           },
-          { action: 'rename', label: 'Rename', onSelect: () => startRename(entry) },
-          { action: 'delete', label: 'Delete', onSelect: () => requestDelete(entry) },
+          { action: 'rename', label: t('fileExplorer.rename'), onSelect: () => startRename(entry) },
+          { action: 'delete', label: t('fileExplorer.delete'), onSelect: () => requestDelete(entry) },
         ];
       }
       return [
         ...common,
         {
           action: 'paste-path',
-          label: 'Paste path into terminal',
+          label: t('fileExplorer.pastePath'),
           onSelect: () => handlePastePath(fullPath),
         },
-        { action: 'open-app', label: 'Open in app', onSelect: () => void window.ezterminal.openFileInApp(fullPath) },
+        { action: 'open-app', label: t('fileExplorer.openInApp'), onSelect: () => void window.ezterminal.openFileInApp(fullPath) },
         {
           action: 'reveal',
-          label: 'Reveal in explorer',
+          label: t('fileExplorer.revealInExplorer'),
           onSelect: () => void window.ezterminal.revealFileInExplorer(fullPath),
         },
-        { action: 'rename', label: 'Rename', onSelect: () => startRename(entry) },
-        { action: 'delete', label: 'Delete', onSelect: () => requestDelete(entry) },
+        { action: 'rename', label: t('fileExplorer.rename'), onSelect: () => startRename(entry) },
+        { action: 'delete', label: t('fileExplorer.delete'), onSelect: () => requestDelete(entry) },
       ];
     },
     [
@@ -307,6 +312,7 @@ export function FileExplorerPanel({
       requestDelete,
       startNewFolder,
       startRename,
+      t,
     ],
   );
 
@@ -317,10 +323,11 @@ export function FileExplorerPanel({
           className="btn btn-split"
           onClick={handleUp}
           disabled={rootsMode}
-          title="Go up"
+          title={t('fileExplorer.goUp')}
+          aria-label={t('fileExplorer.goUp')}
           data-testid="file-up"
         >
-          ↑
+          <ArrowUp aria-hidden="true" size={16} />
         </button>
         <input
           className="file-path-input"
@@ -329,17 +336,18 @@ export function FileExplorerPanel({
           onKeyDown={(e) => {
             if (e.key === 'Enter') void loadPath(pathInput);
           }}
-          placeholder="Path…"
-          aria-label="current folder path"
+          placeholder={t('fileExplorer.pathPlaceholder')}
+          aria-label={t('fileExplorer.currentFolderPath')}
           data-testid="file-path-input"
         />
         <button
           className="btn btn-split"
           onClick={onClose}
-          title="Close"
+          title={t('common.close')}
+          aria-label={t('common.close')}
           data-testid="file-explorer-close"
         >
-          ✕
+          <X aria-hidden="true" size={16} />
         </button>
       </div>
 
@@ -375,6 +383,7 @@ export function FileExplorerPanel({
               data-testid="new-folder-input"
               value={newFolderName}
               autoFocus
+              aria-label={t('fileExplorer.newFolderName')}
               onChange={(e) => setNewFolderName(e.target.value)}
               onClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => {
@@ -392,6 +401,7 @@ export function FileExplorerPanel({
                 data-testid="rename-input"
                 value={renameValue}
                 autoFocus
+                aria-label={t('fileExplorer.renameEntry', { name: entry.name })}
                 onChange={(e) => setRenameValue(e.target.value)}
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={(e) => {
@@ -401,27 +411,44 @@ export function FileExplorerPanel({
               />
             </div>
           ) : (
-            <div
+            <button
               key={entry.name}
+              type="button"
               className="file-entry"
               data-testid="file-entry"
               draggable
               onDragStart={(event) => setInternalPathDrag(event.dataTransfer, [fullPathFor(entry)])}
               onClick={() => void openEntry(entry)}
+              onKeyDown={(event) => {
+                if ((event.key === 'Enter' || event.key === ' ') && !event.repeat) {
+                  event.preventDefault();
+                  void openEntry(entry);
+                  return;
+                }
+                if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+                event.preventDefault();
+                const rect = event.currentTarget.getBoundingClientRect();
+                setContextMenu({
+                  x: rect.left + Math.min(16, rect.width / 2),
+                  y: rect.top + Math.min(16, rect.height),
+                  entry,
+                });
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                e.currentTarget.focus();
                 setContextMenu({ x: e.clientX, y: e.clientY, entry });
               }}
             >
               <span className="file-entry-icon" aria-hidden="true">
-                {entry.kind === 'dir' ? '▸' : '▪'}
+                {entry.kind === 'dir' ? <Folder size={16} /> : <FileIcon size={16} />}
               </span>
               <span className="file-entry-name">{entry.name}</span>
               {entry.kind === 'file' && (
                 <span className="file-entry-size">{formatSize(entry.size)}</span>
               )}
-            </div>
+            </button>
           ),
         )}
       </div>
@@ -451,21 +478,21 @@ export function FileExplorerPanel({
       {deleteTarget && (
         <div className="file-confirm-overlay" data-testid="delete-confirm">
           <div className="file-confirm-box">
-            <p>Move {deleteTarget.name} to trash?</p>
+            <p>{t('fileExplorer.moveToTrash', { name: deleteTarget.name })}</p>
             <div className="file-confirm-actions">
               <button
                 className="btn btn-split"
                 onClick={() => void confirmDelete()}
                 data-testid="delete-confirm-yes"
               >
-                Delete
+                {t('fileExplorer.delete')}
               </button>
               <button
                 className="btn btn-split"
                 onClick={() => setDeleteTarget(null)}
                 data-testid="delete-confirm-cancel"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
             </div>
           </div>

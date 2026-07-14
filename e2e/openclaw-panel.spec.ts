@@ -60,7 +60,7 @@ test('running: drawer shows state/version/sessions/log lines (AC1/AC2/AC3)', asy
     await expect(window.getByTestId('openclaw-panel')).toBeVisible();
 
     const stateSection = window.getByTestId('openclaw-state');
-    await expect(stateSection).toContainText('실행 중', { timeout: 10_000 });
+    await expect(stateSection).toHaveAttribute('data-state', 'running', { timeout: 10_000 });
     await expect(stateSection).toContainText('2026.6.11');
 
     await expect(window.getByTestId('openclaw-sessions')).toBeVisible({ timeout: 10_000 });
@@ -95,7 +95,9 @@ test('stopped -> start: guidance CTA, fake CLI argv recorded, state flips, UI re
   try {
     const window = await app.firstWindow();
     await window.getByTestId('btn-toggle-openclaw').click();
-    await expect(window.getByTestId('openclaw-state')).toContainText('중지됨', { timeout: 10_000 });
+    await expect(window.getByTestId('openclaw-state')).toHaveAttribute('data-state', 'stopped', {
+      timeout: 10_000,
+    });
 
     // Guidance, never an error — a Start CTA replaces the sessions/log sections.
     await expect(window.getByTestId('openclaw-guidance')).toBeVisible();
@@ -106,7 +108,9 @@ test('stopped -> start: guidance CTA, fake CLI argv recorded, state flips, UI re
     await expect(startBtn).toBeEnabled();
     await startBtn.click();
 
-    await expect(window.getByTestId('openclaw-state')).toContainText('실행 중', { timeout: 15_000 });
+    await expect(window.getByTestId('openclaw-state')).toHaveAttribute('data-state', 'running', {
+      timeout: 15_000,
+    });
     await window.screenshot({ path: path.join(SCREENSHOT_DIR, 'started.png') });
 
     const finalState = JSON.parse(readFileSync(statePath, 'utf8')) as OpenClawFixtureState;
@@ -152,7 +156,7 @@ test('CLI absent: not-installed guidance card, zero error dialogs (AC6)', async 
 
     await window.getByTestId('btn-toggle-openclaw').click();
     const stateSection = window.getByTestId('openclaw-state');
-    await expect(stateSection).toContainText('설치 안 됨', { timeout: 10_000 });
+    await expect(stateSection).toHaveAttribute('data-state', 'not-installed', { timeout: 10_000 });
 
     const guidance = window.getByTestId('openclaw-guidance');
     await expect(guidance).toBeVisible();
@@ -185,7 +189,9 @@ test('config save: edited model/port draft sends allowlisted config-set argv, re
   try {
     const window = await app.firstWindow();
     await window.getByTestId('btn-toggle-openclaw').click();
-    await expect(window.getByTestId('openclaw-state')).toContainText('실행 중', { timeout: 10_000 });
+    await expect(window.getByTestId('openclaw-state')).toHaveAttribute('data-state', 'running', {
+      timeout: 10_000,
+    });
 
     // Seed draft fields already populated from the fixture's initial config
     // (buildFixtureState's `agents.defaults.model`) — wait for the fetch to
@@ -201,7 +207,7 @@ test('config save: edited model/port draft sends allowlisted config-set argv, re
 
     const banner = window.getByTestId('openclaw-restart-banner');
     await expect(banner).toBeVisible({ timeout: 10_000 });
-    await expect(banner).toContainText('재시작해야 적용됩니다');
+    await expect(banner).toContainText(/재시작해야 적용됩니다|Restart the gateway to apply changes/);
     await window.screenshot({ path: path.join(SCREENSHOT_DIR, 'config-saved.png') });
 
     const finalState = JSON.parse(readFileSync(statePath, 'utf8')) as OpenClawFixtureState;
@@ -231,7 +237,9 @@ test('autostart: two-step confirm installs, fake CLI argv recorded (task #9)', a
   try {
     const window = await app.firstWindow();
     await window.getByTestId('btn-toggle-openclaw').click();
-    await expect(window.getByTestId('openclaw-state')).toContainText('실행 중', { timeout: 10_000 });
+    await expect(window.getByTestId('openclaw-state')).toHaveAttribute('data-state', 'running', {
+      timeout: 10_000,
+    });
 
     // First click is a no-op confirm prompt, not the action itself.
     await window.getByTestId('btn-openclaw-autostart-install').click();
@@ -241,7 +249,7 @@ test('autostart: two-step confirm installs, fake CLI argv recorded (task #9)', a
     expect(finalState.cliCalls.find((c) => c.argv.includes('install'))).toBeUndefined();
 
     await window.getByTestId('btn-openclaw-autostart-install-confirm').click();
-    await expect(window.getByTestId('openclaw-autostart-result')).toContainText('등록되었습니다', {
+    await expect(window.getByTestId('openclaw-autostart-result')).toContainText(/등록되었습니다|Autostart was registered/, {
       timeout: 10_000,
     });
 

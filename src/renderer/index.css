@@ -49,9 +49,9 @@
   --term-font: 'Cascadia Code', 'Cascadia Mono', Consolas, 'Courier New', monospace;
 
   /* Console surfaces, near-black with subtly layered depth. */
-  --term-bg: #0c0c0c;          /* the console background */
-  --term-bg-raised: #151515;   /* command line / input strip */
-  --term-bg-inset: #0a0a0a;    /* table body, deepest plane */
+  --term-bg: #0c0c0c; /* the console background */
+  --term-bg-raised: #151515; /* command line / input strip */
+  --term-bg-inset: #0a0a0a; /* table body, deepest plane */
   --term-bg-hover: rgba(255, 255, 255, 0.04);
 
   /* Hairline separators — block chrome stays thin, never card-like. */
@@ -59,23 +59,27 @@
   --term-border-faint: #1a1a1a;
 
   /* Foreground ramp. */
-  --term-fg: #cccccc;          /* default text */
-  --term-fg-bright: #f2f2f2;   /* command text, emphasis */
-  --term-fg-dim: #7f7f7f;      /* metadata, counts */
-  --term-fg-faint: #565656;    /* chrome glyphs, loading */
+  --term-fg: #cccccc; /* default text */
+  --term-fg-bright: #f2f2f2; /* command text, emphasis */
+  --term-fg-dim: #7f7f7f; /* metadata, counts */
+  --term-fg-faint: #565656; /* chrome glyphs, loading */
 
   /* Classic terminal accents. */
-  --term-green: #29d398;       /* success / done / prompt */
-  --term-red: #f0556a;         /* error */
-  --term-amber: #e5b567;       /* cancelled / warn */
-  --term-cyan: #56b6c2;        /* table headers, paths */
-  --term-blue: #4d9fff;        /* running / focus */
+  --term-green: #29d398; /* success / done / prompt */
+  --term-red: #f0556a; /* error */
+  --term-amber: #e5b567; /* cancelled / warn */
+  --term-cyan: #56b6c2; /* table headers, paths */
+  --term-blue: #4d9fff; /* running / focus */
 
   --term-selection: rgba(45, 211, 152, 0.22);
 
   font-family: var(--term-font);
-  font-size: calc(13px * var(--ez-ui-scale, 1));
-  font-feature-settings: 'calt' 1, 'liga' 0; /* keep code legible, no fancy ligatures */
+  /* Keep rem-based product tokens on the canonical 16px scale. The persisted
+     UI scale still enlarges both chrome and terminal typography together. */
+  font-size: calc(16px * var(--ez-ui-scale, 1));
+  font-feature-settings:
+    'calt' 1,
+    'liga' 0; /* keep code legible, no fancy ligatures */
   -webkit-font-smoothing: antialiased;
 }
 
@@ -122,39 +126,37 @@
 }
 
 /* == PALETTE == mirrors THEMES.matrix.cssVars in themes.ts (keep the two in sync).
-   Also overrides --term-font (whole chrome switches to Share Tech Mono) and bumps
-   the root font-size a touch so the lighter face stays legible. */
+   Matrix supplies the terminal/display face without changing the semantic type
+   scale used by product chrome. */
 [data-theme='matrix'] {
   color-scheme: dark;
-  font-size: calc(14px * var(--ez-ui-scale, 1));
   --term-font: 'Share Tech Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
 
   --term-bg: #010301;
-  --term-bg-raised: #071007;
+  --term-bg-raised: #071109;
   --term-bg-inset: #020402;
   --term-bg-hover: rgba(41, 211, 152, 0.08);
 
-  --term-border: #12492a;
-  --term-border-faint: #0a2a15;
+  --term-border: #3c8d61;
+  --term-border-faint: #1d5035;
 
-  --term-fg: #5fe7ac;
-  --term-fg-bright: #c7ffe4;
-  --term-fg-dim: #1c9d6c;
-  --term-fg-faint: #0f6a48;
+  --term-fg: #8af7bd;
+  --term-fg-bright: #d5ffe7;
+  --term-fg-dim: #5ac98f;
+  --term-fg-faint: #419b6d;
 
-  --term-green: #29d398;
-  --term-red: #ff4d5e;
-  --term-amber: #f5c451;
-  --term-cyan: #1fb6c9;
-  --term-blue: #4db8ff;
+  --term-green: #35e58f;
+  --term-red: #ff6b7a;
+  --term-amber: #ffd166;
+  --term-cyan: #62d8ff;
+  --term-blue: #66a8ff;
 
-  --term-selection: rgba(41, 211, 152, 0.25);
+  --term-selection: rgba(53, 229, 143, 0.28);
 }
 
 /* == CRT GLOW (phosphor-glow effect) == a phosphor bloom on accents; a faint
    one on body/output. Gated by data-effect-phosphor-glow, not theme, so any
    theme can opt in — Matrix declares it default-on (effects.ts). */
-html[data-effect-phosphor-glow='on'] .app-title,
 html[data-effect-phosphor-glow='on'] .prompt-sigil,
 html[data-effect-phosphor-glow='on'] .block-command,
 html[data-effect-phosphor-glow='on'] .block-cwd,
@@ -169,14 +171,6 @@ html[data-effect-phosphor-glow='on'] .status-metric {
 html[data-effect-phosphor-glow='on'] .text-block {
   text-shadow: 0 0 4px rgba(41, 211, 152, 0.28);
 }
-/* Wordmark leans into the retro face. */
-[data-theme='matrix'] .app-title {
-  font-family: 'VT323', 'Share Tech Mono', monospace;
-  font-size: 1.15rem;
-  letter-spacing: 2px;
-  color: var(--term-fg-bright);
-}
-
 /* == SCANLINES == one fixed CRT overlay over the whole window, anchored on
    <html> — the one element both platforms share (desktop has .app, mobile has
    #root) — so the same rule serves desktop and mobile. pointer-events: none
@@ -211,12 +205,17 @@ html[data-effect-flicker='on'] #root {
 }
 html[data-effect-micro-jitter='on'][data-effect-flicker='on'] #root {
   animation:
-    fx-micro-jitter var(--fx-micro-duration, 4.00s) step-end infinite,
+    fx-micro-jitter var(--fx-micro-duration, 4s) step-end infinite,
     fx-flicker var(--fx-flicker-duration, 0.067s) steps(2, jump-none) infinite;
 }
 @keyframes fx-flicker {
-  0%, 100% { opacity: 1; }
-  50% { opacity: var(--fx-flicker-min, 0.93); }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: var(--fx-flicker-min, 0.93);
+  }
 }
 
 /* == CRT CURVATURE == a subtle vignette on its own ::before layer (scanlines
@@ -258,8 +257,8 @@ html[data-effect-crt-rollbar='on'] body::after {
   background-image: repeating-linear-gradient(
     to bottom,
     color-mix(in srgb, var(--fx-rollbar-color, #2fd06d) 0%, transparent) 0,
-    var(--fx-rollbar-color, #2fd06d) var(--fx-rollbar-grad-in, 59.40px),
-    var(--fx-rollbar-color, #2fd06d) var(--fx-rollbar-grad-out, 60.60px),
+    var(--fx-rollbar-color, #2fd06d) var(--fx-rollbar-grad-in, 59.4px),
+    var(--fx-rollbar-color, #2fd06d) var(--fx-rollbar-grad-out, 60.6px),
     color-mix(in srgb, var(--fx-rollbar-color, #2fd06d) 0%, transparent) calc(var(--fx-rollbar-thickness, 120) * 1px),
     transparent calc(var(--fx-rollbar-thickness, 120) * 1px),
     transparent var(--fx-rollbar-period, 70vh)
@@ -270,8 +269,12 @@ html[data-effect-crt-rollbar='on'] body::after {
   animation: crt-rollbar-sweep var(--fx-rollbar-duration, 16.8s) linear infinite;
 }
 @keyframes crt-rollbar-sweep {
-  0% { background-position: 0 0; }
-  100% { background-position: 0 var(--fx-rollbar-period, 70vh); }
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 var(--fx-rollbar-period, 70vh);
+  }
 }
 
 /* == SCANLINE SCROLL (scanline-scroll effect) == the horizontal scanline
@@ -288,7 +291,7 @@ html[data-effect-scanline-scroll='on'] body::before {
     to bottom,
     rgba(0, 0, 0, 0) 0px,
     rgba(0, 0, 0, 0) 2px,
-    rgba(120, 255, 190, 0.10) 3px,
+    rgba(120, 255, 190, 0.1) 3px,
     rgba(0, 0, 0, 0) 4px
   );
   background-size: 100% 4px;
@@ -296,8 +299,12 @@ html[data-effect-scanline-scroll='on'] body::before {
   animation: scanline-scroll-move 0.5s linear infinite;
 }
 @keyframes scanline-scroll-move {
-  0% { background-position: 0 0; }
-  100% { background-position: 0 4px; }
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 4px;
+  }
 }
 
 /* == CRT INTERFERENCE (jitter-burst / micro-jitter / static-noise) == the
@@ -345,13 +352,27 @@ html[data-effect-jitter-burst='on'] body {
   animation: fx-jitter-burst var(--fx-burst-period, 3s) step-end infinite;
 }
 @keyframes fx-jitter-burst {
-  0% { transform: translate(0px, 1px); }
-  0.67% { transform: translate(-1px, -1px); }
-  1.33% { transform: translate(0px, 1px); }
-  2.00% { transform: translate(0px, 0px); }
-  2.67% { transform: translate(0px, 0px); }
-  3.33% { transform: translate(0px, 0px); }
-  100% { transform: translate(0px, 0px); }
+  0% {
+    transform: translate(0px, 1px);
+  }
+  0.67% {
+    transform: translate(-1px, -1px);
+  }
+  1.33% {
+    transform: translate(0px, 1px);
+  }
+  2.00% {
+    transform: translate(0px, 0px);
+  }
+  2.67% {
+    transform: translate(0px, 0px);
+  }
+  3.33% {
+    transform: translate(0px, 0px);
+  }
+  100% {
+    transform: translate(0px, 0px);
+  }
 }
 html[data-effect-jitter-burst='on'] #root::before {
   content: '';
@@ -365,29 +386,55 @@ html[data-effect-jitter-burst='on'] #root::before {
   animation: fx-burst-flash var(--fx-burst-period, 3s) linear infinite;
 }
 @keyframes fx-burst-flash {
-  0% { opacity: 0.25; }
-  3.33% { opacity: 0; }
-  100% { opacity: 0; }
+  0% {
+    opacity: 0.25;
+  }
+  3.33% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 
 html[data-effect-micro-jitter='on'] #root {
   will-change: transform;
-  animation: fx-micro-jitter var(--fx-micro-duration, 4.00s) step-end infinite;
+  animation: fx-micro-jitter var(--fx-micro-duration, 4s) step-end infinite;
 }
 /* 10 jumps per cycle at irregular stops — deterministic "random". Amplitude
    scales every offset via the one var (rollbar's calc-inside-keyframes
    precedent). 100% repeats 0% (invisible under step-end; kept for sanity). */
 @keyframes fx-micro-jitter {
-  0% { transform: translate(0, var(--fx-micro-amp, 1px)); }
-  11% { transform: translate(calc(var(--fx-micro-amp, 1px) * -1), 0); }
-  23% { transform: translate(0, calc(var(--fx-micro-amp, 1px) * -1)); }
-  37% { transform: translate(var(--fx-micro-amp, 1px), var(--fx-micro-amp, 1px)); }
-  48% { transform: translate(0, 0); }
-  59% { transform: translate(calc(var(--fx-micro-amp, 1px) * -1), calc(var(--fx-micro-amp, 1px) * -1)); }
-  71% { transform: translate(var(--fx-micro-amp, 1px), 0); }
-  84% { transform: translate(0, var(--fx-micro-amp, 1px)); }
-  93% { transform: translate(calc(var(--fx-micro-amp, 1px) * -1), var(--fx-micro-amp, 1px)); }
-  100% { transform: translate(0, var(--fx-micro-amp, 1px)); }
+  0% {
+    transform: translate(0, var(--fx-micro-amp, 1px));
+  }
+  11% {
+    transform: translate(calc(var(--fx-micro-amp, 1px) * -1), 0);
+  }
+  23% {
+    transform: translate(0, calc(var(--fx-micro-amp, 1px) * -1));
+  }
+  37% {
+    transform: translate(var(--fx-micro-amp, 1px), var(--fx-micro-amp, 1px));
+  }
+  48% {
+    transform: translate(0, 0);
+  }
+  59% {
+    transform: translate(calc(var(--fx-micro-amp, 1px) * -1), calc(var(--fx-micro-amp, 1px) * -1));
+  }
+  71% {
+    transform: translate(var(--fx-micro-amp, 1px), 0);
+  }
+  84% {
+    transform: translate(0, var(--fx-micro-amp, 1px));
+  }
+  93% {
+    transform: translate(calc(var(--fx-micro-amp, 1px) * -1), var(--fx-micro-amp, 1px));
+  }
+  100% {
+    transform: translate(0, var(--fx-micro-amp, 1px));
+  }
 }
 
 html[data-effect-static-noise='on'] #root::after {
@@ -398,21 +445,39 @@ html[data-effect-static-noise='on'] #root::after {
   pointer-events: none;
   background-image: var(--fx-noise-texture);
   background-size: var(--fx-noise-size, 224px) var(--fx-noise-size, 224px);
-  opacity: var(--fx-noise-opacity, 0.10);
+  opacity: var(--fx-noise-opacity, 0.1);
   will-change: background-position;
-  animation: fx-noise-shuffle var(--fx-noise-duration, 0.50s) step-end infinite;
+  animation: fx-noise-shuffle var(--fx-noise-duration, 0.5s) step-end infinite;
 }
 /* Tile-origin shuffle through fixed pseudo-random offsets = animated snow. */
 @keyframes fx-noise-shuffle {
-  0% { background-position: 0% 0%; }
-  12.5% { background-position: 37% 61%; }
-  25% { background-position: 71% 13%; }
-  37.5% { background-position: 19% 83%; }
-  50% { background-position: 89% 41%; }
-  62.5% { background-position: 53% 7%; }
-  75% { background-position: 7% 29%; }
-  87.5% { background-position: 61% 97%; }
-  100% { background-position: 0% 0%; }
+  0% {
+    background-position: 0% 0%;
+  }
+  12.5% {
+    background-position: 37% 61%;
+  }
+  25% {
+    background-position: 71% 13%;
+  }
+  37.5% {
+    background-position: 19% 83%;
+  }
+  50% {
+    background-position: 89% 41%;
+  }
+  62.5% {
+    background-position: 53% 7%;
+  }
+  75% {
+    background-position: 7% 29%;
+  }
+  87.5% {
+    background-position: 61% 97%;
+  }
+  100% {
+    background-position: 0% 0%;
+  }
 }
 
 /* == STATUS INDICATORS == dot → glyph. Colour AND shape encode the state, so it
@@ -442,36 +507,16 @@ html[data-effect-phosphor-glow='on'] .block-status::before {
   content: '\23F8'; /* ⏸ */
 }
 @keyframes matrix-status-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.3; transform: scale(0.72); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.3;
+    transform: scale(0.72);
+  }
 }
-
-/* == SESSION SIGNAL == the single "session live" dot becomes a 3-bar signal
-   meter — pure CSS, no markup change (App.tsx keeps <span class="session-dot"/>).
-   The element is the tall pulsing middle bar; ::before / ::after are the shorter
-   side bars. */
-[data-theme='matrix'] .session-dot {
-  width: 3px;
-  height: 13px;
-  border-radius: 1px;
-  background: var(--term-fg-bright);
-  box-shadow: 0 0 7px var(--term-fg-bright);
-  position: relative;
-  overflow: visible;
-  animation: matrix-status-pulse 1.7s ease-in-out infinite;
-}
-[data-theme='matrix'] .session-dot::before,
-[data-theme='matrix'] .session-dot::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  width: 3px;
-  border-radius: 1px;
-  background: var(--term-green);
-  box-shadow: 0 0 5px var(--term-green);
-}
-[data-theme='matrix'] .session-dot::before { left: -5px; height: 7px; }
-[data-theme='matrix'] .session-dot::after  { left: 5px;  height: 10px; }
 
 /* == PTY / AGENT TUI GLOW == bg/fg for the xterm surface come from
    THEMES.matrix.xterm (themes.ts). This adds the phosphor bloom so Claude Code /
@@ -548,6 +593,7 @@ body {
   height: 100vh;
   box-sizing: border-box;
   background: var(--term-bg);
+  font-family: var(--ui-font-body);
 }
 
 /* One terminal surface: block list (fills, scrolls) + pinned prompt below. Fills its
@@ -558,6 +604,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  font-family: var(--ui-font-terminal);
 }
 
 /* ── dockview host (tabs) ──────────────────────────────────────────────────── */
@@ -763,24 +810,6 @@ body {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-}
-
-.settings-theme-select,
-.settings-font-select {
-  width: 100%;
-  padding: 0.25rem 0.4rem;
-  font-size: 0.78rem;
-  font-family: inherit;
-  background: var(--term-bg-inset);
-  border: 1px solid var(--term-border);
-  border-radius: 3px;
-  color: var(--term-fg);
-}
-
-.settings-theme-select:focus,
-.settings-font-select:focus {
-  outline: none;
-  border-color: var(--term-green);
 }
 
 .settings-theme-import {
@@ -1081,29 +1110,9 @@ body {
   color: var(--term-fg);
 }
 
-/* File explorer drawer (file-explorer plan, M1) — mirrors .status-drawer
-   above but anchored to the LEFT edge (border-right instead of border-left),
-   its own toggle slot (not part of the stats/pairing right-side mutual
-   exclusion). Same width/z-index as .status-drawer.
-
-   z-order ladder for the whole file-explorer stack (M6 audit — verified
-   correct; keep this comment in sync if any of these values ever change,
-   rather than re-deriving the ladder from scratch elsewhere). Every value sits
-   ABOVE dockview's drag sash (z-index 99, a library default) so a pane divider
-   can never paint over or intercept clicks meant for these overlays, and below
-   the CRT effect overlays (198+, pointer-events:none):
-     .palette-overlay (170)        — command palette, above everything
-     .file-context-menu (165)      — right-click menu, above the viewer
-     .terminal-context-menu (165)  — terminal copy/paste menu (same tier; never
-                                      shown together with the file overlays)
-     .file-viewer-overlay (160)    — text viewer
-     .file-confirm-overlay (160)   — delete confirm (same slot as the viewer;
-                                      never shown at the same time — one opens
-                                      from a row click, the other from that
-                                      row's context menu)
-     .status-drawer / .file-drawer (155) — the drawers themselves
-     .preset-menu (150)            — layout presets dropdown, below the drawers
-   170 > 165 >= 165 > 160 >= 160 > 155 > 150 > 99 (sash) holds throughout. */
+/* File Explorer's legacy feature body now renders inside SidebarShell. These
+   styles retain its internal list and viewer stack; workbench.css neutralizes
+   the old absolute drawer positioning at the composition boundary. */
 .file-drawer {
   position: absolute;
   top: 0;
@@ -1162,18 +1171,30 @@ body {
 }
 
 .file-entry {
+  appearance: none;
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 0.4rem;
   padding: 0.3rem 0.6rem;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
   font-size: 0.8rem;
+  text-align: left;
   color: var(--term-fg);
   cursor: pointer;
 }
 
-.file-entry:hover {
+.file-entry:hover,
+.file-entry:focus-visible {
   background: var(--term-bg-inset);
   color: var(--term-fg-bright);
+}
+
+.file-entry:focus-visible {
+  outline: 2px solid var(--term-blue);
+  outline-offset: -2px;
 }
 
 .file-entry-icon {
@@ -1243,10 +1264,7 @@ body {
   word-break: break-word;
 }
 
-/* Right-click context menu (M2) — clones .preset-menu's chrome but is cursor-
-   positioned (`left`/`top` set inline by FileContextMenu.tsx) via `fixed`
-   rather than anchored to a relatively-positioned parent. z-index 165 sits
-   above the viewer (160) and below the command palette (170). */
+/* Cursor-positioned File Explorer context menu, above its local viewer. */
 .file-context-menu {
   position: fixed;
   z-index: 165;
@@ -1271,9 +1289,14 @@ body {
   color: var(--term-fg);
   cursor: pointer;
 }
-.file-context-menu-item:hover {
+.file-context-menu-item:hover,
+.file-context-menu-item:focus-visible {
   border-color: var(--term-green);
   color: var(--term-fg-bright);
+}
+.file-context-menu-item:focus-visible {
+  outline: 2px solid var(--term-blue);
+  outline-offset: -2px;
 }
 
 /* Transient action feedback (M2) — "Copied" / "No active terminal", same
@@ -1347,14 +1370,12 @@ body {
   border-radius: 3px;
 }
 
-/* The popover list itself gets the same drop shadow as this app's other
-   floating menus (.preset-menu, .command-palette). */
+/* Dockview's overflow list uses the same restrained overlay shadow. */
 .ez-dock .dv-tabs-overflow-container {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
 }
 
-/* New-tab / split buttons in the title bar. */
-.btn-new-tab,
+/* Legacy feature buttons that have not yet moved to a shared primitive. */
 .btn-split {
   padding: 0.1rem 0.5rem;
   font-size: 0.72rem;
@@ -1363,7 +1384,6 @@ body {
   border: 1px solid var(--term-border);
   color: var(--term-fg);
 }
-.btn-new-tab:hover,
 .btn-split:hover {
   color: var(--term-fg-bright);
   border-color: var(--term-green);
@@ -1390,203 +1410,6 @@ body {
 }
 .crash-banner .btn {
   margin-left: auto;
-}
-
-/* Layout presets dropdown (Track A ③ A-M4) — anchored to the title-bar button.
-   z-index 150 keeps the dropdown above dockview's drag sash (99) so a pane
-   divider can't intercept clicks on its buttons; see the file-explorer z-order
-   ladder comment above. */
-.preset-box {
-  position: relative;
-}
-.preset-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 150;
-  min-width: 220px;
-  padding: 0.35rem;
-  background: var(--term-bg-raised);
-  border: 1px solid var(--term-border);
-  border-radius: 4px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-.preset-empty {
-  padding: 0.2rem 0.35rem;
-  font-size: 0.72rem;
-  color: var(--term-fg-faint);
-}
-.preset-row {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-.preset-apply {
-  flex: 1 1 auto;
-  text-align: left;
-  padding: 0.15rem 0.4rem;
-  font-size: 0.75rem;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  color: var(--term-fg);
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.preset-apply:hover {
-  border-color: var(--term-green);
-  color: var(--term-fg-bright);
-}
-.preset-icon {
-  flex: 0 0 auto;
-  padding: 0.1rem 0.3rem;
-  font-size: 0.72rem;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  color: var(--term-fg-faint);
-  cursor: pointer;
-}
-.preset-icon:hover {
-  color: var(--term-fg-bright);
-  border-color: var(--term-border);
-}
-.preset-save-row {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding-top: 0.25rem;
-  border-top: 1px solid var(--term-border);
-}
-.preset-name-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 0.15rem 0.4rem;
-  font-size: 0.75rem;
-  font-family: inherit;
-  background: var(--term-bg-inset);
-  border: 1px solid var(--term-border);
-  border-radius: 3px;
-  color: var(--term-fg);
-}
-.preset-name-input:focus {
-  outline: none;
-  border-color: var(--term-green);
-}
-
-/* Command palette (E2) — a centered overlay, same dark/bordered chrome as
-   .preset-menu. Fixed over the whole app so it sits above dockview panes and
-   the drag sash (99); top of the overlay ladder. */
-.palette-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 170;
-  display: flex;
-  justify-content: center;
-  padding-top: 12vh;
-  background: rgba(0, 0, 0, 0.45);
-}
-.command-palette {
-  width: 480px;
-  max-width: calc(100vw - 2rem);
-  max-height: 60vh;
-  display: flex;
-  flex-direction: column;
-  background: var(--term-bg-raised);
-  border: 1px solid var(--term-border);
-  border-radius: 4px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
-  overflow: hidden;
-}
-.palette-input {
-  flex: 0 0 auto;
-  padding: 0.55rem 0.75rem;
-  font-family: var(--term-font);
-  font-size: 0.85rem;
-  background: var(--term-bg-inset);
-  border: none;
-  border-bottom: 1px solid var(--term-border);
-  color: var(--term-fg-bright);
-  caret-color: var(--term-green);
-}
-.palette-input:focus {
-  outline: none;
-}
-.palette-list {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  padding: 0.35rem;
-}
-.palette-empty {
-  padding: 0.3rem 0.5rem;
-  font-size: 0.75rem;
-  color: var(--term-fg-faint);
-}
-.palette-item {
-  padding: 0.3rem 0.5rem;
-  font-size: 0.78rem;
-  border-radius: 3px;
-  color: var(--term-fg);
-  cursor: pointer;
-}
-.palette-item--selected {
-  background: var(--term-bg-hover);
-  color: var(--term-fg-bright);
-}
-
-/* ── slim title bar (the terminal window's chrome line) ───────────────────── */
-.app-head {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex: 0 0 auto;
-  height: 34px;
-  padding: 0 0.85rem;
-  background: var(--term-bg-raised);
-  border-bottom: 1px solid var(--term-border);
-  user-select: none;
-}
-
-/* "session live" indicator — a small steady-green dot. */
-.session-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--term-green);
-  box-shadow: 0 0 6px rgba(41, 211, 152, 0.55);
-  flex: 0 0 auto;
-}
-
-.app-title {
-  margin: 0;
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--term-fg-bright);
-}
-
-.versions {
-  margin-left: auto;
-  font-size: 0.7rem;
-  color: var(--term-fg-faint);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.versions-sep {
-  margin: 0 0.4rem;
-  color: #333;
-}
-
-.versions--missing {
-  color: var(--term-red);
 }
 
 /* ── block list — newest at bottom, input pinned below (Warp-like) ────────── */
@@ -1648,7 +1471,11 @@ body {
 .block-cancel,
 .block-dismiss {
   opacity: 0;
-  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease, background 120ms ease;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease,
+    background 120ms ease;
 }
 
 .block:hover .block-toggle,
@@ -1736,10 +1563,18 @@ body {
   color: currentColor;
 }
 
-.block-status--running { color: var(--term-blue); }
-.block-status--done    { color: var(--term-green); }
-.block-status--error   { color: var(--term-red); }
-.block-status--cancelled { color: var(--term-amber); }
+.block-status--running {
+  color: var(--term-blue);
+}
+.block-status--done {
+  color: var(--term-green);
+}
+.block-status--error {
+  color: var(--term-red);
+}
+.block-status--cancelled {
+  color: var(--term-amber);
+}
 
 /* Agent Attention Hub ----------------------------------------------------- */
 
@@ -1979,6 +1814,13 @@ body {
   text-transform: uppercase;
 }
 
+:lang(ko) .agent-hub-title,
+:lang(ko) .status-section-title {
+  font-family: var(--ui-font-body);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
 .agent-hub-summary,
 .agent-age {
   color: var(--term-fg-faint);
@@ -2036,12 +1878,22 @@ body {
   background: var(--term-fg-faint);
 }
 
-.agent-status-dot--starting { background: var(--term-fg-faint); }
-.agent-status-dot--working { background: var(--term-blue); }
-.agent-status-dot--waiting { background: var(--term-amber); }
+.agent-status-dot--starting {
+  background: var(--term-fg-faint);
+}
+.agent-status-dot--working {
+  background: var(--term-blue);
+}
+.agent-status-dot--waiting {
+  background: var(--term-amber);
+}
 .agent-status-dot--blocked,
-.agent-status-dot--error { background: var(--term-red); }
-.agent-status-dot--done { background: var(--term-green); }
+.agent-status-dot--error {
+  background: var(--term-red);
+}
+.agent-status-dot--done {
+  background: var(--term-green);
+}
 
 .agent-provider {
   flex: 0 0 auto;
@@ -2067,10 +1919,18 @@ body {
 }
 
 .agent-status--blocked,
-.agent-status--error { color: var(--term-red); }
-.agent-status--waiting { color: var(--term-amber); }
-.agent-status--working { color: var(--term-blue); }
-.agent-status--done { color: var(--term-green); }
+.agent-status--error {
+  color: var(--term-red);
+}
+.agent-status--waiting {
+  color: var(--term-amber);
+}
+.agent-status--working {
+  color: var(--term-blue);
+}
+.agent-status--done {
+  color: var(--term-green);
+}
 
 .agent-followup {
   margin-top: 8px;
@@ -2120,10 +1980,6 @@ body {
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
-}
-
-.agent-header-button {
-  position: relative;
 }
 
 .agent-aware-tab {
@@ -2251,8 +2107,13 @@ body {
 }
 
 @keyframes status-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .block-cancel {
@@ -2837,7 +2698,10 @@ body {
   font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.02em;
-  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease,
+    background 120ms ease;
 }
 
 .btn:hover:not(:disabled) {

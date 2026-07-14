@@ -6,6 +6,7 @@ import {
 } from 'dockview-react';
 
 import type { AgentStatus } from '../shared/agent';
+import { useAppTranslation } from './i18n';
 import {
   isTerminalContextMenuKey,
   TerminalContextMenu,
@@ -15,11 +16,25 @@ import {
 
 export const MAX_TAB_TITLE_CHARACTERS = 80;
 
-export function generatedPanelTitle(panelId: string, component: string): string {
+interface GeneratedPanelTitleLabels {
+  readonly terminal: string;
+  readonly openClawChat: string;
+}
+
+const DEFAULT_GENERATED_PANEL_TITLE_LABELS: GeneratedPanelTitleLabels = {
+  terminal: 'Terminal',
+  openClawChat: 'OpenClaw Chat',
+};
+
+export function generatedPanelTitle(
+  panelId: string,
+  component: string,
+  labels: GeneratedPanelTitleLabels = DEFAULT_GENERATED_PANEL_TITLE_LABELS,
+): string {
   const terminalSuffix = /^tab-(\d+)$/.exec(panelId)?.[1];
-  if (terminalSuffix) return `Terminal ${terminalSuffix}`;
-  if (component === 'openclaw-chat') return 'OpenClaw Chat';
-  return 'Terminal';
+  if (terminalSuffix) return `${labels.terminal} ${terminalSuffix}`;
+  if (component === 'openclaw-chat') return labels.openClawChat;
+  return labels.terminal;
 }
 
 export function normalizePanelTitle(value: string, fallback: string): string {
@@ -50,16 +65,21 @@ export function WorkspaceTab({
   onTitleChanged,
   ...props
 }: WorkspaceTabProps): JSX.Element {
+  const { t } = useAppTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const cancelRenameRef = useRef(false);
   const [menu, setMenu] = useState<MenuInvocation | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState('');
+  const generatedTitleLabels: GeneratedPanelTitleLabels = {
+    terminal: t('workspaceTab.terminal'),
+    openClawChat: t('workspaceTab.openClawChat'),
+  };
 
   const startRename = (): void => {
     cancelRenameRef.current = false;
-    setDraft(props.api.title ?? generatedPanelTitle(props.api.id, props.api.component));
+    setDraft(props.api.title ?? generatedPanelTitle(props.api.id, props.api.component, generatedTitleLabels));
     setRenaming(true);
   };
 
@@ -71,7 +91,7 @@ export function WorkspaceTab({
     }
     const next = normalizePanelTitle(
       draft,
-      generatedPanelTitle(props.api.id, props.api.component),
+      generatedPanelTitle(props.api.id, props.api.component, generatedTitleLabels),
     );
     props.api.setTitle(next);
     onTitleChanged(next);
@@ -103,20 +123,20 @@ export function WorkspaceTab({
   };
 
   const menuItems: readonly TerminalContextMenuItem[] = [
-    { action: 'rename', label: 'Rename', shortcut: 'F2', onClick: startRename },
+    { action: 'rename', label: t('workspaceTab.rename'), shortcut: 'F2', onClick: startRename },
     {
       action: 'split-right',
-      label: 'Split Right',
+      label: t('workspace.splitRight'),
       onClick: () => onSplit(props.api.id, 'right'),
     },
     {
       action: 'split-below',
-      label: 'Split Below',
+      label: t('workspace.splitBelow'),
       onClick: () => onSplit(props.api.id, 'below'),
     },
     {
       action: 'close',
-      label: 'Close',
+      label: t('common.close'),
       onClick: () => requestClose(() => props.api.close()),
     },
   ];
@@ -152,8 +172,8 @@ export function WorkspaceTab({
       {status && status !== 'done' && (
         <span
           className={`agent-status-dot agent-status-dot--${status}`}
-          aria-label={`Agent ${status}`}
-          title={`Agent ${status}`}
+          aria-label={t('workspaceTab.agentStatus', { status })}
+          title={t('workspaceTab.agentStatus', { status })}
         />
       )}
 
@@ -163,7 +183,7 @@ export function WorkspaceTab({
           className="workspace-tab-rename"
           value={draft}
           maxLength={MAX_TAB_TITLE_CHARACTERS}
-          aria-label="Tab title"
+          aria-label={t('workspaceTab.title')}
           data-testid="workspace-tab-rename"
           onChange={(event) => setDraft(event.target.value)}
           onPointerDown={(event) => event.stopPropagation()}
@@ -196,7 +216,8 @@ export function WorkspaceTab({
           y={menu.y}
           items={menuItems}
           onClose={closeMenu}
-          ariaLabel="Tab actions"
+          ariaLabel={t('workspaceTab.actions')}
+          shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
           testId="workspace-tab-context-menu"
           itemTestIdPrefix="tab-ctx"
         />,

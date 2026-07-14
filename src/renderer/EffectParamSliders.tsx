@@ -49,15 +49,24 @@ interface EffectParamSlidersProps {
   readonly effectId: InterferenceEffectId;
   readonly params: InterferenceParams;
   readonly onChange: (effectId: InterferenceEffectId, partial: Record<string, number | boolean>) => void;
+  /** Optional localized label formatter; desktop keeps the catalog defaults. */
+  readonly formatLabel?: (effectId: InterferenceEffectId, key: string, value: number) => string;
+  readonly flashLabel?: string;
 }
 
-export function EffectParamSliders({ effectId, params, onChange }: EffectParamSlidersProps): JSX.Element {
+export function EffectParamSliders({
+  effectId,
+  params,
+  onChange,
+  formatLabel,
+  flashLabel = 'Noise flash during burst',
+}: EffectParamSlidersProps): JSX.Element {
   const values: Record<string, number | boolean> = params[effectId];
   return (
     <div className="settings-rollbar-params" data-testid={`settings-fx-${effectId}-params`}>
       {SLIDERS[effectId].map(({ key, label, min, max, step }) => (
         <label key={key} className="settings-rollbar-row">
-          <span>{label(values[key] as number)}</span>
+          <span>{formatLabel?.(effectId, key, values[key] as number) ?? label(values[key] as number)}</span>
           <input
             type="range"
             min={min}
@@ -71,7 +80,7 @@ export function EffectParamSliders({ effectId, params, onChange }: EffectParamSl
       ))}
       {effectId === 'jitter-burst' && (
         <label className="settings-rollbar-row">
-          <span>Noise flash during burst</span>
+          <span>{flashLabel}</span>
           <input
             type="checkbox"
             checked={params['jitter-burst'].flash}

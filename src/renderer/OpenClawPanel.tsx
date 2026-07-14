@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   OPENCLAW_CONFIG_UNSET,
@@ -10,7 +11,7 @@ import {
   type OpenClawStatus,
   type OpenClawStatusState,
 } from '../shared/openclaw';
-import { formatPacketTime } from './status-shared';
+import { useAppTranslation } from './i18n';
 
 /** How often the sessions list is re-polled while the gateway is running —
  * there is no push subscription for it (unlike status/logs), see the M1
@@ -20,13 +21,13 @@ const SESSIONS_POLL_MS = 5000;
  * packet preview's PACKET_ROW_CAP pattern in status-shared.ts). */
 const LOG_LINE_MAX = 500;
 
-const STATE_LABEL: Record<OpenClawStatusState, string> = {
-  'not-installed': '설치 안 됨',
-  stopped: '중지됨',
-  starting: '시작 중…',
-  running: '실행 중',
-  unknown: '알 수 없음',
-};
+const STATE_LABEL_KEY = {
+  'not-installed': 'openClaw.state.notInstalled',
+  stopped: 'openClaw.state.stopped',
+  starting: 'openClaw.state.starting',
+  running: 'openClaw.state.running',
+  unknown: 'openClaw.state.unknown',
+} as const satisfies Record<OpenClawStatusState, string>;
 
 interface OpenClawPanelProps {
   readonly onClose: () => void;
@@ -47,6 +48,7 @@ interface OpenClawPanelProps {
  * with a calm CTA — never an error toast (AC6).
  */
 export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.Element {
+  const { t, i18n } = useAppTranslation();
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
   const [sessions, setSessions] = useState<readonly OpenClawAgentSession[]>([]);
   const [logLines, setLogLines] = useState<OpenClawLogLine[]>([]);
@@ -63,6 +65,17 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
 
   const [autoScroll, setAutoScroll] = useState(true);
   const logViewRef = useRef<HTMLDivElement | null>(null);
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const timeFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }),
+    [locale],
+  );
 
   // ── Autostart toggle (task #9: `gateway install`/`gateway uninstall`) ────
   // No fast way to know the CURRENT registration state (that's only in the
@@ -85,15 +98,15 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
         setAutostartResult(
           result.ok
             ? action === 'install'
-              ? '자동 시작이 등록되었습니다.'
-              : '자동 시작이 해제되었습니다.'
-            : (result.stderr ?? `${action} 실패`),
+              ? t('openClaw.autostartInstalled')
+              : t('openClaw.autostartRemoved')
+            : (result.stderr ?? t('openClaw.actionFailed', { action })),
         );
       }
     } finally {
       setAutostartBusy(null);
     }
-  }, []);
+  }, [t]);
 
   // ── Status seed + push (gated main-side by drawer-open, mirrors the stats
   // overlay's `setStatsPanelVisible`) ────────────────────────────────────────
@@ -158,13 +171,15 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
     setLifecycleError(null);
     try {
       const result = await window.ezterminalDesktop?.runOpenClawLifecycle(action);
-      if (result && !result.ok) setLifecycleError(result.stderr ?? `${action} failed`);
+      if (result && !result.ok) {
+        setLifecycleError(result.stderr ?? t('openClaw.actionFailed', { action }));
+      }
       const fresh = await window.ezterminalDesktop?.getOpenClawStatus(true);
       if (fresh) setStatus(fresh);
     } finally {
       setBusyAction(null);
     }
-  }, []);
+  }, [t]);
 
   // ── Core settings save ─────────────────────────────────────────────────────
   const saveConfig = useCallback(async (): Promise<void> => {
@@ -176,7 +191,7 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
     // field is never sent (no change) — if EVERY field is empty there is
     // nothing to save, so say so instead of silently no-op'ing.
     if (!model && !port) {
-      setConfigError('변경할 값을 입력하세요.');
+      setConfigError(t('openClaw.enterValue'));
       return;
     }
     setSavingConfig(true);
@@ -186,12 +201,12 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
       let restartRequired = false;
       if (model) {
         const r = await api.setOpenClawConfig('agents.defaults.model', model);
-        if (!r.ok) errors.push(r.error ?? '기본 모델 저장 실패');
+        if (!r.ok) errors.push(r.error ?? t('openClaw.modelSaveFailed'));
         restartRequired = restartRequired || r.restartRequired;
       }
       if (port) {
         const r = await api.setOpenClawConfig('gateway.port', port);
-        if (!r.ok) errors.push(r.error ?? '포트 저장 실패');
+        if (!r.ok) errors.push(r.error ?? t('openClaw.portSaveFailed'));
         restartRequired = restartRequired || r.restartRequired;
       }
       if (errors.length > 0) setConfigError(errors.join('; '));
@@ -200,7 +215,7 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
     } finally {
       setSavingConfig(false);
     }
-  }, [modelDraft, portDraft, refreshConfig]);
+  }, [modelDraft, portDraft, refreshConfig, t]);
 
   const restartNow = useCallback((): void => {
     setRestartBanner(false);
@@ -234,27 +249,53 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
   const restartDisabled = busy || state === undefined || state === 'not-installed';
 
   return (
-    <div className="status-drawer openclaw-drawer" data-testid="openclaw-panel">
+    <div
+      className="status-drawer openclaw-drawer"
+      data-testid="openclaw-panel"
+      role="region"
+      aria-label={t('rail.openClaw')}
+    >
       <div className="openclaw-drawer-header">
-        <h2 className="status-section-title">OpenClaw</h2>
-        <button className="btn btn-split" onClick={onClose} title="Close" data-testid="openclaw-close">
-          ✕
+        <h2 className="status-section-title">{t('rail.openClaw')}</h2>
+        <button
+          className="btn btn-split"
+          onClick={onClose}
+          title={t('common.close')}
+          aria-label={t('common.close')}
+          data-testid="openclaw-close"
+        >
+          <X aria-hidden="true" size={16} />
         </button>
       </div>
 
-      <section className="status-section" data-testid="openclaw-state">
-        <div className={`openclaw-state-row openclaw-state-${state ?? 'unknown'}`}>
+      <section
+        className="status-section"
+        data-testid="openclaw-state"
+        data-state={state ?? 'unknown'}
+      >
+        <div
+          className={`openclaw-state-row openclaw-state-${state ?? 'unknown'}`}
+          data-state={state ?? 'unknown'}
+        >
           <span className="openclaw-state-dot" aria-hidden="true" />
-          <span className="status-metric">{status ? STATE_LABEL[status.state] : '확인 중…'}</span>
+          <span className="status-metric">
+            {status ? t(STATE_LABEL_KEY[status.state]) : t('openClaw.checking')}
+          </span>
         </div>
-        {status?.version && <div className="openclaw-state-detail">버전 {status.version}</div>}
-        {status && <div className="openclaw-state-detail">포트 {status.port}</div>}
+        {status?.version && (
+          <div className="openclaw-state-detail">
+            {t('openClaw.version', { version: status.version })}
+          </div>
+        )}
+        {status && (
+          <div className="openclaw-state-detail">{t('openClaw.port', { port: status.port })}</div>
+        )}
       </section>
 
       {state === 'not-installed' ? (
         <section className="status-section" data-testid="openclaw-guidance">
-          <h2 className="status-section-title">설치 필요</h2>
-          <p className="openclaw-guidance-text">OpenClaw CLI가 설치되어 있지 않습니다.</p>
+          <h2 className="status-section-title">{t('openClaw.installRequired')}</h2>
+          <p className="openclaw-guidance-text">{t('openClaw.notInstalled')}</p>
           <code className="openclaw-guidance-cmd">npm i -g openclaw</code>
           <a
             className="openclaw-guidance-link"
@@ -268,7 +309,7 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
       ) : (
         <>
           <section className="status-section">
-            <h2 className="status-section-title">수명주기</h2>
+            <h2 className="status-section-title">{t('openClaw.lifecycle')}</h2>
             <div className="openclaw-lifecycle-buttons">
               <button
                 type="button"
@@ -277,7 +318,7 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
                 onClick={() => void runLifecycle('start')}
                 data-testid="btn-openclaw-start"
               >
-                시작
+                {t('openClaw.start')}
               </button>
               <button
                 type="button"
@@ -286,7 +327,7 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
                 onClick={() => void runLifecycle('stop')}
                 data-testid="btn-openclaw-stop"
               >
-                중지
+                {t('openClaw.stop')}
               </button>
               <button
                 type="button"
@@ -295,7 +336,7 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
                 onClick={() => void runLifecycle('restart')}
                 data-testid="btn-openclaw-restart"
               >
-                재시작
+                {t('openClaw.restart')}
               </button>
             </div>
             {lifecycleError && (
@@ -307,41 +348,41 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
               type="button"
               className="btn btn-split openclaw-chat-btn"
               onClick={onOpenChat}
-              title="채팅 열기"
+              title={t('openClaw.openChat')}
               data-testid="btn-openclaw-open-chat"
             >
-              채팅 열기
+              {t('openClaw.openChat')}
             </button>
             <button
               type="button"
               className="btn btn-split openclaw-chat-btn"
               onClick={() => void window.ezterminalDesktop?.openOpenClawChatExternal()}
-              title="브라우저로 열기"
+              title={t('openClaw.openBrowser')}
               data-testid="btn-openclaw-open-chat-external"
             >
-              브라우저로 열기
+              {t('openClaw.openBrowser')}
             </button>
           </section>
 
           {state === 'stopped' && (
             <section className="status-section" data-testid="openclaw-guidance">
               <div className="status-loading">
-                게이트웨이가 중지되어 있습니다. 시작 버튼을 눌러 세션과 로그를 확인하세요.
+                {t('openClaw.stoppedGuide')}
               </div>
             </section>
           )}
 
           {state === 'unknown' && (
             <section className="status-section" data-testid="openclaw-guidance">
-              <div className="status-loading">상태를 확인할 수 없습니다.</div>
+              <div className="status-loading">{t('openClaw.unknownGuide')}</div>
             </section>
           )}
 
           {(state === 'running' || state === 'starting') && (
             <section className="status-section">
-              <h2 className="status-section-title">세션</h2>
+              <h2 className="status-section-title">{t('openClaw.sessions')}</h2>
               {sessions.length === 0 ? (
-                <div className="status-loading">활성 세션 없음</div>
+                <div className="status-loading">{t('openClaw.noActiveSessions')}</div>
               ) : (
                 <div className="openclaw-sessions" data-testid="openclaw-sessions">
                   {sessions.map((s) => (
@@ -349,10 +390,18 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
                       <div className="openclaw-session-key">{s.key}</div>
                       <div className="status-disk-label">
                         <span>{s.model ?? '—'}</span>
-                        <span>{s.totalTokens !== undefined ? `${s.totalTokens} tok` : '—'}</span>
+                        <span>
+                          {s.totalTokens !== undefined
+                            ? t('openClaw.tokenCount', {
+                              value: numberFormatter.format(s.totalTokens),
+                            })
+                            : '—'}
+                        </span>
                       </div>
                       {s.updatedAt !== undefined && (
-                        <div className="openclaw-session-updated">{formatPacketTime(s.updatedAt)}</div>
+                        <div className="openclaw-session-updated">
+                          {timeFormatter.format(new Date(s.updatedAt))}
+                        </div>
                       )}
                     </div>
                   ))}
@@ -362,10 +411,12 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
           )}
 
           <section className="status-section">
-            <h2 className="status-section-title">로그</h2>
+            <h2 className="status-section-title">{t('openClaw.logs')}</h2>
             <div
               className="openclaw-log-view"
               data-testid="openclaw-log-view"
+              role="log"
+              aria-label={t('openClaw.logs')}
               ref={logViewRef}
               onScroll={handleLogScroll}
             >
@@ -374,7 +425,9 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
                   key={i}
                   className={`openclaw-log-line openclaw-log-level-${line.level.toLowerCase()}`}
                 >
-                  <span className="openclaw-log-time">{formatPacketTime(new Date(line.time).getTime())}</span>
+                  <span className="openclaw-log-time">
+                    {timeFormatter.format(new Date(line.time))}
+                  </span>
                   <span className="openclaw-log-level">{line.level}</span>
                   <span className="openclaw-log-message">{line.message}</span>
                 </div>
@@ -387,29 +440,31 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
                 onClick={resumeAutoScroll}
                 data-testid="openclaw-log-resume"
               >
-                최신 로그로 이동
+                {t('openClaw.resumeLogs')}
               </button>
             )}
           </section>
 
           <section className="status-section">
-            <h2 className="status-section-title">핵심 설정</h2>
+            <h2 className="status-section-title">{t('openClaw.coreSettings')}</h2>
             <div className="openclaw-config-row">
-              <span>기본 모델</span>
+              <span>{t('openClaw.defaultModel')}</span>
               <input
                 className="settings-scrollback-input"
                 value={modelDraft}
+                aria-label={t('openClaw.defaultModel')}
                 onChange={(e) => setModelDraft(e.target.value)}
                 data-testid="openclaw-config-model"
               />
             </div>
             <div className="openclaw-config-row">
-              <span>게이트웨이 포트</span>
+              <span>{t('openClaw.gatewayPort')}</span>
               <input
                 type="number"
                 className="settings-scrollback-input"
                 value={portDraft}
-                placeholder={config?.['gateway.port'] === OPENCLAW_CONFIG_UNSET ? '(미설정)' : undefined}
+                placeholder={config?.['gateway.port'] === OPENCLAW_CONFIG_UNSET ? t('openClaw.unset') : undefined}
+                aria-label={t('openClaw.gatewayPort')}
                 onChange={(e) => setPortDraft(e.target.value)}
                 data-testid="openclaw-config-port"
               />
@@ -421,7 +476,7 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
               onClick={() => void saveConfig()}
               data-testid="openclaw-config-save"
             >
-              저장
+              {t('openClaw.save')}
             </button>
             {configError && (
               <div className="openclaw-error-inline" data-testid="openclaw-config-error">
@@ -430,19 +485,19 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
             )}
             {restartBanner && (
               <div className="openclaw-restart-banner" data-testid="openclaw-restart-banner">
-                <span>게이트웨이를 재시작해야 적용됩니다.</span>
+                <span>{t('openClaw.restartRequired')}</span>
                 <button
                   type="button"
                   className="btn btn-split"
                   onClick={restartNow}
                   data-testid="openclaw-restart-now"
                 >
-                  재시작
+                  {t('openClaw.restart')}
                 </button>
               </div>
             )}
             <div className="openclaw-autostart-row" data-testid="openclaw-autostart-row">
-              <span>OS 시작 시 자동 실행</span>
+              <span>{t('openClaw.autostart')}</span>
               <div className="openclaw-autostart-actions">
                 <button
                   type="button"
@@ -451,7 +506,9 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
                   onClick={() => setPendingAutostart((current) => (current === 'install' ? null : 'install'))}
                   data-testid="btn-openclaw-autostart-install"
                 >
-                  {pendingAutostart === 'install' ? '확인?' : '등록'}
+                  {pendingAutostart === 'install'
+                    ? t('openClaw.confirmQuestion')
+                    : t('openClaw.register')}
                 </button>
                 {pendingAutostart === 'install' && (
                   <button
@@ -460,7 +517,7 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
                     onClick={() => void runAutostart('install')}
                     data-testid="btn-openclaw-autostart-install-confirm"
                   >
-                    예, 등록
+                    {t('openClaw.confirmRegister')}
                   </button>
                 )}
                 <button
@@ -470,7 +527,9 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
                   onClick={() => setPendingAutostart((current) => (current === 'uninstall' ? null : 'uninstall'))}
                   data-testid="btn-openclaw-autostart-uninstall"
                 >
-                  {pendingAutostart === 'uninstall' ? '확인?' : '해제'}
+                  {pendingAutostart === 'uninstall'
+                    ? t('openClaw.confirmQuestion')
+                    : t('openClaw.unregister')}
                 </button>
                 {pendingAutostart === 'uninstall' && (
                   <button
@@ -479,11 +538,11 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
                     onClick={() => void runAutostart('uninstall')}
                     data-testid="btn-openclaw-autostart-uninstall-confirm"
                   >
-                    예, 해제
+                    {t('openClaw.confirmUnregister')}
                   </button>
                 )}
               </div>
-              {autostartBusy && <div className="status-loading">처리 중…</div>}
+              {autostartBusy && <div className="status-loading">{t('openClaw.processing')}</div>}
               {autostartResult && (
                 <div className="openclaw-error-inline" data-testid="openclaw-autostart-result">
                   {autostartResult}

@@ -103,6 +103,7 @@ test('auto mode shows UI with the CLI present; a runtime toggle to off rips the 
 
     await window.getByTestId('btn-toggle-settings').click();
     await expect(window.getByTestId('settings-panel')).toBeVisible();
+    await window.getByTestId('settings-category-integrations').click();
     await expect(window.getByTestId('openclaw-panel')).toHaveCount(0);
 
     const autoRadio = window.getByTestId('settings-openclaw-mode-auto');
@@ -128,6 +129,7 @@ test('auto mode shows UI with the CLI present; a runtime toggle to off rips the 
     // openclawMode local state re-fetches via IPC — wait for the radio to
     // actually render before clicking it.
     await window.getByTestId('btn-toggle-settings').click();
+    await window.getByTestId('settings-category-integrations').click();
     const onRadio = window.getByTestId('settings-openclaw-mode-on');
     await expect(onRadio).toBeVisible({ timeout: 10_000 });
     await onRadio.click();

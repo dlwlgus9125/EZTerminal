@@ -1,11 +1,8 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { ChevronDown, Terminal } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { QuickCommand } from '../shared/quick-command';
+import { useAppTranslation } from './i18n';
 import './quick-command-shelf.css';
 
 const LAST_USED_ID_KEY = 'ezterminal.quick-command.last-used-id';
@@ -19,18 +16,15 @@ export interface QuickCommandShelfProps {
   readonly onManage: () => void;
 }
 
-export function filterQuickCommands(
-  commands: readonly QuickCommand[],
-  query: string,
-): readonly QuickCommand[] {
+export function filterQuickCommands(commands: readonly QuickCommand[], query: string): readonly QuickCommand[] {
   const needle = query.trim().normalize('NFC').toLocaleLowerCase();
   if (!needle) return commands;
-  return commands.filter((command) => (
+  return commands.filter((command) =>
     `${command.name}\n${command.description ?? ''}\n${command.command}`
       .normalize('NFC')
       .toLocaleLowerCase()
-      .includes(needle)
-  ));
+      .includes(needle),
+  );
 }
 
 export function resolvePrimaryQuickCommand(
@@ -38,8 +32,10 @@ export function resolvePrimaryQuickCommand(
   lastUsedId: string | null,
 ): QuickCommand | null {
   if (commands.length === 0) return null;
-  return commands.find((command) => command.id === lastUsedId)
-    ?? [...commands].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+  return (
+    commands.find((command) => command.id === lastUsedId) ??
+    [...commands].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]
+  );
 }
 
 function readLastUsedId(): string | null {
@@ -69,20 +65,15 @@ export function QuickCommandShelf({
   onRun,
   onManage,
 }: QuickCommandShelfProps): JSX.Element {
+  const { t } = useAppTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [lastUsedId, setLastUsedId] = useState(readLastUsedId);
   const rootRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const primary = useMemo(
-    () => resolvePrimaryQuickCommand(commands, lastUsedId),
-    [commands, lastUsedId],
-  );
-  const visibleCommands = useMemo(
-    () => filterQuickCommands(commands, query),
-    [commands, query],
-  );
+  const primary = useMemo(() => resolvePrimaryQuickCommand(commands, lastUsedId), [commands, lastUsedId]);
+  const visibleCommands = useMemo(() => filterQuickCommands(commands, query), [commands, query]);
 
   const close = (restoreFocus = true): void => {
     setOpen(false);
@@ -124,13 +115,16 @@ export function QuickCommandShelf({
         className="btn quick-command-primary"
         data-testid="quick-command-primary"
         disabled={!primary || Boolean(insertDisabledReason)}
-        title={insertDisabledReason ?? (primary ? `Insert: ${primary.name}` : 'No saved Quick Commands')}
+        title={
+          insertDisabledReason ??
+          (primary ? t('quickCommands.insertNamed', { name: primary.name }) : t('quickCommands.empty'))
+        }
         onClick={() => {
           if (primary) choose(primary, 'insert');
         }}
       >
-        <span aria-hidden="true">&gt;_</span>
-        <span className="quick-command-primary-label">{primary?.name ?? 'Quick'}</span>
+        <Terminal aria-hidden="true" size={16} />
+        <span className="quick-command-primary-label">{primary?.name ?? t('quickCommands.shortLabel')}</span>
       </button>
       <button
         ref={toggleRef}
@@ -139,27 +133,27 @@ export function QuickCommandShelf({
         data-testid="quick-command-toggle"
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label="Browse Quick Commands"
+        aria-label={t('quickCommands.browse')}
         onClick={() => setOpen((value) => !value)}
       >
-        <span aria-hidden="true">▾</span>
+        <ChevronDown aria-hidden="true" size={14} />
       </button>
 
       {open && (
         <section
           className="quick-command-popover"
           role="dialog"
-          aria-label="Quick Commands"
+          aria-label={t('quickCommands.title')}
           data-testid="quick-command-popover"
         >
           <label className="quick-command-search-label">
-            <span className="sr-only">Search Quick Commands</span>
+            <span className="sr-only">{t('quickCommands.searchLabel')}</span>
             <input
               ref={searchRef}
               className="quick-command-search"
               type="search"
               value={query}
-              placeholder="Search commands"
+              placeholder={t('quickCommands.searchPlaceholder')}
               onChange={(event) => setQuery(event.target.value)}
             />
           </label>
@@ -167,34 +161,36 @@ export function QuickCommandShelf({
           <div className="quick-command-list" aria-live="polite">
             {visibleCommands.length === 0 ? (
               <p className="quick-command-empty">
-                {commands.length === 0 ? 'No saved Quick Commands.' : 'No matching commands.'}
+                {commands.length === 0 ? t('quickCommands.empty') : t('quickCommands.noMatches')}
               </p>
-            ) : visibleCommands.map((command) => (
-              <article key={command.id} className="quick-command-row">
-                <button
-                  type="button"
-                  className="quick-command-row-main"
-                  data-testid={`quick-command-insert-${command.id}`}
-                  disabled={Boolean(insertDisabledReason)}
-                  title={insertDisabledReason ?? `Insert ${command.name}`}
-                  onClick={() => choose(command, 'insert')}
-                >
-                  <strong>{command.name}</strong>
-                  <code>{command.command}</code>
-                  {command.description && <span>{command.description}</span>}
-                </button>
-                <button
-                  type="button"
-                  className="btn quick-command-run"
-                  data-testid={`quick-command-run-${command.id}`}
-                  disabled={Boolean(runDisabledReason)}
-                  title={runDisabledReason ?? `Run ${command.name}`}
-                  onClick={() => choose(command, 'run')}
-                >
-                  Run
-                </button>
-              </article>
-            ))}
+            ) : (
+              visibleCommands.map((command) => (
+                <article key={command.id} className="quick-command-row">
+                  <button
+                    type="button"
+                    className="quick-command-row-main"
+                    data-testid={`quick-command-insert-${command.id}`}
+                    disabled={Boolean(insertDisabledReason)}
+                    title={insertDisabledReason ?? t('quickCommands.insertNamed', { name: command.name })}
+                    onClick={() => choose(command, 'insert')}
+                  >
+                    <strong>{command.name}</strong>
+                    <code>{command.command}</code>
+                    {command.description && <span>{command.description}</span>}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn quick-command-run"
+                    data-testid={`quick-command-run-${command.id}`}
+                    disabled={Boolean(runDisabledReason)}
+                    title={runDisabledReason ?? t('quickCommands.runNamed', { name: command.name })}
+                    onClick={() => choose(command, 'run')}
+                  >
+                    {t('quickCommands.run')}
+                  </button>
+                </article>
+              ))
+            )}
           </div>
 
           <button
@@ -205,7 +201,7 @@ export function QuickCommandShelf({
               onManage();
             }}
           >
-            Manage Quick Commands…
+            {t('quickCommands.manage')}
           </button>
         </section>
       )}

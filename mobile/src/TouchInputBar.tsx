@@ -1,13 +1,14 @@
-import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from "react";
 
-import type { BlockController } from '../../src/renderer/block-controller';
-import { getTerminalAccessoryKey } from './terminal-accessory-keys';
+import type { BlockController } from "../../src/renderer/block-controller";
+import { useAppTranslation } from "../../src/renderer/i18n";
+import { getTerminalAccessoryKey } from "./terminal-accessory-keys";
 import {
   ACTIVE_MOBILE_TAB_CHANGE_EVENT,
   OPEN_TERMINAL_KEY_SETTINGS_EVENT,
   useTerminalAccessoryLayout,
-} from './terminal-accessory-layout';
-import { createTerminalKeyRepeatController } from './terminal-key-repeat';
+} from "./terminal-accessory-layout";
+import { createTerminalKeyRepeatController } from "./terminal-key-repeat";
 
 const noopSubscribe = (): (() => void) => () => undefined;
 const nullSnapshot = (): null => null;
@@ -19,6 +20,7 @@ export function TouchInputBar({
   controller: BlockController | null;
   connected?: boolean;
 }): JSX.Element | null {
+  const { t } = useAppTranslation();
   const snapshot = useSyncExternalStore(
     controller?.subscribe ?? noopSubscribe,
     controller?.getSnapshot ?? nullSnapshot,
@@ -26,13 +28,17 @@ export function TouchInputBar({
   const accessorySnapshot = useTerminalAccessoryLayout();
   const controllerRef = useRef(controller);
   controllerRef.current = controller;
-  const repeatControllerRef = useRef<ReturnType<typeof createTerminalKeyRepeatController> | null>(null);
+  const repeatControllerRef = useRef<ReturnType<
+    typeof createTerminalKeyRepeatController
+  > | null>(null);
   repeatControllerRef.current ??= createTerminalKeyRepeatController((bytes) => {
     controllerRef.current?.sendPtyInput(bytes);
   });
   const repeatController = repeatControllerRef.current;
 
-  const runningPty = Boolean(controller && snapshot?.shape === 'pty' && snapshot.status === 'running');
+  const runningPty = Boolean(
+    controller && snapshot?.shape === "pty" && snapshot.status === "running",
+  );
   const canSend = connected && runningPty && snapshot?.hasControl === true;
 
   useEffect(() => {
@@ -42,20 +48,20 @@ export function TouchInputBar({
   useEffect(() => {
     const stop = (): void => repeatController.stop();
     const stopWhenHidden = (): void => {
-      if (document.visibilityState !== 'visible') stop();
+      if (document.visibilityState !== "visible") stop();
     };
-    window.addEventListener('pointerup', stop);
-    window.addEventListener('pointercancel', stop);
-    window.addEventListener('blur', stop);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    window.addEventListener("blur", stop);
     window.addEventListener(ACTIVE_MOBILE_TAB_CHANGE_EVENT, stop);
-    document.addEventListener('visibilitychange', stopWhenHidden);
+    document.addEventListener("visibilitychange", stopWhenHidden);
     return () => {
       stop();
-      window.removeEventListener('pointerup', stop);
-      window.removeEventListener('pointercancel', stop);
-      window.removeEventListener('blur', stop);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      window.removeEventListener("blur", stop);
       window.removeEventListener(ACTIVE_MOBILE_TAB_CHANGE_EVENT, stop);
-      document.removeEventListener('visibilitychange', stopWhenHidden);
+      document.removeEventListener("visibilitychange", stopWhenHidden);
     };
   }, [repeatController]);
 
@@ -66,9 +72,16 @@ export function TouchInputBar({
     .map(getTerminalAccessoryKey);
 
   return (
-    <div className="touch-input-bar" role="toolbar" aria-label="Terminal accessory keys" data-testid="touch-input-bar">
+    <div
+      className="touch-input-bar"
+      role="toolbar"
+      aria-label={t("mobile.terminalKeys.toolbar")}
+      data-testid="touch-input-bar"
+    >
       {visibleKeys.length === 0 && (
-        <span className="touch-input-empty" data-testid="touch-input-empty">No keys selected</span>
+        <span className="touch-input-empty" data-testid="touch-input-empty">
+          {t("mobile.terminalKeys.emptySelection")}
+        </span>
       )}
       {visibleKeys.map((key) => (
         <button
@@ -99,17 +112,21 @@ export function TouchInputBar({
       ))}
       {!canSend && (
         <span className="touch-input-state" role="status">
-          {connected ? 'Viewing only' : 'Offline'}
+          {connected
+            ? t("mobile.terminalKeys.viewingOnly")
+            : t("state.offline")}
         </span>
       )}
       <button
         type="button"
         className="btn touch-key touch-key-manage"
-        onClick={() => window.dispatchEvent(new Event(OPEN_TERMINAL_KEY_SETTINGS_EVENT))}
-        aria-label="Manage terminal keys"
+        onClick={() =>
+          window.dispatchEvent(new Event(OPEN_TERMINAL_KEY_SETTINGS_EVENT))
+        }
+        aria-label={t("mobile.terminalKeys.manageAria")}
         data-testid="touch-key-manage"
       >
-        Manage
+        {t("mobile.terminalKeys.manage")}
       </button>
     </div>
   );

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -8,6 +9,7 @@ import {
 } from 'react';
 
 import type { BlockController } from './block-controller';
+import { useAppTranslation } from './i18n';
 import {
   getMountedPtyControlTarget,
   getMountedPtyRegistryRevision,
@@ -29,18 +31,28 @@ interface PtyControlChipProps {
   readonly onRestoreFocus: () => void;
 }
 
-function formatResult(result: PtyControlReclaimResult): string {
+function formatResult(
+  result: PtyControlReclaimResult,
+  t: ReturnType<typeof useAppTranslation>['t'],
+  formatCount: (value: number) => string,
+): string {
   if (result.failed.length === 0 && result.skipped.length === 0) {
     return result.succeeded.length === 1
-      ? 'Control restored.'
-      : `Control restored for ${result.succeeded.length} terminals.`;
+      ? t('ptyControl.restoredOne')
+      : t('ptyControl.restoredMany', { value: formatCount(result.succeeded.length) });
   }
   if (result.succeeded.length === 0 && result.failed.length === 0) {
-    return 'No running terminals remained to reclaim.';
+    return t('ptyControl.noneRemaining');
   }
-  const parts = [`${result.succeeded.length} restored`];
-  if (result.failed.length > 0) parts.push(`${result.failed.length} failed`);
-  if (result.skipped.length > 0) parts.push(`${result.skipped.length} ended`);
+  const parts: string[] = [
+    t('ptyControl.restoredCount', { value: formatCount(result.succeeded.length) }),
+  ];
+  if (result.failed.length > 0) {
+    parts.push(t('ptyControl.failedCount', { value: formatCount(result.failed.length) }));
+  }
+  if (result.skipped.length > 0) {
+    parts.push(t('ptyControl.endedCount', { value: formatCount(result.skipped.length) }));
+  }
   return `${parts.join(' · ')}.`;
 }
 
@@ -52,12 +64,19 @@ export function PtyControlChip({
   hostRef,
   onRestoreFocus,
 }: PtyControlChipProps): JSX.Element | null {
+  const { t, i18n } = useAppTranslation();
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const identity = controller.controlTarget;
   const mountedRef = useRef(true);
   const pendingRef = useRef(false);
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<PtyControlReclaimResult | null>(null);
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const formatCount = useCallback(
+    (value: number) => numberFormatter.format(value),
+    [numberFormatter],
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -116,21 +135,21 @@ export function PtyControlChip({
       className="pty-control-chip"
       data-testid="pty-control-chip"
       role="group"
-      aria-label="Terminal input control"
+      aria-label={t('ptyControl.label')}
       aria-busy={pending}
       onMouseDown={(event) => event.stopPropagation()}
     >
       {!snapshot.hasControl && (
-        <span className="pty-control-chip__label">Viewing only · input active elsewhere</span>
+        <span className="pty-control-chip__label">{t('ptyControl.viewingOnly')}</span>
       )}
       {pending && (
         <span className="pty-control-chip__status" role="status" aria-live="polite">
-          Taking control…
+          {t('ptyControl.taking')}
         </span>
       )}
       {!pending && result && (
         <span className="pty-control-chip__status" role="status" aria-live="polite">
-          {formatResult(result)}
+          {formatResult(result, t, formatCount)}
         </span>
       )}
       {!pending && !snapshot.hasControl && initiator && (
@@ -140,7 +159,7 @@ export function PtyControlChip({
           data-testid="pty-take-control"
           onClick={() => void reclaim([initiator])}
         >
-          Take control
+          {t('ptyControl.take')}
         </button>
       )}
       {!pending && !snapshot.hasControl && candidates.length > 1 && (
@@ -150,7 +169,7 @@ export function PtyControlChip({
           data-testid="pty-take-control-all"
           onClick={() => void reclaim(candidates)}
         >
-          Take control all ({candidates.length})
+          {t('ptyControl.takeAll', { value: formatCount(candidates.length) })}
         </button>
       )}
       {!pending && result && result.failed.length > 0 && (
@@ -160,7 +179,7 @@ export function PtyControlChip({
           data-testid="pty-take-control-retry"
           onClick={() => void reclaim(result.failed)}
         >
-          Retry failed ({result.failed.length})
+          {t('ptyControl.retryFailed', { value: formatCount(result.failed.length) })}
         </button>
       )}
       {!pending && !identity && !snapshot.hasControl && (
@@ -170,7 +189,7 @@ export function PtyControlChip({
           data-testid="pty-take-control"
           onClick={() => controller.claimControl()}
         >
-          Take control
+          {t('ptyControl.take')}
         </button>
       )}
     </div>

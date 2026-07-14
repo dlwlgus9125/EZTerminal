@@ -42,6 +42,7 @@ jspm_packages/
 
 # Vite
 .vite/
+/storybook-static/
 
 # Electron-Forge build output
 out/

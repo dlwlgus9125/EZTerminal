@@ -214,6 +214,14 @@ contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
 // for why: mobile has no implementation of these, and folding them into the
 // shared EzTerminalApi would force mobile's transport to stub every one).
 const desktopApi: EzTerminalDesktopApi = {
+  getUiPreferences: (): Promise<import('../shared/ui-preferences').UiPreferences> =>
+    ipcRenderer.invoke('settings:get-ui-preferences'),
+  setUiPreferences: (
+    preferences: import('../shared/ui-preferences').UiPreferencesPatch,
+  ): Promise<import('../shared/ui-preferences').UiPreferences> =>
+    ipcRenderer.invoke('settings:set-ui-preferences', preferences),
+  refreshNativeMenuLocale: (): Promise<void> =>
+    ipcRenderer.invoke('settings:refresh-native-menu-locale'),
   onRecentPanelInput: (
     listener: (event: RecentPanelInputEvent) => void,
   ): (() => void) => {

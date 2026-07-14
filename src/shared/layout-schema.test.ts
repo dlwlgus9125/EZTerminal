@@ -173,6 +173,39 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
   });
 });
 
+describe('layout-schema — additive Adaptive Workbench preferences', () => {
+  it('keeps schemaVersion 1 and accepts locale, density, and sidebar width', () => {
+    const parsed = SettingsSchema.safeParse({
+      schemaVersion: 1,
+      startup: { mode: 'last' },
+      locale: 'system',
+      density: 'adaptive',
+      sidebarWidth: 320,
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('continues to accept a pre-redesign settings file with all fields absent', () => {
+    expect(SettingsSchema.safeParse({
+      schemaVersion: 1,
+      startup: { mode: 'last' },
+    }).success).toBe(true);
+  });
+
+  it('rejects invalid preference values without changing the envelope version', () => {
+    expect(SettingsSchema.safeParse({
+      schemaVersion: 1,
+      startup: { mode: 'last' },
+      density: 'dense',
+    }).success).toBe(false);
+    expect(SettingsSchema.safeParse({
+      schemaVersion: 1,
+      startup: { mode: 'last' },
+      sidebarWidth: 500,
+    }).success).toBe(false);
+  });
+});
+
 describe('layout-schema — maxTabSuffix (F6 reseed)', () => {
   it('returns the highest tab-N suffix', () => {
     const env = validateLayoutEnvelope(makeEnvelope(makeLayout(['tab-2', 'tab-7', 'tab-3'])));
