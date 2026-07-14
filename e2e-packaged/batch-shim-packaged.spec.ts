@@ -41,6 +41,9 @@ test('packaged batch shim: cmd.exe + buildCmdLine + packaged node-pty spawns a r
     cwd: path.dirname(CMD_FIXTURE),
     env: process.env as Record<string, string>,
   });
+  const exitPromise = new Promise<void>((resolve) => {
+    proc.onExit(() => resolve());
+  });
 
   const output = await new Promise<string>((resolve, reject) => {
     let buf = '';
@@ -62,17 +65,19 @@ test('packaged batch shim: cmd.exe + buildCmdLine + packaged node-pty spawns a r
   });
 
   expect(output).toContain('READY');
-  // Resume-then-kill (pty-runner.ts's `killOnce` pattern): a bare kill() on a
-  // live ConPTY can race its internal console-list teardown helper and print a
-  // benign but noisy "AttachConsole failed" crash to stderr.
-  try {
-    proc.resume();
-  } catch {
-    // Socket already gone.
-  }
-  try {
-    proc.kill();
-  } catch {
-    // Already exited / handle released.
-  }
+  // End the fixture through its input protocol and wait for the shell to exit.
+  // Calling kill() here starts node-pty's asynchronous console-list helper;
+  // moving on to the next Playwright test can then close the shell first and
+  // leave a benign but noisy "AttachConsole failed" crash on stderr.
+  proc.write('__EZTERMINAL_TEST_EXIT__\r');
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('batch-shim PTY did not exit after its exit marker')),
+      10_000,
+    );
+    exitPromise.then(() => {
+      clearTimeout(timer);
+      resolve();
+    }, reject);
+  });
 });

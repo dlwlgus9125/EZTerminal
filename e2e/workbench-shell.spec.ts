@@ -39,7 +39,9 @@ test('desktop shell has four header zones and a focus-restoring overlay sidebar'
     const sidebar = window.getByTestId('workbench-sidebar');
     await expect(sidebar).toBeVisible();
     await expect(sidebar).toHaveAttribute('data-destination', 'explorer');
-    expect(await sidebar.evaluate((element) => getComputedStyle(element).position)).toBe('fixed');
+    // The overlay is anchored to the scale-aware workbench body so it starts
+    // below the header without relying on a fixed header-height offset.
+    expect(await sidebar.evaluate((element) => getComputedStyle(element).position)).toBe('absolute');
     await expect(window.locator('.workbench-sidebar-scrim')).toBeVisible();
     expect(await window.locator('.dock-host').boundingBox()).toEqual(dockBefore);
 

@@ -6,4 +6,5 @@ process.stdin.setEncoding('utf8');
 process.stdin.resume();
 process.stdin.on('data', (d) => {
   process.stdout.write('ECHO:' + d);
+  if (d.includes('__EZTERMINAL_TEST_EXIT__')) process.exit(0);
 });
