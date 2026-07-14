@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-14
+
 ### Added
 - Agent Attention Hub for Codex, Claude and configured CLI sessions, including tab status, explicit waiting follow-up, optional provider hooks, desktop notifications and connected-mobile parity.
 - Quick Open (`Ctrl/Cmd+P`) and command mode (`Ctrl/Cmd+Shift+P`) across panes, history, persisted Quick Commands, workspace files, presets, app actions and agent launchers.
@@ -12,6 +14,11 @@
 - Risk-aware terminal/session close confirmation, default-off and rate-limited OSC 52 clipboard writes, and explicit workspace-contained terminal file-location previews.
 - Safe OpenSSH config aliases for `ssh-connect`, main-owned Git worktree list/create/open/remove commands, and bounded semantic PTY restore with visible raw-fallback diagnostics.
 - Loopback-only SSH local forwards tied to an authenticated connection id, terminal commands, lifecycle cleanup, backpressure, resource limits and compact Settings controls.
+
+### Changed
+- Reorganized the desktop into an adaptive four-zone workbench with one activity rail, one responsive sidebar, consolidated settings categories, and scale-aware header behavior.
+- Restored the full `EZTerminal` signal wordmark and Matrix CRT identity with persisted Clean, Static, CRT Signature, and Full CRT effect profiles.
+- Preserved the full product title from 800–1440px at 100–150% UI scale while collapsing secondary action labels before the brand.
 
 ### Security
 - Preview classification is magic-first, SVG is never treated as a raster image, PDF bytes are not embedded, Markdown raw HTML/remote images are blocked, and external URLs are validated again in main before opening.
