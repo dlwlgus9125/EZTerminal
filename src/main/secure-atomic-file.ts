@@ -59,12 +59,29 @@ export function applyAndVerifyWindowsAcl(
   execute: typeof execFile = execFile,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    // GitHub-hosted Windows runners launch pnpm from PowerShell 7, whose
+    // PSModulePath can omit the Windows PowerShell 5.1 inbox modules. The ACL
+    // helper intentionally uses powershell.exe, so put its trusted system
+    // module directory first instead of depending on the parent shell's path.
+    const windowsPowerShellModules = path.win32.join(
+      process.env.SystemRoot ?? process.env.WINDIR ?? 'C:\\Windows',
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
+      'Modules',
+    );
     const options: ExecFileOptions = {
       windowsHide: true,
       shell: false,
       timeout: 15_000,
       maxBuffer: 64 * 1024,
-      env: { ...process.env, EZTERMINAL_SECURE_FILE: filePath },
+      env: {
+        ...process.env,
+        PSModulePath: [windowsPowerShellModules, process.env.PSModulePath]
+          .filter((entry): entry is string => Boolean(entry))
+          .join(';'),
+        EZTERMINAL_SECURE_FILE: filePath,
+      },
     };
     execute(
       'powershell.exe',

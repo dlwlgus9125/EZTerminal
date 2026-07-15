@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -26,13 +26,14 @@ async function fixture(): Promise<{ root: string; outside: string }> {
 describe('resolveTerminalFileLocation', () => {
   it('resolves a contained regular file and preserves exact source position', async () => {
     const { root } = await fixture();
+    const expectedPath = await realpath(path.join(root, 'src', 'a.ts'));
     const capabilities = new TerminalFileCapabilityStore({ newId: () => 'cap-1' });
     await expect(resolveTerminalFileLocation(
       { path: './src/a.ts', cwd: root, line: 7, column: 3, executionKind: 'local' },
       capabilities,
     )).resolves.toEqual({
       ok: true,
-      path: path.join(root, 'src', 'a.ts'),
+      path: expectedPath,
       capability: 'cap-1',
       line: 7,
       column: 3,

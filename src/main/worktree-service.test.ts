@@ -1,5 +1,5 @@
 import { execFile, execFileSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -261,7 +261,10 @@ describe('WorktreeService — real Git boundaries', () => {
     git(repo, ['worktree', 'add', '-b', 'manual-branch', externalPath]);
     const listed = await service.execute({ action: 'list', cwd: repo }, 'desktop');
     if (!listed.ok) throw new Error('list failed');
-    const unmanaged = listed.worktrees.find((item) => path.normalize(item.path) === path.normalize(externalPath));
+    const canonicalExternalPath = realpathSync(externalPath);
+    const unmanaged = listed.worktrees.find(
+      (item) => path.normalize(realpathSync(item.path)) === path.normalize(canonicalExternalPath),
+    );
     expect(unmanaged).toMatchObject({ managed: false, main: false });
     const rejected = await service.execute({ action: 'remove', cwd: repo, worktreeId: unmanaged!.worktreeId }, 'desktop');
     expect(rejected).toMatchObject({ ok: false, error: 'WORKTREE_UNMANAGED' });
