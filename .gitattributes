@@ -1,0 +1,7 @@
+# Capacitor rewrites these generated files with LF on every sync. Keep their
+# checkout representation deterministic so `git status` is a valid freshness gate.
+mobile/android/app/capacitor.build.gradle text eol=lf
+mobile/android/capacitor.settings.gradle text eol=lf
+
+# The Unix Gradle wrapper must retain LF endings and its executable index bit.
+mobile/android/gradlew text eol=lf
