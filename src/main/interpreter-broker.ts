@@ -114,7 +114,7 @@ function hasExactSessionIds(expected: readonly string[], actual: readonly string
 }
 
 export class InterpreterBroker {
-  private readonly interpreter: BrokerInterpreter;
+  private interpreter: BrokerInterpreter;
   private readonly createMessageChannel: () => RemoteMessageChannel;
   private readonly newId: () => string;
   private readonly sessionEnvironment?: (
@@ -137,6 +137,7 @@ export class InterpreterBroker {
   private readonly interpreterExitListeners = new Set<
     (code?: number) => void
   >();
+  private readonly wireInterpreter: (interpreter: BrokerInterpreter) => void;
   private alive = true;
 
   constructor(deps: {
@@ -170,122 +171,153 @@ export class InterpreterBroker {
     // Listener #1: session/run dispatch ONLY. Script-host + known-host messages
     // are handled by main's own (separate) listener — this arm ignores them, so
     // the two disjoint-by-type listeners never double-process a message.
-    this.interpreter.on('message', (msg) => {
-      if (msg.type === 'session-created') {
-        const pending = this.pendingCreates.get(msg.requestId);
-        if (pending === undefined) return; // unmatched requestId — ignore
-        this.pendingCreates.delete(msg.requestId);
-        const session: SessionInfo = { sessionId: msg.sessionId, cwd: msg.cwd };
-        const environment = this.sessionEnvironment?.(msg.sessionId);
-        if (environment && Object.keys(environment).length > 0) {
-          // ParentPort preserves order. Injection is posted before the
-          // createSession promise resolves, so an immediately following run
-          // cannot start without the hook-correlation environment.
-          this.interpreter.postMessage({
-            type: 'set-session-environment',
+    this.wireInterpreter = (candidate): void => {
+      candidate.on('message', (msg) => {
+        if (candidate !== this.interpreter) return;
+        if (msg.type === 'session-created') {
+          const pending = this.pendingCreates.get(msg.requestId);
+          if (pending === undefined) return; // unmatched requestId — ignore
+          this.pendingCreates.delete(msg.requestId);
+          const session: SessionInfo = { sessionId: msg.sessionId, cwd: msg.cwd };
+          const environment = this.sessionEnvironment?.(msg.sessionId);
+          if (environment && Object.keys(environment).length > 0) {
+            // ParentPort preserves order. Injection is posted before the
+            // createSession promise resolves, so an immediately following run
+            // cannot start without the hook-correlation environment.
+            this.interpreter.postMessage({
+              type: 'set-session-environment',
+              sessionId: msg.sessionId,
+              environment,
+            });
+          }
+          // ADR C6: resolve the caller FIRST, THEN add to the directory (whose
+          // onSessionAdded fan-out is setImmediate-deferred). Load-bearing order.
+          pending.resolve(session);
+          this.directory.add(session);
+        } else if (msg.type === 'session-run-settled') {
+          const exactOwner = this.runGuard.finishRun({ sessionId: msg.sessionId, runId: msg.runId });
+          if (exactOwner && msg.cwd !== undefined)
+            this.directory.updateCwd(msg.sessionId, msg.cwd);
+        } else if (msg.type === 'run-started') {
+          const info: RunStartedInfo = {
             sessionId: msg.sessionId,
-            environment,
-          });
-        }
-        // ADR C6: resolve the caller FIRST, THEN add to the directory (whose
-        // onSessionAdded fan-out is setImmediate-deferred). Load-bearing order.
-        pending.resolve(session);
-        this.directory.add(session);
-      } else if (msg.type === 'session-run-settled') {
-        const exactOwner = this.runGuard.finishRun({ sessionId: msg.sessionId, runId: msg.runId });
-        if (exactOwner && msg.cwd !== undefined)
-          this.directory.updateCwd(msg.sessionId, msg.cwd);
-      } else if (msg.type === 'run-started') {
-        const info: RunStartedInfo = {
-          sessionId: msg.sessionId,
-          runId: msg.runId,
-          commandText: msg.commandText,
-          executionKind: msg.executionKind,
-        };
-        for (const listener of this.runStartedListeners) listener(info);
-      } else if (msg.type === 'run-list') {
-        const pending = this.pendingRunLists.get(msg.requestId);
-        if (pending === undefined) return; // unmatched requestId — ignore
-        this.pendingRunLists.delete(msg.requestId);
-        pending.resolve(msg.runs);
-      } else if (msg.type === 'run-attach-result') {
-        const pending = this.pendingAttaches.get(msg.requestId);
-        if (pending === undefined) return;
-        this.pendingAttaches.delete(msg.requestId);
-        clearTimeout(pending.timer);
-        if (msg.accepted) {
-          pending.resolve({ accepted: true, port: pending.port });
-        } else {
-          pending.port.close();
-          pending.resolve({ accepted: false, reason: msg.reason });
-        }
-      } else if (msg.type === 'session-destroy-result') {
-        const pending = this.pendingDestroys.get(msg.requestId);
-        if (pending !== undefined && !hasExactSessionIds(pending.sessionIds, msg.sessionIds)) {
-          // A known correlation id is not sufficient: the interpreter must
-          // echo the exact requested identity set. Never let a malformed ACK
-          // delete an unrelated directory entry or resolve success.
+            runId: msg.runId,
+            commandText: msg.commandText,
+            executionKind: msg.executionKind,
+          };
+          for (const listener of this.runStartedListeners) listener(info);
+        } else if (msg.type === 'run-list') {
+          const pending = this.pendingRunLists.get(msg.requestId);
+          if (pending === undefined) return; // unmatched requestId — ignore
+          this.pendingRunLists.delete(msg.requestId);
+          pending.resolve(msg.runs);
+        } else if (msg.type === 'run-attach-result') {
+          const pending = this.pendingAttaches.get(msg.requestId);
+          if (pending === undefined) return;
+          this.pendingAttaches.delete(msg.requestId);
+          clearTimeout(pending.timer);
+          if (msg.accepted) {
+            pending.resolve({ accepted: true, port: pending.port });
+          } else {
+            pending.port.close();
+            pending.resolve({ accepted: false, reason: msg.reason });
+          }
+        } else if (msg.type === 'session-destroy-result') {
+          const pending = this.pendingDestroys.get(msg.requestId);
+          if (pending !== undefined && !hasExactSessionIds(pending.sessionIds, msg.sessionIds)) {
+            // A known correlation id is not sufficient: the interpreter must
+            // echo the exact requested identity set. Never let a malformed ACK
+            // delete an unrelated directory entry or resolve success.
+            this.pendingDestroys.delete(msg.requestId);
+            clearTimeout(pending.timer);
+            if (pending.tombstoneTimer !== null) clearTimeout(pending.tombstoneTimer);
+            if (!pending.settled) {
+              pending.settled = true;
+              pending.resolve({ ok: false, reason: 'unavailable' });
+            }
+            return;
+          }
+          // Reconcile even after the caller timed out or its bounded tombstone
+          // expired. The interpreter is authoritative and echoes the affected
+          // identities specifically for this late-ACK path.
+          if (msg.destroyed) {
+            for (const sessionId of pending?.sessionIds ?? msg.sessionIds) {
+              this.directory.remove(sessionId);
+              this.runGuard.finishSession(sessionId);
+            }
+          }
+          if (pending === undefined) return;
           this.pendingDestroys.delete(msg.requestId);
           clearTimeout(pending.timer);
-          if (pending.tombstoneTimer !== null) clearTimeout(pending.tombstoneTimer);
+          if (pending.tombstoneTimer !== null)
+            clearTimeout(pending.tombstoneTimer);
           if (!pending.settled) {
             pending.settled = true;
-            pending.resolve({ ok: false, reason: 'unavailable' });
-          }
-          return;
-        }
-        // Reconcile even after the caller timed out or its bounded tombstone
-        // expired. The interpreter is authoritative and echoes the affected
-        // identities specifically for this late-ACK path.
-        if (msg.destroyed) {
-          for (const sessionId of pending?.sessionIds ?? msg.sessionIds) {
-            this.directory.remove(sessionId);
-            this.runGuard.finishSession(sessionId);
+            pending.resolve(
+              msg.destroyed
+                ? { ok: true }
+                : { ok: false, reason: 'state-changed' },
+            );
           }
         }
-        if (pending === undefined) return;
-        this.pendingDestroys.delete(msg.requestId);
-        clearTimeout(pending.timer);
-        if (pending.tombstoneTimer !== null)
-          clearTimeout(pending.tombstoneTimer);
-        if (!pending.settled) {
-          pending.settled = true;
-          pending.resolve(
-            msg.destroyed
-              ? { ok: true }
-              : { ok: false, reason: 'state-changed' },
-          );
-        }
-      }
-    });
+      });
 
-    // On interpreter death: flip alive, then reject + clear every in-flight
-    // pending (parity with main's former exit cleanup). Reason string is the
-    // in-flight-death signal callers (WS adapters) `.catch`-swallow.
-    this.interpreter.on('exit', (code) => {
+      // On interpreter death: flip alive, then reject + clear every in-flight
+      // pending (parity with main's former exit cleanup). Reason string is the
+      // in-flight-death signal callers (WS adapters) `.catch`-swallow.
+      candidate.on('exit', (code) => {
+        if (candidate !== this.interpreter) return;
+        this.alive = false;
+        const err = new Error('interpreter exited');
+        for (const pending of this.pendingCreates.values()) pending.reject(err);
+        for (const pending of this.pendingRunLists.values()) pending.reject(err);
+        for (const pending of this.pendingAttaches.values()) {
+          clearTimeout(pending.timer);
+          pending.port.close();
+          pending.resolve({ accepted: false, reason: 'transport-failed' });
+        }
+        for (const pending of this.pendingDestroys.values()) {
+          clearTimeout(pending.timer);
+          if (pending.tombstoneTimer !== null)
+            clearTimeout(pending.tombstoneTimer);
+          if (!pending.settled)
+            pending.resolve({ ok: false, reason: 'unavailable' });
+        }
+        this.pendingCreates.clear();
+        this.pendingRunLists.clear();
+        this.pendingAttaches.clear();
+        this.pendingDestroys.clear();
+        this.runGuard.clearRuns();
+        for (const listener of this.interpreterExitListeners) listener(code);
+      });
+    };
+    this.wireInterpreter(this.interpreter);
+  }
+
+  /** Replace a dead utility process without changing the broker object observed
+   * by desktop IPC, the mobile bridge, or agent activity tracking. Session ids
+   * and their latest cwd are replayed before any later command message. */
+  restart(interpreter: BrokerInterpreter): boolean {
+    const sessions = this.directory.list();
+    this.interpreter = interpreter;
+    this.alive = true;
+    this.wireInterpreter(interpreter);
+    try {
+      interpreter.postMessage({ type: 'restore-sessions', sessions });
+      for (const session of sessions) {
+        const environment = this.sessionEnvironment?.(session.sessionId);
+        if (!environment || Object.keys(environment).length === 0) continue;
+        interpreter.postMessage({
+          type: 'set-session-environment',
+          sessionId: session.sessionId,
+          environment,
+        });
+      }
+      return true;
+    } catch {
       this.alive = false;
-      const err = new Error('interpreter exited');
-      for (const pending of this.pendingCreates.values()) pending.reject(err);
-      for (const pending of this.pendingRunLists.values()) pending.reject(err);
-      for (const pending of this.pendingAttaches.values()) {
-        clearTimeout(pending.timer);
-        pending.port.close();
-        pending.resolve({ accepted: false, reason: 'transport-failed' });
-      }
-      for (const pending of this.pendingDestroys.values()) {
-        clearTimeout(pending.timer);
-        if (pending.tombstoneTimer !== null)
-          clearTimeout(pending.tombstoneTimer);
-        if (!pending.settled)
-          pending.resolve({ ok: false, reason: 'unavailable' });
-      }
-      this.pendingCreates.clear();
-      this.pendingRunLists.clear();
-      this.pendingAttaches.clear();
-      this.pendingDestroys.clear();
-      this.runGuard.clearRuns();
-      for (const listener of this.interpreterExitListeners) listener(code);
-    });
+      return false;
+    }
   }
 
   createSession(cwd?: string): Promise<SessionInfo> {

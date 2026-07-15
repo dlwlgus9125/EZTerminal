@@ -101,6 +101,12 @@ const api: EzTerminalApi = {
     return () => ipcRenderer.removeListener('session-dead', handler);
   },
 
+  onSessionRecovered: (listener: () => void): (() => void) => {
+    const handler = (): void => listener();
+    ipcRenderer.on('session-recovered', handler);
+    return () => ipcRenderer.removeListener('session-recovered', handler);
+  },
+
   // Session mirroring (M2): full mirroring across desktop tabs + mobile.
   listSessions: (): Promise<readonly SessionInfo[]> => ipcRenderer.invoke('list-sessions'),
   listRuns: (): Promise<readonly RunStartedInfo[]> => ipcRenderer.invoke('list-runs'),

@@ -767,10 +767,20 @@ export function App(): JSX.Element {
   // Shared fate: the one utilityProcess backs every session, so its death kills
   // them all. Panes latch dead individually (TerminalPane); this app-level
   // banner tells the user WHAT happened and where the local evidence lives.
-  const [crashInfo, setCrashInfo] = useState<{ logPath: string | null } | null>(null);
+  const [crashInfo, setCrashInfo] = useState<{ logPath: string | null; recovered: boolean } | null>(null);
   useEffect(() => {
-    const unsub = window.ezterminal?.onSessionDead?.((info) => setCrashInfo({ logPath: info?.logPath ?? null }));
-    return () => unsub?.();
+    const unsubscribeDead = window.ezterminal?.onSessionDead?.((info) => {
+      setCrashInfo({ logPath: info?.logPath ?? null, recovered: false });
+    });
+    const unsubscribeRecovered = window.ezterminal?.onSessionRecovered?.(() => {
+      setCrashInfo((current) => current
+        ? { ...current, recovered: true }
+        : { logPath: null, recovered: true });
+    });
+    return () => {
+      unsubscribeDead?.();
+      unsubscribeRecovered?.();
+    };
   }, []);
 
   // One adaptive sidebar owns every navigation destination. At >=1200px it
@@ -2482,7 +2492,7 @@ export function App(): JSX.Element {
 
       {crashInfo && (
         <div className="crash-banner" role="alert" data-testid="crash-banner">
-          <span>{t('app.shellCrashed')}</span>
+          <span>{t(crashInfo.recovered ? 'app.shellRecovered' : 'app.shellCrashed')}</span>
           {crashInfo.logPath && <code className="crash-banner-path">{crashInfo.logPath}</code>}
           <button
             className="btn btn-split"

@@ -11,7 +11,7 @@ import { launchApp } from './launch-app';
 // banner must appear, pointing at the local error log main.ts appended to.
 // The interpreter is killed from OUTSIDE (OS-level), exactly like a real crash.
 
-test('interpreter crash: banner appears and the local log records the exit', async () => {
+test('interpreter crash: the shell recovers in place and records the exit', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'ezterm-crash-e2e-'));
   const app = await launchApp(dir);
   const w = await app.firstWindow();
@@ -21,6 +21,7 @@ test('interpreter crash: banner appears and the local log records the exit', asy
   await expect(w.getByTestId('pane').first()).toHaveAttribute('data-session-id', /.+/, {
     timeout: 15_000,
   });
+  const sessionId = await w.getByTestId('pane').first().getAttribute('data-session-id');
 
   // Kill the interpreter utilityProcess (`--utility-sub-type=node`) the way a
   // real crash would take it down. Searched across ALL DESCENDANTS of the
@@ -44,10 +45,17 @@ test('interpreter crash: banner appears and the local log records the exit', asy
   ).trim();
   expect(Number(killed)).toBeGreaterThan(0);
 
-  // Banner with the log path, and input latched dead (existing shared-fate).
+  // The incident remains visible and locally diagnosable while the supervisor
+  // restores the same session identity and re-enables keyboard input.
   await expect(w.getByTestId('crash-banner')).toBeVisible({ timeout: 15_000 });
   await expect(w.getByTestId('crash-banner')).toContainText('main.log');
-  await expect(w.getByTestId('cmd-input')).toBeDisabled();
+  await expect(w.getByTestId('pane').first()).toHaveAttribute('data-session-id', sessionId!);
+  await expect(w.getByTestId('cmd-input')).toBeEnabled({ timeout: 15_000 });
+
+  await w.getByTestId('cmd-input').click();
+  await w.keyboard.type('gen-rows 1');
+  await w.keyboard.press('Enter');
+  await expect(w.getByTestId('block-status').last()).toHaveText('done', { timeout: 15_000 });
 
   // The local log recorded the event (B-M5 evidence trail).
   const logFile = path.join(dir, 'logs', 'main.log');

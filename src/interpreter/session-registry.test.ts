@@ -48,6 +48,17 @@ describe('SessionRegistry — create / get', () => {
     expect(reg.get('missing')).toBeUndefined();
   });
 
+  it('restores an exact broker-owned identity at its last cwd with clean state', () => {
+    const reg = new SessionRegistry(ids(), () => 'C:\\start');
+    expect(reg.restore('stable-session', 'C:\\workspace')).toEqual({
+      sessionId: 'stable-session',
+      cwd: 'C:\\workspace',
+    });
+    expect(reg.canRun('stable-session').ok).toBe(true);
+    expect(reg.get('stable-session')?.shell.getHistory()).toEqual([]);
+    expect(() => reg.restore('stable-session', 'C:\\other')).toThrow('already exists');
+  });
+
   it('applies main-owned environment only to the addressed live session', () => {
     vi.stubEnv('EZTERMINAL_SESSION_ID', 'parent-session');
     vi.stubEnv('EZTERMINAL_AGENT_HOOK_DESCRIPTOR', 'parent-descriptor');

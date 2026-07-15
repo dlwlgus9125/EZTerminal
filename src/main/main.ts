@@ -157,6 +157,7 @@ process.on('unhandledRejection', (reason) => {
 
 // Interpreter utilityProcess — created once on 'ready', lives for the app lifetime.
 let interpreter: UtilityProcess | null = null;
+let appIsQuitting = false;
 
 // The single main-side broker over the interpreter — created once on 'ready'
 // right after the fork. main (local IPC) and remote-bridge (WS) are thin
@@ -851,6 +852,7 @@ app.on('ready', () => {
   // Best-effort final flush; the debounced save already persisted anything
   // older than ~300ms (accepted v1 loss window — gate Q2).
   app.on('before-quit', () => {
+    appIsQuitting = true;
     void layoutStore.flush();
     systemStatsService?.stop();
     packetCaptureRegistry?.kill();
@@ -945,12 +947,15 @@ app.on('ready', () => {
   // MessagePortMain-based streaming without freezing the UI.
   // Output resolves to .vite/build/interpreter-process.js (same dir as main.js).
   const interpreterPath = path.join(__dirname, 'interpreter-process.js');
-  console.log(`[main] spawning interpreter at: ${interpreterPath}`);
+  const spawnInterpreterProcess = (): UtilityProcess => {
+    console.log(`[main] spawning interpreter at: ${interpreterPath}`);
+    return utilityProcess.fork(interpreterPath, [], {
+      serviceName: 'EZTerminal Interpreter',
+      stdio: 'inherit',
+    });
+  };
 
-  interpreter = utilityProcess.fork(interpreterPath, [], {
-    serviceName: 'EZTerminal Interpreter',
-    stdio: 'inherit',
-  });
+  interpreter = spawnInterpreterProcess();
 
   // The single main-side broker over the interpreter (interpreter-broker plan).
   // It attaches listener #1 (session/run dispatch) + an exit listener in its
@@ -978,11 +983,14 @@ app.on('ready', () => {
   });
   console.log('[main] interpreter broker ready');
 
-  sshForwardService = new SshForwardService({
-    interpreter: interpreter as unknown as BrokerInterpreter,
-    createMessageChannel: () => new MessageChannelMain(),
-    onInterpreterExited: (listener) => broker?.onInterpreterExited(listener) ?? (() => undefined),
-  });
+  const bindSshForwardService = (target: UtilityProcess): void => {
+    sshForwardService = new SshForwardService({
+      interpreter: target as unknown as BrokerInterpreter,
+      createMessageChannel: () => new MessageChannelMain(),
+      onInterpreterExited: (listener) => broker?.onInterpreterExited(listener) ?? (() => undefined),
+    });
+  };
+  bindSshForwardService(interpreter);
   console.log('[main] SSH forwarding service ready');
 
   agentActivityService = new AgentActivityService({
@@ -1063,120 +1071,193 @@ app.on('ready', () => {
   // known_hosts TOFU verdicts. This is listener #2 — disjoint by message type
   // from the broker's listener #1 (session-created/run-started/run-list), so the
   // two never double-process a message.
-  interpreter.on('message', (msg: InterpreterToMain) => {
-    if (msg?.type === 'spawn-script-host') {
-      const result = scriptHostRegistry.spawn(msg.hostId, msg.scriptPath, msg.args, msg.cwd, (hostId, code) => {
-        interpreter?.postMessage({ type: 'script-host-exit', hostId, code } satisfies MainToInterpreter);
-      });
-      if ('error' in result) {
-        interpreter?.postMessage({
-          type: 'script-host-error',
-          hostId: msg.hostId,
-          message: result.error,
-        } satisfies MainToInterpreter);
-      } else {
-        interpreter?.postMessage(
-          { type: 'script-host-ready', hostId: msg.hostId } satisfies MainToInterpreter,
-          [result.interpreterPort],
-        );
-      }
-    } else if (msg?.type === 'kill-script-host') {
-      scriptHostRegistry.kill(msg.hostId);
-    } else if (msg?.type === 'known-host-check') {
-      const { requestId, host, port, keyType, fingerprint } = msg;
-      void knownHostsReady
-        .then(() => knownHostsStore.check(host, port, keyType, fingerprint))
-        .then((outcome) => {
-          interpreter?.postMessage({
-            type: 'known-host-verdict',
-            requestId,
-            verdict: outcome.verdict,
-            existingFingerprint: outcome.existingFingerprint,
-            knownHostsPath: knownHostsStore.path,
-          } satisfies MainToInterpreter);
-        })
-        .catch((err: unknown) => {
-          console.error('[main] known-host-check failed:', err);
-          // Fail closed as 'unknown' (re-prompts TOFU) rather than dropping the
-          // request — a store error must never silently resolve as 'match'.
-          interpreter?.postMessage({
-            type: 'known-host-verdict',
-            requestId,
-            verdict: 'unknown',
-            knownHostsPath: knownHostsStore.path,
-          } satisfies MainToInterpreter);
-        });
-    } else if (msg?.type === 'known-host-add') {
-      void knownHostsReady
-        .then(() => knownHostsStore.add(msg.host, msg.port, msg.keyType, msg.fingerprint))
-        .catch((err: unknown) => {
-          console.error('[main] known-host-add failed:', err);
-        });
-    } else if (msg?.type === 'worktree-action-request') {
-      const origin = msg.origin === 'desktop' ? 'desktop' : 'mobile';
-      if (!isWorktreeRequest(msg.request)) {
-        interpreter?.postMessage({
-          type: 'worktree-action-response',
-          requestId: msg.requestId,
-          result: {
-            ok: false,
-            action: 'list',
-            error: 'INVALID_REQUEST',
-            message: 'Invalid worktree request.',
-          },
-        } satisfies MainToInterpreter);
-        return;
-      }
-      const controller = new AbortController();
-      pendingWorktreeActions.get(msg.requestId)?.abort();
-      pendingWorktreeActions.set(msg.requestId, controller);
-      void worktreeService
-        .execute(msg.request, origin, controller.signal, {
-          sessionId: msg.sessionId,
-          runId: msg.runId,
-        })
-        .then((result) => {
-          if (controller.signal.aborted || pendingWorktreeActions.get(msg.requestId) !== controller) return;
-          if (origin === 'desktop' && msg.request.action === 'open' && result.ok && result.opened) {
-            notifyDesktopWorktreeOpen(result.opened);
+  const recoveryDelaysMs = [250, 1_000, 3_000] as const;
+  let consecutiveRecoveryAttempts = 0;
+  let recoveryStabilityTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function scheduleInterpreterRecovery(): void {
+    if (appIsQuitting) return;
+    const attemptIndex = consecutiveRecoveryAttempts;
+    if (attemptIndex >= recoveryDelaysMs.length) {
+      mainLog?.line('interpreter recovery exhausted after 3 consecutive attempts');
+      return;
+    }
+    consecutiveRecoveryAttempts += 1;
+    const delayMs = recoveryDelaysMs[attemptIndex];
+    mainLog?.line(`interpreter recovery attempt ${String(consecutiveRecoveryAttempts)} scheduled in ${String(delayMs)}ms`);
+    setTimeout(() => {
+      if (appIsQuitting) return;
+      let next: UtilityProcess | null = null;
+      try {
+        next = spawnInterpreterProcess();
+        interpreter = next;
+        if (!broker?.restart(next as unknown as BrokerInterpreter)) {
+          throw new Error('broker rejected interpreter replacement');
+        }
+        bindSshForwardService(next);
+        wireInterpreterProcess(next);
+        mainLog?.line(`interpreter recovered on attempt ${String(consecutiveRecoveryAttempts)}`);
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+            win.webContents.send('session-recovered');
           }
-          interpreter?.postMessage({
+        }
+        if (recoveryStabilityTimer !== null) clearTimeout(recoveryStabilityTimer);
+        recoveryStabilityTimer = setTimeout(() => {
+          consecutiveRecoveryAttempts = 0;
+          recoveryStabilityTimer = null;
+        }, 30_000);
+      } catch (error) {
+        mainLog?.line(`interpreter recovery spawn failed: ${String(error)}`);
+        if (next) {
+          try { next.kill(); } catch { /* already gone */ }
+        }
+        interpreter = null;
+        scheduleInterpreterRecovery();
+      }
+    }, delayMs);
+  }
+
+  function postToInterpreterGeneration(
+    target: UtilityProcess,
+    message: MainToInterpreter,
+    transfer?: MessagePortMain[],
+  ): void {
+    if (target !== interpreter) return;
+    try {
+      target.postMessage(message, transfer);
+    } catch {
+      // The generation exited while an asynchronous main-owned request settled.
+    }
+  }
+
+  function wireInterpreterProcess(target: UtilityProcess): void {
+    target.on('message', (msg: InterpreterToMain) => {
+      if (target !== interpreter) return;
+      if (msg?.type === 'spawn-script-host') {
+        const result = scriptHostRegistry.spawn(msg.hostId, msg.scriptPath, msg.args, msg.cwd, (hostId, code) => {
+          postToInterpreterGeneration(target, { type: 'script-host-exit', hostId, code });
+        });
+        if ('error' in result) {
+          postToInterpreterGeneration(target, {
+            type: 'script-host-error',
+            hostId: msg.hostId,
+            message: result.error,
+          });
+        } else {
+          postToInterpreterGeneration(target, {
+            type: 'script-host-ready',
+            hostId: msg.hostId,
+          }, [result.interpreterPort]);
+        }
+      } else if (msg?.type === 'kill-script-host') {
+        scriptHostRegistry.kill(msg.hostId);
+      } else if (msg?.type === 'known-host-check') {
+        const { requestId, host, port, keyType, fingerprint } = msg;
+        void knownHostsReady
+          .then(() => knownHostsStore.check(host, port, keyType, fingerprint))
+          .then((outcome) => {
+            postToInterpreterGeneration(target, {
+              type: 'known-host-verdict',
+              requestId,
+              verdict: outcome.verdict,
+              existingFingerprint: outcome.existingFingerprint,
+              knownHostsPath: knownHostsStore.path,
+            });
+          })
+          .catch((err: unknown) => {
+            console.error('[main] known-host-check failed:', err);
+            // Fail closed as 'unknown' (re-prompts TOFU) rather than dropping the
+            // request — a store error must never silently resolve as 'match'.
+            postToInterpreterGeneration(target, {
+              type: 'known-host-verdict',
+              requestId,
+              verdict: 'unknown',
+              knownHostsPath: knownHostsStore.path,
+            });
+          });
+      } else if (msg?.type === 'known-host-add') {
+        void knownHostsReady
+          .then(() => knownHostsStore.add(msg.host, msg.port, msg.keyType, msg.fingerprint))
+          .catch((err: unknown) => {
+            console.error('[main] known-host-add failed:', err);
+          });
+      } else if (msg?.type === 'worktree-action-request') {
+        const origin = msg.origin === 'desktop' ? 'desktop' : 'mobile';
+        if (!isWorktreeRequest(msg.request)) {
+          postToInterpreterGeneration(target, {
             type: 'worktree-action-response',
             requestId: msg.requestId,
-            result,
-          } satisfies MainToInterpreter);
-        })
-        .finally(() => {
-          if (pendingWorktreeActions.get(msg.requestId) === controller) {
-            pendingWorktreeActions.delete(msg.requestId);
-          }
-        });
-    } else if (msg?.type === 'worktree-action-cancel') {
-      pendingWorktreeActions.get(msg.requestId)?.abort();
-      pendingWorktreeActions.delete(msg.requestId);
-    }
-  });
+            result: {
+              ok: false,
+              action: 'list',
+              error: 'INVALID_REQUEST',
+              message: 'Invalid worktree request.',
+            },
+          });
+          return;
+        }
+        const controller = new AbortController();
+        pendingWorktreeActions.get(msg.requestId)?.abort();
+        pendingWorktreeActions.set(msg.requestId, controller);
+        void worktreeService
+          .execute(msg.request, origin, controller.signal, {
+            sessionId: msg.sessionId,
+            runId: msg.runId,
+          })
+          .then((result) => {
+            if (controller.signal.aborted || pendingWorktreeActions.get(msg.requestId) !== controller) return;
+            if (origin === 'desktop' && msg.request.action === 'open' && result.ok && result.opened) {
+              notifyDesktopWorktreeOpen(result.opened);
+            }
+            postToInterpreterGeneration(target, {
+              type: 'worktree-action-response',
+              requestId: msg.requestId,
+              result,
+            });
+          })
+          .finally(() => {
+            if (pendingWorktreeActions.get(msg.requestId) === controller) {
+              pendingWorktreeActions.delete(msg.requestId);
+            }
+          });
+      } else if (msg?.type === 'worktree-action-cancel') {
+        pendingWorktreeActions.get(msg.requestId)?.abort();
+        pendingWorktreeActions.delete(msg.requestId);
+      }
+    });
 
-  interpreter.on('exit', (code) => {
-    console.log(`[main] interpreter exited with code ${String(code)}`);
-    mainLog?.line(`interpreter exited with code ${String(code)} (all sessions dead)`);
-    interpreter = null;
-    for (const controller of pendingWorktreeActions.values()) controller.abort();
-    pendingWorktreeActions.clear();
-    // Shared-fate (Codex B8, extended for E4): ONE utilityProcess backs every
-    // session, so its death kills them all — including every live script-host,
-    // which would otherwise become an orphaned process (design §6.1). Tell every
-    // renderer to mark its panes dead + stop accepting runs (no auto-respawn in
-    // Phase 1). The broker's OWN exit listener flips its `alive` flag and rejects
-    // in-flight create-session/list-runs pendings — this listener stays orthogonal
-    // (process/window cleanup), so it must NOT also reject them here.
-    scriptHostRegistry.killAll();
-    // The payload (additive, B-M5) lets the renderer's banner point the user at
-    // the local evidence.
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send('session-dead', { logPath: mainLog?.path ?? null });
-    }
-  });
+    target.on('exit', (code) => {
+      if (target !== interpreter) return;
+      console.log(`[main] interpreter exited with code ${String(code)}`);
+      mainLog?.line(`interpreter exited with code ${String(code)} (planned=${String(appIsQuitting)})`);
+      interpreter = null;
+      if (recoveryStabilityTimer !== null) {
+        clearTimeout(recoveryStabilityTimer);
+        recoveryStabilityTimer = null;
+      }
+      for (const controller of pendingWorktreeActions.values()) controller.abort();
+      pendingWorktreeActions.clear();
+      // Shared-fate (Codex B8, extended for E4): ONE utilityProcess backs every
+      // session, so its death kills them all — including every live script-host,
+      // which would otherwise become an orphaned process (design §6.1). Tell every
+      // renderer to mark active runs interrupted while recovery replaces the
+      // process. The broker's OWN exit listener flips its `alive` flag and rejects
+      // in-flight create-session/list-runs pendings — this listener stays orthogonal
+      // (process/window cleanup), so it must NOT also reject them here.
+      scriptHostRegistry.killAll();
+      // The payload (additive, B-M5) lets the renderer's banner point the user at
+      // the local evidence.
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+          win.webContents.send('session-dead', { logPath: mainLog?.path ?? null });
+        }
+      }
+      scheduleInterpreterRecovery();
+    });
+  }
+
+  wireInterpreterProcess(interpreter);
 
   // ── OpenClaw management service (openclaw-management M1) ─────────────────
   // Electron-free service (see openclaw-service.ts's module doc for the M0

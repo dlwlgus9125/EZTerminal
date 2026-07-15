@@ -1,6 +1,6 @@
 {
   "name": "ezterminal-mobile",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "EZTerminal mobile remote control — reuses the desktop renderer's BlockController/Block components over a WS transport (mobile remote-control plan, M1+).",
   "type": "module",

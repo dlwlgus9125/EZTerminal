@@ -960,6 +960,10 @@ process.parentPort.on('message', (event: ElectronMsgEvent) => {
       process.parentPort.postMessage(reply);
       break;
     }
+    case 'restore-sessions': {
+      for (const session of msg.sessions) registry.restore(session.sessionId, session.cwd);
+      break;
+    }
     case 'set-session-environment':
       registry.setEnvironment(msg.sessionId, msg.environment);
       break;

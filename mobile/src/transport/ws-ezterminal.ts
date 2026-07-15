@@ -640,6 +640,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return () => this.sessionDeadListeners.delete(listener);
   }
 
+  // Desktop main-process recovery is an in-window IPC event. A mobile bridge
+  // connection remains usable through the stable broker and needs no local
+  // latch transition, so this shared-API hook is intentionally inert here.
+  onSessionRecovered(): () => void {
+    return () => undefined;
+  }
+
   // ── Session mirroring (M2) ────────────────────────────────────────────────
 
   onSessionAdded(listener: (session: SessionInfo) => void): () => void {

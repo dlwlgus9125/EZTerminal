@@ -27,7 +27,7 @@
 4. 키스토어/키 비밀번호와 별칭, SHA-256 지문도 각각 Environment secret으로 등록한다.
 5. 공개 SHA-256 지문을 `mobile/android/signing-certificate.sha256`의 `UNCONFIGURED` 대신 한 줄로 커밋한다. workflow는 커밋된 지문, 보호된 secret과 실제 APK 인증서가 모두 같지 않으면 실패한다.
 
-키스토어는 GitHub만 유일하게 보관해서는 안 된다. 암호화된 오프라인 사본과 암호 관리자 사본을 별도 위치에 유지한다. 인증서 지문은 공개 정보이므로 저장소에 고정해 보호된 Environment가 유일한 신뢰 근거가 되지 않게 한다. 현재 `UNCONFIGURED` 표식은 키가 아직 생성되지 않았음을 나타내며 Release workflow를 의도적으로 차단한다.
+키스토어는 GitHub만 유일하게 보관해서는 안 된다. 암호화된 오프라인 사본과 암호 관리자 사본을 별도 위치에 유지한다. 인증서 지문은 공개 정보이므로 저장소에 고정해 보호된 Environment가 유일한 신뢰 근거가 되지 않게 한다. 저장소 지문이 `UNCONFIGURED`인 경우 Release workflow는 의도적으로 차단된다.
 
 1.0 이전 APK는 Android Debug 인증서로 서명됐다. 새 키와 서명 연속성이 없으므로 기존 앱을 한 번 삭제하고 다시 설치해야 한다. 이후 공개 APK는 반드시 같은 장기키를 사용한다.
 

@@ -325,13 +325,24 @@ export function TerminalPane({
   // would normally flip `activeTakeover`/`activePlainPty` false, which would
   // otherwise hide cmd-input permanently or keep routing keys nowhere.
   useEffect(() => {
-    const unsub = window.ezterminal?.onSessionDead?.(() => {
+    const unsubscribeDead = window.ezterminal?.onSessionDead?.(() => {
+      for (const entry of blocksRef.current) {
+        entry.controller?.markTransportInterrupted(t('terminalPane.interpreterInterrupted'));
+      }
       setSessionDead(true);
+      setActiveRunning(false);
       setActiveTakeover(false);
       setActivePlainPty(false);
     });
-    return () => unsub?.();
-  }, []);
+    const unsubscribeRecovered = window.ezterminal?.onSessionRecovered?.(() => {
+      setSessionDead(false);
+      requestAnimationFrame(() => cmdInputRef.current?.focus());
+    });
+    return () => {
+      unsubscribeDead?.();
+      unsubscribeRecovered?.();
+    };
+  }, [t]);
 
   // Follow new output: when a block is added (or its controller is attached) scroll
   // the list to the bottom if we are pinned there. Streaming growth of the active

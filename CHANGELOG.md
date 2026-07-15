@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-16
+
+### Fixed
+- Restart the shared shell interpreter automatically after an unexpected process exit instead of leaving every terminal input permanently disabled.
+- Restore stable session identities, last working directories and main-owned session environment on the replacement interpreter.
+- Settle interrupted commands visibly, release renderer input gates and retain the local crash-log path while the terminal becomes usable again.
+- Guard asynchronous main-process replies by interpreter generation and bound rapid recovery attempts to prevent stale delivery or restart loops.
+
 ## [1.0.0] - 2026-07-15
 
 ### Changed

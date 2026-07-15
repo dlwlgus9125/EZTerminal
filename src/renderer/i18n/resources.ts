@@ -253,6 +253,7 @@ export const appResources = {
       },
       app: {
         shellCrashed: 'The shell interpreter crashed and all sessions ended. Restart the app to continue.',
+        shellRecovered: 'The shell interpreter restarted. Active commands ended, and the terminal is ready again.',
       },
       terminalFiles: {
         remotePath: 'Remote SSH paths cannot be opened on this device.',
@@ -523,6 +524,7 @@ export const appResources = {
         starting: 'starting…',
         commandInput: 'command input',
         ended: 'This terminal pane has ended.',
+        interpreterInterrupted: 'The shell interpreter restarted before this command finished.',
         sessionStarting: 'The terminal session is still starting.',
         waitForCommand: 'Wait for the active command to finish.',
         clearDraft: 'Clear the current draft before running a saved command.',
@@ -1197,6 +1199,7 @@ export const appResources = {
       },
       app: {
         shellCrashed: '셸 인터프리터가 중단되어 모든 세션이 종료되었습니다. 계속하려면 앱을 다시 시작하세요.',
+        shellRecovered: '셸 인터프리터를 다시 시작했습니다. 실행 중이던 명령은 종료됐으며 터미널을 다시 사용할 수 있습니다.',
       },
       terminalFiles: {
         remotePath: '이 기기에서는 원격 SSH 경로를 열 수 없습니다.',
@@ -1467,6 +1470,7 @@ export const appResources = {
         starting: '시작 중…',
         commandInput: '명령 입력',
         ended: '이 터미널 창은 종료되었습니다.',
+        interpreterInterrupted: '명령이 끝나기 전에 셸 인터프리터가 다시 시작됐습니다.',
         sessionStarting: '터미널 세션이 아직 시작 중입니다.',
         waitForCommand: '활성 명령이 끝날 때까지 기다려 주세요.',
         clearDraft: '저장된 명령을 실행하려면 현재 입력을 지워 주세요.',

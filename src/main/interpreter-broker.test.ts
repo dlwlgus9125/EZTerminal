@@ -654,6 +654,42 @@ describe('InterpreterBroker — listener wiring', () => {
 });
 
 describe('InterpreterBroker — dead-interpreter contract', () => {
+  it('restarts on a replacement interpreter and rehydrates stable session identities', async () => {
+    const { broker, interpreter } = makeBroker();
+    const created = broker.createSession('/workspace');
+    interpreter.emit({
+      type: 'session-created',
+      requestId: 'id-1',
+      sessionId: 'stable-session',
+      cwd: '/workspace',
+    });
+    await created;
+    interpreter.emitExit(1);
+
+    const replacement = new FakeInterpreter();
+    expect(broker.restart(replacement)).toBe(true);
+    expect(replacement.listenerCount).toBe(1);
+    expect(replacement.posted[0]?.msg).toEqual({
+      type: 'restore-sessions',
+      sessions: [{ sessionId: 'stable-session', cwd: '/workspace' }],
+    });
+    expect(broker.listSessions()).toEqual([{ sessionId: 'stable-session', cwd: '/workspace' }]);
+
+    const next = broker.createSession('/next');
+    expect(replacement.posted.at(-1)?.msg).toEqual({
+      type: 'create-session',
+      requestId: 'id-2',
+      cwd: '/next',
+    });
+    replacement.emit({
+      type: 'session-created',
+      requestId: 'id-2',
+      sessionId: 'next-session',
+      cwd: '/next',
+    });
+    await expect(next).resolves.toEqual({ sessionId: 'next-session', cwd: '/next' });
+  });
+
   it('after exit: createSession rejects, listRuns resolves [], runCommand returns an error port, attachRun returns null', async () => {
     const { broker, interpreter } = makeBroker();
     interpreter.emitExit(0);

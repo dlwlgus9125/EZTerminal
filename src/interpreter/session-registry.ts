@@ -59,8 +59,21 @@ export class SessionRegistry {
 
   /** Create a new session with its own durable state; returns the authoritative id + cwd (B5). */
   create(cwd?: string): SessionInfo {
-    const sessionId = this.newId();
-    const shell = new ShellSession(cwd ?? this.defaultCwd());
+    return this.createWithId(this.newId(), cwd ?? this.defaultCwd());
+  }
+
+  /** Recreate one broker-owned identity after a utility-process restart. Only
+   * durable location survives: active executions and mutable shell state died
+   * with the old process and intentionally start clean. */
+  restore(sessionId: string, cwd: string): SessionInfo {
+    if (this.sessions.has(sessionId)) {
+      throw new Error(`session ${sessionId} already exists`);
+    }
+    return this.createWithId(sessionId, cwd);
+  }
+
+  private createWithId(sessionId: string, cwd: string): SessionInfo {
+    const shell = new ShellSession(cwd);
     for (const name of this.mainOwnedEnvironmentNames) shell.maskEnv(name);
     this.sessions.set(sessionId, {
       shell,

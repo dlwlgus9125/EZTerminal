@@ -116,6 +116,16 @@ describe('BlockController — windowing / prune / dedup', () => {
     expect(controller.getSnapshot().errorMessage).toBe('boom');
   });
 
+  it('settles a running block when its interpreter transport is interrupted', () => {
+    const { controller } = make();
+    controller.markTransportInterrupted('interpreter restarted');
+    expect(controller.getSnapshot().status).toBe('error');
+    expect(controller.getSnapshot().errorMessage).toBe('interpreter restarted');
+
+    controller.markTransportInterrupted('late duplicate');
+    expect(controller.getSnapshot().errorMessage).toBe('interpreter restarted');
+  });
+
   it('dispose() posts a close control and closes the port', () => {
     const { port, controller } = make();
     controller.dispose();

@@ -298,6 +298,17 @@ export class BlockController {
     this.port.postMessage({ type: 'cancel' });
   }
 
+  /** Settle a run whose transport vanished before it could emit a terminal
+   * frame. Keeping the buffered output visible makes the interruption explicit
+   * while releasing every renderer-side busy/input gate. */
+  markTransportInterrupted(message: string): void {
+    if (this.status !== 'running') return;
+    this.status = 'error';
+    this.errorMessage = message;
+    this.sshPrompt = null;
+    this.emitChange(true);
+  }
+
   // ── PTY block (Phase 2 TUI + Phase 3 adaptive render) ────────────────────────
   /** Register the xterm write sink; flushes bytes buffered before mount (which,
    * post-upgrade, is the ENTIRE plain-mode history — see `ptyBuffer`'s doc).

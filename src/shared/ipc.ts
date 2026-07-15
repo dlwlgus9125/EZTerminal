@@ -463,6 +463,14 @@ export interface CreateSessionMessage {
   readonly cwd?: string;
 }
 
+/** Rehydrate the broker's durable session identities after the interpreter
+ * utility process is replaced. Active runs and shell variables are deliberately
+ * not replayed; each restored session resumes at its last authoritative cwd. */
+export interface RestoreSessionsMessage {
+  readonly type: 'restore-sessions';
+  readonly sessions: readonly SessionInfo[];
+}
+
 /** Main-owned internal environment injected immediately after creation and
  * before createSession resolves. It never crosses the renderer or remote API. */
 export interface SetSessionEnvironmentMessage {
@@ -675,6 +683,7 @@ export interface WorktreeActionResponseMessage {
 export type MainToInterpreter =
   | RunMessage
   | CreateSessionMessage
+  | RestoreSessionsMessage
   | SetSessionEnvironmentMessage
   | DestroySessionMessage
   | DestroySessionsGuardedMessage
@@ -986,6 +995,9 @@ export interface EzTerminalApi {
    * Returns an unsubscribe.
    */
   onSessionDead: (listener: (info?: { logPath?: string | null }) => void) => () => void;
+  /** The interpreter supervisor restored every prior session identity and new
+   * commands can be submitted again. Returns an unsubscribe. */
+  onSessionRecovered: (listener: () => void) => () => void;
 
   // ── Layout persistence (Track A ③) ─────────────────────────────────────────
   // Main owns the filesystem; every payload is validated main-side against
