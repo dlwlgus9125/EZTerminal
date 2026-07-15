@@ -25,8 +25,10 @@ $allow = [System.Security.AccessControl.AccessControlType]::Allow
 $full = [System.Security.AccessControl.FileSystemRights]::FullControl
 & icacls.exe $target '/inheritance:r' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "icacls inheritance update failed: $LASTEXITCODE" }
-$existingSids = @((Get-Acl -LiteralPath $target).Access | ForEach-Object {
-  $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+$accessSections = [System.Security.AccessControl.AccessControlSections]::Access
+$existingAcl = [System.IO.File]::GetAccessControl($target, $accessSections)
+$existingSids = @($existingAcl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object {
+  $_.IdentityReference.Value
 } | Sort-Object -Unique)
 foreach ($sid in $existingSids) {
   & icacls.exe $target '/remove:g' ('*' + $sid) '/remove:d' ('*' + $sid) | Out-Null
@@ -34,13 +36,13 @@ foreach ($sid in $existingSids) {
 }
 & icacls.exe $target '/grant:r' ('*' + $current.Value + ':(F)') ('*' + $system.Value + ':(F)') | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "icacls grant failed: $LASTEXITCODE" }
-$verified = Get-Acl -LiteralPath $target
+$verified = [System.IO.File]::GetAccessControl($target, $accessSections)
 if (-not $verified.AreAccessRulesProtected) { throw 'ACL inheritance is still enabled' }
 $allowedSids = @($current.Value, $system.Value)
 $seenCurrent = $false
 $seenSystem = $false
-foreach ($rule in $verified.Access) {
-  $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+foreach ($rule in $verified.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+  $sid = $rule.IdentityReference.Value
   if ($allowedSids -notcontains $sid) { throw "Unexpected ACL principal: $sid" }
   if ($rule.IsInherited) { throw 'Inherited ACL rule remains' }
   if ($rule.AccessControlType -ne $allow) { throw 'Deny ACL rule remains' }
@@ -59,17 +61,6 @@ export function applyAndVerifyWindowsAcl(
   execute: typeof execFile = execFile,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    // GitHub-hosted Windows runners launch pnpm from PowerShell 7, whose
-    // PSModulePath can omit the Windows PowerShell 5.1 inbox modules. The ACL
-    // helper intentionally uses powershell.exe, so put its trusted system
-    // module directory first instead of depending on the parent shell's path.
-    const windowsPowerShellModules = path.win32.join(
-      process.env.SystemRoot ?? process.env.WINDIR ?? 'C:\\Windows',
-      'System32',
-      'WindowsPowerShell',
-      'v1.0',
-      'Modules',
-    );
     const options: ExecFileOptions = {
       windowsHide: true,
       shell: false,
@@ -77,9 +68,6 @@ export function applyAndVerifyWindowsAcl(
       maxBuffer: 64 * 1024,
       env: {
         ...process.env,
-        PSModulePath: [windowsPowerShellModules, process.env.PSModulePath]
-          .filter((entry): entry is string => Boolean(entry))
-          .join(';'),
         EZTERMINAL_SECURE_FILE: filePath,
       },
     };

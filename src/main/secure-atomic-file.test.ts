@@ -131,15 +131,11 @@ describe('applyAndVerifyWindowsAcl', () => {
     expect(options.shell).toBe(false);
     expect(args.join(' ')).not.toContain(trickyPath);
     expect(options.env.EZTERMINAL_SECURE_FILE).toBe(trickyPath);
-    expect(options.env.PSModulePath?.split(';')[0]).toBe(path.win32.join(
-      process.env.SystemRoot ?? process.env.WINDIR ?? 'C:\\Windows',
-      'System32',
-      'WindowsPowerShell',
-      'v1.0',
-      'Modules',
-    ));
-    expect(args.join(' ')).toContain('icacls.exe');
-    expect(args.join(' ')).toContain('AreAccessRulesProtected');
+    const command = args.join(' ');
+    expect(command).toContain('icacls.exe');
+    expect(command).toContain('AreAccessRulesProtected');
+    expect(command).toContain('GetAccessRules');
+    expect(command).not.toContain('Get-Acl');
   });
 
   it.runIf(process.platform === 'win32')('applies a verified current-user + SYSTEM ACL on Windows', async () => {
