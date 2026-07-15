@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   attachConnection,
   AUTH_CLOSE_CODE,
+  PROTOCOL_CLOSE_CODE,
   MAX_REMOTE_FILE_READS,
   MAX_REMOTE_PENDING_FILE_OPENS,
   isRemoteOriginAllowed,
@@ -38,13 +39,30 @@ import type {
 } from '../shared/ipc';
 import { MAX_GUARDED_DESTROY_RUN_IDS } from '../shared/ipc';
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
-import { uint8ArrayToBase64, type RemotePacketFrame, type ServerToClientMessage } from '../shared/remote-protocol';
+import {
+  REMOTE_PROTOCOL_VERSION,
+  uint8ArrayToBase64,
+  type AuthMessage,
+  type RemotePacketFrame,
+  type ServerToClientMessage,
+} from '../shared/remote-protocol';
 import type { OpenClawAgentSession, OpenClawLifecycleResult, OpenClawLogLine, OpenClawStatus } from '../shared/openclaw';
 import type { AgentActivitySnapshot, AgentFollowupResult } from '../shared/agent';
 import type { WorktreeRequest } from '../shared/worktree';
 
 const TOKEN = 'the-secret-token';
+const HOST_VERSION = '1.0.0-test';
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+function authMessage(token = TOKEN): AuthMessage {
+  return {
+    kind: 'auth',
+    token,
+    protocolVersion: REMOTE_PROTOCOL_VERSION,
+    clientVersion: '1.0.0-test',
+    buildSha: 'test-sha',
+  };
+}
 
 async function waitForSent(
   ws: FakeWs,
@@ -402,6 +420,7 @@ function makeOptions(overrides: Partial<RemoteBridgeOptions> = {}): {
   const options: RemoteBridgeOptions = {
     port: 0,
     getToken: () => TOKEN,
+    hostVersion: HOST_VERSION,
     broker,
     ...overrides,
   };
@@ -410,7 +429,7 @@ function makeOptions(overrides: Partial<RemoteBridgeOptions> = {}): {
 
 async function authed(ws: FakeWs, options: RemoteBridgeOptions): Promise<void> {
   attachConnection(ws, options);
-  ws.clientSend({ kind: 'auth', token: TOKEN });
+  ws.clientSend(authMessage());
   await flush();
 }
 
@@ -444,7 +463,7 @@ describe('RemoteBridge — auth gate', () => {
     const ws = new FakeWs();
     const { options } = makeOptions();
     attachConnection(ws, options);
-    ws.clientSend({ kind: 'auth', token: 'wrong' });
+    ws.clientSend(authMessage('wrong'));
     await flush();
     expect(ws.sent).toContainEqual({ kind: 'auth-fail', reason: 'invalid-token' });
     expect(ws.closeCode).toBe(AUTH_CLOSE_CODE);
@@ -452,9 +471,14 @@ describe('RemoteBridge — auth gate', () => {
 
   it('accepts the correct token: sends auth-ok and does not close', async () => {
     const ws = new FakeWs();
-    const { options } = makeOptions();
+    const { options } = makeOptions({ buildSha: 'release-sha' });
     await authed(ws, options);
-    expect(ws.sent).toContainEqual({ kind: 'auth-ok' });
+    expect(ws.sent).toContainEqual({
+      kind: 'auth-ok',
+      protocolVersion: REMOTE_PROTOCOL_VERSION,
+      hostVersion: HOST_VERSION,
+      hostBuildSha: 'release-sha',
+    });
     expect(ws.closeCode).toBeUndefined();
   });
 
@@ -472,7 +496,7 @@ describe('RemoteBridge — auth gate', () => {
     attachConnection(ws, options);
     // Wrong-kind-first closes synchronously above; here simulate a slow auth
     // in flight by using an async token and sending a second message meanwhile.
-    ws.clientSend({ kind: 'auth', token: TOKEN });
+    ws.clientSend(authMessage());
     ws.clientSend({ kind: 'list-sessions' });
     await flush();
     // list-sessions racing auth resolution before authed=true must not process —
@@ -493,6 +517,41 @@ describe('RemoteBridge — auth gate', () => {
     attachConnection(ws, options);
 
     expect(() => ws.clientSend(payload)).not.toThrow();
+    expect(ws.closeCode).toBe(AUTH_CLOSE_CODE);
+  });
+
+  it.each([
+    ['missing', { kind: 'auth', token: TOKEN, clientVersion: '1.0.0' }],
+    ['unsupported', { ...authMessage(), protocolVersion: REMOTE_PROTOCOL_VERSION + 1 }],
+  ])('rejects a %s protocol version distinctly from credentials', async (_label, payload) => {
+    const ws = new FakeWs();
+    const { options } = makeOptions();
+    attachConnection(ws, options);
+
+    ws.clientSend(payload);
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'auth-fail',
+      reason: 'incompatible-protocol',
+      supportedProtocolVersion: REMOTE_PROTOCOL_VERSION,
+      hostVersion: HOST_VERSION,
+    });
+    expect(ws.closeCode).toBe(PROTOCOL_CLOSE_CODE);
+  });
+
+  it('does not expose protocol metadata until the token is valid', async () => {
+    const ws = new FakeWs();
+    const { options } = makeOptions();
+    attachConnection(ws, options);
+
+    ws.clientSend({ ...authMessage('wrong'), protocolVersion: 99 });
+    await flush();
+
+    expect(ws.sent).toContainEqual({ kind: 'auth-fail', reason: 'invalid-token' });
+    expect(ws.sent.some((message) => (
+      message.kind === 'auth-fail' && message.reason === 'incompatible-protocol'
+    ))).toBe(false);
     expect(ws.closeCode).toBe(AUTH_CLOSE_CODE);
   });
 
@@ -698,9 +757,11 @@ describe('RemoteBridge — onAuthenticated hook (auth-deadline wiring, security 
     const { options } = makeOptions();
     const onAuthenticated = vi.fn();
     attachConnection(ws, options, { onAuthenticated });
-    ws.clientSend({ kind: 'auth', token: TOKEN });
+    ws.clientSend(authMessage());
+    ws.clientSend(authMessage());
     await flush();
     expect(onAuthenticated).toHaveBeenCalledTimes(1);
+    expect(ws.sent.filter((message) => message.kind === 'auth-ok')).toHaveLength(1);
   });
 
   it('never fires on a failed auth', async () => {
@@ -708,7 +769,7 @@ describe('RemoteBridge — onAuthenticated hook (auth-deadline wiring, security 
     const { options } = makeOptions();
     const onAuthenticated = vi.fn();
     attachConnection(ws, options, { onAuthenticated });
-    ws.clientSend({ kind: 'auth', token: 'wrong' });
+    ws.clientSend(authMessage('wrong'));
     await flush();
     expect(onAuthenticated).not.toHaveBeenCalled();
   });
@@ -928,7 +989,7 @@ describe('RemoteBridge — list-runs (M1 mirror-active-runs)', () => {
     attachConnection(ws, options);
     // Simulate the message racing auth resolution, same as the list-sessions
     // race test above — only 'auth-ok' should ever be sent.
-    ws.clientSend({ kind: 'auth', token: TOKEN });
+    ws.clientSend(authMessage());
     ws.clientSend({ kind: 'list-runs' });
     await flush();
 
@@ -947,7 +1008,7 @@ describe('RemoteBridge — run-command frame/control multiplexing', () => {
       createMessageChannel: makeFakeChannel,
     });
     const ws = new FakeWs();
-    await authed(ws, { port: 0, getToken: () => TOKEN, broker });
+    await authed(ws, { port: 0, getToken: () => TOKEN, hostVersion: HOST_VERSION, broker });
 
     await runGuard.withRemovalBarrier(() => {
       ws.clientSend({ kind: 'run-command', runId: 'blocked', sessionId: 'sess-1', commandText: 'ls' });
@@ -2608,7 +2669,12 @@ describe('RemoteBridge - read-only Quick Commands capability', () => {
     const { options } = makeOptions({ quickCommandSource });
     await authed(ws, options);
 
-    expect(ws.sent).toContainEqual({ kind: 'auth-ok', capabilities: ['quick-commands-read'] });
+    expect(ws.sent).toContainEqual({
+      kind: 'auth-ok',
+      protocolVersion: REMOTE_PROTOCOL_VERSION,
+      hostVersion: HOST_VERSION,
+      capabilities: ['quick-commands-read'],
+    });
 
     ws.clientSend({ kind: 'quick-commands-list', requestId: 'qc-1' });
     await flush();
@@ -2627,7 +2693,11 @@ describe('RemoteBridge - read-only Quick Commands capability', () => {
     const { options } = makeOptions();
     await authed(ws, options);
 
-    expect(ws.sent).toContainEqual({ kind: 'auth-ok' });
+    expect(ws.sent).toContainEqual({
+      kind: 'auth-ok',
+      protocolVersion: REMOTE_PROTOCOL_VERSION,
+      hostVersion: HOST_VERSION,
+    });
     ws.clientSend({ kind: 'quick-commands-list', requestId: 'qc-unsupported' });
 
     expect(ws.sent).toContainEqual({

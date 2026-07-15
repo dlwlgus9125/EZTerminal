@@ -1,14 +1,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { WsEzTerminalTransport, type CreateSocket, type WsLike } from './ws-ezterminal';
-import type { ConnectionHealthSnapshot } from './connection-health';
+import { createSecureRequestId, WsEzTerminalTransport, type CreateSocket, type WsLike } from './ws-ezterminal';
+import type { ConnectionHealthSnapshot, RemoteConnectionState } from './connection-health';
 import { BlockController } from '../../../src/renderer/block-controller';
 import type { RunStartedInfo, SessionInfo, SystemStatsSnapshot } from '../../../src/shared/ipc';
 import { FILE_CHUNK_BYTES } from '../../../src/shared/files';
-import { base64ToUint8Array, encodeFrame, uint8ArrayToBase64, type RemotePacketFrame } from '../../../src/shared/remote-protocol';
+import {
+  REMOTE_PROTOCOL_VERSION,
+  base64ToUint8Array,
+  encodeFrame,
+  uint8ArrayToBase64,
+  type RemotePacketFrame,
+} from '../../../src/shared/remote-protocol';
 import type { OpenClawLogLine, OpenClawStatus } from '../../../src/shared/openclaw';
 
 // ── Fake socket ──────────────────────────────────────────────────────────────
+
+describe('createSecureRequestId', () => {
+  it('creates unique RFC 4122 v4 ids using the WebView-compatible crypto primitive', () => {
+    const ids = Array.from({ length: 32 }, () => createSecureRequestId());
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) {
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    }
+  });
+});
 
 type Handler = (...args: never[]) => void;
 
@@ -48,6 +64,17 @@ class FakeSocket implements WsLike {
   }
 
   triggerMessage(msg: unknown): void {
+    const normalized = (msg as { kind?: string })?.kind === 'auth-ok'
+      ? {
+          protocolVersion: REMOTE_PROTOCOL_VERSION,
+          hostVersion: '1.0.0-test',
+          ...(msg as Record<string, unknown>),
+        }
+      : msg;
+    this.triggerRawMessage(normalized);
+  }
+
+  triggerRawMessage(msg: unknown): void {
     if ((msg as { kind?: string })?.kind === 'auth-ok') this.readyState = 1;
     const data = JSON.stringify(msg);
     for (const h of this.handlers.message) h({ data } as never);
@@ -135,9 +162,65 @@ function captureEzPacketPort(): { readonly port: MessagePort | undefined; stop: 
 describe('WsEzTerminalTransport — auth handshake', () => {
   it('sends an auth envelope with the configured token once the socket opens', () => {
     const { createSocket, sockets } = makeCreateSocket();
-    new WsEzTerminalTransport({ url: 'ws://x', token: 'tok-123', createSocket });
+    new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok-123',
+      createSocket,
+      buildInfo: { appVersion: '1.0.0-test', protocolVersion: REMOTE_PROTOCOL_VERSION, buildSha: 'abc123' },
+    });
     sockets[0].triggerOpen();
-    expect(sockets[0].lastSent()).toEqual({ kind: 'auth', token: 'tok-123' });
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'auth',
+      token: 'tok-123',
+      protocolVersion: REMOTE_PROTOCOL_VERSION,
+      clientVersion: '1.0.0-test',
+      buildSha: 'abc123',
+    });
+  });
+
+  it.each([
+    ['missing auth-ok version', { kind: 'auth-ok' }],
+    ['unsupported auth-ok version', { kind: 'auth-ok', protocolVersion: 99, hostVersion: '2.0.0' }],
+    ['explicit auth failure', {
+      kind: 'auth-fail',
+      reason: 'incompatible-protocol',
+      supportedProtocolVersion: REMOTE_PROTOCOL_VERSION,
+      hostVersion: '2.0.0',
+    }],
+  ])('stops reconnecting on %s', (_label, message) => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    const states: RemoteConnectionState[] = [];
+    transport.onConnectionStateChange((state) => states.push(state));
+
+    sockets[0].triggerRawMessage(message);
+
+    expect(states.at(-1)).toBe('protocol-incompatible');
+    expect(transport.isAuthed).toBe(false);
+    expect(transport.retryNow()).toBe(false);
+    expect(sockets[0].closed).toBe(true);
+  });
+
+  it('ignores application messages before auth and after a protocol rejection', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    const availability: boolean[] = [];
+    transport.onOpenClawAvailability((visible) => availability.push(visible));
+
+    sockets[0].triggerMessage({ kind: 'openclaw-availability', visible: true });
+    expect(availability).not.toContain(true);
+
+    sockets[0].triggerRawMessage({
+      kind: 'auth-ok',
+      protocolVersion: 99,
+      hostVersion: '2.0.0',
+    });
+    sockets[0].triggerMessage({ kind: 'openclaw-availability', visible: true });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    expect(availability).not.toContain(true);
+    expect(transport.currentConnectionState).toBe('protocol-incompatible');
+    expect(transport.isAuthed).toBe(false);
   });
 
   it('isAuthed flips true on auth-ok and false on auth-fail', () => {
@@ -596,6 +679,7 @@ describe('WsEzTerminalTransport — runCommand: _ezPort handoff + frame delivery
   it('delivers InterpreterFrames from the WS to a real BlockController via the reproduced _ezPort message', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
 
     const capture = captureEzPort('run-1');
     await transport.runCommand('ls', 'run-1', 'sess-1');
@@ -632,6 +716,7 @@ describe('WsEzTerminalTransport — runCommand: _ezPort handoff + frame delivery
   it('decodes pty-data bytes and replay side-effect suppression before delivery', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
 
     const capture = captureEzPort('run-pty');
     await transport.runCommand('!bash', 'run-pty', 'sess-1');
@@ -661,6 +746,7 @@ describe('WsEzTerminalTransport — runCommand: _ezPort handoff + frame delivery
   it('relays a control posted to the fake port as {kind:control, runId, control}', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
 
     const capture = captureEzPort('run-1');
     await transport.runCommand('ls', 'run-1', 'sess-1');
@@ -674,6 +760,7 @@ describe('WsEzTerminalTransport — runCommand: _ezPort handoff + frame delivery
   it('demuxes two concurrent runs — frames never cross runIds', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
 
     const captureA = captureEzPort('run-a');
     await transport.runCommand('ls', 'run-a', 'sess-1');
@@ -723,7 +810,9 @@ describe('WsEzTerminalTransport — disconnect / reconnect with backoff', () => 
     expect(sockets).toHaveLength(2);
 
     sockets[1].triggerOpen();
-    expect(sockets[1].lastSent()).toEqual({ kind: 'auth', token: 'tok' });
+    expect(sockets[1].lastSent()).toMatchObject({
+      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_VERSION,
+    });
     sockets[1].triggerMessage({ kind: 'auth-ok' });
   });
 
@@ -756,7 +845,9 @@ describe('WsEzTerminalTransport — disconnect / reconnect with backoff', () => 
     expect(sockets[1].sent).toEqual([]);
 
     sockets[1].triggerOpen();
-    expect(sockets[1].lastSent()).toEqual({ kind: 'auth', token: 'tok' });
+    expect(sockets[1].lastSent()).toMatchObject({
+      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_VERSION,
+    });
     const sentBeforeAuth = sockets[1].sent.length;
     await expect(transport.listSessions()).resolves.toEqual([]);
     await expect(transport.listFiles('/before-auth-ok')).resolves.toEqual({
@@ -1230,7 +1321,9 @@ describe('WsEzTerminalTransport — connection health and explicit retry', () =>
     expect(transport.retryNow()).toBe(true);
     expect(sockets).toHaveLength(2);
     sockets[1].triggerOpen();
-    expect(sockets[1].lastSent()).toEqual({ kind: 'auth', token: 'tok' });
+    expect(sockets[1].lastSent()).toMatchObject({
+      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_VERSION,
+    });
   });
 
   it('returns bounded redacted diagnostics', () => {
@@ -1282,13 +1375,17 @@ describe('WsEzTerminalTransport — auth watchdog (self-heals a stuck attempt)',
       initialBackoffMs: 100,
     });
     sockets[0].triggerOpen();
-    expect(sockets[0].lastSent()).toEqual({ kind: 'auth', token: 'tok' });
+    expect(sockets[0].lastSent()).toMatchObject({
+      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_VERSION,
+    });
     // No auth-ok, no close — the exact stall that used to hang "Connecting…" forever.
     vi.advanceTimersByTime(1000 + 100);
     expect(sockets[0].closed).toBe(true);
     expect(sockets).toHaveLength(2);
     sockets[1].triggerOpen();
-    expect(sockets[1].lastSent()).toEqual({ kind: 'auth', token: 'tok' });
+    expect(sockets[1].lastSent()).toMatchObject({
+      kind: 'auth', token: 'tok', protocolVersion: REMOTE_PROTOCOL_VERSION,
+    });
     sockets[1].triggerMessage({ kind: 'auth-ok' }); // the retry authenticates cleanly
   });
 
@@ -1342,6 +1439,7 @@ describe('WsEzTerminalTransport — onSessionDead', () => {
   it('fires registered listeners on a session-dead message, and unsubscribe works', () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
 
     const calls: Array<{ logPath?: string | null } | undefined> = [];
     const unsub = transport.onSessionDead((info) => calls.push(info));
@@ -1359,6 +1457,7 @@ describe('WsEzTerminalTransport — session mirroring (M2)', () => {
   it('onSessionAdded/onSessionRemoved fire on the matching broadcast; unsubscribe stops delivery', () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
 
     const added: SessionInfo[] = [];
     const removed: string[] = [];
@@ -1381,6 +1480,7 @@ describe('WsEzTerminalTransport — session mirroring (M2)', () => {
   it('onRunStarted fires with sessionId/runId/commandText on a run-started broadcast', () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
 
     const seen: RunStartedInfo[] = [];
     transport.onRunStarted((info) => seen.push(info));
@@ -1398,6 +1498,7 @@ describe('WsEzTerminalTransport — session mirroring (M2)', () => {
   it('attachRun() sends attach-run and dispatches the _ezAttachPort handoff, delivering frames for that runId to a real BlockController', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
 
     const capture = captureEzAttachPort('run-9');
     await transport.attachRun('sess-1', 'run-9');
@@ -1418,6 +1519,7 @@ describe('WsEzTerminalTransport — session mirroring (M2)', () => {
   it('relays a control posted to an attached port as {kind:control, runId, control}', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
 
     const capture = captureEzAttachPort('run-9');
     await transport.attachRun('sess-1', 'run-9');
@@ -1584,6 +1686,7 @@ describe('WsEzTerminalTransport — stats', () => {
   it('fans out stats-update to multiple listeners; unsubscribe stops delivery', () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
 
     const seenA: SystemStatsSnapshot[] = [];
     const seenB: SystemStatsSnapshot[] = [];

@@ -1,40 +1,38 @@
-# EZTerminal — Windows 코드서명 (B-M3)
+# EZTerminal 1.0 서명 정책
 
-> 인프라는 구축 완료(env-gated). **인증서 취득은 외부 의존 — 사용자 결정.**
-> env 미설정 시 모든 빌드는 무서명으로 정상 동작한다 (기본값).
+## Android 장기 릴리스키
 
-## 활성화 방법
+1. 저장소 밖의 안전한 작업 폴더에서 키를 한 번 생성한다.
 
-```powershell
-$env:WINDOWS_SIGN_CERT_FILE = 'C:\path\to\cert.pfx'   # 필수 — 없으면 서명 전체 skip
-$env:WINDOWS_SIGN_CERT_PASSWORD = '...'               # pfx 비밀번호
-pnpm make
-```
+   ```powershell
+   keytool -genkeypair -v `
+     -keystore ezterminal-release.jks `
+     -alias ezterminal-release `
+     -keyalg RSA -keysize 4096 -validity 10000
+   ```
 
-- `forge.config.ts`의 `windowsSign`이 packager(EZTerminal.exe + dll/node) 및
-  MakerSquirrel(`EZTerminal-Setup.exe`)에 동일 적용된다.
-- `signtool.exe`는 `@electron/windows-sign`이 vendored — Windows SDK 불필요.
-- 타임스탬프 서버 기본값: `http://timestamp.digicert.com` (오버라이드:
-  `WINDOWS_TIMESTAMP_SERVER`는 라이브러리 기본 env 지원).
-- CI(GitHub Actions)에서는 두 env를 repository secrets로 설정하면 release.yml(B-M2)이 그대로 서명한다.
-  pfx 자체는 base64 secret → 임시 파일 복원 패턴 권장.
+2. 인증서 지문을 확인하고 공백/콜론을 제외한 SHA-256 64자리를 기록한다.
 
-## 인증서 옵션 (취득 시 참고)
+   ```powershell
+   keytool -list -v -keystore ezterminal-release.jks -alias ezterminal-release
+   ```
 
-| 옵션 | 비용/절차 | SmartScreen 평판 |
-|---|---|---|
-| **Azure Trusted Signing** (권고) | 구독제, 개인/조직 검증 | MS 관리 인증서 — 평판 축적 유리 |
-| OV 코드서명 인증서 (Sectigo/DigiCert 등) | 연 단위 구매, USB 토큰(2023+ 의무) | 다운로드 수 축적까지 경고 지속 |
-| EV 인증서 | 고가, 하드웨어 토큰 | 즉시 평판 (SmartScreen 경고 최소) |
-| 무서명 (현재) | 0원 | 설치 시 SmartScreen "알 수 없는 게시자" 경고 — 잠정 수용됨 |
+3. 키스토어를 base64로 변환해 GitHub Environment `release`의 `ANDROID_KEYSTORE_BASE64` secret에 등록한다.
 
-- USB 토큰 기반 OV/EV는 CI 자동 서명이 어려움(토큰이 로컬 필요) → CI 서명까지 원하면
-  Azure Trusted Signing이 현실적. 그 경우 `windowsSign.signWithParams`로 Trusted Signing
-  dlib 파라미터를 넘기는 구성으로 확장한다(취득 후 이 문서 갱신).
+   ```powershell
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes('ezterminal-release.jks')) |
+     Set-Clipboard
+   ```
 
-## 검증 기록
+4. 키스토어/키 비밀번호와 별칭, SHA-256 지문도 각각 Environment secret으로 등록한다.
+5. 공개 SHA-256 지문을 `mobile/android/signing-certificate.sha256`의 `UNCONFIGURED` 대신 한 줄로 커밋한다. workflow는 커밋된 지문, 보호된 secret과 실제 APK 인증서가 모두 같지 않으면 실패한다.
 
-- 무서명 경로(env 부재): `pnpm package` exit 0 — 기존과 동일 (2026-07-02 확인)
-- 서명 경로: 자체서명 테스트 인증서(pfx)로 `pnpm package` → `Get-AuthenticodeSignature`가
-  EZTerminal.exe에서 서명 확인. 자체서명이라 상태는 `UnknownError`(신뢰 체인 없음)지만
-  signtool 실행·서명 삽입 경로가 동작함을 증명 (2026-07-02 확인)
+키스토어는 GitHub만 유일하게 보관해서는 안 된다. 암호화된 오프라인 사본과 암호 관리자 사본을 별도 위치에 유지한다. 인증서 지문은 공개 정보이므로 저장소에 고정해 보호된 Environment가 유일한 신뢰 근거가 되지 않게 한다. 현재 `UNCONFIGURED` 표식은 키가 아직 생성되지 않았음을 나타내며 Release workflow를 의도적으로 차단한다.
+
+1.0 이전 APK는 Android Debug 인증서로 서명됐다. 새 키와 서명 연속성이 없으므로 기존 앱을 한 번 삭제하고 다시 설치해야 한다. 이후 공개 APK는 반드시 같은 장기키를 사용한다.
+
+## Windows 1.0
+
+Windows 1.0 공개 산출물은 의도적으로 무서명이다. Release workflow는 `EZTerminal.exe`와 `EZTerminal-Setup.exe`의 Authenticode 상태가 정확히 `NotSigned`인지 확인하고 `release-manifest.json`에 기록한다. 사용자는 첫 실행 때 SmartScreen의 알 수 없는 게시자 경고를 볼 수 있다.
+
+`forge.config.ts`의 선택적 PFX 지원은 향후 인증서 도입을 위해 남아 있지만 1.0 Release workflow는 PFX를 주입하지 않는다. 정식 Windows 인증서를 도입할 때는 검증 계약과 문서를 함께 변경하고 별도의 릴리스 후보에서 시험한다.

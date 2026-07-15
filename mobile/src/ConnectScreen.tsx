@@ -15,18 +15,21 @@ export function ConnectScreen({
   saved,
   connecting,
   failed,
+  protocolIncompatible = false,
   storageWarning,
   onConnect,
 }: {
   saved: SavedConnection | null;
   connecting: boolean;
   failed: boolean;
+  protocolIncompatible?: boolean;
   storageWarning?: string | null;
   onConnect: (url: string, token: string) => void;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const [url, setUrl] = useState(saved?.url ?? '');
   const [token, setToken] = useState(saved?.token ?? '');
+  const insecureWs = /^ws:\/\//i.test(url.trim());
 
   const submit = (): void => {
     const trimmedUrl = url.trim();
@@ -39,6 +42,11 @@ export function ConnectScreen({
     <div className="connect-screen" data-testid="connect-screen">
       <div className="connect-card">
         <h1 className="connect-title">{t('mobile.connect.title')}</h1>
+        {insecureWs && (
+          <p className="connect-security-warning" role="note" data-testid="connect-ws-warning">
+            {t('mobile.connect.trustedNetworkWarning')}
+          </p>
+        )}
         <label className="connect-field">
           <span>{t('mobile.connect.serverUrl')}</span>
           <input
@@ -57,7 +65,12 @@ export function ConnectScreen({
             data-testid="connect-token"
           />
         </label>
-        {failed && (
+        {protocolIncompatible ? (
+          <p className="connect-error" role="alert" data-testid="connect-protocol-incompatible">
+            <strong>{t('mobile.connect.protocolIncompatibleLabel')}</strong>{' '}
+            {t('mobile.connect.protocolIncompatibleDetail')}
+          </p>
+        ) : failed && (
           <p className="connect-error" data-testid="connect-error">
             {t('mobile.connect.failed')}
           </p>

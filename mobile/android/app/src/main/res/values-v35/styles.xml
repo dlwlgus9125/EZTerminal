@@ -3,7 +3,7 @@
     <!-- Android 15 enforces edge-to-edge for targetSdk 35. Capacitor 6's
          WebView can report a zero safe-area inset even while the status bar
          overlaps the header, leaving its buttons untappable. Keep the API 35
-         attribute out of the base resource table so API 22-34 stay safe. -->
+         attribute out of the base resource table so API 29-34 stay safe. -->
     <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>

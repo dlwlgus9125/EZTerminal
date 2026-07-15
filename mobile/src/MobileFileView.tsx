@@ -1,14 +1,14 @@
 import { Browser } from '@capacitor/browser';
-import { Directory, Filesystem } from '@capacitor/filesystem';
 import { ArrowUp, File as FileIcon, Folder, FolderPlus, RefreshCw, Upload, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../../src/shared/files';
 import type { FilePreviewResult } from '../../src/shared/file-preview';
 import { normalizeExternalHttpUrl } from '../../src/shared/external-url';
-import { uint8ArrayToBase64 } from '../../src/shared/remote-protocol';
 import { FilePreviewContent } from '../../src/renderer/FilePreviewContent';
 import { useAppTranslation } from '../../src/renderer/i18n';
+import { saveDownloadToDevice } from './download-storage';
+import { e2eLog } from './e2e-telemetry';
 import { useLongPress } from './long-press';
 import { MobileActionSheet } from './MobileActionSheet';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
@@ -61,14 +61,21 @@ interface DownloadProgress {
   readonly total: number;
 }
 
-/** Android <=29 needs a runtime grant for `Directory.Documents` (the static
- * manifest permission alone isn't enough); scoped storage (API 30+) and
- * iOS/web are no-ops that resolve 'granted' immediately. */
-async function ensureFilesystemPermission(): Promise<boolean> {
-  const { publicStorage } = await Filesystem.checkPermissions();
-  if (publicStorage === 'granted') return true;
-  const { publicStorage: after } = await Filesystem.requestPermissions();
-  return after === 'granted';
+// The file page can be unmounted by Android Back while a network read is
+// still active. Keep transfer ownership at module lifetime so reopening the
+// page cannot allocate a second 50 MiB receive buffer before the first one
+// reaches the native single-flight bridge.
+let activeDownloadOwner: symbol | null = null;
+
+function acquireDownloadOwner(): symbol | null {
+  if (activeDownloadOwner !== null) return null;
+  const owner = Symbol('mobile-file-download');
+  activeDownloadOwner = owner;
+  return owner;
+}
+
+function releaseDownloadOwner(owner: symbol): void {
+  if (activeDownloadOwner === owner) activeDownloadOwner = null;
 }
 
 export function MobileFileView({
@@ -101,6 +108,10 @@ export function MobileFileView({
   // fire it twice (e.g. two trashFile calls for the same path). One ref
   // covers all three since they never legitimately overlap.
   const mutatingRef = useRef(false);
+  // A second tap must not start another network transfer while the first one
+  // is still being persisted through the single-flight native MediaStore
+  // bridge. The ref closes the pre-render double-tap window.
+  const downloadInFlightRef = useRef(false);
 
   // Upload (M5) — see the module doc above for the ref-vs-closure shape.
   const [uploadItems, setUploadItems] = useState<readonly UploadItem[]>([]);
@@ -128,7 +139,7 @@ export function MobileFileView({
     setEntries(result.entries);
     setPathInput(result.path);
     // e2e marker (M6 parity): logcat has no DOM access without Appium.
-    console.log('[ez-e2e] files:listed', result.path, result.entries.length);
+    e2eLog('files:listed', result.path, result.entries.length);
   }, [transport]);
 
   const loadRoots = useCallback(async (): Promise<void> => {
@@ -141,7 +152,7 @@ export function MobileFileView({
     setParent(null);
     setPathInput('');
     setEntries(roots.map((name) => ({ name, kind: 'dir' as const, isSymlink: false, size: 0, mtimeMs: 0 })));
-    console.log('[ez-e2e] files:listed', '(roots)', roots.length);
+    e2eLog('files:listed', '(roots)', roots.length);
   }, [transport]);
 
   // Best-effort snapshot ONLY at open — no live cwd following (locked requirement).
@@ -163,7 +174,7 @@ export function MobileFileView({
       if (!result.ok) setError(result.error);
       else setError(null);
       setViewing({ entry, path: fullPath, result });
-      console.log('[ez-e2e] files:viewer-open', entry.name);
+      e2eLog('files:viewer-open', entry.name);
     },
     [transport],
   );
@@ -280,28 +291,24 @@ export function MobileFileView({
 
   const handleDownload = useCallback(
     async (entry: FileEntry): Promise<void> => {
+      if (downloadInFlightRef.current) return;
+      const downloadOwner = acquireDownloadOwner();
+      if (downloadOwner === null) return;
+      downloadInFlightRef.current = true;
       const fullPath = fullPathFor(entry);
       setDownloadProgress({ name: entry.name, received: 0, total: entry.size });
       try {
-        const granted = await ensureFilesystemPermission();
-        if (!granted) {
-          showToast(t('mobile.filesView.permissionDenied'));
-          return;
-        }
         const { name, bytes } = await transport.downloadFile(fullPath, (received, total) => {
           setDownloadProgress({ name: entry.name, received, total });
         });
-        await Filesystem.writeFile({
-          path: name,
-          data: uint8ArrayToBase64(bytes),
-          directory: Directory.Documents,
-          recursive: true,
-        });
-        console.log('[ez-e2e] files:download-done', name, bytes.length);
-        showToast(t('mobile.filesView.saved', { name }));
+        const saved = await saveDownloadToDevice(name, bytes);
+        e2eLog('files:download-done', saved.name, bytes.length, saved.uri);
+        showToast(t('mobile.filesView.saved', { name: saved.name }));
       } catch (err) {
         showToast(err instanceof Error ? err.message : t('mobile.filesView.downloadFailed'));
       } finally {
+        downloadInFlightRef.current = false;
+        releaseDownloadOwner(downloadOwner);
         setDownloadProgress(null);
       }
     },
@@ -324,7 +331,7 @@ export function MobileFileView({
         for (const item of nextItems) {
           const wasDone = prevItems.find((p) => p.id === item.id)?.status === 'done';
           if (item.status === 'done' && !wasDone) {
-            console.log('[ez-e2e] files:upload-done', item.finalName, item.size);
+            e2eLog('files:upload-done', item.finalName, item.size);
             if (item.dirPath === currentPathRef.current) {
               void loadPath(currentPathRef.current);
             }
@@ -370,14 +377,26 @@ export function MobileFileView({
     return (
       <div className="mobile-file-viewer" data-testid="mobile-file-viewer">
         <header className="mobile-file-head">
-          <button type="button" className="btn" onClick={() => setViewing(null)} data-testid="viewer-back">
+          <button
+            type="button"
+            className="btn"
+            onClick={() => setViewing(null)}
+            disabled={downloadProgress !== null}
+            data-testid="viewer-back"
+          >
             ‹ {t('mobile.filesView.back')}
           </button>
           <div className="mobile-file-viewer-title">{viewing.result.ok ? viewing.result.name : viewing.entry.name}</div>
           <button type="button" className="btn" onClick={() => onPastePath(viewing.path)} data-testid="viewer-insert">
             {t('mobile.filesView.insert')}
           </button>
-          <button type="button" className="btn" onClick={() => void handleDownload(viewing.entry)} data-testid="viewer-download">
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void handleDownload(viewing.entry)}
+            disabled={downloadProgress !== null}
+            data-testid="viewer-download"
+          >
             {t('mobile.filesView.download')}
           </button>
           {!viewing.result.ok && (
@@ -386,6 +405,11 @@ export function MobileFileView({
             </button>
           )}
         </header>
+        {downloadProgress && (
+          <div className="mobile-file-progress" data-testid="mobile-file-progress">
+            {downloadProgress.name}: {formatSize(downloadProgress.received)} / {formatSize(downloadProgress.total)}
+          </div>
+        )}
         {viewing.result.ok && viewing.result.kind === 'text' && viewing.result.truncated && (
           <div className="mobile-file-truncated" data-testid="viewer-truncated">
             {t('mobile.filesView.truncated')}
@@ -474,7 +498,14 @@ export function MobileFileView({
           }}
           data-testid="mobile-file-upload-input"
         />
-        <button type="button" className="btn" onClick={onClose} aria-label={t('common.close')} data-testid="mobile-file-close">
+        <button
+          type="button"
+          className="btn"
+          onClick={onClose}
+          disabled={downloadProgress !== null}
+          aria-label={t('common.close')}
+          data-testid="mobile-file-close"
+        >
           <X aria-hidden="true" size={18} />
         </button>
       </header>
@@ -724,6 +755,7 @@ export function MobileFileView({
               <button
                 type="button"
                 className="mobile-action-sheet-row"
+                disabled={downloadProgress !== null}
                 onClick={() => {
                   void handleDownload(sheetEntry);
                   closeEntrySheetAndRestoreFocus();

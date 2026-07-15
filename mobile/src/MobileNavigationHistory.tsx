@@ -172,7 +172,7 @@ export function MobileNavigationHistoryProvider({ children }: { readonly childre
   }, [pushHistoryEntry, releaseLayer, replaceHistoryEntry]);
 
   const replaceTopLayer = useCallback((transition: () => void): void => {
-    const current = layersRef.current.at(-1);
+    const current = layersRef.current[layersRef.current.length - 1];
     if (!current) {
       transition();
       return;
@@ -233,7 +233,7 @@ export function MobileNavigationHistoryProvider({ children }: { readonly childre
           // close. Consuming another Back here could skip the terminal page.
           if (pendingTraversalRef.current || replacementRef.current) return;
           const layers = layersRef.current;
-          const top = layers.at(-1);
+          const top = layers[layers.length - 1];
           if (!top) {
             if (canGoBack) {
               try {

@@ -18,11 +18,11 @@ test('tab overflow: narrow window with many tabs shows the overflow chip and scr
 
   await app.evaluate(({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows()[0];
-    win.setBounds({ width: 700, height: 500 });
+    win.setBounds({ width: 800, height: 600 });
   });
 
-  // 1 default pane + 13 new tabs = 14, narrow enough to overflow at 700px
-  // (M3's manual probe: 15 tabs @700x500 -> scrollWidth 1848 vs clientWidth 656).
+  // 1 default pane + 13 new tabs = 14, enough to overflow at the supported
+  // 800x600 minimum window while keeping the responsive contract realistic.
   for (let i = 0; i < 13; i++) {
     await window.getByTestId('btn-new-tab').click();
   }

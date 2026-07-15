@@ -4,6 +4,7 @@ import {
   MobileNavigationHistoryProvider,
   useMobileNavigationHistory,
 } from './MobileNavigationHistory';
+import { setElementIsolated } from './dom-isolation';
 
 /**
  * Keeps terminal-owned React/xterm state alive while opaque auxiliary pages
@@ -45,6 +46,7 @@ function MobileWorkbenchLayers({
   readonly onRequestTerminal: () => void;
 }): JSX.Element {
   const terminalLayerRef = useRef<HTMLDivElement | null>(null);
+  const pageIsolationOwnerRef = useRef(Symbol('mobile-page-isolation'));
   const pageLayerId = `mobile-page-${useId()}`;
   const pageActive = page !== undefined && page !== null;
   const navigation = useMobileNavigationHistory();
@@ -54,8 +56,9 @@ function MobileWorkbenchLayers({
   useLayoutEffect(() => {
     const terminalLayer = terminalLayerRef.current;
     if (!terminalLayer) return;
-    terminalLayer.inert = pageActive;
-    terminalLayer.toggleAttribute('inert', pageActive);
+    const owner = pageIsolationOwnerRef.current;
+    setElementIsolated(terminalLayer, owner, pageActive);
+    return () => setElementIsolated(terminalLayer, owner, false);
   }, [pageActive]);
 
   useEffect(() => {
@@ -72,7 +75,6 @@ function MobileWorkbenchLayers({
       <div
         ref={terminalLayerRef}
         className="mobile-terminal-layer"
-        aria-hidden={pageActive ? true : undefined}
         data-testid="mobile-terminal-layer"
       >
         {terminal}

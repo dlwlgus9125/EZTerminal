@@ -40,6 +40,7 @@ import {
 } from '../shared/ipc';
 import {
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
+  REMOTE_PROTOCOL_VERSION,
   base64ToUint8Array,
   encodeFrame,
   uint8ArrayToBase64,
@@ -80,6 +81,9 @@ import {
 
 /** Non-standard WS close code: auth was missing/wrong on this connection. */
 export const AUTH_CLOSE_CODE = 4001;
+
+/** Non-standard WS close code: desktop/mobile wire protocols are incompatible. */
+export const PROTOCOL_CLOSE_CODE = 4002;
 
 /** Default bridge port — overridable via `EZTERMINAL_REMOTE_PORT`. */
 export const DEFAULT_REMOTE_BRIDGE_PORT = 7420;
@@ -553,6 +557,10 @@ export interface RemoteQuickCommandSource {
 export interface RemoteBridgeOptions {
   readonly port: number;
   readonly getToken: () => Promise<string> | string;
+  /** Public application version returned in the authenticated handshake. */
+  readonly hostVersion: string;
+  /** Optional release identity for local diagnostics; never used for auth. */
+  readonly buildSha?: string;
   /** The single shared interpreter broker — main.ts and this bridge adapt to
    * ONE instance, so there is exactly one interpreter listener + one session
    * directory across both transports. */
@@ -597,6 +605,7 @@ export function attachConnection(
   hooks?: { onAuthenticated?: () => void },
 ): void {
   let authed = false;
+  let authPending = false;
   let releaseRunsOnClose = false;
   let connectionClosed = false;
   const runLeases = leasesFor(options);
@@ -897,6 +906,9 @@ export function attachConnection(
     }
 
     if (!authed) {
+      // getToken() may be asynchronous. Ignore every frame until that one
+      // decision settles so duplicate auth frames cannot authenticate twice.
+      if (authPending) return;
       if (!isRecord(parsed) || parsed.kind !== 'auth') {
         ws.close(AUTH_CLOSE_CODE);
         return;
@@ -906,13 +918,33 @@ export function attachConnection(
         ws.close(AUTH_CLOSE_CODE);
         return;
       }
+      const protocolCompatible = (
+        parsed.protocolVersion === REMOTE_PROTOCOL_VERSION
+        && typeof parsed.clientVersion === 'string'
+        && parsed.clientVersion.trim().length > 0
+      );
       const candidateToken = parsed.token;
+      authPending = true;
       void Promise.resolve(options.getToken()).then((token) => {
+        if (connectionClosed || authed) return;
         if (tokensMatch(candidateToken, token)) {
+          if (!protocolCompatible) {
+            send({
+              kind: 'auth-fail',
+              reason: 'incompatible-protocol',
+              supportedProtocolVersion: REMOTE_PROTOCOL_VERSION,
+              hostVersion: options.hostVersion,
+            });
+            ws.close(PROTOCOL_CLOSE_CODE);
+            return;
+          }
           authed = true;
           hooks?.onAuthenticated?.();
           send({
             kind: 'auth-ok',
+            protocolVersion: REMOTE_PROTOCOL_VERSION,
+            hostVersion: options.hostVersion,
+            ...(options.buildSha ? { hostBuildSha: options.buildSha } : {}),
             ...(options.quickCommandSource
               ? { capabilities: [REMOTE_CAPABILITY_QUICK_COMMANDS_READ] as const }
               : {}),
@@ -925,6 +957,10 @@ export function attachConnection(
           send({ kind: 'auth-fail', reason: 'invalid-token' });
           ws.close(AUTH_CLOSE_CODE);
         }
+      }).catch(() => {
+        if (connectionClosed || authed) return;
+        send({ kind: 'auth-fail', reason: 'invalid-token' });
+        ws.close(AUTH_CLOSE_CODE);
       });
       return;
     }

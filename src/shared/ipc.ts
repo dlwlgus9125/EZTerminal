@@ -58,6 +58,9 @@ export const DESKTOP_BRIDGE_KEY = 'ezterminalDesktop' as const;
 
 /** Runtime version strings, surfaced by the preload (no IPC round-trip). */
 export interface RuntimeVersions {
+  readonly app: string;
+  readonly protocol: number;
+  readonly buildSha: string;
   readonly electron: string;
   readonly chrome: string;
   readonly node: string;

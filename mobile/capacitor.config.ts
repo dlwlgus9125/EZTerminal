@@ -1,9 +1,9 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 // Mobile remote-control shell (M2): wraps the Vite web build (`dist/`) as an
-// Android WebView app. No native plugins beyond core — the app talks to the
-// desktop bridge purely over WS (ws-ezterminal.ts), nothing native-only is
-// needed for M2's scope (stats/packet-capture are explicitly desktop-only).
+// Android WebView app. The app talks to the desktop bridge over WS and also
+// registers one app-local MediaStore plugin for user-requested downloads;
+// targetSdk 35 must not write raw shared-storage paths.
 const config: CapacitorConfig = {
   appId: 'com.ezterminal.remote',
   appName: 'EZTerminal Remote',

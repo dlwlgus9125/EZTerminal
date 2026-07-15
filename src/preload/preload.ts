@@ -12,6 +12,8 @@ import {
   type SystemStatsSnapshot,
 } from '../shared/ipc';
 import type { ThemeMod } from '../shared/theme-schema';
+import { REMOTE_PROTOCOL_VERSION } from '../shared/remote-protocol';
+import packageJson from '../../package.json';
 
 // Preload runs with context isolation ON (architecture §1).
 // We expose a NARROW, explicit API — never the raw ipcRenderer.
@@ -64,6 +66,9 @@ ipcRenderer.on('packet-port', (event) => {
 
 const api: EzTerminalApi = {
   versions: {
+    app: packageJson.version,
+    protocol: REMOTE_PROTOCOL_VERSION,
+    buildSha: process.env.EZTERMINAL_BUILD_SHA ?? process.env.GITHUB_SHA ?? 'dev',
     electron: process.versions.electron ?? 'unknown',
     chrome: process.versions.chrome ?? 'unknown',
     node: process.versions.node ?? 'unknown',

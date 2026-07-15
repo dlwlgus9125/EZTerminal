@@ -41,6 +41,7 @@ function renderSheet({
   source,
   supported = true,
   connected = true,
+  active = true,
   onInsert = vi.fn(),
   onRun = vi.fn(),
   runDisabledReason,
@@ -48,6 +49,7 @@ function renderSheet({
   source: MobileQuickCommandSource;
   supported?: boolean;
   connected?: boolean;
+  active?: boolean;
   onInsert?: (text: string) => void;
   onRun?: (text: string) => void;
   runDisabledReason?: string;
@@ -58,6 +60,7 @@ function renderSheet({
         source={source}
         supported={supported}
         connected={connected}
+        active={active}
         onInsert={onInsert}
         onRun={onRun}
         runDisabledReason={runDisabledReason}
@@ -126,6 +129,21 @@ describe('MobileQuickCommandSheet', () => {
     expect(container.querySelector<HTMLButtonElement>(`[data-testid="mobile-quick-command-run-${command.id}"]`)?.disabled).toBe(true);
     act(() => container.querySelector<HTMLButtonElement>(`[data-testid="mobile-quick-command-insert-${command.id}"]`)!.click());
     expect(onInsert).toHaveBeenCalledWith(command.command);
+  });
+
+  it('closes an open sheet when its preserved terminal tab becomes inactive', async () => {
+    const source: MobileQuickCommandSource = {
+      listRemoteQuickCommands: vi.fn(async (): Promise<RemoteQuickCommandsResult> => ({ ok: true, commands: [command] })),
+    };
+    renderSheet({ source, active: true });
+    await openAndLoad();
+    expect(container.querySelector('[data-testid="mobile-quick-command-sheet"]')).not.toBeNull();
+
+    renderSheet({ source, active: false });
+    expect(container.querySelector('[data-testid="mobile-quick-command-sheet"]')).toBeNull();
+
+    renderSheet({ source, active: true });
+    expect(container.querySelector('[data-testid="mobile-quick-command-sheet"]')).toBeNull();
   });
 
   it('renders retryable error and desktop-authored empty states', async () => {

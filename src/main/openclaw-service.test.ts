@@ -159,6 +159,12 @@ class FakeOpenClawWs implements OpenClawWsLike {
     else if (event === 'close') this.closeHandlers.push(listener as never);
     else this.errorHandlers.push(listener as never);
   }
+  /** Test-only visibility into listener registration on the injected socket. */
+  listenerCount(event: 'message' | 'close' | 'error'): number {
+    if (event === 'message') return this.messageHandlers.length;
+    if (event === 'close') return this.closeHandlers.length;
+    return this.errorHandlers.length;
+  }
   /** Test helper: simulate a server-sent frame. */
   serverSend(msg: unknown): void {
     const data = { toString: () => JSON.stringify(msg) };
@@ -1067,6 +1073,73 @@ describe('OpenClawService — log poll gated on running (M5)', () => {
 });
 
 // ── dispose ──────────────────────────────────────────────────────────────
+
+describe('OpenClawService — gateway-down soak', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('bounds reconnects and keeps listener/timer counts flat over 60 simulated seconds', async () => {
+    vi.useFakeTimers();
+    const sockets: FakeOpenClawWs[] = [];
+    const wsFactory = vi.fn(() => {
+      const socket = new FakeOpenClawWs();
+      sockets.push(socket);
+      // The injected gateway accepts a socket and immediately drops it before
+      // the challenge. This exercises the real persistent reconnect/backoff
+      // path without relying on a live gateway or private service state.
+      queueMicrotask(() => socket.close());
+      return socket;
+    });
+    const httpGet = vi.fn(async (): Promise<HttpGetResult> => ({ ok: false, reason: 'refused' }));
+    const statusListener = vi.fn();
+    const logListener = vi.fn();
+    const service = new OpenClawService({
+      env: cliEnv,
+      httpGet,
+      wsFactory,
+      readFile: async () => JSON.stringify({ gateway: { auth: { token: 'tok' } } }),
+    });
+
+    service.subscribeStatus(statusListener);
+    service.subscribeLogs(logListener);
+
+    let maxPendingTimers = 0;
+    for (let elapsedMs = 0; elapsedMs <= 60_000; elapsedMs += 1000) {
+      await vi.advanceTimersByTimeAsync(elapsedMs === 0 ? 0 : 1000);
+      maxPendingTimers = Math.max(maxPendingTimers, vi.getTimerCount());
+    }
+
+    // Backoff attempts occur at 0, .5, 1.5, 3.5, 7.5, then at the capped
+    // five-second cadence. A two-second log-poll reconnect storm would exceed
+    // this ceiling well before the simulated minute ends.
+    expect(wsFactory.mock.calls.length).toBeGreaterThan(1);
+    expect(wsFactory.mock.calls.length).toBeLessThanOrEqual(15);
+    expect(httpGet).toHaveBeenCalledTimes(16); // immediate status + 15 polls
+    expect(statusListener).toHaveBeenCalledTimes(16);
+    expect(logListener).toHaveBeenCalledTimes(1); // initial "Connecting" line only
+
+    // Each replacement socket gets one fixed handler set; reconnects never
+    // append duplicate handlers to a surviving socket.
+    for (const socket of sockets) {
+      expect(socket.listenerCount('message')).toBe(1);
+      expect(socket.listenerCount('close')).toBe(1);
+      expect(socket.listenerCount('error')).toBe(1);
+    }
+    expect(maxPendingTimers).toBeLessThanOrEqual(3); // status, log, reconnect
+    expect(vi.getTimerCount()).toBe(3);
+
+    const attemptsAtDispose = wsFactory.mock.calls.length;
+    const statusPushesAtDispose = statusListener.mock.calls.length;
+    service.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(wsFactory).toHaveBeenCalledTimes(attemptsAtDispose);
+    expect(statusListener).toHaveBeenCalledTimes(statusPushesAtDispose);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
 
 describe('OpenClawService — dispose', () => {
   it('is idempotent and never spawns a lifecycle CLI call itself', () => {

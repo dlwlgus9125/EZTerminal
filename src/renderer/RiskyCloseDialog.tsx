@@ -42,7 +42,7 @@ export function RiskyCloseDialog({
         'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
       ) ?? [])];
       const first = controls[0];
-      const last = controls.at(-1);
+      const last = controls[controls.length - 1];
       if (!first || !last) return;
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();

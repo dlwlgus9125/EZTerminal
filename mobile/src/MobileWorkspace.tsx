@@ -8,6 +8,7 @@ import { useAppTranslation } from '../../src/renderer/i18n';
 import { quoteEzArgument } from '../../src/shared/quote-ez-argument';
 import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
 import { Button, IconButton } from '../../src/renderer/ui/Button';
+import { e2eLog } from './e2e-telemetry';
 import { MobileHeaderMoreActions } from './MobileHeaderMoreActions';
 import { MobileSessionView } from './MobileSessionView';
 import { MobileWorkbenchCoordinator } from './MobileWorkbenchCoordinator';
@@ -45,8 +46,8 @@ function countAgentAttention(snapshot: AgentActivitySnapshot): number {
 // its tab exists — switching tabs only toggles `display: none` on the
 // wrapper div, it never unmounts. This is deliberate: a fresh mount would
 // tear down that tab's BlockController(s)/FakeMessagePort and lose the
-// running PTY stream's UI state. `display:none` still lets a MutationObserver
-// fire (the e2e output marker) and keeps React state alive; the one thing it
+// running PTY stream's UI state. `display:none` keeps React state alive (and
+// the compile-time E2E output probe active); the one thing it
 // breaks is xterm's internal measurement of a now-zero-size container, which
 // is why activating a tab dispatches a `resize` event on the next animation
 // frame — xterm/any ResizeObserver-driven view re-measures once it's visible
@@ -237,7 +238,7 @@ export function MobileWorkspace({
   useEffect(() => {
     if (!tabsState.activeSessionId) return;
     window.dispatchEvent(new Event(ACTIVE_MOBILE_TAB_CHANGE_EVENT));
-    console.log('[ez-e2e] tab-active:', tabsState.activeSessionId);
+    e2eLog('tab-active:', tabsState.activeSessionId);
     const id = requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
     return () => cancelAnimationFrame(id);
   }, [tabsState.activeSessionId]);
@@ -433,6 +434,7 @@ export function MobileWorkspace({
         >
           <MobileSessionView
             sessionId={tab.sessionId}
+            active={tab.sessionId === tabsState.activeSessionId}
             quickCommandSource={transport}
             quickCommandsSupported={transport.supportsRemoteQuickCommands}
             connected={connected}

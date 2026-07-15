@@ -1,7 +1,12 @@
 html,
 body,
 #storybook-root {
+  block-size: 100%;
   min-block-size: 100%;
+}
+
+html {
+  font-size: calc(16px * var(--ez-ui-scale, 1));
 }
 
 body {

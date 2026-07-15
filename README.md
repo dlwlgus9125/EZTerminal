@@ -8,7 +8,7 @@
 
 Block-based UI · themes &amp; CRT effects · system monitor · SSH · pair your phone as a remote
 
-![release](https://img.shields.io/badge/release-v0.10.0-brightgreen)
+![release](https://img.shields.io/badge/release-v1.0.0-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 ![built with](https://img.shields.io/badge/built%20with-Electron%20·%20React%20·%20TypeScript-9cf)
@@ -135,12 +135,23 @@ fail closed for late attach instead of presenting an incomplete terminal.
 
 ## Download
 
-Grab the latest **Windows installer** from the
-[**Releases**](https://github.com/dlwlgus9125/EZTerminal/releases/latest) page →
-`EZTerminal-Setup.exe`.
+Grab both official 1.0 downloads from the
+[**Releases**](https://github.com/dlwlgus9125/EZTerminal/releases/latest) page:
 
-> Builds are currently **unsigned**, so Windows SmartScreen may warn about an "unknown publisher" on
+- Windows 10 22H2 / Windows 11 x64: `EZTerminal-Setup.exe`
+- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.0-vc21.apk`
+
+> The Windows build is currently **unsigned**, so Windows SmartScreen may warn about an "unknown publisher" on
 > first run. Choose *More info → Run anyway* to proceed.
+
+> The Android 1.0 app uses a new long-term release certificate. Remove any older debug-signed
+> EZTerminal APK before installing 1.0; Android cannot update across the signing-key change and the
+> uninstall removes that app's locally saved pairing data. Future releases signed with this key can
+> update normally.
+
+Windows and Android updates are manual. Verify the download against `SHA256SUMS.txt` in the release.
+The mobile bridge uses plain `ws://`: enable it only on a trusted LAN or through an encrypted overlay
+such as Tailscale/WireGuard. Pairing grants the phone the desktop user's command and filesystem access.
 
 ## Build from source
 

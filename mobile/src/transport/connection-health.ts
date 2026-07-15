@@ -5,6 +5,7 @@ export type RemoteConnectionState =
   | 'connected'
   | 'reconnecting'
   | 'auth-rejected'
+  | 'protocol-incompatible'
   | 'disconnected';
 
 export type ConnectionHealthKind =
@@ -14,6 +15,7 @@ export type ConnectionHealthKind =
   | 'warning'
   | 'unreachable'
   | 'auth-rejected'
+  | 'protocol-incompatible'
   | 'disconnected';
 
 export interface ConnectionHealthSnapshot {
@@ -58,6 +60,13 @@ export function classifyConnectionHealth(
       kind: 'auth-rejected',
       label: t('mobile.connect.authRejectedLabel'),
       detail: t('mobile.connect.authRejectedDetail'),
+    };
+  }
+  if (snapshot.state === 'protocol-incompatible') {
+    return {
+      kind: 'protocol-incompatible',
+      label: t('mobile.connect.protocolIncompatibleLabel'),
+      detail: t('mobile.connect.protocolIncompatibleDetail'),
     };
   }
   if (snapshot.state === 'disconnected') {

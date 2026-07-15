@@ -18,6 +18,9 @@ jobs:
     # → node-gyp finds no C++ toolchain and `pnpm install` dies compiling cap.
     runs-on: windows-2022
     timeout-minutes: 90
+    env:
+      EZTERMINAL_BUILD_SHA: ${{ github.sha }}
+      VITE_BUILD_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -84,7 +87,7 @@ jobs:
         run: pnpm test
       - name: Mobile production build
         working-directory: mobile
-        run: pnpm build
+        run: pnpm build:release
 
       - name: Sync Capacitor Android project
         working-directory: mobile
@@ -157,5 +160,79 @@ jobs:
           path: |
             test-results/
             playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  android-instrumentation:
+    name: Android instrumentation (API ${{ matrix.api-level }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VITE_BUILD_SHA: ${{ github.sha }}
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [29, 35]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Install only the Capacitor workspace so this Android-only lane does
+      # not compile the desktop packet-capture dependency on Linux.
+      - name: Install mobile dependencies
+        run: pnpm install --filter ezterminal-mobile... --frozen-lockfile
+
+      - name: Build production mobile assets
+        working-directory: mobile
+        run: pnpm build:release
+
+      - name: Sync Capacitor Android project
+        working-directory: mobile
+        run: pnpm cap:sync
+
+      - name: Verify generated Android project is current
+        shell: bash
+        run: |
+          status="$(git status --porcelain --untracked-files=all -- mobile/android)"
+          if [[ -n "$status" ]]; then
+            printf '%s\n' "$status"
+            echo 'Capacitor sync changed Android source. Commit generated updates.' >&2
+            exit 1
+          fi
+
+      - name: Run device-side contract tests
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: cd mobile/android && ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace
+
+      - name: Upload Android instrumentation report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-instrumentation-api-${{ matrix.api-level }}
+          path: |
+            mobile/android/app/build/reports/androidTests/connected/
+            mobile/android/app/build/outputs/androidTest-results/
           if-no-files-found: ignore
           retention-days: 7

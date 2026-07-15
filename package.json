@@ -1,7 +1,7 @@
 {
   "name": "ezterminal",
   "productName": "EZTerminal",
-  "version": "0.10.0",
+  "version": "1.0.0",
   "description": "EZTerminal — a structured-data shell terminal (Phase 1 shell core).",
   "main": ".vite/build/main.js",
   "private": true,
@@ -10,7 +10,8 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "lint": "eslint --ext .ts,.tsx .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && pnpm typecheck:mobile-e2e",
+    "typecheck:mobile-e2e": "tsc -p mobile/tsconfig.e2e.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "storybook": "storybook dev -p 6006",
@@ -22,7 +23,8 @@
     "test:e2e:packaged": "playwright test --config playwright.packaged.config.ts",
     "guard:native": "node scripts/guard-native-pty.mjs",
     "guard:native-cap": "node scripts/guard-native-cap.mjs",
-    "guard:pty-routing": "node scripts/guard-pty-routing.mjs"
+    "guard:pty-routing": "node scripts/guard-pty-routing.mjs",
+    "verify:mobile-release": "node scripts/verify-no-e2e-markers.mjs mobile/dist"
   },
   "keywords": [],
   "author": {

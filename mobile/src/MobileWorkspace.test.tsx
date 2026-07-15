@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileWorkspace } from './MobileWorkspace';
 import { WsEzTerminalTransport, type CreateSocket, type WsLike } from './transport/ws-ezterminal';
+import { REMOTE_PROTOCOL_VERSION } from '../../src/shared/remote-protocol';
 
 // Silences React's "not configured to support act()" warning for this file's
 // synchronous createRoot().render() calls below.
@@ -39,7 +40,10 @@ class FakeSocket implements WsLike {
   }
 
   triggerMessage(msg: unknown): void {
-    const data = JSON.stringify(msg);
+    const normalized = (msg as { kind?: string })?.kind === 'auth-ok'
+      ? { protocolVersion: REMOTE_PROTOCOL_VERSION, hostVersion: '1.0.0-test', ...(msg as Record<string, unknown>) }
+      : msg;
+    const data = JSON.stringify(normalized);
     for (const h of this.handlers.message) h({ data } as never);
   }
 

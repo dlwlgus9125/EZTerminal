@@ -1,9 +1,82 @@
-import { useCallback, useEffect, useId, useRef, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
 
 import { useAppTranslation } from '../../src/renderer/i18n';
+import { setElementIsolated } from './dom-isolation';
 import { useMobileNavigationHistory } from './MobileNavigationHistory';
 
 const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+const modalLayers: HTMLElement[] = [];
+const isolatedElements = new Set<HTMLElement>();
+const modalIsolationOwner = Symbol('mobile-action-sheet-isolation');
+let modalIsolationObserver: MutationObserver | null = null;
+let observedModalRoot: HTMLElement | null = null;
+
+function isolationTargets(activeLayer: HTMLElement): Set<HTMLElement> {
+  const targets = new Set<HTMLElement>();
+  const body = activeLayer.ownerDocument.body;
+  let current: HTMLElement | null = activeLayer;
+
+  while (current && current !== body) {
+    const parentElement: HTMLElement | null = current.parentElement;
+    if (!parentElement) break;
+    for (const sibling of Array.from(parentElement.children)) {
+      if (sibling !== current && sibling instanceof HTMLElement) targets.add(sibling);
+    }
+    current = parentElement;
+  }
+
+  return targets;
+}
+
+function syncModalIsolationObserver(): void {
+  const topLayer = modalLayers[modalLayers.length - 1];
+  const root = topLayer?.ownerDocument.body ?? null;
+
+  if (root === observedModalRoot && modalIsolationObserver) return;
+
+  modalIsolationObserver?.disconnect();
+  modalIsolationObserver = null;
+  observedModalRoot = null;
+  if (!root || !topLayer) return;
+
+  const Observer = topLayer.ownerDocument.defaultView?.MutationObserver;
+  if (!Observer) return;
+
+  modalIsolationObserver = new Observer(() => reconcileModalIsolation());
+  modalIsolationObserver.observe(root, { childList: true, subtree: true });
+  observedModalRoot = root;
+}
+
+function reconcileModalIsolation(): void {
+  const topLayer = modalLayers[modalLayers.length - 1];
+  const targets = topLayer ? isolationTargets(topLayer) : new Set<HTMLElement>();
+
+  for (const element of isolatedElements) {
+    if (targets.has(element)) continue;
+    setElementIsolated(element, modalIsolationOwner, false);
+    isolatedElements.delete(element);
+  }
+
+  for (const element of targets) {
+    if (!isolatedElements.has(element)) {
+      setElementIsolated(element, modalIsolationOwner, true);
+      isolatedElements.add(element);
+    }
+  }
+}
+
+function registerModalLayer(element: HTMLElement): () => void {
+  modalLayers.push(element);
+  syncModalIsolationObserver();
+  reconcileModalIsolation();
+  return () => {
+    const index = modalLayers.lastIndexOf(element);
+    if (index >= 0) modalLayers.splice(index, 1);
+    syncModalIsolationObserver();
+    reconcileModalIsolation();
+  };
+}
 
 export function MobileActionSheet({
   title,
@@ -40,6 +113,7 @@ export function MobileActionSheet({
   const titleId = useId();
   const descriptionId = useId();
   const layerId = `mobile-sheet-${useId()}`;
+  const backdropRef = useRef<HTMLDivElement | null>(null);
   const sheetRef = useRef<HTMLDivElement | null>(null);
   const navigation = useMobileNavigationHistory();
   const onCloseRef = useRef(onClose);
@@ -53,6 +127,12 @@ export function MobileActionSheet({
   const dismiss = useCallback(() => {
     navigation.closeLayer(layerId, 'ui');
   }, [layerId, navigation]);
+
+  useLayoutEffect(() => {
+    const backdrop = backdropRef.current;
+    if (!backdrop) return;
+    return registerModalLayer(backdrop);
+  }, []);
 
   useEffect(() => {
     const sheet = sheetRef.current;
@@ -89,6 +169,7 @@ export function MobileActionSheet({
 
   return (
     <div
+      ref={backdropRef}
       className={`mobile-action-sheet-backdrop mobile-action-sheet-backdrop--${variant}`}
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) dismiss();

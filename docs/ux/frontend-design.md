@@ -693,3 +693,49 @@ The redesign is complete only when:
 - old duplicate surfaces and unused code are removed;
 - Storybook, axe, visual regression, desktop checks, mobile checks, packaged
   smoke, and full E2E all pass.
+
+## 15. Version 1.0 release contract
+
+Version 1.0 freezes the Adaptive Workbench direction and adds no new product
+surface. Desktop and Android provide outcome parity for commands, terminal
+sessions, files, agents, monitoring, theme, language, density, and connection
+recovery. Parity does not mean pixel mirroring: desktop keeps keyboard-first
+multi-pane controls, while Android uses touch-first pages and sheets and keeps
+the terminal layer mounted beneath them.
+
+The supported release surfaces are Windows 10 22H2/Windows 11 x64 at a minimum
+window size of 800x600, and Android 10 (API 29) or newer. Android must be
+verified at API 29 and API 35 plus a physical foldable device. The physical
+device lane covers folded/unfolded layouts, portrait/landscape rotation,
+display cutouts, the software keyboard, Android Back, and TalkBack.
+
+API 29 verification includes its stock WebView 74 runtime, not only an updated
+Play-system WebView. The compatibility bootstrap must run before React and
+xterm, and the device lane must exercise forced-xterm pointer input, file
+upload, theme-file import, and modal focus isolation.
+
+Mobile safe-area ownership remains singular at the application root. Storybook
+and browser fixtures must reproduce the same definite root-height chain rather
+than changing the product workbench back to viewport ownership. Product scale
+fixtures must call the real UI preference path and wait for a stable story-ready
+signal before screenshots.
+
+Every modal action sheet isolates all non-dialog application content from the
+accessibility tree and focus order. Isolation is reference-counted so closing a
+nested sheet cannot expose the background while another modal remains open.
+All mobile interactive targets, including integration configuration fields,
+remain at least 44x44 CSS pixels.
+
+Plain `ws://` remains available for version 1.0 only on a trusted LAN or through
+Tailscale/WireGuard. Pairing and connection screens must present this warning
+before or beside an insecure endpoint; the warning is persistent guidance, not
+a transient toast. TLS and certificate pinning are a post-1.0 protocol change.
+
+Production builds contain no E2E-only observers, terminal-text extraction, or
+`[ez-e2e]` diagnostics. Dedicated E2E builds may expose those probes. Visual
+approval uses real product components and a final APK on device; mock shell
+stories remain deterministic coverage but are not the sole release oracle.
+
+Version 1.0 explicitly defers mobile split/layout presets, the global Command
+Center, a complete desktop-settings mirror, full OpenClaw administration, a
+standalone Android shell, Play Store distribution, and automatic updates.

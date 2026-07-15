@@ -14,6 +14,7 @@ import { FilePreviewContent } from '../../src/renderer/FilePreviewContent';
 import { normalizeExternalHttpUrl } from '../../src/shared/external-url';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { beforeInputTextForPty } from './composer-input';
+import { installE2ETerminalOutputProbe } from './e2e-telemetry';
 import { useLongPress } from './long-press';
 import { appendToComposer, resolvePasteTarget } from './paste-routing';
 import { MobileActionSheet } from './MobileActionSheet';
@@ -67,6 +68,7 @@ interface TerminalPathPreview {
 export function MobileTerminalPathOverlay({
   action,
   preview,
+  active = true,
   returnFocusRef,
   onCloseAction,
   onPreview,
@@ -75,6 +77,8 @@ export function MobileTerminalPathOverlay({
 }: {
   readonly action: ResolvedTerminalPath | null;
   readonly preview: TerminalPathPreview | null;
+  /** False while the owning terminal tab is preserved off-screen. */
+  readonly active?: boolean;
   readonly returnFocusRef: RefObject<HTMLElement>;
   readonly onCloseAction: () => void;
   readonly onPreview: () => void;
@@ -83,7 +87,14 @@ export function MobileTerminalPathOverlay({
 }): JSX.Element | null {
   const { t } = useAppTranslation();
   const activePath = preview?.path ?? action?.path;
-  if (!activePath) return null;
+
+  useLayoutEffect(() => {
+    if (active || !activePath) return;
+    if (preview) onClosePreview();
+    else onCloseAction();
+  }, [active, activePath, onCloseAction, onClosePreview, preview]);
+
+  if (!active || !activePath) return null;
 
   const closePreviewAndRestoreFocus = (): void => {
     onClosePreview();
@@ -166,6 +177,7 @@ function nextRunId(): string {
 
 export function MobileSessionView({
   sessionId,
+  active = true,
   quickCommandSource,
   quickCommandsSupported = false,
   connected = true,
@@ -173,6 +185,8 @@ export function MobileSessionView({
   onCwdChange,
 }: {
   sessionId: string;
+  /** Active workspace tab; inactive views remain mounted for PTY continuity. */
+  active?: boolean;
   quickCommandSource?: MobileQuickCommandSource;
   quickCommandsSupported?: boolean;
   connected?: boolean;
@@ -219,6 +233,14 @@ export function MobileSessionView({
   onSessionDeadRef.current = onSessionDead;
   const onCwdChangeRef = useRef(onCwdChange);
   onCwdChangeRef.current = onCwdChange;
+
+  useLayoutEffect(() => {
+    if (active) return;
+    terminalPathSequenceRef.current += 1;
+    setTerminalPathAction(null);
+    setTerminalPathPreview(null);
+    setTerminalPathError(null);
+  }, [active]);
 
   const terminalRuntimeOptions = useMemo<TerminalRuntimeOptions>(() => ({
     ...MOBILE_TERMINAL_RUNTIME_OPTIONS,
@@ -323,25 +345,11 @@ export function MobileSessionView({
     return () => unregisterPaneInput(sessionId);
   }, [sessionId]);
 
-  // M3 e2e test hook ONLY: a running command's output renders into a
-  // `[data-testid="text-output"]` element (TextBlock.tsx or PtyBlock.tsx's
-  // plain-mode view — both protected/reused desktop files this app cannot
-  // modify to add a verification seam directly). The Android emulator smoke
-  // test has no DOM access without Appium, so this observer mirrors that
-  // text to `console.log`, which Android's WebView forwards to logcat —
-  // `mobile/e2e/smoke.ts` greps for the `[ez-e2e]` marker. Harmless in normal
-  // use (one extra console.log per output mutation).
+  // Android UI automation has no DOM access. In E2E mode this mirrors rendered
+  // output to logcat; production replaces the flag with false and removes the
+  // observer branch and terminal contents from the bundle entirely.
   useEffect(() => {
-    const container = blockListRef.current;
-    if (!container) return;
-    const observer = new MutationObserver(() => {
-      for (const el of container.querySelectorAll('[data-testid="text-output"]')) {
-        const text = el.textContent;
-        if (text) console.log('[ez-e2e] output:', text);
-      }
-    });
-    observer.observe(container, { childList: true, subtree: true, characterData: true });
-    return () => observer.disconnect();
+    return installE2ETerminalOutputProbe(blockListRef.current);
   }, []);
 
   useLayoutEffect(() => {
@@ -652,6 +660,7 @@ export function MobileSessionView({
       <MobileTerminalPathOverlay
         action={terminalPathAction}
         preview={terminalPathPreview}
+        active={active}
         returnFocusRef={terminalPathReturnFocusRef}
         onCloseAction={() => setTerminalPathAction(null)}
         onPreview={() => void previewTerminalPath()}
@@ -746,6 +755,7 @@ export function MobileSessionView({
             source={quickCommandSource}
             supported={quickCommandsSupported}
             connected={connected}
+            active={active}
             insertDisabledReason={sessionDead ? t('mobile.terminalView.sessionEnded') : undefined}
             runDisabledReason={
               sessionDead

@@ -251,6 +251,8 @@ const createWindow = (): void => {
   const mainWindow = new BrowserWindow({
     width: 1024,
     height: 720,
+    minWidth: 800,
+    minHeight: 600,
     title: 'EZTerminal',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -1391,6 +1393,8 @@ app.on('ready', () => {
       return startRemoteBridge({
         port: remoteBridgePort,
         getToken: () => remoteTokenStore.getToken(),
+        hostVersion: app.getVersion(),
+        buildSha: process.env.EZTERMINAL_BUILD_SHA ?? process.env.GITHUB_SHA,
         broker: broker!,
         statsSource: remoteStatsSource,
         packetSource: remotePacketSource,

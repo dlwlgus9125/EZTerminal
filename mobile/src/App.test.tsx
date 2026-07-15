@@ -136,6 +136,15 @@ afterEach(() => {
 });
 
 describe('App connection health banner', () => {
+  it('shows protocol incompatibility separately from a credential failure', () => {
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="connect-submit"]')!.click());
+    act(() => transport().emitState('protocol-incompatible'));
+
+    expect(host.querySelector('[data-testid="connect-protocol-incompatible"]')?.textContent)
+      .toContain('업데이트 필요');
+    expect(host.querySelector('[data-testid="connect-error"]')).toBeNull();
+  });
+
   it('renders localized verdict copy from the active App locale', async () => {
     act(() => host.querySelector<HTMLButtonElement>('[data-testid="connect-submit"]')!.click());
 

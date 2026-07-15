@@ -52,6 +52,14 @@ client is, by design, a remote terminal:
   traffic (including the token). On untrusted/shared Wi‑Fi, an on-path attacker
   could otherwise capture the token from the first `auth` frame.
 - Disable remote control when you are not using it.
+- **Update both applications together.** Desktop and Android 1.0 use an explicit
+  remote-protocol version and reject incompatible peers instead of retrying as
+  though the token were wrong. Updates are downloaded manually from GitHub
+  Releases and verified with the published `SHA256SUMS.txt`.
+- **Android 1.0 rekeys the app.** APKs published before 1.0 used a debug
+  certificate. They must be uninstalled before the release-signed 1.0 APK can
+  be installed, which also removes saved pairing data. Do not bypass Android's
+  signature check or install APKs from unofficial mirrors.
 
 ### Known limitations / roadmap
 

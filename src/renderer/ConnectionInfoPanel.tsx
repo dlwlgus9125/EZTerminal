@@ -94,6 +94,9 @@ export function ConnectionInfoPanel(): JSX.Element {
     <div className="status-drawer" data-testid="connection-info-panel">
       <section className="status-section">
         <h2 className="status-section-title">{t('remote.pairingTitle')}</h2>
+        <p className="status-loading" role="note" data-testid="pairing-ws-warning">
+          {t('remote.trustedNetworkWarning')}
+        </p>
         {loading ? (
           <div className="status-loading">{t('common.loading')}</div>
         ) : securityError ? (

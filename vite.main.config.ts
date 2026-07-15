@@ -31,6 +31,16 @@ import { defineConfig } from 'vite';
 // packageAfterPrune copies the real module in for the packaged exe.
 // https://vitejs.dev/config
 export default defineConfig({
+  define: {
+    // Bake the source identity into the packaged app. Reading process.env only
+    // at runtime would show "dev" when an end user launches the installed app.
+    'process.env.EZTERMINAL_BUILD_SHA': JSON.stringify(
+      process.env.EZTERMINAL_BUILD_SHA ?? process.env.GITHUB_SHA ?? 'dev',
+    ),
+    'process.env.GITHUB_SHA': JSON.stringify(
+      process.env.EZTERMINAL_BUILD_SHA ?? process.env.GITHUB_SHA ?? 'dev',
+    ),
+  },
   build: {
     rollupOptions: {
       external: ['ws'],

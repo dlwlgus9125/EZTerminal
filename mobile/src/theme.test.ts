@@ -31,7 +31,7 @@ describe('theme', () => {
     expect(loadTheme()).toBe('high-contrast');
   });
 
-  it('applyTheme sets the dataset, dispatches ez:theme, and logs the e2e marker', () => {
+  it('applyTheme sets the dataset and dispatches ez:theme without production telemetry', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const listener = vi.fn();
     window.addEventListener('ez:theme', listener);
@@ -40,7 +40,7 @@ describe('theme', () => {
 
     expect(document.documentElement.dataset.theme).toBe('light');
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(logSpy).toHaveBeenCalledWith('[ez-e2e] theme:', 'light');
+    expect(logSpy).not.toHaveBeenCalled();
 
     window.removeEventListener('ez:theme', listener);
     logSpy.mockRestore();

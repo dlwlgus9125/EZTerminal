@@ -21,19 +21,13 @@
  *     still arrive at each; a small rotation smoke test at the main profile.
  *
  * KNOWN TRAPS baked into this flow (see lib.ts for the code-level detail):
- *  - `position:fixed` overlays (ThemeMenu sheet, SessionSwitcher sheet
- *    variant, backdrops) NEVER show up in a uiautomator dump even while
- *    visually open — every assertion here uses in-flow nodes or logcat
- *    markers, never a dump of an open overlay's contents.
- *  - The theme sheet's option rows are tapped by fixed geometry measured at
- *    the emulator's DEFAULT resolution (1080x2340 @ 420dpi) — this is why
- *    step (d) runs strictly BEFORE step (e)'s `wm size`/`wm density` calls.
+ *  - `position:fixed` overlays are unreliable in uiautomator dumps, so their
+ *    interactions use WebView test ids and still dispatch real Android taps.
  *  - Streaming PTY output renders into the xterm canvas, not plain DOM text —
  *    continuity during the tab-hide test is proven by RAW `[ez-e2e] output:`
  *    marker-COUNT growth, never content matching.
- *  - `ping localhost` (no dots/dashes): adb-`input text`-typed `.`/`-` have
- *    been observed reaching cmd.exe mangled even though the EditText's own
- *    verification read back correctly.
+ *  - Controlled values use the WebView DOM setter to avoid device-IME
+ *    autocorrection; buttons, long-press, Back, and rotation stay native.
  *
  * Run locally: `node mobile/e2e/parity.ts` (see package.json's `e2e:parity`
  * script). Not run by the automated test suite — like smoke.ts, this drives a
@@ -47,31 +41,183 @@ import {
   APP_ID,
   DUMP_LOCAL_PATH,
   MAIN_ENTRY,
+  type DumpNode,
+  type Point,
   center,
   connectAndAuth,
+  createTerminalSession,
   dismissKeyboard,
-  fillReliably,
+  findDocumentsUiFileResult,
+  findDocumentsUiSearchAction,
+  findDocumentsUiSearchField,
+  getResumedActivity,
+  isPublishedEzTerminalMediaStoreDownload,
   launchDesktop,
   logcatLines,
   longPress,
+  openWorkspaceMoreAction,
+  parseMediaStoreDownloadUri,
+  parseEzTerminalMediaStoreDownloadIds,
   pollLogcat,
   pressEnter,
   runAdb,
+  setTestIdTextValue,
   sleep,
+  submitConnectionOnce,
   tap,
   tapTestId,
+  tapTestIdAt,
   tryDumpUi,
+  typeText,
   waitForAnyNodeText,
-  waitForLabel,
+  waitForAnyTestId,
+  waitForResumedActivity,
   waitForTestId,
-  waitForText,
+  waitForTestIdHidden,
+  waitForVisibleTestIdEnabled,
 } from './lib.ts';
 
-/** Bottom-anchored geometry for the ThemeMenu sheet's option rows, measured
- * on the emulator's DEFAULT resolution (1080x2340 @ 420dpi) — see lib.ts's
- * `waitForLabel` doc for why the sheet itself can't be dump-located. MUST run
- * before any `wm size`/`wm density` change (the row coords don't survive a
- * geometry change). */
+const DOWNLOADS_COLLECTION_URI = 'content://media/external_primary/downloads';
+
+function findMediaStoreDownloadIds(displayName: string): readonly string[] {
+  const rows = runAdb([
+    'shell',
+    'content',
+    'query',
+    '--uri',
+    DOWNLOADS_COLLECTION_URI,
+    '--projection',
+    '_id:_display_name:relative_path',
+  ]);
+  return parseEzTerminalMediaStoreDownloadIds(rows, displayName);
+}
+
+function removeMediaStoreDownload(displayName: string): void {
+  for (const id of findMediaStoreDownloadIds(displayName)) {
+    runAdb(['shell', 'content', 'delete', '--uri', `${DOWNLOADS_COLLECTION_URI}/${id}`]);
+  }
+}
+
+function queryMediaStoreDownload(uri: string): string {
+  if (!/^content:\/\/media\/(?:external|external_primary)\/downloads\/\d+$/.test(uri)) {
+    throw new Error(`invalid MediaStore download URI: ${uri}`);
+  }
+  return runAdb([
+    'shell',
+    'content',
+    'query',
+    '--uri',
+    uri,
+    '--projection',
+    '_id:_display_name:relative_path:is_pending',
+  ]);
+}
+
+function assertMediaStoreDownload(uri: string, displayName: string): void {
+  const row = queryMediaStoreDownload(uri).trim();
+  if (!isPublishedEzTerminalMediaStoreDownload(row, displayName)) {
+    throw new Error(`unexpected MediaStore row for ${displayName}: ${row}`);
+  }
+}
+
+function deleteExactMediaStoreDownload(uri: string): void {
+  // Query validates the URI before it can reach adb and independently proves
+  // an item exists. API 35's `content delete` returns status 0 with empty
+  // stdout, so deletion proof comes from the exact-URI post-query below.
+  const before = queryMediaStoreDownload(uri).trim();
+  if (before === '' || /No result found/i.test(before)) {
+    throw new Error(`MediaStore row did not exist before exact deletion at ${uri}`);
+  }
+  runAdb(['shell', 'content', 'delete', '--uri', uri]);
+  const remaining = queryMediaStoreDownload(uri).trim();
+  if (remaining !== '' && !/No result found/i.test(remaining)) {
+    throw new Error(`MediaStore row remained after deletion at ${uri}: ${remaining}`);
+  }
+}
+
+function deviceDownloadNames(): readonly string[] {
+  return runAdb(['shell', 'ls', '-1', '/sdcard/Download/EZTerminal'])
+    .split(/\r?\n/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
+function readDeviceFileUtf8(devicePath: string): string {
+  // `adb shell cat <path>` is reparsed by the device shell and breaks on
+  // valid names containing spaces/parentheses. The adb sync protocol used by
+  // `pull` preserves the path as one argument and the exact file bytes.
+  const directory = mkdtempSync(path.join(tmpdir(), 'ezparity-device-file-'));
+  const localPath = path.join(directory, 'payload.bin');
+  try {
+    runAdb(['pull', devicePath, localPath]);
+    return readFileSync(localPath, 'utf8');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+async function waitForDocumentPickerNode(
+  findNode: (nodes: readonly DumpNode[]) => DumpNode | undefined,
+  description: string,
+  timeoutMs = 15_000,
+): Promise<DumpNode> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const node = findNode(tryDumpUi());
+    if (node) return node;
+    if (Date.now() > deadline) {
+      throw new Error(`Timed out waiting for DocumentsUI ${description}`);
+    }
+    await sleep(300);
+  }
+}
+
+async function searchDocumentPicker(filename: string): Promise<Point> {
+  try {
+    const directResult = await waitForDocumentPickerNode(
+      (nodes) => findDocumentsUiFileResult(nodes, filename),
+      `direct file result ${filename}`,
+      2_000,
+    );
+    return center(directResult.bounds);
+  } catch {
+    // API 29 does not always refresh Recent immediately after a MediaStore
+    // publish. Continue through DocumentsUI's locale-independent search.
+  }
+
+  const query = path.parse(filename).name;
+  if (!/^[A-Za-z0-9]+$/.test(query)) {
+    throw new Error(`DocumentsUI fixture search query must be alphanumeric: ${query}`);
+  }
+  let searchField = findDocumentsUiSearchField(tryDumpUi());
+  if (!searchField) {
+    const searchButton = await waitForDocumentPickerNode(
+      findDocumentsUiSearchAction,
+      'search action',
+    );
+    await tap(center(searchButton.bounds));
+    searchField = await waitForDocumentPickerNode(findDocumentsUiSearchField, 'search field');
+  }
+  await tap(center(searchField.bounds));
+  runAdb(['shell', 'input', 'keyevent', '123', ...Array<string>(120).fill('67')]);
+  await sleep(250);
+  await typeText(query);
+  await waitForDocumentPickerNode(
+    (nodes) => {
+      const field = findDocumentsUiSearchField(nodes);
+      return field?.text === query ? field : undefined;
+    },
+    `exact search query ${query}`,
+  );
+  await pressEnter();
+  const result = await waitForDocumentPickerNode(
+    (nodes) => findDocumentsUiFileResult(nodes, filename),
+    `file result ${filename}`,
+    20_000,
+  );
+  return center(result.bounds);
+}
+
 const THEME_TEST_ID: Record<string, string> = {
   Dark: 'dark',
   Light: 'light',
@@ -80,54 +226,15 @@ const THEME_TEST_ID: Record<string, string> = {
 };
 
 async function selectTheme(label: string): Promise<void> {
-  await tapTestId('workspace-more-btn');
-  await tapTestId('more-theme');
+  await openWorkspaceMoreAction('more-theme', 'theme-menu');
   await tapTestId(`theme-option-${THEME_TEST_ID[label]}`);
 }
-
-/**
- * Estimated (UNVERIFIED — no live emulator was available while writing this
- * step; see the files-step comment below) device-pixel Y for the "Download
- * to phone" row in MobileFileView's file-row long-press action sheet, at the
- * emulator's DEFAULT resolution (1080x2340 @ 420dpi, same basis as
- * THEME_ROW_Y above). The sheet backdrop is `position:fixed`, so — per this
- * file's own documented trap — it NEVER appears in a uiautomator dump; there
- * is no dump-based way to find its rows, the exact reason THEME_ROW_Y exists
- * for the theme sheet.
- *
- * Derivation (CSS px -> device px, scale factor 420/160 = 2.625;
- * mobile.css's `.mobile-file-sheet`/`.mobile-file-sheet-item`):
- *   sheet padding: 8px top + 8px bottom; item gap: 4px; each item: min-height
- *   44px + 10px top/bottom padding =~ 64px.
- *   A FILE row's sheet has 8 items, in this fixed order: 0 Copy path,
- *   1 Copy name, 2 Refresh, 3 New folder, 4 Rename, 5 Delete, 6 Paste path
- *   into input, 7 Download to phone (LAST).
- *   Sheet height (CSS) =~ 8 + 8*64 + 7*4 + 8 = 556px -> ~1459 device px.
- *   Sheet top (device) =~ 2340 - 1459 = 881.
- *   "Download to phone" (item 7) center (device) =~
- *     881 + (8 + 7*(64+4) + 64/2) * 2.625 =~ 2251.
- *
- * ACTION REQUIRED on the first manual run: if the tap misses, screenshot
- * mid-sheet (`runAdbBinary(['exec-out', 'screencap', '-p'])`, exported from
- * lib.ts) and correct this constant — treat it exactly like THEME_ROW_Y,
- * just not yet measured against a live device.
- */
 
 /** True once a `[ez-e2e] stats:` logcat line reports at least one CPU core —
  * i.e. a real snapshot has arrived (not just the initial "측정 중…" state). */
 function hasCoreCount(line: string): boolean {
   const match = line.match(/cores=(\d+)/);
   return match !== null && Number(match[1]) >= 1;
-}
-
-/** Finds the tab-strip's pill buttons via geometry (top of screen, non-empty
- * text, excluding the `+`/`New tab` add button) — used to pre-capture pill
- * coordinates BEFORE starting a streaming command, since every uiautomator
- * dump costs 1-3s and the streaming window is short. */
-function findTabPills(): ReturnType<typeof tryDumpUi> {
-  return tryDumpUi().filter(
-    (n) => n.clickable && n.bounds[1] < 300 && n.text !== '' && n.text !== '+' && n.desc !== 'New tab',
-  );
 }
 
 async function main(): Promise<void> {
@@ -147,34 +254,26 @@ async function main(): Promise<void> {
 
     // ── b. TABS ──────────────────────────────────────────────────────────
     console.log('[parity] creating tab A...');
-    await tap(await waitForText('New terminal'));
+    await createTerminalSession();
     const tabAMarker = await pollLogcat('[ez-e2e] tab-active:', 10000);
     const tabAId = tabAMarker.split('tab-active:')[1].trim();
 
     console.log('[parity] running cmd /c echo alpha in tab A...');
-    await fillReliably(0, 'cmd /c echo alpha');
-    await dismissKeyboard();
-    await tap(await waitForText('Run'));
+    await setTestIdTextValue('cmd-input', 'cmd /c echo alpha');
+    await tapTestId('btn-run');
     await pollLogcat('[ez-e2e] output:', 20000, (l) => l.includes('alpha'));
     console.log('[parity] step OK: tab A echo roundtrip');
 
     console.log('[parity] creating tab B via header New tab...');
-    await tap(await waitForLabel('New tab'));
+    await tapTestId('tab-add-btn');
     const tabBMarker = await pollLogcat('[ez-e2e] tab-active:', 10000, (l) => !l.includes(tabAId));
 
-    // Pre-capture pill coords BEFORE Run — each uiautomator dump costs 1-3s,
-    // and `ping localhost` only streams a few seconds (default 4 pings).
-    const pillsBefore = findTabPills();
-    if (pillsBefore.length < 2) {
-      throw new Error(`expected >=2 tab pills, saw ${JSON.stringify(pillsBefore.map((p) => p.text))}`);
-    }
     console.log('[parity] starting streaming ping in tab B...');
-    await fillReliably(0, 'cmd /c ping localhost');
-    await dismissKeyboard();
-    await tap(await waitForText('Run'));
+    await setTestIdTextValue('cmd-input', 'cmd /c ping localhost');
+    await tapTestId('btn-run');
 
-    console.log('[parity] switching to tab A while B streams (pre-captured pill tap)...');
-    await tap(center(pillsBefore[0].bounds));
+    console.log('[parity] switching to tab A while B streams...');
+    await tapTestIdAt('tab-pill-open', 0);
     await pollLogcat('[ez-e2e] tab-active:', 8000, (l) => l.includes(tabAId) && l > tabBMarker);
 
     // Continuity = RAW output-marker count keeps growing while B is hidden —
@@ -190,32 +289,28 @@ async function main(): Promise<void> {
     console.log(`[parity] step OK: keep-alive (${before} -> ${after} output markers while B hidden)`);
 
     console.log('[parity] switching back to tab B, running echo bravo2...');
-    const pillsAfter = findTabPills();
-    await tap(center(pillsAfter[1].bounds));
-    await sleep(1000);
-    await fillReliably(0, 'cmd /c echo bravo2');
-    await dismissKeyboard();
-    await tap(await waitForText('Run'));
+    await tapTestIdAt('tab-pill-open', 1);
+    await waitForVisibleTestIdEnabled('btn-run', 20_000);
+    await setTestIdTextValue('cmd-input', 'cmd /c echo bravo2');
+    await tapTestId('btn-run');
     await pollLogcat('[ez-e2e] output:', 20000, (l) => l.includes('bravo2'));
     console.log('[parity] step OK: tab B PTY survived hide/show, fresh command works');
 
     // ── c. STATS ─────────────────────────────────────────────────────────
     console.log('[parity] opening stats...');
-    await tapTestId('workspace-more-btn');
-    await tapTestId('more-stats');
-    await waitForTestId('mobile-stats-view');
+    await openWorkspaceMoreAction('more-stats', 'mobile-stats-view');
     await pollLogcat('[ez-e2e] stats:', 20000, hasCoreCount);
     await pollLogcat('[ez-e2e] stats:', 30000, (l) => /conns=\d+/.test(l));
     console.log('[parity] step OK: stats cores + conns (refcount proof)');
 
     console.log('[parity] 캡처 tab: ack + idle status...');
-    await tap(await waitForText('캡처'));
-    await tap(await waitForText('확인'));
+    await tapTestId('stats-tab-capture');
+    await tapTestId('status-packet-ack-confirm');
     await pollLogcat('[ez-e2e] packets: idle', 15000);
     console.log('[parity] step OK: packets idle (view-only, desktop not capturing)');
     await tapTestId('mobile-stats-close');
 
-    // ── d. THEME (default resolution ONLY — see THEME_ROW_Y's doc) ──────
+    // ── d. THEME ─────────────────────────────────────────────────────────
     console.log('[parity] cycling themes...');
     for (const [label, marker] of [
       ['Matrix', 'matrix'],
@@ -242,67 +337,40 @@ async function main(): Promise<void> {
     console.log('[parity] step OK: theme persistence across restart');
 
     // ── f. FILES (file-explorer plan, M6) ───────────────────────────────
-    // MUST run strictly BEFORE step (e)'s `wm size`/`wm density` calls — a
-    // hard repo constraint, same reason THEME_ROW_Y-style fixed-geometry
-    // taps break after a resolution change (DOWNLOAD_ACTION_ROW_Y_ESTIMATE
-    // below is exactly that kind of fixed-geometry tap).
+    // Run before the geometry mutations so DocumentsUI and file assertions
+    // operate at the emulator's default, known-good layout.
     //
     // The app is on ConnectScreen here (the theme-persistence restart above
     // left it there) — reconnect and open a fresh tab first, since
     // MobileWorkspace's Files button only exists once >=1 tab is open.
-    //
-    // TWO assumptions in this step have NO prior track record in this
-    // codebase's scripts (no live emulator was available while writing it —
-    // this is a MANUAL gate, see this repo's M6 plan):
-    //   1. `pressEnter()` (lib.ts) — every other flow here submits via an
-    //      explicit button; the file path bar has none.
-    //   2. `waitForAnyNodeText` (lib.ts) for the file ROWS themselves —
-    //      MobileFileView's `.mobile-file-row` is a plain `<div onClick>`,
-    //      not a `<button>` like every other tap target in these scripts
-    //      (confirmed by reading TabStrip.tsx: its pills ARE real buttons).
-    //   3. DOWNLOAD_ACTION_ROW_Y_ESTIMATE (above) is a computed, not
-    //      measured, coordinate — the action sheet is a `position:fixed`
-    //      overlay, so it's dump-invisible the same way the ThemeMenu sheet
-    //      is (THEME_ROW_Y's rows WERE measured against a live emulator;
-    //      this one could not be).
-    // If any of these prove wrong on the first manual run, fix them here —
-    // the rest of the step (fixture creation, marker polling, byte-exact
-    // upload/download verification) does not depend on which one broke.
     console.log('[parity] reconnecting for the files step...');
     await connectAndAuth(token);
-    await tap(await waitForText('New terminal'));
+    await createTerminalSession();
     await pollLogcat('[ez-e2e] tab-active:', 10000);
     console.log('[parity] step OK: reconnected with a fresh tab');
 
     console.log('[parity] creating desktop fixture files...');
-    // Letters/digits only in both the dir prefix and file names — VERIFIED
-    // TRAP (this file's header doc): adb-typed `.`/`-` have been observed
-    // reaching cmd.exe mangled even when the EditText's own read-back looked
-    // correct. `mkdtempSync`'s own random suffix is already alphanumeric.
+    // Keep the picker QUERY strictly alphanumeric while retaining `.txt` so
+    // MediaStore publishes a searchable text MIME on API 29/35.
     const filesFixtureDir = mkdtempSync(path.join(tmpdir(), 'ezparityfiles'));
-    const readFixtureName = 'parityreadtxt.txt';
+    const readFixtureName = `parityread${Date.now()}.txt`;
     const readFixtureContent = `PARITY_READ_${Date.now()}`;
     writeFileSync(path.join(filesFixtureDir, readFixtureName), readFixtureContent, 'utf8');
-    // Pre-clean device-side leftovers from any earlier ABORTED run — the
-    // success-path cleanup below never ran then, and a Documents file left by
-    // a previous install is owned by that install's UID, so this run's fresh
-    // install dies with EACCES/FILE_NOTCREATED trying to write the same name
-    // (VERIFIED on the live emulator). rm makes the step idempotent.
-    runAdb(['shell', 'rm', '-f', `/sdcard/Documents/${readFixtureName}`]);
+    const deviceDownloadPath = `/sdcard/Download/EZTerminal/${readFixtureName}`;
+    const collisionDownloadName = `${path.parse(readFixtureName).name} (1)${path.extname(readFixtureName)}`;
+    const collisionDownloadPath = `/sdcard/Download/EZTerminal/${collisionDownloadName}`;
+    let originalDownloadUri: string | null = null;
+    let collisionDownloadUri: string | null = null;
 
     try {
       console.log('[parity] opening Files and navigating to the fixture dir...');
-      await tapTestId('workspace-more-btn');
-      await tapTestId('more-files');
-      await waitForTestId('mobile-file-view');
-      // VERIFIED TRAP (first live run): adb `input text` swallows backslashes
-      // outright (same mangling class as the `.`/`-` note above), so the
-      // Windows path can never pass fillReliably's exact read-back check.
-      // Type the forward-slash form instead — Windows fs accepts it, and
-      // main's `path.resolve` canonicalizes the reply (and the `files:listed`
-      // marker below) back to the backslash form.
-      await fillReliably(0, filesFixtureDir.replaceAll('\\', '/'));
+      await openWorkspaceMoreAction('more-files', 'mobile-file-view');
+      // Set the controlled value exactly, then focus it before sending the
+      // native Enter used by the product's path-navigation handler.
+      await setTestIdTextValue('mobile-file-path-input', filesFixtureDir.replaceAll('\\', '/'));
+      await tapTestId('mobile-file-path-input');
       await pressEnter();
+      await dismissKeyboard();
       await sleep(800);
       await pollLogcat('[ez-e2e] files:listed', 15000, (l) => l.includes(filesFixtureDir));
       console.log('[parity] step OK: files:listed for the fixture dir');
@@ -313,36 +381,122 @@ async function main(): Promise<void> {
       console.log('[parity] step OK: files:viewer-open');
 
       console.log('[parity] downloading the fixture file to the phone...');
-      await tap(await waitForText('‹ Back'));
+      await tapTestId('viewer-back');
       const fileRowPoint = await waitForAnyNodeText(readFixtureName);
       await longPress(fileRowPoint, 700); // > 500ms LongPressTracker default
       await sleep(500);
       await tapTestId('sheet-download');
-      await pollLogcat('[ez-e2e] files:download-done', 20000, (l) => l.includes(readFixtureName));
+      const originalDownloadLog = await pollLogcat(
+        '[ez-e2e] files:download-done',
+        20000,
+        (line) => line.includes(readFixtureName),
+      );
+      originalDownloadUri = parseMediaStoreDownloadUri(originalDownloadLog);
+      if (!originalDownloadUri) {
+        throw new Error(`download completion omitted its MediaStore URI: ${originalDownloadLog}`);
+      }
+      assertMediaStoreDownload(originalDownloadUri, readFixtureName);
       console.log('[parity] step OK: files:download-done');
 
-      const documentsLs = runAdb(['shell', 'ls', '/sdcard/Documents']);
-      if (!documentsLs.includes(readFixtureName)) {
-        throw new Error(`downloaded file not found in /sdcard/Documents: ${documentsLs}`);
+      const originalRows = findMediaStoreDownloadIds(readFixtureName);
+      if (originalRows.length !== 1 || !deviceDownloadNames().includes(readFixtureName)) {
+        throw new Error(
+          `expected one indexed/raw original download; ids=${JSON.stringify(originalRows)} `
+          + `files=${JSON.stringify(deviceDownloadNames())}`,
+        );
       }
-      console.log('[parity] step OK: downloaded file confirmed in /sdcard/Documents');
+      const downloadedContent = readDeviceFileUtf8(deviceDownloadPath);
+      if (downloadedContent !== readFixtureContent) {
+        throw new Error(
+          `device download content mismatch: expected ${JSON.stringify(readFixtureContent)}, got ${JSON.stringify(downloadedContent)}`,
+        );
+      }
+      console.log('[parity] step OK: downloaded bytes confirmed in Downloads/EZTerminal');
+
+      console.log('[parity] downloading the same file again to verify MediaStore collision naming...');
+      await longPress(await waitForAnyNodeText(readFixtureName), 700);
+      await sleep(500);
+      await tapTestId('sheet-download');
+      const collisionDownloadLog = await pollLogcat(
+        '[ez-e2e] files:download-done',
+        20000,
+        (line) => line.includes(collisionDownloadName),
+      );
+      collisionDownloadUri = parseMediaStoreDownloadUri(collisionDownloadLog);
+      if (!collisionDownloadUri) {
+        throw new Error(`collision completion omitted its MediaStore URI: ${collisionDownloadLog}`);
+      }
+      assertMediaStoreDownload(collisionDownloadUri, collisionDownloadName);
+      const collisionContent = readDeviceFileUtf8(collisionDownloadPath);
+      if (collisionContent !== readFixtureContent) {
+        throw new Error(
+          `collision download mismatch: expected ${JSON.stringify(readFixtureContent)}, got ${JSON.stringify(collisionContent)}`,
+        );
+      }
+      console.log('[parity] step OK: repeated download preserved exact bytes under a (1) name');
+
+      // Leave exactly one same-content candidate on the phone before opening
+      // DocumentsUI. Otherwise selecting the repeated `(1)` phone download
+      // could still create the expected desktop `(1)` name and make this
+      // roundtrip assertion pass without proving which source was picked.
+      const collisionRows = findMediaStoreDownloadIds(collisionDownloadName);
+      if (collisionRows.length !== 1) {
+        throw new Error(`expected exactly one collision row before deletion: ${JSON.stringify(collisionRows)}`);
+      }
+      deleteExactMediaStoreDownload(collisionDownloadUri);
+      if (
+        findMediaStoreDownloadIds(collisionDownloadName).length !== 0
+        || deviceDownloadNames().includes(collisionDownloadName)
+      ) {
+        throw new Error(`collision fixture remained after exact URI deletion: ${collisionDownloadName}`);
+      }
+      assertMediaStoreDownload(originalDownloadUri, readFixtureName);
+      if (!deviceDownloadNames().includes(readFixtureName)) {
+        throw new Error(`original picker source disappeared: ${readFixtureName}`);
+      }
+      console.log('[parity] step OK: picker source is unambiguous (original phone download only)');
 
       console.log('[parity] uploading via the system document picker (roundtrip)...');
       // VERIFIED TRAP (first live run): an `adb push`ed file is NOT
       // MediaStore-indexed, so the GET_CONTENT picker's Recent/Documents
       // views never show it (only "BROWSE FILES IN OTHER APPS" could reach
       // it, several fragile taps deep). The file the app itself just
-      // DOWNLOADED via the Filesystem plugin IS indexed (it showed under
+      // DOWNLOADED via MediaStore IS indexed (it shows under
       // "Recent files" on the live emulator) — so upload THAT one back.
       // This upgrades the assertion to a full desktop→phone→desktop
       // ROUNDTRIP byte-equality check, and since the fixture dir still holds
       // the original file, it also exercises the server's collision
       // auto-rename ("name (1).ext") through a real picker upload.
-      await tap(await waitForLabel('Upload'));
-      await sleep(1500); // picker activity launch (native Activity, not WebView)
-      await tap(await waitForAnyNodeText(readFixtureName, 20000));
+      await tapTestId('mobile-file-upload-btn');
+      // AOSP API 29 uses com.android.documentsui while Google API 35 uses
+      // com.google.android.documentsui. Match the stable package suffix.
+      await waitForResumedActivity('documentsui', 20_000);
+      // Search uses stable DocumentsUI resource ids and the unique filename;
+      // it does not depend on translated root labels or OEM root ordering.
+      let pickerFilePoint = await searchDocumentPicker(readFixtureName);
+      let pickerReturned = false;
+      for (let attempt = 1; attempt <= 3 && !pickerReturned; attempt += 1) {
+        await tap(pickerFilePoint);
+        try {
+          await waitForResumedActivity(APP_ID, 5_000);
+          pickerReturned = true;
+        } catch {
+          const current = getResumedActivity();
+          if (!current.includes('documentsui')) {
+            throw new Error(`document picker left without returning to EZTerminal: ${current}`);
+          }
+          console.log(`[parity] picker file tap attempt ${attempt} did not dispatch; retrying...`);
+          const fileResult = await waitForDocumentPickerNode(
+            (nodes) => findDocumentsUiFileResult(nodes, readFixtureName),
+            `file result ${readFixtureName}`,
+            20_000,
+          );
+          pickerFilePoint = center(fileResult.bounds);
+        }
+      }
+      if (!pickerReturned) throw new Error('document picker did not return after 3 file taps');
 
-      const expectedUploadName = 'parityreadtxt (1).txt';
+      const expectedUploadName = collisionDownloadName;
       await pollLogcat('[ez-e2e] files:upload-done', 20000, (l) => l.includes(expectedUploadName));
       console.log('[parity] step OK: files:upload-done (collision auto-rename observed)');
 
@@ -354,8 +508,13 @@ async function main(): Promise<void> {
       }
       console.log('[parity] step OK: desktop→phone→desktop roundtrip bytes match exactly');
 
-      runAdb(['shell', 'rm', '-f', `/sdcard/Documents/${readFixtureName}`]);
     } finally {
+      try {
+        removeMediaStoreDownload(readFixtureName);
+        removeMediaStoreDownload(collisionDownloadName);
+      } catch (error) {
+        console.warn(`[parity] MediaStore fixture cleanup failed: ${String(error)}`);
+      }
       rmSync(filesFixtureDir, { recursive: true, force: true });
     }
 
@@ -364,44 +523,22 @@ async function main(): Promise<void> {
     // known-clean state), so reconnecting here needs no precondition check.
     console.log('[parity] reconnecting for fold-geometry checks...');
     await connectAndAuth(token);
-    await tap(await waitForText('New terminal'));
+    await createTerminalSession();
     await pollLogcat('[ez-e2e] tab-active:', 10000);
     console.log('[parity] step OK: reconnected with a fresh tab');
 
     // A wm size/density change can briefly drop the WS: the app then falls
     // back to ConnectScreen with URL/token still prefilled (observed on the
     // API 35 emulator — a real fold keeps the process alive, but the harness
-    // must tolerate the emulator's harsher behavior). Recover by re-tapping
-    // Connect and reopening a tab until the workspace ('Stats') is reachable.
+    // must tolerate the emulator's harsher behavior). If that happens, allow
+    // exactly one product connection result for this geometry transition.
     const ensureWorkspace = async (): Promise<void> => {
-      const deadline = Date.now() + 45000;
-      for (;;) {
-        const nodes = tryDumpUi();
-        const find = (label: string) =>
-          nodes.find((n) => (n.text === label || n.desc === label) && n.clickable);
-        try {
-          await waitForTestId('workspace-more-btn', 750);
-          return;
-        } catch {
-          // The app may still be reconnecting or showing ConnectScreen.
-        }
-        const newSession = find('New terminal');
-        if (newSession) {
-          await tap(center(newSession.bounds));
-          await sleep(800);
-          continue;
-        }
-        const connect = find('Connect');
-        if (connect) {
-          await tap(center(connect.bounds));
-          await sleep(1500);
-          continue;
-        }
-        if (Date.now() > deadline) {
-          throw new Error(`workspace not reachable after geometry change. Texts: ${JSON.stringify(nodes.map((n) => n.text || n.desc).filter(Boolean))}`);
-        }
-        await sleep(700);
+      const state = await waitForAnyTestId(['workspace-more-btn', 'connect-submit'], 45000);
+      if (state === 'connect-submit') {
+        await submitConnectionOnce();
       }
+      await waitForTestId('workspace-more-btn', 45000);
+      await waitForTestIdHidden('mobile-reconnect-scrim', 45000);
     };
 
     const profiles = [
@@ -417,8 +554,7 @@ async function main(): Promise<void> {
       // Tapping 'Stats' both proves the workspace UI (header + tab strip)
       // survived the geometry change AND opens the stats view for the marker
       // poll below — a broken layout would make this wait time out.
-      await tapTestId('workspace-more-btn');
-      await tapTestId('more-stats');
+      await openWorkspaceMoreAction('more-stats', 'mobile-stats-view');
       await pollLogcat('[ez-e2e] stats:', 20000, hasCoreCount);
       await tapTestId('mobile-stats-close');
       console.log(`[parity] step OK: ${profile.name} geometry reachable + stats live`);

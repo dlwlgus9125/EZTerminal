@@ -57,14 +57,16 @@ import {
   APP_ID,
   DUMP_LOCAL_PATH,
   MAIN_ENTRY,
+  assertNoWebViewJavaScriptRuntimeErrors,
+  closeWebViewDevtools,
   connectAndAuth,
-  dismissKeyboard,
-  fillReliably,
+  createTerminalSession,
   launchDesktop,
   pollLogcat,
   runAdb,
-  tap,
-  waitForText,
+  setTestIdTextValue,
+  tapTestId,
+  waitForVisibleTestIdDescendant,
 } from './lib.ts';
 
 async function main(): Promise<void> {
@@ -87,7 +89,7 @@ async function main(): Promise<void> {
     await connectAndAuth(token);
 
     console.log('[smoke] creating a session...');
-    await tap(await waitForText('New terminal'));
+    await createTerminalSession();
 
     console.log('[smoke] running cmd /c echo hello...');
     // NOTE: `echo` is NOT a command in EZTerminal's structured shell — there is
@@ -98,9 +100,8 @@ async function main(): Promise<void> {
     // so it can never satisfy this assertion. Invoke cmd.exe explicitly so the
     // external-command PTY path actually emits "hello" (verified end-to-end
     // against the real bridge: the pty-data stream carries "hello\r\n").
-    await fillReliably(0, 'cmd /c echo hello'); // cmd-input (only EditText on MobileSessionView)
-    await dismissKeyboard();
-    await tap(await waitForText('Run'));
+    await setTestIdTextValue('cmd-input', 'cmd /c echo hello');
+    await tapTestId('btn-run');
 
     console.log('[smoke] polling logcat for [ez-e2e] output containing "hello"...');
     // cmd.exe PTY spawn + output render can take a few seconds on a cold
@@ -108,9 +109,31 @@ async function main(): Promise<void> {
     const hit = await pollLogcat('[ez-e2e] output:', 20000, (l) => l.includes('hello'));
     console.log('[smoke] PASS —', hit.trim());
 
-    console.log('[smoke] tearing down (destroy session, stop app)...');
-    runAdb(['shell', 'am', 'force-stop', APP_ID]);
+    console.log('[smoke] running forced xterm command...');
+    await setTestIdTextValue('cmd-input', '!cmd /d /c echo xterm74');
+    await tapTestId('btn-run');
+
+    console.log('[smoke] waiting for the real xterm DOM...');
+    await waitForVisibleTestIdDescendant('pty-block', '.xterm-screen', 20_000);
+
+    // Use a real Android input tap so this reaches xterm's pointer-coordinate
+    // path (including the WebView 74 WeakRef compatibility seam). A CDP click
+    // would bypass the native coordinate translation this smoke must cover.
+    await tapTestId('pty-block');
+    assertNoWebViewJavaScriptRuntimeErrors();
+    console.log('[smoke] PASS — forced xterm DOM and native pointer path');
+
+    console.log('[smoke] PASS teardown...');
   } finally {
+    // Always close the WebView, including on assertion failure. Otherwise its
+    // CDP socket keeps this Node process alive and hides the original error
+    // behind the outer command timeout.
+    closeWebViewDevtools();
+    try {
+      runAdb(['shell', 'am', 'force-stop', APP_ID]);
+    } catch {
+      // best-effort cleanup; preserve the original smoke failure
+    }
     await app.close();
     try {
       unlinkSync(DUMP_LOCAL_PATH);

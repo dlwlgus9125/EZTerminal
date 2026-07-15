@@ -12,6 +12,7 @@ import {
 import { applyThemeVarsAndEffects, themeModToDefinition } from '../../src/renderer/theme-runtime';
 import { listThemes, registerTheme } from '../../src/renderer/themes';
 import { validateThemeMod } from '../../src/shared/theme-schema';
+import { e2eLog } from './e2e-telemetry';
 
 // Mobile's own theme choice — independent of the desktop's settings.json
 // persistence (no bridge protocol extension per the mobile-parity plan D6).
@@ -110,17 +111,15 @@ export function importCustomTheme(json: string): { ok: boolean; error?: string }
 }
 
 /** Applies `name` to the document, layers in its cssVars/effects via the
- * shared apply-path helper, and notifies open PtyBlocks to re-theme. Also
- * logs an `[ez-e2e]` marker (mirrors MobileSessionView's output marker) —
- * Android's WebView forwards console.log to logcat, which `mobile/e2e/parity.ts`
- * greps to assert a theme switch actually took effect. */
+ * shared apply-path helper, and notifies open PtyBlocks to re-theme. The
+ * compile-time E2E build also emits the logcat marker used by parity tests. */
 export function applyTheme(name: ThemeName): void {
   document.documentElement.dataset.theme = name;
   applyThemeVarsAndEffects(name, { effectToggles: loadEffectToggles(), platformDefaults: MOBILE_EFFECT_DEFAULTS });
   applyRollbarParams(clampRollbarParams(loadRollbar()));
   applyInterferenceParams(clampInterferenceParams(loadEffectParams()));
   window.dispatchEvent(new Event('ez:theme'));
-  console.log('[ez-e2e] theme:', name);
+  e2eLog('theme:', name);
 }
 
 // ── font override (Wave 3) ───────────────────────────────────────────────────

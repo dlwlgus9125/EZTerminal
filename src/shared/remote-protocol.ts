@@ -15,11 +15,10 @@
  * isolate this so a later swap to a binary WS frame (header + raw bytes) only
  * touches this module, not the bridge or transport call sites.
  *
- * No version negotiation: both sides ship from the same repo in lockstep, and
- * both are written to silently ignore any `kind` they don't recognize (rather
- * than erroring), so new message kinds can be added here without a protocol
- * bump. The `packets-*` kinds are defined now (M1) but only handled starting
- * in a later milestone (M3) — until then a client sending them gets no reply.
+ * Authentication negotiates an explicit protocol version. Desktop and Android
+ * may be installed independently, so a missing or unsupported version fails
+ * closed with a distinct incompatibility response instead of masquerading as
+ * a bad token or an endless transient reconnect.
  */
 import type {
   DestroySessionGuardResult,
@@ -50,6 +49,16 @@ import type { QuickCommand } from './quick-command';
 
 export const REMOTE_CAPABILITY_QUICK_COMMANDS_READ = 'quick-commands-read' as const;
 export type RemoteCapability = typeof REMOTE_CAPABILITY_QUICK_COMMANDS_READ;
+
+/** First public desktop/mobile wire contract, released with EZTerminal 1.0. */
+export const REMOTE_PROTOCOL_VERSION = 1 as const;
+
+/** Copy-safe identity shown in About/Diagnostics and release evidence. */
+export interface BuildInfo {
+  readonly appVersion: string;
+  readonly protocolVersion: typeof REMOTE_PROTOCOL_VERSION;
+  readonly buildSha: string;
+}
 
 // ── Uint8Array <-> base64 (isomorphic: relies only on global atob/btoa, no
 //    Node Buffer — this module is shared with the browser-side mobile
@@ -110,6 +119,9 @@ export function decodeFrame(frame: WireInterpreterFrame): InterpreterFrame {
 export interface AuthMessage {
   readonly kind: 'auth';
   readonly token: string;
+  readonly protocolVersion: typeof REMOTE_PROTOCOL_VERSION;
+  readonly clientVersion: string;
+  readonly buildSha?: string;
 }
 
 export interface ListSessionsMessage {
@@ -453,14 +465,23 @@ export type ClientToServerMessage =
 
 export interface AuthOkMessage {
   readonly kind: 'auth-ok';
-  /** Omitted by older hosts and when no optional remote surface is wired. */
+  readonly protocolVersion: typeof REMOTE_PROTOCOL_VERSION;
+  readonly hostVersion: string;
+  readonly hostBuildSha?: string;
   readonly capabilities?: readonly RemoteCapability[];
 }
 
-export interface AuthFailMessage {
-  readonly kind: 'auth-fail';
-  readonly reason?: 'invalid-token';
-}
+export type AuthFailMessage =
+  | {
+      readonly kind: 'auth-fail';
+      readonly reason: 'invalid-token';
+    }
+  | {
+      readonly kind: 'auth-fail';
+      readonly reason: 'incompatible-protocol';
+      readonly supportedProtocolVersion: typeof REMOTE_PROTOCOL_VERSION;
+      readonly hostVersion: string;
+    };
 
 export interface SessionListMessage {
   readonly kind: 'session-list';

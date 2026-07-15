@@ -214,8 +214,15 @@ export function App(): JSX.Element {
     return (
       <ConnectScreen
         saved={savedConnection}
-        connecting={transport !== null && !authed && !connectFailed && connectionState !== 'auth-rejected'}
+        connecting={
+          transport !== null
+          && !authed
+          && !connectFailed
+          && connectionState !== 'auth-rejected'
+          && connectionState !== 'protocol-incompatible'
+        }
         failed={connectFailed}
+        protocolIncompatible={connectionState === 'protocol-incompatible'}
         storageWarning={localizedCredentialWarning}
         onConnect={connect}
       />
@@ -272,15 +279,20 @@ export function App(): JSX.Element {
               </span>
             )}
             <div className="mobile-reconnect-actions">
-              <button type="button" className="btn btn-run" onClick={retryConnection} data-testid="mobile-retry-now">
-                {t('mobile.connect.retryNow')}
-              </button>
+              {connectionVerdict?.kind !== 'protocol-incompatible' && (
+                <button type="button" className="btn btn-run" onClick={retryConnection} data-testid="mobile-retry-now">
+                  {t('mobile.connect.retryNow')}
+                </button>
+              )}
               <button type="button" className="btn" onClick={() => void copyConnectionDiagnostics()}>
                 {t('mobile.connect.copyDiagnostics')}
               </button>
-              {connectionVerdict?.kind === 'auth-rejected' && (
+              {(connectionVerdict?.kind === 'auth-rejected'
+                || connectionVerdict?.kind === 'protocol-incompatible') && (
                 <button type="button" className="btn btn-cancel" onClick={disconnect}>
-                  {t('mobile.connect.pairAgain')}
+                  {connectionVerdict.kind === 'protocol-incompatible'
+                    ? t('mobile.connect.backToConnect')
+                    : t('mobile.connect.pairAgain')}
                 </button>
               )}
             </div>

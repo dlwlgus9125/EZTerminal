@@ -604,6 +604,12 @@ export function SettingsPanel({
       <section className="status-section" hidden={category !== 'about'}>
         <h2 className="status-section-title">{t('settings.about')}</h2>
         <div className="settings-diagnostic-grid">
+          <span>{t('settings.appVersion')}</span>
+          <code>{window.ezterminal?.versions?.app ?? t('common.unavailable')}</code>
+          <span>{t('settings.protocolVersion')}</span>
+          <code>{window.ezterminal?.versions?.protocol ?? t('common.unavailable')}</code>
+          <span>{t('settings.buildSha')}</span>
+          <code>{window.ezterminal?.versions?.buildSha ?? t('common.unavailable')}</code>
           <span>{t('settings.electron')}</span>
           <code>{window.ezterminal?.versions?.electron ?? t('common.unavailable')}</code>
           <span>{t('settings.chromium')}</span>

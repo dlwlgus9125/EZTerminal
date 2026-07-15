@@ -3,12 +3,6 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- App-scoped writes need no permission on API 30+. Capacitor's Documents
-         compatibility path still requests this permission on API <=29. -->
-    <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="29"
-        tools:ignore="ScopedStorage" />
 
     <application
         android:allowBackup="false"

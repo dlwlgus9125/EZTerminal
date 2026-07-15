@@ -113,6 +113,8 @@ export const appResources = {
       },
       remote: {
         pairingTitle: 'Mobile pairing',
+        trustedNetworkWarning:
+          'Remote access uses unencrypted ws://. Use it only on a trusted LAN or through Tailscale/WireGuard.',
         tokenUnavailable: 'The remote access token is unavailable. Remote access remains off.',
         rotateFailed: 'The new token could not be stored securely. Remote access was stopped.',
         disabled: 'Remote access is disabled — enable it in Settings.',
@@ -235,6 +237,9 @@ export const appResources = {
         confirmRiskyPaneClose: 'Confirm before closing a pane with active work',
         allowOsc52Clipboard: 'Allow terminal OSC 52 clipboard writes',
         about: 'About & Diagnostics',
+        appVersion: 'EZTerminal version',
+        protocolVersion: 'Remote protocol',
+        buildSha: 'Build SHA',
         electron: 'Electron',
         chromium: 'Chromium',
         node: 'Node.js',
@@ -702,6 +707,8 @@ export const appResources = {
         },
         connect: {
           title: 'EZTerminal Remote',
+          trustedNetworkWarning:
+            'ws:// is not encrypted. Connect only on a trusted LAN or through Tailscale/WireGuard.',
           serverUrl: 'Server URL',
           token: 'Token',
           failed: 'Connection failed — check the URL and token.',
@@ -732,6 +739,9 @@ export const appResources = {
           connectedDetail: 'The desktop connection is ready.',
           authRejectedLabel: 'Authentication rejected',
           authRejectedDetail: 'Retry the saved credential once, or pair this device again.',
+          protocolIncompatibleLabel: 'Update required',
+          protocolIncompatibleDetail:
+            'This phone and desktop use incompatible remote protocols. Update both EZTerminal apps, then pair again.',
           disconnectedLabel: 'Disconnected',
           disconnectedDetail: 'The connection was closed.',
           connectingDetail: 'Contacting the desktop host.',
@@ -845,7 +855,7 @@ export const appResources = {
           copied: 'Copied',
           copyFailed: 'Copy failed',
           permissionDenied: 'Storage permission denied',
-          saved: 'Saved {{name}}',
+          saved: 'Saved {{name}} to Downloads/EZTerminal',
           downloadFailed: 'Download failed',
           waiting: 'Waiting…',
           done: 'Done',
@@ -1048,6 +1058,8 @@ export const appResources = {
       },
       remote: {
         pairingTitle: '모바일 페어링',
+        trustedNetworkWarning:
+          '원격 연결은 암호화되지 않은 ws://를 사용합니다. 신뢰할 수 있는 LAN 또는 Tailscale/WireGuard에서만 사용하세요.',
         tokenUnavailable: '원격 접속 토큰을 사용할 수 없습니다. 원격 접속은 꺼진 상태로 유지됩니다.',
         rotateFailed: '새 토큰을 안전하게 저장하지 못해 원격 접속을 중지했습니다.',
         disabled: '원격 접속이 꺼져 있습니다. 설정에서 활성화해 주세요.',
@@ -1169,6 +1181,9 @@ export const appResources = {
         confirmRiskyPaneClose: '작업 중인 창을 닫기 전에 확인',
         allowOsc52Clipboard: '터미널 OSC 52 클립보드 쓰기 허용',
         about: '정보 및 진단',
+        appVersion: 'EZTerminal 버전',
+        protocolVersion: '원격 프로토콜',
+        buildSha: '빌드 SHA',
         electron: 'Electron',
         chromium: 'Chromium',
         node: 'Node.js',
@@ -1636,6 +1651,8 @@ export const appResources = {
         },
         connect: {
           title: 'EZTerminal Remote',
+          trustedNetworkWarning:
+            'ws:// 연결은 암호화되지 않습니다. 신뢰할 수 있는 LAN 또는 Tailscale/WireGuard에서만 연결하세요.',
           serverUrl: '서버 URL',
           token: '토큰',
           failed: '연결하지 못했습니다. URL과 토큰을 확인해 주세요.',
@@ -1666,6 +1683,9 @@ export const appResources = {
           connectedDetail: '데스크톱 연결을 사용할 수 있습니다.',
           authRejectedLabel: '인증이 거부됨',
           authRejectedDetail: '저장된 자격 증명으로 다시 시도하거나 기기를 다시 페어링해 주세요.',
+          protocolIncompatibleLabel: '업데이트 필요',
+          protocolIncompatibleDetail:
+            '휴대폰과 데스크톱의 원격 프로토콜이 호환되지 않습니다. 양쪽 EZTerminal을 모두 업데이트한 뒤 다시 페어링하세요.',
           disconnectedLabel: '연결 끊김',
           disconnectedDetail: '연결이 종료되었습니다.',
           connectingDetail: '데스크톱 호스트에 연결하는 중입니다.',
@@ -1779,7 +1799,7 @@ export const appResources = {
           copied: '복사했습니다.',
           copyFailed: '복사하지 못했습니다.',
           permissionDenied: '저장소 권한이 거부되었습니다.',
-          saved: '{{name}}을(를) 저장했습니다.',
+          saved: '{{name}}을(를) Downloads/EZTerminal에 저장했습니다.',
           downloadFailed: '다운로드하지 못했습니다.',
           waiting: '대기 중…',
           done: '완료',

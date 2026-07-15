@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-15
+
+### Changed
+- Froze the Adaptive Workbench feature set for the first stable release and aligned core command, session, file, agent, monitor, theme and settings outcomes across Windows and Android.
+- Set the supported release floor to Windows 10 22H2/Windows 11 x64 and Android 10 (API 29), with API 29/API 35 emulator and physical foldable-device release gates.
+- Added an explicit remote-protocol version and build identity so incompatible desktop/mobile versions fail with actionable update guidance rather than an authentication retry loop.
+
+### Fixed
+- Removed E2E-only terminal/output diagnostics from production mobile bundles while retaining a dedicated E2E APK mode.
+- Added a bootstrap-first compatibility layer for the stock Android 10 WebView 74 runtime, covering xterm rendering and pointer input, file/theme imports, and modal background isolation.
+- Moved Android downloads to scoped `Downloads/EZTerminal` MediaStore storage without broad storage permission, using bounded 256 KiB native chunks, single-flight writes, partial-row cleanup and byte-exact repeated-download collision names.
+- Hardened mobile safe-area, modal focus isolation, minimum touch targets and deterministic scale/viewport visual coverage.
+- Added exact-SHA Windows/APK artifact staging, production marker scanning, API-level APK verification, zero-retry release tests and single-attempt cold mobile connection gates.
+
+### Security
+- Replaced the pre-1.0 Android debug certificate with a protected long-term release key. Existing debug-signed APK installations require a one-time uninstall and re-pair.
+- Release APK signing now fails closed unless the protected `release` Environment provides the keystore credentials and expected SHA-256 certificate fingerprint.
+- Windows 1.0 remains intentionally unsigned; the release records `NotSigned` and documents the SmartScreen warning. Plain `ws://` remains restricted to trusted LANs or Tailscale/WireGuard.
+
 ## [0.10.0] - 2026-07-14
 
 ### Added

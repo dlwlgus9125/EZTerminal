@@ -165,7 +165,7 @@ export function TerminalContextMenu({
           case 'End':
             event.preventDefault();
             event.stopPropagation();
-            if (enabledIndexes.length > 0) setActiveIndex(enabledIndexes.at(-1) ?? -1);
+            if (enabledIndexes.length > 0) setActiveIndex(enabledIndexes[enabledIndexes.length - 1] ?? -1);
             break;
           case 'Enter':
           case ' ':

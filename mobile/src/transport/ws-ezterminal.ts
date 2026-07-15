@@ -87,7 +87,9 @@ import {
   base64ToUint8Array,
   decodeFrame,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
+  REMOTE_PROTOCOL_VERSION,
   uint8ArrayToBase64,
+  type BuildInfo,
   type ClientToServerMessage,
   type OpenClawChatTicketFailureReason,
   type RemoteCapability,
@@ -115,8 +117,21 @@ import {
   type ConnectionHealthSnapshot,
   type RemoteConnectionState,
 } from './connection-health';
+import { MOBILE_BUILD_INFO } from '../build-info';
+import { e2eLog } from '../e2e-telemetry';
 
 export type { ConnectionHealthSnapshot, RemoteConnectionState } from './connection-health';
+
+/** WebView-74-compatible RFC 4122 v4 request id. Android 10 may start with a
+ * WebView that predates `crypto.randomUUID`, but it still provides the secure
+ * `crypto.getRandomValues` primitive. */
+export function createSecureRequestId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 /** Generic result of one `file-read` round trip (M4) — `readTextFile`/
  * `downloadFile` each reshape this into their own public return type. */
@@ -272,9 +287,11 @@ export class FakeMessagePort<TFrame = InterpreterFrame> extends EventTarget {
 export interface WsEzTerminalOptions {
   readonly url: string;
   readonly token: string;
+  /** Test/release seam for the public handshake and copied diagnostics. */
+  readonly buildInfo?: BuildInfo;
   /** Test seam: defaults to the real browser `WebSocket`. */
   readonly createSocket?: CreateSocket;
-  /** Test seam: defaults to `crypto.randomUUID`. */
+  /** Test seam: defaults to the secure WebView-compatible v4 generator. */
   readonly newId?: () => string;
   readonly initialBackoffMs?: number;
   readonly maxBackoffMs?: number;
@@ -302,10 +319,11 @@ interface ResumeRetryState {
 
 export class WsEzTerminalTransport implements EzTerminalApi {
   /** Not meaningful for a remote WS client — no local Electron/Chrome/Node process. */
-  readonly versions: RuntimeVersions = { electron: 'n/a', chrome: 'n/a', node: 'n/a' };
+  readonly versions: RuntimeVersions;
 
   private readonly url: string;
   private readonly token: string;
+  private readonly buildInfo: BuildInfo;
   private readonly createSocket: CreateSocket;
   private readonly newId: () => string;
   private readonly initialBackoffMs: number;
@@ -328,6 +346,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private reconnectAttempts = 0;
   private nextRetryAt: number | null = null;
   private lastConnectedAt: number | null = null;
+  private hostVersion = 'unknown';
+  private hostBuildSha = 'unknown';
   private reattachPrioritySessionId: string | null = null;
 
   /** Stable renderer-side ports. They deliberately survive transient sockets;
@@ -364,7 +384,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   >();
   private readonly connectionDiagnostics: Array<{
     readonly at: string;
-    readonly event: 'connect' | 'connected' | 'retry-scheduled' | 'retry-now' | 'auth-rejected' | 'disconnected';
+    readonly event: 'connect' | 'connected' | 'retry-scheduled' | 'retry-now' | 'auth-rejected' | 'protocol-incompatible' | 'disconnected';
     readonly state: RemoteConnectionState;
     readonly attempt: number;
   }> = [];
@@ -468,8 +488,17 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   constructor(options: WsEzTerminalOptions) {
     this.url = options.url;
     this.token = options.token;
+    this.buildInfo = options.buildInfo ?? MOBILE_BUILD_INFO;
+    this.versions = {
+      app: this.buildInfo.appVersion,
+      protocol: this.buildInfo.protocolVersion,
+      buildSha: this.buildInfo.buildSha,
+      electron: 'n/a',
+      chrome: 'n/a',
+      node: 'n/a',
+    };
     this.createSocket = options.createSocket ?? ((url) => new WebSocket(url) as unknown as WsLike);
-    this.newId = options.newId ?? (() => crypto.randomUUID());
+    this.newId = options.newId ?? createSecureRequestId;
     this.initialBackoffMs = options.initialBackoffMs ?? DEFAULT_INITIAL_BACKOFF_MS;
     this.maxBackoffMs = options.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
     this.authTimeoutMs = options.authTimeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS;
@@ -1127,7 +1156,11 @@ export class WsEzTerminalTransport implements EzTerminalApi {
 
   /** Cancel the current wait/attempt and start exactly one fresh socket. */
   retryNow(): boolean {
-    if (this.connectionState === 'connected' || this.connectionState === 'disconnected') return false;
+    if (
+      this.connectionState === 'connected'
+      || this.connectionState === 'disconnected'
+      || this.connectionState === 'protocol-incompatible'
+    ) return false;
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -1160,6 +1193,11 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       `state=${snapshot.state}`,
       `attempt=${snapshot.attempt}`,
       `endpointKind=${snapshot.endpointKind}`,
+      `appVersion=${this.buildInfo.appVersion}`,
+      `protocolVersion=${this.buildInfo.protocolVersion}`,
+      `buildSha=${this.buildInfo.buildSha}`,
+      `hostVersion=${this.hostVersion}`,
+      `hostBuildSha=${this.hostBuildSha}`,
       `lastConnectedAt=${snapshot.lastConnectedAt === null ? 'never' : new Date(snapshot.lastConnectedAt).toISOString()}`,
       `nextRetryAt=${snapshot.nextRetryAt === null ? 'none' : new Date(snapshot.nextRetryAt).toISOString()}`,
       ...this.connectionDiagnostics.map((entry) => (
@@ -1377,7 +1415,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     // 'close' arrives) is a no-op instead of corrupting the newer attempt.
     socket.addEventListener('open', () => {
       if (this.socket !== socket) return;
-      socket.send(JSON.stringify({ kind: 'auth', token: this.token } satisfies ClientToServerMessage));
+      socket.send(JSON.stringify({
+        kind: 'auth',
+        token: this.token,
+        protocolVersion: REMOTE_PROTOCOL_VERSION,
+        clientVersion: this.buildInfo.appVersion,
+        buildSha: this.buildInfo.buildSha,
+      } satisfies ClientToServerMessage));
     });
     socket.addEventListener('message', (event) => {
       if (this.socket !== socket) return;
@@ -1444,7 +1488,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   }
 
   private recordConnectionDiagnostic(
-    event: 'connect' | 'connected' | 'retry-scheduled' | 'retry-now' | 'auth-rejected' | 'disconnected',
+    event: 'connect' | 'connected' | 'retry-scheduled' | 'retry-now' | 'auth-rejected' | 'protocol-incompatible' | 'disconnected',
   ): void {
     this.connectionDiagnostics.push({
       at: new Date().toISOString(),
@@ -1581,7 +1625,11 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       this.openclawAvailable = false;
       for (const listener of this.openclawAvailabilityListeners) listener(false);
     }
-    if (this.stopped || this.connectionState === 'auth-rejected') return;
+    if (
+      this.stopped
+      || this.connectionState === 'auth-rejected'
+      || this.connectionState === 'protocol-incompatible'
+    ) return;
     this.reconnectAttempts += 1;
     const retryDelay = this.backoffMs;
     this.nextRetryAt = Date.now() + retryDelay;
@@ -1733,8 +1781,37 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         runId: record.runId,
         generation,
       });
+      e2eLog('transport:resume', `generation=${generation}`, `runId=${record.runId}`);
     }, delay);
     this.resumeRetries.set(record.runId, retry);
+  }
+
+  /** A protocol mismatch is terminal until the user updates one of the apps. */
+  private rejectIncompatibleProtocol(hostVersion?: unknown): void {
+    if (typeof hostVersion === 'string' && hostVersion.trim()) this.hostVersion = hostVersion;
+    this.remoteCapabilities.clear();
+    this.setAuthed(false);
+    this.stopped = true;
+    this.nextRetryAt = null;
+    this.setConnectionState('protocol-incompatible');
+    this.recordConnectionDiagnostic('protocol-incompatible');
+    this.emitConnectionHealth();
+    this.resolvePendingRequestsUnavailable();
+    this.closeTerminalSocket();
+  }
+
+  /** Close and synchronously invalidate a terminal auth/protocol socket.
+   * Browser close events are asynchronous, so waiting for `close` would let
+   * already-queued messages mutate state after a fail-closed decision. */
+  private closeTerminalSocket(): void {
+    const socket = this.socket;
+    if (!socket) return;
+    try {
+      socket.close();
+    } catch {
+      // endConnection below still invalidates a socket whose close throws.
+    }
+    this.endConnection(socket);
   }
 
   private handleServerMessage(data: string): void {
@@ -1744,9 +1821,23 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     } catch {
       return;
     }
+    if (this.stopped) return;
+    if (!this.authed && msg.kind !== 'auth-ok' && msg.kind !== 'auth-fail') return;
     switch (msg.kind) {
       case 'auth-ok':
+        if (
+          msg.protocolVersion !== REMOTE_PROTOCOL_VERSION
+          || typeof msg.hostVersion !== 'string'
+          || msg.hostVersion.trim().length === 0
+        ) {
+          this.rejectIncompatibleProtocol(msg.hostVersion);
+          break;
+        }
         if (this.authed) break;
+        this.hostVersion = msg.hostVersion;
+        this.hostBuildSha = typeof msg.hostBuildSha === 'string' && msg.hostBuildSha.trim()
+          ? msg.hostBuildSha
+          : 'unknown';
         this.remoteCapabilities = new Set(
           Array.isArray(msg.capabilities)
             ? msg.capabilities.filter(
@@ -1769,6 +1860,12 @@ export class WsEzTerminalTransport implements EzTerminalApi {
           this.setConnectionState('connected');
           this.recordConnectionDiagnostic('connected');
           this.emitConnectionHealth();
+          e2eLog(
+            isReconnect ? 'transport:reconnect' : 'transport:connected',
+            `generation=${this.generation}`,
+            `appVersion=${this.buildInfo.appVersion}`,
+            `buildSha=${this.buildInfo.buildSha}`,
+          );
           if (isReconnect) {
             const records = [...this.ports.values()].sort((a, b) => {
               const aPriority = a.sessionId === this.reattachPrioritySessionId ? 0 : 1;
@@ -1782,6 +1879,11 @@ export class WsEzTerminalTransport implements EzTerminalApi {
                 runId: record.runId,
                 generation: this.generation,
               });
+              e2eLog(
+                'transport:resume',
+                `generation=${this.generation}`,
+                `runId=${record.runId}`,
+              );
             }
           }
         }
@@ -1801,6 +1903,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         if (this.openclawLogsSubscribed) this.send({ kind: 'openclaw-logs-subscribe' });
         break;
       case 'auth-fail':
+        if (msg.reason === 'incompatible-protocol') {
+          this.rejectIncompatibleProtocol(msg.hostVersion);
+          break;
+        }
         this.remoteCapabilities.clear();
         this.setAuthed(false);
         this.stopped = true;
@@ -1809,8 +1915,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         this.recordConnectionDiagnostic('auth-rejected');
         this.emitConnectionHealth();
         this.resolvePendingRequestsUnavailable();
-        this.clearWatchdog();
-        this.socket?.close();
+        this.closeTerminalSocket();
         break;
       case 'session-created': {
         const pending = this.pendingCreates.get(msg.requestId);

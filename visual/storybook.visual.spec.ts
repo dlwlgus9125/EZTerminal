@@ -21,7 +21,9 @@ async function openStory(
   storyId: string,
   options: StoryOptions,
 ): Promise<void> {
-  const globals = `theme:${options.theme};locale:${options.locale};density:${options.density}`;
+  const scale = options.scale ?? 100;
+  const globals = `theme:${options.theme};locale:${options.locale};density:${options.density};uiScale:${scale}`;
+  const readyKey = `${storyId}|${options.theme}|${options.locale}|${options.density}|${scale}`;
   await page.emulateMedia({
     reducedMotion: options.motion === "reduced" ? "reduce" : "no-preference",
   });
@@ -32,14 +34,7 @@ async function openStory(
     },
   );
   await expect(page.locator("#storybook-root")).toBeVisible();
-  await page.evaluate(
-    async ({ scale }) => {
-      await document.fonts.ready;
-      document.documentElement.dataset.uiScale = String(scale);
-      document.documentElement.style.fontSize = scale === 150 ? "150%" : "";
-    },
-    { scale: options.scale ?? 100 },
-  );
+  await expect(page.locator("html")).toHaveAttribute("data-story-ready", readyKey);
   await page.addStyleTag({
     content: `
       *, *::before, *::after {
@@ -62,7 +57,7 @@ async function openStory(
   await expect(root).toHaveAttribute("lang", options.locale);
   await expect(root).toHaveAttribute(
     "data-ui-scale",
-    String(options.scale ?? 100),
+    String(scale),
   );
   expect(
     await page.evaluate(
@@ -413,6 +408,9 @@ test.describe("mobile-width Storybook visual contracts", () => {
       await page.setViewportSize(visualCase.viewport);
       await openStory(page, visualCase.storyId, visualCase.options);
       await expect(page.getByTestId("mobile-terminal-layer")).toBeVisible();
+      const coordinatorBox = await page.locator(".mobile-workbench-coordinator").boundingBox();
+      expect(coordinatorBox, "mobile workbench must have measurable geometry").not.toBeNull();
+      expect(coordinatorBox!.height).toBeCloseTo(visualCase.viewport.height, 0);
       if ("page" in visualCase) {
         await expect(page.getByTestId("mobile-page-shell")).toBeVisible();
         await expect(page.getByTestId("mobile-terminal-layer")).toHaveAttribute(

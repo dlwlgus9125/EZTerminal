@@ -30,7 +30,7 @@ const RESULT: FilePreviewResult = {
   fileSize: 22,
 };
 
-function Harness(): JSX.Element {
+function Harness({ active = true }: { readonly active?: boolean }): JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [action, setAction] = useState<typeof ACTION | null>(null);
   const [preview, setPreview] = useState<{
@@ -48,6 +48,7 @@ function Harness(): JSX.Element {
       <MobileTerminalPathOverlay
         action={action}
         preview={preview}
+        active={active}
         returnFocusRef={triggerRef}
         onCloseAction={() => setAction(null)}
         onPreview={() => {
@@ -118,5 +119,23 @@ describe('MobileSessionView terminal path overlays', () => {
 
     expect(host.querySelector('[data-testid="terminal-path-preview"]')).toBeNull();
     expect(document.activeElement).toBe(host.querySelector('[data-testid="path-trigger"]'));
+  });
+
+  it('closes a path sheet when its preserved terminal tab becomes inactive', () => {
+    expect(host.querySelector('[data-testid="terminal-path-action-sheet"]')).not.toBeNull();
+
+    act(() => root.render(
+      <MobileNavigationHistoryProvider>
+        <Harness active={false} />
+      </MobileNavigationHistoryProvider>,
+    ));
+    expect(host.querySelector('[data-testid="terminal-path-action-sheet"]')).toBeNull();
+
+    act(() => root.render(
+      <MobileNavigationHistoryProvider>
+        <Harness active />
+      </MobileNavigationHistoryProvider>,
+    ));
+    expect(host.querySelector('[data-testid="terminal-path-action-sheet"]')).toBeNull();
   });
 });

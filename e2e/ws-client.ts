@@ -1,6 +1,10 @@
 import { WebSocket } from 'ws';
 
-import type { ClientToServerMessage, ServerToClientMessage } from '../src/shared/remote-protocol';
+import {
+  REMOTE_PROTOCOL_VERSION,
+  type ClientToServerMessage,
+  type ServerToClientMessage,
+} from '../src/shared/remote-protocol';
 
 /**
  * Minimal Node-side WS client for the mirroring e2e (session-mirror.spec.ts):
@@ -41,7 +45,13 @@ export class TestWsClient {
       ws.once('error', reject);
     });
     const client = new TestWsClient(ws);
-    client.send({ kind: 'auth', token });
+    client.send({
+      kind: 'auth',
+      token,
+      protocolVersion: REMOTE_PROTOCOL_VERSION,
+      clientVersion: '1.0.0-e2e',
+      buildSha: 'e2e',
+    });
     await client.waitFor((msg) => msg.kind === 'auth-ok', 5_000);
     return client;
   }

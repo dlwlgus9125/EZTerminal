@@ -7,9 +7,13 @@ param(
     [string]$MetadataPath,
 
     [string]$ExpectedApplicationId = 'com.ezterminal.remote',
-    [string]$ExpectedVersionName = '0.10.0',
-    [int]$ExpectedVersionCode = 20,
+    [string]$ExpectedVersionName = '1.0.0',
+    [int]$ExpectedVersionCode = 21,
+    [int]$ExpectedMinSdk = 29,
+    [int]$ExpectedTargetSdk = 35,
     [string]$ExpectedCertSha256 = '',
+    [string[]]$ForbiddenText = @(),
+    [string[]]$RequiredText = @(),
     [string]$OutputPath = '',
     [switch]$RequireSignature
 )
@@ -90,6 +94,18 @@ Assert-Equal $packageMatch.Groups[1].Value $ExpectedApplicationId 'APK applicati
 Assert-Equal ([int]$packageMatch.Groups[2].Value) $ExpectedVersionCode 'APK versionCode'
 Assert-Equal $packageMatch.Groups[3].Value $ExpectedVersionName 'APK versionName'
 
+$sdkMatch = [regex]::Match($badging, "(?m)^minSdkVersion:'(\d+)'\r?$")
+if (-not $sdkMatch.Success) {
+    throw 'aapt2 output did not contain minSdkVersion.'
+}
+Assert-Equal ([int]$sdkMatch.Groups[1].Value) $ExpectedMinSdk 'APK minSdkVersion'
+
+$targetSdkMatch = [regex]::Match($badging, "(?m)^targetSdkVersion:'(\d+)'\r?$")
+if (-not $targetSdkMatch.Success) {
+    throw 'aapt2 output did not contain targetSdkVersion.'
+}
+Assert-Equal ([int]$targetSdkMatch.Groups[1].Value) $ExpectedTargetSdk 'APK targetSdkVersion'
+
 if ($RequireSignature -or -not [string]::IsNullOrWhiteSpace($ExpectedCertSha256)) {
     $apksigner = Get-BuildTool 'apksigner.bat'
     $signatureOutput = @(& $apksigner verify --verbose --print-certs $resolvedApk 2>&1)
@@ -119,6 +135,62 @@ if ($RequireSignature -or -not [string]::IsNullOrWhiteSpace($ExpectedCertSha256)
     Write-Host "Verified signing certificate SHA-256: $actualDigest"
 }
 
+if (@($ForbiddenText).Count -gt 0 -or @($RequiredText).Count -gt 0) {
+    $requiredFound = @{}
+    foreach ($required in $RequiredText) {
+        if (-not [string]::IsNullOrEmpty($required)) {
+            $requiredFound[$required] = $false
+        }
+    }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($resolvedApk)
+    try {
+        $textExtensions = @('.css', '.html', '.js', '.json', '.map', '.txt')
+        foreach ($entry in $archive.Entries) {
+            if (-not $entry.FullName.StartsWith('assets/public/', [StringComparison]::OrdinalIgnoreCase)) {
+                continue
+            }
+            if ($textExtensions -notcontains [IO.Path]::GetExtension($entry.FullName).ToLowerInvariant()) {
+                continue
+            }
+            $stream = $entry.Open()
+            $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8, $true)
+            try {
+                $content = $reader.ReadToEnd()
+                foreach ($forbidden in $ForbiddenText) {
+                    if (-not [string]::IsNullOrEmpty($forbidden) -and
+                        $content.IndexOf($forbidden, [StringComparison]::Ordinal) -ge 0) {
+                        throw "Forbidden production marker '$forbidden' found in APK entry $($entry.FullName)."
+                    }
+                }
+                foreach ($required in $RequiredText) {
+                    if (-not [string]::IsNullOrEmpty($required) -and
+                        $content.IndexOf($required, [StringComparison]::Ordinal) -ge 0) {
+                        $requiredFound[$required] = $true
+                    }
+                }
+            } finally {
+                $reader.Dispose()
+                $stream.Dispose()
+            }
+        }
+    } finally {
+        $archive.Dispose()
+    }
+    $missingRequired = @($RequiredText | Where-Object {
+        -not [string]::IsNullOrEmpty($_) -and -not $requiredFound[$_]
+    })
+    if ($missingRequired.Count -gt 0) {
+        throw "APK web assets are missing required build identity: $($missingRequired -join ', ')"
+    }
+    if (@($ForbiddenText).Count -gt 0) {
+        Write-Host "Verified APK web assets contain none of: $($ForbiddenText -join ', ')"
+    }
+    if (@($RequiredText).Count -gt 0) {
+        Write-Host "Verified APK web assets contain required build identity: $($RequiredText -join ', ')"
+    }
+}
+
 if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
     $outputDirectory = Split-Path -Parent $OutputPath
     if ($outputDirectory) {
@@ -133,4 +205,4 @@ if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
     Write-Host "SHA-256: $hash"
 }
 
-Write-Host "Verified $ExpectedApplicationId $ExpectedVersionName (versionCode $ExpectedVersionCode)."
+Write-Host "Verified $ExpectedApplicationId $ExpectedVersionName (versionCode $ExpectedVersionCode, minSdk $ExpectedMinSdk, targetSdk $ExpectedTargetSdk)."

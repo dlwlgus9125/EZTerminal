@@ -15,6 +15,7 @@ import {
   OPENCLAW_CHAT_FRAME_TIMEOUT_MS,
 } from './MobileOpenClawView';
 import { WsEzTerminalTransport, type CreateSocket, type WsLike } from './transport/ws-ezterminal';
+import { REMOTE_PROTOCOL_VERSION } from '../../src/shared/remote-protocol';
 
 const browserOpen = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock('@capacitor/browser', () => ({ Browser: { open: browserOpen } }));
@@ -78,7 +79,10 @@ class FakeSocket implements WsLike {
   }
 
   triggerMessage(msg: unknown): void {
-    const data = JSON.stringify(msg);
+    const normalized = (msg as { kind?: string })?.kind === 'auth-ok'
+      ? { protocolVersion: REMOTE_PROTOCOL_VERSION, hostVersion: '1.0.0-test', ...(msg as Record<string, unknown>) }
+      : msg;
+    const data = JSON.stringify(normalized);
     for (const h of this.handlers.message) h({ data } as never);
   }
 

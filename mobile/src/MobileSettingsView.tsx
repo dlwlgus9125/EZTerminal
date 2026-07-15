@@ -41,6 +41,7 @@ import {
 import { loadUiScale, saveUiScale } from './ui-scale';
 import { TerminalAccessorySettings } from './TerminalAccessorySettings';
 import { useMobileUiPreferences } from './MobileUiPreferencesProvider';
+import { MOBILE_BUILD_INFO } from './build-info';
 
 // MobileSettingsView — full-screen settings overlay (v0.2.0 M4). Modeled on
 // MobileStatsView.tsx's structure (standalone view, own header, `.btn`/
@@ -420,6 +421,15 @@ export function MobileSettingsView({
 
         <section className="status-section">
           <h2 className="status-section-title">{t('mobile.settingsView.connection')}</h2>
+          <div className="status-metric" data-testid="settings-app-version">
+            {t('settings.appVersion')}: {MOBILE_BUILD_INFO.appVersion}
+          </div>
+          <div className="status-metric" data-testid="settings-protocol-version">
+            {t('settings.protocolVersion')}: {MOBILE_BUILD_INFO.protocolVersion}
+          </div>
+          <div className="status-metric" data-testid="settings-build-sha">
+            {t('settings.buildSha')}: {MOBILE_BUILD_INFO.buildSha}
+          </div>
           <div className="status-metric" data-testid="settings-connection-url">
             {connectionUrl || '—'}
           </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useAppTranslation } from "../../src/renderer/i18n";
 import type { QuickCommand } from "../../src/shared/quick-command";
@@ -31,6 +31,7 @@ export function MobileQuickCommandSheet({
   source,
   supported,
   connected,
+  active = true,
   insertDisabledReason,
   runDisabledReason,
   onInsert,
@@ -39,6 +40,8 @@ export function MobileQuickCommandSheet({
   readonly source: MobileQuickCommandSource;
   readonly supported: boolean;
   readonly connected: boolean;
+  /** False while the owning terminal tab is preserved off-screen. */
+  readonly active?: boolean;
   readonly insertDisabledReason?: string;
   readonly runDisabledReason?: string;
   readonly onInsert: (command: string) => void;
@@ -63,6 +66,13 @@ export function MobileQuickCommandSheet({
     setQuery("");
     setConfirmCommand(null);
   }, []);
+
+  // Terminal tabs stay mounted to preserve PTY/UI state. A sheet must not
+  // stay mounted inside a display:none tab: it would remain the top modal
+  // layer and make the newly active tab inert even though no dialog is shown.
+  useLayoutEffect(() => {
+    if (!active && open) close();
+  }, [active, close, open]);
 
   const load = useCallback((): void => {
     if (!connected) {
@@ -119,7 +129,7 @@ export function MobileQuickCommandSheet({
         &gt;_
       </button>
 
-      {open && (
+      {active && open && (
         <MobileActionSheet
           title={
             confirmCommand

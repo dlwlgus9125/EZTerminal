@@ -14,6 +14,7 @@ import type { PacketRow, SystemStatsSnapshot } from '../../src/shared/ipc';
 import type { RemotePacketFrame, RemotePacketStatus } from '../../src/shared/remote-protocol';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { Tab, TabList, TabPanel, Tabs } from '../../src/renderer/ui/Tabs';
+import { e2eLog } from './e2e-telemetry';
 
 type StatsTab = 'summary' | 'conns' | 'capture';
 
@@ -47,10 +48,9 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
     const unsubscribe = window.ezterminal.onStatsUpdate((snapshot) => {
       if (!alive) return;
       setHistory((current) => mergeSnapshot(current, snapshot));
-      // e2e marker: mobile/e2e greps logcat for this (no DOM access without
-      // Appium) — see MobileSessionView.tsx's `[ez-e2e] output:` for precedent.
-      console.log(
-        '[ez-e2e] stats:',
+      // E2E-only marker for the logcat-driven Android parity harness.
+      e2eLog(
+        'stats:',
         'cpu=' + Math.round(snapshot.cpu.loadPct),
         'cores=' + snapshot.cpu.cores.length,
         'conns=' + (snapshot.conns ? snapshot.conns.length : 'null'),
@@ -104,7 +104,7 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
         return next.length > PACKET_ROW_CAP ? next.slice(next.length - PACKET_ROW_CAP) : next;
       });
       // e2e marker: mobile/e2e greps logcat for this (no DOM access without Appium).
-      console.log('[ez-e2e] packets: rows=' + drained.length);
+      e2eLog('packets:', 'rows=' + drained.length);
     };
 
     const onPortMessage = (event: MessageEvent<RemotePacketFrame>): void => {
@@ -114,7 +114,7 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
         if (rafId === null) rafId = requestAnimationFrame(flush);
       } else {
         setPacketStatus(frame.status);
-        console.log('[ez-e2e] packets:', frame.status);
+        e2eLog('packets:', frame.status);
       }
     };
 

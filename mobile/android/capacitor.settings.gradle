@@ -8,8 +8,5 @@ project(':capacitor-app').projectDir = new File('../../node_modules/@capacitor/a
 include ':capacitor-browser'
 project(':capacitor-browser').projectDir = new File('../../node_modules/@capacitor/browser/android')
 
-include ':capacitor-filesystem'
-project(':capacitor-filesystem').projectDir = new File('../../node_modules/@capacitor/filesystem/android')
-
 include ':capacitor-secure-storage-plugin'
 project(':capacitor-secure-storage-plugin').projectDir = new File('../../node_modules/capacitor-secure-storage-plugin/android')

@@ -4,6 +4,7 @@ import {
   base64ToUint8Array,
   decodeFrame,
   encodeFrame,
+  REMOTE_PROTOCOL_VERSION,
   uint8ArrayToBase64,
   type ClientToServerMessage,
   type ServerToClientMessage,
@@ -60,6 +61,8 @@ describe('remote-protocol - Quick Commands capability', () => {
   it('keeps the capability and bounded read-only reply JSON-safe', () => {
     const auth = {
       kind: 'auth-ok',
+      protocolVersion: REMOTE_PROTOCOL_VERSION,
+      hostVersion: '1.0.0',
       capabilities: ['quick-commands-read'],
     } satisfies ServerToClientMessage;
     const request = {

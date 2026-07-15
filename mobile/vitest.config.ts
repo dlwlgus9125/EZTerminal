@@ -6,6 +6,12 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'jsdom',
+    setupFiles: ['./src/test-setup.ts'],
+    onConsoleLog(log, type) {
+      if (type === 'stderr') {
+        throw new Error(`Unexpected mobile test stderr: ${log}`);
+      }
+    },
     passWithNoTests: true,
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     exclude: ['node_modules/**'],

@@ -50,6 +50,17 @@ describe('classifyConnectionHealth', () => {
     ).kind).toBe('auth-rejected');
   });
 
+  it('classifies protocol incompatibility as a distinct update action', () => {
+    expect(classifyConnectionHealth(
+      snapshot({ state: 'protocol-incompatible', attempt: 0 }),
+      english,
+    )).toEqual({
+      kind: 'protocol-incompatible',
+      label: 'Update required',
+      detail: 'This phone and desktop use incompatible remote protocols. Update both EZTerminal apps, then pair again.',
+    });
+  });
+
   it('returns localized English and Korean banner copy through the typed translator', () => {
     expect(classifyConnectionHealth(
       snapshot({ state: 'connected' }),

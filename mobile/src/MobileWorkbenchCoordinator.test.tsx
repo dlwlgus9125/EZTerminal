@@ -70,6 +70,42 @@ function MoreToSettingsHarness(): JSX.Element {
   );
 }
 
+function NestedSheetsHarness(): JSX.Element {
+  const [firstOpen, setFirstOpen] = useState(true);
+  const [secondOpen, setSecondOpen] = useState(false);
+
+  return (
+    <MobileWorkbenchCoordinator
+      terminal={<button type="button" data-testid="background-control">Terminal</button>}
+      overlays={(
+        <>
+          {firstOpen && (
+            <MobileActionSheet
+              title="First sheet"
+              onClose={() => setFirstOpen(false)}
+              testId="first-sheet"
+            >
+              <button type="button" data-testid="open-second-sheet" onClick={() => setSecondOpen(true)}>
+                Open second sheet
+              </button>
+            </MobileActionSheet>
+          )}
+          {secondOpen && (
+            <MobileActionSheet
+              title="Second sheet"
+              onClose={() => setSecondOpen(false)}
+              testId="second-sheet"
+            >
+              <button type="button">Second action</button>
+            </MobileActionSheet>
+          )}
+        </>
+      )}
+      onRequestTerminal={() => undefined}
+    />
+  );
+}
+
 describe('MobileWorkbenchCoordinator', () => {
   it('preserves terminal DOM identity and makes it inert under an auxiliary page', () => {
     const render = (page?: JSX.Element): void => {
@@ -145,6 +181,59 @@ describe('MobileWorkbenchCoordinator', () => {
 
     expect(onCloseSheet).toHaveBeenCalledTimes(1);
     expect(onRequestTerminal).not.toHaveBeenCalled();
+  });
+
+  it('isolates the background and only exposes the top action sheet', () => {
+    act(() => root.render(<NestedSheetsHarness />));
+
+    const terminalLayer = host.querySelector<HTMLElement>('.mobile-terminal-layer')!;
+    const firstBackdrop = host.querySelector<HTMLElement>('[data-testid="first-sheet-backdrop"]')!;
+    expect(terminalLayer.hasAttribute('inert')).toBe(true);
+    expect(terminalLayer.getAttribute('aria-hidden')).toBe('true');
+    expect(firstBackdrop.hasAttribute('inert')).toBe(false);
+
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-second-sheet"]')!.click());
+    const secondBackdrop = host.querySelector<HTMLElement>('[data-testid="second-sheet-backdrop"]')!;
+    expect(firstBackdrop.hasAttribute('inert')).toBe(true);
+    expect(firstBackdrop.getAttribute('aria-hidden')).toBe('true');
+    expect(secondBackdrop.hasAttribute('inert')).toBe(false);
+
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="second-sheet"] .mobile-action-sheet-cancel')!.click());
+    expect(host.querySelector('[data-testid="second-sheet"]')).toBeNull();
+    expect(firstBackdrop.hasAttribute('inert')).toBe(false);
+    expect(firstBackdrop.hasAttribute('aria-hidden')).toBe(false);
+    expect(terminalLayer.hasAttribute('inert')).toBe(true);
+
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="first-sheet"] .mobile-action-sheet-cancel')!.click());
+    expect(host.querySelector('[data-testid="first-sheet"]')).toBeNull();
+    expect(terminalLayer.hasAttribute('inert')).toBe(false);
+    expect(terminalLayer.hasAttribute('aria-hidden')).toBe(false);
+  });
+
+  it('isolates dynamically added background siblings until the complete sheet stack closes', async () => {
+    act(() => root.render(<NestedSheetsHarness />));
+
+    const dynamicBackground = document.createElement('aside');
+    dynamicBackground.inert = false;
+    dynamicBackground.setAttribute('aria-hidden', 'false');
+    document.body.append(dynamicBackground);
+    await act(async () => Promise.resolve());
+
+    expect(dynamicBackground.inert).toBe(true);
+    expect(dynamicBackground.hasAttribute('inert')).toBe(true);
+    expect(dynamicBackground.getAttribute('aria-hidden')).toBe('true');
+
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-second-sheet"]')!.click());
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="second-sheet"] .mobile-action-sheet-cancel')!.click());
+    expect(dynamicBackground.inert).toBe(true);
+    expect(dynamicBackground.getAttribute('aria-hidden')).toBe('true');
+
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="first-sheet"] .mobile-action-sheet-cancel')!.click());
+    expect(dynamicBackground.inert).toBe(false);
+    expect(dynamicBackground.hasAttribute('inert')).toBe(false);
+    expect(dynamicBackground.getAttribute('aria-hidden')).toBe('false');
+
+    dynamicBackground.remove();
   });
 
   it('keeps a More destination mounted after the sheet history traversal would run', async () => {
