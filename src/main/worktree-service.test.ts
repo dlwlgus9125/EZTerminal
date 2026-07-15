@@ -263,7 +263,7 @@ describe('WorktreeService — real Git boundaries', () => {
     if (!listed.ok) throw new Error('list failed');
     const canonicalExternalPath = realpathSync(externalPath);
     const unmanaged = listed.worktrees.find(
-      (item) => path.normalize(realpathSync(item.path)) === path.normalize(canonicalExternalPath),
+      (item) => path.normalize(item.path) === path.normalize(canonicalExternalPath),
     );
     expect(unmanaged).toMatchObject({ managed: false, main: false });
     const rejected = await service.execute({ action: 'remove', cwd: repo, worktreeId: unmanaged!.worktreeId }, 'desktop');
