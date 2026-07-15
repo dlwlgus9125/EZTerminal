@@ -1,5 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import { packagedExePath } from './paths';
 
@@ -65,7 +68,16 @@ function killTree(pid: number | undefined): void {
 }
 
 test('packaged EXE: interpreter utilityProcess forks from app.asar under fuses', async () => {
-  const child = spawn(EXE, [], { stdio: ['ignore', 'pipe', 'pipe'] });
+  // Keep this production-binary probe independent from any installed/running
+  // EZTerminal instance. Electron's single-instance lock and disk cache are
+  // scoped by userData, so sharing the real profile makes the release gate
+  // depend on unrelated desktop state.
+  const userDataDir = mkdtempSync(path.join(tmpdir(), 'ezterm-packaged-smoke-'));
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    EZTERMINAL_USER_DATA_DIR: userDataDir,
+  };
+  const child = spawn(EXE, [], { stdio: ['ignore', 'pipe', 'pipe'], env });
   const out = captureOutput(child);
   let exitCode: number | null | undefined;
   child.on('exit', (code) => (exitCode = code));
