@@ -62,6 +62,7 @@ dist/
 *.aab
 
 # Signing material — never commit keystores or certificates
+/.release-secrets/
 *.jks
 *.keystore
 *.p12
