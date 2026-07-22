@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { OpenClawMode, TerminalRendererPreference, ThemeName } from '../shared/layout-schema';
 import type { RemoteRuntimeStatus } from '../shared/ipc';
+import type { TerminalPastePreferences } from '../shared/terminal-clipboard';
 import { AgentIntegrationSettings } from './AgentIntegrationSettings';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import type { InterferenceParams, RollbarParams } from './effect-params';
@@ -72,6 +73,8 @@ interface SettingsPanelProps {
   readonly onChangeConfirmRiskyPaneClose: (enabled: boolean) => void;
   readonly allowOsc52Clipboard: boolean;
   readonly onChangeAllowOsc52Clipboard: (enabled: boolean) => void;
+  readonly terminalPastePreferences: TerminalPastePreferences;
+  readonly onChangeTerminalPastePreferences: (preferences: TerminalPastePreferences) => void;
   readonly theme: ThemeName;
   readonly onSelectTheme: (name: ThemeName) => void;
   readonly availableThemes: readonly ThemeDefinition[];
@@ -110,6 +113,8 @@ export function SettingsPanel({
   onChangeConfirmRiskyPaneClose,
   allowOsc52Clipboard,
   onChangeAllowOsc52Clipboard,
+  terminalPastePreferences,
+  onChangeTerminalPastePreferences,
   theme,
   onSelectTheme,
   availableThemes,
@@ -599,6 +604,24 @@ export function SettingsPanel({
           onChange={(event) => onChangeAllowOsc52Clipboard(event.target.checked)}
           label={t('settings.allowOsc52Clipboard')}
           data-testid="settings-allow-osc52-clipboard"
+        />
+        <Switch
+          checked={terminalPastePreferences.warnOnMultiline}
+          onChange={(event) => onChangeTerminalPastePreferences({
+            ...terminalPastePreferences,
+            warnOnMultiline: event.target.checked,
+          })}
+          label={t('settings.warnOnMultilinePaste')}
+          data-testid="settings-warn-multiline-paste"
+        />
+        <Switch
+          checked={terminalPastePreferences.warnOnLarge}
+          onChange={(event) => onChangeTerminalPastePreferences({
+            ...terminalPastePreferences,
+            warnOnLarge: event.target.checked,
+          })}
+          label={t('settings.warnOnLargePaste')}
+          data-testid="settings-warn-large-paste"
         />
       </section>
       <section className="status-section" hidden={category !== 'about'}>

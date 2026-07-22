@@ -26,6 +26,11 @@ import {
 import type { FilePreviewResult } from '../shared/file-preview';
 import type { SessionInfo } from '../shared/ipc';
 import type { ThemeMod } from '../shared/theme-schema';
+import {
+  DEFAULT_TERMINAL_PASTE_PREFERENCES,
+  type TerminalPastePreferences,
+  type TerminalPasteRisk,
+} from '../shared/terminal-clipboard';
 import { type QuickCommand, type QuickCommandInput, type QuickCommandMutationResult } from '../shared/quick-command';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
 import {
@@ -69,6 +74,7 @@ import { RiskyCloseDialog } from './RiskyCloseDialog';
 import { SettingsPanel, type SettingsCategory } from './SettingsPanel';
 import { StatusPanel } from './StatusPanel';
 import { TerminalPane } from './TerminalPane';
+import { TerminalPasteWarningDialog } from './TerminalPasteWarningDialog';
 import { WorkspaceTab } from './WorkspaceTab';
 import { preflightLayoutEnvelope } from './layout-preflight';
 import { SessionPanelTracker, type PaneInstanceToken, type SessionPaneLease } from './session-panel-tracker';
@@ -77,6 +83,8 @@ import { THEME_ORDER, THEMES, listThemes, registerTheme, type ThemeDefinition } 
 import { applyScrollback, clampScrollback, SCROLLBACK_DEFAULT } from './scrollback';
 import { applyUiScale, clampUiScale, UI_SCALE_DEFAULT } from './ui-scale';
 import { useUiPreferences } from './ui-preferences';
+import { useToast } from './ui';
+import type { TerminalNoticeKind } from './terminal-paste';
 import {
   ActivityRail,
   AppHeader,
@@ -186,6 +194,11 @@ interface CloseDialogState {
   readonly details?: readonly string[];
   readonly confirmLabel: string;
   readonly onConfirm: () => void;
+}
+
+interface PendingPasteConfirmation {
+  readonly risk: TerminalPasteRisk;
+  readonly resolve: (confirmed: boolean) => void;
 }
 
 function AgentAwareTab(props: IDockviewPanelHeaderProps): JSX.Element {
@@ -318,6 +331,7 @@ async function pickStartupLayout(): Promise<LayoutEnvelope | null> {
 
 export function App(): JSX.Element {
   const { t } = useAppTranslation();
+  const { pushToast } = useToast();
   const paneActionMessage = useCallback(
     (result: PaneActionResult): string | null => {
       if (result.ok) return null;
@@ -394,6 +408,75 @@ export function App(): JSX.Element {
     setAllowOsc52Clipboard(enabled);
     void window.ezterminalDesktop?.setAllowOsc52Clipboard(enabled);
   }, []);
+  const [terminalPastePreferences, setTerminalPastePreferences] = useState<TerminalPastePreferences>(
+    DEFAULT_TERMINAL_PASTE_PREFERENCES,
+  );
+  useEffect(() => {
+    let alive = true;
+    void window.ezterminalDesktop?.getTerminalPastePreferences().then((preferences) => {
+      if (alive) setTerminalPastePreferences(preferences);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const changeTerminalPastePreferences = useCallback((preferences: TerminalPastePreferences): void => {
+    setTerminalPastePreferences(preferences);
+    void window.ezterminalDesktop?.setTerminalPastePreferences(preferences);
+  }, []);
+  const pendingPasteConfirmationRef = useRef<PendingPasteConfirmation | null>(null);
+  const [pendingPasteConfirmation, setPendingPasteConfirmation] = useState<PendingPasteConfirmation | null>(null);
+  const requestPasteConfirmation = useCallback((risk: TerminalPasteRisk): Promise<boolean> => {
+    if (pendingPasteConfirmationRef.current) return Promise.resolve(false);
+    return new Promise<boolean>((resolve) => {
+      const pending = { risk, resolve };
+      pendingPasteConfirmationRef.current = pending;
+      setPendingPasteConfirmation(pending);
+    });
+  }, []);
+  const settlePasteConfirmation = useCallback((confirmed: boolean): void => {
+    const pending = pendingPasteConfirmationRef.current;
+    if (!pending) return;
+    pendingPasteConfirmationRef.current = null;
+    setPendingPasteConfirmation(null);
+    pending.resolve(confirmed);
+  }, []);
+  useEffect(() => () => {
+    const pending = pendingPasteConfirmationRef.current;
+    pendingPasteConfirmationRef.current = null;
+    pending?.resolve(false);
+  }, []);
+  const notifyTerminal = useCallback((notice: TerminalNoticeKind): void => {
+    if (notice === 'codex-interrupt-help') {
+      pushToast({
+        title: t('terminalSafety.codexInterruptTitle'),
+        description: t('terminalSafety.codexInterruptDescription'),
+        variant: 'info',
+      });
+      return;
+    }
+    if (notice === 'clipboard-read-failed') {
+      pushToast({
+        title: t('terminalSafety.clipboardReadFailedTitle'),
+        description: t('terminalSafety.clipboardReadFailedDescription'),
+        variant: 'warning',
+      });
+      return;
+    }
+    if (notice === 'clipboard-no-text') {
+      pushToast({
+        title: t('terminalSafety.clipboardNoTextTitle'),
+        description: t('terminalSafety.clipboardNoTextDescription'),
+        variant: 'info',
+      });
+      return;
+    }
+    pushToast({
+      title: t('terminalSafety.clipboardEmptyTitle'),
+      description: t('terminalSafety.clipboardEmptyDescription'),
+      variant: 'info',
+    });
+  }, [pushToast, t]);
 
   // ── OpenClaw desktop visibility (openclaw-stabilization M2) ───────────────
   // Tri-state `openclawMode` setting resolved main-side into one effective
@@ -1162,6 +1245,17 @@ export function App(): JSX.Element {
       writeClipboardText: async (text) => {
         await window.ezterminalDesktop?.writeOsc52Clipboard(text);
       },
+      readClipboard: async () => {
+        const desktopSnapshot = await window.ezterminalDesktop?.readTerminalClipboard();
+        if (desktopSnapshot) return desktopSnapshot;
+        return {
+          hasImage: false,
+          text: await navigator.clipboard.readText(),
+        };
+      },
+      pastePreferences: terminalPastePreferences,
+      confirmPaste: requestPasteConfirmation,
+      notifyTerminal,
       openTerminalFileLocation: (request) => {
         quickPreviewSequenceRef.current += 1;
         const sequence = quickPreviewSequenceRef.current;
@@ -1204,7 +1298,14 @@ export function App(): JSX.Element {
           });
       },
     }),
-    [allowOsc52Clipboard, t, terminalRendererPreference],
+    [
+      allowOsc52Clipboard,
+      notifyTerminal,
+      requestPasteConfirmation,
+      t,
+      terminalPastePreferences,
+      terminalRendererPreference,
+    ],
   );
 
   const [theme, setThemeState] = useState<ThemeName>('matrix');
@@ -2338,16 +2439,17 @@ export function App(): JSX.Element {
     };
   }, [cancelRecentPanelSwitch, commitRecentPanelSwitch, cycleRecentPanel]);
 
-  // Global keybindings: Ctrl/Cmd+P (all sources), Ctrl/Cmd+Shift+P
-  // (commands/actions), plus the existing Alt split shortcuts. Capture phase
+  // Global keybindings: Ctrl/Cmd+Shift+P (commands/actions), plus the existing
+  // Alt split shortcuts. Ctrl/Cmd+P is intentionally left to terminal apps.
+  // Capture phase
   // wins before xterm's textarea and the cmd-input, so a bound combo is never
   // typed into the terminal. e.code is keyboard-layout independent.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.code === 'KeyP' && !e.altKey && (e.ctrlKey || e.metaKey)) {
+      if (e.code === 'KeyP' && e.shiftKey && !e.altKey && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         e.stopPropagation();
-        openQuickOpen(e.shiftKey ? 'commands' : 'all');
+        openQuickOpen('commands');
         return;
       }
       if (e.metaKey || e.ctrlKey || !e.altKey || !e.shiftKey) return;
@@ -2423,6 +2525,8 @@ export function App(): JSX.Element {
         onChangeConfirmRiskyPaneClose={changeConfirmRiskyPaneClose}
         allowOsc52Clipboard={allowOsc52Clipboard}
         onChangeAllowOsc52Clipboard={changeAllowOsc52Clipboard}
+        terminalPastePreferences={terminalPastePreferences}
+        onChangeTerminalPastePreferences={changeTerminalPastePreferences}
         theme={theme}
         onSelectTheme={selectTheme}
         availableThemes={availableThemes}
@@ -2567,6 +2671,13 @@ export function App(): JSX.Element {
               confirmLabel={closeDialog.confirmLabel}
               onCancel={() => setCloseDialog(null)}
               onConfirm={closeDialog.onConfirm}
+            />
+          )}
+          {pendingPasteConfirmation && (
+            <TerminalPasteWarningDialog
+              risk={pendingPasteConfirmation.risk}
+              onCancel={() => settlePasteConfirmation(false)}
+              onConfirm={() => settlePasteConfirmation(true)}
             />
           )}
           <FileDropOverlay activePanelId={activePanelId} agentSessionIds={agentSessionIds} />

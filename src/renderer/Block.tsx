@@ -1,6 +1,8 @@
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
 import { useState, useSyncExternalStore } from 'react';
 
+import { classifyDirectAgentCommand } from '../shared/agent-command';
+import type { PtyRestoreWarningFrame } from '../shared/ipc';
 import type { BlockController } from './block-controller';
 import { formatCwd } from './format-cwd';
 import { useAppTranslation } from './i18n';
@@ -9,7 +11,6 @@ import { ResultTable } from './ResultTable';
 import { SshPromptCard } from './SshPromptCard';
 import { TextBlock } from './TextBlock';
 import type { TerminalRuntimeOptions } from './xterm-runtime';
-import type { PtyRestoreWarningFrame } from '../shared/ipc';
 
 // A Block = command input (the text that was run) + its output, collapsible and
 // stacked vertically in the BlockList (architecture §8 item 9). The output renders
@@ -53,6 +54,8 @@ export function Block({
   const { t } = useAppTranslation();
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const [collapsed, setCollapsed] = useState(false);
+  const isDesktopCodex = terminalRuntimeOptions?.platform === 'desktop'
+    && classifyDirectAgentCommand(controller.command) === 'codex';
 
   const { status, shape, rowCount, errorMessage, startCwd, sshPrompt, sshConnectionId, sshConnectionState } = snapshot;
 
@@ -116,7 +119,7 @@ export function Block({
             onClick={() => controller.cancel()}
             data-testid="block-cancel"
           >
-            {t('common.cancel')}
+            {isDesktopCodex ? t('terminalPane.forceStop') : t('common.cancel')}
           </button>
         )}
         {onDismiss && (

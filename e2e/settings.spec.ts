@@ -63,3 +63,29 @@ test('settings drawer: mutually exclusive with the stats panel (shared right-slo
 
   await app.close();
 });
+
+test('terminal paste warnings default on and persist independently', async () => {
+  const dir = tempUserData();
+  const app1 = await launchApp(dir);
+  const w1 = await app1.firstWindow();
+  await expect(w1.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  await w1.getByTestId('btn-toggle-settings').click();
+  await w1.getByTestId('settings-category-terminal').click();
+  const multiline = w1.getByTestId('settings-warn-multiline-paste');
+  const large = w1.getByTestId('settings-warn-large-paste');
+  await expect(multiline).toBeChecked();
+  await expect(large).toBeChecked();
+  await multiline.click();
+  await expect(multiline).not.toBeChecked();
+  await app1.close();
+
+  const app2 = await launchApp(dir);
+  const w2 = await app2.firstWindow();
+  await expect(w2.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+  await w2.getByTestId('btn-toggle-settings').click();
+  await w2.getByTestId('settings-category-terminal').click();
+  await expect(w2.getByTestId('settings-warn-multiline-paste')).not.toBeChecked();
+  await expect(w2.getByTestId('settings-warn-large-paste')).toBeChecked();
+  await app2.close();
+});

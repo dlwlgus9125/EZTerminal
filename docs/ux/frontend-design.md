@@ -97,6 +97,39 @@ that the title, EFFECT character, and CRT character be restored. Direction 2 is
 therefore the implementation decision: it preserves the approved workbench
 hierarchy while restoring a recognizable product signature.
 
+### 3.2 Codex terminal safety direction
+
+Three ways of exposing Codex-specific keyboard safety were evaluated:
+
+1. **Minimal safety UI — selected by the user.** Keep the terminal visually
+   unchanged, show one brief notice the first time a Codex run blocks `Ctrl+C`,
+   and show a dialog only for risky text paste.
+2. **Persistent safety badge — rejected.** A pane-level badge would improve
+   discoverability but consume terminal space throughout every Codex run.
+3. **User-defined Codex keymap — rejected for this release.** Full remapping
+   would be flexible but substantially expand settings, validation, and support
+   burden beyond the requested safe Windows-terminal behavior.
+
+The policy applies only to directly launched Codex commands. With no terminal
+selection, `Ctrl+C` and `Ctrl+D` are consumed; `Escape` continues to the Codex
+TUI; `/exit`, `/quit`, and the explicit force-stop action remain the exit paths.
+With a selection, `Ctrl+C` and `Ctrl+Insert` copy only that terminal surface.
+Generic PTYs retain their control-byte behavior.
+
+Clipboard paste is format-aware. Text uses the terminal's paste adapter;
+image-bearing `Ctrl+V` in Codex is handed to Codex so it owns image attachment
+and temporary-file cleanup. `Ctrl+Shift+V` and `Shift+Insert` explicitly request
+text when both formats exist. Multiline and text larger than 5 KiB use one
+small `alertdialog` that reports line count and size without displaying or
+logging clipboard contents. Cancel receives initial focus, Escape cancels, and
+closing restores the invoking terminal focus. The two warnings are independent
+Terminal & Safety settings and default on.
+
+This addition uses the repository-owned `Dialog`, `Toast`, `Button`, and
+`Switch` primitives and existing semantic tokens. It adds no route, breakpoint,
+asset, font, color role, or mobile interaction. Storybook owns dialog states;
+desktop Playwright owns keyboard, focus, clipboard, and screenshot coverage.
+
 ## 4. Desktop application shell
 
 ### 4.1 Layout anatomy
@@ -559,6 +592,7 @@ tests hard-fail a built-in theme regression.
 | Command Center | Stale searches are discarded | Recent/useful actions or no-match message | Disabled result explains why | Explicit action closes only when its operation completes |
 | Mobile auxiliary page | Terminal remains mounted underneath | Page-specific empty state | Offline/local capabilities are distinguished | Back reveals the same terminal instance |
 | Dialog / ActionSheet | Duplicate submission disabled | Not applicable | Error remains within labelled surface | Close restores invoker unless action intentionally moves focus |
+| Terminal paste safety | Clipboard read is a bounded user-initiated action | Empty or unavailable format gets a brief status notice | Read failure sends no PTY input; warning cancellation is silent | Confirmed text is delivered once; focus returns to the same terminal |
 
 Toasts are reserved for brief completed feedback. Recoverable errors that need
 action stay next to the failed operation. Skeletons preserve final geometry.
@@ -569,6 +603,11 @@ action stay next to the failed operation. Skeletons preserve final geometry.
   Back on mobile.
 - Visible focus meets 3:1 contrast and is never removed without an equivalent.
 - Modal dialogs and Command Center trap focus; non-modal sidebars do not.
+- The paste warning is an `alertdialog`; Cancel receives initial focus, Escape
+  cancels without reaching the PTY, and close restores the exact invoker.
+- A blocked Codex control key is announced at most once per run through the
+  existing polite status-toast pattern; repeated keypresses do not spam assistive
+  technology.
 - Menus support Arrow keys, Home/End, Enter/Space, Escape, Shift+F10, and the
   Menu key where applicable, with deterministic focus restoration.
 - Status, selection, error, and attention never rely on color alone.
@@ -652,6 +691,8 @@ Required axes:
   reduced motion, using a deterministic animation phase for screenshots;
 - sidebar closed/open, wide reflow/narrow overlay, and loading/empty/error
   panel states.
+- Codex paste warning states for multiline, large, and combined risks, including
+  Korean/English text, Cancel focus, and a deterministic Matrix-theme screenshot.
 
 CI builds Storybook and runs its component/accessibility checks, desktop visual
 tests, mobile typecheck/test/build/lint, and mobile visual tests in addition to

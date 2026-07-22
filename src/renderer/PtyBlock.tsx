@@ -18,6 +18,7 @@ import {
 } from './TerminalContextMenu';
 import { TerminalFindBar } from './TerminalFindBar';
 import { useAppTranslation } from './i18n';
+import { classifyDirectAgentCommand } from '../shared/agent-command';
 import { findTerminalFileLinkAtOffset } from '../shared/terminal-file-location';
 import {
   acceptOsc52ClipboardWrite,
@@ -27,6 +28,12 @@ import {
 import { QUERY_CARRY_CHARS, containsTerminalQuery } from './pty-query-gate';
 import { TouchScrollAccumulator } from './touch-scroll';
 import { attachXtermImeHygiene } from './xterm-ime-hygiene';
+import {
+  resolveTerminalShortcut,
+  takeCodexInterruptNotice,
+} from './terminal-key-policy';
+import { pasteFromRuntimeClipboard } from './terminal-paste';
+import { selectedTextWithin } from './terminal-selection';
 import {
   DEFAULT_TERMINAL_RUNTIME_OPTIONS,
   XtermRuntime,
@@ -161,6 +168,8 @@ function PtyXtermView({
   const [findResults, setFindResults] = useState<TerminalSearchResults>(EMPTY_SEARCH_RESULTS);
   const linkHandlingEnabled = Boolean(runtimeOptions.openExternalHttpUrl);
   const terminalFileLinksEnabled = Boolean(runtimeOptions.openTerminalFileLocation);
+  const terminalRuntimeOptionsRef = useRef(runtimeOptions);
+  terminalRuntimeOptionsRef.current = runtimeOptions;
 
   // Latest-value ref (M8b): the mount effect's callbacks (ResizeObserver,
   // ez:refit, the pty-data sink's auto-reply gate) are created once and must
@@ -223,6 +232,8 @@ function PtyXtermView({
       return true;
     });
     termRef.current = term;
+    const isDesktop = runtimeOptions.platform === 'desktop';
+    const isCodex = isDesktop && classifyDirectAgentCommand(controller.command) === 'codex';
 
     // FitAddon is ALWAYS loaded now (M8b) — a non-controlling view can later
     // claim control and needs it to report its own size at that point
@@ -254,11 +265,23 @@ function PtyXtermView({
     // state (modes.mouseTrackingMode, buffer.active.type) without new IPC.
     (el as HTMLDivElement & { __ezTerm?: Terminal }).__ezTerm = term;
 
-    // Copy/paste shortcuts (WT-parity M2) — xterm's own key handler, so
-    // everything else (Ctrl+C interrupt, arrows, ...) passes through
-    // untouched (return true). Ctrl+Shift+C copies the current selection;
-    // Ctrl+Shift+V pastes (term.paste applies bracketed-paste framing itself
-    // when the child enabled it).
+    // Desktop uses the Windows-style terminal policy below. Mobile preserves
+    // its existing Ctrl+F and Ctrl+Shift+C/V physical-key behavior; touch paste
+    // remains owned by MobileSessionView. term.paste applies bracketed-paste
+    // framing whenever the child enabled it.
+    const requestClipboardPaste = (mode: 'default' | 'text'): void => {
+      void pasteFromRuntimeClipboard(terminalRuntimeOptionsRef.current, {
+        isCodex,
+        mode,
+        deliverImage: () => {
+          if (termRef.current === term) controller.sendPtyInput('\x16');
+        },
+        deliverText: (text) => {
+          if (termRef.current === term) term.paste(text);
+        },
+      });
+    };
+
     term.attachCustomKeyEventHandler((e) => {
       if (e.type === 'keydown' && isTerminalContextMenuKey(e)) {
         e.preventDefault();
@@ -266,32 +289,67 @@ function PtyXtermView({
         openKeyboardMenuRef.current();
         return false;
       }
-      if (
-        e.type === 'keydown' &&
-        e.code === 'KeyF' &&
-        (e.ctrlKey || e.metaKey) &&
-        !e.altKey &&
-        !e.shiftKey
-      ) {
-        e.preventDefault();
-        setFindOpen(true);
-        return false;
+      if (e.type !== 'keydown') return true;
+      if (!isDesktop) {
+        if (
+          e.code === 'KeyF'
+          && (e.ctrlKey || e.metaKey)
+          && !e.altKey
+          && !e.shiftKey
+        ) {
+          e.preventDefault();
+          setFindOpen(true);
+          return false;
+        }
+        if (!e.ctrlKey || !e.shiftKey) return true;
+        if (e.code === 'KeyC') {
+          if (term.hasSelection()) void navigator.clipboard.writeText(term.getSelection());
+          e.preventDefault();
+          return false;
+        }
+        if (e.code === 'KeyV') {
+          void navigator.clipboard.readText().then((text) => {
+            if (termRef.current === term && text) term.paste(text);
+          });
+          e.preventDefault();
+          return false;
+        }
+        return true;
       }
-      if (e.type !== 'keydown' || !e.ctrlKey || !e.shiftKey) return true;
-      if (e.code === 'KeyC') {
+      const action = resolveTerminalShortcut({
+        code: e.code,
+        key: e.key,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        isCodex,
+        hasSelection: term.hasSelection(),
+        canFind: true,
+      });
+      if (action.kind === 'pass') return true;
+      e.preventDefault();
+      if (action.kind === 'copy') {
         if (term.hasSelection()) void navigator.clipboard.writeText(term.getSelection());
-        e.preventDefault(); // suppress Chromium's dev-only Ctrl+Shift+C (inspect element)
-        return false;
+      } else if (action.kind === 'paste') {
+        requestClipboardPaste(action.mode);
+      } else if (action.kind === 'find') {
+        setFindOpen(true);
+      } else if (
+        action.notice === 'codex-interrupt-help'
+        && takeCodexInterruptNotice(controller)
+      ) {
+        terminalRuntimeOptionsRef.current.notifyTerminal?.('codex-interrupt-help');
       }
-      if (e.code === 'KeyV') {
-        void navigator.clipboard.readText().then((text) => {
-          if (text) term.paste(text);
-        });
-        e.preventDefault();
-        return false;
-      }
-      return true;
+      return false;
     });
+
+    const onNativePaste = (event: ClipboardEvent): void => {
+      event.preventDefault();
+      event.stopPropagation();
+      requestClipboardPaste('default');
+    };
+    if (isDesktop) el.addEventListener('paste', onNativePaste, true);
 
     // In control: report OUR size to the interpreter — this is what claiming
     // control actually accomplishes (the shared PTY resizes to us). A no-op
@@ -547,6 +605,7 @@ function PtyXtermView({
     window.addEventListener('ez:scrollback', applyScrollbackSetting);
 
     return () => {
+      el.removeEventListener('paste', onNativePaste, true);
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
       el.removeEventListener('touchend', onTouchEnd);
@@ -618,10 +677,30 @@ function PtyXtermView({
     runtimeRef.current?.find(findQuery, 'previous', findCaseSensitive);
   };
 
+  const requestMenuPaste = (): void => {
+    const term = termRef.current;
+    if (!term) return;
+    if (runtimeOptions.platform !== 'desktop') {
+      void navigator.clipboard.readText().then((text) => {
+        if (termRef.current === term && text) term.paste(text);
+      });
+      return;
+    }
+    void pasteFromRuntimeClipboard(runtimeOptions, {
+      isCodex: classifyDirectAgentCommand(controller.command) === 'codex',
+      mode: 'default',
+      deliverImage: () => controller.sendPtyInput('\x16'),
+      deliverText: (text) => term.paste(text),
+    });
+  };
+
   const menuItems: TerminalContextMenuItem[] = [
     {
       action: 'copy',
       label: t('terminalContext.copy'),
+      shortcut: runtimeOptions.platform === 'desktop'
+        ? 'Ctrl+C / Ctrl+Shift+C / Ctrl+Insert'
+        : undefined,
       disabled: !termRef.current?.hasSelection(),
       onClick: () => {
         const term = termRef.current;
@@ -631,16 +710,16 @@ function PtyXtermView({
     {
       action: 'paste',
       label: t('terminalContext.paste'),
-      onClick: () => {
-        const term = termRef.current;
-        if (!term) return;
-        void navigator.clipboard.readText().then((text) => {
-          if (text) term.paste(text);
-        });
-      },
+      shortcut: runtimeOptions.platform === 'desktop' ? 'Ctrl+V' : undefined,
+      onClick: requestMenuPaste,
     },
     { action: 'select-all', label: t('terminalContext.selectAll'), onClick: () => termRef.current?.selectAll() },
-    { action: 'find', label: t('terminalFind.label'), onClick: () => setFindOpen(true) },
+    {
+      action: 'find',
+      label: t('terminalFind.label'),
+      shortcut: runtimeOptions.platform === 'desktop' ? 'Ctrl+Shift+F' : undefined,
+      onClick: () => setFindOpen(true),
+    },
   ];
 
   return (
@@ -744,6 +823,8 @@ function PtyPlainView({
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const containerRef = useRef<HTMLDivElement>(null);
   const outputRef = useRef<HTMLPreElement>(null);
+  const isCodex = runtimeOptions.platform === 'desktop'
+    && classifyDirectAgentCommand(controller.command) === 'codex';
   // Right-click context menu (WT-parity M2) — same pattern as PtyXtermView's.
   const [menuPos, setMenuPos] = useState<TerminalMenuInvocation | null>(null);
 
@@ -813,24 +894,39 @@ function PtyPlainView({
   // the adaptive render model a program that enables bracketed paste
   // (?2004h) trips the plain->xterm upgrade, so plain mode never has it
   // active — adding ESC[200~ framing here would be dead code.
+  const selectedOutputText = (): string => selectedTextWithin(outputRef.current);
+  const requestPlainMenuPaste = (): void => {
+    if (runtimeOptions.platform !== 'desktop') {
+      void navigator.clipboard.readText().then((text) => {
+        if (text) controller.sendPtyInput(text);
+      });
+      return;
+    }
+    void pasteFromRuntimeClipboard(runtimeOptions, {
+      isCodex,
+      mode: 'default',
+      deliverImage: () => controller.sendPtyInput('\x16'),
+      deliverText: (text) => controller.sendPtyInput(text),
+    });
+  };
   const menuItems: TerminalContextMenuItem[] = [
     {
       action: 'copy',
       label: t('terminalContext.copy'),
-      disabled: window.getSelection()?.isCollapsed ?? true,
+      shortcut: runtimeOptions.platform === 'desktop'
+        ? 'Ctrl+C / Ctrl+Shift+C / Ctrl+Insert'
+        : undefined,
+      disabled: selectedOutputText() === '',
       onClick: () => {
-        const text = window.getSelection()?.toString();
+        const text = selectedOutputText();
         if (text) void navigator.clipboard.writeText(text);
       },
     },
     {
       action: 'paste',
       label: t('terminalContext.paste'),
-      onClick: () => {
-        void navigator.clipboard.readText().then((text) => {
-          if (text) controller.sendPtyInput(text);
-        });
-      },
+      shortcut: runtimeOptions.platform === 'desktop' ? 'Ctrl+V' : undefined,
+      onClick: requestPlainMenuPaste,
     },
     {
       action: 'select-all',

@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-07-22
+
+### Added
+- Added a direct-Codex terminal safety policy that preserves selection copy, blocks accidental `Ctrl+C`/`Ctrl+D` exits, passes `Esc` through for task cancellation, and keeps explicit slash-command or force-stop exits available.
+- Added image-aware Codex paste routing, explicit text-paste aliases, and independently configurable multiline and 5-KiB paste confirmations.
+
+### Changed
+- Left `Ctrl+P` and `Ctrl+F` available to terminal programs, moving app command mode and xterm search to `Ctrl/Cmd+Shift+P` and `Ctrl/Cmd+Shift+F` respectively.
+- Centralized desktop terminal paste entry points while preserving ordinary PTY and mobile control-key behavior.
+
 ## [1.0.1] - 2026-07-16
 
 ### Fixed

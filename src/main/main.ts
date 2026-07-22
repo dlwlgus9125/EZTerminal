@@ -88,6 +88,8 @@ import type { WorkspaceFileSearchRequest } from '../shared/workspace-search';
 import { isWorktreeRequest, type WorktreeInfo, type WorktreeResult } from '../shared/worktree';
 import type { TerminalFileLocationRequest } from '../shared/terminal-file-location';
 import { resolveTerminalFileLocation } from './terminal-path-resolver';
+import { readTerminalClipboardSnapshot } from './terminal-clipboard';
+import { isTerminalPastePreferences } from '../shared/terminal-clipboard';
 import { TerminalFileCapabilityStore } from './terminal-file-capability';
 import {
   UiPreferencesPatchSchema,
@@ -720,6 +722,16 @@ app.on('ready', () => {
     await storeReady;
     await layoutStore.setAllowOsc52Clipboard(enabled);
   });
+  ipcMain.handle('settings:get-terminal-paste-preferences', async () => {
+    await storeReady;
+    return layoutStore.getTerminalPastePreferences();
+  });
+  ipcMain.handle('settings:set-terminal-paste-preferences', async (_event, preferences: unknown) => {
+    if (!isTerminalPastePreferences(preferences)) return;
+    await storeReady;
+    await layoutStore.setTerminalPastePreferences(preferences);
+  });
+  ipcMain.handle('terminal:read-clipboard', () => readTerminalClipboardSnapshot(clipboard));
   ipcMain.handle('terminal:write-osc52-clipboard', async (event, text: unknown): Promise<boolean> => {
     if (typeof text !== 'string' || Buffer.byteLength(text, 'utf8') > OSC52_MAIN_MAX_BYTES) return false;
     await storeReady;

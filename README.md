@@ -8,7 +8,7 @@
 
 Block-based UI · themes &amp; CRT effects · system monitor · SSH · pair your phone as a remote
 
-![release](https://img.shields.io/badge/release-v1.0.1-brightgreen)
+![release](https://img.shields.io/badge/release-v1.0.2-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 ![built with](https://img.shields.io/badge/built%20with-Electron%20·%20React%20·%20TypeScript-9cf)
@@ -65,12 +65,23 @@ list — plus optional live **packet capture** (Npcap).
 
 ### 🪟 Tabs, splits &amp; layouts
 An independent shell session per tab, drag-to-rearrange splits, savable presets and layout persistence
-across restarts. Windows Terminal-parity keys: copy / paste, context menus, configurable scrollback,
-and a `Ctrl+C` that stops the foreground program without killing the whole tree.
+across restarts. Windows Terminal-parity keys include selection-aware copy, text paste aliases,
+context menus and configurable scrollback. In ordinary PTYs, `Ctrl+C` still interrupts the foreground
+program without killing the whole tree.
 
-Use `Ctrl/Cmd+P` for Quick Open across panes, command history, saved Quick Commands, workspace files,
-presets and agent launchers; `Ctrl/Cmd+Shift+P` narrows it to commands and actions. Full xterm blocks
-also support `Ctrl/Cmd+F` search, safe modifier-click web links, Unicode 11 and WebGL with DOM fallback.
+Use the Command Center button for Quick Open across panes, command history, saved Quick Commands,
+workspace files, presets and agent launchers; `Ctrl/Cmd+Shift+P` opens commands and actions. `Ctrl+P`
+is left to terminal programs. Full xterm blocks use `Ctrl/Cmd+Shift+F` for search and also support safe
+modifier-click web links, Unicode 11 and WebGL with DOM fallback.
+
+Directly launched Codex sessions add a narrow safety layer: with no selection, `Ctrl+C` and `Ctrl+D`
+are blocked so Codex exits only through `/exit`, `/quit`, or the explicit **Force stop** button; `Esc`
+still cancels the current Codex task. With a selection, `Ctrl+C` copies as usual. `Ctrl+V` gives an
+image-bearing clipboard to Codex itself, so Codex owns the image attachment; EZTerminal does
+not create or expose a temporary path. `Ctrl+Shift+V` and `Shift+Insert` always paste clipboard text.
+Multiline and larger-than-5-KiB text pastes ask for confirmation by default, with independent toggles
+under **Settings → Terminal & Safety**. Wrapper, pipeline, SSH, and non-Codex PTYs keep their normal
+control-key behavior.
 
 <img src="docs/screenshots/05-splits.png" width="840" alt="Split panes running independent sessions" />
 
@@ -139,7 +150,7 @@ Grab both official 1.0 downloads from the
 [**Releases**](https://github.com/dlwlgus9125/EZTerminal/releases/latest) page:
 
 - Windows 10 22H2 / Windows 11 x64: `EZTerminal-Setup.exe`
-- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.1-vc22.apk`
+- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.2-vc23.apk`
 
 > The Windows build is currently **unsigned**, so Windows SmartScreen may warn about an "unknown publisher" on
 > first run. Choose *More info → Run anyway* to proceed.

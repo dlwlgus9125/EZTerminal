@@ -350,6 +350,44 @@ test("all built-in themes use the semantic token gallery", async ({ page }) => {
   });
 });
 
+test.describe("terminal paste warning visual contracts", () => {
+  for (const locale of ["en", "ko"] as const) {
+    test(`shows combined paste risk in ${locale}`, async ({ page }) => {
+      await page.setViewportSize({ width: 800, height: 600 });
+      await openStory(
+        page,
+        "compositions-terminal-paste-warning--multiline-and-large",
+        {
+          theme: "matrix",
+          locale,
+          density: "adaptive",
+          motion: "reduced",
+        },
+      );
+      const dialog = page.getByRole("alertdialog");
+      await expect(dialog).toBeVisible();
+      await expect(dialog.locator(".ez-ui-dialog__header button")).toBeVisible();
+      const dialogPaint = await dialog.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          backgroundColor: style.backgroundColor,
+          borderColor: style.borderColor,
+          borderWidth: style.borderWidth,
+        };
+      });
+      expect(dialogPaint.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+      expect(dialogPaint.borderColor).not.toBe("rgba(0, 0, 0, 0)");
+      expect(dialogPaint.borderWidth).toBe("1px");
+      await expect(page.getByTestId("terminal-paste-warning-cancel")).toBeFocused();
+      await expectNoAccessibilityViolations(page);
+      await expect(page).toHaveScreenshot(
+        `desktop-800x600-terminal-paste-warning-${locale}.png`,
+        { animations: "disabled" },
+      );
+    });
+  }
+});
+
 const mobileCases = [
   {
     name: "360x800 portrait English terminal shell",

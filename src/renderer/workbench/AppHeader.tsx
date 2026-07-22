@@ -114,7 +114,6 @@ export function AppHeader({
           title={t('header.commandCenter')}
         >
           {t('header.commandCenter')}
-          <kbd className="workbench-shortcut">Ctrl P</kbd>
         </Button>
       </div>
       <div

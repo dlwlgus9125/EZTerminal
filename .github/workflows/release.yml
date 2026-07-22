@@ -116,8 +116,8 @@ jobs:
           if ($rootVersion -ne $mobileVersion -or $rootVersion -ne $androidVersion) {
             throw "Version mismatch: root=$rootVersion mobile=$mobileVersion android=$androidVersion."
           }
-          if ($rootVersion -ne '1.0.1' -or $androidCode -ne 22) {
-            throw "This workflow is prepared for EZTerminal 1.0.1 / Android versionCode 22."
+          if ($rootVersion -ne '1.0.2' -or $androidCode -ne 23) {
+            throw "This workflow is prepared for EZTerminal 1.0.2 / Android versionCode 23."
           }
           $repositoryCert = ((Get-Content mobile/android/signing-certificate.sha256 -Raw) -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
           if ($repositoryCert -notmatch '^[0-9A-F]{64}$') {
@@ -242,7 +242,7 @@ jobs:
       - name: Desktop end-to-end tests
         run: pnpm e2e
 
-      # EZTerminal 1.0.1 intentionally ships unsigned on Windows. The staging
+      # EZTerminal 1.0.2 intentionally ships unsigned on Windows. The staging
       # script below rejects anything except explicit Authenticode NotSigned.
       - name: Build unsigned Windows release
         run: pnpm make
@@ -329,7 +329,7 @@ jobs:
         with:
           draft: true
           generate_release_notes: true
-          body_path: docs/release/release-notes-1.0.1.md
+          body_path: docs/release/release-notes-1.0.2.md
           fail_on_unmatched_files: true
           files: release-assets/*
 

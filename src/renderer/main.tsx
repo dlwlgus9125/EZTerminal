@@ -1,7 +1,9 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { useAppTranslation } from './i18n';
 import { DesktopUiPreferencesProvider } from './ui-preferences';
+import { ToastProvider } from './ui';
 import './index.css';
 import './ui/styles.css';
 import './workbench/workbench.css';
@@ -11,10 +13,19 @@ if (!container) {
   throw new Error('Root element #root not found in index.html');
 }
 
+function DesktopApplication(): JSX.Element {
+  const { t } = useAppTranslation();
+  return (
+    <ToastProvider viewportLabel={t('common.notifications')}>
+      <App />
+    </ToastProvider>
+  );
+}
+
 createRoot(container).render(
   <StrictMode>
     <DesktopUiPreferencesProvider>
-      <App />
+      <DesktopApplication />
     </DesktopUiPreferencesProvider>
   </StrictMode>,
 );

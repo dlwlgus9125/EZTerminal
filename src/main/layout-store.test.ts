@@ -299,6 +299,21 @@ describe('LayoutStore — uiScale + remoteEnabled (v0.2.0 M1)', () => {
     expect(await store.getAllowOsc52Clipboard()).toBe(true);
   });
 
+  it('defaults paste warnings on and persists both choices atomically', async () => {
+    const store = new LayoutStore(makeDir());
+    await store.init();
+    expect(await store.getTerminalPastePreferences()).toEqual({
+      warnOnMultiline: true,
+      warnOnLarge: true,
+    });
+    await store.setTerminalPastePreferences({ warnOnMultiline: false, warnOnLarge: true });
+    await store.setTheme('light');
+    expect(await store.getTerminalPastePreferences()).toEqual({
+      warnOnMultiline: false,
+      warnOnLarge: true,
+    });
+  });
+
   it('interleaved setTheme/setUiScale/setRemoteEnabled all preserve each other (shared settings.json)', async () => {
     const store = new LayoutStore(makeDir());
     await store.init();

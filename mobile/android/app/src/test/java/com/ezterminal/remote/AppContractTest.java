@@ -12,8 +12,8 @@ public class AppContractTest {
     @Test
     public void buildIdentityMatchesReleaseContract() {
         assertEquals("com.ezterminal.remote", BuildConfig.APPLICATION_ID);
-        assertEquals("1.0.1", BuildConfig.VERSION_NAME);
-        assertEquals(22, BuildConfig.VERSION_CODE);
+        assertEquals("1.0.2", BuildConfig.VERSION_NAME);
+        assertEquals(23, BuildConfig.VERSION_CODE);
     }
 
     @Test

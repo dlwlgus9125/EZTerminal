@@ -273,6 +273,13 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.invoke('settings:get-allow-osc52-clipboard'),
   setAllowOsc52Clipboard: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke('settings:set-allow-osc52-clipboard', enabled),
+  getTerminalPastePreferences: (): Promise<import('../shared/terminal-clipboard').TerminalPastePreferences> =>
+    ipcRenderer.invoke('settings:get-terminal-paste-preferences'),
+  setTerminalPastePreferences: (
+    preferences: import('../shared/terminal-clipboard').TerminalPastePreferences,
+  ): Promise<void> => ipcRenderer.invoke('settings:set-terminal-paste-preferences', preferences),
+  readTerminalClipboard: (): Promise<import('../shared/terminal-clipboard').TerminalClipboardSnapshot> =>
+    ipcRenderer.invoke('terminal:read-clipboard'),
   writeOsc52Clipboard: (text: string): Promise<boolean> =>
     ipcRenderer.invoke('terminal:write-osc52-clipboard', text),
   listSshForwards: (): Promise<readonly import('../shared/ssh-forward').SshForwardInfo[]> =>

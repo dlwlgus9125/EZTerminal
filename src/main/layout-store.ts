@@ -41,6 +41,10 @@ import {
   type UiPreferences,
   type UiPreferencesPatch,
 } from '../shared/ui-preferences';
+import {
+  DEFAULT_TERMINAL_PASTE_PREFERENCES,
+  type TerminalPastePreferences,
+} from '../shared/terminal-clipboard';
 
 const LAYOUT_FILE = 'layout.json';
 const PRESETS_FILE = 'presets.json';
@@ -256,6 +260,29 @@ export class LayoutStore {
     await this.updateSettings(
       (current) => ({ ...current, allowOsc52Clipboard }),
       'allowOsc52Clipboard',
+    );
+  }
+
+  async getTerminalPastePreferences(): Promise<TerminalPastePreferences> {
+    const settings = await this.loadSettingsFile();
+    return {
+      warnOnMultiline: settings.warnOnMultilinePaste
+        ?? DEFAULT_TERMINAL_PASTE_PREFERENCES.warnOnMultiline,
+      warnOnLarge: settings.warnOnLargePaste
+        ?? DEFAULT_TERMINAL_PASTE_PREFERENCES.warnOnLarge,
+    };
+  }
+
+  async setTerminalPastePreferences(
+    preferences: TerminalPastePreferences,
+  ): Promise<void> {
+    await this.updateSettings(
+      (current) => ({
+        ...current,
+        warnOnMultilinePaste: preferences.warnOnMultiline,
+        warnOnLargePaste: preferences.warnOnLarge,
+      }),
+      'terminalPastePreferences',
     );
   }
 

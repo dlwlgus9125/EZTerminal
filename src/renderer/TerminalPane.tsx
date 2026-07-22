@@ -11,14 +11,24 @@ import {
 } from './pane-registry';
 import { focusPaneSurface } from './pane-focus';
 import { keyToPtyBytes } from './pty-keys';
+import {
+  resolveTerminalShortcut,
+  takeCodexInterruptNotice,
+} from './terminal-key-policy';
+import { pasteFromRuntimeClipboard } from './terminal-paste';
+import { selectedTextWithin } from './terminal-selection';
 import { QuickCommandShelf } from './QuickCommandShelf';
 import type {
   PaneInstanceToken,
   SessionPaneLease,
 } from './session-panel-tracker';
-import type { TerminalRuntimeOptions } from './xterm-runtime';
+import {
+  DEFAULT_TERMINAL_RUNTIME_OPTIONS,
+  type TerminalRuntimeOptions,
+} from './xterm-runtime';
 import type { RunStartedInfo, SessionInfo } from '../shared/ipc';
 import type { QuickCommand } from '../shared/quick-command';
+import { classifyDirectAgentCommand } from '../shared/agent-command';
 
 // A TerminalPane is one independent shell surface: its own shell session (cwd/env/
 // variables/history), its own stack of command Blocks, and its own pinned prompt.
@@ -98,6 +108,7 @@ export function TerminalPane({
   onManageQuickCommands,
 }: TerminalPaneProps): JSX.Element {
   const { t } = useAppTranslation();
+  const resolvedTerminalRuntimeOptions = terminalRuntimeOptions ?? DEFAULT_TERMINAL_RUNTIME_OPTIONS;
   const [command, setCommand] = useState('');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   // Submitted commands (oldest first) for ↑/↓ recall. The renderer submits these,
@@ -619,6 +630,29 @@ export function TerminalPane({
     activeController.current?.cancel();
   }, []);
 
+  const selectedPlainOutputText = useCallback((): string => {
+    const pane = cmdInputRef.current?.closest('.pane');
+    return selectedTextWithin(pane ?? null);
+  }, []);
+
+  const pasteIntoActivePlainPty = useCallback((mode: 'default' | 'text'): void => {
+    const controller = activeController.current;
+    if (!controller || controller.getSnapshot().status !== 'running') return;
+    void pasteFromRuntimeClipboard(resolvedTerminalRuntimeOptions, {
+      isCodex: classifyDirectAgentCommand(controller.command) === 'codex',
+      mode,
+      deliverImage: () => {
+        if (activeController.current === controller) controller.sendPtyInput('\x16');
+      },
+      deliverText: (text) => {
+        if (activeController.current === controller) controller.sendPtyInput(text);
+      },
+    });
+  }, [resolvedTerminalRuntimeOptions]);
+
+  const activeIsCodex = activeRunning
+    && classifyDirectAgentCommand(activeController.current?.command ?? '') === 'codex';
+
   // Dismiss a finished (or any) block: dispose its controller so the interpreter
   // releases the ResultStore + closes the port, then drop it from the list. This
   // bounds memory — completed blocks no longer pin a store for the app lifetime
@@ -705,6 +739,35 @@ export function TerminalPane({
               // text is sent once, on `onCompositionEnd` below, so it must
               // NOT also go through this per-keydown path.
               if (e.nativeEvent.isComposing || e.key === 'Process') return;
+              const controller = activeController.current;
+              const selectedText = selectedPlainOutputText();
+              const shortcut = resolveTerminalShortcut({
+                code: e.code,
+                key: e.key,
+                ctrlKey: e.ctrlKey,
+                metaKey: e.metaKey,
+                altKey: e.altKey,
+                shiftKey: e.shiftKey,
+                isCodex: classifyDirectAgentCommand(controller?.command ?? '') === 'codex',
+                hasSelection: selectedText !== '',
+                canFind: false,
+              });
+              if (shortcut.kind !== 'pass') {
+                e.preventDefault();
+                if (shortcut.kind === 'copy') {
+                  if (selectedText) void navigator.clipboard.writeText(selectedText);
+                } else if (shortcut.kind === 'paste') {
+                  pasteIntoActivePlainPty(shortcut.mode);
+                } else if (
+                  shortcut.kind === 'block'
+                  && shortcut.notice === 'codex-interrupt-help'
+                  && controller
+                  && takeCodexInterruptNotice(controller)
+                ) {
+                  resolvedTerminalRuntimeOptions.notifyTerminal?.('codex-interrupt-help');
+                }
+                return;
+              }
               // Plain PTY run: keystrokes go straight to the PTY child
               // (M1 focus retention) — command editing / history recall /
               // Enter-run are all suspended for the run's duration, matching
@@ -748,8 +811,7 @@ export function TerminalPane({
           onPaste={(e) => {
             if (!activePlainPty) return; // idle: default paste-into-input behavior
             e.preventDefault();
-            const text = e.clipboardData.getData('text');
-            if (text) activeController.current?.sendPtyInput(text);
+            pasteIntoActivePlainPty('default');
           }}
           onCompositionEnd={(e) => {
             if (!activePlainPty) return; // idle: default composition-into-draft behavior
@@ -800,7 +862,7 @@ export function TerminalPane({
           disabled={!activeRunning}
           data-testid="btn-cancel"
         >
-          {t('common.cancel')}
+          {activeIsCodex ? t('terminalPane.forceStop') : t('common.cancel')}
         </button>
       </div>
     </div>

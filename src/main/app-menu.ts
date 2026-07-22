@@ -55,10 +55,10 @@ const labels = {
 // are KEPT: on Windows, dropping them breaks Ctrl+C/V/X in plain `<input>`
 // elements (the command composer, settings fields) because those roles are
 // what wires the accelerator to the focused text field in the first place.
-// This does not regress terminal Ctrl+C-as-interrupt — the focused xterm
-// consumes that key before it reaches the menu (proven by the M0 bug where
-// \x03 reached the child process). Terminal-native copy/paste disambiguation
-// is a later milestone, not this one.
+// The focused terminal surface consumes its keyboard chords before they reach
+// the menu. Native Edit > Paste still emits a DOM paste event, which the
+// terminal adapter routes through the same Codex/image and text-warning policy
+// as keyboard and context-menu paste.
 //
 // Pure function, no runtime `electron` import — only the TYPE is used above —
 // so this is unit-testable without an Electron runtime.

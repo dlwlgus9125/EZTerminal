@@ -165,6 +165,10 @@ export const SettingsSchema = z.object({
   confirmRiskyPaneClose: z.boolean().optional(),
   // Terminal-originated OSC 52 writes are privileged and default off.
   allowOsc52Clipboard: z.boolean().optional(),
+  // Windows Terminal-style text paste warnings. Both default on in
+  // layout-store; optional fields keep pre-feature schemaVersion 1 files valid.
+  warnOnMultilinePaste: z.boolean().optional(),
+  warnOnLargePaste: z.boolean().optional(),
   // Remote WS bridge on/off (v0.2.0 D2) — absent defaults to true (pre-existing
   // always-on behavior) in layout-store.
   remoteEnabled: z.boolean().optional(),

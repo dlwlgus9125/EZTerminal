@@ -49,6 +49,10 @@ import type {
   OpenClawVisibility,
 } from './openclaw';
 import type { UiPreferences, UiPreferencesPatch } from './ui-preferences';
+import type {
+  TerminalClipboardSnapshot,
+  TerminalPastePreferences,
+} from './terminal-clipboard';
 
 /** The single key under which the preload bridge is exposed on `window`. */
 export const BRIDGE_KEY = 'ezterminal' as const;
@@ -1159,6 +1163,11 @@ export interface EzTerminalDesktopApi {
   setConfirmRiskyPaneClose: (enabled: boolean) => Promise<void>;
   getAllowOsc52Clipboard: () => Promise<boolean>;
   setAllowOsc52Clipboard: (enabled: boolean) => Promise<void>;
+  /** Windows Terminal-style multiline/large text paste warning preferences. */
+  getTerminalPastePreferences: () => Promise<TerminalPastePreferences>;
+  setTerminalPastePreferences: (preferences: TerminalPastePreferences) => Promise<void>;
+  /** User-initiated routing snapshot; image bytes and paths never cross IPC. */
+  readTerminalClipboard: () => Promise<TerminalClipboardSnapshot>;
   /** Main rechecks opt-in, size and rate limits before touching the OS clipboard. */
   writeOsc52Clipboard: (text: string) => Promise<boolean>;
   /** Active loopback-only listeners, for the compact Settings summary. */

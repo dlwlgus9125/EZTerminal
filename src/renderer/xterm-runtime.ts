@@ -12,6 +12,7 @@ import { normalizeExternalHttpUrl } from '../shared/external-url';
 import type { TerminalRendererPreference } from '../shared/layout-schema';
 import { findTerminalFileLinks, type TerminalFileLocationRequest } from '../shared/terminal-file-location';
 import type { ExecutionKind } from '../shared/ipc';
+import type { TerminalPasteRuntime } from './terminal-paste';
 
 export { normalizeExternalHttpUrl };
 
@@ -20,7 +21,7 @@ export type ActiveTerminalRenderer = 'webgl' | 'dom';
 
 /** Platform-owned capabilities for one xterm surface. The component never
  * reaches into Electron or Capacitor directly; its host supplies the adapter. */
-export interface TerminalRuntimeOptions {
+export interface TerminalRuntimeOptions extends TerminalPasteRuntime {
   readonly platform: 'desktop' | 'mobile';
   readonly rendererPreference: TerminalRendererPreference;
   readonly openExternalHttpUrl?: (url: string) => void;

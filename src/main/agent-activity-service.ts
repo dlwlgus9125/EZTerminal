@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import path from 'node:path';
 
 import type {
   AgentActivity,
@@ -12,6 +11,11 @@ import type {
 } from '../shared/agent';
 import type { InterpreterFrame, RunStartedInfo, SessionInfo } from '../shared/ipc';
 import type { RemotePort } from './interpreter-broker';
+import {
+  classifyDirectAgentCommand,
+  directCommandExecutable,
+  executableBasename,
+} from '../shared/agent-command';
 
 const COMPLETED_ACTIVITY_CAP = 100;
 const ENDED_PROVIDER_SESSION_TTL_MS = 60_000;
@@ -62,47 +66,11 @@ function providerKey(provider: AgentProvider, value: string): string {
   return `${provider}\0${value}`;
 }
 
-function hasUnquotedPipeline(command: string): boolean {
-  let quote: '"' | "'" | null = null;
-  for (let i = 0; i < command.length; i += 1) {
-    const char = command[i];
-    if (quote) {
-      if (char === quote) quote = null;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      continue;
-    }
-    if (char === '|' || char === ';' || (char === '&' && command[i + 1] === '&')) return true;
-  }
-  return false;
-}
-
-function firstCommandToken(commandText: string): string | null {
-  let command = commandText.trim();
-  if (command.startsWith('!')) command = command.slice(1).trimStart();
-  if (!command || hasUnquotedPipeline(command)) return null;
-  const first = command[0];
-  if (first === '"' || first === "'") {
-    const end = command.indexOf(first, 1);
-    return end > 1 ? command.slice(1, end) : null;
-  }
-  const match = /^\S+/u.exec(command);
-  return match?.[0] ?? null;
-}
-
-function executableBasename(token: string): string {
-  const slashNormalized = token.replace(/\\/gu, '/');
-  return path.posix.basename(slashNormalized).toLocaleLowerCase('en-US').replace(/\.(?:exe|cmd|bat|ps1)$/u, '');
-}
-
 export function classifyAgentCommand(commandText: string, settings: AgentSettings): AgentProvider | null {
-  const token = firstCommandToken(commandText);
-  if (!token) return null;
-  const executable = executableBasename(token);
-  if (executable === 'codex') return 'codex';
-  if (executable === 'claude') return 'claude';
+  const direct = classifyDirectAgentCommand(commandText);
+  if (direct) return direct;
+  const executable = directCommandExecutable(commandText);
+  if (!executable) return null;
   for (const profile of settings.genericProfiles) {
     if (!profile.enabled) continue;
     if (executable === executableBasename(profile.executable)) return 'generic';
