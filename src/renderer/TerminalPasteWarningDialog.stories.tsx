@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, within } from 'storybook/test';
+import { expect, waitFor, within } from 'storybook/test';
 
 import { AppI18nProvider } from './i18n';
 import { TerminalPasteWarningDialog } from './TerminalPasteWarningDialog';
@@ -42,7 +42,7 @@ export const MultilineAndLarge: Story = {
     const page = within(canvasElement.ownerDocument.body);
     const dialog = page.getByRole('alertdialog');
     await expect(dialog).toBeVisible();
-    await expect(page.getByTestId('terminal-paste-warning-cancel')).toHaveFocus();
+    await waitFor(() => expect(page.getByTestId('terminal-paste-warning-cancel')).toHaveFocus());
   },
 };
 
