@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { EzTerminalApi } from '../shared/ipc';
+import { createCapabilityAccess } from './capability-access';
 import { ConnectionInfoPanel } from './ConnectionInfoPanel';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -33,13 +34,16 @@ describe('ConnectionInfoPanel security readiness', () => {
       }),
       onRemoteRuntimeStatus: () => () => undefined,
     } as unknown as EzTerminalApi;
-    Object.defineProperty(window, 'ezterminal', { configurable: true, value: api });
+    const capabilities = createCapabilityAccess({
+      readCore: () => api,
+      readDesktop: () => undefined,
+    });
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);
 
     await act(async () => {
-      root.render(<ConnectionInfoPanel />);
+      root.render(<ConnectionInfoPanel capabilities={capabilities} />);
       await Promise.resolve();
     });
 
@@ -70,13 +74,16 @@ describe('ConnectionInfoPanel security readiness', () => {
       retryRemoteRuntime,
       onRemoteRuntimeStatus: () => () => undefined,
     } as unknown as EzTerminalApi;
-    Object.defineProperty(window, 'ezterminal', { configurable: true, value: api });
+    const capabilities = createCapabilityAccess({
+      readCore: () => api,
+      readDesktop: () => undefined,
+    });
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);
 
     await act(async () => {
-      root.render(<ConnectionInfoPanel />);
+      root.render(<ConnectionInfoPanel capabilities={capabilities} />);
       await Promise.resolve();
       await Promise.resolve();
     });

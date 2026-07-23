@@ -23,7 +23,7 @@ public class AppInstrumentedTest {
         long versionCode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
             ? packageInfo.getLongVersionCode()
             : packageInfo.versionCode;
-        assertEquals("1.0.2", packageInfo.versionName);
-        assertEquals(23L, versionCode);
+        assertEquals(BuildConfig.VERSION_NAME, packageInfo.versionName);
+        assertEquals((long) BuildConfig.VERSION_CODE, versionCode);
     }
 }

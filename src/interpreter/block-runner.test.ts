@@ -223,10 +223,41 @@ describe('runBlock — credit/window protocol', () => {
     handle.handleControl({ type: 'requestRows', start: 0, count: 1 });
     await waitFor(() => chunks(frames).some((c) => c.rows.length > 0), 'first row served');
 
-    await handle.dispose();
+    const firstDispose = handle.dispose();
+    const secondDispose = handle.dispose();
+    expect(secondDispose).toBe(firstDispose);
+    await firstDispose;
     await handle.dispose(); // idempotent — no double cleanup / double release
 
     expect(cleanups).toBe(1);
+    expect(returned).toBe(1);
+  });
+
+  it('still releases the row source when pipeline cleanup rejects', async () => {
+    let returned = 0;
+    async function* forever(): AsyncGenerator<Uint8Array> {
+      try {
+        for (;;) {
+          yield new TextEncoder().encode('x');
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      } finally {
+        returned += 1;
+      }
+    }
+    const data: PipelineData = {
+      kind: 'byte-stream',
+      bytes: forever(),
+      cleanup: async () => {
+        throw new Error('cleanup failed');
+      },
+    };
+    const frames: InterpreterFrame[] = [];
+    const handle = runBlock(data, (frame) => frames.push(frame), new AbortController().signal);
+    handle.handleControl({ type: 'requestRows', start: 0, count: 1 });
+    await waitFor(() => chunks(frames).some((chunk) => chunk.rows.length > 0), 'first row served');
+
+    await expect(handle.dispose()).rejects.toThrow('cleanup failed');
     expect(returned).toBe(1);
   });
 
@@ -254,5 +285,41 @@ describe('runBlock — credit/window protocol', () => {
 
     expect(frames.some((f) => f.type === 'cancelled')).toBe(true);
     expect(frames.some((f) => f.type === 'end')).toBe(false);
+  });
+
+  it('starts cleanup on abort so a quiet pending iterator cannot deadlock cancellation', async () => {
+    const frames: InterpreterFrame[] = [];
+    const ac = new AbortController();
+    let resolvePending: ((result: IteratorResult<Uint8Array>) => void) | null = null;
+    let cleanups = 0;
+    const bytes: AsyncIterable<Uint8Array> = {
+      [Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
+        return {
+          next(): Promise<IteratorResult<Uint8Array>> {
+            return new Promise((resolve) => {
+              resolvePending = resolve;
+            });
+          },
+        };
+      },
+    };
+    const data: PipelineData = {
+      kind: 'byte-stream',
+      bytes,
+      cleanup: async () => {
+        cleanups += 1;
+        resolvePending?.({ done: true, value: undefined });
+      },
+    };
+    const handle = runBlock(data, (frame) => frames.push(frame), ac.signal);
+    await waitFor(() => resolvePending !== null, 'quiet iterator pending');
+
+    ac.abort();
+    await handle.done;
+
+    expect(cleanups).toBe(1);
+    expect(frames.some((frame) => frame.type === 'cancelled')).toBe(true);
+    expect(frames.some((frame) => frame.type === 'end')).toBe(false);
+    await handle.dispose();
   });
 });

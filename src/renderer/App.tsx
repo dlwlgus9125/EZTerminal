@@ -6,12 +6,10 @@ import {
   type DockviewReadyEvent,
   type IDockviewPanelProps,
   type IDockviewPanelHeaderProps,
-  type SerializedDockview,
 } from 'dockview-react';
 import 'dockview-react/dist/styles/dockview.css';
 
 import {
-  maxTabSuffix,
   type LayoutEnvelope,
   type TerminalRendererPreference,
   type ThemeName,
@@ -84,6 +82,7 @@ import { THEME_ORDER, THEMES, listThemes, registerTheme, type ThemeDefinition } 
 import { applyScrollback, clampScrollback, SCROLLBACK_DEFAULT } from './scrollback';
 import { applyUiScale, clampUiScale, UI_SCALE_DEFAULT } from './ui-scale';
 import { useUiPreferences } from './ui-preferences';
+import { rendererCapabilities } from './capability-access';
 import { useToast } from './ui';
 import type { TerminalNoticeKind } from './terminal-paste';
 import {
@@ -109,13 +108,15 @@ import {
   type PaneSnapshot,
 } from './pane-registry';
 import {
-  advanceRecentPanelSwitch,
   installRecentPanelKeybindings,
-  reconcileRecentPanelSwitch,
-  recordRecentPanelActivation,
-  startRecentPanelSwitch,
   type RecentPanelSwitchSession,
 } from './recent-panel-switching';
+import {
+  WorkbenchCoordinator,
+  createDockviewWorkbenchAdapter,
+  type LayoutTransactionOptions,
+  type WorkbenchPanelPosition,
+} from './workbench-coordinator';
 import { DEFAULT_TERMINAL_RUNTIME_OPTIONS, type TerminalRuntimeOptions } from './xterm-runtime';
 
 // Desktop's per-effect default-on state (App.tsx's `applyTheme`/`onToggleEffect`
@@ -259,12 +260,6 @@ const components = {
   'openclaw-chat': OpenClawChatPanel,
 };
 
-let tabCounter = 0;
-
-/** How long a layout may keep changing before it is persisted. Changes made
- * less than this before a hard kill are lost — accepted v1 window (gate Q2). */
-const SAVE_DEBOUNCE_MS = 300;
-
 type OpenStateUpdate = boolean | ((open: boolean) => boolean);
 
 type QuickOpenBuiltinAction = 'new-tab' | 'split-right' | 'split-down' | 'cycle-theme' | 'save-preset';
@@ -304,10 +299,6 @@ function recentDistinctCommands(history: readonly string[]): string[] {
     recent.push(command);
   }
   return recent;
-}
-
-function listSwitchablePanelIds(api: DockviewApi): readonly string[] {
-  return api.panels.map((panel) => panel.id);
 }
 
 function workspaceFilePath(root: string, relativePath: string): string {
@@ -372,6 +363,45 @@ export function App(): JSX.Element {
   const scheduleSessionMirrorRef = useRef<((session: SessionInfo) => void) | null>(null);
   const deferredSessionRemovalsRef = useRef(new Set<string>());
   const scheduleSessionRemovalRef = useRef<((sessionId: string) => void) | null>(null);
+  const [activePanelId, setActivePanelId] = useState<string | null>(null);
+  const [recentPanelSwitch, setRecentPanelSwitch] = useState<RecentPanelSwitchSession | null>(null);
+  const workbenchCoordinatorRef = useRef<WorkbenchCoordinator | null>(null);
+  if (workbenchCoordinatorRef.current === null) {
+    workbenchCoordinatorRef.current = new WorkbenchCoordinator({
+      persistence: {
+        saveLayout: (layout) => window.ezterminal.saveLayout(layout),
+        flushLayout: () => window.ezterminal.flushLayout(),
+        quarantineLayout: () => window.ezterminal.quarantineLayout(),
+      },
+      isPaneCreationLocked: () => presetApplyPendingRef.current,
+      onActivePanelChange: (panelId, source) => {
+        setActivePanelId(panelId);
+        if (source !== 'activation') return;
+        requestAnimationFrame(() => {
+          const activeTab =
+            document.querySelector('.ez-dock .dv-active-group .dv-tab.dv-active-tab') ??
+            document.querySelector('.ez-dock .dv-tab.dv-active-tab');
+          activeTab?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+        });
+      },
+      onRecentPanelSwitchChange: setRecentPanelSwitch,
+      focusPane: (panelId) => {
+        const pane = getPaneHandle(panelId);
+        if (!pane) return false;
+        pane.focus();
+        return true;
+      },
+      onError: (message, error) => console.error(`[renderer] ${message}:`, error),
+    });
+  }
+  const workbenchCoordinator = workbenchCoordinatorRef.current;
+  useEffect(
+    () => () => {
+      workbenchCoordinator.detach();
+      apiRef.current = null;
+    },
+    [workbenchCoordinator],
+  );
   const presetMutationValue = useMemo<PresetMutationContextValue>(
     () => ({
       locked: presetApplyPending,
@@ -485,21 +515,15 @@ export function App(): JSX.Element {
   // boolean (main.ts's resolveOpenClawVisibility) — gates the header button,
   // drawer, and openOpenClawChat below. Starts `true` (same "flash before
   // settle" tradeoff as `theme`'s boot fetch further down) until the first
-  // getOpenClawVisibility() round trip or an onOpenClawVisibilityChanged push
+  // capability seed or visibility push
   // (Settings panel toggle, any window) resolves it. Declared this early
   // (ahead of openOpenClawChat right below) so its useCallback can depend on
   // the current value, not just the stable setter.
   const [openclawVisible, setOpenclawVisible] = useState(true);
   useEffect(() => {
-    let alive = true;
-    void window.ezterminalDesktop?.getOpenClawVisibility().then((v) => {
-      if (alive && v) setOpenclawVisible(v.visible);
-    });
-    const unsub = window.ezterminalDesktop?.onOpenClawVisibilityChanged((v) => setOpenclawVisible(v.visible));
-    return () => {
-      alive = false;
-      unsub?.();
-    };
+    return rendererCapabilities.openClaw.observeVisibility(
+      (visibility) => setOpenclawVisible(visibility.visible),
+    );
   }, []);
 
   // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
@@ -586,22 +610,13 @@ export function App(): JSX.Element {
           return;
         }
         if (sessionPanelTracker.hasSession(session.sessionId)) return; // already bound or mounting
-        const api = apiRef.current;
-        if (!api) return;
-        tabCounter += 1;
-        const panelId = `tab-${tabCounter}`;
         try {
-          const panel = api.addPanel({
-            id: panelId,
-            component: 'terminal',
-            title: `Terminal ${tabCounter}`,
-            renderer: 'always',
-            params: { adoptSessionId: session.sessionId },
-          });
+          const panel = workbenchCoordinator.openTerminal({ adoptSessionId: session.sessionId });
+          if (!panel) return;
           // Register with the exact Dockview panel API object. The component's
           // mount does the same idempotently, but this closes the addPanel ->
           // first React effect gap for an immediately-following remove event.
-          sessionPanelTracker.trackPending(session.sessionId, panelId, panel.api);
+          sessionPanelTracker.trackPending(session.sessionId, panel.panelId, panel.instanceToken);
         } catch {
           // Dockview rejected the add (for example an unexpected id collision).
           // No panel instance exists to track or close.
@@ -626,11 +641,9 @@ export function App(): JSX.Element {
         for (const candidate of [...candidates.pending, ...candidates.bound]) {
           if (seen.has(candidate.instanceToken)) continue;
           seen.add(candidate.instanceToken);
-          const panel = api.getPanel(candidate.panelId);
           // A preset can reuse a textual panel id. Object identity proves this
           // is still the exact Dockview instance that registered the lease.
-          if (!panel || panel.api !== candidate.instanceToken) continue;
-          panel.api.close();
+          workbenchCoordinator.closePanel(candidate.panelId, candidate.instanceToken);
         }
       }, 0);
       pendingRemoveChecks.set(sessionId, timer);
@@ -662,37 +675,27 @@ export function App(): JSX.Element {
       pendingAddChecks.clear();
       pendingRemoveChecks.clear();
     };
-  }, [sessionPanelTracker]);
+  }, [sessionPanelTracker, workbenchCoordinator]);
 
   // Both "new tab" and "split" open a fresh self-contained TerminalPane. Passing a
   // `position` makes dockview place it in a NEW grid group (a split) instead of the
-  // active group (a tab). One module-scoped counter keeps ids/titles globally unique
-  // across tabs AND splits. `renderer: 'always'` is required either way so a pane that
-  // later becomes hidden stays mounted and its live PTY survives (Codex B7).
+  // active group (a tab). WorkbenchCoordinator owns globally unique ids/titles
+  // across tabs AND splits. `renderer: 'always'` is required either way so a
+  // pane that later becomes hidden stays mounted and its live PTY survives.
   const openPanel = useCallback(
     (
-      position?: { referencePanel: string; direction: 'right' | 'below' },
+      position?: WorkbenchPanelPosition,
       cwd?: string,
-      allowDuringPresetRecovery = false,
     ) => {
-      if (presetApplyPendingRef.current && !allowDuringPresetRecovery) return;
-      const api = apiRef.current;
-      if (!api) return;
-      tabCounter += 1;
-      api.addPanel({
-        id: `tab-${tabCounter}`,
-        component: 'terminal',
-        title: `Terminal ${tabCounter}`,
-        renderer: 'always',
-        ...(cwd ? { params: { cwd } } : {}),
+      workbenchCoordinator.openTerminal({
         ...(position ? { position } : {}),
+        ...(cwd ? { cwd } : {}),
       });
     },
-    [],
+    [workbenchCoordinator],
   );
 
   const addTab = useCallback(() => openPanel(), [openPanel]);
-  const addRecoveryTab = useCallback(() => openPanel(undefined, undefined, true), [openPanel]);
 
   // File-explorer drawer's "open terminal here" (M2): a fresh tab whose session
   // starts in `dirPath`, threaded through dockview panel params to TerminalPanel.
@@ -744,11 +747,9 @@ export function App(): JSX.Element {
   // 'within' (a tab, not a split), so it is always explicit.
   const splitActive = useCallback(
     (direction: 'right' | 'below') => {
-      const api = apiRef.current;
-      if (!api || !api.activePanel) return;
-      openPanel({ referencePanel: api.activePanel.id, direction });
+      workbenchCoordinator.splitActive(direction);
     },
-    [openPanel],
+    [workbenchCoordinator],
   );
 
   // ── Layout persistence (Track A ③, A-M3/M4) ──────────────────────────────
@@ -756,96 +757,24 @@ export function App(): JSX.Element {
   // (Codex gate B2): StrictMode remounts dispose the first dockview and fire
   // onReady again, so a stale async apply must never touch the new instance —
   // and a disposal-induced fromJSON failure must never quarantine a good file.
-  // Saves are suppressed while a transaction runs (B3).
-  const restoreGenRef = useRef(0);
-  const savesSuppressedRef = useRef(true);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // WorkbenchCoordinator owns the transaction generation, save suppression,
+  // debounce cancellation, and persistence ordering behind one Interface.
   // Flips true once the STARTUP restore transaction (onReady below) has
   // settled — the OpenClaw visibility gating effect (near openclawOpen's
   // declaration) waits on this so it never races a persisted layout that's
-  // still mid-restore when getOpenClawVisibility() resolves (openclaw-
+  // still mid-restore when the visibility seed resolves (openclaw-
   // stabilization M2).
   const [layoutReady, setLayoutReady] = useState(false);
 
-  const scheduleSave = useCallback((): void => {
-    const api = apiRef.current;
-    if (!api || savesSuppressedRef.current) return;
-    if (saveTimerRef.current !== null) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      saveTimerRef.current = null;
-      void window.ezterminal.saveLayout(api.toJSON());
-    }, SAVE_DEBOUNCE_MS);
-  }, []);
+  const scheduleSave = useCallback(
+    (): void => workbenchCoordinator.scheduleLayoutSave(),
+    [workbenchCoordinator],
+  );
 
   const runLayoutTransaction = useCallback(
-    async (
-      source: () => Promise<LayoutEnvelope | null>,
-      opts: {
-        quarantineOnCorrupt: boolean;
-        restoreBackupOnFailure: boolean;
-        beforeApply?: () => boolean;
-      },
-    ): Promise<boolean> => {
-      const api = apiRef.current;
-      if (!api) return false;
-      restoreGenRef.current += 1;
-      const gen = restoreGenRef.current;
-      const isStale = (): boolean => gen !== restoreGenRef.current;
-      savesSuppressedRef.current = true;
-      let applied = false;
-      try {
-        let envelope: LayoutEnvelope | null = null;
-        try {
-          envelope = await source();
-        } catch {
-          envelope = null; // bridge unavailable/failed — treated as "nothing to apply"
-        }
-        if (isStale()) return false;
-        if (envelope) {
-          // This callback intentionally runs after the source await and in the
-          // same task as fromJSON. No pane bind/run can slip between the final
-          // destructive-state check and the synchronous layout mutation.
-          if (opts.beforeApply && !opts.beforeApply()) return false;
-          // Preset apply keeps a live backup: dockview's own revert does not
-          // cover every failure window (gate B1), so we restore it ourselves.
-          const backup = opts.restoreBackupOnFailure && api.panels.length > 0 ? api.toJSON() : null;
-          try {
-            // Re-seed BEFORE fromJSON: restored ids keep their original tab-N
-            // names, and a later addPanel minting a duplicate id throws (F6).
-            tabCounter = Math.max(tabCounter, maxTabSuffix(envelope.layout));
-            api.fromJSON(envelope.layout as unknown as SerializedDockview);
-            if (api.panels.length === 0) throw new Error('layout restored zero panels');
-            applied = true;
-          } catch (err) {
-            // Disposal/supersession is NOT corruption — never quarantine for it (B2).
-            if (isStale()) return false;
-            console.error('[renderer] layout apply failed:', err);
-            if (opts.quarantineOnCorrupt) {
-              try {
-                await window.ezterminal.quarantineLayout(); // awaited: B3
-              } catch {
-                // Quarantine is best-effort; a pane must still open below.
-              }
-              if (isStale()) return false;
-            }
-            if (backup) {
-              try {
-                api.fromJSON(backup);
-              } catch {
-                // Backup re-apply failed too — the default pane below covers it.
-              }
-            }
-            if (api.panels.length === 0) addRecoveryTab();
-          }
-        } else if (api.panels.length === 0) {
-          addRecoveryTab(); // first run (or quarantined): the default single pane
-        }
-      } finally {
-        if (!isStale()) savesSuppressedRef.current = false;
-      }
-      return applied;
-    },
-    [addRecoveryTab],
+    (source: () => Promise<LayoutEnvelope | null>, options: LayoutTransactionOptions): Promise<boolean> =>
+      workbenchCoordinator.runLayoutTransaction(source, options),
+    [workbenchCoordinator],
   );
 
   // ── Interpreter-crash banner (B-M5) ───────────────────────────────────────
@@ -910,71 +839,25 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!layoutReady || openclawVisible) return;
     setOpenclawOpen(false);
-    apiRef.current?.getPanel('openclaw-chat')?.api.close();
+    workbenchCoordinator.closePanel('openclaw-chat');
     // setOpenclawOpen is stable and intentionally declared after OpenClaw's
     // visibility state to preserve the existing hook ordering.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layoutReady, openclawVisible]);
-
-  // Explorer reads the active pane cwd when its shared sidebar destination opens.
-  const [activePanelId, setActivePanelId] = useState<string | null>(null);
-  const recentPanelOrderRef = useRef<readonly string[]>([]);
-  const recentPanelSwitchRef = useRef<RecentPanelSwitchSession | null>(null);
-  const [recentPanelSwitch, setRecentPanelSwitchState] = useState<RecentPanelSwitchSession | null>(null);
-
-  const updateRecentPanelSwitch = useCallback((next: RecentPanelSwitchSession | null): void => {
-    recentPanelSwitchRef.current = next;
-    setRecentPanelSwitchState(next);
-  }, []);
-
-  const activateAndFocusPanel = useCallback((panelId: string): void => {
-    const api = apiRef.current;
-    const panel = api?.getPanel(panelId);
-    if (!api || !panel) return;
-    panel.api.setActive();
-    requestAnimationFrame(() => {
-      const pane = getPaneHandle(panelId);
-      if (pane) pane.focus();
-      else api.focus();
-    });
-  }, []);
+  }, [layoutReady, openclawVisible, workbenchCoordinator]);
 
   const cycleRecentPanel = useCallback(
-    (reverse: boolean): void => {
-      const api = apiRef.current;
-      const activePanelId = api?.activePanel?.id;
-      if (!api || !activePanelId) return;
-      const availablePanelIds = listSwitchablePanelIds(api);
-      const current = recentPanelSwitchRef.current;
-      if (current) {
-        const reconciled = reconcileRecentPanelSwitch(current, availablePanelIds);
-        updateRecentPanelSwitch(reconciled ? advanceRecentPanelSwitch(reconciled, reverse) : null);
-        return;
-      }
-      updateRecentPanelSwitch(
-        startRecentPanelSwitch(recentPanelOrderRef.current, availablePanelIds, activePanelId, reverse),
-      );
-    },
-    [updateRecentPanelSwitch],
+    (reverse: boolean): void => workbenchCoordinator.cycleRecentPanel(reverse),
+    [workbenchCoordinator],
   );
 
-  const commitRecentPanelSwitch = useCallback((): void => {
-    const session = recentPanelSwitchRef.current;
-    const api = apiRef.current;
-    if (!session || !api) return;
-    const reconciled = reconcileRecentPanelSwitch(session, listSwitchablePanelIds(api));
-    updateRecentPanelSwitch(null);
-    activateAndFocusPanel(reconciled?.selectedPanelId ?? session.originPanelId);
-  }, [activateAndFocusPanel, updateRecentPanelSwitch]);
+  const commitRecentPanelSwitch = useCallback(
+    (): void => workbenchCoordinator.commitRecentPanelSwitch(),
+    [workbenchCoordinator],
+  );
 
   const cancelRecentPanelSwitch = useCallback(
-    (restoreFocus: boolean): void => {
-      const session = recentPanelSwitchRef.current;
-      if (!session) return;
-      updateRecentPanelSwitch(null);
-      if (restoreFocus) activateAndFocusPanel(session.originPanelId);
-    },
-    [activateAndFocusPanel, updateRecentPanelSwitch],
+    (restoreFocus: boolean): void => workbenchCoordinator.cancelRecentPanelSwitch(restoreFocus),
+    [workbenchCoordinator],
   );
 
   // Agent Activity is a main-owned monotonic snapshot. Renderer state only
@@ -1024,10 +907,7 @@ export function App(): JSX.Element {
       const activePanelId = api?.activePanel?.id;
       const panelId =
         candidates.find((binding) => binding.panelId === activePanelId)?.panelId ?? candidates[0]?.panelId;
-      if (panelId) {
-        api?.getPanel(panelId)?.api.setActive();
-        requestAnimationFrame(() => getPaneHandle(panelId)?.focus());
-      }
+      if (panelId) workbenchCoordinator.activatePanel(panelId);
       setUnreadAgentIds(
         (current) =>
           new Set(
@@ -1035,7 +915,7 @@ export function App(): JSX.Element {
           ),
       );
     },
-    [agentSnapshot, sessionPanelTracker],
+    [agentSnapshot, sessionPanelTracker, workbenchCoordinator],
   );
 
   useEffect(() => {
@@ -1100,9 +980,8 @@ export function App(): JSX.Element {
   );
 
   const focusActivePane = useCallback((): void => {
-    const panelId = apiRef.current?.activePanel?.id;
-    if (panelId) requestAnimationFrame(() => getPaneHandle(panelId)?.focus());
-  }, []);
+    workbenchCoordinator.focusActivePanel();
+  }, [workbenchCoordinator]);
 
   const requestPanelClose = useCallback(
     (panelId: string, component: string, close: () => void): void => {
@@ -1851,19 +1730,14 @@ export function App(): JSX.Element {
   }, []);
 
   const refreshAgentLaunchers = useCallback(async (): Promise<void> => {
-    const desktop = window.ezterminalDesktop;
-    if (!desktop) return;
-    const integrations =
-      typeof desktop.listAgentIntegrations === 'function'
-        ? desktop.listAgentIntegrations().catch(() => null)
-        : Promise.resolve(null);
-    const settings =
-      typeof desktop.getAgentSettings === 'function'
-        ? desktop.getAgentSettings().catch(() => null)
-        : Promise.resolve(null);
-    const [nextIntegrations, nextSettings] = await Promise.all([integrations, settings]);
-    if (nextIntegrations) setAgentIntegrations(nextIntegrations);
-    if (nextSettings) setGenericAgentProfiles(nextSettings.genericProfiles);
+    try {
+      const snapshot = await rendererCapabilities.agentIntegrations.load();
+      if (!snapshot) return;
+      setAgentIntegrations(snapshot.integrations);
+      setGenericAgentProfiles(snapshot.settings.genericProfiles);
+    } catch {
+      // Launcher discovery is optional; the existing launcher list remains usable.
+    }
   }, []);
 
   useEffect(() => {
@@ -1951,9 +1825,11 @@ export function App(): JSX.Element {
     [quickCommandManageResult, t],
   );
 
+  const desktopCapabilityAvailable =
+    rendererCapabilities.snapshot().desktop === 'available';
   const quickCommandManager = useMemo<QuickCommandManagerConfig | undefined>(
     () =>
-      window.ezterminalDesktop
+      desktopCapabilityAvailable
         ? {
             commands: quickCommands,
             onCreate: createQuickCommand,
@@ -1961,7 +1837,13 @@ export function App(): JSX.Element {
             onDelete: deleteQuickCommand,
           }
         : undefined,
-    [createQuickCommand, deleteQuickCommand, quickCommands, updateQuickCommand],
+    [
+      createQuickCommand,
+      deleteQuickCommand,
+      desktopCapabilityAvailable,
+      quickCommands,
+      updateQuickCommand,
+    ],
   );
 
   const runAvailabilityNote = activePaneSnapshot?.isBusy
@@ -2265,8 +2147,7 @@ export function App(): JSX.Element {
       const target = (row as AppQuickOpenRow).target;
       setQuickOpenActionMessage(null);
       if (target.type === 'pane') {
-        apiRef.current?.getPanel(target.panelId)?.api.setActive();
-        requestAnimationFrame(() => getPaneHandle(target.panelId)?.focus());
+        workbenchCoordinator.activatePanel(target.panelId);
         closeQuickOpen();
         return;
       }
@@ -2320,6 +2201,7 @@ export function App(): JSX.Element {
       openSavePresetDialog,
       splitActive,
       t,
+      workbenchCoordinator,
     ],
   );
 
@@ -2337,52 +2219,7 @@ export function App(): JSX.Element {
     (event: DockviewReadyEvent) => {
       apiRef.current = event.api;
       const api = event.api;
-      const initialActivePanelId = api.activePanel?.id ?? null;
-      setActivePanelId(initialActivePanelId);
-      if (initialActivePanelId) {
-        recentPanelOrderRef.current = recordRecentPanelActivation(
-          recentPanelOrderRef.current,
-          initialActivePanelId,
-          listSwitchablePanelIds(api),
-        );
-      }
-      api.onDidActivePanelChange((changeEvent) => {
-        const nextActivePanelId = changeEvent.panel?.id ?? null;
-        setActivePanelId(nextActivePanelId);
-        if (nextActivePanelId) {
-          recentPanelOrderRef.current = recordRecentPanelActivation(
-            recentPanelOrderRef.current,
-            nextActivePanelId,
-            listSwitchablePanelIds(api),
-          );
-        }
-        const switchSession = recentPanelSwitchRef.current;
-        if (switchSession && nextActivePanelId !== switchSession.originPanelId) {
-          updateRecentPanelSwitch(null);
-        }
-        // Tab strip overflow (v0.2.0 M3): dockview's own tab strip already
-        // scrolls a newly-active tab into view within ITS group (tabs.js's
-        // setActivePanel), but that's an internal implementation detail we
-        // shouldn't rely on staying that way — this is a small, idempotent
-        // belt-and-suspenders nudge on top of it. rAF gives dockview's own
-        // DOM update (the new .dv-active-tab class) a tick to commit first.
-        requestAnimationFrame(() => {
-          const activeTab =
-            document.querySelector('.ez-dock .dv-active-group .dv-tab.dv-active-tab') ??
-            document.querySelector('.ez-dock .dv-tab.dv-active-tab');
-          activeTab?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-        });
-      });
-      api.onDidRemovePanel(() => {
-        const availablePanelIds = listSwitchablePanelIds(api);
-        recentPanelOrderRef.current = recentPanelOrderRef.current.filter((panelId) =>
-          availablePanelIds.includes(panelId),
-        );
-        const switchSession = recentPanelSwitchRef.current;
-        if (switchSession) {
-          updateRecentPanelSwitch(reconcileRecentPanelSwitch(switchSession, availablePanelIds));
-        }
-      });
+      const attachment = workbenchCoordinator.attach(createDockviewWorkbenchAdapter(api));
       // Test seam: e2e drives programmatic panel moves through this handle. dockview's
       // mouse drag is native HTML5 DnD (not Playwright-drivable); panel.api.moveTo(...)
       // uses the identical move engine a drag invokes.
@@ -2390,16 +2227,8 @@ export function App(): JSX.Element {
 
       // e2e seam: deterministically persist NOW (cancel the debounce, save,
       // await main's write chain) instead of polling the file from the test.
-      (window as Window & { __ezLayoutFlush?: () => Promise<void> }).__ezLayoutFlush = async () => {
-        const current = apiRef.current;
-        if (!current || savesSuppressedRef.current) return;
-        if (saveTimerRef.current !== null) {
-          clearTimeout(saveTimerRef.current);
-          saveTimerRef.current = null;
-        }
-        await window.ezterminal.saveLayout(current.toJSON());
-        await window.ezterminal.flushLayout();
-      };
+      (window as Window & { __ezLayoutFlush?: () => Promise<void> }).__ezLayoutFlush = () =>
+        workbenchCoordinator.flushLayoutSave();
 
       void runLayoutTransaction(pickStartupLayout, {
         quarantineOnCorrupt: true,
@@ -2407,14 +2236,14 @@ export function App(): JSX.Element {
       }).then(() => {
         // Attach the save listener only after the restore settled (B2/B3), and
         // only if this dockview instance is still the live one (StrictMode).
-        if (apiRef.current !== api) return;
-        api.onDidLayoutChange(() => scheduleSave());
+        if (!attachment.isCurrent()) return;
+        attachment.enableLayoutPersistence();
         scheduleSave(); // persist the restored/initial state
         setLayoutReady(true);
       });
       void refreshPresets();
     },
-    [runLayoutTransaction, scheduleSave, refreshPresets, updateRecentPanelSwitch],
+    [refreshPresets, runLayoutTransaction, scheduleSave, workbenchCoordinator],
   );
 
   // Ctrl+Tab is owned by the pane switcher in capture phase. Keeping this
@@ -2425,7 +2254,7 @@ export function App(): JSX.Element {
     // Ctrl+Tab. Electron/Chromium reserves it, so desktop also supplies the
     // equivalent data-free event through `before-input-event` + preload.
     const uninstallRendererBindings = installRecentPanelKeybindings(window, {
-      isOpen: () => recentPanelSwitchRef.current !== null,
+      isOpen: () => workbenchCoordinator.isRecentPanelSwitchOpen(),
       cycle: cycleRecentPanel,
       commit: commitRecentPanelSwitch,
       cancel: cancelRecentPanelSwitch,
@@ -2439,7 +2268,7 @@ export function App(): JSX.Element {
       uninstallRendererBindings();
       unsubscribeNativeInput?.();
     };
-  }, [cancelRecentPanelSwitch, commitRecentPanelSwitch, cycleRecentPanel]);
+  }, [cancelRecentPanelSwitch, commitRecentPanelSwitch, cycleRecentPanel, workbenchCoordinator]);
 
   // Global keybindings: Ctrl/Cmd+Shift+P (commands/actions), plus the existing
   // Alt split shortcuts. Ctrl/Cmd+P is intentionally left to terminal apps.

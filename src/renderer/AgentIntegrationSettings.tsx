@@ -7,6 +7,7 @@ import {
   type AgentSettings,
   type GenericAgentProfile,
 } from '../shared/agent';
+import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 
 const DEFAULT_SETTINGS: AgentSettings = {
@@ -40,7 +41,13 @@ function newProfile(): GenericAgentProfile {
   };
 }
 
-export function AgentIntegrationSettings(): JSX.Element {
+interface AgentIntegrationSettingsProps {
+  readonly capabilities?: CapabilityAccess;
+}
+
+export function AgentIntegrationSettings({
+  capabilities = rendererCapabilities,
+}: AgentIntegrationSettingsProps): JSX.Element {
   const { t } = useAppTranslation();
   const [integrations, setIntegrations] = useState<readonly AgentIntegrationStatus[]>([]);
   const [settings, setSettings] = useState<AgentSettings>(DEFAULT_SETTINGS);
@@ -48,43 +55,44 @@ export function AgentIntegrationSettings(): JSX.Element {
   const [message, setMessage] = useState<AgentSettingsMessage>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
-    const desktop = window.ezterminalDesktop;
-    if (!desktop) return;
-    const [nextIntegrations, nextSettings] = await Promise.all([
-      desktop.listAgentIntegrations(),
-      desktop.getAgentSettings(),
-    ]);
-    setIntegrations(nextIntegrations);
-    setSettings(nextSettings);
-  }, []);
+    const snapshot = await capabilities.agentIntegrations.load();
+    if (!snapshot) return;
+    setIntegrations(snapshot.integrations);
+    setSettings(snapshot.settings);
+  }, [capabilities]);
 
   useEffect(() => {
     void refresh().catch(() => setMessage({ kind: 'unavailable' }));
   }, [refresh]);
 
   const mutateIntegration = async (provider: AgentIntegrationProvider, enabled: boolean): Promise<void> => {
-    const desktop = window.ezterminalDesktop;
-    if (!desktop || busyProvider) return;
+    if (busyProvider) return;
     setBusyProvider(provider);
     setMessage(null);
-    const result = await desktop.setAgentIntegrationEnabled(provider, enabled);
-    setBusyProvider(null);
-    if (result.ok) {
-      setMessage({
-        kind: enabled ? 'hooks-installed' : 'hooks-removed',
-        provider: providerLabel(provider),
-      });
-      await refresh();
-      return;
+    try {
+      const result = await capabilities.agentIntegrations.setEnabled(provider, enabled);
+      if (!result) return;
+      if (result.ok) {
+        setMessage({
+          kind: enabled ? 'hooks-installed' : 'hooks-removed',
+          provider: providerLabel(provider),
+        });
+        await refresh();
+        return;
+      }
+      setMessage({ kind: 'external', message: result.message });
+      setIntegrations((current) => current.map((item) => item.provider === provider ? result.status : item));
+    } catch {
+      setMessage({ kind: 'unavailable' });
+    } finally {
+      setBusyProvider(null);
     }
-    setMessage({ kind: 'external', message: result.message });
-    setIntegrations((current) => current.map((item) => item.provider === provider ? result.status : item));
   };
 
   const persist = async (next: AgentSettings): Promise<void> => {
     setSettings(next);
     try {
-      const saved = await window.ezterminalDesktop?.setAgentSettings(next);
+      const saved = await capabilities.agentIntegrations.saveSettings(next);
       if (!saved) {
         setMessage({ kind: 'invalid-profiles' });
         return;

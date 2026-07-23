@@ -11,6 +11,7 @@ import {
   type OpenClawStatus,
   type OpenClawStatusState,
 } from '../shared/openclaw';
+import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 
 /** How often the sessions list is re-polled while the gateway is running —
@@ -34,6 +35,7 @@ interface OpenClawPanelProps {
   /** Opens (or focuses, if already open) the singleton chat dockview panel —
    * see App.tsx's `openOpenClawChat` (openclaw-management M3). */
   readonly onOpenChat: () => void;
+  readonly capabilities?: CapabilityAccess;
 }
 
 /**
@@ -47,7 +49,11 @@ interface OpenClawPanelProps {
  * Guidance states (not-installed / stopped) replace the operational sections
  * with a calm CTA — never an error toast (AC6).
  */
-export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.Element {
+export function OpenClawPanel({
+  onClose,
+  onOpenChat,
+  capabilities = rendererCapabilities,
+}: OpenClawPanelProps): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
   const [sessions, setSessions] = useState<readonly OpenClawAgentSession[]>([]);
@@ -93,7 +99,7 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
     setAutostartBusy(action);
     setAutostartResult(null);
     try {
-      const result = await window.ezterminalDesktop?.runOpenClawAutostart(action);
+      const result = await capabilities.openClaw.runAutostart(action);
       if (result) {
         setAutostartResult(
           result.ok
@@ -103,34 +109,26 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
             : (result.stderr ?? t('openClaw.actionFailed', { action })),
         );
       }
+    } catch {
+      setAutostartResult(t('openClaw.actionFailed', { action }));
     } finally {
       setAutostartBusy(null);
     }
-  }, [t]);
+  }, [capabilities, t]);
 
   // ── Status seed + push (gated main-side by drawer-open, mirrors the stats
   // overlay's `setStatsPanelVisible`) ────────────────────────────────────────
   useEffect(() => {
-    let alive = true;
-    const api = window.ezterminalDesktop;
-    api?.setOpenClawDrawerOpen(true);
-    void api?.getOpenClawStatus().then((s) => {
-      if (alive) setStatus(s);
+    return capabilities.openClaw.observeDrawer({
+      onStatus: setStatus,
+      onLog: (line) => {
+        setLogLines((current) => {
+          const next = [...current, line];
+          return next.length > LOG_LINE_MAX ? next.slice(next.length - LOG_LINE_MAX) : next;
+        });
+      },
     });
-    const unsubStatus = api?.onOpenClawStatus((s) => setStatus(s));
-    const unsubLog = api?.onOpenClawLog((line) => {
-      setLogLines((current) => {
-        const next = [...current, line];
-        return next.length > LOG_LINE_MAX ? next.slice(next.length - LOG_LINE_MAX) : next;
-      });
-    });
-    return () => {
-      alive = false;
-      unsubStatus?.();
-      unsubLog?.();
-      api?.setOpenClawDrawerOpen(false);
-    };
-  }, []);
+  }, [capabilities]);
 
   // ── Sessions: on-demand poll while running (no push channel) ─────────────
   useEffect(() => {
@@ -140,9 +138,9 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
     }
     let alive = true;
     const load = (): void => {
-      void window.ezterminalDesktop?.listOpenClawSessions().then((list) => {
-        if (alive) setSessions(list);
-      });
+      void capabilities.openClaw.listSessions().then((list) => {
+        if (alive && list) setSessions(list);
+      }, () => undefined);
     };
     load();
     const timer = setInterval(load, SESSIONS_POLL_MS);
@@ -150,19 +148,19 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
       alive = false;
       clearInterval(timer);
     };
-  }, [status?.state]);
+  }, [capabilities, status?.state]);
 
   // ── Core config: fetched once, editable via local drafts ─────────────────
   const refreshConfig = useCallback(async (): Promise<void> => {
-    const cfg = await window.ezterminalDesktop?.getOpenClawConfig();
+    const cfg = await capabilities.openClaw.getConfig();
     if (!cfg) return;
     setConfig(cfg);
     setModelDraft(cfg['agents.defaults.model'] === OPENCLAW_CONFIG_UNSET ? '' : cfg['agents.defaults.model']);
     setPortDraft(cfg['gateway.port'] === OPENCLAW_CONFIG_UNSET ? '' : cfg['gateway.port']);
-  }, []);
+  }, [capabilities]);
 
   useEffect(() => {
-    void refreshConfig();
+    void refreshConfig().catch(() => undefined);
   }, [refreshConfig]);
 
   // ── Lifecycle actions ─────────────────────────────────────────────────────
@@ -170,21 +168,22 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
     setBusyAction(action);
     setLifecycleError(null);
     try {
-      const result = await window.ezterminalDesktop?.runOpenClawLifecycle(action);
+      const result = await capabilities.openClaw.runLifecycle(action);
       if (result && !result.ok) {
         setLifecycleError(result.stderr ?? t('openClaw.actionFailed', { action }));
       }
-      const fresh = await window.ezterminalDesktop?.getOpenClawStatus(true);
+      const fresh = await capabilities.openClaw.getStatus(true);
       if (fresh) setStatus(fresh);
+    } catch {
+      setLifecycleError(t('openClaw.actionFailed', { action }));
     } finally {
       setBusyAction(null);
     }
-  }, [t]);
+  }, [capabilities, t]);
 
   // ── Core settings save ─────────────────────────────────────────────────────
   const saveConfig = useCallback(async (): Promise<void> => {
-    const api = window.ezterminalDesktop;
-    if (!api) return;
+    if (capabilities.snapshot().desktop === 'unavailable') return;
     const model = modelDraft.trim();
     const port = portDraft.trim();
     // Config save contract (openclaw-stabilization M6): an empty/whitespace
@@ -200,22 +199,26 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
       const errors: string[] = [];
       let restartRequired = false;
       if (model) {
-        const r = await api.setOpenClawConfig('agents.defaults.model', model);
+        const r = await capabilities.openClaw.setConfig('agents.defaults.model', model);
+        if (!r) return;
         if (!r.ok) errors.push(r.error ?? t('openClaw.modelSaveFailed'));
         restartRequired = restartRequired || r.restartRequired;
       }
       if (port) {
-        const r = await api.setOpenClawConfig('gateway.port', port);
+        const r = await capabilities.openClaw.setConfig('gateway.port', port);
+        if (!r) return;
         if (!r.ok) errors.push(r.error ?? t('openClaw.portSaveFailed'));
         restartRequired = restartRequired || r.restartRequired;
       }
       if (errors.length > 0) setConfigError(errors.join('; '));
       if (restartRequired) setRestartBanner(true);
       await refreshConfig();
+    } catch {
+      setConfigError(t('openClaw.actionFailed', { action: 'save' }));
     } finally {
       setSavingConfig(false);
     }
-  }, [modelDraft, portDraft, refreshConfig, t]);
+  }, [capabilities, modelDraft, portDraft, refreshConfig, t]);
 
   const restartNow = useCallback((): void => {
     setRestartBanner(false);
@@ -356,7 +359,7 @@ export function OpenClawPanel({ onClose, onOpenChat }: OpenClawPanelProps): JSX.
             <button
               type="button"
               className="btn btn-split openclaw-chat-btn"
-              onClick={() => void window.ezterminalDesktop?.openOpenClawChatExternal()}
+              onClick={() => void capabilities.openClaw.openChatExternal().catch(() => undefined)}
               title={t('openClaw.openBrowser')}
               data-testid="btn-openclaw-open-chat-external"
             >

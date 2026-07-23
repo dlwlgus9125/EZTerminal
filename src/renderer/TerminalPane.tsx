@@ -18,6 +18,11 @@ import {
 import { pasteFromRuntimeClipboard } from './terminal-paste';
 import { selectedTextWithin } from './terminal-selection';
 import { QuickCommandShelf } from './QuickCommandShelf';
+import {
+  closeRunPort,
+  getRunPortBroker,
+  RunPortError,
+} from './run-port-broker';
 import type {
   PaneInstanceToken,
   SessionPaneLease,
@@ -210,6 +215,34 @@ export function TerminalPane({
   // always reaches the current one. Same "latest callback in a ref" idiom as
   // the pane lease factory above.
   const attachToRunRef = useRef<((info: RunStartedInfo) => void) | null>(null);
+  // Port handoffs belong to the current pane/session binding. The scope is
+  // replaced before paint when that binding changes, so late transfers cannot
+  // create controllers after unmount, session death, or adoption replacement.
+  const handoffAbortByRunRef = useRef(new Map<string, AbortController>());
+  const knownRunIdsRef = useRef(new Set<string>());
+  const pendingHandoffRunIdsRef = useRef(new Set<string>());
+  const mountedRef = useRef(true);
+
+  useLayoutEffect(() => {
+    const abortPending = (reason: string): void => {
+      for (const controller of handoffAbortByRunRef.current.values()) {
+        controller.abort(reason);
+      }
+      handoffAbortByRunRef.current.clear();
+    };
+    abortPending(sessionDead ? 'session-dead' : 'session-change');
+    if (!sessionId) {
+      abortPending('session-unavailable');
+    }
+    return () => abortPending('unmount');
+  }, [sessionId, sessionDead]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Bind this pane to a session on mount — either ADOPT an existing one (M2,
   // `adoptSessionId`) or CREATE a fresh one (Codex B5), seeding the prompt
@@ -337,6 +370,14 @@ export function TerminalPane({
   // otherwise hide cmd-input permanently or keep routing keys nowhere.
   useEffect(() => {
     const unsubscribeDead = window.ezterminal?.onSessionDead?.(() => {
+      for (const controller of handoffAbortByRunRef.current.values()) {
+        controller.abort('session-dead');
+      }
+      handoffAbortByRunRef.current.clear();
+      const pendingRunIds = new Set(pendingHandoffRunIdsRef.current);
+      pendingHandoffRunIdsRef.current.clear();
+      for (const runId of pendingRunIds) knownRunIdsRef.current.delete(runId);
+      setBlocks((previous) => previous.filter((entry) => !pendingRunIds.has(entry.id)));
       for (const entry of blocksRef.current) {
         entry.controller?.markTransportInterrupted(t('terminalPane.interpreterInterrupted'));
       }
@@ -388,9 +429,13 @@ export function TerminalPane({
   // runs before the session-destroy cleanup above so the pane tears down its blocks,
   // then its session (Codex B6 ordering).
   useEffect(() => {
+    const pendingRunIds = pendingHandoffRunIdsRef.current;
+    const knownRunIds = knownRunIdsRef.current;
     return () => {
       activeUnsub.current?.();
       for (const entry of blocksRef.current) entry.controller?.dispose();
+      pendingRunIds.clear();
+      knownRunIds.clear();
     };
   }, []);
 
@@ -438,6 +483,9 @@ export function TerminalPane({
     if (!text) return { ok: false, reason: 'empty' };
     const runSessionId = sessionId;
     const runId = nextRunId();
+    const handoffController = new AbortController();
+    const handoffSignal = handoffController.signal;
+    handoffAbortByRunRef.current.set(runId, handoffController);
 
     // Submitting a command re-engages terminal-style following, even if the user had
     // scrolled up to read earlier output.
@@ -451,38 +499,55 @@ export function TerminalPane({
 
     setBlocks((prev) => [...prev, { id: runId, command: text, controller: null }]);
 
-    // The preload transfers the per-command MessagePort via window.postMessage,
-    // echoing our runId so the right port reaches the right block (identical
-    // command text run twice no longer collides). Listen BEFORE calling runCommand.
-    const onWindowMessage = (ev: MessageEvent): void => {
-      // Only trust port transfers from our own window — never a foreign frame
-      // (SEC-LOW-5). The same-window identity is the reliable signal: on file://
-      // the event origin serializes as the opaque "null" (≠ location.origin
-      // "file://"), so an origin-string compare alone is unreliable; in dev (http)
-      // the origins match. A cross-origin frame satisfies neither.
-      if (ev.source !== window && ev.origin !== window.location.origin) return;
-      if (!ev.data || ev.data._ezPort !== runId) return;
-      window.removeEventListener('message', onWindowMessage);
-
-      const port = ev.ports[0];
-      if (!port) {
-        console.error('[renderer] cmd-port message arrived with no port');
+    // The singleton broker registers the runId correlation before asking the
+    // preload to transfer the command port.
+    knownRunIdsRef.current.add(runId);
+    pendingHandoffRunIdsRef.current.add(runId);
+    void getRunPortBroker().request({
+      kind: 'run',
+      runId,
+      signal: handoffSignal,
+      send: () => window.ezterminal.runCommand(text, runId, runSessionId),
+    }).then((port) => {
+      if (handoffAbortByRunRef.current.get(runId) === handoffController) {
+        handoffAbortByRunRef.current.delete(runId);
+      }
+      pendingHandoffRunIdsRef.current.delete(runId);
+      if (handoffSignal.aborted) {
+        closeRunPort(port);
+        knownRunIdsRef.current.delete(runId);
+        if (mountedRef.current) {
+          setBlocks((prev) => prev.filter((entry) => entry.id !== runId));
+        }
         return;
       }
-      const controller = new BlockController(text, port, {
-        controlTarget: { panelId, sessionId: runSessionId, runId },
-      });
-      bindActiveController(controller);
-      setBlocks((prev) =>
-        prev.map((entry) => (entry.id === runId ? { ...entry, controller } : entry)),
-      );
-    };
-
-    window.addEventListener('message', onWindowMessage);
-
-    window.ezterminal.runCommand(text, runId, runSessionId).catch((err: unknown) => {
-      window.removeEventListener('message', onWindowMessage);
-      console.error('[renderer] runCommand failed:', err);
+      try {
+        const controller = new BlockController(text, port, {
+          controlTarget: { panelId, sessionId: runSessionId, runId },
+        });
+        bindActiveController(controller);
+        setBlocks((prev) =>
+          prev.map((entry) => (entry.id === runId ? { ...entry, controller } : entry)),
+        );
+      } catch (error) {
+        closeRunPort(port);
+        knownRunIdsRef.current.delete(runId);
+        if (mountedRef.current) {
+          setBlocks((prev) => prev.filter((entry) => entry.id !== runId));
+        }
+        console.error('[renderer] failed to bind cmd-port:', error);
+      }
+    }).catch((error: unknown) => {
+      if (handoffAbortByRunRef.current.get(runId) === handoffController) {
+        handoffAbortByRunRef.current.delete(runId);
+      }
+      pendingHandoffRunIdsRef.current.delete(runId);
+      knownRunIdsRef.current.delete(runId);
+      if (mountedRef.current) {
+        setBlocks((prev) => prev.filter((entry) => entry.id !== runId));
+      }
+      if (handoffSignal.aborted || (error instanceof RunPortError && error.code === 'aborted')) return;
+      console.error('[renderer] runCommand failed:', error);
     });
     return { ok: true };
   }, [
@@ -582,35 +647,62 @@ export function TerminalPane({
   // run isn't one of this pane's own before calling this.
   const attachToRun = useCallback(
     (info: RunStartedInfo): void => {
+      if (knownRunIdsRef.current.has(info.runId)) return;
+      const handoffController = new AbortController();
+      const handoffSignal = handoffController.signal;
+      handoffAbortByRunRef.current.set(info.runId, handoffController);
+      knownRunIdsRef.current.add(info.runId);
+      pendingHandoffRunIdsRef.current.add(info.runId);
       setBlocks((prev) => [...prev, { id: info.runId, command: info.commandText, controller: null }]);
 
-      // Mirrors handleRun's `_ezPort` handshake above, but for the
-      // `_ezAttachPort` handoff `attachRun` triggers (preload.ts, ws-ezterminal.ts).
-      const onWindowMessage = (ev: MessageEvent): void => {
-        if (ev.source !== window && ev.origin !== window.location.origin) return;
-        if (!ev.data || ev.data._ezAttachPort !== info.runId) return;
-        window.removeEventListener('message', onWindowMessage);
-
-        const port = ev.ports[0];
-        if (!port) {
-          console.error('[renderer] attach-port message arrived with no port');
+      void getRunPortBroker().request({
+        kind: 'attach',
+        runId: info.runId,
+        signal: handoffSignal,
+        send: () => window.ezterminal.attachRun(info.sessionId, info.runId),
+      }).then((port) => {
+        if (handoffAbortByRunRef.current.get(info.runId) === handoffController) {
+          handoffAbortByRunRef.current.delete(info.runId);
+        }
+        pendingHandoffRunIdsRef.current.delete(info.runId);
+        if (handoffSignal.aborted) {
+          closeRunPort(port);
+          knownRunIdsRef.current.delete(info.runId);
+          if (mountedRef.current) {
+            setBlocks((prev) => prev.filter((entry) => entry.id !== info.runId));
+          }
           return;
         }
-        const controller = new BlockController(info.commandText, port, {
-          mirror: true,
-          controlTarget: { panelId, sessionId: info.sessionId, runId: info.runId },
-        });
-        bindActiveController(controller);
-        setBlocks((prev) =>
-          prev.map((entry) => (entry.id === info.runId ? { ...entry, controller } : entry)),
-        );
-      };
-
-      window.addEventListener('message', onWindowMessage);
-
-      window.ezterminal.attachRun(info.sessionId, info.runId).catch((err: unknown) => {
-        window.removeEventListener('message', onWindowMessage);
-        console.error('[renderer] attachRun failed:', err);
+        try {
+          const controller = new BlockController(info.commandText, port, {
+            mirror: true,
+            controlTarget: { panelId, sessionId: info.sessionId, runId: info.runId },
+          });
+          bindActiveController(controller);
+          setBlocks((prev) =>
+            prev.map((entry) => (
+              entry.id === info.runId ? { ...entry, controller } : entry
+            )),
+          );
+        } catch (error) {
+          closeRunPort(port);
+          knownRunIdsRef.current.delete(info.runId);
+          if (mountedRef.current) {
+            setBlocks((prev) => prev.filter((entry) => entry.id !== info.runId));
+          }
+          console.error('[renderer] failed to bind attach-port:', error);
+        }
+      }).catch((error: unknown) => {
+        if (handoffAbortByRunRef.current.get(info.runId) === handoffController) {
+          handoffAbortByRunRef.current.delete(info.runId);
+        }
+        pendingHandoffRunIdsRef.current.delete(info.runId);
+        knownRunIdsRef.current.delete(info.runId);
+        if (mountedRef.current) {
+          setBlocks((prev) => prev.filter((entry) => entry.id !== info.runId));
+        }
+        if (handoffSignal.aborted || (error instanceof RunPortError && error.code === 'aborted')) return;
+        console.error('[renderer] attachRun failed:', error);
       });
     },
     [bindActiveController, panelId],
@@ -620,7 +712,7 @@ export function TerminalPane({
   useEffect(() => {
     const unsub = window.ezterminal?.onRunStarted?.((info: RunStartedInfo) => {
       if (info.sessionId !== sessionIdRef.current) return; // not my session
-      if (blocksRef.current.some((entry) => entry.id === info.runId)) return; // my own run
+      if (knownRunIdsRef.current.has(info.runId)) return; // my own/already-pending run
       attachToRun(info);
     });
     return () => unsub?.();
@@ -658,6 +750,10 @@ export function TerminalPane({
   // bounds memory — completed blocks no longer pin a store for the app lifetime
   // (ARCH-P1 / CODE-M4).
   const handleDismiss = useCallback((id: string) => {
+    handoffAbortByRunRef.current.get(id)?.abort('block-dismissed');
+    handoffAbortByRunRef.current.delete(id);
+    knownRunIdsRef.current.delete(id);
+    pendingHandoffRunIdsRef.current.delete(id);
     setBlocks((prev) => {
       const entry = prev.find((e) => e.id === id);
       if (entry?.controller) {

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import type { IDockviewPanelProps } from 'dockview-react';
 
 import type { OpenClawChatViewState, OpenClawStatus, OpenClawStatusState } from '../shared/openclaw';
+import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 
 /**
@@ -54,8 +55,11 @@ const STATE_LABEL_KEY = {
  * see openclaw-chat-view.ts's module doc for why a visible native view
  * would otherwise obscure this UI.
  */
-export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
+export function OpenClawChatPanel(
+  props: IDockviewPanelProps & { readonly capabilities?: CapabilityAccess },
+): JSX.Element {
   const { t } = useAppTranslation();
+  const capabilities = props.capabilities ?? rendererCapabilities;
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
   const [viewState, setViewState] = useState<OpenClawChatViewState>({ hasError: false, loading: false });
   const [busyLifecycle, setBusyLifecycle] = useState(false);
@@ -79,30 +83,19 @@ export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
     // the guidance placeholder (it stays alive even after status settles). Only
     // when running should the native view exist and show.
     const running = status?.state === 'running';
-    window.ezterminalDesktop?.setOpenClawChatVisible(panelVisible && !overlayOpen && running);
-  }, [panelVisible, overlayOpen, status?.state]);
+    capabilities.openClaw.setChatVisible(panelVisible && !overlayOpen && running);
+  }, [capabilities, panelVisible, overlayOpen, status?.state]);
 
   // ── Status: seed + subscribe. Independent of the drawer's own gate (main.ts
   // refcounts both — see openclaw:chat-panel-mounted). Sent for the panel's
   // entire mounted lifetime, NOT gated on running state: this is exactly how
   // the panel detects a stopped->running transition and requests the view.
   useEffect(() => {
-    let alive = true;
-    const api = window.ezterminalDesktop;
-    api?.setOpenClawChatPanelMounted(true);
-    void api?.getOpenClawStatus().then((s) => {
-      if (alive) setStatus(s);
+    return capabilities.openClaw.observeChat({
+      onStatus: setStatus,
+      onViewState: setViewState,
     });
-    const unsubStatus = api?.onOpenClawStatus((s) => setStatus(s));
-    const unsubViewState = api?.onOpenClawChatViewState((s) => setViewState(s));
-    return () => {
-      alive = false;
-      unsubStatus?.();
-      unsubViewState?.();
-      api?.setOpenClawChatPanelMounted(false);
-      api?.closeOpenClawChatView();
-    };
-  }, []);
+  }, [capabilities]);
 
   // ── Request the view exactly once per stopped->running transition. If an
   // error is still latched from BEFORE this transition (viewState.hasError),
@@ -115,22 +108,22 @@ export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
       if (!openedRef.current) {
         openedRef.current = true;
         if (viewState.hasError) {
-          window.ezterminalDesktop?.reloadOpenClawChatView();
+          capabilities.openClaw.reloadChat();
         } else {
-          window.ezterminalDesktop?.openOpenClawChatView();
+          capabilities.openClaw.openChat();
         }
       }
     } else {
       openedRef.current = false;
     }
-  }, [status?.state, viewState.hasError]);
+  }, [capabilities, status?.state, viewState.hasError]);
 
   // ── Bounds reporting: rAF-throttled ResizeObserver + scroll/layout nudges.
   const reportBounds = useThrottledRaf(() => {
     const el = containerRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    window.ezterminalDesktop?.setOpenClawChatBounds({
+    capabilities.openClaw.setChatBounds({
       x: Math.round(rect.x),
       y: Math.round(rect.y),
       width: Math.round(rect.width),
@@ -158,21 +151,23 @@ export function OpenClawChatPanel(props: IDockviewPanelProps): JSX.Element {
   const startGateway = useCallback(async (): Promise<void> => {
     setBusyLifecycle(true);
     try {
-      await window.ezterminalDesktop?.runOpenClawLifecycle('start');
-      const fresh = await window.ezterminalDesktop?.getOpenClawStatus(true);
+      await capabilities.openClaw.runLifecycle('start');
+      const fresh = await capabilities.openClaw.getStatus(true);
       if (fresh) setStatus(fresh);
+    } catch {
+      // The existing guidance remains actionable; avoid an unhandled IPC rejection.
     } finally {
       setBusyLifecycle(false);
     }
-  }, []);
+  }, [capabilities]);
 
   const reconnect = useCallback((): void => {
-    window.ezterminalDesktop?.reloadOpenClawChatView();
-  }, []);
+    capabilities.openClaw.reloadChat();
+  }, [capabilities]);
 
   const openInBrowser = useCallback((): void => {
-    void window.ezterminalDesktop?.openOpenClawChatExternal();
-  }, []);
+    void capabilities.openClaw.openChatExternal().catch(() => undefined);
+  }, [capabilities]);
 
   const state = status?.state;
   const showGuidance = state !== 'running';

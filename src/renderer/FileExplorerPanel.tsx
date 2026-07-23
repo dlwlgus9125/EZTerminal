@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatSize, joinPath, type FileEntry } from '../shared/files';
 import type { FilePreviewResult } from '../shared/file-preview';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
+import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { FileContextMenu, type FileContextMenuItem } from './FileContextMenu';
 import { setInternalPathDrag } from './FileDropOverlay';
 import { useAppTranslation } from './i18n';
@@ -15,6 +16,7 @@ interface FileExplorerPanelProps {
   readonly onClose: () => void;
   /** Open a new terminal pane whose session starts in `dirPath` (M2 — "open terminal here"). */
   readonly onOpenTerminalAt: (dirPath: string) => void;
+  readonly capabilities?: CapabilityAccess;
 }
 
 interface ViewingFile {
@@ -49,6 +51,7 @@ export function FileExplorerPanel({
   activePanelId,
   onClose,
   onOpenTerminalAt,
+  capabilities = rendererCapabilities,
 }: FileExplorerPanelProps): JSX.Element {
   const { t } = useAppTranslation();
   const [currentPath, setCurrentPath] = useState<string | null>(null);
@@ -78,7 +81,7 @@ export function FileExplorerPanel({
 
   const loadPath = useCallback(async (path: string): Promise<void> => {
     setBinaryNotice(null);
-    const result = await window.ezterminal.listFiles(path);
+    const result = await capabilities.files.list(path);
     if (!result.ok) {
       setError(result.error);
       return;
@@ -89,11 +92,11 @@ export function FileExplorerPanel({
     setParent(result.parent);
     setEntries(result.entries);
     setPathInput(result.path);
-  }, []);
+  }, [capabilities]);
 
   const loadRoots = useCallback(async (): Promise<void> => {
     setBinaryNotice(null);
-    const roots = await window.ezterminal.listFileRoots();
+    const roots = await capabilities.files.listRoots();
     setError(null);
     setRootsMode(true);
     setCurrentPath(null);
@@ -102,7 +105,7 @@ export function FileExplorerPanel({
     setEntries(
       roots.map((name) => ({ name, kind: 'dir' as const, isSymlink: false, size: 0, mtimeMs: 0 })),
     );
-  }, []);
+  }, [capabilities]);
 
   // Best-effort snapshot ONLY at open — no live cwd following (locked requirement).
   useEffect(() => {
@@ -118,11 +121,11 @@ export function FileExplorerPanel({
 
   const loadPreview = useCallback(async (fullPath: string): Promise<void> => {
     setBinaryNotice(null);
-    const result = await window.ezterminal.readFilePreview(fullPath);
+    const result = await capabilities.files.preview(fullPath);
     if (!result.ok) setError(result.error);
     else setError(null);
     setViewing({ path: fullPath, result });
-  }, []);
+  }, [capabilities]);
 
   const openEntry = useCallback(
     async (entry: FileEntry): Promise<void> => {
@@ -182,7 +185,7 @@ export function FileExplorerPanel({
     if (!name) return;
     mutatingRef.current = true;
     try {
-      const result = await window.ezterminal.createFolder(currentPath, name);
+      const result = await capabilities.files.createFolder(currentPath, name);
       if (!result.ok) {
         setError(result.error);
         return;
@@ -194,7 +197,7 @@ export function FileExplorerPanel({
     } finally {
       mutatingRef.current = false;
     }
-  }, [currentPath, newFolderName, loadPath]);
+  }, [capabilities, currentPath, newFolderName, loadPath]);
 
   const startRename = useCallback((entry: FileEntry): void => {
     setRenameValue(entry.name);
@@ -208,7 +211,7 @@ export function FileExplorerPanel({
       if (!name) return;
       mutatingRef.current = true;
       try {
-        const result = await window.ezterminal.renameFile(fullPathFor(entry), name);
+        const result = await capabilities.files.rename(fullPathFor(entry), name);
         if (!result.ok) {
           setError(result.error);
           return;
@@ -220,7 +223,7 @@ export function FileExplorerPanel({
         mutatingRef.current = false;
       }
     },
-    [currentPath, renameValue, fullPathFor, loadPath],
+    [capabilities, currentPath, renameValue, fullPathFor, loadPath],
   );
 
   const requestDelete = useCallback(
@@ -234,7 +237,7 @@ export function FileExplorerPanel({
     if (!deleteTarget || mutatingRef.current) return;
     mutatingRef.current = true;
     try {
-      const result = await window.ezterminal.trashFile(deleteTarget.fullPath);
+      const result = await capabilities.files.trash(deleteTarget.fullPath);
       setDeleteTarget(null);
       if (!result.ok) {
         setError(result.error);
@@ -244,7 +247,7 @@ export function FileExplorerPanel({
     } finally {
       mutatingRef.current = false;
     }
-  }, [deleteTarget, currentPath, loadPath]);
+  }, [capabilities, deleteTarget, currentPath, loadPath]);
 
   /** Background (no `entry`) gets current-dir-level actions; a file/dir row
    * gets the item set the plan specifies for its kind. */
@@ -292,17 +295,22 @@ export function FileExplorerPanel({
           label: t('fileExplorer.pastePath'),
           onSelect: () => handlePastePath(fullPath),
         },
-        { action: 'open-app', label: t('fileExplorer.openInApp'), onSelect: () => void window.ezterminal.openFileInApp(fullPath) },
+        {
+          action: 'open-app',
+          label: t('fileExplorer.openInApp'),
+          onSelect: () => void capabilities.files.openInApp(fullPath),
+        },
         {
           action: 'reveal',
           label: t('fileExplorer.revealInExplorer'),
-          onSelect: () => void window.ezterminal.revealFileInExplorer(fullPath),
+          onSelect: () => void capabilities.files.reveal(fullPath),
         },
         { action: 'rename', label: t('fileExplorer.rename'), onSelect: () => startRename(entry) },
         { action: 'delete', label: t('fileExplorer.delete'), onSelect: () => requestDelete(entry) },
       ];
     },
     [
+      capabilities,
       currentPath,
       fullPathFor,
       handleCopy,
@@ -469,9 +477,9 @@ export function FileExplorerPanel({
           onClose={() => setViewing(null)}
           onInsert={() => handlePastePath(viewing.path)}
           onRetry={() => void loadPreview(viewing.path)}
-          onOpen={() => void window.ezterminal.openFileInApp(viewing.path)}
-          onReveal={() => void window.ezterminal.revealFileInExplorer(viewing.path)}
-          openExternalHttpUrl={(url) => void window.ezterminalDesktop?.openExternalHttpUrl(url)}
+          onOpen={() => void capabilities.files.openInApp(viewing.path)}
+          onReveal={() => void capabilities.files.reveal(viewing.path)}
+          openExternalHttpUrl={(url) => void capabilities.files.openExternalHttpUrl(url)}
         />
       )}
 

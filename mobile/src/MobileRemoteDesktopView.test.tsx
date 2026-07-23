@@ -1,4 +1,4 @@
-import { act } from 'react';
+import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -59,5 +59,24 @@ describe('MobileRemoteDesktopView', () => {
     expect(transport.stopDesktopControl).not.toHaveBeenCalled();
     act(() => container.querySelector<HTMLButtonElement>('.mobile-pc-toolbar button')!.click());
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('keeps one in-flight start alive through the StrictMode effect replay', async () => {
+    const transport = busyTransport();
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <MobileRemoteDesktopView
+            transport={transport as unknown as WsEzTerminalTransport}
+            onClose={() => undefined}
+          />
+        </StrictMode>,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(transport.startDesktopControl).toHaveBeenCalledOnce();
+    expect(container.querySelector('.mobile-pc-state--busy')).toBeTruthy();
   });
 });

@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { AppErrorBoundary } from './AppErrorBoundary';
 import { useAppTranslation } from './i18n';
 import { DesktopUiPreferencesProvider } from './ui-preferences';
 import { ToastProvider } from './ui';
@@ -24,8 +25,10 @@ function DesktopApplication(): JSX.Element {
 
 createRoot(container).render(
   <StrictMode>
-    <DesktopUiPreferencesProvider>
-      <DesktopApplication />
-    </DesktopUiPreferencesProvider>
+    <AppErrorBoundary>
+      <DesktopUiPreferencesProvider>
+        <DesktopApplication />
+      </DesktopUiPreferencesProvider>
+    </AppErrorBoundary>
   </StrictMode>,
 );

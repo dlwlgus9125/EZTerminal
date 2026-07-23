@@ -32,27 +32,161 @@ use webrtc::stats::StatsReportType;
 use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 
+use crate::broker::BrokerErrorCode;
 use crate::capture::{DisplayCapture, DisplayDescriptor, enumerate_displays};
 use crate::input::{InputChannel, InputInjector, InputOutcome};
+use crate::local_broker::{BrokerClientError, BrokerLeaseClient};
 use crate::protocol::{
     MAX_CONTROL_BYTES, MainToTransport, NativeEndReason, NativeErrorCode, NativeHello,
-    NativeIceCandidate, QualityTier, RemoteDisplay, ServiceAvailability, TransportMetrics,
-    TransportState, TransportToMain, encode_main_message, parse_main_message,
+    NativeIceCandidate, QualityTier, RemoteDisplay, TransportMetrics, TransportState,
+    TransportToMain, encode_main_message, parse_main_message,
 };
 use crate::quality::{NetworkSample, QualityController};
 
 const CONTROL_CHANNEL: &str = "ez-control-v1";
 const POINTER_CHANNEL: &str = "ez-pointer-v1";
+const CAPABILITY_RELEASE_WAIT_TIMEOUT: Duration = Duration::from_millis(2_500);
+const TRANSPORT_RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(400);
+
+#[derive(Clone)]
+struct SessionAuthority {
+    stop: Arc<AtomicBool>,
+    input_gate: Arc<Mutex<()>>,
+}
+
+impl SessionAuthority {
+    fn new() -> Self {
+        Self {
+            stop: Arc::new(AtomicBool::new(false)),
+            input_gate: Arc::new(Mutex::new(())),
+        }
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.stop.load(Ordering::Acquire)
+    }
+
+    fn stop_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.stop)
+    }
+
+    fn enter_input(&self) -> Option<std::sync::MutexGuard<'_, ()>> {
+        let permit = self
+            .input_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (!self.is_stopped()).then_some(permit)
+    }
+
+    fn revoke(&self) -> bool {
+        let _permit = self
+            .input_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !self.stop.swap(true, Ordering::AcqRel)
+    }
+}
 
 struct PeerSession {
     pc: Arc<RTCPeerConnection>,
-    stop: Arc<AtomicBool>,
+    authority: SessionAuthority,
     input: Arc<Mutex<InputInjector>>,
+}
+
+struct CapabilityLease {
+    client: Arc<BrokerLeaseClient>,
+    authority: SessionAuthority,
+    released: Arc<AtomicBool>,
+    heartbeat_abort: tokio::task::AbortHandle,
+}
+
+impl CapabilityLease {
+    fn new(
+        client: BrokerLeaseClient,
+        session_id: uuid::Uuid,
+        output: mpsc::Sender<TransportToMain>,
+    ) -> Self {
+        let heartbeat_interval = client.heartbeat_interval();
+        let client = Arc::new(client);
+        let authority = SessionAuthority::new();
+        let released = Arc::new(AtomicBool::new(false));
+        let heartbeat_client = Arc::clone(&client);
+        let heartbeat_authority = authority.clone();
+        let heartbeat_task = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(heartbeat_interval).await;
+                if heartbeat_authority.is_stopped() {
+                    break;
+                }
+                let client = Arc::clone(&heartbeat_client);
+                let heartbeat = tokio::task::spawn_blocking(move || client.heartbeat()).await;
+                if matches!(heartbeat, Ok(Ok(()))) {
+                    continue;
+                }
+                if heartbeat_authority.revoke() {
+                    let _ = output
+                        .send(TransportToMain::Error {
+                            session_id: Some(session_id),
+                            code: NativeErrorCode::ServiceUnavailable,
+                            message: "the supervised session-agent capability lease was lost"
+                                .into(),
+                        })
+                        .await;
+                    let _ = output
+                        .send(TransportToMain::Ended {
+                            session_id,
+                            reason: NativeEndReason::AgentStopped,
+                        })
+                        .await;
+                }
+                break;
+            }
+        });
+        let heartbeat_abort = heartbeat_task.abort_handle();
+        drop(heartbeat_task);
+        Self {
+            client,
+            authority,
+            released,
+            heartbeat_abort,
+        }
+    }
+
+    fn session_authority(&self) -> SessionAuthority {
+        self.authority.clone()
+    }
+
+    async fn close(&self) {
+        self.authority.revoke();
+        self.heartbeat_abort.abort();
+        if self.released.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let client = Arc::clone(&self.client);
+        let release = tokio::task::spawn_blocking(move || client.release());
+        let _ = tokio::time::timeout(CAPABILITY_RELEASE_WAIT_TIMEOUT, release).await;
+    }
+}
+
+impl Drop for CapabilityLease {
+    fn drop(&mut self) {
+        self.authority.revoke();
+        self.heartbeat_abort.abort();
+        if self.released.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let client = Arc::clone(&self.client);
+        let _ = std::thread::Builder::new()
+            .name("ez-remote-lease-release".into())
+            .spawn(move || {
+                let _ = client.release();
+            });
+    }
 }
 
 impl PeerSession {
     async fn close(self) -> Result<()> {
-        self.stop.store(true, Ordering::Release);
+        self.authority.revoke();
         if let Ok(mut input) = self.input.lock() {
             input.release_all();
         }
@@ -62,7 +196,10 @@ impl PeerSession {
 }
 
 pub fn run() -> Result<()> {
-    tokio::runtime::Runtime::new()?.block_on(run_async())
+    let runtime = tokio::runtime::Runtime::new()?;
+    let result = runtime.block_on(run_async());
+    runtime.shutdown_timeout(TRANSPORT_RUNTIME_SHUTDOWN_TIMEOUT);
+    result
 }
 
 async fn run_async() -> Result<()> {
@@ -77,16 +214,10 @@ async fn run_async() -> Result<()> {
         Ok::<_, anyhow::Error>(())
     });
 
-    output_tx
-        .send(TransportToMain::Ready {
-            protocol_version: crate::NATIVE_PROTOCOL_VERSION,
-            service: crate::service::availability(),
-        })
-        .await?;
-
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut hello: Option<NativeHello> = None;
     let mut peer_connection: Option<PeerSession> = None;
+    let mut capability_lease: Option<CapabilityLease> = None;
 
     while let Some(line) = lines
         .next_line()
@@ -119,42 +250,84 @@ async fn run_async() -> Result<()> {
                     .await;
                     continue;
                 }
-                if crate::service::availability() != ServiceAvailability::Ready {
-                    send_error(
-                        &output_tx,
-                        Some(value.session_id),
-                        NativeErrorCode::ServiceUnavailable,
-                        "the privileged remote service is not running",
-                    )
-                    .await;
-                    continue;
-                }
+                let remote_session_id = value.session_id;
+                let acquisition = tokio::task::spawn_blocking(move || {
+                    BrokerLeaseClient::acquire(remote_session_id)
+                })
+                .await;
+                let client = match acquisition {
+                    Ok(Ok(client)) => client,
+                    Ok(Err(error)) => {
+                        let (code, message) = broker_error(&error);
+                        send_error(&output_tx, Some(value.session_id), code, message).await;
+                        continue;
+                    }
+                    Err(error) => {
+                        send_error(
+                            &output_tx,
+                            Some(value.session_id),
+                            NativeErrorCode::Internal,
+                            format!("capability broker task failed: {error}"),
+                        )
+                        .await;
+                        continue;
+                    }
+                };
+                capability_lease = Some(CapabilityLease::new(
+                    client,
+                    value.session_id,
+                    output_tx.clone(),
+                ));
                 hello = Some(value);
+                output_tx
+                    .send(TransportToMain::Ready {
+                        protocol_version: crate::NATIVE_PROTOCOL_VERSION,
+                        service: crate::service::availability(),
+                    })
+                    .await?;
             }
             MainToTransport::Offer { session_id, sdp } => {
-                let Some(active_hello) = hello.as_ref() else {
+                let active_hello = match validate_offer_state(
+                    hello.as_ref(),
+                    session_id,
+                    peer_connection.is_some(),
+                ) {
+                    Ok(active_hello) => active_hello,
+                    Err(message) => {
+                        send_error(
+                            &output_tx,
+                            Some(session_id),
+                            NativeErrorCode::InvalidMessage,
+                            message,
+                        )
+                        .await;
+                        continue;
+                    }
+                };
+                let peer_ip: IpAddr = active_hello.peer_address.parse()?;
+                validate_remote_sdp_candidates(&sdp, peer_ip)?;
+                let Some(lease) = capability_lease.as_ref() else {
                     send_error(
                         &output_tx,
                         Some(session_id),
-                        NativeErrorCode::InvalidMessage,
-                        "hello must precede the offer",
+                        NativeErrorCode::ServiceUnavailable,
+                        "the privileged capability lease is unavailable",
                     )
                     .await;
                     continue;
                 };
-                if active_hello.session_id != session_id {
+                if lease.authority.is_stopped() {
                     send_error(
                         &output_tx,
                         Some(session_id),
-                        NativeErrorCode::InvalidMessage,
-                        "session id does not match hello",
+                        NativeErrorCode::ServiceUnavailable,
+                        "the privileged capability lease has expired",
                     )
                     .await;
                     continue;
                 }
-                let peer_ip: IpAddr = active_hello.peer_address.parse()?;
-                validate_remote_sdp_candidates(&sdp, peer_ip)?;
-                let pc = create_peer(active_hello, output_tx.clone()).await?;
+                let pc =
+                    create_peer(active_hello, output_tx.clone(), lease.session_authority()).await?;
                 pc.pc
                     .set_remote_description(RTCSessionDescription::offer(sdp)?)
                     .await?;
@@ -206,8 +379,21 @@ async fn run_async() -> Result<()> {
                 }
             }
             MainToTransport::Stop { session_id, .. } => {
+                if let Err(message) = validate_stop_session(hello.as_ref(), session_id) {
+                    send_error(
+                        &output_tx,
+                        Some(session_id),
+                        NativeErrorCode::InvalidMessage,
+                        message,
+                    )
+                    .await;
+                    continue;
+                }
                 if let Some(pc) = peer_connection.take() {
                     pc.close().await?;
+                }
+                if let Some(lease) = capability_lease.as_ref() {
+                    lease.close().await;
                 }
                 let _ = output_tx
                     .send(TransportToMain::Ended {
@@ -227,6 +413,9 @@ async fn run_async() -> Result<()> {
     if let Some(pc) = peer_connection {
         let _ = pc.close().await;
     }
+    if let Some(lease) = capability_lease.as_ref() {
+        lease.close().await;
+    }
     drop(output_tx);
     writer.await??;
     Ok(())
@@ -235,6 +424,7 @@ async fn run_async() -> Result<()> {
 async fn create_peer(
     hello: &NativeHello,
     output: mpsc::Sender<TransportToMain>,
+    authority: SessionAuthority,
 ) -> Result<PeerSession> {
     let local_ip: IpAddr = hello.local_address.parse()?;
     let socket = UdpSocket::bind(SocketAddr::new(local_ip, hello.udp_port))
@@ -297,7 +487,6 @@ async fn create_peer(
     });
 
     let session_id = hello.session_id;
-    let stop = Arc::new(AtomicBool::new(false));
     let connected = Arc::new(AtomicBool::new(false));
     let network_sample = Arc::new(Mutex::new(NetworkSample {
         round_trip_time_ms: 0,
@@ -306,7 +495,7 @@ async fn create_peer(
     }));
     spawn_network_stats(
         Arc::clone(&pc),
-        Arc::clone(&stop),
+        authority.stop_flag(),
         Arc::clone(&network_sample),
     );
     let displays = enumerate_displays()?;
@@ -323,16 +512,17 @@ async fn create_peer(
         displays.clone(),
         Arc::clone(&selected_display_id),
     )));
-    spawn_capture(
+    spawn_input_revocation(authority.stop_flag(), Arc::clone(&input));
+    spawn_capture(CaptureTask {
         session_id,
-        Arc::clone(&track),
-        Arc::clone(&stop),
-        Arc::clone(&connected),
+        track: Arc::clone(&track),
+        authority: authority.clone(),
+        connected: Arc::clone(&connected),
         displays,
         selected_display_id,
         network_sample,
-        output.clone(),
-    );
+        output: output.clone(),
+    });
     let candidate_output = output.clone();
     pc.on_ice_candidate(Box::new(move |candidate| {
         let candidate_output = candidate_output.clone();
@@ -355,11 +545,11 @@ async fn create_peer(
 
     let state_output = output.clone();
     let state_connected = Arc::clone(&connected);
-    let state_stop = Arc::clone(&stop);
+    let state_authority = authority.clone();
     pc.on_peer_connection_state_change(Box::new(move |state| {
         let state_output = state_output.clone();
         let state_connected = Arc::clone(&state_connected);
-        let state_stop = Arc::clone(&state_stop);
+        let state_authority = state_authority.clone();
         Box::pin(async move {
             let message = match state {
                 RTCPeerConnectionState::New | RTCPeerConnectionState::Connecting => {
@@ -388,7 +578,7 @@ async fn create_peer(
                 }
                 RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
                     state_connected.store(false, Ordering::Release);
-                    state_stop.store(true, Ordering::Release);
+                    state_authority.revoke();
                     TransportToMain::Ended {
                         session_id,
                         reason: NativeEndReason::TransportFailed,
@@ -401,8 +591,10 @@ async fn create_peer(
     }));
 
     let channel_input = Arc::clone(&input);
+    let channel_authority = authority.clone();
     pc.on_data_channel(Box::new(move |channel| {
         let channel_input = Arc::clone(&channel_input);
+        let channel_authority = channel_authority.clone();
         Box::pin(async move {
             let label = channel.label().to_owned();
             if label != CONTROL_CHANNEL && label != POINTER_CHANNEL {
@@ -424,8 +616,13 @@ async fn create_peer(
             channel.on_message(Box::new(move |message| {
                 let label = label.clone();
                 let channel_input = Arc::clone(&channel_input);
+                let channel_authority = channel_authority.clone();
                 let reply_channel = Arc::clone(&reply_channel);
                 Box::pin(async move {
+                    if channel_authority.is_stopped() {
+                        send_input_error(&reply_channel, "capability-unavailable").await;
+                        return;
+                    }
                     if message.data.len() > MAX_CONTROL_BYTES {
                         send_input_error(&reply_channel, "message-too-large").await;
                         return;
@@ -435,10 +632,15 @@ async fn create_peer(
                     } else {
                         InputChannel::Reliable
                     };
+                    let Some(_permit) = channel_authority.enter_input() else {
+                        send_input_error(&reply_channel, "capability-unavailable").await;
+                        return;
+                    };
                     let outcome = channel_input
                         .lock()
                         .map_err(|_| anyhow!("input state poisoned"))
                         .and_then(|mut injector| injector.handle(&message.data, input_channel));
+                    drop(_permit);
                     match outcome {
                         Ok(InputOutcome::ClipboardText(text)) => {
                             if let Ok(message) = serde_json::to_string(&serde_json::json!({
@@ -458,36 +660,46 @@ async fn create_peer(
         })
     }));
 
-    Ok(PeerSession { pc, stop, input })
+    Ok(PeerSession {
+        pc,
+        authority,
+        input,
+    })
 }
 
-fn spawn_capture(
+fn spawn_input_revocation(stop: Arc<AtomicBool>, input: Arc<Mutex<InputInjector>>) {
+    tokio::spawn(async move {
+        loop {
+            if stop.load(Ordering::Acquire) {
+                if let Ok(mut injector) = input.lock() {
+                    injector.release_all();
+                }
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    });
+}
+
+struct CaptureTask {
     session_id: uuid::Uuid,
     track: Arc<TrackLocalStaticSample>,
-    stop: Arc<AtomicBool>,
+    authority: SessionAuthority,
     connected: Arc<AtomicBool>,
     displays: Vec<DisplayDescriptor>,
     selected_display_id: Arc<Mutex<String>>,
     network_sample: Arc<Mutex<NetworkSample>>,
     output: mpsc::Sender<TransportToMain>,
-) {
+}
+
+fn spawn_capture(task: CaptureTask) {
     let runtime = tokio::runtime::Handle::current();
     std::thread::spawn(move || {
-        let result = run_capture_loop(
-            session_id,
-            &track,
-            &stop,
-            &connected,
-            &displays,
-            &selected_display_id,
-            &network_sample,
-            &output,
-            &runtime,
-        );
+        let result = run_capture_loop(&task, &runtime);
         if let Err(error) = result {
-            stop.store(true, Ordering::Release);
-            let _ = output.blocking_send(TransportToMain::Error {
-                session_id: Some(session_id),
+            task.authority.revoke();
+            let _ = task.output.blocking_send(TransportToMain::Error {
+                session_id: Some(task.session_id),
                 code: NativeErrorCode::CaptureUnavailable,
                 message: error.to_string(),
             });
@@ -495,17 +707,15 @@ fn spawn_capture(
     });
 }
 
-fn run_capture_loop(
-    session_id: uuid::Uuid,
-    track: &TrackLocalStaticSample,
-    stop: &AtomicBool,
-    connected: &AtomicBool,
-    displays: &[DisplayDescriptor],
-    selected_display_id: &Mutex<String>,
-    network_sample: &Mutex<NetworkSample>,
-    output: &mpsc::Sender<TransportToMain>,
-    runtime: &tokio::runtime::Handle,
-) -> Result<()> {
+fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Result<()> {
+    let session_id = task.session_id;
+    let track = &task.track;
+    let stop = &task.authority.stop;
+    let connected = &task.connected;
+    let displays = &task.displays;
+    let selected_display_id = &task.selected_display_id;
+    let network_sample = &task.network_sample;
+    let output = &task.output;
     let mut quality = QualityController::default();
     let mut tier = quality.tier();
     let mut profile = quality_profile(tier);
@@ -720,6 +930,36 @@ fn spawn_network_stats(
     });
 }
 
+fn validate_offer_state(
+    hello: Option<&NativeHello>,
+    session_id: uuid::Uuid,
+    peer_exists: bool,
+) -> Result<&NativeHello, &'static str> {
+    let Some(hello) = hello else {
+        return Err("hello must precede the offer");
+    };
+    if hello.session_id != session_id {
+        return Err("session id does not match hello");
+    }
+    if peer_exists {
+        return Err("an offer was already accepted");
+    }
+    Ok(hello)
+}
+
+fn validate_stop_session(
+    hello: Option<&NativeHello>,
+    session_id: uuid::Uuid,
+) -> Result<(), &'static str> {
+    let Some(hello) = hello else {
+        return Err("hello must precede stop");
+    };
+    if hello.session_id != session_id {
+        return Err("stop session id does not match hello");
+    }
+    Ok(())
+}
+
 fn validate_remote_sdp_candidates(sdp: &str, peer_ip: IpAddr) -> Result<()> {
     for line in sdp.lines().map(str::trim) {
         if let Some(candidate) = line.strip_prefix("a=")
@@ -743,6 +983,23 @@ fn candidate_matches_peer(candidate: &str, peer_ip: IpAddr) -> bool {
         && fields[7].eq_ignore_ascii_case("host")
 }
 
+fn broker_error(error: &BrokerClientError) -> (NativeErrorCode, String) {
+    let code = match error {
+        BrokerClientError::Rejected(BrokerErrorCode::LeaseBusy) => NativeErrorCode::LeaseBusy,
+        BrokerClientError::Rejected(BrokerErrorCode::CallerDenied) => {
+            NativeErrorCode::ServiceDenied
+        }
+        BrokerClientError::Rejected(BrokerErrorCode::IncompatibleProtocol) => {
+            NativeErrorCode::UnsupportedVersion
+        }
+        BrokerClientError::Rejected(BrokerErrorCode::CapabilityUnavailable) => {
+            NativeErrorCode::CaptureUnavailable
+        }
+        _ => NativeErrorCode::ServiceUnavailable,
+    };
+    (code, error.to_string())
+}
+
 async fn send_error(
     output: &mpsc::Sender<TransportToMain>,
     session_id: Option<uuid::Uuid>,
@@ -761,6 +1018,18 @@ async fn send_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hello_for(session_id: uuid::Uuid) -> NativeHello {
+        NativeHello {
+            protocol_version: crate::NATIVE_PROTOCOL_VERSION,
+            session_id,
+            client_id: uuid::Uuid::new_v4(),
+            client_name: "test client".into(),
+            local_address: "127.0.0.1".into(),
+            peer_address: "127.0.0.1".into(),
+            udp_port: 7422,
+        }
+    }
 
     #[test]
     fn only_accepts_udp_host_candidates_from_the_authenticated_peer() {
@@ -829,5 +1098,84 @@ mod tests {
             (640, 360, 800_000)
         );
         assert_eq!(survival.frames_per_second, 15.0);
+    }
+
+    #[test]
+    fn broker_rejections_map_to_existing_native_error_contract() {
+        let (code, _) = broker_error(&BrokerClientError::Rejected(BrokerErrorCode::LeaseBusy));
+        assert_eq!(code, NativeErrorCode::LeaseBusy);
+        let (code, _) = broker_error(&BrokerClientError::Rejected(BrokerErrorCode::CallerDenied));
+        assert_eq!(code, NativeErrorCode::ServiceDenied);
+        let (code, _) = broker_error(&BrokerClientError::Rejected(
+            BrokerErrorCode::IncompatibleProtocol,
+        ));
+        assert_eq!(code, NativeErrorCode::UnsupportedVersion);
+    }
+
+    #[test]
+    fn offer_state_rejects_renegotiation_and_unbound_sessions() {
+        let session_id = uuid::Uuid::new_v4();
+        let hello = hello_for(session_id);
+        assert!(validate_offer_state(Some(&hello), session_id, false).is_ok());
+        assert_eq!(
+            validate_offer_state(Some(&hello), session_id, true),
+            Err("an offer was already accepted")
+        );
+        assert_eq!(
+            validate_offer_state(Some(&hello), uuid::Uuid::new_v4(), false),
+            Err("session id does not match hello")
+        );
+        assert_eq!(
+            validate_offer_state(None, session_id, false),
+            Err("hello must precede the offer")
+        );
+    }
+
+    #[test]
+    fn stop_requires_the_accepted_hello_session() {
+        let session_id = uuid::Uuid::new_v4();
+        let hello = hello_for(session_id);
+        assert!(validate_stop_session(Some(&hello), session_id).is_ok());
+        assert_eq!(
+            validate_stop_session(Some(&hello), uuid::Uuid::new_v4()),
+            Err("stop session id does not match hello")
+        );
+        assert_eq!(
+            validate_stop_session(None, session_id),
+            Err("hello must precede stop")
+        );
+    }
+
+    #[test]
+    fn input_authority_linearizes_revocation_and_rejects_late_work() {
+        let authority = SessionAuthority::new();
+        let permit = authority.enter_input().expect("authority starts active");
+        let revoker = authority.clone();
+        let (revoked_tx, revoked_rx) = std::sync::mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            let changed = revoker.revoke();
+            revoked_tx.send(changed).unwrap();
+        });
+
+        assert!(
+            revoked_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "revocation must wait for the already-authorized input operation"
+        );
+        drop(permit);
+        assert!(
+            revoked_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("revocation completes after input")
+        );
+        worker.join().unwrap();
+        assert!(authority.enter_input().is_none());
+    }
+
+    #[test]
+    fn release_wait_and_runtime_shutdown_budget_is_under_three_seconds() {
+        assert!(
+            CAPABILITY_RELEASE_WAIT_TIMEOUT + TRANSPORT_RUNTIME_SHUTDOWN_TIMEOUT
+                < Duration::from_secs(3)
+        );
     }
 }

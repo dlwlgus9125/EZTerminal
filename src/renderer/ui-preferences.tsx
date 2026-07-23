@@ -17,6 +17,7 @@ import {
   type UiPreferences,
   type UiPreferencesPatch,
 } from '../shared/ui-preferences';
+import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { AppI18nProvider } from './i18n';
 
 interface UiPreferencesContextValue {
@@ -27,7 +28,13 @@ interface UiPreferencesContextValue {
 
 const UiPreferencesContext = createContext<UiPreferencesContextValue | null>(null);
 
-export function DesktopUiPreferencesProvider({ children }: { readonly children: ReactNode }): JSX.Element {
+export function DesktopUiPreferencesProvider({
+  children,
+  capabilities = rendererCapabilities,
+}: {
+  readonly children: ReactNode;
+  readonly capabilities?: CapabilityAccess;
+}): JSX.Element {
   const [preferences, setPreferences] = useState<UiPreferences>(() => ({ ...DEFAULT_UI_PREFERENCES }));
   const [ready, setReady] = useState(false);
   const [languages, setLanguages] = useState<readonly string[]>(() => navigatorLanguages());
@@ -37,14 +44,14 @@ export function DesktopUiPreferencesProvider({ children }: { readonly children: 
 
   useEffect(() => {
     let alive = true;
-    const desktop = window.ezterminalDesktop;
-    if (!desktop?.getUiPreferences) {
+    if (capabilities.snapshot().desktop === 'unavailable') {
       setReady(true);
       return () => { alive = false; };
     }
-    void desktop.getUiPreferences().then((stored) => {
+    void capabilities.uiPreferences.load().then((stored) => {
       if (!alive) return;
       setReady(true);
+      if (!stored) return;
       if (revisionRef.current !== 0) return;
       preferencesRef.current = stored;
       setPreferences(stored);
@@ -52,18 +59,18 @@ export function DesktopUiPreferencesProvider({ children }: { readonly children: 
       if (alive) setReady(true);
     });
     return () => { alive = false; };
-  }, []);
+  }, [capabilities]);
 
   useEffect(() => {
     const onLanguageChange = (): void => {
       setLanguages(navigatorLanguages());
       if (preferencesRef.current.locale === 'system') {
-        void window.ezterminalDesktop?.refreshNativeMenuLocale().catch(() => undefined);
+        void capabilities.uiPreferences.refreshNativeMenuLocale().catch(() => undefined);
       }
     };
     window.addEventListener('languagechange', onLanguageChange);
     return () => window.removeEventListener('languagechange', onLanguageChange);
-  }, []);
+  }, [capabilities]);
 
   useEffect(() => {
     document.documentElement.dataset.density = preferences.density;
@@ -79,11 +86,12 @@ export function DesktopUiPreferencesProvider({ children }: { readonly children: 
     preferencesRef.current = parsed.data;
     setPreferences(parsed.data);
 
-    const desktop = window.ezterminalDesktop;
-    if (!desktop?.setUiPreferences) return Promise.resolve();
+    if (capabilities.snapshot().desktop === 'unavailable') return Promise.resolve();
     const run = writeQueueRef.current.then(async () => {
       try {
-        const persisted = UiPreferencesSchema.parse(await desktop.setUiPreferences(patch.data));
+        const saved = await capabilities.uiPreferences.save(patch.data);
+        if (!saved) return;
+        const persisted = UiPreferencesSchema.parse(saved);
         if (revisionRef.current === revision) {
           preferencesRef.current = persisted;
           setPreferences(persisted);
@@ -91,7 +99,9 @@ export function DesktopUiPreferencesProvider({ children }: { readonly children: 
       } catch (error) {
         if (revisionRef.current === revision) {
           try {
-            const persisted = UiPreferencesSchema.parse(await desktop.getUiPreferences());
+            const stored = await capabilities.uiPreferences.load();
+            if (!stored) throw new Error('Desktop UI preferences are unavailable.');
+            const persisted = UiPreferencesSchema.parse(stored);
             preferencesRef.current = persisted;
             setPreferences(persisted);
           } catch {
@@ -105,7 +115,7 @@ export function DesktopUiPreferencesProvider({ children }: { readonly children: 
     // a transient IPC rejection cannot prevent later preference writes.
     writeQueueRef.current = run.then(() => undefined, () => undefined);
     return run;
-  }, []);
+  }, [capabilities]);
 
   const value = useMemo<UiPreferencesContextValue>(() => ({
     preferences,

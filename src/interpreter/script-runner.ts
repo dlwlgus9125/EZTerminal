@@ -293,7 +293,9 @@ export function runScriptSession(
     },
     dispose(): void {
       if (settled) {
-        void blockHandle?.dispose();
+        void blockHandle?.dispose().catch(() => {
+          console.error('[interpreter] script result cleanup failed');
+        });
         return;
       }
       settled = true;

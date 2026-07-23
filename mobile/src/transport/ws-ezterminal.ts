@@ -1910,12 +1910,19 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   }
 
   private handleServerMessage(data: string): void {
-    let msg: ServerToClientMessage;
+    let parsed: unknown;
     try {
-      msg = JSON.parse(data) as ServerToClientMessage;
+      parsed = JSON.parse(data);
     } catch {
       return;
     }
+    if (
+      typeof parsed !== 'object'
+      || parsed === null
+      || Array.isArray(parsed)
+      || typeof (parsed as { kind?: unknown }).kind !== 'string'
+    ) return;
+    const msg = parsed as ServerToClientMessage;
     if (this.stopped) return;
     if (!this.authed && msg.kind !== 'auth-ok' && msg.kind !== 'auth-fail') return;
     switch (msg.kind) {

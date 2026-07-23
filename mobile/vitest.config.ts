@@ -12,7 +12,8 @@ export default defineConfig({
         throw new Error(`Unexpected mobile test stderr: ${log}`);
       }
     },
-    passWithNoTests: true,
+    passWithNoTests: false,
+    retry: 0,
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     exclude: ['node_modules/**'],
   },

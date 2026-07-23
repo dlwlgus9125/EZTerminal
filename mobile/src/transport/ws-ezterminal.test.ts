@@ -236,6 +236,18 @@ describe('WsEzTerminalTransport — auth handshake', () => {
     expect(transport.isAuthed).toBe(false);
   });
 
+  it.each([null, true, 42, 'message', [], {}])(
+    'ignores a non-envelope server payload without crashing: %j',
+    (payload) => {
+      const { createSocket, sockets } = makeCreateSocket();
+      const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+
+      expect(() => sockets[0].triggerRawMessage(payload)).not.toThrow();
+      expect(transport.isAuthed).toBe(false);
+      expect(transport.currentConnectionState).not.toBe('protocol-incompatible');
+    },
+  );
+
   it('isAuthed flips true on auth-ok and false on auth-fail', () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });

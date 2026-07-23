@@ -5,6 +5,9 @@ import '@xterm/xterm/css/xterm.css';
 import type { BlockController } from './block-controller';
 import { resolveFontFamily } from './fonts';
 import { getActiveScrollback } from './scrollback';
+import {
+  PlainOutputDomRetention,
+} from './pty-output-retention';
 import { getUserFontId } from './theme-runtime';
 import { getActiveTheme } from './themes';
 import { getActiveUiScale } from './ui-scale';
@@ -836,13 +839,23 @@ function PtyPlainView({
   // of React state to avoid render-thrash (B2 e2e: large plain output must
   // complete without a UI stall or ack deadlock).
   useEffect(() => {
+    const domRetention = new PlainOutputDomRetention();
     const unsink = controller.setPlainDataSink((html) => {
-      outputRef.current?.insertAdjacentHTML('beforeend', html);
+      const output = outputRef.current;
+      if (!output) return;
+      domRetention.append(output, html, getActiveScrollback());
     });
     const unregisterReplayReset = controller.setPtyReplayResetHandler(() => {
       if (outputRef.current) outputRef.current.textContent = '';
+      domRetention.reset();
     });
+    const applyPlainScrollback = (): void => {
+      const output = outputRef.current;
+      if (output) domRetention.limit(output, getActiveScrollback());
+    };
+    window.addEventListener('ez:scrollback', applyPlainScrollback);
     return () => {
+      window.removeEventListener('ez:scrollback', applyPlainScrollback);
       unsink();
       unregisterReplayReset();
     };

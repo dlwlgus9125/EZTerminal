@@ -1,3 +1,4 @@
+pub mod broker;
 #[cfg(all(windows, feature = "windows-host"))]
 pub mod capture;
 #[cfg(all(windows, feature = "windows-host"))]
@@ -6,6 +7,8 @@ pub mod lease;
 pub mod protocol;
 pub mod quality;
 
+#[cfg(all(windows, feature = "windows-host"))]
+pub mod local_broker;
 #[cfg(all(windows, feature = "windows-host"))]
 pub mod service;
 #[cfg(all(windows, feature = "windows-host"))]

@@ -22,6 +22,18 @@ import type {
 // PTY block's plain-mode render (M3), which needs the SAME ansi->html conversion
 // TextBlock.tsx gets for free from the interpreter's byte-stream path.
 import { AnsiHtmlStream } from '../interpreter/external/ansi';
+import { SCROLLBACK_DEFAULT, getActiveScrollback } from './scrollback';
+import {
+  PTY_PLAIN_HISTORY_MAX_BYTES,
+  PtyReplayBuffer,
+  type RetainedPtyChunk,
+} from './pty-output-retention';
+
+interface InFlightPtyWrite {
+  readonly entry: RetainedPtyChunk;
+  readonly generation: number;
+  settled: boolean;
+}
 
 export type BlockStatus = 'running' | 'done' | 'error' | 'cancelled';
 
@@ -98,6 +110,7 @@ export interface BlockSnapshot {
 
 /** Rows kept cached on each side of the viewport. Bounds memory + DOM. */
 const KEEP_BUFFER = 300;
+const MAX_ROW_WINDOW = 10_000;
 
 /**
  * Minimum gap between listener notifications for `progress` frames. A fast
@@ -120,6 +133,10 @@ export const NOTIFY_THROTTLE_MS = 33;
  */
 export const PTY_ACK_QUANTUM = 64 * 1024;
 
+function activeScrollbackLines(): number {
+  return typeof document === 'undefined' ? SCROLLBACK_DEFAULT : getActiveScrollback();
+}
+
 /** PTY byte sink: `onFlushed` MUST be called once xterm has consumed `bytes`
  * (term.write's callback) — it drives the backpressure ack. */
 export interface PtyDataSinkMetadata {
@@ -132,10 +149,6 @@ export type PtyDataSink = (
   onFlushed: () => void,
   metadata: PtyDataSinkMetadata,
 ) => void;
-
-interface BufferedPtyData extends PtyDataSinkMetadata {
-  readonly bytes: Uint8Array;
-}
 
 /**
  * Plain-mode PTY sink (Phase 3): receives already ansi->html-converted chunks,
@@ -192,22 +205,19 @@ export class BlockController {
 
   /** De-dupes repeated requests for the same window (e.g. across re-renders). */
   private requestedKey = '';
+  /** Latest requested range; late chunks outside its keep-buffer are stale. */
+  private requestedWindow: { readonly start: number; readonly count: number } | null = null;
 
-  /** PTY blocks stream raw bytes straight to xterm — NEVER into React state. The
-   * sink is the mounted PtyBlock's `term.write`; bytes that arrive before it
-   * mounts are buffered and flushed on registration. While `ptyRenderMode` is
-   * `plain`, this buffer ALSO doubles as the pre-upgrade history: nothing is
-   * ever written to `ptyDataSink` in plain mode, so every plain-mode byte stays
-   * queued here until (if) an xterm sink registers post-upgrade and replays it
-   * (Phase 3 "resize then replay" — PtyBlock.tsx sends the real pane size
-   * before registering, so replay renders at the right dimensions). The buffer
-   * is NOT unbounded: buffered bytes are never xterm-acked, so the interpreter
-   * pauses the PTY at its high-water mark (gate B2) — plain mode acks
-   * separately/immediately below (M3), so this only throttles once xterm is
-   * the active (and lagging) consumer.
+  /** PTY blocks stream raw bytes straight to xterm — NEVER into React state.
+   * In plain mode the buffer keeps only configured scrollback (plus an 8 MiB
+   * single-line ceiling) for a possible xterm upgrade. Those bytes were already
+   * ACKed, so replay never consumes them again. In xterm mode the pre-mount
+   * entries remain unacked and are bounded by the interpreter high-water mark.
    */
   private ptyDataSink: PtyDataSink | null = null;
-  private ptyBuffer: BufferedPtyData[] = [];
+  private readonly ptyBuffer = new PtyReplayBuffer();
+  private ptySinkGeneration = 0;
+  private inFlightPtyWrites: InFlightPtyWrite[] = [];
 
   /** Paste seam (mobile long-press menu): an xterm view registers
    * `term.paste` here so pasted text gets bracketed-paste framing and \n→\r
@@ -218,12 +228,11 @@ export class BlockController {
 
   /** Phase 3 adaptive render: mode + the plain-mode ansi->html pipeline. A
    * single `AnsiHtmlStream` instance is reused for the block's entire plain
-   * phase so SGR state (current fg/bg/bold) carries across chunks; `plainHtml`
-   * accumulates the converted output so a LATE-registering plain sink (e.g. the
-   * block re-expanding after being collapsed) can replay it in one shot. */
+   * phase so SGR state (current fg/bg/bold) carries across chunks. Raw replay
+   * history is retained in the bounded `ptyBuffer`; late plain sinks rebuild
+   * sanitized HTML from only that retained scrollback. */
   private ptyRenderMode: PtyRenderMode = 'plain';
   private plainAnsi = new AnsiHtmlStream();
-  private plainHtml = '';
   private plainSink: PlainDataSink | null = null;
   private ptyReplayResetHandler: (() => void) | null = null;
 
@@ -241,9 +250,15 @@ export class BlockController {
   private ptyReceived = 0;
   private ptyConsumed = 0;
   private ptyAckedAt = 0;
+  /** Invalidates late xterm callbacks across replay reset/dispose. */
+  private ptyFlowEpoch = 0;
 
   private snapshot: BlockSnapshot;
   private readonly listeners = new Set<() => void>();
+  private readonly handleScrollbackChange = (): void => {
+    if (this.ptyRenderMode !== 'plain') return;
+    this.ptyBuffer.limit(activeScrollbackLines(), PTY_PLAIN_HISTORY_MAX_BYTES);
+  };
 
   /** Throttle state for coalesced (progress-frame) notifications. */
   private lastNotifyAt = 0;
@@ -257,6 +272,9 @@ export class BlockController {
     this.hasControl = !this.isMirror;
     this.snapshot = this.buildSnapshot();
     liveControllers.add(this);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('ez:scrollback', this.handleScrollbackChange);
+    }
 
     port.addEventListener('message', (event: MessageEvent<InterpreterFrame>) => {
       this.onFrame(event.data);
@@ -268,6 +286,20 @@ export class BlockController {
   /** e2e seam data: pty bytes received off the port vs flushed by xterm. */
   getPtyFlow(): { received: number; consumed: number } {
     return { received: this.ptyReceived, consumed: this.ptyConsumed };
+  }
+
+  /** Detailed test/diagnostic seam for the load-bearing ACK invariant. */
+  getPtyFlowAccounting(): { received: number; consumed: number; acked: number } {
+    return {
+      received: this.ptyReceived,
+      consumed: this.ptyConsumed,
+      acked: this.ptyAckedAt,
+    };
+  }
+
+  /** Bounded replay diagnostics; no terminal content crosses this seam. */
+  getPtyRetention(): { bytes: number; lineBreaks: number; chunks: number } {
+    return this.ptyBuffer.diagnostics();
   }
 
   // ── external store ────────────────────────────────────────────────────────
@@ -314,23 +346,44 @@ export class BlockController {
    * post-upgrade, is the ENTIRE plain-mode history — see `ptyBuffer`'s doc).
    * Returns an unsubscribe for unmount. */
   setPtyDataSink(sink: PtyDataSink): () => void {
+    if (this.ptyDataSink) this.detachPtyDataSink(this.ptyDataSink, this.ptySinkGeneration);
+    const generation = ++this.ptySinkGeneration;
     this.ptyDataSink = sink;
-    if (this.ptyBuffer.length > 0) {
-      const buffered = this.ptyBuffer;
-      this.ptyBuffer = [];
-      for (const entry of buffered) this.deliverPtyData(entry.bytes, entry.suppressSideEffects);
-    }
+    const buffered = this.ptyBuffer.drain();
+    for (const entry of buffered) this.writePtyData(entry);
     return () => {
-      if (this.ptyDataSink === sink) this.ptyDataSink = null;
+      this.detachPtyDataSink(sink, generation);
     };
   }
 
-  /** Register the plain-mode sink; replays already-converted HTML so a
+  private detachPtyDataSink(sink: PtyDataSink, generation: number): void {
+    if (this.ptyDataSink !== sink || this.ptySinkGeneration !== generation) return;
+    this.ptyDataSink = null;
+    const replay: RetainedPtyChunk[] = [];
+    const remaining: InFlightPtyWrite[] = [];
+    for (const delivery of this.inFlightPtyWrites) {
+      if (delivery.generation === generation && !delivery.settled) {
+        delivery.settled = true;
+        replay.push(delivery.entry);
+      } else if (!delivery.settled) {
+        remaining.push(delivery);
+      }
+    }
+    this.inFlightPtyWrites = remaining;
+    // Pending writes predate anything that arrived after detachment.
+    this.ptyBuffer.prepend(replay);
+  }
+
+  /** Register the plain-mode sink; converts and replays bounded raw history so a
    * late-registering (or re-registering, e.g. collapse -> expand) view starts
    * with the full accumulated output. Returns an unsubscribe. */
   setPlainDataSink(sink: PlainDataSink): () => void {
     this.plainSink = sink;
-    if (this.plainHtml) sink(this.plainHtml);
+    const replayAnsi = new AnsiHtmlStream();
+    for (const entry of this.ptyBuffer.snapshot()) {
+      const html = replayAnsi.push(entry.bytes);
+      if (html) sink(html);
+    }
     return () => {
       if (this.plainSink === sink) this.plainSink = null;
     };
@@ -359,12 +412,14 @@ export class BlockController {
     this.endCwd = null;
     this.sshPrompt = null;
     this.requestedKey = '';
-    this.ptyBuffer = [];
+    this.requestedWindow = null;
+    this.ptyBuffer.clear();
+    this.discardInFlightPtyWrites();
     this.plainAnsi = new AnsiHtmlStream();
-    this.plainHtml = '';
     this.ptyReceived = 0;
     this.ptyConsumed = 0;
     this.ptyAckedAt = 0;
+    this.ptyFlowEpoch += 1;
     this.ptyReplayResetHandler?.();
   }
 
@@ -375,10 +430,15 @@ export class BlockController {
    * xterm's `term.write` actually flushes it. */
   private deliverPtyData(bytes: Uint8Array, suppressSideEffects: boolean): void {
     if (this.ptyRenderMode === 'plain') {
-      this.ptyBuffer.push({ bytes, suppressSideEffects }); // retained for a possible xterm replay later
+      this.ptyBuffer.append(
+        { bytes, suppressSideEffects, alreadyConsumed: true },
+        {
+          maxLines: activeScrollbackLines(),
+          maxBytes: PTY_PLAIN_HISTORY_MAX_BYTES,
+        },
+      );
       const html = this.plainAnsi.push(bytes);
       if (html) {
-        this.plainHtml += html;
         this.plainSink?.(html);
       }
       this.ptyConsumed += bytes.byteLength;
@@ -387,14 +447,54 @@ export class BlockController {
     }
     const sink = this.ptyDataSink;
     if (!sink) {
-      this.ptyBuffer.push({ bytes, suppressSideEffects });
+      // Unlike acknowledged plain history, these bytes cannot be dropped: the
+      // interpreter's unacked-byte high-water mark bounds this pre-mount queue.
+      this.ptyBuffer.append({ bytes, suppressSideEffects, alreadyConsumed: false });
       return;
     }
-    const size = bytes.byteLength;
-    sink(bytes, () => {
-      this.ptyConsumed += size;
-      this.maybeSendPtyAck();
-    }, { suppressSideEffects });
+    this.writePtyData({ bytes, suppressSideEffects, alreadyConsumed: false });
+  }
+
+  private writePtyData(entry: RetainedPtyChunk): void {
+    const sink = this.ptyDataSink;
+    if (!sink) {
+      this.ptyBuffer.append(entry);
+      return;
+    }
+    const size = entry.bytes.byteLength;
+    const epoch = this.ptyFlowEpoch;
+    const delivery: InFlightPtyWrite = {
+      entry,
+      generation: this.ptySinkGeneration,
+      settled: false,
+    };
+    this.inFlightPtyWrites.push(delivery);
+    const settle = (): void => {
+      if (delivery.settled) return;
+      delivery.settled = true;
+      const index = this.inFlightPtyWrites.indexOf(delivery);
+      if (index >= 0) this.inFlightPtyWrites.splice(index, 1);
+    };
+    try {
+      sink(entry.bytes, () => {
+        // xterm callbacks are expected once, but make the accounting invariant
+        // robust to duplicate callbacks and callbacks from a reset/unmounted view.
+        if (delivery.settled || epoch !== this.ptyFlowEpoch) return;
+        settle();
+        if (entry.alreadyConsumed) return; // plain -> xterm replay: never re-ACK
+        this.ptyConsumed += size;
+        this.maybeSendPtyAck();
+      }, { suppressSideEffects: entry.suppressSideEffects });
+    } catch (error) {
+      settle();
+      this.ptyBuffer.prepend([entry]);
+      throw error;
+    }
+  }
+
+  private discardInFlightPtyWrites(): void {
+    for (const delivery of this.inFlightPtyWrites) delivery.settled = true;
+    this.inFlightPtyWrites = [];
   }
 
   /** Send a cumulative `pty-ack` once at least one quantum of NEW bytes has
@@ -402,6 +502,9 @@ export class BlockController {
    * xterm (flush-driven) consumption — `ptyConsumed` is a single monotonic
    * counter across a plain -> xterm upgrade, so accounting never regresses. */
   private maybeSendPtyAck(): void {
+    if (this.ptyAckedAt > this.ptyConsumed || this.ptyConsumed > this.ptyReceived) {
+      throw new Error('PTY flow invariant violated: acked <= consumed <= received');
+    }
     if (this.ptyConsumed - this.ptyAckedAt >= PTY_ACK_QUANTUM) {
       this.ptyAckedAt = this.ptyConsumed;
       try {
@@ -459,6 +562,12 @@ export class BlockController {
 
   /** Tear down the block: tell the interpreter to release the store, close the port. */
   dispose(): void {
+    this.ptyFlowEpoch += 1;
+    this.ptyBuffer.clear();
+    this.discardInFlightPtyWrites();
+    this.ptyDataSink = null;
+    this.plainSink = null;
+    this.plainAnsi = new AnsiHtmlStream();
     try {
       this.port.postMessage({ type: 'close' });
     } catch {
@@ -475,14 +584,20 @@ export class BlockController {
     }
     this.listeners.clear();
     liveControllers.delete(this);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('ez:scrollback', this.handleScrollbackChange);
+    }
   }
 
   private fetchWindow(type: 'requestRows' | 'setViewport', start: number, count: number): void {
+    if (!Number.isFinite(start) || !Number.isFinite(count)) return;
     const s = Math.max(0, Math.trunc(start));
-    const c = Math.max(0, Math.trunc(count));
+    const c = Math.min(MAX_ROW_WINDOW, Math.max(0, Math.trunc(count)));
+    if (!Number.isSafeInteger(s) || !Number.isSafeInteger(c)) return;
     const key = `${s}:${c}`;
     if (key === this.requestedKey) return; // already asked for this exact window
     this.requestedKey = key;
+    this.requestedWindow = { start: s, count: c };
     this.pruneCache(s, c);
     this.port.postMessage({ type, start: s, count: c });
   }
@@ -494,6 +609,15 @@ export class BlockController {
     for (const index of this.cache.keys()) {
       if (index < lo || index >= hi) this.cache.delete(index);
     }
+  }
+
+  private isInsideRequestedKeepRange(index: number): boolean {
+    const window = this.requestedWindow;
+    if (!window) return true;
+    return (
+      index >= window.start - KEEP_BUFFER
+      && index < window.start + window.count + KEEP_BUFFER
+    );
   }
 
   // ── frame handling (interpreter → renderer) ─────────────────────────────────
@@ -528,7 +652,12 @@ export class BlockController {
         break;
       case 'chunk':
         for (let i = 0; i < frame.rows.length; i++) {
-          this.cache.set(frame.start + i, frame.rows[i]);
+          const index = frame.start + i;
+          if (this.requestedWindow && !this.isInsideRequestedKeepRange(index)) continue;
+          this.cache.set(index, frame.rows[i]);
+        }
+        if (this.requestedWindow) {
+          this.pruneCache(this.requestedWindow.start, this.requestedWindow.count);
         }
         break;
       case 'progress':
@@ -555,6 +684,7 @@ export class BlockController {
         // setPtyDataSink on mount, replaying everything buffered so far.
         this.ptyRenderMode = 'xterm';
         this.plainSink = null;
+        this.plainAnsi = new AnsiHtmlStream();
         break;
       case 'pty-dims':
         this.ptyDims = { cols: frame.cols, rows: frame.rows };

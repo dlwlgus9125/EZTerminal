@@ -1,13 +1,20 @@
 import { defineConfig } from 'vitest/config';
 
-// Unit-test runner. Real tests are added in later tasks (T1+).
-// `passWithNoTests` keeps `pnpm test` green while the suite is empty —
-// it reports "no test files" rather than inventing fake passing tests.
+// Unit-test runner. An unexpectedly empty suite is a release-configuration
+// failure, and retries stay disabled so intermittent failures remain visible.
 export default defineConfig({
   test: {
     environment: 'node',
-    passWithNoTests: true,
+    passWithNoTests: false,
+    retry: 0,
     include: ['src/**/*.{test,spec}.{ts,tsx}', 'test/**/*.{test,spec}.ts'],
-    exclude: ['e2e/**', 'node_modules/**', '.vite/**', 'out/**', 'dist/**'],
+    exclude: [
+      'e2e/**',
+      'node_modules/**',
+      '.vite/**',
+      'out/**',
+      'dist/**',
+      'src/**/*.os.test.{ts,tsx}',
+    ],
   },
 });

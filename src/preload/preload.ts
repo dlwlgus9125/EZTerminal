@@ -32,6 +32,34 @@ import packageJson from '../../package.json';
 //   runCommand() resolves void once the port has been forwarded; the renderer
 //   receives the port asynchronously via the window message event.
 
+type RunPortMarker = '_ezPort' | '_ezAttachPort';
+
+function forwardRunPort(
+  port: MessagePort | undefined,
+  payload: unknown,
+  marker: RunPortMarker,
+): void {
+  if (!port) return;
+  const runId = (
+    typeof payload === 'object'
+    && payload !== null
+    && !Array.isArray(payload)
+    && typeof (payload as { runId?: unknown }).runId === 'string'
+  )
+    ? (payload as { runId: string }).runId
+    : '';
+  if (runId.length === 0) {
+    port.close();
+    return;
+  }
+  try {
+    window.postMessage({ [marker]: runId }, '/', [port]);
+  } catch {
+    // A failed isolated-world transfer must not leave an orphan endpoint.
+    port.close();
+  }
+}
+
 // One PERSISTENT cmd-port listener (not a per-run `once`). Main echoes the run's
 // `runId` in the payload, so we forward each brokered port tagged with its runId —
 // concurrent runs (across panes) can no longer grab each other's ports (Codex B3).
@@ -41,18 +69,16 @@ import packageJson from '../../package.json';
 // '*', so a port can't leak to a foreign frame) and — unlike window.location.origin
 // — also works under file://, whose opaque origin a string targetOrigin can't match
 // (SEC-LOW-5).
-ipcRenderer.on('cmd-port', (event, payload: { runId: string }) => {
+ipcRenderer.on('cmd-port', (event, payload: unknown) => {
   const port = event.ports[0];
-  if (!port) return;
-  window.postMessage({ _ezPort: payload?.runId }, '/', [port]);
+  forwardRunPort(port, payload, '_ezPort');
 });
 
 // Same relay for a mirroring `attachRun`'s port (M2): keyed by `runId` exactly
 // like `cmd-port` above (multiple concurrent attaches never mis-correlate).
-ipcRenderer.on('attach-port', (event, payload: { runId: string }) => {
+ipcRenderer.on('attach-port', (event, payload: unknown) => {
   const port = event.ports[0];
-  if (!port) return;
-  window.postMessage({ _ezAttachPort: payload?.runId }, '/', [port]);
+  forwardRunPort(port, payload, '_ezAttachPort');
 });
 
 // Same relay for the packet-capture sub-view's port (status-panel-v2 Phase 2B).
@@ -90,8 +116,9 @@ const api: EzTerminalApi = {
 
   runCommand: (commandText: string, runId: string, sessionId: string): Promise<void> => {
     // The port arrives asynchronously via the persistent 'cmd-port' listener above,
-    // keyed by runId; the renderer registers its own window 'message' listener before
-    // calling this, so resolving as soon as the request is sent is safe.
+    // keyed by runId; the renderer's singleton broker registers its pending
+    // correlation before calling this, so resolving as soon as the request is sent
+    // is safe.
     ipcRenderer.send('run-command', { commandText, runId, sessionId });
     return Promise.resolve();
   },

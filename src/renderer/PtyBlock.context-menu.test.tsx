@@ -35,6 +35,7 @@ let pane: HTMLElement;
 let mount: HTMLDivElement;
 let commandInput: HTMLInputElement;
 let controller: BlockController;
+let port: FakePort;
 let rafCallbacks: FrameRequestCallback[];
 
 beforeEach(() => {
@@ -53,7 +54,7 @@ beforeEach(() => {
   pane.append(commandInput, mount);
   document.body.append(pane);
 
-  const port = new FakePort();
+  port = new FakePort();
   controller = new BlockController('plain command', port as unknown as MessagePort);
   port.deliver({ type: 'schema', shape: 'pty', columns: [] });
   root = createRoot(mount);
@@ -64,6 +65,7 @@ afterEach(() => {
   act(() => root.unmount());
   controller.dispose();
   pane.remove();
+  delete document.documentElement.dataset.scrollback;
   vi.unstubAllGlobals();
 });
 
@@ -86,6 +88,25 @@ function flushAnimationFrames(): void {
 }
 
 describe('plain PTY keyboard context menu', () => {
+  it('keeps the imperative plain-output DOM within the configured scrollback', () => {
+    document.documentElement.dataset.scrollback = '100';
+    act(() => {
+      port.deliver({
+        type: 'pty-data',
+        data: new Uint8Array(Buffer.from(
+          Array.from({ length: 150 }, (_, index) => `line-${index}`).join('\n'),
+          'utf8',
+        )),
+      });
+    });
+
+    const text = mount.querySelector('[data-testid="text-output"]')?.textContent ?? '';
+    expect(text.split('\n')).toHaveLength(100);
+    expect(text).not.toContain('line-49\n');
+    expect(text).toContain('line-50\n');
+    expect(text).toContain('line-149');
+  });
+
   it('exposes the terminal action menu label in Korean', () => {
     act(() => root.unmount());
     root = createRoot(mount);

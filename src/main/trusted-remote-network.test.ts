@@ -14,6 +14,15 @@ function ipv4(address: string): NetworkInterfaceInfo {
   };
 }
 
+function loopbackIpv4(): NetworkInterfaceInfo {
+  return {
+    ...ipv4('127.0.0.1'),
+    netmask: '255.0.0.0',
+    internal: true,
+    cidr: '127.0.0.1/8',
+  };
+}
+
 describe('selectTrustedRemoteNetwork', () => {
   it('prefers a known overlay and never falls back to ordinary LAN', () => {
     expect(selectTrustedRemoteNetwork({ Ethernet: [ipv4('192.168.1.8')], Tailscale: [ipv4('100.64.0.8')] }))
@@ -25,5 +34,17 @@ describe('selectTrustedRemoteNetwork', () => {
     const interfaces = { 'Company VPN': [ipv4('10.44.0.8')] };
     expect(selectTrustedRemoteNetwork(interfaces, 'Company VPN')?.address).toBe('10.44.0.8');
     expect(selectTrustedRemoteNetwork(interfaces, '10.44.0.8')?.interfaceName).toBe('Company VPN');
+  });
+
+  it('allows explicitly pinned loopback without ever selecting it implicitly', () => {
+    const interfaces = {
+      Tailscale: [ipv4('100.64.0.8')],
+      Loopback: [loopbackIpv4()],
+    };
+    expect(selectTrustedRemoteNetwork({ Loopback: interfaces.Loopback })).toBeNull();
+    expect(selectTrustedRemoteNetwork(interfaces, '127.0.0.1')).toEqual({
+      interfaceName: 'Loopback',
+      address: '127.0.0.1',
+    });
   });
 });

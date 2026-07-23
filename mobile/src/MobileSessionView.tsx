@@ -17,6 +17,11 @@ import { beforeInputTextForPty } from './composer-input';
 import { installE2ETerminalOutputProbe } from './e2e-telemetry';
 import { useLongPress } from './long-press';
 import { appendToComposer, resolvePasteTarget } from './paste-routing';
+import {
+  closeRunPort,
+  getRunPortBroker,
+  RunPortError,
+} from '../../src/renderer/run-port-broker';
 import { MobileActionSheet } from './MobileActionSheet';
 import { MobileQuickCommandSheet, type MobileQuickCommandSource } from './MobileQuickCommandSheet';
 import { TouchInputBar } from './TouchInputBar';
@@ -298,11 +303,40 @@ export function MobileSessionView({
   const stickToBottom = useRef(true);
   const blocksRef = useRef<BlockEntry[]>([]);
   blocksRef.current = blocks;
+  const handoffAbortByRunRef = useRef(new Map<string, AbortController>());
+  const knownRunIdsRef = useRef(new Set<string>());
+  const pendingHandoffRunIdsRef = useRef(new Set<string>());
+  const mountedRef = useRef(true);
+
+  useLayoutEffect(() => {
+    const abortPending = (reason: string): void => {
+      for (const controller of handoffAbortByRunRef.current.values()) {
+        controller.abort(reason);
+      }
+      handoffAbortByRunRef.current.clear();
+    };
+    abortPending('session-or-connection-change');
+    if (!connected || sessionDead) {
+      abortPending(sessionDead ? 'session-dead' : 'disconnect');
+    }
+    return () => abortPending('unmount');
+  }, [connected, sessionDead, sessionId]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // A transient disconnect keeps drafts and views mounted, but a previously
   // focused xterm must not appear to accept bytes that cannot reach the host.
   useEffect(() => {
     if (connected) return;
+    const pendingRunIds = new Set(pendingHandoffRunIdsRef.current);
+    pendingHandoffRunIdsRef.current.clear();
+    for (const runId of pendingRunIds) knownRunIdsRef.current.delete(runId);
+    setBlocks((previous) => previous.filter((entry) => !pendingRunIds.has(entry.id)));
     const focused = document.activeElement as HTMLElement | null;
     if (focused && blockListRef.current?.contains(focused)) focused.blur();
   }, [connected]);
@@ -324,6 +358,14 @@ export function MobileSessionView({
   // signal is global — see module doc).
   useEffect(() => {
     const unsub = window.ezterminal.onSessionDead(() => {
+      for (const controller of handoffAbortByRunRef.current.values()) {
+        controller.abort('session-dead');
+      }
+      handoffAbortByRunRef.current.clear();
+      const pendingRunIds = new Set(pendingHandoffRunIdsRef.current);
+      pendingHandoffRunIdsRef.current.clear();
+      for (const runId of pendingRunIds) knownRunIdsRef.current.delete(runId);
+      setBlocks((previous) => previous.filter((entry) => !pendingRunIds.has(entry.id)));
       setSessionDead(true);
       setActivePlainPty(false);
       setActiveTakeover(false);
@@ -360,9 +402,13 @@ export function MobileSessionView({
   // back) so the interpreter releases their stores. Unlike TerminalPane, there
   // is no session destroy here — SessionSwitcher owns that lifecycle.
   useEffect(() => {
+    const pendingRunIds = pendingHandoffRunIdsRef.current;
+    const knownRunIds = knownRunIdsRef.current;
     return () => {
       activeUnsub.current?.();
       for (const entry of blocksRef.current) entry.controller?.dispose();
+      pendingRunIds.clear();
+      knownRunIds.clear();
     };
   }, []);
 
@@ -401,6 +447,9 @@ export function MobileSessionView({
     const text = requestedText.trim();
     if (!text) return;
     const runId = nextRunId();
+    const handoffController = new AbortController();
+    const handoffSignal = handoffController.signal;
+    handoffAbortByRunRef.current.set(runId, handoffController);
 
     stickToBottom.current = true;
     setHistory((prev) => [...prev, text]);
@@ -410,31 +459,51 @@ export function MobileSessionView({
 
     setBlocks((prev) => [...prev, { id: runId, command: text, controller: null }]);
 
-    // Same `_ezPort` handoff TerminalPane.tsx listens for — ws-ezterminal.ts's
-    // runCommand() reproduces it via a synthetic dispatchEvent (see its module
-    // doc). Listen BEFORE calling runCommand.
-    const onWindowMessage = (ev: MessageEvent): void => {
-      if (ev.source !== window && ev.origin !== window.location.origin) return;
-      if (!ev.data || (ev.data as { _ezPort?: string })._ezPort !== runId) return;
-      window.removeEventListener('message', onWindowMessage);
-
-      const port = ev.ports[0];
-      if (!port) {
-        console.error('[mobile] cmd-port message arrived with no port');
+    knownRunIdsRef.current.add(runId);
+    pendingHandoffRunIdsRef.current.add(runId);
+    void getRunPortBroker().request({
+      kind: 'run',
+      runId,
+      signal: handoffSignal,
+      send: () => window.ezterminal.runCommand(text, runId, sessionId),
+    }).then((port) => {
+      if (handoffAbortByRunRef.current.get(runId) === handoffController) {
+        handoffAbortByRunRef.current.delete(runId);
+      }
+      pendingHandoffRunIdsRef.current.delete(runId);
+      if (handoffSignal.aborted) {
+        closeRunPort(port);
+        knownRunIdsRef.current.delete(runId);
+        if (mountedRef.current) {
+          setBlocks((prev) => prev.filter((entry) => entry.id !== runId));
+        }
         return;
       }
-      const controller = new BlockController(text, port);
-      bindActiveController(controller);
-      setBlocks((prev) =>
-        prev.map((entry) => (entry.id === runId ? { ...entry, controller } : entry)),
-      );
-    };
-
-    window.addEventListener('message', onWindowMessage);
-
-    window.ezterminal.runCommand(text, runId, sessionId).catch((err: unknown) => {
-      window.removeEventListener('message', onWindowMessage);
-      console.error('[mobile] runCommand failed:', err);
+      try {
+        const controller = new BlockController(text, port);
+        bindActiveController(controller);
+        setBlocks((prev) =>
+          prev.map((entry) => (entry.id === runId ? { ...entry, controller } : entry)),
+        );
+      } catch (error) {
+        closeRunPort(port);
+        knownRunIdsRef.current.delete(runId);
+        if (mountedRef.current) {
+          setBlocks((prev) => prev.filter((entry) => entry.id !== runId));
+        }
+        console.error('[mobile] failed to bind cmd-port:', error);
+      }
+    }).catch((error: unknown) => {
+      if (handoffAbortByRunRef.current.get(runId) === handoffController) {
+        handoffAbortByRunRef.current.delete(runId);
+      }
+      pendingHandoffRunIdsRef.current.delete(runId);
+      knownRunIdsRef.current.delete(runId);
+      if (mountedRef.current) {
+        setBlocks((prev) => prev.filter((entry) => entry.id !== runId));
+      }
+      if (handoffSignal.aborted || (error instanceof RunPortError && error.code === 'aborted')) return;
+      console.error('[mobile] runCommand failed:', error);
     });
   }, [connected, sessionId, sessionDead, activeRunning, bindActiveController]);
 
@@ -445,42 +514,65 @@ export function MobileSessionView({
   // Mirror a run this view did NOT start — shared by two triggers: the
   // edge-triggered `onRunStarted` broadcast below (a run beginning THIS
   // instant) and the level-triggered mount effect further down (a run
-  // already in flight when this view mounts). `blocksRef` already has an
-  // entry for a run THIS view started (added synchronously in handleRun,
-  // above) or already attached to, so checking it first — before the
-  // synchronous `setBlocks` add — is what lets both triggers dedupe against
-  // each other and against a run's own origin: the check and the add MUST
-  // stay synchronous with no `await` between them.
+  // already in flight when this view mounts). `knownRunIdsRef` is updated
+  // synchronously before transport I/O, so self-echo and concurrent catch-up
+  // cannot create duplicate attach requests before React commits the block.
   const attachToRun = useCallback(
     (info: RunStartedInfo): void => {
-      if (blocksRef.current.some((entry) => entry.id === info.runId)) return; // already handled
+      if (knownRunIdsRef.current.has(info.runId)) return; // already handled
+      const handoffController = new AbortController();
+      const handoffSignal = handoffController.signal;
+      handoffAbortByRunRef.current.set(info.runId, handoffController);
+      knownRunIdsRef.current.add(info.runId);
+      pendingHandoffRunIdsRef.current.add(info.runId);
 
       setBlocks((prev) => [...prev, { id: info.runId, command: info.commandText, controller: null }]);
 
-      // Mirrors handleRun's `_ezPort` handshake above, but for the
-      // `_ezAttachPort` handoff `attachRun` triggers (ws-ezterminal.ts).
-      const onWindowMessage = (ev: MessageEvent): void => {
-        if (ev.source !== window && ev.origin !== window.location.origin) return;
-        if (!ev.data || (ev.data as { _ezAttachPort?: string })._ezAttachPort !== info.runId) return;
-        window.removeEventListener('message', onWindowMessage);
-
-        const port = ev.ports[0];
-        if (!port) {
-          console.error('[mobile] attach-port message arrived with no port');
+      void getRunPortBroker().request({
+        kind: 'attach',
+        runId: info.runId,
+        signal: handoffSignal,
+        send: () => window.ezterminal.attachRun(info.sessionId, info.runId),
+      }).then((port) => {
+        if (handoffAbortByRunRef.current.get(info.runId) === handoffController) {
+          handoffAbortByRunRef.current.delete(info.runId);
+        }
+        pendingHandoffRunIdsRef.current.delete(info.runId);
+        if (handoffSignal.aborted) {
+          closeRunPort(port);
+          knownRunIdsRef.current.delete(info.runId);
+          if (mountedRef.current) {
+            setBlocks((prev) => prev.filter((entry) => entry.id !== info.runId));
+          }
           return;
         }
-        const controller = new BlockController(info.commandText, port, { mirror: true });
-        bindActiveController(controller);
-        setBlocks((prev) =>
-          prev.map((entry) => (entry.id === info.runId ? { ...entry, controller } : entry)),
-        );
-      };
-
-      window.addEventListener('message', onWindowMessage);
-
-      window.ezterminal.attachRun(info.sessionId, info.runId).catch((err: unknown) => {
-        window.removeEventListener('message', onWindowMessage);
-        console.error('[mobile] attachRun failed:', err);
+        try {
+          const controller = new BlockController(info.commandText, port, { mirror: true });
+          bindActiveController(controller);
+          setBlocks((prev) =>
+            prev.map((entry) => (
+              entry.id === info.runId ? { ...entry, controller } : entry
+            )),
+          );
+        } catch (error) {
+          closeRunPort(port);
+          knownRunIdsRef.current.delete(info.runId);
+          if (mountedRef.current) {
+            setBlocks((prev) => prev.filter((entry) => entry.id !== info.runId));
+          }
+          console.error('[mobile] failed to bind attach-port:', error);
+        }
+      }).catch((error: unknown) => {
+        if (handoffAbortByRunRef.current.get(info.runId) === handoffController) {
+          handoffAbortByRunRef.current.delete(info.runId);
+        }
+        pendingHandoffRunIdsRef.current.delete(info.runId);
+        knownRunIdsRef.current.delete(info.runId);
+        if (mountedRef.current) {
+          setBlocks((prev) => prev.filter((entry) => entry.id !== info.runId));
+        }
+        if (handoffSignal.aborted || (error instanceof RunPortError && error.code === 'aborted')) return;
+        console.error('[mobile] attachRun failed:', error);
       });
     },
     [bindActiveController],
@@ -490,7 +582,7 @@ export function MobileSessionView({
   // (or another mobile tab) may start a run in this SAME session — sessions
   // are shared, not exclusively owned by whichever surface created them.
   // `onRunStarted` is an unconditional broadcast, including this view's OWN
-  // runs (self-echo) — `attachToRun`'s blocksRef check tells "mine, already
+  // runs (self-echo) — `attachToRun`'s known-run check tells "mine, already
   // handled" apart from "someone else's, attach".
   useEffect(() => {
     const unsub = window.ezterminal.onRunStarted((info: RunStartedInfo) => {
@@ -504,10 +596,10 @@ export function MobileSessionView({
   // instant a run begins, so a run already in flight when this view mounts
   // (session switch, tab reopen) would otherwise show nothing. `listRuns()`
   // is the level-triggered counterpart — query what's active right now and
-  // attach to anything in this session not already covered. Reconnect needs
-  // no separate handling: App.tsx unmounts the whole workspace on de-auth,
-  // so a later remount re-runs this same effect.
+  // attach to anything in this session not already covered. A reconnect
+  // re-runs this catch-up after the disconnected generation was aborted.
   useEffect(() => {
+    if (!connected || sessionDead) return;
     let cancelled = false;
     void window.ezterminal.listRuns().then((runs) => {
       if (cancelled) return;
@@ -519,13 +611,17 @@ export function MobileSessionView({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, attachToRun]);
+  }, [connected, sessionDead, sessionId, attachToRun]);
 
   const handleCancel = useCallback(() => {
     activeController.current?.cancel();
   }, []);
 
   const handleDismiss = useCallback((id: string) => {
+    handoffAbortByRunRef.current.get(id)?.abort('block-dismissed');
+    handoffAbortByRunRef.current.delete(id);
+    knownRunIdsRef.current.delete(id);
+    pendingHandoffRunIdsRef.current.delete(id);
     setBlocks((prev) => {
       const entry = prev.find((e) => e.id === id);
       if (entry?.controller) {

@@ -13,14 +13,18 @@ import { TestWsClient } from './ws-client';
 // does — this port is dedicated to this spec so it never collides with
 // another instance's default-port bridge.
 const REMOTE_PORT = 17421;
+const LOOPBACK_REMOTE_ENV = { EZTERMINAL_REMOTE_VPN_INTERFACE: '127.0.0.1' } as const;
 test('remote runtime: bind failure preserves desired state, reports EADDRINUSE, and retry recovers', async () => {
   const occupiedPort = 17422;
   const blocker = createServer();
   await new Promise<void>((resolve, reject) => {
     blocker.once('error', reject);
-    blocker.listen(occupiedPort, '0.0.0.0', resolve);
+    blocker.listen(occupiedPort, '127.0.0.1', resolve);
   });
-  const app = await launchApp(undefined, { EZTERMINAL_REMOTE_PORT: String(occupiedPort) });
+  const app = await launchApp(undefined, {
+    ...LOOPBACK_REMOTE_ENV,
+    EZTERMINAL_REMOTE_PORT: String(occupiedPort),
+  });
 
   try {
     const win = await app.firstWindow();
@@ -45,7 +49,10 @@ test('remote runtime: bind failure preserves desired state, reports EADDRINUSE, 
 });
 
 test('remote toggle: enabling binds; disabling closes the live client and refuses new ones; re-enabling rebinds cleanly', async () => {
-  const app = await launchApp(undefined, { EZTERMINAL_REMOTE_PORT: String(REMOTE_PORT) });
+  const app = await launchApp(undefined, {
+    ...LOOPBACK_REMOTE_ENV,
+    EZTERMINAL_REMOTE_PORT: String(REMOTE_PORT),
+  });
   const win = await app.firstWindow();
   await expect(win.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 

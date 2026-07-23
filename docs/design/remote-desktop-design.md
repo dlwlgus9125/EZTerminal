@@ -4,20 +4,40 @@
 > EZTerminal Android-to-Windows graphical desktop control feature. It is an
 > application protocol and does not implement Microsoft RDP.
 
-## Implementation status (2026-07-23)
+## Implementation status (2026-07-24)
 
-The VPN-only signaling/WebRTC path, exclusive/resumable lease, unlocked-session
-GDI capture, OpenH264 adaptive stream, multi-monitor selection, cursor, input,
-explicit text clipboard, Android control page, desktop safety UI, and NSIS
-service/firewall lifecycle are implemented and covered by automated builds.
+The 1.0.3 candidate implements the VPN-only signaling/WebRTC path,
+exclusive/resumable controller lease, unlocked-session GDI capture, OpenH264
+adaptive stream, multi-monitor selection, cursor, input, explicit text
+clipboard, Android control page, desktop safety UI, and the NSIS
+service/firewall definitions.
 
-The LocalSystem service is still a passive lifecycle boundary; it does not yet
-create and broker the interactive-session agent described below. Consequently
-lock/UAC secure-desktop capture and input are not implemented, and
-Ctrl+Alt+Delete is always advertised as unavailable. The Windows VM, physical
-Android, and 10 Mbps/80 ms performance gates in section 8 also remain open.
-These are release blockers: the current artifacts are development candidates,
-not authorization to advertise the first public `desktop-control-v1` release.
+The LocalSystem service is now an active authorization boundary rather than a
+passive lifecycle placeholder. Its local-only named pipe verifies the transport
+PID, executable path, impersonated user SID, and active Windows session before
+granting the bounded lease. The service launches and supervises a nonce-bound
+agent in that interactive user session, checks its capability handshake and
+heartbeat, applies a bounded restart policy, and revokes on identity, liveness,
+or session mismatch.
+
+This is not yet the complete privileged media architecture described in
+sections 2-8. The session agent currently probes capture/input access and proves
+liveness; GDI frame capture, OpenH264 encoding, and actual `SendInput`
+injection remain in the normal-user transport. Secure-desktop capture/input for
+lock and UAC is therefore unavailable, and the Software SAS capability remains
+hard-coded false: Ctrl+Alt+Delete is never advertised.
+
+The supported target wording remains Windows 10 22H2/Windows 11 x64 and Android 10/API 29
+or newer. Evidence for this hardening candidate is deliberately narrower: the
+current Windows host and API 29/API 35 emulators. Elevated/admin service
+lifecycle, physical Android hardware, secure desktop, and the target network
+performance scenario have not been physically validated. See
+[`docs/release/validation-policy-1.0.3.md`](../release/validation-policy-1.0.3.md).
+
+Sections 1-8 retain the intended end-state design and verification gates. They
+must not be read as an as-built claim for 1.0.3; this implementation-status
+section and the release validation policy take precedence for current release
+claims.
 
 ## 1. Product contract
 
@@ -29,12 +49,12 @@ not authorization to advertise the first public `desktop-control-v1` release.
 - One Android installation controls the desktop at a time. Local display,
   keyboard, and mouse remain active and visible.
 - Selected-monitor video, Trackpad and Direct input, zoom/rotation, Korean IME,
-  physical keyboard, special keys, text clipboard, lock screen, and UAC are in
-  scope. Audio, files, automatic clipboard sync, privacy mode, and biometrics
-  are not.
-- Windows Home supports secure-desktop capture/input but not Ctrl+Alt+Del.
-  Pro/Enterprise/Education expose Ctrl+Alt+Del only when the installer option is
-  accepted and the effective Software SAS policy permits services.
+  physical keyboard, special keys, and explicit text clipboard are in the
+  current 1.0.3 scope. Audio, files, automatic clipboard sync, privacy mode,
+  biometrics, lock/UAC secure-desktop control, and Ctrl+Alt+Delete are not.
+- Secure-desktop and Software SAS behavior later in this document describe the
+  target architecture only. The current runtime reports these capabilities
+  unavailable on every Windows edition.
 
 ## 2. Process and privilege architecture
 
@@ -269,6 +289,9 @@ path remains usable for app and installer when a certificate is later supplied.
    without clock synchronization. At 10 Mbps/80 ms and 1920x1080, activity must
    sustain at least 24fps and p95 feedback must not exceed 250ms.
 
-No public release advertises `desktop-control-v1` until all six gates pass. A
-failed secure-desktop, API 29 H.264/WebRTC, or performance gate is a blocker and
-does not authorize silent feature or support-matrix reduction.
+These six gates define completion of the target secure-desktop architecture;
+they are not evidence that every path has passed for 1.0.3. The current release
+may advertise only its unlocked-session `desktop-control-v1` behavior and must
+retain the explicit limitations in the implementation-status section. A failed
+API 29 H.264/WebRTC or release-performance gate remains a blocker for that
+limited claim and does not authorize silent support-matrix reduction.

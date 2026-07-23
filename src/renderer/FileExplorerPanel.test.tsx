@@ -4,6 +4,8 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { EzTerminalApi } from '../shared/ipc';
+import { createCapabilityAccess, type CapabilityAccess } from './capability-access';
 import { FileExplorerPanel } from './FileExplorerPanel';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -11,6 +13,7 @@ import { FileExplorerPanel } from './FileExplorerPanel';
 let container: HTMLDivElement;
 let root: Root;
 let listFiles: ReturnType<typeof vi.fn>;
+let capabilities: CapabilityAccess;
 
 function press(target: EventTarget, key: string, shiftKey = false): void {
   act(() => {
@@ -37,6 +40,7 @@ async function renderPanel(): Promise<void> {
         activePanelId={null}
         onClose={vi.fn()}
         onOpenTerminalAt={vi.fn()}
+        capabilities={capabilities}
       />,
     );
   });
@@ -57,18 +61,19 @@ beforeEach(() => {
       { name: 'subdir', kind: 'dir' as const, isSymlink: false, size: 0, mtimeMs: 0 },
     ],
   }));
-  Object.defineProperty(window, 'ezterminal', {
-    configurable: true,
-    value: {
-      listFiles,
-      listFileRoots: vi.fn(async () => []),
-      readFilePreview: vi.fn(),
-      createFolder: vi.fn(),
-      renameFile: vi.fn(),
-      trashFile: vi.fn(),
-      openFileInApp: vi.fn(),
-      revealFileInExplorer: vi.fn(),
-    },
+  const core = {
+    listFiles,
+    listFileRoots: vi.fn(async () => []),
+    readFilePreview: vi.fn(),
+    createFolder: vi.fn(),
+    renameFile: vi.fn(),
+    trashFile: vi.fn(),
+    openFileInApp: vi.fn(),
+    revealFileInExplorer: vi.fn(),
+  } as unknown as EzTerminalApi;
+  capabilities = createCapabilityAccess({
+    readCore: () => core,
+    readDesktop: () => undefined,
   });
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -78,7 +83,6 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
-  Reflect.deleteProperty(window, 'ezterminal');
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });

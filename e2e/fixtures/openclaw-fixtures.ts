@@ -102,22 +102,33 @@ export function startFakeGateway(statePath: string): Promise<FakeGatewayHandle> 
   const proc = spawn('node', [gatewayScript, statePath], { stdio: ['ignore', 'pipe', 'pipe'] });
   return new Promise((resolve, reject) => {
     let buf = '';
+    let ready = false;
+    const onExitBeforeReady = (code: number | null, signal: NodeJS.Signals | null): void => {
+      if (!ready) {
+        reject(new Error(`fake OpenClaw gateway exited before READY (code=${String(code)}, signal=${String(signal)})`));
+      }
+    };
     const onData = (chunk: Buffer): void => {
       buf += chunk.toString('utf8');
       const match = /READY (\d+)/.exec(buf);
       if (!match) return;
+      ready = true;
       proc.stdout.off('data', onData);
+      proc.off('exit', onExitBeforeReady);
       resolve({
         port: Number(match[1]),
         proc,
-        stop: () =>
-          new Promise<void>((res) => {
+        stop: () => {
+          if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve();
+          return new Promise<void>((res) => {
             proc.once('exit', () => res());
             proc.kill();
-          }),
+          });
+        },
       });
     };
     proc.stdout.on('data', onData);
+    proc.once('exit', onExitBeforeReady);
     proc.once('error', reject);
   });
 }

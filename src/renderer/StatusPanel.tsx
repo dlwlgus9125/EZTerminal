@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { PacketCaptureFrame, PacketCaptureStatus, PacketRow, SystemStatsSnapshot } from '../shared/ipc';
+import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import {
   HISTORY_MAX,
   PACKET_ROW_CAP,
@@ -17,7 +18,9 @@ const PACKET_ACK_KEY = 'ezterminal.packetAckSeen';
 /** 300px overlay drawer: CPU/MEM (always-on sparklines) + NET/DISK/PROC (populated
  * only while the panel is visible — main gates their collection accordingly, so
  * those fields read null here until the panel-open-only collectors report in). */
-export function StatusPanel(): JSX.Element {
+export function StatusPanel({
+  capabilities = rendererCapabilities,
+}: { readonly capabilities?: CapabilityAccess }): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const [history, setHistory] = useState<SystemStatsSnapshot[]>([]);
   const locale = i18n.resolvedLanguage ?? i18n.language;
@@ -32,19 +35,15 @@ export function StatusPanel(): JSX.Element {
   );
 
   useEffect(() => {
-    let alive = true;
-    void window.ezterminal.getStatsHistory().then((seed) => {
-      if (!alive) return;
-      setHistory((current) => (current.length === 0 ? seed.slice(-HISTORY_MAX) : current));
+    return capabilities.systemStatus.observe({
+      onSeed: (seed) => {
+        setHistory((current) => (current.length === 0 ? seed.slice(-HISTORY_MAX) : current));
+      },
+      onSnapshot: (snapshot) => {
+        setHistory((current) => mergeSnapshot(current, snapshot));
+      },
     });
-    const unsubscribe = window.ezterminal.onStatsUpdate((snapshot) => {
-      setHistory((current) => mergeSnapshot(current, snapshot));
-    });
-    return () => {
-      alive = false;
-      unsubscribe();
-    };
-  }, []);
+  }, [capabilities]);
 
   // Packet preview sub-view: off by default, explicit opt-in each session.
   const [packetOpen, setPacketOpen] = useState(false);
@@ -104,27 +103,52 @@ export function StatusPanel(): JSX.Element {
 
     // Same-window-origin guard as the cmd-port receiver (TerminalPane.tsx) — never
     // trust a port transfer from a foreign frame (SEC-LOW-5).
+    const closePort = (candidate: MessagePort | null | undefined): void => {
+      if (!candidate) return;
+      try {
+        candidate.removeEventListener('message', onPortMessage);
+      } catch {
+        // A malformed or already-detached endpoint still gets a close attempt.
+      }
+      try {
+        candidate.close();
+      } catch {
+        // Closing an already-closed transferred port is idempotent.
+      }
+    };
+
     const onWindowMessage = (event: MessageEvent): void => {
-      if (event.source !== window && event.origin !== window.location.origin) return;
       if (!event.data || event.data._ezPacketPort !== true) return;
-      const p = event.ports[0];
-      if (!p) return;
-      port = p;
+      const received = Array.from(event.ports ?? []);
+      if (
+        event.source !== window
+        || event.origin !== window.location.origin
+        || received.length !== 1
+      ) {
+        for (const candidate of received) closePort(candidate);
+        return;
+      }
+      const nextPort = received[0]!;
+      closePort(port);
+      port = nextPort;
       port.addEventListener('message', onPortMessage);
       port.start();
     };
 
     window.addEventListener('message', onWindowMessage);
-    window.ezterminal.subscribePackets();
+    const stopCapture = capabilities.systemStatus.capturePackets(() => {
+      if (alive) setPacketStatus('error');
+    });
 
     return () => {
       alive = false;
       window.removeEventListener('message', onWindowMessage);
       if (rafId !== null) cancelAnimationFrame(rafId);
-      port?.close();
-      window.ezterminal.unsubscribePackets();
+      closePort(port);
+      port = null;
+      stopCapture();
     };
-  }, [packetCapturing]);
+  }, [capabilities, packetCapturing]);
 
   const latest = history[history.length - 1] ?? null;
   const cpuValues = history.map((s) => s.cpu.loadPct);

@@ -4,10 +4,7 @@ param(
     [string]$Api35Avd = 'EZTerminalApi35',
 
     [Parameter(Mandatory = $true)]
-    [string]$PhysicalDeviceSerial,
-
-    [Parameter(Mandatory = $true)]
-    [switch]$PhysicalChecklistApproved
+    [string]$PerformanceBaselinePath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,6 +28,22 @@ function Invoke-Checked {
         }
     } finally {
         Pop-Location
+    }
+}
+
+function Assert-EmbeddedBuildSha {
+    param([string]$ExpectedSha)
+    foreach ($bundlePath in @('.vite/build/main.js', '.vite/build/preload.js')) {
+        if (-not (Test-Path -LiteralPath $bundlePath)) {
+            throw "Exact-SHA build did not produce $bundlePath."
+        }
+        $bundle = Get-Content -LiteralPath $bundlePath -Raw
+        if ($bundle.IndexOf($ExpectedSha, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+            throw "$bundlePath does not contain the exact source SHA $ExpectedSha."
+        }
+        if ($bundle -match 'buildSha\s*:\s*["'']dev["'']') {
+            throw "$bundlePath still contains buildSha=dev."
+        }
     }
 }
 
@@ -92,7 +105,7 @@ function Invoke-MobileE2e {
 }
 
 function Invoke-AvdGate {
-    param([string]$Avd, [int]$Api, [int]$Port)
+    param([string]$Avd, [int]$Api, [int]$Port, [switch]$Soak)
     $serial = "emulator-$Port"
     $knownAvds = @(& $emulator -list-avds)
     if ($knownAvds -notcontains $Avd) {
@@ -114,6 +127,12 @@ function Invoke-AvdGate {
         Wait-ForAndroidBoot $serial $Api
         Invoke-Instrumentation $serial
         Invoke-MobileE2e $serial -Full
+        if ($Soak) {
+            $env:EZTERMINAL_SOAK_DURATION_MS = '1800000'
+            $env:EZTERMINAL_SOAK_QUIESCENCE_MS = '15000'
+            $env:EZTERMINAL_SOAK_REPORT_PATH = Join-Path $repoRoot 'release-assets\mobile-soak-report.json'
+            Invoke-MobileE2e $serial -Soak
+        }
         $results.Add([ordered]@{ device = $serial; api = $Api; avd = $Avd; status = 'passed' })
     } finally {
         try { Invoke-Adb $serial @('emu', 'kill') | Out-Null } catch { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
@@ -124,10 +143,6 @@ function Invoke-AvdGate {
 if (-not (Test-Path -LiteralPath $adb) -or -not (Test-Path -LiteralPath $emulator)) {
     throw "Android SDK platform-tools and emulator are required below $androidHome."
 }
-if (-not $PhysicalChecklistApproved) {
-    throw 'The physical Fold checklist must be completed and explicitly approved for an RC gate.'
-}
-
 Push-Location $repoRoot
 try {
     $dirty = @(git status --porcelain --untracked-files=all)
@@ -138,13 +153,71 @@ try {
     $sha = (& git rev-parse HEAD).Trim()
     $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
     $env:EZTERMINAL_PLAYWRIGHT_RETRIES = '0'
+    $env:EZTERMINAL_RUN_RELEASE_PERFORMANCE = '1'
     $env:EZTERMINAL_BUILD_SHA = $sha
     $env:VITE_BUILD_SHA = $sha
     $env:ANDROID_HOME = $androidHome
     $env:ANDROID_SDK_ROOT = $androidHome
 
+    $reportDirectory = Join-Path $repoRoot 'release-assets'
+    New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
+    $resolvedPerformanceBaseline = (Resolve-Path -LiteralPath $PerformanceBaselinePath).Path
+    $performanceReportPath = Join-Path $reportDirectory 'desktop-performance-report.json'
+    if (Test-Path -LiteralPath $performanceReportPath) {
+        Remove-Item -LiteralPath $performanceReportPath -Force
+    }
+    $env:EZTERMINAL_PERFORMANCE_REPORT_PATH = $performanceReportPath
+
     Invoke-Checked 'pnpm' @('install', '--frozen-lockfile')
+    Invoke-Checked 'pnpm' @('verify:version')
+    Invoke-Checked 'pnpm' @('typecheck')
+    Invoke-Checked 'pnpm' @('lint')
+    1..3 | ForEach-Object {
+        Write-Host "Desktop unit stability run $_/3"
+        Invoke-Checked 'pnpm' @('test')
+    }
+    Invoke-Checked 'pnpm' @('audit', '--prod', '--audit-level=low')
+    Invoke-Checked 'pnpm' @('audit', '--audit-level=low')
+    # Force an exact-SHA Vite build before Playwright. Its ordinary global
+    # setup may reuse mtime-fresh local artifacts, which is valid for
+    # development but not for release evidence.
     Invoke-Checked 'pnpm' @('package')
+    Assert-EmbeddedBuildSha $sha
+    Invoke-Checked 'pnpm' @('e2e')
+    if (-not (Test-Path -LiteralPath $performanceReportPath)) {
+        throw 'The desktop E2E gate did not produce desktop-performance-report.json.'
+    }
+    $performanceReport = Get-Content -LiteralPath $performanceReportPath -Raw | ConvertFrom-Json
+    if (
+        [int]$performanceReport.schemaVersion -ne 1 -or
+        [string]$performanceReport.buildSha -ne $sha -or
+        [int]$performanceReport.warmupRuns -ne 5 -or
+        [int]$performanceReport.measurementRuns -ne 25
+    ) {
+        throw 'The desktop performance report is not exact-SHA evidence using the approved 5-warmup/25-measurement protocol.'
+    }
+    $performanceComparisonJson = & node scripts/verify-performance-report.mjs `
+        --baseline $resolvedPerformanceBaseline `
+        --candidate $performanceReportPath `
+        --max-regression-percent 5 `
+        --min-target-improvement-percent 15 `
+        --expected-candidate-build-sha $sha `
+        --target-metrics plainOutput12MiBRetentionPressureMs | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host $performanceComparisonJson
+        throw 'The desktop performance report exceeded its relative or absolute budget.'
+    }
+    $performanceComparison = $performanceComparisonJson | ConvertFrom-Json
+    if ($performanceComparison.ok -ne $true) {
+        throw 'The desktop performance comparison did not report a passing result.'
+    }
+    $performanceBaselineHash = (
+        Get-FileHash -LiteralPath $resolvedPerformanceBaseline -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+    $performanceReportHash = (
+        Get-FileHash -LiteralPath $performanceReportPath -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+
     Invoke-Checked 'pnpm' @('--dir', 'mobile', 'build:e2e')
     Invoke-Checked 'pnpm' @('--dir', 'mobile', 'cap:sync')
     Invoke-Checked (Join-Path $repoRoot 'mobile\android\gradlew.bat') `
@@ -152,94 +225,28 @@ try {
         (Join-Path $repoRoot 'mobile\android')
 
     Invoke-AvdGate $Api29Avd 29 5556
-    Invoke-AvdGate $Api35Avd 35 5558
+    Invoke-AvdGate $Api35Avd 35 5558 -Soak
 
-    if ($PhysicalDeviceSerial -match '^emulator-') {
-        throw "PhysicalDeviceSerial must identify real hardware, not Android emulator '$PhysicalDeviceSerial'."
-    }
-    $physicalKernelQemu = Invoke-Adb $PhysicalDeviceSerial @('shell', 'getprop', 'ro.kernel.qemu')
-    $physicalBootQemu = Invoke-Adb $PhysicalDeviceSerial @('shell', 'getprop', 'ro.boot.qemu')
-    if ($physicalKernelQemu -eq '1' -or $physicalBootQemu -eq '1') {
-        throw "Physical Fold gate rejected QEMU-backed device '$PhysicalDeviceSerial'."
-    }
-    $physicalApi = [int](Invoke-Adb $PhysicalDeviceSerial @('shell', 'getprop', 'ro.build.version.sdk'))
-    if ($physicalApi -lt 29) { throw "Physical device $PhysicalDeviceSerial uses unsupported API $physicalApi." }
-    $physicalManufacturer = Invoke-Adb $PhysicalDeviceSerial @('shell', 'getprop', 'ro.product.manufacturer')
-    $physicalModel = Invoke-Adb $PhysicalDeviceSerial @('shell', 'getprop', 'ro.product.model')
-    $physicalDevice = Invoke-Adb $PhysicalDeviceSerial @('shell', 'getprop', 'ro.product.device')
-    $physicalCharacteristics = Invoke-Adb $PhysicalDeviceSerial @('shell', 'getprop', 'ro.build.characteristics')
-    $physicalFoldStates = Invoke-Adb $PhysicalDeviceSerial @('shell', 'cmd', 'device_state', 'print-states')
-    $physicalFoldStateIds = @(
-        [regex]::Matches($physicalFoldStates, 'identifier\s*=\s*(\d+)') |
-            ForEach-Object { $_.Groups[1].Value } |
-            Sort-Object -Unique
-    )
-    if ($physicalFoldStateIds.Count -lt 2) {
-        throw "Physical Fold gate requires hardware exposing at least two device posture states; '$physicalModel' reported $($physicalFoldStateIds.Count)."
-    }
-    Invoke-Instrumentation $PhysicalDeviceSerial
     $soakReportPath = Join-Path $repoRoot 'release-assets\mobile-soak-report.json'
-    $physicalE2ePort = 17420
-    $previousE2eHostUrl = $env:EZTERMINAL_MOBILE_E2E_HOST_URL
-    $previousE2ePort = $env:EZTERMINAL_REMOTE_PORT
-    $reverseInstalled = $false
-    try {
-        $env:EZTERMINAL_REMOTE_PORT = [string]$physicalE2ePort
-        $env:EZTERMINAL_MOBILE_E2E_HOST_URL = "ws://127.0.0.1:$physicalE2ePort"
-        Invoke-Adb $PhysicalDeviceSerial @('reverse', "tcp:$physicalE2ePort", "tcp:$physicalE2ePort") | Write-Host
-        $reverseInstalled = $true
-        $reverseList = Invoke-Adb $PhysicalDeviceSerial @('reverse', '--list')
-        if ($reverseList -notmatch "tcp:$physicalE2ePort\s+tcp:$physicalE2ePort") {
-            throw "adb reverse did not expose physical device loopback port $physicalE2ePort."
-        }
-
-        $env:EZTERMINAL_SOAK_DURATION_MS = '1800000'
-        $env:EZTERMINAL_SOAK_QUIESCENCE_MS = '15000'
-        $env:EZTERMINAL_SOAK_REPORT_PATH = $soakReportPath
-        Invoke-MobileE2e $PhysicalDeviceSerial -Soak
-        if (-not (Test-Path -LiteralPath $soakReportPath)) {
-            throw 'The physical Fold soak did not produce mobile-soak-report.json.'
-        }
-        $soak = Get-Content -LiteralPath $soakReportPath -Raw | ConvertFrom-Json
-        $soakGrowthFailures = @($soak.growthChecks | Where-Object { $_.passed -ne $true })
-        if (
-            $soak.status -ne 'passed' -or
-            [string]$soak.releaseIdentity.buildSha -ne $sha -or
-            [string]$soak.releaseIdentity.appVersion -ne $version -or
-            [int64]$soak.config.durationMs -lt 1800000 -or
-            [int]$soak.config.sessionCount -ne 8 -or
-            @($soak.cycles).Count -ne 20 -or
-            $soak.markerAudit.passed -ne $true -or
-            $soakGrowthFailures.Count -ne 0 -or
-            @($soak.cleanupErrors).Count -ne 0
-        ) {
-            throw 'The physical Fold release soak report does not satisfy the exact-SHA 1.0 gate.'
-        }
-        $soakReportHash = (Get-FileHash -LiteralPath $soakReportPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    } finally {
-        try {
-            if ($reverseInstalled) {
-                Invoke-Adb $PhysicalDeviceSerial @('reverse', '--remove', "tcp:$physicalE2ePort") | Out-Null
-            }
-        } finally {
-            $env:EZTERMINAL_MOBILE_E2E_HOST_URL = $previousE2eHostUrl
-            $env:EZTERMINAL_REMOTE_PORT = $previousE2ePort
-        }
+    if (-not (Test-Path -LiteralPath $soakReportPath)) {
+        throw 'The API 35 emulator soak did not produce mobile-soak-report.json.'
     }
-    $results.Add([ordered]@{
-        deviceKind = 'physical-fold'
-        api = $physicalApi
-        manufacturer = $physicalManufacturer
-        model = $physicalModel
-        productDevice = $physicalDevice
-        buildCharacteristics = $physicalCharacteristics
-        foldStateIds = $physicalFoldStateIds
-        foldStateEvidence = $physicalFoldStates
-        qemu = $false
-        manualChecks = @('fold/unfold', 'portrait/landscape', 'display cutout', 'software keyboard', 'Android Back', 'TalkBack')
-        manualApproval = [bool]$PhysicalChecklistApproved
-        status = 'passed'
-    })
+    $soak = Get-Content -LiteralPath $soakReportPath -Raw | ConvertFrom-Json
+    $soakGrowthFailures = @($soak.growthChecks | Where-Object { $_.passed -ne $true })
+    if (
+        $soak.status -ne 'passed' -or
+        [string]$soak.releaseIdentity.buildSha -ne $sha -or
+        [string]$soak.releaseIdentity.appVersion -ne $version -or
+        [int64]$soak.config.durationMs -lt 1800000 -or
+        [int]$soak.config.sessionCount -ne 8 -or
+        @($soak.cycles).Count -ne 20 -or
+        $soak.markerAudit.passed -ne $true -or
+        $soakGrowthFailures.Count -ne 0 -or
+        @($soak.cleanupErrors).Count -ne 0
+    ) {
+        throw 'The API 35 emulator soak report does not satisfy the exact-SHA gate.'
+    }
+    $soakReportHash = (Get-FileHash -LiteralPath $soakReportPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
     # Restore the exact production web assets after the E2E-only APK gate.
     Invoke-Checked 'pnpm' @('--dir', 'mobile', 'build:release')
@@ -250,16 +257,37 @@ try {
         throw 'Production Capacitor sync changed Android source. Commit generated updates before release.'
     }
 
-    $reportDirectory = Join-Path $repoRoot 'release-assets'
-    New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
     $reportPath = Join-Path $reportDirectory 'local-rc-report.json'
     [ordered]@{
         schemaVersion = 1
         appVersion = $version
         buildSha = $sha
         completedAtUtc = [DateTime]::UtcNow.ToString('o')
+        validationPolicy = 'current-windows-host-and-api-29-35-emulators'
+        acceptedResidualRisks = @(
+            'Windows 10, Home, Enterprise, domain and MDM policy paths are not validated.',
+            'Elevated service install, removal and firewall policy paths are not physically validated.',
+            'Physical Android devices, OEM codecs, TalkBack and hardware keyboards are not validated.',
+            'Multi-monitor, HDR and vendor-specific GPU encoder paths are not validated.',
+            'The 10 Mbps and 80 ms physical network scenario is not validated.'
+        )
+        knownFunctionalLimits = @(
+            'Lock and UAC secure-desktop capture and input are not supported in 1.0.3.',
+            'Software SAS and Ctrl+Alt+Delete are not supported in 1.0.3.',
+            'GDI capture, OpenH264 encoding and SendInput injection remain in the normal-user transport.'
+        )
         playwrightRetries = 0
         mobileConnectionAttemptsPerScenario = 1
+        desktopPerformance = [ordered]@{
+            status = 'passed'
+            baselineReportSha256 = $performanceBaselineHash
+            candidateReportSha256 = $performanceReportHash
+            maxP95RegressionPercent = 5
+            minTargetP95ImprovementPercent = 15
+            targetMetrics = @('plainOutput12MiBRetentionPressureMs')
+            results = @($performanceComparison.results)
+            candidate = $performanceReport
+        }
         devices = $results
         mobileSoak = [ordered]@{
             status = [string]$soak.status

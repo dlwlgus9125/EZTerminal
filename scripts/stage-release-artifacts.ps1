@@ -72,26 +72,153 @@ try {
         throw 'LocalRcReportPath does not contain valid UTF-8 JSON.'
     }
 
-    $rootVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
-    $mobileVersion = (Get-Content mobile/package.json -Raw | ConvertFrom-Json).version
-    $gradle = Get-Content mobile/android/app/build.gradle -Raw
-    $gradleVersion = [regex]::Match($gradle, 'versionName\s+"([^"]+)"').Groups[1].Value
-    $gradleCode = [int][regex]::Match($gradle, 'versionCode\s+(\d+)').Groups[1].Value
-    Assert-Equal $rootVersion $Version 'root package version'
-    Assert-Equal $mobileVersion $Version 'mobile package version'
-    Assert-Equal $gradleVersion $Version 'Android versionName'
-    Assert-Equal $gradleCode $AndroidVersionCode 'Android versionCode'
+    & node scripts/verify-version-contract.mjs
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Version contract verification failed.'
+    }
+    $versionContract = Get-Content release/version.json -Raw | ConvertFrom-Json
+    Assert-Equal ([string]$versionContract.version) $Version 'release contract version'
+    Assert-Equal ([int]$versionContract.androidVersionCode) $AndroidVersionCode 'Android versionCode'
+    Assert-Equal ([int]$versionContract.protocolVersion) $ProtocolVersion 'protocol version'
+    Assert-Equal ([int]$localRcReport.schemaVersion) 1 'local RC report schema'
+    Assert-Equal ([string]$localRcReport.appVersion) $Version 'local RC report appVersion'
+    Assert-Equal (
+        [string]$localRcReport.validationPolicy
+    ) 'current-windows-host-and-api-29-35-emulators' 'local RC validation policy'
+    $requiredFunctionalLimits = @(
+        'Lock and UAC secure-desktop capture and input are not supported in 1.0.3.',
+        'Software SAS and Ctrl+Alt+Delete are not supported in 1.0.3.',
+        'GDI capture, OpenH264 encoding and SendInput injection remain in the normal-user transport.'
+    )
+    foreach ($limit in $requiredFunctionalLimits) {
+        if (@($localRcReport.knownFunctionalLimits) -notcontains $limit) {
+            throw "Local RC report omits the required functional limit: $limit"
+        }
+    }
+    $desktopPerformance = $localRcReport.desktopPerformance
+    Assert-Equal ([string]$desktopPerformance.status) 'passed' 'desktop performance status'
+    Assert-Equal ([double]$desktopPerformance.maxP95RegressionPercent) 5 'desktop p95 regression budget'
+    Assert-Equal ([double]$desktopPerformance.minTargetP95ImprovementPercent) 15 'target p95 improvement budget'
+    if (@($desktopPerformance.targetMetrics) -notcontains 'plainOutput12MiBRetentionPressureMs') {
+        throw 'The local RC report does not include the approved retention-pressure bottleneck target.'
+    }
+    if (
+        [string]$desktopPerformance.baselineReportSha256 -notmatch '^[0-9a-f]{64}$' -or
+        [string]$desktopPerformance.candidateReportSha256 -notmatch '^[0-9a-f]{64}$'
+    ) {
+        throw 'The local RC performance evidence is not bound to baseline/candidate report hashes.'
+    }
+    $candidatePerformance = $desktopPerformance.candidate
+    Assert-Equal ([int]$candidatePerformance.schemaVersion) 1 'desktop performance schema'
+    Assert-Equal (
+        [string]$candidatePerformance.buildSha
+    ) ([string]$localRcReport.buildSha) 'desktop performance buildSha'
+    Assert-Equal ([int]$candidatePerformance.warmupRuns) 5 'desktop performance warmup count'
+    Assert-Equal ([int]$candidatePerformance.measurementRuns) 25 'desktop performance measurement count'
+    Assert-Equal ([string]$candidatePerformance.environment.platform) 'win32' 'desktop performance platform'
+    Assert-Equal ([string]$candidatePerformance.environment.arch) 'x64' 'desktop performance architecture'
+    if (
+        [string]::IsNullOrWhiteSpace([string]$candidatePerformance.environment.osRelease) -or
+        [string]::IsNullOrWhiteSpace([string]$candidatePerformance.environment.cpuModel) -or
+        [int]$candidatePerformance.environment.logicalCpuCount -lt 1 -or
+        [int]$candidatePerformance.environment.totalMemoryGiB -lt 1
+    ) {
+        throw 'Desktop performance evidence is missing its benchmark environment.'
+    }
+    foreach ($metricName in @(
+        'cancellationLatencyMs',
+        'rows100kCompletionMs',
+        'plainOutput1_1MiBCompletionMs',
+        'plainOutput12MiBRetentionPressureMs'
+    )) {
+        $metric = $candidatePerformance.metrics.$metricName
+        if ($null -eq $metric -or @($metric.samples).Count -ne 25) {
+            throw "Desktop performance metric '$metricName' does not contain 25 measurements."
+        }
+    }
+    $performanceResultNames = @($desktopPerformance.results | ForEach-Object { [string]$_.name })
+    foreach ($metricName in @(
+        'cancellationLatencyMs',
+        'rows100kCompletionMs',
+        'plainOutput1_1MiBCompletionMs',
+        'plainOutput12MiBRetentionPressureMs'
+    )) {
+        if ($performanceResultNames -notcontains $metricName) {
+            throw "Desktop performance comparison is missing '$metricName'."
+        }
+    }
+    $targetPerformanceResult = @($desktopPerformance.results | Where-Object {
+        [string]$_.name -eq 'plainOutput12MiBRetentionPressureMs' -and $_.targeted -eq $true
+    })
+    if ($targetPerformanceResult.Count -ne 1) {
+        throw 'Desktop retention-pressure comparison is not marked as the optimization target.'
+    }
+    $cancellationSamples = @(
+        $candidatePerformance.metrics.cancellationLatencyMs.samples |
+            ForEach-Object { [double]$_ } |
+            Sort-Object
+    )
+    $cancellationP95 = if ($cancellationSamples.Count -eq 25) {
+        $cancellationSamples[[Math]::Ceiling($cancellationSamples.Count * 0.95) - 1]
+    } else {
+        [double]::PositiveInfinity
+    }
+    $cancellationMax = if ($cancellationSamples.Count -gt 0) {
+        ($cancellationSamples | Measure-Object -Maximum).Maximum
+    } else {
+        [double]::PositiveInfinity
+    }
+    if (
+        [double]$cancellationP95 -gt 3000 -or
+        [double]$cancellationMax -ge 5000
+    ) {
+        throw 'Desktop cancellation latency exceeds its absolute release budget.'
+    }
+    $failedPerformanceResults = @($desktopPerformance.results | Where-Object {
+        [double]$_.deltaPercent -gt 5 -or
+        ($_.targeted -eq $true -and [double]$_.deltaPercent -gt -15)
+    })
+    if ($failedPerformanceResults.Count -ne 0) {
+        throw 'Desktop performance evidence exceeds a relative regression or target-improvement budget.'
+    }
 
     $commit = (& git rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
         throw 'Could not resolve the release source commit.'
     }
-    if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and
-        -not $commit.StartsWith($ExpectedCommit, [StringComparison]::OrdinalIgnoreCase) -and
-        -not $ExpectedCommit.StartsWith($commit, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Release source commit mismatch: expected '$ExpectedCommit', got '$commit'."
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit)) {
+        if ($ExpectedCommit -notmatch '^[0-9A-Fa-f]{40}$') {
+            throw "ExpectedCommit must be the complete 40-digit source SHA, got '$ExpectedCommit'."
+        }
+        Assert-Equal $commit $ExpectedCommit.ToLowerInvariant() 'release source commit'
     }
     Assert-Equal ([string]$localRcReport.buildSha) $commit 'local RC report buildSha'
+    Assert-Equal ([int]$localRcReport.playwrightRetries) 0 'local RC Playwright retry count'
+    Assert-Equal (
+        [int]$localRcReport.mobileConnectionAttemptsPerScenario
+    ) 1 'local RC mobile connection-attempt count'
+    $passedApi29 = @($localRcReport.devices | Where-Object {
+        $_.status -eq 'passed' -and $_.avd -and [int]$_.api -eq 29
+    })
+    $passedApi35 = @($localRcReport.devices | Where-Object {
+        $_.status -eq 'passed' -and $_.avd -and [int]$_.api -eq 35
+    })
+    if ($passedApi29.Count -lt 1 -or $passedApi35.Count -lt 1) {
+        throw 'Local RC report lacks passing API 29 and API 35 emulator evidence.'
+    }
+    Assert-Equal ([string]$localRcReport.mobileSoak.status) 'passed' 'mobile soak status'
+    Assert-Equal ([string]$localRcReport.mobileSoak.buildSha) $commit 'mobile soak buildSha'
+    Assert-Equal ([string]$localRcReport.mobileSoak.appVersion) $Version 'mobile soak appVersion'
+    if (
+        [int64]$localRcReport.mobileSoak.durationMs -lt 1800000 -or
+        [int]$localRcReport.mobileSoak.sessionCount -ne 8 -or
+        [int]$localRcReport.mobileSoak.recoveryCycles -ne 20 -or
+        $localRcReport.mobileSoak.memoryPassed -ne $true -or
+        $localRcReport.mobileSoak.markerAuditPassed -ne $true -or
+        $localRcReport.mobileSoak.cleanupPassed -ne $true
+    ) {
+        throw 'Local RC report lacks the required 30-minute mobile soak evidence.'
+    }
     if ($RequireCleanTree) {
         $status = @(git status --porcelain --untracked-files=all)
         if ($status.Count -ne 0) {
@@ -153,6 +280,14 @@ try {
         -RequiredText $commit `
         -OutputPath (Join-Path $assets $androidName) `
         -RequireSignature
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Android artifact verification failed.'
+    }
+
+    & node scripts/generate-sbom.mjs --output (Join-Path $assets 'sbom.cdx.json')
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Dependency SBOM generation failed.'
+    }
 
     $manifest = [ordered]@{
         appVersion = $Version
@@ -172,6 +307,7 @@ try {
         artifacts = @(
             'EZTerminal-Setup.exe',
             'local-rc-report.json',
+            'sbom.cdx.json',
             $androidName,
             "$androidName.sha256"
         )

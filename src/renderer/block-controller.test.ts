@@ -85,6 +85,16 @@ describe('BlockController — windowing / prune / dedup', () => {
     expect(port.posted.filter((m) => m.type === 'requestRows')).toHaveLength(2);
   });
 
+  it('drops non-finite row windows and clamps an oversized count', () => {
+    const { port, controller } = make();
+    controller.requestRows(Number.POSITIVE_INFINITY, 10);
+    controller.requestRows(0, Number.NaN);
+    expect(port.posted).toEqual([]);
+
+    controller.requestRows(0, 1_000_000);
+    expect(port.posted).toEqual([{ type: 'requestRows', start: 0, count: 10_000 }]);
+  });
+
   it('prunes cached rows that fall far outside the active window', () => {
     const { port, controller } = make();
     port.deliver({ type: 'chunk', start: 0, rows: [{ n: 1 }] });
@@ -100,6 +110,21 @@ describe('BlockController — windowing / prune / dedup', () => {
     port.deliver({ type: 'chunk', start: 100, rows: [{ n: 100 }] });
     controller.requestRows(120, 10); // 100 is within the keep-buffer of [120, 130)
     expect(controller.getRow(100)).toEqual({ n: 100 });
+  });
+
+  it('does not let a late stale chunk repopulate rows pruned by a newer window', () => {
+    const { port, controller } = make();
+    controller.requestRows(0, 2);
+    controller.requestRows(10_000, 2);
+
+    // The first request completes after the viewport has already moved.
+    port.deliver({ type: 'chunk', start: 0, rows: [{ n: 0 }, { n: 1 }] });
+    port.deliver({ type: 'chunk', start: 10_000, rows: [{ n: 10_000 }, { n: 10_001 }] });
+
+    expect(controller.getRow(0)).toBeUndefined();
+    expect(controller.getRow(1)).toBeUndefined();
+    expect(controller.getRow(10_000)).toEqual({ n: 10_000 });
+    expect(controller.getRow(10_001)).toEqual({ n: 10_001 });
   });
 
   it('reflects terminal frames in the snapshot status', () => {
@@ -250,6 +275,51 @@ describe('BlockController — PTY block, xterm mode (Phase 2 + Phase 3 upgraded)
     unsink();
     port.deliver({ type: 'pty-data', data: new Uint8Array([2]) });
     expect(received).toEqual([1]);
+  });
+
+  it('requeues unflushed xterm bytes across a sink-generation teardown', () => {
+    const { port, controller } = make();
+    upgrade(port);
+    let staleFlush: (() => void) | null = null;
+    const detach = controller.setPtyDataSink((_bytes, onFlushed) => {
+      staleFlush = onFlushed;
+    });
+    port.deliver({ type: 'pty-data', data: new Uint8Array(PTY_ACK_QUANTUM) });
+
+    detach();
+    const replayed: number[] = [];
+    controller.setPtyDataSink((bytes, onFlushed) => {
+      replayed.push(bytes.byteLength);
+      onFlushed();
+    });
+    (staleFlush as (() => void) | null)?.();
+
+    expect(replayed).toEqual([PTY_ACK_QUANTUM]);
+    expect(controller.getPtyFlowAccounting()).toEqual({
+      received: PTY_ACK_QUANTUM,
+      consumed: PTY_ACK_QUANTUM,
+      acked: PTY_ACK_QUANTUM,
+    });
+  });
+
+  it('requeues only the ordered unflushed suffix when xterm unmounts', () => {
+    const { port, controller } = make();
+    upgrade(port);
+    const flushes: Array<() => void> = [];
+    const detach = controller.setPtyDataSink((_bytes, onFlushed) => flushes.push(onFlushed));
+    port.deliver({ type: 'pty-data', data: new Uint8Array([1]) });
+    port.deliver({ type: 'pty-data', data: new Uint8Array([2]) });
+    flushes[0]();
+
+    detach();
+    const replayed: number[] = [];
+    controller.setPtyDataSink((bytes, onFlushed) => {
+      replayed.push(bytes[0]);
+      onFlushed();
+    });
+
+    expect(replayed).toEqual([2]);
+    expect(controller.getPtyFlow()).toEqual({ received: 2, consumed: 2 });
   });
 
   it('sendPtyInput / sendPtyResize post the matching controls', () => {
@@ -443,6 +513,47 @@ describe('BlockController — pty-render-upgrade (Phase 3, irreversible plain ->
       expect(acksAfter[i]).toBeGreaterThanOrEqual(acksAfter[i - 1]);
     }
   });
+
+  it('never consumes or ACKs plain history a second time during xterm replay', () => {
+    const { port, controller } = make();
+    port.deliver({ type: 'schema', shape: 'pty', columns: [] });
+    port.deliver({ type: 'pty-data', data: new Uint8Array(PTY_ACK_QUANTUM) });
+    expect(controller.getPtyFlowAccounting()).toEqual({
+      received: PTY_ACK_QUANTUM,
+      consumed: PTY_ACK_QUANTUM,
+      acked: PTY_ACK_QUANTUM,
+    });
+
+    port.deliver({ type: 'pty-render-upgrade' });
+    controller.setPtyDataSink((_bytes, onFlushed) => {
+      onFlushed();
+      onFlushed(); // an erroneous duplicate callback is idempotent too
+    });
+
+    expect(controller.getPtyFlowAccounting()).toEqual({
+      received: PTY_ACK_QUANTUM,
+      consumed: PTY_ACK_QUANTUM,
+      acked: PTY_ACK_QUANTUM,
+    });
+    expect(port.posted.filter((message) => message.type === 'pty-ack')).toEqual([
+      { type: 'pty-ack', bytes: PTY_ACK_QUANTUM },
+    ]);
+  });
+
+  it('keeps plain replay history within the active default scrollback', () => {
+    const { port, controller } = make();
+    port.deliver({ type: 'schema', shape: 'pty', columns: [] });
+    port.deliver({
+      type: 'pty-data',
+      data: new Uint8Array(Buffer.from('line\n'.repeat(6_000), 'utf8')),
+    });
+
+    expect(controller.getPtyRetention().lineBreaks).toBeLessThanOrEqual(4_999);
+    expect(controller.getPtyRetention().bytes).toBeLessThan(6_000 * 5);
+    const replay: string[] = [];
+    controller.setPlainDataSink((html) => replay.push(html));
+    expect(replay.join('')).not.toBe('');
+  });
 });
 
 describe('BlockController — ssh-connect prompt (E5)', () => {
@@ -570,6 +681,43 @@ describe('BlockController — pty-ack backpressure (Stage C, xterm mode)', () =>
       consumed: PTY_ACK_QUANTUM * 2,
     });
     expect(acks(port.posted)).toEqual([PTY_ACK_QUANTUM * 2]);
+  });
+
+  it('counts a live xterm flush exactly once even if its callback fires twice', () => {
+    const { port, controller } = make();
+    upgrade(port);
+    controller.setPtyDataSink((_bytes, onFlushed) => {
+      onFlushed();
+      onFlushed();
+    });
+
+    port.deliver({ type: 'pty-data', data: new Uint8Array(PTY_ACK_QUANTUM) });
+
+    expect(controller.getPtyFlowAccounting()).toEqual({
+      received: PTY_ACK_QUANTUM,
+      consumed: PTY_ACK_QUANTUM,
+      acked: PTY_ACK_QUANTUM,
+    });
+    expect(acks(port.posted)).toEqual([PTY_ACK_QUANTUM]);
+  });
+
+  it('ignores a late flush callback after replay reset', () => {
+    const { port, controller } = make();
+    upgrade(port);
+    let lateFlush: (() => void) | null = null;
+    controller.setPtyDataSink((_bytes, onFlushed) => {
+      lateFlush = onFlushed;
+    });
+    port.deliver({ type: 'pty-data', data: new Uint8Array(PTY_ACK_QUANTUM) });
+    port.deliver({ type: 'pty-replay-reset' });
+
+    (lateFlush as (() => void) | null)?.();
+
+    expect(controller.getPtyFlowAccounting()).toEqual({
+      received: 0,
+      consumed: 0,
+      acked: 0,
+    });
   });
 });
 

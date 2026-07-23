@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { EzTerminalDesktopApi } from '../shared/ipc';
 import { DEFAULT_UI_PREFERENCES, type UiPreferences } from '../shared/ui-preferences';
+import { createCapabilityAccess } from './capability-access';
 import { DesktopUiPreferencesProvider, useUiPreferences } from './ui-preferences';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -31,9 +32,16 @@ function Probe(): JSX.Element {
 }
 
 async function renderProvider(api: EzTerminalDesktopApi): Promise<void> {
-  Object.defineProperty(window, 'ezterminalDesktop', { configurable: true, value: api });
+  const capabilities = createCapabilityAccess({
+    readCore: () => undefined,
+    readDesktop: () => api,
+  });
   await act(async () => {
-    root.render(<DesktopUiPreferencesProvider><Probe /></DesktopUiPreferencesProvider>);
+    root.render(
+      <DesktopUiPreferencesProvider capabilities={capabilities}>
+        <Probe />
+      </DesktopUiPreferencesProvider>,
+    );
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -62,9 +70,16 @@ describe('DesktopUiPreferencesProvider write serialization', () => {
         ...patch,
       })),
     } as unknown as EzTerminalDesktopApi;
-    Object.defineProperty(window, 'ezterminalDesktop', { configurable: true, value: api });
+    const capabilities = createCapabilityAccess({
+      readCore: () => undefined,
+      readDesktop: () => api,
+    });
     act(() => {
-      root.render(<DesktopUiPreferencesProvider><Probe /></DesktopUiPreferencesProvider>);
+      root.render(
+        <DesktopUiPreferencesProvider capabilities={capabilities}>
+          <Probe />
+        </DesktopUiPreferencesProvider>,
+      );
     });
 
     let update!: Promise<void>;

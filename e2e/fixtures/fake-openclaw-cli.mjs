@@ -22,7 +22,7 @@
  * would race on this lockless read-modify-write file without buying any
  * assertion the e2e specs need.
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 
 const statePath = process.env.EZTERM_E2E_OPENCLAW_STATE;
 const argv = process.argv.slice(2);
@@ -32,7 +32,17 @@ function readState() {
 }
 
 function writeState(state) {
-  writeFileSync(statePath, JSON.stringify(state));
+  // The gateway polls this file concurrently. Writing in place briefly exposes
+  // an empty/partial JSON document and can crash that fixture process exactly
+  // while a lifecycle transition is being asserted. Publish a complete sibling
+  // file atomically so every reader observes either the old or the new state.
+  const pendingPath = `${statePath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(pendingPath, JSON.stringify(state));
+    renameSync(pendingPath, statePath);
+  } finally {
+    rmSync(pendingPath, { force: true });
+  }
 }
 
 const [group, sub, ...rest] = argv;

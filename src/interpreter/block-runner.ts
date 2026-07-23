@@ -20,7 +20,7 @@
 import type { ColumnInfo, InterpreterFrame, JsonValue, ResultRow } from '../shared/ipc';
 import { recordToJson, toRowIterable, valueToJson, type PipelineData } from './core';
 import { AnsiHtmlStream } from './external/ansi';
-import { ResultStore } from './result-store';
+import { OutputCapacityError, ResultStore } from './result-store';
 
 /** Rows pulled per background-drain step before yielding + reporting progress. */
 const DRAIN_BATCH = 5_000;
@@ -131,20 +131,49 @@ export function runBlock(data: PipelineData, emit: Emit, signal: AbortSignal): B
   // After the source is exhausted the store keeps its buffered rows so the
   // renderer can still page/scroll; serving must stay enabled until teardown.
   let disposed = false;
-  let dataCleaned = false;
+  let dataCleanupPromise: Promise<void> | null = null;
+  let disposePromise: Promise<void> | null = null;
 
-  async function runDataCleanup(): Promise<void> {
-    if (dataCleaned) return;
-    dataCleaned = true;
-    await data.cleanup?.();
+  function runDataCleanup(): Promise<void> {
+    dataCleanupPromise ??= Promise.resolve().then(async () => {
+      await data.cleanup?.();
+    });
+    return dataCleanupPromise;
   }
 
-  async function dispose(): Promise<void> {
-    if (disposed) return;
+  function dispose(): Promise<void> {
+    disposePromise ??= disposeBlock();
+    return disposePromise;
+  }
+
+  async function disposeBlock(): Promise<void> {
     disposed = true;
-    await store.dispose();
-    await runDataCleanup();
+    // Cleanup may be what unblocks a pending iterator.next(), while store
+    // disposal owns quota/file release. Start both and observe every failure so
+    // one rejected cleanup never prevents the other from running.
+    const results = await Promise.allSettled([
+      runDataCleanup(),
+      store.dispose(),
+    ]);
+    const failures = results.flatMap((result) => (
+      result.status === 'rejected' ? [result.reason] : []
+    ));
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, 'Multiple structured-output cleanup operations failed');
+    }
   }
+
+  // Some stream adapters release a blocked iterator.next() from their cleanup
+  // hook. Cancellation must start that cleanup immediately; waiting for drive's
+  // finally block would deadlock because drive cannot reach finally until the
+  // pending next() settles. The shared promise keeps cleanup single-shot and the
+  // rejection handler prevents an abort event from creating an unhandled promise.
+  const interruptPendingRead = (): void => {
+    void runDataCleanup().catch(() => undefined);
+  };
+  if (signal.aborted) interruptPendingRead();
+  else signal.addEventListener('abort', interruptPendingRead, { once: true });
 
   async function drive(): Promise<void> {
     try {
@@ -176,21 +205,28 @@ export function runBlock(data: PipelineData, emit: Emit, signal: AbortSignal): B
     } catch (err) {
       if (disposed) return;
       if (signal.aborted) emit({ type: 'cancelled' });
-      else emit({ type: 'error', message: describeError(err) });
+      else {
+        if (err instanceof OutputCapacityError) {
+          emit({ type: 'progress', count: store.count, done: true });
+        }
+        emit({ type: 'error', message: describeError(err) });
+      }
     } finally {
+      signal.removeEventListener('abort', interruptPendingRead);
       // Release only the underlying source (iterator + pipeline cleanup). The
       // store's buffered rows stay servable so the renderer can keep paging after
       // `end`; the block is torn down only by an explicit dispose()/close.
-      await store.dispose().catch(() => undefined);
+      await store.stopSource().catch(() => undefined);
       await runDataCleanup().catch(() => undefined);
     }
   }
 
   async function serveWindow(start: number, count: number, readAhead: number): Promise<void> {
     try {
-      const window = await store.getWindow(start, count, readAhead);
-      if (disposed) return;
-      emit({ type: 'chunk', start: window.start, rows: window.rows });
+      await store.forEachWindowChunk(start, count, readAhead, (window) => {
+        if (disposed) return;
+        emit({ type: 'chunk', start: window.start, rows: window.rows });
+      });
     } catch (err) {
       if (!disposed && !signal.aborted) emit({ type: 'error', message: describeError(err) });
     }

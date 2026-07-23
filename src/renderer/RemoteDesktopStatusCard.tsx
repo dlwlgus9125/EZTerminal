@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { MonitorSmartphone, Power } from 'lucide-react';
 
 import type { RemoteDesktopHostStatus } from '../shared/ipc';
+import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 
 function useElapsed(connectedAt: number | null): string {
@@ -21,37 +22,37 @@ function useElapsed(connectedAt: number | null): string {
     : `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-export function useRemoteDesktopHostStatus(): RemoteDesktopHostStatus | null {
+export function useRemoteDesktopHostStatus(
+  capabilities: CapabilityAccess = rendererCapabilities,
+): RemoteDesktopHostStatus | null {
   const [status, setStatus] = useState<RemoteDesktopHostStatus | null>(null);
   useEffect(() => {
     let alive = true;
-    const api = window.ezterminalDesktop;
-    if (!api?.getRemoteDesktopStatus || !api.onRemoteDesktopStatus) return undefined;
-    void api.getRemoteDesktopStatus().then((next) => {
-      if (alive) setStatus(next);
-    });
-    const unsubscribe = api.onRemoteDesktopStatus((next) => {
+    const unsubscribe = capabilities.remoteDesktop.observe((next) => {
       if (alive) setStatus(next);
     });
     return () => {
       alive = false;
       unsubscribe();
     };
-  }, []);
+  }, [capabilities]);
   return status;
 }
 
-export function RemoteDesktopStatusCard(): JSX.Element {
+export function RemoteDesktopStatusCard({
+  capabilities = rendererCapabilities,
+}: { readonly capabilities?: CapabilityAccess }): JSX.Element {
   const { t } = useAppTranslation();
-  const status = useRemoteDesktopHostStatus();
+  const status = useRemoteDesktopHostStatus(capabilities);
   const elapsed = useElapsed(status?.connectedAt ?? null);
   const [disconnecting, setDisconnecting] = useState(false);
   const disconnect = useCallback(() => {
-    const request = window.ezterminalDesktop?.disconnectRemoteDesktop();
-    if (!request) return;
+    if (capabilities.snapshot().desktop === 'unavailable') return;
     setDisconnecting(true);
-    void request.finally(() => setDisconnecting(false));
-  }, []);
+    void capabilities.remoteDesktop.disconnect()
+      .catch(() => null)
+      .finally(() => setDisconnecting(false));
+  }, [capabilities]);
 
   return (
     <div className="status-drawer remote-desktop-card" data-testid="remote-desktop-status-card">
@@ -94,7 +95,13 @@ export function RemoteDesktopStatusCard(): JSX.Element {
   );
 }
 
-export function RemoteControlBanner({ status }: { readonly status: RemoteDesktopHostStatus }): JSX.Element {
+export function RemoteControlBanner({
+  status,
+  capabilities = rendererCapabilities,
+}: {
+  readonly status: RemoteDesktopHostStatus;
+  readonly capabilities?: CapabilityAccess;
+}): JSX.Element {
   const { t } = useAppTranslation();
   const [disconnecting, setDisconnecting] = useState(false);
   return (
@@ -106,10 +113,11 @@ export function RemoteControlBanner({ status }: { readonly status: RemoteDesktop
         type="button"
         disabled={disconnecting}
         onClick={() => {
-          const request = window.ezterminalDesktop?.disconnectRemoteDesktop();
-          if (!request) return;
+          if (capabilities.snapshot().desktop === 'unavailable') return;
           setDisconnecting(true);
-          void request.finally(() => setDisconnecting(false));
+          void capabilities.remoteDesktop.disconnect()
+            .catch(() => null)
+            .finally(() => setDisconnecting(false));
         }}
       >
         {disconnecting ? t('remote.stopping') : t('remote.pcControlDisconnect')}

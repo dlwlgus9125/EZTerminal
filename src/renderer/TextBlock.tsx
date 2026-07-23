@@ -1,7 +1,11 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 import type { JsonValue } from '../shared/ipc';
 import type { BlockController } from './block-controller';
+import { PlainOutputDomRetention } from './pty-output-retention';
+import { getActiveScrollback } from './scrollback';
+
+const TEXT_ROW_PAGE = 10_000;
 
 // Text output — a single scalar value, OR external-program text (T7). The rows
 // flow through the credit/window protocol either way: a scalar is one row; an
@@ -25,18 +29,25 @@ export function TextBlock({ controller }: { controller: BlockController }): JSX.
   // row on each frame: requesting [0, rowCount) on every chunk was O(K^2) over IPC
   // (and pinned every row in the controller cache). Track how many rows we've
   // consumed and request / append only the delta (CODE-M1).
-  const [text, setText] = useState('');
   const consumed = useRef(0);
+  // Keep at most one sequential page in flight. Advancing the controller's
+  // requested window before every chunk of the current page has arrived would
+  // let its stale-window pruning discard a still-needed prefix.
+  const requestedThrough = useRef(0);
+  const outputRef = useRef<HTMLPreElement>(null);
+  const retention = useRef(new PlainOutputDomRetention());
 
-  // Ask the interpreter only for the new rows as the total grows.
   useEffect(() => {
-    if (rowCount > consumed.current) {
-      controller.requestRows(consumed.current, rowCount - consumed.current);
-    }
-  }, [controller, rowCount]);
+    consumed.current = 0;
+    requestedThrough.current = 0;
+    retention.current.reset();
+    if (outputRef.current) outputRef.current.textContent = '';
+  }, [controller]);
 
   // Append any newly-arrived rows (contiguous, in order) to the accumulated text.
   // Runs after each frame (version bump); stops at the first not-yet-fetched gap.
+  // Once a complete page is consumed, request the next one even if rowCount is
+  // already final and will never change again.
   useEffect(() => {
     let added = '';
     let i = consumed.current;
@@ -47,26 +58,37 @@ export function TextBlock({ controller }: { controller: BlockController }): JSX.
     }
     if (i > consumed.current) {
       consumed.current = i;
-      setText((prev) => prev + added);
+      const output = outputRef.current;
+      if (output) {
+        if (isHtml) {
+          retention.current.append(output, added, getActiveScrollback());
+        } else {
+          retention.current.appendText(output, added, getActiveScrollback());
+        }
+      }
+    }
+    if (
+      consumed.current >= requestedThrough.current
+      && consumed.current < rowCount
+    ) {
+      const count = Math.min(TEXT_ROW_PAGE, rowCount - consumed.current);
+      requestedThrough.current = consumed.current + count;
+      controller.requestRows(consumed.current, count);
     }
   }, [controller, rowCount, version, isHtml]);
 
-  // External output: HTML pre-sanitized by ansi_up in the interpreter; scalars are
-  // plain text. Either way `text` is the accumulated, already-formatted output.
-  if (isHtml) {
-    // Content is sanitized upstream by ansi_up (escape_html) — safe to inject.
-    return (
-      <pre
-        className="text-block"
-        data-testid="text-output"
-        dangerouslySetInnerHTML={{ __html: text }}
-      />
-    );
-  }
+  useEffect(() => {
+    const applyLimit = (): void => {
+      const output = outputRef.current;
+      if (output) retention.current.limit(output, getActiveScrollback());
+    };
+    window.addEventListener('ez:scrollback', applyLimit);
+    return () => window.removeEventListener('ez:scrollback', applyLimit);
+  }, []);
 
   return (
-    <pre className="text-block" data-testid="text-output">
-      {text}
-    </pre>
+    // Imperative retention preserves sanitized ANSI spans while applying the
+    // configured line scrollback and pathological-single-line character ceiling.
+    <pre ref={outputRef} className="text-block" data-testid="text-output" />
   );
 }

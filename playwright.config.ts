@@ -14,14 +14,18 @@ function configuredRetries(defaultValue: number): number {
 // `globalSetup` produces the Vite build artifacts the app launches from.
 export default defineConfig({
   testDir: './e2e',
+  // The 5-warmup/25-sample benchmark is release evidence, not an ordinary
+  // functional test. Keeping it opt-in prevents every CI/e2e invocation from
+  // silently spending up to fifteen minutes without a same-host baseline.
+  testIgnore: process.env.EZTERMINAL_RUN_RELEASE_PERFORMANCE === '1'
+    ? []
+    : ['**/release-performance.spec.ts'],
   fullyParallel: false,
   workers: 1,
   timeout: 60_000,
-  // One retry: the `gen-rows 100000000` cancel test is timing-sensitive under the
-  // 100M-row stress (Playwright actionability can time out when the DOM churns
-  // hard), so it occasionally needs a second attempt. The behavior under test is
-  // correct — this keeps the suite deterministic rather than masking a real bug.
-  retries: configuredRetries(1),
+  // Release evidence must not hide intermittent process or port failures behind
+  // retries. Diagnostic callers can still opt in through the environment.
+  retries: configuredRetries(0),
   reporter: 'list',
   globalSetup: './e2e/global-setup.ts',
 });

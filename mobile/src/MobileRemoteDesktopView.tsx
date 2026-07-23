@@ -1,13 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Clipboard } from '@capacitor/clipboard';
 import { ArrowLeft, ClipboardCopy, ClipboardPaste, Keyboard, Monitor, MousePointer2, Power, Touchpad } from 'lucide-react';
 
-import type {
-  DesktopControlCapabilities,
-  DesktopControlStatusMessage,
-  DesktopDisplay,
-} from '../../src/shared/remote-protocol';
 import { useAppTranslation } from '../../src/renderer/i18n';
+import {
+  INITIAL_DESKTOP_PRESENTATION_SNAPSHOT,
+  RemoteDesktopPresentationAdapter,
+  type DesktopControlCommand,
+  type DesktopKeyModifier,
+  type DesktopPresentationAdapter,
+  type DesktopPresentationDetail,
+  type DesktopPointerCommand,
+} from './remote-desktop-presentation-adapter';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
 type InputMode = 'trackpad' | 'direct';
@@ -27,7 +37,6 @@ interface PointerRecord {
   absoluteY: number;
 }
 
-const MAX_CLIPBOARD_BYTES = 256 * 1024;
 const INPUT_MODE_STORAGE_KEY = 'ezterminal.pcControl.inputMode';
 const TAP_MAX_MS = 350;
 const TAP_MOVE_PX = 8;
@@ -87,66 +96,118 @@ function startErrorKey(code: string | undefined):
   }
 }
 
+function createPresentationAdapter(
+  transport: WsEzTerminalTransport,
+): DesktopPresentationAdapter {
+  return new RemoteDesktopPresentationAdapter(transport, {
+    clipboard: {
+      readText: async () => (await Clipboard.read()).value,
+      writeText: async (text) => {
+        await Clipboard.write({ string: text });
+      },
+    },
+    visibility: {
+      isHidden: () => document.visibilityState === 'hidden',
+      subscribe: (listener) => {
+        document.addEventListener('visibilitychange', listener);
+        return () => document.removeEventListener('visibilitychange', listener);
+      },
+    },
+    createPeerConnection: () => {
+      if (typeof RTCPeerConnection !== 'function') {
+        throw new Error('WebRTC is unavailable');
+      }
+      return new RTCPeerConnection({ iceServers: [] });
+    },
+  });
+}
+
+export interface MobileRemoteDesktopViewProps {
+  readonly transport: WsEzTerminalTransport;
+  readonly onClose: () => void;
+  readonly presentationAdapterFactory?: (
+    transport: WsEzTerminalTransport,
+  ) => DesktopPresentationAdapter;
+}
+
 export function MobileRemoteDesktopView({
   transport,
   onClose,
-}: {
-  readonly transport: WsEzTerminalTransport;
-  readonly onClose: () => void;
-}): JSX.Element {
+  presentationAdapterFactory = createPresentationAdapter,
+}: MobileRemoteDesktopViewProps): JSX.Element {
   const { t } = useAppTranslation();
-  const [phase, setPhase] = useState<'starting' | 'active' | 'reconnecting' | 'busy' | 'error'>('starting');
-  const [detail, setDetail] = useState('');
+  const presentationAdapter = useMemo(
+    () => presentationAdapterFactory(transport),
+    [presentationAdapterFactory, transport],
+  );
+  const [presentation, setPresentation] = useState(
+    INITIAL_DESKTOP_PRESENTATION_SNAPSHOT,
+  );
+  const presentationAdapterRef = useRef<DesktopPresentationAdapter | null>(null);
+  const {
+    capabilities,
+    displays,
+    phase,
+    selectedDisplayId,
+    status,
+  } = presentation;
   const [mode, setMode] = useState<InputMode>(() => (
     window.localStorage.getItem(INPUT_MODE_STORAGE_KEY) === 'direct' ? 'direct' : 'trackpad'
   ));
-  const [displays, setDisplays] = useState<readonly DesktopDisplay[]>([]);
-  const [selectedDisplayId, setSelectedDisplayId] = useState<string | null>(null);
-  const [capabilities, setCapabilities] = useState<DesktopControlCapabilities | null>(null);
-  const [status, setStatus] = useState<DesktopControlStatusMessage | null>(null);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
-  const [clipboardStatus, setClipboardStatus] = useState('');
   const [zoom, setZoom] = useState(1);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const controlRef = useRef<RTCDataChannel | null>(null);
-  const pointerRef = useRef<RTCDataChannel | null>(null);
-  const sessionIdRef = useRef<string | null>(null);
-  const sequenceRef = useRef(0);
   const pointersRef = useRef(new Map<number, PointerRecord>());
   const twoFingerRef = useRef<TwoFingerGesture | null>(null);
   const holdTimersRef = useRef(new Map<number, number>());
   const lastTrackpadTapRef = useRef<{ at: number; x: number; y: number } | null>(null);
-  const clipboardCopyPendingRef = useRef(false);
+
+  let detail = '';
+  const detailState: DesktopPresentationDetail = presentation.detail;
+  if (detailState?.kind === 'busy') {
+    detail = t('mobile.pcControl.busy', {
+      device: detailState.controllerName ?? t('common.unavailable'),
+    });
+  } else if (detailState?.kind === 'start-error') {
+    detail = t(startErrorKey(detailState.errorCode));
+  } else if (detailState?.kind === 'start-failed') {
+    detail = t('mobile.pcControl.startFailed');
+  } else if (detailState?.kind === 'negotiation-failed') {
+    detail = t('mobile.pcControl.negotiationFailed');
+  } else if (detailState?.kind === 'ended') {
+    detail = t(`mobile.pcControl.endReason.${detailState.reason}`);
+  }
+
+  const clipboardStatus = presentation.clipboardFeedback === 'sent'
+    ? t('mobile.pcControl.clipboardSent')
+    : presentation.clipboardFeedback === 'copied'
+      ? t('mobile.pcControl.clipboardCopied')
+      : presentation.clipboardFeedback === 'permission'
+        ? t('mobile.pcControl.clipboardPermission')
+        : presentation.clipboardFeedback === 'invalid'
+          ? t('mobile.pcControl.clipboardInvalid')
+          : presentation.clipboardFeedback === 'input-unavailable'
+            ? t('mobile.pcControl.inputUnavailable')
+            : '';
 
   useEffect(() => {
     window.localStorage.setItem(INPUT_MODE_STORAGE_KEY, mode);
   }, [mode]);
 
-  const sendControl = useCallback((payload: Record<string, unknown>): boolean => {
-    const channel = controlRef.current;
-    const sessionId = sessionIdRef.current;
-    if (!channel || channel.readyState !== 'open' || !sessionId) return false;
-    channel.send(JSON.stringify({
-      ...payload,
-      sessionId,
-      sequence: ++sequenceRef.current,
-    }));
-    return true;
-  }, []);
+  const sendControl = useCallback(
+    (payload: DesktopControlCommand): boolean => (
+      presentationAdapterRef.current?.sendControl(payload) ?? false
+    ),
+    [],
+  );
 
-  const sendPointer = useCallback((payload: Record<string, unknown>): boolean => {
-    const channel = pointerRef.current;
-    const sessionId = sessionIdRef.current;
-    if (!channel || channel.readyState !== 'open' || !sessionId) return false;
-    channel.send(JSON.stringify({
-      ...payload,
-      sessionId,
-      sequence: ++sequenceRef.current,
-    }));
-    return true;
-  }, []);
+  const sendPointer = useCallback(
+    (payload: DesktopPointerCommand): boolean => (
+      presentationAdapterRef.current?.sendPointer(payload) ?? false
+    ),
+    [],
+  );
 
   const clearHoldTimer = useCallback((pointerId: number): void => {
     const timer = holdTimersRef.current.get(pointerId);
@@ -173,187 +234,33 @@ export function MobileRemoteDesktopView({
   }, [displays, selectedDisplayId, zoom]);
 
   useEffect(() => {
-    let disposed = false;
-    let negotiating = false;
-    let resumePending = false;
-    let peerGeneration = 0;
     const holdTimers = holdTimersRef.current;
-    const closePeer = (): void => {
-      controlRef.current?.close();
-      pointerRef.current?.close();
-      pcRef.current?.close();
-      controlRef.current = null;
-      pointerRef.current = null;
-      pcRef.current = null;
+    presentationAdapterRef.current = presentationAdapter;
+    const publishSnapshot = (): void => {
+      setPresentation(presentationAdapter.getSnapshot());
     };
-    const unsubscribeSignal = transport.onDesktopSignal((message) => {
-      if (message.sessionId !== sessionIdRef.current) return;
-      const pc = pcRef.current;
-      if (!pc) return;
-      if (message.signal.type === 'answer') {
-        void pc.setRemoteDescription({ type: 'answer', sdp: message.signal.sdp }).catch(() => {
-          if (!disposed) {
-            setPhase('error');
-            setDetail(t('mobile.pcControl.negotiationFailed'));
-          }
-        });
-      } else if (message.signal.type === 'ice') {
-        void pc.addIceCandidate(message.signal.candidate).catch(() => undefined);
-      }
-    });
-    const unsubscribeStatus = transport.onDesktopStatus((next) => {
-      if (next.sessionId !== sessionIdRef.current || disposed) return;
-      setStatus(next);
-      if (next.displays) setDisplays(next.displays);
-      if (next.selectedDisplayId !== undefined) setSelectedDisplayId(next.selectedDisplayId);
-      if (next.state === 'active') setPhase('active');
-      else if (next.state === 'reconnecting') setPhase('reconnecting');
-      else if (next.state === 'error') setPhase('error');
-    });
-    const unsubscribeEnded = transport.onDesktopEnded((message) => {
-      if (message.sessionId !== sessionIdRef.current || disposed) return;
-      setPhase('error');
-      setDetail(t(`mobile.pcControl.endReason.${message.reason}`));
-      closePeer();
-    });
-
-    const beginDesktop = async (): Promise<void> => {
-      if (disposed || negotiating) return;
-      negotiating = true;
-      const generation = ++peerGeneration;
-      try {
-        const result = await transport.startDesktopControl();
-        if (disposed || generation !== peerGeneration) return;
-        if (!result.ok) {
-          setPhase(result.reason === 'busy' ? 'busy' : 'error');
-          setDetail(result.reason === 'busy'
-            ? t('mobile.pcControl.busy', { device: result.controllerName ?? t('common.unavailable') })
-            : t(startErrorKey(result.errorCode)));
-          return;
-        }
-
-        resumePending = false;
-        sessionIdRef.current = result.sessionId;
-        setDisplays(result.displays);
-        setSelectedDisplayId(result.selectedDisplayId);
-        setCapabilities(result.capabilities);
-        closePeer();
-
-        const pc = new RTCPeerConnection({ iceServers: [] });
-        pcRef.current = pc;
-        pc.addTransceiver('video', { direction: 'recvonly' });
-        const control = pc.createDataChannel('ez-control-v1', { ordered: true });
-        const pointer = pc.createDataChannel('ez-pointer-v1', { ordered: false, maxRetransmits: 0 });
-        controlRef.current = control;
-        pointerRef.current = pointer;
-        control.addEventListener('message', (event) => {
-          try {
-            const message = JSON.parse(String(event.data)) as { type?: unknown; text?: unknown };
-            if (message.type === 'clipboard-text' && typeof message.text === 'string') {
-              const text = message.text.slice(0, MAX_CLIPBOARD_BYTES);
-              if (!clipboardCopyPendingRef.current) return;
-              clipboardCopyPendingRef.current = false;
-              void Clipboard.write({ string: text }).then(() => {
-                if (!disposed) setClipboardStatus(t('mobile.pcControl.clipboardCopied'));
-              }).catch(() => {
-                if (!disposed) setClipboardStatus(t('mobile.pcControl.clipboardPermission'));
-              });
-            } else if (message.type === 'input-error') {
-              clipboardCopyPendingRef.current = false;
-              setClipboardStatus(t('mobile.pcControl.inputUnavailable'));
-            }
-          } catch {
-            // Closed protocol surface: malformed control frames are ignored.
-          }
-        });
-        pc.addEventListener('track', (event) => {
-          if (videoRef.current && event.streams[0]) {
-            videoRef.current.srcObject = event.streams[0];
-            void videoRef.current.play().catch(() => undefined);
-          }
-        });
-        pc.addEventListener('icecandidate', (event) => {
-          if (!event.candidate || pcRef.current !== pc) return;
-          const candidate = event.candidate.toJSON();
-          if (!candidate.candidate) return;
-          transport.sendDesktopSignal(result.sessionId, {
-            type: 'ice',
-            candidate: {
-              candidate: candidate.candidate,
-              sdpMid: candidate.sdpMid,
-              sdpMLineIndex: candidate.sdpMLineIndex,
-            },
-          });
-        });
-        pc.addEventListener('connectionstatechange', () => {
-          if (disposed || pcRef.current !== pc) return;
-          if (pc.connectionState === 'connected') setPhase('active');
-          else if (pc.connectionState === 'disconnected') setPhase('reconnecting');
-          else if (pc.connectionState === 'failed') setPhase('error');
-        });
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        if (!disposed && pcRef.current === pc) {
-          transport.sendDesktopSignal(result.sessionId, { type: 'offer', sdp: offer.sdp ?? '' });
-        }
-      } catch {
-        if (!disposed) {
-          setPhase('error');
-          setDetail(t('mobile.pcControl.startFailed'));
-        }
-      } finally {
-        negotiating = false;
-      }
-    };
-    void beginDesktop();
-    const unsubscribeConnection = transport.onConnectionStateChange((state) => {
-      if (disposed || !sessionIdRef.current) return;
-      if (state === 'reconnecting' || state === 'connecting') {
-        resumePending = true;
-        setPhase('reconnecting');
-        closePeer();
-      } else if (state === 'connected' && resumePending) {
-        void beginDesktop();
-      } else if (state === 'auth-rejected' || state === 'protocol-incompatible' || state === 'disconnected') {
-        resumePending = false;
-        setPhase('error');
-        closePeer();
-      }
-    });
-
-    const onVisibility = (): void => {
-      if (document.visibilityState !== 'hidden' || !sessionIdRef.current) return;
-      transport.stopDesktopControl(sessionIdRef.current, 'background');
-      sessionIdRef.current = null;
-      resumePending = false;
-      closePeer();
-    };
-    document.addEventListener('visibilitychange', onVisibility);
+    const unsubscribe = presentationAdapter.subscribe(publishSnapshot);
+    presentationAdapter.attachVideo(videoRef.current);
+    presentationAdapter.start();
+    publishSnapshot();
     return () => {
-      disposed = true;
-      document.removeEventListener('visibilitychange', onVisibility);
-      unsubscribeSignal();
-      unsubscribeStatus();
-      unsubscribeEnded();
-      unsubscribeConnection();
-      const sessionId = sessionIdRef.current;
-      if (sessionId) transport.stopDesktopControl(sessionId, 'navigation');
-      closePeer();
-      sessionIdRef.current = null;
-      clipboardCopyPendingRef.current = false;
+      unsubscribe();
+      if (presentationAdapterRef.current === presentationAdapter) {
+        presentationAdapterRef.current = null;
+      }
+      presentationAdapter.attachVideo(null);
+      presentationAdapter.dispose();
       for (const timer of holdTimers.values()) window.clearTimeout(timer);
       holdTimers.clear();
     };
-  }, [t, transport]);
+  }, [presentationAdapter]);
 
   useEffect(() => {
     if (keyboardOpen) inputRef.current?.focus();
   }, [keyboardOpen]);
 
   const close = (): void => {
-    const sessionId = sessionIdRef.current;
-    if (sessionId) transport.stopDesktopControl(sessionId, 'client-stop');
-    sessionIdRef.current = null;
+    presentationAdapterRef.current?.stop('client-stop');
     onClose();
   };
 
@@ -565,31 +472,14 @@ export function MobileRemoteDesktopView({
   };
 
   const sendMobileClipboard = async (): Promise<void> => {
-    setClipboardStatus('');
-    try {
-      const { value: text } = await Clipboard.read();
-      if (!text || new TextEncoder().encode(text).byteLength > MAX_CLIPBOARD_BYTES) {
-        setClipboardStatus(t('mobile.pcControl.clipboardInvalid'));
-        return;
-      }
-      setClipboardStatus(sendControl({ type: 'clipboard-write', text })
-        ? t('mobile.pcControl.clipboardSent')
-        : t('mobile.pcControl.inputUnavailable'));
-    } catch {
-      setClipboardStatus(t('mobile.pcControl.clipboardPermission'));
-    }
+    await presentationAdapterRef.current?.sendLocalClipboard();
   };
 
   const copyPcClipboard = (): void => {
-    clipboardCopyPendingRef.current = true;
-    setClipboardStatus('');
-    if (!sendControl({ type: 'clipboard-read' })) {
-      clipboardCopyPendingRef.current = false;
-      setClipboardStatus(t('mobile.pcControl.inputUnavailable'));
-    }
+    presentationAdapterRef.current?.copyRemoteClipboard();
   };
 
-  const sendKey = (code: string, modifiers?: readonly string[]): void => {
+  const sendKey = (code: string, modifiers?: readonly DesktopKeyModifier[]): void => {
     sendControl({ type: 'key', code, down: true, modifiers: modifiers ?? [] });
     sendControl({ type: 'key', code, down: false, modifiers: modifiers ?? [] });
   };
@@ -608,8 +498,7 @@ export function MobileRemoteDesktopView({
             <select
               value={selectedDisplayId ?? displays[0]?.id ?? ''}
               onChange={(event) => {
-                setSelectedDisplayId(event.target.value);
-                sendControl({ type: 'set-display', displayId: event.target.value });
+                presentationAdapterRef.current?.selectDisplay(event.target.value);
                 setZoom(1);
               }}
             >
@@ -703,12 +592,12 @@ export function MobileRemoteDesktopView({
         onKeyDown={(event) => {
           if (event.key.length === 1 || event.nativeEvent.isComposing) return;
           event.preventDefault();
-          sendKey(event.code || event.key, [
-            ...(event.ctrlKey ? ['control'] : []),
-            ...(event.altKey ? ['alt'] : []),
-            ...(event.shiftKey ? ['shift'] : []),
-            ...(event.metaKey ? ['meta'] : []),
-          ]);
+          const modifiers: DesktopKeyModifier[] = [];
+          if (event.ctrlKey) modifiers.push('control');
+          if (event.altKey) modifiers.push('alt');
+          if (event.shiftKey) modifiers.push('shift');
+          if (event.metaKey) modifiers.push('meta');
+          sendKey(event.code || event.key, modifiers);
         }}
       />
     </div>

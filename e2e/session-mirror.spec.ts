@@ -26,6 +26,10 @@ const OPENCLAW_PROXY_PORT = 17422;
 test('session mirroring: WS create-session/run-command/destroy-session reflect on the desktop dockview', async () => {
   const app = await launchApp(undefined, {
     EZTERMINAL_REMOTE_PORT: String(REMOTE_PORT),
+    // The production default remains VPN-only. This bridge integration test
+    // explicitly pins loopback so its client never reaches a developer's LAN
+    // or Tailscale interface and can assert exact local port lifecycle.
+    EZTERMINAL_REMOTE_VPN_INTERFACE: '127.0.0.1',
     EZTERMINAL_OPENCLAW_PROXY_PORT: String(OPENCLAW_PROXY_PORT),
   });
   // Named `win`, not `window` (unlike most other specs): this test calls

@@ -26,7 +26,7 @@ jobs:
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 10
+          version: 10.33.4
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -49,22 +49,11 @@ jobs:
       - name: Export and verify version contract
         shell: pwsh
         run: |
-          $rootVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $mobileVersion = (Get-Content mobile/package.json -Raw | ConvertFrom-Json).version
-          $gradle = Get-Content mobile/android/app/build.gradle -Raw
-          $versionNameMatch = [regex]::Match($gradle, 'versionName\s+"([^"]+)"')
-          $versionCodeMatch = [regex]::Match($gradle, 'versionCode\s+(\d+)')
-          if (-not $versionNameMatch.Success -or -not $versionCodeMatch.Success) {
-            throw 'Could not read Android versionName/versionCode from app/build.gradle.'
-          }
-          $androidVersionName = $versionNameMatch.Groups[1].Value
-          $androidVersionCode = [int]$versionCodeMatch.Groups[1].Value
-          if ($rootVersion -ne $mobileVersion -or $rootVersion -ne $androidVersionName) {
-            throw "Root, mobile, and Android versions must match: root=$rootVersion mobile=$mobileVersion android=$androidVersionName."
-          }
-          if ($androidVersionCode -lt 1) {
-            throw 'Android versionCode must be a positive integer.'
-          }
+          pnpm verify:version
+          if ($LASTEXITCODE -ne 0) { throw 'Version contract verification failed.' }
+          $contract = Get-Content release/version.json -Raw | ConvertFrom-Json
+          $rootVersion = [string]$contract.version
+          $androidVersionCode = [int]$contract.androidVersionCode
           "EZTERMINAL_VERSION=$rootVersion" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "ANDROID_VERSION_CODE=$androidVersionCode" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "ANDROID_DEBUG_ARTIFACT_NAME=android-debug-$rootVersion-vc$androidVersionCode" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
@@ -75,6 +64,10 @@ jobs:
         run: pnpm lint
       - name: Desktop unit tests
         run: pnpm test
+      - name: Dependency vulnerability gate
+        run: |
+          pnpm audit --prod --audit-level=low
+          pnpm audit --audit-level=low
 
       - name: Mobile lint
         working-directory: mobile
@@ -106,6 +99,14 @@ jobs:
       - name: Android lint, unit tests, and debug artifacts
         working-directory: mobile/android
         run: .\gradlew.bat lintDebug testDebugUnitTest assembleDebug assembleDebugAndroidTest --no-daemon --stacktrace
+      - name: Verify Android dependency locks and metadata are stable
+        shell: pwsh
+        run: |
+          $status = @(git status --porcelain --untracked-files=all -- mobile/android)
+          if ($status.Count -ne 0) {
+            $status | ForEach-Object { Write-Host $_ }
+            throw 'Android build changed committed dependency locks or verification metadata.'
+          }
       - name: Verify debug APK contract and signature
         shell: pwsh
         run: |
@@ -152,6 +153,16 @@ jobs:
       - name: Packaged app smoke tests
         run: pnpm test:e2e:packaged
 
+      - name: Generate dependency SBOM
+        run: pnpm sbom -- --output artifacts/sbom.cdx.json
+      - name: Upload dependency SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dependency-sbom
+          path: artifacts/sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload Playwright artifacts on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -162,6 +173,30 @@ jobs:
             playwright-report/
           if-no-files-found: ignore
           retention-days: 7
+
+  rust-quality:
+    name: Native remote host quality
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Resolve pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Format, test, and lint native host
+        working-directory: native/remote-host
+        run: |
+          cargo fmt --all -- --check
+          cargo test --locked --all-targets
+          cargo clippy --locked --all-targets -- -D warnings
+      - name: Install pinned Rust supply-chain tools
+        run: |
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo install cargo-deny --version 0.20.2 --locked
+      - name: Audit native dependency graph
+        working-directory: native/remote-host
+        run: |
+          cargo audit --deny warnings
+          cargo deny check
 
   android-instrumentation:
     name: Android instrumentation (API ${{ matrix.api-level }})
@@ -186,7 +221,7 @@ jobs:
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 10
+          version: 10.33.4
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:

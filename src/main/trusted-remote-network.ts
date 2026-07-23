@@ -15,10 +15,15 @@ export function selectTrustedRemoteNetwork(
   const requested = explicit?.trim().toLowerCase() || null;
   for (const [interfaceName, infos] of Object.entries(interfaces)) {
     for (const info of infos ?? []) {
-      if (info.internal || info.family !== 'IPv4') continue;
+      if (info.family !== 'IPv4') continue;
       const explicitlySelected = requested === interfaceName.toLowerCase()
         || requested === info.address.toLowerCase();
-      if (!explicitlySelected && !TRUSTED_VPN_NAME.test(interfaceName)) continue;
+      // Never choose loopback implicitly, but allow an administrator or an
+      // isolated test harness to pin it explicitly. A loopback-only listener
+      // is narrower than a VPN listener and does not weaken the default
+      // fail-closed network selection.
+      if (requested !== null && !explicitlySelected) continue;
+      if (requested === null && (info.internal || !TRUSTED_VPN_NAME.test(interfaceName))) continue;
       return { interfaceName, address: info.address };
     }
   }

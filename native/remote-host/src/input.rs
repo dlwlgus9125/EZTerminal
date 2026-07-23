@@ -327,16 +327,20 @@ impl InputInjector {
     }
 
     pub fn release_all(&mut self) {
-        for scan in self.pressed_keys.drain().collect::<Vec<_>>() {
-            let _ = send_scan(scan, false, is_extended_scan(scan));
+        for scan in self.pressed_keys.iter().copied().collect::<Vec<_>>() {
+            if send_scan(scan, false, is_extended_scan(scan)).is_ok() {
+                self.pressed_keys.remove(&scan);
+            }
         }
-        for button in self.pressed_buttons.drain().collect::<Vec<_>>() {
-            let button = match button {
+        for id in self.pressed_buttons.iter().copied().collect::<Vec<_>>() {
+            let button = match id {
                 0 => MouseButton::Left,
                 1 => MouseButton::Right,
                 _ => MouseButton::Middle,
             };
-            let _ = send_button(button, false);
+            if send_button(button, false).is_ok() {
+                self.pressed_buttons.remove(&id);
+            }
         }
     }
 
@@ -346,32 +350,23 @@ impl InputInjector {
             MouseButton::Right => 1,
             MouseButton::Middle => 2,
         };
+        send_button(button, down)?;
         if down {
             self.pressed_buttons.insert(id);
         } else {
             self.pressed_buttons.remove(&id);
         }
-        send_button(button, down)
+        Ok(())
     }
 
     fn set_key(&mut self, code: &str, down: bool, modifiers: &[Modifier]) -> Result<()> {
-        let mut modifier_scans = Vec::with_capacity(modifiers.len());
-        for modifier in modifiers {
-            let scan = match modifier {
-                Modifier::Control => 0x1d,
-                Modifier::Alt => 0x38,
-                Modifier::Shift => 0x2a,
-                Modifier::Meta => 0x15b,
-            };
-            modifier_scans.push(scan);
-        }
+        let (scan, modifier_scans) = key_plan(code, modifiers)?;
         if down {
             for scan in &modifier_scans {
                 send_scan(*scan, true, is_extended_scan(*scan))?;
                 self.pressed_keys.insert(*scan);
             }
         }
-        let scan = scan_code(code).ok_or_else(|| anyhow::anyhow!("unknown key code"))?;
         send_scan(scan, down, is_extended_scan(scan))?;
         if down {
             self.pressed_keys.insert(scan);
@@ -398,6 +393,27 @@ impl InputInjector {
             .find(|display| display.id == selected)
             .ok_or_else(|| anyhow::anyhow!("selected display is unavailable"))
     }
+}
+
+fn key_plan(code: &str, modifiers: &[Modifier]) -> Result<(u16, Vec<u16>)> {
+    let scan = scan_code(code).ok_or_else(|| anyhow::anyhow!("unknown key code"))?;
+    if modifiers.len() > 4 {
+        bail!("too many key modifiers");
+    }
+    let mut modifier_scans = Vec::with_capacity(modifiers.len());
+    for modifier in modifiers {
+        let modifier_scan = match modifier {
+            Modifier::Control => 0x1d,
+            Modifier::Alt => 0x38,
+            Modifier::Shift => 0x2a,
+            Modifier::Meta => 0x15b,
+        };
+        if modifier_scans.contains(&modifier_scan) {
+            bail!("duplicate key modifier");
+        }
+        modifier_scans.push(modifier_scan);
+    }
+    Ok((scan, modifier_scans))
 }
 
 impl Drop for InputInjector {
@@ -514,7 +530,7 @@ fn inject_unicode(text: &str) -> Result<()> {
 }
 
 fn write_clipboard_text(text: &str) -> Result<()> {
-    if text.as_bytes().len() > MAX_CLIPBOARD_BYTES {
+    if text.len() > MAX_CLIPBOARD_BYTES {
         bail!("clipboard text exceeds limit");
     }
     let utf16: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
@@ -684,6 +700,16 @@ mod tests {
         assert_eq!(scan_code("ArrowLeft"), Some(0x14b));
         assert!(is_extended_scan(scan_code("ArrowLeft").unwrap()));
         assert_eq!(scan_code("not-a-key"), None);
+    }
+
+    #[test]
+    fn key_plan_rejects_the_entire_frame_before_any_injection() {
+        assert!(key_plan("not-a-key", &[Modifier::Control]).is_err());
+        assert!(key_plan("KeyA", &[Modifier::Control, Modifier::Control]).is_err());
+        assert_eq!(
+            key_plan("KeyA", &[Modifier::Control, Modifier::Shift]).unwrap(),
+            (0x1e, vec![0x1d, 0x2a])
+        );
     }
 
     #[test]

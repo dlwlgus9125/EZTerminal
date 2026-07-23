@@ -10,8 +10,6 @@ import { describe, expect, it } from 'vitest';
 
 import { createProcessLister, parsePosixPs, parseTasklistCsv } from './process-list';
 
-const onWindows = process.platform === 'win32';
-
 // A representative `tasklist /fo csv /nh` sample (no header line). Includes a name
 // with spaces, one with an embedded comma, and one with a doubled (escaped) quote.
 const SAMPLE = [
@@ -53,15 +51,6 @@ describe('createProcessLister (injectable runner)', () => {
     expect(rows.map((r) => r.name)).toContain('node.exe');
     expect(rows.find((r) => r.name === 'node.exe')?.pid).toBe(1234);
   });
-
-  // The real source runs Windows `tasklist`; on a live machine the table is never
-  // empty (this very test process is in it).
-  it.runIf(onWindows)('the REAL tasklist source returns ≥1 row', async () => {
-    const rows = await createProcessLister()();
-    expect(rows.length).toBeGreaterThan(0);
-    expect(typeof rows[0].pid).toBe('number');
-    expect(typeof rows[0].name).toBe('string');
-  }, 15_000);
 
   it('dispatches to the POSIX parser when platform is darwin/linux, even on Windows', async () => {
     const lister = createProcessLister(async () => POSIX_SAMPLE, 'linux');

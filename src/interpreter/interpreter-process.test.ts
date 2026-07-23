@@ -127,6 +127,21 @@ describe('interpreter-process — ExecutionSession port fanout (M2 T2.2b, Critic
     expect(posted).toContainEqual({ type: 'run-attach-result', requestId: 'attach-ok', accepted: true });
   });
 
+  it('aborts the execution source before primary-close disposal', async () => {
+    const abort = vi.spyOn(AbortController.prototype, 'abort');
+    try {
+      const { handler, posted } = await importInterpreter();
+      const { primary } = beginRun(handler, posted, 'run-close-aborts');
+      const callsBeforeClose = abort.mock.calls.length;
+
+      primary.send({ type: 'close' });
+
+      expect(abort.mock.calls.length).toBeGreaterThan(callsBeforeClose);
+    } finally {
+      abort.mockRestore();
+    }
+  });
+
   it('replays a mobile worktree-open intent with the same id after an attach', async () => {
     const { handler, posted } = await importInterpreter();
     handler({ data: { type: 'create-session', requestId: 'req-wt' }, ports: [] });
@@ -848,5 +863,64 @@ describe('interpreter-process — SSH late attach policy', () => {
     );
     expect(live?.runs).toHaveLength(1);
     primary.send({ type: 'close' });
+  });
+});
+
+describe('interpreter-process — ActiveExecutionAdapter terminal invariant', () => {
+  afterEach(() => {
+    vi.doUnmock('./block-runner');
+    vi.resetModules();
+  });
+
+  it('fans out and replays exactly one terminal frame, then disposes once', async () => {
+    const dispose = vi.fn(() => Promise.resolve());
+    vi.doMock('./block-runner', async () => {
+      const actual = await vi.importActual<typeof import('./block-runner')>('./block-runner');
+      const runBlock: typeof actual.runBlock = (_data, emit) => {
+        emit({ type: 'schema', columns: [], shape: 'table' });
+        emit({ type: 'end' });
+        // Model a badly timed runner callback after completion. The
+        // ExecutionSession cross-adapter gate must suppress it.
+        emit({ type: 'error', message: 'late duplicate terminal' });
+        return {
+          handleControl: vi.fn(),
+          dispose,
+          done: Promise.resolve(),
+        };
+      };
+      return { ...actual, runBlock };
+    });
+
+    const { handler, posted } = await importInterpreter();
+    const { sessionId, primary } = beginRun(handler, posted, 'run-terminal-once');
+    const primaryTerminal = primary.posted.filter((frame) => {
+      const type = (frame as InterpreterFrame).type;
+      return type === 'end' || type === 'error' || type === 'cancelled';
+    });
+    expect(primaryTerminal).toEqual([
+      expect.objectContaining({ type: 'end' }),
+    ]);
+
+    const late = new FakePort();
+    handler({
+      data: {
+        type: 'attach-run',
+        requestId: 'attach-terminal-once',
+        sessionId,
+        runId: 'run-terminal-once',
+      },
+      ports: [late],
+    });
+    const replayedTerminal = late.posted.filter((frame) => {
+      const type = (frame as InterpreterFrame).type;
+      return type === 'end' || type === 'error' || type === 'cancelled';
+    });
+    expect(replayedTerminal).toEqual([
+      expect.objectContaining({ type: 'end' }),
+    ]);
+
+    primary.send({ type: 'close' });
+    primary.close();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 });

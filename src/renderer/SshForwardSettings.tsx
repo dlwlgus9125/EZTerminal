@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { SshForwardInfo } from '../shared/ssh-forward';
+import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 
 type SshForwardError =
@@ -9,7 +10,9 @@ type SshForwardError =
   | null;
 
 /** Compact, desktop-only status/control surface for loopback SSH forwards. */
-export function SshForwardSettings(): JSX.Element {
+export function SshForwardSettings({
+  capabilities = rendererCapabilities,
+}: { readonly capabilities?: CapabilityAccess }): JSX.Element {
   const { t } = useAppTranslation();
   const [forwards, setForwards] = useState<readonly SshForwardInfo[] | null>(null);
   const [error, setError] = useState<SshForwardError>(null);
@@ -17,20 +20,15 @@ export function SshForwardSettings(): JSX.Element {
   const mountedRef = useRef(true);
 
   const refresh = useCallback(async (): Promise<void> => {
-    const api = window.ezterminalDesktop;
-    if (!api) {
-      if (mountedRef.current) setForwards([]);
-      return;
-    }
     try {
-      const next = await api.listSshForwards();
+      const next = await capabilities.sshForwards.list();
       if (!mountedRef.current) return;
-      setForwards(next);
+      setForwards(next ?? []);
       setError(null);
     } catch {
       if (mountedRef.current) setError({ kind: 'status-unavailable' });
     }
-  }, []);
+  }, [capabilities]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -43,12 +41,12 @@ export function SshForwardSettings(): JSX.Element {
   }, [refresh]);
 
   const stop = useCallback(async (forward: SshForwardInfo): Promise<void> => {
-    const api = window.ezterminalDesktop;
-    if (!api || stopping) return;
+    if (stopping) return;
     setStopping(forward.forwardId);
     setError(null);
     try {
-      const result = await api.stopSshForward(forward.connectionId, forward.forwardId);
+      const result = await capabilities.sshForwards.stop(forward.connectionId, forward.forwardId);
+      if (!result) return;
       if (!result.ok && mountedRef.current) setError({ kind: 'external', message: result.error.message });
       await refresh();
     } catch {
@@ -56,7 +54,7 @@ export function SshForwardSettings(): JSX.Element {
     } finally {
       if (mountedRef.current) setStopping(null);
     }
-  }, [refresh, stopping]);
+  }, [capabilities, refresh, stopping]);
 
   const errorText = error?.kind === 'external'
     ? error.message

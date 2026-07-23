@@ -5,6 +5,7 @@ import type { OpenClawMode, TerminalRendererPreference, ThemeName } from '../sha
 import type { RemoteRuntimeStatus } from '../shared/ipc';
 import type { TerminalPastePreferences } from '../shared/terminal-clipboard';
 import { AgentIntegrationSettings } from './AgentIntegrationSettings';
+import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import type { InterferenceParams, RollbarParams } from './effect-params';
 import { EffectParamSliders, isInterferenceEffectId } from './EffectParamSliders';
@@ -98,6 +99,7 @@ interface SettingsPanelProps {
     effectId: keyof InterferenceParams,
     partial: Record<string, number | boolean>,
   ) => void;
+  readonly capabilities?: CapabilityAccess;
 }
 
 export function SettingsPanel({
@@ -128,6 +130,7 @@ export function SettingsPanel({
   onChangeRollbar,
   interference,
   onChangeEffectParams,
+  capabilities = rendererCapabilities,
 }: SettingsPanelProps): JSX.Element {
   const { t } = useAppTranslation();
   const { preferences: uiPreferences, updatePreferences } = useUiPreferences();
@@ -150,44 +153,41 @@ export function SettingsPanel({
 
   useEffect(() => {
     let alive = true;
-    void window.ezterminal.getRemoteRuntimeStatus().then((status) => {
-      if (alive) setRemoteStatus(status);
+    const unsubscribeRuntime = capabilities.remoteRuntime.observe({
+      onStatus: (status) => {
+        if (alive) setRemoteStatus(status);
+      },
+      onSecurity: (status) => {
+        if (alive) setRemoteSecurityError(status.error);
+      },
     });
-    const unsubscribeRuntime = window.ezterminal.onRemoteRuntimeStatus((status) => {
-      if (alive) setRemoteStatus(status);
-    });
-    void window.ezterminal.getRemoteSecurityStatus().then((status) => {
-      if (alive) {
-        setRemoteSecurityError(status.error);
-      }
-    });
-    void window.ezterminalDesktop?.getOpenClawMode().then((mode) => {
-      if (alive) setOpenclawModeState(mode);
-    });
+    void capabilities.openClaw.getMode().then((mode) => {
+      if (alive && mode) setOpenclawModeState(mode);
+    }, () => undefined);
     return () => {
       alive = false;
       unsubscribeRuntime();
     };
-  }, []);
+  }, [capabilities]);
 
   const handleRemoteToggle = useCallback((e: React.ChangeEvent<HTMLInputElement>): void => {
     const next = e.target.checked;
     setRemoteSecurityError(null);
-    void window.ezterminal.setRemoteEnabled(next).then(
+    void capabilities.remoteRuntime.setEnabled(next).then(
       (status) => setRemoteStatus(status),
       () => {
         setRemoteSecurityError(t('settings.remoteStartFailed'));
       },
     );
-  }, [t]);
+  }, [capabilities, t]);
 
   const handleRemoteRetry = useCallback((): void => {
     setRemoteSecurityError(null);
-    void window.ezterminal.retryRemoteRuntime().then(
+    void capabilities.remoteRuntime.retry().then(
       (status) => setRemoteStatus(status),
       () => setRemoteSecurityError(t('settings.remoteStartFailed')),
     );
-  }, [t]);
+  }, [capabilities, t]);
 
   // OpenClaw visibility mode (openclaw-stabilization M2): the visibility-
   // changed push (main.ts's `openclaw:visibility-changed`) updates App's
@@ -195,8 +195,8 @@ export function SettingsPanel({
   // reflects the new mode locally.
   const handleOpenclawModeChange = useCallback((mode: OpenClawMode): void => {
     setOpenclawModeState(mode);
-    void window.ezterminalDesktop?.setOpenClawMode(mode);
-  }, []);
+    void capabilities.openClaw.setMode(mode).catch(() => undefined);
+  }, [capabilities]);
 
   const handleImportFile = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>): void => {
@@ -223,6 +223,7 @@ export function SettingsPanel({
           ? t('settings.error')
           : t('settings.off');
   const systemDefaultFontId = FONT_CATALOG.find((f) => f.systemDefault)?.id ?? FONT_CATALOG[0].id;
+  const runtimeVersions = capabilities.runtimeVersions();
 
   // Scrollback input (WT-parity M5 fix): a local text draft so typing a
   // multi-digit value doesn't clamp+persist on every keystroke — the
@@ -516,7 +517,7 @@ export function SettingsPanel({
 
       <section className="status-section" hidden={category !== 'agents'}>
         <h2 className="status-section-title">{t('settings.agentIntegrations')}</h2>
-        <AgentIntegrationSettings />
+        <AgentIntegrationSettings capabilities={capabilities} />
       </section>
 
       <section className="status-section" hidden={category !== 'integrations'}>
@@ -628,17 +629,17 @@ export function SettingsPanel({
         <h2 className="status-section-title">{t('settings.about')}</h2>
         <div className="settings-diagnostic-grid">
           <span>{t('settings.appVersion')}</span>
-          <code>{window.ezterminal?.versions?.app ?? t('common.unavailable')}</code>
+          <code>{runtimeVersions?.app ?? t('common.unavailable')}</code>
           <span>{t('settings.protocolVersion')}</span>
-          <code>{window.ezterminal?.versions?.protocol ?? t('common.unavailable')}</code>
+          <code>{runtimeVersions?.protocol ?? t('common.unavailable')}</code>
           <span>{t('settings.buildSha')}</span>
-          <code>{window.ezterminal?.versions?.buildSha ?? t('common.unavailable')}</code>
+          <code>{runtimeVersions?.buildSha ?? t('common.unavailable')}</code>
           <span>{t('settings.electron')}</span>
-          <code>{window.ezterminal?.versions?.electron ?? t('common.unavailable')}</code>
+          <code>{runtimeVersions?.electron ?? t('common.unavailable')}</code>
           <span>{t('settings.chromium')}</span>
-          <code>{window.ezterminal?.versions?.chrome ?? t('common.unavailable')}</code>
+          <code>{runtimeVersions?.chrome ?? t('common.unavailable')}</code>
           <span>{t('settings.node')}</span>
-          <code>{window.ezterminal?.versions?.node ?? t('common.unavailable')}</code>
+          <code>{runtimeVersions?.node ?? t('common.unavailable')}</code>
           <span>{t('settings.terminalRenderer')}</span>
           <code>{terminalRendererPreference}</code>
         </div>

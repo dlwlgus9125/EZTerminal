@@ -35,11 +35,16 @@ const GRAPH_INTERVAL_MS = 1000;
 const NET_INTERVAL_MS = 2000;
 const NET_TIMEOUT_MS = 5000;
 const PROC_INTERVAL_MS = 3000;
-const PROC_TIMEOUT_MS = 2500;
+// A cold spawn-per-call CIM query on Windows commonly needs 3-4 seconds when
+// the panel's collectors start together. The old 2.5-second deadline therefore
+// discarded healthy process/memory results and left those sections loading
+// forever. Keep the calls bounded, but leave enough headroom to complete inside
+// the UI's 10-second PROC / 15-second MEM-detail readiness contracts.
+const PROC_TIMEOUT_MS = 7500;
 const DISK_INTERVAL_MS = 10000;
 const DISK_TIMEOUT_MS = 5000;
 const MEM_DETAIL_INTERVAL_MS = 3000;
-const MEM_DETAIL_TIMEOUT_MS = 2500;
+const MEM_DETAIL_TIMEOUT_MS = 7500;
 const CONN_INTERVAL_MS = 3000;
 const CONN_TIMEOUT_MS = 2500;
 const TOP_CONN_COUNT = 10;

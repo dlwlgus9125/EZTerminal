@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { quoteEzArgument } from '../shared/quote-ez-argument';
+import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 import { getPaneHandle } from './pane-registry';
 
@@ -38,9 +39,14 @@ export function setInternalPathDrag(dataTransfer: DataTransfer, paths: readonly 
 export interface FileDropOverlayProps {
   readonly activePanelId: string | null;
   readonly agentSessionIds: ReadonlySet<string>;
+  readonly capabilities?: CapabilityAccess;
 }
 
-export function FileDropOverlay({ activePanelId, agentSessionIds }: FileDropOverlayProps): JSX.Element | null {
+export function FileDropOverlay({
+  activePanelId,
+  agentSessionIds,
+  capabilities = rendererCapabilities,
+}: FileDropOverlayProps): JSX.Element | null {
   const { t, i18n } = useAppTranslation();
   const [dragDepth, setDragDepth] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
@@ -98,7 +104,7 @@ export function FileDropOverlay({ activePanelId, agentSessionIds }: FileDropOver
         }
       }
       for (const file of [...transfer.files]) {
-        const path = window.ezterminalDesktop?.getPathForFile(file);
+        const path = capabilities.files.pathForDrop(file);
         if (path) paths.push(path);
       }
       const unique = uniquePaths(paths);
@@ -149,7 +155,7 @@ export function FileDropOverlay({ activePanelId, agentSessionIds }: FileDropOver
       window.removeEventListener('drop', onDrop, true);
       if (toastTimer !== null) window.clearTimeout(toastTimer);
     };
-  }, [maxDroppedPaths, t]);
+  }, [capabilities, maxDroppedPaths, t]);
 
   if (dragDepth <= 0 && !toast) return null;
   return (

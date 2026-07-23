@@ -18,7 +18,7 @@ import type {
 
 const NATIVE_PROTOCOL_VERSION = 1;
 const MAX_NATIVE_MESSAGE_BYTES = 272 * 1024;
-const NATIVE_READY_TIMEOUT_MS = 5_000;
+const NATIVE_READY_TIMEOUT_MS = 12_000;
 export const DESKTOP_RESUME_GRACE_MS = 15_000;
 
 export type DesktopServerEvent =
@@ -60,6 +60,7 @@ interface ActiveDesktopSession {
   identity: RemoteClientIdentity;
   endpoint: DesktopConnectionEndpoint;
   transport: NativeTransport | null;
+  transportStart: Promise<boolean> | null;
   emit: (event: DesktopServerEvent) => void;
   state: DesktopControlStatusMessage['state'];
   displays: readonly DesktopDisplay[];
@@ -95,6 +96,8 @@ export class RemoteDesktopController {
   private active: ActiveDesktopSession | null = null;
   private service: RemoteDesktopServiceHealth = 'unknown';
   private errorCode: string | null = null;
+  private transportTeardown: Promise<void> = Promise.resolve();
+  private transportStopsInFlight = 0;
   private readonly statusListeners = new Set<(status: RemoteDesktopHostStatus) => void>();
 
   constructor(private readonly options: RemoteDesktopControllerOptions) {
@@ -133,14 +136,19 @@ export class RemoteDesktopController {
       if (current.releaseTimer) this.clearTimer(current.releaseTimer);
       current.releaseTimer = null;
       this.publishStatus();
-      if (!current.transport) {
-        const started = await this.startTransport(current);
+      if (!current.transport || current.transportStart) {
+        const started = await this.ensureTransport(current);
         if (!started) {
-          if (this.active === current) this.active = null;
-          this.errorCode = 'SERVICE_UNAVAILABLE';
-          this.publishStatus();
+          if (this.active === current) {
+            this.active = null;
+            this.errorCode = 'SERVICE_UNAVAILABLE';
+            this.publishStatus();
+          }
           return { ok: false, reason: 'unavailable', errorCode: 'SERVICE_UNAVAILABLE' };
         }
+      }
+      if (this.active !== current) {
+        return { ok: false, reason: 'unavailable', errorCode: 'SERVICE_UNAVAILABLE' };
       }
       return this.success(current, resumed);
     }
@@ -150,6 +158,7 @@ export class RemoteDesktopController {
       identity,
       endpoint,
       transport: null,
+      transportStart: null,
       emit,
       state: 'starting',
       displays: [],
@@ -166,10 +175,15 @@ export class RemoteDesktopController {
     this.active = session;
     this.errorCode = null;
     this.publishStatus();
-    if (!(await this.startTransport(session))) {
-      if (this.active === session) this.active = null;
-      this.errorCode = 'SERVICE_UNAVAILABLE';
-      this.publishStatus();
+    if (!(await this.ensureTransport(session))) {
+      if (this.active === session) {
+        this.active = null;
+        this.errorCode = 'SERVICE_UNAVAILABLE';
+        this.publishStatus();
+      }
+      return { ok: false, reason: 'unavailable', errorCode: 'SERVICE_UNAVAILABLE' };
+    }
+    if (this.active !== session) {
       return { ok: false, reason: 'unavailable', errorCode: 'SERVICE_UNAVAILABLE' };
     }
     return this.success(session, false);
@@ -198,7 +212,7 @@ export class RemoteDesktopController {
     session.transport = null;
     if (transport) {
       transport.send({ type: 'stop', sessionId, reason });
-      await transport.stop();
+      await this.trackTransportStop(transport);
     }
     session.emit({ kind: 'desktop-control-ended', sessionId, reason });
     this.errorCode = null;
@@ -215,7 +229,7 @@ export class RemoteDesktopController {
     session.expectedExit = true;
     const transport = session.transport;
     session.transport = null;
-    if (transport) void transport.stop();
+    if (transport) void this.trackTransportStop(transport).catch(() => undefined);
     this.publishStatus();
     session.releaseTimer = this.setTimer(() => {
       if (this.active === session && session.disconnectedAt !== null) {
@@ -269,11 +283,26 @@ export class RemoteDesktopController {
 
   async shutdown(reason: DesktopControlEndedMessage['reason'] = 'app-quit'): Promise<void> {
     const session = this.active;
-    if (!session) return;
-    await this.stop(session.identity.clientId, session.sessionId, reason);
+    if (session) await this.stop(session.identity.clientId, session.sessionId, reason);
+    await this.awaitTransportTeardown();
+  }
+
+  private ensureTransport(session: ActiveDesktopSession): Promise<boolean> {
+    if (session.transportStart) return session.transportStart;
+    if (session.transport) return Promise.resolve(true);
+
+    const attempt = this.startTransport(session).catch(() => false);
+    const tracked = attempt.finally(() => {
+      if (session.transportStart === tracked) session.transportStart = null;
+    });
+    session.transportStart = tracked;
+    return tracked;
   }
 
   private async startTransport(session: ActiveDesktopSession): Promise<boolean> {
+    if (this.transportStopsInFlight > 0) await this.awaitTransportTeardown();
+    if (this.active !== session || session.disconnectedAt !== null) return false;
+
     const transport = this.options.createTransport?.() ?? createNativeTransport(this.options.hostPath);
     session.transport = transport;
     session.expectedExit = false;
@@ -289,7 +318,7 @@ export class RemoteDesktopController {
       const readyTimer = setTimeout(() => {
         session.expectedExit = true;
         session.transport = null;
-        void transport.stop();
+        void this.trackTransportStop(transport).catch(() => undefined);
         settle(false);
       }, NATIVE_READY_TIMEOUT_MS);
 
@@ -302,16 +331,27 @@ export class RemoteDesktopController {
           if (!accepted) {
             session.expectedExit = true;
             if (session.transport === transport) session.transport = null;
-            void transport.stop();
+            void this.trackTransportStop(transport).catch(() => undefined);
           }
           settle(accepted);
+          return;
+        }
+        if (!settled && (message.type === 'error' || message.type === 'ended')) {
+          session.expectedExit = true;
+          if (session.transport === transport) session.transport = null;
+          void this.trackTransportStop(transport).catch(() => undefined);
+          settle(false);
           return;
         }
         this.handleNativeMessage(session, message);
       });
       transport.onExit(() => {
         if (session.transport === transport) session.transport = null;
-        if (!settled) settle(false);
+        if (!settled) {
+          session.expectedExit = true;
+          settle(false);
+          return;
+        }
         if (this.active !== session || session.expectedExit || session.disconnectedAt !== null) return;
         session.state = 'error';
         this.errorCode = 'NATIVE_PROCESS_EXITED';
@@ -439,7 +479,37 @@ export class RemoteDesktopController {
     session.expectedExit = true;
     const transport = session.transport;
     session.transport = null;
-    if (transport) void transport.stop();
+    if (transport) void this.trackTransportStop(transport).catch(() => undefined);
+  }
+
+  /**
+   * A broker lease is PID-bound. Do not create a replacement child until all
+   * prior child shutdowns have settled, otherwise a fast resume can race the
+   * old PID's explicit release and receive a spurious LeaseBusy rejection.
+   */
+  private trackTransportStop(transport: NativeTransport): Promise<void> {
+    let stopping: Promise<void>;
+    try {
+      stopping = Promise.resolve(transport.stop());
+    } catch (error) {
+      stopping = Promise.reject(error);
+    }
+    this.transportStopsInFlight += 1;
+    const settled = stopping
+      .catch(() => undefined)
+      .finally(() => {
+        this.transportStopsInFlight = Math.max(0, this.transportStopsInFlight - 1);
+      });
+    this.transportTeardown = Promise.all([this.transportTeardown, settled]).then(() => undefined);
+    return stopping;
+  }
+
+  private async awaitTransportTeardown(): Promise<void> {
+    for (;;) {
+      const pending = this.transportTeardown;
+      await pending;
+      if (pending === this.transportTeardown) return;
+    }
   }
 
   private expireDisconnectedLease(): void {

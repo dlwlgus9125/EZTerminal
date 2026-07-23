@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import type { RemoteRuntimeStatus } from '../shared/ipc';
+import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 
 type PairingError =
@@ -16,7 +17,9 @@ type PairingError =
  * already defines in index.css rather than adding new CSS — same overlay
  * shape, different content.
  */
-export function ConnectionInfoPanel(): JSX.Element {
+export function ConnectionInfoPanel({
+  capabilities = rendererCapabilities,
+}: { readonly capabilities?: CapabilityAccess }): JSX.Element {
   const { t } = useAppTranslation();
   const [urls, setUrls] = useState<readonly string[] | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -26,38 +29,37 @@ export function ConnectionInfoPanel(): JSX.Element {
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
   useEffect(() => {
-    let alive = true;
-    void window.ezterminal.getRemoteConnectionInfo().then((info) => {
-      if (alive) setUrls(info.urls);
+    return capabilities.remotePairing.observe({
+      onConnectionInfo: (info) => setUrls(info.urls),
+      onSecurity: (status) => {
+        setSecurityError(status.error ? { kind: 'external', message: status.error } : null);
+      },
+      onToken: setToken,
+      onRuntime: setRemoteStatus,
+      onError: (stage) => {
+        if (stage === 'security' || stage === 'token') {
+          setSecurityError({ kind: 'token-unavailable' });
+          return;
+        }
+        const message = t('remote.runtimeUnavailable');
+        if (stage === 'connection') {
+          setUrls([]);
+          setSecurityError({ kind: 'external', message });
+          return;
+        }
+        setRemoteStatus({
+          desiredEnabled: false,
+          state: 'error',
+          port: 0,
+          errorCode: 'CAPABILITY_UNAVAILABLE',
+          error: message,
+        });
+      },
     });
-    void window.ezterminal.getRemoteSecurityStatus().then((status) => {
-      if (!alive) return;
-      setSecurityError(status.error ? { kind: 'external', message: status.error } : null);
-      if (status.state === 'ready') {
-        void window.ezterminal.getRemoteToken().then(
-          (t) => {
-            if (alive) setToken(t);
-          },
-          () => {
-            if (alive) setSecurityError({ kind: 'token-unavailable' });
-          },
-        );
-      }
-    });
-    void window.ezterminal.getRemoteRuntimeStatus().then((status) => {
-      if (alive) setRemoteStatus(status);
-    });
-    const unsubscribeRuntime = window.ezterminal.onRemoteRuntimeStatus((status) => {
-      if (alive) setRemoteStatus(status);
-    });
-    return () => {
-      alive = false;
-      unsubscribeRuntime();
-    };
-  }, []);
+  }, [capabilities, t]);
 
   const handleRotate = useCallback(() => {
-    void window.ezterminal.rotateRemoteToken().then(
+    void capabilities.remotePairing.rotateToken().then(
       (t) => {
         setToken(t);
         setJustRotated(true);
@@ -65,7 +67,7 @@ export function ConnectionInfoPanel(): JSX.Element {
       },
       () => setSecurityError({ kind: 'rotate-failed' }),
     );
-  }, []);
+  }, [capabilities]);
 
   const handleCopy = useCallback((text: string) => {
     void navigator.clipboard.writeText(text).then(() => {
@@ -75,8 +77,14 @@ export function ConnectionInfoPanel(): JSX.Element {
   }, []);
 
   const handleRetry = useCallback(() => {
-    void window.ezterminal.retryRemoteRuntime().then(setRemoteStatus);
-  }, []);
+    void capabilities.remoteRuntime.retry().then(setRemoteStatus, () => {
+      setRemoteStatus((current) => current && {
+        ...current,
+        state: 'error',
+        error: current.error ?? t('remote.runtimeUnavailable'),
+      });
+    });
+  }, [capabilities, t]);
 
   const loading = urls === null
     || remoteStatus === null

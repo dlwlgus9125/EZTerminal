@@ -3,22 +3,19 @@ import {
   BrowserWindow,
   clipboard,
   crashReporter,
+  dialog,
   ipcMain,
   Menu,
   MessageChannelMain,
   Notification,
-  safeStorage,
   session,
   shell,
-  Tray,
   utilityProcess,
 } from 'electron';
 import type { UtilityProcess, MessagePortMain, Rectangle } from 'electron';
 import { stat } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { networkInterfaces } from 'node:os';
 
 import { isAppUrl } from './url-guard';
 import { buildMenuTemplate } from './app-menu';
@@ -32,7 +29,9 @@ import { KnownHostsStore } from './known-hosts-store';
 import { LogFile, pruneCrashDumps } from './diagnostics';
 import { SystemStatsService } from './system-stats-service';
 import { StatsVisibility } from './stats-visibility';
-import { RemoteTokenStore } from './remote-token-store';
+import { RendererCrashRecovery } from './renderer-crash-recovery';
+import { installRunCommandIpc } from './run-command-ipc';
+import { GracefulShutdownCoordinator } from './graceful-shutdown';
 import { OpenClawService } from './openclaw-service';
 import { OpenClawChatViewManager } from './openclaw-chat-view';
 import { startOpenClawProxy, DEFAULT_OPENCLAW_PROXY_PORT, type OpenClawProxyHandle } from './openclaw-proxy';
@@ -48,19 +47,15 @@ import { WorkspaceFileSearchService } from './workspace-file-search-service';
 import { WorktreeService } from './worktree-service';
 import { AsyncMutationGate } from './async-mutation-gate';
 import { SessionWorktreeGuard } from './session-worktree-guard';
-import {
-  startRemoteBridge,
-  DEFAULT_REMOTE_BRIDGE_PORT,
-  type RemoteFileSource,
-  type RemoteOpenClawSource,
-  type RemotePacketSource,
-  type RemoteQuickCommandSource,
-  type RemoteStatsSource,
+import type {
+  RemoteFileSource,
+  RemoteOpenClawSource,
+  RemotePacketSource,
+  RemoteQuickCommandSource,
+  RemoteStatsSource,
 } from './remote-bridge';
-import { RemoteRuntimeController, RemoteRuntimeStartError } from './remote-runtime';
-import { formatConnectionInfo } from './remote-connection-info';
-import { RemoteDesktopController } from './remote-desktop-controller';
-import { selectTrustedRemoteNetwork } from './trusted-remote-network';
+import type { DesktopRuntime } from './desktop-runtime';
+import { createElectronDesktopRuntime } from './electron-desktop-runtime-adapter';
 import {
   TerminalRendererPreferenceSchema,
   type EffectParamsSettings,
@@ -79,9 +74,6 @@ import type {
   InterpreterToMain,
   MainToInterpreter,
   RunStartedInfo,
-  RemoteRuntimeStatus,
-  RemoteDesktopHostStatus,
-  RemoteDesktopServiceHealth,
   SessionInfo,
   SystemStatsSnapshot,
 } from '../shared/ipc';
@@ -180,10 +172,8 @@ let systemStatsService: SystemStatsService | null = null;
 // must be a module-level `let`, not a local const inside the 'ready' handler.
 let packetCaptureRegistry: PacketCaptureRegistry | null = null;
 
-// Desired setting + observed mobile remote-control listener lifecycle.
-let remoteRuntimeController: RemoteRuntimeController | null = null;
-let remoteDesktopController: RemoteDesktopController | null = null;
-let remoteDesktopTray: Tray | null = null;
+// Deep Module owning remote listener, desktop-control, IPC, and cleanup lifecycle.
+let desktopRuntime: DesktopRuntime | null = null;
 
 // OpenClaw reverse proxy (openclaw-management M4) — started lazily by the
 // first authenticated chat-ticket request, independently of the core bridge.
@@ -228,6 +218,7 @@ async function resolveOpenClawVisibility(
 // one of those happens. This drives a periodic recheck (main.ts, near the
 // other openclaw wiring) that's a no-op outside 'auto' mode.
 const OPENCLAW_VISIBILITY_RECHECK_MS = 30_000;
+const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 
 /** Rebuild the terminal-safe native menu when the UI language changes. */
 function applyNativeMenuLocale(preference: UiLocalePreference): void {
@@ -253,6 +244,8 @@ const CSP =
   "form-action 'none'";
 
 const createWindow = (): void => {
+  const rendererCrashRecovery = new RendererCrashRecovery();
+  let crashFailureDialogOpen = false;
   const mainWindow = new BrowserWindow({
     width: 1024,
     height: 720,
@@ -324,13 +317,52 @@ const createWindow = (): void => {
     );
   }
 
-  mainWindow.webContents.once('did-finish-load', () => {
+  mainWindow.webContents.on('did-finish-load', () => {
     console.log('[main] renderer finished loading');
+    rendererCrashRecovery.armStabilityTimer();
   });
 
   // A dead/killed renderer is a crash-grade event worth local evidence (B-M5).
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     mainLog?.line(`render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`);
+    if (appIsQuitting || mainWindow.isDestroyed()) return;
+    const decision = rendererCrashRecovery.decide(details.reason);
+    mainLog?.line(`renderer crash recovery decision=${decision}`);
+    if (decision === 'reload') {
+      setTimeout(() => {
+        if (!appIsQuitting && !mainWindow.isDestroyed()) mainWindow.webContents.reload();
+      }, 250).unref();
+      return;
+    }
+    if (decision !== 'show-failure' || crashFailureDialogOpen) return;
+    crashFailureDialogOpen = true;
+    const korean = app.getLocale().toLowerCase().startsWith('ko');
+    void dialog.showMessageBox(mainWindow, {
+      type: 'error',
+      title: 'EZTerminal',
+      message: korean
+        ? '화면 프로세스 복구가 반복해서 실패했습니다.'
+        : 'The interface process repeatedly failed to recover.',
+      detail: korean
+        ? '터미널 세션은 백그라운드에 유지됩니다. 화면을 다시 불러오거나 앱을 종료할 수 있습니다.'
+        : 'Terminal sessions remain in the background. Reload the interface or quit the app.',
+      buttons: korean ? ['화면 다시 불러오기', '앱 종료'] : ['Reload interface', 'Quit'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    }).then(({ response }) => {
+      crashFailureDialogOpen = false;
+      if (appIsQuitting || mainWindow.isDestroyed()) return;
+      if (response === 0) {
+        rendererCrashRecovery.markStable();
+        mainWindow.webContents.reload();
+      } else {
+        app.quit();
+      }
+    }).catch((error) => {
+      crashFailureDialogOpen = false;
+      mainLog?.line(`renderer crash recovery dialog failed: ${String(error)}`);
+    });
   });
 
   // A reload must not leave the status overlay's panel-open-only collectors
@@ -350,40 +382,15 @@ const createWindow = (): void => {
   // Window destroy (Phase 2B): stop any live capture host — it must not
   // outlive the window whose renderer it was streaming packets to.
   mainWindow.on('closed', () => {
+    rendererCrashRecovery.dispose();
     packetCaptureRegistry?.kill();
     openClawChatView?.destroy();
     if (mainWindowRef === mainWindow) mainWindowRef = null;
   });
 
   // ── Per-command MessagePort brokering (architecture §3) ───────────────────
-  // For each run-command IPC from the renderer:
-  //   1. Create a MessageChannelMain (port1, port2).
-  //   2. Transfer port2 to the interpreter utilityProcess with the command.
-  //   3. Transfer port1 to the renderer via webContents.postMessage.
-  // After this, renderer ↔ interpreter communicate directly over the port
-  // without routing bulk frame data through main.
-  ipcMain.on(
-    'run-command',
-    (event, payload: { commandText: string; runId: string; sessionId: string }) => {
-      if (!broker) {
-        console.error('[main] interpreter not ready for command:', payload?.commandText);
-        return;
-      }
-      const { commandText, runId, sessionId } = payload;
-      const port1 = broker.runCommand(sessionId, runId, commandText);
-      // A truthy broker over a DEAD interpreter returns null — restore the
-      // pre-broker "not ready" log (parity), then skip the transfer.
-      if (!port1) {
-        console.error('[main] interpreter not ready for command:', commandText);
-        return;
-      }
-      // Transfer port1 to renderer — arrives as a DOM MessagePort via event.ports.
-      // Echo `runId` so the preload/renderer correlate THIS port to THIS run even
-      // when multiple runs are in flight across panes (Codex B3).
-      event.sender.postMessage('cmd-port', { runId }, [port1 as unknown as MessagePortMain]);
-      console.log(`[main] brokered port for run ${runId} in session ${sessionId}`);
-    },
-  );
+  // The app-lifetime run-command listener is installed once after the broker
+  // is constructed. Window recreation must not register global IPC again.
 };
 
 app.on('ready', () => {
@@ -418,6 +425,7 @@ app.on('ready', () => {
     console.error('[main] quick command store init failed:', err);
   });
   const workspaceFileSearch = new WorkspaceFileSearchService();
+  let uninstallRunCommandIpc: (() => void) | null = null;
   quickCommandStore.subscribe((commands) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
@@ -863,30 +871,64 @@ app.on('ready', () => {
     await storeReady;
     if (params && typeof params === 'object') await layoutStore.setEffectParams(params);
   });
-  // Best-effort final flush; the debounced save already persisted anything
-  // older than ~300ms (accepted v1 loss window — gate Q2).
-  app.on('before-quit', () => {
-    appIsQuitting = true;
-    void layoutStore.flush();
-    systemStatsService?.stop();
-    packetCaptureRegistry?.kill();
-    void remoteRuntimeController?.shutdown();
-    void remoteDesktopController?.shutdown('app-quit');
-    remoteDesktopTray?.destroy();
-    remoteDesktopTray = null;
-    void stopOpenClawProxy();
-    unsubscribeOpenClawEndpoint();
-    openClawService?.dispose();
-    openClawChatView?.destroy();
-    agentActivityService?.dispose();
-    void agentSettingsStore.flush();
-    void quickCommandStore.flush();
-    workspaceFileSearch.dispose();
-    void sshForwardService?.dispose();
-    sshForwardService = null;
-    void agentHookRelay.stop();
-    clearInterval(openclawVisibilityRecheckTimer);
+  // The first quit is held while every owned service drains exactly once;
+  // completion or a bounded timeout reissues app.quit().
+  const gracefulShutdown = new GracefulShutdownCoordinator({
+    timeoutMs: GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+    continueQuit: () => app.quit(),
+    reportError: (context, error) => {
+      console.error(`[main] ${context}:`, error);
+      const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+      mainLog?.line(`${context}: ${detail}`);
+    },
+    tasks: [
+      {
+        name: 'quit state',
+        run: () => {
+          appIsQuitting = true;
+        },
+      },
+      {
+        name: 'run command IPC',
+        run: () => {
+          uninstallRunCommandIpc?.();
+          uninstallRunCommandIpc = null;
+        },
+      },
+      { name: 'layout store', run: () => layoutStore.flush() },
+      { name: 'system stats', run: () => systemStatsService?.stop() },
+      { name: 'packet capture', run: () => packetCaptureRegistry?.kill() },
+      {
+        name: 'desktop runtime',
+        run: () => {
+          const runtime = desktopRuntime;
+          desktopRuntime = null;
+          return runtime?.dispose();
+        },
+      },
+      { name: 'OpenClaw endpoint subscription', run: () => unsubscribeOpenClawEndpoint() },
+      { name: 'OpenClaw service', run: () => openClawService?.dispose() },
+      { name: 'OpenClaw chat view', run: () => openClawChatView?.destroy() },
+      { name: 'agent activity', run: () => agentActivityService?.dispose() },
+      { name: 'agent settings', run: () => agentSettingsStore.flush() },
+      { name: 'quick commands', run: () => quickCommandStore.flush() },
+      { name: 'workspace search', run: () => workspaceFileSearch.dispose() },
+      {
+        name: 'SSH forwards',
+        run: () => {
+          const service = sshForwardService;
+          sshForwardService = null;
+          return service?.dispose();
+        },
+      },
+      { name: 'agent hook relay', run: () => agentHookRelay.stop() },
+      {
+        name: 'OpenClaw visibility timer',
+        run: () => clearInterval(openclawVisibilityRecheckTimer),
+      },
+    ],
   });
+  app.on('before-quit', (event) => gracefulShutdown.handleBeforeQuit(event));
 
   // Session lifecycle (Codex B1/B5). create-session is the ONLY way a shell session
   // comes into being — the interpreter mints the authoritative {sessionId, cwd} and
@@ -999,6 +1041,10 @@ app.on('ready', () => {
     },
   });
   console.log('[main] interpreter broker ready');
+  uninstallRunCommandIpc = installRunCommandIpc({
+    ipc: ipcMain,
+    getBroker: () => broker,
+  });
 
   const bindSshForwardService = (target: UtilityProcess): void => {
     sshForwardService = new SshForwardService({
@@ -1370,7 +1416,7 @@ app.on('ready', () => {
     getCoreConfig: () => openclaw.getCoreConfig(),
     setCoreConfig: (key, value) => openclaw.setCoreConfig(key, value),
     mintChatTicket: async () => {
-      if (remoteRuntimeController?.currentStatus.state !== 'running') {
+      if (!desktopRuntime?.isRunning()) {
         return { ticket: null, reason: 'proxy-unavailable' };
       }
       const status = await openclaw.getStatus();
@@ -1384,7 +1430,7 @@ app.on('ready', () => {
       const token = await openclaw.getChatToken();
       if (!token) return { ticket: null, reason: 'token-unavailable' };
       const proxy = await ensureOpenClawProxy();
-      if (!proxy || remoteRuntimeController?.currentStatus.state !== 'running') {
+      if (!proxy || !desktopRuntime?.isRunning()) {
         if (proxy) await stopOpenClawProxy();
         return { ticket: null, reason: 'proxy-unavailable' };
       }
@@ -1396,93 +1442,6 @@ app.on('ready', () => {
       return () => remoteOpenClawVisibilityListeners.delete(listener);
     },
   };
-  const remoteTokenStore = new RemoteTokenStore(path.join(app.getPath('userData')), {
-    protector: process.platform === 'win32'
-      ? {
-          encrypt: (plaintext) => {
-            if (!safeStorage.isEncryptionAvailable()) {
-              throw new Error('Windows credential encryption is unavailable.');
-            }
-            return safeStorage.encryptString(plaintext);
-          },
-          decrypt: (ciphertext) => {
-            if (!safeStorage.isEncryptionAvailable()) {
-              throw new Error('Windows credential encryption is unavailable.');
-            }
-            return safeStorage.decryptString(ciphertext);
-          },
-        }
-      : undefined,
-    requireProtector: process.platform === 'win32',
-  });
-  let remoteTokenSecure = false;
-  let remoteSecurityError: string | null = null;
-  let remoteTokenInit: Promise<void> | null = null;
-  const ensureRemoteTokenSecurity = (): Promise<void> => {
-    if (remoteTokenSecure) return Promise.resolve();
-    if (remoteTokenInit === null) {
-      remoteTokenInit = (async () => {
-        await remoteTokenStore.init();
-        // Mint/load and fully harden the token before any listener can bind.
-        await remoteTokenStore.getToken();
-        remoteTokenSecure = true;
-        remoteSecurityError = null;
-      })()
-        .catch((err) => {
-          remoteTokenSecure = false;
-          remoteSecurityError = 'The remote access token could not be stored securely. Remote access remains off.';
-          console.error('[main] remote token security readiness failed:', err);
-          throw err;
-        })
-        .finally(() => {
-          remoteTokenInit = null;
-        });
-    }
-    return remoteTokenInit ?? Promise.resolve();
-  };
-  const remoteBridgePort = Number(process.env.EZTERMINAL_REMOTE_PORT) || DEFAULT_REMOTE_BRIDGE_PORT;
-  const remoteHostPath = process.env.EZTERMINAL_REMOTE_HOST_PATH
-    ?? (app.isPackaged
-      ? path.join(process.resourcesPath, 'ezterminal-remote-host.exe')
-      : path.join(app.getAppPath(), 'native', 'remote-host', 'target', 'release', 'ezterminal-remote-host.exe'));
-  const probeRemoteDesktopService = (): Promise<RemoteDesktopServiceHealth> => new Promise((resolve) => {
-    execFile(
-      remoteHostPath,
-      ['--probe'],
-      { windowsHide: true, timeout: 3_000, maxBuffer: 16 * 1024 },
-      (error, stdout) => {
-        if (error) {
-          resolve('unknown');
-          return;
-        }
-        try {
-          const result = JSON.parse(stdout) as { service?: unknown; protocolVersion?: unknown };
-          if (result.protocolVersion !== 1) {
-            resolve('unknown');
-            return;
-          }
-          switch (result.service) {
-            case 'ready': case 'missing': case 'stopped': case 'denied':
-              resolve(result.service);
-              return;
-            default:
-              resolve('unknown');
-          }
-        } catch {
-          resolve('unknown');
-        }
-      },
-    );
-  });
-  const desktopController = new RemoteDesktopController({
-    hostPath: remoteHostPath,
-    probeService: probeRemoteDesktopService,
-  });
-  remoteDesktopController = desktopController;
-  // The unlocked-session implementation is available to development/VM gates,
-  // but the public protocol capability stays hidden until the SYSTEM
-  // interactive-session broker and every release gate in the design pass.
-  const experimentalDesktopControl = process.env.EZTERMINAL_EXPERIMENTAL_DESKTOP_CONTROL === '1';
   const remoteStatsSource: RemoteStatsSource = {
     getHistory: () => systemStatsService?.getHistory() ?? [],
     onSnapshot: (listener) => {
@@ -1501,65 +1460,7 @@ app.on('ready', () => {
       return quickCommandStore.list();
     },
   };
-  const publishRemoteRuntimeStatus = (status: RemoteRuntimeStatus): void => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
-      win.webContents.send('remote:runtime-status', status);
-    }
-  };
-  const publishRemoteDesktopStatus = (status: RemoteDesktopHostStatus): void => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
-      win.webContents.send('remote:desktop-status', status);
-    }
-  };
-  desktopController.onStatus(publishRemoteDesktopStatus);
-  if (process.platform === 'win32') {
-    try {
-      const trayIcon = app.isPackaged
-        ? path.join(process.resourcesPath, 'icon.ico')
-        : path.join(app.getAppPath(), 'assets', 'icon.ico');
-      remoteDesktopTray = new Tray(trayIcon);
-      const openMainWindow = (): void => {
-        const win = mainWindowRef ?? BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-        if (!win || win.isDestroyed()) return;
-        if (win.isMinimized()) win.restore();
-        win.show();
-        win.focus();
-      };
-      const updateTray = (status: RemoteDesktopHostStatus): void => {
-        if (!remoteDesktopTray) return;
-        const korean = app.getLocale().toLowerCase().startsWith('ko');
-        const active = status.controllerName !== null;
-        const error = status.state === 'error' || ['missing', 'stopped', 'denied'].includes(status.service);
-        const stateLabel = active
-          ? (korean ? `제어 중: ${status.controllerName}` : `Controlled by ${status.controllerName}`)
-          : error
-            ? (korean ? 'PC 제어 오류' : 'PC Control error')
-            : (korean ? 'PC 제어 대기' : 'PC Control idle');
-        remoteDesktopTray.setToolTip(`EZTerminal — ${stateLabel}`);
-        remoteDesktopTray.setContextMenu(Menu.buildFromTemplate([
-          { label: korean ? 'EZTerminal 열기' : 'Open EZTerminal', click: openMainWindow },
-          {
-            label: active ? (korean ? `${status.controllerName} 연결 끊기` : `Disconnect ${status.controllerName}`) : (korean ? '연결 끊기' : 'Disconnect'),
-            enabled: active,
-            click: () => { void desktopController.shutdown('local-disconnect'); },
-          },
-          { type: 'separator' },
-          { label: korean ? '종료' : 'Quit', click: () => app.quit() },
-        ]));
-      };
-      remoteDesktopTray.on('click', openMainWindow);
-      desktopController.onStatus(updateTray);
-      updateTray(desktopController.getStatus());
-    } catch (error) {
-      console.error('[main] remote desktop tray unavailable:', error);
-      remoteDesktopTray = null;
-    }
-  }
-  void desktopController.probeService();
-  const runtime = new RemoteRuntimeController({
-    port: remoteBridgePort,
+  const runtime = createElectronDesktopRuntime({
     readDesiredEnabled: async () => {
       await storeReady;
       return layoutStore.getRemoteEnabled();
@@ -1568,117 +1469,36 @@ app.on('ready', () => {
       await storeReady;
       await layoutStore.setRemoteEnabled(enabled);
     },
-    start: async () => {
-      try {
-        await ensureRemoteTokenSecurity();
-      } catch {
-        throw new RemoteRuntimeStartError('REMOTE_TOKEN_UNAVAILABLE', 'remote token unavailable');
-      }
+    waitUntilBridgeReady: async () => {
       await agentInfrastructureReady;
-      const trustedNetwork = selectTrustedRemoteNetwork(
-        networkInterfaces(),
-        process.env.EZTERMINAL_REMOTE_VPN_INTERFACE,
-      );
-      if (!trustedNetwork) {
-        throw new RemoteRuntimeStartError(
-          'REMOTE_TRUSTED_NETWORK_UNAVAILABLE',
-          'trusted VPN adapter unavailable',
-        );
-      }
+    },
+    prepareBridge: async () => {
       // Keep the presentation hint current before auth; it no longer gates
       // any authenticated OpenClaw request.
       currentOpenClawVisible = await resolveOpenClawVisibility(
         await layoutStore.getOpenClawMode(),
         () => openclaw.isInstalled(),
       );
-      const bridge = await startRemoteBridge({
-        port: remoteBridgePort,
-        bindHost: trustedNetwork.address,
-        getToken: () => remoteTokenStore.getToken(),
-        hostVersion: app.getVersion(),
-        buildSha: process.env.EZTERMINAL_BUILD_SHA ?? process.env.GITHUB_SHA,
-        broker: broker!,
-        statsSource: remoteStatsSource,
-        packetSource: remotePacketSource,
-        fileSource: fileService satisfies RemoteFileSource,
-        worktreeSource: worktreeService,
-        quickCommandSource: remoteQuickCommandSource,
-        openclawSource: remoteOpenClawSource,
-        agentSource: agentActivityService ?? undefined,
-        desktopSource: experimentalDesktopControl ? desktopController : undefined,
-      });
-      return {
-        port: bridge.port,
-        stop: async () => {
-          await desktopController.shutdown('bridge-disabled');
-          await bridge.stop();
-        },
-      };
     },
-    onStatus: publishRemoteRuntimeStatus,
-    onError: (error) => console.error('[main] remote runtime operation failed:', error),
+    stopAuxiliaryRuntime: stopOpenClawProxy,
+    bridgeSources: {
+      broker: broker!,
+      statsSource: remoteStatsSource,
+      packetSource: remotePacketSource,
+      fileSource: fileService satisfies RemoteFileSource,
+      worktreeSource: worktreeService,
+      quickCommandSource: remoteQuickCommandSource,
+      openclawSource: remoteOpenClawSource,
+      agentSource: agentActivityService ?? undefined,
+    },
+    getMainWindow: () => (
+      mainWindowRef
+      ?? BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed())
+      ?? null
+    ),
   });
-  remoteRuntimeController = runtime;
-  void runtime.initialize();
-
-  // Desktop pairing panel (M4): connection info/token are read-only display +
-  // an explicit rotate action, same invoke shape as the settings handlers above.
-  ipcMain.handle('remote:get-connection-info', () => {
-    const interfaces = networkInterfaces();
-    const trustedNetwork = selectTrustedRemoteNetwork(
-      interfaces,
-      process.env.EZTERMINAL_REMOTE_VPN_INTERFACE,
-    );
-    return formatConnectionInfo(interfaces, remoteBridgePort, trustedNetwork?.address);
-  });
-  ipcMain.handle('remote:get-token', async () => {
-    await ensureRemoteTokenSecurity();
-    return remoteTokenStore.getToken();
-  });
-  ipcMain.handle('remote:get-security-status', async () => {
-    try {
-      await ensureRemoteTokenSecurity();
-    } catch {
-      // The status payload is the renderer-safe error channel.
-    }
-    return {
-      state: remoteSecurityError === null ? 'ready' : 'error',
-      error: remoteSecurityError,
-    } as const;
-  });
-  ipcMain.handle('remote:rotate-token', async () => {
-    await ensureRemoteTokenSecurity();
-    try {
-      const token = await remoteTokenStore.rotateToken();
-      await desktopController.shutdown('token-rotated');
-      return token;
-    } catch (err) {
-      remoteTokenSecure = false;
-      remoteSecurityError = 'The new remote access token could not be stored securely. Remote access was stopped.';
-      await runtime.stopWithError('REMOTE_TOKEN_UNAVAILABLE', remoteSecurityError);
-      await stopOpenClawProxy().catch((error) => console.error('[main] OpenClaw proxy stop failed:', error));
-      throw err;
-    }
-  });
-  ipcMain.handle('remote:get-enabled', async () => {
-    return (await runtime.getStatus()).desiredEnabled;
-  });
-  ipcMain.handle('remote:get-runtime-status', () => runtime.getStatus());
-  ipcMain.handle('remote:set-enabled', async (_event, enabled: boolean) => {
-    if (typeof enabled !== 'boolean') return runtime.getStatus();
-    const status = await runtime.setDesiredEnabled(enabled);
-    if (!enabled) {
-      await stopOpenClawProxy().catch((error) => console.error('[main] OpenClaw proxy stop failed:', error));
-    }
-    return status;
-  });
-  ipcMain.handle('remote:retry-runtime', () => runtime.retry());
-  ipcMain.handle('remote:get-desktop-status', () => desktopController.probeService());
-  ipcMain.handle('remote:disconnect-desktop', async (): Promise<boolean> => {
-    const active = desktopController.getStatus().controllerName !== null;
-    if (active) await desktopController.shutdown('local-disconnect');
-    return active;
-  });
+  desktopRuntime = runtime;
+  void runtime.initialize().catch(() => undefined);
 
   // ── OpenClaw management (openclaw-management M1) ─────────────────────────
   // `openclaw`/`openClawService` are constructed earlier (see the mobile

@@ -49,7 +49,7 @@ import type { SystemStatsSnapshot } from '../shared/ipc';
 const GRAPH_INTERVAL_MS = 1000;
 const NET_TIMEOUT_MS = 5000;
 const MEM_DETAIL_INTERVAL_MS = 3000;
-const MEM_DETAIL_TIMEOUT_MS = 2500;
+const MEM_DETAIL_TIMEOUT_MS = 7500;
 
 function resumeHandler(): () => void {
   const call = mocks.powerMonitorOn.mock.calls.find(([event]) => event === 'resume');
@@ -221,6 +221,52 @@ describe('SystemStatsService — panel-open-only collectors (NET/PROC/DISK/MEM d
     expect(mocks.fsSize.mock.calls.length).toBe(diskCallsAtClose);
     expect(mocks.mem.mock.calls.length).toBe(memCallsAtClose);
     expect(mocks.networkConnections.mock.calls.length).toBe(connCallsAtClose);
+
+    service.stop();
+  });
+
+  it('accepts slow but healthy process and memory results from a cold Windows PowerShell start', async () => {
+    mocks.currentLoad.mockResolvedValue({ currentLoad: 1, cpus: [] });
+    mocks.networkStats.mockResolvedValue([]);
+    mocks.fsSize.mockResolvedValue([]);
+    mocks.networkConnections.mockResolvedValue([]);
+    mocks.processes.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve({
+            list: [{ pid: 7, name: 'slow-proc', cpu: 2, memRss: 1024 }],
+          }), 3000);
+        }),
+    );
+    mocks.mem.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve({
+            available: 4,
+            cached: 3,
+            swapused: 2,
+            swaptotal: 1,
+          }), 3000);
+        }),
+    );
+    const pushed: SystemStatsSnapshot[] = [];
+    const service = new SystemStatsService(null, (snapshot) => pushed.push(snapshot));
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    service.setPanelVisible(true);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(pushed[pushed.length - 1].procs).toEqual([
+      { pid: 7, name: 'slow-proc', cpuPct: 2, memBytes: 1024 * 1024 },
+    ]);
+    expect(pushed[pushed.length - 1].memDetail).toEqual({
+      availableBytes: 4,
+      cachedBytes: 3,
+      swapUsedBytes: 2,
+      swapTotalBytes: 1,
+    });
 
     service.stop();
   });

@@ -8,7 +8,7 @@
 
 Block-based UI · themes &amp; CRT effects · system monitor · SSH · pair your phone as a remote
 
-![release](https://img.shields.io/badge/release-v1.0.2-brightgreen)
+![release](https://img.shields.io/badge/release-v1.0.3-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 ![built with](https://img.shields.io/badge/built%20with-Electron%20·%20React%20·%20TypeScript-9cf)
@@ -134,14 +134,21 @@ Keystore-backed storage with no plaintext fallback. A transient network
 loss keeps the mounted workspace and may resume bounded active runs in place for up to five minutes;
 an invalid token stops retrying and asks the user to pair again.
 
-On Windows 10 22H2/11 x64, **More → PC Control** can also stream the visible PC
-screen over VPN-bound WebRTC and provide trackpad/direct-touch, physical or
-Korean IME keyboard input, special keys, and explicit text clipboard actions.
-Only one phone controls the GUI at a time; the local display and input remain
-active, and the desktop banner, tray, or Remote panel can disconnect it at any
-time. The Windows installer adds the LocalSystem host service and exact
-program/port firewall rules. PC Control stays unavailable when the remote
-bridge is off or no trusted Tailscale/WireGuard adapter is present.
+On Windows 10 22H2/11 x64, **More → PC Control** can also stream the unlocked,
+visible PC screen over VPN-bound WebRTC and provide trackpad/direct-touch,
+physical or Korean IME keyboard input, special keys, and explicit text
+clipboard actions. Only one phone controls the GUI at a time; the local display
+and input remain active, and the desktop banner, tray, or Remote panel can
+disconnect it at any time.
+
+PC Control is enabled in supported Windows builds, but the capability is
+advertised only while the remote bridge is enabled, a trusted
+Tailscale/WireGuard adapter is selected, and the installed LocalSystem host
+service is ready. Starting control additionally requires a successful
+active-session agent handshake. Missing or unhealthy native components fail
+closed without disabling terminal-only remote access. In 1.0.3, frame
+capture/encoding and actual input injection still run in the normal-user
+transport; lock/UAC secure-desktop control and Ctrl+Alt+Delete are unavailable.
 
 Desktop Settings also includes risk-aware pane-close confirmation and a default-off OSC 52 clipboard
 write option. After confirmation, the interpreter atomically compares the expected active run IDs and
@@ -159,7 +166,7 @@ Grab both official 1.0 downloads from the
 [**Releases**](https://github.com/dlwlgus9125/EZTerminal/releases/latest) page:
 
 - Windows 10 22H2 / Windows 11 x64: `EZTerminal-Setup.exe`
-- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.2-vc23.apk`
+- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.3-vc24.apk`
 
 > The Windows build is currently **unsigned**, so Windows SmartScreen may warn about an "unknown publisher" on
 > first run. Choose *More info → Run anyway* to proceed.
@@ -174,6 +181,13 @@ The mobile bridge binds only to a selected trusted VPN interface and uses plain 
 encrypted tunnel. Pairing grants the phone command/filesystem access and explicit visible desktop,
 input, and text-clipboard control.
 
+The supported targets remain Windows 10 22H2/Windows 11 x64 and Android 10+, while this
+candidate's validation evidence is limited to the current Windows host and API
+29/API 35 emulators. Elevated/admin service lifecycle and physical-device
+validation were not performed. Certificate provisioning, store publication,
+and automatic-update operations are outside this hardening change; see the
+[1.0.3 validation policy](docs/release/validation-policy-1.0.3.md).
+
 ## Build from source
 
 ```bash
@@ -184,11 +198,10 @@ pnpm test         # unit tests (Vitest)
 pnpm e2e          # end-to-end tests (Playwright + Electron)
 ```
 
-The graphical PC-control candidate is intentionally not advertised by public
-builds until its secure-desktop and device/performance gates pass. Developers
-running those gates can opt in with
-`EZTERMINAL_EXPERIMENTAL_DESKTOP_CONTROL=1`; a running installed host service
-and a trusted VPN interface are still required.
+Graphical PC Control is included by default in Windows builds. At runtime it
+still requires an enabled remote bridge, a running installed host service, and
+a trusted VPN interface; otherwise the desktop capability is not advertised.
+Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.3.
 
 The Android companion app lives in [`mobile/`](mobile/) (Capacitor + Android Studio).
 

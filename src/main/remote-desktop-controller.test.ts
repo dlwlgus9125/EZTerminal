@@ -4,7 +4,7 @@ import { RemoteDesktopController } from './remote-desktop-controller';
 
 class FakeNativeTransport {
   readonly sent: unknown[] = [];
-  readonly stop = vi.fn(async () => undefined);
+  readonly stop = vi.fn<() => Promise<void>>(async () => undefined);
   private readonly messages = new Set<(message: unknown) => void>();
   private readonly exits = new Set<() => void>();
 
@@ -112,5 +112,95 @@ describe('RemoteDesktopController', () => {
       errorCode: 'SERVICE_UNAVAILABLE',
     });
     expect(native.stop).toHaveBeenCalledOnce();
+  });
+
+  it('fails immediately and silently when broker acquisition rejects before native readiness', async () => {
+    const native = new FakeNativeTransport();
+    const events: unknown[] = [];
+    const controller = new RemoteDesktopController({
+      hostPath: 'unused',
+      createTransport: () => native,
+    });
+
+    const starting = controller.start(phoneA, endpoint, (event) => events.push(event));
+    native.emit({
+      type: 'error',
+      sessionId: null,
+      code: 'lease-busy',
+      message: 'not public',
+    });
+
+    await expect(starting).resolves.toEqual({
+      ok: false,
+      reason: 'unavailable',
+      errorCode: 'SERVICE_UNAVAILABLE',
+    });
+    expect(native.stop).toHaveBeenCalledOnce();
+    expect(events).toEqual([]);
+  });
+
+  it('serializes duplicate same-client starts behind one native readiness result', async () => {
+    const native = new FakeNativeTransport();
+    const controller = new RemoteDesktopController({
+      hostPath: 'unused',
+      createTransport: () => native,
+    });
+    let duplicateSettled = false;
+
+    const first = controller.start(phoneA, endpoint, vi.fn());
+    const duplicate = controller.start(phoneA, endpoint, vi.fn()).finally(() => {
+      duplicateSettled = true;
+    });
+    await Promise.resolve();
+
+    expect(duplicateSettled).toBe(false);
+    expect(native.sent).toHaveLength(1);
+    native.emit({ type: 'ready', protocolVersion: 1, service: 'ready' });
+
+    const [firstResult, duplicateResult] = await Promise.all([first, duplicate]);
+    expect(firstResult).toMatchObject({ ok: true, resumed: false });
+    expect(duplicateResult).toMatchObject({
+      ok: true,
+      sessionId: firstResult.ok ? firstResult.sessionId : 'unexpected',
+      resumed: false,
+    });
+  });
+
+  it('waits for the prior PID teardown before starting a fast same-client resume', async () => {
+    let finishFirstStop!: () => void;
+    const firstStop = new Promise<void>((resolve) => {
+      finishFirstStop = resolve;
+    });
+    const transports: FakeNativeTransport[] = [];
+    const controller = new RemoteDesktopController({
+      hostPath: 'unused',
+      createTransport: () => {
+        const transport = new FakeNativeTransport();
+        if (transports.length === 0) {
+          transport.stop.mockImplementationOnce(() => firstStop);
+        }
+        transports.push(transport);
+        return transport;
+      },
+    });
+
+    const firstStarting = controller.start(phoneA, endpoint, vi.fn());
+    transports[0].emit({ type: 'ready', protocolVersion: 1, service: 'ready' });
+    const first = await firstStarting;
+    if (!first.ok) throw new Error('expected a successful first session');
+
+    controller.disconnected(phoneA.clientId);
+    const resumedStarting = controller.start(phoneA, endpoint, vi.fn());
+    await Promise.resolve();
+    expect(transports).toHaveLength(1);
+
+    finishFirstStop();
+    await vi.waitFor(() => expect(transports).toHaveLength(2));
+    transports[1].emit({ type: 'ready', protocolVersion: 1, service: 'ready' });
+    await expect(resumedStarting).resolves.toMatchObject({
+      ok: true,
+      sessionId: first.sessionId,
+      resumed: true,
+    });
   });
 });

@@ -57,6 +57,7 @@ native/**/target/
 # Loose packaged zip at repo root (bundle/zip-maker output, not an out-*/ dir)
 /ezterminal.zip
 /release-assets/
+/artifacts/
 # Packaged installers / app binaries — never commit build artifacts to source
 # (guards against a stray `EZTerminal-Setup*.exe` / APK at the repo root)
 *.exe

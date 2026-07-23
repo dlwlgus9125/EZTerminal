@@ -16,7 +16,8 @@ export default defineConfig({
   testDir: "./visual",
   fullyParallel: false,
   workers: 1,
-  retries: configuredRetries(process.env.CI ? 1 : 0),
+  timeout: 60_000,
+  retries: configuredRetries(0),
   reporter: "list",
   snapshotPathTemplate: "{testDir}/__snapshots__/{testFilePath}/{arg}{ext}",
   use: {

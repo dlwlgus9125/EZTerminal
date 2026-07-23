@@ -50,11 +50,15 @@ import type {
   WorktreeResult,
 } from '../shared/worktree';
 import { evaluate, parse } from './core';
-import { describeError, runBlock, type BlockHandle } from './block-runner';
-import { runPtySession, clampDim, type PtySession, type PtyAttachHandle } from './pty-session';
-import { runScriptSession, type HostChannel, type HostToInterpreterMsg, type ScriptSession, type SpawnHost } from './script-runner';
+import { describeError, runBlock } from './block-runner';
+import {
+  startExecutionAdapter,
+  type ActiveExecutionAdapter,
+} from './execution-adapter';
+import { runPtySession, clampDim, type PtyAttachHandle } from './pty-session';
+import { runScriptSession, type HostChannel, type HostToInterpreterMsg, type SpawnHost } from './script-runner';
 import { runSshSession, type KnownHostCheckResult, type SshSession, type SshSessionDeps } from './ssh-session';
-import { runSshForwardCommand, type SshForwardCommandSession } from './ssh-forward-command';
+import { runSshForwardCommand } from './ssh-forward-command';
 import { bridgeSshForwardStream, rejectSshForwardStream, type SshForwardPort } from './ssh-forward-stream-bridge';
 import { createSshClient } from './external/ssh-client';
 import { resolveSshConfigAlias } from './external/ssh-config-resolver';
@@ -121,11 +125,7 @@ interface AttachPortState {
  */
 class ExecutionSession implements Execution {
   private readonly ac = new AbortController();
-  private handle: BlockHandle | null = null;
-  private ptySession: PtySession | null = null;
-  private scriptSession: ScriptSession | null = null;
-  private sshSession: SshSession | null = null;
-  private sshForwardCommandSession: SshForwardCommandSession | null = null;
+  private activeExecution: ActiveExecutionAdapter | null = null;
   private primaryPort: MessagePortMain | null = null;
   // The port currently holding PTY resize authority (control handoff, M8a).
   // Starts as the primary (set alongside it in `run()`) so pre-M8a behavior
@@ -177,6 +177,14 @@ class ExecutionSession implements Execution {
     let startSent = false;
     const send = (frame: InterpreterFrame): void => {
       if (this.disposed) return;
+      const isTerminal =
+        frame.type === 'end'
+        || frame.type === 'error'
+        || frame.type === 'cancelled';
+      // Concrete runners already guard their own terminal state, but this is
+      // the cross-adapter invariant: even a late callback racing teardown can
+      // never fan out or replay a second terminal frame.
+      if (isTerminal && this.lastTerminal !== null) return;
       // Attach the session cwd onto the terminal `end` frame so the renderer's
       // prompt reflects a `cd` (cwd AFTER the command). The pure block-runner that
       // emits `end` stays cwd-agnostic; the session-aware wrapper augments it here.
@@ -185,9 +193,7 @@ class ExecutionSession implements Execution {
       this.broadcast(outFrame);
       // A terminal frame settles the foreground run (freeing the session), but the
       // port stays OPEN so the renderer can keep paging the completed result.
-      if (frame.type === 'end' || frame.type === 'error' || frame.type === 'cancelled') {
-        this.settle();
-      }
+      if (isTerminal) this.settle();
     };
 
     this.wirePort(port, /* isPrimary */ true);
@@ -218,41 +224,47 @@ class ExecutionSession implements Execution {
       executionKind = data.kind === 'ssh-stream' ? 'ssh' : 'local';
       send({ type: 'start', commandText, cwd: startCwd, executionKind });
       startSent = true;
-      // A `!cmd` interactive program is a live PTY/TUI, not a paged result — it
-      // bypasses the ResultStore/window machinery and runs through runPtySession.
-      if (data.kind === 'pty-stream') {
-        this.lastDims = { cols: PTY_INITIAL_COLS, rows: PTY_INITIAL_ROWS };
-        this.ptySession = runPtySession(data, send, signal, PTY_INITIAL_COLS, PTY_INITIAL_ROWS);
-      } else if (data.kind === 'script-stream') {
-        // run-script (E4): a script-host round-trip, not a row/byte source —
-        // routed like the pty-stream branch above (see script-runner.ts).
-        this.scriptSession = runScriptSession(data, ctx, send, signal, spawnScriptHost);
-      } else if (data.kind === 'ssh-stream') {
-        // ssh-connect (E5): TOFU + credential prompts precede a pty-shaped
-        // channel — routed like the pty-stream branch above (see ssh-session.ts).
-        // Same PTY_INITIAL_COLS/ROWS grid: runSshSession's shell() call defaults
-        // to the same 80x24 when not passed explicit initialCols/initialRows.
-        this.lastDims = { cols: PTY_INITIAL_COLS, rows: PTY_INITIAL_ROWS };
-        const connectionId = randomUUID();
-        this.sshSession = runSshSession(
-          data,
-          send,
-          signal,
-          sshSessionDeps,
-          PTY_INITIAL_COLS,
-          PTY_INITIAL_ROWS,
-          connectionId,
-          {
-            onReady: (session) => registerSshConnection(session),
-            onClosed: (id) => {
-              unregisterSshConnection(id);
-              send({ type: 'ssh-connection', connectionId: id, state: 'closed' });
+      this.activeExecution = startExecutionAdapter(data, {
+        startStructured: (structuredData) => runBlock(structuredData, send, signal),
+        // A `!cmd` interactive program is a live PTY/TUI, not a paged result.
+        startPty: (ptyData) => {
+          this.lastDims = { cols: PTY_INITIAL_COLS, rows: PTY_INITIAL_ROWS };
+          return runPtySession(
+            ptyData,
+            send,
+            signal,
+            PTY_INITIAL_COLS,
+            PTY_INITIAL_ROWS,
+          );
+        },
+        // run-script is a host round-trip which later exposes ordinary paging.
+        startScript: (scriptData) => (
+          runScriptSession(scriptData, ctx, send, signal, spawnScriptHost)
+        ),
+        // SSH owns TOFU/prompt/channel setup but presents terminal controls at
+        // the same ActiveExecutionAdapter seam once started.
+        startSsh: (sshData) => {
+          this.lastDims = { cols: PTY_INITIAL_COLS, rows: PTY_INITIAL_ROWS };
+          const connectionId = randomUUID();
+          return runSshSession(
+            sshData,
+            send,
+            signal,
+            sshSessionDeps,
+            PTY_INITIAL_COLS,
+            PTY_INITIAL_ROWS,
+            connectionId,
+            {
+              onReady: (session) => registerSshConnection(session),
+              onClosed: (id) => {
+                unregisterSshConnection(id);
+                send({ type: 'ssh-connection', connectionId: id, state: 'closed' });
+              },
             },
-          },
-        );
-      } else if (data.kind === 'ssh-forward-command') {
-        this.sshForwardCommandSession = runSshForwardCommand(
-          data,
+          );
+        },
+        startForward: (forwardData) => runSshForwardCommand(
+          forwardData,
           send,
           signal,
           (request, requestSignal) => requestSshForward(
@@ -260,10 +272,8 @@ class ExecutionSession implements Execution {
             this.requestOrigin,
             requestSignal,
           ),
-        );
-      } else {
-        this.handle = runBlock(data, send, signal);
-      }
+        ),
+      });
     } catch (err) {
       // Synchronous parse/evaluate failure: there is nothing to page, so emit the
       // terminal frame and dispose immediately.
@@ -293,7 +303,8 @@ class ExecutionSession implements Execution {
     // SSH output currently has no independent replayable transport. Silently
     // attaching would grant input/control to a mirror that receives no PTY
     // bytes, so fail closed without touching the primary SSH channel.
-    if (this.sshSession) {
+    const lateAttach = this.activeExecution?.lateAttach;
+    if (lateAttach?.mode === 'unsupported') {
       try {
         port.postMessage({
           type: 'pty-restore-warning',
@@ -308,11 +319,11 @@ class ExecutionSession implements Execution {
       } catch {
         // The requesting mirror already disconnected; the primary stays live.
       }
-      return { accepted: false, reason: 'ssh-unsupported' };
+      return { accepted: false, reason: lateAttach.reason };
     }
     let ptyHandle: PtyAttachHandle | null = null;
-    if (this.ptySession) {
-      ptyHandle = this.ptySession.attach((bytes) => {
+    if (lateAttach?.mode === 'pty-replay') {
+      ptyHandle = lateAttach.attach((bytes) => {
         try {
           port.postMessage({ type: 'pty-data', data: bytes } satisfies InterpreterFrame);
         } catch {
@@ -400,11 +411,18 @@ class ExecutionSession implements Execution {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    void this.handle?.dispose();
-    this.ptySession?.dispose();
-    this.scriptSession?.dispose();
-    this.sshSession?.dispose();
-    this.sshForwardCommandSession?.dispose();
+    // Closing/dismissing a live structured stream must interrupt a pending
+    // iterator.next() before its store queues iterator.return(). In particular,
+    // a quiet external child otherwise has no event that can unblock teardown.
+    this.ac.abort();
+    const executionCleanup = this.activeExecution?.dispose();
+    this.activeExecution = null;
+    void executionCleanup?.catch(() => {
+      // The execution is already detached from every transport. Observe the
+      // rejection so a best-effort file cleanup cannot crash the shared utility
+      // process through an unhandled promise rejection.
+      console.error('[interpreter] execution cleanup failed');
+    });
     this.settle();
     try {
       this.primaryPort?.close();
@@ -595,13 +613,10 @@ class ExecutionSession implements Execution {
         break;
       case 'requestRows':
       case 'setViewport':
-        this.handle?.handleControl(control);
-        this.scriptSession?.handleControl(control);
-        this.sshForwardCommandSession?.handleControl(control);
+        this.activeExecution?.handleControl(control);
         break;
       case 'pty-input':
-        this.ptySession?.write(control.data);
-        this.sshSession?.write(control.data);
+        this.activeExecution?.handleControl(control);
         break;
       case 'pty-resize': {
         // Gated to the CONTROL port only (control handoff, M8a — same pattern
@@ -613,8 +628,7 @@ class ExecutionSession implements Execution {
         if (port !== this.effectiveControlPort()) break;
         const cols = clampDim(control.cols);
         const rows = clampDim(control.rows);
-        this.ptySession?.resize(cols, rows);
-        this.sshSession?.resize(cols, rows);
+        this.activeExecution?.handleControl({ type: 'pty-resize', cols, rows });
         this.lastDims = { cols, rows };
         // Every OTHER open port learns the new dims — including the primary,
         // now that it is not guaranteed to be the one who set them.
@@ -623,8 +637,7 @@ class ExecutionSession implements Execution {
       }
       case 'pty-ack':
         if (port === this.primaryPort) {
-          this.ptySession?.ack(control.bytes);
-          this.sshSession?.ack(control.bytes);
+          this.activeExecution?.handleControl(control);
         } else {
           // This attach port's own pacing — delegated entirely to
           // pty-session.ts's `PtyAttachHandle` (T2.2e), isolated from the
@@ -636,7 +649,7 @@ class ExecutionSession implements Execution {
         this.claimControl(port);
         break;
       case 'ssh-prompt-response':
-        this.sshSession?.handlePromptResponse(control);
+        this.activeExecution?.handleControl(control);
         break;
       default:
         break;

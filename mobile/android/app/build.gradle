@@ -1,5 +1,19 @@
 apply plugin: 'com.android.application'
 
+def releaseContractFile = rootProject.file('../../release/version.json')
+if (!releaseContractFile.isFile()) {
+    throw new GradleException("Missing release version contract: ${releaseContractFile}")
+}
+def releaseContract = new groovy.json.JsonSlurper().parse(releaseContractFile)
+if (
+    releaseContract.schemaVersion != 1 ||
+    !(releaseContract.version ==~ /\d+\.\d+\.\d+/) ||
+    !(releaseContract.androidVersionCode instanceof Number) ||
+    releaseContract.androidVersionCode.intValue() < 1
+) {
+    throw new GradleException("Invalid release version contract: ${releaseContractFile}")
+}
+
 def releaseSigning = [
     storeFile: System.getenv('ANDROID_KEYSTORE_PATH'),
     storePassword: System.getenv('ANDROID_KEYSTORE_PASSWORD'),
@@ -28,8 +42,8 @@ android {
         applicationId "com.ezterminal.remote"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 23
-        versionName "1.0.2"
+        versionCode releaseContract.androidVersionCode.intValue()
+        versionName releaseContract.version
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
