@@ -143,5 +143,7 @@ describe('applyAndVerifyWindowsAcl', () => {
     await file.init();
     await expect(file.writeAtomic('secret')).resolves.toBeUndefined();
     await expect(file.readText()).resolves.toBe('secret');
-  }, 15_000);
+  // The product command still fails at 15 s. Leave the harness enough time to
+  // observe that callback under a fully concurrent Windows test run.
+  }, 20_000);
 });

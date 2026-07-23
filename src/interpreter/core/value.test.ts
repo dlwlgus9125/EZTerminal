@@ -86,6 +86,18 @@ describe('serialization + column inference', () => {
     });
   });
 
+  it('serializes only own fields while preserving their insertion order', () => {
+    const fields = Object.create({ inherited: stringValue('hidden') }) as Record<
+      string,
+      ReturnType<typeof stringValue> | ReturnType<typeof numberValue>
+    >;
+    fields.name = stringValue('a');
+    fields.count = numberValue(2);
+
+    expect(Object.keys(recordToJson(recordValue(fields)))).toEqual(['name', 'count']);
+    expect(recordToJson(recordValue(fields))).toEqual({ name: 'a', count: 2 });
+  });
+
   it('infers columns with value kinds, preserving order', () => {
     const rec = recordValue({ n: numberValue(1), name: stringValue('x') });
     expect(inferColumns(rec)).toEqual([

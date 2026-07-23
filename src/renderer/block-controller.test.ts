@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ANSI_PENDING_MAX_CHARS } from '../interpreter/external/ansi';
 import type { InterpreterFrame, RendererControl } from '../shared/ipc';
 import { BlockController, NOTIFY_THROTTLE_MS, PTY_ACK_QUANTUM } from './block-controller';
 
@@ -142,10 +143,23 @@ describe('BlockController — windowing / prune / dedup', () => {
   });
 
   it('settles a running block when its interpreter transport is interrupted', () => {
-    const { controller } = make();
+    const { port, controller } = make();
+    const order: string[] = [];
+    controller.setPlainDataSink(
+      (html) => order.push(`data:${html}`),
+      () => order.push('flush'),
+    );
+    order.length = 0;
+    controller.subscribe(() => {
+      if (controller.getSnapshot().status === 'error') order.push('error');
+    });
+    port.deliver({ type: 'pty-data', data: new Uint8Array([0xe2, 0x82]) });
+
     controller.markTransportInterrupted('interpreter restarted');
     expect(controller.getSnapshot().status).toBe('error');
     expect(controller.getSnapshot().errorMessage).toBe('interpreter restarted');
+    expect(order[0]).toContain('data:\ufffd');
+    expect(order.slice(1)).toEqual(['flush', 'error']);
 
     controller.markTransportInterrupted('late duplicate');
     expect(controller.getSnapshot().errorMessage).toBe('interpreter restarted');
@@ -429,6 +443,27 @@ describe('BlockController — PTY block, plain mode (Phase 3 adaptive-render def
     expect(controller.getSnapshot().version).toBe(versionBefore);
   });
 
+  it('delivers one large live PTY frame to the plain sink in bounded ordered fragments', () => {
+    const { port, controller } = make();
+    port.deliver({ type: 'schema', shape: 'pty', columns: [] });
+    const received: string[] = [];
+    controller.setPlainDataSink((html) => received.push(html));
+    const text = 'x'.repeat((ANSI_PENDING_MAX_CHARS * 2) + 17);
+
+    port.deliver({ type: 'pty-data', data: new Uint8Array(Buffer.from(text, 'utf8')) });
+
+    expect(received).toHaveLength(3);
+    expect(received.every((html) => html.length <= ANSI_PENDING_MAX_CHARS)).toBe(true);
+    expect(received.join('')).toBe(text);
+    expect(controller.getPtyFlow()).toEqual({
+      received: text.length,
+      consumed: text.length,
+    });
+    expect(port.posted.filter((message) => message.type === 'pty-ack')).toEqual([
+      { type: 'pty-ack', bytes: text.length },
+    ]);
+  });
+
   it('replays the already-accumulated HTML to a late-registering plain sink', () => {
     const { port, controller } = make();
     port.deliver({ type: 'schema', shape: 'pty', columns: [] });
@@ -443,6 +478,20 @@ describe('BlockController — PTY block, plain mode (Phase 3 adaptive-render def
     expect(received.join('')).toContain('-late');
   });
 
+  it('replays a retained large PTY frame to a late plain sink in bounded fragments', () => {
+    const { port, controller } = make();
+    port.deliver({ type: 'schema', shape: 'pty', columns: [] });
+    const text = 'r'.repeat((ANSI_PENDING_MAX_CHARS * 2) + 31);
+    port.deliver({ type: 'pty-data', data: new Uint8Array(Buffer.from(text, 'utf8')) });
+
+    const replayed: string[] = [];
+    controller.setPlainDataSink((html) => replayed.push(html));
+
+    expect(replayed).toHaveLength(3);
+    expect(replayed.every((html) => html.length <= ANSI_PENDING_MAX_CHARS)).toBe(true);
+    expect(replayed.join('')).toBe(text);
+  });
+
   it('acks IMMEDIATELY (no flush to wait for) once a quantum of plain bytes is received', () => {
     const { port, controller } = make();
     port.deliver({ type: 'schema', shape: 'pty', columns: [] });
@@ -452,6 +501,101 @@ describe('BlockController — PTY block, plain mode (Phase 3 adaptive-render def
 
     expect(port.posted).toContainEqual({ type: 'pty-ack', bytes: PTY_ACK_QUANTUM });
     expect(controller.getPtyFlow()).toEqual({ received: PTY_ACK_QUANTUM, consumed: PTY_ACK_QUANTUM });
+  });
+
+  it('falls back to bounded raw xterm replay without stranding ACKs when the plain sink throws', () => {
+    const { port, controller } = make();
+    const report = vi.spyOn(console, 'error').mockImplementation(() => {});
+    controller.setPlainDataSink(() => {
+      throw new Error('synthetic DOM failure');
+    });
+
+    port.deliver({ type: 'pty-data', data: new Uint8Array(PTY_ACK_QUANTUM) });
+
+    expect(controller.getSnapshot().ptyRenderMode).toBe('xterm');
+    expect(controller.getPtyFlowAccounting()).toEqual({
+      received: PTY_ACK_QUANTUM,
+      consumed: PTY_ACK_QUANTUM,
+      acked: PTY_ACK_QUANTUM,
+    });
+    expect(port.posted.filter((message) => message.type === 'pty-ack')).toEqual([
+      { type: 'pty-ack', bytes: PTY_ACK_QUANTUM },
+    ]);
+
+    const replayed: number[] = [];
+    controller.setPtyDataSink((bytes, onFlushed) => {
+      replayed.push(bytes.byteLength);
+      onFlushed();
+    });
+    expect(replayed).toEqual([PTY_ACK_QUANTUM]);
+    expect(port.posted.filter((message) => message.type === 'pty-ack')).toHaveLength(1);
+    expect(report).toHaveBeenCalledOnce();
+    report.mockRestore();
+  });
+
+  it('publishes terminal completion after a plain DOM flush failure', () => {
+    const { port, controller } = make();
+    const report = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let failFlush = false;
+    controller.setPlainDataSink(
+      () => {},
+      () => {
+        if (failFlush) throw new Error('synthetic flush failure');
+      },
+    );
+    failFlush = true;
+
+    port.deliver({ type: 'end' });
+
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'done',
+      ptyRenderMode: 'xterm',
+    });
+    expect(report).toHaveBeenCalledOnce();
+    report.mockRestore();
+  });
+
+  it('flushes pending plain DOM output before publishing terminal completion', () => {
+    const { port, controller } = make();
+    const order: string[] = [];
+    controller.setPlainDataSink(
+      (html) => order.push(`data:${html}`),
+      () => order.push('flush'),
+    );
+    order.length = 0; // Ignore the empty replay's registration flush.
+    controller.subscribe(() => {
+      if (controller.getSnapshot().status === 'done') order.push('done');
+    });
+
+    port.deliver({ type: 'pty-data', data: new Uint8Array(Buffer.from('marker', 'utf8')) });
+    port.deliver({ type: 'end' });
+
+    expect(order).toEqual(['data:marker', 'flush', 'done']);
+  });
+
+  it.each([
+    ['end', { type: 'end' }],
+    ['error', { type: 'error', message: 'failed' }],
+    ['cancelled', { type: 'cancelled' }],
+  ] as const)('finishes a split UTF-8 tail before %s status publication', (_name, terminal) => {
+    const { port, controller } = make();
+    const order: string[] = [];
+    controller.setPlainDataSink(
+      (html) => order.push(`data:${html}`),
+      () => order.push('flush'),
+    );
+    order.length = 0;
+    controller.subscribe(() => {
+      const status = controller.getSnapshot().status;
+      if (status !== 'running') order.push(`status:${status}`);
+    });
+
+    port.deliver({ type: 'pty-data', data: new Uint8Array([0xe2, 0x82]) });
+    port.deliver(terminal);
+
+    expect(order[0]).toContain('data:\ufffd');
+    expect(order[1]).toBe('flush');
+    expect(order[2]).toMatch(/^status:/);
   });
 
   it('unsubscribing the plain sink stops delivery', () => {

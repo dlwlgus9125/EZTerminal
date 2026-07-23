@@ -4,7 +4,11 @@ param(
     [string]$Api35Avd = 'EZTerminalApi35',
 
     [Parameter(Mandatory = $true)]
-    [string]$PerformanceBaselinePath
+    [string]$PerformanceBaselinePath,
+
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[0-9A-Fa-f]{40}$')]
+    [string]$PerformanceBaselineBuildSha
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,6 +48,158 @@ function Assert-EmbeddedBuildSha {
         if ($bundle -match 'buildSha\s*:\s*["'']dev["'']') {
             throw "$bundlePath still contains buildSha=dev."
         }
+    }
+}
+
+function Assert-CleanGitTree {
+    param([string]$Phase)
+    $dirty = @(git status --porcelain --untracked-files=all)
+    if ($dirty.Count -ne 0) {
+        $dirty | ForEach-Object { Write-Host $_ }
+        throw "The RC gate must have a clean, frozen commit ($Phase)."
+    }
+}
+
+function Assert-FileEvidence {
+    param(
+        [object]$Evidence,
+        [string]$ExpectedLogicalPath,
+        [string]$ActualPath,
+        [string]$Label
+    )
+    if (-not (Test-Path -LiteralPath $ActualPath -PathType Leaf)) {
+        throw "$Label source file is missing: $ActualPath"
+    }
+    $actualHash = (Get-FileHash -LiteralPath $ActualPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualBytes = (Get-Item -LiteralPath $ActualPath).Length
+    if (
+        [string]$Evidence.path -cne $ExpectedLogicalPath -or
+        [string]$Evidence.sha256 -cne $actualHash -or
+        [int64]$Evidence.bytes -ne $actualBytes
+    ) {
+        throw "$Label does not match $ExpectedLogicalPath."
+    }
+}
+
+function Assert-CandidatePerformanceProvenance {
+    param([object]$Report, [string]$ExpectedSha, [string]$ExpectedVersion)
+
+    $releaseVersion = Get-Content -LiteralPath (Join-Path $repoRoot 'release\version.json') -Raw |
+        ConvertFrom-Json
+    $product = $Report.provenance.product
+    $harness = $Report.provenance.harness
+    if (
+        [int]$Report.schemaVersion -ne 2 -or
+        [string]$Report.evidenceMode -cne 'release' -or
+        [string]$Report.buildSha -cne $ExpectedSha -or
+        [string]$product.name -cne 'EZTerminal' -or
+        [string]$product.version -cne $ExpectedVersion -or
+        [int]$product.protocolVersion -ne [int]$releaseVersion.protocolVersion -or
+        [string]$product.buildSha -cne $ExpectedSha -or
+        [string]$product.source.gitHeadSha -cne $ExpectedSha -or
+        [bool]$product.source.workingTreeDirty -or
+        [string]$harness.source.gitHeadSha -cne $ExpectedSha -or
+        [bool]$harness.source.workingTreeDirty
+    ) {
+        throw 'The desktop performance report has invalid exact-SHA product or clean-tree provenance.'
+    }
+
+    $electronVersion = (
+        Get-Content -LiteralPath (Join-Path $repoRoot 'node_modules\electron\package.json') -Raw |
+            ConvertFrom-Json
+    ).version
+    $playwrightVersion = (
+        Get-Content -LiteralPath (Join-Path $repoRoot 'node_modules\@playwright\test\package.json') -Raw |
+            ConvertFrom-Json
+    ).version
+    $runnerNodeVersion = (& node -p 'process.versions.node').Trim()
+    if (
+        [string]$product.runtime.electron -cne [string]$electronVersion -or
+        [string]$harness.runner.playwright -cne [string]$playwrightVersion -or
+        [string]$harness.runner.node -cne [string]$runnerNodeVersion
+    ) {
+        throw 'The desktop performance report tool versions differ from the installed RC toolchain.'
+    }
+
+    Assert-FileEvidence $product.lock 'pnpm-lock.yaml' `
+        (Join-Path $repoRoot 'pnpm-lock.yaml') 'product lock evidence'
+    Assert-FileEvidence $harness.lock 'pnpm-lock.yaml' `
+        (Join-Path $repoRoot 'pnpm-lock.yaml') 'harness lock evidence'
+    Assert-FileEvidence $harness.spec 'e2e/release-performance.spec.ts' `
+        (Join-Path $repoRoot 'e2e\release-performance.spec.ts') 'performance harness evidence'
+
+    $expectedFixtures = @(
+        [ordered]@{
+            id = 'largePlainOutput'
+            path = 'e2e/fixtures/large-plain-output.js'
+            actual = Join-Path $repoRoot 'e2e\fixtures\large-plain-output.js'
+            stdoutBytes = 1101119
+            stdoutSha256 = 'bbab0e75bbec8e2b80d281ab814a67d841e03167099d787a407d69a038ed717a'
+            marker = 'LARGE-OUTPUT-DONE'
+        },
+        [ordered]@{
+            id = 'retentionPressureOutput'
+            path = 'e2e/fixtures/retention-pressure-output.js'
+            actual = Join-Path $repoRoot 'e2e\fixtures\retention-pressure-output.js'
+            stdoutBytes = 12012025
+            stdoutSha256 = '8f4d6337d2637244a47991f82383f798e78b36a145b579c01c027b6a3bdeced7'
+            marker = 'RETENTION-PRESSURE-DONE'
+        }
+    )
+    $reportedFixtures = @($harness.fixtures)
+    if ($reportedFixtures.Count -ne $expectedFixtures.Count) {
+        throw 'The desktop performance report fixture set is incomplete.'
+    }
+    for ($index = 0; $index -lt $expectedFixtures.Count; $index += 1) {
+        $expected = $expectedFixtures[$index]
+        $reported = $reportedFixtures[$index]
+        Assert-FileEvidence $reported $expected.path $expected.actual "fixture evidence $($expected.id)"
+        if (
+            [string]$reported.id -cne $expected.id -or
+            [int64]$reported.stdoutBytes -ne $expected.stdoutBytes -or
+            [string]$reported.stdoutSha256 -cne $expected.stdoutSha256 -or
+            [string]$reported.completionMarker -cne $expected.marker
+        ) {
+            throw "Fixture output metadata differs for $($expected.id)."
+        }
+    }
+
+    $viteRoot = Join-Path $repoRoot '.vite'
+    $expectedArtifacts = @(
+        'build/main.js',
+        'build/preload.js',
+        'build/interpreter-process.js',
+        'build/script-host.js',
+        'build/packet-capture-host.js'
+    ) | ForEach-Object {
+        [ordered]@{
+            path = $_
+            actual = Join-Path $viteRoot ($_.Replace('/', '\'))
+        }
+    }
+    $expectedArtifacts += @(
+        Get-ChildItem -LiteralPath (Join-Path $viteRoot 'renderer\main_window') -Recurse -File |
+            ForEach-Object {
+                [ordered]@{
+                    path = $_.FullName.Substring($viteRoot.Length + 1).Replace('\', '/')
+                    actual = $_.FullName
+                }
+            }
+    )
+    $reportedArtifacts = @($product.launchArtifacts.files)
+    if (
+        [string]$product.launchArtifacts.entry -cne 'build/main.js' -or
+        $reportedArtifacts.Count -ne $expectedArtifacts.Count
+    ) {
+        throw 'The desktop performance report launch artifact set is incomplete.'
+    }
+    foreach ($expected in $expectedArtifacts) {
+        $matches = @($reportedArtifacts | Where-Object { [string]$_.path -ceq $expected.path })
+        if ($matches.Count -ne 1) {
+            throw "The desktop performance report does not uniquely identify $($expected.path)."
+        }
+        Assert-FileEvidence $matches[0] $expected.path $expected.actual `
+            "launch artifact evidence $($expected.path)"
     }
 }
 
@@ -145,13 +301,14 @@ if (-not (Test-Path -LiteralPath $adb) -or -not (Test-Path -LiteralPath $emulato
 }
 Push-Location $repoRoot
 try {
-    $dirty = @(git status --porcelain --untracked-files=all)
-    if ($dirty.Count -ne 0) {
-        $dirty | ForEach-Object { Write-Host $_ }
-        throw 'The RC gate must start from a clean, frozen commit.'
-    }
+    Assert-CleanGitTree 'before validation'
     $sha = (& git rev-parse HEAD).Trim()
     $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+    $expectedNodeVersion = (Get-Content .nvmrc -Raw).Trim().TrimStart('v')
+    $actualNodeVersion = (& node -p 'process.versions.node').Trim()
+    if ($LASTEXITCODE -ne 0 -or $actualNodeVersion -cne $expectedNodeVersion) {
+        throw "Release validation requires Node $expectedNodeVersion; current Node is $actualNodeVersion."
+    }
     $env:EZTERMINAL_PLAYWRIGHT_RETRIES = '0'
     $env:EZTERMINAL_RUN_RELEASE_PERFORMANCE = '1'
     $env:EZTERMINAL_BUILD_SHA = $sha
@@ -162,6 +319,35 @@ try {
     $reportDirectory = Join-Path $repoRoot 'release-assets'
     New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
     $resolvedPerformanceBaseline = (Resolve-Path -LiteralPath $PerformanceBaselinePath).Path
+    $normalizedPerformanceBaselineBuildSha = $PerformanceBaselineBuildSha.ToLowerInvariant()
+    $performanceBaseline = Get-Content -LiteralPath $resolvedPerformanceBaseline -Raw |
+        ConvertFrom-Json
+    if (
+        [int]$performanceBaseline.schemaVersion -ne 2 -or
+        [string]$performanceBaseline.evidenceMode -cne 'release' -or
+        [string]$performanceBaseline.buildSha -cne $normalizedPerformanceBaselineBuildSha -or
+        [string]$performanceBaseline.provenance.product.buildSha -cne `
+            $normalizedPerformanceBaselineBuildSha -or
+        [string]$performanceBaseline.provenance.product.source.gitHeadSha -cne `
+            $normalizedPerformanceBaselineBuildSha -or
+        [string]$performanceBaseline.provenance.harness.runner.node -cne $actualNodeVersion -or
+        [string]$performanceBaseline.environment.hostFingerprint.algorithm -cne `
+            'windows-machine-guid-sha256-v1' -or
+        [string]$performanceBaseline.environment.hostFingerprint.sha256 -cnotmatch `
+            '^[0-9a-f]{64}$' -or
+        [string]$performanceBaseline.environment.powerPlan.schemeGuid -cnotmatch `
+            '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
+        [string]$performanceBaseline.environment.powerPlan.powerSource -cnotmatch `
+            '^(ac|dc)$' -or
+        [string]$performanceBaseline.environment.powerPlan.effectivePowerMode -cnotmatch `
+            '^(battery-saver|better-battery|balanced|high-performance|max-performance)$' -or
+        [string]$performanceBaseline.environment.powerPlan.baseSettingsSha256 -cnotmatch `
+            '^[0-9a-f]{64}$' -or
+        [string]$performanceBaseline.environment.powerPlan.effectiveSettingsSha256 -cnotmatch `
+            '^[0-9a-f]{64}$'
+    ) {
+        throw 'The baseline report is not same-host/power-plan schema-v2 evidence for this Node toolchain and -PerformanceBaselineBuildSha.'
+    }
     $performanceReportPath = Join-Path $reportDirectory 'desktop-performance-report.json'
     if (Test-Path -LiteralPath $performanceReportPath) {
         Remove-Item -LiteralPath $performanceReportPath -Force
@@ -189,18 +375,25 @@ try {
     }
     $performanceReport = Get-Content -LiteralPath $performanceReportPath -Raw | ConvertFrom-Json
     if (
-        [int]$performanceReport.schemaVersion -ne 1 -or
-        [string]$performanceReport.buildSha -ne $sha -or
+        [int]$performanceReport.schemaVersion -ne 2 -or
+        [string]$performanceReport.evidenceMode -cne 'release' -or
+        [string]$performanceReport.buildSha -cne $sha -or
         [int]$performanceReport.warmupRuns -ne 5 -or
-        [int]$performanceReport.measurementRuns -ne 25
+        [int]$performanceReport.measurementRuns -ne 25 -or
+        (@($performanceReport.metricOrder) -join ',') -cne (
+            'cancellationLatencyMs,rows100kCompletionMs,' +
+            'plainOutput1_1MiBCompletionMs,plainOutput12MiBRetentionPressureMs'
+        )
     ) {
-        throw 'The desktop performance report is not exact-SHA evidence using the approved 5-warmup/25-measurement protocol.'
+        throw 'The desktop performance report is not schema-v2 exact-SHA evidence using the approved ordered 5/25 protocol.'
     }
+    Assert-CandidatePerformanceProvenance $performanceReport $sha $version
     $performanceComparisonJson = & node scripts/verify-performance-report.mjs `
         --baseline $resolvedPerformanceBaseline `
         --candidate $performanceReportPath `
         --max-regression-percent 5 `
         --min-target-improvement-percent 15 `
+        --expected-baseline-build-sha $normalizedPerformanceBaselineBuildSha `
         --expected-candidate-build-sha $sha `
         --target-metrics plainOutput12MiBRetentionPressureMs | Out-String
     if ($LASTEXITCODE -ne 0) {
@@ -211,6 +404,7 @@ try {
     if ($performanceComparison.ok -ne $true) {
         throw 'The desktop performance comparison did not report a passing result.'
     }
+    Assert-CleanGitTree 'after desktop performance measurement'
     $performanceBaselineHash = (
         Get-FileHash -LiteralPath $resolvedPerformanceBaseline -Algorithm SHA256
     ).Hash.ToLowerInvariant()
@@ -256,6 +450,7 @@ try {
         $androidStatus | ForEach-Object { Write-Host $_ }
         throw 'Production Capacitor sync changed Android source. Commit generated updates before release.'
     }
+    Assert-CleanGitTree 'after all candidate validation'
 
     $reportPath = Join-Path $reportDirectory 'local-rc-report.json'
     [ordered]@{
@@ -280,6 +475,9 @@ try {
         mobileConnectionAttemptsPerScenario = 1
         desktopPerformance = [ordered]@{
             status = 'passed'
+            schemaVersion = 2
+            baselineBuildSha = $normalizedPerformanceBaselineBuildSha
+            candidateBuildSha = $sha
             baselineReportSha256 = $performanceBaselineHash
             candidateReportSha256 = $performanceReportHash
             maxP95RegressionPercent = 5

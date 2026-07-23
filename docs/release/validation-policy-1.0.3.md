@@ -66,8 +66,42 @@ GitHub Release에서 수동으로 제공하는 계약을 유지한다.
 
 ```powershell
 ./scripts/verify-release-candidate.ps1 `
-  -PerformanceBaselinePath C:\secure-release-evidence\desktop-performance-baseline.json
+  -PerformanceBaselinePath C:\secure-release-evidence\desktop-performance-baseline.json `
+  -PerformanceBaselineBuildSha <40-character-baseline-commit-sha>
 ```
 
 기준과 후보 보고서는 각각 SHA-256으로 `local-rc-report.json`에 결속되며,
 후보의 원시 25개 표본도 보고서에 포함된다.
+두 보고서는 schema v2의 동일한 순서로 정확히 5회 워밍업과 25회 측정을
+수행해야 한다. 검증기는 외부에서 지정한 기준/후보 commit SHA를 실제 preload
+빌드 SHA와 대조하고, 깨끗한 제품/하네스 Git 상태, 실행 산출물·하네스·fixture와
+lockfile 해시, fixture 출력 바이트 수, 실제 Node/Electron/Playwright 버전을
+검증한다.
+원본 Windows `MachineGuid`는 저장하지 않고 도메인 분리 SHA-256 지문만
+기록한다. 기준과 후보는 이 호스트 지문, 활성 전원 구성표 GUID, 현재 AC/DC
+전원, 공식 Windows effective power mode, base-plan 전체 설정 해시, 활성 overlay
+설정 해시가 모두 같아야 한다. 각 환경 스냅샷 중 상태가 바뀌거나 수집 시작/종료
+상태가 다르거나 Windows가 AC/DC 상태를 판별하지 못해도 실패한다.
+빌드 Node는 `.nvmrc`의 정확한 `24.14.0`으로 고정한다. Release workflow가
+다시 만든 `.vite`의 모든 launch artifact는 성능 측정 때 기록한 바이트 수와
+SHA-256이 정확히 같아야 하므로, 다른 도구 체인이나 비결정적 재빌드 결과는
+게시 산출물로 승격되지 않는다.
+과거 제품 기준선은 해당 commit의 깨끗한 worktree에서 정확한 SHA로 패키징한 뒤,
+현재의 깨끗한 하네스가 `EZTERMINAL_PERFORMANCE_MAIN_ENTRY`로 그
+`.vite/build/main.js`를 실행해 수집한다. 기준선 제품 소스에 새 benchmark 파일을
+복사해서 dirty 상태를 숨기는 방식은 허용하지 않는다.
+
+빠른 로컬 병목 진단은 다음과 같이 릴리스 증거와 분리한다.
+
+```powershell
+$env:EZTERMINAL_RUN_PERFORMANCE_DIAGNOSTIC = '1'
+$env:EZTERMINAL_PERFORMANCE_DIAGNOSTIC_METRICS = 'rows100kCompletionMs'
+$env:EZTERMINAL_PERFORMANCE_DIAGNOSTIC_WARMUP_RUNS = '1'
+$env:EZTERMINAL_PERFORMANCE_DIAGNOSTIC_MEASUREMENT_RUNS = '3'
+pnpm exec playwright test e2e/release-performance.spec.ts
+```
+
+진단 모드는 선택한 지표에 대해 워밍업 0~5회, 측정 1~25회만 허용하고
+`evidenceMode=diagnostic`을 기록한다. 검증기, 로컬 RC, Release workflow는
+진단 보고서를 항상 거부한다. `EZTERMINAL_RUN_RELEASE_PERFORMANCE=1`이면 진단
+환경변수와 무관하게 전체 4개 지표, 5회 워밍업, 25회 측정으로 고정된다.

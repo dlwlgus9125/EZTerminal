@@ -25,6 +25,7 @@ import {
 /** A malformed renderer request must not force an oversized IPC frame. */
 const MAX_WINDOW = 10_000;
 const RECORD_HEADER_BYTES = 4;
+const HOT_RESERVATION_CREDIT_BYTES = 1024 * 1024;
 
 interface Segment {
   readonly start: number;
@@ -38,15 +39,48 @@ interface Segment {
   loading?: Promise<readonly ResultRow[]>;
 }
 
-export interface ResultStoreOptions {
+interface EncodedRecord {
+  readonly json: string;
+  /** Four-byte spill-record framing allowance plus UTF-8 JSON payload. */
+  readonly byteLength: number;
+  readonly decodedHotBytes: number;
+  /** Decoded row plus its pending JSON builder string. */
+  readonly retainedHotBytes: number;
+}
+
+export interface ResultStoreOptions<SourceRow = ResultRow> {
   readonly runtime?: OutputRetentionRuntime;
   readonly limits?: Partial<OutputRetentionLimits>;
+  /** Optional synchronous wire-row projection, fused with the source pull. */
+  readonly mapRow?: (row: SourceRow) => ResultRow;
+  /**
+   * Global producer stop seam (for example, an owning block's AbortSignal).
+   * Checked around every iterator pull so a large target cannot hide abort.
+   */
+  readonly shouldStopPull?: () => boolean;
+  /** Narrow storage seam for deterministic failure-path tests. */
+  readonly fileSystem?: Partial<ResultStoreFileSystem>;
+}
+
+export interface ResultStoreFileSystem {
+  readonly randomBytes: (size: number) => Buffer;
+  readonly writeFile: (
+    path: string,
+    contents: Buffer,
+    options: { readonly flag: 'wx'; readonly mode: number },
+  ) => Promise<void>;
+  readonly remove: (
+    path: string,
+    options: { readonly recursive?: boolean; readonly force: boolean },
+  ) => Promise<void>;
 }
 
 export interface ResultStoreDiagnostics {
   readonly hotBytes: number;
   readonly spillBytes: number;
   readonly segments: number;
+  readonly hotReservationCalls: number;
+  readonly segmentWrites: number;
   readonly runDirectory: string;
 }
 
@@ -65,21 +99,28 @@ export class OutputCapacityError extends Error {
   }
 }
 
-export class ResultStore {
+export class ResultStore<SourceRow = ResultRow> {
   private readonly runtime: OutputRetentionRuntime;
   private readonly limits: OutputRetentionLimits;
   private readonly runDirectory: string;
+  private readonly mapRow: (row: SourceRow) => ResultRow;
+  private readonly shouldStopPull: () => boolean;
+  private readonly fileSystem: ResultStoreFileSystem;
   private readonly segments: Segment[] = [];
   private readonly cacheLru = new Map<string, Segment>();
 
   private pendingRows: ResultRow[] = [];
-  private pendingRecords: Buffer[] = [];
+  private pendingRecords: EncodedRecord[] = [];
   private pendingBytes = 0;
   private pendingHotBytes = 0;
   private pendingDecodedHotBytes = 0;
   private totalRows = 0;
   private hotBytes = 0;
+  /** Globally reserved but not yet consumed builder credit. */
+  private hotCreditBytes = 0;
   private spillBytes = 0;
+  private hotReservationCalls = 0;
+  private segmentWrites = 0;
 
   private done = false;
   private sourceStopped = false;
@@ -91,8 +132,8 @@ export class ResultStore {
   private readonly activeWindowReads = new Set<Promise<unknown>>();
 
   constructor(
-    private readonly iterator: AsyncIterator<ResultRow>,
-    options: ResultStoreOptions = {},
+    private readonly iterator: AsyncIterator<SourceRow>,
+    options: ResultStoreOptions<SourceRow> = {},
   ) {
     this.runtime = options.runtime ?? getDefaultOutputRetentionRuntime();
     this.limits = validateLimits({
@@ -103,6 +144,14 @@ export class ResultStore {
       globalSpillBytes: this.runtime.globalSpillLimit,
     });
     this.runDirectory = this.runtime.createRunDirectory();
+    this.mapRow = options.mapRow ?? ((row) => row as unknown as ResultRow);
+    this.shouldStopPull = options.shouldStopPull ?? (() => false);
+    this.fileSystem = {
+      randomBytes,
+      writeFile: (path, contents, writeOptions) => writeFile(path, contents, writeOptions),
+      remove: (path, removeOptions) => rm(path, removeOptions),
+      ...options.fileSystem,
+    };
   }
 
   /** Rows accepted so far (the running total while filling). */
@@ -136,14 +185,19 @@ export class ResultStore {
    * Advance the source until at least `target` rows are retained, or until a
    * terminal condition. Pulls and segment writes remain strictly serialized.
    */
-  ensure(target: number): Promise<void> {
+  ensure(target: number, shouldPause?: () => boolean): Promise<void> {
     const safeTarget = nonNegativeSafeInteger(target, 'result target');
-    if (safeTarget <= this.totalRows || this.disposed || (this.done && !this.failure)) {
+    if (
+      safeTarget <= this.totalRows
+      || this.disposed
+      || this.shouldStopPull()
+      || (this.done && !this.failure)
+    ) {
       return Promise.resolve();
     }
     if (this.failure) return Promise.reject(this.failure);
 
-    const run = this.advanceChain.then(() => this.advanceUntil(safeTarget));
+    const run = this.advanceChain.then(() => this.advanceUntil(safeTarget, shouldPause));
     this.advanceChain = run.then(
       () => undefined,
       () => undefined,
@@ -151,19 +205,27 @@ export class ResultStore {
     return run;
   }
 
-  private async advanceUntil(target: number): Promise<void> {
-    if (target <= this.totalRows || this.disposed || (this.done && !this.failure)) return;
+  private async advanceUntil(target: number, shouldPause?: () => boolean): Promise<void> {
+    if (
+      target <= this.totalRows
+      || this.disposed
+      || this.shouldStopPull()
+      || (this.done && !this.failure)
+    ) return;
     if (this.failure) throw this.failure;
 
     try {
       while (!this.done && !this.disposed && this.totalRows < target) {
+        if (this.shouldStopPull() || shouldPause?.()) return;
         const next = await this.iterator.next();
-        if (this.disposed || this.done) return;
+        if (this.disposed || this.done || this.shouldStopPull()) return;
         if (next.done) {
           this.done = true;
+          this.releaseUnusedHotCredit();
           break;
         }
-        await this.append(next.value);
+        const pendingAppend = this.append(this.mapRow(next.value));
+        if (pendingAppend) await pendingAppend;
       }
     } catch (error) {
       const retainedError = asError(error);
@@ -175,15 +237,20 @@ export class ResultStore {
       }
       this.failure ??= retainedError;
       this.done = true;
+      this.releaseUnusedHotCredit();
       await this.stopIterator().catch(() => undefined);
       throw this.failure;
     }
   }
 
-  private async append(row: ResultRow): Promise<void> {
+  /**
+   * Retain one row synchronously while the active segment still has room.
+   * Only segment boundaries and the direct-cold fallback return a promise.
+   * Keeping the common path synchronous avoids adding a second microtask hop
+   * to every source pull (100,000 avoidable awaits for `gen-rows 100000`).
+  */
+  private append(row: ResultRow): Promise<void> | undefined {
     const record = encodeRow(row);
-    const decodedHotBytes = estimateJsonHeapBytes(row);
-    const retainedHotBytes = decodedHotBytes + estimateBufferHeapBytes(record.byteLength);
     if (record.byteLength > this.limits.segmentBytes) {
       throw new OutputCapacityError(
         `one row requires ${record.byteLength} bytes; the per-segment limit is ${this.limits.segmentBytes} bytes`,
@@ -194,25 +261,26 @@ export class ResultStore {
       this.pendingRows.length >= this.limits.segmentRows
       || this.pendingBytes + record.byteLength > this.limits.segmentBytes
     ) {
-      await this.flushPending(true);
+      return this.flushAndAppend(row, record, true);
     }
 
-    this.makePerRunHotRoom(retainedHotBytes);
-    let hasRunRoom = this.hotBytes + retainedHotBytes <= this.limits.perRunHotBytes;
-    let reservedHot = hasRunRoom && this.runtime.reserveHot(retainedHotBytes);
-    if ((!reservedHot || !hasRunRoom) && this.pendingRows.length > 0) {
+    return this.appendEncoded(row, record);
+  }
+
+  private appendEncoded(
+    row: ResultRow,
+    record: EncodedRecord,
+  ): Promise<void> | undefined {
+    const { decodedHotBytes, retainedHotBytes } = record;
+    const reservedHot = this.reserveBuilderHot(retainedHotBytes);
+    if (!reservedHot && this.pendingRows.length > 0) {
       // Active builders are not globally evictable. Persist ours without a hot
       // copy, then retry before falling back to a direct cold segment.
-      await this.flushPending(false);
-      this.makePerRunHotRoom(retainedHotBytes);
-      hasRunRoom = this.hotBytes + retainedHotBytes <= this.limits.perRunHotBytes;
-      reservedHot = hasRunRoom && this.runtime.reserveHot(retainedHotBytes);
+      return this.flushAndAppend(row, record, false);
     }
 
     if (!reservedHot) {
-      await this.writeDirectSegment(row, record, decodedHotBytes);
-      this.totalRows += 1;
-      return;
+      return this.writeDirectAndCount(row, record);
     }
 
     this.hotBytes += retainedHotBytes;
@@ -221,6 +289,50 @@ export class ResultStore {
     this.pendingBytes += record.byteLength;
     this.pendingHotBytes += retainedHotBytes;
     this.pendingDecodedHotBytes += decodedHotBytes;
+    this.totalRows += 1;
+  }
+
+  private reserveBuilderHot(bytes: number): boolean {
+    const extraNeeded = Math.max(0, bytes - this.hotCreditBytes);
+    this.makePerRunHotRoom(extraNeeded);
+    const available = this.limits.perRunHotBytes - this.hotBytes - this.hotCreditBytes;
+    if (extraNeeded > available) return false;
+
+    if (extraNeeded > 0) {
+      const reservation = Math.min(
+        Math.max(HOT_RESERVATION_CREDIT_BYTES, extraNeeded),
+        available,
+      );
+      this.hotReservationCalls += 1;
+      if (!this.runtime.reserveHot(reservation)) return false;
+      this.hotCreditBytes += reservation;
+    }
+    this.hotCreditBytes -= bytes;
+    return true;
+  }
+
+  private releaseUnusedHotCredit(): void {
+    if (this.hotCreditBytes === 0) return;
+    this.runtime.releaseHot(this.hotCreditBytes);
+    this.hotCreditBytes = 0;
+  }
+
+  private async flushAndAppend(
+    row: ResultRow,
+    record: EncodedRecord,
+    retainHot: boolean,
+  ): Promise<void> {
+    await this.flushPending(retainHot);
+    const pendingAppend = this.appendEncoded(row, record);
+    if (pendingAppend) await pendingAppend;
+  }
+
+  private async writeDirectAndCount(
+    row: ResultRow,
+    record: EncodedRecord,
+  ): Promise<void> {
+    this.releaseUnusedHotCredit();
+    await this.writeDirectSegment(row, record);
     this.totalRows += 1;
   }
 
@@ -247,16 +359,18 @@ export class ResultStore {
     if (this.pendingRows.length === 0) return;
     const rows = this.pendingRows;
     const records = this.pendingRecords;
-    const bytes = this.pendingBytes;
     const pendingHotBytes = this.pendingHotBytes;
     const decodedHotBytes = this.pendingDecodedHotBytes;
     const start = this.totalRows - rows.length;
+    const contents = encodeSegment(records);
+    if (contents.byteLength > this.limits.segmentBytes) {
+      throw new Error('Result segment exceeded its byte bound');
+    }
     const segment = await this.writeSegment(
       start,
       rows.length,
-      bytes,
       decodedHotBytes,
-      records,
+      contents,
     );
 
     this.pendingRows = [];
@@ -267,9 +381,9 @@ export class ResultStore {
     this.segments.push(segment);
 
     if (retainHot && decodedHotBytes <= this.limits.perRunHotBytes) {
-      const releasedBufferBytes = pendingHotBytes - decodedHotBytes;
-      this.hotBytes -= releasedBufferBytes;
-      this.runtime.releaseHot(releasedBufferBytes);
+      const releasedBuilderBytes = pendingHotBytes - decodedHotBytes;
+      this.hotBytes -= releasedBuilderBytes;
+      this.runtime.releaseHot(releasedBuilderBytes);
       segment.cachedRows = rows;
       this.registerCache(segment);
     } else {
@@ -280,15 +394,14 @@ export class ResultStore {
 
   private async writeDirectSegment(
     row: ResultRow,
-    record: Buffer,
-    decodedHotBytes: number,
+    record: EncodedRecord,
   ): Promise<void> {
+    const contents = encodeSegment([record]);
     const segment = await this.writeSegment(
       this.totalRows,
       1,
-      record.byteLength,
-      decodedHotBytes,
-      [record],
+      record.decodedHotBytes,
+      contents,
     );
     this.segments.push(segment);
     // The row exists only as this method's transient argument; it is not retained.
@@ -298,16 +411,27 @@ export class ResultStore {
   private async writeSegment(
     start: number,
     count: number,
-    bytes: number,
     hotBytes: number,
-    records: readonly Buffer[],
+    contents: Buffer,
   ): Promise<Segment> {
-    const contents = Buffer.concat(records, bytes);
+    const bytes = contents.byteLength;
     this.reserveSpill(bytes);
     for (;;) {
-      const path = join(this.runDirectory, `segment-${randomBytes(16).toString('hex')}.bin`);
+      let path: string;
       try {
-        await writeFile(path, contents, { flag: 'wx', mode: 0o600 });
+        path = join(
+          this.runDirectory,
+          `segment-${this.fileSystem.randomBytes(16).toString('hex')}.bin`,
+        );
+      } catch (error) {
+        // No write was attempted for this reservation, so there can be no
+        // partial file to remove before rolling the reservation back.
+        this.releaseSpillReservation(bytes);
+        throw error;
+      }
+      try {
+        await this.fileSystem.writeFile(path, contents, { flag: 'wx', mode: 0o600 });
+        this.segmentWrites += 1;
         return {
           start,
           count,
@@ -318,8 +442,17 @@ export class ResultStore {
         };
       } catch (error) {
         if (isNodeError(error, 'EEXIST')) continue;
+        try {
+          await this.fileSystem.remove(path, { force: true });
+        } catch (cleanupError) {
+          // The path may contain a partial write. Keep the full reservation
+          // charged so repeated failures cannot bypass the runtime spill cap.
+          throw new AggregateError(
+            [error, cleanupError],
+            `Failed to write and remove partial output segment: ${path}`,
+          );
+        }
         this.releaseSpillReservation(bytes);
-        await rm(path, { force: true }).catch(() => undefined);
         throw error;
       }
     }
@@ -340,9 +473,10 @@ export class ResultStore {
 
   /**
    * Visit the requested range as contiguous, ordered chunks whose encoded row
-   * payload never exceeds one segment. This is the production IPC path: a valid
-   * 10,000-row request therefore cannot become one hundreds-of-megabytes
-   * structured-clone frame. A single row is already bounded by segmentBytes.
+   * JSON payload never exceeds one spill segment. This is the production IPC
+   * path: a valid 10,000-row request therefore cannot become one unbounded
+   * payload. Structured-clone bookkeeping adds engine-owned overhead beyond
+   * this UTF-8 bound; a single row is still rejected at segmentBytes.
    */
   forEachWindowChunk(
     start: number,
@@ -473,6 +607,7 @@ export class ResultStore {
   }
 
   private async loadColdSegment(segment: Segment): Promise<readonly ResultRow[]> {
+    this.releaseUnusedHotCredit();
     this.makePerRunHotRoom(segment.hotBytes);
     const hasRunRoom = this.hotBytes + segment.hotBytes <= this.limits.perRunHotBytes;
     const reserved = hasRunRoom && this.runtime.reserveHot(segment.hotBytes);
@@ -505,6 +640,7 @@ export class ResultStore {
   }
 
   private tryCacheSegment(segment: Segment, rows: readonly ResultRow[]): void {
+    this.releaseUnusedHotCredit();
     this.makePerRunHotRoom(segment.hotBytes);
     if (
       this.hotBytes + segment.hotBytes > this.limits.perRunHotBytes
@@ -534,7 +670,7 @@ export class ResultStore {
   }
 
   private makePerRunHotRoom(bytes: number): void {
-    while (this.hotBytes + bytes > this.limits.perRunHotBytes) {
+    while (this.hotBytes + this.hotCreditBytes + bytes > this.limits.perRunHotBytes) {
       const oldest = this.cacheLru.keys().next();
       if (oldest.done) break;
       this.runtime.evictCache(oldest.value);
@@ -560,7 +696,11 @@ export class ResultStore {
    */
   async stopSource(): Promise<void> {
     this.done = true;
-    await this.queueIteratorStop();
+    try {
+      await this.queueIteratorStop();
+    } finally {
+      this.releaseUnusedHotCredit();
+    }
   }
 
   private queueIteratorStop(): Promise<void> {
@@ -580,14 +720,22 @@ export class ResultStore {
 
   /** Stop the producer and deterministically release every file and quota. */
   dispose(): Promise<void> {
-    this.disposePromise ??= this.disposeInternal();
-    return this.disposePromise;
+    if (this.disposePromise) return this.disposePromise;
+    const operation = this.disposeInternal();
+    this.disposePromise = operation;
+    // Concurrent callers share one attempt, but a failed physical deletion
+    // must not poison future retries with the same cached rejected promise.
+    void operation.catch(() => {
+      if (this.disposePromise === operation) this.disposePromise = null;
+    });
+    return operation;
   }
 
   private async disposeInternal(): Promise<void> {
     this.disposed = true;
     this.done = true;
     await this.queueIteratorStop().catch(() => undefined);
+    this.releaseUnusedHotCredit();
     await Promise.allSettled([...this.activeWindowReads]);
 
     for (const key of [...this.cacheLru.keys()]) this.runtime.evictCache(key);
@@ -601,30 +749,44 @@ export class ResultStore {
     this.pendingHotBytes = 0;
     this.pendingDecodedHotBytes = 0;
 
+    await this.fileSystem.remove(this.runDirectory, { recursive: true, force: true });
+    // Release disk accounting only after the directory is actually gone. On a
+    // Windows sharing/ACL failure dispose rejects and leaves the reservation
+    // charged, failing closed instead of permitting unbounded orphan spill.
     this.runtime.releaseSpill(this.spillBytes);
     this.spillBytes = 0;
     this.segments.length = 0;
-    await rm(this.runDirectory, { recursive: true, force: true });
   }
 
   diagnostics(): ResultStoreDiagnostics {
     return {
-      hotBytes: this.hotBytes,
+      hotBytes: this.hotBytes + this.hotCreditBytes,
       spillBytes: this.spillBytes,
       segments: this.segments.length,
+      hotReservationCalls: this.hotReservationCalls,
+      segmentWrites: this.segmentWrites,
       runDirectory: this.runDirectory,
     };
   }
 }
 
-function encodeRow(row: ResultRow): Buffer {
+function encodeRow(row: ResultRow): EncodedRecord {
   const json = JSON.stringify(row);
   if (json === undefined) throw new TypeError('Result row is not JSON serializable');
-  const payload = Buffer.from(json, 'utf8');
-  const record = Buffer.allocUnsafe(RECORD_HEADER_BYTES + payload.byteLength);
-  record.writeUInt32BE(payload.byteLength, 0);
-  payload.copy(record, RECORD_HEADER_BYTES);
-  return record;
+  const byteLength = RECORD_HEADER_BYTES + Buffer.byteLength(json, 'utf8');
+  const decodedHotBytes = estimateDecodedJsonTextHeap(json);
+  return {
+    json,
+    byteLength,
+    decodedHotBytes,
+    // JSON string + EncodedRecord wrapper + two builder-array slots.
+    retainedHotBytes: decodedHotBytes + 24 + json.length * 2 + 96,
+  };
+}
+
+function encodeSegment(records: readonly EncodedRecord[]): Buffer {
+  const json = `[${records.map((record) => record.json).join(',')}]`;
+  return Buffer.from(json, 'utf8');
 }
 
 function encodedRowByteLength(row: ResultRow): number {
@@ -633,64 +795,30 @@ function encodedRowByteLength(row: ResultRow): number {
   return RECORD_HEADER_BYTES + Buffer.byteLength(json, 'utf8');
 }
 
-function estimateBufferHeapBytes(bytes: number): number {
-  // Buffer wrapper + backing-store bookkeeping, rounded conservatively.
-  return bytes + 64;
-}
-
-function estimateJsonHeapBytes(value: unknown, seen = new WeakSet<object>()): number {
-  if (value === null || value === undefined) return 8;
-  switch (typeof value) {
-    case 'string':
-      return 24 + value.length * 2;
-    case 'number':
-      return 8;
-    case 'boolean':
-      return 8;
-    case 'object': {
-      if (seen.has(value)) return 16;
-      seen.add(value);
-      if (Array.isArray(value)) {
-        let bytes = 32 + value.length * 8;
-        for (const item of value) bytes += estimateJsonHeapBytes(item, seen);
-        seen.delete(value);
-        return bytes;
-      }
-      let bytes = 48;
-      for (const [key, item] of Object.entries(value)) {
-        bytes += 24 + key.length * 2 + 8;
-        bytes += estimateJsonHeapBytes(item, seen);
-      }
-      seen.delete(value);
-      return bytes;
-    }
-    default:
-      return 16;
+function estimateDecodedJsonTextHeap(json: string): number {
+  // The text itself covers string/key code units. Structural tokens add
+  // conservative decoded object slots without walking the row object again.
+  // Counting punctuation inside string literals only over-reserves quota.
+  let bytes = 32 + json.length * 2;
+  for (let index = 0; index < json.length; index += 1) {
+    const character = json.charCodeAt(index);
+    if (character === 0x7b) bytes += 48; // object
+    else if (character === 0x5b) bytes += 64; // array + first slot
+    else if (character === 0x3a) bytes += 48; // property/key/value slot
+    else if (character === 0x2c) bytes += 32; // next property/array slot
   }
+  return bytes;
 }
 
 function decodeSegment(contents: Buffer, segment: Pick<Segment, 'count' | 'bytes' | 'path'>): ResultRow[] {
   if (contents.byteLength !== segment.bytes) {
     throw new Error(`Corrupt output segment length: ${segment.path}`);
   }
-  const rows: ResultRow[] = [];
-  let offset = 0;
-  while (offset < contents.byteLength) {
-    if (contents.byteLength - offset < RECORD_HEADER_BYTES) {
-      throw new Error(`Corrupt output segment header: ${segment.path}`);
-    }
-    const length = contents.readUInt32BE(offset);
-    offset += RECORD_HEADER_BYTES;
-    if (length > contents.byteLength - offset) {
-      throw new Error(`Corrupt output segment payload: ${segment.path}`);
-    }
-    rows.push(JSON.parse(contents.toString('utf8', offset, offset + length)) as ResultRow);
-    offset += length;
-  }
-  if (rows.length !== segment.count) {
+  const decoded = JSON.parse(contents.toString('utf8')) as unknown;
+  if (!Array.isArray(decoded) || decoded.length !== segment.count) {
     throw new Error(`Corrupt output segment row count: ${segment.path}`);
   }
-  return rows;
+  return decoded as ResultRow[];
 }
 
 function validateLimits(limits: OutputRetentionLimits): OutputRetentionLimits {

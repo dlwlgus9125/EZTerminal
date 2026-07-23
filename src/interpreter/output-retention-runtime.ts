@@ -27,7 +27,11 @@ export interface OutputRetentionLimits {
 
 export const DEFAULT_OUTPUT_RETENTION_LIMITS: OutputRetentionLimits = Object.freeze({
   segmentBytes: 4 * MEBIBYTE,
-  segmentRows: 4_096,
+  // Byte and hot-memory quotas remain the primary hard bounds. A larger row
+  // ceiling lets compact outputs fill a bounded segment before paying another
+  // fs create/write/antivirus scan; large rows still flush at 4 MiB and the
+  // active builder still cannot exceed the 8 MiB per-run hot quota.
+  segmentRows: 32_768,
   perRunHotBytes: 8 * MEBIBYTE,
   globalHotBytes: 128 * MEBIBYTE,
   perRunSpillBytes: 512 * MEBIBYTE,

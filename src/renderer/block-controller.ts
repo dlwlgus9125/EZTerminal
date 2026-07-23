@@ -114,7 +114,7 @@ const MAX_ROW_WINDOW = 10_000;
 
 /**
  * Minimum gap between listener notifications for `progress` frames. A fast
- * builtin (`gen-rows 100000000`) reports progress every 5000-row drain batch —
+ * builtin (`gen-rows 100000000`) reports progress every structured drain batch —
  * tens of thousands of frames — and notifying React on every one saturates the
  * main thread (re-render + follow-scroll layout per frame) until clicks starve.
  * The snapshot still updates on EVERY frame; only the notification is coalesced
@@ -233,7 +233,9 @@ export class BlockController {
    * sanitized HTML from only that retained scrollback. */
   private ptyRenderMode: PtyRenderMode = 'plain';
   private plainAnsi = new AnsiHtmlStream();
+  private plainAnsiFinished = false;
   private plainSink: PlainDataSink | null = null;
+  private plainSinkFlush: (() => void) | null = null;
   private ptyReplayResetHandler: (() => void) | null = null;
 
   /** The PRIMARY's PTY grid size, mirrored via `pty-dims` frames (D3). */
@@ -335,6 +337,8 @@ export class BlockController {
    * while releasing every renderer-side busy/input gate. */
   markTransportInterrupted(message: string): void {
     if (this.status !== 'running') return;
+    this.finishPlainAnsi();
+    this.flushPlainSink();
     this.status = 'error';
     this.errorMessage = message;
     this.sshPrompt = null;
@@ -377,15 +381,22 @@ export class BlockController {
   /** Register the plain-mode sink; converts and replays bounded raw history so a
    * late-registering (or re-registering, e.g. collapse -> expand) view starts
    * with the full accumulated output. Returns an unsubscribe. */
-  setPlainDataSink(sink: PlainDataSink): () => void {
+  setPlainDataSink(sink: PlainDataSink, flush?: () => void): () => void {
     this.plainSink = sink;
+    this.plainSinkFlush = flush ?? null;
     const replayAnsi = new AnsiHtmlStream();
     for (const entry of this.ptyBuffer.snapshot()) {
-      const html = replayAnsi.push(entry.bytes);
-      if (html) sink(html);
+      for (const html of replayAnsi.pushFragments(entry.bytes)) this.deliverPlainHtml(html);
     }
+    if (this.status !== 'running') {
+      for (const html of replayAnsi.flushFragments()) this.deliverPlainHtml(html);
+    }
+    this.flushPlainSink();
     return () => {
-      if (this.plainSink === sink) this.plainSink = null;
+      if (this.plainSink === sink) {
+        this.plainSink = null;
+        this.plainSinkFlush = null;
+      }
     };
   }
 
@@ -416,6 +427,7 @@ export class BlockController {
     this.ptyBuffer.clear();
     this.discardInFlightPtyWrites();
     this.plainAnsi = new AnsiHtmlStream();
+    this.plainAnsiFinished = false;
     this.ptyReceived = 0;
     this.ptyConsumed = 0;
     this.ptyAckedAt = 0;
@@ -437,10 +449,12 @@ export class BlockController {
           maxBytes: PTY_PLAIN_HISTORY_MAX_BYTES,
         },
       );
-      const html = this.plainAnsi.push(bytes);
-      if (html) {
-        this.plainSink?.(html);
+      for (const html of this.plainAnsi.pushFragments(bytes)) {
+        this.deliverPlainHtml(html);
       }
+      // Raw history was retained before rendering. Even if the DOM sink failed
+      // and switched this block to xterm, the current entry is safe to consume:
+      // xterm replay marks it alreadyConsumed and cannot ACK it a second time.
       this.ptyConsumed += bytes.byteLength;
       this.maybeSendPtyAck();
       return;
@@ -453,6 +467,50 @@ export class BlockController {
       return;
     }
     this.writePtyData({ bytes, suppressSideEffects, alreadyConsumed: false });
+  }
+
+  private finishPlainAnsi(): void {
+    if (this.ptyRenderMode !== 'plain' || this.plainAnsiFinished) return;
+    this.plainAnsiFinished = true;
+    for (const html of this.plainAnsi.flushFragments()) {
+      this.deliverPlainHtml(html);
+    }
+  }
+
+  private deliverPlainHtml(html: string): void {
+    const sink = this.plainSink;
+    if (!sink) return;
+    try {
+      sink(html);
+    } catch (error) {
+      this.fallbackFromPlainRenderer(error);
+    }
+  }
+
+  private flushPlainSink(): void {
+    const flush = this.plainSinkFlush;
+    if (!flush) return;
+    try {
+      flush();
+    } catch (error) {
+      this.fallbackFromPlainRenderer(error);
+    }
+  }
+
+  /**
+   * A renderer failure must not strand the interpreter behind an unacknowledged
+   * PTY high-water mark. Raw history is authoritative and bounded, so xterm can
+   * replay it while the release harness records the console error as a failure.
+   */
+  private fallbackFromPlainRenderer(error: unknown): void {
+    if (this.ptyRenderMode !== 'plain') return;
+    this.ptyRenderMode = 'xterm';
+    this.plainSink = null;
+    this.plainSinkFlush = null;
+    this.plainAnsi = new AnsiHtmlStream();
+    this.plainAnsiFinished = false;
+    console.error('Plain PTY renderer failed; falling back to xterm.', error);
+    this.emitChange(true);
   }
 
   private writePtyData(entry: RetainedPtyChunk): void {
@@ -567,6 +625,7 @@ export class BlockController {
     this.discardInFlightPtyWrites();
     this.ptyDataSink = null;
     this.plainSink = null;
+    this.plainSinkFlush = null;
     this.plainAnsi = new AnsiHtmlStream();
     try {
       this.port.postMessage({ type: 'close' });
@@ -665,16 +724,22 @@ export class BlockController {
         this.exhausted = frame.done;
         break;
       case 'end':
+        this.finishPlainAnsi();
+        this.flushPlainSink();
         this.status = 'done';
         // cwd AFTER the command — a `cd` updates the live prompt off this.
         this.endCwd = frame.cwd ?? this.endCwd;
         break;
       case 'error':
+        this.finishPlainAnsi();
+        this.flushPlainSink();
         this.status = 'error';
         this.errorMessage = frame.message;
         this.sshPrompt = null;
         break;
       case 'cancelled':
+        this.finishPlainAnsi();
+        this.flushPlainSink();
         this.status = 'cancelled';
         this.sshPrompt = null;
         break;
@@ -684,7 +749,9 @@ export class BlockController {
         // setPtyDataSink on mount, replaying everything buffered so far.
         this.ptyRenderMode = 'xterm';
         this.plainSink = null;
+        this.plainSinkFlush = null;
         this.plainAnsi = new AnsiHtmlStream();
+        this.plainAnsiFinished = false;
         break;
       case 'pty-dims':
         this.ptyDims = { cols: frame.cols, rows: frame.rows };

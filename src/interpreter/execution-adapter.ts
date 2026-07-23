@@ -24,6 +24,15 @@ export type ActiveExecutionKind = 'structured' | 'pty' | 'script' | 'ssh' | 'for
 
 export type ExecutionControlResult = 'handled' | 'unsupported';
 
+/** Keep teardown ownership after transports detach; timers do not hold process exit open. */
+const ADAPTER_DISPOSE_RETRY_DELAYS_MS = [
+  1_000,
+  5_000,
+  30_000,
+  120_000,
+  600_000,
+] as const;
+
 export type PagingControl = Extract<
   RendererControl,
   { type: 'requestRows' | 'setViewport' }
@@ -61,6 +70,34 @@ export interface ActiveExecutionAdapter {
   readonly lateAttach: LateAttachCapability;
   handleControl(control: RendererControl): ExecutionControlResult;
   dispose(): Promise<void>;
+}
+
+function retryDelay(delayMs: number): Promise<void> {
+  if (delayMs <= 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, delayMs);
+    timer.unref();
+  });
+}
+
+/**
+ * Dispose a detached adapter with bounded background retries. ExecutionSession
+ * may clear its active field immediately, but this promise retains the adapter
+ * until a later transient Windows sharing lock can be cleaned up.
+ */
+export async function disposeExecutionAdapterWithRetry(
+  adapter: ActiveExecutionAdapter,
+  retryDelaysMs: readonly number[] = ADAPTER_DISPOSE_RETRY_DELAYS_MS,
+): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await adapter.dispose();
+      return;
+    } catch (error) {
+      if (attempt >= retryDelaysMs.length) throw error;
+      await retryDelay(Math.max(0, retryDelaysMs[attempt] ?? 0));
+    }
+  }
 }
 
 /**
@@ -101,7 +138,14 @@ function activeAdapter(definition: AdapterDefinition): ActiveExecutionAdapter {
       } catch (error) {
         disposePromise = Promise.reject(error);
       }
-      return disposePromise;
+      const operation = disposePromise;
+      // A failed physical cleanup (notably a transient Windows sharing
+      // violation) must not poison the adapter with a permanently rejected
+      // promise. The adapter stays closed to controls, but disposal may retry.
+      void operation.catch(() => {
+        if (disposePromise === operation) disposePromise = null;
+      });
+      return operation;
     },
   };
 }

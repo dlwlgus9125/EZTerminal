@@ -97,6 +97,13 @@ try {
     }
     $desktopPerformance = $localRcReport.desktopPerformance
     Assert-Equal ([string]$desktopPerformance.status) 'passed' 'desktop performance status'
+    Assert-Equal ([int]$desktopPerformance.schemaVersion) 2 'desktop performance comparison schema'
+    if ([string]$desktopPerformance.baselineBuildSha -notmatch '^[0-9a-f]{40}$') {
+        throw 'The local RC performance evidence is missing its expected baseline build SHA.'
+    }
+    Assert-Equal (
+        [string]$desktopPerformance.candidateBuildSha
+    ) ([string]$localRcReport.buildSha) 'desktop performance candidate SHA'
     Assert-Equal ([double]$desktopPerformance.maxP95RegressionPercent) 5 'desktop p95 regression budget'
     Assert-Equal ([double]$desktopPerformance.minTargetP95ImprovementPercent) 15 'target p95 improvement budget'
     if (@($desktopPerformance.targetMetrics) -notcontains 'plainOutput12MiBRetentionPressureMs') {
@@ -109,40 +116,191 @@ try {
         throw 'The local RC performance evidence is not bound to baseline/candidate report hashes.'
     }
     $candidatePerformance = $desktopPerformance.candidate
-    Assert-Equal ([int]$candidatePerformance.schemaVersion) 1 'desktop performance schema'
+    Assert-Equal ([int]$candidatePerformance.schemaVersion) 2 'desktop performance schema'
+    Assert-Equal ([string]$candidatePerformance.evidenceMode) 'release' 'desktop performance evidence mode'
     Assert-Equal (
         [string]$candidatePerformance.buildSha
     ) ([string]$localRcReport.buildSha) 'desktop performance buildSha'
     Assert-Equal ([int]$candidatePerformance.warmupRuns) 5 'desktop performance warmup count'
     Assert-Equal ([int]$candidatePerformance.measurementRuns) 25 'desktop performance measurement count'
+    $performanceMetricOrder = @(
+        'cancellationLatencyMs',
+        'rows100kCompletionMs',
+        'plainOutput1_1MiBCompletionMs',
+        'plainOutput12MiBRetentionPressureMs'
+    )
+    Assert-Equal (
+        (@($candidatePerformance.metricOrder) -join ',')
+    ) ($performanceMetricOrder -join ',') 'desktop performance metric order'
+    $productProvenance = $candidatePerformance.provenance.product
+    $harnessProvenance = $candidatePerformance.provenance.harness
+    Assert-Equal ([string]$productProvenance.name) 'EZTerminal' 'performance product name'
+    Assert-Equal ([string]$productProvenance.version) $Version 'performance product version'
+    Assert-Equal ([int]$productProvenance.protocolVersion) $ProtocolVersion 'performance protocol version'
+    Assert-Equal (
+        [string]$productProvenance.buildSha
+    ) ([string]$localRcReport.buildSha) 'performance product build SHA'
+    Assert-Equal (
+        [string]$productProvenance.source.gitHeadSha
+    ) ([string]$localRcReport.buildSha) 'performance product source SHA'
+    Assert-Equal (
+        [string]$harnessProvenance.source.gitHeadSha
+    ) ([string]$localRcReport.buildSha) 'performance harness source SHA'
+    if (
+        $productProvenance.source.workingTreeDirty -ne $false -or
+        $harnessProvenance.source.workingTreeDirty -ne $false
+    ) {
+        throw 'Desktop performance evidence was collected from a dirty product or harness tree.'
+    }
+    $lockHash = (Get-FileHash pnpm-lock.yaml -Algorithm SHA256).Hash.ToLowerInvariant()
+    $harnessHash = (
+        Get-FileHash e2e/release-performance.spec.ts -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+    Assert-Equal ([string]$productProvenance.lock.sha256) $lockHash 'performance product lock hash'
+    Assert-Equal ([string]$harnessProvenance.lock.sha256) $lockHash 'performance harness lock hash'
+    Assert-Equal ([string]$harnessProvenance.spec.sha256) $harnessHash 'performance harness hash'
+    $installedElectronVersion = [string](
+        Get-Content node_modules/electron/package.json -Raw | ConvertFrom-Json
+    ).version
+    $installedPlaywrightVersion = [string](
+        Get-Content node_modules/@playwright/test/package.json -Raw | ConvertFrom-Json
+    ).version
+    $releaseNodeVersion = (& node -p 'process.versions.node').Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not resolve the release build Node version.'
+    }
+    Assert-Equal (
+        [string]$productProvenance.runtime.electron
+    ) $installedElectronVersion 'performance Electron version'
+    Assert-Equal (
+        [string]$harnessProvenance.runner.playwright
+    ) $installedPlaywrightVersion 'performance Playwright version'
+    Assert-Equal (
+        [string]$harnessProvenance.runner.node
+    ) $releaseNodeVersion 'performance/release build Node version'
+    if ([string]::IsNullOrWhiteSpace([string]$productProvenance.runtime.node)) {
+        throw 'Desktop performance evidence is missing the launched Electron Node version.'
+    }
+    if (
+        [string]$productProvenance.launchArtifacts.entry -ne 'build/main.js' -or
+        @($productProvenance.launchArtifacts.files).Count -lt 8 -or
+        @($productProvenance.launchArtifacts.files | Where-Object {
+            [string]$_.sha256 -notmatch '^[0-9a-f]{64}$' -or [int64]$_.bytes -lt 1
+        }).Count -ne 0
+    ) {
+        throw 'Desktop performance evidence is missing launch artifact hashes.'
+    }
+    $viteRoot = (Resolve-Path -LiteralPath '.vite').Path
+    $actualLaunchArtifacts = @(
+        'build/main.js',
+        'build/preload.js',
+        'build/interpreter-process.js',
+        'build/script-host.js',
+        'build/packet-capture-host.js'
+    ) | ForEach-Object {
+        [ordered]@{
+            path = $_
+            actual = (Resolve-Path -LiteralPath (
+                Join-Path $viteRoot ($_.Replace('/', '\'))
+            )).Path
+        }
+    }
+    $actualLaunchArtifacts += @(
+        Get-ChildItem -LiteralPath (Join-Path $viteRoot 'renderer\main_window') -Recurse -File |
+            ForEach-Object {
+                [ordered]@{
+                    path = $_.FullName.Substring($viteRoot.Length + 1).Replace('\', '/')
+                    actual = $_.FullName
+                }
+            }
+    )
+    $reportedLaunchArtifacts = @($productProvenance.launchArtifacts.files)
+    if ($reportedLaunchArtifacts.Count -ne $actualLaunchArtifacts.Count) {
+        throw 'Release .vite artifact count differs from the benchmarked launch artifact set.'
+    }
+    foreach ($actualArtifact in $actualLaunchArtifacts) {
+        $reportedMatches = @($reportedLaunchArtifacts | Where-Object {
+            [string]$_.path -ceq [string]$actualArtifact.path
+        })
+        if ($reportedMatches.Count -ne 1) {
+            throw "Release .vite does not uniquely match benchmark artifact $($actualArtifact.path)."
+        }
+        $reportedArtifact = $reportedMatches[0]
+        $actualFile = Get-Item -LiteralPath $actualArtifact.actual
+        $actualHash = (
+            Get-FileHash -LiteralPath $actualFile.FullName -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
+        if (
+            [int64]$reportedArtifact.bytes -ne [int64]$actualFile.Length -or
+            [string]$reportedArtifact.sha256 -cne $actualHash
+        ) {
+            throw "Release .vite bytes differ from benchmark artifact $($actualArtifact.path)."
+        }
+    }
+    $reportedFixtures = @($harnessProvenance.fixtures)
+    $largeFixtureHash = (
+        Get-FileHash e2e/fixtures/large-plain-output.js -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+    $retentionFixtureHash = (
+        Get-FileHash e2e/fixtures/retention-pressure-output.js -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+    if (
+        $reportedFixtures.Count -ne 2 -or
+        @($reportedFixtures | Where-Object {
+            [string]$_.id -eq 'largePlainOutput' -and
+            [string]$_.path -eq 'e2e/fixtures/large-plain-output.js' -and
+            [string]$_.sha256 -eq $largeFixtureHash -and
+            [int64]$_.stdoutBytes -eq 1101119 -and
+            [string]$_.stdoutSha256 -eq 'bbab0e75bbec8e2b80d281ab814a67d841e03167099d787a407d69a038ed717a' -and
+            [string]$_.completionMarker -eq 'LARGE-OUTPUT-DONE'
+        }).Count -ne 1 -or
+        @($reportedFixtures | Where-Object {
+            [string]$_.id -eq 'retentionPressureOutput' -and
+            [string]$_.path -eq 'e2e/fixtures/retention-pressure-output.js' -and
+            [string]$_.sha256 -eq $retentionFixtureHash -and
+            [int64]$_.stdoutBytes -eq 12012025 -and
+            [string]$_.stdoutSha256 -eq '8f4d6337d2637244a47991f82383f798e78b36a145b579c01c027b6a3bdeced7' -and
+            [string]$_.completionMarker -eq 'RETENTION-PRESSURE-DONE'
+        }).Count -ne 1
+    ) {
+        throw 'Desktop performance fixture output metadata is incomplete.'
+    }
     Assert-Equal ([string]$candidatePerformance.environment.platform) 'win32' 'desktop performance platform'
     Assert-Equal ([string]$candidatePerformance.environment.arch) 'x64' 'desktop performance architecture'
     if (
         [string]::IsNullOrWhiteSpace([string]$candidatePerformance.environment.osRelease) -or
         [string]::IsNullOrWhiteSpace([string]$candidatePerformance.environment.cpuModel) -or
         [int]$candidatePerformance.environment.logicalCpuCount -lt 1 -or
-        [int]$candidatePerformance.environment.totalMemoryGiB -lt 1
+        [int]$candidatePerformance.environment.totalMemoryGiB -lt 1 -or
+        [string]$candidatePerformance.environment.hostFingerprint.algorithm -cne
+            'windows-machine-guid-sha256-v1' -or
+        [string]$candidatePerformance.environment.hostFingerprint.sha256 -cnotmatch
+            '^[0-9a-f]{64}$' -or
+        [string]$candidatePerformance.environment.powerPlan.schemeGuid -cnotmatch
+            '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
+        [string]$candidatePerformance.environment.powerPlan.powerSource -cnotmatch
+            '^(ac|dc)$' -or
+        [string]$candidatePerformance.environment.powerPlan.effectivePowerMode -cnotmatch
+            '^(battery-saver|better-battery|balanced|high-performance|max-performance)$' -or
+        [string]$candidatePerformance.environment.powerPlan.baseSettingsSha256 -cnotmatch
+            '^[0-9a-f]{64}$' -or
+        [string]$candidatePerformance.environment.powerPlan.effectiveSettingsSha256 -cnotmatch
+            '^[0-9a-f]{64}$'
     ) {
-        throw 'Desktop performance evidence is missing its benchmark environment.'
+        throw 'Desktop performance evidence is missing same-host or power-plan identity.'
     }
-    foreach ($metricName in @(
-        'cancellationLatencyMs',
-        'rows100kCompletionMs',
-        'plainOutput1_1MiBCompletionMs',
-        'plainOutput12MiBRetentionPressureMs'
-    )) {
+    foreach ($metricName in $performanceMetricOrder) {
         $metric = $candidatePerformance.metrics.$metricName
-        if ($null -eq $metric -or @($metric.samples).Count -ne 25) {
-            throw "Desktop performance metric '$metricName' does not contain 25 measurements."
+        if (
+            $null -eq $metric -or
+            [int]$metric.warmupRuns -ne 5 -or
+            @($metric.samples).Count -ne 25
+        ) {
+            throw "Desktop performance metric '$metricName' does not contain the exact 5/25 protocol."
         }
     }
     $performanceResultNames = @($desktopPerformance.results | ForEach-Object { [string]$_.name })
-    foreach ($metricName in @(
-        'cancellationLatencyMs',
-        'rows100kCompletionMs',
-        'plainOutput1_1MiBCompletionMs',
-        'plainOutput12MiBRetentionPressureMs'
-    )) {
+    foreach ($metricName in $performanceMetricOrder) {
         if ($performanceResultNames -notcontains $metricName) {
             throw "Desktop performance comparison is missing '$metricName'."
         }

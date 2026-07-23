@@ -98,6 +98,9 @@ describe('plain PTY keyboard context menu', () => {
           'utf8',
         )),
       });
+      // Production batches small PTY fragments; a terminal frame guarantees
+      // the pending DOM is visible before completion is published.
+      port.deliver({ type: 'end' });
     });
 
     const text = mount.querySelector('[data-testid="text-output"]')?.textContent ?? '';

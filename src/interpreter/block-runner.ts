@@ -18,12 +18,31 @@
  */
 
 import type { ColumnInfo, InterpreterFrame, JsonValue, ResultRow } from '../shared/ipc';
-import { recordToJson, toRowIterable, valueToJson, type PipelineData } from './core';
+import {
+  recordToJson,
+  toRowIterable,
+  valueToJson,
+  type PipelineData,
+  type RecordValue,
+} from './core';
 import { AnsiHtmlStream } from './external/ansi';
-import { OutputCapacityError, ResultStore } from './result-store';
+import {
+  ResultStore,
+  type ResultStoreFileSystem,
+} from './result-store';
 
-/** Rows pulled per background-drain step before yielding + reporting progress. */
-const DRAIN_BATCH = 5_000;
+/**
+ * Rows pulled per structured-output drain step before yielding/reporting.
+ * At retained-store throughput this remains well inside the cancellation
+ * budget, while avoiding 20 utility→renderer progress turns for 100k rows.
+ */
+const DRAIN_BATCH = 50_000;
+/** Yield CPU-bound/immediately-resolved row sources back to controls promptly. */
+const STRUCTURED_DRAIN_SLICE_MS = 250;
+/** Avoid turning time slicing into a progress-frame/IPC flood for slow streams. */
+const STRUCTURED_PROGRESS_INTERVAL_MS = 250;
+/** Amortize clock reads while keeping CPU-heavy row transforms bounded. */
+const DRAIN_CLOCK_CHECK_ROWS = 8;
 /**
  * Byte streams (external text) trickle one decoded chunk at a time and want to
  * display incrementally — batching 5000 would stall a slow/forever stream for a
@@ -33,6 +52,8 @@ const DRAIN_BATCH = 5_000;
 const BYTE_DRAIN_BATCH = 1;
 /** Extra rows buffered past a viewport so the next scroll is instant. */
 const VIEWPORT_READ_AHEAD = 200;
+/** Retry transient Windows sharing/antivirus failures without releasing quota early. */
+const STORE_DISPOSE_RETRY_DELAYS_MS = [25, 100, 400] as const;
 
 export type Emit = (frame: InterpreterFrame) => void;
 
@@ -76,11 +97,23 @@ export interface BlockHandle {
   readonly done: Promise<void>;
 }
 
+export interface RunBlockOptions {
+  /** Narrow storage seam used to exercise physical cleanup failures. */
+  readonly retentionFileSystem?: Partial<ResultStoreFileSystem>;
+  /** Test seam; production uses the bounded backoff above. */
+  readonly disposeRetryDelaysMs?: readonly number[];
+}
+
 /**
  * Run a block: emit schema, fill the store + emit progress, and serve windows.
  * Returns a handle the caller wires to the control channel and disposes on close.
  */
-export function runBlock(data: PipelineData, emit: Emit, signal: AbortSignal): BlockHandle {
+export function runBlock(
+  data: PipelineData,
+  emit: Emit,
+  signal: AbortSignal,
+  options: RunBlockOptions = {},
+): BlockHandle {
   const isByteStream = data.kind === 'byte-stream';
   const isScalar =
     data.kind === 'value' && data.value.kind !== 'table' && data.value.kind !== 'record';
@@ -93,9 +126,20 @@ export function runBlock(data: PipelineData, emit: Emit, signal: AbortSignal): B
   // The store's source: scalars become a single `{ value }` row; byte streams
   // become `{ value: <html> }` rows (ANSI → sanitized HTML, one row per decoded
   // chunk); structured input is the row stream serialized to wire (JSON) rows.
-  const store = new ResultStore(makeRowIterator());
+  type SourceRow = ResultRow | RecordValue;
+  const structured = !isByteStream && !isScalar;
+  const store = new ResultStore<SourceRow>(makeRowIterator(), {
+    mapRow: structured
+      ? (row) => recordToJson(row as RecordValue)
+      : (row) => row as ResultRow,
+    // The store also serves renderer window reads. A stop check at the producer
+    // boundary prevents either a 50k background target or a 10k read-ahead
+    // target from consuming a slow async source after cancellation.
+    shouldStopPull: () => signal.aborted,
+    fileSystem: options.retentionFileSystem,
+  });
 
-  function makeRowIterator(): AsyncIterator<ResultRow> {
+  function makeRowIterator(): AsyncIterator<SourceRow> {
     if (isByteStream) {
       // `html` marks the column so the text block injects it as HTML, not text.
       columns = [{ name: 'value', type: 'html' }];
@@ -120,11 +164,7 @@ export function runBlock(data: PipelineData, emit: Emit, signal: AbortSignal): B
       };
       return one();
     }
-    const source = toRowIterable(data);
-    const rows = async function* (): AsyncGenerator<ResultRow> {
-      for await (const record of source) yield recordToJson(record);
-    };
-    return rows();
+    return toRowIterable(data)[Symbol.asyncIterator]();
   }
 
   // `disposed` is set ONLY by an external dispose()/close — never by the drain.
@@ -142,8 +182,29 @@ export function runBlock(data: PipelineData, emit: Emit, signal: AbortSignal): B
   }
 
   function dispose(): Promise<void> {
-    disposePromise ??= disposeBlock();
-    return disposePromise;
+    if (disposePromise) return disposePromise;
+    const operation = disposeBlock();
+    disposePromise = operation;
+    void operation.catch(() => {
+      if (disposePromise === operation) disposePromise = null;
+    });
+    return operation;
+  }
+
+  async function disposeStoreWithRetry(): Promise<void> {
+    const delays = options.disposeRetryDelaysMs ?? STORE_DISPOSE_RETRY_DELAYS_MS;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await store.dispose();
+        return;
+      } catch (error) {
+        if (attempt >= delays.length) throw error;
+        const delayMs = Math.max(0, delays[attempt] ?? 0);
+        if (delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+    }
   }
 
   async function disposeBlock(): Promise<void> {
@@ -153,7 +214,7 @@ export function runBlock(data: PipelineData, emit: Emit, signal: AbortSignal): B
     // one rejected cleanup never prevents the other from running.
     const results = await Promise.allSettled([
       runDataCleanup(),
-      store.dispose(),
+      disposeStoreWithRetry(),
     ]);
     const failures = results.flatMap((result) => (
       result.status === 'rejected' ? [result.reason] : []
@@ -176,6 +237,7 @@ export function runBlock(data: PipelineData, emit: Emit, signal: AbortSignal): B
   else signal.addEventListener('abort', interruptPendingRead, { once: true });
 
   async function drive(): Promise<void> {
+    let schemaEmitted = false;
     try {
       // Schema must precede chunks; infer from row 0 only if undeclared.
       if (!columns) {
@@ -183,20 +245,52 @@ export function runBlock(data: PipelineData, emit: Emit, signal: AbortSignal): B
         columns = inferColumnsFromRow(store.at(0));
       }
       emit({ type: 'schema', columns, shape });
+      schemaEmitted = true;
       emit({ type: 'progress', count: store.count, done: store.exhausted });
 
       // Background drain: fill the (Node-side) store to discover the total and
       // report it via progress. No rows cross IPC here — only counts. Byte
       // streams drain one chunk at a time so external text appears incrementally.
       const drainBatch = isByteStream ? BYTE_DRAIN_BATCH : DRAIN_BATCH;
+      let drainTarget = Math.min(Number.MAX_SAFE_INTEGER, store.count + drainBatch);
+      let lastProgressAt = performance.now();
       while (!disposed && !signal.aborted && !store.exhausted) {
-        await store.ensure(store.count + drainBatch);
-        emit({ type: 'progress', count: store.count, done: store.exhausted });
+        const sliceDeadline = performance.now() + STRUCTURED_DRAIN_SLICE_MS;
+        let rowsUntilClockCheck = 0;
+        await store.ensure(
+          drainTarget,
+          isByteStream
+            ? undefined
+            : () => {
+                if (rowsUntilClockCheck > 0) {
+                  rowsUntilClockCheck -= 1;
+                  return false;
+                }
+                rowsUntilClockCheck = DRAIN_CLOCK_CHECK_ROWS - 1;
+                return performance.now() >= sliceDeadline;
+              },
+        );
+
+        const now = performance.now();
+        const reachedTarget = store.count >= drainTarget;
+        if (
+          isByteStream
+          || reachedTarget
+          || store.exhausted
+          || now - lastProgressAt >= STRUCTURED_PROGRESS_INTERVAL_MS
+        ) {
+          emit({ type: 'progress', count: store.count, done: store.exhausted });
+          lastProgressAt = now;
+        }
+        if (reachedTarget) {
+          drainTarget = Math.min(Number.MAX_SAFE_INTEGER, store.count + drainBatch);
+        }
         await yieldToEventLoop();
       }
 
       if (disposed) return;
       if (signal.aborted) {
+        emit({ type: 'progress', count: store.count, done: true });
         emit({ type: 'cancelled' });
         return;
       }
@@ -204,11 +298,13 @@ export function runBlock(data: PipelineData, emit: Emit, signal: AbortSignal): B
       emit({ type: 'end' });
     } catch (err) {
       if (disposed) return;
-      if (signal.aborted) emit({ type: 'cancelled' });
-      else {
-        if (err instanceof OutputCapacityError) {
-          emit({ type: 'progress', count: store.count, done: true });
-        }
+      // The progress throttle may not have published rows retained immediately
+      // before cancellation/error. Commit the final count before every terminal
+      // frame so the renderer never hides valid partial output.
+      if (schemaEmitted) emit({ type: 'progress', count: store.count, done: true });
+      if (signal.aborted) {
+        emit({ type: 'cancelled' });
+      } else {
         emit({ type: 'error', message: describeError(err) });
       }
     } finally {

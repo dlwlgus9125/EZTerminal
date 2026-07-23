@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
+  BatchedPlainOutputDomRetention,
   PlainOutputDomRetention,
+  PTY_PLAIN_DOM_BATCH_CHARS,
+  PTY_PLAIN_DOM_MAX_LATENCY_MS,
   PtyReplayBuffer,
   prunePlainOutputDom,
 } from './pty-output-retention';
@@ -135,7 +138,8 @@ describe('PtyReplayBuffer', () => {
       suppressSideEffects: false,
       alreadyConsumed: true,
     };
-    const appendCount = 256;
+    // Odd count catches a one-chunk trim slack that would retain 8 MiB + 64 KiB.
+    const appendCount = 257;
 
     for (let index = 0; index < appendCount; index += 1) {
       buffer.append(chunk, { maxLines: 5_000, maxBytes: 8 * 1024 * 1024 });
@@ -156,12 +160,74 @@ describe('prunePlainOutputDom', () => {
   it('deletes old text while preserving ANSI markup around the retained suffix', () => {
     const output = document.createElement('pre');
     output.innerHTML = '<span class="old">one\ntwo\n</span><b>three\nfour</b>';
+    const createRange = vi.spyOn(output.ownerDocument, 'createRange');
 
     prunePlainOutputDom(output, 2, 1_024);
 
     expect(output.textContent).toBe('three\nfour');
     expect(output.querySelector('b')?.textContent).toBe('three\nfour');
     expect(output.querySelector('.old')).toBeNull();
+    expect(createRange).toHaveBeenCalledOnce();
+    createRange.mockRestore();
+  });
+
+  it('falls back for a mixed Text/ANSI prefix and preserves a retained selection', () => {
+    const output = document.createElement('pre');
+    const oldText = document.createTextNode('old\n');
+    const styled = document.createElement('span');
+    styled.className = 'styled';
+    styled.textContent = 'styled\n';
+    const retained = document.createTextNode('keep');
+    output.append(oldText, styled, retained);
+    document.body.append(output);
+    const selection = window.getSelection();
+    const selected = document.createRange();
+    selected.selectNodeContents(retained);
+    selection?.removeAllRanges();
+    selection?.addRange(selected);
+    const createRange = vi.spyOn(output.ownerDocument, 'createRange');
+
+    prunePlainOutputDom(output, 1, 1_024);
+
+    expect(output.textContent).toBe('keep');
+    expect(output.querySelector('.styled')).toBeNull();
+    expect(selection?.toString()).toBe('keep');
+    expect(createRange).toHaveBeenCalledOnce();
+    createRange.mockRestore();
+    selection?.removeAllRanges();
+    output.remove();
+  });
+
+  it('removes a direct Text-node prefix without invoking the Range fallback', () => {
+    const output = document.createElement('pre');
+    output.append(
+      document.createTextNode('one\n'),
+      document.createTextNode('two\n'),
+      document.createTextNode('three\n'),
+      document.createTextNode('four'),
+    );
+    const createRange = vi.spyOn(output.ownerDocument, 'createRange');
+
+    prunePlainOutputDom(output, 2, 1_024);
+
+    expect(output.textContent).toBe('three\nfour');
+    expect(Array.from(output.childNodes).every((node) => node.nodeType === 3)).toBe(true);
+    expect(createRange).not.toHaveBeenCalled();
+    createRange.mockRestore();
+  });
+
+  it('uses direct Text.deleteData without leaving a split surrogate', () => {
+    const output = document.createElement('pre');
+    const face = '\ud83d\ude00';
+    output.textContent = `discard-${face.repeat(20)}`;
+    const createRange = vi.spyOn(output.ownerDocument, 'createRange');
+
+    prunePlainOutputDom(output, 100, 9);
+
+    expect(Array.from(output.textContent ?? '').every((character) => character === face)).toBe(true);
+    expect((output.textContent ?? '').length).toBeLessThanOrEqual(10);
+    expect(createRange).not.toHaveBeenCalled();
+    createRange.mockRestore();
   });
 
   it('bounds a pathological single line without splitting a surrogate pair', () => {
@@ -204,5 +270,126 @@ describe('PlainOutputDomRetention', () => {
       chars: 'two\nthree'.length,
       lineBreaks: 1,
     });
+  });
+});
+
+describe('BatchedPlainOutputDomRetention', () => {
+  it('uses bounded max latency instead of flushing every animation frame', () => {
+    vi.useFakeTimers();
+    try {
+      const output = document.createElement('pre');
+      const retention = new BatchedPlainOutputDomRetention();
+
+      retention.append(output, 'live', 100);
+      vi.advanceTimersByTime(PTY_PLAIN_DOM_MAX_LATENCY_MS - 1);
+      expect(output.textContent).toBe('');
+
+      vi.advanceTimersByTime(1);
+      expect(output.textContent).toBe('live');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('coalesces small fragments and applies the exact line bound when flushed', () => {
+    const output = document.createElement('pre');
+    const scheduled: Array<() => void> = [];
+    const retention = new BatchedPlainOutputDomRetention((callback) => {
+      scheduled.push(callback);
+      return () => {};
+    });
+
+    retention.append(output, '<span>one\ntwo\n</span>', 2);
+    retention.append(output, '<b>three\nfour</b>', 2);
+
+    expect(output.textContent).toBe('');
+    expect(scheduled).toHaveLength(1);
+    scheduled[0]();
+
+    expect(output.textContent).toBe('three\nfour');
+    expect(output.querySelector('b')?.textContent).toBe('three\nfour');
+    expect(retention.diagnostics()).toEqual({
+      chars: 'three\nfour'.length,
+      lineBreaks: 1,
+      pendingChars: 0,
+    });
+  });
+
+  it('flushes synchronously at the bounded batch threshold', () => {
+    const output = document.createElement('pre');
+    let cancelled = false;
+    const retention = new BatchedPlainOutputDomRetention(
+      () => () => {
+        cancelled = true;
+      },
+      8,
+    );
+
+    retention.append(output, '1234', 100);
+    expect(output.textContent).toBe('');
+    retention.append(output, '5678', 100);
+
+    expect(cancelled).toBe(true);
+    expect(output.textContent).toBe('12345678');
+    expect(retention.diagnostics().pendingChars).toBe(0);
+  });
+
+  it('keeps the production 2 MiB boundary at exactly 32 64-KiB fragments', () => {
+    const output = document.createElement('pre');
+    let cancelled = false;
+    const retention = new BatchedPlainOutputDomRetention(() => () => {
+      cancelled = true;
+    });
+    const fragment = 'x'.repeat(64 * 1024);
+
+    for (let index = 0; index < 31; index += 1) {
+      retention.append(output, fragment, 10_000);
+    }
+    expect(output.textContent).toBe('');
+    expect(retention.diagnostics().pendingChars).toBe(31 * fragment.length);
+
+    retention.append(output, fragment, 10_000);
+
+    expect(cancelled).toBe(true);
+    expect(output.textContent).toHaveLength(PTY_PLAIN_DOM_BATCH_CHARS);
+    expect(retention.diagnostics().pendingChars).toBe(0);
+  });
+
+  it('cancels stale scheduled work and enforces the character cap after flush', () => {
+    const output = document.createElement('pre');
+    const scheduled: Array<() => void> = [];
+    let cancellations = 0;
+    const retention = new BatchedPlainOutputDomRetention((callback) => {
+      scheduled.push(callback);
+      return () => {
+        cancellations += 1;
+      };
+    });
+
+    retention.append(output, '<span>discard-KEEP</span>', 100, 4);
+    retention.flush();
+
+    expect(cancellations).toBe(1);
+    expect(output.textContent).toBe('KEEP');
+    expect(retention.diagnostics()).toEqual({
+      chars: 4,
+      lineBreaks: 0,
+      pendingChars: 0,
+    });
+
+    // A cancelled callback is harmless even if a test scheduler delivers it.
+    scheduled[0]();
+    expect(output.textContent).toBe('KEEP');
+
+    retention.append(output, 'pending-reset', 100);
+    output.textContent = '';
+    retention.reset();
+    scheduled[1]();
+    expect(output.textContent).toBe('');
+
+    retention.append(output, 'pending-dispose', 100);
+    retention.dispose();
+    scheduled[2]();
+    expect(output.textContent).toBe('');
   });
 });

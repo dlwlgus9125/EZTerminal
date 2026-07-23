@@ -10,14 +10,18 @@ function configuredRetries(defaultValue: number): number {
   return parsed;
 }
 
+const performanceBenchmarkEnabled =
+  process.env.EZTERMINAL_RUN_RELEASE_PERFORMANCE === '1'
+  || process.env.EZTERMINAL_RUN_PERFORMANCE_DIAGNOSTIC === '1';
+
 // End-to-end runner. Drives the real Electron app via Playwright's Electron API.
 // `globalSetup` produces the Vite build artifacts the app launches from.
 export default defineConfig({
   testDir: './e2e',
   // The 5-warmup/25-sample benchmark is release evidence, not an ordinary
   // functional test. Keeping it opt-in prevents every CI/e2e invocation from
-  // silently spending up to fifteen minutes without a same-host baseline.
-  testIgnore: process.env.EZTERMINAL_RUN_RELEASE_PERFORMANCE === '1'
+  // silently spending up to thirty minutes without a same-host baseline.
+  testIgnore: performanceBenchmarkEnabled
     ? []
     : ['**/release-performance.spec.ts'],
   fullyParallel: false,

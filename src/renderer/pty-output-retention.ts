@@ -9,6 +9,8 @@
 
 export const PTY_PLAIN_HISTORY_MAX_BYTES = 8 * 1024 * 1024;
 export const PTY_PLAIN_DOM_MAX_CHARS = 8 * 1024 * 1024;
+export const PTY_PLAIN_DOM_BATCH_CHARS = 2 * 1024 * 1024;
+export const PTY_PLAIN_DOM_MAX_LATENCY_MS = 40;
 
 export interface RetainedPtyChunk {
   readonly bytes: Uint8Array;
@@ -112,8 +114,7 @@ export class PtyReplayBuffer {
   }
 
   private trimBytes(maxBytes: number): void {
-    const trimSlack = Math.min(64 * 1024, Math.floor(maxBytes / 8));
-    if (this.retainedBytes <= maxBytes + trimSlack) return;
+    if (this.retainedBytes <= maxBytes) return;
     const remove = this.retainedBytes - maxBytes;
 
     // Prefer beginning at a line boundary. This avoids replaying a suffix of a
@@ -324,10 +325,117 @@ export class PlainOutputDomRetention {
   }
 }
 
+type PlainOutputFlushScheduler = (callback: () => void) => () => void;
+
+/**
+ * Coalesces the many small HTML fragments produced by ConPTY into bounded DOM
+ * writes. A typical plain-output process emits roughly one PTY frame per line;
+ * parsing, inserting, and pruning the DOM for every ~1 KiB frame dominates the
+ * whole command even though the transport and ANSI conversion are inexpensive.
+ *
+ * The pending fragment is capped by `maxBatchChars` (apart from one indivisible
+ * incoming fragment), is flushed on a bounded 40 ms cadence for interactive
+ * output, and can be synchronously flushed by the controller before a terminal
+ * status frame is published. A requestAnimationFrame-per-fragment policy makes
+ * Blink repeatedly lay out a multi-megabyte `<pre>` during firehose output;
+ * this max-latency throttle preserves live feedback without restoring that
+ * repeated visible-page cost. ACK accounting remains transport-driven while
+ * the final marker is observable before the block reports completion.
+ */
+export class BatchedPlainOutputDomRetention {
+  private readonly retention = new PlainOutputDomRetention();
+  private pendingHtml: string[] = [];
+  private pendingChars = 0;
+  private target: HTMLElement | null = null;
+  private maxLines = 1;
+  private maxChars = PTY_PLAIN_DOM_MAX_CHARS;
+  private cancelScheduledFlush: (() => void) | null = null;
+
+  constructor(
+    private readonly scheduleFlush: PlainOutputFlushScheduler = schedulePlainOutputFlush,
+    private readonly maxBatchChars = PTY_PLAIN_DOM_BATCH_CHARS,
+  ) {}
+
+  append(
+    element: HTMLElement,
+    html: string,
+    maxLines: number,
+    maxChars = PTY_PLAIN_DOM_MAX_CHARS,
+  ): void {
+    if (html.length === 0) return;
+    if (this.target && this.target !== element) this.flush();
+    this.target = element;
+    this.maxLines = maxLines;
+    this.maxChars = maxChars;
+    this.pendingHtml.push(html);
+    this.pendingChars += html.length;
+
+    if (this.pendingChars >= Math.max(1, this.maxBatchChars)) {
+      this.flush();
+      return;
+    }
+    if (this.cancelScheduledFlush) return;
+    this.cancelScheduledFlush = this.scheduleFlush(() => {
+      this.cancelScheduledFlush = null;
+      this.flush();
+    });
+  }
+
+  flush(): void {
+    this.cancelScheduledFlush?.();
+    this.cancelScheduledFlush = null;
+    const target = this.target;
+    if (!target || this.pendingChars === 0) return;
+
+    const html = this.pendingHtml.join('');
+    this.pendingHtml = [];
+    this.pendingChars = 0;
+    this.retention.append(target, html, this.maxLines, this.maxChars);
+  }
+
+  limit(
+    element: HTMLElement,
+    maxLines: number,
+    maxChars = PTY_PLAIN_DOM_MAX_CHARS,
+  ): void {
+    this.flush();
+    this.retention.limit(element, maxLines, maxChars);
+  }
+
+  reset(): void {
+    this.cancelScheduledFlush?.();
+    this.cancelScheduledFlush = null;
+    this.pendingHtml = [];
+    this.pendingChars = 0;
+    this.target = null;
+    this.retention.reset();
+  }
+
+  dispose(): void {
+    this.cancelScheduledFlush?.();
+    this.cancelScheduledFlush = null;
+    this.pendingHtml = [];
+    this.pendingChars = 0;
+    this.target = null;
+  }
+
+  diagnostics(): {
+    readonly chars: number;
+    readonly lineBreaks: number;
+    readonly pendingChars: number;
+  } {
+    return {
+      ...this.retention.diagnostics(),
+      pendingChars: this.pendingChars,
+    };
+  }
+}
+
 /**
  * Delete the oldest rendered text while preserving the remaining DOM markup.
- * `Range.deleteContents()` trims text nodes in place, so ANSI `<span>` styling
- * around the retained suffix remains valid and no `innerHTML` rewrite is needed.
+ * Direct plain Text-node prefixes use an allocation-light removal path; nested
+ * ANSI markup falls back to `Range.deleteContents()` so styling around the
+ * retained suffix remains valid without an `innerHTML` rewrite.
  */
 export function prunePlainOutputDom(
   element: HTMLElement,
@@ -373,23 +481,29 @@ function deletePlainOutputPrefix(
   let endNode: Text | null = null;
   let endOffset = 0;
 
-  outer: for (
+  for (
     let node = walker.nextNode() as Text | null;
     node;
     node = walker.nextNode() as Text | null
   ) {
-    for (let offset = 0; offset < node.data.length; offset += 1) {
-      removedChars += 1;
-      if (node.data[offset] === '\n') removedLineBreaks += 1;
-      if (
-        removedChars >= minimumChars
-        && removedLineBreaks >= minimumLineBreaks
-      ) {
-        endNode = node;
-        endOffset = offset + 1;
-        break outer;
-      }
+    const neededChars = Math.max(0, minimumChars - removedChars);
+    const neededLineBreaks = Math.max(0, minimumLineBreaks - removedLineBreaks);
+    const lineCut = offsetAfterLineBreaks(node.data, neededLineBreaks);
+    const candidateOffset = Math.max(neededChars, lineCut);
+
+    if (
+      candidateOffset <= node.data.length
+      && lineCut >= 0
+    ) {
+      endNode = node;
+      endOffset = candidateOffset;
+      removedChars += endOffset;
+      removedLineBreaks += countCharacterBefore(node.data, '\n', endOffset);
+      break;
     }
+
+    removedChars += node.data.length;
+    removedLineBreaks += countCharacter(node.data, '\n');
   }
 
   if (!endNode) {
@@ -405,10 +519,12 @@ function deletePlainOutputPrefix(
     removedChars += 1;
   }
 
-  const range = element.ownerDocument.createRange();
-  range.setStart(element, 0);
-  range.setEnd(endNode, endOffset);
-  range.deleteContents();
+  if (!deleteDirectTextPrefix(element, endNode, endOffset)) {
+    const range = element.ownerDocument.createRange();
+    range.setStart(element, 0);
+    range.setEnd(endNode, endOffset);
+    range.deleteContents();
+  }
 
   // Range deletion can leave empty ANSI spans at the front. Remove only empty
   // leading nodes; styled ancestors containing retained text are untouched.
@@ -418,6 +534,63 @@ function deletePlainOutputPrefix(
   return { chars: removedChars, lineBreaks: removedLineBreaks };
 }
 
+/**
+ * Fast path for ordinary PTY output, where ansi_up emits escaped text without
+ * wrapper markup. Removing complete leading Text nodes and trimming the final
+ * one in place avoids Range's general tree surgery/normalization cost on every
+ * bounded batch. If any prefix node is ANSI markup, return false so the Range
+ * fallback preserves its nested styling exactly.
+ */
+function deleteDirectTextPrefix(
+  element: HTMLElement,
+  endNode: Text,
+  endOffset: number,
+): boolean {
+  if (endNode.parentNode !== element) return false;
+  for (let node = element.firstChild; node && node !== endNode; node = node.nextSibling) {
+    if (node.nodeType !== 3 /* TEXT_NODE */) return false;
+  }
+
+  while (element.firstChild && element.firstChild !== endNode) {
+    element.firstChild.remove();
+  }
+  if (endOffset >= endNode.data.length) {
+    endNode.remove();
+  } else if (endOffset > 0) {
+    endNode.deleteData(0, endOffset);
+  }
+  return true;
+}
+
+/** Return the offset immediately after the requested newline, or -1. */
+function offsetAfterLineBreaks(text: string, count: number): number {
+  if (count <= 0) return 0;
+  let offset = 0;
+  for (let found = 0; found < count; found += 1) {
+    const index = text.indexOf('\n', offset);
+    if (index < 0) return -1;
+    offset = index + 1;
+  }
+  return offset;
+}
+
+function countCharacterBefore(text: string, needle: string, end: number): number {
+  let count = 0;
+  let offset = 0;
+  while (offset < end) {
+    const index = text.indexOf(needle, offset);
+    if (index < 0 || index >= end) break;
+    count += 1;
+    offset = index + needle.length;
+  }
+  return count;
+}
+
+function schedulePlainOutputFlush(callback: () => void): () => void {
+  const handle = setTimeout(callback, PTY_PLAIN_DOM_MAX_LATENCY_MS);
+  return () => clearTimeout(handle);
+}
+
 function countByte(bytes: Uint8Array, needle: number): number {
   let count = 0;
   for (const byte of bytes) if (byte === needle) count += 1;
@@ -425,9 +598,7 @@ function countByte(bytes: Uint8Array, needle: number): number {
 }
 
 function countCharacter(text: string, needle: string): number {
-  let count = 0;
-  for (const character of text) if (character === needle) count += 1;
-  return count;
+  return countCharacterBefore(text, needle, text.length);
 }
 
 function isHighSurrogate(value: number): boolean {

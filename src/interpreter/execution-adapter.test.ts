@@ -12,6 +12,7 @@ import {
   type PipelineData,
 } from './core';
 import {
+  disposeExecutionAdapterWithRetry,
   startExecutionAdapter,
   type ActiveExecutionAdapter,
   type ExecutionAdapterStarters,
@@ -201,5 +202,33 @@ describe('execution adapter contract', () => {
 
     expect(values[handleName].dispose).toHaveBeenCalledOnce();
     expect(adapter.handleControl({ type: 'requestRows', start: 0, count: 1 })).toBe('unsupported');
+  });
+
+  it('allows a closed adapter to retry a rejected physical cleanup', async () => {
+    const values = fakes();
+    vi.mocked(values.structured.dispose)
+      .mockRejectedValueOnce(new Error('sharing violation'))
+      .mockResolvedValueOnce();
+    const adapter = start('structured', values);
+
+    await expect(adapter.dispose()).rejects.toThrow('sharing violation');
+    await adapter.dispose();
+
+    expect(values.structured.dispose).toHaveBeenCalledTimes(2);
+    expect(adapter.handleControl({ type: 'requestRows', start: 0, count: 1 })).toBe('unsupported');
+  });
+
+  it('retains detached cleanup ownership until a later bounded retry succeeds', async () => {
+    const values = fakes();
+    vi.mocked(values.structured.dispose)
+      .mockRejectedValueOnce(new Error('sharing violation 1'))
+      .mockRejectedValueOnce(new Error('sharing violation 2'))
+      .mockRejectedValueOnce(new Error('sharing violation 3'))
+      .mockResolvedValueOnce();
+    const adapter = start('structured', values);
+
+    await disposeExecutionAdapterWithRetry(adapter, [0, 0, 0]);
+
+    expect(values.structured.dispose).toHaveBeenCalledTimes(4);
   });
 });

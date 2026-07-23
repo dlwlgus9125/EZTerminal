@@ -262,8 +262,11 @@ export function valueToJson(value: RuntimeValue): JsonValue {
 
 export function recordToJson(record: RecordValue): JsonRecord {
   const out: JsonRecord = {};
-  for (const [key, value] of Object.entries(record.fields)) {
-    out[key] = valueToJson(value);
+  const fields = record.fields;
+  for (const key in fields) {
+    if (Object.prototype.hasOwnProperty.call(fields, key)) {
+      out[key] = valueToJson(fields[key]);
+    }
   }
   return out;
 }

@@ -1,3 +1,5 @@
+import { rm } from 'node:fs/promises';
+
 import { describe, expect, it } from 'vitest';
 
 import type { ChunkFrame, InterpreterFrame, ProgressFrame } from '../shared/ipc';
@@ -109,6 +111,45 @@ describe('runBlock — credit/window protocol', () => {
     expect(frames.some((f) => f.type === 'end')).toBe(false);
   });
 
+  it('bounds cancellation to the in-flight pull for a slow async structured stream', async () => {
+    const frames: InterpreterFrame[] = [];
+    const ac = new AbortController();
+    let pulls = 0;
+    let signalThirdPull!: () => void;
+    const thirdPull = new Promise<void>((resolve) => {
+      signalThirdPull = resolve;
+    });
+
+    // A legitimate async list stream, deliberately independent of gen-rows.
+    // The finite guard makes a missing cancellation check fail quickly and
+    // deterministically by pull count instead of hanging for 50,000 rows.
+    async function* slowRows() {
+      while (pulls < 64) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        pulls += 1;
+        if (pulls === 3) signalThirdPull();
+        yield {
+          kind: 'record' as const,
+          fields: { n: { kind: 'number' as const, value: pulls } },
+        };
+      }
+    }
+
+    const data: PipelineData = { kind: 'list-stream', rows: slowRows() };
+    const handle = runBlock(data, (frame) => frames.push(frame), ac.signal);
+    await thirdPull;
+    ac.abort();
+    await handle.done;
+
+    // At most the row already in flight may settle after abort. Without the
+    // per-pull seam the 50k drain target consumes all 64 guarded rows first.
+    expect(pulls).toBeLessThanOrEqual(4);
+    expect(progress(frames).at(-1)).toMatchObject({ type: 'progress', done: true });
+    expect(progress(frames).at(-1)?.count).toBeGreaterThan(0);
+    expect(frames.some((frame) => frame.type === 'cancelled')).toBe(true);
+    expect(frames.some((frame) => frame.type === 'end')).toBe(false);
+  });
+
   it('renders a scalar value as a text block', async () => {
     const frames: InterpreterFrame[] = [];
     const signal = new AbortController().signal;
@@ -193,7 +234,35 @@ describe('runBlock — credit/window protocol', () => {
       type: 'error',
       message: expect.stringContaining('kaboom'),
     });
+    expect(progress(frames).at(-1)).toEqual({ type: 'progress', count: 1, done: true });
     expect(frames.some((f) => f.type === 'end')).toBe(false);
+  });
+
+  it('publishes structured rows retained after the last throttled progress before an error', async () => {
+    const frames: InterpreterFrame[] = [];
+    async function* rows() {
+      for (let n = 1; n <= 3; n += 1) {
+        yield {
+          kind: 'record' as const,
+          fields: { n: { kind: 'number' as const, value: n } },
+        };
+      }
+      throw new Error('structured failure');
+    }
+    const data: PipelineData = { kind: 'list-stream', rows: rows() };
+
+    const handle = runBlock(
+      data,
+      (frame) => frames.push(frame),
+      new AbortController().signal,
+    );
+    await handle.done;
+
+    expect(progress(frames).at(-1)).toEqual({ type: 'progress', count: 3, done: true });
+    expect(frames.at(-1)).toMatchObject({
+      type: 'error',
+      message: expect.stringContaining('structured failure'),
+    });
   });
 
   it('dispose() is idempotent and releases the source + runs cleanup once', async () => {
@@ -231,6 +300,35 @@ describe('runBlock — credit/window protocol', () => {
 
     expect(cleanups).toBe(1);
     expect(returned).toBe(1);
+  });
+
+  it('retries a transient spill-directory removal before releasing structured cleanup', async () => {
+    const frames: InterpreterFrame[] = [];
+    let removeAttempts = 0;
+    const signal = new AbortController().signal;
+    const handle = runBlock(
+      evaluate(parse('gen-rows 1'), ctx(signal)),
+      (frame) => frames.push(frame),
+      signal,
+      {
+        retentionFileSystem: {
+          remove: async (path, options) => {
+            removeAttempts += 1;
+            if (removeAttempts === 1) {
+              throw Object.assign(new Error('synthetic sharing violation'), { code: 'EBUSY' });
+            }
+            await rm(path, options);
+          },
+        },
+        disposeRetryDelaysMs: [0],
+      },
+    );
+    await handle.done;
+
+    await handle.dispose();
+
+    expect(removeAttempts).toBe(2);
+    expect(frames.some((frame) => frame.type === 'end')).toBe(true);
   });
 
   it('still releases the row source when pipeline cleanup rejects', async () => {

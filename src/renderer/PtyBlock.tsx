@@ -6,7 +6,7 @@ import type { BlockController } from './block-controller';
 import { resolveFontFamily } from './fonts';
 import { getActiveScrollback } from './scrollback';
 import {
-  PlainOutputDomRetention,
+  BatchedPlainOutputDomRetention,
 } from './pty-output-retention';
 import { getUserFontId } from './theme-runtime';
 import { getActiveTheme } from './themes';
@@ -839,12 +839,18 @@ function PtyPlainView({
   // of React state to avoid render-thrash (B2 e2e: large plain output must
   // complete without a UI stall or ack deadlock).
   useEffect(() => {
-    const domRetention = new PlainOutputDomRetention();
-    const unsink = controller.setPlainDataSink((html) => {
+    const domRetention = new BatchedPlainOutputDomRetention();
+    // Effect setup must be idempotent. React StrictMode intentionally mounts,
+    // cleans up, and mounts again while preserving this DOM node; controller
+    // replay is authoritative, so retaining the first setup's copy would
+    // duplicate output and make the new retention counter under-count it.
+    if (outputRef.current) outputRef.current.textContent = '';
+    const sink = (html: string): void => {
       const output = outputRef.current;
       if (!output) return;
       domRetention.append(output, html, getActiveScrollback());
-    });
+    };
+    const unsink = controller.setPlainDataSink(sink, () => domRetention.flush());
     const unregisterReplayReset = controller.setPtyReplayResetHandler(() => {
       if (outputRef.current) outputRef.current.textContent = '';
       domRetention.reset();
@@ -858,6 +864,7 @@ function PtyPlainView({
       window.removeEventListener('ez:scrollback', applyPlainScrollback);
       unsink();
       unregisterReplayReset();
+      domRetention.dispose();
     };
   }, [controller]);
 

@@ -20,12 +20,19 @@ jobs:
         working-directory: native/remote-host
         run: |
           cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw 'cargo fmt failed.' }
           cargo test --locked --all-targets
+          if ($LASTEXITCODE -ne 0) { throw 'cargo test failed.' }
           cargo clippy --locked --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw 'cargo clippy failed.' }
           cargo install cargo-audit --version 0.22.2 --locked
+          if ($LASTEXITCODE -ne 0) { throw 'cargo-audit installation failed.' }
           cargo install cargo-deny --version 0.20.2 --locked
+          if ($LASTEXITCODE -ne 0) { throw 'cargo-deny installation failed.' }
           cargo audit --deny warnings
+          if ($LASTEXITCODE -ne 0) { throw 'cargo audit failed.' }
           cargo deny check
+          if ($LASTEXITCODE -ne 0) { throw 'cargo deny failed.' }
 
   android-instrumentation:
     name: Release Android instrumentation (API ${{ matrix.api-level }})
@@ -50,7 +57,7 @@ jobs:
           version: 10.33.4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
         with:
@@ -107,7 +114,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
 
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
@@ -208,8 +215,65 @@ jobs:
           )
           $invalidPerformanceSamples = @($requiredPerformanceMetrics | Where-Object {
             $metric = $candidateMetrics.$_
-            $null -eq $metric -or @($metric.samples).Count -ne 25
+            $null -eq $metric -or
+            [int]$metric.warmupRuns -ne 5 -or
+            @($metric.samples).Count -ne 25
           })
+          $candidateProvenance = $performance.candidate.provenance
+          $productProvenance = $candidateProvenance.product
+          $harnessProvenance = $candidateProvenance.harness
+          $launchArtifactPaths = @($productProvenance.launchArtifacts.files | ForEach-Object {
+            [string]$_.path
+          })
+          $requiredLaunchArtifacts = @(
+            'build/interpreter-process.js',
+            'build/main.js',
+            'build/packet-capture-host.js',
+            'build/preload.js',
+            'build/script-host.js',
+            'renderer/main_window/index.html'
+          )
+          $missingLaunchArtifacts = @($requiredLaunchArtifacts | Where-Object {
+            $launchArtifactPaths -notcontains $_
+          })
+          $invalidLaunchArtifacts = @($productProvenance.launchArtifacts.files | Where-Object {
+            [string]$_.sha256 -notmatch '^[0-9a-f]{64}$' -or [int64]$_.bytes -lt 1
+          })
+          $reportedFixtures = @($harnessProvenance.fixtures)
+          $largeFixture = @($reportedFixtures | Where-Object {
+            [string]$_.id -eq 'largePlainOutput' -and
+            [string]$_.path -eq 'e2e/fixtures/large-plain-output.js' -and
+            [int64]$_.stdoutBytes -eq 1101119 -and
+            [string]$_.stdoutSha256 -eq 'bbab0e75bbec8e2b80d281ab814a67d841e03167099d787a407d69a038ed717a' -and
+            [string]$_.completionMarker -eq 'LARGE-OUTPUT-DONE'
+          })
+          $retentionFixture = @($reportedFixtures | Where-Object {
+            [string]$_.id -eq 'retentionPressureOutput' -and
+            [string]$_.path -eq 'e2e/fixtures/retention-pressure-output.js' -and
+            [int64]$_.stdoutBytes -eq 12012025 -and
+            [string]$_.stdoutSha256 -eq '8f4d6337d2637244a47991f82383f798e78b36a145b579c01c027b6a3bdeced7' -and
+            [string]$_.completionMarker -eq 'RETENTION-PRESSURE-DONE'
+          })
+          $lockHash = (Get-FileHash pnpm-lock.yaml -Algorithm SHA256).Hash.ToLowerInvariant()
+          $harnessHash = (
+            Get-FileHash e2e/release-performance.spec.ts -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+          $largeFixtureHash = (
+            Get-FileHash e2e/fixtures/large-plain-output.js -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+          $retentionFixtureHash = (
+            Get-FileHash e2e/fixtures/retention-pressure-output.js -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+          $installedElectronVersion = [string](
+            Get-Content node_modules/electron/package.json -Raw | ConvertFrom-Json
+          ).version
+          $installedPlaywrightVersion = [string](
+            Get-Content node_modules/@playwright/test/package.json -Raw | ConvertFrom-Json
+          ).version
+          $releaseNodeVersion = (& node -p 'process.versions.node').Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Could not resolve the release build Node version.'
+          }
           $performanceResultNames = @($performanceResults | ForEach-Object { [string]$_.name })
           $missingPerformanceComparisons = @($requiredPerformanceMetrics | Where-Object {
             $performanceResultNames -notcontains $_
@@ -237,18 +301,62 @@ jobs:
             [double]$performance.maxP95RegressionPercent -ne 5 -or
             [double]$performance.minTargetP95ImprovementPercent -ne 15 -or
             @($performance.targetMetrics) -notcontains 'plainOutput12MiBRetentionPressureMs' -or
+            [int]$performance.schemaVersion -ne 2 -or
+            [string]$performance.baselineBuildSha -notmatch '^[0-9a-f]{40}$' -or
+            [string]$performance.candidateBuildSha -ne $head -or
             [string]$performance.baselineReportSha256 -notmatch '^[0-9a-f]{64}$' -or
             [string]$performance.candidateReportSha256 -notmatch '^[0-9a-f]{64}$' -or
-            [int]$performance.candidate.schemaVersion -ne 1 -or
+            [int]$performance.candidate.schemaVersion -ne 2 -or
+            [string]$performance.candidate.evidenceMode -ne 'release' -or
             [string]$performance.candidate.buildSha -ne $head -or
             [int]$performance.candidate.warmupRuns -ne 5 -or
             [int]$performance.candidate.measurementRuns -ne 25 -or
+            (@($performance.candidate.metricOrder) -join ',') -ne (
+              $requiredPerformanceMetrics -join ','
+            ) -or
+            [string]$productProvenance.name -ne 'EZTerminal' -or
+            [string]$productProvenance.version -ne $rootVersion -or
+            [int]$productProvenance.protocolVersion -ne [int]$contract.protocolVersion -or
+            [string]$productProvenance.buildSha -ne $head -or
+            [string]$productProvenance.source.gitHeadSha -ne $head -or
+            $productProvenance.source.workingTreeDirty -ne $false -or
+            [string]$harnessProvenance.source.gitHeadSha -ne $head -or
+            $harnessProvenance.source.workingTreeDirty -ne $false -or
+            [string]$productProvenance.lock.sha256 -ne $lockHash -or
+            [string]$harnessProvenance.lock.sha256 -ne $lockHash -or
+            [string]$harnessProvenance.spec.sha256 -ne $harnessHash -or
+            [string]$productProvenance.runtime.electron -ne $installedElectronVersion -or
+            [string]::IsNullOrWhiteSpace([string]$productProvenance.runtime.node) -or
+            [string]$harnessProvenance.runner.node -ne $releaseNodeVersion -or
+            [string]$harnessProvenance.runner.playwright -ne $installedPlaywrightVersion -or
+            [string]$productProvenance.launchArtifacts.entry -ne 'build/main.js' -or
+            $missingLaunchArtifacts.Count -ne 0 -or
+            $invalidLaunchArtifacts.Count -ne 0 -or
+            $reportedFixtures.Count -ne 2 -or
+            $largeFixture.Count -ne 1 -or
+            $retentionFixture.Count -ne 1 -or
+            [string]$largeFixture[0].sha256 -ne $largeFixtureHash -or
+            [string]$retentionFixture[0].sha256 -ne $retentionFixtureHash -or
             [string]$performance.candidate.environment.platform -ne 'win32' -or
             [string]$performance.candidate.environment.arch -ne 'x64' -or
             [string]::IsNullOrWhiteSpace([string]$performance.candidate.environment.osRelease) -or
             [string]::IsNullOrWhiteSpace([string]$performance.candidate.environment.cpuModel) -or
             [int]$performance.candidate.environment.logicalCpuCount -lt 1 -or
             [int]$performance.candidate.environment.totalMemoryGiB -lt 1 -or
+            [string]$performance.candidate.environment.hostFingerprint.algorithm -ne
+              'windows-machine-guid-sha256-v1' -or
+            [string]$performance.candidate.environment.hostFingerprint.sha256 -notmatch
+              '^[0-9a-f]{64}$' -or
+            [string]$performance.candidate.environment.powerPlan.schemeGuid -notmatch
+              '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
+            [string]$performance.candidate.environment.powerPlan.powerSource -notmatch
+              '^(ac|dc)$' -or
+            [string]$performance.candidate.environment.powerPlan.effectivePowerMode -notmatch
+              '^(battery-saver|better-battery|balanced|high-performance|max-performance)$' -or
+            [string]$performance.candidate.environment.powerPlan.baseSettingsSha256 -notmatch
+              '^[0-9a-f]{64}$' -or
+            [string]$performance.candidate.environment.powerPlan.effectiveSettingsSha256 -notmatch
+              '^[0-9a-f]{64}$' -or
             $invalidPerformanceSamples.Count -ne 0 -or
             $missingPerformanceComparisons.Count -ne 0 -or
             $targetPerformanceResult.Count -ne 1 -or

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { AnsiHtmlStream, ansiToHtml } from './ansi';
+import {
+  ANSI_PENDING_MAX_CHARS,
+  AnsiHtmlStream,
+  ansiToHtml,
+} from './ansi';
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 const ESC = '\x1b';
@@ -48,11 +52,59 @@ describe('AnsiHtmlStream (stateful streaming)', () => {
     expect(b).toContain('red');
   });
 
+  it('bounds an unterminated OSC carry and degrades it to inert escaped text', () => {
+    const stream = new AnsiHtmlStream();
+    const opener = `${ESC}]8;;https://example.invalid/${'<img>'.repeat(64)}`;
+    const padding = 'x'.repeat(ANSI_PENDING_MAX_CHARS - opener.length);
+
+    const fallback = stream.push(enc(opener + padding));
+
+    expect(stream.diagnostics().pendingChars).toBe(0);
+    expect(fallback).not.toContain('<img>');
+    expect(fallback).toContain('&lt;img&gt;');
+    expect(fallback).toContain('x'.repeat(128));
+    expect(stream.push(enc('-after-reset'))).toContain('-after-reset');
+  });
+
+  it('flushes a short incomplete control as safe text without retaining carry', () => {
+    const stream = new AnsiHtmlStream();
+
+    expect(stream.push(enc(`${ESC}]8;;https://example.invalid`))).toBe('');
+    const tail = stream.flush();
+
+    expect(tail).toContain(']8;;https://example.invalid');
+    expect(tail).not.toContain(ESC);
+    expect(stream.diagnostics().pendingChars).toBe(0);
+  });
+
   it('decodes a multi-byte UTF-8 char split across byte chunks', () => {
     const stream = new AnsiHtmlStream();
     const euro = enc('€'); // 3 bytes: E2 82 AC
     const first = stream.push(euro.slice(0, 2));
     const second = stream.push(euro.slice(2));
     expect((first + second)).toContain('€');
+  });
+
+  it('exposes a large PTY frame as ordered, independently parseable fragments', () => {
+    const stream = new AnsiHtmlStream();
+    const text = 'x'.repeat((ANSI_PENDING_MAX_CHARS * 2) + 17);
+
+    const fragments = stream.pushFragments(enc(text));
+
+    expect(fragments).toHaveLength(3);
+    expect(fragments.every((fragment) => fragment.length <= ANSI_PENDING_MAX_CHARS)).toBe(true);
+    expect(fragments.join('')).toBe(text);
+  });
+
+  it('preserves ANSI state and supplementary Unicode across fragment boundaries', () => {
+    const stream = new AnsiHtmlStream();
+    const prefix = 'x'.repeat(ANSI_PENDING_MAX_CHARS - 1);
+    const fragments = stream.pushFragments(
+      enc(`${ESC}[32m${prefix}😀green-after-boundary${ESC}[0m`),
+    );
+
+    expect(fragments.length).toBeGreaterThan(1);
+    expect(fragments.join('')).toContain('😀green-after-boundary');
+    expect(fragments.at(-1)).toContain('color:rgb(0,187,0)');
   });
 });

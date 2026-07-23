@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,7 +11,11 @@ import {
   OutputRetentionRuntime,
   type OutputRetentionLimits,
 } from './output-retention-runtime';
-import { OutputCapacityError, ResultStore } from './result-store';
+import {
+  OutputCapacityError,
+  ResultStore,
+  type ResultStoreFileSystem,
+} from './result-store';
 
 const runtimes: OutputRetentionRuntime[] = [];
 const tempRoots: string[] = [];
@@ -39,11 +44,13 @@ function makeStore(
   options: {
     runtime?: OutputRetentionRuntime;
     limits?: Partial<OutputRetentionLimits>;
+    fileSystem?: Partial<ResultStoreFileSystem>;
   } = {},
 ): ResultStore {
   return new ResultStore(iterator, {
     runtime: options.runtime ?? makeRuntime(),
     limits: options.limits,
+    fileSystem: options.fileSystem,
   });
 }
 
@@ -206,6 +213,52 @@ describe('ResultStore — credit/window compatibility', () => {
     await first;
   });
 
+  it('retains spill accounting after a failed directory removal and releases it on retry', async () => {
+    const runtime = makeRuntime({ globalHotBytes: 1_024, globalSpillBytes: 4_096 });
+    let directoryRemoveAttempts = 0;
+    const store = makeStore(countingSource(3).iterator, {
+      runtime,
+      limits: {
+        segmentBytes: 256,
+        segmentRows: 1,
+        perRunHotBytes: 1_024,
+        perRunSpillBytes: 4_096,
+      },
+      fileSystem: {
+        remove: async (path, options) => {
+          if (options.recursive && directoryRemoveAttempts++ === 0) {
+            throw new Error('injected directory removal failure');
+          }
+          await rm(path, options);
+        },
+      },
+    });
+    await store.ensure(2);
+    const before = store.diagnostics();
+    expect(before.spillBytes).toBeGreaterThan(0);
+    expect(before.segments).toBeGreaterThan(0);
+
+    const first = store.dispose();
+    expect(store.dispose()).toBe(first);
+    await expect(first).rejects.toThrow('injected directory removal failure');
+
+    expect(existsSync(before.runDirectory)).toBe(true);
+    expect(store.diagnostics()).toMatchObject({
+      spillBytes: before.spillBytes,
+      segments: before.segments,
+    });
+    expect(runtime.diagnostics().spillBytes).toBe(before.spillBytes);
+
+    const retry = store.dispose();
+    expect(retry).not.toBe(first);
+    await retry;
+
+    expect(directoryRemoveAttempts).toBe(2);
+    expect(existsSync(before.runDirectory)).toBe(false);
+    expect(store.diagnostics()).toMatchObject({ spillBytes: 0, segments: 0 });
+    expect(runtime.diagnostics()).toEqual({ hotBytes: 0, spillBytes: 0, caches: 0 });
+  });
+
   it('serializes stopSource behind an in-flight next and drops the late row', async () => {
     let resolveNext: ((result: IteratorResult<ResultRow>) => void) | null = null;
     let nextPending = false;
@@ -358,22 +411,33 @@ describe('ResultStore — segmented spill and quotas', () => {
     await store.dispose();
   }, 20_000);
 
-  it('enforces the global hot limit across independent runs via LRU eviction', async () => {
-    const runtime = makeRuntime({ globalHotBytes: 128, globalSpillBytes: 32_768 });
+  it('creates and evicts real hot caches to enforce the global LRU limit', async () => {
+    const runtime = makeRuntime({ globalHotBytes: 650, globalSpillBytes: 32_768 });
     const limits = {
       ...tinyLimits,
-      perRunHotBytes: 96,
+      segmentRows: 1,
+      perRunHotBytes: 600,
       perRunSpillBytes: 16_384,
     };
-    const first = makeStore(countingSource(20).iterator, { runtime, limits });
-    const second = makeStore(countingSource(20).iterator, { runtime, limits });
+    const first = makeStore(countingSource(3).iterator, { runtime, limits });
+    const second = makeStore(countingSource(1).iterator, { runtime, limits });
 
-    await Promise.all([first.ensure(20), second.ensure(20)]);
+    await first.ensure(3);
+    await first.stopSource();
+    const cachedBeforePressure = runtime.diagnostics().caches;
+    expect(cachedBeforePressure).toBeGreaterThan(0);
 
-    expect(runtime.diagnostics().hotBytes).toBeLessThanOrEqual(128);
+    // A second run cannot reserve its builder while the first run's pending
+    // row is non-evictable, so the runtime must evict every older cache before
+    // the second run safely falls back to a direct-cold segment.
+    await second.ensure(1);
+    expect(runtime.diagnostics().caches).toBe(0);
+    expect(runtime.diagnostics().hotBytes).toBeLessThanOrEqual(650);
+
     expect((await first.getWindow(0, 2)).rows).toEqual([{ n: 0 }, { n: 1 }]);
-    expect((await second.getWindow(18, 2)).rows).toEqual([{ n: 18 }, { n: 19 }]);
-    expect(runtime.diagnostics().hotBytes).toBeLessThanOrEqual(128);
+    expect((await second.getWindow(0, 1)).rows).toEqual([{ n: 0 }]);
+    expect(runtime.diagnostics().caches).toBeGreaterThan(0);
+    expect(runtime.diagnostics().hotBytes).toBeLessThanOrEqual(650);
     await Promise.all([first.dispose(), second.dispose()]);
     expect(runtime.diagnostics()).toEqual({ hotBytes: 0, spillBytes: 0, caches: 0 });
   });
@@ -445,7 +509,7 @@ describe('ResultStore — segmented spill and quotas', () => {
     await store.dispose();
   });
 
-  it('never emits a single row larger than the production 4 MiB segment cap', async () => {
+  it('rejects a row whose encoded JSON exceeds the production 4 MiB segment cap', async () => {
     const runtime = makeRuntime({
       globalHotBytes: DEFAULT_OUTPUT_RETENTION_LIMITS.globalHotBytes,
       globalSpillBytes: DEFAULT_OUTPUT_RETENTION_LIMITS.globalSpillBytes,
@@ -490,6 +554,70 @@ describe('ResultStore — segmented spill and quotas', () => {
     await store.dispose();
   });
 
+  it('rolls back spill quota when segment-name generation fails after reservation', async () => {
+    const runtime = makeRuntime({ globalHotBytes: 1_024, globalSpillBytes: 4_096 });
+    const store = makeStore(countingSource(2).iterator, {
+      runtime,
+      limits: {
+        segmentBytes: 256,
+        segmentRows: 1,
+        perRunHotBytes: 1_024,
+        perRunSpillBytes: 4_096,
+      },
+      fileSystem: {
+        randomBytes: () => {
+          throw new Error('injected random failure');
+        },
+      },
+    });
+
+    await expect(store.ensure(2)).rejects.toThrow('injected random failure');
+
+    expect(store.diagnostics().spillBytes).toBe(0);
+    expect(runtime.diagnostics().spillBytes).toBe(0);
+    expect(store.count).toBe(1);
+    await store.dispose();
+  });
+
+  it('keeps quota charged until a partial failed write is physically removed', async () => {
+    const runtime = makeRuntime({ globalHotBytes: 1_024, globalSpillBytes: 4_096 });
+    let partialCleanupFailures = 0;
+    const store = makeStore(countingSource(2).iterator, {
+      runtime,
+      limits: {
+        segmentBytes: 256,
+        segmentRows: 1,
+        perRunHotBytes: 1_024,
+        perRunSpillBytes: 4_096,
+      },
+      fileSystem: {
+        writeFile: async (path, contents, options) => {
+          await writeFile(path, contents, options);
+          throw new Error('injected write failure after partial output');
+        },
+        remove: async (path, options) => {
+          if (!options.recursive && partialCleanupFailures++ === 0) {
+            throw new Error('injected partial cleanup failure');
+          }
+          await rm(path, options);
+        },
+      },
+    });
+
+    await expect(store.ensure(2)).rejects.toThrow('injected write failure after partial output');
+
+    const retainedSpill = store.diagnostics().spillBytes;
+    expect(retainedSpill).toBeGreaterThan(0);
+    expect(partialCleanupFailures).toBe(2);
+    expect(runtime.diagnostics().spillBytes).toBe(retainedSpill);
+    expect(readdirSync(store.diagnostics().runDirectory)).toHaveLength(1);
+
+    await store.dispose();
+
+    expect(runtime.diagnostics()).toEqual({ hotBytes: 0, spillBytes: 0, caches: 0 });
+    expect(existsSync(store.diagnostics().runDirectory)).toBe(false);
+  });
+
   it('uses random segment names and owner-only POSIX modes beneath the runtime directory', async () => {
     const runtime = makeRuntime();
     const store = makeStore(countingSource(2).iterator, {
@@ -514,11 +642,50 @@ describe('ResultStore — segmented spill and quotas', () => {
   it('ships the approved commercial retention defaults', () => {
     expect(DEFAULT_OUTPUT_RETENTION_LIMITS).toMatchObject({
       segmentBytes: 4 * 1024 * 1024,
-      segmentRows: 4_096,
+      segmentRows: 32_768,
       perRunHotBytes: 8 * 1024 * 1024,
       globalHotBytes: 128 * 1024 * 1024,
       perRunSpillBytes: 512 * 1024 * 1024,
       globalSpillBytes: 2 * 1024 * 1024 * 1024,
     });
+  });
+
+  it('batches quota reservations and bounded segment writes for 100k compact rows', async () => {
+    const runtime = makeRuntime();
+    const store = makeStore(
+      countingSource(100_000, (index) => ({ n: index, name: `row-${index}` })).iterator,
+      { runtime },
+    );
+
+    await store.ensure(100_001);
+
+    const diagnostics = store.diagnostics();
+    expect(store.count).toBe(100_000);
+    expect(diagnostics.hotReservationCalls).toBeLessThan(100);
+    expect(diagnostics.segmentWrites).toBeLessThanOrEqual(5);
+    expect(diagnostics.hotBytes).toBeLessThanOrEqual(
+      DEFAULT_OUTPUT_RETENTION_LIMITS.perRunHotBytes,
+    );
+    expect(diagnostics.hotBytes).toBe(runtime.diagnostics().hotBytes);
+    expect(runtime.diagnostics().hotBytes).toBeLessThanOrEqual(
+      DEFAULT_OUTPUT_RETENTION_LIMITS.globalHotBytes,
+    );
+
+    await store.dispose();
+    expect(runtime.diagnostics()).toEqual({ hotBytes: 0, spillBytes: 0, caches: 0 });
+  });
+
+  it('releases unused hot reservation credit when a small source is exhausted', async () => {
+    const runtime = makeRuntime();
+    const store = makeStore(countingSource(1).iterator, { runtime });
+
+    await store.ensure(2);
+
+    expect(store.exhausted).toBe(true);
+    expect(store.diagnostics().hotBytes).toBeLessThan(64 * 1024);
+    expect(runtime.diagnostics().hotBytes).toBe(store.diagnostics().hotBytes);
+
+    await store.dispose();
+    expect(runtime.diagnostics()).toEqual({ hotBytes: 0, spillBytes: 0, caches: 0 });
   });
 });

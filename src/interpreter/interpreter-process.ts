@@ -52,6 +52,7 @@ import type {
 import { evaluate, parse } from './core';
 import { describeError, runBlock } from './block-runner';
 import {
+  disposeExecutionAdapterWithRetry,
   startExecutionAdapter,
   type ActiveExecutionAdapter,
 } from './execution-adapter';
@@ -415,13 +416,16 @@ class ExecutionSession implements Execution {
     // iterator.next() before its store queues iterator.return(). In particular,
     // a quiet external child otherwise has no event that can unblock teardown.
     this.ac.abort();
-    const executionCleanup = this.activeExecution?.dispose();
+    const execution = this.activeExecution;
     this.activeExecution = null;
-    void executionCleanup?.catch(() => {
+    void (execution
+      ? disposeExecutionAdapterWithRetry(execution)
+      : Promise.resolve()).catch(() => {
       // The execution is already detached from every transport. Observe the
-      // rejection so a best-effort file cleanup cannot crash the shared utility
-      // process through an unhandled promise rejection.
-      console.error('[interpreter] execution cleanup failed');
+      // final bounded retry rejection so cleanup cannot crash the shared
+      // utility process through an unhandled promise rejection. Spill quota
+      // remains charged and process-exit cleanup retains the fail-closed bound.
+      console.error('[interpreter] execution cleanup failed after bounded retries');
     });
     this.settle();
     try {
