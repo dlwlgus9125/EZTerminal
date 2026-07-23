@@ -1,0 +1,63 @@
+[package]
+name = "ezterminal-remote-host"
+version = "1.0.2"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[features]
+default = ["windows-host"]
+windows-host = [
+  "dep:anyhow",
+  "dep:bytes",
+  "dep:openh264",
+  "dep:tokio",
+  "dep:webrtc",
+  "dep:windows",
+  "dep:windows-service",
+]
+
+[dependencies]
+anyhow = { version = "1.0.104", optional = true }
+bytes = { version = "1.11.1", optional = true }
+openh264 = { version = "=0.9.7", features = ["source"], optional = true }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+tokio = { version = "1.49.0", features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"], optional = true }
+uuid = { version = "1.24.0", features = ["v4", "serde"] }
+webrtc = { version = "=0.17.1", optional = true }
+windows-service = { version = "0.8.1", optional = true }
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62.2"
+optional = true
+features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Gdi",
+  "Win32_Media_MediaFoundation",
+  "Win32_Security",
+  "Win32_System_Com",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_Pipes",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_Services",
+  "Win32_System_Threading",
+  "Win32_System_WindowsProgramming",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+]
+
+[dev-dependencies]
+proptest = "1.10.0"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = "symbols"

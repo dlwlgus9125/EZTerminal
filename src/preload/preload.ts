@@ -7,6 +7,7 @@ import {
   type EzTerminalDesktopApi,
   type RecentPanelInputEvent,
   type RemoteRuntimeStatus,
+  type RemoteDesktopHostStatus,
   type RunStartedInfo,
   type SessionInfo,
   type SystemStatsSnapshot,
@@ -233,6 +234,13 @@ contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
 // for why: mobile has no implementation of these, and folding them into the
 // shared EzTerminalApi would force mobile's transport to stub every one).
 const desktopApi: EzTerminalDesktopApi = {
+  getRemoteDesktopStatus: () => ipcRenderer.invoke('remote:get-desktop-status'),
+  disconnectRemoteDesktop: () => ipcRenderer.invoke('remote:disconnect-desktop'),
+  onRemoteDesktopStatus: (listener: (status: RemoteDesktopHostStatus) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: RemoteDesktopHostStatus): void => listener(status);
+    ipcRenderer.on('remote:desktop-status', handler);
+    return () => ipcRenderer.removeListener('remote:desktop-status', handler);
+  },
   getUiPreferences: (): Promise<import('../shared/ui-preferences').UiPreferences> =>
     ipcRenderer.invoke('settings:get-ui-preferences'),
   setUiPreferences: (

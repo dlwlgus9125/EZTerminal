@@ -41,7 +41,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
 
       # pnpm.onlyBuiltDependencies in package.json allowlists electron /
-      # electron-winstaller / node-pty / cap build scripts. cap compiles from source
+      # node-pty / cap build scripts. cap compiles from source
       # (node-gyp) against its bundled WinPcap SDK; .npmrc clang=false routes it to
       # MSVC. wpcap.dll (Npcap) is only needed at runtime for live capture, not to build.
       - run: pnpm install --frozen-lockfile

@@ -13,11 +13,13 @@ import type { RemoteConnectionInfo } from '../shared/ipc';
 export function formatConnectionInfo(
   interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>,
   port: number,
+  allowedAddress?: string,
 ): RemoteConnectionInfo {
   const urls: string[] = [];
   for (const infos of Object.values(interfaces)) {
     for (const info of infos ?? []) {
       if (info.internal || info.family !== 'IPv4') continue;
+      if (allowedAddress && info.address !== allowedAddress) continue;
       urls.push(`ws://${info.address}:${port}`);
     }
   }

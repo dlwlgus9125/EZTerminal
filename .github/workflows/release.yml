@@ -312,7 +312,7 @@ jobs:
             -LocalRcReportPath $env:LOCAL_RC_REPORT_PATH `
             -ExpectedCommit '${{ github.sha }}' `
             -ExpectedWindowsSignature NotSigned `
-            -ProtocolVersion 1 `
+            -ProtocolVersion 2 `
             -RequireCleanTree
 
       - name: Upload unified release candidate

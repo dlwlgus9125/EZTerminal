@@ -511,6 +511,38 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   min-height: auto;
 }
 
+.remote-panel {
+  display: grid;
+  align-content: start;
+}
+
+.remote-desktop-card .status-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+}
+
+.remote-desktop-card .status-metric {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+}
+
+.remote-desktop-card .status-metric strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-desktop-disconnect {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-1);
+  margin-top: var(--ui-space-2);
+}
+
 .settings-workbench {
   display: grid !important;
   grid-template-columns: minmax(116px, 0.42fr) minmax(0, 1fr);

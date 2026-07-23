@@ -38,6 +38,8 @@ function publicError(error: unknown, port: number): { readonly errorCode: string
       return { errorCode: code, error: 'The remote access token is unavailable.' };
     case 'REMOTE_SETTINGS_UNAVAILABLE':
       return { errorCode: code, error: 'The remote access setting could not be loaded.' };
+    case 'REMOTE_TRUSTED_NETWORK_UNAVAILABLE':
+      return { errorCode: code, error: 'No trusted Tailscale, WireGuard, or selected VPN adapter is available.' };
     default:
       return { errorCode: code, error: 'Remote access failed to start.' };
   }

@@ -1412,6 +1412,28 @@ body {
   margin-left: auto;
 }
 
+.remote-control-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 0.35rem 0.85rem;
+  border-bottom: 1px solid var(--term-amber);
+  color: var(--term-fg-bright);
+  background: #342708;
+  font-size: 0.78rem;
+}
+
+.remote-control-banner .btn {
+  margin-left: auto;
+}
+
+.remote-control-banner .btn:focus-visible {
+  outline: 2px solid var(--term-fg-bright);
+  outline-offset: 2px;
+}
+
 /* ── block list — newest at bottom, input pinned below (Warp-like) ────────── */
 .block-list {
   flex: 1 1 auto;

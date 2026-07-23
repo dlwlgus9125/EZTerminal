@@ -1,7 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Device } from '@capacitor/device';
 
 import { ConnectScreen, type SavedConnection } from './ConnectScreen';
-import { ConnectionCredentialStore } from './connection-credential-store';
+import { ConnectionCredentialStore, type StoredConnection } from './connection-credential-store';
 import {
   classifyConnectionHealth,
   type ConnectionHealthSnapshot,
@@ -23,6 +24,17 @@ const MobileWorkspace = lazy(async () => ({
 // permanently killed the retry loop — a fresh Connect tap / reload was then the
 // only way to recover.)
 const CONNECT_TIMEOUT_MS = 6000;
+
+async function createMobileIdentity(): Promise<Pick<StoredConnection, 'clientId' | 'clientName'>> {
+  let clientName = 'Android device';
+  try {
+    const info = await Device.getInfo();
+    clientName = (info.name || info.model || clientName).trim().slice(0, 80) || clientName;
+  } catch {
+    // The install-scoped UUID remains sufficient when model lookup fails.
+  }
+  return { clientId: crypto.randomUUID(), clientName };
+}
 
 const CREDENTIAL_WARNING_KEY = {
   'Secure credential storage is available only in the Android app. Credentials will not be saved here.':
@@ -56,7 +68,8 @@ export function App(): JSX.Element {
   const [currentConnection, setCurrentConnection] = useState<SavedConnection | null>(null);
   const transportRef = useRef<WsEzTerminalTransport | null>(null);
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingCredentialRef = useRef<SavedConnection | null>(null);
+  const pendingCredentialRef = useRef<StoredConnection | null>(null);
+  const clientIdentityRef = useRef<Pick<StoredConnection, 'clientId' | 'clientName'> | null>(null);
   const credentialStoreRef = useRef<ConnectionCredentialStore | null>(null);
   if (credentialStoreRef.current === null) credentialStoreRef.current = new ConnectionCredentialStore();
 
@@ -65,6 +78,12 @@ export function App(): JSX.Element {
     void credentialStoreRef.current!.load().then((result) => {
       if (!alive) return;
       setSavedConnection(result.connection);
+      if (result.connection) {
+        clientIdentityRef.current = {
+          clientId: result.connection.clientId,
+          clientName: result.connection.clientName,
+        };
+      }
       setCredentialWarning(result.warning);
       setCredentialsLoaded(true);
     });
@@ -82,6 +101,7 @@ export function App(): JSX.Element {
 
   const connect = useCallback(
     (url: string, token: string) => {
+      void (async () => {
       transportRef.current?.disconnect();
       clearConnectTimeout();
       setConnectFailed(false);
@@ -92,11 +112,17 @@ export function App(): JSX.Element {
       setSessionDead(false);
       setCredentialWarning(null);
 
-      const connection = { url, token };
+      const identity = clientIdentityRef.current ?? await createMobileIdentity();
+      clientIdentityRef.current = identity;
+      const connection: StoredConnection = { url, token, ...identity };
       pendingCredentialRef.current = connection;
       setCurrentConnection(connection);
 
-      const t = new WsEzTerminalTransport({ url, token });
+      const t = new WsEzTerminalTransport({
+        url,
+        token,
+        clientIdentity: { ...identity, platform: 'android' },
+      });
       transportRef.current = t;
       // `window.ezterminal` is declared `readonly` in the shared type (see
       // src/shared/window.d.ts) because on desktop it's injected once by
@@ -113,6 +139,7 @@ export function App(): JSX.Element {
         // once the host is reachable (see CONNECT_TIMEOUT_MS note above).
         if (!t.isAuthed) setConnectFailed(true);
       }, CONNECT_TIMEOUT_MS);
+      })();
     },
     [clearConnectTimeout],
   );

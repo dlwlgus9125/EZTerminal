@@ -1,7 +1,6 @@
 import path from 'node:path';
 import { cpSync, readFileSync, realpathSync } from 'node:fs';
 import type { ForgeConfig } from '@electron-forge/shared-types';
-import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
@@ -14,7 +13,7 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 // certificate exists (acquisition is an external/user decision —
 // docs/release/signing.md). Set WINDOWS_SIGN_CERT_FILE (path to .pfx) and
 // WINDOWS_SIGN_CERT_PASSWORD to activate; the exe/dlls (packager) and
-// Setup.exe (Squirrel) sign with the same options. signtool.exe is vendored
+// Setup.exe (NSIS) sign with the same options. signtool.exe is vendored
 // by @electron/windows-sign — no Windows SDK required.
 const windowsSign = process.env.WINDOWS_SIGN_CERT_FILE
   ? {
@@ -62,6 +61,18 @@ const config: ForgeConfig = {
   outDir: process.env.EZ_OUT_DIR,
   packagerConfig: {
     windowsSign,
+    extraResource: process.platform === 'win32' ? [
+      path.join(
+        process.cwd(),
+        'native',
+        'remote-host',
+        'target',
+        'release',
+        'ezterminal-remote-host.exe',
+      ),
+      path.join(process.cwd(), 'assets', 'icon.ico'),
+      path.join(process.cwd(), 'THIRD_PARTY_NOTICES.md'),
+    ] : [],
     // App identity (B-M1, real art landed M4a). icon.ico is generated from
     // appicon.png — regenerate with `node scripts/generate-app-icon.mjs`.
     // electron-packager embeds it into the exe via rcedit, so `pnpm package`
@@ -184,22 +195,10 @@ const config: ForgeConfig = {
       const wsSrc = realpathSync(path.join(process.cwd(), 'node_modules', 'ws'));
       const wsDest = path.join(buildPath, 'node_modules', 'ws');
       cpSync(wsSrc, wsDest, { recursive: true, dereference: true });
+
     },
   },
   makers: [
-    // Squirrel.Windows installer (B-M1). `noMsi` — Squirrel's MSI is a legacy
-    // machine-wide stub, not the real installer; the Setup.exe is canonical.
-    // `iconUrl` must be a remote URL (Squirrel constraint) — points at the repo
-    // raw path once a GitHub remote exists; until then Add/Remove Programs
-    // falls back to a generic icon (setup/app icons are unaffected).
-    new MakerSquirrel({
-      authors: 'EZTerminal',
-      description: 'EZTerminal — a structured-data shell terminal',
-      setupExe: 'EZTerminal-Setup.exe',
-      setupIcon: path.join(process.cwd(), 'assets', 'icon.ico'),
-      noMsi: true,
-      windowsSign,
-    }),
     new MakerZIP({}, ['darwin']),
     new MakerRpm({}),
     new MakerDeb({}),

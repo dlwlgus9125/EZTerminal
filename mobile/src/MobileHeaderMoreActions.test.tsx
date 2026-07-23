@@ -10,10 +10,12 @@ import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
 interface HarnessProps {
   readonly wide: boolean;
   readonly connected: boolean;
+  readonly desktopControlSupported?: boolean;
+  readonly onOpenPcControl?: () => void;
   readonly onOpenSettings?: () => void;
 }
 
-function Harness({ wide, connected, onOpenSettings = () => undefined }: HarnessProps): JSX.Element {
+function Harness({ wide, connected, desktopControlSupported, onOpenPcControl, onOpenSettings = () => undefined }: HarnessProps): JSX.Element {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   return (
@@ -23,6 +25,7 @@ function Harness({ wide, connected, onOpenSettings = () => undefined }: HarnessP
         <MobileHeaderMoreActions
           wide={wide}
           connected={connected}
+          desktopControlSupported={desktopControlSupported}
           themeName="dark"
           openclawVisible
           openclawState="starting"
@@ -31,6 +34,7 @@ function Harness({ wide, connected, onOpenSettings = () => undefined }: HarnessP
           onOpenSessions={() => undefined}
           onOpenFiles={() => undefined}
           onOpenStats={() => undefined}
+          onOpenPcControl={onOpenPcControl}
           onOpenTheme={() => undefined}
           onOpenClaw={() => undefined}
           onOpenSettings={onOpenSettings}
@@ -81,6 +85,15 @@ describe('MobileHeaderMoreActions', () => {
     expect(container.querySelector('[data-testid="more-sessions"]')).toBeNull();
     expect(container.querySelector('[data-testid="more-files"]')).toBeNull();
     expect(container.querySelector('[data-testid="more-stats"]')).toBeTruthy();
+  });
+
+  it('enables PC Control only when the authenticated host advertises it', () => {
+    const onOpenPcControl = vi.fn();
+    openSheet({ wide: false, connected: true, desktopControlSupported: true, onOpenPcControl });
+    const control = container.querySelector<HTMLButtonElement>('[data-testid="more-pc-control"]')!;
+    expect(control.disabled).toBe(false);
+    act(() => control.click());
+    expect(onOpenPcControl).toHaveBeenCalledOnce();
   });
 
   it('closes before dispatching a selected action', () => {

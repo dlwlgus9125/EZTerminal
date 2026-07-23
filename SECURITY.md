@@ -13,8 +13,9 @@ so the companion mobile app can drive terminal sessions on the desktop host.
 **This is the most security-sensitive part of the app**, because a paired
 client is, by design, a remote terminal:
 
-> **Pairing a device grants it full command execution and full filesystem
-> read/write access to this machine — everything the desktop user can do.**
+> **Pairing a device grants full command execution, full filesystem read/write,
+> and (when PC Control is opened) visible desktop, keyboard, pointer, and
+> explicit text-clipboard access — everything the desktop user can do.**
 > The file-browser API is intentionally not confined to a subfolder; the shell
 > (`run-command`) already grants equivalent access, so the pairing token *is*
 > host access. Treat the token like a password to your computer.
@@ -43,14 +44,28 @@ client is, by design, a remote terminal:
   Unexpected disconnects retain at most 32 run ports for five minutes, drain
   output under backpressure, and require the same token before resuming. An
   explicit Disconnect releases those leases; an invalid token stops retries.
+- **VPN-bound graphical control.** `desktop-control-v1` is advertised only to
+  an authenticated protocol-v2 Android identity accepted on an explicitly
+  selected Tailscale/WireGuard/Wintun address. WebRTC has no public STUN/TURN
+  servers, binds UDP 7422 to that same address, and rejects ICE candidates that
+  do not match the authenticated WebSocket peer. DTLS-SRTP protects video and
+  input inside the VPN.
+- **Release-gated.** Public builds currently suppress the graphical-control
+  capability. The unlocked-session candidate requires the explicit development
+  flag documented in the README; lock/UAC and physical-device/performance gates
+  must pass before this restriction is removed.
+- **Visible and revocable.** Only one Android installation can control the GUI
+  at a time. The desktop shows a non-dismissible banner and tray state, and a
+  local Disconnect immediately releases input and the lease. Clipboard access
+  is directional and user-initiated; there is no background clipboard sync.
 
 ### What you must do
 
-- **The transport is plain `ws://` (not encrypted).** Only enable the bridge on
-  a network you trust, or reach the desktop over an **encrypted overlay such as
-  [Tailscale](https://tailscale.com/) / WireGuard**, whose tunnel encrypts the
-  traffic (including the token). On untrusted/shared Wi‑Fi, an on-path attacker
-  could otherwise capture the token from the first `auth` frame.
+- **The transport is plain `ws://` inside the selected VPN tunnel.** The bridge
+  refuses ordinary LAN interfaces and must be reached through an **encrypted
+  overlay such as [Tailscale](https://tailscale.com/) / WireGuard** (or another
+  explicitly trusted VPN), whose tunnel encrypts the traffic including the
+  token. Never expose either bridge port through router forwarding.
 - Disable remote control when you are not using it.
 - **Update both applications together.** Desktop and Android 1.0 use an explicit
   remote-protocol version and reject incompatible peers instead of retrying as
@@ -63,9 +78,8 @@ client is, by design, a remote terminal:
 
 ### Known limitations / roadmap
 
-- **No TLS yet.** `wss://` with a pinned self-signed certificate is planned so
-  the bridge can be used safely on an untrusted LAN without an overlay. Until
-  then, rely on Tailscale/WireGuard or a trusted network.
+- **No TLS yet.** `wss://` with a pinned certificate remains future work. Until
+  then, a trusted Tailscale/WireGuard-style VPN is mandatory.
 
 ## Desktop application hardening
 

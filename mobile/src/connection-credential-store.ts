@@ -2,7 +2,7 @@ import { SecureStoragePlugin } from 'capacitor-secure-storage-plugin';
 
 const SECURE_KEY = 'ezterminal-mobile-connection-v1';
 export const LEGACY_CONNECTION_KEY = 'ezterminal-mobile-connection';
-const SCHEMA_VERSION = 1 as const;
+const SCHEMA_VERSION = 2 as const;
 export const CONNECTION_CREDENTIAL_MAX_BYTES = 4 * 1024;
 
 const utf8Encoder = new TextEncoder();
@@ -10,6 +10,8 @@ const utf8Encoder = new TextEncoder();
 export interface StoredConnection {
   readonly url: string;
   readonly token: string;
+  readonly clientId: string;
+  readonly clientName: string;
 }
 
 interface SecureConnectionRecord extends StoredConnection {
@@ -34,22 +36,51 @@ export interface LegacyStorageLike {
   removeItem(key: string): void;
 }
 
-function parseConnection(value: unknown, requireSchema: boolean): StoredConnection | null {
+type LegacyConnection = Pick<StoredConnection, 'url' | 'token'>;
+
+function isUuid(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function parseConnection(value: unknown): StoredConnection | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const record = value as {
+    schemaVersion?: unknown;
+    url?: unknown;
+    token?: unknown;
+    clientId?: unknown;
+    clientName?: unknown;
+  };
+  if (record.schemaVersion !== SCHEMA_VERSION) return null;
+  if (typeof record.url !== 'string' || record.url.trim() === '') return null;
+  if (typeof record.token !== 'string' || record.token.trim() === '') return null;
+  if (!isUuid(record.clientId)) return null;
+  if (typeof record.clientName !== 'string' || record.clientName.trim() === '' || record.clientName.length > 80) return null;
+  return {
+    url: record.url,
+    token: record.token,
+    clientId: record.clientId,
+    clientName: record.clientName,
+  };
+}
+
+function parseLegacyConnection(value: unknown): LegacyConnection | null {
   if (typeof value !== 'object' || value === null) return null;
   const record = value as { schemaVersion?: unknown; url?: unknown; token?: unknown };
-  if (requireSchema && record.schemaVersion !== SCHEMA_VERSION) return null;
+  if (record.schemaVersion !== undefined && record.schemaVersion !== 1) return null;
   if (typeof record.url !== 'string' || record.url.trim() === '') return null;
   if (typeof record.token !== 'string' || record.token.trim() === '') return null;
   return { url: record.url, token: record.token };
 }
 
-function parseJsonConnection(text: string, requireSchema: boolean): StoredConnection | null {
+function parseBoundedJson(text: string): unknown | null {
   // Secure-storage values cross a native/plugin boundary. Bound the bytes
   // before JSON.parse so a corrupt or hostile record cannot force an
   // unbounded secret allocation/parse. Apply the same rule to legacy migration.
   if (utf8Encoder.encode(text).byteLength > CONNECTION_CREDENTIAL_MAX_BYTES) return null;
   try {
-    return parseConnection(JSON.parse(text) as unknown, requireSchema);
+    return JSON.parse(text) as unknown;
   } catch {
     return null;
   }
@@ -59,6 +90,10 @@ export class ConnectionCredentialStore {
   constructor(
     private readonly secure: SecureStorageLike = SecureStoragePlugin,
     private readonly legacy: LegacyStorageLike = localStorage,
+    private readonly createIdentity: () => Pick<StoredConnection, 'clientId' | 'clientName'> = () => ({
+      clientId: crypto.randomUUID(),
+      clientName: 'Android device',
+    }),
   ) {}
 
   /** Load secure credentials and migrate the old plaintext record on Android. */
@@ -79,7 +114,19 @@ export class ConnectionCredentialStore {
 
     let secureWarning: string | null = null;
     if (keys.includes(SECURE_KEY)) {
-      const connection = await this.readSecure();
+      const stored = await this.readSecureValue();
+      let connection = stored === null ? null : parseConnection(stored);
+      if (!connection) {
+        const legacySecure = parseLegacyConnection(stored);
+        if (legacySecure) {
+          connection = { ...legacySecure, ...this.createIdentity() };
+          try {
+            await this.writeAndVerify(connection);
+          } catch {
+            return { connection: null, warning: 'Existing credentials could not be migrated to Android secure storage.' };
+          }
+        }
+      }
       if (!connection) {
         secureWarning = 'Stored connection credentials are invalid or unavailable.';
       } else if (!this.removeAndVerifyLegacy()) {
@@ -111,9 +158,12 @@ export class ConnectionCredentialStore {
   }
 
   /** Persist only in Android Keystore-backed storage; there is no web fallback. */
-  async save(connection: StoredConnection): Promise<void> {
+  async save(connection: StoredConnection | LegacyConnection): Promise<void> {
     if (!(await this.isAndroid())) throw new Error('Android secure storage is unavailable.');
-    const validated = parseConnection(connection, false);
+    const candidate = 'clientId' in connection && 'clientName' in connection
+      ? connection
+      : { ...connection, ...this.createIdentity() };
+    const validated = parseConnection({ schemaVersion: SCHEMA_VERSION, ...candidate });
     if (!validated) throw new Error('Invalid connection credentials.');
     await this.writeAndVerify(validated);
     if (!this.removeAndVerifyLegacy()) throw new Error('Plaintext credential cleanup is pending.');
@@ -127,10 +177,10 @@ export class ConnectionCredentialStore {
     }
   }
 
-  private async readSecure(): Promise<StoredConnection | null> {
+  private async readSecureValue(): Promise<unknown | null> {
     try {
       const result = await this.secure.get({ key: SECURE_KEY });
-      return parseJsonConnection(result.value, true);
+      return parseBoundedJson(result.value);
     } catch {
       return null;
     }
@@ -140,9 +190,9 @@ export class ConnectionCredentialStore {
     try {
       const raw = this.legacy.getItem(LEGACY_CONNECTION_KEY);
       if (!raw) return { connection: null, warning: null };
-      const connection = parseJsonConnection(raw, false);
+      const connection = parseLegacyConnection(parseBoundedJson(raw));
       return connection
-        ? { connection, warning: null }
+        ? { connection: { ...connection, ...this.createIdentity() }, warning: null }
         : { connection: null, warning: 'The old plaintext connection record is invalid and was not used.' };
     } catch {
       return { connection: null, warning: 'Plaintext credential cleanup could not be verified.' };
@@ -158,7 +208,7 @@ export class ConnectionCredentialStore {
     const written = await this.secure.set({ key: SECURE_KEY, value: serialized });
     if (!written.value) throw new Error('Secure storage rejected the write.');
     const readBack = await this.secure.get({ key: SECURE_KEY });
-    if (readBack.value !== serialized || !parseJsonConnection(readBack.value, true)) {
+    if (readBack.value !== serialized || !parseConnection(parseBoundedJson(readBack.value))) {
       throw new Error('Secure storage read-back verification failed.');
     }
   }

@@ -48,10 +48,17 @@ import type {
 import type { QuickCommand } from './quick-command';
 
 export const REMOTE_CAPABILITY_QUICK_COMMANDS_READ = 'quick-commands-read' as const;
-export type RemoteCapability = typeof REMOTE_CAPABILITY_QUICK_COMMANDS_READ;
+export const REMOTE_CAPABILITY_DESKTOP_CONTROL = 'desktop-control-v1' as const;
+export type RemoteCapability =
+  | typeof REMOTE_CAPABILITY_QUICK_COMMANDS_READ
+  | typeof REMOTE_CAPABILITY_DESKTOP_CONTROL;
 
-/** First public desktop/mobile wire contract, released with EZTerminal 1.0. */
-export const REMOTE_PROTOCOL_VERSION = 1 as const;
+/** v1 remains accepted for terminal-only clients; v2 adds desktop control. */
+export const REMOTE_PROTOCOL_VERSION_LEGACY = 1 as const;
+export const REMOTE_PROTOCOL_VERSION = 2 as const;
+export type RemoteProtocolVersion =
+  | typeof REMOTE_PROTOCOL_VERSION_LEGACY
+  | typeof REMOTE_PROTOCOL_VERSION;
 
 /** Copy-safe identity shown in About/Diagnostics and release evidence. */
 export interface BuildInfo {
@@ -119,9 +126,71 @@ export function decodeFrame(frame: WireInterpreterFrame): InterpreterFrame {
 export interface AuthMessage {
   readonly kind: 'auth';
   readonly token: string;
-  readonly protocolVersion: typeof REMOTE_PROTOCOL_VERSION;
+  readonly protocolVersion: RemoteProtocolVersion;
   readonly clientVersion: string;
   readonly buildSha?: string;
+  /** Required to advertise/use desktop control in protocol v2. */
+  readonly clientIdentity?: RemoteClientIdentity;
+}
+
+export interface RemoteClientIdentity {
+  /** Install-scoped random UUID. It is not derived from Android hardware. */
+  readonly clientId: string;
+  readonly clientName: string;
+  readonly platform: 'android';
+}
+
+export interface DesktopDisplay {
+  readonly id: string;
+  readonly name: string;
+  readonly width: number;
+  readonly height: number;
+  readonly rotationDegrees: number;
+  readonly primary: boolean;
+}
+
+export interface DesktopControlCapabilities {
+  readonly ctrlAltDelete: boolean;
+  readonly clipboardText: boolean;
+  readonly directTouch: boolean;
+  readonly multiMonitor: boolean;
+}
+
+export type DesktopControlState =
+  | 'unavailable'
+  | 'idle'
+  | 'starting'
+  | 'active'
+  | 'reconnecting'
+  | 'busy'
+  | 'stopping'
+  | 'error';
+
+export interface DesktopIceCandidate {
+  readonly candidate: string;
+  readonly sdpMid?: string | null;
+  readonly sdpMLineIndex?: number | null;
+}
+
+export type DesktopSessionSignal =
+  | { readonly type: 'offer' | 'answer'; readonly sdp: string }
+  | { readonly type: 'ice'; readonly candidate: DesktopIceCandidate };
+
+export interface DesktopControlStartRequest {
+  readonly kind: 'desktop-control-start';
+  readonly requestId: string;
+}
+
+export interface DesktopSignalMessage {
+  readonly kind: 'desktop-signal';
+  readonly sessionId: string;
+  readonly signal: DesktopSessionSignal;
+}
+
+export interface DesktopControlStopMessage {
+  readonly kind: 'desktop-control-stop';
+  readonly sessionId: string;
+  readonly reason: 'client-stop' | 'background' | 'navigation';
 }
 
 export interface ListSessionsMessage {
@@ -459,13 +528,16 @@ export type ClientToServerMessage =
   | OpenClawConfigGetRequest
   | OpenClawConfigSetRequest
   | OpenClawChatTicketRequest
-  | QuickCommandsListRequest;
+  | QuickCommandsListRequest
+  | DesktopControlStartRequest
+  | DesktopSignalMessage
+  | DesktopControlStopMessage;
 
 // ── Server -> client envelopes ───────────────────────────────────────────────
 
 export interface AuthOkMessage {
   readonly kind: 'auth-ok';
-  readonly protocolVersion: typeof REMOTE_PROTOCOL_VERSION;
+  readonly protocolVersion: RemoteProtocolVersion;
   readonly hostVersion: string;
   readonly hostBuildSha?: string;
   readonly capabilities?: readonly RemoteCapability[];
@@ -480,8 +552,61 @@ export type AuthFailMessage =
       readonly kind: 'auth-fail';
       readonly reason: 'incompatible-protocol';
       readonly supportedProtocolVersion: typeof REMOTE_PROTOCOL_VERSION;
+      readonly supportedProtocolVersions?: readonly RemoteProtocolVersion[];
       readonly hostVersion: string;
     };
+
+export type DesktopControlStartResultMessage =
+  | {
+      readonly kind: 'desktop-control-start-result';
+      readonly requestId: string;
+      readonly ok: true;
+      readonly sessionId: string;
+      readonly displays: readonly DesktopDisplay[];
+      readonly selectedDisplayId: string | null;
+      readonly endpoint: { readonly address: string; readonly port: number };
+      readonly capabilities: DesktopControlCapabilities;
+      readonly resumed: boolean;
+    }
+  | {
+      readonly kind: 'desktop-control-start-result';
+      readonly requestId: string;
+      readonly ok: false;
+      readonly reason: 'busy' | 'unavailable' | 'error';
+      readonly controllerName?: string;
+      readonly errorCode?: string;
+    };
+
+export interface DesktopControlStatusMessage {
+  readonly kind: 'desktop-control-status';
+  readonly sessionId: string;
+  readonly state: DesktopControlState;
+  readonly displays?: readonly DesktopDisplay[];
+  readonly selectedDisplayId?: string | null;
+  readonly qualityTier?: 'high' | 'medium' | 'low' | 'survival';
+  readonly framesPerSecond?: number;
+  readonly roundTripTimeMs?: number;
+  readonly packetLossPercent?: number;
+  readonly bitrateKbps?: number;
+}
+
+export interface DesktopControlEndedMessage {
+  readonly kind: 'desktop-control-ended';
+  readonly sessionId: string;
+  readonly reason:
+    | 'client-stop'
+    | 'local-disconnect'
+    | 'bridge-disabled'
+    | 'token-rotated'
+    | 'app-quit'
+    | 'peer-timeout'
+    | 'service-stopped'
+    | 'agent-stopped'
+    | 'capture-failed'
+    | 'encoder-failed'
+    | 'transport-failed';
+  readonly errorCode?: string;
+}
 
 export interface SessionListMessage {
   readonly kind: 'session-list';
@@ -820,4 +945,8 @@ export type ServerToClientMessage =
   | OpenClawConfigReply
   | OpenClawConfigSetReply
   | OpenClawChatTicketReply
-  | QuickCommandsListReply;
+  | QuickCommandsListReply
+  | DesktopControlStartResultMessage
+  | DesktopSignalMessage
+  | DesktopControlStatusMessage
+  | DesktopControlEndedMessage;

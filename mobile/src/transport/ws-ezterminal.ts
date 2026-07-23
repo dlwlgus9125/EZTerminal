@@ -86,13 +86,20 @@ import {
 import {
   base64ToUint8Array,
   decodeFrame,
+  REMOTE_CAPABILITY_DESKTOP_CONTROL,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_PROTOCOL_VERSION,
   uint8ArrayToBase64,
   type BuildInfo,
   type ClientToServerMessage,
+  type DesktopControlEndedMessage,
+  type DesktopControlStartResultMessage,
+  type DesktopControlStatusMessage,
+  type DesktopSessionSignal,
+  type DesktopSignalMessage,
   type OpenClawChatTicketFailureReason,
   type RemoteCapability,
+  type RemoteClientIdentity,
   type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../../../src/shared/remote-protocol';
@@ -121,6 +128,7 @@ import { MOBILE_BUILD_INFO } from '../build-info';
 import { e2eLog } from '../e2e-telemetry';
 
 export type { ConnectionHealthSnapshot, RemoteConnectionState } from './connection-health';
+export type MobileDesktopStartResult = DesktopControlStartResultMessage;
 
 /** WebView-74-compatible RFC 4122 v4 request id. Android 10 may start with a
  * WebView that predates `crypto.randomUUID`, but it still provides the secure
@@ -287,6 +295,7 @@ export class FakeMessagePort<TFrame = InterpreterFrame> extends EventTarget {
 export interface WsEzTerminalOptions {
   readonly url: string;
   readonly token: string;
+  readonly clientIdentity?: RemoteClientIdentity;
   /** Test/release seam for the public handshake and copied diagnostics. */
   readonly buildInfo?: BuildInfo;
   /** Test seam: defaults to the real browser `WebSocket`. */
@@ -323,6 +332,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
 
   private readonly url: string;
   private readonly token: string;
+  private readonly clientIdentity: RemoteClientIdentity | undefined;
   private readonly buildInfo: BuildInfo;
   private readonly createSocket: CreateSocket;
   private readonly newId: () => string;
@@ -382,6 +392,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     string,
     (result: RemoteQuickCommandsResult) => void
   >();
+  private readonly pendingDesktopStarts = new Map<
+    string,
+    (result: DesktopControlStartResultMessage) => void
+  >();
+  private readonly desktopSignalListeners = new Set<(message: DesktopSignalMessage) => void>();
+  private readonly desktopStatusListeners = new Set<(message: DesktopControlStatusMessage) => void>();
+  private readonly desktopEndedListeners = new Set<(message: DesktopControlEndedMessage) => void>();
   private readonly connectionDiagnostics: Array<{
     readonly at: string;
     readonly event: 'connect' | 'connected' | 'retry-scheduled' | 'retry-now' | 'auth-rejected' | 'protocol-incompatible' | 'disconnected';
@@ -488,6 +505,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   constructor(options: WsEzTerminalOptions) {
     this.url = options.url;
     this.token = options.token;
+    this.clientIdentity = options.clientIdentity;
     this.buildInfo = options.buildInfo ?? MOBILE_BUILD_INFO;
     this.versions = {
       app: this.buildInfo.appVersion,
@@ -1145,6 +1163,62 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return this.remoteCapabilities.has(REMOTE_CAPABILITY_QUICK_COMMANDS_READ);
   }
 
+  get supportsDesktopControl(): boolean {
+    return this.remoteCapabilities.has(REMOTE_CAPABILITY_DESKTOP_CONTROL);
+  }
+
+  startDesktopControl(): Promise<DesktopControlStartResultMessage> {
+    const requestId = this.newId();
+    if (!this.supportsDesktopControl || !this.authed) {
+      return Promise.resolve({
+        kind: 'desktop-control-start-result',
+        requestId,
+        ok: false,
+        reason: 'unavailable',
+        errorCode: this.authed ? 'UNSUPPORTED' : 'OFFLINE',
+      });
+    }
+    return new Promise((resolve) => {
+      this.pendingDesktopStarts.set(requestId, resolve);
+      if (!this.send({ kind: 'desktop-control-start', requestId })) {
+        this.pendingDesktopStarts.delete(requestId);
+        resolve({
+          kind: 'desktop-control-start-result',
+          requestId,
+          ok: false,
+          reason: 'unavailable',
+          errorCode: 'OFFLINE',
+        });
+      }
+    });
+  }
+
+  sendDesktopSignal(sessionId: string, signal: DesktopSessionSignal): boolean {
+    return this.send({ kind: 'desktop-signal', sessionId, signal });
+  }
+
+  stopDesktopControl(
+    sessionId: string,
+    reason: 'client-stop' | 'background' | 'navigation' = 'client-stop',
+  ): boolean {
+    return this.send({ kind: 'desktop-control-stop', sessionId, reason });
+  }
+
+  onDesktopSignal(listener: (message: DesktopSignalMessage) => void): () => void {
+    this.desktopSignalListeners.add(listener);
+    return () => this.desktopSignalListeners.delete(listener);
+  }
+
+  onDesktopStatus(listener: (message: DesktopControlStatusMessage) => void): () => void {
+    this.desktopStatusListeners.add(listener);
+    return () => this.desktopStatusListeners.delete(listener);
+  }
+
+  onDesktopEnded(listener: (message: DesktopControlEndedMessage) => void): () => void {
+    this.desktopEndedListeners.add(listener);
+    return () => this.desktopEndedListeners.delete(listener);
+  }
+
   listRemoteQuickCommands(): Promise<RemoteQuickCommandsResult> {
     if (!this.supportsRemoteQuickCommands) {
       return Promise.resolve({ ok: false, error: 'unsupported' });
@@ -1428,6 +1502,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         protocolVersion: REMOTE_PROTOCOL_VERSION,
         clientVersion: this.buildInfo.appVersion,
         buildSha: this.buildInfo.buildSha,
+        ...(this.clientIdentity ? { clientIdentity: this.clientIdentity } : {}),
       } satisfies ClientToServerMessage));
     });
     socket.addEventListener('message', (event) => {
@@ -1522,6 +1597,16 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * public Promise can remain orphaned when `disconnect()` nulls the socket
    * before its eventual close event reaches `endConnection`. */
   private resolvePendingRequestsUnavailable(): void {
+    for (const [requestId, resolve] of this.pendingDesktopStarts) {
+      resolve({
+        kind: 'desktop-control-start-result',
+        requestId,
+        ok: false,
+        reason: 'unavailable',
+        errorCode: 'OFFLINE',
+      });
+    }
+    this.pendingDesktopStarts.clear();
     for (const resolve of this.pendingQuickCommands.values()) {
       resolve({ ok: false, error: 'offline' });
     }
@@ -1733,13 +1818,16 @@ export class WsEzTerminalTransport implements EzTerminalApi {
 
   /** Raw one-way/control path. Auth handshake uses its captured socket
    * directly; release-runs and control semantics intentionally stay unchanged. */
-  private send(msg: ClientToServerMessage): void {
+  private send(msg: ClientToServerMessage): boolean {
+    if (!this.socket) return false;
     try {
-      this.socket?.send(JSON.stringify(msg));
+      this.socket.send(JSON.stringify(msg));
+      return true;
     } catch {
       // A close can race one-way traffic. Request/reply calls use the
       // rollback-aware helpers above; one-way traffic is best-effort and must
       // never prevent disconnect cleanup or escape into the mobile UI.
+      return false;
     }
   }
 
@@ -1850,6 +1938,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
             ? msg.capabilities.filter(
                 (capability): capability is RemoteCapability => (
                   capability === REMOTE_CAPABILITY_QUICK_COMMANDS_READ
+                  || capability === REMOTE_CAPABILITY_DESKTOP_CONTROL
                 ),
               )
             : [],
@@ -1949,6 +2038,19 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         resolve({ ok: true, commands });
         break;
       }
+      case 'desktop-control-start-result':
+        this.pendingDesktopStarts.get(msg.requestId)?.(msg);
+        this.pendingDesktopStarts.delete(msg.requestId);
+        break;
+      case 'desktop-signal':
+        for (const listener of this.desktopSignalListeners) listener(msg);
+        break;
+      case 'desktop-control-status':
+        for (const listener of this.desktopStatusListeners) listener(msg);
+        break;
+      case 'desktop-control-ended':
+        for (const listener of this.desktopEndedListeners) listener(msg);
+        break;
       case 'session-destroy-result':
         this.pendingGuardedDestroys.get(msg.requestId)?.(msg.result);
         this.pendingGuardedDestroys.delete(msg.requestId);

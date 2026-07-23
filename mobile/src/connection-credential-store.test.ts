@@ -8,6 +8,10 @@ import {
 } from './connection-credential-store';
 
 const EXPECTED_CREDENTIAL_MAX_BYTES = 4 * 1024;
+const IDENTITY = {
+  clientId: '01947000-0000-4000-8000-000000000001',
+  clientName: 'Test phone',
+} as const;
 
 class FakeSecureStorage implements SecureStorageLike {
   readonly values = new Map<string, string>();
@@ -59,19 +63,19 @@ describe('ConnectionCredentialStore', () => {
 
   it('migrates legacy plaintext only after secure write and exact read-back', async () => {
     legacy.values.set(LEGACY_CONNECTION_KEY, JSON.stringify({ url: 'ws://host:7420', token: 'secret' }));
-    const result = await new ConnectionCredentialStore(secure, legacy).load();
+    const result = await new ConnectionCredentialStore(secure, legacy, () => IDENTITY).load();
 
-    expect(result).toEqual({ connection: { url: 'ws://host:7420', token: 'secret' }, warning: null });
+    expect(result).toEqual({ connection: { url: 'ws://host:7420', token: 'secret', ...IDENTITY }, warning: null });
     expect(legacy.values.has(LEGACY_CONNECTION_KEY)).toBe(false);
     expect([...secure.values.values()][0]).toBe(
-      JSON.stringify({ schemaVersion: 1, url: 'ws://host:7420', token: 'secret' }),
+      JSON.stringify({ schemaVersion: 2, url: 'ws://host:7420', token: 'secret', ...IDENTITY }),
     );
   });
 
   it('retains legacy plaintext when secure write or read-back verification fails', async () => {
     legacy.values.set(LEGACY_CONNECTION_KEY, JSON.stringify({ url: 'ws://host', token: 'secret' }));
     secure.corruptReadBack = true;
-    const store = new ConnectionCredentialStore(secure, legacy);
+    const store = new ConnectionCredentialStore(secure, legacy, () => IDENTITY);
     const result = await store.load();
 
     expect(result.connection).toBeNull();
@@ -80,14 +84,14 @@ describe('ConnectionCredentialStore', () => {
 
     secure.corruptReadBack = false;
     await expect(store.load()).resolves.toEqual({
-      connection: { url: 'ws://host', token: 'secret' },
+      connection: { url: 'ws://host', token: 'secret', ...IDENTITY },
       warning: null,
     });
     expect(legacy.values.has(LEGACY_CONNECTION_KEY)).toBe(false);
   });
 
   it('retries legacy cleanup and blocks saved autofill until deletion succeeds', async () => {
-    const store = new ConnectionCredentialStore(secure, legacy);
+    const store = new ConnectionCredentialStore(secure, legacy, () => IDENTITY);
     await store.save({ url: 'ws://host', token: 'secret' });
     legacy.values.set(LEGACY_CONNECTION_KEY, JSON.stringify({ url: 'ws://host', token: 'secret' }));
     legacy.failRemove = true;
@@ -98,7 +102,7 @@ describe('ConnectionCredentialStore', () => {
 
     legacy.failRemove = false;
     await expect(store.load()).resolves.toEqual({
-      connection: { url: 'ws://host', token: 'secret' },
+      connection: { url: 'ws://host', token: 'secret', ...IDENTITY },
       warning: null,
     });
   });
@@ -106,7 +110,7 @@ describe('ConnectionCredentialStore', () => {
   it('never reads or writes credentials through the web localStorage fallback', async () => {
     secure.platform = 'web';
     legacy.values.set(LEGACY_CONNECTION_KEY, JSON.stringify({ url: 'ws://host', token: 'plaintext' }));
-    const store = new ConnectionCredentialStore(secure, legacy);
+    const store = new ConnectionCredentialStore(secure, legacy, () => IDENTITY);
 
     const loaded = await store.load();
     expect(loaded.connection).toBeNull();
@@ -117,17 +121,17 @@ describe('ConnectionCredentialStore', () => {
 
   it('removes an invalid legacy plaintext record instead of leaving possible token bytes behind', async () => {
     legacy.values.set(LEGACY_CONNECTION_KEY, '{"url":"ws://host","token":');
-    const result = await new ConnectionCredentialStore(secure, legacy).load();
+    const result = await new ConnectionCredentialStore(secure, legacy, () => IDENTITY).load();
     expect(result.connection).toBeNull();
     expect(result.warning).toMatch(/invalid/);
     expect(legacy.values.has(LEGACY_CONNECTION_KEY)).toBe(false);
   });
 
   it('does not delete the secure credential on explicit load/save cycles', async () => {
-    const store = new ConnectionCredentialStore(secure, legacy);
+    const store = new ConnectionCredentialStore(secure, legacy, () => IDENTITY);
     await store.save({ url: 'ws://host', token: 'secret' });
     await expect(store.load()).resolves.toEqual({
-      connection: { url: 'ws://host', token: 'secret' },
+      connection: { url: 'ws://host', token: 'secret', ...IDENTITY },
       warning: null,
     });
     expect(secure.values.size).toBe(1);
@@ -143,13 +147,13 @@ describe('ConnectionCredentialStore', () => {
       }),
     );
 
-    const result = await new ConnectionCredentialStore(secure, legacy).load();
+    const result = await new ConnectionCredentialStore(secure, legacy, () => IDENTITY).load();
     expect(result.connection).toBeNull();
     expect(result.warning).toMatch(/invalid or unavailable/);
   });
 
   it('enforces the 4 KiB cap in UTF-8 bytes before writing a secret', async () => {
-    const store = new ConnectionCredentialStore(secure, legacy);
+    const store = new ConnectionCredentialStore(secure, legacy, () => IDENTITY);
     await expect(
       store.save({ url: 'ws://host', token: '한'.repeat(EXPECTED_CREDENTIAL_MAX_BYTES / 2) }),
     ).rejects.toThrow(/large/);

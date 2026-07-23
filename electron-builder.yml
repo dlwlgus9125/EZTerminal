@@ -1,0 +1,22 @@
+appId: com.ezterminal.desktop
+productName: EZTerminal
+artifactName: EZTerminal-Setup.exe
+directories:
+  buildResources: build
+  output: out/make/nsis/x64
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: assets/icon.ico
+nsis:
+  oneClick: false
+  perMachine: true
+  include: build/installer.nsh
+  installerIcon: assets/icon.ico
+  uninstallerIcon: assets/icon.ico
+  deleteAppDataOnUninstall: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  warningsAsErrors: true

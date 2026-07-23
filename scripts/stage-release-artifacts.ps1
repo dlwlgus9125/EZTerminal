@@ -25,7 +25,7 @@ param(
     [string]$ReleaseAssetsPath = 'release-assets',
     [ValidateSet('NotSigned', 'Valid')]
     [string]$ExpectedWindowsSignature = 'NotSigned',
-    [int]$ProtocolVersion = 1,
+    [int]$ProtocolVersion = 2,
     [switch]$RequireCleanTree
 )
 
@@ -102,14 +102,8 @@ try {
 
     $appExe = (Resolve-Path -LiteralPath 'out/EZTerminal-win32-x64/EZTerminal.exe').Path
     $appAsar = (Resolve-Path -LiteralPath 'out/EZTerminal-win32-x64/resources/app.asar').Path
-    $squirrelRoot = (Resolve-Path -LiteralPath 'out/make/squirrel.windows/x64').Path
-    $setupExe = (Resolve-Path -LiteralPath (Join-Path $squirrelRoot 'EZTerminal-Setup.exe')).Path
-    $releasesFile = (Resolve-Path -LiteralPath (Join-Path $squirrelRoot 'RELEASES')).Path
-    $nupkgFiles = @(Get-ChildItem -LiteralPath $squirrelRoot -File -Filter "*-$Version-full.nupkg")
-    if ($nupkgFiles.Count -ne 1) {
-        throw "Expected exactly one Squirrel full package for $Version, found $($nupkgFiles.Count)."
-    }
-    $nupkg = $nupkgFiles[0]
+    $nsisRoot = (Resolve-Path -LiteralPath 'out/make/nsis/x64').Path
+    $setupExe = (Resolve-Path -LiteralPath (Join-Path $nsisRoot 'EZTerminal-Setup.exe')).Path
 
     foreach ($bundlePath in @('.vite/build/main.js', '.vite/build/preload.js')) {
         $bundle = (Resolve-Path -LiteralPath $bundlePath).Path
@@ -131,17 +125,6 @@ try {
     $appSignature = Assert-Authenticode $appExe $ExpectedWindowsSignature
     $setupSignature = Assert-Authenticode $setupExe $ExpectedWindowsSignature
 
-    $releaseLine = Get-Content -LiteralPath $releasesFile |
-        Where-Object { $_ -match "\s$([regex]::Escape($nupkg.Name))\s" } |
-        Select-Object -First 1
-    if (-not $releaseLine -or $releaseLine -notmatch '^([0-9A-Fa-f]{40})\s+(\S+)\s+(\d+)$') {
-        throw "Squirrel RELEASES does not contain a valid entry for $($nupkg.Name)."
-    }
-    Assert-Equal $Matches[2] $nupkg.Name 'Squirrel package filename'
-    Assert-Equal ([int64]$Matches[3]) $nupkg.Length 'Squirrel package length'
-    $actualSha1 = (Get-FileHash -LiteralPath $nupkg.FullName -Algorithm SHA1).Hash
-    Assert-Equal $actualSha1 $Matches[1].ToUpperInvariant() 'Squirrel package SHA-1'
-
     $assets = [IO.Path]::GetFullPath((Join-Path $repoRoot $ReleaseAssetsPath))
     $repoPrefix = $repoRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $assets.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -155,8 +138,6 @@ try {
     [IO.File]::WriteAllBytes((Join-Path $assets 'local-rc-report.json'), $localRcReportBytes)
 
     Copy-Item -LiteralPath $setupExe -Destination (Join-Path $assets 'EZTerminal-Setup.exe')
-    Copy-Item -LiteralPath $nupkg.FullName -Destination (Join-Path $assets $nupkg.Name)
-    Copy-Item -LiteralPath $releasesFile -Destination (Join-Path $assets 'RELEASES')
 
     $androidName = "EZTerminal-Android-$Version-vc$AndroidVersionCode.apk"
     $verifyApk = Join-Path $repoRoot 'mobile/android/scripts/verify-apk.ps1'
@@ -190,8 +171,6 @@ try {
         androidSigningCertSha256 = ($AndroidCertSha256 -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
         artifacts = @(
             'EZTerminal-Setup.exe',
-            $nupkg.Name,
-            'RELEASES',
             'local-rc-report.json',
             $androidName,
             "$androidName.sha256"

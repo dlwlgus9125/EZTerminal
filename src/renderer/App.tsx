@@ -69,6 +69,7 @@ import {
   type QuickOpenRow,
 } from './QuickOpenModal';
 import { RichFileViewerOverlay } from './RichFileViewerOverlay';
+import { RemoteControlBanner, useRemoteDesktopHostStatus } from './RemoteDesktopStatusCard';
 import { RecentPanelSwitcher, type RecentPanelSwitcherItem } from './RecentPanelSwitcher';
 import { RiskyCloseDialog } from './RiskyCloseDialog';
 import { SettingsPanel, type SettingsCategory } from './SettingsPanel';
@@ -332,6 +333,7 @@ async function pickStartupLayout(): Promise<LayoutEnvelope | null> {
 export function App(): JSX.Element {
   const { t } = useAppTranslation();
   const { pushToast } = useToast();
+  const remoteDesktopStatus = useRemoteDesktopHostStatus();
   const paneActionMessage = useCallback(
     (result: PaneActionResult): string | null => {
       if (result.ok) return null;
@@ -2593,6 +2595,10 @@ export function App(): JSX.Element {
           ) : undefined
         }
       />
+
+      {remoteDesktopStatus?.controllerName && (
+        <RemoteControlBanner status={remoteDesktopStatus} />
+      )}
 
       {crashInfo && (
         <div className="crash-banner" role="alert" data-testid="crash-banner">

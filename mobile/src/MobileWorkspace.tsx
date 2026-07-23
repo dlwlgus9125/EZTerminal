@@ -27,6 +27,7 @@ import { usePageVisible } from './use-page-visible';
 const AgentHub = lazy(async () => ({ default: (await import('../../src/renderer/AgentHub')).AgentHub }));
 const MobileFileView = lazy(async () => ({ default: (await import('./MobileFileView')).MobileFileView }));
 const MobileOpenClawView = lazy(async () => ({ default: (await import('./MobileOpenClawView')).MobileOpenClawView }));
+const MobileRemoteDesktopView = lazy(async () => ({ default: (await import('./MobileRemoteDesktopView')).MobileRemoteDesktopView }));
 const MobileSettingsView = lazy(async () => ({ default: (await import('./MobileSettingsView')).MobileSettingsView }));
 const MobileStatsView = lazy(async () => ({ default: (await import('./MobileStatsView')).MobileStatsView }));
 const SessionSwitcher = lazy(async () => ({ default: (await import('./SessionSwitcher')).SessionSwitcher }));
@@ -72,7 +73,7 @@ export function MobileWorkspace({
 }): JSX.Element {
   const { t } = useAppTranslation();
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
-  const [view, setView] = useState<'terminal' | 'sessions' | 'agents' | 'stats' | 'files' | 'settings' | 'openclaw'>('terminal');
+  const [view, setView] = useState<'terminal' | 'sessions' | 'agents' | 'stats' | 'files' | 'settings' | 'openclaw' | 'pc-control'>('terminal');
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
   const [wideHeader, setWideHeader] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 600);
@@ -272,6 +273,8 @@ export function MobileWorkspace({
     );
   } else if (view === 'stats') {
     page = <MobileStatsView onClose={() => setView('terminal')} />;
+  } else if (view === 'pc-control') {
+    page = <MobileRemoteDesktopView transport={transport} onClose={() => setView('terminal')} />;
   } else if (view === 'agents') {
     page = (
       <AgentHub
@@ -451,6 +454,7 @@ export function MobileWorkspace({
           <MobileHeaderMoreActions
             wide={wideHeader}
             connected={connected}
+            desktopControlSupported={transport.supportsDesktopControl}
             themeName={currentTheme}
             openclawVisible={effectiveOpenClawVisible}
             openclawState={openclawState?.state}
@@ -459,6 +463,7 @@ export function MobileWorkspace({
             onOpenSessions={() => setView('sessions')}
             onOpenFiles={() => setView('files')}
             onOpenStats={() => setView('stats')}
+            onOpenPcControl={() => setView('pc-control')}
             onOpenTheme={() => setThemeMenuOpen(true)}
             onOpenClaw={() => setView('openclaw')}
             onOpenSettings={() => setView('settings')}

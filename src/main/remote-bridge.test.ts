@@ -604,6 +604,107 @@ describe('RemoteBridge — auth gate', () => {
   });
 });
 
+describe('RemoteBridge — desktop control', () => {
+  const identity = {
+    clientId: '01947000-0000-4000-8000-000000000001',
+    clientName: 'Galaxy A',
+    platform: 'android' as const,
+  };
+
+  it('advertises only to an identified v2 VPN peer and relays the bounded lifecycle', async () => {
+    const ws = new FakeWs();
+    const sessionId = '01947000-0000-4000-8000-000000000099';
+    let emit: ((event: never) => void) | null = null;
+    const desktopSource = {
+      start: vi.fn(async (_identity, _endpoint, nextEmit) => {
+        emit = nextEmit;
+        return {
+          ok: true as const,
+          sessionId,
+          displays: [],
+          selectedDisplayId: null,
+          endpoint: { address: '100.64.0.1', port: 7422 },
+          capabilities: { ctrlAltDelete: false, clipboardText: true, directTouch: true, multiMonitor: true },
+          resumed: false,
+        };
+      }),
+      signal: vi.fn(() => true),
+      stop: vi.fn(async () => true),
+      disconnected: vi.fn(),
+    };
+    const { options } = makeOptions({ desktopSource });
+    attachConnection(ws, options, { localAddress: '100.64.0.1', peerAddress: '100.64.0.2' });
+    ws.clientSend({ ...authMessage(), clientIdentity: identity });
+    await flush();
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'auth-ok', capabilities: ['desktop-control-v1'],
+    }));
+
+    ws.clientSend({ kind: 'desktop-control-start', requestId: 'desktop-1' });
+    await flush();
+    expect(desktopSource.start).toHaveBeenCalledWith(
+      identity,
+      { localAddress: '100.64.0.1', peerAddress: '100.64.0.2' },
+      expect.any(Function),
+    );
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'desktop-control-start-result', requestId: 'desktop-1', ok: true, sessionId,
+    }));
+
+    ws.clientSend({ kind: 'desktop-signal', sessionId, signal: { type: 'offer', sdp: 'v=0' } });
+    expect(desktopSource.signal).toHaveBeenCalledWith(identity.clientId, sessionId, { type: 'offer', sdp: 'v=0' });
+    (emit as unknown as (event: unknown) => void)({ kind: 'desktop-control-status', sessionId, state: 'active' });
+    expect(ws.sent).toContainEqual({ kind: 'desktop-control-status', sessionId, state: 'active' });
+
+    ws.clientSend({ kind: 'desktop-control-stop', sessionId, reason: 'client-stop' });
+    await flush();
+    expect(desktopSource.stop).toHaveBeenCalledWith(identity.clientId, sessionId);
+    ws.close();
+    expect(desktopSource.disconnected).toHaveBeenCalledWith(identity.clientId);
+  });
+
+  it('does not expose desktop control without both identity and trusted socket addresses', async () => {
+    const desktopSource = {
+      start: vi.fn(), signal: vi.fn(), stop: vi.fn(), disconnected: vi.fn(),
+    };
+    const withoutIdentity = new FakeWs();
+    const { options } = makeOptions({ desktopSource });
+    attachConnection(withoutIdentity, options, { localAddress: '100.64.0.1', peerAddress: '100.64.0.2' });
+    withoutIdentity.clientSend(authMessage());
+    await flush();
+    expect(withoutIdentity.sent.find((message) => message.kind === 'auth-ok')).not.toHaveProperty('capabilities');
+
+    const withoutEndpoint = new FakeWs();
+    attachConnection(withoutEndpoint, options);
+    withoutEndpoint.clientSend({ ...authMessage(), clientIdentity: identity });
+    await flush();
+    expect(withoutEndpoint.sent.find((message) => message.kind === 'auth-ok')).not.toHaveProperty('capabilities');
+  });
+
+  it('does not advertise desktop control while the installed host is unavailable', async () => {
+    const desktopSource = {
+      isAvailable: vi.fn(() => false),
+      start: vi.fn(), signal: vi.fn(), stop: vi.fn(), disconnected: vi.fn(),
+    };
+    const ws = new FakeWs();
+    const { options } = makeOptions({ desktopSource });
+    attachConnection(ws, options, { localAddress: '100.64.0.1', peerAddress: '100.64.0.2' });
+    ws.clientSend({ ...authMessage(), clientIdentity: identity });
+    await flush();
+
+    expect(ws.sent.find((message) => message.kind === 'auth-ok')).not.toHaveProperty('capabilities');
+    ws.clientSend({ kind: 'desktop-control-start', requestId: 'desktop-unavailable' });
+    await flush();
+    expect(desktopSource.start).not.toHaveBeenCalled();
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'desktop-control-start-result',
+      requestId: 'desktop-unavailable',
+      ok: false,
+      errorCode: 'DESKTOP_CONTROL_UNAVAILABLE',
+    }));
+  });
+});
+
 describe('RemoteBridge terminal file capabilities', () => {
   it('binds a capability to one connection, consumes it once, and rejects a swapped file', async () => {
     const base = await fs.mkdtemp(path.join(os.tmpdir(), 'ez-remote-terminal-cap-'));

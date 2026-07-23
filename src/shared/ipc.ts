@@ -948,6 +948,23 @@ export interface RemoteRuntimeStatus {
   readonly error: string | null;
 }
 
+export type RemoteDesktopServiceHealth = 'unknown' | 'ready' | 'missing' | 'stopped' | 'denied';
+
+/** Renderer-safe status for the single local graphical-control lease. */
+export interface RemoteDesktopHostStatus {
+  readonly state: 'idle' | 'starting' | 'active' | 'reconnecting' | 'error';
+  readonly service: RemoteDesktopServiceHealth;
+  readonly controllerName: string | null;
+  readonly connectedAt: number | null;
+  readonly localAddress: string | null;
+  readonly peerAddress: string | null;
+  readonly framesPerSecond: number | null;
+  readonly roundTripTimeMs: number | null;
+  readonly bitrateKbps: number | null;
+  readonly qualityTier: string | null;
+  readonly errorCode: string | null;
+}
+
 // ── Preload bridge API ────────────────────────────────────────────────────────
 
 export interface EzTerminalApi {
@@ -1144,6 +1161,12 @@ export interface EzTerminalApi {
 // shared/window.d.ts) so every call site guards with `?.`.
 
 export interface EzTerminalDesktopApi {
+  /** Local privileged service and graphical-control lease state. */
+  getRemoteDesktopStatus: () => Promise<RemoteDesktopHostStatus>;
+  /** End the active graphical-control lease locally. */
+  disconnectRemoteDesktop: () => Promise<boolean>;
+  /** Graphical-control service/session transitions pushed by main. */
+  onRemoteDesktopStatus: (listener: (status: RemoteDesktopHostStatus) => void) => () => void;
   /** Atomic Adaptive Workbench preferences persisted in desktop settings.json. */
   getUiPreferences: () => Promise<UiPreferences>;
   /** Main validates and atomically merges changed fields, then returns the snapshot. */

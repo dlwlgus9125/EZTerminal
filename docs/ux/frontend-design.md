@@ -767,10 +767,11 @@ nested sheet cannot expose the background while another modal remains open.
 All mobile interactive targets, including integration configuration fields,
 remain at least 44x44 CSS pixels.
 
-Plain `ws://` remains available for version 1.0 only on a trusted LAN or through
-Tailscale/WireGuard. Pairing and connection screens must present this warning
-before or beside an insecure endpoint; the warning is persistent guidance, not
-a transient toast. TLS and certificate pinning are a post-1.0 protocol change.
+Plain `ws://` remains available for version 1.0 only through Tailscale,
+WireGuard, or another explicitly trusted VPN interface; ordinary LAN binding is
+rejected. Pairing and connection screens must present this warning before or
+beside an endpoint; the warning is persistent guidance, not a transient toast.
+TLS and certificate pinning are a post-1.0 protocol change.
 
 Production builds contain no E2E-only observers, terminal-text extraction, or
 `[ez-e2e]` diagnostics. Dedicated E2E builds may expose those probes. Visual
@@ -780,3 +781,127 @@ stories remain deterministic coverage but are not the sole release oracle.
 Version 1.0 explicitly defers mobile split/layout presets, the global Command
 Center, a complete desktop-settings mirror, full OpenClaw administration, a
 standalone Android shell, Play Store distribution, and automatic updates.
+
+## 16. Remote desktop control addendum
+
+This addendum is normative for the first public remote-desktop-control release.
+It adds a full Windows GUI control surface to the Android companion; it does not
+implement or expose the Microsoft RDP protocol. The audience is an already
+paired EZTerminal user who needs to operate the same Windows PC while away from
+it over Tailscale, WireGuard, or another explicitly trusted VPN.
+
+### 16.1 Direction decision
+
+Three mobile information-architecture directions were evaluated:
+
+1. **Auxiliary full-screen page — selected by the user.** `More > PC Control`
+   opens an opaque page above the still-mounted terminal layer. This preserves
+   terminal state, gives the remote video enough area, and follows the existing
+   `MobileWorkbenchCoordinator`/Android Back model.
+2. **Top-level header mode — rejected.** It makes PC control faster to reach but
+   overloads the compact header and turns a secondary capability into primary
+   navigation.
+3. **Pseudo terminal tab — rejected.** It reuses tab chrome but falsely implies
+   that a graphical desktop is a terminal session and complicates tab lifetime.
+
+The desktop does not gain a new activity-rail destination. The existing Remote
+panel owns service, VPN, pairing, and active-controller state. A non-dismissible
+application-wide banner and the Windows tray provide the local safety affordance.
+
+### 16.2 Screen and component inventory
+
+- `MobileHeaderMoreActions` adds **PC Control**. It is disabled with a connected
+  reason when the authenticated server does not advertise
+  `desktop-control-v1`.
+- `MobileRemoteDesktopView` is an auxiliary page containing
+  `RemoteDesktopToolbar`, `RemoteVideoSurface`, connection-state overlay, and
+  an action sheet for special keys, clipboard, quality, and diagnostics.
+- The toolbar owns Back, device/status label, monitor selection, Trackpad/Direct
+  mode, keyboard, overflow, and Disconnect. Landscape moves secondary controls
+  into overflow but retains Back, mode, keyboard, and Disconnect.
+- `RemoteVideoSurface` uses a video element with a separately composited remote
+  cursor. It owns zoom/pan and maps pointer coordinates through the current
+  fit/zoom/rotation transform.
+- Trackpad is the persisted default input mode. One finger moves, tap clicks,
+  double tap double-clicks, double-tap-and-hold drags, two fingers scroll, and
+  two-finger tap right-clicks. Pinch changes client-side zoom.
+- Direct mode maps one-finger contact to the remote absolute position; tap
+  clicks, drag holds the left button, long press right-clicks, and pinch zooms.
+- A hidden labelled text input owns Android IME composition. Committed text is
+  sent as Unicode; physical keyboard events and special keys use scan codes.
+- Clipboard actions are explicitly directional: **Send mobile text to PC** and
+  **Copy PC text to mobile**. No clipboard read or write occurs on page entry,
+  focus, reconnect, or background transition.
+- `RemotePanel` adds a PC Control card for service health, trusted VPN adapter,
+  UDP endpoint, current device, duration, fps, RTT, bitrate, edition limitations,
+  and immediate Disconnect.
+- `RemoteControlBanner` appears above the desktop workbench whenever control is
+  active. It identifies the device and exposes Disconnect; it cannot be dismissed.
+  The Windows tray mirrors idle/active/error state and exposes Open, Disconnect,
+  and Quit.
+
+All additions use repository primitives, semantic tokens, and Lucide icons. No
+new raster illustration, remote font, normative Figma file, or generated image
+is required. The existing app icon is the source for tray artwork.
+
+### 16.3 State contract
+
+| Surface | Loading / progress | Empty / unavailable | Error / offline | Success / cancellation |
+| --- | --- | --- | --- | --- |
+| Mobile PC Control entry | Capability status follows authenticated bridge state | Missing service, unsupported peer, or untrusted VPN has a connected disabled reason | Auth/protocol failure uses existing connection recovery | Opens one auxiliary page without remounting Terminal |
+| Remote desktop page | `starting` and ICE connection show a stable video-size skeleton | No display/encoder and Windows-edition limits identify the exact missing capability | `reconnecting` freezes the last frame; timeout, UDP block, service failure, and controller busy are distinct | `active` announces once; Disconnect and Android background release input immediately |
+| Video surface | Initial frame and monitor switch retain final geometry | Not applicable while a display exists | Capture loss retries within the active lease and exposes Retry/Disconnect after terminal failure | Monitor change forces a keyframe without resetting client zoom preference |
+| Input | Sticky modifiers and drag state are visibly pressed | Ctrl+Alt+Del is disabled with a Home/policy reason | Rejected input does not retry or leave keys pressed | Every stop path releases remote keys/buttons and restores toolbar focus |
+| Clipboard sheet | One bounded user action may show progress | Empty/unavailable text produces polite status | Permission, secure-desktop, and size errors send/write nothing | Completed direction gets one toast; Cancel has no side effect |
+| Desktop PC Control card | Service and session startup are explicit | Bridge off, service missing, no trusted VPN, and idle are distinct | Native crash, UDP collision, and capture/encoder errors keep remediation beside status | Active state identifies device and local Disconnect wins immediately |
+| Banner / tray | Not applicable | Hidden/inactive when there is no controller | Error state remains in Remote panel, not a stale active banner | Active banner/tray survive panel navigation and disappear only after release |
+
+Only one Android controller may hold the lease. A second device sees the current
+device name and `busy`; it cannot force takeover. The current controller or the
+local desktop must disconnect first. A transport interruption suspends input at
+once and gives the same installation ID a 15-second resume window. Android
+backgrounding is an explicit stop rather than a hidden resume window.
+
+### 16.4 Responsive, input, and accessibility contract
+
+- Required mobile viewports remain 360x800, 412x915, 600x960, and 915x412.
+  The remote page has no document scroll; the video viewport clips its own
+  transformed surface and toolbar/overflow own their scrolling.
+- Every toolbar and sheet target is at least 44x44 CSS pixels and survives
+  Korean/English labels, display cutouts, safe areas, software keyboard resize,
+  200% text zoom, and portrait/landscape rotation.
+- Android Back closes, in order: IME/special-key/clipboard sheet, toolbar
+  overflow, remote page, then the platform default. Leaving the page returns to
+  the exact mounted terminal instance and usable focus.
+- Connection state, input mode, selected monitor, sticky modifiers, busy/error,
+  and Ctrl+Alt+Del availability never rely on color alone. State transitions use
+  one polite live region; fps, elapsed time, cursor movement, and retry ticks are
+  never live-announced.
+- The video surface has a localized accessible name and concise gesture
+  instructions. Toolbar alternatives expose keyboard, monitor, clipboard, and
+  disconnect operations without requiring a canvas gesture.
+- Reduced motion removes nonessential toolbar/overlay transitions. Remote video
+  itself is user-requested content and is not paused by reduced-motion settings.
+- Desktop banner controls are keyboard reachable, visibly focused, and do not
+  steal focus when a session starts. Tray labels are localized through the same
+  effective-locale source as the native menu.
+
+### 16.5 Visual oracle and freshness
+
+Storybook owns deterministic disconnected, unavailable, starting, active,
+reconnecting, busy, Home-limited, error, special-key, clipboard, portrait, and
+landscape states using fake `MediaStream`/controller adapters. Playwright owns
+the existing desktop/mobile screenshot axes, Korean/English, Matrix/reduced
+motion, banner presence, 150% scale, and mobile Back/focus behavior. Product
+Stories set `parameters.a11y.test = 'error'`.
+
+No installed readiness detector exists, but this repository already has
+Storybook and screenshot regression configuration; those project-local lanes
+remain required. Mock streams and stories are deterministic reference fixtures,
+not the release oracle. Final approval requires a packaged Windows app and APK
+on API 29/API 35 plus a physical device over a real VPN. This addendum and the
+repository primitives are normative; screenshots must be refreshed whenever
+this interaction contract or the relevant tokens/components change.
+
+There are no unresolved appearance, navigation, responsive, asset, or
+accessibility decisions for this feature.

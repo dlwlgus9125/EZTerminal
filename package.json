@@ -7,8 +7,9 @@
   "private": true,
   "scripts": {
     "start": "electron-forge start",
-    "package": "electron-forge package",
-    "make": "electron-forge make",
+    "build:remote-host": "cargo build --release --locked --manifest-path native/remote-host/Cargo.toml",
+    "package": "node scripts/package-app.mjs",
+    "make": "node scripts/make-distributables.mjs",
     "lint": "eslint --ext .ts,.tsx .",
     "typecheck": "tsc --noEmit && pnpm typecheck:mobile-e2e",
     "typecheck:mobile-e2e": "tsc -p mobile/tsconfig.e2e.json --noEmit",
@@ -35,7 +36,6 @@
     "onlyBuiltDependencies": [
       "cap",
       "electron",
-      "electron-winstaller",
       "node-pty"
     ],
     "overrides": {
@@ -52,7 +52,6 @@
     "@electron-forge/cli": "^7.11.2",
     "@electron-forge/maker-deb": "^7.11.2",
     "@electron-forge/maker-rpm": "^7.11.2",
-    "@electron-forge/maker-squirrel": "^7.11.2",
     "@electron-forge/maker-zip": "^7.11.2",
     "@electron-forge/plugin-auto-unpack-natives": "^7.11.2",
     "@electron-forge/plugin-fuses": "^7.11.2",
@@ -64,7 +63,6 @@
     "@storybook/addon-a11y": "10.4.0",
     "@storybook/addon-vitest": "10.4.0",
     "@storybook/react-vite": "10.4.0",
-    "@types/electron-squirrel-startup": "^1.0.2",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
@@ -75,7 +73,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "@vitest/browser": "3.2.6",
     "electron": "42.5.0",
-    "electron-winstaller": "^5.4.2",
+    "electron-builder": "^26.15.3",
     "eslint": "^8.57.1",
     "eslint-import-resolver-typescript": "^3.7.0",
     "eslint-plugin-import": "^2.32.0",
@@ -101,7 +99,6 @@
     "cap": "^0.2.1",
     "cross-spawn": "^7.0.6",
     "dockview-react": "^7.0.2",
-    "electron-squirrel-startup": "^1.0.1",
     "i18next": "^26.3.6",
     "lucide-react": "^1.24.0",
     "node-pty": "^1.1.0",

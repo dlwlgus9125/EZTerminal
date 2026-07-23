@@ -37,6 +37,7 @@ function MoreAction({ label, hint, onSelect, disabled = false, state, testId }: 
 export function MobileHeaderMoreActions({
   wide,
   connected,
+  desktopControlSupported = false,
   themeName,
   openclawVisible,
   openclawState,
@@ -45,12 +46,14 @@ export function MobileHeaderMoreActions({
   onOpenSessions,
   onOpenFiles,
   onOpenStats,
+  onOpenPcControl = () => undefined,
   onOpenTheme,
   onOpenClaw,
   onOpenSettings,
 }: {
   readonly wide: boolean;
   readonly connected: boolean;
+  readonly desktopControlSupported?: boolean;
   readonly themeName: string;
   readonly openclawVisible: boolean;
   readonly openclawState?: OpenClawStatus['state'];
@@ -59,6 +62,7 @@ export function MobileHeaderMoreActions({
   readonly onOpenSessions: () => void;
   readonly onOpenFiles: () => void;
   readonly onOpenStats: () => void;
+  readonly onOpenPcControl?: () => void;
   readonly onOpenTheme: () => void;
   readonly onOpenClaw: () => void;
   readonly onOpenSettings: () => void;
@@ -95,6 +99,18 @@ export function MobileHeaderMoreActions({
           testId="more-files"
         />
       )}
+      <MoreAction
+        label={t('mobile.pcControl.title')}
+        hint={!connected
+          ? t('mobile.pcControl.offline')
+          : desktopControlSupported
+            ? t('mobile.pcControl.entryHint')
+            : t('mobile.pcControl.unsupported')}
+        disabled={!connected || !desktopControlSupported}
+        state={!connected ? remoteState : desktopControlSupported ? undefined : t('common.unavailable')}
+        onSelect={() => choose(onOpenPcControl)}
+        testId="more-pc-control"
+      />
       <MoreAction
         label={t('mobile.moreActions.stats')}
         hint={t('mobile.moreActions.statsHint')}

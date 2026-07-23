@@ -52,6 +52,8 @@ out-*/
 
 # Generic build output
 dist/
+native/**/target/
+.native-build/
 # Loose packaged zip at repo root (bundle/zip-maker output, not an out-*/ dir)
 /ezterminal.zip
 /release-assets/

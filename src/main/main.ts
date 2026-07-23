@@ -10,14 +10,15 @@ import {
   safeStorage,
   session,
   shell,
+  Tray,
   utilityProcess,
 } from 'electron';
 import type { UtilityProcess, MessagePortMain, Rectangle } from 'electron';
 import { stat } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { networkInterfaces } from 'node:os';
-import started from 'electron-squirrel-startup';
 
 import { isAppUrl } from './url-guard';
 import { buildMenuTemplate } from './app-menu';
@@ -58,6 +59,8 @@ import {
 } from './remote-bridge';
 import { RemoteRuntimeController, RemoteRuntimeStartError } from './remote-runtime';
 import { formatConnectionInfo } from './remote-connection-info';
+import { RemoteDesktopController } from './remote-desktop-controller';
+import { selectTrustedRemoteNetwork } from './trusted-remote-network';
 import {
   TerminalRendererPreferenceSchema,
   type EffectParamsSettings,
@@ -77,6 +80,8 @@ import type {
   MainToInterpreter,
   RunStartedInfo,
   RemoteRuntimeStatus,
+  RemoteDesktopHostStatus,
+  RemoteDesktopServiceHealth,
   SessionInfo,
   SystemStatsSnapshot,
 } from '../shared/ipc';
@@ -107,11 +112,6 @@ const OSC52_MAIN_MIN_INTERVAL_MS = 1_000;
 // remote-bridge (WS) are thin adapters over one shared instance, so bulk frame
 // data never routes through main.
 
-// Handle creating/removing shortcuts on Windows when installing/uninstalling.
-if (started) {
-  app.quit();
-}
-
 // Test seam (Track A ③): e2e/packaged smoke isolate persistence in a temp dir.
 // Must run BEFORE 'ready' so every userData consumer sees the override. Set only
 // by test harnesses; production never defines it.
@@ -123,7 +123,7 @@ if (process.env.EZTERMINAL_USER_DATA_DIR) {
 // fixed remote/proxy ports or present a different pairing token. Test harnesses
 // that intentionally launch isolated instances must opt out explicitly.
 const allowMultipleInstances = process.env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES === '1';
-if (!started && !allowMultipleInstances) {
+if (!allowMultipleInstances) {
   const primaryInstance = app.requestSingleInstanceLock();
   if (!primaryInstance) {
     app.quit();
@@ -182,6 +182,8 @@ let packetCaptureRegistry: PacketCaptureRegistry | null = null;
 
 // Desired setting + observed mobile remote-control listener lifecycle.
 let remoteRuntimeController: RemoteRuntimeController | null = null;
+let remoteDesktopController: RemoteDesktopController | null = null;
+let remoteDesktopTray: Tray | null = null;
 
 // OpenClaw reverse proxy (openclaw-management M4) — started lazily by the
 // first authenticated chat-ticket request, independently of the core bridge.
@@ -869,6 +871,9 @@ app.on('ready', () => {
     systemStatsService?.stop();
     packetCaptureRegistry?.kill();
     void remoteRuntimeController?.shutdown();
+    void remoteDesktopController?.shutdown('app-quit');
+    remoteDesktopTray?.destroy();
+    remoteDesktopTray = null;
     void stopOpenClawProxy();
     unsubscribeOpenClawEndpoint();
     openClawService?.dispose();
@@ -1436,6 +1441,48 @@ app.on('ready', () => {
     return remoteTokenInit ?? Promise.resolve();
   };
   const remoteBridgePort = Number(process.env.EZTERMINAL_REMOTE_PORT) || DEFAULT_REMOTE_BRIDGE_PORT;
+  const remoteHostPath = process.env.EZTERMINAL_REMOTE_HOST_PATH
+    ?? (app.isPackaged
+      ? path.join(process.resourcesPath, 'ezterminal-remote-host.exe')
+      : path.join(app.getAppPath(), 'native', 'remote-host', 'target', 'release', 'ezterminal-remote-host.exe'));
+  const probeRemoteDesktopService = (): Promise<RemoteDesktopServiceHealth> => new Promise((resolve) => {
+    execFile(
+      remoteHostPath,
+      ['--probe'],
+      { windowsHide: true, timeout: 3_000, maxBuffer: 16 * 1024 },
+      (error, stdout) => {
+        if (error) {
+          resolve('unknown');
+          return;
+        }
+        try {
+          const result = JSON.parse(stdout) as { service?: unknown; protocolVersion?: unknown };
+          if (result.protocolVersion !== 1) {
+            resolve('unknown');
+            return;
+          }
+          switch (result.service) {
+            case 'ready': case 'missing': case 'stopped': case 'denied':
+              resolve(result.service);
+              return;
+            default:
+              resolve('unknown');
+          }
+        } catch {
+          resolve('unknown');
+        }
+      },
+    );
+  });
+  const desktopController = new RemoteDesktopController({
+    hostPath: remoteHostPath,
+    probeService: probeRemoteDesktopService,
+  });
+  remoteDesktopController = desktopController;
+  // The unlocked-session implementation is available to development/VM gates,
+  // but the public protocol capability stays hidden until the SYSTEM
+  // interactive-session broker and every release gate in the design pass.
+  const experimentalDesktopControl = process.env.EZTERMINAL_EXPERIMENTAL_DESKTOP_CONTROL === '1';
   const remoteStatsSource: RemoteStatsSource = {
     getHistory: () => systemStatsService?.getHistory() ?? [],
     onSnapshot: (listener) => {
@@ -1460,6 +1507,57 @@ app.on('ready', () => {
       win.webContents.send('remote:runtime-status', status);
     }
   };
+  const publishRemoteDesktopStatus = (status: RemoteDesktopHostStatus): void => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('remote:desktop-status', status);
+    }
+  };
+  desktopController.onStatus(publishRemoteDesktopStatus);
+  if (process.platform === 'win32') {
+    try {
+      const trayIcon = app.isPackaged
+        ? path.join(process.resourcesPath, 'icon.ico')
+        : path.join(app.getAppPath(), 'assets', 'icon.ico');
+      remoteDesktopTray = new Tray(trayIcon);
+      const openMainWindow = (): void => {
+        const win = mainWindowRef ?? BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+        if (!win || win.isDestroyed()) return;
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+      };
+      const updateTray = (status: RemoteDesktopHostStatus): void => {
+        if (!remoteDesktopTray) return;
+        const korean = app.getLocale().toLowerCase().startsWith('ko');
+        const active = status.controllerName !== null;
+        const error = status.state === 'error' || ['missing', 'stopped', 'denied'].includes(status.service);
+        const stateLabel = active
+          ? (korean ? `제어 중: ${status.controllerName}` : `Controlled by ${status.controllerName}`)
+          : error
+            ? (korean ? 'PC 제어 오류' : 'PC Control error')
+            : (korean ? 'PC 제어 대기' : 'PC Control idle');
+        remoteDesktopTray.setToolTip(`EZTerminal — ${stateLabel}`);
+        remoteDesktopTray.setContextMenu(Menu.buildFromTemplate([
+          { label: korean ? 'EZTerminal 열기' : 'Open EZTerminal', click: openMainWindow },
+          {
+            label: active ? (korean ? `${status.controllerName} 연결 끊기` : `Disconnect ${status.controllerName}`) : (korean ? '연결 끊기' : 'Disconnect'),
+            enabled: active,
+            click: () => { void desktopController.shutdown('local-disconnect'); },
+          },
+          { type: 'separator' },
+          { label: korean ? '종료' : 'Quit', click: () => app.quit() },
+        ]));
+      };
+      remoteDesktopTray.on('click', openMainWindow);
+      desktopController.onStatus(updateTray);
+      updateTray(desktopController.getStatus());
+    } catch (error) {
+      console.error('[main] remote desktop tray unavailable:', error);
+      remoteDesktopTray = null;
+    }
+  }
+  void desktopController.probeService();
   const runtime = new RemoteRuntimeController({
     port: remoteBridgePort,
     readDesiredEnabled: async () => {
@@ -1477,14 +1575,25 @@ app.on('ready', () => {
         throw new RemoteRuntimeStartError('REMOTE_TOKEN_UNAVAILABLE', 'remote token unavailable');
       }
       await agentInfrastructureReady;
+      const trustedNetwork = selectTrustedRemoteNetwork(
+        networkInterfaces(),
+        process.env.EZTERMINAL_REMOTE_VPN_INTERFACE,
+      );
+      if (!trustedNetwork) {
+        throw new RemoteRuntimeStartError(
+          'REMOTE_TRUSTED_NETWORK_UNAVAILABLE',
+          'trusted VPN adapter unavailable',
+        );
+      }
       // Keep the presentation hint current before auth; it no longer gates
       // any authenticated OpenClaw request.
       currentOpenClawVisible = await resolveOpenClawVisibility(
         await layoutStore.getOpenClawMode(),
         () => openclaw.isInstalled(),
       );
-      return startRemoteBridge({
+      const bridge = await startRemoteBridge({
         port: remoteBridgePort,
+        bindHost: trustedNetwork.address,
         getToken: () => remoteTokenStore.getToken(),
         hostVersion: app.getVersion(),
         buildSha: process.env.EZTERMINAL_BUILD_SHA ?? process.env.GITHUB_SHA,
@@ -1496,7 +1605,15 @@ app.on('ready', () => {
         quickCommandSource: remoteQuickCommandSource,
         openclawSource: remoteOpenClawSource,
         agentSource: agentActivityService ?? undefined,
+        desktopSource: experimentalDesktopControl ? desktopController : undefined,
       });
+      return {
+        port: bridge.port,
+        stop: async () => {
+          await desktopController.shutdown('bridge-disabled');
+          await bridge.stop();
+        },
+      };
     },
     onStatus: publishRemoteRuntimeStatus,
     onError: (error) => console.error('[main] remote runtime operation failed:', error),
@@ -1507,7 +1624,12 @@ app.on('ready', () => {
   // Desktop pairing panel (M4): connection info/token are read-only display +
   // an explicit rotate action, same invoke shape as the settings handlers above.
   ipcMain.handle('remote:get-connection-info', () => {
-    return formatConnectionInfo(networkInterfaces(), remoteBridgePort);
+    const interfaces = networkInterfaces();
+    const trustedNetwork = selectTrustedRemoteNetwork(
+      interfaces,
+      process.env.EZTERMINAL_REMOTE_VPN_INTERFACE,
+    );
+    return formatConnectionInfo(interfaces, remoteBridgePort, trustedNetwork?.address);
   });
   ipcMain.handle('remote:get-token', async () => {
     await ensureRemoteTokenSecurity();
@@ -1527,7 +1649,9 @@ app.on('ready', () => {
   ipcMain.handle('remote:rotate-token', async () => {
     await ensureRemoteTokenSecurity();
     try {
-      return await remoteTokenStore.rotateToken();
+      const token = await remoteTokenStore.rotateToken();
+      await desktopController.shutdown('token-rotated');
+      return token;
     } catch (err) {
       remoteTokenSecure = false;
       remoteSecurityError = 'The new remote access token could not be stored securely. Remote access was stopped.';
@@ -1549,6 +1673,12 @@ app.on('ready', () => {
     return status;
   });
   ipcMain.handle('remote:retry-runtime', () => runtime.retry());
+  ipcMain.handle('remote:get-desktop-status', () => desktopController.probeService());
+  ipcMain.handle('remote:disconnect-desktop', async (): Promise<boolean> => {
+    const active = desktopController.getStatus().controllerName !== null;
+    if (active) await desktopController.shutdown('local-disconnect');
+    return active;
+  });
 
   // ── OpenClaw management (openclaw-management M1) ─────────────────────────
   // `openclaw`/`openClawService` are constructed earlier (see the mobile

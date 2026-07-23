@@ -178,6 +178,19 @@ describe('WsEzTerminalTransport — auth handshake', () => {
     });
   });
 
+  it('adds the install-scoped Android identity without a hardware identifier', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const clientIdentity = {
+      clientId: '01947000-0000-4000-8000-000000000001',
+      clientName: 'Galaxy Fold',
+      platform: 'android' as const,
+    };
+    new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, clientIdentity });
+    sockets[0].triggerOpen();
+    expect(sockets[0].lastSent()).toMatchObject({ kind: 'auth', clientIdentity });
+    expect(JSON.stringify(sockets[0].lastSent())).not.toContain('hardware');
+  });
+
   it.each([
     ['missing auth-ok version', { kind: 'auth-ok' }],
     ['unsupported auth-ok version', { kind: 'auth-ok', protocolVersion: 99, hostVersion: '2.0.0' }],
@@ -249,6 +262,61 @@ describe('WsEzTerminalTransport — auth handshake', () => {
     unsub();
     sockets[0].triggerMessage({ kind: 'auth-ok' });
     expect(seen).toEqual([false, true, false]); // no further calls after unsubscribe
+  });
+});
+
+describe('WsEzTerminalTransport — desktop control', () => {
+  it('negotiates capability, correlates start, and relays signaling/status/end events', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x', token: 'tok', createSocket, newId: () => 'desktop-1',
+    });
+    sockets[0].triggerOpen();
+    sockets[0].triggerMessage({ kind: 'auth-ok', capabilities: ['desktop-control-v1'] });
+    expect(transport.supportsDesktopControl).toBe(true);
+
+    const pending = transport.startDesktopControl();
+    expect(sockets[0].lastSent()).toEqual({ kind: 'desktop-control-start', requestId: 'desktop-1' });
+    const result = {
+      kind: 'desktop-control-start-result', requestId: 'desktop-1', ok: true,
+      sessionId: '01947000-0000-4000-8000-000000000099', displays: [], selectedDisplayId: null,
+      endpoint: { address: '100.64.0.1', port: 7422 },
+      capabilities: { ctrlAltDelete: false, clipboardText: true, directTouch: true, multiMonitor: true },
+      resumed: false,
+    } as const;
+    sockets[0].triggerMessage(result);
+    await expect(pending).resolves.toEqual(result);
+
+    const signals: unknown[] = [];
+    const statuses: unknown[] = [];
+    const ended: unknown[] = [];
+    transport.onDesktopSignal((message) => signals.push(message));
+    transport.onDesktopStatus((message) => statuses.push(message));
+    transport.onDesktopEnded((message) => ended.push(message));
+    const signal = { kind: 'desktop-signal', sessionId: result.sessionId, signal: { type: 'answer', sdp: 'v=0' } } as const;
+    const status = { kind: 'desktop-control-status', sessionId: result.sessionId, state: 'active' } as const;
+    const end = { kind: 'desktop-control-ended', sessionId: result.sessionId, reason: 'local-disconnect' } as const;
+    sockets[0].triggerMessage(signal);
+    sockets[0].triggerMessage(status);
+    sockets[0].triggerMessage(end);
+    expect(signals).toEqual([signal]);
+    expect(statuses).toEqual([status]);
+    expect(ended).toEqual([end]);
+
+    expect(transport.sendDesktopSignal(result.sessionId, { type: 'offer', sdp: 'v=0' })).toBe(true);
+    expect(sockets[0].lastSent()).toMatchObject({ kind: 'desktop-signal', sessionId: result.sessionId });
+    expect(transport.stopDesktopControl(result.sessionId)).toBe(true);
+    expect(sockets[0].lastSent()).toEqual({ kind: 'desktop-control-stop', sessionId: result.sessionId, reason: 'client-stop' });
+  });
+
+  it('fails locally without sending when offline or unsupported', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'desktop-offline' });
+    await expect(transport.startDesktopControl()).resolves.toMatchObject({ ok: false, errorCode: 'OFFLINE' });
+    sockets[0].triggerOpen();
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    await expect(transport.startDesktopControl()).resolves.toMatchObject({ ok: false, errorCode: 'UNSUPPORTED' });
+    expect(sockets[0].sent.some((entry) => JSON.parse(entry).kind === 'desktop-control-start')).toBe(false);
   });
 });
 

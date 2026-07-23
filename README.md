@@ -34,8 +34,8 @@ Results render as a live, **virtualized table** (100,000+ rows stay smooth). Eve
 collapsible **block** with its own status, working directory and output — and external / TUI programs
 (`node`, `git`, `claude`, `codex`, …) are auto-detected and run in a full PTY.
 
-It also ships a companion **Android app** that pairs with the desktop over your LAN / Tailscale to run
-and mirror sessions from your phone.
+It also ships a companion **Android app** that pairs with the desktop through Tailscale, WireGuard,
+or another explicitly trusted VPN to run terminal sessions and control the visible Windows desktop.
 
 ## Features
 
@@ -134,6 +134,15 @@ Keystore-backed storage with no plaintext fallback. A transient network
 loss keeps the mounted workspace and may resume bounded active runs in place for up to five minutes;
 an invalid token stops retrying and asks the user to pair again.
 
+On Windows 10 22H2/11 x64, **More → PC Control** can also stream the visible PC
+screen over VPN-bound WebRTC and provide trackpad/direct-touch, physical or
+Korean IME keyboard input, special keys, and explicit text clipboard actions.
+Only one phone controls the GUI at a time; the local display and input remain
+active, and the desktop banner, tray, or Remote panel can disconnect it at any
+time. The Windows installer adds the LocalSystem host service and exact
+program/port firewall rules. PC Control stays unavailable when the remote
+bridge is off or no trusted Tailscale/WireGuard adapter is present.
+
 Desktop Settings also includes risk-aware pane-close confirmation and a default-off OSC 52 clipboard
 write option. After confirmation, the interpreter atomically compares the expected active run IDs and
 fails closed if state changed. Terminal-originated clipboard queries are never answered, writes are
@@ -161,18 +170,25 @@ Grab both official 1.0 downloads from the
 > update normally.
 
 Windows and Android updates are manual. Verify the download against `SHA256SUMS.txt` in the release.
-The mobile bridge uses plain `ws://`: enable it only on a trusted LAN or through an encrypted overlay
-such as Tailscale/WireGuard. Pairing grants the phone the desktop user's command and filesystem access.
+The mobile bridge binds only to a selected trusted VPN interface and uses plain `ws://` inside that
+encrypted tunnel. Pairing grants the phone command/filesystem access and explicit visible desktop,
+input, and text-clipboard control.
 
 ## Build from source
 
 ```bash
 pnpm install
 pnpm start        # run in development
-pnpm make         # build the Windows installer -> out/make/squirrel.windows/x64/
+pnpm make         # build the Windows installer -> out/make/nsis/x64/
 pnpm test         # unit tests (Vitest)
 pnpm e2e          # end-to-end tests (Playwright + Electron)
 ```
+
+The graphical PC-control candidate is intentionally not advertised by public
+builds until its secure-desktop and device/performance gates pass. Developers
+running those gates can opt in with
+`EZTERMINAL_EXPERIMENTAL_DESKTOP_CONTROL=1`; a running installed host service
+and a trusted VPN interface are still required.
 
 The Android companion app lives in [`mobile/`](mobile/) (Capacitor + Android Studio).
 

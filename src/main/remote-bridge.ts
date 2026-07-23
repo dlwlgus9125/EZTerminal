@@ -39,13 +39,21 @@ import {
   type SystemStatsSnapshot,
 } from '../shared/ipc';
 import {
+  REMOTE_CAPABILITY_DESKTOP_CONTROL,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_PROTOCOL_VERSION_LEGACY,
   base64ToUint8Array,
   encodeFrame,
   uint8ArrayToBase64,
   type ClientToServerMessage,
   type OpenClawChatTicketFailureReason,
+  type DesktopControlEndedMessage,
+  type DesktopControlStartResultMessage,
+  type DesktopControlStatusMessage,
+  type DesktopSessionSignal,
+  type DesktopSignalMessage,
+  type RemoteClientIdentity,
   type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../shared/remote-protocol';
@@ -130,6 +138,11 @@ export function isRemoteOriginAllowed(origin: string | undefined): boolean {
   return !origin || ALLOWED_WS_ORIGINS.has(origin);
 }
 
+function normalizeSocketAddress(address: string | undefined): string | undefined {
+  if (!address) return undefined;
+  return address.startsWith('::ffff:') ? address.slice('::ffff:'.length) : address;
+}
+
 /** Constant-time token comparison. Length-checks first (so a length mismatch
  * never reaches `timingSafeEqual`, which throws on unequal-length buffers) and
  * then compares without an early-exit byte loop, so a network attacker learns
@@ -187,6 +200,8 @@ function isOptionalNumber(value: unknown): value is number | undefined {
 }
 
 const MAX_GUARDED_DESTROY_ID_LENGTH = 256;
+const MAX_DESKTOP_SDP_BYTES = 256 * 1024;
+const MAX_DESKTOP_ICE_BYTES = 8 * 1024;
 
 function isGuardedDestroyId(value: unknown): value is string {
   return (
@@ -210,6 +225,35 @@ function isGuardedDestroyRequest(value: UnknownRecord): boolean {
     runIds.every(isGuardedDestroyId)
     && new Set(runIds).size === runIds.length
   );
+}
+
+function isRemoteClientIdentity(value: unknown): value is RemoteClientIdentity {
+  if (!isRecord(value)) return false;
+  return value.platform === 'android'
+    && typeof value.clientId === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.clientId)
+    && typeof value.clientName === 'string'
+    && value.clientName.trim().length > 0
+    && value.clientName.length <= 80;
+}
+
+function isDesktopSignal(value: unknown): value is DesktopSessionSignal {
+  if (!isRecord(value) || typeof value.type !== 'string') return false;
+  if (value.type === 'offer' || value.type === 'answer') {
+    return typeof value.sdp === 'string'
+      && value.sdp.length > 0
+      && Buffer.byteLength(value.sdp) <= MAX_DESKTOP_SDP_BYTES;
+  }
+  if (value.type !== 'ice' || !isRecord(value.candidate)) return false;
+  return typeof value.candidate.candidate === 'string'
+    && value.candidate.candidate.length > 0
+    && Buffer.byteLength(value.candidate.candidate) <= MAX_DESKTOP_ICE_BYTES
+    && (value.candidate.sdpMid === undefined
+      || value.candidate.sdpMid === null
+      || typeof value.candidate.sdpMid === 'string')
+    && (value.candidate.sdpMLineIndex === undefined
+      || value.candidate.sdpMLineIndex === null
+      || isFiniteNumber(value.candidate.sdpMLineIndex));
 }
 
 /** Runtime boundary for the nested control union. The bridge itself reads
@@ -365,6 +409,16 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         typeof value.key === 'string' &&
         typeof value.value === 'string'
       );
+    case 'desktop-control-start':
+      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= 256;
+    case 'desktop-signal':
+      return typeof value.sessionId === 'string'
+        && value.sessionId.length <= 256
+        && isDesktopSignal(value.signal);
+    case 'desktop-control-stop':
+      return typeof value.sessionId === 'string'
+        && value.sessionId.length <= 256
+        && (value.reason === 'client-stop' || value.reason === 'background' || value.reason === 'navigation');
     default:
       return false;
   }
@@ -554,6 +608,26 @@ export interface RemoteQuickCommandSource {
   list(): Promise<readonly QuickCommand[]>;
 }
 
+export type RemoteDesktopServerEvent =
+  | DesktopSignalMessage
+  | DesktopControlStatusMessage
+  | DesktopControlEndedMessage;
+
+type DistributedOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K & keyof T> : never;
+
+export interface RemoteDesktopSource {
+  /** False suppresses capability advertisement before the installed host is ready. */
+  isAvailable?(): boolean;
+  start(
+    identity: RemoteClientIdentity,
+    endpoint: { readonly localAddress: string; readonly peerAddress: string },
+    emit: (event: RemoteDesktopServerEvent) => void,
+  ): Promise<DistributedOmit<DesktopControlStartResultMessage, 'kind' | 'requestId'>>;
+  signal(clientId: string, sessionId: string, signal: DesktopSessionSignal): boolean;
+  stop(clientId: string, sessionId: string): Promise<boolean>;
+  disconnected(clientId: string): void;
+}
+
 export interface RemoteBridgeOptions {
   readonly port: number;
   readonly getToken: () => Promise<string> | string;
@@ -578,6 +652,10 @@ export interface RemoteBridgeOptions {
   readonly worktreeSource?: RemoteWorktreeSource;
   /** Optional capability: old hosts omit it and mobile hides the surface. */
   readonly quickCommandSource?: RemoteQuickCommandSource;
+  /** Optional until the privileged host is installed and ready. */
+  readonly desktopSource?: RemoteDesktopSource;
+  /** Trusted VPN address selected by main. Defaults only for legacy tests. */
+  readonly bindHost?: string;
   /** Shared across websocket generations so transiently orphaned runs resume. */
   readonly runLeases?: RemoteRunLeaseRegistry;
 }
@@ -602,9 +680,15 @@ function leasesFor(options: RemoteBridgeOptions): RemoteRunLeaseRegistry {
 export function attachConnection(
   ws: RemoteWs,
   options: RemoteBridgeOptions,
-  hooks?: { onAuthenticated?: () => void },
+  hooks?: {
+    onAuthenticated?: () => void;
+    readonly localAddress?: string;
+    readonly peerAddress?: string;
+  },
 ): void {
   let authed = false;
+  let negotiatedProtocol = REMOTE_PROTOCOL_VERSION_LEGACY as 1 | 2;
+  let clientIdentity: RemoteClientIdentity | null = null;
   let authPending = false;
   let releaseRunsOnClose = false;
   let connectionClosed = false;
@@ -866,6 +950,7 @@ export function attachConnection(
 
   ws.on('close', () => {
     connectionClosed = true;
+    if (clientIdentity) options.desktopSource?.disconnected(clientIdentity.clientId);
     terminalCapabilities.clear();
     if (releaseRunsOnClose) releasePendingResumeLeases();
     unsubSessionAdded();
@@ -918,10 +1003,15 @@ export function attachConnection(
         ws.close(AUTH_CLOSE_CODE);
         return;
       }
+      const requestedProtocol = parsed.protocolVersion;
       const protocolCompatible = (
-        parsed.protocolVersion === REMOTE_PROTOCOL_VERSION
+        (requestedProtocol === REMOTE_PROTOCOL_VERSION_LEGACY
+          || requestedProtocol === REMOTE_PROTOCOL_VERSION)
         && typeof parsed.clientVersion === 'string'
         && parsed.clientVersion.trim().length > 0
+        && (requestedProtocol !== REMOTE_PROTOCOL_VERSION
+          || parsed.clientIdentity === undefined
+          || isRemoteClientIdentity(parsed.clientIdentity))
       );
       const candidateToken = parsed.token;
       authPending = true;
@@ -939,15 +1029,29 @@ export function attachConnection(
             return;
           }
           authed = true;
+          negotiatedProtocol = requestedProtocol as 1 | 2;
+          clientIdentity = negotiatedProtocol === REMOTE_PROTOCOL_VERSION
+            && isRemoteClientIdentity(parsed.clientIdentity)
+            ? parsed.clientIdentity
+            : null;
           hooks?.onAuthenticated?.();
+          const capabilities = [
+            ...(options.quickCommandSource ? [REMOTE_CAPABILITY_QUICK_COMMANDS_READ] : []),
+            ...(negotiatedProtocol === REMOTE_PROTOCOL_VERSION
+              && clientIdentity
+              && options.desktopSource
+              && (options.desktopSource.isAvailable?.() ?? true)
+              && hooks?.localAddress
+              && hooks.peerAddress
+              ? [REMOTE_CAPABILITY_DESKTOP_CONTROL]
+              : []),
+          ];
           send({
             kind: 'auth-ok',
-            protocolVersion: REMOTE_PROTOCOL_VERSION,
+            protocolVersion: negotiatedProtocol,
             hostVersion: options.hostVersion,
             ...(options.buildSha ? { hostBuildSha: options.buildSha } : {}),
-            ...(options.quickCommandSource
-              ? { capabilities: [REMOTE_CAPABILITY_QUICK_COMMANDS_READ] as const }
-              : {}),
+            ...(capabilities.length > 0 ? { capabilities } : {}),
           });
           if (options.agentSource) send({ kind: 'agent-snapshot', snapshot: options.agentSource.getSnapshot() });
           // OpenClaw availability (M3): initial state, right after auth —
@@ -969,6 +1073,62 @@ export function attachConnection(
     const msg = parsed;
 
     switch (msg.kind) {
+      case 'desktop-control-start': {
+        const { requestId } = msg;
+        if (
+          negotiatedProtocol !== REMOTE_PROTOCOL_VERSION
+          || !clientIdentity
+          || !options.desktopSource
+          || !(options.desktopSource.isAvailable?.() ?? true)
+          || !hooks?.localAddress
+          || !hooks.peerAddress
+        ) {
+          send({
+            kind: 'desktop-control-start-result',
+            requestId,
+            ok: false,
+            reason: 'unavailable',
+            errorCode: 'DESKTOP_CONTROL_UNAVAILABLE',
+          });
+          break;
+        }
+        void options.desktopSource.start(
+          clientIdentity,
+          { localAddress: hooks.localAddress, peerAddress: hooks.peerAddress },
+          send,
+        ).then((result) => {
+          if (!authed) return;
+          if (result.ok) {
+            send({ kind: 'desktop-control-start-result', requestId, ...result });
+          } else {
+            send({ kind: 'desktop-control-start-result', requestId, ...result });
+          }
+        }).catch(() => {
+          if (authed) {
+            send({
+              kind: 'desktop-control-start-result',
+              requestId,
+              ok: false,
+              reason: 'error',
+              errorCode: 'DESKTOP_CONTROL_START_FAILED',
+            });
+          }
+        });
+        break;
+      }
+
+      case 'desktop-signal':
+        if (clientIdentity && msg.signal.type !== 'answer') {
+          options.desktopSource?.signal(clientIdentity.clientId, msg.sessionId, msg.signal);
+        }
+        break;
+
+      case 'desktop-control-stop':
+        if (clientIdentity) {
+          void options.desktopSource?.stop(clientIdentity.clientId, msg.sessionId);
+        }
+        break;
+
       case 'list-sessions':
         send({ kind: 'session-list', sessions: options.broker.listSessions() });
         break;
@@ -1684,7 +1844,7 @@ export async function startRemoteBridge(options: RemoteBridgeOptions): Promise<R
   const connectionOptions = options.runLeases ? options : { ...options, runLeases };
   const wss = new WebSocketServer({
     port: options.port,
-    host: '0.0.0.0',
+    host: options.bindHost ?? '0.0.0.0',
     maxPayload: MAX_INBOUND_FRAME_BYTES,
     verifyClient: (info: { origin?: string }) => isRemoteOriginAllowed(info.origin),
   });
@@ -1710,7 +1870,7 @@ export async function startRemoteBridge(options: RemoteBridgeOptions): Promise<R
   // see this): counts consecutive missed pongs per socket, terminating once a
   // connection misses HEARTBEAT_MAX_MISSED_PONGS in a row.
   const missedPongs = new WeakMap<WebSocket, number>();
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, request) => {
     // Refuse beyond the connection cap so a socket flood can't exhaust main
     // (1013 = Try Again Later). `wss.clients` already includes this socket.
     if (wss.clients.size > MAX_REMOTE_CONNECTIONS) {
@@ -1727,6 +1887,8 @@ export async function startRemoteBridge(options: RemoteBridgeOptions): Promise<R
     ws.on('close', () => clearTimeout(authTimer));
     attachConnection(ws as unknown as RemoteWs, connectionOptions, {
       onAuthenticated: () => clearTimeout(authTimer),
+      localAddress: normalizeSocketAddress(request.socket.localAddress),
+      peerAddress: normalizeSocketAddress(request.socket.remoteAddress),
     });
   });
   const heartbeat = setInterval(() => {
