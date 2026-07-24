@@ -9,7 +9,7 @@
  *
  * See `smoke.ts`'s header doc for the general emulator/adb setup story
  * (prerequisites this file does NOT manage: a booted AVD, a fresh debug APK,
- * a fresh `.vite/build/main.js`, port 7420 free).
+ * a fresh `.vite/build/main.js`, port 17420 free).
  *
  * Run directly via `node <file>.ts` (Node's native TS type-stripping, no
  * ts-node/tsx) — relative imports MUST carry the explicit `.ts` extension
@@ -46,7 +46,7 @@ export const OPENCLAW_PROXY_PORT = Number(process.env.EZTERMINAL_OPENCLAW_PROXY_
 export function resolveAndroidHostUrl(
   configured = process.env.EZTERMINAL_MOBILE_E2E_HOST_URL,
 ): string {
-  const candidate = configured?.trim() || `ws://10.0.2.2:${REMOTE_PORT}`;
+  const candidate = configured?.trim() || `ws://127.0.0.1:${REMOTE_PORT}`;
   let parsed: URL;
   try {
     parsed = new URL(candidate);
@@ -59,9 +59,11 @@ export function resolveAndroidHostUrl(
   return parsed.href.replace(/\/$/, '');
 }
 
-// 10.0.2.2 is the emulator default. A physical RC uses adb reverse and
-// explicitly overrides this with ws://127.0.0.1:<port>.
+// The RC harness defaults to an adb-reversed device loopback. This keeps the
+// production bridge fail-closed on its selected interface instead of widening
+// the listener to 0.0.0.0 merely so an emulator host alias can reach it.
 export const EMULATOR_HOST_URL = resolveAndroidHostUrl();
+let remoteBridgeReversePort: number | null = null;
 const DUMP_DEVICE_PATH = '/sdcard/ez_e2e_dump.xml';
 export const DUMP_LOCAL_PATH = path.join(import.meta.dirname, '.ez_e2e_dump.xml');
 
@@ -477,10 +479,23 @@ function resetWebViewCdp(error?: Error): void {
   }
 }
 
-/** Releases the page-level DevTools client so a completed Node E2E process
- * can exit cleanly. The adb forward itself owns no Node event-loop resources. */
+/** Releases the page-level DevTools client and its adb forward. This may be
+ * called mid-scenario while the product WebSocket transport remains live. */
 export function closeWebViewDevtools(): void {
   resetWebViewCdp();
+}
+
+/** Releases every harness-owned adb route at the final scenario boundary. */
+export function closeMobileE2eResources(): void {
+  resetWebViewCdp();
+  if (remoteBridgeReversePort !== null) {
+    try {
+      runAdb(['reverse', '--remove', `tcp:${remoteBridgeReversePort}`]);
+    } catch {
+      // The device may already be gone during best-effort E2E cleanup.
+    }
+    remoteBridgeReversePort = null;
+  }
 }
 
 async function resolveWebViewCdp(): Promise<WebSocket> {
@@ -1286,23 +1301,89 @@ export async function launchDesktop(): Promise<{ app: ElectronApplication; token
   env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES = '1';
   env.EZTERMINAL_REMOTE_PORT = String(REMOTE_PORT);
   env.EZTERMINAL_OPENCLAW_PROXY_PORT = String(OPENCLAW_PROXY_PORT);
+  env.EZTERMINAL_REMOTE_VPN_INTERFACE =
+    process.env.EZTERMINAL_REMOTE_VPN_INTERFACE?.trim() || '127.0.0.1';
   const app = await electron.launch({ args: [MAIN_ENTRY], env });
-  const win = await app.firstWindow();
-  await win.waitForLoadState('domcontentloaded');
-  const token: string = await win.evaluate(() => window.ezterminal.getRemoteToken());
-  // Remote control is OFF by default (opt-in, security review) — turn it on so
-  // the phone can reach the bridge. `setRemoteEnabled` resolves only after the
-  // WS listener has actually bound, so the emulator connect that follows won't
-  // race a not-yet-listening port.
-  await win.evaluate(() => window.ezterminal.setRemoteEnabled(true));
-  return { app, token };
+  try {
+    const win = await app.firstWindow();
+    await win.waitForLoadState('domcontentloaded');
+    const token: string = await win.evaluate(() => window.ezterminal.getRemoteToken());
+    // Remote control is OFF by default (opt-in, security review). Require the
+    // actual listener state and port before the one allowed cold connection.
+    const status = await win.evaluate(() => window.ezterminal.setRemoteEnabled(true));
+    if (
+      status.state !== 'running'
+      || status.port !== REMOTE_PORT
+      || status.errorCode !== null
+      || status.error !== null
+    ) {
+      throw new Error(
+        'Desktop remote bridge did not become ready: '
+        + `state=${status.state}, port=${status.port}, `
+        + `errorCode=${status.errorCode ?? 'none'}, error=${status.error ?? 'none'}`,
+      );
+    }
+    return { app, token };
+  } catch (error) {
+    await app.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+function ensureRemoteBridgeTransport(): void {
+  const url = new URL(EMULATOR_HOST_URL);
+  const loopback = url.hostname === '127.0.0.1'
+    || url.hostname === 'localhost'
+    || url.hostname === '[::1]';
+  if (!loopback) return;
+
+  const devicePort = Number(url.port);
+  if (!Number.isSafeInteger(devicePort) || devicePort <= 0 || devicePort > 65_535) {
+    throw new Error(`Invalid adb reverse port in mobile E2E host URL: ${JSON.stringify(url.port)}`);
+  }
+  runAdb(['reverse', `tcp:${devicePort}`, `tcp:${REMOTE_PORT}`]);
+  remoteBridgeReversePort = devicePort;
+  console.log(`[e2e] adb reverse: device tcp:${devicePort} -> desktop tcp:${REMOTE_PORT}`);
+}
+
+async function assertColdConnectionUsedOneSocket(): Promise<void> {
+  const diagnostics = await evaluateWebView<string | null>(`(() => {
+    const api = window.ezterminal;
+    return api && typeof api.getConnectionDiagnostics === 'function'
+      ? api.getConnectionDiagnostics()
+      : null;
+  })()`);
+  if (!diagnostics) {
+    throw new Error('Mobile connection diagnostics are unavailable after authentication');
+  }
+
+  const events = diagnostics
+    .split('\n')
+    .filter((line) => line.includes(' event='));
+  const connects = events.filter((line) => /\bevent=connect\b/.test(line));
+  const connected = events.filter((line) => /\bevent=connected\b/.test(line));
+  const retries = events.filter((line) => /\bevent=(retry-scheduled|retry-now)\b/.test(line));
+  const initialAttemptOnly = [...connects, ...connected]
+    .every((line) => /\battempt=0\b/.test(line));
+  if (
+    connects.length !== 1
+    || connected.length !== 1
+    || retries.length !== 0
+    || !initialAttemptOnly
+  ) {
+    throw new Error(
+      'Cold mobile connection used more than one WebSocket attempt:\n'
+      + events.join('\n'),
+    );
+  }
 }
 
 /**
  * Drives the phone from a cold/unknown app state into the authed
  * MobileWorkspace: installs the debug APK fresh, clears any stale app data,
  * launches the Activity, fills the connect form with the resolved Android
- * host URL (`10.0.2.2` by default, adb-reversed loopback on physical RC) +
+ * host URL (adb-reversed loopback by default, explicit network override when
+ * requested) +
  * `token`, then submits the stable connect control exactly once. A release
  * candidate must expose a cold-start connection failure instead of hiding it
  * behind a later successful product retry.
@@ -1317,6 +1398,7 @@ export async function connectAndAuth(token: string): Promise<void> {
   runAdb(['install', '-r', APK_PATH]);
   runAdb(['shell', 'pm', 'clear', APP_ID]); // drop any stale localStorage from a previous run
 
+  ensureRemoteBridgeTransport();
   console.log('[e2e] clearing logcat and launching app...');
   runAdb(['logcat', '-c']);
   runAdb(['shell', 'am', 'start', '-n', `${APP_ID}/.MainActivity`]);
@@ -1349,6 +1431,7 @@ export async function submitConnectionOnce(): Promise<void> {
   if (outcome !== 'mobile-workspace') {
     throw new Error(`Connection failed on the only allowed attempt: ${outcome}`);
   }
+  await assertColdConnectionUsedOneSocket();
 }
 
 /** Creates a terminal from the 1.0 workspace's locale-independent header

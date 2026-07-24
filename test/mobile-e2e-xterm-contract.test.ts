@@ -33,14 +33,14 @@ describe('mobile E2E forced-xterm contract', () => {
     )).toBe(false);
   });
 
-  it('forces xterm, waits for its real DOM, taps natively, checks errors, and closes CDP', () => {
+  it('forces xterm, waits for its real DOM, taps natively, checks errors, and closes E2E resources', () => {
     const smoke = readFileSync(path.join(root, 'mobile/e2e/smoke.ts'), 'utf8');
 
     expect(smoke).toContain("'!cmd /d /c echo xterm74'");
     expect(smoke).toContain("waitForVisibleTestIdDescendant('pty-block', '.xterm-screen'");
     expect(smoke).toContain("tapTestId('pty-block')");
     expect(smoke).toContain('assertNoWebViewJavaScriptRuntimeErrors()');
-    expect(smoke).toContain('closeWebViewDevtools()');
+    expect(smoke).toContain('closeMobileE2eResources()');
   });
 
   it('waits for the visible tab run control instead of a hidden duplicate', () => {

@@ -32,6 +32,7 @@ import {
   APP_ID,
   MAIN_ENTRY,
   ROOT,
+  closeMobileE2eResources,
   closeWebViewDevtools,
   connectAndAuth,
   createTerminalSession,
@@ -611,7 +612,7 @@ async function main(): Promise<void> {
       : { message: String(error) };
     throw error;
   } finally {
-    closeWebViewDevtools();
+    closeMobileE2eResources();
     try {
       runAdb(['shell', 'am', 'force-stop', APP_ID]);
     } catch (error) {

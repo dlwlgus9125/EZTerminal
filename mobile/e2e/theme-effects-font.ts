@@ -4,7 +4,7 @@
  * Runs against the same real desktop app + Android emulator setup as
  * `smoke.ts`/`parity.ts` (see smoke.ts's header doc for prerequisites this
  * script does NOT manage: a booted AVD, a fresh debug APK, a fresh
- * `.vite/build/main.js`, port 7420 free). Exercises the mobile-only surface
+ * `.vite/build/main.js`, port 17420 free). Exercises the mobile-only surface
  * Wave 3 added on top of Wave 1/2's shared renderer/themes.ts +
  * renderer/theme-runtime.ts:
  *
@@ -57,6 +57,7 @@ import {
   APP_ID,
   EMULATOR_HOST_URL,
   MAIN_ENTRY,
+  closeMobileE2eResources,
   connectAndAuth,
   createTerminalSession,
   getTestIdTextContent,
@@ -181,6 +182,7 @@ async function main(): Promise<void> {
 
     console.log('[theme-e2e] ALL STEPS PASSED');
   } finally {
+    closeMobileE2eResources();
     try {
       runAdb(['shell', 'am', 'force-stop', APP_ID]);
     } catch {

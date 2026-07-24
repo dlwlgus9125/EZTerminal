@@ -49,6 +49,7 @@ describe('Android resumed-activity parser', () => {
     expect(implementation.match(/tapTestId\(['"]connect-submit['"]\)/g)).toHaveLength(1);
     expect(implementation).not.toMatch(/\b(?:for|while)\s*\(/);
     expect(implementation).toContain('only allowed attempt');
+    expect(implementation).toContain('assertColdConnectionUsedOneSocket');
 
     const e2eSources = ['lib.ts', 'parity.ts', 'smoke.ts', 'apk-stabilization.ts', 'theme-effects-font.ts']
       .map((name) => readFileSync(new URL(`../mobile/e2e/${name}`, import.meta.url), 'utf8'))
@@ -65,7 +66,26 @@ describe('Android resumed-activity parser', () => {
       new URL('../.github/workflows/release.yml', import.meta.url),
       'utf8',
     );
+    const releaseStager = readFileSync(
+      new URL('../scripts/stage-release-artifacts.ps1', import.meta.url),
+      'utf8',
+    );
     expect(verifier).toContain('mobileConnectionAttemptsPerScenario = 1');
+    expect(verifier).toContain('mobileSocketAttemptsBeforeInitialAuth = 1');
+    expect(verifier).toContain("mobileTransport = 'adb-reverse-loopback'");
+    expect(verifier).toContain('mobileRemotePort = 17420');
+    expect(verifier).toContain("emulatorBootMode = 'cold-no-snapshot'");
+    expect(verifier).toContain("$env:EZTERMINAL_REMOTE_VPN_INTERFACE = '127.0.0.1'");
+    expect(verifier).toContain("$env:EZTERMINAL_MOBILE_E2E_HOST_URL = 'ws://127.0.0.1:17420'");
+    expect(verifier).toContain("'-no-snapshot-load', '-no-snapshot-save'");
     expect(releaseWorkflow).toContain('[int]$rcReport.mobileConnectionAttemptsPerScenario -ne 1');
+    expect(releaseWorkflow).toContain('[int]$rcReport.mobileSocketAttemptsBeforeInitialAuth -ne 1');
+    expect(releaseWorkflow).toContain("[string]$rcReport.mobileTransport -ne 'adb-reverse-loopback'");
+    expect(releaseWorkflow).toContain('[int]$rcReport.mobileRemotePort -ne 17420');
+    expect(releaseWorkflow).toContain("[string]$rcReport.emulatorBootMode -ne 'cold-no-snapshot'");
+    expect(releaseStager).toContain('[int]$localRcReport.mobileSocketAttemptsBeforeInitialAuth');
+    expect(releaseStager).toContain('[string]$localRcReport.mobileTransport');
+    expect(releaseStager).toContain('[int]$localRcReport.mobileRemotePort');
+    expect(releaseStager).toContain("[string]$localRcReport.emulatorBootMode");
   });
 });

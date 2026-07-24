@@ -3,12 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { REMOTE_PORT, resolveAndroidHostUrl } from '../mobile/e2e/lib.ts';
 
 describe('mobile E2E Android host URL', () => {
-  it('defaults to the Android emulator host alias', () => {
-    expect(resolveAndroidHostUrl(undefined)).toBe(`ws://10.0.2.2:${REMOTE_PORT}`);
+  it('defaults to the adb-reversed device loopback', () => {
+    expect(resolveAndroidHostUrl(undefined)).toBe(`ws://127.0.0.1:${REMOTE_PORT}`);
   });
 
-  it('accepts the adb-reversed loopback URL used by a physical Fold', () => {
-    expect(resolveAndroidHostUrl(' ws://127.0.0.1:17420 ')).toBe('ws://127.0.0.1:17420');
+  it('accepts an explicit emulator host alias override', () => {
+    expect(resolveAndroidHostUrl(' ws://10.0.2.2:17420 ')).toBe('ws://10.0.2.2:17420');
   });
 
   it('rejects malformed and non-WebSocket overrides', () => {

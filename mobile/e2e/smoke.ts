@@ -39,11 +39,11 @@
  *    (`pnpm package`, or just run `pnpm e2e` once — its globalSetup builds them).
  *  - No OTHER desktop app instance (a manual `pnpm start`, a leftover process
  *    from a previous interrupted run of THIS script, etc.) may already be
- *    bound to port 7420. This script's own try/finally always calls
+ *    bound to loopback port 17420. This script's own try/finally always calls
  *    `app.close()`, so back-to-back clean runs are fine — but a prior run
  *    that was killed externally (Ctrl-C, a crashed shell) leaves an orphaned
  *    Electron process holding the port. Symptom if this happens: main.log
- *    shows `EADDRINUSE: address already in use 0.0.0.0:7420` and the phone's
+ *    shows `EADDRINUSE` for `127.0.0.1:17420` and the phone's
  *    Connect keeps silently timing out (it's actually talking to the STALE
  *    instance, whose token doesn't match the fresh one this run fetched).
  *    Fix: close any stray EZTerminal window before running this script.
@@ -58,7 +58,7 @@ import {
   DUMP_LOCAL_PATH,
   MAIN_ENTRY,
   assertNoWebViewJavaScriptRuntimeErrors,
-  closeWebViewDevtools,
+  closeMobileE2eResources,
   connectAndAuth,
   createTerminalSession,
   launchDesktop,
@@ -128,7 +128,7 @@ async function main(): Promise<void> {
     // Always close the WebView, including on assertion failure. Otherwise its
     // CDP socket keeps this Node process alive and hides the original error
     // behind the outer command timeout.
-    closeWebViewDevtools();
+    closeMobileE2eResources();
     try {
       runAdb(['shell', 'am', 'force-stop', APP_ID]);
     } catch {

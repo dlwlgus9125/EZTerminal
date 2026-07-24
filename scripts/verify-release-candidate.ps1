@@ -244,7 +244,15 @@ function Invoke-Instrumentation {
 function Invoke-MobileE2e {
     param([string]$Serial, [switch]$Full, [switch]$Soak)
     $previousSerial = $env:ANDROID_SERIAL
+    $previousRemotePort = $env:EZTERMINAL_REMOTE_PORT
+    $previousOpenClawProxyPort = $env:EZTERMINAL_OPENCLAW_PROXY_PORT
+    $previousVpnInterface = $env:EZTERMINAL_REMOTE_VPN_INTERFACE
+    $previousHostUrl = $env:EZTERMINAL_MOBILE_E2E_HOST_URL
     $env:ANDROID_SERIAL = $Serial
+    $env:EZTERMINAL_REMOTE_PORT = '17420'
+    $env:EZTERMINAL_OPENCLAW_PROXY_PORT = '17421'
+    $env:EZTERMINAL_REMOTE_VPN_INTERFACE = '127.0.0.1'
+    $env:EZTERMINAL_MOBILE_E2E_HOST_URL = 'ws://127.0.0.1:17420'
     try {
         Invoke-Checked 'pnpm' @('--dir', 'mobile', 'e2e:smoke')
         Invoke-Checked 'pnpm' @('--dir', 'mobile', 'e2e:stabilization')
@@ -257,6 +265,10 @@ function Invoke-MobileE2e {
         }
     } finally {
         $env:ANDROID_SERIAL = $previousSerial
+        $env:EZTERMINAL_REMOTE_PORT = $previousRemotePort
+        $env:EZTERMINAL_OPENCLAW_PROXY_PORT = $previousOpenClawProxyPort
+        $env:EZTERMINAL_REMOTE_VPN_INTERFACE = $previousVpnInterface
+        $env:EZTERMINAL_MOBILE_E2E_HOST_URL = $previousHostUrl
     }
 }
 
@@ -277,7 +289,8 @@ function Invoke-AvdGate {
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
         -ArgumentList @(
             '-avd', $Avd, '-port', $Port, '-no-window', '-no-audio',
-            '-no-boot-anim', '-no-snapshot-save', '-gpu', 'swiftshader_indirect'
+            '-no-boot-anim', '-no-snapshot-load', '-no-snapshot-save',
+            '-gpu', 'swiftshader_indirect'
         )
     try {
         Wait-ForAndroidBoot $serial $Api
@@ -292,7 +305,29 @@ function Invoke-AvdGate {
         $results.Add([ordered]@{ device = $serial; api = $Api; avd = $Avd; status = 'passed' })
     } finally {
         try { Invoke-Adb $serial @('emu', 'kill') | Out-Null } catch { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
-        $process.WaitForExit(30000) | Out-Null
+        if (-not $process.WaitForExit(30000)) {
+            try {
+                Stop-Process -Id $process.Id -Force -ErrorAction Stop
+            } catch {
+                if (-not $process.HasExited) { throw }
+            }
+            if (-not $process.WaitForExit(30000)) {
+                throw "Emulator process $($process.Id) for $serial did not exit after forced teardown."
+            }
+        }
+        $deviceDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        do {
+            $attachedDevices = & $adb devices
+            if ($LASTEXITCODE -ne 0) {
+                throw "adb devices failed while verifying teardown of $serial."
+            }
+            $deviceStillAttached = $attachedDevices -match "(?m)^$([regex]::Escape($serial))\s"
+            if (-not $deviceStillAttached) { break }
+            Start-Sleep -Seconds 1
+        } while ([DateTime]::UtcNow -lt $deviceDeadline)
+        if ($deviceStillAttached) {
+            throw "$serial remained attached after emulator teardown."
+        }
     }
 }
 
@@ -473,6 +508,10 @@ try {
         )
         playwrightRetries = 0
         mobileConnectionAttemptsPerScenario = 1
+        mobileSocketAttemptsBeforeInitialAuth = 1
+        mobileTransport = 'adb-reverse-loopback'
+        mobileRemotePort = 17420
+        emulatorBootMode = 'cold-no-snapshot'
         desktopPerformance = [ordered]@{
             status = 'passed'
             schemaVersion = 2

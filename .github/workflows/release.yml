@@ -177,9 +177,13 @@ jobs:
           if (
             [string]$rcReport.buildSha -ne $head -or
             [int]$rcReport.playwrightRetries -ne 0 -or
-            [int]$rcReport.mobileConnectionAttemptsPerScenario -ne 1
+            [int]$rcReport.mobileConnectionAttemptsPerScenario -ne 1 -or
+            [int]$rcReport.mobileSocketAttemptsBeforeInitialAuth -ne 1 -or
+            [string]$rcReport.mobileTransport -ne 'adb-reverse-loopback' -or
+            [int]$rcReport.mobileRemotePort -ne 17420 -or
+            [string]$rcReport.emulatorBootMode -ne 'cold-no-snapshot'
           ) {
-            throw 'Local RC report is not bound to this exact zero-retry, single-connect-attempt release commit.'
+            throw 'Local RC report is not bound to this exact zero-retry, cold-boot, single-connect release commit.'
           }
           $devices = @($rcReport.devices)
           $api29 = @($devices | Where-Object { $_.status -eq 'passed' -and $_.avd -and [int]$_.api -eq 29 })

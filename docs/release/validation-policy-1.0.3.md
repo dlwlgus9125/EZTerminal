@@ -14,6 +14,9 @@ Android API 29/API 35 에뮬레이터뿐이다. 지원 대상이라는 문구가
   개선 15% 이상
 - `gen-rows 100000000` 취소 지연 p95 3초 이하 및 최댓값 5초 미만
 - Android API 29 및 API 35 에뮬레이터의 instrumentation/E2E
+- 두 에뮬레이터는 snapshot을 불러오지 않는 cold boot로 시작하고, 제품 VPN
+  바인딩을 완화하지 않은 채 하네스 전용 ADB reverse loopback을 사용한다.
+  최초 인증 전 UI 제출과 실제 WebSocket 연결은 각각 정확히 1회여야 한다.
 - API 35 에뮬레이터의 30분, 8세션, 20회 복구 soak
 - JavaScript와 Rust 의존성 감사, SBOM, Gradle lock/검증 메타데이터
 - 기존 시각 스냅숏, 접근성, Electron E2E와 packaged E2E

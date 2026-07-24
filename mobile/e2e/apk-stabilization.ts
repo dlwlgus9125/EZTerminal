@@ -4,7 +4,7 @@ import {
   APK_PATH,
   APP_ID,
   MAIN_ENTRY,
-  closeWebViewDevtools,
+  closeMobileE2eResources,
   connectAndAuth,
   getWebViewHistorySnapshot,
   launchDesktop,
@@ -83,7 +83,7 @@ async function main(): Promise<void> {
 
     console.log('[apk-stabilization] PASS: More destinations, async history, and Android Back');
   } finally {
-    closeWebViewDevtools();
+    closeMobileE2eResources();
     try {
       runAdb(['shell', 'am', 'force-stop', APP_ID]);
     } catch {

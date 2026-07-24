@@ -355,6 +355,18 @@ try {
     Assert-Equal (
         [int]$localRcReport.mobileConnectionAttemptsPerScenario
     ) 1 'local RC mobile connection-attempt count'
+    Assert-Equal (
+        [int]$localRcReport.mobileSocketAttemptsBeforeInitialAuth
+    ) 1 'local RC mobile pre-auth socket-attempt count'
+    Assert-Equal (
+        [string]$localRcReport.mobileTransport
+    ) 'adb-reverse-loopback' 'local RC mobile transport'
+    Assert-Equal (
+        [int]$localRcReport.mobileRemotePort
+    ) 17420 'local RC mobile remote port'
+    Assert-Equal (
+        [string]$localRcReport.emulatorBootMode
+    ) 'cold-no-snapshot' 'local RC emulator boot mode'
     $passedApi29 = @($localRcReport.devices | Where-Object {
         $_.status -eq 'passed' -and $_.avd -and [int]$_.api -eq 29
     })

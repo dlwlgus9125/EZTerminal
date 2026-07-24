@@ -3,7 +3,7 @@
  *
  * Runs against the same real desktop app + Android emulator setup as
  * `smoke.ts` (see its header doc for prerequisites this script does NOT
- * manage: booted AVD, fresh debug APK, fresh `.vite/build/main.js`, port 7420
+ * manage: booted AVD, fresh debug APK, fresh `.vite/build/main.js`, port 17420
  * free) but exercises the FULL surface built across M1-M6 in one pass:
  *
  *  b. Multi-session TABS — create tab A, run a command, create tab B via the
@@ -44,6 +44,7 @@ import {
   type DumpNode,
   type Point,
   center,
+  closeMobileE2eResources,
   connectAndAuth,
   createTerminalSession,
   dismissKeyboard,
@@ -573,6 +574,7 @@ async function main(): Promise<void> {
     console.log('[parity] ALL PASS');
     runAdb(['shell', 'am', 'force-stop', APP_ID]);
   } finally {
+    closeMobileE2eResources();
     try {
       runAdb(['shell', 'wm', 'size', 'reset']);
       runAdb(['shell', 'wm', 'density', 'reset']);
