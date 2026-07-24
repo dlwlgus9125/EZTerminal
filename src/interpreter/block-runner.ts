@@ -42,7 +42,7 @@ const DRAIN_BATCH = 50_000;
 // cancellation even when a fused mapper can drain 50k rows faster than the
 // progress interval. The release p95 gate is relative to the checkpoint path,
 // so keep this bound below one 60 Hz frame.
-const STRUCTURED_DRAIN_SLICE_MS = 12;
+const STRUCTURED_DRAIN_SLICE_MS = 8;
 /** Avoid turning time slicing into a progress-frame/IPC flood for slow streams. */
 const STRUCTURED_PROGRESS_INTERVAL_MS = 250;
 /** Amortize clock reads while keeping CPU-heavy row transforms bounded. */
