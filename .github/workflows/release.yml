@@ -195,8 +195,8 @@ jobs:
             throw 'Local RC report does not use the approved current-host/emulator validation policy.'
           }
           $requiredFunctionalLimits = @(
-            'Lock and UAC secure-desktop capture and input are not supported in 1.0.3.',
-            'Software SAS and Ctrl+Alt+Delete are not supported in 1.0.3.',
+            'Lock and UAC secure-desktop capture and input are not supported.',
+            'Software SAS and Ctrl+Alt+Delete are not supported.',
             'GDI capture, OpenH264 encoding and SendInput injection remain in the normal-user transport.'
           )
           foreach ($limit in $requiredFunctionalLimits) {
@@ -452,7 +452,7 @@ jobs:
       - name: Desktop end-to-end tests
         run: pnpm e2e
 
-      # EZTerminal 1.0.3 intentionally ships unsigned on Windows. The staging
+      # EZTerminal 1.0.x intentionally ships unsigned on Windows. The staging
       # script below rejects anything except explicit Authenticode NotSigned.
       - name: Build unsigned Windows release
         run: pnpm make
@@ -539,7 +539,7 @@ jobs:
         with:
           draft: true
           generate_release_notes: true
-          body_path: docs/release/release-notes-1.0.3.md
+          body_path: docs/release/release-notes-1.0.4.md
           fail_on_unmatched_files: true
           files: release-assets/*
 

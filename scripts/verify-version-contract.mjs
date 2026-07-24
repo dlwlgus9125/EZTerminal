@@ -23,6 +23,12 @@ const rootPackage = await readJson('package.json');
 const mobilePackage = await readJson('mobile/package.json');
 const cargo = await readFile(resolve(root, 'native/remote-host/Cargo.toml'), 'utf8');
 const gradle = await readFile(resolve(root, 'mobile/android/app/build.gradle'), 'utf8');
+const apkVerifier = await readFile(resolve(root, 'mobile/android/scripts/verify-apk.ps1'), 'utf8');
+const verificationMetadata = await readFile(
+  resolve(root, 'mobile/android/gradle/verification-metadata.xml'),
+  'utf8',
+);
+const releaseWorkflow = await readFile(resolve(root, '.github/workflows/release.yml'), 'utf8');
 const remoteProtocol = await readFile(resolve(root, 'src/shared/remote-protocol.ts'), 'utf8');
 
 assert(contract.schemaVersion === 1, 'release/version.json schemaVersion must be 1.');
@@ -54,6 +60,21 @@ const sharedProtocolVersion = Number(capture(
   /REMOTE_PROTOCOL_VERSION\s*=\s*(\d+)/,
   'shared remote protocol version',
 ));
+const defaultApkVersion = capture(
+  apkVerifier,
+  /\[string\]\$ExpectedVersionName\s*=\s*'([^']+)'/,
+  'APK verifier default versionName',
+);
+const defaultApkVersionCode = Number(capture(
+  apkVerifier,
+  /\[int\]\$ExpectedVersionCode\s*=\s*(\d+)/,
+  'APK verifier default versionCode',
+));
+const aapt2Metadata = capture(
+  verificationMetadata,
+  /<component group="com\.android\.tools\.build" name="aapt2" version="[^"]+">([\s\S]*?)<\/component>/,
+  'AAPT2 dependency verification metadata',
+);
 
 assert(rootPackage.version === contract.version, 'package.json version differs from release/version.json.');
 assert(
@@ -68,6 +89,34 @@ assert(
 assert(
   sharedProtocolVersion === contract.protocolVersion,
   'src/shared/remote-protocol.ts differs from release/version.json protocolVersion.',
+);
+assert(
+  defaultApkVersion === contract.version,
+  'mobile/android/scripts/verify-apk.ps1 default versionName differs from release/version.json.',
+);
+assert(
+  defaultApkVersionCode === contract.androidVersionCode,
+  'mobile/android/scripts/verify-apk.ps1 default versionCode differs from release/version.json.',
+);
+for (const platform of ['linux', 'windows']) {
+  assert(
+    new RegExp(
+      `<artifact name="aapt2-[^"]+-${platform}\\.jar">\\s*` +
+      '<sha256 value="[0-9a-f]{64}" origin="[^"]+"\\/>\\s*<\\/artifact>',
+    ).test(aapt2Metadata),
+    `AAPT2 dependency verification metadata is missing a trusted ${platform} artifact.`,
+  );
+}
+
+const releaseNotesPath = `docs/release/release-notes-${contract.version}.md`;
+const validationPolicyPath = `docs/release/validation-policy-${contract.version}.md`;
+await Promise.all([
+  readFile(resolve(root, releaseNotesPath), 'utf8'),
+  readFile(resolve(root, validationPolicyPath), 'utf8'),
+]);
+assert(
+  releaseWorkflow.includes(`body_path: ${releaseNotesPath}`),
+  `.github/workflows/release.yml does not publish ${releaseNotesPath}.`,
 );
 
 if (process.argv.includes('--json')) {

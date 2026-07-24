@@ -6,7 +6,7 @@
 
 ## Implementation status (2026-07-24)
 
-The 1.0.3 candidate implements the VPN-only signaling/WebRTC path,
+The 1.0.4 candidate implements the VPN-only signaling/WebRTC path,
 exclusive/resumable controller lease, unlocked-session GDI capture, OpenH264
 adaptive stream, multi-monitor selection, cursor, input, explicit text
 clipboard, Android control page, desktop safety UI, and the NSIS
@@ -32,10 +32,10 @@ or newer. Evidence for this hardening candidate is deliberately narrower: the
 current Windows host and API 29/API 35 emulators. Elevated/admin service
 lifecycle, physical Android hardware, secure desktop, and the target network
 performance scenario have not been physically validated. See
-[`docs/release/validation-policy-1.0.3.md`](../release/validation-policy-1.0.3.md).
+[`docs/release/validation-policy-1.0.4.md`](../release/validation-policy-1.0.4.md).
 
 Sections 1-8 retain the intended end-state design and verification gates. They
-must not be read as an as-built claim for 1.0.3; this implementation-status
+must not be read as an as-built claim for 1.0.4; this implementation-status
 section and the release validation policy take precedence for current release
 claims.
 
@@ -50,7 +50,7 @@ claims.
   keyboard, and mouse remain active and visible.
 - Selected-monitor video, Trackpad and Direct input, zoom/rotation, Korean IME,
   physical keyboard, special keys, and explicit text clipboard are in the
-  current 1.0.3 scope. Audio, files, automatic clipboard sync, privacy mode,
+  current 1.0.4 scope. Audio, files, automatic clipboard sync, privacy mode,
   biometrics, lock/UAC secure-desktop control, and Ctrl+Alt+Delete are not.
 - Secure-desktop and Software SAS behavior later in this document describe the
   target architecture only. The current runtime reports these capabilities
@@ -290,7 +290,7 @@ path remains usable for app and installer when a certificate is later supplied.
    sustain at least 24fps and p95 feedback must not exceed 250ms.
 
 These six gates define completion of the target secure-desktop architecture;
-they are not evidence that every path has passed for 1.0.3. The current release
+they are not evidence that every path has passed for 1.0.4. The current release
 may advertise only its unlocked-session `desktop-control-v1` behavior and must
 retain the explicit limitations in the implementation-status section. A failed
 API 29 H.264/WebRTC or release-performance gate remains a blocker for that

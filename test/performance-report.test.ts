@@ -71,7 +71,7 @@ function report(
     provenance: {
       product: {
         name: 'EZTerminal',
-        version: options.productVersion ?? '1.0.3',
+        version: options.productVersion ?? '1.0.4',
         protocolVersion: 2,
         buildSha,
         source: { gitHeadSha: buildSha, workingTreeDirty: false },

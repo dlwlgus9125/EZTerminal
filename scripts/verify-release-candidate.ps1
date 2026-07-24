@@ -502,8 +502,8 @@ try {
             'The 10 Mbps and 80 ms physical network scenario is not validated.'
         )
         knownFunctionalLimits = @(
-            'Lock and UAC secure-desktop capture and input are not supported in 1.0.3.',
-            'Software SAS and Ctrl+Alt+Delete are not supported in 1.0.3.',
+            'Lock and UAC secure-desktop capture and input are not supported.',
+            'Software SAS and Ctrl+Alt+Delete are not supported.',
             'GDI capture, OpenH264 encoding and SendInput injection remain in the normal-user transport.'
         )
         playwrightRetries = 0

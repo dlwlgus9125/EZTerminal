@@ -9,7 +9,7 @@
   !insertmacro MUI_PAGE_WELCOME
 !macroend
 
-; 1.0.3 does not support software SAS or secure-desktop input. Undo only the
+; 1.0.x does not support software SAS or secure-desktop input. Undo only the
 ; exact legacy installer value when no administrator/domain policy changed it.
 !macro RestoreLegacyEzSasPolicy
   ClearErrors
