@@ -111,6 +111,42 @@ describe('runBlock — credit/window protocol', () => {
     expect(frames.some((f) => f.type === 'end')).toBe(false);
   });
 
+  it('yields a CPU-immediate stream to a queued cancel before the 50k drain target', async () => {
+    const frames: InterpreterFrame[] = [];
+    const ac = new AbortController();
+    let pulls = 0;
+    let cancelQueued = false;
+    async function* immediateRows() {
+      for (;;) {
+        pulls += 1;
+        yield {
+          kind: 'record' as const,
+          fields: { n: { kind: 'number' as const, value: pulls } },
+        };
+      }
+    }
+    const data: PipelineData = { kind: 'list-stream', rows: immediateRows() };
+    const handle = runBlock(
+      data,
+      (frame) => {
+        frames.push(frame);
+        if (frame.type === 'progress' && frame.count > 0 && !cancelQueued) {
+          cancelQueued = true;
+          setImmediate(() => ac.abort());
+        }
+      },
+      ac.signal,
+      { structuredDrainSliceMs: 0 },
+    );
+
+    await handle.done;
+
+    expect(cancelQueued).toBe(true);
+    expect(pulls).toBeLessThan(50_000);
+    expect(frames.some((frame) => frame.type === 'cancelled')).toBe(true);
+    expect(frames.some((frame) => frame.type === 'end')).toBe(false);
+  });
+
   it('bounds cancellation to the in-flight pull for a slow async structured stream', async () => {
     const frames: InterpreterFrame[] = [];
     const ac = new AbortController();

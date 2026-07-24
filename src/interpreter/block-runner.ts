@@ -38,7 +38,11 @@ import {
  */
 const DRAIN_BATCH = 50_000;
 /** Yield CPU-bound/immediately-resolved row sources back to controls promptly. */
-const STRUCTURED_DRAIN_SLICE_MS = 250;
+// Keep the utility-process macrotask queue responsive enough for renderer
+// cancellation even when a fused mapper can drain 50k rows faster than the
+// progress interval. The release p95 gate is relative to the checkpoint path,
+// so keep this bound below one 60 Hz frame.
+const STRUCTURED_DRAIN_SLICE_MS = 12;
 /** Avoid turning time slicing into a progress-frame/IPC flood for slow streams. */
 const STRUCTURED_PROGRESS_INTERVAL_MS = 250;
 /** Amortize clock reads while keeping CPU-heavy row transforms bounded. */
@@ -102,6 +106,8 @@ export interface RunBlockOptions {
   readonly retentionFileSystem?: Partial<ResultStoreFileSystem>;
   /** Test seam; production uses the bounded backoff above. */
   readonly disposeRetryDelaysMs?: readonly number[];
+  /** Test seam for deterministic macrotask-yield coverage. */
+  readonly structuredDrainSliceMs?: number;
 }
 
 /**
@@ -117,6 +123,10 @@ export function runBlock(
   const isByteStream = data.kind === 'byte-stream';
   const isScalar =
     data.kind === 'value' && data.value.kind !== 'table' && data.value.kind !== 'record';
+  const structuredDrainSliceMs = Math.max(
+    0,
+    options.structuredDrainSliceMs ?? STRUCTURED_DRAIN_SLICE_MS,
+  );
 
   // Declared columns + render shape. Scalars and external (byte-stream) output
   // render as a single-column `text` block; structured rows render as a table.
@@ -255,7 +265,7 @@ export function runBlock(
       let drainTarget = Math.min(Number.MAX_SAFE_INTEGER, store.count + drainBatch);
       let lastProgressAt = performance.now();
       while (!disposed && !signal.aborted && !store.exhausted) {
-        const sliceDeadline = performance.now() + STRUCTURED_DRAIN_SLICE_MS;
+        const sliceDeadline = performance.now() + structuredDrainSliceMs;
         let rowsUntilClockCheck = 0;
         await store.ensure(
           drainTarget,
