@@ -29,6 +29,7 @@ const verificationMetadata = await readFile(
   'utf8',
 );
 const releaseWorkflow = await readFile(resolve(root, '.github/workflows/release.yml'), 'utf8');
+const ciWorkflow = await readFile(resolve(root, '.github/workflows/ci.yml'), 'utf8');
 const remoteProtocol = await readFile(resolve(root, 'src/shared/remote-protocol.ts'), 'utf8');
 
 assert(contract.schemaVersion === 1, 'release/version.json schemaVersion must be 1.');
@@ -131,6 +132,20 @@ assert(
 assert(
   desktopE2eIndex > nativeHostE2eBuildIndex,
   '.github/workflows/release.yml must build the native remote host before desktop E2E.',
+);
+const ciNativeHostE2eBuildIndex = ciWorkflow.search(
+  /^[ \t]*- name: Build native remote host for desktop E2E\r?\n[ \t]+run: pnpm build:remote-host[ \t]*$/m,
+);
+const electronE2eIndex = ciWorkflow.search(
+  /^[ \t]*- name: Electron end-to-end tests[ \t]*$/m,
+);
+assert(
+  ciNativeHostE2eBuildIndex >= 0,
+  '.github/workflows/ci.yml must build the native remote host for Electron E2E.',
+);
+assert(
+  electronE2eIndex > ciNativeHostE2eBuildIndex,
+  '.github/workflows/ci.yml must build the native remote host before Electron E2E.',
 );
 
 if (process.argv.includes('--json')) {

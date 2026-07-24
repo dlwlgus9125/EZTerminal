@@ -139,6 +139,8 @@ jobs:
         run: pnpm test:visual
       # Fresh checkout has no .vite, so the e2e global-setup builds the real bundles
       # (locally a stale .vite is silently reused — CI closes that gap by construction).
+      - name: Build native remote host for desktop E2E
+        run: pnpm build:remote-host
       - name: Electron end-to-end tests
         run: pnpm e2e
       - name: Package Electron app
