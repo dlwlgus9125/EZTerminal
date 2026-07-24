@@ -449,6 +449,8 @@ jobs:
         run: pnpm storybook:build
       - name: Storybook visual regression and axe checks
         run: pnpm test:visual
+      - name: Build native remote host for desktop E2E
+        run: pnpm build:remote-host
       - name: Desktop end-to-end tests
         run: pnpm e2e
 

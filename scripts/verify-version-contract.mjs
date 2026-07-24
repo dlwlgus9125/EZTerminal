@@ -118,6 +118,20 @@ assert(
   releaseWorkflow.includes(`body_path: ${releaseNotesPath}`),
   `.github/workflows/release.yml does not publish ${releaseNotesPath}.`,
 );
+const nativeHostE2eBuildIndex = releaseWorkflow.search(
+  /^[ \t]*- name: Build native remote host for desktop E2E\r?\n[ \t]+run: pnpm build:remote-host[ \t]*$/m,
+);
+const desktopE2eIndex = releaseWorkflow.search(
+  /^[ \t]*- name: Desktop end-to-end tests[ \t]*$/m,
+);
+assert(
+  nativeHostE2eBuildIndex >= 0,
+  '.github/workflows/release.yml must build the native remote host for desktop E2E.',
+);
+assert(
+  desktopE2eIndex > nativeHostE2eBuildIndex,
+  '.github/workflows/release.yml must build the native remote host before desktop E2E.',
+);
 
 if (process.argv.includes('--json')) {
   process.stdout.write(`${JSON.stringify(contract)}\n`);
