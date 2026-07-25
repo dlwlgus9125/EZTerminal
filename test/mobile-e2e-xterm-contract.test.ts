@@ -33,10 +33,10 @@ describe('mobile E2E forced-xterm contract', () => {
     )).toBe(false);
   });
 
-  it('forces xterm, waits for its real DOM, taps natively, checks errors, and closes E2E resources', () => {
+  it('holds forced xterm open, waits for its real DOM, taps natively, checks errors, and closes resources', () => {
     const smoke = readFileSync(path.join(root, 'mobile/e2e/smoke.ts'), 'utf8');
 
-    expect(smoke).toContain("'!cmd /d /c echo xterm74'");
+    expect(smoke).toContain("'!cmd /d /c ping -n 11 127.0.0.1'");
     expect(smoke).toContain("waitForVisibleTestIdDescendant('pty-block', '.xterm-screen'");
     expect(smoke).toContain("tapTestId('pty-block')");
     expect(smoke).toContain('assertNoWebViewJavaScriptRuntimeErrors()');
