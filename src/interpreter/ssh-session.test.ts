@@ -1,4 +1,3 @@
-import { utils as ssh2Utils } from 'ssh2';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { InterpreterFrame } from '../shared/ipc';
@@ -7,15 +6,30 @@ import { sshAliasStreamData, sshStreamData, type DirectSshStreamData } from './c
 import { runSshSession, type SshSessionDeps } from './ssh-session';
 import type { SshAuthMethod, SshChannelLike, SshClientLike, SshConnectOptions, SshForwardChannelLike } from './external/ssh-client';
 
-// `parsePrivateKey` (external/ssh-client.ts) calls the REAL ssh2 key parser, not
-// a fake — so the credential-resolution tests need genuinely valid (test-only)
-// OpenSSH key material, generated once here rather than per test (ed25519 keygen
-// is cheap). An unencrypted key for the "no prompt needed" path, and a passphrase-
-// encrypted one for the "prompts, then decrypts" path.
-const UNENCRYPTED_KEY = Buffer.from(ssh2Utils.generateKeyPairSync('ed25519', {}).private);
-const KEY_PASSPHRASE = 'correct horse battery staple';
+// `parsePrivateKey` calls the real ssh2 parser. Fixed, valid OpenSSH fixtures
+// keep the release gate deterministic while covering unencrypted and encrypted
+// credential paths without generating expensive random keys during collection.
+const UNENCRYPTED_KEY = Buffer.from(
+  `-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtz
+c2gtZWQyNTUxOQAAACAj0omlhMqIYFchcpDNHKYz2zDWNwI4anyHjOclvjSHMAAA
+AIjdzDks3cw5LAAAAAtzc2gtZWQyNTUxOQAAACAj0omlhMqIYFchcpDNHKYz2zDW
+NwI4anyHjOclvjSHMAAAAEDnW25ZZBrY3211tuXBtPol2L7DhMiI30Fnfv/PyqF+
+8SPSiaWEyohgVyFykM0cpjPbMNY3AjhqfIeM5yW+NIcwAAAAAAECAwQF
+-----END OPENSSH PRIVATE KEY-----
+`,
+);
+const KEY_PASSPHRASE = 'testpass123';
 const ENCRYPTED_KEY = Buffer.from(
-  ssh2Utils.generateKeyPairSync('ed25519', { passphrase: KEY_PASSPHRASE, cipher: 'aes256-ctr', rounds: 16 }).private,
+  `-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0AAAAGAAAABAK
+1Lp2GcF2ecKSLUhRkc/iAAAAEAAAAAEAAAAzAAAAC3NzaC1lZDI1NTE5AAAAIKU5
+imvA0yNc6mq6EPmUOyzCL94Ar75KurKSGlQmrCaxAAAAkP3eDLJHv5Ll3DYRmEDO
+0UZItATHZ9cmHzNMi0IZwZuUPC5QtvqW2TpO8U5QE8+m/T/ldEdooSbDK22ncUmC
+I+g2N22ohmTQYuJm2u7XcZT14e1X6YKr8FvRK3tUVSeP2hTP+qtOTQO100vFhLO8
+SUj58q8kV+L4F1jemkrdaWht3+7cfO9qco+38rOKlZiFSQ==
+-----END OPENSSH PRIVATE KEY-----
+`,
 );
 
 function collect() {
