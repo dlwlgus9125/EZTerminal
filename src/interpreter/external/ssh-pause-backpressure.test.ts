@@ -1,4 +1,4 @@
-import { Server, utils as ssh2Utils } from 'ssh2';
+import { Server } from 'ssh2';
 import type { Connection, ServerChannel } from 'ssh2';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -36,7 +36,17 @@ async function waitUntil(predicate: () => boolean, timeoutMs: number, label: str
   }
 }
 
-const HOST_KEY = ssh2Utils.generateKeyPairSync('ed25519', {}).private;
+// A fixed, valid OpenSSH key keeps repeated release-gate runs deterministic.
+const HOST_KEY = Buffer.from(
+  `-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtz
+c2gtZWQyNTUxOQAAACAj0omlhMqIYFchcpDNHKYz2zDWNwI4anyHjOclvjSHMAAA
+AIjdzDks3cw5LAAAAAtzc2gtZWQyNTUxOQAAACAj0omlhMqIYFchcpDNHKYz2zDW
+NwI4anyHjOclvjSHMAAAAEDnW25ZZBrY3211tuXBtPol2L7DhMiI30Fnfv/PyqF+
+8SPSiaWEyohgVyFykM0cpjPbMNY3AjhqfIeM5yW+NIcwAAAAAAECAwQF
+-----END OPENSSH PRIVATE KEY-----
+`,
+);
 
 /** Start a throwaway ssh2 Server that accepts any auth and firehoses a shell
  * with 8KB writes on a tight setImmediate loop, ignoring write() backpressure
