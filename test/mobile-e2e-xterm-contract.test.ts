@@ -54,6 +54,8 @@ describe('mobile E2E forced-xterm contract', () => {
     expect(end).toBeGreaterThan(start);
     expect(waiter).toContain('.reverse()');
     expect(waiter).toContain("!element.hasAttribute('disabled')");
+    expect(parity).toContain("const tabBId = tabBMarker.split('tab-active:')[1].trim()");
+    expect(parity).toContain("(l) => l.includes(tabBId) && l > tabBMarker");
     expect(parity).toContain("waitForVisibleTestIdEnabled('btn-run', 20_000)");
   });
 

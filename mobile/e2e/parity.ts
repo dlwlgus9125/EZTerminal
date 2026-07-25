@@ -268,6 +268,7 @@ async function main(): Promise<void> {
     console.log('[parity] creating tab B via header New tab...');
     await tapTestId('tab-add-btn');
     const tabBMarker = await pollLogcat('[ez-e2e] tab-active:', 10000, (l) => !l.includes(tabAId));
+    const tabBId = tabBMarker.split('tab-active:')[1].trim();
 
     console.log('[parity] starting streaming ping in tab B...');
     await setTestIdTextValue('cmd-input', 'cmd /c ping localhost');
@@ -291,6 +292,11 @@ async function main(): Promise<void> {
 
     console.log('[parity] switching back to tab B, running echo bravo2...');
     await tapTestIdAt('tab-pill-open', 1);
+    await pollLogcat(
+      '[ez-e2e] tab-active:',
+      8000,
+      (l) => l.includes(tabBId) && l > tabBMarker,
+    );
     await waitForVisibleTestIdEnabled('btn-run', 20_000);
     await setTestIdTextValue('cmd-input', 'cmd /c echo bravo2');
     await tapTestId('btn-run');
