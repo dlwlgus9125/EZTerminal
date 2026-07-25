@@ -37,6 +37,7 @@ describe('mobile E2E forced-xterm contract', () => {
     const smoke = readFileSync(path.join(root, 'mobile/e2e/smoke.ts'), 'utf8');
 
     expect(smoke).toContain("'!cmd /d /c ping -n 11 127.0.0.1'");
+    expect(smoke).toContain("waitForVisibleTestIdEnabled('btn-run', 20_000)");
     expect(smoke).toContain("waitForVisibleTestIdDescendant('pty-block', '.xterm-screen'");
     expect(smoke).toContain("tapTestId('pty-block')");
     expect(smoke).toContain('assertNoWebViewJavaScriptRuntimeErrors()');

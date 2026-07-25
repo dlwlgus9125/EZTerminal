@@ -67,6 +67,7 @@ import {
   setTestIdTextValue,
   tapTestId,
   waitForVisibleTestIdDescendant,
+  waitForVisibleTestIdEnabled,
 } from './lib.ts';
 
 async function main(): Promise<void> {
@@ -110,6 +111,10 @@ async function main(): Promise<void> {
     console.log('[smoke] PASS —', hit.trim());
 
     console.log('[smoke] running held-open forced xterm command...');
+    // The output marker can arrive before the desktop's terminal-end frame.
+    // Wait for the active session to leave its running state; otherwise the
+    // native tap below lands on a still-disabled Run button and no PTY starts.
+    await waitForVisibleTestIdEnabled('btn-run', 20_000);
     // Keep the PTY alive long enough for the 250ms CDP polling loop to observe
     // its real DOM. A one-shot `echo` can mount and finish between polls.
     await setTestIdTextValue('cmd-input', '!cmd /d /c ping -n 11 127.0.0.1');
