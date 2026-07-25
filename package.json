@@ -28,6 +28,7 @@
     "test:visual": "playwright test --config playwright.visual.config.ts",
     "test:visual:update": "playwright test --config playwright.visual.config.ts --update-snapshots",
     "e2e": "playwright test",
+    "e2e:performance": "node scripts/run-release-performance-e2e.mjs",
     "test:e2e:packaged": "playwright test --config playwright.packaged.config.ts",
     "verify:version": "node scripts/verify-version-contract.mjs",
     "sbom": "node scripts/generate-sbom.mjs",

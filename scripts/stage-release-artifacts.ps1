@@ -67,7 +67,8 @@ try {
     $actualRcReportHash = (Get-FileHash -LiteralPath $resolvedRcReport -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-Equal $actualRcReportHash $normalizedRcReportHash 'local RC report SHA-256'
     try {
-        $localRcReport = [Text.Encoding]::UTF8.GetString($localRcReportBytes) | ConvertFrom-Json
+        $localRcReportJson = [Text.Encoding]::UTF8.GetString($localRcReportBytes).TrimStart([char]0xFEFF)
+        $localRcReport = $localRcReportJson | ConvertFrom-Json
     } catch {
         throw 'LocalRcReportPath does not contain valid UTF-8 JSON.'
     }

@@ -5,3 +5,11 @@ mobile/android/capacitor.settings.gradle text eol=lf
 
 # The Unix Gradle wrapper must retain LF endings and its executable index bit.
 mobile/android/gradlew text eol=lf
+
+# Release evidence and the renderer entry must have reproducible bytes on
+# Windows and Linux release workers.
+/pnpm-lock.yaml text eol=lf
+/index.html text eol=lf
+/e2e/release-performance.spec.ts text eol=lf
+/e2e/fixtures/large-plain-output.js text eol=lf
+/e2e/fixtures/retention-pressure-output.js text eol=lf

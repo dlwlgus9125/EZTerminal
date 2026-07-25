@@ -8,11 +8,20 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[0-9A-Fa-f]{40}$')]
-    [string]$PerformanceBaselineBuildSha
+    [string]$PerformanceBaselineBuildSha,
+
+    [switch]$RunPerformanceMeasurement
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+if (-not $RunPerformanceMeasurement) {
+    throw (
+        'The release performance E2E is opt-in. Run this RC gate with ' +
+        '-RunPerformanceMeasurement only after the user explicitly requests a performance measurement.'
+    )
+}
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $androidHome = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:LOCALAPPDATA 'Android\Sdk' }
@@ -345,7 +354,6 @@ try {
         throw "Release validation requires Node $expectedNodeVersion; current Node is $actualNodeVersion."
     }
     $env:EZTERMINAL_PLAYWRIGHT_RETRIES = '0'
-    $env:EZTERMINAL_RUN_RELEASE_PERFORMANCE = '1'
     $env:EZTERMINAL_BUILD_SHA = $sha
     $env:VITE_BUILD_SHA = $sha
     $env:ANDROID_HOME = $androidHome
@@ -405,6 +413,7 @@ try {
     Invoke-Checked 'pnpm' @('package')
     Assert-EmbeddedBuildSha $sha
     Invoke-Checked 'pnpm' @('e2e')
+    Invoke-Checked 'pnpm' @('e2e:performance')
     if (-not (Test-Path -LiteralPath $performanceReportPath)) {
         throw 'The desktop E2E gate did not produce desktop-performance-report.json.'
     }

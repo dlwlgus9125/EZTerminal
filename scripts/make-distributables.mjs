@@ -44,4 +44,6 @@ pnpm(
   prepackaged,
   '--config',
   'electron-builder.yml',
+  '--publish',
+  'never',
 );

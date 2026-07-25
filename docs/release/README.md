@@ -53,8 +53,13 @@ Release workflow는 API 29/35 계측 테스트를 다시 실행한다. 또한 �
      -Api29Avd EZTerminalApi29 `
      -Api35Avd EZTerminalApi35 `
      -PerformanceBaselinePath C:\secure-release-evidence\desktop-performance-baseline.json `
-     -PerformanceBaselineBuildSha <40-character-baseline-commit-sha>
+     -PerformanceBaselineBuildSha <40-character-baseline-commit-sha> `
+     -RunPerformanceMeasurement
    ```
+
+   `-RunPerformanceMeasurement`와 `pnpm e2e:performance`는 사용자가
+   "성능 측정해줘"처럼 성능 측정을 명시적으로 요청했을 때만 사용한다.
+   일반 `pnpm e2e`, 업데이트, 빌드 및 릴리스 요청은 성능 E2E를 실행하지 않는다.
 
    데스크톱 성능은 5회 워밍업 뒤 25회 측정하고, 모든 p95 회귀를 5% 이내로
    제한한다. 12 MiB plain-output 보존 압력 병목은 15% 이상 개선되어야 한다.
