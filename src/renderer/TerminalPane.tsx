@@ -127,6 +127,9 @@ export function TerminalPane({
   const activeController = useRef<BlockController | null>(null);
   // Whether the active run is still running — gates the top-level Cancel button.
   const [activeRunning, setActiveRunning] = useState(false);
+  // True while the explicit Codex recovery action is between Escape and its
+  // delayed in-session `continue`; disables duplicate recovery sequences.
+  const [activeCodexRecoveryPending, setActiveCodexRecoveryPending] = useState(false);
   // Whether the active run is a RUNNING xterm `pty` block — gates the "TUI pane
   // takeover" (terminal-feel pass T1): the pane hides its other blocks + pinned
   // cmd-input (CSS-only, never unmounted) and the running block fills the
@@ -383,6 +386,7 @@ export function TerminalPane({
       }
       setSessionDead(true);
       setActiveRunning(false);
+      setActiveCodexRecoveryPending(false);
       setActiveTakeover(false);
       setActivePlainPty(false);
     });
@@ -454,6 +458,7 @@ export function TerminalPane({
       const onActiveChange = (): void => {
         const snap = controller.getSnapshot();
         setActiveRunning(snap.status === 'running');
+        setActiveCodexRecoveryPending(snap.codexRecoveryPending);
         setActiveTakeover(
           snap.status === 'running' && snap.shape === 'pty' && snap.ptyRenderMode === 'xterm',
         );
@@ -722,6 +727,10 @@ export function TerminalPane({
     activeController.current?.cancel();
   }, []);
 
+  const handleCodexRecovery = useCallback(() => {
+    activeController.current?.recoverCodexSession();
+  }, []);
+
   const selectedPlainOutputText = useCallback((): string => {
     const pane = cmdInputRef.current?.closest('.pane');
     return selectedTextWithin(pane ?? null);
@@ -744,6 +753,8 @@ export function TerminalPane({
 
   const activeIsCodex = activeRunning
     && classifyDirectAgentCommand(activeController.current?.command ?? '') === 'codex';
+  const activeCanRecoverCodex = activeIsCodex
+    && resolvedTerminalRuntimeOptions.platform === 'desktop';
 
   // Dismiss a finished (or any) block: dispose its controller so the interpreter
   // releases the ResultStore + closes the port, then drop it from the list. This
@@ -762,6 +773,7 @@ export function TerminalPane({
           activeUnsub.current = null;
           activeController.current = null;
           setActiveRunning(false);
+          setActiveCodexRecoveryPending(false);
           setActiveTakeover(false);
           setActivePlainPty(false);
         }
@@ -952,7 +964,22 @@ export function TerminalPane({
         >
           {t('terminalPane.run')}
         </button>
+        {activeCanRecoverCodex && (
+          <button
+            type="button"
+            className="btn btn-recover"
+            onClick={handleCodexRecovery}
+            disabled={activeCodexRecoveryPending}
+            title={t('terminalPane.recoverCodexDescription')}
+            data-testid="btn-codex-recover"
+          >
+            {activeCodexRecoveryPending
+              ? t('terminalPane.recoveringCodex')
+              : t('terminalPane.recoverCodex')}
+          </button>
+        )}
         <button
+          type="button"
           className="btn btn-cancel"
           onClick={handleCancel}
           disabled={!activeRunning}

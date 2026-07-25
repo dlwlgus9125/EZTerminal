@@ -17,6 +17,7 @@ import type {
   ResultRow,
   ResultShape,
 } from '../shared/ipc';
+import { classifyDirectAgentCommand } from '../shared/agent-command';
 // AnsiHtmlStream is a pure browser-safe utility (ansi_up + TextDecoder, no Node
 // APIs) — reused as-is from the interpreter side rather than duplicated, for the
 // PTY block's plain-mode render (M3), which needs the SAME ansi->html conversion
@@ -74,6 +75,9 @@ export interface SshPromptState {
 /** Immutable view handed to React via useSyncExternalStore. */
 export interface BlockSnapshot {
   readonly status: BlockStatus;
+  /** True between the user-requested Codex interrupt and the follow-up
+   * `continue` input. Used to disable duplicate recovery requests. */
+  readonly codexRecoveryPending: boolean;
   /** Local vs SSH execution, or null when an older peer omitted the additive field. */
   readonly executionKind: ExecutionKind | null;
   readonly sshConnectionId: string | null;
@@ -122,6 +126,10 @@ const MAX_ROW_WINDOW = 10_000;
  * Terminal/one-shot frames bypass the throttle entirely.
  */
 export const NOTIFY_THROTTLE_MS = 33;
+
+/** Gives the Codex TUI time to settle back at its prompt after Escape before
+ * the in-session continuation text is submitted. */
+export const CODEX_RECOVERY_CONTINUE_DELAY_MS = 750;
 
 /**
  * PTY backpressure ack quantum (Stage C): a cumulative `pty-ack` control is
@@ -201,6 +209,9 @@ export class BlockController {
   private startCwd: string | null = null;
   private endCwd: string | null = null;
   private sshPrompt: SshPromptState | null = null;
+  private codexRecoveryPending = false;
+  private codexRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private disposed = false;
   private version = 0;
 
   /** De-dupes repeated requests for the same window (e.g. across re-renders). */
@@ -329,7 +340,55 @@ export class BlockController {
   }
 
   cancel(): void {
+    const recoveryWasPending = this.clearCodexRecovery();
     this.port.postMessage({ type: 'cancel' });
+    if (recoveryWasPending) this.emitChange(true);
+  }
+
+  /**
+   * Recover a live Codex TUI without replacing its process or session:
+   * interrupt the stuck turn, then ask the same prompt to continue. The delay
+   * keeps `continue` from landing in the still-active turn, and the pending
+   * gate prevents duplicate click sequences.
+   */
+  recoverCodexSession(): boolean {
+    if (
+      this.disposed
+      || this.status !== 'running'
+      || this.codexRecoveryPending
+      || classifyDirectAgentCommand(this.command) !== 'codex'
+    ) {
+      return false;
+    }
+
+    this.codexRecoveryPending = true;
+    try {
+      this.sendPtyInput('\x1b');
+    } catch {
+      this.codexRecoveryPending = false;
+      return false;
+    }
+
+    this.codexRecoveryTimer = setTimeout(() => {
+      this.codexRecoveryTimer = null;
+      if (this.disposed || this.status !== 'running') {
+        if (this.codexRecoveryPending) {
+          this.codexRecoveryPending = false;
+          this.emitChange(true);
+        }
+        return;
+      }
+
+      try {
+        this.sendPtyInput('continue\r');
+      } catch {
+        // The run may have closed between the status check and postMessage.
+      }
+      this.codexRecoveryPending = false;
+      this.emitChange(true);
+    }, CODEX_RECOVERY_CONTINUE_DELAY_MS);
+    this.emitChange(true);
+    return true;
   }
 
   /** Settle a run whose transport vanished before it could emit a terminal
@@ -337,6 +396,7 @@ export class BlockController {
    * while releasing every renderer-side busy/input gate. */
   markTransportInterrupted(message: string): void {
     if (this.status !== 'running') return;
+    this.clearCodexRecovery();
     this.finishPlainAnsi();
     this.flushPlainSink();
     this.status = 'error';
@@ -409,6 +469,7 @@ export class BlockController {
   }
 
   private resetForPtyReplay(): void {
+    this.clearCodexRecovery();
     this.cache.clear();
     this.status = 'running';
     this.shape = null;
@@ -620,6 +681,8 @@ export class BlockController {
 
   /** Tear down the block: tell the interpreter to release the store, close the port. */
   dispose(): void {
+    this.disposed = true;
+    this.clearCodexRecovery();
     this.ptyFlowEpoch += 1;
     this.ptyBuffer.clear();
     this.discardInFlightPtyWrites();
@@ -724,6 +787,7 @@ export class BlockController {
         this.exhausted = frame.done;
         break;
       case 'end':
+        this.clearCodexRecovery();
         this.finishPlainAnsi();
         this.flushPlainSink();
         this.status = 'done';
@@ -731,6 +795,7 @@ export class BlockController {
         this.endCwd = frame.cwd ?? this.endCwd;
         break;
       case 'error':
+        this.clearCodexRecovery();
         this.finishPlainAnsi();
         this.flushPlainSink();
         this.status = 'error';
@@ -738,6 +803,7 @@ export class BlockController {
         this.sshPrompt = null;
         break;
       case 'cancelled':
+        this.clearCodexRecovery();
         this.finishPlainAnsi();
         this.flushPlainSink();
         this.status = 'cancelled';
@@ -803,9 +869,21 @@ export class BlockController {
     for (const listener of this.listeners) listener();
   }
 
+  /** Cancel a scheduled continuation. Returns whether visible state changed. */
+  private clearCodexRecovery(): boolean {
+    if (this.codexRecoveryTimer !== null) {
+      clearTimeout(this.codexRecoveryTimer);
+      this.codexRecoveryTimer = null;
+    }
+    if (!this.codexRecoveryPending) return false;
+    this.codexRecoveryPending = false;
+    return true;
+  }
+
   private buildSnapshot(): BlockSnapshot {
     return {
       status: this.status,
+      codexRecoveryPending: this.codexRecoveryPending,
       executionKind: this.executionKind,
       sshConnectionId: this.sshConnectionId,
       sshConnectionState: this.sshConnectionState,

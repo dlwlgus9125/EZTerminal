@@ -12,6 +12,7 @@ process.stdin.resume();
 
 let line = '';
 let received = '';
+let interrupted = false;
 process.stdin.on('data', (data) => {
   received += data;
   if (data.includes('\x03')) process.stdout.write('CTRL-C-RECEIVED\r\n');
@@ -19,7 +20,10 @@ process.stdin.on('data', (data) => {
   if (data.includes('\x06')) process.stdout.write('CTRL-F-RECEIVED\r\n');
   if (data.includes('\x10')) process.stdout.write('CTRL-P-RECEIVED\r\n');
   if (data.includes('\x16')) process.stdout.write('CTRL-V-RECEIVED\r\n');
-  if (data.includes('\x1b')) process.stdout.write('ESC-RECEIVED\r\n');
+  if (data.includes('\x1b')) {
+    interrupted = true;
+    process.stdout.write('ESC-RECEIVED\r\n');
+  }
   if (received.includes('first\nsecond')) {
     process.stdout.write('MULTILINE-PASTE-RECEIVED\r\n');
     received = '';
@@ -34,6 +38,13 @@ process.stdin.on('data', (data) => {
       continue;
     }
     if (character === '\r' || character === '\n') {
+      // A mounted xterm can answer terminal capability/focus queries between
+      // Escape and the submitted line. Those replies are not user text, so
+      // accept the recovery instruction at the end of the accumulated input.
+      if (line.trim().endsWith('continue') && interrupted) {
+        process.stdout.write('RECOVERY-SEQUENCE\r\n');
+        interrupted = false;
+      }
       if (line.trim() === '/exit' || line.trim() === '/quit') {
         process.stdout.write('EXPLICIT-EXIT\r\n');
         process.exit(0);

@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ANSI_PENDING_MAX_CHARS } from '../interpreter/external/ansi';
 import type { InterpreterFrame, RendererControl } from '../shared/ipc';
-import { BlockController, NOTIFY_THROTTLE_MS, PTY_ACK_QUANTUM } from './block-controller';
+import {
+  BlockController,
+  CODEX_RECOVERY_CONTINUE_DELAY_MS,
+  NOTIFY_THROTTLE_MS,
+  PTY_ACK_QUANTUM,
+} from './block-controller';
 
 // A minimal stand-in for a DOM MessagePort: records the controls the controller
 // posts, and lets the test deliver interpreter frames as if they arrived over the
@@ -32,9 +37,12 @@ class FakePort {
   }
 }
 
-function make(opts?: { mirror?: boolean }): { port: FakePort; controller: BlockController } {
+function make(
+  opts?: { mirror?: boolean },
+  command = 'cmd',
+): { port: FakePort; controller: BlockController } {
   const port = new FakePort();
-  const controller = new BlockController('cmd', port as unknown as MessagePort, opts);
+  const controller = new BlockController(command, port as unknown as MessagePort, opts);
   return { port, controller };
 }
 
@@ -170,6 +178,69 @@ describe('BlockController — windowing / prune / dedup', () => {
     controller.dispose();
     expect(port.posted).toContainEqual({ type: 'close' });
     expect(port.closed).toBe(true);
+  });
+});
+
+describe('BlockController Codex in-session recovery', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('interrupts once, then submits continue to the same live Codex PTY', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { port, controller } = make(undefined, 'codex resume --last');
+
+    expect(controller.recoverCodexSession()).toBe(true);
+    expect(controller.getSnapshot().codexRecoveryPending).toBe(true);
+    expect(port.posted).toEqual([{ type: 'pty-input', data: '\x1b' }]);
+
+    expect(controller.recoverCodexSession()).toBe(false);
+    expect(port.posted).toHaveLength(1);
+
+    vi.advanceTimersByTime(CODEX_RECOVERY_CONTINUE_DELAY_MS);
+    expect(port.posted).toEqual([
+      { type: 'pty-input', data: '\x1b' },
+      { type: 'pty-input', data: 'continue\r' },
+    ]);
+    expect(controller.getSnapshot().codexRecoveryPending).toBe(false);
+  });
+
+  it('cancels the delayed continuation when the run settles or is force-stopped', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+    const settled = make(undefined, 'codex');
+    settled.controller.recoverCodexSession();
+    settled.port.deliver({ type: 'end' });
+    vi.advanceTimersByTime(CODEX_RECOVERY_CONTINUE_DELAY_MS);
+    expect(settled.port.posted).toEqual([{ type: 'pty-input', data: '\x1b' }]);
+    expect(settled.controller.getSnapshot().codexRecoveryPending).toBe(false);
+
+    const cancelled = make(undefined, 'codex');
+    cancelled.controller.recoverCodexSession();
+    cancelled.controller.cancel();
+    vi.advanceTimersByTime(CODEX_RECOVERY_CONTINUE_DELAY_MS);
+    expect(cancelled.port.posted).toEqual([
+      { type: 'pty-input', data: '\x1b' },
+      { type: 'cancel' },
+    ]);
+    expect(cancelled.controller.getSnapshot().codexRecoveryPending).toBe(false);
+  });
+
+  it('rejects non-Codex recovery and never continues after disposal', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const shell = make();
+    expect(shell.controller.recoverCodexSession()).toBe(false);
+    expect(shell.port.posted).toEqual([]);
+
+    const codex = make(undefined, 'codex');
+    expect(codex.controller.recoverCodexSession()).toBe(true);
+    codex.controller.dispose();
+    vi.advanceTimersByTime(CODEX_RECOVERY_CONTINUE_DELAY_MS);
+    expect(codex.controller.recoverCodexSession()).toBe(false);
+    expect(codex.port.posted).toEqual([
+      { type: 'pty-input', data: '\x1b' },
+      { type: 'close' },
+    ]);
   });
 });
 

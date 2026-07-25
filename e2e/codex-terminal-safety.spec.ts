@@ -22,6 +22,10 @@ test('direct Codex uses terminal-safe keys and Windows-style clipboard routing',
   await expect(run.getByTestId('pty-plain-block')).toBeVisible();
   await expect.poll(() => output.innerText(), { timeout: 15_000 }).toContain('FAKE-CODEX-READY');
   await expect(window.getByTestId('btn-cancel')).toHaveText('Force stop');
+  await expect(window.getByTestId('btn-codex-recover')).toHaveText('Recover session');
+  await window.getByTestId('btn-codex-recover').click();
+  await expect.poll(() => output.innerText()).toContain('RECOVERY-SEQUENCE');
+  await expect(run.getByTestId('block-status')).toHaveText('running');
 
   await input.click();
   await window.keyboard.press('Control+c');
@@ -103,6 +107,10 @@ test('direct Codex keeps the same safety policy after upgrading to xterm', async
   const terminal = run.getByTestId('pty-block');
   await expect(terminal).toBeVisible();
   await expect.poll(() => readXtermBuffer(terminal), { timeout: 15_000 }).toContain('FAKE-CODEX-READY');
+  await expect(run.getByTestId('block-codex-recover')).toHaveText('Recover session');
+  await run.getByTestId('block-codex-recover').click();
+  await expect.poll(() => readXtermBuffer(terminal)).toContain('RECOVERY-SEQUENCE');
+  await expect(run.getByTestId('block-status')).toHaveText('running');
   await terminal.click();
 
   await window.keyboard.press('Control+c');

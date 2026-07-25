@@ -1490,6 +1490,7 @@ body {
    (not display/visibility) so they stay hit-testable — a click still lands
    without a prior hover, exactly like a real mouse click does in practice. */
 .block-toggle,
+.block-recover,
 .block-cancel,
 .block-dismiss {
   opacity: 0;
@@ -1501,9 +1502,11 @@ body {
 }
 
 .block:hover .block-toggle,
+.block:hover .block-recover,
 .block:hover .block-cancel,
 .block:hover .block-dismiss,
 .block-toggle:focus-visible,
+.block-recover:focus-visible,
 .block-cancel:focus-visible,
 .block-dismiss:focus-visible {
   opacity: 1;
@@ -2138,6 +2141,7 @@ body {
   }
 }
 
+.block-recover,
 .block-cancel {
   padding: 0.08rem 0.5rem;
   font-size: 0.68rem;
@@ -2743,6 +2747,16 @@ body {
 .btn-run:hover:not(:disabled) {
   border-color: var(--term-green);
   background: rgba(41, 211, 152, 0.1);
+}
+
+.btn-recover {
+  color: var(--term-amber);
+  border-color: color-mix(in srgb, var(--term-amber) 38%, transparent);
+}
+
+.btn-recover:hover:not(:disabled) {
+  border-color: var(--term-amber);
+  background: color-mix(in srgb, var(--term-amber) 10%, transparent);
 }
 
 .btn-cancel {

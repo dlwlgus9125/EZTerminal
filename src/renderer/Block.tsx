@@ -57,7 +57,17 @@ export function Block({
   const isDesktopCodex = terminalRuntimeOptions?.platform === 'desktop'
     && classifyDirectAgentCommand(controller.command) === 'codex';
 
-  const { status, shape, rowCount, errorMessage, startCwd, sshPrompt, sshConnectionId, sshConnectionState } = snapshot;
+  const {
+    status,
+    shape,
+    rowCount,
+    errorMessage,
+    startCwd,
+    sshPrompt,
+    sshConnectionId,
+    sshConnectionState,
+    codexRecoveryPending,
+  } = snapshot;
 
   return (
     <section
@@ -113,8 +123,23 @@ export function Block({
             SSH {sshConnectionId.slice(0, 8)}
           </button>
         )}
+        {status === 'running' && isDesktopCodex && (
+          <button
+            type="button"
+            className="btn btn-recover block-recover"
+            onClick={() => controller.recoverCodexSession()}
+            disabled={codexRecoveryPending}
+            title={t('terminalPane.recoverCodexDescription')}
+            data-testid="block-codex-recover"
+          >
+            {codexRecoveryPending
+              ? t('terminalPane.recoveringCodex')
+              : t('terminalPane.recoverCodex')}
+          </button>
+        )}
         {status === 'running' && (
           <button
+            type="button"
             className="btn btn-cancel block-cancel"
             onClick={() => controller.cancel()}
             data-testid="block-cancel"

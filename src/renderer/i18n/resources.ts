@@ -545,6 +545,9 @@ export const appResources = {
         clearDraft: 'Clear the current draft before running a saved command.',
         layoutRecovery: 'Layout recovery is in progress.',
         run: 'Run',
+        recoverCodex: 'Recover session',
+        recoveringCodex: 'Recovering\u2026',
+        recoverCodexDescription: 'Interrupt the current Codex turn and continue in this session.',
         forceStop: 'Force stop',
       },
       terminalSafety: {
@@ -1580,6 +1583,9 @@ export const appResources = {
         clearDraft: '저장된 명령을 실행하려면 현재 입력을 지워 주세요.',
         layoutRecovery: '레이아웃을 복구하는 중입니다.',
         run: '실행',
+        recoverCodex: '세션 복구',
+        recoveringCodex: '복구 중\u2026',
+        recoverCodexDescription: '현재 Codex 턴을 중단하고 이 세션에서 계속 진행합니다.',
         forceStop: '강제 종료',
       },
       terminalSafety: {
