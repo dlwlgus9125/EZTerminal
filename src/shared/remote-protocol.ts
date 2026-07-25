@@ -154,6 +154,17 @@ export interface DesktopControlCapabilities {
   readonly clipboardText: boolean;
   readonly directTouch: boolean;
   readonly multiMonitor: boolean;
+  /** New hosts accept viewport-sized adaptive capture hints. */
+  readonly adaptiveViewport?: boolean;
+}
+
+export const MIN_DESKTOP_VIEWPORT_PIXELS = 64;
+export const MAX_DESKTOP_VIEWPORT_PIXELS = 4_096;
+
+export interface DesktopVideoViewport {
+  /** Physical pixels available to the decoded video, after device pixel ratio. */
+  readonly pixelWidth: number;
+  readonly pixelHeight: number;
 }
 
 export type DesktopControlState =
@@ -179,6 +190,7 @@ export type DesktopSessionSignal =
 export interface DesktopControlStartRequest {
   readonly kind: 'desktop-control-start';
   readonly requestId: string;
+  readonly viewport?: DesktopVideoViewport;
 }
 
 export interface DesktopSignalMessage {
@@ -588,6 +600,8 @@ export interface DesktopControlStatusMessage {
   readonly roundTripTimeMs?: number;
   readonly packetLossPercent?: number;
   readonly bitrateKbps?: number;
+  readonly streamWidth?: number;
+  readonly streamHeight?: number;
 }
 
 export interface DesktopControlEndedMessage {

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use bytes::Bytes;
 use openh264::OpenH264API;
 use openh264::encoder::{
@@ -38,13 +38,14 @@ use crate::input::{InputChannel, InputInjector, InputOutcome};
 use crate::local_broker::{BrokerClientError, BrokerLeaseClient};
 use crate::protocol::{
     MAX_CONTROL_BYTES, MainToTransport, NativeEndReason, NativeErrorCode, NativeHello,
-    NativeIceCandidate, QualityTier, RemoteDisplay, TransportMetrics, TransportState,
-    TransportToMain, encode_main_message, parse_main_message,
+    NativeIceCandidate, QualityTier, RemoteDisplay, StreamViewport, TransportMetrics,
+    TransportState, TransportToMain, encode_main_message, parse_main_message,
 };
 use crate::quality::{NetworkSample, QualityController};
 
 const CONTROL_CHANNEL: &str = "ez-control-v1";
 const POINTER_CHANNEL: &str = "ez-pointer-v1";
+const MAX_PENDING_REMOTE_ICE_CANDIDATES: usize = 64;
 const CAPABILITY_RELEASE_WAIT_TIMEOUT: Duration = Duration::from_millis(2_500);
 const TRANSPORT_RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(400);
 
@@ -218,6 +219,7 @@ async fn run_async() -> Result<()> {
     let mut hello: Option<NativeHello> = None;
     let mut peer_connection: Option<PeerSession> = None;
     let mut capability_lease: Option<CapabilityLease> = None;
+    let mut pending_remote_ice = Vec::new();
 
     while let Some(line) = lines
         .next_line()
@@ -305,7 +307,7 @@ async fn run_async() -> Result<()> {
                     }
                 };
                 let peer_ip: IpAddr = active_hello.peer_address.parse()?;
-                validate_remote_sdp_candidates(&sdp, peer_ip)?;
+                let sdp = constrain_remote_sdp_candidates(&sdp, peer_ip);
                 let Some(lease) = capability_lease.as_ref() else {
                     send_error(
                         &output_tx,
@@ -331,6 +333,9 @@ async fn run_async() -> Result<()> {
                 pc.pc
                     .set_remote_description(RTCSessionDescription::offer(sdp)?)
                     .await?;
+                for candidate in pending_remote_ice.drain(..) {
+                    pc.pc.add_ice_candidate(candidate).await?;
+                }
                 let answer = pc.pc.create_answer(None).await?;
                 pc.pc.set_local_description(answer).await?;
                 let local = pc
@@ -357,25 +362,21 @@ async fn run_async() -> Result<()> {
                     continue;
                 }
                 let peer_ip = active_hello.peer_address.parse()?;
-                if !candidate_matches_peer(&candidate.candidate, peer_ip) {
-                    send_error(
-                        &output_tx,
-                        Some(session_id),
-                        NativeErrorCode::PeerAddressMismatch,
-                        "remote ICE candidate is not the authenticated peer",
-                    )
-                    .await;
+                let Some(constrained_candidate) =
+                    constrain_remote_candidate(&candidate.candidate, peer_ip)
+                else {
                     continue;
-                }
+                };
+                let candidate = RTCIceCandidateInit {
+                    candidate: constrained_candidate,
+                    sdp_mid: candidate.sdp_mid,
+                    sdp_mline_index: candidate.sdp_mline_index,
+                    username_fragment: None,
+                };
                 if let Some(pc) = peer_connection.as_ref() {
-                    pc.pc
-                        .add_ice_candidate(RTCIceCandidateInit {
-                            candidate: candidate.candidate,
-                            sdp_mid: candidate.sdp_mid,
-                            sdp_mline_index: candidate.sdp_mline_index,
-                            username_fragment: None,
-                        })
-                        .await?;
+                    pc.pc.add_ice_candidate(candidate).await?;
+                } else if pending_remote_ice.len() < MAX_PENDING_REMOTE_ICE_CANDIDATES {
+                    pending_remote_ice.push(candidate);
                 }
             }
             MainToTransport::Stop { session_id, .. } => {
@@ -488,11 +489,7 @@ async fn create_peer(
 
     let session_id = hello.session_id;
     let connected = Arc::new(AtomicBool::new(false));
-    let network_sample = Arc::new(Mutex::new(NetworkSample {
-        round_trip_time_ms: 0,
-        packet_loss_percent: 0.0,
-        send_backlog_ms: 0,
-    }));
+    let network_sample = Arc::new(Mutex::new(NetworkSample::default()));
     spawn_network_stats(
         Arc::clone(&pc),
         authority.stop_flag(),
@@ -507,10 +504,13 @@ async fn create_peer(
             .id
             .clone(),
     ));
-    let input = Arc::new(Mutex::new(InputInjector::with_displays(
+    let stream_viewport = Arc::new(Mutex::new(hello.viewport));
+    let input = Arc::new(Mutex::new(InputInjector::with_desktop_state(
         session_id,
         displays.clone(),
         Arc::clone(&selected_display_id),
+        Arc::clone(&stream_viewport),
+        Arc::clone(&network_sample),
     )));
     spawn_input_revocation(authority.stop_flag(), Arc::clone(&input));
     spawn_capture(CaptureTask {
@@ -520,6 +520,7 @@ async fn create_peer(
         connected: Arc::clone(&connected),
         displays,
         selected_display_id,
+        stream_viewport,
         network_sample,
         output: output.clone(),
     });
@@ -688,6 +689,7 @@ struct CaptureTask {
     connected: Arc<AtomicBool>,
     displays: Vec<DisplayDescriptor>,
     selected_display_id: Arc<Mutex<String>>,
+    stream_viewport: Arc<Mutex<Option<StreamViewport>>>,
     network_sample: Arc<Mutex<NetworkSample>>,
     output: mpsc::Sender<TransportToMain>,
 }
@@ -714,6 +716,7 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
     let connected = &task.connected;
     let displays = &task.displays;
     let selected_display_id = &task.selected_display_id;
+    let stream_viewport = &task.stream_viewport;
     let network_sample = &task.network_sample;
     let output = &task.output;
     let mut quality = QualityController::default();
@@ -724,35 +727,48 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
         .map_err(|_| anyhow!("display selection poisoned"))?
         .clone();
     let active_display = find_display(displays, &active_display_id)?;
-    let mut capture = DisplayCapture::new(
-        active_display.clone(),
-        profile.max_width,
-        profile.max_height,
-    )?;
+    let mut active_viewport = *stream_viewport
+        .lock()
+        .map_err(|_| anyhow!("stream viewport poisoned"))?;
+    let (max_width, max_height) = capture_limits(active_display, profile, active_viewport);
+    let mut capture = DisplayCapture::new(active_display.clone(), max_width, max_height)?;
     let (width, height) = capture.dimensions();
     output.blocking_send(TransportToMain::Displays {
         session_id,
         displays: remote_displays(displays),
         selected_display_id: Some(active_display_id.clone()),
     })?;
-    let mut encoder = make_encoder(profile.bitrate_bps, profile.frames_per_second)?;
+    let mut encoder = make_encoder(
+        target_bitrate(profile, width, height),
+        profile.frames_per_second,
+    )?;
     let mut yuv = YUVBuffer::new(width, height);
     let mut sample_started = Instant::now();
     let mut frames = 0u32;
+    let mut attempted_frames = 0u32;
     let mut encoded_bytes = 0u64;
+    let mut pipeline_work = Duration::ZERO;
 
     while !stop.load(Ordering::Acquire) {
         let requested_display_id = selected_display_id
             .lock()
             .map_err(|_| anyhow!("display selection poisoned"))?
             .clone();
-        if requested_display_id != active_display_id {
+        let requested_viewport = *stream_viewport
+            .lock()
+            .map_err(|_| anyhow!("stream viewport poisoned"))?;
+        if requested_display_id != active_display_id || requested_viewport != active_viewport {
             let next = find_display(displays, &requested_display_id)?;
-            capture = DisplayCapture::new(next.clone(), profile.max_width, profile.max_height)?;
+            let (max_width, max_height) = capture_limits(next, profile, requested_viewport);
+            capture = DisplayCapture::new(next.clone(), max_width, max_height)?;
             let (next_width, next_height) = capture.dimensions();
             yuv = YUVBuffer::new(next_width, next_height);
-            encoder = make_encoder(profile.bitrate_bps, profile.frames_per_second)?;
+            encoder = make_encoder(
+                target_bitrate(profile, next_width, next_height),
+                profile.frames_per_second,
+            )?;
             active_display_id = requested_display_id;
+            active_viewport = requested_viewport;
             output.blocking_send(TransportToMain::Displays {
                 session_id,
                 displays: remote_displays(displays),
@@ -763,7 +779,9 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
             std::thread::sleep(Duration::from_millis(20));
             sample_started = Instant::now();
             frames = 0;
+            attempted_frames = 0;
             encoded_bytes = 0;
+            pipeline_work = Duration::ZERO;
             continue;
         }
         let frame_started = Instant::now();
@@ -785,18 +803,26 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
             }
             frames += 1;
         }
+        attempted_frames += 1;
+        pipeline_work += frame_started.elapsed();
         let elapsed = sample_started.elapsed();
         if elapsed >= Duration::from_secs(2) {
             let seconds = elapsed.as_secs_f32().max(0.001);
+            if let Ok(mut sample) = network_sample.lock() {
+                let frame_budget_seconds =
+                    attempted_frames as f32 * profile.frame_duration.as_secs_f32();
+                sample.pipeline_utilization_percent = if frame_budget_seconds > 0.0 {
+                    (pipeline_work.as_secs_f32() / frame_budget_seconds) * 100.0
+                } else {
+                    0.0
+                };
+            }
             let sample = network_sample
                 .lock()
                 .map(|sample| *sample)
-                .unwrap_or(NetworkSample {
-                    round_trip_time_ms: 0,
-                    packet_loss_percent: 0.0,
-                    send_backlog_ms: 0,
-                });
+                .unwrap_or_default();
             let next_tier = quality.observe(sample);
+            let (stream_width, stream_height) = capture.dimensions();
             let _ = output.blocking_send(TransportToMain::State {
                 session_id,
                 state: TransportState::Active,
@@ -806,27 +832,62 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
                     round_trip_time_ms: sample.round_trip_time_ms,
                     packet_loss_percent: sample.packet_loss_percent,
                     quality_tier: tier,
+                    stream_width: stream_width as u32,
+                    stream_height: stream_height as u32,
                 }),
             });
             if next_tier != tier {
                 tier = next_tier;
                 profile = quality_profile(tier);
                 let display = find_display(displays, &active_display_id)?;
-                capture =
-                    DisplayCapture::new(display.clone(), profile.max_width, profile.max_height)?;
+                let (max_width, max_height) = capture_limits(display, profile, active_viewport);
+                capture = DisplayCapture::new(display.clone(), max_width, max_height)?;
                 let (next_width, next_height) = capture.dimensions();
                 yuv = YUVBuffer::new(next_width, next_height);
-                encoder = make_encoder(profile.bitrate_bps, profile.frames_per_second)?;
+                encoder = make_encoder(
+                    target_bitrate(profile, next_width, next_height),
+                    profile.frames_per_second,
+                )?;
             }
             sample_started = Instant::now();
             frames = 0;
+            attempted_frames = 0;
             encoded_bytes = 0;
+            pipeline_work = Duration::ZERO;
         }
         if let Some(remaining) = profile.frame_duration.checked_sub(frame_started.elapsed()) {
             std::thread::sleep(remaining);
         }
     }
     Ok(())
+}
+
+fn capture_limits(
+    display: &DisplayDescriptor,
+    profile: QualityProfile,
+    viewport: Option<StreamViewport>,
+) -> (u32, u32) {
+    let (tier_width, tier_height) = if display.height > display.width {
+        (profile.max_height, profile.max_width)
+    } else {
+        (profile.max_width, profile.max_height)
+    };
+    match viewport {
+        Some(viewport) => (
+            tier_width.min(viewport.pixel_width),
+            tier_height.min(viewport.pixel_height),
+        ),
+        None => (tier_width, tier_height),
+    }
+}
+
+fn target_bitrate(profile: QualityProfile, width: usize, height: usize) -> u32 {
+    const MIN_STREAM_BITRATE_BPS: u32 = 400_000;
+    let profile_pixels = (profile.max_width as u64 * profile.max_height as u64).max(1);
+    let stream_pixels = width as u64 * height as u64;
+    let scaled = (profile.bitrate_bps as u64 * stream_pixels / profile_pixels)
+        .min(profile.bitrate_bps as u64) as u32;
+    scaled.max(MIN_STREAM_BITRATE_BPS.min(profile.bitrate_bps))
 }
 
 async fn send_input_error(channel: &webrtc::data_channel::RTCDataChannel, code: &'static str) {
@@ -960,27 +1021,46 @@ fn validate_stop_session(
     Ok(())
 }
 
-fn validate_remote_sdp_candidates(sdp: &str, peer_ip: IpAddr) -> Result<()> {
-    for line in sdp.lines().map(str::trim) {
-        if let Some(candidate) = line.strip_prefix("a=")
-            && candidate.starts_with("candidate:")
-            && !candidate_matches_peer(candidate, peer_ip)
-        {
-            bail!("SDP contains an ICE candidate outside the authenticated peer address")
+fn constrain_remote_sdp_candidates(sdp: &str, peer_ip: IpAddr) -> String {
+    let had_trailing_newline = sdp.ends_with('\n');
+    let mut lines = Vec::new();
+    for line in sdp.lines() {
+        let line = line.trim_end_matches('\r');
+        if let Some(candidate) = line.strip_prefix("a=candidate:") {
+            if let Some(candidate) =
+                constrain_remote_candidate(&format!("candidate:{candidate}"), peer_ip)
+            {
+                lines.push(format!("a={candidate}"));
+            }
+            continue;
         }
+        lines.push(line.to_owned());
     }
-    Ok(())
+    let mut constrained = lines.join("\r\n");
+    if had_trailing_newline {
+        constrained.push_str("\r\n");
+    }
+    constrained
 }
 
-fn candidate_matches_peer(candidate: &str, peer_ip: IpAddr) -> bool {
-    let fields: Vec<&str> = candidate.split_ascii_whitespace().collect();
-    fields.len() >= 8
-        && fields[2].eq_ignore_ascii_case("udp")
-        && fields[4]
-            .parse::<IpAddr>()
-            .is_ok_and(|value| value == peer_ip)
-        && fields[6].eq_ignore_ascii_case("typ")
-        && fields[7].eq_ignore_ascii_case("host")
+fn constrain_remote_candidate(candidate: &str, peer_ip: IpAddr) -> Option<String> {
+    let mut fields: Vec<&str> = candidate.split_ascii_whitespace().collect();
+    if fields.len() < 8
+        || fields[0]
+            .strip_prefix("candidate:")
+            .is_none_or(str::is_empty)
+        || fields[1] != "1"
+        || !fields[2].eq_ignore_ascii_case("udp")
+        || fields[3].parse::<u32>().is_err()
+        || !fields[5].parse::<u16>().is_ok_and(|port| port != 0)
+        || !fields[6].eq_ignore_ascii_case("typ")
+        || !fields[7].eq_ignore_ascii_case("host")
+    {
+        return None;
+    }
+    let authenticated_address = peer_ip.to_string();
+    fields[4] = &authenticated_address;
+    Some(fields.join(" "))
 }
 
 fn broker_error(error: &BrokerClientError) -> (NativeErrorCode, String) {
@@ -1028,46 +1108,89 @@ mod tests {
             local_address: "127.0.0.1".into(),
             peer_address: "127.0.0.1".into(),
             udp_port: 7422,
+            viewport: None,
         }
     }
 
     #[test]
-    fn only_accepts_udp_host_candidates_from_the_authenticated_peer() {
+    fn accepts_only_bounded_udp_host_candidates() {
         let peer: IpAddr = "100.64.0.2".parse().unwrap();
-        assert!(candidate_matches_peer(
-            "candidate:1 1 UDP 2122260223 100.64.0.2 51111 typ host",
-            peer
-        ));
-        assert!(!candidate_matches_peer(
-            "candidate:1 1 UDP 2122260223 192.168.1.9 51111 typ host",
-            peer
-        ));
-        assert!(!candidate_matches_peer(
-            "candidate:1 1 TCP 2122260223 100.64.0.2 9 typ host tcptype active",
-            peer
-        ));
-        assert!(!candidate_matches_peer(
-            "candidate:1 1 UDP 2122260223 100.64.0.2 51111 typ srflx",
-            peer
-        ));
+        assert_eq!(
+            constrain_remote_candidate(
+                "candidate:1 1 UDP 2122260223 100.64.0.2 51111 typ host",
+                peer,
+            ),
+            Some("candidate:1 1 UDP 2122260223 100.64.0.2 51111 typ host".into()),
+        );
+        assert_eq!(
+            constrain_remote_candidate(
+                "candidate:1 1 TCP 2122260223 100.64.0.2 9 typ host tcptype active",
+                peer,
+            ),
+            None,
+        );
+        assert_eq!(
+            constrain_remote_candidate(
+                "candidate:1 1 UDP 2122260223 100.64.0.2 51111 typ srflx",
+                peer,
+            ),
+            None,
+        );
+        assert_eq!(
+            constrain_remote_candidate(
+                "candidate:1 1 UDP not-a-priority 100.64.0.2 51111 typ host",
+                peer,
+            ),
+            None,
+        );
     }
 
     #[test]
-    fn embedded_sdp_candidates_are_fail_closed() {
-        let peer = "100.64.0.2".parse().unwrap();
-        assert!(
-            validate_remote_sdp_candidates(
-                "v=0\r\na=candidate:1 1 UDP 1 100.64.0.2 51111 typ host\r\n",
+    fn constrains_multihomed_host_candidates_to_the_authenticated_peer() {
+        let peer: IpAddr = "100.64.0.2".parse().unwrap();
+        assert_eq!(
+            constrain_remote_candidate(
+                "candidate:1 1 UDP 2122260223 192.168.1.9 51111 typ host generation 0",
                 peer,
-            )
-            .is_ok()
+            ),
+            Some("candidate:1 1 UDP 2122260223 100.64.0.2 51111 typ host generation 0".into(),),
         );
-        assert!(
-            validate_remote_sdp_candidates(
-                "v=0\r\na=candidate:1 1 UDP 1 10.0.0.9 51111 typ host\r\n",
+        assert_eq!(
+            constrain_remote_candidate(
+                "candidate:2 1 udp 2122260223 device-id.local 51112 typ host",
                 peer,
-            )
-            .is_err()
+            ),
+            Some("candidate:2 1 udp 2122260223 100.64.0.2 51112 typ host".into()),
+        );
+        assert_eq!(
+            constrain_remote_candidate(
+                "candidate:3 1 TCP 2122260223 192.168.1.9 9 typ host tcptype active",
+                peer,
+            ),
+            None,
+        );
+        assert_eq!(
+            constrain_remote_candidate(
+                "candidate:4 1 UDP 2122260223 192.168.1.9 51113 typ srflx",
+                peer,
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn embedded_sdp_candidates_are_constrained_to_the_authenticated_peer() {
+        let peer = "100.64.0.2".parse().unwrap();
+        assert_eq!(
+            constrain_remote_sdp_candidates(
+                concat!(
+                    "v=0\r\n",
+                    "a=candidate:1 1 UDP 1 10.0.0.9 51111 typ host\r\n",
+                    "a=candidate:2 1 TCP 1 10.0.0.9 9 typ host tcptype active\r\n",
+                ),
+                peer,
+            ),
+            "v=0\r\na=candidate:1 1 UDP 1 100.64.0.2 51111 typ host\r\n",
         );
     }
 
@@ -1098,6 +1221,50 @@ mod tests {
             (640, 360, 800_000)
         );
         assert_eq!(survival.frames_per_second, 15.0);
+    }
+
+    #[test]
+    fn capture_limits_follow_viewport_orientation_and_tier() {
+        let landscape = DisplayDescriptor {
+            id: "landscape".into(),
+            name: "Landscape".into(),
+            x: 0,
+            y: 0,
+            width: 2_560,
+            height: 1_440,
+            rotation_degrees: 0,
+            primary: true,
+        };
+        let portrait = DisplayDescriptor {
+            width: 1_440,
+            height: 2_560,
+            ..landscape.clone()
+        };
+        let viewport = Some(StreamViewport {
+            pixel_width: 1_080,
+            pixel_height: 1_920,
+        });
+        assert_eq!(
+            capture_limits(&landscape, quality_profile(QualityTier::High), viewport),
+            (1_080, 1_080)
+        );
+        assert_eq!(
+            capture_limits(&portrait, quality_profile(QualityTier::High), viewport),
+            (1_080, 1_920)
+        );
+        assert_eq!(
+            capture_limits(&portrait, quality_profile(QualityTier::Low), viewport),
+            (540, 960)
+        );
+    }
+
+    #[test]
+    fn bitrate_scales_down_with_the_encoded_pixel_count() {
+        let high = quality_profile(QualityTier::High);
+        assert_eq!(target_bitrate(high, 1_920, 1_080), high.bitrate_bps);
+        let mobile = target_bitrate(high, 960, 540);
+        assert!(mobile >= 400_000);
+        assert!(mobile < high.bitrate_bps);
     }
 
     #[test]

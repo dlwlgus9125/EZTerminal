@@ -1,11 +1,14 @@
-import type {
-  DesktopControlCapabilities,
-  DesktopControlEndedMessage,
-  DesktopControlStartResultMessage,
-  DesktopControlStatusMessage,
-  DesktopDisplay,
-  DesktopSessionSignal,
-  DesktopSignalMessage,
+import {
+  MAX_DESKTOP_VIEWPORT_PIXELS,
+  MIN_DESKTOP_VIEWPORT_PIXELS,
+  type DesktopControlCapabilities,
+  type DesktopControlEndedMessage,
+  type DesktopControlStartResultMessage,
+  type DesktopControlStatusMessage,
+  type DesktopDisplay,
+  type DesktopSessionSignal,
+  type DesktopSignalMessage,
+  type DesktopVideoViewport,
 } from '../../src/shared/remote-protocol';
 import type { RemoteConnectionState } from './transport/connection-health';
 
@@ -20,6 +23,9 @@ const MAX_PENDING_DESKTOP_ICE_CANDIDATES = 128;
 const MAX_KEY_CODE_CHARS = 128;
 const MAX_DISPLAY_ID_CHARS = 256;
 const MAX_POINTER_DELTA = 1_000_000;
+const POINTER_BACKPRESSURE_BYTES = 32 * 1024;
+const POINTER_FLUSH_DELAY_MS = 16;
+const CLIENT_VIDEO_STATS_INTERVAL_MS = 2_000;
 
 export type DesktopPresentationPhase =
   | 'starting'
@@ -88,10 +94,12 @@ export type DesktopControlCommand =
   | { readonly type: 'clipboard-write'; readonly text: string }
   | { readonly type: 'clipboard-read' }
   | { readonly type: 'set-display'; readonly displayId: string }
+  | { readonly type: 'set-viewport'; readonly pixelWidth: number; readonly pixelHeight: number }
+  | { readonly type: 'client-video-stats'; readonly droppedFramePercent: number }
   | { readonly type: 'secure-attention' };
 
 export interface DesktopPresentationTransport {
-  startDesktopControl(): Promise<DesktopControlStartResultMessage>;
+  startDesktopControl(viewport?: DesktopVideoViewport): Promise<DesktopControlStartResultMessage>;
   sendDesktopSignal(sessionId: string, signal: DesktopSessionSignal): boolean;
   stopDesktopControl(
     sessionId: string,
@@ -124,6 +132,7 @@ export interface DesktopPresentationAdapter {
   readonly subscribe: (listener: () => void) => () => void;
   start(): void;
   attachVideo(video: HTMLVideoElement | null): void;
+  setViewport(viewport: DesktopVideoViewport): void;
   sendControl(command: DesktopControlCommand): boolean;
   sendPointer(command: DesktopPointerCommand): boolean;
   selectDisplay(displayId: string): boolean;
@@ -234,6 +243,29 @@ function validPointerCommand(command: DesktopPointerCommand): boolean {
   return isDelta(command.dx) && isDelta(command.dy);
 }
 
+function coalescePointer(
+  current: DesktopPointerCommand | null,
+  next: DesktopPointerCommand,
+): DesktopPointerCommand {
+  if (current?.type === 'pointer-relative' && next.type === 'pointer-relative') {
+    return {
+      type: 'pointer-relative',
+      dx: Math.max(-MAX_POINTER_DELTA, Math.min(MAX_POINTER_DELTA, current.dx + next.dx)),
+      dy: Math.max(-MAX_POINTER_DELTA, Math.min(MAX_POINTER_DELTA, current.dy + next.dy)),
+    };
+  }
+  return next;
+}
+
+function validViewport(viewport: DesktopVideoViewport): boolean {
+  return Number.isInteger(viewport.pixelWidth)
+    && viewport.pixelWidth >= MIN_DESKTOP_VIEWPORT_PIXELS
+    && viewport.pixelWidth <= MAX_DESKTOP_VIEWPORT_PIXELS
+    && Number.isInteger(viewport.pixelHeight)
+    && viewport.pixelHeight >= MIN_DESKTOP_VIEWPORT_PIXELS
+    && viewport.pixelHeight <= MAX_DESKTOP_VIEWPORT_PIXELS;
+}
+
 function validControlCommand(command: DesktopControlCommand): boolean {
   switch (command.type) {
     case 'pointer-button': {
@@ -263,6 +295,12 @@ function validControlCommand(command: DesktopControlCommand): boolean {
     case 'set-display':
       return command.displayId.length > 0
         && command.displayId.length <= MAX_DISPLAY_ID_CHARS;
+    case 'set-viewport':
+      return validViewport(command);
+    case 'client-video-stats':
+      return Number.isFinite(command.droppedFramePercent)
+        && command.droppedFramePercent >= 0
+        && command.droppedFramePercent <= 100;
   }
 }
 
@@ -272,6 +310,7 @@ function safeCapabilities(value: DesktopControlCapabilities): DesktopControlCapa
     clipboardText: value?.clipboardText === true,
     directTouch: value?.directTouch === true,
     multiMonitor: value?.multiMonitor === true,
+    adaptiveViewport: value?.adaptiveViewport === true,
   };
 }
 
@@ -367,11 +406,16 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
   private peerBinding: PeerBinding | null = null;
   private video: HTMLVideoElement | null = null;
   private remoteStream: MediaStream | null = null;
+  private viewport: DesktopVideoViewport | null = null;
   private sessionId: string | null = null;
   private resumePending = false;
   private sequence = 0;
   private clipboardReadPending = false;
   private clipboardOperationGeneration = 0;
+  private queuedPointer: DesktopPointerCommand | null = null;
+  private pointerFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  private videoStatsTimer: ReturnType<typeof setInterval> | null = null;
+  private previousVideoFrames: { total: number; dropped: number } | null = null;
 
   constructor(
     private readonly transport: DesktopPresentationTransport,
@@ -389,6 +433,7 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
     if (this.started && !this.disposed) return;
     this.disposed = false;
     this.started = true;
+    if (this.video && this.videoStatsTimer === null) this.startClientVideoStats();
     this.update({
       phase: this.sessionId ? this.snapshot.phase : 'starting',
       detail: null,
@@ -410,8 +455,24 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
   attachVideo(video: HTMLVideoElement | null): void {
     if (this.video === video) return;
     if (this.video?.srcObject === this.remoteStream) this.video.srcObject = null;
+    this.stopClientVideoStats();
     this.video = video;
     this.applyRemoteStream();
+    if (video) this.startClientVideoStats();
+  }
+
+  setViewport(viewport: DesktopVideoViewport): void {
+    if (!validViewport(viewport)) return;
+    if (
+      this.viewport?.pixelWidth === viewport.pixelWidth
+      && this.viewport.pixelHeight === viewport.pixelHeight
+    ) {
+      return;
+    }
+    this.viewport = viewport;
+    if (this.sessionId && this.snapshot.capabilities?.adaptiveViewport === true) {
+      this.sendControl({ type: 'set-viewport', ...viewport });
+    }
   }
 
   sendControl(command: DesktopControlCommand): boolean {
@@ -430,6 +491,13 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
     ) {
       return false;
     }
+    if (
+      command.type === 'pointer-button'
+      || command.type === 'pointer-click'
+      || command.type === 'wheel'
+    ) {
+      this.flushQueuedPointer();
+    }
     return this.sendFrame(this.peerBinding?.control ?? null, command);
   }
 
@@ -441,7 +509,21 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
     ) {
       return false;
     }
-    return this.sendFrame(this.peerBinding?.pointer ?? null, command);
+    const channel = this.peerBinding?.pointer ?? null;
+    if (
+      !channel
+      || channel.readyState !== 'open'
+      || !this.sessionId
+      || this.disposed
+    ) {
+      return false;
+    }
+    if (channel.bufferedAmount >= POINTER_BACKPRESSURE_BYTES || this.queuedPointer) {
+      this.queuedPointer = coalescePointer(this.queuedPointer, command);
+      this.schedulePointerFlush();
+      return true;
+    }
+    return this.sendFrame(channel, command);
   }
 
   selectDisplay(displayId: string): boolean {
@@ -489,6 +571,7 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
   stop(reason: 'client-stop' | 'background' | 'navigation'): void {
     this.lifecycleGeneration += 1;
     this.invalidateNegotiation();
+    this.stopClientVideoStats();
     this.resumePending = false;
     this.clipboardReadPending = false;
     this.clipboardOperationGeneration += 1;
@@ -624,7 +707,8 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
     this.activeNegotiation = generation;
     let startRequest: Promise<DesktopControlStartResultMessage>;
     try {
-      startRequest = this.pendingStart ?? this.transport.startDesktopControl();
+      startRequest = this.pendingStart
+        ?? this.transport.startDesktopControl(this.viewport ?? undefined);
       this.pendingStart = startRequest;
       const result = await startRequest;
       if (!this.isCurrentNegotiation(generation)) {
@@ -858,11 +942,66 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
     void this.video.play().catch(() => undefined);
   }
 
+  private schedulePointerFlush(): void {
+    if (this.pointerFlushTimer !== null) return;
+    this.pointerFlushTimer = setTimeout(() => {
+      this.pointerFlushTimer = null;
+      this.flushQueuedPointer();
+      if (this.queuedPointer) this.schedulePointerFlush();
+    }, POINTER_FLUSH_DELAY_MS);
+  }
+
+  private flushQueuedPointer(): void {
+    const command = this.queuedPointer;
+    const channel = this.peerBinding?.pointer ?? null;
+    if (!command) return;
+    if (!channel || channel.readyState !== 'open' || !this.sessionId || this.disposed) {
+      this.queuedPointer = null;
+      return;
+    }
+    if (channel.bufferedAmount >= POINTER_BACKPRESSURE_BYTES) return;
+    this.queuedPointer = null;
+    this.sendFrame(channel, command);
+  }
+
+  private startClientVideoStats(): void {
+    this.previousVideoFrames = null;
+    this.videoStatsTimer = setInterval(() => {
+      const video = this.video;
+      if (!video || typeof video.getVideoPlaybackQuality !== 'function') return;
+      const quality = video.getVideoPlaybackQuality();
+      const current = {
+        total: quality.totalVideoFrames,
+        dropped: quality.droppedVideoFrames,
+      };
+      const previous = this.previousVideoFrames;
+      this.previousVideoFrames = current;
+      if (!previous) return;
+      const total = current.total - previous.total;
+      const dropped = current.dropped - previous.dropped;
+      if (total <= 0 || dropped < 0) return;
+      this.sendControl({
+        type: 'client-video-stats',
+        droppedFramePercent: Math.min(100, Math.max(0, (dropped / total) * 100)),
+      });
+    }, CLIENT_VIDEO_STATS_INTERVAL_MS);
+  }
+
+  private stopClientVideoStats(): void {
+    if (this.videoStatsTimer !== null) clearInterval(this.videoStatsTimer);
+    this.videoStatsTimer = null;
+    this.previousVideoFrames = null;
+  }
+
   private closePeer(): void {
     const binding = this.peerBinding;
     this.peerBinding = null;
     this.peerGeneration += 1;
     this.remoteStream = null;
+    this.queuedPointer = null;
+    if (this.pointerFlushTimer !== null) clearTimeout(this.pointerFlushTimer);
+    this.pointerFlushTimer = null;
+    this.previousVideoFrames = null;
     if (this.video) this.video.srcObject = null;
     if (!binding) return;
     binding.cleanup();

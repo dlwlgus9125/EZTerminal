@@ -24,7 +24,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::capture::DisplayDescriptor;
-use crate::protocol::{MAX_CLIPBOARD_BYTES, MAX_CONTROL_BYTES};
+use crate::protocol::{MAX_CLIPBOARD_BYTES, MAX_CONTROL_BYTES, StreamViewport};
+use crate::quality::NetworkSample;
 
 const CF_UNICODETEXT_VALUE: u32 = 13;
 
@@ -106,6 +107,17 @@ enum InputFrame {
         sequence: u64,
         display_id: String,
     },
+    SetViewport {
+        session_id: Uuid,
+        sequence: u64,
+        pixel_width: u32,
+        pixel_height: u32,
+    },
+    ClientVideoStats {
+        session_id: Uuid,
+        sequence: u64,
+        dropped_frame_percent: f32,
+    },
     SecureAttention {
         session_id: Uuid,
         sequence: u64,
@@ -164,6 +176,16 @@ impl InputFrame {
                 sequence,
                 ..
             }
+            | Self::SetViewport {
+                session_id,
+                sequence,
+                ..
+            }
+            | Self::ClientVideoStats {
+                session_id,
+                sequence,
+                ..
+            }
             | Self::SecureAttention {
                 session_id,
                 sequence,
@@ -204,6 +226,8 @@ pub struct InputInjector {
     pressed_buttons: HashSet<u8>,
     displays: Vec<DisplayDescriptor>,
     selected_display_id: Arc<Mutex<String>>,
+    stream_viewport: Arc<Mutex<Option<StreamViewport>>>,
+    network_sample: Arc<Mutex<NetworkSample>>,
 }
 
 impl InputInjector {
@@ -231,6 +255,22 @@ impl InputInjector {
         displays: Vec<DisplayDescriptor>,
         selected_display_id: Arc<Mutex<String>>,
     ) -> Self {
+        Self::with_desktop_state(
+            session_id,
+            displays,
+            selected_display_id,
+            Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(NetworkSample::default())),
+        )
+    }
+
+    pub fn with_desktop_state(
+        session_id: Uuid,
+        displays: Vec<DisplayDescriptor>,
+        selected_display_id: Arc<Mutex<String>>,
+        stream_viewport: Arc<Mutex<Option<StreamViewport>>>,
+        network_sample: Arc<Mutex<NetworkSample>>,
+    ) -> Self {
         Self {
             session_id,
             last_reliable_sequence: 0,
@@ -239,6 +279,8 @@ impl InputInjector {
             pressed_buttons: HashSet::new(),
             displays,
             selected_display_id,
+            stream_viewport,
+            network_sample,
         }
     }
 
@@ -320,6 +362,35 @@ impl InputInjector {
                     .selected_display_id
                     .lock()
                     .map_err(|_| anyhow::anyhow!("display selection poisoned"))? = display_id;
+            }
+            InputFrame::SetViewport {
+                pixel_width,
+                pixel_height,
+                ..
+            } => {
+                let viewport = StreamViewport {
+                    pixel_width,
+                    pixel_height,
+                };
+                viewport.validate()?;
+                *self
+                    .stream_viewport
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("stream viewport poisoned"))? = Some(viewport);
+            }
+            InputFrame::ClientVideoStats {
+                dropped_frame_percent,
+                ..
+            } => {
+                if !dropped_frame_percent.is_finite()
+                    || !(0.0..=100.0).contains(&dropped_frame_percent)
+                {
+                    bail!("invalid client video stats");
+                }
+                self.network_sample
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("network sample poisoned"))?
+                    .client_dropped_frame_percent = dropped_frame_percent;
             }
             InputFrame::SecureAttention { .. } => bail!("secure attention is unavailable"),
         }
@@ -737,6 +808,57 @@ mod tests {
         assert!(
             injector
                 .handle(valid.as_bytes(), InputChannel::Reliable)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn viewport_and_client_video_stats_are_bounded_and_shared() {
+        let session = Uuid::new_v4();
+        let viewport = Arc::new(Mutex::new(None));
+        let sample = Arc::new(Mutex::new(NetworkSample::default()));
+        let mut injector = InputInjector::with_desktop_state(
+            session,
+            vec![DisplayDescriptor {
+                id: "primary".into(),
+                name: "Primary display".into(),
+                x: 0,
+                y: 0,
+                width: 2_560,
+                height: 1_440,
+                rotation_degrees: 0,
+                primary: true,
+            }],
+            Arc::new(Mutex::new("primary".into())),
+            Arc::clone(&viewport),
+            Arc::clone(&sample),
+        );
+        let viewport_frame = format!(
+            r#"{{"type":"set-viewport","sessionId":"{session}","sequence":1,"pixelWidth":1080,"pixelHeight":1920}}"#
+        );
+        injector
+            .handle(viewport_frame.as_bytes(), InputChannel::Reliable)
+            .unwrap();
+        assert_eq!(
+            *viewport.lock().unwrap(),
+            Some(StreamViewport {
+                pixel_width: 1_080,
+                pixel_height: 1_920,
+            })
+        );
+        let stats_frame = format!(
+            r#"{{"type":"client-video-stats","sessionId":"{session}","sequence":2,"droppedFramePercent":6.5}}"#
+        );
+        injector
+            .handle(stats_frame.as_bytes(), InputChannel::Reliable)
+            .unwrap();
+        assert_eq!(sample.lock().unwrap().client_dropped_frame_percent, 6.5);
+        let invalid = format!(
+            r#"{{"type":"set-viewport","sessionId":"{session}","sequence":3,"pixelWidth":63,"pixelHeight":1920}}"#
+        );
+        assert!(
+            injector
+                .handle(invalid.as_bytes(), InputChannel::Reliable)
                 .is_err()
         );
     }

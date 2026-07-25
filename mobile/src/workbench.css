@@ -311,6 +311,7 @@
   height: 100%;
   display: block;
   object-fit: contain;
+  object-position: center;
   transform-origin: center;
 }
 

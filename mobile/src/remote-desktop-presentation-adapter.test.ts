@@ -41,6 +41,7 @@ function success(
       clipboardText: true,
       directTouch: true,
       multiMonitor: true,
+      adaptiveViewport: true,
     },
     resumed: false,
   };
@@ -66,6 +67,7 @@ async function settle(): Promise<void> {
 
 class FakeDataChannel extends EventTarget {
   readyState: RTCDataChannelState = 'open';
+  bufferedAmount = 0;
   readonly sent: string[] = [];
   readonly close = vi.fn(() => {
     this.readyState = 'closed';
@@ -239,6 +241,46 @@ function harness(
 }
 
 describe('RemoteDesktopPresentationAdapter', () => {
+  it('sends the initial viewport and applies later viewport changes over control', async () => {
+    const { adapter, peers, transport } = harness([Promise.resolve(success())]);
+    adapter.setViewport({ pixelWidth: 1_170, pixelHeight: 2_160 });
+    adapter.start();
+    expect(transport.startDesktopControl).toHaveBeenCalledWith({
+      pixelWidth: 1_170,
+      pixelHeight: 2_160,
+    });
+    await settle();
+
+    adapter.setViewport({ pixelWidth: 2_160, pixelHeight: 1_170 });
+    expect(JSON.parse(peers[0].control.sent[0])).toMatchObject({
+      type: 'set-viewport',
+      pixelWidth: 2_160,
+      pixelHeight: 1_170,
+      sessionId: 'session-1',
+    });
+    adapter.dispose();
+  });
+
+  it('coalesces pointer movement while the unreliable channel is backpressured', async () => {
+    const { adapter, peers } = harness([Promise.resolve(success())]);
+    adapter.start();
+    await settle();
+    peers[0].pointer.bufferedAmount = 64 * 1024;
+
+    expect(adapter.sendPointer({ type: 'pointer-relative', dx: 2, dy: 3 })).toBe(true);
+    expect(adapter.sendPointer({ type: 'pointer-relative', dx: 4, dy: 5 })).toBe(true);
+    expect(peers[0].pointer.sent).toHaveLength(0);
+
+    peers[0].pointer.bufferedAmount = 0;
+    adapter.sendControl({ type: 'pointer-click', button: 'left', count: 1 });
+    expect(JSON.parse(peers[0].pointer.sent[0])).toMatchObject({
+      type: 'pointer-relative',
+      dx: 6,
+      dy: 8,
+    });
+    adapter.dispose();
+  });
+
   it('owns negotiation, sequenced input, and idempotent teardown behind one interface', async () => {
     const { adapter, peers, transport, visibility } = harness([Promise.resolve(success())]);
     const listener = vi.fn();

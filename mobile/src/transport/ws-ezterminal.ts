@@ -95,6 +95,7 @@ import {
   type DesktopControlEndedMessage,
   type DesktopControlStartResultMessage,
   type DesktopControlStatusMessage,
+  type DesktopVideoViewport,
   type DesktopSessionSignal,
   type DesktopSignalMessage,
   type OpenClawChatTicketFailureReason,
@@ -1167,7 +1168,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return this.remoteCapabilities.has(REMOTE_CAPABILITY_DESKTOP_CONTROL);
   }
 
-  startDesktopControl(): Promise<DesktopControlStartResultMessage> {
+  startDesktopControl(viewport?: DesktopVideoViewport): Promise<DesktopControlStartResultMessage> {
     const requestId = this.newId();
     if (!this.supportsDesktopControl || !this.authed) {
       return Promise.resolve({
@@ -1180,7 +1181,11 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     }
     return new Promise((resolve) => {
       this.pendingDesktopStarts.set(requestId, resolve);
-      if (!this.send({ kind: 'desktop-control-start', requestId })) {
+      if (!this.send({
+        kind: 'desktop-control-start',
+        requestId,
+        ...(viewport ? { viewport } : {}),
+      })) {
         this.pendingDesktopStarts.delete(requestId);
         resolve({
           kind: 'desktop-control-start-result',

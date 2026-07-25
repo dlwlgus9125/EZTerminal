@@ -43,6 +43,8 @@ import {
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_PROTOCOL_VERSION_LEGACY,
+  MAX_DESKTOP_VIEWPORT_PIXELS,
+  MIN_DESKTOP_VIEWPORT_PIXELS,
   base64ToUint8Array,
   encodeFrame,
   uint8ArrayToBase64,
@@ -51,6 +53,7 @@ import {
   type DesktopControlEndedMessage,
   type DesktopControlStartResultMessage,
   type DesktopControlStatusMessage,
+  type DesktopVideoViewport,
   type DesktopSessionSignal,
   type DesktopSignalMessage,
   type RemoteClientIdentity,
@@ -256,6 +259,20 @@ function isDesktopSignal(value: unknown): value is DesktopSessionSignal {
       || isFiniteNumber(value.candidate.sdpMLineIndex));
 }
 
+function isDesktopVideoViewport(value: unknown): value is DesktopVideoViewport {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.pixelWidth === 'number'
+    && Number.isInteger(value.pixelWidth)
+    && value.pixelWidth >= MIN_DESKTOP_VIEWPORT_PIXELS
+    && value.pixelWidth <= MAX_DESKTOP_VIEWPORT_PIXELS
+    && typeof value.pixelHeight === 'number'
+    && Number.isInteger(value.pixelHeight)
+    && value.pixelHeight >= MIN_DESKTOP_VIEWPORT_PIXELS
+    && value.pixelHeight <= MAX_DESKTOP_VIEWPORT_PIXELS
+  );
+}
+
 /** Runtime boundary for the nested control union. The bridge itself reads
  * `control.type`, while the interpreter reads the variant fields, so both the
  * discriminant and the minimum fields for that variant are checked here. */
@@ -410,7 +427,10 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         typeof value.value === 'string'
       );
     case 'desktop-control-start':
-      return typeof value.requestId === 'string' && value.requestId.length > 0 && value.requestId.length <= 256;
+      return typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= 256
+        && (value.viewport === undefined || isDesktopVideoViewport(value.viewport));
     case 'desktop-signal':
       return typeof value.sessionId === 'string'
         && value.sessionId.length <= 256
@@ -622,6 +642,7 @@ export interface RemoteDesktopSource {
     identity: RemoteClientIdentity,
     endpoint: { readonly localAddress: string; readonly peerAddress: string },
     emit: (event: RemoteDesktopServerEvent) => void,
+    viewport?: DesktopVideoViewport,
   ): Promise<DistributedOmit<DesktopControlStartResultMessage, 'kind' | 'requestId'>>;
   signal(clientId: string, sessionId: string, signal: DesktopSessionSignal): boolean;
   stop(clientId: string, sessionId: string): Promise<boolean>;
@@ -1096,6 +1117,7 @@ export function attachConnection(
           clientIdentity,
           { localAddress: hooks.localAddress, peerAddress: hooks.peerAddress },
           send,
+          msg.viewport,
         ).then((result) => {
           if (!authed) return;
           if (result.ok) {

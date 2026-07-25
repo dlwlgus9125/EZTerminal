@@ -2,6 +2,8 @@ pub mod broker;
 #[cfg(all(windows, feature = "windows-host"))]
 pub mod capture;
 #[cfg(all(windows, feature = "windows-host"))]
+pub mod dpi;
+#[cfg(all(windows, feature = "windows-host"))]
 pub mod input;
 pub mod lease;
 pub mod protocol;
@@ -16,5 +18,5 @@ pub mod session_agent;
 #[cfg(all(windows, feature = "windows-host"))]
 pub mod transport;
 
-pub const NATIVE_PROTOCOL_VERSION: u16 = 1;
+pub const NATIVE_PROTOCOL_VERSION: u16 = 2;
 pub const SERVICE_NAME: &str = "EZTerminalRemoteHost";

@@ -2,12 +2,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocol::QualityTier;
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkSample {
     pub round_trip_time_ms: u32,
     pub packet_loss_percent: f32,
     pub send_backlog_ms: u32,
+    pub pipeline_utilization_percent: f32,
+    pub client_dropped_frame_percent: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -33,10 +35,14 @@ impl QualityController {
     pub fn observe(&mut self, sample: NetworkSample) -> QualityTier {
         let severe = sample.packet_loss_percent >= 8.0
             || sample.send_backlog_ms >= 350
-            || sample.round_trip_time_ms >= 350;
+            || sample.round_trip_time_ms >= 350
+            || sample.pipeline_utilization_percent >= 120.0
+            || sample.client_dropped_frame_percent >= 12.0;
         let degraded = sample.packet_loss_percent >= 3.0
             || sample.send_backlog_ms >= 150
-            || sample.round_trip_time_ms >= 220;
+            || sample.round_trip_time_ms >= 220
+            || sample.pipeline_utilization_percent >= 90.0
+            || sample.client_dropped_frame_percent >= 5.0;
 
         if severe || degraded {
             self.stable_samples = 0;
@@ -48,6 +54,12 @@ impl QualityController {
             return self.tier;
         }
 
+        let stable =
+            sample.pipeline_utilization_percent < 70.0 && sample.client_dropped_frame_percent < 2.0;
+        if !stable {
+            self.stable_samples = 0;
+            return self.tier;
+        }
         self.stable_samples = self.stable_samples.saturating_add(1);
         if self.stable_samples >= 5 {
             self.tier = upgrade(self.tier);
@@ -96,6 +108,8 @@ mod tests {
                 round_trip_time_ms: 80,
                 packet_loss_percent: 9.0,
                 send_backlog_ms: 0,
+                pipeline_utilization_percent: 20.0,
+                client_dropped_frame_percent: 0.0,
             }),
             QualityTier::Low
         );
@@ -103,10 +117,32 @@ mod tests {
             round_trip_time_ms: 80,
             packet_loss_percent: 0.2,
             send_backlog_ms: 10,
+            pipeline_utilization_percent: 20.0,
+            client_dropped_frame_percent: 0.0,
         };
         for _ in 0..4 {
             assert_eq!(controller.observe(stable), QualityTier::Low);
         }
         assert_eq!(controller.observe(stable), QualityTier::Medium);
+    }
+
+    #[test]
+    fn pipeline_pressure_degrades_and_blocks_premature_upgrade() {
+        let mut controller = QualityController::default();
+        let overloaded = NetworkSample {
+            round_trip_time_ms: 20,
+            packet_loss_percent: 0.0,
+            send_backlog_ms: 0,
+            pipeline_utilization_percent: 125.0,
+            client_dropped_frame_percent: 0.0,
+        };
+        assert_eq!(controller.observe(overloaded), QualityTier::Low);
+        let busy = NetworkSample {
+            pipeline_utilization_percent: 75.0,
+            ..overloaded
+        };
+        for _ in 0..8 {
+            assert_eq!(controller.observe(busy), QualityTier::Low);
+        }
     }
 }

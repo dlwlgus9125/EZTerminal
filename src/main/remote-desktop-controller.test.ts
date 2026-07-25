@@ -41,8 +41,13 @@ describe('RemoteDesktopController', () => {
       hostPath: 'unused',
       createTransport: () => native,
     });
-    const starting = controller.start(phoneA, endpoint, (event) => events.push(event));
-    native.emit({ type: 'ready', protocolVersion: 1, service: 'ready' });
+    const starting = controller.start(
+      phoneA,
+      endpoint,
+      (event) => events.push(event),
+      { pixelWidth: 1_170, pixelHeight: 2_160 },
+    );
+    native.emit({ type: 'ready', protocolVersion: 2, service: 'ready' });
     const started = await starting;
     expect(started).toMatchObject({ ok: true, resumed: false });
     if (!started.ok) throw new Error('expected a successful session');
@@ -53,6 +58,7 @@ describe('RemoteDesktopController', () => {
       localAddress: endpoint.localAddress,
       peerAddress: endpoint.peerAddress,
       udpPort: 7422,
+      viewport: { pixelWidth: 1_170, pixelHeight: 2_160 },
     });
     expect(controller.signal(phoneA.clientId, started.sessionId, { type: 'offer', sdp: 'v=0' })).toBe(true);
     expect(native.sent[1]).toEqual({ type: 'offer', sessionId: started.sessionId, sdp: 'v=0' });
@@ -63,6 +69,25 @@ describe('RemoteDesktopController', () => {
       sessionId: started.sessionId,
       signal: { type: 'answer', sdp: 'v=0\r\na=answer' },
     });
+    native.emit({
+      type: 'state',
+      sessionId: started.sessionId,
+      state: 'active',
+      metrics: {
+        framesPerSecond: 30,
+        bitrateBps: 2_000_000,
+        roundTripTimeMs: 20,
+        packetLossPercent: 0,
+        qualityTier: 'high',
+        streamWidth: 1_170,
+        streamHeight: 658,
+      },
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'desktop-control-status',
+      streamWidth: 1_170,
+      streamHeight: 658,
+    }));
     await expect(controller.start(phoneB, endpoint, vi.fn())).resolves.toEqual({
       ok: false,
       reason: 'busy',
@@ -79,7 +104,7 @@ describe('RemoteDesktopController', () => {
       createTransport: () => {
         const transport = new FakeNativeTransport();
         transports.push(transport);
-        queueMicrotask(() => transport.emit({ type: 'ready', protocolVersion: 1, service: 'ready' }));
+        queueMicrotask(() => transport.emit({ type: 'ready', protocolVersion: 2, service: 'ready' }));
         return transport;
       },
     });
@@ -105,7 +130,7 @@ describe('RemoteDesktopController', () => {
     const native = new FakeNativeTransport();
     const controller = new RemoteDesktopController({ hostPath: 'unused', createTransport: () => native });
     const starting = controller.start(phoneA, endpoint, vi.fn());
-    native.emit({ type: 'ready', protocolVersion: 1, service: 'missing' });
+    native.emit({ type: 'ready', protocolVersion: 2, service: 'missing' });
     await expect(starting).resolves.toEqual({
       ok: false,
       reason: 'unavailable',
@@ -155,7 +180,7 @@ describe('RemoteDesktopController', () => {
 
     expect(duplicateSettled).toBe(false);
     expect(native.sent).toHaveLength(1);
-    native.emit({ type: 'ready', protocolVersion: 1, service: 'ready' });
+    native.emit({ type: 'ready', protocolVersion: 2, service: 'ready' });
 
     const [firstResult, duplicateResult] = await Promise.all([first, duplicate]);
     expect(firstResult).toMatchObject({ ok: true, resumed: false });
@@ -185,7 +210,7 @@ describe('RemoteDesktopController', () => {
     });
 
     const firstStarting = controller.start(phoneA, endpoint, vi.fn());
-    transports[0].emit({ type: 'ready', protocolVersion: 1, service: 'ready' });
+    transports[0].emit({ type: 'ready', protocolVersion: 2, service: 'ready' });
     const first = await firstStarting;
     if (!first.ok) throw new Error('expected a successful first session');
 
@@ -196,7 +221,7 @@ describe('RemoteDesktopController', () => {
 
     finishFirstStop();
     await vi.waitFor(() => expect(transports).toHaveLength(2));
-    transports[1].emit({ type: 'ready', protocolVersion: 1, service: 'ready' });
+    transports[1].emit({ type: 'ready', protocolVersion: 2, service: 'ready' });
     await expect(resumedStarting).resolves.toMatchObject({
       ok: true,
       sessionId: first.sessionId,

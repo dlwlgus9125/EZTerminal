@@ -2,7 +2,11 @@ import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { MobileRemoteDesktopView, mapVideoPoint } from './MobileRemoteDesktopView';
+import {
+  MobileRemoteDesktopView,
+  mapVideoPoint,
+  measureVideoViewport,
+} from './MobileRemoteDesktopView';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -45,6 +49,26 @@ describe('MobileRemoteDesktopView', () => {
     expect(mapVideoPoint(50, 50, viewport, 200, 100, 1)).toEqual({ x: 0.5, y: 0.5 });
     expect(mapVideoPoint(50, 0, viewport, 200, 100, 1)).toEqual({ x: 0.5, y: 0 });
     expect(mapVideoPoint(0, 50, viewport, 200, 100, 2)).toEqual({ x: 0.25, y: 0.5 });
+  });
+
+  it('measures the rendered video area in physical pixels and clamps extremes', () => {
+    const element = {
+      getBoundingClientRect: () => ({
+        width: 390,
+        height: 720,
+      } as DOMRect),
+    };
+    expect(measureVideoViewport(element, 3)).toEqual({
+      pixelWidth: 1_170,
+      pixelHeight: 2_160,
+    });
+    expect(measureVideoViewport(element, 20)).toEqual({
+      pixelWidth: 4_096,
+      pixelHeight: 4_096,
+    });
+    expect(measureVideoViewport({
+      getBoundingClientRect: () => ({ width: 0, height: 720 } as DOMRect),
+    }, 3)).toBeNull();
   });
 
   it('renders a distinct busy state and returns without creating WebRTC', async () => {

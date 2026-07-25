@@ -142,15 +142,7 @@ unsafe impl Send for DisplayCapture {}
 
 impl DisplayCapture {
     pub fn new(source: DisplayDescriptor, max_width: u32, max_height: u32) -> Result<Self> {
-        let scale = f64::min(
-            1.0,
-            f64::min(
-                max_width as f64 / source.width as f64,
-                max_height as f64 / source.height as f64,
-            ),
-        );
-        let width = even_dimension((source.width as f64 * scale).round() as usize);
-        let height = even_dimension((source.height as f64 * scale).round() as usize);
+        let (width, height) = fitted_dimensions(source.width, source.height, max_width, max_height);
 
         let screen_dc = unsafe { GetDC(None) };
         if screen_dc.0.is_null() {
@@ -292,6 +284,25 @@ impl Drop for DisplayCapture {
     }
 }
 
+pub fn fitted_dimensions(
+    source_width: u32,
+    source_height: u32,
+    max_width: u32,
+    max_height: u32,
+) -> (usize, usize) {
+    let scale = f64::min(
+        1.0,
+        f64::min(
+            max_width as f64 / source_width.max(1) as f64,
+            max_height as f64 / source_height.max(1) as f64,
+        ),
+    );
+    (
+        even_dimension((source_width.max(1) as f64 * scale).floor() as usize),
+        even_dimension((source_height.max(1) as f64 * scale).floor() as usize),
+    )
+}
+
 fn even_dimension(value: usize) -> usize {
     value.max(2) & !1
 }
@@ -305,5 +316,20 @@ mod tests {
         assert_eq!(even_dimension(1), 2);
         assert_eq!(even_dimension(721), 720);
         assert_eq!(even_dimension(1080), 1080);
+    }
+
+    #[test]
+    fn viewport_fit_preserves_the_entire_landscape_source() {
+        assert_eq!(fitted_dimensions(2_560, 1_440, 1_080, 1_920), (1_080, 606));
+        assert_eq!(fitted_dimensions(2_560, 1_440, 1_170, 800), (1_170, 658));
+    }
+
+    #[test]
+    fn viewport_fit_is_portrait_aware_and_never_upscales() {
+        assert_eq!(
+            fitted_dimensions(1_440, 2_560, 1_080, 1_920),
+            (1_080, 1_920)
+        );
+        assert_eq!(fitted_dimensions(800, 600, 1_920, 1_080), (800, 600));
     }
 }

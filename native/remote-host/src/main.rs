@@ -2,9 +2,17 @@ use std::process::ExitCode;
 
 #[cfg(all(windows, feature = "windows-host"))]
 fn main() -> ExitCode {
-    use ezterminal_remote_host::{service, session_agent, transport};
+    use ezterminal_remote_host::{dpi, service, session_agent, transport};
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(
+        args.first().map(String::as_str),
+        Some("--session-agent" | "--transport")
+    ) && let Err(error) = dpi::ensure_per_monitor_v2()
+    {
+        eprintln!("ezterminal remote host failed: {error:#}");
+        return ExitCode::FAILURE;
+    }
     let result = match args.first().map(String::as_str) {
         Some("--service") => service::run_dispatcher(),
         Some("--install-service") => service::install(),

@@ -13,6 +13,26 @@ pub const MAX_ICE_BYTES: usize = 8 * 1024;
 pub const MAX_CLIPBOARD_BYTES: usize = 256 * 1024;
 pub const MAX_VIDEO_SAMPLE_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_CLIENT_NAME_CHARS: usize = 80;
+pub const MIN_VIEWPORT_PIXELS: u32 = 64;
+pub const MAX_VIEWPORT_PIXELS: u32 = 4_096;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamViewport {
+    pub pixel_width: u32,
+    pub pixel_height: u32,
+}
+
+impl StreamViewport {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        if !(MIN_VIEWPORT_PIXELS..=MAX_VIEWPORT_PIXELS).contains(&self.pixel_width)
+            || !(MIN_VIEWPORT_PIXELS..=MAX_VIEWPORT_PIXELS).contains(&self.pixel_height)
+        {
+            return Err(ProtocolError::InvalidViewport);
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +44,8 @@ pub struct NativeHello {
     pub local_address: String,
     pub peer_address: String,
     pub udp_port: u16,
+    #[serde(default)]
+    pub viewport: Option<StreamViewport>,
 }
 
 impl NativeHello {
@@ -42,6 +64,9 @@ impl NativeHello {
         }
         if self.udp_port == 0 {
             return Err(ProtocolError::InvalidPort);
+        }
+        if let Some(viewport) = self.viewport {
+            viewport.validate()?;
         }
         Ok(())
     }
@@ -197,6 +222,8 @@ pub struct TransportMetrics {
     pub round_trip_time_ms: u32,
     pub packet_loss_percent: f32,
     pub quality_tier: QualityTier,
+    pub stream_width: u32,
+    pub stream_height: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -253,6 +280,8 @@ pub enum ProtocolError {
     InvalidAddress,
     #[error("invalid UDP port")]
     InvalidPort,
+    #[error("invalid stream viewport")]
+    InvalidViewport,
     #[error("field exceeds its size limit: {0}")]
     Oversized(&'static str),
     #[error("message exceeds the control frame limit")]
@@ -294,18 +323,31 @@ mod tests {
             local_address: "100.64.0.1".into(),
             peer_address: "100.64.0.2".into(),
             udp_port: 7422,
+            viewport: None,
         }
     }
 
     #[test]
     fn hello_rejects_wrong_version_and_invalid_addresses() {
         let mut value = hello();
-        value.protocol_version = 2;
-        assert_eq!(value.validate(), Err(ProtocolError::UnsupportedVersion(2)));
+        value.protocol_version = NATIVE_PROTOCOL_VERSION + 1;
+        assert_eq!(
+            value.validate(),
+            Err(ProtocolError::UnsupportedVersion(
+                NATIVE_PROTOCOL_VERSION + 1
+            ))
+        );
 
         let mut value = hello();
         value.peer_address = "not an address".into();
         assert_eq!(value.validate(), Err(ProtocolError::InvalidAddress));
+
+        let mut value = hello();
+        value.viewport = Some(StreamViewport {
+            pixel_width: MIN_VIEWPORT_PIXELS - 1,
+            pixel_height: 1_080,
+        });
+        assert_eq!(value.validate(), Err(ProtocolError::InvalidViewport));
     }
 
     #[test]

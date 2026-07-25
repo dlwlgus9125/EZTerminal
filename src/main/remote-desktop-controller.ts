@@ -9,6 +9,7 @@ import type {
   DesktopDisplay,
   DesktopSessionSignal,
   DesktopSignalMessage,
+  DesktopVideoViewport,
   RemoteClientIdentity,
 } from '../shared/remote-protocol';
 import type {
@@ -16,7 +17,7 @@ import type {
   RemoteDesktopServiceHealth,
 } from '../shared/ipc';
 
-const NATIVE_PROTOCOL_VERSION = 1;
+const NATIVE_PROTOCOL_VERSION = 2;
 const MAX_NATIVE_MESSAGE_BYTES = 272 * 1024;
 const NATIVE_READY_TIMEOUT_MS = 12_000;
 export const DESKTOP_RESUME_GRACE_MS = 15_000;
@@ -73,6 +74,7 @@ interface ActiveDesktopSession {
   roundTripTimeMs: number | null;
   bitrateKbps: number | null;
   qualityTier: string | null;
+  viewport: DesktopVideoViewport | null;
 }
 
 const DEFAULT_CAPABILITIES: DesktopControlCapabilities = {
@@ -80,6 +82,7 @@ const DEFAULT_CAPABILITIES: DesktopControlCapabilities = {
   clipboardText: true,
   directTouch: true,
   multiMonitor: true,
+  adaptiveViewport: true,
 };
 
 /**
@@ -112,6 +115,7 @@ export class RemoteDesktopController {
     identity: RemoteClientIdentity,
     endpoint: DesktopConnectionEndpoint,
     emit: (event: DesktopServerEvent) => void,
+    viewport?: DesktopVideoViewport,
   ): Promise<DesktopStartResult> {
     if (this.options.probeService && this.service !== 'ready') await this.probeService();
     if (this.options.probeService && this.service !== 'ready') {
@@ -131,6 +135,7 @@ export class RemoteDesktopController {
       current.identity = identity;
       current.endpoint = endpoint;
       current.emit = emit;
+      if (viewport) current.viewport = viewport;
       const resumed = current.disconnectedAt !== null;
       current.disconnectedAt = null;
       if (current.releaseTimer) this.clearTimer(current.releaseTimer);
@@ -171,6 +176,7 @@ export class RemoteDesktopController {
       roundTripTimeMs: null,
       bitrateKbps: null,
       qualityTier: null,
+      viewport: viewport ?? null,
     };
     this.active = session;
     this.errorCode = null;
@@ -373,6 +379,7 @@ export class RemoteDesktopController {
         localAddress: session.endpoint.localAddress,
         peerAddress: session.endpoint.peerAddress,
         udpPort: this.udpPort,
+        viewport: session.viewport,
       });
     });
   }
@@ -417,6 +424,8 @@ export class RemoteDesktopController {
           ...(metrics && typeof metrics.roundTripTimeMs === 'number' ? { roundTripTimeMs: metrics.roundTripTimeMs } : {}),
           ...(metrics && typeof metrics.packetLossPercent === 'number' ? { packetLossPercent: metrics.packetLossPercent } : {}),
           ...(metrics && typeof metrics.bitrateBps === 'number' ? { bitrateKbps: metrics.bitrateBps / 1_000 } : {}),
+          ...(metrics && typeof metrics.streamWidth === 'number' ? { streamWidth: metrics.streamWidth } : {}),
+          ...(metrics && typeof metrics.streamHeight === 'number' ? { streamHeight: metrics.streamHeight } : {}),
         });
         this.publishStatus();
         break;

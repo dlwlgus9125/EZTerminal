@@ -10,6 +10,11 @@ import { ArrowLeft, ClipboardCopy, ClipboardPaste, Keyboard, Monitor, MousePoint
 
 import { useAppTranslation } from '../../src/renderer/i18n';
 import {
+  MAX_DESKTOP_VIEWPORT_PIXELS,
+  MIN_DESKTOP_VIEWPORT_PIXELS,
+  type DesktopVideoViewport,
+} from '../../src/shared/remote-protocol';
+import {
   INITIAL_DESKTOP_PRESENTATION_SNAPSHOT,
   RemoteDesktopPresentationAdapter,
   type DesktopControlCommand,
@@ -42,6 +47,7 @@ const TAP_MAX_MS = 350;
 const TAP_MOVE_PX = 8;
 const LONG_PRESS_MS = 550;
 const DOUBLE_TAP_MS = 350;
+const VIEWPORT_UPDATE_DELAY_MS = 200;
 
 interface TwoFingerGesture {
   readonly startedAt: number;
@@ -57,6 +63,25 @@ interface TwoFingerGesture {
 
 function clampUnit(value: number): number {
   return Math.min(1, Math.max(0, value));
+}
+
+export function measureVideoViewport(
+  element: Pick<HTMLElement, 'getBoundingClientRect'>,
+  devicePixelRatio: number,
+): DesktopVideoViewport | null {
+  const rect = element.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  const ratio = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0
+    ? devicePixelRatio
+    : 1;
+  const bounded = (value: number): number => Math.min(
+    MAX_DESKTOP_VIEWPORT_PIXELS,
+    Math.max(MIN_DESKTOP_VIEWPORT_PIXELS, Math.round(value * ratio)),
+  );
+  return {
+    pixelWidth: bounded(rect.width),
+    pixelHeight: bounded(rect.height),
+  };
 }
 
 /** Maps through object-fit:contain and the centered client-side zoom. */
@@ -157,6 +182,7 @@ export function MobileRemoteDesktopView({
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const pointersRef = useRef(new Map<number, PointerRecord>());
   const twoFingerRef = useRef<TwoFingerGesture | null>(null);
@@ -241,9 +267,34 @@ export function MobileRemoteDesktopView({
     };
     const unsubscribe = presentationAdapter.subscribe(publishSnapshot);
     presentationAdapter.attachVideo(videoRef.current);
+    const publishViewport = (): void => {
+      const element = viewportRef.current;
+      if (!element) return;
+      const viewport = measureVideoViewport(element, window.devicePixelRatio);
+      if (viewport) presentationAdapter.setViewport(viewport);
+    };
+    let viewportTimer: number | null = null;
+    const queueViewport = (): void => {
+      if (viewportTimer !== null) window.clearTimeout(viewportTimer);
+      viewportTimer = window.setTimeout(() => {
+        viewportTimer = null;
+        publishViewport();
+      }, VIEWPORT_UPDATE_DELAY_MS);
+    };
+    publishViewport();
     presentationAdapter.start();
+    const resizeObserver = typeof ResizeObserver === 'function'
+      ? new ResizeObserver(queueViewport)
+      : null;
+    if (viewportRef.current) resizeObserver?.observe(viewportRef.current);
+    window.addEventListener('resize', queueViewport);
+    window.visualViewport?.addEventListener('resize', queueViewport);
     publishSnapshot();
     return () => {
+      if (viewportTimer !== null) window.clearTimeout(viewportTimer);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', queueViewport);
+      window.visualViewport?.removeEventListener('resize', queueViewport);
       unsubscribe();
       if (presentationAdapterRef.current === presentationAdapter) {
         presentationAdapterRef.current = null;
@@ -523,6 +574,7 @@ export function MobileRemoteDesktopView({
       </header>
 
       <div
+        ref={viewportRef}
         className="mobile-pc-video-viewport"
         role="application"
         aria-label={t('mobile.pcControl.videoLabel')}

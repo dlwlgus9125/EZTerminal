@@ -640,12 +640,17 @@ describe('RemoteBridge — desktop control', () => {
       kind: 'auth-ok', capabilities: ['desktop-control-v1'],
     }));
 
-    ws.clientSend({ kind: 'desktop-control-start', requestId: 'desktop-1' });
+    ws.clientSend({
+      kind: 'desktop-control-start',
+      requestId: 'desktop-1',
+      viewport: { pixelWidth: 1_170, pixelHeight: 2_160 },
+    });
     await flush();
     expect(desktopSource.start).toHaveBeenCalledWith(
       identity,
       { localAddress: '100.64.0.1', peerAddress: '100.64.0.2' },
       expect.any(Function),
+      { pixelWidth: 1_170, pixelHeight: 2_160 },
     );
     expect(ws.sent).toContainEqual(expect.objectContaining({
       kind: 'desktop-control-start-result', requestId: 'desktop-1', ok: true, sessionId,
