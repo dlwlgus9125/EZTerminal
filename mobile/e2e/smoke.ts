@@ -109,8 +109,10 @@ async function main(): Promise<void> {
     const hit = await pollLogcat('[ez-e2e] output:', 20000, (l) => l.includes('hello'));
     console.log('[smoke] PASS —', hit.trim());
 
-    console.log('[smoke] running forced xterm command...');
-    await setTestIdTextValue('cmd-input', '!cmd /d /c echo xterm74');
+    console.log('[smoke] running held-open forced xterm command...');
+    // Keep the PTY alive long enough for the 250ms CDP polling loop to observe
+    // its real DOM. A one-shot `echo` can mount and finish between polls.
+    await setTestIdTextValue('cmd-input', '!cmd /d /c ping -n 11 127.0.0.1');
     await tapTestId('btn-run');
 
     console.log('[smoke] waiting for the real xterm DOM...');
