@@ -218,6 +218,24 @@ export type CreateSocket = (url: string) => WsLike;
 const DEFAULT_INITIAL_BACKOFF_MS = 500;
 const DEFAULT_MAX_BACKOFF_MS = 8000;
 const WS_OPEN = 1;
+/**
+ * Post-auth liveness (silent-socket detection): the desktop's WS-protocol
+ * pings are answered by the browser's network stack and are invisible here,
+ * so an idle-but-healthy link and a silently dead one (radio loss, NAT/VPN
+ * drop with no RST) look identical from JS — and reconnects are otherwise
+ * scheduled only from a real 'close' event, leaving a dead socket frozen on
+ * screen forever. After `LIVENESS_IDLE_MS` without any server message, probe
+ * with the cheapest existing request/reply (`list-runs` — no protocol change,
+ * works against every desktop version); no server message within
+ * `LIVENESS_PROBE_TIMEOUT_MS` of the probe means the socket is dead and is
+ * force-closed so the ordinary backoff → reconnect → resume-run path repairs
+ * the session. Background timer throttling only delays the probe; on
+ * foreground return the throttled timers fire and a dead socket is detected
+ * immediately.
+ */
+const LIVENESS_IDLE_MS = 45_000;
+const LIVENESS_PROBE_TIMEOUT_MS = 10_000;
+const LIVENESS_CHECK_INTERVAL_MS = 15_000;
 const RESUME_RETRY_INITIAL_MS = 250;
 const RESUME_RETRY_MAX_MS = 4000;
 const RESUME_RETRY_MAX_ATTEMPTS = 5;
@@ -311,6 +329,10 @@ export interface WsEzTerminalOptions {
   readonly openClawTicketTimeoutMs?: number;
   readonly openClawConfigTimeoutMs?: number;
   readonly openClawLifecycleTimeoutMs?: number;
+  /** Test seams for the post-auth liveness monitor (silent-socket detection). */
+  readonly livenessIdleMs?: number;
+  readonly livenessProbeTimeoutMs?: number;
+  readonly livenessCheckMs?: number;
 }
 
 interface RunPortRecord {
@@ -347,6 +369,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly openClawTicketTimeoutMs: number;
   private readonly openClawConfigTimeoutMs: number;
   private readonly openClawLifecycleTimeoutMs: number;
+  private readonly livenessIdleMs: number;
+  private readonly livenessProbeTimeoutMs: number;
+  private readonly livenessCheckMs: number;
+  /** Advanced by EVERY valid server message — the liveness monitor's signal. */
+  private lastServerMessageAt = 0;
+  private livenessCheckTimer: ReturnType<typeof setInterval> | null = null;
+  private livenessProbeDeadline: ReturnType<typeof setTimeout> | null = null;
 
   private socket: WsLike | null = null;
   private authed = false;
@@ -532,6 +561,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.openClawTicketTimeoutMs = options.openClawTicketTimeoutMs ?? OPENCLAW_TICKET_TIMEOUT_MS;
     this.openClawConfigTimeoutMs = options.openClawConfigTimeoutMs ?? OPENCLAW_CONFIG_TIMEOUT_MS;
     this.openClawLifecycleTimeoutMs = options.openClawLifecycleTimeoutMs ?? OPENCLAW_LIFECYCLE_TIMEOUT_MS;
+    this.livenessIdleMs = options.livenessIdleMs ?? LIVENESS_IDLE_MS;
+    this.livenessProbeTimeoutMs = options.livenessProbeTimeoutMs ?? LIVENESS_PROBE_TIMEOUT_MS;
+    this.livenessCheckMs = options.livenessCheckMs ?? LIVENESS_CHECK_INTERVAL_MS;
     this.backoffMs = this.initialBackoffMs;
     this.connect();
   }
@@ -547,6 +579,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       this.reconnectTimer = null;
     }
     this.clearWatchdog();
+    this.stopLivenessMonitor();
     this.socket?.close();
     this.socket = null;
     this.nextRetryAt = null;
@@ -1561,6 +1594,40 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     }, this.authTimeoutMs);
   }
 
+  // Post-auth liveness monitor — see the LIVENESS_* constants' doc for the
+  // full rationale (silent sockets are invisible to JS and never fire 'close').
+
+  private startLivenessMonitor(): void {
+    this.stopLivenessMonitor();
+    this.lastServerMessageAt = Date.now();
+    this.livenessCheckTimer = setInterval(() => this.checkLiveness(), this.livenessCheckMs);
+  }
+
+  private stopLivenessMonitor(): void {
+    if (this.livenessCheckTimer !== null) {
+      clearInterval(this.livenessCheckTimer);
+      this.livenessCheckTimer = null;
+    }
+    if (this.livenessProbeDeadline !== null) {
+      clearTimeout(this.livenessProbeDeadline);
+      this.livenessProbeDeadline = null;
+    }
+  }
+
+  private checkLiveness(): void {
+    if (this.stopped || !this.authed || !this.socket) return;
+    if (this.livenessProbeDeadline !== null) return; // probe already outstanding
+    if (Date.now() - this.lastServerMessageAt < this.livenessIdleMs) return;
+    const probeSentAt = Date.now();
+    void this.listRuns(); // any server message — this reply or otherwise — proves liveness
+    this.livenessProbeDeadline = setTimeout(() => {
+      this.livenessProbeDeadline = null;
+      if (this.stopped || !this.authed) return;
+      if (this.lastServerMessageAt >= probeSentAt) return; // traffic arrived meanwhile
+      this.closeTerminalSocket(); // dead socket → backoff reconnect → resume-run
+    }, this.livenessProbeTimeoutMs);
+  }
+
   private setAuthed(value: boolean): void {
     if (this.authed === value) return;
     this.authed = value;
@@ -1723,6 +1790,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     if (this.socket !== socket) return;
     this.clearAllResumeRetries();
     this.clearWatchdog();
+    this.stopLivenessMonitor();
     this.setAuthed(false);
     this.socket = null;
     // No frames can arrive for these runs anymore — tell every open block so it
@@ -1918,9 +1986,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.closeTerminalSocket();
   }
 
-  /** Close and synchronously invalidate a terminal auth/protocol socket.
-   * Browser close events are asynchronous, so waiting for `close` would let
-   * already-queued messages mutate state after a fail-closed decision. */
+  /** Close and synchronously invalidate a socket after a fail-closed decision
+   * (auth/protocol rejection, or a liveness probe declaring it dead). Browser
+   * close events are asynchronous, so waiting for `close` would let
+   * already-queued messages mutate state after that decision. */
   private closeTerminalSocket(): void {
     const socket = this.socket;
     if (!socket) return;
@@ -1946,6 +2015,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       || typeof (parsed as { kind?: unknown }).kind !== 'string'
     ) return;
     const msg = parsed as ServerToClientMessage;
+    // Any valid server message proves the socket is alive (liveness monitor).
+    this.lastServerMessageAt = Date.now();
     if (this.stopped) return;
     if (!this.authed && msg.kind !== 'auth-ok' && msg.kind !== 'auth-fail') return;
     switch (msg.kind) {
@@ -2016,6 +2087,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         // A fully successful (re)connect resets the backoff — a flappy link
         // that keeps briefly reconnecting shouldn't creep toward the cap.
         this.backoffMs = this.initialBackoffMs;
+        this.startLivenessMonitor();
         // Replay the stats subscription across reconnects — the bridge's own
         // `statsVisible` is per-connection state that does NOT survive a new
         // socket (see `setStatsPanelVisible`'s doc comment).

@@ -3061,3 +3061,100 @@ describe('WsEzTerminalTransport — OpenClaw status subscription refcount (openc
     expect(sockets[0].lastSent()).toEqual({ kind: 'openclaw-status-subscribe' }); // still a clean 0->1
   });
 });
+
+describe('WsEzTerminalTransport — post-auth liveness (silent socket detection)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Authed transport with fake timers and the liveness knobs pinned to the
+   * documented defaults, so every advance below is explicit about which
+   * threshold it crosses. */
+  function makeAuthed(): { sockets: FakeSocket[] } {
+    vi.useFakeTimers();
+    const { createSocket, sockets } = makeCreateSocket();
+    new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      initialBackoffMs: 10,
+      livenessIdleMs: 45_000,
+      livenessProbeTimeoutMs: 10_000,
+      livenessCheckMs: 15_000,
+    });
+    sockets[0].triggerOpen();
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    return { sockets };
+  }
+
+  function probesSent(socket: FakeSocket): number {
+    return socket.sent.filter((raw) => (JSON.parse(raw) as { kind?: string }).kind === 'list-runs').length;
+  }
+
+  it('probes an idle link with list-runs once the idle threshold is crossed', () => {
+    const { sockets } = makeAuthed();
+
+    vi.advanceTimersByTime(45_000); // idle threshold reached at this check tick
+
+    expect(probesSent(sockets[0])).toBe(1);
+  });
+
+  it('force-closes a silently dead socket and schedules a reconnect', () => {
+    const { sockets } = makeAuthed();
+
+    // Total silence after auth-ok: idle threshold (45s) then the unanswered
+    // probe deadline (10s). A dead-silent socket must be torn down so the
+    // ordinary backoff -> reconnect -> resume-run path can repair the session.
+    vi.advanceTimersByTime(45_000 + 10_000);
+    expect(sockets[0].closed).toBe(true);
+
+    vi.advanceTimersByTime(10); // initialBackoffMs
+    expect(sockets.length).toBe(2); // fresh connection attempt started
+  });
+
+  it('a probe answered in time keeps the socket open', () => {
+    const { sockets } = makeAuthed();
+
+    vi.advanceTimersByTime(45_000); // probe fired at this tick
+    expect(probesSent(sockets[0])).toBe(1);
+    sockets[0].triggerMessage({ kind: 'run-list', runs: [] }); // answered within the deadline
+
+    vi.advanceTimersByTime(30_000); // past the probe deadline + further checks
+
+    expect(sockets[0].closed).toBe(false);
+    expect(sockets.length).toBe(1);
+  });
+
+  it('steady server traffic never triggers a probe', () => {
+    const { sockets } = makeAuthed();
+
+    for (let index = 0; index < 10; index += 1) {
+      vi.advanceTimersByTime(10_000);
+      sockets[0].triggerMessage({ kind: 'run-list', runs: [] });
+    }
+
+    expect(probesSent(sockets[0])).toBe(0);
+    expect(sockets[0].closed).toBe(false);
+  });
+
+  it('disconnect() stops the liveness monitor with the socket', () => {
+    vi.useFakeTimers();
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      livenessIdleMs: 45_000,
+      livenessProbeTimeoutMs: 10_000,
+      livenessCheckMs: 15_000,
+    });
+    sockets[0].triggerOpen();
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    transport.disconnect();
+    vi.advanceTimersByTime(120_000);
+
+    expect(probesSent(sockets[0])).toBe(0);
+    expect(sockets.length).toBe(1); // no zombie probe, no reconnect
+  });
+});
