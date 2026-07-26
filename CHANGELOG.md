@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-07-26
+
+### Fixed
+- Restored the terminal context menu across horizontally and vertically split
+  desktop panes, including pane backgrounds, command input, rendered output,
+  plain PTY output, and xterm sessions.
+- Kept copy, paste, select-all, keyboard invocation, and focus restoration
+  scoped to the pane that opened the menu.
+- Rendered terminal context menus at the document root so Dockview transforms
+  cannot offset or clip them outside a split pane.
+
+See [1.0.8 release notes](docs/release/release-notes-1.0.8.md).
+
 ## [1.0.7] - 2026-07-26
 
 ### Fixed

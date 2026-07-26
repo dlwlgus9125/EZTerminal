@@ -122,7 +122,7 @@ describe('plain PTY keyboard context menu', () => {
     commandInput.focus();
     dispatchMenuKey('ContextMenu');
 
-    expect(mount.querySelector('[role="menu"]')?.getAttribute('aria-label')).toBe('터미널 작업');
+    expect(document.querySelector('[role="menu"]')?.getAttribute('aria-label')).toBe('터미널 작업');
   });
 
   it('opens from Shift+F10 and restores its command invoker after Escape', () => {
@@ -132,14 +132,14 @@ describe('plain PTY keyboard context menu', () => {
     dispatchMenuKey('F10', true);
 
     expect(composerBubbleHandler).not.toHaveBeenCalled();
-    const menu = mount.querySelector<HTMLElement>('[role="menu"]');
+    const menu = document.querySelector<HTMLElement>('[role="menu"]');
     expect(menu).not.toBeNull();
     expect(document.activeElement).toBe(
-      mount.querySelector<HTMLButtonElement>('[data-testid="term-ctx-paste"]'),
+      document.querySelector<HTMLButtonElement>('[data-testid="term-ctx-paste"]'),
     );
 
     dispatchMenuKey('Escape');
-    expect(mount.querySelector('[role="menu"]')).toBeNull();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
     flushAnimationFrames();
     expect(document.activeElement).toBe(commandInput);
   });
@@ -147,7 +147,7 @@ describe('plain PTY keyboard context menu', () => {
   it('opens from ContextMenu and never restores focus across panes on outside click', () => {
     commandInput.focus();
     dispatchMenuKey('ContextMenu');
-    expect(mount.querySelector('[role="menu"]')).not.toBeNull();
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
 
     const otherPane = document.createElement('section');
     otherPane.className = 'pane';
@@ -160,8 +160,27 @@ describe('plain PTY keyboard context menu', () => {
     });
     flushAnimationFrames();
 
-    expect(mount.querySelector('[role="menu"]')).toBeNull();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(otherInput);
     otherPane.remove();
+  });
+
+  it('keeps plain output selected after Select All restores the invoking pane focus', () => {
+    const output = mount.querySelector<HTMLElement>('[data-testid="text-output"]');
+    expect(output).not.toBeNull();
+    output!.textContent = 'plain output selection';
+
+    commandInput.focus();
+    dispatchMenuKey('ContextMenu');
+    const selectAll = document.querySelector<HTMLButtonElement>(
+      '[data-testid="term-ctx-select-all"]',
+    );
+    expect(selectAll).not.toBeNull();
+    act(() => selectAll?.click());
+    flushAnimationFrames();
+
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(commandInput);
+    expect(window.getSelection()?.toString()).toContain('plain output selection');
   });
 });

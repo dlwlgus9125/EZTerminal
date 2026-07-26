@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export interface TerminalContextMenuItem {
   /** Used verbatim in `data-testid="term-ctx-<action>"` — keep these stable, e2e depends on them. */
@@ -9,9 +10,22 @@ export interface TerminalContextMenuItem {
   readonly onClick: () => void;
 }
 
-export interface TerminalContextMenuCloseDetail {
-  readonly reason: 'action' | 'escape' | 'outside';
-  readonly target: EventTarget | null;
+export type TerminalContextMenuCloseDetail =
+  | {
+    readonly reason: 'action';
+    readonly action: string;
+    readonly target: EventTarget | null;
+  }
+  | {
+    readonly reason: 'escape' | 'outside';
+    readonly target: EventTarget | null;
+  };
+
+export interface TerminalContextMenuInvocation {
+  readonly x: number;
+  readonly y: number;
+  readonly invoker: HTMLElement | null;
+  readonly originPane: Element | null;
 }
 
 interface TerminalContextMenuProps {
@@ -51,6 +65,59 @@ export function mayRestoreTerminalContextMenuFocus(
   if (activeElement === null || activeElement === document.body) return true;
   const activePane = activeElement.closest('.pane');
   return activePane === null || activePane === originPane;
+}
+
+export function captureTerminalContextMenuInvocation(
+  host: HTMLElement,
+  x: number,
+  y: number,
+): TerminalContextMenuInvocation {
+  const originPane = host.closest('.pane');
+  const active = document.activeElement;
+  return {
+    x,
+    y,
+    invoker: active instanceof HTMLElement && originPane?.contains(active) ? active : null,
+    originPane,
+  };
+}
+
+export function keyboardTerminalContextMenuInvocation(
+  host: HTMLElement,
+): TerminalContextMenuInvocation {
+  const rect = host.getBoundingClientRect();
+  return captureTerminalContextMenuInvocation(
+    host,
+    rect.left + Math.min(24, Math.max(8, rect.width / 2)),
+    rect.top + Math.min(24, Math.max(8, rect.height / 2)),
+  );
+}
+
+export function closeTerminalContextMenu(
+  invocation: TerminalContextMenuInvocation,
+  detail: TerminalContextMenuCloseDetail,
+  clear: () => void,
+  fallbackFocus: () => void,
+  afterFocus?: () => void,
+): void {
+  const shouldRestore = mayRestoreTerminalContextMenuFocus(invocation.originPane, detail);
+  clear();
+  if (!shouldRestore) return;
+  requestAnimationFrame(() => {
+    if (!mayRestoreTerminalContextMenuFocus(invocation.originPane, detail)) return;
+    const active = document.activeElement;
+    if (
+      active !== null
+      && active !== document.body
+      && active !== invocation.invoker
+      && !active.closest('.terminal-context-menu')
+    ) {
+      return;
+    }
+    if (invocation.invoker?.isConnected) invocation.invoker.focus();
+    else fallbackFocus();
+    afterFocus?.();
+  });
 }
 
 /**
@@ -124,7 +191,7 @@ export function TerminalContextMenu({
     const item = items[index];
     if (!item || item.disabled) return;
     item.onClick();
-    onClose({ reason: 'action', target });
+    onClose({ reason: 'action', action: item.action, target });
   };
 
   const move = (direction: 1 | -1): void => {
@@ -136,7 +203,7 @@ export function TerminalContextMenu({
     setActiveIndex(enabledIndexes[next]);
   };
 
-  return (
+  return createPortal((
     <div
       ref={menuRef}
       className="terminal-context-menu"
@@ -204,5 +271,5 @@ export function TerminalContextMenu({
         </button>
       ))}
     </div>
-  );
+  ), document.body);
 }

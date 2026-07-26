@@ -13,10 +13,12 @@ import { getActiveTheme } from './themes';
 import { getActiveUiScale } from './ui-scale';
 import { PtyControlChip } from './PtyControlChip';
 import {
+  captureTerminalContextMenuInvocation,
+  closeTerminalContextMenu,
   isTerminalContextMenuKey,
-  mayRestoreTerminalContextMenuFocus,
+  keyboardTerminalContextMenuInvocation,
   TerminalContextMenu,
-  type TerminalContextMenuCloseDetail,
+  type TerminalContextMenuInvocation,
   type TerminalContextMenuItem,
 } from './TerminalContextMenu';
 import { TerminalFindBar } from './TerminalFindBar';
@@ -87,62 +89,6 @@ function computeBaseFontSize(): number {
 
 const EMPTY_SEARCH_RESULTS: TerminalSearchResults = Object.freeze({ resultIndex: -1, resultCount: 0 });
 
-interface TerminalMenuInvocation {
-  readonly x: number;
-  readonly y: number;
-  readonly invoker: HTMLElement | null;
-  readonly originPane: Element | null;
-}
-
-function captureTerminalMenuInvocation(
-  host: HTMLElement,
-  x: number,
-  y: number,
-): TerminalMenuInvocation {
-  const originPane = host.closest('.pane');
-  const active = document.activeElement;
-  return {
-    x,
-    y,
-    invoker: active instanceof HTMLElement && originPane?.contains(active) ? active : null,
-    originPane,
-  };
-}
-
-function keyboardTerminalMenuInvocation(host: HTMLElement): TerminalMenuInvocation {
-  const rect = host.getBoundingClientRect();
-  return captureTerminalMenuInvocation(
-    host,
-    rect.left + Math.min(24, Math.max(8, rect.width / 2)),
-    rect.top + Math.min(24, Math.max(8, rect.height / 2)),
-  );
-}
-
-function closeTerminalMenu(
-  invocation: TerminalMenuInvocation,
-  detail: TerminalContextMenuCloseDetail,
-  clear: () => void,
-  fallbackFocus: () => void,
-): void {
-  const shouldRestore = mayRestoreTerminalContextMenuFocus(invocation.originPane, detail);
-  clear();
-  if (!shouldRestore) return;
-  requestAnimationFrame(() => {
-    if (!mayRestoreTerminalContextMenuFocus(invocation.originPane, detail)) return;
-    const active = document.activeElement;
-    if (
-      active !== null
-      && active !== document.body
-      && active !== invocation.invoker
-      && !active.closest('.terminal-context-menu')
-    ) {
-      return;
-    }
-    if (invocation.invoker?.isConnected) invocation.invoker.focus();
-    else fallbackFocus();
-  });
-}
-
 function PtyXtermView({
   controller,
   runtimeOptions,
@@ -185,11 +131,11 @@ function PtyXtermView({
 
   // Right-click context menu (WT-parity M2) — position of the triggering
   // `contextmenu` event, or null when closed.
-  const [menuPos, setMenuPos] = useState<TerminalMenuInvocation | null>(null);
+  const [menuPos, setMenuPos] = useState<TerminalContextMenuInvocation | null>(null);
   const openKeyboardMenuRef = useRef<() => void>(() => {});
   openKeyboardMenuRef.current = () => {
     const host = containerRef.current;
-    if (host) setMenuPos(keyboardTerminalMenuInvocation(host));
+    if (host) setMenuPos(keyboardTerminalContextMenuInvocation(host));
   };
 
   // The mount effect (re)creates these per mount, closing over that mount's
@@ -755,7 +701,7 @@ function PtyXtermView({
         // is a fine-pointer affordance, so skip it here to avoid a double menu.
         if (window.matchMedia?.('(pointer: coarse)').matches) return;
         e.preventDefault();
-        setMenuPos(captureTerminalMenuInvocation(e.currentTarget, e.clientX, e.clientY));
+        setMenuPos(captureTerminalContextMenuInvocation(e.currentTarget, e.clientX, e.clientY));
       }}
     >
       <PtyControlChip
@@ -782,7 +728,7 @@ function PtyXtermView({
           items={menuItems}
           ariaLabel={t('terminalContext.actionsLabel')}
           shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
-          onClose={(detail) => closeTerminalMenu(
+          onClose={(detail) => closeTerminalContextMenu(
             menuPos,
             detail,
             () => setMenuPos(null),
@@ -829,7 +775,7 @@ function PtyPlainView({
   const isCodex = runtimeOptions.platform === 'desktop'
     && classifyDirectAgentCommand(controller.command) === 'codex';
   // Right-click context menu (WT-parity M2) — same pattern as PtyXtermView's.
-  const [menuPos, setMenuPos] = useState<TerminalMenuInvocation | null>(null);
+  const [menuPos, setMenuPos] = useState<TerminalContextMenuInvocation | null>(null);
 
   // Mount: wire the plain sink (input focus now lives on cmd-input — M1 focus
   // retention routes plain-PTY keystrokes there, TerminalPane.tsx's
@@ -900,7 +846,7 @@ function PtyPlainView({
       }
       event.preventDefault();
       event.stopPropagation();
-      setMenuPos(keyboardTerminalMenuInvocation(host));
+      setMenuPos(keyboardTerminalContextMenuInvocation(host));
     };
     // Capture before TerminalPane's composer handler so Shift+F10 is never
     // translated to the PTY's ordinary F10 byte sequence.
@@ -929,6 +875,15 @@ function PtyPlainView({
       deliverText: (text) => controller.sendPtyInput(text),
     });
   };
+  const selectAllOutput = (): void => {
+    const el = outputRef.current;
+    const sel = window.getSelection();
+    if (!el || !sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
   const menuItems: TerminalContextMenuItem[] = [
     {
       action: 'copy',
@@ -951,15 +906,7 @@ function PtyPlainView({
     {
       action: 'select-all',
       label: t('terminalContext.selectAll'),
-      onClick: () => {
-        const el = outputRef.current;
-        const sel = window.getSelection();
-        if (!el || !sel) return;
-        const range = document.createRange();
-        range.selectNodeContents(el);
-        sel.removeAllRanges();
-        sel.addRange(range);
-      },
+      onClick: selectAllOutput,
     },
   ];
 
@@ -977,7 +924,7 @@ function PtyPlainView({
         // is a fine-pointer affordance, so skip it here to avoid a double menu.
         if (window.matchMedia?.('(pointer: coarse)').matches) return;
         e.preventDefault();
-        setMenuPos(captureTerminalMenuInvocation(e.currentTarget, e.clientX, e.clientY));
+        setMenuPos(captureTerminalContextMenuInvocation(e.currentTarget, e.clientX, e.clientY));
       }}
     >
       <PtyControlChip
@@ -1024,7 +971,7 @@ function PtyPlainView({
           items={menuItems}
           ariaLabel={t('terminalContext.actionsLabel')}
           shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
-          onClose={(detail) => closeTerminalMenu(
+          onClose={(detail) => closeTerminalContextMenu(
             menuPos,
             detail,
             () => setMenuPos(null),
@@ -1032,6 +979,9 @@ function PtyPlainView({
               const pane = containerRef.current?.closest('.pane');
               pane?.querySelector<HTMLInputElement>('.cmd-input')?.focus();
             },
+            detail.reason === 'action' && detail.action === 'select-all'
+              ? selectAllOutput
+              : undefined,
           )}
         />
       )}

@@ -15,6 +15,15 @@ import {
   resolveTerminalShortcut,
   takeCodexInterruptNotice,
 } from './terminal-key-policy';
+import {
+  captureTerminalContextMenuInvocation,
+  closeTerminalContextMenu,
+  isTerminalContextMenuKey,
+  keyboardTerminalContextMenuInvocation,
+  TerminalContextMenu,
+  type TerminalContextMenuInvocation,
+  type TerminalContextMenuItem,
+} from './TerminalContextMenu';
 import { pasteFromRuntimeClipboard } from './terminal-paste';
 import { selectedTextWithin } from './terminal-selection';
 import { QuickCommandShelf } from './QuickCommandShelf';
@@ -45,6 +54,18 @@ interface BlockEntry {
   readonly id: string;
   readonly command: string;
   controller: BlockController | null;
+}
+
+interface PaneContextMenuSource {
+  readonly kind: 'input' | 'pane';
+  readonly selectedText: string;
+  readonly draftSelectionStart: number;
+  readonly draftSelectionEnd: number;
+}
+
+interface PaneContextMenuState {
+  readonly invocation: TerminalContextMenuInvocation;
+  readonly source: PaneContextMenuSource;
 }
 
 // Module-scoped so runIds are unique across ALL panes — the brokered command port is
@@ -179,9 +200,21 @@ export function TerminalPane({
   // The scrollable block-list container — auto-scrolled to follow new output like a
   // terminal. `stickToBottom` stays true while the view is pinned to the bottom and
   // flips false if the user scrolls up, so we never yank them back down.
+  const paneRef = useRef<HTMLDivElement>(null);
   const blockListRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const cmdInputRef = useRef<HTMLInputElement>(null);
+  const pendingDraftCaretRef = useRef<number | null>(null);
+  const [paneContextMenu, setPaneContextMenu] = useState<PaneContextMenuState | null>(null);
+
+  useLayoutEffect(() => {
+    const caret = pendingDraftCaretRef.current;
+    if (caret === null) return;
+    pendingDraftCaretRef.current = null;
+    const input = cmdInputRef.current;
+    input?.focus();
+    input?.setSelectionRange(caret, caret);
+  }, [command]);
 
   const scrollBlockListToBottom = useCallback((): void => {
     const el = blockListRef.current;
@@ -751,6 +784,113 @@ export function TerminalPane({
     });
   }, [resolvedTerminalRuntimeOptions]);
 
+  const capturePaneContextMenuSource = useCallback(
+    (target: EventTarget | null): PaneContextMenuSource => {
+      const input = cmdInputRef.current;
+      const draftSelectionStart = input?.selectionStart ?? command.length;
+      const draftSelectionEnd = input?.selectionEnd ?? draftSelectionStart;
+      const inputWasClicked = input !== null
+        && target instanceof Node
+        && (target === input || input.contains(target));
+      return {
+        kind: inputWasClicked ? 'input' : 'pane',
+        selectedText: inputWasClicked
+          ? command.slice(draftSelectionStart, draftSelectionEnd)
+          : selectedTextWithin(paneRef.current),
+        draftSelectionStart,
+        draftSelectionEnd,
+      };
+    },
+    [command],
+  );
+
+  const openPaneContextMenu = useCallback(
+    (invocation: TerminalContextMenuInvocation, target: EventTarget | null): void => {
+      setPaneContextMenu({
+        invocation,
+        source: capturePaneContextMenuSource(target),
+      });
+    },
+    [capturePaneContextMenuSource],
+  );
+
+  const insertTextIntoDraft = useCallback(
+    (text: string, source: PaneContextMenuSource): void => {
+      setCommand((previous) => {
+        const start = Math.max(0, Math.min(source.draftSelectionStart, previous.length));
+        const end = Math.max(start, Math.min(source.draftSelectionEnd, previous.length));
+        pendingDraftCaretRef.current = start + text.length;
+        return `${previous.slice(0, start)}${text}${previous.slice(end)}`;
+      });
+    },
+    [],
+  );
+
+  const requestPaneMenuPaste = useCallback(
+    (source: PaneContextMenuSource): void => {
+      if (activePlainPty) {
+        pasteIntoActivePlainPty('default');
+        return;
+      }
+      void pasteFromRuntimeClipboard(resolvedTerminalRuntimeOptions, {
+        isCodex: false,
+        mode: 'text',
+        deliverImage: () => {},
+        deliverText: (text) => insertTextIntoDraft(text, source),
+      });
+    },
+    [
+      activePlainPty,
+      insertTextIntoDraft,
+      pasteIntoActivePlainPty,
+      resolvedTerminalRuntimeOptions,
+    ],
+  );
+
+  const selectPaneOutput = useCallback((): void => {
+    const output = blockListRef.current;
+    const selection = window.getSelection();
+    if (!output || !selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(output);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }, []);
+
+  const paneContextMenuItems: TerminalContextMenuItem[] = paneContextMenu
+    ? [
+      {
+        action: 'copy',
+        label: t('terminalContext.copy'),
+        shortcut: resolvedTerminalRuntimeOptions.platform === 'desktop'
+          ? 'Ctrl+C / Ctrl+Shift+C / Ctrl+Insert'
+          : undefined,
+        disabled: paneContextMenu.source.selectedText === '',
+        onClick: () => {
+          const text = paneContextMenu.source.selectedText;
+          if (text) void navigator.clipboard.writeText(text);
+        },
+      },
+      {
+        action: 'paste',
+        label: t('terminalContext.paste'),
+        shortcut: resolvedTerminalRuntimeOptions.platform === 'desktop' ? 'Ctrl+V' : undefined,
+        onClick: () => requestPaneMenuPaste(paneContextMenu.source),
+      },
+      {
+        action: 'select-all',
+        label: t('terminalContext.selectAll'),
+        onClick: () => {
+          if (paneContextMenu.source.kind === 'input') {
+            cmdInputRef.current?.select();
+          } else {
+            selectPaneOutput();
+          }
+        },
+      },
+    ]
+    : [];
+
   const activeIsCodex = activeRunning
     && classifyDirectAgentCommand(activeController.current?.command ?? '') === 'codex';
   const activeCanRecoverCodex = activeIsCodex
@@ -787,9 +927,47 @@ export function TerminalPane({
     // data-session-id: layout-persistence e2e records per-pane session ids and
     // asserts they all DIFFER after a restart-restore (B1/B5 — fresh sessions).
     <div
+      ref={paneRef}
       className={activeTakeover ? 'pane pane--tui-takeover' : 'pane'}
       data-testid="pane"
       data-session-id={sessionId ?? undefined}
+      onContextMenu={(event) => {
+        if (
+          event.defaultPrevented
+          || window.matchMedia?.('(pointer: coarse)').matches
+          || (
+            event.target instanceof Element
+            && event.target.closest('.terminal-context-menu')
+          )
+        ) {
+          return;
+        }
+        event.preventDefault();
+        openPaneContextMenu(
+          captureTerminalContextMenuInvocation(
+            event.currentTarget,
+            event.clientX,
+            event.clientY,
+          ),
+          event.target,
+        );
+      }}
+      onKeyDown={(event) => {
+        if (
+          event.defaultPrevented
+          || !isTerminalContextMenuKey(event.nativeEvent)
+          || (
+            event.target instanceof Element
+            && event.target.closest('.terminal-context-menu')
+          )
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const host = event.target instanceof HTMLElement ? event.target : event.currentTarget;
+        openPaneContextMenu(keyboardTerminalContextMenuInvocation(host), event.target);
+      }}
     >
       <div
         className="block-list"
@@ -988,6 +1166,26 @@ export function TerminalPane({
           {activeIsCodex ? t('terminalPane.forceStop') : t('common.cancel')}
         </button>
       </div>
+      {paneContextMenu && (
+        <TerminalContextMenu
+          x={paneContextMenu.invocation.x}
+          y={paneContextMenu.invocation.y}
+          items={paneContextMenuItems}
+          ariaLabel={t('terminalContext.actionsLabel')}
+          shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
+          onClose={(detail) => closeTerminalContextMenu(
+            paneContextMenu.invocation,
+            detail,
+            () => setPaneContextMenu(null),
+            () => cmdInputRef.current?.focus(),
+            detail.reason === 'action'
+              && detail.action === 'select-all'
+              && paneContextMenu.source.kind === 'pane'
+              ? selectPaneOutput
+              : undefined,
+          )}
+        />
+      )}
     </div>
   );
 }

@@ -8,7 +8,7 @@
 
 Block-based UI · themes &amp; CRT effects · system monitor · SSH · pair your phone as a remote
 
-![release](https://img.shields.io/badge/release-v1.0.7-brightgreen)
+![release](https://img.shields.io/badge/release-v1.0.8-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 ![built with](https://img.shields.io/badge/built%20with-Electron%20·%20React%20·%20TypeScript-9cf)
@@ -139,7 +139,7 @@ advertised only while the remote bridge is enabled, a trusted
 Tailscale/WireGuard adapter is selected, and the installed LocalSystem host
 service is ready. Starting control additionally requires a successful
 active-session agent handshake. Missing or unhealthy native components fail
-closed without disabling terminal-only remote access. In 1.0.7, frame
+closed without disabling terminal-only remote access. In 1.0.8, frame
 capture/encoding and actual input injection still run in the normal-user
 transport; lock/UAC secure-desktop control and Ctrl+Alt+Delete are unavailable.
 
@@ -159,7 +159,7 @@ Grab both official 1.0 downloads from the
 [**Releases**](https://github.com/dlwlgus9125/EZTerminal/releases/latest) page:
 
 - Windows 10 22H2 / Windows 11 x64: `EZTerminal-Setup.exe`
-- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.7-vc28.apk`
+- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.8-vc29.apk`
 
 > The Windows build is currently **unsigned**, so Windows SmartScreen may warn about an "unknown publisher" on
 > first run. Choose *More info → Run anyway* to proceed.
@@ -179,7 +179,7 @@ release's validation evidence is limited to the current Windows host and API
 29/API 35 emulators. Elevated/admin service lifecycle and physical-device
 validation were not performed. Certificate provisioning, store publication,
 and automatic-update operations are outside this release; see the
-[1.0.7 validation policy](docs/release/validation-policy-1.0.7.md).
+[1.0.8 validation policy](docs/release/validation-policy-1.0.8.md).
 
 ## Build from source
 
@@ -194,7 +194,7 @@ pnpm e2e          # end-to-end tests (Playwright + Electron)
 Graphical PC Control is included by default in Windows builds. At runtime it
 still requires an enabled remote bridge, a running installed host service, and
 a trusted VPN interface; otherwise the desktop capability is not advertised.
-Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.7.
+Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.8.
 
 The Android companion app lives in [`mobile/`](mobile/) (Capacitor + Android Studio).
 

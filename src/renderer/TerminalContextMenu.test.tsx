@@ -29,7 +29,7 @@ function renderMenu(
     readonly ariaLabel?: string;
     readonly shortcutLabel?: (shortcut: string) => string;
   },
-): HTMLDivElement {
+): HTMLElement {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -44,7 +44,7 @@ function renderMenu(
       />,
     );
   });
-  return container;
+  return document.body;
 }
 
 function press(key: string): void {
@@ -65,6 +65,15 @@ afterEach(() => {
 });
 
 describe('TerminalContextMenu', () => {
+  it('portals to the document body so transformed pane ancestors cannot offset fixed positioning', () => {
+    const el = renderMenu(
+      [{ action: 'copy', label: 'Copy', onClick: vi.fn() }],
+      vi.fn(),
+    );
+    expect(container?.querySelector('[role="menu"]')).toBeNull();
+    expect(el.querySelector('[role="menu"]')).not.toBeNull();
+  });
+
   it('renders each item at its data-testid', () => {
     const el = renderMenu(
       [
@@ -127,7 +136,10 @@ describe('TerminalContextMenu', () => {
     renderMenu([{ action: 'copy', label: 'Copy', onClick: onEnter }], closeEnter);
     press('Enter');
     expect(onEnter).toHaveBeenCalledTimes(1);
-    expect(closeEnter).toHaveBeenCalledWith(expect.objectContaining({ reason: 'action' }));
+    expect(closeEnter).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'action',
+      action: 'copy',
+    }));
 
     act(() => root?.unmount());
     root = null;
@@ -139,7 +151,10 @@ describe('TerminalContextMenu', () => {
     renderMenu([{ action: 'paste', label: 'Paste', onClick: onSpace }], closeSpace);
     press(' ');
     expect(onSpace).toHaveBeenCalledTimes(1);
-    expect(closeSpace).toHaveBeenCalledWith(expect.objectContaining({ reason: 'action' }));
+    expect(closeSpace).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'action',
+      action: 'paste',
+    }));
   });
 
   it('disables an item and suppresses its onClick when `disabled` is set', () => {
