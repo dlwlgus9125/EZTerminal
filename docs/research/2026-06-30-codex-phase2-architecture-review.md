@@ -1,6 +1,6 @@
 # Codex 아키텍처 검증 — Phase 2 (풀스크린 TUI: node-pty + xterm.js)
 
-> 2026-06-30. 코딩 전 게이트(M0). 대상: 승인된 plan `~/.claude/plans/ezterminal-vectorized-tome.md`.
+> 2026-06-30. 코딩 전 게이트(M0). 대상: 승인된 Phase 2 구현 계획.
 > 방식: Codex(codex-cli 0.142.0) 적대적 read-only 아키텍처 리뷰(plan + 핵심 소스 파일).
 > **Verdict: REVISE — 4 blocker.** 전부 plan에 반영하여 해소 후 M1 착수.
 

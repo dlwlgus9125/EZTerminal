@@ -1,49 +1,134 @@
 // @vitest-environment jsdom
 
 import { act } from 'react';
-import { createRoot } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { EzTerminalApi } from '../shared/ipc';
+import type { EzTerminalApi, SystemStatsSnapshot } from '../shared/ipc';
 import { createCapabilityAccess } from './capability-access';
 import { StatusPanel } from './StatusPanel';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+let container: HTMLDivElement;
+let root: Root | null;
+
+const snapshot: SystemStatsSnapshot = {
+  at: Date.UTC(2026, 6, 26, 12, 34, 56),
+  cpu: { loadPct: 37.4, cores: [12, 63] },
+  mem: { usedBytes: 4 * 1073741824, totalBytes: 8 * 1073741824 },
+  memDetail: {
+    availableBytes: 3 * 1073741824,
+    cachedBytes: 1 * 1073741824,
+    swapUsedBytes: 512 * 1048576,
+    swapTotalBytes: 2 * 1073741824,
+  },
+  net: { iface: 'Ethernet-fixture', rxSec: 2 * 1048576, txSec: 512 * 1024 },
+  disks: [{ mount: 'C:', usedBytes: 75 * 1073741824, sizeBytes: 100 * 1073741824 }],
+  procs: [{ pid: 42, name: 'fixture-node.exe', cpuPct: 9.5, memBytes: 256 * 1048576 }],
+  conns: [{
+    proto: 'TCP',
+    local: '127.0.0.1:2026',
+    peer: '127.0.0.1:3030',
+    state: 'ESTABLISHED',
+    process: 'fixture-node.exe',
+  }],
+};
+
+function makeCore(history: readonly SystemStatsSnapshot[] = []) {
+  return {
+    getStatsHistory: vi.fn(async () => history),
+    onStatsUpdate: vi.fn(() => vi.fn()),
+    subscribePackets: vi.fn(),
+    unsubscribePackets: vi.fn(),
+  };
+}
+
+async function render(core: ReturnType<typeof makeCore>): Promise<void> {
+  const capabilities = createCapabilityAccess({
+    readCore: () => core as unknown as EzTerminalApi,
+    readDesktop: () => undefined,
+  });
+  await act(async () => {
+    root?.render(<StatusPanel capabilities={capabilities} />);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+async function click(testId: string): Promise<void> {
+  await act(async () => {
+    container.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+beforeEach(() => {
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    callback(0);
+    return 1;
+  });
+  vi.stubGlobal('cancelAnimationFrame', vi.fn());
+  container = document.createElement('div');
+  document.body.append(container);
+  root = createRoot(container);
+});
+
 afterEach(() => {
-  document.body.replaceChildren();
+  act(() => root?.unmount());
+  root = null;
+  container.remove();
   localStorage.clear();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
-describe('StatusPanel packet handoff', () => {
-  it('requires trusted source AND origin, and closes superseded packet ports', async () => {
-    const subscribePackets = vi.fn();
-    const unsubscribePackets = vi.fn();
-    const core = {
-      getStatsHistory: vi.fn(async () => []),
-      onStatsUpdate: vi.fn(() => vi.fn()),
-      subscribePackets,
-      unsubscribePackets,
-    } as unknown as EzTerminalApi;
-    const capabilities = createCapabilityAccess({
-      readCore: () => core,
-      readDesktop: () => undefined,
-    });
-    const container = document.createElement('div');
-    document.body.append(container);
-    const root = createRoot(container);
-    localStorage.setItem('ezterminal.packetAckSeen', '1');
+describe('StatusPanel rendering', () => {
+  it('renders every status section from a deterministic snapshot', async () => {
+    await render(makeCore([snapshot]));
 
-    await act(async () => {
-      root.render(<StatusPanel capabilities={capabilities} />);
-      await Promise.resolve();
-    });
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-testid="status-packet-toggle"]')!.click();
-      await Promise.resolve();
-    });
-    expect(subscribePackets).toHaveBeenCalledTimes(1);
+    for (const section of ['cpu', 'mem', 'net', 'conns', 'disk', 'proc']) {
+      expect(container.querySelector(`[data-testid="status-section-${section}"]`)).not.toBeNull();
+    }
+    expect(container.querySelectorAll('[data-testid="status-cpu-cores"] .status-core-row')).toHaveLength(2);
+    expect(container.querySelector('[data-testid="status-mem-detail"]')?.textContent).toContain('4.0 GB');
+    expect(container.querySelector('[data-testid="status-section-net"]')?.textContent).toContain('Ethernet-fixture');
+    expect(container.querySelector('[data-testid="status-section-disk"]')?.textContent).toContain('75%');
+    expect(container.querySelector('[data-testid="status-section-proc"]')?.textContent).toContain('fixture-node.exe');
+    expect(container.querySelector('[data-testid="status-section-conns"]')?.textContent).toContain('ESTABLISHED');
+  });
+});
+
+describe('StatusPanel packet handoff', () => {
+  it('acknowledges once, subscribes only while open, and re-subscribes without a second prompt', async () => {
+    const core = makeCore();
+    await render(core);
+
+    expect(container.querySelector('[data-testid="status-packet-view"]')).toBeNull();
+    await click('status-packet-toggle');
+    expect(container.querySelector('[data-testid="status-packet-ack-confirm"]')).not.toBeNull();
+    expect(core.subscribePackets).not.toHaveBeenCalled();
+
+    await click('status-packet-ack-confirm');
+    expect(localStorage.getItem('ezterminal.packetAckSeen')).toBe('1');
+    expect(core.subscribePackets).toHaveBeenCalledOnce();
+
+    await click('status-packet-toggle');
+    expect(container.querySelector('[data-testid="status-packet-view"]')).toBeNull();
+    expect(core.unsubscribePackets).toHaveBeenCalledOnce();
+
+    await click('status-packet-toggle');
+    expect(container.querySelector('[data-testid="status-packet-ack-confirm"]')).toBeNull();
+    expect(core.subscribePackets).toHaveBeenCalledTimes(2);
+  });
+
+  it('requires trusted source AND origin, and closes superseded packet ports', async () => {
+    const core = makeCore();
+    localStorage.setItem('ezterminal.packetAckSeen', '1');
+    await render(core);
+    await click('status-packet-toggle');
+    expect(core.subscribePackets).toHaveBeenCalledTimes(1);
 
     const foreignSourcePort = {
       addEventListener: vi.fn(),
@@ -113,8 +198,9 @@ describe('StatusPanel packet handoff', () => {
     expect(firstPort.close).toHaveBeenCalledOnce();
     expect(replacementPort.start).toHaveBeenCalledOnce();
 
-    act(() => root.unmount());
+    act(() => root?.unmount());
+    root = null;
     expect(replacementPort.close).toHaveBeenCalledTimes(1);
-    expect(unsubscribePackets).toHaveBeenCalledTimes(1);
+    expect(core.unsubscribePackets).toHaveBeenCalledTimes(1);
   });
 });

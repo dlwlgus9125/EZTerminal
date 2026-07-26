@@ -19,7 +19,7 @@ import { useUiPreferences } from './ui-preferences';
 
 export type SettingsCategory = 'general' | 'appearance' | 'terminal' | 'agents' | 'integrations' | 'about';
 
-const SETTINGS_CATEGORIES = [
+export const SETTINGS_CATEGORIES = [
   { id: 'general', labelKey: 'settings.general' },
   { id: 'appearance', labelKey: 'settings.appearance' },
   { id: 'terminal', labelKey: 'settings.terminalSafety' },

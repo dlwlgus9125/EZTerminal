@@ -715,7 +715,11 @@ export function attachConnection(
   let connectionClosed = false;
   const runLeases = leasesFor(options);
   const terminalCapabilities = new TerminalFileCapabilityStore();
-  const runs = new Map<string, { readonly sessionId: string; readonly port: RemotePort }>();
+  const runs = new Map<string, {
+    readonly sessionId: string;
+    readonly port: RemotePort;
+    readonly initiatedHere: boolean;
+  }>();
   const pendingLeaseResumes = new Map<string, { readonly sessionId: string; readonly runId: string }>();
   // This connection's own stats subscription (independent of the desktop panel
   // and of every other connection — statsSource.acquire()/release() combine
@@ -784,6 +788,8 @@ export function attachConnection(
   const resumeRun = async (sessionId: string, runId: string, generation: number): Promise<void> => {
     const pendingKey = `${sessionId}\0${runId}`;
     const leaseWasPresent = runLeases.has(sessionId, runId);
+    const leaseWasOwned = clientIdentity !== null
+      && runLeases.isOwnedBy(sessionId, runId, clientIdentity.clientId);
     if (leaseWasPresent) pendingLeaseResumes.set(pendingKey, { sessionId, runId });
     const attached = await options.broker.attachRunChecked(sessionId, runId);
     if (leaseWasPresent) pendingLeaseResumes.delete(pendingKey);
@@ -811,13 +817,18 @@ export function attachConnection(
       return;
     }
     if (connectionClosed) {
-      runLeases.park(sessionId, runId, port1);
+      runLeases.park(
+        sessionId,
+        runId,
+        port1,
+        leaseWasOwned && clientIdentity ? clientIdentity.clientId : undefined,
+      );
       port1.start();
       orphan?.close();
       return;
     }
 
-    const record = { sessionId, port: port1 };
+    const record = { sessionId, port: port1, initiatedHere: leaseWasOwned };
     runs.get(runId)?.port.close();
     runs.set(runId, record);
     port1.on('message', (event) => {
@@ -826,11 +837,13 @@ export function attachConnection(
     port1.on('close', () => {
       if (runs.get(runId) === record) runs.delete(runId);
     });
-    // Reset the stable renderer before starting the replay queue. If no lease
-    // existed, the old server-side socket may still be half-open, so explicitly
-    // take PTY control rather than waiting for its eventual close.
+    // Reset the stable renderer before starting the replay queue. An owned
+    // initiating lease reclaims PTY control explicitly: closing a leased
+    // MessagePortMain is not a reliable utility-process handoff signal. The
+    // lease-less case retains the existing claim because an old socket may
+    // still be half-open. A resumed observer lease stays viewing-only.
     send({ kind: 'resume-run-ready', sessionId, runId, generation });
-    if (!orphan) port1.postMessage({ type: 'pty-claim-control' });
+    if (leaseWasOwned || !orphan) port1.postMessage({ type: 'pty-claim-control' });
     port1.start();
     orphan?.close();
   };
@@ -981,7 +994,14 @@ export function attachConnection(
     unsubAgentSnapshot();
     for (const [runId, record] of runs) {
       if (releaseRunsOnClose) record.port.close();
-      else runLeases.park(record.sessionId, runId, record.port);
+      else {
+        runLeases.park(
+          record.sessionId,
+          runId,
+          record.port,
+          record.initiatedHere && clientIdentity ? clientIdentity.clientId : undefined,
+        );
+      }
     }
     runs.clear();
     if (statsVisible) {
@@ -1163,7 +1183,16 @@ export function attachConnection(
         options.broker
           .listRuns()
           .then((runs) => {
-            if (authed) send({ kind: 'run-list', runs });
+            if (!authed) return;
+            send({
+              kind: 'run-list',
+              runs: runs.map((run) => (
+                clientIdentity
+                && runLeases.isOwnedBy(run.sessionId, run.runId, clientIdentity.clientId)
+                  ? { ...run, resumeOwned: true }
+                  : run
+              )),
+            });
           })
           .catch(() => {});
         break;
@@ -1229,7 +1258,7 @@ export function attachConnection(
         // return (dead interpreter) means no port to relay — skip, don't throw.
         const port1 = options.broker.runCommand(msg.sessionId, runId, msg.commandText, 'mobile');
         if (!port1) break;
-        const record = { sessionId, port: port1 };
+        const record = { sessionId, port: port1, initiatedHere: true };
         runs.get(runId)?.port.close();
         runs.set(runId, record);
         port1.on('message', (event) => {
@@ -1251,7 +1280,7 @@ export function attachConnection(
         // Same null-guard as run-command: a dead interpreter yields no port.
         const port1 = options.broker.attachRun(sessionId, runId);
         if (!port1) break;
-        const record = { sessionId, port: port1 };
+        const record = { sessionId, port: port1, initiatedHere: false };
         runs.get(runId)?.port.close();
         runs.set(runId, record);
         port1.on('message', (event) => {

@@ -327,6 +327,10 @@ interface ResumeRetryState {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
+function runKey(sessionId: string, runId: string): string {
+  return `${sessionId}\0${runId}`;
+}
+
 export class WsEzTerminalTransport implements EzTerminalApi {
   /** Not meaningful for a remote WS client — no local Electron/Chrome/Node process. */
   readonly versions: RuntimeVersions;
@@ -382,6 +386,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   /** `list-runs` has no correlation id on the wire either (M1 mirror-active-
    * runs) — same FIFO precedent as `pendingListSessions` above. */
   private readonly pendingListRuns: Array<(runs: readonly RunStartedInfo[]) => void> = [];
+  /** Parked initiating runs advertised to this install after a full WebView
+   * process restart. attachRun consumes the marker and performs an
+   * authoritative resume instead of creating a viewing-only mirror. */
+  private readonly restartResumableRuns = new Set<string>();
   private readonly sessionDeadListeners = new Set<(info?: { logPath?: string | null }) => void>();
   /** Mobile-only (M2 ConnectScreen): fires on every authed transition, including
    * an immediate replay of the CURRENT state to a listener that just subscribed. */
@@ -700,6 +708,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * whether this connection is the run's initiator or an attacher, since
    * `frame` messages carry only `runId` either way. */
   attachRun(sessionId: string, runId: string): Promise<void> {
+    const resumeOwned = this.restartResumableRuns.delete(runKey(sessionId, runId));
     const port = new FakeMessagePort((control) => {
       this.send({ kind: 'control', runId, control });
       if (control.type === 'close') {
@@ -709,8 +718,17 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     });
     this.clearResumeRetry(runId);
     this.ports.get(runId)?.port.close();
-    this.ports.set(runId, { sessionId, runId, port, initiatedHere: false });
-    this.send({ kind: 'attach-run', sessionId, runId });
+    this.ports.set(runId, { sessionId, runId, port, initiatedHere: resumeOwned });
+    this.send(
+      resumeOwned
+        ? { kind: 'resume-run', sessionId, runId, generation: this.generation }
+        : { kind: 'attach-run', sessionId, runId },
+    );
+    e2eLog(
+      resumeOwned ? 'transport:resume-owned' : 'transport:attach',
+      `generation=${this.generation}`,
+      `runId=${runId}`,
+    );
     const event = new MessageEvent('message', { data: { _ezAttachPort: runId }, source: window });
     Object.defineProperty(event, 'ports', { value: [port], enumerable: true, configurable: true });
     window.dispatchEvent(event);
@@ -2071,6 +2089,15 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         this.pendingListSessions.shift()?.(msg.sessions);
         break;
       case 'run-list':
+        this.restartResumableRuns.clear();
+        for (const run of msg.runs) {
+          if (run.resumeOwned) this.restartResumableRuns.add(runKey(run.sessionId, run.runId));
+        }
+        e2eLog(
+          'transport:run-list',
+          `count=${msg.runs.length}`,
+          `resumeOwned=${this.restartResumableRuns.size}`,
+        );
         this.pendingListRuns.shift()?.(msg.runs);
         break;
       case 'frame': {

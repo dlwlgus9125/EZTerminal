@@ -1596,6 +1596,51 @@ describe('WsEzTerminalTransport — session mirroring (M2)', () => {
     expect(controller.getSnapshot().startCwd).toBe('/a');
   });
 
+  it('authoritatively resumes an initiating run advertised after a full app restart', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const runsPromise = transport.listRuns();
+    expect(sockets[0].lastSent()).toEqual({ kind: 'list-runs' });
+    sockets[0].triggerMessage({
+      kind: 'run-list',
+      runs: [{
+        sessionId: 'sess-1',
+        runId: 'run-owned',
+        commandText: 'codex',
+        resumeOwned: true,
+      }],
+    });
+    await expect(runsPromise).resolves.toHaveLength(1);
+
+    const capture = captureEzAttachPort('run-owned');
+    await transport.attachRun('sess-1', 'run-owned');
+    capture.stop();
+
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'resume-run',
+      sessionId: 'sess-1',
+      runId: 'run-owned',
+      generation: 1,
+    });
+    expect(capture.port).toBeDefined();
+
+    const controller = new BlockController('codex', capture.port!, { mirror: true });
+    sockets[0].triggerMessage({
+      kind: 'resume-run-ready',
+      sessionId: 'sess-1',
+      runId: 'run-owned',
+      generation: 1,
+    });
+    sockets[0].triggerMessage({
+      kind: 'frame',
+      runId: 'run-owned',
+      frame: { type: 'pty-control', hasControl: true },
+    });
+    expect(controller.getSnapshot().hasControl).toBe(true);
+  });
+
   it('relays a control posted to an attached port as {kind:control, runId, control}', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });

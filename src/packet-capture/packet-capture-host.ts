@@ -34,8 +34,8 @@
  * decode headers) but never copied into a PacketRow, logged, or written to
  * disk.
  *
- * `cap` is the only maintained packet-capture binding for Node (spike:
- * .omc/artifacts/packet-spike/results-rerun.md §5) but requires Npcap on
+ * `cap` is the maintained packet-capture binding selected for Node after the
+ * initial compatibility measurement, but it requires Npcap on
  * Windows and is a real native module — `require('cap')` throws a catchable
  * error when Npcap/wpcap.dll is absent, reported as `npcap-missing` rather
  * than crashing the host. This file therefore `require()`s `cap` LAZILY,

@@ -4,8 +4,7 @@ import path from 'node:path';
 import { launchApp } from './launch-app';
 import { readXtermBuffer } from './xterm-buffer';
 
-// Regression lock (scroll-fixer investigation — see .omc/research or session
-// handoff for the full diagnostic writeup): a user reported "can't scroll up
+// Regression lock from the scroll-fixer investigation: a user reported "can't scroll up
 // inside a TUI takeover xterm to see earlier output." Root-caused to the
 // specific TUI program (claude's ink renderer redraws its whole screen via
 // absolute cursor positioning confined to the CURRENT terminal row count, and

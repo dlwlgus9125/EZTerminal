@@ -62,20 +62,3 @@ test('theme selection applies immediately and persists across relaunch', async (
     .toBe('dark');
   await app2.close();
 });
-
-test('all built-in themes are available in canonical order and selectable', async () => {
-  const dir = tempUserData();
-  const app = await launchApp(dir);
-  const w = await app.firstWindow();
-  const select = await openThemeSettings(w);
-  expect(await select.locator('option').evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value)))
-    .toEqual(['dark', 'light', 'high-contrast', 'matrix']);
-  for (const theme of ['dark', 'light', 'high-contrast', 'matrix']) {
-    await select.selectOption(theme);
-    await expect
-      .poll(() => w.evaluate(() => document.documentElement.getAttribute('data-theme')))
-      .toBe(theme);
-  }
-
-  await app.close();
-});

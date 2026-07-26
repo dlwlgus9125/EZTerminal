@@ -1,6 +1,6 @@
 // Adaptive-render e2e fixture: replays the EXACT ink-style (claude) trigger burst
-// captured by the M0a spike (.omc/research/pty-signal-measurements.md §4/§7,
-// claude.raw at t≈2987ms) — bracketed paste + focus-tracking is the confirmed,
+// captured by the M0a ConPTY measurements (claude.raw at t≈2987ms) —
+// bracketed paste + focus-tracking is the confirmed,
 // zero-false-positive, sigil-free claude/codex signal. Not a synthetic/invented
 // sequence — copied verbatim from the real capture.
 process.stdout.write(

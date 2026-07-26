@@ -9,9 +9,9 @@ import { readXtermBuffer } from './xterm-buffer';
 // sigil-free (no `!`) so the auto-detection itself is what's under test; see
 // pty.spec.ts for the `!cmd` forceXterm path (unaffected by M3).
 //
-// Fixtures are derived from the M0a measurement spike
-// (.omc/research/pty-signal-measurements.md) — the ink/ratatui trigger burst is
-// copied verbatim from the real claude/codex captures (§4/§7); the others match
+// Fixtures are derived from the initial M0a ConPTY measurements — the
+// ink/ratatui trigger burst is copied verbatim from real claude/codex captures;
+// the others match
 // the OBSERVED PATH for their category (npm/pnpm-style progress, line-oriented
 // prompts, large plain output: all measured to trigger NOTHING and must stay
 // plain).

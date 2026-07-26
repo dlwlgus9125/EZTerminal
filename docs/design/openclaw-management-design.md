@@ -1,6 +1,6 @@
 # OpenClaw 관리 기능 설계 (OpenClaw Management)
 
-> 완료 2026-07-12. EZTerminal 안에서 로컬 **OpenClaw**(개인 AI 어시스턴트 게이트웨이, 예약작업 "OpenClaw Gateway"로 `127.0.0.1:18789` 상시 구동)를 관리한다 — 상태·수명주기·세션·로그·설정 + **채팅**(Control UI 임베드), 데스크톱과 모바일 양쪽 전체 패리티. deep-interview 확정(`.omc/specs/deep-interview-openclaw-management.md`), OMC team 하네스로 구현(Wave 0~4).
+> 완료 2026-07-12. EZTerminal 안에서 로컬 **OpenClaw**(개인 AI 어시스턴트 게이트웨이, 예약작업 "OpenClaw Gateway"로 `127.0.0.1:18789` 상시 구동)를 관리한다 — 상태·수명주기·세션·로그·설정 + **채팅**(Control UI 임베드), 데스크톱과 모바일 양쪽 전체 패리티.
 
 ## 수명주기 위임 모델 — EZTerminal은 게이트웨이를 소유하지 않는다
 

@@ -35,6 +35,19 @@ describe('RemoteRunLeaseRegistry', () => {
     expect(registry.size).toBe(0);
   });
 
+  it('exposes initiating ownership only to the matching mobile install', () => {
+    const registry = new RemoteRunLeaseRegistry({ ttlMs: 1_000 });
+    const port = new FakePort();
+    registry.park('s1', 'r1', port, 'client-a');
+
+    expect(registry.isOwnedBy('s1', 'r1', 'client-a')).toBe(true);
+    expect(registry.isOwnedBy('s1', 'r1', 'client-b')).toBe(false);
+    expect(registry.isOwnedBy('s1', 'missing', 'client-a')).toBe(false);
+
+    registry.release('s1', 'r1');
+    expect(registry.isOwnedBy('s1', 'r1', 'client-a')).toBe(false);
+  });
+
   it('expires a lease and evicts the oldest entry at the cap', () => {
     vi.useFakeTimers();
     try {

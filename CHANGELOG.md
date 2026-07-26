@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-07-25
+
+### Changed
+- Made the Windows remote host Per-Monitor DPI Awareness v2 so PC Control captures physical monitor pixels correctly at scaled display settings.
+- Sized and centered mobile video from the actual viewport and device-pixel ratio, including rotation, fold, and window-size changes.
+- Bounded stream resolution and bitrate to the active quality level, and folded encoder pressure and mobile frame drops into adaptive quality decisions.
+- Coalesced pointer movement under data-channel backpressure so stale input cannot accumulate.
+
+### Compatibility
+- Added optional viewport fields to public remote protocol v2 while keeping older clients compatible.
+- Required the desktop application and internal Windows remote-host service to update together.
+- Kept lock-screen/UAC secure-desktop capture, Software SAS, and Ctrl+Alt+Delete explicitly unsupported.
+
+See [1.0.5 release notes](docs/release/release-notes-1.0.5.md).
+
+## [1.0.4] - 2026-07-24
+
+### Changed
+- Promoted the commercial-hardening candidate to a release after validating bounded output retention, recovery, remote-control fail-closed behavior, and exact-SHA release evidence.
+- Added verified Linux AAPT2 artifacts to Gradle dependency metadata so Android release builds fail closed on an untrusted tool binary.
+
+See [1.0.4 release notes](docs/release/release-notes-1.0.4.md).
+
+## [1.0.3] - 2026-07-24
+
+### Changed
+- Bounded structured-result and PTY retention with explicit capacity failure and lifecycle cleanup.
+- Added renderer recovery boundaries, narrow runtime adapters, pinned toolchains, dependency audits, SBOM generation, and the release performance evidence contract.
+- Hardened direct Codex terminal keys and paste handling while preserving ordinary PTY and mobile control behavior.
+
+See [1.0.3 release notes](docs/release/release-notes-1.0.3.md).
+
 ## [1.0.2] - 2026-07-22
 
 ### Added

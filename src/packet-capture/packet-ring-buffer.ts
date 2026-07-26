@@ -6,8 +6,8 @@
  * excluded from vitest's plain-Node run for exactly that reason — see its own
  * header comment.
  *
- * Spike numbers (.omc/artifacts/packet-spike/results-rerun.md §4): ordinary
- * LAN traffic already bursts to 150-195 packets/sec, ~15-20x the plan's
+ * Initial measurements found ordinary LAN traffic bursting to 150-195
+ * packets/sec, ~15-20x the renderer's
  * ≤10 msg/s renderer throttle budget. A naive one-message-per-packet (or
  * unbounded-queue) design would flood the renderer or grow memory unbounded.
  * This buffer caps at `capacity` rows and drops the OLDEST once full; the

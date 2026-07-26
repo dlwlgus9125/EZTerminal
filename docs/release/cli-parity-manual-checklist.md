@@ -1,6 +1,6 @@
 # CLI 패리티 — 수동 검증 체크리스트 (AC-1/AC-2/AC-3/AC-4/AC-10)
 
-> 플랜 `.omc/plans/cli-parity-auto-pty.md` M5. **왜 수동인가**: `claude`/`codex`는 실행에
+> **왜 수동인가**: `claude`/`codex`는 실행에
 > 로그인 인증이 필요해 CI에서 자동화할 수 없다. AC-1/AC-2의 "기계 경로"(PATHEXT resolve →
 > M1 배치 PTY spawn → M3 xterm 업그레이드)는 이미 `e2e/adaptive-render.spec.ts`의
 > ink풍 `.cmd` shim 픽스처로 상시 회귀 검증된다 — 이 문서는 그 위에 실제 바이너리로만
@@ -44,7 +44,7 @@
 
 `node` REPL은 `e2e/pty.spec.ts`의 AC-3 케이스가 상시 자동 회귀로 커버한다(빌드에 항상 존재하는
 런타임이라 픽스처가 필요 없음). `python`은 이 머신에 상시 설치를 전제할 수 없어 자동 e2e 대상이
-아니다 — M0a 실측 스파이크(`.omc/research/pty-signal-measurements.md`)에서 1회 확인됨: 고신뢰
+아니다 — 초기 ConPTY 실측에서 1회 확인됨: 고신뢰
 TUI 신호 미방출, plain 렌더 유지, 최소 키셋 입력으로 정상 평가/종료. 릴리스마다 재확인:
 
 - [ ] EZTerminal에서 `python` 입력(sigil 없이) → Run → PLAIN 렌더로 프롬프트(`>>>`) 표시
@@ -79,8 +79,8 @@ TUI 신호 미방출, plain 렌더 유지, 최소 키셋 입력으로 정상 평
       있었으나, 근본 원인이 **이 머신에 설치된 구형 시스템 ConPTY**(Windows 10 19045,
       2019~2021년대 conhost 빌드)의 실제 결함으로 확정되었고 이제 해소되었다: claude(ink)의
       렌더러가 절대좌표로 매 프레임을 다시 그리는 동안, 화면 밖으로 밀려난 이전 턴의 바이트를
-      OS ConPTY 자체가 재합성 과정에서 누락시킴(30초 raw 캡처에서 긴 응답의 앞부분 확인 —
-      `.omc/research/pty-signal-measurements.md` §9). **해소**: node-pty가 자체 번들
+      OS ConPTY 자체가 재합성 과정에서 누락시킴(30초 raw 캡처에서 긴 응답의 앞부분 확인).
+      **해소**: node-pty가 자체 번들
       `conpty.dll`/`OpenConsole.exe`(최신 빌드)를 쓰도록 하는 `useConptyDll:true` 옵션을
       `src/interpreter/external/pty-runner.ts`에서 채택 — 동일한 결정적 재현 시나리오(실제
       claude 80줄 응답)를 Electron+xterm.js 실 UI로 재검증한 결과, 휠 스크롤로 대화 시작

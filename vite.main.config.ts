@@ -14,8 +14,7 @@ import { defineConfig } from 'vite';
 // "5.31.11" version string — with no literal `require('systeminformation')`
 // or the bare string "systeminformation" anywhere in the output, confirming
 // Rollup treated it as ordinary bundled JS, not an external). Runtime
-// behavior in the packaged exe is still confirmed by team-verify's packaged
-// smoke (T3.5, .omc/plans/status-overlay-panel.md).
+// behavior in the packaged exe is still confirmed by the packaged smoke test.
 //
 // ws (mobile remote-control M0/M3) is NOT safe to bundle here, unlike
 // systeminformation above: it has an internal `require('bufferutil')` /

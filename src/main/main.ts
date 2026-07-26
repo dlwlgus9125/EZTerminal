@@ -35,6 +35,7 @@ import { GracefulShutdownCoordinator } from './graceful-shutdown';
 import { OpenClawService } from './openclaw-service';
 import { OpenClawChatViewManager } from './openclaw-chat-view';
 import { startOpenClawProxy, DEFAULT_OPENCLAW_PROXY_PORT, type OpenClawProxyHandle } from './openclaw-proxy';
+import { resolveOpenClawVisibility } from './openclaw-visibility';
 import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
 import { SshForwardService } from './ssh-forward-service';
 import { sshForwardFailure, type SshForwardResult } from '../shared/ssh-forward';
@@ -195,24 +196,8 @@ let openClawChatView: OpenClawChatViewManager | null = null;
 // attach() needs a handle to the window it should embed into.
 let mainWindowRef: BrowserWindow | null = null;
 
-/**
- * OpenClaw desktop visibility (openclaw-stabilization M2): resolves the
- * tri-state `openclawMode` setting into an effective on/off. 'auto' defers to
- * `isInstalled` (OpenClawService.isInstalled(), TTL'd negative-cache); 'on'/
- * 'off' are unconditional. A standalone function (not a closure over one
- * OpenClawService instance) so the WS remote bridge (M3) can reuse it.
- */
-async function resolveOpenClawVisibility(
-  mode: OpenClawMode,
-  isInstalled: () => Promise<boolean>,
-): Promise<boolean> {
-  if (mode === 'on') return true;
-  if (mode === 'off') return false;
-  return isInstalled();
-}
-
 // OpenClaw desktop visibility (openclaw-stabilization M5): in 'auto' mode,
-// `resolveOpenClawVisibility` above only ever reruns on boot or an explicit
+// `resolveOpenClawVisibility` only ever reruns on boot or an explicit
 // mode toggle — nothing re-queries `isInstalled()` on its own, so installing
 // or uninstalling the openclaw CLI mid-session never updates gating until
 // one of those happens. This drives a periodic recheck (main.ts, near the

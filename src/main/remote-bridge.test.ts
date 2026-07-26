@@ -1241,6 +1241,93 @@ describe('RemoteBridge — run-command frame/control multiplexing', () => {
 });
 
 describe('RemoteBridge — connection teardown', () => {
+  it('advertises a parked initiating run only to the same restarted mobile install', async () => {
+    const identity = {
+      clientId: '01947000-0000-4000-8000-000000000001',
+      clientName: 'Restarting phone',
+      platform: 'android' as const,
+    };
+    const first = new FakeWs();
+    const leases = new RemoteRunLeaseRegistry({ ttlMs: 60_000 });
+    const { options, interpreter, channels } = makeOptions({ runLeases: leases });
+    attachConnection(first, options);
+    first.clientSend({ ...authMessage(), clientIdentity: identity });
+    await flush();
+
+    first.clientSend({
+      kind: 'run-command',
+      runId: 'run-owned',
+      sessionId: 'sess-1',
+      commandText: 'codex',
+    });
+    first.close();
+    expect(leases.isOwnedBy('sess-1', 'run-owned', identity.clientId)).toBe(true);
+
+    const requestRunList = async (ws: FakeWs): Promise<void> => {
+      ws.clientSend({ kind: 'list-runs' });
+      const request = [...interpreter.posted]
+        .reverse()
+        .find((entry) => entry.message.type === 'list-runs')?.message;
+      if (request?.type !== 'list-runs') throw new Error('no run-list request');
+      interpreter.emit({
+        type: 'run-list',
+        requestId: request.requestId,
+        runs: [{ sessionId: 'sess-1', runId: 'run-owned', commandText: 'codex' }],
+      });
+      await flush();
+    };
+
+    const restarted = new FakeWs();
+    attachConnection(restarted, options);
+    restarted.clientSend({ ...authMessage(), clientIdentity: identity });
+    await flush();
+    await requestRunList(restarted);
+    expect(restarted.sent).toContainEqual({
+      kind: 'run-list',
+      runs: [{
+        sessionId: 'sess-1',
+        runId: 'run-owned',
+        commandText: 'codex',
+        resumeOwned: true,
+      }],
+    });
+
+    const other = new FakeWs();
+    attachConnection(other, options);
+    other.clientSend({
+      ...authMessage(),
+      clientIdentity: {
+        ...identity,
+        clientId: '01947000-0000-4000-8000-000000000002',
+        clientName: 'Other phone',
+      },
+    });
+    await flush();
+    await requestRunList(other);
+    expect(other.sent).toContainEqual({
+      kind: 'run-list',
+      runs: [{ sessionId: 'sess-1', runId: 'run-owned', commandText: 'codex' }],
+    });
+
+    restarted.clientSend({
+      kind: 'resume-run',
+      sessionId: 'sess-1',
+      runId: 'run-owned',
+      generation: 1,
+    });
+    acceptLatestAttach(interpreter);
+    await flush();
+    expect(restarted.sent).toContainEqual({
+      kind: 'resume-run-ready',
+      sessionId: 'sess-1',
+      runId: 'run-owned',
+      generation: 1,
+    });
+    expect(channels[1].port1.posted).toContainEqual({ type: 'pty-claim-control' });
+    expect(channels[0].port1.closed).toBe(true);
+    leases.dispose();
+  });
+
   it('parks transient runs, resumes with ready-before-replay, and explicitly releases them', async () => {
     const ws = new FakeWs();
     const leases = new RemoteRunLeaseRegistry({ ttlMs: 60_000 });
@@ -1280,6 +1367,7 @@ describe('RemoteBridge — connection teardown', () => {
       runId: 'run-1',
       generation: 2,
     });
+    expect(channels[2].port1.posted).not.toContainEqual({ type: 'pty-claim-control' });
     expect(channels[2].port1.started).toBe(true);
     expect(channels[0].port1.closed).toBe(true);
     channels[2].port2.postMessage({ type: 'schema', shape: 'pty', columns: [] });

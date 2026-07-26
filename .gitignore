@@ -82,10 +82,6 @@ native/**/target/
 /blob-report/
 /playwright/.cache/
 
-# oh-my-claudecode operational state (keep committable skills only)
-.omc/
-!.omc/skills/
-
 # Claude Code local/personal settings (machine-specific)
 .claude/settings.local.json
 

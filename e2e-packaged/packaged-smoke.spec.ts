@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -23,6 +24,16 @@ import { packagedExePath } from './paths';
 // covered by `pnpm e2e`; the ONLY packaged delta is the asar-fork, verified here.
 
 const EXE = packagedExePath();
+
+function packagedAsarEntries(): string[] {
+  const require = createRequire(__filename);
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const asar = require('@electron/asar') as typeof import('@electron/asar');
+  const asarPath = path.join(path.dirname(EXE), 'resources', 'app.asar');
+  return asar
+    .listPackage(asarPath, { isPack: false })
+    .map((entry) => entry.replace(/\\/g, '/').replace(/^\/+/, ''));
+}
 
 /** Collected stdout+stderr text of a child, for log-line assertions. */
 function captureOutput(child: ChildProcess): { text: () => string } {
@@ -83,6 +94,10 @@ test('packaged EXE: interpreter utilityProcess forks from app.asar under fuses',
   child.on('exit', (code) => (exitCode = code));
 
   try {
+    const entries = packagedAsarEntries();
+    expect(entries, `app.asar entries:\n${entries.join('\n')}`)
+      .toContain('.vite/build/script-host.js');
+
     // 1) The packaged main process boots under the fuses and forks the interpreter
     //    from inside app.asar (not from disk).
     await waitFor(() => out.text().includes('[main] EZTerminal main process ready'), 30_000, 'main ready');

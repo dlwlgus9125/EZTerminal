@@ -60,8 +60,8 @@ describe('buildCmdLine — node-pty pass-through (real ConPTY, real cmd.exe)', (
     return cmd;
   }
 
-  // Strip ConPTY's own CSI/OSC noise (prelude + any repaint bracketing, see
-  // .omc/research/pty-signal-measurements.md) so the JSON array can be found by a
+  // Strip ConPTY's own CSI/OSC noise (prelude + repaint bracketing observed in
+  // the initial signal measurements) so the JSON array can be found by a
   // simple bracket match instead of a regex that has to reason about escape codes.
   function stripAnsi(text: string): string {
     /* eslint-disable no-control-regex -- matching literal ESC/control bytes is the point */

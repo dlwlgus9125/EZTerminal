@@ -1,5 +1,4 @@
-// Generates the real app icon assets from appicon.png (source artwork), replacing
-// the placeholder from generate-placeholder-icon.mjs (B-M1, kept for reference).
+// Generates the production app icon assets from appicon.png (source artwork).
 // Rerunnable: `node scripts/generate-app-icon.mjs`.
 //
 // - assets/icon.ico: multi-size Windows icon via png2icons (zero deps, pure JS —

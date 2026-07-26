@@ -833,9 +833,9 @@ export interface RunStartedInfo {
 
 // ── System stats overlay panel (status-overlay-panel, rev6/Option A″) ───────
 // SystemStatsService (main) runs a persistent 1s pure-JS loop for cpu/mem
-// (si.currentLoad() + Node os.totalmem()/freemem() — no PowerShell, no
-// persistent session: see .omc/artifacts/stats-spike/results.md for why a
-// persistent powerShellStart() session was rejected). net/disks/procs are
+// (si.currentLoad() + Node os.totalmem()/freemem() — no PowerShell; a persistent
+// powerShellStart() session was rejected because it serialized concurrent
+// calls). net/disks/procs are
 // collected by independent, panel-open-only spawned-PowerShell loops and are
 // null while the panel is closed or during warmup.
 // Channels: 'stats:update' (main -> renderer push, panelVisible only, 1Hz),

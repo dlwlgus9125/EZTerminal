@@ -75,8 +75,8 @@ export interface PtyAttachHandle {
 }
 
 /**
- * Adaptive-render trigger detector (Phase 3, M0a-confirmed trigger set —
- * .omc/research/pty-signal-measurements.md §7). Fires ONCE, on the FIRST
+ * Adaptive-render trigger detector (Phase 3, M0a-confirmed trigger set).
+ * Fires ONCE, on the FIRST
  * high-confidence "about to read interactive input" DEC private-mode SET
  * sequence: alt-screen (`?1049h`/`?47h`), bracketed paste (`?2004h`),
  * mouse/focus tracking (`?1000h`-`?1006h`, EXCEPT `?1004h` — see below), or

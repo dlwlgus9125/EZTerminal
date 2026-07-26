@@ -724,6 +724,33 @@ export function getTestIdTextContent(testId: string): Promise<string | null> {
   })()`);
 }
 
+/** Reads the public xterm buffer exposed on the visible PTY container.
+ * Canvas-backed terminal text does not appear in DOM textContent or in the
+ * E2E MutationObserver, so process-restart scenarios use this to verify replay
+ * and post-restart input against the actual terminal surface. */
+export function getVisibleXtermBufferText(): Promise<string> {
+  return evaluateWebView<string>(`(() => {
+    const element = [...document.querySelectorAll('[data-testid="pty-block"]')]
+      .reverse()
+      .find((node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return rect.width > 0 && rect.height > 0
+          && style.display !== 'none' && style.visibility !== 'hidden';
+      });
+    const terminal = element && element.__ezTerm;
+    if (!terminal) return '';
+    const buffer = terminal.buffer.active;
+    const lines = [];
+    for (let index = 0; index < buffer.length; index += 1) {
+      const line = buffer.getLine(index);
+      lines.push(line ? line.translateToString(true) : '');
+    }
+    return lines.join('\\n');
+  })()`);
+}
+
 /** Waits for a unique test control to expose an exact DOM attribute state.
  * Useful for locale-independent selected/toggled assertions that Android's
  * accessibility text would otherwise encode as translated labels. */

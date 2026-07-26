@@ -31,6 +31,11 @@ test('drag-layout: moving a pane preserves its live PTY session (re-parents, nev
 
   const panes = window.getByTestId('pane');
   await expect(panes).toHaveCount(1);
+  const draggable = await window
+    .locator('.dv-tab')
+    .first()
+    .evaluate((el) => (el as HTMLElement).draggable);
+  expect(draggable).toBe(true);
 
   // Start a live PTY in the first pane and wait for its startup output.
   await panes.nth(0).getByTestId('cmd-input').fill(`!node ${ECHO_FIXTURE}`);
@@ -71,22 +76,6 @@ test('drag-layout: moving a pane preserves its live PTY session (re-parents, nev
     .poll(() => readXtermBuffer(window.locator('[data-testid="pty-block"]:visible')), { timeout: 15_000 })
     .toContain('READY');
   await expect(window.locator('[data-testid="block-status"]:visible')).toHaveText('running');
-
-  await app.close();
-});
-
-test('drag-layout: DnD is enabled — dockview tabs are draggable', async () => {
-  const app = await launchApp();
-  const window = await app.firstWindow();
-  await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
-  await expect(window.getByTestId('pane')).toHaveCount(1);
-
-  // With disableDnd removed, dockview marks its tabs draggable (drag layout editor on).
-  const draggable = await window
-    .locator('.dv-tab')
-    .first()
-    .evaluate((el) => (el as HTMLElement).draggable);
-  expect(draggable).toBe(true);
 
   await app.close();
 });

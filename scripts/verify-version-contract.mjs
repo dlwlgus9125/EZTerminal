@@ -31,6 +31,8 @@ const verificationMetadata = await readFile(
 const releaseWorkflow = await readFile(resolve(root, '.github/workflows/release.yml'), 'utf8');
 const ciWorkflow = await readFile(resolve(root, '.github/workflows/ci.yml'), 'utf8');
 const remoteProtocol = await readFile(resolve(root, 'src/shared/remote-protocol.ts'), 'utf8');
+const readme = await readFile(resolve(root, 'README.md'), 'utf8');
+const changelog = await readFile(resolve(root, 'CHANGELOG.md'), 'utf8');
 
 assert(contract.schemaVersion === 1, 'release/version.json schemaVersion must be 1.');
 assert(
@@ -98,6 +100,28 @@ assert(
 assert(
   defaultApkVersionCode === contract.androidVersionCode,
   'mobile/android/scripts/verify-apk.ps1 default versionCode differs from release/version.json.',
+);
+assert(
+  readme.includes(`release-v${contract.version}-brightgreen`),
+  'README.md release badge differs from release/version.json.',
+);
+assert(
+  readme.includes(
+    `EZTerminal-Android-${contract.version}-vc${contract.androidVersionCode}.apk`,
+  ),
+  'README.md Android artifact name differs from release/version.json.',
+);
+assert(
+  readme.includes(
+    `[${contract.version} validation policy]` +
+      `(docs/release/validation-policy-${contract.version}.md)`,
+  ),
+  'README.md validation-policy link differs from release/version.json.',
+);
+const escapedVersion = contract.version.replaceAll('.', '\\.');
+assert(
+  new RegExp(`^## \\[${escapedVersion}\\] - \\d{4}-\\d{2}-\\d{2}$`, 'm').test(changelog),
+  'CHANGELOG.md is missing a dated section for release/version.json.',
 );
 for (const platform of ['linux', 'windows']) {
   assert(

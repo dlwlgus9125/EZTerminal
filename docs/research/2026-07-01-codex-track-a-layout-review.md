@@ -1,8 +1,7 @@
 # Codex 아키텍처 검증 — Track A Phase 1 (멀티세션 셸 백엔드 + dockview 탭)
 
-> 2026-07-01. 코딩 전 게이트(M0). 대상: 승인된 plan `~/.claude/plans/ezterminal-vectorized-island.md`.
+> 2026-07-01. 코딩 전 게이트(M0). 대상: 승인된 Track A 구현 계획.
 > 방식: Codex(codex-cli 0.142.0, gpt-5.5, reasoning xhigh) 적대적 read-only 아키텍처 리뷰(plan + 핵심 소스 8파일).
-> 원본 아티팩트: `.omc/artifacts/ask/codex-adversarial-...-2026-07-01T02-53-08-699Z.md`.
 > **Verdict: REVISE — 8 blocker.** 전부 plan 반영 후 M1 착수.
 
 ## Verdict 요약

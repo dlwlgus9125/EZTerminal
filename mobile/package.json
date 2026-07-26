@@ -19,6 +19,7 @@
     "e2e:smoke": "node e2e/smoke.ts",
     "e2e:parity": "node e2e/parity.ts",
     "e2e:stabilization": "node e2e/apk-stabilization.ts",
+    "e2e:session-restart": "node e2e/session-force-stop-recovery.ts",
     "e2e:release-soak": "node e2e/release-soak.ts",
     "e2e:theme-effects": "node e2e/theme-effects-font.ts"
   },

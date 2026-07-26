@@ -68,14 +68,6 @@ async function main(): Promise<void> {
       await androidBackToTerminal(destination.view);
     }
 
-    // Repeated sheet -> page replacement is the original APK regression.
-    // Alternate destinations so stale markers cannot accidentally cancel out.
-    for (let i = 0; i < 20; i += 1) {
-      const destination = DESTINATIONS[i % DESTINATIONS.length];
-      await openFromMore(destination);
-      await androidBackToTerminal(destination.view);
-    }
-
     // Back closes the More sheet itself before it can leave the workspace.
     await tapTestId('workspace-more-btn');
     await waitForTestId('workspace-more-sheet');

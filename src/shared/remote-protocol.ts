@@ -627,10 +627,16 @@ export interface SessionListMessage {
   readonly sessions: readonly SessionInfo[];
 }
 
+/** Connection-relative metadata for restoring a run after a full mobile
+ * process restart. This does not belong on the origin-agnostic run broadcast. */
+export interface RemoteRunListEntry extends RunStartedInfo {
+  readonly resumeOwned?: true;
+}
+
 /** Reply to `list-runs` — every currently-active run (M1 mirror-active-runs). */
 export interface RunListMessage {
   readonly kind: 'run-list';
-  readonly runs: readonly RunStartedInfo[];
+  readonly runs: readonly RemoteRunListEntry[];
 }
 
 export interface SessionCreatedReply {

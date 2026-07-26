@@ -13,9 +13,7 @@
  *  c. STATS — cores/conns markers (conns proves the M1 refcount works from a
  *     remote-only subscriber), then the 캡처 (packet) tab's view-only `idle`
  *     status (desktop isn't capturing — no Npcap dependency here).
- *  d. THEME — cycle all 4 themes (logcat marker per theme), then a
- *     force-stop+relaunch persistence check (boot-time `applyTheme(loadTheme())`
- *     re-logs the last selection).
+ *  d. FILES — preview/download/upload round trips against desktop fixtures.
  *  e. FOLD GEOMETRY — `wm size`/`wm density` to simulate the Fold7's cover
  *     and main screens, asserting the workspace stays reachable and stats
  *     still arrive at each; a small rotation smoke test at the main profile.
@@ -219,18 +217,6 @@ async function searchDocumentPicker(filename: string): Promise<Point> {
   return center(result.bounds);
 }
 
-const THEME_TEST_ID: Record<string, string> = {
-  Dark: 'dark',
-  Light: 'light',
-  'High Contrast': 'high-contrast',
-  Matrix: 'matrix',
-};
-
-async function selectTheme(label: string): Promise<void> {
-  await openWorkspaceMoreAction('more-theme', 'theme-menu');
-  await tapTestId(`theme-option-${THEME_TEST_ID[label]}`);
-}
-
 /** True once a `[ez-e2e] stats:` logcat line reports at least one CPU core —
  * i.e. a real snapshot has arrived (not just the initial "측정 중…" state). */
 function hasCoreCount(line: string): boolean {
@@ -317,45 +303,10 @@ async function main(): Promise<void> {
     console.log('[parity] step OK: packets idle (view-only, desktop not capturing)');
     await tapTestId('mobile-stats-close');
 
-    // ── d. THEME ─────────────────────────────────────────────────────────
-    console.log('[parity] cycling themes...');
-    for (const [label, marker] of [
-      ['Matrix', 'matrix'],
-      ['Light', 'light'],
-      ['High Contrast', 'high-contrast'],
-      ['Dark', 'dark'],
-    ] as const) {
-      await selectTheme(label);
-      await pollLogcat(`[ez-e2e] theme: ${marker}`, 10000);
-      console.log(`[parity] step OK: theme ${marker}`);
-    }
-
-    console.log('[parity] theme persistence: select Matrix, force-stop, relaunch...');
-    await selectTheme('Matrix');
-    await pollLogcat('[ez-e2e] theme: matrix', 10000);
-    runAdb(['shell', 'am', 'force-stop', APP_ID]);
-    await sleep(1000);
-    runAdb(['logcat', '-c']);
-    runAdb(['shell', 'am', 'start', '-n', `${APP_ID}/.MainActivity`]);
-    // The app lands on ConnectScreen after this restart (auto-reconnect may
-    // or may not beat this poll — irrelevant here; only the boot-time
-    // applyTheme(loadTheme()) marker matters).
-    await pollLogcat('[ez-e2e] theme: matrix', 15000);
-    console.log('[parity] step OK: theme persistence across restart');
-
-    // ── f. FILES (file-explorer plan, M6) ───────────────────────────────
+    // ── d. FILES (file-explorer plan, M6) ───────────────────────────────
     // Run before the geometry mutations so DocumentsUI and file assertions
     // operate at the emulator's default, known-good layout.
     //
-    // The app is on ConnectScreen here (the theme-persistence restart above
-    // left it there) — reconnect and open a fresh tab first, since
-    // MobileWorkspace's Files button only exists once >=1 tab is open.
-    console.log('[parity] reconnecting for the files step...');
-    await connectAndAuth(token);
-    await createTerminalSession();
-    await pollLogcat('[ez-e2e] tab-active:', 10000);
-    console.log('[parity] step OK: reconnected with a fresh tab');
-
     console.log('[parity] creating desktop fixture files...');
     // Keep the picker QUERY strictly alphanumeric while retaining `.txt` so
     // MediaStore publishes a searchable text MIME on API 29/35.

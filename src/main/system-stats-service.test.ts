@@ -1,7 +1,7 @@
 /**
  * SystemStatsService unit tests (status-overlay-panel rev6/T4). `systeminformation`
- * and Electron's `powerMonitor` are mocked — the T1-0 spike already proved the
- * spawn-per-call PowerShell costs empirically (.omc/artifacts/stats-spike/results.md);
+ * and Electron's `powerMonitor` are mocked — the initial measurement already
+ * established the spawn-per-call PowerShell cost;
  * these tests lock in the service's OWN scheduling/gating/timeout/history contracts
  * against a controllable double, using vitest's fake timers (never real delays).
  *

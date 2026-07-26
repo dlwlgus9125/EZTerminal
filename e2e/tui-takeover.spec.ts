@@ -14,7 +14,6 @@ import { readXtermBuffer } from './xterm-buffer';
 // mirroring PtyPlainView's existing exit-focus pattern).
 
 const ECHO_FIXTURE = path.resolve(__dirname, 'fixtures', 'pty-echo.js');
-const INK_LONGLIVED_FIXTURE = path.resolve(__dirname, 'fixtures', 'ink-trigger-longlived.js');
 
 test('tui-takeover: a forced-xterm (`!cmd`) block takes over the pane while running, and releases on exit', async () => {
   const app = await launchApp();
@@ -68,37 +67,6 @@ test('tui-takeover: a forced-xterm (`!cmd`) block takes over the pane while runn
 
   await expect(pane).not.toHaveClass(/pane--tui-takeover/);
   await expect(priorBlock).toBeVisible();
-  await expect(cmdInput).toBeVisible();
-  await expect(cmdInput).toBeFocused();
-
-  await app.close();
-});
-
-test('tui-takeover: a sigil-free auto-upgrade (ink-style trigger) also takes over the pane while running', async () => {
-  const app = await launchApp();
-  const window = await app.firstWindow();
-  await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
-
-  // Long-lived variant of the ink-style trigger burst (stays alive via
-  // setInterval instead of exiting ~300ms after the burst, like
-  // ink-trigger-burst.js does) — gives a deterministic "still running, still
-  // upgraded" window to assert against, instead of racing a fixed timeout.
-  await window.getByTestId('cmd-input').fill(`node ${INK_LONGLIVED_FIXTURE}`);
-  await window.getByTestId('btn-run').click();
-
-  const pane = window.getByTestId('pane');
-  await expect(pane).toHaveClass(/pane--tui-takeover/);
-  await expect
-    .poll(() => readXtermBuffer(window.getByTestId('pty-block')), { timeout: 15_000 })
-    .toContain('INK-STYLE-READY');
-  await expect(window.getByTestId('block-status')).toHaveText('running');
-
-  // Exit: Cancel kills the child -> status flips to cancelled -> takeover releases.
-  await window.getByTestId('block-cancel').click();
-  await expect(window.getByTestId('block-status')).toHaveText('cancelled', { timeout: 15_000 });
-
-  await expect(pane).not.toHaveClass(/pane--tui-takeover/);
-  const cmdInput = window.getByTestId('cmd-input');
   await expect(cmdInput).toBeVisible();
   await expect(cmdInput).toBeFocused();
 

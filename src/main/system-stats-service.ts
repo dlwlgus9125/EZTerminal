@@ -1,13 +1,12 @@
 /**
- * SystemStatsService — status overlay panel stats collector (status-overlay-
- * panel, rev6/Option A″: .omc/plans/status-overlay-panel.md).
+ * SystemStatsService — status overlay panel stats collector.
  *
  * `si.powerShellStart()` (a persistent PowerShell session) must NEVER be used
  * here. The T1-0 spike measured `si.processes()` hanging indefinitely under a
  * persistent session (100% reproducible, 3/3 attempts, session itself stayed
  * alive) and the always-on CPU+MEM+NET trio costing ~1.7x its latency budget
- * because the session serializes concurrent calls through one stdin pipe —
- * see .omc/artifacts/stats-spike/results.md. Every PowerShell-routed call
+ * because the session serializes concurrent calls through one stdin pipe.
+ * Every PowerShell-routed call
  * below therefore uses systeminformation's default (spawn-per-call) mode,
  * guarded by a per-call timeout so a hang can never wedge this service.
  *

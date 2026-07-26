@@ -1,4 +1,4 @@
-// Guard: CLI-parity auto-PTY invariants (plan .omc/plans/cli-parity-auto-pty.md, M5).
+// Guard: CLI-parity auto-PTY invariants.
 //
 // Locks four behaviors that, if silently regressed, would reopen exactly the bugs
 // this feature fixed (claude/codex failing to launch, batch-shim injection, pipes

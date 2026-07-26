@@ -8,12 +8,12 @@
 
 Block-based UI · themes &amp; CRT effects · system monitor · SSH · pair your phone as a remote
 
-![release](https://img.shields.io/badge/release-v1.0.4-brightgreen)
+![release](https://img.shields.io/badge/release-v1.0.5-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 ![built with](https://img.shields.io/badge/built%20with-Electron%20·%20React%20·%20TypeScript-9cf)
 
-<img src="docs/screenshots/01-hero.png" width="840" alt="EZTerminal — a structured-data pipeline rendered as a table" />
+<img src="visual/__snapshots__/storybook.visual.spec.ts/desktop-matrix-workbench.png" width="840" alt="EZTerminal adaptive workbench in the Matrix theme" />
 
 </div>
 
@@ -50,18 +50,11 @@ Light, Dark and a **Matrix CRT** theme, plus importable custom theme mods. Toggl
 glow, a moving CRT roll bar, flicker, jitter and noise — each with live sliders — and pick any bundled
 monospace font.
 
-<table>
-<tr>
-<td width="50%"><img src="docs/screenshots/02-matrix-crt.png" alt="Matrix CRT theme" /></td>
-<td width="50%"><img src="docs/screenshots/04-settings.png" alt="Themes, fonts and CRT effect controls" /></td>
-</tr>
-</table>
+<img src="visual/__snapshots__/storybook.visual.spec.ts/desktop-matrix-effect-profile-menu.png" width="840" alt="Matrix theme CRT effect profiles" />
 
 ### 📊 System monitor
 A btop-style panel: per-core CPU, memory breakdown, network, disk, live connections and a process
 list — plus optional live **packet capture** (Npcap).
-
-<img src="docs/screenshots/03-status.png" width="840" alt="System status panel" />
 
 ### 🪟 Tabs, splits &amp; layouts
 An independent shell session per tab, drag-to-rearrange splits, savable presets and layout persistence
@@ -82,8 +75,6 @@ not create or expose a temporary path. `Ctrl+Shift+V` and `Shift+Insert` always 
 Multiline and larger-than-5-KiB text pastes ask for confirmation by default, with independent toggles
 under **Settings → Terminal & Safety**. Wrapper, pipeline, SSH, and non-Codex PTYs keep their normal
 control-key behavior.
-
-<img src="docs/screenshots/05-splits.png" width="840" alt="Split panes running independent sessions" />
 
 ### 📁 Files &amp; 🔐 SSH
 A built-in file explorer (desktop and mobile) and an SSH client with trust-on-first-use host-key
@@ -134,6 +125,8 @@ Keystore-backed storage with no plaintext fallback. A transient network
 loss keeps the mounted workspace and may resume bounded active runs in place for up to five minutes;
 an invalid token stops retrying and asks the user to pair again.
 
+<img src="visual/__snapshots__/storybook.visual.spec.ts/mobile-360x800-shell-en.png" height="640" alt="EZTerminal Android remote shell" />
+
 On Windows 10 22H2/11 x64, **More → PC Control** can also stream the unlocked,
 visible PC screen over VPN-bound WebRTC and provide trackpad/direct-touch,
 physical or Korean IME keyboard input, special keys, and explicit text
@@ -146,7 +139,7 @@ advertised only while the remote bridge is enabled, a trusted
 Tailscale/WireGuard adapter is selected, and the installed LocalSystem host
 service is ready. Starting control additionally requires a successful
 active-session agent handshake. Missing or unhealthy native components fail
-closed without disabling terminal-only remote access. In 1.0.4, frame
+closed without disabling terminal-only remote access. In 1.0.5, frame
 capture/encoding and actual input injection still run in the normal-user
 transport; lock/UAC secure-desktop control and Ctrl+Alt+Delete are unavailable.
 
@@ -166,7 +159,7 @@ Grab both official 1.0 downloads from the
 [**Releases**](https://github.com/dlwlgus9125/EZTerminal/releases/latest) page:
 
 - Windows 10 22H2 / Windows 11 x64: `EZTerminal-Setup.exe`
-- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.4-vc25.apk`
+- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.5-vc26.apk`
 
 > The Windows build is currently **unsigned**, so Windows SmartScreen may warn about an "unknown publisher" on
 > first run. Choose *More info → Run anyway* to proceed.
@@ -182,11 +175,11 @@ encrypted tunnel. Pairing grants the phone command/filesystem access and explici
 input, and text-clipboard control.
 
 The supported targets remain Windows 10 22H2/Windows 11 x64 and Android 10+, while this
-candidate's validation evidence is limited to the current Windows host and API
+release's validation evidence is limited to the current Windows host and API
 29/API 35 emulators. Elevated/admin service lifecycle and physical-device
 validation were not performed. Certificate provisioning, store publication,
-and automatic-update operations are outside this hardening change; see the
-[1.0.4 validation policy](docs/release/validation-policy-1.0.4.md).
+and automatic-update operations are outside this release; see the
+[1.0.5 validation policy](docs/release/validation-policy-1.0.5.md).
 
 ## Build from source
 
@@ -201,7 +194,7 @@ pnpm e2e          # end-to-end tests (Playwright + Electron)
 Graphical PC Control is included by default in Windows builds. At runtime it
 still requires an enabled remote bridge, a running installed host service, and
 a trusted VPN interface; otherwise the desktop capability is not advertised.
-Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.4.
+Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.5.
 
 The Android companion app lives in [`mobile/`](mobile/) (Capacitor + Android Studio).
 
