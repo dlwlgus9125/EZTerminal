@@ -17,11 +17,12 @@ const FLOOD_FIXTURE = path.resolve(__dirname, 'fixtures', 'pty-flood-esc.js');
 // `pty.resume()` path — so output stops for everyone at PTY_HIGH_WATER (1 MiB)
 // while the child blocks on its output pipe and input appears dead.
 //
-// Port isolation: 17420/17422 (session-mirror) and 17421 (remote-toggle) are
-// taken — this spec pins its own pair so a real running desktop instance (or a
-// parallel spec) can never collide (EADDRINUSE, see session-mirror.spec.ts).
-const REMOTE_PORT = 17431;
-const OPENCLAW_PROXY_PORT = 17432;
+// Port isolation: 17420/17422 (session-mirror), 17421 (remote-toggle), and
+// 17431 (remote-bridge.test.ts's real-WS unit describe) are taken — this spec
+// pins its own pair so a real running desktop instance (or a concurrently
+// running unit suite) can never collide (EADDRINUSE, see session-mirror.spec.ts).
+const REMOTE_PORT = 17441;
+const OPENCLAW_PROXY_PORT = 17442;
 
 /** Track a run's PTY output on a TestWsClient: decode every pty-data frame,
  * immediately ack the CUMULATIVE received byte count — the renderer
