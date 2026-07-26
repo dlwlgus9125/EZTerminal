@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-07-26
+
+### Fixed
+- Restored input ownership for a mobile-started PTY after Android force-stop and
+  relaunch, while keeping observer-only leases view-only.
+- Added an explicit recovery action for interrupted direct Codex terminal runs.
+
+### Changed
+- Consolidated release documentation and regression coverage around the durable
+  project contracts.
+- Made the release performance benchmark opt-in and excluded it from this
+  functional hotfix release at the operator's explicit request.
+
+See [1.0.6 release notes](docs/release/release-notes-1.0.6.md).
+
 ## [1.0.5] - 2026-07-25
 
 ### Changed

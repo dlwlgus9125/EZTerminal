@@ -4,8 +4,8 @@ EZTerminal 1.0.x는 Windows Electron 앱과 Android Capacitor 원격 클라이�
 
 ## 관련 문서
 
-- [1.0.5 릴리스 노트](release-notes-1.0.5.md)
-- [1.0.5 검증 정책과 잔여 위험](validation-policy-1.0.5.md)
+- [1.0.6 릴리스 노트](release-notes-1.0.6.md)
+- [1.0.6 검증 정책과 잔여 위험](validation-policy-1.0.6.md)
 - [서명 준비와 인증서 지문 확인](signing.md)
 - [PC Control 설계와 현재 구현 상태](../design/remote-desktop-design.md)
 
@@ -14,9 +14,9 @@ EZTerminal 1.0.x는 Windows Electron 앱과 Android Capacitor 원격 클라이�
 - Windows: Windows 10 22H2 또는 Windows 11, x64, 무서명 NSIS 관리자 설치 파일
 - Android: Android 10(API 29) 이상, GitHub Release의 장기키 서명 APK
 - 네트워크: Tailscale/WireGuard 또는 명시적으로 신뢰한 VPN 인터페이스의 `ws://` 연결만 지원
-- PC Control: 잠금되지 않은 데스크톱만 지원한다. 준비된 host service가 있을 때만 capability를 광고하며, 제어 시작에는 활성 세션 agent handshake가 추가로 필요하다. 잠금/UAC secure desktop과 Ctrl+Alt+Delete는 1.0.5에서 지원하지 않는다.
-- 버전: 데스크톱·모바일·Android `versionName`은 `1.0.5`, 현재 패치 후보의 `versionCode`는 26
-- 같은 SHA의 빌드 재시도는 versionCode를 올리지 않는다. 외부에 전달한 후보를 교체할 때는 27 이상으로 증가시킨다.
+- PC Control: 잠금되지 않은 데스크톱만 지원한다. 준비된 host service가 있을 때만 capability를 광고하며, 제어 시작에는 활성 세션 agent handshake가 추가로 필요하다. 잠금/UAC secure desktop과 Ctrl+Alt+Delete는 1.0.6에서 지원하지 않는다.
+- 버전: 데스크톱·모바일·Android `versionName`은 `1.0.6`, 현재 패치 후보의 `versionCode`는 27
+- 같은 SHA의 빌드 재시도는 versionCode를 올리지 않는다. 외부에 전달한 후보를 교체할 때는 28 이상으로 증가시킨다.
 
 ## 최초 1.0 준비
 
@@ -38,7 +38,12 @@ Release workflow는 API 29/35 계측 테스트를 다시 실행한다. 또한 �
 원문의 SHA-256, build SHA, API 29/35 AVD, 같은 Windows PC의 성능 기준/후보
 비교, API 35의 30분 8세션·20회 복구 소크 결과를 직접 검증하고 하나라도
 다르면 Android 키를 사용하기 전에 실패한다. 현재 후보의 제한된 검증 범위와
-수용 위험은 [validation-policy-1.0.5.md](validation-policy-1.0.5.md)에 고정한다.
+수용 위험은 [validation-policy-1.0.6.md](validation-policy-1.0.6.md)에 고정한다.
+
+`v1.0.6`은 세션 복구 핫픽스다. 운영자의 명시적 요청에 따라 성능 벤치마크를
+실행하지 않으며, 따라서 아래 exact-SHA 성능 증거를 요구하는 자동 Release
+workflow 대신 비성능 검증과 동일 SHA 서명 빌드 결과를 수동 게시한다. 이 예외와
+그로 인한 성능 회귀 미검증 위험은 버전별 검증 정책에 기록한다.
 
 자세한 키 생성·지문 확인 방법은 [signing.md](signing.md)를 따른다.
 
@@ -88,17 +93,20 @@ Release workflow는 API 29/35 계측 테스트를 다시 실행한다. 또한 �
    재연결/재개 중복과 메모리 성장 한도를 검증한다. 원시 성능 표본, 기준/후보
    해시와 소크 요약은 `release-assets/local-rc-report.json`에 기록된다.
 3. `workflow_dispatch`로 Release workflow를 실행해 동일 SHA의 통합 RC 산출물을 검토한다. Playwright 릴리스 테스트는 재시도 없이 실행되고, 각 모바일 연결 시나리오는 첫 연결 결과 한 번만 허용한다.
-4. SHA를 변경하지 않은 상태에서 `v1.0.5` 태그를 push한다. workflow가 새로 검증하고 draft Release를 만든다.
+4. SHA를 변경하지 않은 상태에서 `v1.0.6` 태그를 push한다. 성능 증거가 승인된
+   정규 릴리스라면 workflow가 새로 검증하고 draft Release를 만든다. 성능 측정을
+   생략한 이번 핫픽스는 태그 전 비성능 게이트와 수동 산출물 검증 결과를 릴리스
+   노트에 남긴다.
 5. `release-manifest.json`, `SHA256SUMS.txt`, 버전, Android 인증서 지문과 로컬 RC 결과를 대조한 뒤 사람이 draft를 게시한다.
 
 ## 산출물
 
 | 파일 | 계약 |
 |---|---|
-| `EZTerminal-Setup.exe` | ProductVersion 1.0.5, Authenticode `NotSigned` |
+| `EZTerminal-Setup.exe` | ProductVersion 1.0.6, Authenticode `NotSigned` |
 | `local-rc-report.json` | exact SHA, API 29/35, 데스크톱 성능 비교와 30분 소크의 검증된 증거 |
 | `sbom.cdx.json` | npm·Cargo 프로덕션 의존성의 CycloneDX 1.5 SBOM |
-| `EZTerminal-Android-1.0.5-vc26.apk` | applicationId `com.ezterminal.remote`, API 29+, 장기키 연속 서명 |
+| `EZTerminal-Android-1.0.6-vc27.apk` | applicationId `com.ezterminal.remote`, API 29+, 장기키 연속 서명 |
 | `release-manifest.json` | 앱/프로토콜 버전, versionCode, 전체 build SHA, RC 보고서 해시, 서명 상태 |
 | `SHA256SUMS.txt` | 모든 게시 산출물의 SHA-256 |
 
@@ -126,5 +134,5 @@ Windows 10/Home/Enterprise/domain·MDM, 관리자 서비스 설치·방화벽, �
 Android/OEM 코덱/TalkBack 및 다중 모니터·HDR 경로는 이번 RC의 자동 차단
 증거가 아니다. 지원 문구는 유지하되 이 미검증 범위를
 `local-rc-report.json`의 `acceptedResidualRisks`에 반드시 남긴다. 잠금/UAC
-secure desktop과 Software SAS는 단순 미검증 범위가 아니라 1.0.5의 알려진
+secure desktop과 Software SAS는 단순 미검증 범위가 아니라 1.0.6의 알려진
 미지원 기능으로 별도 표시한다.

@@ -541,7 +541,7 @@ jobs:
         with:
           draft: true
           generate_release_notes: true
-          body_path: docs/release/release-notes-1.0.5.md
+          body_path: docs/release/release-notes-1.0.6.md
           fail_on_unmatched_files: true
           files: release-assets/*
 
