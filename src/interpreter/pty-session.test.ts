@@ -250,6 +250,58 @@ describe('runPtySession — byte-ack backpressure (Stage C)', () => {
   });
 });
 
+describe('runPtySession — releasePrimaryWindow (primary-port loss, mobile resume freeze)', () => {
+  const chunk = (n: number): Uint8Array => new Uint8Array(n);
+
+  it('release while paused resumes exactly once, idempotently, without killing', () => {
+    const fake = makeFakePty();
+    const session = runPtySession(fake.data, collect().emit, new AbortController().signal, 80, 24);
+
+    fake.emitData(chunk(PTY_HIGH_WATER + 1));
+    expect(fake.calls.paused).toBe(1);
+
+    session.releasePrimaryWindow();
+    expect(fake.calls.resumed).toBe(1);
+    session.releasePrimaryWindow(); // idempotent — no duplicate resume
+    expect(fake.calls.resumed).toBe(1);
+    expect(fake.calls.killed).toBe(0);
+  });
+
+  it('after release, no volume of unacked output ever pauses again', () => {
+    const fake = makeFakePty();
+    const session = runPtySession(fake.data, collect().emit, new AbortController().signal, 80, 24);
+
+    session.releasePrimaryWindow();
+    for (let i = 0; i < 10; i += 1) fake.emitData(chunk(PTY_HIGH_WATER));
+
+    expect(fake.calls.paused).toBe(0);
+  });
+
+  it('acks arriving after release stay inert (clamped, no spurious resume)', () => {
+    const fake = makeFakePty();
+    const session = runPtySession(fake.data, collect().emit, new AbortController().signal, 80, 24);
+
+    session.releasePrimaryWindow();
+    fake.emitData(chunk(PTY_HIGH_WATER + 1));
+    session.ack(Number.MAX_SAFE_INTEGER);
+
+    expect(fake.calls.resumed).toBe(0);
+    expect(fake.calls.paused).toBe(0);
+  });
+
+  it('release after settle is a no-op (never touches a dead pty)', () => {
+    const fake = makeFakePty();
+    const ac = new AbortController();
+    const session = runPtySession(fake.data, collect().emit, ac.signal, 80, 24);
+
+    ac.abort(); // settles (cancel path: resume-then-kill)
+    const resumesAtSettle = fake.calls.resumed;
+    session.releasePrimaryWindow();
+
+    expect(fake.calls.resumed).toBe(resumesAtSettle);
+  });
+});
+
 describe('TuiSignalDetector (Phase 3, M0a trigger set — pty-signal-measurements.md §7)', () => {
   const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
   const ESC = '\x1b';

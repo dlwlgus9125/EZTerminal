@@ -69,6 +69,14 @@ export interface ActiveExecutionAdapter {
   readonly kind: ActiveExecutionKind;
   readonly lateAttach: LateAttachCapability;
   handleControl(control: RendererControl): ExecutionControlResult;
+  /**
+   * The primary port disconnected while attach ports keep the run alive.
+   * Only the PTY runner needs this (releases its primary byte-ack window —
+   * `PtySession.releasePrimaryWindow`); runners with no primary-keyed pacing
+   * omit it. SSH omits it too: late attach is rejected there, so a primary
+   * loss is always last-port teardown, never a survivable detach.
+   */
+  primaryDetached?(): void;
   dispose(): Promise<void>;
 }
 
@@ -117,12 +125,14 @@ interface AdapterDefinition {
   readonly kind: ActiveExecutionKind;
   readonly lateAttach: LateAttachCapability;
   readonly handleControl: (control: RendererControl) => ExecutionControlResult;
+  readonly primaryDetached?: () => void;
   readonly dispose: () => void | Promise<void>;
 }
 
 function activeAdapter(definition: AdapterDefinition): ActiveExecutionAdapter {
   let disposed = false;
   let disposePromise: Promise<void> | null = null;
+  const primaryDetached = definition.primaryDetached;
   return {
     kind: definition.kind,
     lateAttach: definition.lateAttach,
@@ -130,6 +140,14 @@ function activeAdapter(definition: AdapterDefinition): ActiveExecutionAdapter {
       if (disposed) return 'unsupported';
       return definition.handleControl(control);
     },
+    ...(primaryDetached
+      ? {
+          primaryDetached(): void {
+            if (disposed) return;
+            primaryDetached();
+          },
+        }
+      : {}),
     dispose(): Promise<void> {
       if (disposePromise) return disposePromise;
       disposed = true;
@@ -189,6 +207,7 @@ function ptyAdapter(session: PtySession): ActiveExecutionAdapter {
           return 'unsupported';
       }
     },
+    primaryDetached: () => session.releasePrimaryWindow(),
     dispose: () => session.dispose(),
   });
 }

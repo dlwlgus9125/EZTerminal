@@ -195,6 +195,18 @@ export interface PtySession {
    * stale/duplicate acks are ignored. May resume a paused PTY.
    */
   ack(bytes: number): void;
+  /**
+   * The PRIMARY port is gone while mirrors keep the run alive (disconnect→
+   * resume orphan close, run-lease expiry, a reload with a mirror attached).
+   * `ack` pacing is keyed to the primary port and nothing ever re-assigns
+   * one, so the window above would fill and pause the PTY permanently for
+   * EVERY surface (mobile resume freeze, 2026-07-26). With no primary
+   * consumer left there is nothing for that window to protect — release it:
+   * resume immediately if paused, never arm the pause again. Mirrors keep
+   * their own independent attach pacing (same reasoning as the run-lease
+   * registry's parked-port drain, remote-run-lease.ts).
+   */
+  releasePrimaryWindow(): void;
   /** Tear down: kill the PTY + release the source. Idempotent. */
   dispose(): void;
   /**
@@ -225,6 +237,9 @@ export function runPtySession(
   let sent = 0;
   let acked = 0;
   let paused = false;
+  // Set once the primary port dies while mirrors keep the run alive — see
+  // `PtySession.releasePrimaryWindow`.
+  let primaryReleased = false;
 
   // M2 mirroring (T2.2d/e): bounded scrollback ring (oldest bytes drop first,
   // always keeping at least the newest chunk even if it alone exceeds the
@@ -371,7 +386,7 @@ export function runPtySession(
       if (sub.paused) continue;
       deliverToSubscriber(sub, bytes);
     }
-    if (!paused && sent - acked > PTY_HIGH_WATER) {
+    if (!primaryReleased && !paused && sent - acked > PTY_HIGH_WATER) {
       paused = true;
       pty.pause();
     }
@@ -404,6 +419,14 @@ export function runPtySession(
       if (settled || !Number.isFinite(bytes)) return;
       if (bytes > acked) acked = Math.min(bytes, sent); // monotonic, never beyond sent
       if (paused && sent - acked <= PTY_LOW_WATER) {
+        paused = false;
+        pty.resume();
+      }
+    },
+    releasePrimaryWindow(): void {
+      primaryReleased = true;
+      if (settled) return;
+      if (paused) {
         paused = false;
         pty.resume();
       }

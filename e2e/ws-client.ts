@@ -3,6 +3,7 @@ import { WebSocket } from 'ws';
 import {
   REMOTE_PROTOCOL_VERSION,
   type ClientToServerMessage,
+  type RemoteClientIdentity,
   type ServerToClientMessage,
 } from '../src/shared/remote-protocol';
 
@@ -20,10 +21,15 @@ interface PendingWaiter {
 
 export class TestWsClient {
   private readonly pending: PendingWaiter[] = [];
+  private readonly listeners: Array<(msg: ServerToClientMessage) => void> = [];
 
   private constructor(private readonly ws: WebSocket) {
     this.ws.on('message', (data) => {
       const msg = JSON.parse(data.toString()) as ServerToClientMessage;
+      // Every-message listeners first (e.g. a per-frame auto-acker,
+      // remote-resume-stall.spec.ts) so a waiter chained on a frame can rely
+      // on that frame's ack having been sent already.
+      for (const listener of [...this.listeners]) listener(msg);
       // Iterate a snapshot: a waiter's resolve may synchronously queue a new
       // waitFor (chained awaits in the test), which must not be visited by
       // this same delivery pass.
@@ -37,8 +43,14 @@ export class TestWsClient {
   }
 
   /** Open a socket and complete the auth handshake — the first message any
-   * connection must send (see remote-bridge.ts's un-authed guard). */
-  static async connectAuthed(url: string, token: string): Promise<TestWsClient> {
+   * connection must send (see remote-bridge.ts's un-authed guard).
+   * `clientIdentity` opts into protocol-v2 install identity, the way the real
+   * mobile transport authenticates (required for initiator-owned resume). */
+  static async connectAuthed(
+    url: string,
+    token: string,
+    clientIdentity?: RemoteClientIdentity,
+  ): Promise<TestWsClient> {
     const ws = new WebSocket(url);
     await new Promise<void>((resolve, reject) => {
       ws.once('open', () => resolve());
@@ -51,9 +63,17 @@ export class TestWsClient {
       protocolVersion: REMOTE_PROTOCOL_VERSION,
       clientVersion: '1.0.0-e2e',
       buildSha: 'e2e',
+      ...(clientIdentity ? { clientIdentity } : {}),
     });
     await client.waitFor((msg) => msg.kind === 'auth-ok', 5_000);
     return client;
+  }
+
+  /** Register a listener invoked for EVERY server message (before any
+   * `waitFor` waiter). Unlike `waitFor` it never unregisters — use for
+   * continuous protocol duties like per-frame `pty-ack`s. */
+  onEachMessage(listener: (msg: ServerToClientMessage) => void): void {
+    this.listeners.push(listener);
   }
 
   send(msg: ClientToServerMessage): void {

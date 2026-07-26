@@ -469,7 +469,16 @@ class ExecutionSession implements Execution {
         this.attachPorts.delete(port);
       }
       if (wasControl) this.revertControl();
-      if (!this.primaryPort && this.attachPorts.size === 0) this.dispose();
+      if (!this.primaryPort && this.attachPorts.size === 0) {
+        this.dispose();
+      } else if (isPrimary) {
+        // Mirrors keep the run alive, but `pty-ack` pacing stays keyed to the
+        // primary port (see handleControl) and nothing ever re-assigns one —
+        // without releasing the primary byte-ack window here, the PTY pauses
+        // permanently for EVERY surface once the child outruns PTY_HIGH_WATER
+        // (mobile resume freeze, 2026-07-26).
+        this.activeExecution?.primaryDetached?.();
+      }
     });
     port.start();
   }

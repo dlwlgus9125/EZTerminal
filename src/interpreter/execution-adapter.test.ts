@@ -48,6 +48,7 @@ function fakes(): Fakes {
     write: vi.fn(),
     resize: vi.fn(),
     ack: vi.fn(),
+    releasePrimaryWindow: vi.fn(),
     attach: vi.fn(() => ptyAttach),
     dispose: vi.fn(),
   } satisfies PtySession;
@@ -155,6 +156,24 @@ describe('execution adapter contract', () => {
     if (adapter.lateAttach.mode !== 'pty-replay') throw new Error('wrong late-attach mode');
     expect(adapter.lateAttach.attach(onData)).toBe(values.ptyAttach);
     expect(values.pty.attach).toHaveBeenCalledWith(onData);
+  });
+
+  it('only the PTY adapter reacts to a primary detach (releases the primary window)', async () => {
+    const values = fakes();
+    const pty = start('pty', values);
+
+    pty.primaryDetached?.();
+    expect(values.pty.releasePrimaryWindow).toHaveBeenCalledOnce();
+
+    // Runners with no primary-keyed pacing simply omit the hook.
+    for (const kind of ['structured', 'script', 'ssh', 'forward'] as const) {
+      expect(start(kind, fakes()).primaryDetached).toBeUndefined();
+    }
+
+    // A disposed adapter must not touch the (already torn down) session.
+    await pty.dispose();
+    pty.primaryDetached?.();
+    expect(values.pty.releasePrimaryWindow).toHaveBeenCalledOnce();
   });
 
   it('routes SSH terminal/prompt controls and rejects late attach by capability', () => {

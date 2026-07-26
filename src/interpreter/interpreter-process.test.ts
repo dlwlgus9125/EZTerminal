@@ -19,6 +19,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { InterpreterFrame } from '../shared/ipc';
+import type { PtyHandle } from './core/value';
 
 type MessageHandler = (event: { data: unknown; ports: readonly unknown[] }) => void;
 
@@ -922,5 +923,175 @@ describe('interpreter-process — ActiveExecutionAdapter terminal invariant', ()
     primary.send({ type: 'close' });
     primary.close();
     expect(dispose).toHaveBeenCalledOnce();
+  });
+});
+
+describe('interpreter-process — primary-port loss with surviving mirrors (mobile resume freeze)', () => {
+  afterEach(() => {
+    vi.doUnmock('./external/pty-runner');
+    vi.resetModules();
+  });
+
+  /** A controllable fake PTY child: the test pumps output bytes and observes
+   * pause/resume/write exactly where the real ConPTY would see them. */
+  class FakePty {
+    paused = false;
+    resumeCalls = 0;
+    killed = false;
+    readonly writes: string[] = [];
+    private readonly dataListeners: Array<(bytes: Uint8Array) => void> = [];
+    private readonly exitListeners: Array<(code: number) => void> = [];
+
+    readonly handle: PtyHandle = {
+      onData: (listener) => this.dataListeners.push(listener),
+      onExit: (listener) => this.exitListeners.push(listener),
+      write: (data) => this.writes.push(data),
+      resize: () => {},
+      pause: () => {
+        this.paused = true;
+      },
+      resume: () => {
+        this.paused = false;
+        this.resumeCalls += 1;
+      },
+      kill: () => {
+        this.killed = true;
+      },
+    };
+
+    emitData(bytes: Uint8Array): void {
+      for (const listener of this.dataListeners) listener(bytes);
+    }
+  }
+
+  /** Replaces `runPty` (the single node-pty edge) with a fake-handle factory;
+   * every other export stays real. Unlike pty-session.test.ts's fake at the
+   * `data.spawn` seam, this keeps interpreter-process's REAL port routing and
+   * pty-session's REAL flow control in the loop — the layer where primary
+   * pty-ack pacing and attach pacing diverge. Must run BEFORE
+   * `importInterpreter()` (same doMock precedent as the ssh-session and
+   * block-runner describes above). */
+  function installFakePtyRunner(): FakePty[] {
+    const handles: FakePty[] = [];
+    vi.doMock('./external/pty-runner', async () => {
+      const actual = await vi.importActual<typeof import('./external/pty-runner')>('./external/pty-runner');
+      const runPty: typeof actual.runPty = () => {
+        const fake = new FakePty();
+        handles.push(fake);
+        return fake.handle;
+      };
+      return { ...actual, runPty };
+    });
+    return handles;
+  }
+
+  /** `!cmd` PTY run against the mocked runner — no real ConPTY spawn. */
+  function beginFakePtyRun(
+    handler: MessageHandler,
+    posted: unknown[],
+    runId: string,
+  ): { sessionId: string; primary: FakePort } {
+    handler({ data: { type: 'create-session', requestId: 'req-1' }, ports: [] });
+    const created = posted.find(
+      (m): m is { type: 'session-created'; sessionId: string } =>
+        (m as { type?: string }).type === 'session-created',
+    );
+    if (!created) throw new Error('session-created reply never arrived');
+    const { sessionId } = created;
+
+    const primary = new FakePort();
+    handler({
+      data: { type: 'run', runId, sessionId, commandText: '!cmd' },
+      ports: [primary],
+    });
+    return { sessionId, primary };
+  }
+
+  /** Cumulative pty-data bytes a port has received — the exact ack coordinate
+   * the renderer's BlockController reports back (replay + live, one counter). */
+  function ptyBytesReceived(port: FakePort): number {
+    return port.posted.reduce((total: number, frame) => {
+      const f = frame as { type?: string; data?: Uint8Array };
+      return f.type === 'pty-data' && f.data ? total + f.data.byteLength : total;
+    }, 0);
+  }
+
+  const CHUNK_BYTES = 64 * 1024;
+  // 20 × 64 KiB = 1.25 MiB — comfortably past PTY_HIGH_WATER (1 MiB), the
+  // volume any CLI-agent TUI produces within minutes.
+  const CHUNK_COUNT = 20;
+
+  /** Start a `!cmd` run + one mirror attach, then TRANSPORT-close the primary
+   * port — the exact event remote-bridge's resume (`orphan?.close()`) and the
+   * five-minute run-lease expiry produce. No `{type:'close'}` control is sent,
+   * so the run must survive on the mirror alone (last-port rule). */
+  async function orphanPrimaryWithMirror(): Promise<{
+    fake: FakePty;
+    attach: FakePort;
+    sessionId: string;
+    posted: unknown[];
+    handler: MessageHandler;
+  }> {
+    const handles = installFakePtyRunner();
+    const { handler, posted } = await importInterpreter();
+    const { sessionId, primary } = beginFakePtyRun(handler, posted, 'run-freeze');
+    const fake = handles[0];
+    if (!fake) throw new Error('fake pty was never spawned');
+
+    const attach = new FakePort();
+    handler({
+      data: { type: 'attach-run', requestId: 'attach-freeze', sessionId, runId: 'run-freeze' },
+      ports: [attach],
+    });
+    expect(posted).toContainEqual({ type: 'run-attach-result', requestId: 'attach-freeze', accepted: true });
+
+    primary.close();
+
+    handler({ data: { type: 'list-runs', requestId: 'lr-freeze' }, ports: [] });
+    expect(posted).toContainEqual({
+      type: 'run-list',
+      requestId: 'lr-freeze',
+      runs: [{ sessionId, runId: 'run-freeze', commandText: '!cmd', executionKind: 'local' }],
+    });
+
+    return { fake, attach, sessionId, posted, handler };
+  }
+
+  it('keeps the PTY unpaused when the primary transport-closes and the surviving mirror acks everything', async () => {
+    const { fake, attach } = await orphanPrimaryWithMirror();
+
+    // A CLI agent keeps streaming; the only remaining consumer acks every byte
+    // it receives — exactly what the resumed phone and the desktop pane do.
+    const chunk = new Uint8Array(CHUNK_BYTES).fill(0x61);
+    for (let i = 0; i < CHUNK_COUNT; i += 1) {
+      fake.emitData(chunk);
+      attach.send({ type: 'pty-ack', bytes: ptyBytesReceived(attach) });
+    }
+
+    // The reported freeze: paused here means output stops for EVERY surface
+    // while the child blocks on its output pipe, with no reachable resume.
+    expect(fake.paused).toBe(false);
+    expect(fake.killed).toBe(false);
+  });
+
+  it('keeps the PTY unpaused when the primary transport-closes and the mirror never acks (lease-expiry shape)', async () => {
+    const { fake } = await orphanPrimaryWithMirror();
+
+    // Same stream, but the mirror acks nothing at all — the shape of a parked
+    // lease expiring or a stalled mirror. The mirror's OWN attach window may
+    // drop ITS bytes; the shared PTY must not freeze for everyone.
+    const chunk = new Uint8Array(CHUNK_BYTES).fill(0x61);
+    for (let i = 0; i < CHUNK_COUNT; i += 1) fake.emitData(chunk);
+
+    expect(fake.paused).toBe(false);
+    expect(fake.killed).toBe(false);
+  });
+
+  it('still delivers mirror pty-input to the child after the primary port is gone', async () => {
+    const { fake, attach } = await orphanPrimaryWithMirror();
+
+    attach.send({ type: 'pty-input', data: '\x1b' });
+
+    expect(fake.writes).toContain('\x1b');
   });
 });
