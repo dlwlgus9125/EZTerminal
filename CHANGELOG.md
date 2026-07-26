@@ -7,6 +7,8 @@
 ### Fixed
 - Restored PC Control capability advertisement when the installed native host
   reports its current internal protocol v2 service as ready.
+- Prevented the Matrix micro-jitter effect from creating a one-pixel document
+  scrollbar on integer-height desktop viewports.
 
 ### Changed
 - Centralized the Electron native-host protocol contract and made release

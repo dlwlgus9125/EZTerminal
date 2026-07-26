@@ -552,6 +552,13 @@ html[data-effect-phosphor-glow='on'] .ssh-prompt-actions .btn-run {
   box-sizing: border-box;
 }
 
+/* The desktop shell owns scrolling inside its panes. Clip document overflow so
+   the positive 1px micro-jitter frame cannot create a phantom window scrollbar. */
+html,
+body {
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   background: var(--term-bg);
