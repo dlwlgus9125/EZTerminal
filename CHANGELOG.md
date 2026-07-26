@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-07-26
+
+### Fixed
+- Restored PC Control capability advertisement when the installed native host
+  reports its current internal protocol v2 service as ready.
+
+### Changed
+- Centralized the Electron native-host protocol contract and made release
+  validation reject a Rust/Electron protocol-version mismatch.
+- Added an explicit functional-hotfix release profile that records skipped
+  performance and soak evidence without weakening the full release profile.
+
+See [1.0.7 release notes](docs/release/release-notes-1.0.7.md).
+
 ## [1.0.6] - 2026-07-26
 
 ### Fixed

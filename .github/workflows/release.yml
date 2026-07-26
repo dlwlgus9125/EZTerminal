@@ -134,6 +134,10 @@ jobs:
           $contract = Get-Content release/version.json -Raw | ConvertFrom-Json
           $rootVersion = [string]$contract.version
           $androidCode = [int]$contract.androidVersionCode
+          $validationProfile = [string]$contract.validationProfile
+          if ($validationProfile -notin @('full', 'functional-hotfix')) {
+            throw "Unsupported release validation profile: $validationProfile"
+          }
           $repositoryCert = ((Get-Content mobile/android/signing-certificate.sha256 -Raw) -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
           if ($repositoryCert -notmatch '^[0-9A-F]{64}$') {
             throw 'The committed Android release certificate fingerprint is UNCONFIGURED or invalid. Generate the long-term key and commit its public SHA-256 fingerprint before release.'
@@ -145,6 +149,7 @@ jobs:
           if ($head -ne '${{ github.sha }}') {
             throw "Checkout SHA $head differs from workflow SHA ${{ github.sha }}."
           }
+          if ($validationProfile -eq 'full') {
           if ($env:EZTERMINAL_LOCAL_RC_APPROVED_SHA -ne $head) {
             throw 'Protected release Environment does not approve this exact SHA. Run the local RC gate and update EZTERMINAL_LOCAL_RC_APPROVED_SHA.'
           }
@@ -383,12 +388,18 @@ jobs:
           ) {
             throw 'Local RC report lacks a passing exact-SHA 8-session/20-recovery mobile soak.'
           }
+          } else {
+            Write-Host 'functional-hotfix profile: performance and 30-minute soak evidence are intentionally not claimed.'
+          }
           $dirty = @(git status --porcelain --untracked-files=all)
           if ($dirty.Count -ne 0) { throw "Release checkout is not clean: $($dirty -join ', ')" }
           "EZTERMINAL_VERSION=$rootVersion" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "ANDROID_VERSION_CODE=$androidCode" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "ANDROID_REPOSITORY_CERT_SHA256=$repositoryCert" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          "LOCAL_RC_REPORT_PATH=$rcReportPath" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "RELEASE_VALIDATION_PROFILE=$validationProfile" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          if ($validationProfile -eq 'full') {
+            "LOCAL_RC_REPORT_PATH=$rcReportPath" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          }
           "RELEASE_ARTIFACT_NAME=EZTerminal-$rootVersion-$($head.Substring(0, 8))" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Desktop typecheck
@@ -514,18 +525,23 @@ jobs:
       - name: Verify and stage exact-SHA release artifacts
         shell: pwsh
         run: |
-          ./scripts/stage-release-artifacts.ps1 `
-            -Version $env:EZTERMINAL_VERSION `
-            -AndroidVersionCode ([int]$env:ANDROID_VERSION_CODE) `
-            -AndroidApkPath mobile/android/app/build/outputs/apk/release/app-release.apk `
-            -AndroidMetadataPath mobile/android/app/build/outputs/apk/release/output-metadata.json `
-            -AndroidCertSha256 $env:ANDROID_REPOSITORY_CERT_SHA256 `
-            -LocalRcReportSha256 $env:EZTERMINAL_LOCAL_RC_REPORT_SHA256 `
-            -LocalRcReportPath $env:LOCAL_RC_REPORT_PATH `
-            -ExpectedCommit '${{ github.sha }}' `
-            -ExpectedWindowsSignature NotSigned `
-            -ProtocolVersion 2 `
-            -RequireCleanTree
+          $stage = @{
+            Version = $env:EZTERMINAL_VERSION
+            AndroidVersionCode = [int]$env:ANDROID_VERSION_CODE
+            AndroidApkPath = 'mobile/android/app/build/outputs/apk/release/app-release.apk'
+            AndroidMetadataPath = 'mobile/android/app/build/outputs/apk/release/output-metadata.json'
+            AndroidCertSha256 = $env:ANDROID_REPOSITORY_CERT_SHA256
+            ExpectedCommit = '${{ github.sha }}'
+            ExpectedWindowsSignature = 'NotSigned'
+            ProtocolVersion = 2
+            ValidationProfile = $env:RELEASE_VALIDATION_PROFILE
+            RequireCleanTree = $true
+          }
+          if ($env:RELEASE_VALIDATION_PROFILE -eq 'full') {
+            $stage.LocalRcReportSha256 = $env:EZTERMINAL_LOCAL_RC_REPORT_SHA256
+            $stage.LocalRcReportPath = $env:LOCAL_RC_REPORT_PATH
+          }
+          ./scripts/stage-release-artifacts.ps1 @stage
 
       - name: Upload unified release candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -541,7 +557,7 @@ jobs:
         with:
           draft: true
           generate_release_notes: true
-          body_path: docs/release/release-notes-1.0.6.md
+          body_path: docs/release/release-notes-1.0.7.md
           fail_on_unmatched_files: true
           files: release-assets/*
 

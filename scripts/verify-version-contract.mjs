@@ -30,7 +30,16 @@ const verificationMetadata = await readFile(
 );
 const releaseWorkflow = await readFile(resolve(root, '.github/workflows/release.yml'), 'utf8');
 const ciWorkflow = await readFile(resolve(root, '.github/workflows/ci.yml'), 'utf8');
+const releaseStager = await readFile(
+  resolve(root, 'scripts/stage-release-artifacts.ps1'),
+  'utf8',
+);
 const remoteProtocol = await readFile(resolve(root, 'src/shared/remote-protocol.ts'), 'utf8');
+const nativeDesktopProtocol = await readFile(
+  resolve(root, 'src/main/native-desktop-protocol.ts'),
+  'utf8',
+);
+const nativeHostLib = await readFile(resolve(root, 'native/remote-host/src/lib.rs'), 'utf8');
 const readme = await readFile(resolve(root, 'README.md'), 'utf8');
 const changelog = await readFile(resolve(root, 'CHANGELOG.md'), 'utf8');
 
@@ -47,6 +56,11 @@ assert(
   Number.isSafeInteger(contract.protocolVersion) && contract.protocolVersion > 0,
   'release/version.json protocolVersion must be a positive integer.',
 );
+assert(
+  contract.validationProfile === 'full'
+    || contract.validationProfile === 'functional-hotfix',
+  'release/version.json validationProfile must be full or functional-hotfix.',
+);
 
 const cargoVersion = capture(
   cargo,
@@ -62,6 +76,16 @@ const sharedProtocolVersion = Number(capture(
   remoteProtocol,
   /REMOTE_PROTOCOL_VERSION\s*=\s*(\d+)/,
   'shared remote protocol version',
+));
+const nativeDesktopProtocolVersion = Number(capture(
+  nativeDesktopProtocol,
+  /NATIVE_DESKTOP_PROTOCOL_VERSION\s*=\s*(\d+)/,
+  'Electron native desktop protocol version',
+));
+const nativeHostProtocolVersion = Number(capture(
+  nativeHostLib,
+  /NATIVE_PROTOCOL_VERSION\s*:\s*u16\s*=\s*(\d+)/,
+  'Rust native desktop protocol version',
 ));
 const defaultApkVersion = capture(
   apkVerifier,
@@ -92,6 +116,10 @@ assert(
 assert(
   sharedProtocolVersion === contract.protocolVersion,
   'src/shared/remote-protocol.ts differs from release/version.json protocolVersion.',
+);
+assert(
+  nativeDesktopProtocolVersion === nativeHostProtocolVersion,
+  'Electron and Rust native desktop protocol versions differ.',
 );
 assert(
   defaultApkVersion === contract.version,
@@ -142,6 +170,16 @@ await Promise.all([
 assert(
   releaseWorkflow.includes(`body_path: ${releaseNotesPath}`),
   `.github/workflows/release.yml does not publish ${releaseNotesPath}.`,
+);
+assert(
+  releaseWorkflow.includes('RELEASE_VALIDATION_PROFILE')
+    && releaseWorkflow.includes('functional-hotfix'),
+  '.github/workflows/release.yml does not enforce the release validation profile.',
+);
+assert(
+  releaseStager.includes("[ValidateSet('full', 'functional-hotfix')]")
+    && releaseStager.includes('validationProfile = $ValidationProfile'),
+  'scripts/stage-release-artifacts.ps1 does not record the release validation profile.',
 );
 const nativeHostE2eBuildIndex = releaseWorkflow.search(
   /^[ \t]*- name: Build native remote host for desktop E2E\r?\n[ \t]+run: pnpm build:remote-host[ \t]*$/m,

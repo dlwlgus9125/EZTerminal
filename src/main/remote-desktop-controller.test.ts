@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { parseRemoteDesktopServiceProbe } from './native-desktop-protocol';
 import { RemoteDesktopController } from './remote-desktop-controller';
 
 class FakeNativeTransport {
@@ -34,6 +35,20 @@ const phoneB = {
 const endpoint = { localAddress: '100.64.0.1', peerAddress: '100.64.0.2' };
 
 describe('RemoteDesktopController', () => {
+  it('keeps PC Control available when the installed host probe emits v2 ready', async () => {
+    const controller = new RemoteDesktopController({
+      hostPath: 'unused',
+      probeService: async () => parseRemoteDesktopServiceProbe(JSON.stringify({
+        protocolVersion: 2,
+        service: 'ready',
+      })),
+    });
+
+    expect(controller.isAvailable()).toBe(false);
+    await expect(controller.probeService()).resolves.toMatchObject({ service: 'ready' });
+    expect(controller.isAvailable()).toBe(true);
+  });
+
   it('grants one controller, forwards bounded signaling, and refuses takeover', async () => {
     const native = new FakeNativeTransport();
     const events: unknown[] = [];

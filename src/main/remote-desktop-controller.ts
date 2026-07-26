@@ -16,8 +16,8 @@ import type {
   RemoteDesktopHostStatus,
   RemoteDesktopServiceHealth,
 } from '../shared/ipc';
+import { NATIVE_DESKTOP_PROTOCOL_VERSION } from './native-desktop-protocol';
 
-const NATIVE_PROTOCOL_VERSION = 2;
 const MAX_NATIVE_MESSAGE_BYTES = 272 * 1024;
 const NATIVE_READY_TIMEOUT_MS = 12_000;
 export const DESKTOP_RESUME_GRACE_MS = 15_000;
@@ -333,7 +333,8 @@ export class RemoteDesktopController {
         if (message.type === 'ready') {
           this.service = nativeServiceHealth(message.service);
           this.publishStatus();
-          const accepted = message.protocolVersion === NATIVE_PROTOCOL_VERSION && this.service === 'ready';
+          const accepted = message.protocolVersion === NATIVE_DESKTOP_PROTOCOL_VERSION
+            && this.service === 'ready';
           if (!accepted) {
             session.expectedExit = true;
             if (session.transport === transport) session.transport = null;
@@ -372,7 +373,7 @@ export class RemoteDesktopController {
       });
       transport.send({
         type: 'hello',
-        protocolVersion: NATIVE_PROTOCOL_VERSION,
+        protocolVersion: NATIVE_DESKTOP_PROTOCOL_VERSION,
         sessionId: session.sessionId,
         clientId: session.identity.clientId,
         clientName: session.identity.clientName.slice(0, 80),

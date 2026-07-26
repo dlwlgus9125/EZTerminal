@@ -26,13 +26,12 @@ import {
   type RemoteBridgeHandle,
   type RemoteBridgeOptions,
 } from './remote-bridge';
+import { parseRemoteDesktopServiceProbe } from './native-desktop-protocol';
 import { formatConnectionInfo } from './remote-connection-info';
 import { RemoteDesktopController } from './remote-desktop-controller';
 import { RemoteRuntimeStartError } from './remote-runtime';
 import { RemoteTokenStore } from './remote-token-store';
 import { selectTrustedRemoteNetwork } from './trusted-remote-network';
-
-const NATIVE_DESKTOP_PROTOCOL_VERSION = 1;
 
 export type ElectronDesktopRuntimeBridgeSources = Pick<
   RemoteBridgeOptions,
@@ -81,25 +80,7 @@ function probeRemoteDesktopService(hostPath: string): Promise<RemoteDesktopServi
           resolve('unknown');
           return;
         }
-        try {
-          const result = JSON.parse(stdout) as { service?: unknown; protocolVersion?: unknown };
-          if (result.protocolVersion !== NATIVE_DESKTOP_PROTOCOL_VERSION) {
-            resolve('unknown');
-            return;
-          }
-          switch (result.service) {
-            case 'ready':
-            case 'missing':
-            case 'stopped':
-            case 'denied':
-              resolve(result.service);
-              return;
-            default:
-              resolve('unknown');
-          }
-        } catch {
-          resolve('unknown');
-        }
+        resolve(parseRemoteDesktopServiceProbe(stdout));
       },
     );
   });

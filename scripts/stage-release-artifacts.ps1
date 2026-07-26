@@ -15,14 +15,14 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$AndroidCertSha256,
 
-    [Parameter(Mandatory = $true)]
-    [string]$LocalRcReportSha256,
+    [string]$LocalRcReportSha256 = '',
 
-    [Parameter(Mandatory = $true)]
-    [string]$LocalRcReportPath,
+    [string]$LocalRcReportPath = '',
 
     [string]$ExpectedCommit = $env:GITHUB_SHA,
     [string]$ReleaseAssetsPath = 'release-assets',
+    [ValidateSet('full', 'functional-hotfix')]
+    [string]$ValidationProfile = 'full',
     [ValidateSet('NotSigned', 'Valid')]
     [string]$ExpectedWindowsSignature = 'NotSigned',
     [int]$ProtocolVersion = 2,
@@ -58,20 +58,6 @@ try {
     if ($Version -notmatch '^\d+\.\d+\.\d+$') {
         throw "Version must be a three-part semantic version, got '$Version'."
     }
-    $normalizedRcReportHash = ($LocalRcReportSha256 -replace '[^0-9A-Fa-f]', '').ToLowerInvariant()
-    if ($normalizedRcReportHash -notmatch '^[0-9a-f]{64}$') {
-        throw 'LocalRcReportSha256 must contain exactly 64 hexadecimal digits.'
-    }
-    $resolvedRcReport = (Resolve-Path -LiteralPath $LocalRcReportPath).Path
-    $localRcReportBytes = [IO.File]::ReadAllBytes($resolvedRcReport)
-    $actualRcReportHash = (Get-FileHash -LiteralPath $resolvedRcReport -Algorithm SHA256).Hash.ToLowerInvariant()
-    Assert-Equal $actualRcReportHash $normalizedRcReportHash 'local RC report SHA-256'
-    try {
-        $localRcReportJson = [Text.Encoding]::UTF8.GetString($localRcReportBytes).TrimStart([char]0xFEFF)
-        $localRcReport = $localRcReportJson | ConvertFrom-Json
-    } catch {
-        throw 'LocalRcReportPath does not contain valid UTF-8 JSON.'
-    }
 
     & node scripts/verify-version-contract.mjs
     if ($LASTEXITCODE -ne 0) {
@@ -81,11 +67,39 @@ try {
     Assert-Equal ([string]$versionContract.version) $Version 'release contract version'
     Assert-Equal ([int]$versionContract.androidVersionCode) $AndroidVersionCode 'Android versionCode'
     Assert-Equal ([int]$versionContract.protocolVersion) $ProtocolVersion 'protocol version'
-    Assert-Equal ([int]$localRcReport.schemaVersion) 1 'local RC report schema'
-    Assert-Equal ([string]$localRcReport.appVersion) $Version 'local RC report appVersion'
     Assert-Equal (
-        [string]$localRcReport.validationPolicy
-    ) 'current-windows-host-and-api-29-35-emulators' 'local RC validation policy'
+        [string]$versionContract.validationProfile
+    ) $ValidationProfile 'release validation profile'
+
+    $normalizedRcReportHash = $null
+    $localRcReportBytes = $null
+    $localRcReport = $null
+    if ($ValidationProfile -eq 'full') {
+        $normalizedRcReportHash = (
+            $LocalRcReportSha256 -replace '[^0-9A-Fa-f]', ''
+        ).ToLowerInvariant()
+        if ($normalizedRcReportHash -notmatch '^[0-9a-f]{64}$') {
+            throw 'LocalRcReportSha256 must contain exactly 64 hexadecimal digits.'
+        }
+        $resolvedRcReport = (Resolve-Path -LiteralPath $LocalRcReportPath).Path
+        $localRcReportBytes = [IO.File]::ReadAllBytes($resolvedRcReport)
+        $actualRcReportHash = (
+            Get-FileHash -LiteralPath $resolvedRcReport -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
+        Assert-Equal $actualRcReportHash $normalizedRcReportHash 'local RC report SHA-256'
+        try {
+            $localRcReportJson = (
+                [Text.Encoding]::UTF8.GetString($localRcReportBytes)
+            ).TrimStart([char]0xFEFF)
+            $localRcReport = $localRcReportJson | ConvertFrom-Json
+        } catch {
+            throw 'LocalRcReportPath does not contain valid UTF-8 JSON.'
+        }
+        Assert-Equal ([int]$localRcReport.schemaVersion) 1 'local RC report schema'
+        Assert-Equal ([string]$localRcReport.appVersion) $Version 'local RC report appVersion'
+        Assert-Equal (
+            [string]$localRcReport.validationPolicy
+        ) 'current-windows-host-and-api-29-35-emulators' 'local RC validation policy'
     $requiredFunctionalLimits = @(
         'Lock and UAC secure-desktop capture and input are not supported.',
         'Software SAS and Ctrl+Alt+Delete are not supported.',
@@ -340,6 +354,12 @@ try {
     if ($failedPerformanceResults.Count -ne 0) {
         throw 'Desktop performance evidence exceeds a relative regression or target-improvement budget.'
     }
+    } elseif (
+        -not [string]::IsNullOrWhiteSpace($LocalRcReportSha256) -or
+        -not [string]::IsNullOrWhiteSpace($LocalRcReportPath)
+    ) {
+        throw 'functional-hotfix staging must not attach or claim a full local RC report.'
+    }
 
     $commit = (& git rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
@@ -351,6 +371,7 @@ try {
         }
         Assert-Equal $commit $ExpectedCommit.ToLowerInvariant() 'release source commit'
     }
+    if ($ValidationProfile -eq 'full') {
     Assert-Equal ([string]$localRcReport.buildSha) $commit 'local RC report buildSha'
     Assert-Equal ([int]$localRcReport.playwrightRetries) 0 'local RC Playwright retry count'
     Assert-Equal (
@@ -389,6 +410,7 @@ try {
         $localRcReport.mobileSoak.cleanupPassed -ne $true
     ) {
         throw 'Local RC report lacks the required 30-minute mobile soak evidence.'
+    }
     }
     if ($RequireCleanTree) {
         $status = @(git status --porcelain --untracked-files=all)
@@ -433,7 +455,12 @@ try {
     }
     New-Item -ItemType Directory -Path $assets | Out-Null
 
-    [IO.File]::WriteAllBytes((Join-Path $assets 'local-rc-report.json'), $localRcReportBytes)
+    if ($ValidationProfile -eq 'full') {
+        [IO.File]::WriteAllBytes(
+            (Join-Path $assets 'local-rc-report.json'),
+            $localRcReportBytes
+        )
+    }
 
     Copy-Item -LiteralPath $setupExe -Destination (Join-Path $assets 'EZTerminal-Setup.exe')
 
@@ -460,28 +487,52 @@ try {
         throw 'Dependency SBOM generation failed.'
     }
 
-    $manifest = [ordered]@{
-        appVersion = $Version
-        androidVersionCode = $AndroidVersionCode
-        protocolVersion = $ProtocolVersion
-        buildSha = $commit
-        embeddedBuildShaVerified = $true
-        localRcReportSha256 = $normalizedRcReportHash
-        localRcReportVerified = $true
-        generatedAtUtc = [DateTime]::UtcNow.ToString('o')
-        windowsAuthenticode = [ordered]@{
-            expected = $ExpectedWindowsSignature
-            app = $appSignature
-            setup = $setupSignature
-        }
-        androidSigningCertSha256 = ($AndroidCertSha256 -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
-        artifacts = @(
+    $manifestArtifacts = @(
+        'EZTerminal-Setup.exe',
+        'sbom.cdx.json',
+        $androidName,
+        "$androidName.sha256"
+    )
+    if ($ValidationProfile -eq 'full') {
+        $manifestArtifacts = @(
             'EZTerminal-Setup.exe',
             'local-rc-report.json',
             'sbom.cdx.json',
             $androidName,
             "$androidName.sha256"
         )
+    }
+
+    $manifest = [ordered]@{
+        appVersion = $Version
+        androidVersionCode = $AndroidVersionCode
+        protocolVersion = $ProtocolVersion
+        validationProfile = $ValidationProfile
+        buildSha = $commit
+        embeddedBuildShaVerified = $true
+        localRcReportSha256 = $normalizedRcReportHash
+        localRcReportVerified = ($ValidationProfile -eq 'full')
+        generatedAtUtc = [DateTime]::UtcNow.ToString('o')
+        validation = [ordered]@{
+            commonFunctionalGates = 'passed'
+            performanceBenchmark = if ($ValidationProfile -eq 'full') {
+                'passed'
+            } else {
+                'not-run-by-explicit-operator-request'
+            }
+            mobileSoak = if ($ValidationProfile -eq 'full') {
+                'passed'
+            } else {
+                'not-run-for-functional-hotfix'
+            }
+        }
+        windowsAuthenticode = [ordered]@{
+            expected = $ExpectedWindowsSignature
+            app = $appSignature
+            setup = $setupSignature
+        }
+        androidSigningCertSha256 = ($AndroidCertSha256 -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
+        artifacts = $manifestArtifacts
     }
     $manifest | ConvertTo-Json -Depth 5 |
         Set-Content -LiteralPath (Join-Path $assets 'release-manifest.json') -Encoding utf8
