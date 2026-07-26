@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-07-26
+
+### Fixed
+- Kept a shared PTY streaming for every surface after its primary port died
+  while mirrors stayed attached — the mobile-initiated CLI-agent session that
+  froze (output and visible input response) for both phone and desktop a few
+  minutes after a disconnect/resume or the five-minute lease expiry.
+- Preserved the initiating installation's control identity across remote-bridge
+  restarts, so toggling remote access off and on no longer demotes that
+  install's own still-active run to viewing-only on resume.
+- Reconciled the mirror auto-reply input gate on PTY replay reset, so a
+  stranded xterm write callback can no longer swallow a mirror view's keyboard
+  input for the life of the pane.
+- Detected silently dead mobile sockets with a post-auth liveness probe, so a
+  phone whose connection died without a close event reconnects and resumes
+  instead of freezing on stale output forever.
+
+See [1.0.10 release notes](docs/release/release-notes-1.0.10.md).
+
 ## [1.0.9] - 2026-07-26
 
 ### Fixed
