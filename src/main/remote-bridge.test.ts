@@ -35,6 +35,7 @@ import type {
   MainToInterpreter,
   PacketRow,
   RunAttachRejectReason,
+  RunStartedInfo,
   SystemStatsSnapshot,
 } from '../shared/ipc';
 import { MAX_GUARDED_DESTROY_RUN_IDS } from '../shared/ipc';
@@ -430,6 +431,20 @@ function makeOptions(overrides: Partial<RemoteBridgeOptions> = {}): {
 async function authed(ws: FakeWs, options: RemoteBridgeOptions): Promise<void> {
   attachConnection(ws, options);
   ws.clientSend(authMessage());
+  await flush();
+}
+
+async function replyToRunList(
+  ws: FakeWs,
+  interpreter: FakeInterpreter,
+  runs: readonly RunStartedInfo[],
+): Promise<void> {
+  ws.clientSend({ kind: 'list-runs' });
+  const request = [...interpreter.posted]
+    .reverse()
+    .find((entry) => entry.message.type === 'list-runs')?.message;
+  if (request?.type !== 'list-runs') throw new Error('no run-list request');
+  interpreter.emit({ type: 'run-list', requestId: request.requestId, runs });
   await flush();
 }
 
@@ -1261,27 +1276,17 @@ describe('RemoteBridge — connection teardown', () => {
       commandText: 'codex',
     });
     first.close();
-    expect(leases.isOwnedBy('sess-1', 'run-owned', identity.clientId)).toBe(true);
-
-    const requestRunList = async (ws: FakeWs): Promise<void> => {
-      ws.clientSend({ kind: 'list-runs' });
-      const request = [...interpreter.posted]
-        .reverse()
-        .find((entry) => entry.message.type === 'list-runs')?.message;
-      if (request?.type !== 'list-runs') throw new Error('no run-list request');
-      interpreter.emit({
-        type: 'run-list',
-        requestId: request.requestId,
-        runs: [{ sessionId: 'sess-1', runId: 'run-owned', commandText: 'codex' }],
-      });
-      await flush();
-    };
+    expect(leases.size).toBe(1);
 
     const restarted = new FakeWs();
     attachConnection(restarted, options);
     restarted.clientSend({ ...authMessage(), clientIdentity: identity });
     await flush();
-    await requestRunList(restarted);
+    await replyToRunList(restarted, interpreter, [{
+      sessionId: 'sess-1',
+      runId: 'run-owned',
+      commandText: 'codex',
+    }]);
     expect(restarted.sent).toContainEqual({
       kind: 'run-list',
       runs: [{
@@ -1303,7 +1308,11 @@ describe('RemoteBridge — connection teardown', () => {
       },
     });
     await flush();
-    await requestRunList(other);
+    await replyToRunList(other, interpreter, [{
+      sessionId: 'sess-1',
+      runId: 'run-owned',
+      commandText: 'codex',
+    }]);
     expect(other.sent).toContainEqual({
       kind: 'run-list',
       runs: [{ sessionId: 'sess-1', runId: 'run-owned', commandText: 'codex' }],
@@ -1326,6 +1335,115 @@ describe('RemoteBridge — connection teardown', () => {
     expect(channels[1].port1.posted).toContainEqual({ type: 'pty-claim-control' });
     expect(channels[0].port1.closed).toBe(true);
     leases.dispose();
+  });
+
+  it('keeps the initiating install resumable after the port lease expires while the run remains active', async () => {
+    const identity = {
+      clientId: '01947000-0000-4000-8000-000000000003',
+      clientName: 'Long-backgrounded phone',
+      platform: 'android' as const,
+    };
+    const first = new FakeWs();
+    const leases = new RemoteRunLeaseRegistry({ ttlMs: 1_000 });
+    const { options, interpreter, channels } = makeOptions({ runLeases: leases });
+    attachConnection(first, options);
+    first.clientSend({ ...authMessage(), clientIdentity: identity });
+    await flush();
+
+    vi.useFakeTimers();
+    try {
+      first.clientSend({
+        kind: 'run-command',
+        runId: 'run-after-lease',
+        sessionId: 'sess-1',
+        commandText: 'codex',
+      });
+      first.close();
+      expect(leases.size).toBe(1);
+
+      vi.advanceTimersByTime(1_001);
+      expect(leases.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const restarted = new FakeWs();
+    attachConnection(restarted, options);
+    restarted.clientSend({ ...authMessage(), clientIdentity: identity });
+    await flush();
+    await replyToRunList(restarted, interpreter, [{
+      sessionId: 'sess-1',
+      runId: 'run-after-lease',
+      commandText: 'codex',
+    }]);
+
+    expect(restarted.sent).toContainEqual({
+      kind: 'run-list',
+      runs: [{
+        sessionId: 'sess-1',
+        runId: 'run-after-lease',
+        commandText: 'codex',
+        resumeOwned: true,
+      }],
+    });
+
+    restarted.clientSend({
+      kind: 'resume-run',
+      sessionId: 'sess-1',
+      runId: 'run-after-lease',
+      generation: 2,
+    });
+    acceptLatestAttach(interpreter);
+    await flush();
+
+    expect(restarted.sent).toContainEqual({
+      kind: 'resume-run-ready',
+      sessionId: 'sess-1',
+      runId: 'run-after-lease',
+      generation: 2,
+    });
+    expect(channels[1].port1.posted).toContainEqual({
+      type: 'pty-claim-control',
+    });
+  });
+
+  it('explicit release-runs relinquishes initiator restoration for a later reconnect', async () => {
+    const identity = {
+      clientId: '01947000-0000-4000-8000-000000000004',
+      clientName: 'Disconnecting phone',
+      platform: 'android' as const,
+    };
+    const first = new FakeWs();
+    const { options, interpreter } = makeOptions();
+    attachConnection(first, options);
+    first.clientSend({ ...authMessage(), clientIdentity: identity });
+    await flush();
+    first.clientSend({
+      kind: 'run-command',
+      runId: 'run-relinquished',
+      sessionId: 'sess-1',
+      commandText: 'codex',
+    });
+    first.clientSend({ kind: 'release-runs' });
+
+    const restarted = new FakeWs();
+    attachConnection(restarted, options);
+    restarted.clientSend({ ...authMessage(), clientIdentity: identity });
+    await flush();
+    await replyToRunList(restarted, interpreter, [{
+      sessionId: 'sess-1',
+      runId: 'run-relinquished',
+      commandText: 'codex',
+    }]);
+
+    expect(restarted.sent).toContainEqual({
+      kind: 'run-list',
+      runs: [{
+        sessionId: 'sess-1',
+        runId: 'run-relinquished',
+        commandText: 'codex',
+      }],
+    });
   });
 
   it('parks transient runs, resumes with ready-before-replay, and explicitly releases them', async () => {

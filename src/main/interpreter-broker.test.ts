@@ -302,6 +302,36 @@ describe('InterpreterBroker — listRuns + onRunStarted', () => {
     });
     expect(seen[0]?.executionKind).toBe('ssh');
   });
+
+  it('onRunSettled fires only for the exact active run and can be unsubscribed', () => {
+    const { broker, interpreter } = makeBroker();
+    const seen: Array<{ sessionId: string; runId: string }> = [];
+    const unsubscribe = broker.onRunSettled((identity) => seen.push(identity));
+    expect(broker.runCommand('session-1', 'run-1', 'codex')).not.toBeNull();
+
+    interpreter.emit({
+      type: 'session-run-settled',
+      sessionId: 'other-session',
+      runId: 'run-1',
+    });
+    expect(seen).toEqual([]);
+
+    interpreter.emit({
+      type: 'session-run-settled',
+      sessionId: 'session-1',
+      runId: 'run-1',
+    });
+    expect(seen).toEqual([{ sessionId: 'session-1', runId: 'run-1' }]);
+
+    unsubscribe();
+    expect(broker.runCommand('session-1', 'run-2', 'pwd')).not.toBeNull();
+    interpreter.emit({
+      type: 'session-run-settled',
+      sessionId: 'session-1',
+      runId: 'run-2',
+    });
+    expect(seen).toHaveLength(1);
+  });
 });
 
 describe('InterpreterBroker — run/attach port brokering', () => {
@@ -313,6 +343,35 @@ describe('InterpreterBroker — run/attach port brokering', () => {
     expect(port1).toBe(channels[0].port1);
     expect(interpreter.posted[0].msg).toEqual({ type: 'run', commandText: 'ls', sessionId: 'sess-1', runId: 'run-1' });
     expect(interpreter.posted[0].transfer).toEqual([channels[0].port2]);
+  });
+
+  it('tryRunCommand marks only commands actually posted to the interpreter', async () => {
+    const runGuard = new SessionWorktreeGuard();
+    const { broker, interpreter } = makeBroker(
+      undefined,
+      undefined,
+      undefined,
+      runGuard,
+    );
+    const accepted = broker.tryRunCommand('sess-1', 'run-1', 'codex', 'mobile');
+    expect(accepted.posted).toBe(true);
+    expect(interpreter.posted[0]?.msg).toMatchObject({
+      type: 'run',
+      requestOrigin: 'mobile',
+    });
+    interpreter.emit({
+      type: 'session-run-settled',
+      sessionId: 'sess-1',
+      runId: 'run-1',
+    });
+
+    let rejected: ReturnType<InterpreterBroker['tryRunCommand']> | undefined;
+    await runGuard.withRemovalBarrier(() => {
+      rejected = broker.tryRunCommand('sess-1', 'run-2', 'pwd', 'mobile');
+    });
+
+    expect(rejected?.posted).toBe(false);
+    expect(interpreter.posted).toHaveLength(1);
   });
 
   it('attachRun returns port1 and posts attach-run with [port2] transferred', () => {

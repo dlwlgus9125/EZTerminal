@@ -44,7 +44,10 @@ import type {
 import type { WorktreeRequestOrigin } from '../shared/worktree';
 import { AsyncMutationGate, type MutationGate } from './async-mutation-gate';
 import { SessionDirectory } from './session-directory';
-import { SessionWorktreeGuard } from './session-worktree-guard';
+import {
+  SessionWorktreeGuard,
+  type SessionRunIdentity,
+} from './session-worktree-guard';
 
 // ── DI seams (narrow slices of Electron's MessagePortMain / UtilityProcess —
 //    real instances satisfy these structurally, fakes in tests need implement
@@ -88,6 +91,9 @@ type PendingRunList = { resolve: (runs: readonly RunStartedInfo[]) => void; reje
 export type CheckedAttachRunResult =
   | { readonly accepted: true; readonly port: RemotePort }
   | { readonly accepted: false; readonly reason: RunAttachRejectReason };
+export type RunCommandDispatchResult =
+  | { readonly posted: true; readonly port: RemotePort }
+  | { readonly posted: false; readonly port: RemotePort | null };
 type PendingAttach = {
   readonly port: RemotePort;
   readonly timer: ReturnType<typeof setTimeout>;
@@ -133,6 +139,9 @@ export class InterpreterBroker {
   private readonly pendingDestroys = new Map<string, PendingDestroy>();
   private readonly runStartedListeners = new Set<
     (info: RunStartedInfo) => void
+  >();
+  private readonly runSettledListeners = new Set<
+    (identity: SessionRunIdentity) => void
   >();
   private readonly interpreterExitListeners = new Set<
     (code?: number) => void
@@ -195,9 +204,13 @@ export class InterpreterBroker {
           pending.resolve(session);
           this.directory.add(session);
         } else if (msg.type === 'session-run-settled') {
-          const exactOwner = this.runGuard.finishRun({ sessionId: msg.sessionId, runId: msg.runId });
-          if (exactOwner && msg.cwd !== undefined)
-            this.directory.updateCwd(msg.sessionId, msg.cwd);
+          const identity = { sessionId: msg.sessionId, runId: msg.runId };
+          const exactOwner = this.runGuard.finishRun(identity);
+          if (exactOwner) {
+            if (msg.cwd !== undefined)
+              this.directory.updateCwd(msg.sessionId, msg.cwd);
+            for (const listener of this.runSettledListeners) listener(identity);
+          }
         } else if (msg.type === 'run-started') {
           const info: RunStartedInfo = {
             sessionId: msg.sessionId,
@@ -374,9 +387,33 @@ export class InterpreterBroker {
     commandText: string,
     requestOrigin?: WorktreeRequestOrigin,
   ): RemotePort | null {
-    if (!this.alive) return this.createRejectedRunPort('The interpreter is not running');
+    return this.tryRunCommand(sessionId, runId, commandText, requestOrigin).port;
+  }
+
+  /**
+   * Distinguishes a command posted to the interpreter from a broker-local
+   * rejection while preserving the same terminal error port for adapters.
+   * Remote transport metadata may only be attached to the `posted` branch.
+   */
+  tryRunCommand(
+    sessionId: string,
+    runId: string,
+    commandText: string,
+    requestOrigin?: WorktreeRequestOrigin,
+  ): RunCommandDispatchResult {
+    if (!this.alive) {
+      return {
+        posted: false,
+        port: this.createRejectedRunPort('The interpreter is not running'),
+      };
+    }
     if (!this.runGuard.tryBeginRun({ sessionId, runId })) {
-      return this.createRejectedRunPort('Run could not start while a worktree mutation is in progress');
+      return {
+        posted: false,
+        port: this.createRejectedRunPort(
+          'Run could not start while a worktree mutation is in progress',
+        ),
+      };
     }
     let channel: RemoteMessageChannel | undefined;
     try {
@@ -392,7 +429,8 @@ export class InterpreterBroker {
         },
         [port2],
       );
-      return port1; // returned UN-started — the caller starts/transfers it.
+      // Returned UN-started; the caller starts or transfers it.
+      return { posted: true, port: port1 };
     } catch {
       this.runGuard.finishRun({ sessionId, runId });
       try {
@@ -401,7 +439,12 @@ export class InterpreterBroker {
       } catch {
         // Channel creation/transfer already tore down one side.
       }
-      return this.createRejectedRunPort('The interpreter could not start this run');
+      return {
+        posted: false,
+        port: this.createRejectedRunPort(
+          'The interpreter could not start this run',
+        ),
+      };
     }
   }
 
@@ -605,6 +648,11 @@ export class InterpreterBroker {
   onRunStarted(fn: (info: RunStartedInfo) => void): () => void {
     this.runStartedListeners.add(fn);
     return () => this.runStartedListeners.delete(fn);
+  }
+
+  onRunSettled(fn: (identity: SessionRunIdentity) => void): () => void {
+    this.runSettledListeners.add(fn);
+    return () => this.runSettledListeners.delete(fn);
   }
 
   onInterpreterExited(fn: (code?: number) => void): () => void {

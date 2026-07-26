@@ -269,7 +269,11 @@ export interface AttachRunRequest {
   readonly runId: string;
 }
 
-/** Rebind a stable mobile-side port to a run parked by RemoteRunLeaseRegistry. */
+/**
+ * Rebind a stable mobile-side port to an active run. Main consumes a parked
+ * liveness lease when one still exists, but an initiating installation may
+ * also resume after that bounded port lease has expired.
+ */
 export interface ResumeRunRequest {
   readonly kind: 'resume-run';
   readonly sessionId: string;
@@ -278,7 +282,10 @@ export interface ResumeRunRequest {
   readonly generation: number;
 }
 
-/** Explicit disconnect releases this connection's run ports instead of leasing them. */
+/**
+ * Explicit disconnect releases this installation's run ports instead of
+ * leasing them and relinquishes automatic initiator restoration.
+ */
 export interface ReleaseRunsMessage {
   readonly kind: 'release-runs';
 }
@@ -627,8 +634,12 @@ export interface SessionListMessage {
   readonly sessions: readonly SessionInfo[];
 }
 
-/** Connection-relative metadata for restoring a run after a full mobile
- * process restart. This does not belong on the origin-agnostic run broadcast. */
+/**
+ * Connection-relative metadata for restoring a run after a full mobile
+ * process restart. It is derived from active-run initiator identity rather
+ * than the shorter MessagePort lease and does not belong on the
+ * origin-agnostic run broadcast.
+ */
 export interface RemoteRunListEntry extends RunStartedInfo {
   readonly resumeOwned?: true;
 }

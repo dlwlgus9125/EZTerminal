@@ -9,6 +9,7 @@
  *
  * Run directly with Node's native TypeScript stripping:
  *   node mobile/e2e/session-force-stop-recovery.ts
+ *   node mobile/e2e/session-force-stop-recovery.ts --offline-ms=330000
  */
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -43,6 +44,23 @@ const FAKE_CODEX = path.resolve(
   'fake-codex',
   'codex.cmd',
 );
+const DEFAULT_OFFLINE_MS = 2_000;
+const MAX_OFFLINE_MS = 20 * 60 * 1_000;
+
+function parseOfflineMs(): number {
+  const args = process.argv.slice(2);
+  const option = args.find((arg) => arg.startsWith('--offline-ms='));
+  const unknown = args.find((arg) => !arg.startsWith('--offline-ms='));
+  if (unknown) throw new Error(`Unknown argument: ${unknown}`);
+  if (!option) return DEFAULT_OFFLINE_MS;
+  const value = Number(option.slice('--offline-ms='.length));
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_OFFLINE_MS) {
+    throw new Error(
+      `--offline-ms must be an integer from 0 through ${MAX_OFFLINE_MS}`,
+    );
+  }
+  return value;
+}
 
 async function waitForXtermText(text: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -61,6 +79,7 @@ async function waitForXtermText(text: string, timeoutMs: number): Promise<void> 
 }
 
 async function main(): Promise<void> {
+  const offlineMs = parseOfflineMs();
   if (!existsSync(MAIN_ENTRY)) {
     throw new Error(`Desktop build is missing: ${MAIN_ENTRY}`);
   }
@@ -85,7 +104,8 @@ async function main(): Promise<void> {
 
     runAdb(['shell', 'am', 'force-stop', APP_ID]);
     closeWebViewDevtools();
-    await sleep(2_000);
+    console.log(`[repro] Android app stopped; waiting ${offlineMs}ms before relaunch`);
+    await sleep(offlineMs);
     runAdb(['logcat', '-c']);
     runAdb(['shell', 'am', 'start', '-n', `${APP_ID}/.MainActivity`]);
 

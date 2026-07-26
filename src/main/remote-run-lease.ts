@@ -3,7 +3,7 @@ import type { RemotePort } from './interpreter-broker';
 
 /** A transient mobile disconnect keeps at most this many run ports alive. */
 export const REMOTE_RUN_LEASE_CAP = 32;
-/** Foreground/background network changes are recoverable for five minutes. */
+/** An orphaned run port remains available for in-place resume for five minutes. */
 export const REMOTE_RUN_LEASE_MS = 5 * 60 * 1000;
 
 interface LeaseRecord {
@@ -11,8 +11,6 @@ interface LeaseRecord {
   readonly sessionId: string;
   readonly runId: string;
   readonly port: RemotePort;
-  /** Install identity of the mobile client that initiated this run. */
-  readonly ownerClientId?: string;
   readonly createdAt: number;
   readonly timer: ReturnType<typeof setTimeout>;
 }
@@ -47,7 +45,7 @@ export class RemoteRunLeaseRegistry {
     this.now = options.now ?? Date.now;
   }
 
-  park(sessionId: string, runId: string, port: RemotePort, ownerClientId?: string): void {
+  park(sessionId: string, runId: string, port: RemotePort): void {
     const key = leaseKey(sessionId, runId);
     this.releaseKey(key);
 
@@ -64,7 +62,6 @@ export class RemoteRunLeaseRegistry {
       sessionId,
       runId,
       port,
-      ownerClientId,
       createdAt: this.now(),
       timer,
     };
@@ -90,11 +87,6 @@ export class RemoteRunLeaseRegistry {
 
   has(sessionId: string, runId: string): boolean {
     return this.leases.has(leaseKey(sessionId, runId));
-  }
-
-  /** True only for the install that initiated the parked run. */
-  isOwnedBy(sessionId: string, runId: string, clientId: string): boolean {
-    return this.leases.get(leaseKey(sessionId, runId))?.ownerClientId === clientId;
   }
 
   /** Remove a lease without closing it; caller closes it after replacement is live. */

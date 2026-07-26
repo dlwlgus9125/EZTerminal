@@ -75,6 +75,7 @@ import {
   type WorktreeResult,
 } from '../shared/worktree';
 import type { InterpreterBroker, RemoteInterpreter, RemoteMessageChannel, RemotePort } from './interpreter-broker';
+import { RemoteRunInitiatorRegistry } from './remote-run-initiator';
 import { RemoteRunLeaseRegistry } from './remote-run-lease';
 import { resolveTerminalFileLocation } from './terminal-path-resolver';
 import { TerminalFileCapabilityStore } from './terminal-file-capability';
@@ -679,9 +680,15 @@ export interface RemoteBridgeOptions {
   readonly bindHost?: string;
   /** Shared across websocket generations so transiently orphaned runs resume. */
   readonly runLeases?: RemoteRunLeaseRegistry;
+  /** Shared across generations for the full lifetime of an active mobile run. */
+  readonly runInitiators?: RemoteRunInitiatorRegistry;
 }
 
 const defaultRunLeases = new WeakMap<InterpreterBroker, RemoteRunLeaseRegistry>();
+const defaultRunInitiators = new WeakMap<
+  InterpreterBroker,
+  RemoteRunInitiatorRegistry
+>();
 
 function leasesFor(options: RemoteBridgeOptions): RemoteRunLeaseRegistry {
   if (options.runLeases) return options.runLeases;
@@ -691,6 +698,16 @@ function leasesFor(options: RemoteBridgeOptions): RemoteRunLeaseRegistry {
     defaultRunLeases.set(options.broker, leases);
   }
   return leases;
+}
+
+function initiatorsFor(options: RemoteBridgeOptions): RemoteRunInitiatorRegistry {
+  if (options.runInitiators) return options.runInitiators;
+  let initiators = defaultRunInitiators.get(options.broker);
+  if (!initiators) {
+    initiators = new RemoteRunInitiatorRegistry(options.broker);
+    defaultRunInitiators.set(options.broker, initiators);
+  }
+  return initiators;
 }
 
 /**
@@ -714,6 +731,7 @@ export function attachConnection(
   let releaseRunsOnClose = false;
   let connectionClosed = false;
   const runLeases = leasesFor(options);
+  const runInitiators = initiatorsFor(options);
   const terminalCapabilities = new TerminalFileCapabilityStore();
   const runs = new Map<string, {
     readonly sessionId: string;
@@ -788,8 +806,12 @@ export function attachConnection(
   const resumeRun = async (sessionId: string, runId: string, generation: number): Promise<void> => {
     const pendingKey = `${sessionId}\0${runId}`;
     const leaseWasPresent = runLeases.has(sessionId, runId);
-    const leaseWasOwned = clientIdentity !== null
-      && runLeases.isOwnedBy(sessionId, runId, clientIdentity.clientId);
+    const initiatedByClient = clientIdentity !== null
+      && runInitiators.isInitiatedBy(
+        sessionId,
+        runId,
+        clientIdentity.clientId,
+      );
     if (leaseWasPresent) pendingLeaseResumes.set(pendingKey, { sessionId, runId });
     const attached = await options.broker.attachRunChecked(sessionId, runId);
     if (leaseWasPresent) pendingLeaseResumes.delete(pendingKey);
@@ -817,18 +839,17 @@ export function attachConnection(
       return;
     }
     if (connectionClosed) {
-      runLeases.park(
-        sessionId,
-        runId,
-        port1,
-        leaseWasOwned && clientIdentity ? clientIdentity.clientId : undefined,
-      );
+      runLeases.park(sessionId, runId, port1);
       port1.start();
       orphan?.close();
       return;
     }
 
-    const record = { sessionId, port: port1, initiatedHere: leaseWasOwned };
+    const record = {
+      sessionId,
+      port: port1,
+      initiatedHere: initiatedByClient,
+    };
     runs.get(runId)?.port.close();
     runs.set(runId, record);
     port1.on('message', (event) => {
@@ -837,13 +858,15 @@ export function attachConnection(
     port1.on('close', () => {
       if (runs.get(runId) === record) runs.delete(runId);
     });
-    // Reset the stable renderer before starting the replay queue. An owned
-    // initiating lease reclaims PTY control explicitly: closing a leased
-    // MessagePortMain is not a reliable utility-process handoff signal. The
-    // lease-less case retains the existing claim because an old socket may
-    // still be half-open. A resumed observer lease stays viewing-only.
+    // Reset the stable renderer before starting the replay queue. The
+    // initiating installation reclaims PTY control independently of whether
+    // its bounded liveness lease still exists. The lease-less case retains the
+    // existing claim because an old socket may still be half-open. A resumed
+    // observer lease stays viewing-only.
     send({ kind: 'resume-run-ready', sessionId, runId, generation });
-    if (leaseWasOwned || !orphan) port1.postMessage({ type: 'pty-claim-control' });
+    if (initiatedByClient || !orphan) {
+      port1.postMessage({ type: 'pty-claim-control' });
+    }
     port1.start();
     orphan?.close();
   };
@@ -995,12 +1018,7 @@ export function attachConnection(
     for (const [runId, record] of runs) {
       if (releaseRunsOnClose) record.port.close();
       else {
-        runLeases.park(
-          record.sessionId,
-          runId,
-          record.port,
-          record.initiatedHere && clientIdentity ? clientIdentity.clientId : undefined,
-        );
+        runLeases.park(record.sessionId, runId, record.port);
       }
     }
     runs.clear();
@@ -1188,7 +1206,11 @@ export function attachConnection(
               kind: 'run-list',
               runs: runs.map((run) => (
                 clientIdentity
-                && runLeases.isOwnedBy(run.sessionId, run.runId, clientIdentity.clientId)
+                && runInitiators.isInitiatedBy(
+                  run.sessionId,
+                  run.runId,
+                  clientIdentity.clientId,
+                )
                   ? { ...run, resumeOwned: true }
                   : run
               )),
@@ -1254,10 +1276,20 @@ export function attachConnection(
 
       case 'run-command': {
         const { runId, sessionId } = msg;
-        // Broker mints the port pair + posts port2 to the interpreter; a `null`
-        // return (dead interpreter) means no port to relay — skip, don't throw.
-        const port1 = options.broker.runCommand(msg.sessionId, runId, msg.commandText, 'mobile');
+        // Broker mints the port pair + posts port2 to the interpreter. Its
+        // dispatch result distinguishes a real run from a broker-local error
+        // port so only an actual mobile run receives durable initiator metadata.
+        const dispatch = options.broker.tryRunCommand(
+          msg.sessionId,
+          runId,
+          msg.commandText,
+          'mobile',
+        );
+        const { port: port1 } = dispatch;
         if (!port1) break;
+        if (dispatch.posted && clientIdentity) {
+          runInitiators.remember(sessionId, runId, clientIdentity.clientId);
+        }
         const record = { sessionId, port: port1, initiatedHere: true };
         runs.get(runId)?.port.close();
         runs.set(runId, record);
@@ -1302,6 +1334,9 @@ export function attachConnection(
       case 'release-runs':
         releaseRunsOnClose = true;
         releasePendingResumeLeases();
+        if (clientIdentity) {
+          runInitiators.forgetClient(clientIdentity.clientId);
+        }
         for (const record of runs.values()) record.port.close();
         runs.clear();
         break;
@@ -1892,7 +1927,8 @@ export interface RemoteBridgeHandle {
  */
 export async function startRemoteBridge(options: RemoteBridgeOptions): Promise<RemoteBridgeHandle> {
   const runLeases = leasesFor(options);
-  const connectionOptions = options.runLeases ? options : { ...options, runLeases };
+  const runInitiators = initiatorsFor(options);
+  const connectionOptions = { ...options, runLeases, runInitiators };
   const wss = new WebSocketServer({
     port: options.port,
     host: options.bindHost ?? '0.0.0.0',
@@ -1966,6 +2002,7 @@ export async function startRemoteBridge(options: RemoteBridgeOptions): Promise<R
         for (const ws of wss.clients) ws.terminate();
         wss.close((err) => {
           runLeases.dispose();
+          runInitiators.clear();
           if (err) console.error('[remote-bridge] error closing WebSocketServer:', err);
           resolve();
         });

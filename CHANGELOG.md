@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-07-26
+
+### Fixed
+- Kept the initiating Android installation eligible to restore input control
+  for the full lifetime of its active run instead of losing that identity when
+  the five-minute orphan-port lease expired.
+
+See [1.0.9 release notes](docs/release/release-notes-1.0.9.md).
+
 ## [1.0.8] - 2026-07-26
 
 ### Fixed
