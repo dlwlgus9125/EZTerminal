@@ -30,6 +30,7 @@ import {
   Osc52WriteGate,
   TerminalSideEffectSuppression,
 } from './osc52';
+import { MirrorWriteGate } from './mirror-write-gate';
 import { QUERY_CARRY_CHARS, containsTerminalQuery } from './pty-query-gate';
 import { TouchScrollAccumulator } from './touch-scroll';
 import { attachXtermImeHygiene } from './xterm-ime-hygiene';
@@ -393,7 +394,7 @@ function PtyXtermView({
     // query, the case the gate exists for, still arms it. `queryCarry`
     // stitches queries split across chunk boundaries (same carry technique as
     // the interpreter's TuiSignalDetector).
-    let mirrorWritesInFlight = 0;
+    const mirrorGate = new MirrorWriteGate();
     let queryCarry = '';
     const latin1 = new TextDecoder('latin1');
     const writeToXterm = (
@@ -405,15 +406,15 @@ function PtyXtermView({
       const releaseSideEffectSuppression = suppressSideEffects
         ? sideEffectSuppression.enter()
         : null;
-      if (suppressMirrorAutoReplies) mirrorWritesInFlight++;
+      const releaseMirrorGate = suppressMirrorAutoReplies ? mirrorGate.arm() : null;
       try {
         term.write(bytes, () => {
-          if (suppressMirrorAutoReplies) mirrorWritesInFlight--;
+          releaseMirrorGate?.();
           releaseSideEffectSuppression?.();
           onFlushed();
         });
       } catch (error) {
-        if (suppressMirrorAutoReplies) mirrorWritesInFlight--;
+        releaseMirrorGate?.();
         releaseSideEffectSuppression?.();
         throw error;
       }
@@ -434,10 +435,15 @@ function PtyXtermView({
     const unregisterReplayReset = controller.setPtyReplayResetHandler(() => {
       term.reset();
       runtime.clearSearch();
+      // New stream generation: pre-reset gate accounting (including a write
+      // whose flush callback never survived the reset) must not keep dropping
+      // this mount's input, and a half-stitched query must not span the reset.
+      mirrorGate.reset();
+      queryCarry = '';
     });
     // Keystrokes / pasted text → PTY child (attach ports support input too).
     const dataDisposable = term.onData((data) => {
-      if (mirrorWritesInFlight > 0) return; // auto-reply, not a user — see above
+      if (mirrorGate.blocked) return; // auto-reply, not a user — see above
       controller.sendPtyInput(data);
     });
     // Soft-keyboard duplication fix: empty the helper textarea after every
