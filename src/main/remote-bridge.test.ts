@@ -26,6 +26,7 @@ import {
   type RemoteWs,
 } from './remote-bridge';
 import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
+import { RemoteRunInitiatorRegistry } from './remote-run-initiator';
 import { RemoteRunLeaseRegistry } from './remote-run-lease';
 import { SessionWorktreeGuard } from './session-worktree-guard';
 import type { FileReadStream } from './file-service';
@@ -3097,5 +3098,19 @@ describe('startRemoteBridge — real WS server lifecycle (v0.2.0 D2)', () => {
     const client2 = await connect(TEST_PORT);
     client2.close();
     await handle2.stop();
+  }, 10_000);
+
+  it('stop() preserves initiator identities for later bridge generations (run lifetime, not bridge lifetime)', async () => {
+    const { options } = makeOptions({ port: TEST_PORT });
+    // Same registry shape production memoizes per broker: identity must have
+    // the RUN's lifetime (registry doc), so a remote toggle off/on cannot
+    // demote an install's own still-active run to viewing-only on resume.
+    const initiators = new RemoteRunInitiatorRegistry(options.broker);
+    initiators.remember('session-own', 'run-own', 'client-own');
+
+    const handle = await startRemoteBridge({ ...options, runInitiators: initiators });
+    await handle.stop();
+
+    expect(initiators.isInitiatedBy('session-own', 'run-own', 'client-own')).toBe(true);
   }, 10_000);
 });

@@ -2002,7 +2002,12 @@ export async function startRemoteBridge(options: RemoteBridgeOptions): Promise<R
         for (const ws of wss.clients) ws.terminate();
         wss.close((err) => {
           runLeases.dispose();
-          runInitiators.clear();
+          // `runInitiators` deliberately survives stop(): initiator identity
+          // has the RUN's lifetime (registry doc) and the broker-scoped
+          // registry serves later bridge generations, so a remote toggle
+          // off/on cannot demote an install's own still-active run to
+          // viewing-only on resume. Its run-lifecycle subscriptions keep
+          // cleanup exact without any bridge-lifetime wipe.
           if (err) console.error('[remote-bridge] error closing WebSocketServer:', err);
           resolve();
         });
