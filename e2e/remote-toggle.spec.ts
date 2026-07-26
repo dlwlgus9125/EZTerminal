@@ -24,6 +24,9 @@ test('remote toggle: enabling binds; disabling closes the live client and refuse
   await expect(toggle).not.toBeChecked();
   await toggle.click();
   await expect(toggle).toBeChecked();
+  await expect.poll(() => win.evaluate(async () => (
+    await window.ezterminal.getRemoteRuntimeStatus()
+  ).state)).toBe('running');
   const client = await TestWsClient.connectAuthed(`ws://127.0.0.1:${REMOTE_PORT}`, token);
 
   try {
@@ -41,6 +44,9 @@ test('remote toggle: enabling binds; disabling closes the live client and refuse
 
     await toggle.click();
     await expect(toggle).toBeChecked();
+    await expect.poll(() => win.evaluate(async () => (
+      await window.ezterminal.getRemoteRuntimeStatus()
+    ).state)).toBe('running');
     const client2 = await TestWsClient.connectAuthed(`ws://127.0.0.1:${REMOTE_PORT}`, token);
     client2.close();
   } finally {
