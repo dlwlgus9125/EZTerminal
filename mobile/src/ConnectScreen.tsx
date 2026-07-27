@@ -1,10 +1,11 @@
-import { Eye, EyeOff, KeyRound, Link2, Server, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, Link2, QrCode, Server, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MOBILE_BUILD_INFO } from './build-info';
 import { formatEndpointHost } from './mobile-endpoint';
 import { MobileSignalMark } from './MobileSignalMark';
+import { PairingScanner } from './PairingScanner';
 
 export interface SavedConnection {
   readonly url: string;
@@ -61,6 +62,7 @@ export function ConnectScreen({
   const [token, setToken] = useState(saved?.token ?? '');
   const [revealToken, setRevealToken] = useState(false);
   const [bootStep, setBootStep] = useState(0);
+  const [scanning, setScanning] = useState(false);
   const trimmedUrl = url.trim();
   const secureWs = /^wss:\/\//i.test(trimmedUrl);
 
@@ -125,6 +127,17 @@ export function ConnectScreen({
         )}
 
         <p className="mob-connect__divider">{t('mobile.connect.orNew')}</p>
+
+        <button
+          type="button"
+          className="mob-connect__scan"
+          disabled={connecting}
+          onClick={() => setScanning(true)}
+          data-testid="connect-scan-qr"
+        >
+          <QrCode aria-hidden="true" />
+          {t('pairing.scan')}
+        </button>
 
         <div className="mob-connect__fields">
           <label className="mob-connect__label">
@@ -223,6 +236,20 @@ export function ConnectScreen({
           <span>EZT://PAIR</span><span data-build-stamp>v{MOBILE_BUILD_INFO.appVersion}</span>
         </p>
       </form>
+      {scanning && (
+        <PairingScanner
+          onClose={() => setScanning(false)}
+          onDetected={({ endpoint, code }) => {
+            setScanning(false);
+            // Fill the fields as well as connecting: if the code has already
+            // expired the user is left looking at what was scanned rather than
+            // an empty form and no explanation.
+            setUrl(endpoint);
+            setToken(code);
+            submit(endpoint, code);
+          }}
+        />
+      )}
     </main>
   );
 }

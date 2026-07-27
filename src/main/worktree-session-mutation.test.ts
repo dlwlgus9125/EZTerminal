@@ -168,7 +168,7 @@ describe('session creation / worktree removal mutation gate', () => {
       runId: 'run-cd',
       cwd: created.opened.path,
     });
-    expect(broker.listSessions()).toEqual([{
+    expect(broker.listSessions()).toMatchObject([{
       sessionId: 'session-after-cd',
       cwd: created.opened.path,
     }]);

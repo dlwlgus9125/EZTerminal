@@ -705,6 +705,9 @@ export interface RemoteBridgeOptions {
   readonly agentSource?: RemoteAgentSource;
   /** Optional so existing fixtures without Git wiring keep working. */
   readonly gitSource?: RemoteGitSource;
+  /** Redeems a one-time pairing code. Absent means pairing is unavailable and
+   * only the bearer token authenticates. */
+  readonly pairingSource?: { consume(code: string): boolean };
   /** Optional so older bridge fixtures remain valid. */
   readonly worktreeSource?: RemoteWorktreeSource;
   /** Optional capability: old hosts omit it and mobile hides the surface. */
@@ -1120,7 +1123,11 @@ export function attachConnection(
       authPending = true;
       void Promise.resolve(options.getToken()).then((token) => {
         if (connectionClosed || authed) return;
-        if (tokensMatch(candidateToken, token)) {
+        // The bearer is checked first so an ordinary reconnect never burns the
+        // pairing code the user is still looking at on screen.
+        const byBearer = tokensMatch(candidateToken, token);
+        const byPairingCode = !byBearer && (options.pairingSource?.consume(candidateToken) ?? false);
+        if (byBearer || byPairingCode) {
           if (!protocolCompatible) {
             send({
               kind: 'auth-fail',
@@ -1157,6 +1164,10 @@ export function attachConnection(
             hostVersion: options.hostVersion,
             ...(options.buildSha ? { hostBuildSha: options.buildSha } : {}),
             ...(capabilities.length > 0 ? { capabilities } : {}),
+            // Handing the bearer over is what turns a scan into a pairing. It
+            // travels the channel the code just authenticated, which is the
+            // same channel the bearer itself uses on every later connect.
+            ...(byPairingCode ? { issuedToken: token } : {}),
           });
           if (options.agentSource) send({ kind: 'agent-snapshot', snapshot: options.agentSource.getSnapshot() });
           // OpenClaw availability (M3): initial state, right after auth —

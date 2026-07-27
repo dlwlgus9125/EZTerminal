@@ -45,6 +45,7 @@ export type ElectronDesktopRuntimeBridgeSources = Pick<
   | 'openclawSource'
   | 'agentSource'
   | 'gitSource'
+  | 'pairingSource'
   | 'runLeases'
 >;
 

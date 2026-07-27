@@ -371,7 +371,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   readonly versions: RuntimeVersions;
 
   private readonly url: string;
-  private readonly token: string;
+  /** Replaced in place when the host issues a bearer after a code pairing. */
+  private token: string;
   private readonly clientIdentity: RemoteClientIdentity | undefined;
   private readonly buildInfo: BuildInfo;
   private readonly createSocket: CreateSocket;
@@ -436,6 +437,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   /** Mobile-only (M2 ConnectScreen): fires on every authed transition, including
    * an immediate replay of the CURRENT state to a listener that just subscribed. */
   private readonly authListeners = new Set<(authed: boolean) => void>();
+  private readonly tokenIssuedListeners = new Set<(token: string) => void>();
   private readonly connectionStateListeners = new Set<(state: RemoteConnectionState) => void>();
   private readonly connectionHealthListeners = new Set<(snapshot: ConnectionHealthSnapshot) => void>();
   private remoteCapabilities = new Set<RemoteCapability>();
@@ -895,6 +897,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         // the gate never granted.
       )) resolve({ ok: false, error: 'delivery-failed' });
     });
+  }
+
+  /** Mobile-only: the host handed over a long-lived bearer after this link
+   * authenticated with a one-time pairing code. The app persists it so the
+   * next launch does not need the desktop's screen. */
+  onTokenIssued(listener: (token: string) => void): () => void {
+    this.tokenIssuedListeners.add(listener);
+    return () => this.tokenIssuedListeners.delete(listener);
   }
 
   /** Mobile-only (not part of `EzTerminalApi`): drives the ConnectScreen's
@@ -2120,6 +2130,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         }
         if (this.authed) break;
         this.hostVersion = msg.hostVersion;
+        // A pairing code buys exactly one connection; the bearer that comes
+        // back with it is what makes the next one work without the desktop
+        // being in the room. Adopt it before anything else can fail.
+        if (typeof msg.issuedToken === 'string' && msg.issuedToken.trim()) {
+          this.token = msg.issuedToken;
+          for (const listener of this.tokenIssuedListeners) listener(msg.issuedToken);
+        }
         this.hostBuildSha = typeof msg.hostBuildSha === 'string' && msg.hostBuildSha.trim()
           ? msg.hostBuildSha
           : 'unknown';

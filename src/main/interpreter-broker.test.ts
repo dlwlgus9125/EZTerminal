@@ -157,8 +157,8 @@ describe('InterpreterBroker — createSession', () => {
     await expect(p).resolves.toEqual({ sessionId: 'sess-1', cwd: '/tmp' });
 
     await afterMacrotask();
-    expect(added).toEqual([{ sessionId: 'sess-1', cwd: '/tmp' }]);
-    expect(broker.listSessions()).toEqual([{ sessionId: 'sess-1', cwd: '/tmp' }]);
+    expect(added).toMatchObject([{ sessionId: 'sess-1', cwd: '/tmp' }]);
+    expect(broker.listSessions()).toMatchObject([{ sessionId: 'sess-1', cwd: '/tmp' }]);
   });
 
   it('ADR C6: the createSession promise resolves BEFORE the onSessionAdded broadcast fires', async () => {
@@ -405,7 +405,7 @@ describe('InterpreterBroker — run/attach port brokering', () => {
     });
 
     expect(runGuard.hasConflictingActiveRun()).toBe(false);
-    expect(broker.listSessions()).toEqual([{ sessionId: 'sess-cwd', cwd: '/initial/child' }]);
+    expect(broker.listSessions()).toMatchObject([{ sessionId: 'sess-cwd', cwd: '/initial/child' }]);
   });
 
   it('does not update cwd or release a lease for a mismatched settlement identity', async () => {
@@ -423,11 +423,11 @@ describe('InterpreterBroker — run/attach port brokering', () => {
       cwd: '/attacker-controlled',
     });
     expect(runGuard.hasConflictingActiveRun()).toBe(true);
-    expect(broker.listSessions()).toEqual([{ sessionId: 'owner', cwd: '/initial' }]);
+    expect(broker.listSessions()).toMatchObject([{ sessionId: 'owner', cwd: '/initial' }]);
 
     interpreter.emit({ type: 'session-run-settled', sessionId: 'owner', runId: 'run-cwd', cwd: '/initial/child' });
     expect(runGuard.hasConflictingActiveRun()).toBe(false);
-    expect(broker.listSessions()).toEqual([{ sessionId: 'owner', cwd: '/initial/child' }]);
+    expect(broker.listSessions()).toMatchObject([{ sessionId: 'owner', cwd: '/initial/child' }]);
   });
 
   it('returns a terminal error port when a worktree removal barrier rejects a run', async () => {
@@ -552,7 +552,7 @@ describe('InterpreterBroker — destroySession', () => {
     await p;
 
     broker.destroySession('sess-1');
-    expect(broker.listSessions()).toEqual([]);
+    expect(broker.listSessions()).toMatchObject([]);
     expect(interpreter.posted.map((x) => x.msg)).toContainEqual({ type: 'destroy-session', sessionId: 'sess-1' });
   });
 
@@ -573,7 +573,7 @@ describe('InterpreterBroker — destroySession', () => {
     interpreter.throwOnPost = true;
 
     expect(() => broker.destroySession('sess-1')).not.toThrow();
-    expect(broker.listSessions()).toEqual([{ sessionId: 'sess-1', cwd: '/tmp' }]);
+    expect(broker.listSessions()).toMatchObject([{ sessionId: 'sess-1', cwd: '/tmp' }]);
   });
 
   it('guarded destroy keeps the directory until the interpreter accepts the exact run snapshot', async () => {
@@ -594,7 +594,7 @@ describe('InterpreterBroker — destroySession', () => {
 
     interpreter.emit({ type: 'session-destroy-result', requestId: 'id-2', sessionIds: ['sess-1'], destroyed: true });
     await expect(destroy).resolves.toEqual({ ok: true });
-    expect(broker.listSessions()).toEqual([]);
+    expect(broker.listSessions()).toMatchObject([]);
   });
 
   it('guarded destroy fails closed and preserves the directory when session state changed', async () => {
@@ -607,7 +607,7 @@ describe('InterpreterBroker — destroySession', () => {
     interpreter.emit({ type: 'session-destroy-result', requestId: 'id-2', sessionIds: ['sess-1'], destroyed: false });
 
     await expect(destroy).resolves.toEqual({ ok: false, reason: 'state-changed' });
-    expect(broker.listSessions()).toEqual([{ sessionId: 'sess-1', cwd: '/tmp' }]);
+    expect(broker.listSessions()).toMatchObject([{ sessionId: 'sess-1', cwd: '/tmp' }]);
   });
 
   it('rejects a correlated destroy ACK whose echoed session identities do not match', async () => {
@@ -627,7 +627,7 @@ describe('InterpreterBroker — destroySession', () => {
     });
 
     await expect(destroy).resolves.toEqual({ ok: false, reason: 'unavailable' });
-    expect(broker.listSessions()).toEqual([
+    expect(broker.listSessions()).toMatchObject([
       { sessionId: 'sess-1', cwd: '/tmp' },
       { sessionId: 'sess-2', cwd: '/tmp' },
     ]);
@@ -652,7 +652,7 @@ describe('InterpreterBroker — destroySession', () => {
         sessionIds: ['sess-1'],
         destroyed: true,
       });
-      expect(broker.listSessions()).toEqual([]);
+      expect(broker.listSessions()).toMatchObject([]);
     } finally {
       vi.useRealTimers();
     }
@@ -686,7 +686,7 @@ describe('InterpreterBroker — destroySession', () => {
       destroyed: true,
     });
     await expect(destroy).resolves.toEqual({ ok: true });
-    expect(broker.listSessions()).toEqual([]);
+    expect(broker.listSessions()).toMatchObject([]);
   });
 });
 
@@ -728,11 +728,14 @@ describe('InterpreterBroker — dead-interpreter contract', () => {
     const replacement = new FakeInterpreter();
     expect(broker.restart(replacement)).toBe(true);
     expect(replacement.listenerCount).toBe(1);
-    expect(replacement.posted[0]?.msg).toEqual({
+    // The restore payload carries the directory's own records, so a session
+    // keeps the birth time it had before the interpreter died rather than
+    // appearing to have been created by the restart.
+    expect(replacement.posted[0]?.msg).toMatchObject({
       type: 'restore-sessions',
       sessions: [{ sessionId: 'stable-session', cwd: '/workspace' }],
     });
-    expect(broker.listSessions()).toEqual([{ sessionId: 'stable-session', cwd: '/workspace' }]);
+    expect(broker.listSessions()).toMatchObject([{ sessionId: 'stable-session', cwd: '/workspace' }]);
 
     const next = broker.createSession('/next');
     expect(replacement.posted.at(-1)?.msg).toEqual({
@@ -799,7 +802,7 @@ describe('InterpreterBroker — dead-interpreter contract', () => {
     interpreter.emitExit(1);
 
     await expect(destroy).resolves.toEqual({ ok: false, reason: 'unavailable' });
-    expect(broker.listSessions()).toEqual([{ sessionId: 'sess-1', cwd: '/tmp' }]);
+    expect(broker.listSessions()).toMatchObject([{ sessionId: 'sess-1', cwd: '/tmp' }]);
   });
 
   it('reconciles a guarded batch locally when it starts after authoritative interpreter exit', async () => {
@@ -816,7 +819,7 @@ describe('InterpreterBroker — dead-interpreter contract', () => {
       { sessionId: 'sess-1', expectedActiveRunIds: [] },
       { sessionId: 'sess-2', expectedActiveRunIds: [] },
     ])).resolves.toEqual({ ok: true });
-    expect(broker.listSessions()).toEqual([]);
+    expect(broker.listSessions()).toMatchObject([]);
     expect(interpreter.posted).toHaveLength(postsAfterExit);
   });
 });

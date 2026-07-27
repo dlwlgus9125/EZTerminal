@@ -619,6 +619,10 @@ export interface AuthOkMessage {
   readonly hostVersion: string;
   readonly hostBuildSha?: string;
   readonly capabilities?: readonly RemoteCapability[];
+  /** Present only when this connection authenticated with a one-time pairing
+   * code. The client saves it and uses it from then on; without this, pairing
+   * would have to be repeated on every launch, which is not pairing. */
+  readonly issuedToken?: string;
 }
 
 export type AuthFailMessage =

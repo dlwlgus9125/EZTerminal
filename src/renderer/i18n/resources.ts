@@ -5,6 +5,27 @@ export const defaultNamespace = 'translation' as const;
 export const appResources = {
   en: {
     translation: {
+      pairing: {
+        title: 'Pair a new device',
+        steps: 'On your phone: Connect → Scan QR. Or type the code below.',
+        manualHint: 'Or enter this code on the phone instead of scanning.',
+        qrLabel: 'Pairing QR code',
+        validFor: 'Valid for',
+        oneTime: 'Single use — the code stops working the moment a device pairs.',
+        idle: 'No code is active. Generate one to pair a device.',
+        issue: 'Generate code',
+        reissue: 'Generate a new code',
+        redeemed: 'Paired. The device saved its own credentials and no longer needs this code.',
+        card: 'QR pairing',
+        cardHint: 'Scan to connect a phone',
+        unavailable: 'Turn remote access on to pair a device.',
+        scan: 'Scan QR',
+        scanTitle: 'Scan the pairing QR',
+        scanHint: 'Point the camera at the code on your desktop.',
+        cameraDenied: 'Camera access is off. Allow it in Android settings, or type the code instead.',
+        cameraUnavailable: 'No camera is available on this device.',
+        scanFailed: 'That is not an EZTerminal pairing code.',
+      },
       common: {
         appName: 'EZTerminal',
         loading: 'Loading…',
@@ -1233,6 +1254,27 @@ export const appResources = {
   },
   ko: {
     translation: {
+      pairing: {
+        title: '새 기기 페어링',
+        steps: '휴대폰에서: 연결 → QR 스캔. 또는 아래 코드를 직접 입력하세요.',
+        manualHint: '스캔 대신 이 코드를 휴대폰에 입력해도 됩니다.',
+        qrLabel: '페어링 QR 코드',
+        validFor: '유효',
+        oneTime: '1회용 — 기기가 페어링되는 즉시 코드가 무효화됩니다.',
+        idle: '활성 코드가 없습니다. 코드를 생성해 기기를 페어링하세요.',
+        issue: '코드 생성',
+        reissue: '새 코드 생성',
+        redeemed: '페어링 완료. 기기가 자체 자격 증명을 저장했으므로 이 코드는 더 이상 필요 없습니다.',
+        card: 'QR 페어링',
+        cardHint: '스캔해서 휴대폰 연결',
+        unavailable: '기기를 페어링하려면 원격 접속을 켜세요.',
+        scan: 'QR 스캔',
+        scanTitle: '페어링 QR 스캔',
+        scanHint: '데스크톱 화면의 코드에 카메라를 맞추세요.',
+        cameraDenied: '카메라 권한이 꺼져 있습니다. 안드로이드 설정에서 허용하거나 코드를 직접 입력하세요.',
+        cameraUnavailable: '이 기기에는 사용할 수 있는 카메라가 없습니다.',
+        scanFailed: 'EZTerminal 페어링 코드가 아닙니다.',
+      },
       common: {
         appName: 'EZTerminal',
         loading: '불러오는 중…',

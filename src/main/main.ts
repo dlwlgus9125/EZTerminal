@@ -44,6 +44,7 @@ import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
 import { AgentHookInstaller } from './agent-hook-installer';
 import { AgentSettingsStore } from './agent-settings-store';
 import { GitStatusService } from './git-status-service';
+import { PairingCodeService } from './pairing-code-service';
 import { QuickCommandStore } from './quick-command-store';
 import { WorkspaceFileSearchService } from './workspace-file-search-service';
 import { WorktreeService } from './worktree-service';
@@ -426,6 +427,8 @@ app.on('ready', () => {
   const agentSettingsStore = new AgentSettingsStore(path.join(app.getPath('userData')));
   // Read-only, cached, argv-only. Safe to call on every directory listing.
   const gitStatusService = new GitStatusService();
+  // In-memory, single-use, expiring. Never persisted — see the service header.
+  const pairingCodeService = new PairingCodeService();
   let agentActivityService: AgentActivityService | null = null;
   let agentRelayReady = false;
   const agentHookRelay = new AgentHookRelay(
@@ -808,6 +811,9 @@ app.on('ready', () => {
     if (typeof activityId !== 'string' || typeof text !== 'string') return { ok: false, error: 'invalid-text' };
     return agentActivityService?.sendFollowup(activityId, text) ?? { ok: false, error: 'delivery-failed' };
   });
+  ipcMain.handle('pairing:issue', () => pairingCodeService.issue());
+  ipcMain.handle('pairing:get', () => pairingCodeService.current());
+  ipcMain.handle('pairing:revoke', () => { pairingCodeService.revoke(); });
   ipcMain.handle('git:status', (_event, directory: string) => gitStatusService.getStatus(directory));
   ipcMain.handle('git:diff', (_event, directory: string) => gitStatusService.getDiff(directory));
   ipcMain.handle('agents:decide', (_event, activityId: string, decision: string): AgentDecisionResult => {
@@ -1066,6 +1072,14 @@ app.on('ready', () => {
   };
   bindSshForwardService(interpreter);
   console.log('[main] SSH forwarding service ready');
+
+  const broadcast = (channel: string, payload?: unknown): void => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send(channel, payload);
+    }
+  };
+  pairingCodeService.onChange((code) => broadcast('pairing:changed', code));
 
   agentActivityService = new AgentActivityService({
     broker,
@@ -1506,6 +1520,15 @@ app.on('ready', () => {
       openclawSource: remoteOpenClawSource,
       agentSource: agentActivityService ?? undefined,
       gitSource: gitStatusService,
+      pairingSource: {
+        consume: (code) => {
+          const redeemed = pairingCodeService.consume(code);
+          // Announced separately from the code going null, so the dialog can
+          // tell "a device just paired" from "the code simply expired".
+          if (redeemed) broadcast('pairing:redeemed');
+          return redeemed;
+        },
+      },
     },
     getMainWindow: () => (
       mainWindowRef

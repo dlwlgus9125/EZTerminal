@@ -26,6 +26,7 @@ import type {
   WorktreeResult,
 } from './worktree';
 import type { GitDiffResult, GitDirectoryStatus } from './git-status';
+import type { PairingCode } from './pairing';
 import type { ThemeMod } from './theme-schema';
 import type {
   AgentActivitySnapshot,
@@ -1188,6 +1189,17 @@ export interface EzTerminalApi {
 // shared/window.d.ts) so every call site guards with `?.`.
 
 export interface EzTerminalDesktopApi {
+  // ── One-time pairing (desktop issues, phone redeems) ────────────────────
+  /** Mint a fresh code, replacing any live one. */
+  issuePairingCode: () => Promise<PairingCode>;
+  /** The live code, or null when none is outstanding. */
+  getPairingCode: () => Promise<PairingCode | null>;
+  /** Cancel the outstanding code immediately. */
+  revokePairingCode: () => Promise<void>;
+  /** Issued, expired, or redeemed — `null` means no code is live any more. */
+  onPairingCodeChanged: (listener: (code: PairingCode | null) => void) => () => void;
+  /** A device just authenticated with the code. Fires once per redemption. */
+  onPairingRedeemed: (listener: () => void) => () => void;
   /** Devices this desktop's remote bridge has seen during this run. Desktop
    * state about its own clients — a phone has no use for, and no way to
    * answer, the question. */

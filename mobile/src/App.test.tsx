@@ -51,6 +51,10 @@ vi.mock('./transport/ws-ezterminal', () => ({
       return () => this.authListeners.delete(listener);
     }
 
+    onTokenIssued(): () => void {
+      return () => undefined;
+    }
+
     onConnectionStateChange(listener: (state: RemoteConnectionState) => void): () => void {
       this.stateListeners.add(listener);
       listener(this.connectionState);

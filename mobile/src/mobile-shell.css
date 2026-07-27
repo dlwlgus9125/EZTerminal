@@ -1254,6 +1254,45 @@
   margin-top: 10px;
 }
 
+/* Pairing scanner. The preview fills the sheet; everything else is one line
+   of instruction under it. */
+/* A fixed viewport height rather than `aspect-ratio`, which WebView 74 does
+   not understand and would silently collapse to nothing. */
+.mob-scanner__video {
+  inline-size: 100%;
+  block-size: 58vh;
+  border-radius: 12px;
+  background: var(--ui-canvas);
+  object-fit: cover;
+}
+
+.mob-scanner__hint {
+  margin: 10px 0 0;
+  color: var(--ui-text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.mob-connect__scan {
+  margin: 0 16px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--mob-accent-line);
+  border-radius: 10px;
+  background: var(--mob-accent-tint);
+  color: var(--ui-accent);
+  font: 700 0.813rem var(--ui-font-body);
+  cursor: pointer;
+}
+
+.mob-connect__scan:disabled {
+  opacity: 0.5;
+}
+
 .mob-status-line__rtt {
   display: inline-flex;
   align-items: center;

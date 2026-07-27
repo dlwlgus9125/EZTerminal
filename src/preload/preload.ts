@@ -275,6 +275,24 @@ contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
 // for why: mobile has no implementation of these, and folding them into the
 // shared EzTerminalApi would force mobile's transport to stub every one).
 const desktopApi: EzTerminalDesktopApi = {
+  issuePairingCode: () => ipcRenderer.invoke('pairing:issue'),
+  getPairingCode: () => ipcRenderer.invoke('pairing:get'),
+  revokePairingCode: () => ipcRenderer.invoke('pairing:revoke'),
+  onPairingCodeChanged: (
+    listener: (code: import('../shared/pairing').PairingCode | null) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      code: import('../shared/pairing').PairingCode | null,
+    ): void => listener(code);
+    ipcRenderer.on('pairing:changed', handler);
+    return () => ipcRenderer.removeListener('pairing:changed', handler);
+  },
+  onPairingRedeemed: (listener: () => void): (() => void) => {
+    const handler = (): void => listener();
+    ipcRenderer.on('pairing:redeemed', handler);
+    return () => ipcRenderer.removeListener('pairing:redeemed', handler);
+  },
   listRemoteDevices: (): Promise<readonly RemoteDeviceEntry[]> =>
     ipcRenderer.invoke('remote:list-devices'),
   getRemoteDesktopStatus: () => ipcRenderer.invoke('remote:get-desktop-status'),

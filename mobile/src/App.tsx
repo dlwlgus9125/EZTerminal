@@ -154,6 +154,14 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     if (!transport) return;
+    // A code pairing hands back a bearer. Remember it as the pending
+    // credential so the same save path that runs after a manual connect
+    // persists the real token instead of the spent code.
+    const unsubToken = transport.onTokenIssued((issued) => {
+      const base = pendingCredentialRef.current ?? savedConnectionRef.current;
+      if (!base) return;
+      pendingCredentialRef.current = { ...base, token: issued } as StoredConnection;
+    });
     const unsubAuth = transport.onAuthChange((isAuthed) => {
       setAuthed(isAuthed);
       if (isAuthed) {
@@ -192,6 +200,7 @@ export function App(): JSX.Element {
     });
     const unsubDead = transport.onSessionDead(() => setSessionDead(true));
     return () => {
+      unsubToken();
       unsubAuth();
       unsubConnectionState();
       unsubConnectionHealth();

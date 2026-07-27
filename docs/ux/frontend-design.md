@@ -346,10 +346,31 @@ The existing setting keys and theme/custom-theme formats remain unchanged.
 
 ### 5.4 First connection, responsive behavior, and CSS boundary
 
-The connection surface remains manual URL/token pairing. A saved secure
-connection may be summarized and re-used explicitly, with editing available;
-there is no QR scanner, camera permission, deep link, discovery, multiple
-profiles, or automatic connection.
+The connection surface accepts manual URL/token entry and one scanned pairing
+code. A saved secure connection may be summarized and re-used explicitly, with
+editing available; there is no deep link, network discovery, multiple profiles,
+or automatic connection.
+
+QR pairing is admitted under fixed terms, and every one of them is load-bearing:
+
+- The desktop issues a **single-use code that expires** (5 minutes), held in
+  memory and never persisted. A code that survived a restart would be a
+  long-lived secret wearing a short-lived label.
+- The code authenticates exactly once. On success the host returns the
+  long-lived bearer token, which the phone stores in the same Android
+  Keystore-backed record manual entry uses; the code is dead from that moment,
+  so a photograph of the screen is worthless.
+- The camera permission is **optional at install** and requested only when the
+  scan sheet opens. Frames are decoded on-device by a bundled decoder, are
+  never stored or transmitted, and the stream is released on every exit path
+  including Android Back.
+- Typing the code remains equivalent in every respect. A device with no camera,
+  or a user who declines the permission, pairs by hand with no loss of
+  capability.
+
+Superseded: this section previously ruled out a QR scanner and camera
+permission outright, on the grounds that neither an expiring code nor a scanner
+existed. Both do now.
 
 Loading credentials, ready, connecting, trusted-network warning, authentication
 failure, incompatible protocol, secure-storage warning, and success transition

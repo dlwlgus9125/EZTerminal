@@ -2793,6 +2793,132 @@ body {
   color: var(--ui-text-muted);
 }
 
+/* == PAIRING == the action card and the modal it opens. */
+.remote-panel__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 9px;
+  align-items: stretch;
+}
+
+.remote-pairing-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 12px 10px;
+  border: 1px solid var(--ui-border-focus-soft);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-accent-muted);
+  color: var(--ui-text-secondary);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.remote-pairing-card:hover {
+  box-shadow: var(--ui-glow-box);
+}
+
+.remote-pairing-card b {
+  color: var(--ui-focus);
+  font-size: var(--ui-font-size-sm);
+}
+
+.remote-pairing-card span {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+}
+
+.pairing-qr {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: center;
+}
+
+.pairing-qr__symbol {
+  inline-size: 170px;
+  block-size: 170px;
+  flex: none;
+  border-radius: var(--ui-radius-md);
+  box-shadow: var(--ui-glow-box);
+}
+
+.pairing-qr__side {
+  flex: 1 1 12rem;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.pairing-qr__hint,
+.pairing-qr__note,
+.pairing-qr__detected {
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+  line-height: 1.6;
+}
+
+.pairing-qr__note {
+  color: var(--ui-text-muted);
+}
+
+/* The one thing in this dialog a person reads aloud. */
+.pairing-qr__code {
+  margin: 0;
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-2xl);
+  letter-spacing: 0.22em;
+  color: var(--ui-focus);
+  text-shadow: var(--ui-glow-text);
+}
+
+.pairing-qr__validity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-text-muted);
+}
+
+.pairing-qr__validity b {
+  font-family: var(--ui-font-terminal);
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-text-secondary);
+}
+
+.pairing-qr__track {
+  flex: 1 1 auto;
+  block-size: 3px;
+  border-radius: 2px;
+  background: var(--ui-surface-inset);
+  overflow: hidden;
+}
+
+.pairing-qr__track i {
+  display: block;
+  block-size: 100%;
+  background: var(--ui-accent);
+  transition: inline-size 1s linear;
+}
+
+.pairing-qr__actions {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pairing-qr__track i {
+    transition: none;
+  }
+}
+
 /* Git's opinion of a listed file, in the shape the design asks for: a diffstat
    when there is one, the word "new" when the file has no history to diff. */
 .file-entry-change {
