@@ -26,6 +26,7 @@ import {
   type RemoteBridgeHandle,
   type RemoteBridgeOptions,
 } from './remote-bridge';
+import { RemoteDeviceRoster } from './remote-device-roster';
 import { parseRemoteDesktopServiceProbe } from './native-desktop-protocol';
 import { formatConnectionInfo } from './remote-connection-info';
 import { RemoteDesktopController } from './remote-desktop-controller';
@@ -56,6 +57,8 @@ export interface ElectronDesktopRuntimeOptions {
   readonly getMainWindow?: () => BrowserWindowType | null;
   /** Defaults to enabled on Windows; tests and unsupported hosts may disable it. */
   readonly desktopControlEnabled?: boolean;
+  /** Injected so main can read the roster the bridge feeds. */
+  readonly deviceRoster?: RemoteDeviceRoster;
 }
 
 function reportDesktopRuntimeError(context: string, error: unknown): void {
@@ -207,6 +210,8 @@ async function stopBridgeResources(
  * bridge composition remain behind this seam.
  */
 export function createElectronDesktopRuntime(options: ElectronDesktopRuntimeOptions): DesktopRuntime {
+  // Survives bridge restarts so "last seen" outlives a toggle of the runtime.
+  const deviceRoster = options.deviceRoster ?? new RemoteDeviceRoster();
   const configuredPort = Number(process.env.EZTERMINAL_REMOTE_PORT);
   const remoteBridgePort = Number.isInteger(configuredPort)
     && configuredPort > 0
@@ -271,10 +276,16 @@ export function createElectronDesktopRuntime(options: ElectronDesktopRuntimeOpti
         hostVersion: app.getVersion(),
         buildSha: process.env.EZTERMINAL_BUILD_SHA ?? process.env.GITHUB_SHA,
         desktopSource: desktopControlEnabled ? desktopHost : undefined,
+        onClientPresence: (identity, presence) =>
+          deviceRoster.record(identity, presence, Date.now()),
       });
       return {
         port: bridge.port,
-        stop: () => stopBridgeResources(desktopHost, bridge),
+        stop: async () => {
+          // A stopped bridge has no connected clients, whatever it saw earlier.
+          deviceRoster.markAllDisconnected(Date.now());
+          await stopBridgeResources(desktopHost, bridge);
+        },
       };
     },
     stopAuxiliaryRuntime: options.stopAuxiliaryRuntime,

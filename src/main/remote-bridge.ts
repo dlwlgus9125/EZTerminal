@@ -682,6 +682,13 @@ export interface RemoteBridgeOptions {
   readonly runLeases?: RemoteRunLeaseRegistry;
   /** Shared across generations for the full lifetime of an active mobile run. */
   readonly runInitiators?: RemoteRunInitiatorRegistry;
+  /** Called once a client has authenticated and supplied a valid identity, and
+   * again when its socket closes. Purely observational — it drives the Remote
+   * panel's device roster and never gates auth or capability. */
+  readonly onClientPresence?: (
+    identity: RemoteClientIdentity,
+    presence: 'connected' | 'disconnected',
+  ) => void;
 }
 
 const defaultRunLeases = new WeakMap<InterpreterBroker, RemoteRunLeaseRegistry>();
@@ -1007,7 +1014,10 @@ export function attachConnection(
 
   ws.on('close', () => {
     connectionClosed = true;
-    if (clientIdentity) options.desktopSource?.disconnected(clientIdentity.clientId);
+    if (clientIdentity) {
+      options.desktopSource?.disconnected(clientIdentity.clientId);
+      options.onClientPresence?.(clientIdentity, 'disconnected');
+    }
     terminalCapabilities.clear();
     if (releaseRunsOnClose) releasePendingResumeLeases();
     unsubSessionAdded();
@@ -1093,6 +1103,7 @@ export function attachConnection(
             && isRemoteClientIdentity(parsed.clientIdentity)
             ? parsed.clientIdentity
             : null;
+          if (clientIdentity) options.onClientPresence?.(clientIdentity, 'connected');
           hooks?.onAuthenticated?.();
           const capabilities = [
             ...(options.quickCommandSource ? [REMOTE_CAPABILITY_QUICK_COMMANDS_READ] : []),

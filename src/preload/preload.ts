@@ -8,6 +8,7 @@ import {
   type RecentPanelInputEvent,
   type RemoteRuntimeStatus,
   type RemoteDesktopHostStatus,
+  type RemoteDeviceEntry,
   type RunStartedInfo,
   type SessionInfo,
   type SystemStatsSnapshot,
@@ -137,6 +138,8 @@ const api: EzTerminalApi = {
 
   // Session mirroring (M2): full mirroring across desktop tabs + mobile.
   listSessions: (): Promise<readonly SessionInfo[]> => ipcRenderer.invoke('list-sessions'),
+  listRemoteDevices: (): Promise<readonly RemoteDeviceEntry[]> =>
+    ipcRenderer.invoke('remote:list-devices'),
   listRuns: (): Promise<readonly RunStartedInfo[]> => ipcRenderer.invoke('list-runs'),
   onSessionAdded: (listener: (session: SessionInfo) => void): (() => void) => {
     const handler = (_event: unknown, session: SessionInfo): void => listener(session);

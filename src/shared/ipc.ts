@@ -804,6 +804,15 @@ export type InterpreterToMain =
   | WorktreeActionCancelMessage;
 
 /** The authoritative session identity returned by `createSession`. */
+/** A device the remote bridge has seen this run. */
+export interface RemoteDeviceEntry {
+  readonly clientId: string;
+  readonly clientName: string;
+  readonly platform: 'android';
+  readonly connected: boolean;
+  readonly lastSeenAt: number;
+}
+
 export interface SessionInfo {
   readonly sessionId: string;
   readonly cwd: string;
@@ -1118,6 +1127,8 @@ export interface EzTerminalApi {
   // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
   /** Every currently-live session, oldest-created first (mirrors `SessionDirectory.list()`). */
   listSessions: () => Promise<readonly SessionInfo[]>;
+  /** Devices seen by the remote bridge during this run. */
+  listRemoteDevices: () => Promise<readonly RemoteDeviceEntry[]>;
   /** Every currently-active run across every session (M1 mirror-active-runs
    * gap fix) — lets a client that connects/mounts AFTER a run already started
    * learn its `runId` to call `attachRun` (`onRunStarted` below is edge-

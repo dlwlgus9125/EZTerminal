@@ -55,6 +55,7 @@ import type {
   RemoteQuickCommandSource,
   RemoteStatsSource,
 } from './remote-bridge';
+import { RemoteDeviceRoster } from './remote-device-roster';
 import type { DesktopRuntime } from './desktop-runtime';
 import { createElectronDesktopRuntime } from './electron-desktop-runtime-adapter';
 import {
@@ -1454,7 +1455,11 @@ app.on('ready', () => {
       return quickCommandStore.list();
     },
   };
+  const deviceRoster = new RemoteDeviceRoster();
+  ipcMain.handle('remote:list-devices', () => deviceRoster.list());
+
   const runtime = createElectronDesktopRuntime({
+    deviceRoster,
     readDesiredEnabled: async () => {
       await storeReady;
       return layoutStore.getRemoteEnabled();

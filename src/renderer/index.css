@@ -1163,6 +1163,48 @@ body {
   cursor: default;
 }
 
+/* Devices the bridge has seen this run. */
+.remote-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.remote-device {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  padding: 9px 11px;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+  font-size: var(--ui-font-size-12);
+}
+
+.remote-device-icon {
+  inline-size: 14px;
+  block-size: 14px;
+  flex: 0 0 auto;
+  color: var(--ui-info);
+}
+
+.remote-device-name {
+  min-inline-size: 0;
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.remote-device-state {
+  margin-inline-start: auto;
+  color: var(--ui-text-dim);
+}
+
+.remote-device-state[data-connected='true'] {
+  color: var(--ui-accent);
+}
+
 /* == REMOTE TOPOLOGY == the link drawn spatially, so "who is attached to me,
    over what" is a glance rather than a read of label/value rows. */
 .remote-topology {

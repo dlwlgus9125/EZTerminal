@@ -1,6 +1,7 @@
 import { ConnectionInfoPanel } from '../ConnectionInfoPanel';
 import { SshForwardSettings } from '../SshForwardSettings';
 import { RemoteDesktopStatusCard, useRemoteDesktopHostStatus } from '../RemoteDesktopStatusCard';
+import { RemoteDeviceRoster } from './RemoteDeviceRoster';
 import { RemoteTopology } from './RemoteTopology';
 
 /** Pairing/remote access and SSH tunnels share one workbench destination. */
@@ -31,6 +32,7 @@ export function RemotePanel(): JSX.Element {
        * own change. */}
       <RemoteDesktopStatusCard />
       <ConnectionInfoPanel />
+      <RemoteDeviceRoster />
       <SshForwardSettings />
     </div>
   );
