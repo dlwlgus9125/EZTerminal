@@ -631,6 +631,10 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   position: relative;
+  /* Column flex now that the workspace bar sits above the pane grid. Flex only
+     — the warning above still stands: no transform, filter, or z-index here. */
+  display: flex;
+  flex-direction: column;
   /* Half the pane gutter. Each leaf view contributes the other half, so the
      spacing at the window edge matches the spacing between two panes. */
   padding: var(--ui-pane-inset);
@@ -642,7 +646,8 @@ body {
     );
 }
 .ez-dock {
-  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Status overlay panel (status-overlay-panel) — a non-modal 300px drawer that
@@ -983,6 +988,75 @@ body {
   font-size: var(--ui-font-size-2xs);
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+/* == WORKSPACE BAR == names the layout and keeps splitting one click away.
+   Fixed height above the pane grid, so it never competes with a pane for
+   space. */
+.workspace-bar {
+  flex: 0 0 auto;
+  block-size: 46px;
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  padding-inline: var(--ui-space-4);
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-13);
+  user-select: none;
+}
+
+.workspace-bar__label {
+  flex: 0 0 auto;
+}
+
+.workspace-bar__name {
+  min-inline-size: 0;
+  block-size: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding-inline: var(--ui-space-3);
+  border: 1px solid var(--ui-border-focus-soft);
+  border-radius: var(--ui-radius-round);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-inset);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.workspace-bar__chips {
+  margin-inline-start: auto;
+  display: flex;
+  gap: var(--ui-space-2);
+}
+
+.workspace-bar__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--ui-font-size-12);
+  cursor: pointer;
+}
+
+.workspace-bar__chip svg {
+  inline-size: 14px;
+  block-size: 14px;
+}
+
+.workspace-bar__chip:not(:disabled):hover {
+  color: var(--ui-text-primary);
+  border-color: var(--ui-accent);
+}
+
+.workspace-bar__chip:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* == REMOTE TOPOLOGY == the link drawn spatially, so "who is attached to me,

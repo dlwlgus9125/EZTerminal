@@ -87,6 +87,10 @@ export function AgentHub({
     [locale],
   );
   const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const timeFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false }),
+    [locale],
+  );
 
   const groups = useMemo(() => {
     const attention: AgentActivity[] = [];
@@ -148,7 +152,32 @@ export function AgentHub({
     if (items.length === 0) return null;
     return (
       <section className="agent-group" data-testid={`agent-group-${group}`}>
-        <h2 className="status-section-title">{title}</h2>
+        {/* The count belongs in the heading: a queue you are meant to work
+            through should say how deep it is before you read the first card. */}
+        <h2 className={`status-section-title agent-group-title agent-group-title--${group}`}>
+          {`${title} · ${numberFormatter.format(items.length)}`}
+        </h2>
+        {group === 'recent' ? (
+          // Finished work is a log, not a queue: one dense monospace line each,
+          // newest first, with nothing to act on.
+          <ol className="agent-timeline">
+            {items.map((item) => (
+              <li className="agent-timeline-row" key={item.id}>
+                <time
+                  className="agent-timeline-time"
+                  dateTime={new Date(item.updatedAt).toISOString()}
+                >
+                  {timeFormatter.format(new Date(item.updatedAt))}
+                </time>
+                <span className="agent-timeline-provider">{PROVIDER_LABEL[item.provider]}</span>
+                <span className="agent-timeline-cwd" title={item.cwd}>{formatCwd(item.cwd)}</span>
+                <span className={`agent-status agent-status--${item.status}`}>
+                  {t(STATUS_LABEL_KEY[item.status])}
+                </span>
+              </li>
+            ))}
+          </ol>
+        ) : (
         <div className="agent-list">
           {items.map((item) => (
             <article className="agent-row" data-status={item.status} key={item.id} data-testid="agent-row">
@@ -223,6 +252,7 @@ export function AgentHub({
             </article>
           ))}
         </div>
+        )}
       </section>
     );
   };
@@ -233,27 +263,27 @@ export function AgentHub({
       data-testid="agent-hub"
       aria-label={t('agentHub.activity')}
     >
-      <header className="agent-hub-head">
-        {mobile && onClose && (
-          <IconButton
-            icon={ArrowLeft}
-            aria-label={t('agentHub.closeHub')}
-            onClick={onClose}
-            data-testid="mobile-agent-close"
-          />
-        )}
-        <div>
-          <h1 className="agent-hub-title">{t('rail.agents')}</h1>
-          <span className="agent-hub-summary">
-            {t('agentHub.tracked', { value: numberFormatter.format(snapshot.items.length) })}
-          </span>
-        </div>
-        {!mobile && onClose && (
-          <button type="button" className="btn btn-split" onClick={onClose} aria-label={t('agentHub.closeHub')}>
-            {t('common.close')}
-          </button>
-        )}
-      </header>
+      {/* On desktop the sidebar shell already draws the title and the close
+          control, so a second header here would stack two of each. Mobile has
+          no such shell and still needs its own. */}
+      {mobile && (
+        <header className="agent-hub-head">
+          {onClose && (
+            <IconButton
+              icon={ArrowLeft}
+              aria-label={t('agentHub.closeHub')}
+              onClick={onClose}
+              data-testid="mobile-agent-close"
+            />
+          )}
+          <div>
+            <h1 className="agent-hub-title">{t('rail.agents')}</h1>
+            <span className="agent-hub-summary">
+              {t('agentHub.tracked', { value: numberFormatter.format(snapshot.items.length) })}
+            </span>
+          </div>
+        </header>
+      )}
       {disconnected && <div className="agent-offline" role="status">{t('agentHub.reconnecting')}</div>}
       <div className="agent-live-region" aria-live="polite" aria-atomic="true">
         {groups.attention.length === 1

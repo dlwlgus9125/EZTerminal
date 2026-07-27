@@ -46,6 +46,10 @@ export const appResources = {
       },
       workspace: {
         split: 'Split',
+        presetApplied: 'Preset "{{name}}" applied',
+        currentLabel: 'Workspace',
+        unsavedLayout: 'Unsaved layout',
+        focusActive: 'Focus active',
         presetSaved: 'Preset "{{name}}" saved',
         presetSaveFailed: 'Could not save preset "{{name}}"',
         presetDeleted: 'Preset "{{name}}" deleted',
@@ -1216,6 +1220,10 @@ export const appResources = {
       },
       workspace: {
         split: '분할',
+        presetApplied: '프리셋 "{{name}}" 적용됨',
+        currentLabel: '작업영역',
+        unsavedLayout: '저장 안 된 배치',
+        focusActive: '활성 페인 집중',
         presetSaved: '프리셋 "{{name}}" 저장됨',
         presetSaveFailed: '프리셋 "{{name}}" 저장 실패',
         presetDeleted: '프리셋 "{{name}}" 삭제됨',

@@ -4,6 +4,7 @@ export { BrandMark, type BrandMarkProps } from './BrandMark';
 export { RemotePanel } from './RemotePanel';
 export { SidebarShell } from './SidebarShell';
 export { StatusBar, type StatusBarProps } from './StatusBar';
+export { WorkspaceBar, type WorkspaceBarProps } from './WorkspaceBar';
 export { WorkspaceMenu } from './WorkspaceMenu';
 export type { SidebarDestination } from './types';
 export { SIDEBAR_REFLOW_QUERY, useSidebarReflow } from './use-sidebar-overlay';

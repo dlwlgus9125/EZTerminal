@@ -91,6 +91,7 @@ import {
   RemotePanel,
   SidebarShell,
   StatusBar,
+  WorkspaceBar,
   WorkspaceMenu,
   useSidebarReflow,
   type SidebarDestination,
@@ -377,6 +378,7 @@ export function App(): JSX.Element {
       isPaneCreationLocked: () => presetApplyPendingRef.current,
       onActivePanelChange: (panelId, source) => {
         setActivePanelId(panelId);
+        setPaneCount(apiRef.current?.panels.length ?? 0);
         if (source !== 'activation') return;
         requestAnimationFrame(() => {
           const activeTab =
@@ -1464,6 +1466,12 @@ export function App(): JSX.Element {
   );
 
   // ── Presets (A-M4) ────────────────────────────────────────────────────────
+  const [paneCount, setPaneCount] = useState(0);
+  // The preset the current layout came from, for the workspace bar. Applying or
+  // saving sets it; it deliberately survives a later split, because "this began
+  // as Agent Desk" stays true and the alternative is a name that blinks away on
+  // the first change.
+  const [appliedPreset, setAppliedPreset] = useState<string | null>(null);
   const [presetsOpen, setPresetsOpen] = useState(false);
   const [presetNames, setPresetNames] = useState<string[]>([]);
   const [startupPreset, setStartupPreset] = useState<string | null>(null);
@@ -1489,6 +1497,7 @@ export function App(): JSX.Element {
       setPresetNameDraft('');
       setSavingPreset(false);
       await refreshPresets();
+      setAppliedPreset(name);
       pushToast({ title: t('workspace.presetSaved', { name }), variant: 'success' });
       return;
     }
@@ -1627,8 +1636,11 @@ export function App(): JSX.Element {
                     });
                     return;
                   }
+                  setAppliedPreset(name);
+                  setPaneCount(apiRef.current?.panels.length ?? 0);
                   scheduleSave();
                   focusActivePane();
+                  pushToast({ title: t('workspace.presetApplied', { name }), variant: 'success' });
                 } catch {
                   setCloseDialog({
                     title: t('safetyDialog.presetUnavailableTitle'),
@@ -1655,7 +1667,7 @@ export function App(): JSX.Element {
           },
       );
     },
-    [agentSessionIds, focusActivePane, runLayoutTransaction, scheduleSave, t],
+    [agentSessionIds, focusActivePane, pushToast, runLayoutTransaction, scheduleSave, t],
   );
 
   const toggleStartupPreset = useCallback(
@@ -2341,6 +2353,16 @@ export function App(): JSX.Element {
     openclaw: 'OpenClaw',
     settings: t('rail.settings'),
   };
+  // Live sublabels. The shell has always had the slot; nothing filled it, so a
+  // destination could only ever say its own name.
+  const sidebarDescription: Partial<Record<SidebarDestination, string>> = {
+    agents: agentSnapshot.items.length > 0
+      ? t('agentHub.tracked', { value: agentSnapshot.items.length })
+      : undefined,
+    remote: remoteDesktopStatus?.controllerName
+      ? t('statusBar.mirror', { name: remoteDesktopStatus.controllerName })
+      : undefined,
+  };
   const sidebarContent =
     sidebarDestination === 'explorer' ? (
       <FileExplorerPanel
@@ -2487,6 +2509,7 @@ export function App(): JSX.Element {
             key={sidebarDestination}
             destination={sidebarDestination}
             title={sidebarTitle[sidebarDestination]}
+            description={sidebarDescription[sidebarDestination]}
             width={uiPreferences.sidebarWidth}
             onWidthChange={(sidebarWidth) => {
               void updatePreferences({ sidebarWidth }).catch(() => undefined);
@@ -2497,6 +2520,15 @@ export function App(): JSX.Element {
           </SidebarShell>
         )}
         <div className="dock-host">
+          {/* Names the layout and puts splitting one click away. The other
+              entry points stay; this is the one that is always visible. */}
+          <WorkspaceBar
+            presetName={appliedPreset}
+            paneCount={paneCount}
+            onSplitRight={() => splitActive('right')}
+            onSplitDown={() => splitActive('below')}
+            onFocusSingle={focusActivePane}
+          />
           <SessionBindingContext.Provider value={sessionBindingValue}>
             <OpenClawOverlayContext.Provider value={chatOverlayOpen}>
               <AgentTabStatusContext.Provider value={agentTabStatuses}>
