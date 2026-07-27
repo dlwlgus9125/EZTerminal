@@ -563,66 +563,6 @@ body,
   flex-direction: column;
 }
 
-/* ── Tab strip ───────────────────────────────────────────────────────────── */
-
-.tab-strip {
-  display: flex;
-  flex: 1;
-  min-width: 96px;
-  gap: var(--ui-space-2);
-  overflow-x: auto;
-}
-
-.tab-pill {
-  display: flex;
-  align-items: center;
-  flex: none;
-  gap: var(--ui-space-1);
-  padding: var(--ui-space-1) var(--ui-space-1) var(--ui-space-1) var(--ui-space-3);
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface-inset);
-}
-
-.tab-pill--active {
-  min-width: 96px;
-  border-color: var(--ui-accent);
-}
-
-.tab-strip-tabs,
-.tab-strip-list {
-  display: flex;
-  flex: none;
-  gap: var(--ui-space-2);
-}
-
-.tab-pill-label {
-  min-height: 44px;
-  padding: var(--ui-space-1);
-  font-size: var(--ui-font-size-sm);
-  white-space: nowrap;
-  color: var(--ui-text-primary);
-  background: none;
-  border: none;
-  font-family: var(--ui-font-body);
-}
-
-.tab-pill-close {
-  min-width: 44px;
-  min-height: 44px;
-  padding: var(--ui-space-1) var(--ui-space-2);
-  font-size: var(--ui-font-size-xs);
-  background: none;
-  border: none;
-  color: var(--ui-text-secondary);
-}
-
-.tab-pill-label:focus-visible,
-.tab-pill-close:focus-visible {
-  outline: 2px solid var(--ui-focus);
-  outline-offset: 2px;
-}
-
 /* ── Mobile file view (file-explorer plan, M4) — full-screen overlay, same
    shape as `.mobile-stats-view`; no safe-area handling of its own (`#root`'s
    own padding already covers insets — see mobile.css's module doc). ─────── */

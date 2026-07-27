@@ -62,3 +62,19 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
       return state;
   }
 }
+
+/**
+ * DOM ids for a terminal tab's panel.
+ *
+ * These outlived the TabStrip component that introduced them: the workspace
+ * still needs a stable, unique element id per session for the keep-alive
+ * wrapper it toggles. A session id can contain anything, so it is reduced to
+ * characters an id selector can address.
+ */
+function safeSessionId(sessionId: string): string {
+  return sessionId.replace(/[^a-zA-Z0-9_-]/gu, '-');
+}
+
+export function mobileTerminalPanelId(sessionId: string): string {
+  return `mobile-terminal-panel-${safeSessionId(sessionId)}`;
+}

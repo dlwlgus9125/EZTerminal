@@ -581,11 +581,6 @@
   background: var(--ui-surface);
 }
 
-.workspace-header .tab-strip {
-  flex: 1 1 auto;
-  min-width: 96px;
-}
-
 .workspace-header > .ez-ui-button,
 .workspace-header > .ez-ui-icon-button {
   flex: 0 0 auto;

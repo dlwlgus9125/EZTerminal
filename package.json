@@ -36,6 +36,8 @@
     "guard:native": "node scripts/guard-native-pty.mjs",
     "guard:native-cap": "node scripts/guard-native-cap.mjs",
     "guard:pty-routing": "node scripts/guard-pty-routing.mjs",
+    "guard:approval-privacy": "node scripts/guard-approval-privacy.mjs",
+    "guard:pairing-offline": "node scripts/guard-pairing-offline.mjs",
     "verify:mobile-release": "node scripts/verify-no-e2e-markers.mjs mobile/dist"
   },
   "keywords": [],

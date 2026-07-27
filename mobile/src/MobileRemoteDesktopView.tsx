@@ -225,9 +225,16 @@ export function MobileRemoteDesktopView({
 
   useEffect(() => {
     revealChrome();
+    // The two gestures nobody would guess, said once on arrival. It goes
+    // through the toast system rather than the inline pill so it disappears on
+    // its own instead of competing with the live status for the same corner.
+    showToast(t('mobile.pcControl.entryHint'));
     return () => {
       if (chromeTimerRef.current !== null) clearTimeout(chromeTimerRef.current);
     };
+    // Entry only: re-running this on every translation or toast identity
+    // change would re-announce the hint mid-session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revealChrome]);
 
   let detail = '';

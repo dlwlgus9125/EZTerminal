@@ -1167,8 +1167,8 @@ export async function waitForLabel(label: string, timeoutMs = 15000): Promise<Po
 
 /** Like {@link waitForText}, but does NOT require the matching node to be
  * marked `clickable` (M6) — every tap target these scripts have used up to
- * now (Run/Connect/theme-sheet-rows/TabStrip's pills — the latter genuine
- * `<button>` elements, confirmed by reading TabStrip.tsx while adding this)
+ * now (Run/Connect/theme-sheet-rows/session-sheet rows — all genuine
+ * `<button>` elements)
  * IS a real `<button>`, which the WebView's accessibility bridge always
  * marks clickable. MobileFileView's file-list rows (M6) are plain
  * `<div onClick>`, not buttons — Chrome's accessibility engine does not

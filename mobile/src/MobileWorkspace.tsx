@@ -20,7 +20,6 @@ import { MobileTabBar, type MobileShellTab } from './MobileTabBar';
 import { MobileToastProvider } from './MobileToast';
 import { MobileWorkbenchCoordinator } from './MobileWorkbenchCoordinator';
 import { loadOpenClawMode, saveOpenClawMode } from './openclaw-mode';
-import { mobileTerminalPanelId } from './TabStrip';
 import { decideTabSwipe } from './tab-swipe';
 import { ThemeMenu } from './ThemeMenu';
 import {
@@ -28,7 +27,7 @@ import {
   OPEN_TERMINAL_KEY_SETTINGS_EVENT,
 } from './terminal-accessory-layout';
 import { applyTheme, loadTheme, saveTheme } from './theme';
-import { initialTabsState, tabsReducer } from './tabs';
+import { initialTabsState, mobileTerminalPanelId, tabsReducer } from './tabs';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 import { usePageVisible } from './use-page-visible';
 

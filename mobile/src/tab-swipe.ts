@@ -1,12 +1,11 @@
-// tab-swipe.ts — pure swipe-vs-scroll decision for the mobile tab strip
-// (v0.2.0 plan D4/M5). `.tab-strip` is horizontally scrollable
-// (`overflow-x: auto`, to reveal tabs clipped by a narrow header) AND
-// swipeable (TabStrip.tsx's touchstart/touchend switches tabs) — without
-// this check, scrolling the strip also fires a tab switch. `scrollDelta`
-// (the strip's scrollLeft at touchend minus its scrollLeft at touchstart)
-// tells the two gestures apart: a real strip scroll moves scrollLeft, a
-// swipe while the strip is already fully visible (or pinned at an overflow
-// edge) does not.
+// tab-swipe.ts — pure swipe-vs-scroll decision for switching terminal tabs.
+// The gesture now lives on the terminal header (the tab strip it was written
+// for is gone), and that header can itself scroll horizontally, so the same
+// ambiguity remains: without this check, scrolling the header would also fire
+// a tab switch. `scrollDelta` (the element's scrollLeft at touchend minus its
+// scrollLeft at touchstart) tells the two apart — a real scroll moves
+// scrollLeft, a swipe on content that is already fully visible (or pinned at
+// an overflow edge) does not.
 
 export const SWIPE_MIN_DX = 60;
 export const SWIPE_MAX_DY = 40;
@@ -19,7 +18,7 @@ export interface TabSwipeInput {
 }
 
 /** Swipe left (dx<0, finger moving toward the start) advances to the next
- * tab; swipe right goes back to the previous one — the mapping TabStrip.tsx
+ * tab; swipe right goes back to the previous one — the mapping the tab strip
  * used before this decision was extracted. */
 export function decideTabSwipe({ dx, dy, scrollDelta }: TabSwipeInput): 'next' | 'prev' | null {
   if (Math.abs(scrollDelta) > SCROLL_SUPPRESS_PX) return null;
