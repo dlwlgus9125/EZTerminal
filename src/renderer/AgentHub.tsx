@@ -152,18 +152,21 @@ export function AgentHub({
         <div className="agent-list">
           {items.map((item) => (
             <article className="agent-row" data-status={item.status} key={item.id} data-testid="agent-row">
+              {/* Identity and age on one line, the working directory on its own
+                  as machine text, then the action. Reading order matches the
+                  question being answered: who, where, what can I do. */}
               <div className="agent-row-main">
                 <span className={`agent-status-dot agent-status-dot--${item.status}`} aria-hidden="true" />
                 <span className="agent-provider">{PROVIDER_LABEL[item.provider]}</span>
-                <span className="agent-cwd" title={item.cwd}>{formatCwd(item.cwd)}</span>
+                <span className={`agent-status agent-status--${item.status}`}>
+                  {t(STATUS_LABEL_KEY[item.status])}
+                </span>
                 <time className="agent-age" dateTime={new Date(item.updatedAt).toISOString()}>
                   {ageLabel(item.updatedAt, now, relativeTime)}
                 </time>
               </div>
+              <div className="agent-cwd" title={item.cwd}>{formatCwd(item.cwd)}</div>
               <div className="agent-row-actions">
-                <span className={`agent-status agent-status--${item.status}`}>
-                  {t(STATUS_LABEL_KEY[item.status])}
-                </span>
                 <button
                   type="button"
                   className="btn btn-split agent-focus"

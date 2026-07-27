@@ -985,6 +985,242 @@ body {
   text-transform: uppercase;
 }
 
+/* == REMOTE TOPOLOGY == the link drawn spatially, so "who is attached to me,
+   over what" is a glance rather than a read of label/value rows. */
+.remote-topology {
+  margin: var(--ui-space-3);
+  padding: var(--ui-space-4) var(--ui-space-3);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-inset);
+}
+
+.remote-topology-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+}
+
+.remote-topology-node {
+  inline-size: 6.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-12);
+}
+
+.remote-topology-node[data-idle='true'] {
+  opacity: 0.6;
+}
+
+.remote-topology-meta {
+  color: var(--ui-text-dim);
+  font-size: var(--ui-font-size-3xs);
+  overflow-wrap: anywhere;
+}
+
+.remote-topology-glyph {
+  display: grid;
+  place-items: center;
+  inline-size: 3.5rem;
+  block-size: 2.75rem;
+  border: 2px solid currentcolor;
+  border-radius: var(--ui-radius-md);
+}
+
+.remote-topology-glyph--host {
+  color: var(--ui-accent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ui-accent) 30%, transparent);
+}
+
+.remote-topology-glyph--peer {
+  inline-size: 1.875rem;
+  block-size: 3.125rem;
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-info);
+}
+
+.remote-topology-link {
+  position: relative;
+  flex: 1 1 auto;
+  block-size: 2.75rem;
+}
+
+/* Dashed because the transport is a hop, not a wire. */
+.remote-topology-wire {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 50%;
+  block-size: 2px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--ui-border-focus-soft) 0 8px,
+    transparent 8px 15px
+  );
+}
+
+.remote-topology-link[data-connected='true'] .remote-topology-wire {
+  background: repeating-linear-gradient(90deg, var(--ui-accent) 0 8px, transparent 8px 15px);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--ui-accent) 40%, transparent);
+}
+
+.remote-topology-wire-label,
+.remote-topology-wire-rtt {
+  position: absolute;
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  padding-inline: 6px;
+  background: var(--ui-surface-inset);
+  font-size: var(--ui-font-size-3xs);
+}
+
+.remote-topology-wire-label {
+  inset-block-start: 2px;
+  color: var(--ui-warning);
+}
+
+.remote-topology-wire-rtt {
+  inset-block-end: 0;
+  color: var(--ui-text-dim);
+}
+
+/* == MONITOR SCOPE == an instrument, not a chart. The grid is the graticule and
+   the sweep edge marks "now", so the trace reads as something being measured
+   rather than a summary that happens to be drawn. */
+.status-scope-card {
+  background: var(--ui-surface-inset);
+}
+
+.status-scope-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--ui-space-2);
+  margin-block-end: var(--ui-space-2);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-12);
+}
+
+.status-scope-readout {
+  font-variant-numeric: tabular-nums;
+}
+
+.status-scope-readout--cpu {
+  color: var(--ui-accent);
+}
+
+.status-scope-readout--mem {
+  color: var(--ui-info);
+}
+
+.status-scope {
+  position: relative;
+  block-size: 96px;
+  overflow: hidden;
+  border-radius: var(--ui-radius-md);
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 23px,
+      color-mix(in srgb, var(--ui-accent) 8%, transparent) 23px 24px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 23px,
+      color-mix(in srgb, var(--ui-accent) 8%, transparent) 23px 24px
+    );
+}
+
+.status-scope-trace {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+.status-scope-cpu {
+  stroke: var(--ui-accent);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--ui-accent) 80%, transparent));
+}
+
+.status-scope-mem {
+  stroke: var(--ui-info);
+  opacity: 0.7;
+}
+
+/* The leading edge of the sweep — where the next sample lands. */
+.status-scope-sweep {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  inline-size: 34px;
+  border-inline-end: 2px solid color-mix(in srgb, var(--ui-accent) 60%, transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--ui-accent) 12%, transparent)
+  );
+}
+
+.status-waterfall-title {
+  margin-block: var(--ui-space-3) var(--ui-space-2);
+  color: var(--ui-text-dim);
+  font-size: var(--ui-font-size-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.status-waterfall {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-2xs);
+  color: var(--ui-text-secondary);
+}
+
+.status-waterfall-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+}
+
+.status-waterfall-time {
+  flex: 0 0 auto;
+  inline-size: 3.5rem;
+  color: var(--ui-text-dim);
+}
+
+.status-waterfall-bar {
+  flex: 0 0 auto;
+  block-size: 12px;
+  min-inline-size: 2px;
+  border-radius: 1px;
+  background: var(--ui-accent);
+  transition: inline-size 0.6s ease;
+}
+
+/* A second that stands out against the rest of the window, not against a fixed
+   byte count — a busy link and an idle one need different definitions. */
+.status-waterfall-bar[data-spike='true'] {
+  background: var(--ui-warning);
+}
+
+.status-waterfall-rate {
+  margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Connections read as addressable rows, matching the pane/card language. */
+.status-conn-table tr,
+.status-section[data-testid='status-section-conns'] .status-conn-row {
+  border-radius: var(--ui-radius-md);
+}
+
 .status-polling-note {
   margin: 0;
   padding: 0 0.85rem 0.9rem;
@@ -1040,9 +1276,12 @@ body {
   overflow: hidden;
 }
 
+/* Load bars share the accent so the whole panel reads as one instrument. Blue
+   is reserved for the memory trace, which is the one series that needs to stay
+   distinguishable from CPU on the shared scope. */
 .status-disk-bar-fill {
   height: 100%;
-  background: var(--term-blue);
+  background: var(--ui-accent);
 }
 
 .status-core-grid {
@@ -3176,21 +3415,53 @@ body {
 }
 
 
-/* Live cwd path in the input prompt — dim cyan, like a terminal's `cwd ❯`. */
+/* Live cwd path in the input prompt. Metadata, so it yields to the command
+   being typed rather than competing with it. */
 .prompt-cwd {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 45%;
-  color: var(--term-cyan);
-  font-size: 0.85rem;
+  max-width: 30%;
+  color: var(--ui-text-dim);
+  font-size: var(--ui-font-size-2xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  opacity: 0.85;
 }
 
 .prompt-sigil--input {
+  color: var(--ui-accent);
   font-size: 0.95rem;
+}
+
+/* Composer actions read as chips, not as a button bar. They sit at the trailing
+   edge so the input owns the middle of the pill, matching the prototype's
+   single-line composer while keeping every action it already had. */
+.cmd-row .btn {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: var(--ui-radius-sm);
+  border-color: var(--ui-border-focus-soft);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-12);
+  line-height: var(--ui-line-height-normal);
+}
+
+.cmd-row .btn:not(:disabled):hover {
+  color: var(--ui-text-primary);
+  border-color: var(--ui-accent);
+}
+
+/* Run stays the emphasised action — it is what Enter does. */
+.cmd-row .btn-run:not(:disabled) {
+  color: var(--ui-on-accent);
+  background: var(--ui-accent);
+  border-color: var(--ui-accent);
+  font-weight: 700;
+}
+
+.cmd-row .btn-cancel:not(:disabled) {
+  color: var(--ui-danger);
+  border-color: color-mix(in srgb, var(--ui-danger) 55%, var(--ui-border-mid));
 }
 
 .cmd-input {

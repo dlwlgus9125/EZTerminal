@@ -71,3 +71,58 @@ export function Sparkline({ values, max }: SparklineProps): JSX.Element {
     </svg>
   );
 }
+
+function polylinePoints(
+  values: readonly number[],
+  max: number,
+  width: number,
+  height: number,
+): string {
+  return values
+    .map((value, index) => {
+      const x = values.length > 1 ? (index / (values.length - 1)) * width : width;
+      const y = height - (Math.min(value, max) / max) * height;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+}
+
+interface ScopeProps {
+  readonly cpu: readonly number[];
+  readonly mem: readonly number[];
+}
+
+/**
+ * CPU and memory on one oscilloscope trace rather than two stacked sparklines.
+ * They share a time axis, so overlaying them is what makes "memory climbed while
+ * the CPU was idle" legible at a glance. CPU takes the heavier, glowing stroke
+ * because it is the series that moves; memory rides underneath as a reference.
+ */
+export function Scope({ cpu, mem }: ScopeProps): JSX.Element {
+  const width = 320;
+  const height = 96;
+  return (
+    <div className="status-scope">
+      <svg
+        className="status-scope-trace"
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <polyline
+          className="status-scope-mem"
+          points={polylinePoints(mem, 100, width, height)}
+          fill="none"
+          strokeWidth="1.5"
+        />
+        <polyline
+          className="status-scope-cpu"
+          points={polylinePoints(cpu, 100, width, height)}
+          fill="none"
+          strokeWidth="2"
+        />
+      </svg>
+      <i className="status-scope-sweep" aria-hidden="true" />
+    </div>
+  );
+}

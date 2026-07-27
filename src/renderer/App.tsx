@@ -90,6 +90,7 @@ import {
   AppHeader,
   RemotePanel,
   SidebarShell,
+  StatusBar,
   WorkspaceMenu,
   useSidebarReflow,
   type SidebarDestination,
@@ -2538,6 +2539,13 @@ export function App(): JSX.Element {
           )}
         </div>
       </div>
+      {/* Always-visible footer. Sits outside .workbench-body so it spans the
+          rail and the dock rather than scrolling with either. */}
+      <StatusBar
+        attentionCount={attentionCount}
+        remoteDesktop={remoteDesktopStatus}
+        effectProfile={effectProfile}
+      />
 
       {quickOpenMode && (
         <QuickOpenModal

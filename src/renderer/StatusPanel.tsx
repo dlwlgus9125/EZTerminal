@@ -5,8 +5,10 @@ import { rendererCapabilities, type CapabilityAccess } from './capability-access
 import {
   HISTORY_MAX,
   PACKET_ROW_CAP,
+  Scope,
   Sparkline,
   formatBytes,
+  formatPacketTime,
   formatRate,
   mergeSnapshot,
 } from './status-shared';
@@ -166,6 +168,24 @@ export function StatusPanel({
   }
   const netMax = Math.max(1, ...netRxValues, ...netTxValues);
 
+  // Newest first, so the most recent second is the row the eye lands on. A
+  // spike is anything past 70% of the window's own peak — relative rather than
+  // an absolute byte threshold, because a busy link and an idle one need very
+  // different definitions of "unusual".
+  const waterfall = history
+    .filter((snapshot) => snapshot.net !== null)
+    .slice(-8)
+    .reverse()
+    .map((snapshot) => {
+      const total = snapshot.net!.rxSec + snapshot.net!.txSec;
+      return {
+        at: snapshot.at,
+        total,
+        width: Math.max(2, Math.min(100, (total / Math.max(1, netMax * 2)) * 100)),
+        spike: total > netMax * 2 * 0.7,
+      };
+    });
+
   return (
     <div
       className="status-drawer"
@@ -173,23 +193,43 @@ export function StatusPanel({
       role="region"
       aria-label={t('monitor.label')}
     >
+      {/* One trace for both series. They share a time axis, so overlaying them
+          is what makes "memory climbed while the CPU was idle" readable. */}
+      <section className="status-section status-scope-card" data-testid="status-section-scope">
+        <div className="status-scope-head">
+          <span>{t('monitor.scope')}</span>
+          {latest && (
+            <span className="status-scope-readout">
+              <b className="status-scope-readout--cpu">{latest.cpu.loadPct.toFixed(0)}%</b>
+              {' · '}
+              <b className="status-scope-readout--mem">
+                {((latest.mem.usedBytes / latest.mem.totalBytes) * 100).toFixed(0)}%
+              </b>
+            </span>
+          )}
+        </div>
+        <Scope cpu={cpuValues} mem={memValues} />
+      </section>
+
       <section className="status-section" data-testid="status-section-cpu">
         <h2 className="status-section-title">{t('monitor.cpu')}</h2>
         {latest ? (
           <>
             <div className="status-metric">{latest.cpu.loadPct.toFixed(0)}%</div>
-            <Sparkline values={cpuValues} max={100} />
             {latest.cpu.cores.length > 0 && (
               <div
                 className={
-                  latest.cpu.cores.length > 16
+                  // Bars-only past eight cores. A labelled row per core is
+                  // readable on a laptop and unreadable on a workstation, where
+                  // it pushes every other section off the panel.
+                  latest.cpu.cores.length > 8
                     ? 'status-core-grid status-core-grid--compact'
                     : 'status-core-grid'
                 }
                 data-testid="status-cpu-cores"
               >
                 {latest.cpu.cores.map((load, i) => {
-                  const compact = latest.cpu.cores.length > 16;
+                  const compact = latest.cpu.cores.length > 8;
                   return (
                     <div key={i} className="status-core-row">
                       {!compact && (
@@ -222,7 +262,6 @@ export function StatusPanel({
             <div className="status-metric">
               {formatBytes(latest.mem.usedBytes)} / {formatBytes(latest.mem.totalBytes)}
             </div>
-            <Sparkline values={memValues} max={100} />
             {latest.memDetail && (
               <div className="status-mem-detail" data-testid="status-mem-detail">
                 <div className="status-disk-row">
@@ -289,6 +328,20 @@ export function StatusPanel({
             <div className="status-net-sparks" data-testid="status-net-sparks">
               <Sparkline values={netRxValues} max={netMax} />
               <Sparkline values={netTxValues} max={netMax} />
+            </div>
+            <div className="status-waterfall-title">{t('monitor.waterfall')}</div>
+            <div className="status-waterfall" data-testid="status-waterfall">
+              {waterfall.map((row) => (
+                <div className="status-waterfall-row" key={row.at}>
+                  <span className="status-waterfall-time">{formatPacketTime(row.at)}</span>
+                  <i
+                    className="status-waterfall-bar"
+                    data-spike={row.spike ? 'true' : undefined}
+                    style={{ width: `${row.width}%` }}
+                  />
+                  <span className="status-waterfall-rate">{formatRate(row.total)}</span>
+                </div>
+              ))}
             </div>
           </>
         ) : (

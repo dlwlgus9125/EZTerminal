@@ -127,6 +127,10 @@ export const appResources = {
         pcControlIdle: 'No device is controlling this PC.',
         pcControlDisconnect: 'Disconnect',
         pcControlBanner: '{{device}} is controlling this PC.',
+        topologyThisPc: 'This PC',
+        topologyNoDevice: 'No device',
+        topologyWaiting: 'Waiting for a pairing',
+        topologyAddressUnknown: 'Address unknown',
         trustedNetworkWarning:
           'Remote access uses unencrypted ws:// inside your VPN. Connect through Tailscale, WireGuard, or another explicitly trusted VPN.',
         tokenUnavailable: 'The remote access token is unavailable. Remote access remains off.',
@@ -607,9 +611,17 @@ export const appResources = {
         lineSessions: 'Sessions restored',
         skip: 'Click or press any key to skip',
       },
+      statusBar: {
+        local: 'Local',
+        mirror: 'Mirroring {{name}}',
+        attention_one: '{{count}} agent waiting',
+        attention_other: '{{count}} agents waiting',
+      },
       monitor: {
         label: 'System monitor',
         cpu: 'CPU',
+        scope: 'CPU / MEM scope',
+        waterfall: 'Traffic waterfall · per second',
         mem: 'Memory',
         net: 'Network',
         disk: 'Disk',
@@ -886,7 +898,7 @@ export const appResources = {
           manualTitle: 'Manual connection',
           manualDescription: 'Enter the desktop endpoint and pairing token. No camera or discovery permission is used.',
           tokenDescription: 'Use the pairing token shown by the desktop Remote panel.',
-          trustedNetworkWarning:
+        trustedNetworkWarning:
             'ws:// is protected only by the VPN tunnel. Connect through Tailscale, WireGuard, or another explicitly trusted VPN.',
           serverUrl: 'Server URL',
           token: 'Token',
@@ -1281,6 +1293,10 @@ export const appResources = {
         pcControlIdle: '현재 이 PC를 제어하는 기기가 없습니다.',
         pcControlDisconnect: '연결 끊기',
         pcControlBanner: '{{device}} 기기가 이 PC를 제어하고 있습니다.',
+        topologyThisPc: '이 PC',
+        topologyNoDevice: '연결된 기기 없음',
+        topologyWaiting: '페어링 대기 중',
+        topologyAddressUnknown: '주소 확인 불가',
         trustedNetworkWarning:
           '원격 연결은 VPN 내부에서 ws://를 사용합니다. Tailscale, WireGuard 또는 명시적으로 신뢰한 VPN을 통해서만 사용하세요.',
         tokenUnavailable: '원격 접속 토큰을 사용할 수 없습니다. 원격 접속은 꺼진 상태로 유지됩니다.',
@@ -1760,9 +1776,20 @@ export const appResources = {
         lineSessions: '세션 복원 완료',
         skip: '클릭하거나 아무 키나 누르면 건너뜁니다',
       },
+      statusBar: {
+        local: '로컬',
+        mirror: '{{name}} 미러링 중',
+        // Korean does not inflect for number, so both plural forms carry the
+        // same text. Both keys still have to exist: the parity test compares
+        // leaf-key sets across locales.
+        attention_one: '에이전트 {{count}}건 대기',
+        attention_other: '에이전트 {{count}}건 대기',
+      },
       monitor: {
         label: '시스템 모니터',
         cpu: 'CPU',
+        scope: 'CPU / MEM 스코프',
+        waterfall: '트래픽 워터폴 · 초당',
         mem: '메모리',
         net: '네트워크',
         disk: '디스크',

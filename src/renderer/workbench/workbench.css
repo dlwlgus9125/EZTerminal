@@ -481,6 +481,79 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   min-height: 0;
 }
 
+/* == STATUS BAR == a fixed 30px strip under the whole shell. Fixed height on
+   purpose: global state reported here never reflows the workspace, which is
+   what a banner does. */
+.workbench-status-bar {
+  flex: 0 0 auto;
+  block-size: 30px;
+  z-index: var(--ui-z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-4);
+  padding-inline: var(--ui-space-4);
+  border-block-start: 1px solid var(--ui-border-mid);
+  background: var(--ui-canvas);
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-12);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.workbench-status-bar__item {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workbench-status-bar__item--live {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  color: var(--ui-accent);
+}
+
+.workbench-status-bar__dot {
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 50%;
+  background: currentcolor;
+  box-shadow: 0 0 6px currentcolor;
+}
+
+.workbench-status-bar__item--live[data-state='error'] {
+  color: var(--ui-danger);
+}
+
+.workbench-status-bar__item--live[data-state='idle'] {
+  color: var(--ui-text-dim);
+}
+
+.workbench-status-bar__item--attention {
+  color: var(--ui-warning);
+}
+
+/* Pushed to the trailing edge, with FX after it. */
+.workbench-status-bar__toggle {
+  margin-inline-start: auto;
+  padding: 1px var(--ui-space-2);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-round);
+  color: var(--ui-text-secondary);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workbench-status-bar__toggle:hover {
+  color: var(--ui-text-primary);
+  border-color: var(--ui-accent);
+}
+
+.workbench-status-bar__item--fx {
+  color: var(--ui-info);
+}
+
 .activity-rail {
   position: relative;
   z-index: var(--ui-z-sticky);
