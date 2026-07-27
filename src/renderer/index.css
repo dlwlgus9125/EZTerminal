@@ -2787,6 +2787,40 @@ body {
   color: var(--ui-text-muted);
 }
 
+/* Git's opinion of a listed file, in the shape the design asks for: a diffstat
+   when there is one, the word "new" when the file has no history to diff. */
+.file-entry-change {
+  margin-inline-start: auto;
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-info);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-3xs);
+  white-space: nowrap;
+}
+
+.file-entry-change[data-kind='untracked'],
+.file-entry-change[data-kind='added'] {
+  color: var(--ui-accent);
+}
+
+.file-entry-change[data-kind='deleted'],
+.file-entry-change[data-kind='conflicted'] {
+  color: var(--ui-danger);
+}
+
+/* A size column and a change tag would otherwise both claim the right edge. */
+.file-entry-change + .file-entry-size {
+  margin-inline-start: 8px;
+}
+
+.file-entry--parent .file-entry-name {
+  font-family: var(--ui-font-terminal);
+  color: var(--ui-text-secondary);
+}
+
 /* The pane-level echo of the approval card. One row, because it sits above a
    composer that must not be pushed off screen. */
 .pane-approval {

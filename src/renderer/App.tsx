@@ -2508,6 +2508,7 @@ export function App(): JSX.Element {
         onSendFollowup={(activityId, text) => window.ezterminal.sendAgentFollowup(activityId, text)}
         onDecideApproval={(activityId, decision) => window.ezterminal.decideAgentApproval(activityId, decision)}
         onLoadDiff={(directory) => window.ezterminal.getGitDiff(directory)}
+        onReadGitStatus={(directory) => window.ezterminal.getGitStatus(directory)}
         onOpenAgentSettings={() => {
           setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
           setSidebarDestination('settings');

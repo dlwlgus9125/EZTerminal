@@ -47,8 +47,6 @@ export interface AgentActivity {
   readonly updatedAt: number;
   /** Set iff `status === 'blocked'` and the approval gate captured the call. */
   readonly approval?: AgentApproval;
-  /** Branch of `cwd`, when it is inside a work tree. */
-  readonly branch?: string;
 }
 
 export type AgentDecision = 'allow' | 'deny';

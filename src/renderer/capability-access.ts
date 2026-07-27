@@ -6,6 +6,7 @@ import type {
 } from '../shared/agent';
 import type { FilePreviewResult } from '../shared/file-preview';
 import type { FileListResult, FileOpResult } from '../shared/files';
+import { EMPTY_GIT_DIRECTORY_STATUS, type GitDirectoryStatus } from '../shared/git-status';
 import type {
   EzTerminalApi,
   EzTerminalDesktopApi,
@@ -173,6 +174,10 @@ export interface FileAccess {
   reveal: (path: string) => Promise<void>;
   pathForDrop: (file: File) => string | null;
   openExternalHttpUrl: (url: string) => Promise<boolean>;
+  /** Working-tree status for a listed folder. Resolves to an untracked result
+   * rather than throwing when the host cannot answer, because a change tag is
+   * decoration: its absence must never take the listing down with it. */
+  gitStatus: (path: string) => Promise<GitDirectoryStatus>;
 }
 
 export interface CapabilityAccess {
@@ -687,6 +692,11 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     },
     trash(path) {
       return requireCore('trashFile').trashFile(path);
+    },
+    gitStatus(path) {
+      const api = source.readCore();
+      if (!api?.getGitStatus) return Promise.resolve(EMPTY_GIT_DIRECTORY_STATUS);
+      return api.getGitStatus(path).catch(() => EMPTY_GIT_DIRECTORY_STATUS);
     },
     openInApp(path) {
       return requireCore('openFileInApp').openFileInApp(path);

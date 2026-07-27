@@ -11,10 +11,18 @@ import type {
   AgentProvider,
   AgentStatus,
 } from '../shared/agent';
-import type { GitDiffResult } from '../shared/git-status';
+import {
+  EMPTY_GIT_DIRECTORY_STATUS,
+  type GitDiffResult,
+  type GitDirectoryStatus,
+} from '../shared/git-status';
 import { formatCwd } from './format-cwd';
+import { useGitBranches } from './use-git-branch';
 import { useAppTranslation } from './i18n';
 import { Button, Dialog, IconButton } from './ui';
+
+/** Used when no Git reader is supplied; every row then shows its directory. */
+const readNothing = (): Promise<GitDirectoryStatus> => Promise.resolve(EMPTY_GIT_DIRECTORY_STATUS);
 
 const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'waiting']);
 const ACTIVE = new Set<AgentStatus>(['starting', 'working']);
@@ -83,6 +91,8 @@ export interface AgentHubProps {
   readonly onDecideApproval?: (activityId: string, decision: AgentDecision) => Promise<AgentDecisionResult>;
   /** The agent's uncommitted work, for the reviewer who wants to look first. */
   readonly onLoadDiff?: (directory: string) => Promise<GitDiffResult>;
+  /** Resolves each activity's branch. Absent leaves the working directory. */
+  readonly onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
   readonly onOpenAgentSettings?: () => void;
   readonly onClose?: () => void;
   readonly mobile?: boolean;
@@ -100,6 +110,7 @@ export function AgentHub({
   onSendFollowup,
   onDecideApproval,
   onLoadDiff,
+  onReadGitStatus,
   onOpenAgentSettings,
   onClose,
   mobile = false,
@@ -112,6 +123,10 @@ export function AgentHub({
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [diffView, setDiffView] = useState<DiffView | null>(null);
+  const branches = useGitBranches(
+    snapshot.items.map((item) => item.cwd),
+    onReadGitStatus ?? readNothing,
+  );
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const relativeTime = useMemo(
     () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),
@@ -267,7 +282,9 @@ export function AgentHub({
                   {ageLabel(item.updatedAt, now, relativeTime)}
                 </time>
               </div>
-              <div className="agent-cwd" title={item.cwd}>{formatCwd(item.cwd)}</div>
+              <div className="agent-cwd" title={item.cwd}>
+                {branches.get(item.cwd) ?? formatCwd(item.cwd)}
+              </div>
               {item.approval && (
                 <div className="agent-approval" data-risk={item.approval.risk} data-testid="agent-approval">
                   <div className="agent-approval-head">

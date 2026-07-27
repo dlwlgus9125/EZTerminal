@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { EzTerminalApi } from '../shared/ipc';
 import type { FileEntry, FileListResult } from '../shared/files';
+import { EMPTY_GIT_DIRECTORY_STATUS } from '../shared/git-status';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
 import { createCapabilityAccess, type CapabilityAccess } from './capability-access';
 import { FileExplorerPanel } from './FileExplorerPanel';
@@ -23,6 +24,7 @@ let openFileInApp: ReturnType<typeof vi.fn>;
 let revealFileInExplorer: ReturnType<typeof vi.fn>;
 let clipboardWrite: ReturnType<typeof vi.fn>;
 let onOpenTerminalAt: ReturnType<typeof vi.fn>;
+let gitStatus: ReturnType<typeof vi.fn>;
 let capabilities: CapabilityAccess;
 
 function listing(entries: readonly FileEntry[], path = 'C:\\workspace', parent: string | null = 'C:\\'): FileListResult {
@@ -102,7 +104,9 @@ beforeEach(() => {
   openFileInApp = vi.fn(async () => undefined);
   revealFileInExplorer = vi.fn(async () => undefined);
   onOpenTerminalAt = vi.fn();
+  gitStatus = vi.fn(async () => EMPTY_GIT_DIRECTORY_STATUS);
   const core = {
+    getGitStatus: gitStatus,
     listFiles,
     listFileRoots,
     readFilePreview,
@@ -242,5 +246,41 @@ describe('FileExplorerPanel context actions', () => {
     openContextMenu(row);
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="ctx-paste-path"]')!.click());
     expect(insertText).toHaveBeenCalledWith(quoteEzArgument(fullPath));
+  });
+
+  it('tags listed files with what Git says changed about them', async () => {
+    listFiles.mockResolvedValue(listing([file('changed.ts'), file('fresh.ts'), file('quiet.ts')]));
+    gitStatus.mockResolvedValue({
+      tracked: true,
+      branch: 'main',
+      truncated: false,
+      changes: [
+        { path: 'changed.ts', kind: 'modified', added: 18, removed: 6 },
+        { path: 'fresh.ts', kind: 'untracked' },
+        // A change one level down must not tag a sibling in this folder.
+        { path: 'nested/other.ts', kind: 'modified', added: 1, removed: 1 },
+      ],
+    });
+    await renderPanel();
+
+    const tags = Array.from(container.querySelectorAll<HTMLElement>('[data-testid="file-entry-change"]'));
+    expect(tags.map((tag) => tag.textContent)).toEqual(['+18 \u22126', 'new']);
+    expect(tags[1]?.dataset.kind).toBe('untracked');
+  });
+
+  it('leaves the listing alone when the folder is not in a work tree', async () => {
+    listFiles.mockResolvedValue(listing([file('a.ts')]));
+    await renderPanel();
+    expect(container.querySelector('[data-testid="file-entry-change"]')).toBeNull();
+  });
+
+  it('offers a parent row inside a folder but not at the roots', async () => {
+    await renderPanel();
+    const parent = container.querySelector<HTMLButtonElement>('[data-testid="file-entry-parent"]');
+    expect(parent?.textContent).toContain('..');
+
+    act(() => parent!.click());
+    await flush();
+    expect(listFiles).toHaveBeenCalledWith('C:\\');
   });
 });

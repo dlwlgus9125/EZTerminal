@@ -1,7 +1,8 @@
-import { ArrowUp, File as FileIcon, Folder } from 'lucide-react';
+import { ArrowUp, CornerLeftUp, File as FileIcon, Folder } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../shared/files';
+import { EMPTY_GIT_DIRECTORY_STATUS, type GitDirectoryStatus } from '../shared/git-status';
 import type { FilePreviewResult } from '../shared/file-preview';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
@@ -353,6 +354,41 @@ export function FileExplorerPanel({
 
   const crumbs = useMemo(() => breadcrumbSegments(currentPath ?? ''), [currentPath]);
 
+  // Which of these files Git considers changed. Re-read whenever the listing
+  // does, so a save in another window shows up on the next refresh rather than
+  // going stale behind a cached tag.
+  const [gitStatus, setGitStatus] = useState<GitDirectoryStatus>(EMPTY_GIT_DIRECTORY_STATUS);
+  useEffect(() => {
+    if (!currentPath) {
+      setGitStatus(EMPTY_GIT_DIRECTORY_STATUS);
+      return undefined;
+    }
+    let alive = true;
+    void capabilities.files
+      .gitStatus(currentPath)
+      .then((status) => { if (alive) setGitStatus(status); })
+      .catch(() => { if (alive) setGitStatus(EMPTY_GIT_DIRECTORY_STATUS); });
+    return () => { alive = false; };
+  }, [capabilities, currentPath, entries]);
+
+  const changeTagFor = useCallback(
+    (name: string): { readonly kind: string; readonly label: string } | null => {
+      if (!gitStatus.tracked) return null;
+      const change = gitStatus.changes.find((candidate) => candidate.path === name);
+      if (!change) return null;
+      if (change.kind === 'untracked' || change.kind === 'added') {
+        return { kind: change.kind, label: t('fileExplorer.changeNew') };
+      }
+      if (change.added === undefined || change.removed === undefined) {
+        return { kind: change.kind, label: t(`fileExplorer.change.${change.kind}`) };
+      }
+      // The prototype's `+18 −6`. U+2212 is the minus sign, not a hyphen, so it
+      // lines up with the plus at the same optical weight.
+      return { kind: change.kind, label: `+${change.added} −${change.removed}` };
+    },
+    [gitStatus, t],
+  );
+
   return (
     <div className="file-drawer" data-testid="file-explorer-panel">
       {/* One navigation block: Up, the clickable ancestors, and the literal path.
@@ -447,6 +483,22 @@ export function FileExplorerPanel({
             />
           </div>
         )}
+        {/* The parent row the toolbar button duplicates on purpose: in a long
+            listing the way out should be where the eye already is, not back up
+            at the chrome. */}
+        {!rootsMode && currentPath && (
+          <button
+            type="button"
+            className="file-entry file-entry--parent"
+            onClick={handleUp}
+            data-testid="file-entry-parent"
+          >
+            <span className="file-entry-icon" aria-hidden="true">
+              <CornerLeftUp size={16} />
+            </span>
+            <span className="file-entry-name">..</span>
+          </button>
+        )}
         {entries.map((entry) =>
           renamingEntry === entry.name ? (
             <div key={entry.name} className="file-entry" data-testid="file-entry">
@@ -499,6 +551,15 @@ export function FileExplorerPanel({
                 {entry.kind === 'dir' ? <Folder size={16} /> : <FileIcon size={16} />}
               </span>
               <span className="file-entry-name">{entry.name}</span>
+              {changeTagFor(entry.name) && (
+                <span
+                  className="file-entry-change"
+                  data-kind={changeTagFor(entry.name)?.kind}
+                  data-testid="file-entry-change"
+                >
+                  {changeTagFor(entry.name)?.label}
+                </span>
+              )}
               {entry.kind === 'file' && (
                 <span className="file-entry-size">{formatSize(entry.size)}</span>
               )}

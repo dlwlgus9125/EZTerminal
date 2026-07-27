@@ -10,11 +10,19 @@ import type {
   AgentProvider,
   AgentStatus,
 } from '../../src/shared/agent';
-import type { GitDiffResult } from '../../src/shared/git-status';
+import {
+  EMPTY_GIT_DIRECTORY_STATUS,
+  type GitDiffResult,
+  type GitDirectoryStatus,
+} from '../../src/shared/git-status';
 import { formatCwd } from '../../src/renderer/format-cwd';
+import { useGitBranches } from '../../src/renderer/use-git-branch';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobileActionSheet } from './MobileActionSheet';
 import { useMobileToast } from './MobileToast';
+
+/** Used when the host predates the Git arms; every card then shows its cwd. */
+const readNothing = (): Promise<GitDirectoryStatus> => Promise.resolve(EMPTY_GIT_DIRECTORY_STATUS);
 
 const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'waiting']);
 const RUNNING = new Set<AgentStatus>(['starting', 'working']);
@@ -76,6 +84,7 @@ export function MobileAgentView({
   onSendFollowup,
   onDecideApproval,
   onLoadDiff,
+  onReadGitStatus,
 }: {
   readonly snapshot: AgentActivitySnapshot;
   readonly disconnected?: boolean;
@@ -84,6 +93,7 @@ export function MobileAgentView({
   readonly onSendFollowup: (activityId: string, text: string) => Promise<AgentFollowupResult>;
   readonly onDecideApproval?: (activityId: string, decision: AgentDecision) => Promise<AgentDecisionResult>;
   readonly onLoadDiff?: (directory: string) => Promise<GitDiffResult>;
+  readonly onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const showToast = useMobileToast();
@@ -95,6 +105,10 @@ export function MobileAgentView({
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [diff, setDiff] = useState<string | null>(null);
   const locale = i18n.resolvedLanguage ?? i18n.language;
+  const branches = useGitBranches(
+    snapshot.items.map((item) => item.cwd),
+    onReadGitStatus ?? readNothing,
+  );
   const relativeTime = useMemo(
     () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),
     [locale],
@@ -279,7 +293,7 @@ export function MobileAgentView({
                   <span className="mob-badge mob-badge--warning">{t(STATUS_LABEL_KEY[item.status])}</span>
                 </div>
                 <p className="mob-agent-card__branch" title={item.cwd}>
-                  {item.branch ?? formatCwd(item.cwd, 30)}
+                  {branches.get(item.cwd) ?? formatCwd(item.cwd, 30)}
                 </p>
                 <p className="mob-agent-card__body">
                   {item.status === 'waiting'
