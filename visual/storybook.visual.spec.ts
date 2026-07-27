@@ -495,6 +495,10 @@ test.describe("mobile-width Storybook visual contracts", () => {
       await expectNoAccessibilityViolations(page);
       await expect(page).toHaveScreenshot(visualCase.screenshot, {
         animations: "disabled",
+        // The mobile settings surface prints the build SHA, which is "dev"
+        // locally and the real commit in CI. Mask it so the contract covers
+        // layout and type rather than which build produced the screenshot.
+        mask: [page.locator("[data-build-stamp]")],
       });
     });
   }

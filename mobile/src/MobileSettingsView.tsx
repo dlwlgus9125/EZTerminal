@@ -95,6 +95,7 @@ function SettingsCategoryButton({
   icon: Icon,
   title,
   preview,
+  previewSuffix,
   testId,
   onClick,
 }: {
@@ -103,6 +104,9 @@ function SettingsCategoryButton({
   /** Handoff §6: every row states its CURRENT value, so the index answers
    * "what is this set to?" without opening the category. */
   readonly preview: string;
+  /** Part of the preview that changes with every build (the build SHA), split
+   * out so a visual snapshot can mask it instead of pinning one build. */
+  readonly previewSuffix?: string;
   readonly testId: string;
   readonly onClick: () => void;
 }): JSX.Element {
@@ -111,7 +115,10 @@ function SettingsCategoryButton({
       <span className="mob-settings-row__icon" aria-hidden="true"><Icon /></span>
       <span>
         <span className="mob-settings-row__title">{title}</span>
-        <span className="mob-settings-row__preview">{preview}</span>
+        <span className="mob-settings-row__preview">
+          {preview}
+          {previewSuffix && <span data-build-stamp> {previewSuffix}</span>}
+        </span>
       </span>
       <ChevronRight aria-hidden="true" />
     </button>
@@ -377,13 +384,16 @@ export function MobileSettingsView({
             <SettingsCategoryButton
               icon={Info}
               title={t('mobile.settingsView.categories.connectionAbout')}
-              preview={`v${MOBILE_BUILD_INFO.appVersion} (${MOBILE_BUILD_INFO.buildSha})`}
+              preview={`v${MOBILE_BUILD_INFO.appVersion}`}
+              previewSuffix={`(${MOBILE_BUILD_INFO.buildSha})`}
               testId="settings-category-connection-about"
               onClick={() => openCategory('connection-about', 'settings-category-connection-about')}
             />
             <p className="mob-signal" aria-hidden="true">
               <span>EZT://SETTINGS</span>
-              <span>BUILD {MOBILE_BUILD_INFO.buildSha.toUpperCase()}</span>
+              {/* The build stamp differs per build by design, so it is masked
+                  out of the visual snapshot rather than pinned to one SHA. */}
+              <span data-build-stamp>BUILD {MOBILE_BUILD_INFO.buildSha.toUpperCase()}</span>
             </p>
           </div>
         )}
