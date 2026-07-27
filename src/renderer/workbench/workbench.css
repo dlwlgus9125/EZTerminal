@@ -3,16 +3,22 @@
   z-index: var(--ui-z-sticky);
   container-name: workbench-header;
   container-type: inline-size;
-  min-height: 52px;
+  min-height: 60px;
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: auto auto auto minmax(0, 1fr);
+  /* The Command Center zone is the elastic one so its search field can centre
+     itself and absorb every width change; the other three stay intrinsic. */
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--ui-space-2);
   padding: var(--ui-space-2) var(--ui-space-3);
-  border-bottom: 1px solid var(--ui-border-subtle);
+  border-bottom: 1px solid var(--ui-border-mid);
   color: var(--ui-text-primary);
-  background: var(--ui-surface);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ui-accent) 4%, var(--ui-surface)),
+    var(--ui-surface)
+  );
   user-select: none;
 }
 
@@ -26,8 +32,97 @@
   gap: var(--ui-space-3);
 }
 
+.workbench-header-zone--search {
+  min-width: 0;
+  justify-content: center;
+}
+
 .workbench-header-zone--attention {
   justify-self: end;
+  gap: var(--ui-space-2);
+}
+
+.workbench-version-chip {
+  flex: 0 0 auto;
+  padding: 2px var(--ui-space-2);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-text-dim);
+  font-family: var(--ui-font-heading);
+  font-size: var(--ui-font-size-13);
+  line-height: var(--ui-line-height-tight);
+  white-space: nowrap;
+}
+
+.workbench-header-divider {
+  flex: 0 0 auto;
+  inline-size: 1px;
+  block-size: 1.75rem;
+  background: var(--ui-border-mid);
+}
+
+/* The Command Center's search anchor. A button, not an input: it owns no query
+   state and must hand every keystroke to the modal (frontend-design 4.5). */
+.workbench-command-field {
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: 37.5rem;
+  block-size: var(--ui-control-height-lg);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  padding-inline: var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-text-muted);
+  background: var(--ui-surface-inset);
+  font-family: inherit;
+  font-size: var(--ui-font-size-14);
+  text-align: start;
+  cursor: pointer;
+}
+
+.workbench-command-field:hover {
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-glow-box);
+}
+
+.workbench-command-field:focus-visible {
+  outline: none;
+  border-color: var(--ui-focus);
+  box-shadow: var(--ui-focus-ring);
+}
+
+.workbench-command-field__icon {
+  flex: 0 0 auto;
+  inline-size: 1rem;
+  block-size: 1rem;
+  color: var(--ui-accent);
+}
+
+.workbench-command-field__label {
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.workbench-command-field__keys {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  display: flex;
+  gap: var(--ui-space-1);
+}
+
+.workbench-command-field__keys kbd {
+  padding: 1px var(--ui-space-1);
+  border: 1px solid var(--ui-border-focus-soft);
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-text-secondary);
+  font-family: var(--ui-font-heading);
+  font-size: var(--ui-font-size-12);
+  line-height: var(--ui-line-height-tight);
 }
 
 /* Code-native signal wordmark. The inset panel carries the reference image's
@@ -51,7 +146,7 @@
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--ui-accent) 7%, transparent), transparent 52%),
     var(--ui-surface-inset);
-  font: 400 var(--ui-font-size-20)/1 var(--ui-font-heading);
+  font: 400 var(--ui-font-size-26)/1 var(--ui-font-heading);
   letter-spacing: var(--ui-letter-spacing-heading);
   white-space: nowrap;
 }
@@ -62,33 +157,33 @@
   z-index: 1;
 }
 
+/* 6px bars rising 10/17/24px, expressed in rem so the mark tracks UI scale. */
 .workbench-brand-mark__signal {
-  inline-size: 1rem;
-  block-size: 1rem;
+  block-size: 1.5rem;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: flex-end;
   justify-content: center;
-  gap: 2px;
+  gap: 0.1875rem;
   color: var(--ui-accent);
 }
 
 .workbench-brand-mark__signal-bar {
-  inline-size: 3px;
+  inline-size: 0.375rem;
   border-radius: 1px 1px 0 0;
   background: currentColor;
 }
 
 .workbench-brand-mark__signal-bar:nth-child(1) {
-  block-size: 42%;
+  block-size: 41.7%;
 }
 
 .workbench-brand-mark__signal-bar:nth-child(2) {
-  block-size: 68%;
+  block-size: 70.8%;
 }
 
 .workbench-brand-mark__signal-bar:nth-child(3) {
-  block-size: 94%;
+  block-size: 100%;
 }
 
 .workbench-brand-mark__name {
@@ -383,16 +478,25 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
 .activity-rail {
   position: relative;
   z-index: var(--ui-z-sticky);
-  flex: 0 0 52px;
-  width: 52px;
+  flex: 0 0 62px;
+  width: 62px;
   min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--ui-space-1);
-  padding: var(--ui-space-2) var(--ui-space-1);
-  border-inline-end: 1px solid var(--ui-border-subtle);
-  background: var(--ui-surface);
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-3) var(--ui-space-1);
+  border-inline-end: 1px solid var(--ui-border-mid);
+  background: var(--ui-canvas);
+}
+
+/* The rail is the one place the 44px touch tier applies on desktop regardless
+   of density: it is the primary navigation surface and its icons carry no
+   label to widen the target. */
+.activity-rail .activity-rail-button.ez-ui-icon-button {
+  inline-size: 2.75rem;
+  block-size: 2.75rem;
+  border-radius: var(--ui-radius-lg);
 }
 
 .activity-rail-item {
@@ -404,8 +508,8 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
 }
 
 .activity-rail-button[aria-pressed='true'] {
-  color: var(--ui-accent);
-  background: var(--ui-surface-selected);
+  color: var(--ui-focus);
+  background: color-mix(in srgb, var(--ui-accent) 14%, var(--ui-canvas));
   box-shadow: inset 3px 0 0 var(--ui-accent);
 }
 
@@ -432,10 +536,26 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   height: 100%;
   min-height: 0;
   border: 0;
-  border-inline-end: 1px solid var(--ui-border-subtle);
+  border-inline-end: 1px solid var(--ui-border-mid);
   border-radius: 0;
   box-shadow: none;
   background: var(--ui-surface);
+  /* No fill mode on purpose: `both` would leave translateY(0) applied forever,
+     and any transform makes this element the containing block for fixed-position
+     descendants. Reverting after the run keeps the sidebar transform-free. */
+  animation: workbench-destination-in var(--ui-motion-modal) var(--ui-ease-standard);
+}
+
+@keyframes workbench-destination-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .workbench-sidebar .ez-ui-panel__header {
@@ -653,9 +773,19 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
 
 @media (max-width: 860px) {
   .workbench-header {
-    grid-template-columns: auto auto auto minmax(40px, 1fr);
     gap: var(--ui-space-1);
     padding-inline: var(--ui-space-2);
+  }
+
+  /* The full wordmark stays visible at every supported width; only its size
+     gives way, never its letters. */
+  .workbench-brand-mark {
+    font-size: var(--ui-font-size-20);
+  }
+
+  .workbench-version-chip,
+  .workbench-header-divider {
+    display: none;
   }
 
   .workbench-header .ez-ui-button {
@@ -687,6 +817,25 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
 
   .effect-profile-trigger__fx,
   .effect-profile-trigger__separator {
+    display: none;
+  }
+
+  /* The search field collapses to its icon rather than disappearing, so the
+     Command Center keeps a stable pointer target at every width. The label
+     stays in the accessibility tree — it is the button's accessible name. */
+  .workbench-command-field {
+    max-inline-size: var(--ui-control-height-lg);
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .workbench-command-field__label {
+    inline-size: 0;
+    overflow: hidden;
+    font-size: 0;
+  }
+
+  .workbench-command-field__keys {
     display: none;
   }
 }

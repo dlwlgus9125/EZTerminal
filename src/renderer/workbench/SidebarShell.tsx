@@ -84,6 +84,10 @@ export function SidebarShell({
     <>
       <button className="workbench-sidebar-scrim" aria-label={t('workbench.closePanel')} onClick={dismiss} />
       <PanelShell
+        // Keyed on the destination so swapping panels replays the entry
+        // animation. Reconciliation would otherwise keep the same element and
+        // the content would change with no transition at all.
+        key={destination}
         as="aside"
         className="workbench-sidebar"
         data-destination={destination}

@@ -1,4 +1,4 @@
-import { BellRing, ChevronDown, Command, PanelsTopLeft, Plus } from 'lucide-react';
+import { BellRing, ChevronDown, PanelsTopLeft, Plus, Search } from 'lucide-react';
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 
 import type { EffectProfileId, ResolvedEffectProfileId } from '../effect-profiles';
@@ -7,7 +7,14 @@ import { Badge, Button } from '../ui';
 import { BrandMark } from './BrandMark';
 import { EffectProfileMenu } from './EffectProfileMenu';
 
+/** The real Command Center accelerator. The handoff draws `Ctrl K`, but Ctrl+K
+ * is readline's kill-to-end-of-line and the global handler runs in the capture
+ * phase, so claiming it would swallow the key before any terminal saw it. The
+ * keycaps therefore advertise the binding the app actually has. */
+const COMMAND_CENTER_KEYS = ['Ctrl', 'Shift', 'P'] as const;
+
 export function AppHeader({
+  appVersion,
   attentionCount,
   activeThemeEffects,
   commandCenterOpen,
@@ -22,6 +29,7 @@ export function AppHeader({
   workspaceMenu,
   workspaceOpen,
 }: {
+  readonly appVersion?: string | null;
   readonly attentionCount: number;
   readonly activeThemeEffects: readonly string[];
   readonly commandCenterOpen: boolean;
@@ -85,6 +93,12 @@ export function AppHeader({
     <header className="workbench-header" data-testid="workbench-header">
       <div className="workbench-header-zone workbench-header-zone--new">
         <BrandMark />
+        {appVersion ? (
+          <span className="workbench-version-chip" data-testid="workbench-version">
+            {`v${appVersion}`}
+          </span>
+        ) : null}
+        <span className="workbench-header-divider" aria-hidden="true" />
         <Button
           variant="primary"
           className="workbench-new-terminal"
@@ -95,26 +109,29 @@ export function AppHeader({
         >
           {t('header.newTerminal')}
         </Button>
-        <EffectProfileMenu
-          activeThemeEffects={activeThemeEffects}
-          motionEffectsRequested={motionEffectsRequested}
-          profile={effectProfile}
-          onSelectProfile={onSelectEffectProfile}
-          onOpenAdvanced={onOpenEffectSettings}
-        />
       </div>
-      <div className="workbench-header-zone">
-        <Button
-          variant="ghost"
-          leadingIcon={<Command />}
+      <div className="workbench-header-zone workbench-header-zone--search">
+        {/* Still the Command Center zone, just widened into its search anchor.
+            It owns no query state: clicking hands straight over to the modal,
+            which remains the single implementation. */}
+        <button
+          type="button"
+          className="workbench-command-field"
           aria-expanded={commandCenterOpen}
           aria-haspopup="dialog"
+          aria-keyshortcuts="Control+Shift+P"
           onClick={onOpenCommandCenter}
           data-testid="btn-command-center"
           title={t('header.commandCenter')}
         >
-          {t('header.commandCenter')}
-        </Button>
+          <Search className="workbench-command-field__icon" aria-hidden="true" />
+          <span className="workbench-command-field__label">{t('header.commandCenterPlaceholder')}</span>
+          <span className="workbench-command-field__keys" aria-hidden="true">
+            {COMMAND_CENTER_KEYS.map((key) => (
+              <kbd key={key}>{key}</kbd>
+            ))}
+          </span>
+        </button>
       </div>
       <div
         ref={workspaceRootRef}
@@ -143,6 +160,13 @@ export function AppHeader({
         {workspaceMenu}
       </div>
       <div className="workbench-header-zone workbench-header-zone--attention">
+        <EffectProfileMenu
+          activeThemeEffects={activeThemeEffects}
+          motionEffectsRequested={motionEffectsRequested}
+          profile={effectProfile}
+          onSelectProfile={onSelectEffectProfile}
+          onOpenAdvanced={onOpenEffectSettings}
+        />
         <Button
           variant={attentionCount > 0 ? 'secondary' : 'ghost'}
           leadingIcon={<BellRing />}

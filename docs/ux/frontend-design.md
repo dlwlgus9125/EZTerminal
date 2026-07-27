@@ -168,14 +168,19 @@ The desktop header contains exactly these four product zones:
    safe creation variants without adding adjacent header controls.
 2. **Command Center** — opens the unified command/search surface for files,
    panes, saved Quick Commands, layouts, presets, settings, and destinations.
+   The zone presents itself as a wide search field carrying the real keyboard
+   accelerator. The field is an anchor, not an input: it owns no query state and
+   hands every interaction to the one Command Center implementation.
 3. **Workspace menu** — owns Split, Layout, and Presets.
 4. **Agent Attention** — opens/focuses attention work and includes the unread
    count in an accessible text label.
 
 Zone 1 includes the `BrandMark` (three-bar signal plus the visible full
-`EZTerminal` name) beside New Terminal. One compact `FX · <profile>` appearance
-utility may also live in this zone. It is a presentation control, not a fifth
-navigation zone; individual effect switches and parameters remain in Settings.
+`EZTerminal` name) beside New Terminal, and may carry the build version as a
+compact non-interactive chip. One compact `FX · <profile>` appearance utility
+lives in zone 4 beside Agent Attention, so zone 2 can hold the full width of the
+search field. It is a presentation control, not a fifth navigation zone;
+individual effect switches and parameters remain in Settings.
 
 Theme, Files, Stats, Pairing, Settings, OpenClaw, runtime versions, and the
 session connection dot do not appear as separate header actions. Runtime and

@@ -2377,6 +2377,7 @@ export function App(): JSX.Element {
   return (
     <main className="app">
       <AppHeader
+        appVersion={rendererCapabilities.runtimeVersions()?.app ?? null}
         attentionCount={Math.max(attentionCount, unreadAgentIds.size)}
         activeThemeEffects={activeThemeDef.effects ?? []}
         commandCenterOpen={quickOpenMode !== null}

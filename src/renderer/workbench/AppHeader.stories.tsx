@@ -48,6 +48,9 @@ function AppHeaderStory({
     <AppI18nProvider locale={locale} languages={[locale]}>
       <main lang={locale} style={{ minWidth: 0, width: '100vw' }}>
         <AppHeader
+          // Pinned rather than read from the runtime so the version chip cannot
+          // make a screenshot depend on which build produced it.
+          appVersion="1.0.11"
           activeThemeEffects={activeThemeEffects}
           attentionCount={3}
           commandCenterOpen={false}

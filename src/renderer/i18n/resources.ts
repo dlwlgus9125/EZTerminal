@@ -26,6 +26,7 @@ export const appResources = {
       header: {
         newTerminal: 'New Terminal',
         commandCenter: 'Command Center',
+        commandCenterPlaceholder: 'Search commands, files, sessions, settings',
         workspace: 'Workspace',
         agentAttention: 'Agent Attention',
         effectsMenu: 'CRT effect profile',
@@ -1161,6 +1162,7 @@ export const appResources = {
       header: {
         newTerminal: '새 터미널',
         commandCenter: '명령 센터',
+        commandCenterPlaceholder: '명령·파일·세션·설정 검색',
         workspace: '워크스페이스',
         agentAttention: '에이전트 알림',
         effectsMenu: 'CRT 효과 프로필',

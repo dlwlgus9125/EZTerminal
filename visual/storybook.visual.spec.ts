@@ -84,12 +84,15 @@ async function expectNoAccessibilityViolations(page: Page): Promise<void> {
   );
 }
 
+// Left-to-right order across the four header zones. The FX profile control sits
+// beside Agent Attention in zone four, not next to New Terminal, so the search
+// field can occupy the whole elastic middle column.
 const headerControlTestIds = [
   "workbench-brand-mark",
   "btn-new-tab",
-  "btn-effect-profile",
   "btn-command-center",
   "btn-workspace-menu",
+  "btn-effect-profile",
   "btn-toggle-agents",
 ] as const;
 
