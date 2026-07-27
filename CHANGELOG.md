@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-07-27
+
+### Changed
+- Rebuilt the Android shell around a persistent five-item tab bar — Home,
+  Terminal, PC, Agents, More — that becomes a 72px left rail on an unfolded
+  display. Authentication lands on a Home tab carrying a PC Control hero, the
+  three most recent sessions, the first agent awaiting attention, and an
+  OpenClaw shortcut while the gateway is running.
+- Made PC Control an explicit start action rather than a destination, and moved
+  Files, Monitor, Sessions, OpenClaw, Theme and Settings into a More sheet.
+- Replaced the terminal's tab strip with a session dropdown and bottom sheet,
+  and added a status line, a recent-command chip row and a Ctrl latch around
+  the composer.
+- Turned PC Control into an immersive screen whose floating controls auto-hide
+  3.5 seconds after the last touch.
+- Gave the Settings index a connection card and a current-value preview on
+  every category row.
+- Rebuilt the pairing screen with a saved-connection card and a staged boot log
+  while the link is being established.
+
+### Fixed
+- Stopped Android Back from exiting the app after visiting More-sheet
+  destinations. Each sheet-to-page transition leaked one history entry until
+  the layer stack and browser history disagreed.
+
+See [1.0.11 release notes](docs/release/release-notes-1.0.11.md).
+
 ## [1.0.10] - 2026-07-26
 
 ### Fixed
