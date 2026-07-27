@@ -749,6 +749,39 @@ body {
   background: var(--ui-warning-muted);
 }
 
+/* Three live gateway numbers, read at a glance above the session list. */
+.openclaw-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ui-space-2);
+}
+
+.openclaw-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--ui-space-2);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-inset);
+  text-align: center;
+}
+
+.openclaw-metric-value {
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-lg);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.openclaw-metric-label {
+  color: var(--ui-text-dim);
+  font-size: var(--ui-font-size-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .status-polling-note {
   margin: 0;
   padding: 0 0.85rem 0.9rem;

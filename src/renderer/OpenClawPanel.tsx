@@ -295,6 +295,30 @@ export function OpenClawPanel({
         )}
       </section>
 
+      {/* Console read-out. The handoff asks for channels / messages today /
+          queued work; the gateway reports none of those, so these are the three
+          live numbers it does report. */}
+      {state === 'running' && status && (
+        <section className="status-section openclaw-metrics" data-testid="openclaw-metrics">
+          <div className="openclaw-metric">
+            <span className="openclaw-metric-value">{numberFormatter.format(sessions.length)}</span>
+            <span className="openclaw-metric-label">{t('openClaw.metricSessions')}</span>
+          </div>
+          <div className="openclaw-metric">
+            <span className="openclaw-metric-value">
+              {numberFormatter.format(
+                sessions.reduce((total, session) => total + (session.totalTokens ?? 0), 0),
+              )}
+            </span>
+            <span className="openclaw-metric-label">{t('openClaw.metricTokens')}</span>
+          </div>
+          <div className="openclaw-metric">
+            <span className="openclaw-metric-value">{status.port}</span>
+            <span className="openclaw-metric-label">{t('openClaw.metricPort')}</span>
+          </div>
+        </section>
+      )}
+
       {state === 'not-installed' ? (
         <section className="status-section" data-testid="openclaw-guidance">
           <h2 className="status-section-title">{t('openClaw.installRequired')}</h2>
