@@ -355,36 +355,26 @@ export function FileExplorerPanel({
 
   return (
     <div className="file-drawer" data-testid="file-explorer-panel">
-      <div className="file-drawer-header">
-        <button
-          className="btn btn-split"
-          onClick={handleUp}
-          disabled={rootsMode}
-          title={t('fileExplorer.goUp')}
-          aria-label={t('fileExplorer.goUp')}
-          data-testid="file-up"
-        >
-          <ArrowUp aria-hidden="true" size={16} />
-        </button>
-        <input
-          className="file-path-input"
-          value={pathInput}
-          onChange={(e) => setPathInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void loadPath(pathInput);
-          }}
-          placeholder={t('fileExplorer.pathPlaceholder')}
-          aria-label={t('fileExplorer.currentFolderPath')}
-          data-testid="file-path-input"
-        />
-      </div>
-
-      {!rootsMode && crumbs.length > 0 && (
-        <nav
-          className="file-breadcrumb"
-          aria-label={t('fileExplorer.breadcrumb')}
-          data-testid="file-breadcrumb"
-        >
+      {/* One navigation block: Up, the clickable ancestors, and the literal path.
+          The path line is the input — it was previously a second, always-visible
+          field in its own header row saying the same thing the breadcrumb said,
+          so display and entry now share one element. */}
+      <nav
+        className="file-breadcrumb"
+        aria-label={t('fileExplorer.breadcrumb')}
+        data-testid="file-breadcrumb"
+      >
+        <div className="file-breadcrumb-row">
+          <button
+            className="btn btn-split file-breadcrumb-up"
+            onClick={handleUp}
+            disabled={rootsMode}
+            title={t('fileExplorer.goUp')}
+            aria-label={t('fileExplorer.goUp')}
+            data-testid="file-up"
+          >
+            <ArrowUp aria-hidden="true" size={16} />
+          </button>
           <ol className="file-breadcrumb-trail">
             {crumbs.map((crumb, index) => {
               const current = index === crumbs.length - 1;
@@ -404,11 +394,21 @@ export function FileExplorerPanel({
               );
             })}
           </ol>
-          <span className="file-breadcrumb-full" title={currentPath ?? undefined}>
-            {currentPath}
-          </span>
-        </nav>
-      )}
+        </div>
+        <input
+          className="file-breadcrumb-full"
+          value={pathInput}
+          onChange={(e) => setPathInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void loadPath(pathInput);
+          }}
+          placeholder={t('fileExplorer.pathPlaceholder')}
+          aria-label={t('fileExplorer.currentFolderPath')}
+          title={currentPath ?? undefined}
+          spellCheck={false}
+          data-testid="file-path-input"
+        />
+      </nav>
 
       {error && (
         <div className="file-error" data-testid="file-error">

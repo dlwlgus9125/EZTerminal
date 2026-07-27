@@ -905,9 +905,19 @@ body {
 .file-breadcrumb {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   padding: var(--ui-space-2) var(--ui-space-3);
   border-bottom: 1px solid var(--ui-border-mid);
+}
+
+.file-breadcrumb-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+}
+
+.file-breadcrumb-up {
+  flex: 0 0 auto;
 }
 
 .file-breadcrumb-trail {
@@ -948,13 +958,80 @@ body {
   cursor: default;
 }
 
+/* Reads as the path label it replaces until you focus it. */
 .file-breadcrumb-full {
-  overflow: hidden;
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-sm);
   color: var(--ui-text-dim);
+  background: transparent;
   font-family: var(--ui-font-terminal);
   font-size: var(--ui-font-size-3xs);
+  text-overflow: ellipsis;
+}
+
+.file-breadcrumb-full:hover {
+  border-color: var(--ui-border-mid);
+}
+
+.file-breadcrumb-full:focus {
+  outline: none;
+  border-color: var(--ui-accent);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-inset);
+}
+
+/* Channels the gateway is bridging, folded out of the sessions it reports. */
+.openclaw-channels {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.openclaw-channel {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  padding: 9px 11px;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+  font-size: var(--ui-font-size-12);
+}
+
+.openclaw-channel-dot {
+  inline-size: 7px;
+  block-size: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--ui-text-dim);
+}
+
+/* Lit only while a run is actually in flight on that channel. */
+.openclaw-channel-dot[data-live='true'] {
+  background: var(--ui-accent);
+  box-shadow: 0 0 6px var(--ui-accent);
+}
+
+.openclaw-channel-name {
+  min-inline-size: 0;
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-terminal);
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.openclaw-channel-meta {
+  color: var(--ui-text-muted);
+}
+
+.openclaw-channel-time {
+  margin-inline-start: auto;
+  color: var(--ui-text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Three live gateway numbers, read at a glance above the session list. */
@@ -1557,21 +1634,6 @@ body {
   flex: 1;
 }
 
-/* OpenClaw management drawer (openclaw-management M2) — reuses .status-drawer/
-   .status-section directly (same right-slot mutual-exclusion family as
-   Stats/Pairing/Settings above); the rules below are its own additions. */
-.openclaw-drawer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.5rem 0.85rem;
-  border-bottom: 1px solid var(--term-border-faint);
-}
-
-.openclaw-drawer-header .status-section-title {
-  margin: 0;
-}
-
 .openclaw-state-row {
   display: flex;
   align-items: center;
@@ -1809,26 +1871,6 @@ body {
   background: var(--term-bg-raised);
   border-right: 1px solid var(--term-border);
   box-shadow: 6px 0 18px rgba(0, 0, 0, 0.35);
-}
-
-.file-drawer-header {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.5rem 0.6rem;
-  border-bottom: 1px solid var(--term-border-faint);
-}
-
-.file-path-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 0.15rem 0.4rem;
-  font-size: 0.75rem;
-  font-family: inherit;
-  background: var(--term-bg-inset);
-  border: 1px solid var(--term-border);
-  border-radius: 3px;
-  color: var(--term-fg);
 }
 
 .file-path-input:focus {

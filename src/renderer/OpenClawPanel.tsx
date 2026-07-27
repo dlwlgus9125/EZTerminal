@@ -246,6 +246,26 @@ export function OpenClawPanel({
   const busy = busyAction !== null;
   const startDisabled = busy || state === undefined || state === 'running' || state === 'starting';
   const stopDisabled = busy || state === undefined || state === 'stopped' || state === 'not-installed';
+  // The gateway does not expose a channel list, but every session records the
+  // channel it last spoke on. Folding sessions by that field is what turns
+  // "five agent sessions" into "two bridges, and this is what each is doing".
+  const channels = useMemo(() => {
+    const byChannel = new Map<string, { sessions: number; updatedAt: number; live: boolean }>();
+    for (const session of sessions) {
+      const name = session.lastChannel;
+      if (!name) continue;
+      const current = byChannel.get(name);
+      byChannel.set(name, {
+        sessions: (current?.sessions ?? 0) + 1,
+        updatedAt: Math.max(current?.updatedAt ?? 0, session.updatedAt ?? 0),
+        live: (current?.live ?? false) || session.hasActiveRun === true,
+      });
+    }
+    return [...byChannel.entries()]
+      .map(([name, value]) => ({ name, ...value }))
+      .sort((a, b) => b.updatedAt - a.updatedAt || a.name.localeCompare(b.name));
+  }, [sessions]);
+
   const restartDisabled = busy || state === undefined || state === 'not-installed';
 
   return (
@@ -285,6 +305,10 @@ export function OpenClawPanel({
       {state === 'running' && status && (
         <section className="status-section openclaw-metrics" data-testid="openclaw-metrics">
           <div className="openclaw-metric">
+            <span className="openclaw-metric-value">{numberFormatter.format(channels.length)}</span>
+            <span className="openclaw-metric-label">{t('openClaw.metricChannels')}</span>
+          </div>
+          <div className="openclaw-metric">
             <span className="openclaw-metric-value">{numberFormatter.format(sessions.length)}</span>
             <span className="openclaw-metric-label">{t('openClaw.metricSessions')}</span>
           </div>
@@ -296,10 +320,7 @@ export function OpenClawPanel({
             </span>
             <span className="openclaw-metric-label">{t('openClaw.metricTokens')}</span>
           </div>
-          <div className="openclaw-metric">
-            <span className="openclaw-metric-value">{status.port}</span>
-            <span className="openclaw-metric-label">{t('openClaw.metricPort')}</span>
-          </div>
+
         </section>
       )}
 
@@ -390,6 +411,37 @@ export function OpenClawPanel({
           )}
 
           {(state === 'running' || state === 'starting') && (
+            <>
+          {channels.length > 0 && (
+            <section className="status-section" data-testid="openclaw-channels">
+              <h2 className="status-section-title">{t('openClaw.channels')}</h2>
+              <div className="openclaw-channels">
+                {channels.map((channel) => (
+                  <div className="openclaw-channel" key={channel.name} data-testid="openclaw-channel">
+                    <span
+                      className="openclaw-channel-dot"
+                      data-live={channel.live ? 'true' : undefined}
+                      aria-hidden="true"
+                    />
+                    <span className="openclaw-channel-name">{channel.name}</span>
+                    <span className="openclaw-channel-meta">
+                      {t('openClaw.channelSessions', {
+                        value: numberFormatter.format(channel.sessions),
+                      })}
+                    </span>
+                    {channel.updatedAt > 0 && (
+                      <time
+                        className="openclaw-channel-time"
+                        dateTime={new Date(channel.updatedAt).toISOString()}
+                      >
+                        {timeFormatter.format(new Date(channel.updatedAt))}
+                      </time>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
             <section className="status-section">
               <h2 className="status-section-title">{t('openClaw.sessions')}</h2>
               {sessions.length === 0 ? (
@@ -419,6 +471,7 @@ export function OpenClawPanel({
                 </div>
               )}
             </section>
+            </>
           )}
 
           <section className="status-section">
