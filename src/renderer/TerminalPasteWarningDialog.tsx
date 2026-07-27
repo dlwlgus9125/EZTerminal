@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 
 import type { TerminalPasteRisk } from '../shared/terminal-clipboard';
 import { useAppTranslation } from './i18n';
@@ -15,7 +15,11 @@ export function TerminalPasteWarningDialog({
   onCancel,
   onConfirm,
 }: TerminalPasteWarningDialogProps): JSX.Element {
-  const { t } = useAppTranslation();
+  const { t, i18n } = useAppTranslation();
+  const numberFormatter = useMemo(
+    () => new Intl.NumberFormat(i18n.resolvedLanguage ?? i18n.language),
+    [i18n.language, i18n.resolvedLanguage],
+  );
   const cancelRef = useRef<HTMLButtonElement>(null);
   const cancelCallbackRef = useRef(onCancel);
   cancelCallbackRef.current = onCancel;
@@ -55,14 +59,28 @@ export function TerminalPasteWarningDialog({
         </>
       )}
     >
-      <ul className="terminal-paste-warning__details">
-        {risk.multiline && (
-          <li>{t('terminalPasteWarning.multiline', { count: risk.lineCount })}</li>
-        )}
-        {risk.large && (
-          <li>{t('terminalPasteWarning.large', { count: risk.byteLength })}</li>
-        )}
-      </ul>
+      {/* All three figures are measured from the same text, so the block always
+          shows all three and marks which ones actually tripped a threshold.
+          Listing only the breaches left the dialog unable to answer "how big is
+          it, then?" when just one of them fired. */}
+      <dl className="terminal-paste-warning__details">
+        <div className="terminal-paste-warning__stat" data-breach={risk.multiline ? 'true' : undefined}>
+          <dt>{t('terminalPasteWarning.statLines')}</dt>
+          <dd>{numberFormatter.format(risk.lineCount)}</dd>
+        </div>
+        <div className="terminal-paste-warning__stat" data-breach={risk.large ? 'true' : undefined}>
+          <dt>{t('terminalPasteWarning.statSize')}</dt>
+          <dd>{t('terminalPasteWarning.bytes', { value: numberFormatter.format(risk.byteLength) })}</dd>
+        </div>
+        <div className="terminal-paste-warning__stat" data-breach={risk.multiline ? 'true' : undefined}>
+          <dt>{t('terminalPasteWarning.statShape')}</dt>
+          <dd>
+            {risk.multiline
+              ? t('terminalPasteWarning.shapeMultiline')
+              : t('terminalPasteWarning.shapeSingle')}
+          </dd>
+        </div>
+      </dl>
     </Dialog>
   );
 }

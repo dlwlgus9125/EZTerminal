@@ -990,6 +990,33 @@ body {
   text-transform: uppercase;
 }
 
+/* Trailing slot of a pane group's header: where the active pane is. Renders
+   once per group rather than per tab, so a crowded strip does not repeat it. */
+.pane-header-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  /* Clears the card's rounded corner so the path never touches the border. */
+  padding-inline: var(--ui-space-3) var(--ui-space-4);
+  min-inline-size: 0;
+  color: var(--ui-text-dim);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-2xs);
+  opacity: 0.7;
+}
+
+.pane-header-meta[data-active='true'] {
+  color: var(--ui-text-muted);
+  opacity: 1;
+}
+
+.pane-header-meta__cwd {
+  max-inline-size: 18rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* == WORKSPACE BAR == names the layout and keeps splitting one click away.
    Fixed height above the pane grid, so it never competes with a pane for
    space. */
@@ -3774,11 +3801,30 @@ body {
   list-style: none;
 }
 
-.terminal-paste-warning__details li {
+.terminal-paste-warning__stat {
   padding: var(--ui-space-2) var(--ui-space-3);
-  border: 1px solid color-mix(in srgb, var(--ui-warning) 40%, var(--ui-border-mid));
+  border: 1px solid var(--ui-border-mid);
   border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-inset);
+}
+
+/* The figure that actually crossed a threshold is the one worth looking at. */
+.terminal-paste-warning__stat[data-breach='true'] {
+  border-color: color-mix(in srgb, var(--ui-warning) 40%, var(--ui-border-mid));
   background: var(--ui-warning-muted);
+}
+
+.terminal-paste-warning__stat dt {
+  color: var(--ui-text-dim);
+  font-size: var(--ui-font-size-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.terminal-paste-warning__stat dd {
+  margin: 2px 0 0;
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-terminal);
   font-variant-numeric: tabular-nums;
 }
 

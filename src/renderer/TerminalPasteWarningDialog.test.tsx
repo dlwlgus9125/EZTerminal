@@ -55,8 +55,11 @@ describe('TerminalPasteWarningDialog', () => {
     const dialog = document.querySelector('[data-testid="terminal-paste-warning-dialog"]')!;
     const cancel = document.querySelector<HTMLButtonElement>('[data-testid="terminal-paste-warning-cancel"]')!;
     expect(dialog.getAttribute('role')).toBe('alertdialog');
-    expect(dialog.textContent).toContain('3 lines');
-    expect(dialog.textContent).toContain('6001 UTF-8 bytes');
+    // The measured figures, and nothing derived from the clipboard itself.
+    expect(dialog.textContent).toContain('Lines');
+    expect(dialog.textContent).toContain('3');
+    expect(dialog.textContent).toContain('6,001 B');
+    expect(dialog.textContent).toContain('Multi-line');
     expect(document.activeElement).toBe(cancel);
   });
 

@@ -69,6 +69,7 @@ import {
 import { RichFileViewerOverlay } from './RichFileViewerOverlay';
 import { RemoteControlBanner, useRemoteDesktopHostStatus } from './RemoteDesktopStatusCard';
 import { RecentPanelSwitcher, type RecentPanelSwitcherItem } from './RecentPanelSwitcher';
+import { PaneHeaderMeta } from './PaneHeaderMeta';
 import { RiskyCloseDialog } from './RiskyCloseDialog';
 import { SettingsPanel, type SettingsCategory } from './SettingsPanel';
 import { StatusPanel } from './StatusPanel';
@@ -2540,6 +2541,7 @@ export function App(): JSX.Element {
                             className="dockview-theme-dark ez-dock"
                             components={components}
                             defaultTabComponent={AgentAwareTab}
+                            rightHeaderActionsComponent={PaneHeaderMeta}
                             onReady={onReady}
                             disableFloatingGroups
                           />
