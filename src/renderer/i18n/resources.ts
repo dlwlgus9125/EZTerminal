@@ -910,6 +910,7 @@ export const appResources = {
           run: 'Run',
         },
         terminalView: {
+          exitCode: 'exit {{value}}',
           remotePath: 'Remote SSH paths cannot be previewed on this device.',
           invalidLocation: 'Invalid terminal file location.',
           outsideWorkspace: 'That file is outside the command workspace.',
@@ -952,6 +953,7 @@ export const appResources = {
           eyebrow: 'TRUSTED REMOTE ACCESS',
           description: 'Connect to your desktop workbench without changing its running sessions.',
           savedLabel: 'Saved secure connection',
+          lastConnected: 'Connected {{value}}',
           savedDescription: 'Review or edit the endpoint below, then connect explicitly.',
           manualTitle: 'Manual connection',
           manualDescription: 'Enter the desktop endpoint and pairing token. No camera or discovery permission is used.',
@@ -2136,6 +2138,7 @@ export const appResources = {
           run: '실행',
         },
         terminalView: {
+          exitCode: 'exit {{value}}',
           remotePath: '이 기기에서는 원격 SSH 경로를 미리볼 수 없습니다.',
           invalidLocation: '터미널 파일 위치가 올바르지 않습니다.',
           outsideWorkspace: '해당 파일은 명령 작업 공간 밖에 있습니다.',
@@ -2178,6 +2181,7 @@ export const appResources = {
           eyebrow: '신뢰할 수 있는 원격 접속',
           description: '실행 중인 세션을 변경하지 않고 데스크톱 작업 공간에 연결합니다.',
           savedLabel: '저장된 보안 연결',
+          lastConnected: '{{value}} 연결',
           savedDescription: '아래 엔드포인트를 확인하거나 수정한 뒤 명시적으로 연결하세요.',
           manualTitle: '수동 연결',
           manualDescription: '데스크톱 엔드포인트와 페어링 토큰을 입력하세요. 카메라나 검색 권한은 사용하지 않습니다.',

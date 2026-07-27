@@ -33,6 +33,7 @@ export function MobileHomeView({
   sessions,
   activeSessionId,
   agentSnapshot,
+  activeRuns,
   agentAttention,
   openclawVisible,
   openclawState,
@@ -48,6 +49,8 @@ export function MobileHomeView({
   readonly sessions: readonly HomeSessionRow[];
   readonly activeSessionId: string | null;
   readonly agentSnapshot: AgentActivitySnapshot;
+  /** sessionId -> the command it is currently running, from `listRuns`. */
+  readonly activeRuns: ReadonlyMap<string, string>;
   readonly agentAttention: number;
   readonly openclawVisible: boolean;
   readonly openclawState?: OpenClawStatus['state'];
@@ -124,7 +127,11 @@ export function MobileHomeView({
           {recent.length === 0 ? (
             <p className="mob-empty" data-testid="home-sessions-empty">{t('mobile.sessionManager.empty')}</p>
           ) : recent.map(({ session, open }) => {
-            const busy = agentSnapshot.items.some(
+            // Executing something is what "live" means. An agent working in
+            // this session counts too, but a running command is the direct
+            // answer rather than a proxy for one.
+            const runningCommand = activeRuns.get(session.sessionId);
+            const busy = runningCommand !== undefined || agentSnapshot.items.some(
               (item) => item.sessionId === session.sessionId && AGENT_BUSY.has(item.status),
             );
             return (
@@ -143,9 +150,11 @@ export function MobileHomeView({
                 </span>
                 <span className="mob-row__copy">
                   <span className="mob-row__title" title={session.cwd}>{formatCwd(session.cwd, 32)}</span>
-                  <span className="mob-row__meta">
-                    {open ? t('mobile.home.sessionOpen') : t('mobile.home.sessionOnDesktop')}
-                    {busy ? ` · ${t('mobile.home.sessionBusy')}` : ''}
+                  <span className="mob-row__meta" title={runningCommand}>
+                    {runningCommand
+                      ? runningCommand
+                      : open ? t('mobile.home.sessionOpen') : t('mobile.home.sessionOnDesktop')}
+                    {busy && !runningCommand ? ` · ${t('mobile.home.sessionBusy')}` : ''}
                   </span>
                 </span>
                 <span className={busy ? 'mob-dot mob-dot--live' : 'mob-dot'} aria-hidden="true" />

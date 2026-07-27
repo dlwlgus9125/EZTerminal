@@ -1094,6 +1094,12 @@ body {
   text-overflow: ellipsis;
 }
 
+.pane-header-meta__age {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-text-dim);
+}
+
 /* == WORKSPACE BAR == names the layout and keeps splitting one click away.
    Fixed height above the pane grid, so it never competes with a pane for
    space. */

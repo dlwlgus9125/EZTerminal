@@ -75,6 +75,8 @@ export interface SshPromptState {
 /** Immutable view handed to React via useSyncExternalStore. */
 export interface BlockSnapshot {
   readonly status: BlockStatus;
+  /** Process exit code once the run ended, when the interpreter reported one. */
+  readonly exitCode: number | null;
   /** True between the user-requested Codex interrupt and the follow-up
    * `continue` input. Used to disable duplicate recovery requests. */
   readonly codexRecoveryPending: boolean;
@@ -197,6 +199,7 @@ export class BlockController {
 
   private readonly cache = new Map<number, ResultRow>();
   private status: BlockStatus = 'running';
+  private exitCode: number | null = null;
   private executionKind: ExecutionKind | null = null;
   private sshConnectionId: string | null = null;
   private sshConnectionState: 'ready' | 'closed' | null = null;
@@ -791,6 +794,10 @@ export class BlockController {
         this.finishPlainAnsi();
         this.flushPlainSink();
         this.status = 'done';
+        // The number was already on the wire and thrown away. A status line that
+        // can say "exit 1" instead of "error" is the whole difference between
+        // knowing what happened and knowing only that something did.
+        this.exitCode = frame.exitCode ?? null;
         // cwd AFTER the command — a `cd` updates the live prompt off this.
         this.endCwd = frame.cwd ?? this.endCwd;
         break;
@@ -883,6 +890,7 @@ export class BlockController {
   private buildSnapshot(): BlockSnapshot {
     return {
       status: this.status,
+      exitCode: this.exitCode,
       codexRecoveryPending: this.codexRecoveryPending,
       executionKind: this.executionKind,
       sshConnectionId: this.sshConnectionId,

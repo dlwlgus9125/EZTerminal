@@ -1,5 +1,5 @@
 import { Eye, EyeOff, KeyRound, Link2, Server, ShieldAlert, ShieldCheck } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MOBILE_BUILD_INFO } from './build-info';
@@ -9,11 +9,22 @@ import { MobileSignalMark } from './MobileSignalMark';
 export interface SavedConnection {
   readonly url: string;
   readonly token: string;
+  readonly lastConnectedAt?: number;
 }
 
 /** Handoff §1: the four boot-log lines appear one at a time while linking. */
 const BOOT_LOG_STEP_MS = 340;
 const BOOT_LOG_STEPS = 4;
+
+/** Coarse by design — the card says roughly when, not exactly. */
+function relativeLastConnected(at: number, formatter: Intl.RelativeTimeFormat): string {
+  const minutes = Math.max(0, Math.round((Date.now() - at) / 60_000));
+  if (minutes < 1) return formatter.format(0, 'minute');
+  if (minutes < 60) return formatter.format(-minutes, 'minute');
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return formatter.format(-hours, 'hour');
+  return formatter.format(-Math.floor(hours / 24), 'day');
+}
 
 // ConnectScreen — the mobile-only entry screen (no desktop analogue): host URL
 // + token entry, pre-filled from the last successful connection (App.tsx
@@ -41,7 +52,11 @@ export function ConnectScreen({
   storageWarning?: string | null;
   onConnect: (url: string, token: string) => void;
 }): JSX.Element {
-  const { t } = useAppTranslation();
+  const { t, i18n } = useAppTranslation();
+  const relativeTime = useMemo(
+    () => new Intl.RelativeTimeFormat(i18n.resolvedLanguage ?? i18n.language, { numeric: 'auto' }),
+    [i18n.resolvedLanguage, i18n.language],
+  );
   const [url, setUrl] = useState(saved?.url ?? '');
   const [token, setToken] = useState(saved?.token ?? '');
   const [revealToken, setRevealToken] = useState(false);
@@ -86,8 +101,15 @@ export function ConnectScreen({
             <ShieldCheck aria-hidden="true" />
             <span className="mob-connect__saved-copy">
               <span className="mob-connect__saved-host">{formatEndpointHost(saved.url)}</span>
+              {/* Host and address are the same field: the desktop only ever
+                  advertises ws://<ipv4>:<port>, so the card shows when this
+                  link last worked rather than repeating the host as an "IP". */}
               <span className="mob-connect__saved-meta" title={saved.url}>
-                {t('mobile.connect.savedLabel')}
+                {saved.lastConnectedAt === undefined
+                  ? t('mobile.connect.savedLabel')
+                  : t('mobile.connect.lastConnected', {
+                    value: relativeLastConnected(saved.lastConnectedAt, relativeTime),
+                  })}
               </span>
             </span>
             <button

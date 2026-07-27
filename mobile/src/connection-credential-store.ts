@@ -12,6 +12,10 @@ export interface StoredConnection {
   readonly token: string;
   readonly clientId: string;
   readonly clientName: string;
+  /** Epoch ms of the last successful link. Optional: a record saved before
+   * this field existed is still a perfectly good credential, and the card
+   * simply says less about it rather than being rejected. */
+  readonly lastConnectedAt?: number;
 }
 
 interface SecureConnectionRecord extends StoredConnection {
@@ -51,17 +55,23 @@ function parseConnection(value: unknown): StoredConnection | null {
     token?: unknown;
     clientId?: unknown;
     clientName?: unknown;
+    lastConnectedAt?: unknown;
   };
   if (record.schemaVersion !== SCHEMA_VERSION) return null;
   if (typeof record.url !== 'string' || record.url.trim() === '') return null;
   if (typeof record.token !== 'string' || record.token.trim() === '') return null;
   if (!isUuid(record.clientId)) return null;
   if (typeof record.clientName !== 'string' || record.clientName.trim() === '' || record.clientName.length > 80) return null;
+  const lastConnectedAt =
+    typeof record.lastConnectedAt === 'number' && Number.isFinite(record.lastConnectedAt)
+      ? record.lastConnectedAt
+      : undefined;
   return {
     url: record.url,
     token: record.token,
     clientId: record.clientId,
     clientName: record.clientName,
+    ...(lastConnectedAt !== undefined ? { lastConnectedAt } : {}),
   };
 }
 

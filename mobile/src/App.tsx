@@ -24,6 +24,10 @@ const MobileWorkspace = lazy(async () => ({
 // permanently killed the retry loop — a fresh Connect tap / reload was then the
 // only way to recover.)
 const CONNECT_TIMEOUT_MS = 6000;
+/** Floor on how often a reconnect rewrites the saved credential just to move
+ * its timestamp. "2 hours ago" does not get more accurate by being rewritten
+ * every time a flaky link comes back. */
+const CONNECTED_STAMP_MIN_INTERVAL_MS = 5 * 60_000;
 
 async function createMobileIdentity(): Promise<Pick<StoredConnection, 'clientId' | 'clientName'>> {
   let clientName = 'Android device';
@@ -72,6 +76,10 @@ export function App(): JSX.Element {
   const clientIdentityRef = useRef<Pick<StoredConnection, 'clientId' | 'clientName'> | null>(null);
   const credentialStoreRef = useRef<ConnectionCredentialStore | null>(null);
   if (credentialStoreRef.current === null) credentialStoreRef.current = new ConnectionCredentialStore();
+  // Read inside the auth listener, which is registered once and would
+  // otherwise close over the first render's value forever.
+  const savedConnectionRef = useRef<SavedConnection | null>(null);
+  savedConnectionRef.current = savedConnection;
 
   useEffect(() => {
     let alive = true;
@@ -154,13 +162,22 @@ export function App(): JSX.Element {
         setConnectFailed(false); // a later auto-reconnect clears the stale hint
         const pending = pendingCredentialRef.current;
         pendingCredentialRef.current = null;
-        if (pending) {
-          void credentialStoreRef.current!.save(pending).then(
+        // Stamp the link time on every successful auth, not only the first
+        // one, or the saved card would keep quoting whenever the credential
+        // was first entered. Rewriting is throttled so an auto-reconnect storm
+        // does not hammer secure storage for a value nobody reads that often.
+        const base = pending ?? savedConnectionRef.current;
+        const stale = (base?.lastConnectedAt ?? 0) < Date.now() - CONNECTED_STAMP_MIN_INTERVAL_MS;
+        if (base && (pending || stale)) {
+          const stamped = { ...base, lastConnectedAt: Date.now() };
+          void credentialStoreRef.current!.save(stamped).then(
             () => {
-              setSavedConnection(pending);
+              setSavedConnection(stamped);
               setCredentialWarning(null);
             },
-            () => setCredentialWarning(t('mobile.connect.credentialsNotSaved')),
+            () => {
+              if (pending) setCredentialWarning(t('mobile.connect.credentialsNotSaved'));
+            },
           );
         }
       }

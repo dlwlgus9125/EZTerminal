@@ -40,8 +40,13 @@ export class SessionDirectory {
    * the seam is structural.
    */
   add(session: SessionInfo): void {
-    this.sessions.set(session.sessionId, { cwd: session.cwd, createdAt: Date.now() });
-    for (const listener of this.addListeners) setImmediate(() => listener(session));
+    const createdAt = session.createdAt ?? Date.now();
+    this.sessions.set(session.sessionId, { cwd: session.cwd, createdAt });
+    // The broadcast carries the same birth time the directory kept, so a client
+    // that learns about a session from the push and one that learns from
+    // `list()` agree on how old it is.
+    const announced: SessionInfo = { ...session, createdAt };
+    for (const listener of this.addListeners) setImmediate(() => listener(announced));
   }
 
   remove(sessionId: string): void {
@@ -62,7 +67,7 @@ export class SessionDirectory {
   list(): SessionInfo[] {
     return [...this.sessions.entries()]
       .sort(([, a], [, b]) => a.createdAt - b.createdAt)
-      .map(([sessionId, record]) => ({ sessionId, cwd: record.cwd }));
+      .map(([sessionId, record]) => ({ sessionId, cwd: record.cwd, createdAt: record.createdAt }));
   }
 
   /** A session now exists, any origin. Returns an unsubscribe. */

@@ -1,5 +1,5 @@
 import { Browser } from '@capacitor/browser';
-import { CornerDownLeft, FolderGit2, History, Square, X } from 'lucide-react';
+import { CornerDownLeft, FolderGit2, GitBranch, History, Square, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 
 import { formatCwd } from '../../src/renderer/format-cwd';
@@ -11,6 +11,11 @@ import { keyToPtyBytes } from '../../src/renderer/pty-keys';
 import { TerminalContextMenu, type TerminalContextMenuItem } from '../../src/renderer/TerminalContextMenu';
 import type { TerminalRuntimeOptions } from '../../src/renderer/xterm-runtime';
 import type { RunStartedInfo } from '../../src/shared/ipc';
+import {
+  EMPTY_GIT_DIRECTORY_STATUS,
+  type GitDirectoryStatus,
+} from '../../src/shared/git-status';
+import { useGitBranches } from '../../src/renderer/use-git-branch';
 import type { FilePreviewResult } from '../../src/shared/file-preview';
 import type { TerminalFileLocationResult } from '../../src/shared/terminal-file-location';
 import { FilePreviewContent } from '../../src/renderer/FilePreviewContent';
@@ -197,6 +202,9 @@ function nextRunId(): string {
   return `mobile-run-${runCounter}-${Date.now()}`;
 }
 
+/** Used when the host predates the Git arms; the status line shows cwd then. */
+const readNothing = (): Promise<GitDirectoryStatus> => Promise.resolve(EMPTY_GIT_DIRECTORY_STATUS);
+
 export function MobileSessionView({
   sessionId,
   cwd: initialCwd = '',
@@ -207,6 +215,7 @@ export function MobileSessionView({
   onSessionDead,
   onCwdChange,
   onCloseTab,
+  onReadGitStatus,
 }: {
   sessionId: string;
   /** The session's cwd as the workspace knows it — seeds the status line
@@ -227,6 +236,9 @@ export function MobileSessionView({
    * `start`). MobileWorkspace records it in a map keyed by sessionId; Files
    * reads it ONCE at open, never live-follows it. */
   onCwdChange?: (sessionId: string, cwd: string) => void;
+  /** Resolves the branch shown in the status line. Absent on a host that
+   * predates the Git arms, which then shows the directory instead. */
+  onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const showToast = useMobileToast();
@@ -256,8 +268,13 @@ export function MobileSessionView({
   // flags above come from: the last run's outcome, the PTY grid the primary
   // reports (`pty-dims`), and the cwd after the latest `cd`.
   const [lastStatus, setLastStatus] = useState<BlockStatus | null>(null);
+  const [lastExitCode, setLastExitCode] = useState<number | null>(null);
   const [ptyDims, setPtyDims] = useState<{ cols: number; rows: number } | null>(null);
   const [liveCwd, setLiveCwd] = useState(initialCwd);
+  const branch = useGitBranches(
+    liveCwd ? [liveCwd] : [],
+    onReadGitStatus ?? readNothing,
+  ).get(liveCwd);
   // Ctrl latch (handoff §3). Purely presentational: it reuses the SAME
   // Ctrl+<letter> -> control-byte rule `keyToPtyBytes` already applies, so no
   // new key semantics reach the PTY — it just lets a soft keyboard with no
@@ -469,6 +486,7 @@ export function MobileSessionView({
           snap.status === 'running' && snap.shape === 'pty' && snap.ptyRenderMode === 'plain',
         );
         setLastStatus(snap.status);
+        setLastExitCode(snap.exitCode);
         setPtyDims(snap.ptyDims);
         // cwd snapshot (M4): mirrors desktop TerminalPane's same site — latest
         // `end`, falling back to `start`, so a `cd` is reflected.
@@ -814,19 +832,25 @@ export function MobileSessionView({
       />
 
       <div className="mob-status-line" data-testid="terminal-status-line">
+        {/* Git's branch when the directory has one; the directory itself when
+            it does not. The icon follows the value rather than labelling a cwd
+            as a branch, which is what it used to do. */}
         <span className="mob-status-line__branch">
-          <FolderGit2 aria-hidden="true" />
-          <span title={liveCwd}>{liveCwd ? formatCwd(liveCwd, 24) : '—'}</span>
+          {branch ? <GitBranch aria-hidden="true" /> : <FolderGit2 aria-hidden="true" />}
+          <span title={liveCwd}>{branch ?? (liveCwd ? formatCwd(liveCwd, 24) : '—')}</span>
         </span>
         {lastStatus !== null && lastStatus !== 'running' && (
           <span
             className={
-              lastStatus === 'done'
+              lastStatus === 'done' && (lastExitCode === null || lastExitCode === 0)
                 ? 'mob-status-line__exit'
                 : 'mob-status-line__exit mob-status-line__exit--error'
             }
+            data-testid="terminal-exit"
           >
-            {t(`block.status.${lastStatus}`)}
+            {lastExitCode === null
+              ? t(`block.status.${lastStatus}`)
+              : t('mobile.terminalView.exitCode', { value: lastExitCode })}
           </span>
         )}
         {ptyDims && <span>{ptyDims.cols}×{ptyDims.rows}</span>}

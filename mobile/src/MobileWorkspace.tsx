@@ -39,6 +39,10 @@ const MobileSettingsView = lazy(async () => ({ default: (await import('./MobileS
 const MobileStatsView = lazy(async () => ({ default: (await import('./MobileStatsView')).MobileStatsView }));
 const SessionSwitcher = lazy(async () => ({ default: (await import('./SessionSwitcher')).SessionSwitcher }));
 
+/** Slow enough to be invisible on a battery, fast enough that a finished run
+ * stops claiming to be live before the user looks twice. */
+const ACTIVE_RUN_POLL_MS = 4_000;
+
 function countAgentAttention(snapshot: AgentActivitySnapshot): number {
   return snapshot.items.filter((item) => item.status === 'blocked' || item.status === 'error' || item.status === 'waiting').length;
 }
@@ -84,6 +88,7 @@ export function MobileWorkspace({
   const [connected, setConnected] = useState(false);
   const [connectedSince, setConnectedSince] = useState<number | null>(null);
   const [sessions, setSessions] = useState<readonly SessionInfo[]>([]);
+  const [activeRuns, setActiveRuns] = useState<ReadonlyMap<string, string>>(new Map());
   const themeReturnFocusRef = useRef<HTMLElement | null>(null);
   const sheetReturnFocusRef = useRef<HTMLElement | null>(null);
   const subPageReturnTargetRef = useRef('shell-tab-home');
@@ -157,6 +162,30 @@ export function MobileWorkspace({
       unsubscribeRemoved();
     };
   }, [connected, transport]);
+
+  // Which sessions are actually executing something. `listRuns` is the one
+  // authority for that, and it is edge-triggered nowhere — a run can also end,
+  // which nothing announces — so this looks again while the Home tab is up and
+  // stops entirely when it is not.
+  useEffect(() => {
+    if (!connected || tab !== 'home') {
+      setActiveRuns(new Map());
+      return undefined;
+    }
+    let alive = true;
+    const read = (): void => {
+      void transport.listRuns().then((runs) => {
+        if (!alive) return;
+        setActiveRuns(new Map(runs.map((run) => [run.sessionId, run.commandText])));
+      }).catch(() => undefined);
+    };
+    read();
+    const timer = setInterval(read, ACTIVE_RUN_POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [connected, tab, transport]);
 
   useEffect(() => {
     let alive = true;
@@ -438,6 +467,7 @@ export function MobileWorkspace({
         sessions={sessionRows}
         activeSessionId={tabsState.activeSessionId}
         agentSnapshot={agentSnapshot}
+        activeRuns={activeRuns}
         agentAttention={agentAttention}
         openclawVisible={effectiveOpenClawVisible}
         openclawState={openclawState?.state}
@@ -576,6 +606,7 @@ export function MobileWorkspace({
                   connected={connected}
                   onSessionDead={() => handleSessionDead(entry.sessionId)}
                   onCwdChange={handleCwdChange}
+                  onReadGitStatus={(directory) => transport.getGitStatus(directory)}
                   onCloseTab={() => closeTab(entry.sessionId)}
                 />
               </div>

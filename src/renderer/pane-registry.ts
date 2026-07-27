@@ -242,14 +242,26 @@ export function getMountedPtyRegistryRevision(): number {
   return mountedPtyRevision;
 }
 
+/** When each live pane was mounted, so a header can say how long it has been
+ * open. Kept here rather than derived from the session, because a pane that
+ * adopts an existing session has genuinely been open for less time than the
+ * session has existed, and the header is talking about the pane. */
+const paneOpenedAt = new Map<string, number>();
+
 export function registerPane(panelId: string, handle: PaneHandle): () => void {
   panes.set(panelId, handle);
+  paneOpenedAt.set(panelId, Date.now());
   emit();
   return () => {
     if (panes.get(panelId) !== handle) return;
     panes.delete(panelId);
+    paneOpenedAt.delete(panelId);
     emit();
   };
+}
+
+export function getPaneOpenedAt(panelId: string): number | undefined {
+  return paneOpenedAt.get(panelId);
 }
 
 export function notifyPaneChanged(panelId: string): void {

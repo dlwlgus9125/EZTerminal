@@ -819,6 +819,10 @@ export interface RemoteDeviceEntry {
 export interface SessionInfo {
   readonly sessionId: string;
   readonly cwd: string;
+  /** Epoch ms the session was created. Optional because a session announced by
+   * an older host predates the field; a pane then shows no age rather than a
+   * wrong one. */
+  readonly createdAt?: number;
 }
 
 // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ─────

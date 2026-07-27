@@ -2,7 +2,7 @@ import type { IDockviewHeaderActionsProps } from 'dockview';
 import { useEffect, useState } from 'react';
 
 import { formatCwd } from './format-cwd';
-import { getPaneCwd } from './pane-registry';
+import { getPaneCwd, getPaneOpenedAt } from './pane-registry';
 
 /** How often the header re-reads the active pane's directory. The registry is a
  * plain store with no change events, and a shell can `cd` at any moment, so the
@@ -17,16 +17,33 @@ const CWD_POLL_MS = 1500;
  * repeat itself. This renders once per group and always describes the active
  * pane, which is the one the titlebar is talking about.
  */
+/** Coarse on purpose. A titlebar clock ticking every second next to a terminal
+ * is movement in the corner of the eye that carries no new information, so this
+ * changes at most once a minute and is never announced. */
+function openForLabel(openedAt: number, now: number): string | null {
+  const minutes = Math.floor(Math.max(0, now - openedAt) / 60_000);
+  if (minutes < 1) return null;
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d`;
+}
+
 export function PaneHeaderMeta({ activePanel, isGroupActive }: IDockviewHeaderActionsProps): JSX.Element | null {
   const panelId = activePanel?.id ?? null;
   const [cwd, setCwd] = useState<string | null>(null);
+  const [openLabel, setOpenLabel] = useState<string | null>(null);
 
   useEffect(() => {
     if (!panelId) {
       setCwd(null);
+      setOpenLabel(null);
       return;
     }
-    const read = (): void => setCwd(getPaneCwd(panelId) ?? null);
+    const read = (): void => {
+      setCwd(getPaneCwd(panelId) ?? null);
+      const openedAt = getPaneOpenedAt(panelId);
+      setOpenLabel(openedAt === undefined ? null : openForLabel(openedAt, Date.now()));
+    };
     read();
     const timer = window.setInterval(read, CWD_POLL_MS);
     return () => window.clearInterval(timer);
@@ -39,6 +56,9 @@ export function PaneHeaderMeta({ activePanel, isGroupActive }: IDockviewHeaderAc
       <span className="pane-header-meta__cwd" title={cwd} data-testid="pane-header-cwd">
         {formatCwd(cwd)}
       </span>
+      {openLabel && (
+        <span className="pane-header-meta__age" data-testid="pane-header-age">{openLabel}</span>
+      )}
     </div>
   );
 }
