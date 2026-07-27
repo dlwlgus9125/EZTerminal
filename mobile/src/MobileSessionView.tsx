@@ -1,7 +1,10 @@
 import { Browser } from '@capacitor/browser';
+import { CornerDownLeft, FolderGit2, History, Square, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 
-import { BlockController } from '../../src/renderer/block-controller';
+import { formatCwd } from '../../src/renderer/format-cwd';
+
+import { BlockController, type BlockStatus } from '../../src/renderer/block-controller';
 import { Block } from '../../src/renderer/Block';
 import { registerPaneInput, unregisterPaneInput } from '../../src/renderer/pane-registry';
 import { keyToPtyBytes } from '../../src/renderer/pty-keys';
@@ -24,7 +27,21 @@ import {
 } from '../../src/renderer/run-port-broker';
 import { MobileActionSheet } from './MobileActionSheet';
 import { MobileQuickCommandSheet, type MobileQuickCommandSource } from './MobileQuickCommandSheet';
+import { useMobileToast } from './MobileToast';
 import { TouchInputBar } from './TouchInputBar';
+
+/** Handoff §3: a single scrollable row of recent commands, not a history page. */
+const SNIPPET_LIMIT = 5;
+
+/**
+ * Control byte for a latched Ctrl + single letter, or null when the latch is
+ * off / the key has no Ctrl form. Same rule as `keyToPtyBytes`'s Ctrl branch —
+ * the latch only changes WHEN that rule applies, never what it produces.
+ */
+function ctrlLatchToBytes(latched: boolean, key: string): string | null {
+  if (!latched || key.length !== 1 || !/[a-zA-Z]/.test(key)) return null;
+  return String.fromCharCode(key.toUpperCase().charCodeAt(0) - 64);
+}
 
 const MOBILE_TERMINAL_RUNTIME_OPTIONS: TerminalRuntimeOptions = Object.freeze({
   platform: 'mobile',
@@ -182,20 +199,29 @@ function nextRunId(): string {
 
 export function MobileSessionView({
   sessionId,
+  cwd: initialCwd = '',
   active = true,
   quickCommandSource,
   quickCommandsSupported = false,
   connected = true,
   onSessionDead,
   onCwdChange,
+  onCloseTab,
 }: {
   sessionId: string;
+  /** The session's cwd as the workspace knows it — seeds the status line
+   * before the first block reports one of its own. */
+  cwd?: string;
   /** Active workspace tab; inactive views remain mounted for PTY continuity. */
   active?: boolean;
   quickCommandSource?: MobileQuickCommandSource;
   quickCommandsSupported?: boolean;
   connected?: boolean;
   onSessionDead?: () => void;
+  /** Closes this tab locally (the session itself keeps running on the
+   * desktop). Reached from the status line now that the tab strip's per-pill
+   * close button is gone. */
+  onCloseTab?: () => void;
   /** Best-effort cwd snapshot (file-explorer plan, M4) — mirrors desktop
    * TerminalPane's `setPaneCwd` call site (latest `end`, falling back to
    * `start`). MobileWorkspace records it in a map keyed by sessionId; Files
@@ -203,6 +229,7 @@ export function MobileSessionView({
   onCwdChange?: (sessionId: string, cwd: string) => void;
 }): JSX.Element {
   const { t } = useAppTranslation();
+  const showToast = useMobileToast();
   const [command, setCommand] = useState('');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   const [history, setHistory] = useState<string[]>([]);
@@ -225,6 +252,17 @@ export function MobileSessionView({
   // can't collide with block-list scrolling (PtyBlock's touch→wheel bridge
   // is gated to exactly this state).
   const [activeTakeover, setActiveTakeover] = useState(false);
+  // Status-line facts, all read off the same active-controller snapshot the
+  // flags above come from: the last run's outcome, the PTY grid the primary
+  // reports (`pty-dims`), and the cwd after the latest `cd`.
+  const [lastStatus, setLastStatus] = useState<BlockStatus | null>(null);
+  const [ptyDims, setPtyDims] = useState<{ cols: number; rows: number } | null>(null);
+  const [liveCwd, setLiveCwd] = useState(initialCwd);
+  // Ctrl latch (handoff §3). Purely presentational: it reuses the SAME
+  // Ctrl+<letter> -> control-byte rule `keyToPtyBytes` already applies, so no
+  // new key semantics reach the PTY — it just lets a soft keyboard with no
+  // Ctrl key reach them.
+  const [ctrlLatched, setCtrlLatched] = useState(false);
   const activeUnsub = useRef<(() => void) | null>(null);
   const [sessionDead, setSessionDead] = useState(false);
   const [terminalPathAction, setTerminalPathAction] = useState<ResolvedTerminalPath | null>(null);
@@ -430,10 +468,15 @@ export function MobileSessionView({
         setActivePlainPty(
           snap.status === 'running' && snap.shape === 'pty' && snap.ptyRenderMode === 'plain',
         );
+        setLastStatus(snap.status);
+        setPtyDims(snap.ptyDims);
         // cwd snapshot (M4): mirrors desktop TerminalPane's same site — latest
         // `end`, falling back to `start`, so a `cd` is reflected.
         const cwd = snap.endCwd ?? snap.startCwd;
-        if (cwd) onCwdChangeRef.current?.(sessionId, cwd);
+        if (cwd) {
+          setLiveCwd(cwd);
+          onCwdChangeRef.current?.(sessionId, cwd);
+        }
         if (stickToBottom.current) requestAnimationFrame(scrollBlockListToBottom);
       };
       activeUnsub.current = controller.subscribe(onActiveChange);
@@ -696,8 +739,14 @@ export function MobileSessionView({
     },
   ];
 
+  // Handoff §3's snippet chips: the most recent DISTINCT commands from this
+  // session's own history, newest first. Tapping one loads it into the
+  // composer (it does not run) — the same insert contract Quick Commands uses.
+  const snippets = Array.from(new Set([...history].reverse())).slice(0, SNIPPET_LIMIT);
+
   return (
     <div
+      data-session-id={sessionId}
       className={
         [
           'pane mobile-session-view',
@@ -764,12 +813,37 @@ export function MobileSessionView({
         onClosePreview={() => setTerminalPathPreview(null)}
       />
 
-      <TouchInputBar controller={activeControllerForTouch} connected={connected} />
-
-      <div className="cmd-row">
-        <span className="prompt-sigil prompt-sigil--input" aria-hidden="true">
-          ❯
+      <div className="mob-status-line" data-testid="terminal-status-line">
+        <span className="mob-status-line__branch">
+          <FolderGit2 aria-hidden="true" />
+          <span title={liveCwd}>{liveCwd ? formatCwd(liveCwd, 24) : '—'}</span>
         </span>
+        {lastStatus !== null && lastStatus !== 'running' && (
+          <span
+            className={
+              lastStatus === 'done'
+                ? 'mob-status-line__exit'
+                : 'mob-status-line__exit mob-status-line__exit--error'
+            }
+          >
+            {t(`block.status.${lastStatus}`)}
+          </span>
+        )}
+        {ptyDims && <span>{ptyDims.cols}×{ptyDims.rows}</span>}
+        {onCloseTab && (
+          <button
+            type="button"
+            className="mob-status-line__link"
+            onClick={onCloseTab}
+            data-testid="terminal-close-tab"
+          >
+            <X aria-hidden="true" width={11} height={11} />
+            {t('mobile.closeTab')}
+          </button>
+        )}
+      </div>
+
+      <div className="cmd-row mob-composer">
         <input
           className="cmd-input"
           value={command}
@@ -787,6 +861,13 @@ export function MobileSessionView({
               // IME composing (CJK / dead-key input): let the input compose
               // normally — see desktop TerminalPane's identical guard.
               if (e.nativeEvent.isComposing || e.key === 'Process') return;
+              const latched = ctrlLatchToBytes(ctrlLatched, e.key);
+              if (latched !== null) {
+                e.preventDefault();
+                setCtrlLatched(false);
+                activeController.current?.sendPtyInput(latched);
+                return;
+              }
               const bytes = keyToPtyBytes(e);
               if (bytes === null) return; // unsupported key — leave default input behavior alone
               e.preventDefault();
@@ -827,6 +908,12 @@ export function MobileSessionView({
             const text = beforeInputTextForPty(e.nativeEvent as InputEvent);
             if (text === null) return;
             e.preventDefault();
+            const latched = ctrlLatchToBytes(ctrlLatched, text);
+            if (latched !== null) {
+              setCtrlLatched(false);
+              activeController.current?.sendPtyInput(latched);
+              return;
+            }
             activeController.current?.sendPtyInput(text);
           }}
           onPaste={(e) => {
@@ -868,23 +955,54 @@ export function MobileSessionView({
         )}
         <button
           type="button"
-          className="btn btn-run"
+          className="mob-composer__send"
           onClick={handleRun}
           disabled={!connected || sessionDead || activeRunning}
+          aria-label={t('mobile.terminalView.run')}
           data-testid="btn-run"
         >
-          {t('mobile.terminalView.run')}
+          <CornerDownLeft aria-hidden="true" />
         </button>
-        <button
-          type="button"
-          className="btn btn-cancel"
-          onClick={handleCancel}
-          disabled={!activeRunning}
-          data-testid="btn-cancel"
-        >
-          {t('common.cancel')}
-        </button>
+        {activeRunning && (
+          <button
+            type="button"
+            className="mob-composer__cancel"
+            onClick={handleCancel}
+            aria-label={t('common.cancel')}
+            data-testid="btn-cancel"
+          >
+            <Square aria-hidden="true" />
+          </button>
+        )}
       </div>
+
+      {snippets.length > 0 && (
+        <div className="mob-snippets" data-testid="terminal-snippets">
+          <span className="mob-snippets__icon" aria-hidden="true"><History /></span>
+          {snippets.map((snippet, index) => (
+            <button
+              key={snippet}
+              type="button"
+              className={index === 0 ? 'mob-chip mob-chip--accent' : 'mob-chip'}
+              onClick={() => setCommand(snippet)}
+              data-testid="terminal-snippet"
+            >
+              {snippet}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <TouchInputBar
+        controller={activeControllerForTouch}
+        connected={connected}
+        ctrlLatched={ctrlLatched}
+        onToggleCtrl={() => {
+          const next = !ctrlLatched;
+          setCtrlLatched(next);
+          showToast(next ? t('mobile.terminalKeys.ctrlLatched') : t('mobile.terminalKeys.ctrlReleased'));
+        }}
+      />
     </div>
   );
 }

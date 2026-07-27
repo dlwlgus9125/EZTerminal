@@ -78,10 +78,10 @@ describe('MobileRemoteDesktopView', () => {
       root.render(<MobileRemoteDesktopView transport={transport as unknown as WsEzTerminalTransport} onClose={onClose} />);
       await Promise.resolve();
     });
-    expect(container.querySelector('.mobile-pc-state--busy')).toBeTruthy();
+    expect(container.querySelector('[data-testid="mobile-pc-state"][data-phase="busy"]')).toBeTruthy();
     expect(container.textContent).toContain('Galaxy A');
     expect(transport.stopDesktopControl).not.toHaveBeenCalled();
-    act(() => container.querySelector<HTMLButtonElement>('.mobile-pc-toolbar button')!.click());
+    act(() => container.querySelector<HTMLButtonElement>('.mob-pc-back')!.click());
     expect(onClose).toHaveBeenCalledOnce();
   });
 
@@ -101,6 +101,6 @@ describe('MobileRemoteDesktopView', () => {
     });
 
     expect(transport.startDesktopControl).toHaveBeenCalledOnce();
-    expect(container.querySelector('.mobile-pc-state--busy')).toBeTruthy();
+    expect(container.querySelector('[data-testid="mobile-pc-state"][data-phase="busy"]')).toBeTruthy();
   });
 });

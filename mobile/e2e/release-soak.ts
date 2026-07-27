@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Android 1.0 release soak gate.
  *
  * Prerequisites (deliberately not provisioned here):
@@ -32,11 +32,11 @@ import {
   APP_ID,
   MAIN_ENTRY,
   ROOT,
+  activateTerminalTab,
   closeMobileE2eResources,
   closeWebViewDevtools,
   connectAndAuth,
   createTerminalSession,
-  getSelectedTestIdIndex,
   getTestIdCount,
   getWebViewMemorySnapshot,
   launchDesktop,
@@ -46,7 +46,6 @@ import {
   setTestIdTextValue,
   sleep,
   tapTestId,
-  tapTestIdAt,
   waitForTestId,
   waitForTestIdHidden,
   type WebViewMemorySnapshot,
@@ -242,7 +241,7 @@ async function waitForTabCount(expected: number, timeoutMs = 15_000): Promise<nu
   const deadline = Date.now() + timeoutMs;
   let count = -1;
   for (;;) {
-    count = await getTestIdCount('tab-pill');
+    count = await getTestIdCount('terminal-tab-page');
     if (count === expected) return count;
     if (Date.now() > deadline) throw new Error(`Expected ${expected} mounted tabs, found ${count}`);
     await sleep(250);
@@ -250,13 +249,7 @@ async function waitForTabCount(expected: number, timeoutMs = 15_000): Promise<nu
 }
 
 async function activateTab(index: number): Promise<void> {
-  await tapTestIdAt('tab-pill-open', index);
-  const deadline = Date.now() + 10_000;
-  for (;;) {
-    if (await getSelectedTestIdIndex('tab-pill-open') === index) return;
-    if (Date.now() > deadline) throw new Error(`Tab ${index + 1} did not become active`);
-    await sleep(200);
-  }
+  await activateTerminalTab(index);
 }
 
 async function runEcho(tabIndex: number, token: string): Promise<void> {

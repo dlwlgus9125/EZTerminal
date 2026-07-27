@@ -1,4 +1,15 @@
 import type { OpenClawMode } from '../../src/shared/layout-schema';
+import type { OpenClawStatus } from '../../src/shared/openclaw';
+
+/** Shared by every surface that shows the gateway state as a word (the More
+ * sheet row, the Settings index preview) so they can never drift apart. */
+export const OPENCLAW_STATE_LABEL_KEY = {
+  'not-installed': 'mobile.openClaw.stateNotInstalled',
+  stopped: 'mobile.openClaw.stateStopped',
+  starting: 'mobile.openClaw.stateStarting',
+  running: 'mobile.openClaw.stateRunning',
+  unknown: 'mobile.openClaw.stateUnknown',
+} as const satisfies Record<OpenClawStatus['state'], string>;
 
 // Mobile's own OpenClaw visibility choice (openclaw-stabilization M3) —
 // independent of the desktop's settings.json persistence, same mobile-only

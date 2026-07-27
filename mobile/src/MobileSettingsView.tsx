@@ -1,18 +1,20 @@
-import {
-  ArrowRight,
+﻿import {
   Check,
-  Globe2,
+  ChevronRight,
+  Info,
   Keyboard,
   Minus,
   Palette,
-  PlugZap,
   Plus,
-  Wifi,
+  Server,
+  SlidersHorizontal,
+  Wrench,
   type LucideIcon,
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
+import type { OpenClawStatus } from '../../src/shared/openclaw';
 import { UiDensitySchema, UiLocalePreferenceSchema } from '../../src/shared/ui-preferences';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import type { EffectId } from '../../src/renderer/effects';
@@ -50,9 +52,12 @@ import {
   saveRollbar,
 } from './theme';
 import { loadUiScale, saveUiScale } from './ui-scale';
+import { formatEndpointHost, formatUptime } from './mobile-endpoint';
 import { MobilePageHeader } from './MobilePageHeader';
 import { useMobileNavigationHistory } from './MobileNavigationHistory';
+import { OPENCLAW_STATE_LABEL_KEY } from './openclaw-mode';
 import { TerminalAccessorySettings } from './TerminalAccessorySettings';
+import { useTerminalAccessoryLayout } from './terminal-accessory-layout';
 import { useMobileUiPreferences } from './MobileUiPreferencesProvider';
 import { MOBILE_BUILD_INFO } from './build-info';
 
@@ -89,30 +94,35 @@ type MobileSettingsCategory =
 function SettingsCategoryButton({
   icon: Icon,
   title,
-  description,
+  preview,
   testId,
   onClick,
 }: {
   readonly icon: LucideIcon;
   readonly title: string;
-  readonly description: string;
+  /** Handoff §6: every row states its CURRENT value, so the index answers
+   * "what is this set to?" without opening the category. */
+  readonly preview: string;
   readonly testId: string;
   readonly onClick: () => void;
 }): JSX.Element {
   return (
-    <button type="button" className="mobile-settings-category" onClick={onClick} data-testid={testId}>
-      <span className="mobile-settings-category__icon" aria-hidden="true"><Icon /></span>
-      <span className="mobile-settings-category__copy">
-        <strong>{title}</strong>
-        <span>{description}</span>
+    <button type="button" className="mob-settings-row" onClick={onClick} data-testid={testId}>
+      <span className="mob-settings-row__icon" aria-hidden="true"><Icon /></span>
+      <span>
+        <span className="mob-settings-row__title">{title}</span>
+        <span className="mob-settings-row__preview">{preview}</span>
       </span>
-      <ArrowRight aria-hidden="true" />
+      <ChevronRight aria-hidden="true" />
     </button>
   );
 }
 
 interface MobileSettingsViewProps {
   readonly connectionUrl?: string;
+  /** Epoch ms of the current authenticated link, for the card's uptime. */
+  readonly connectedSince?: number | null;
+  readonly openclawState?: OpenClawStatus['state'];
   readonly onClose: () => void;
   readonly onDisconnect: () => void;
   /** OpenClaw tri-state visibility (openclaw-stabilization M3) — lifted to
@@ -127,6 +137,8 @@ interface MobileSettingsViewProps {
 
 export function MobileSettingsView({
   connectionUrl = '',
+  connectedSince = null,
+  openclawState,
   onClose,
   onDisconnect,
   openclawMode,
@@ -253,6 +265,41 @@ export function MobileSettingsView({
     [],
   );
 
+  // ── Index value previews (handoff §6) ──────────────────────────────────
+  // Everything here reads the SAME state the category screens below edit, so
+  // a preview can never disagree with the setting it summarizes.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const accessoryLayout = useTerminalAccessoryLayout();
+  const localeLabel = preferences.locale === 'ko'
+    ? t('settings.korean')
+    : preferences.locale === 'en'
+      ? t('settings.english')
+      : t('settings.systemLanguage');
+  const generalPreview = [
+    localeLabel,
+    t(`settings.${preferences.density}`),
+    `${uiScale}%`,
+  ].join(' · ');
+  const activeEffectCount = declaredEffects.filter((id) => effectToggles[id] ?? false).length;
+  const appearancePreview = [
+    currentTheme,
+    t('mobile.settingsView.effectsOn', { value: activeEffectCount }),
+    FONT_CATALOG.find((font) => font.id === fontId)?.label ?? t('mobile.settingsView.fontTheme'),
+  ].join(' · ');
+  const terminalInputPreview = t('mobile.settingsView.keysShown', {
+    value: accessoryLayout.layout.visible.length,
+  });
+  const integrationsPreview = [
+    'OpenClaw',
+    openclawState ? t(OPENCLAW_STATE_LABEL_KEY[openclawState]) : t('mobile.moreActions.checking'),
+    t(OPENCLAW_MODE_LABEL_KEY[openclawMode]),
+  ].join(' · ');
+
   const categoryTitle = category === 'general'
     ? t('mobile.settingsView.categories.general')
     : category === 'appearance'
@@ -276,43 +323,68 @@ export function MobileSettingsView({
 
       <div className="mobile-settings-body">
         {category === null && (
-          <div className="mobile-settings-index" aria-label={t('mobile.settingsView.categories.indexLabel')}>
-            <p className="mobile-settings-index__intro">{t('mobile.settingsView.categories.indexDescription')}</p>
+          <div className="mob-column mobile-settings-index" aria-label={t('mobile.settingsView.categories.indexLabel')}>
+            <div className="mob-connection-card" data-testid="settings-connection-card">
+              <span className="mob-connection-card__icon" aria-hidden="true"><Server /></span>
+              <span className="mob-connection-card__copy">
+                <span className="mob-connection-card__host">
+                  {connectionUrl ? formatEndpointHost(connectionUrl) : t('state.connected')}
+                </span>
+                <span className="mob-connection-card__meta" title={connectionUrl}>
+                  {[connectionUrl || null, connectedSince ? formatUptime(now - connectedSince) : null]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+              </span>
+              <button
+                type="button"
+                className="mob-btn-danger"
+                onClick={onDisconnect}
+                data-testid="settings-disconnect-btn"
+              >
+                {t('mobile.settingsView.disconnect')}
+              </button>
+            </div>
+
             <SettingsCategoryButton
-              icon={Globe2}
+              icon={SlidersHorizontal}
               title={t('mobile.settingsView.categories.general')}
-              description={t('mobile.settingsView.categories.generalDescription')}
+              preview={generalPreview}
               testId="settings-category-general"
               onClick={() => openCategory('general', 'settings-category-general')}
             />
             <SettingsCategoryButton
               icon={Palette}
               title={t('mobile.settingsView.categories.appearance')}
-              description={t('mobile.settingsView.categories.appearanceDescription')}
+              preview={appearancePreview}
               testId="settings-category-appearance"
               onClick={() => openCategory('appearance', 'settings-category-appearance')}
             />
             <SettingsCategoryButton
               icon={Keyboard}
               title={t('mobile.settingsView.categories.terminalInput')}
-              description={t('mobile.settingsView.categories.terminalInputDescription')}
+              preview={terminalInputPreview}
               testId="settings-category-terminal-input"
               onClick={() => openCategory('terminal-input', 'settings-category-terminal-input')}
             />
             <SettingsCategoryButton
-              icon={PlugZap}
+              icon={Wrench}
               title={t('mobile.settingsView.categories.integrations')}
-              description={t('mobile.settingsView.categories.integrationsDescription')}
+              preview={integrationsPreview}
               testId="settings-category-integrations"
               onClick={() => openCategory('integrations', 'settings-category-integrations')}
             />
             <SettingsCategoryButton
-              icon={Wifi}
+              icon={Info}
               title={t('mobile.settingsView.categories.connectionAbout')}
-              description={t('mobile.settingsView.categories.connectionAboutDescription')}
+              preview={`v${MOBILE_BUILD_INFO.appVersion} (${MOBILE_BUILD_INFO.buildSha})`}
               testId="settings-category-connection-about"
               onClick={() => openCategory('connection-about', 'settings-category-connection-about')}
             />
+            <p className="mob-signal" aria-hidden="true">
+              <span>EZT://SETTINGS</span>
+              <span>BUILD {MOBILE_BUILD_INFO.buildSha.toUpperCase()}</span>
+            </p>
           </div>
         )}
 
@@ -580,14 +652,8 @@ export function MobileSettingsView({
           <div className="status-metric" data-testid="settings-connection-status">
             {t('state.connected')}
           </div>
-          <button
-            type="button"
-            className="btn"
-            onClick={onDisconnect}
-            data-testid="settings-disconnect-btn"
-          >
-            {t('mobile.settingsView.disconnect')}
-          </button>
+          {/* Disconnect now lives on the index's connection card (handoff §6),
+              which is strictly more reachable than this sub-page. */}
         </section>}
       </div>
     </div>

@@ -60,14 +60,16 @@ describe('mobile E2E forced-xterm contract', () => {
     expect(parity).toContain("waitForVisibleTestIdEnabled('btn-run', 20_000)");
   });
 
-  it('re-observes hub and terminal state after a missed native destination tap', () => {
+  it('re-observes tab-root and terminal state after a missed native destination tap', () => {
     const library = readFileSync(path.join(root, 'mobile/e2e/lib.ts'), 'utf8');
-    const start = library.indexOf('export async function openHubDestination');
+    const start = library.indexOf('export async function openShellDestination');
     const helper = library.slice(start);
 
     expect(start).toBeGreaterThan(0);
     expect(helper).toContain('attempt <= 3');
-    expect(helper).toContain("[destinationTestId, actionTestId, 'mobile-remote-hub', 'workspace-hub-btn']");
+    expect(helper).toContain(
+      "[destinationTestId, actionTestId, 'shell-tab-more', SHELL_ROOT_TEST_ID, 'workspace-hub-btn']",
+    );
     expect(helper).toContain('re-observing state');
   });
 });

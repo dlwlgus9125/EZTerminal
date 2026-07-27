@@ -1,19 +1,31 @@
-import { KeyRound, Link2, LockKeyhole, RadioTower, ShieldCheck } from 'lucide-react';
-import { useState } from 'react';
+import { Eye, EyeOff, KeyRound, Link2, Server, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 import { useAppTranslation } from '../../src/renderer/i18n';
-import { Badge, Button, Field, Input, Status } from '../../src/renderer/ui';
+import { MOBILE_BUILD_INFO } from './build-info';
+import { formatEndpointHost } from './mobile-endpoint';
+import { MobileSignalMark } from './MobileSignalMark';
 
 export interface SavedConnection {
   readonly url: string;
   readonly token: string;
 }
 
+/** Handoff §1: the four boot-log lines appear one at a time while linking. */
+const BOOT_LOG_STEP_MS = 340;
+const BOOT_LOG_STEPS = 4;
+
 // ConnectScreen — the mobile-only entry screen (no desktop analogue): host URL
 // + token entry, pre-filled from the last successful connection (App.tsx
 // persists it in Android secure storage). Token pairing itself (viewing/rotating the
 // desktop's token) is the desktop pairing panel's job (M4) — this screen only
 // accepts manually entered credentials only.
+//
+// The commercial pass changes only what this screen LOOKS like and how the
+// wait is narrated. Reconnect/backoff/watchdog behaviour lives entirely in
+// App.tsx + the transport and is untouched: `connecting` is an input here, and
+// the boot log is a progressive disclosure of that single boolean, not a
+// second source of truth about the handshake.
 export function ConnectScreen({
   saved,
   connecting,
@@ -32,72 +44,74 @@ export function ConnectScreen({
   const { t } = useAppTranslation();
   const [url, setUrl] = useState(saved?.url ?? '');
   const [token, setToken] = useState(saved?.token ?? '');
-  const insecureWs = /^ws:\/\//i.test(url.trim());
+  const [revealToken, setRevealToken] = useState(false);
+  const [bootStep, setBootStep] = useState(0);
+  const trimmedUrl = url.trim();
+  const secureWs = /^wss:\/\//i.test(trimmedUrl);
 
-  const submit = (): void => {
-    const trimmedUrl = url.trim();
-    const trimmedToken = token.trim();
-    if (!trimmedUrl || !trimmedToken) return;
-    onConnect(trimmedUrl, trimmedToken);
+  useEffect(() => {
+    if (!connecting) {
+      setBootStep(0);
+      return;
+    }
+    const timers = Array.from({ length: BOOT_LOG_STEPS }, (_, index) =>
+      setTimeout(() => setBootStep(index + 1), BOOT_LOG_STEP_MS * (index + 1)));
+    return () => timers.forEach(clearTimeout);
+  }, [connecting]);
+
+  const submit = (nextUrl: string, nextToken: string): void => {
+    const finalUrl = nextUrl.trim();
+    const finalToken = nextToken.trim();
+    if (!finalUrl || !finalToken) return;
+    onConnect(finalUrl, finalToken);
   };
 
   return (
     <main className="connect-screen" data-testid="connect-screen">
-      <div className="connect-signal" aria-hidden="true">
-        <span>EZT://PAIR</span><span>MANUAL SECURE LINK</span>
-      </div>
-      <div className="connect-card">
-        <header className="connect-brand">
-          <span className="connect-brand__mark" aria-hidden="true"><RadioTower /></span>
-          <div>
-            <p className="connect-brand__eyebrow">{t('mobile.connect.eyebrow')}</p>
-            <h1 className="connect-title">{t('mobile.connect.title')}</h1>
-            <p className="connect-description">{t('mobile.connect.description')}</p>
-          </div>
+      <form
+        className="mob-connect"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit(url, token);
+        }}
+      >
+        <header className="mob-connect__brand">
+          <MobileSignalMark size="lg" />
+          <span className="mob-connect__wordmark">EZTerminal</span>
+          <p className="mob-connect__eyebrow">{t('mobile.connect.consoleEyebrow')}</p>
         </header>
 
         {saved && (
-          <div className="connect-saved" data-testid="connect-saved-summary">
+          <div className="mob-connect__saved" data-testid="connect-saved-summary">
             <ShieldCheck aria-hidden="true" />
-            <div>
-              <Badge variant="success" size="sm">{t('mobile.connect.savedLabel')}</Badge>
-              <strong title={saved.url}>{saved.url}</strong>
-              <span>{t('mobile.connect.savedDescription')}</span>
-            </div>
+            <span className="mob-connect__saved-copy">
+              <span className="mob-connect__saved-host">{formatEndpointHost(saved.url)}</span>
+              <span className="mob-connect__saved-meta" title={saved.url}>
+                {t('mobile.connect.savedLabel')}
+              </span>
+            </span>
+            <button
+              type="button"
+              className="mob-connect__saved-go"
+              disabled={connecting}
+              onClick={() => submit(saved.url, saved.token)}
+              data-testid="connect-saved-go"
+            >
+              {t('mobile.connect.connectNow')}
+            </button>
           </div>
         )}
 
-        <form
-          className="connect-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submit();
-          }}
-        >
-          <div className="connect-form__heading">
-            <LockKeyhole aria-hidden="true" />
-            <div>
-              <h2>{t('mobile.connect.manualTitle')}</h2>
-              <p>{t('mobile.connect.manualDescription')}</p>
-            </div>
-          </div>
+        <p className="mob-connect__divider">{t('mobile.connect.orNew')}</p>
 
-          {insecureWs && (
-            <p className="connect-security-warning" role="note" data-testid="connect-ws-warning">
-              {t('mobile.connect.trustedNetworkWarning')}
-            </p>
-          )}
-
-          <Field
-            className="connect-field"
-            label={t('mobile.connect.serverUrl')}
-            required
-          >
-            <div className="connect-input-shell">
-              <Link2 aria-hidden="true" />
-              <Input
+        <div className="mob-connect__fields">
+          <label className="mob-connect__label">
+            {t('mobile.connect.serverUrl')}
+            <span className="mob-connect__input">
+              <Server aria-hidden="true" />
+              <input
                 value={url}
-                onChange={(e) => setUrl(e.target.value)}
+                onChange={(event) => setUrl(event.target.value)}
                 placeholder="ws://192.168.1.10:7420"
                 autoCapitalize="none"
                 autoCorrect="off"
@@ -105,60 +119,88 @@ export function ConnectScreen({
                 inputMode="url"
                 data-testid="connect-url"
               />
-            </div>
-          </Field>
-          <Field
-            className="connect-field"
-            label={t('mobile.connect.token')}
-            description={t('mobile.connect.tokenDescription')}
-            required
-          >
-            <div className="connect-input-shell">
+            </span>
+          </label>
+          <label className="mob-connect__label">
+            {t('mobile.connect.token')}
+            <span className="mob-connect__input mob-connect__input--token">
               <KeyRound aria-hidden="true" />
-              <Input
-                type="password"
+              <input
+                type={revealToken ? 'text' : 'password'}
                 value={token}
-                onChange={(e) => setToken(e.target.value)}
+                onChange={(event) => setToken(event.target.value)}
                 autoCapitalize="none"
                 autoComplete="current-password"
                 data-testid="connect-token"
               />
-            </div>
-          </Field>
+              <button
+                type="button"
+                className="mob-connect__reveal"
+                aria-pressed={revealToken}
+                aria-label={t('mobile.connect.revealToken')}
+                onClick={() => setRevealToken((current) => !current)}
+              >
+                {revealToken ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+              </button>
+            </span>
+          </label>
+        </div>
 
-          {protocolIncompatible ? (
-            <div className="connect-error" role="alert" data-testid="connect-protocol-incompatible">
-              <strong>{t('mobile.connect.protocolIncompatibleLabel')}</strong>{' '}
-              {t('mobile.connect.protocolIncompatibleDetail')}
-            </div>
-          ) : failed && (
-            <div className="connect-error" role="alert" data-testid="connect-error">
-              {t('mobile.connect.failed')}
-            </div>
-          )}
-          {storageWarning && (
-            <div className="connect-storage-warning" role="status" data-testid="credential-storage-warning">
-              {storageWarning}
-            </div>
-          )}
+        {!secureWs && (
+          <p className="mob-connect__warning" role="note" data-testid="connect-ws-warning">
+            <ShieldAlert aria-hidden="true" />
+            <span>{t('mobile.connect.trustedNetworkWarning')}</span>
+          </p>
+        )}
 
-          {connecting && (
-            <Status variant="loading" live="polite">{t('mobile.connect.connecting')}</Status>
+        {protocolIncompatible ? (
+          <div className="mob-connect__error" role="alert" data-testid="connect-protocol-incompatible">
+            <strong>{t('mobile.connect.protocolIncompatibleLabel')}</strong>{' '}
+            {t('mobile.connect.protocolIncompatibleDetail')}
+          </div>
+        ) : failed && (
+          <div className="mob-connect__error" role="alert" data-testid="connect-error">
+            {t('mobile.connect.failed')}
+          </div>
+        )}
+        {storageWarning && (
+          <div className="mob-connect__notice" role="status" data-testid="credential-storage-warning">
+            {storageWarning}
+          </div>
+        )}
+
+        {connecting && (
+          <div className="mob-connect__log" role="status" aria-live="polite" data-testid="connect-boot-log">
+            {bootStep >= 1 && <div>&gt; open {formatEndpointHost(trimmedUrl) || '—'} …… <b>OK</b></div>}
+            {bootStep >= 2 && <div>&gt; auth token …… <b>{t('mobile.connect.bootAccepted')}</b></div>}
+            {bootStep >= 3 && <div>&gt; protocol v{MOBILE_BUILD_INFO.protocolVersion} …… <b>OK</b></div>}
+            {bootStep >= 4 && <div>&gt; {t('mobile.connect.bootLinkUp')}</div>}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          className="mob-connect__cta"
+          disabled={connecting}
+          data-testid="connect-submit"
+        >
+          {connecting ? (
+            <>
+              <span className="mob-spinner" aria-hidden="true" />
+              <span>{t('mobile.connect.linking')}</span>
+            </>
+          ) : (
+            <>
+              <Link2 aria-hidden="true" />
+              <span>{t('mobile.connect.establishLink')}</span>
+            </>
           )}
-          <Button
-            type="submit"
-            className="connect-submit"
-            variant="primary"
-            size="lg"
-            fullWidth
-            loading={connecting}
-            loadingLabel={t('mobile.connect.connecting')}
-            data-testid="connect-submit"
-          >
-            {t('mobile.connect.connect')}
-          </Button>
-        </form>
-      </div>
+        </button>
+
+        <p className="mob-signal mob-connect__footer" aria-hidden="true">
+          <span>EZT://PAIR</span><span>v{MOBILE_BUILD_INFO.appVersion}</span>
+        </p>
+      </form>
     </main>
   );
 }

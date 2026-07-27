@@ -1,7 +1,9 @@
+﻿import { SlidersHorizontal } from "lucide-react";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 
 import type { BlockController } from "../../src/renderer/block-controller";
 import { useAppTranslation } from "../../src/renderer/i18n";
+import { useMobileToast } from "./MobileToast";
 import { getTerminalAccessoryKey } from "./terminal-accessory-keys";
 import {
   ACTIVE_MOBILE_TAB_CHANGE_EVENT,
@@ -16,11 +18,18 @@ const nullSnapshot = (): null => null;
 export function TouchInputBar({
   controller,
   connected = true,
+  ctrlLatched = false,
+  onToggleCtrl,
 }: {
   controller: BlockController | null;
   connected?: boolean;
+  /** Handoff §3's Ctrl latch. Owned by MobileSessionView because the composer's
+   * plain-PTY keystroke path is what actually consumes it. */
+  ctrlLatched?: boolean;
+  onToggleCtrl?: () => void;
 }): JSX.Element | null {
   const { t } = useAppTranslation();
+  const showToast = useMobileToast();
   const snapshot = useSyncExternalStore(
     controller?.subscribe ?? noopSubscribe,
     controller?.getSnapshot ?? nullSnapshot,
@@ -73,7 +82,7 @@ export function TouchInputBar({
 
   return (
     <div
-      className="touch-input-bar"
+      className="touch-input-bar mob-keybar"
       role="toolbar"
       aria-label={t("mobile.terminalKeys.toolbar")}
       data-testid="touch-input-bar"
@@ -87,13 +96,14 @@ export function TouchInputBar({
         <button
           key={key.id}
           type="button"
-          className="btn touch-key"
+          className="touch-key mob-key"
           aria-label={key.accessibleLabel}
           disabled={!canSend}
           onPointerDown={(event) => {
             if (!canSend || event.button !== 0) return;
             event.preventDefault();
             repeatController.start(key.bytes, key.repeatable);
+            showToast(t("mobile.terminalKeys.sent", { key: key.label }));
           }}
           onPointerUp={() => repeatController.stop()}
           onPointerCancel={() => repeatController.stop()}
@@ -103,6 +113,7 @@ export function TouchInputBar({
             // click with detail=0 is keyboard/assistive-tech activation.
             if (!canSend || event.detail !== 0) return;
             repeatController.start(key.bytes, false);
+            showToast(t("mobile.terminalKeys.sent", { key: key.label }));
           }}
           onContextMenu={(event) => event.preventDefault()}
           data-testid={`touch-key-${key.id}`}
@@ -110,6 +121,19 @@ export function TouchInputBar({
           {key.label}
         </button>
       ))}
+      {onToggleCtrl && (
+        <button
+          type="button"
+          className={ctrlLatched ? "touch-key mob-key mob-key--latched" : "touch-key mob-key"}
+          aria-pressed={ctrlLatched}
+          disabled={!canSend}
+          onClick={onToggleCtrl}
+          data-testid="touch-key-ctrl-latch"
+        >
+          Ctrl
+          {ctrlLatched && <span className="mob-key__dot" aria-hidden="true" />}
+        </button>
+      )}
       {!canSend && (
         <span className="touch-input-state" role="status">
           {connected
@@ -119,14 +143,14 @@ export function TouchInputBar({
       )}
       <button
         type="button"
-        className="btn touch-key touch-key-manage"
+        className="touch-key mob-key mob-key--manage"
         onClick={() =>
           window.dispatchEvent(new Event(OPEN_TERMINAL_KEY_SETTINGS_EVENT))
         }
         aria-label={t("mobile.terminalKeys.manageAria")}
         data-testid="touch-key-manage"
       >
-        {t("mobile.terminalKeys.manage")}
+        <SlidersHorizontal aria-hidden="true" />
       </button>
     </div>
   );

@@ -1,20 +1,26 @@
-import { lazy, Suspense, useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { ArrowLeft, List, Plus } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { ChevronLeft, ChevronsUpDown, Plus } from 'lucide-react';
 
 import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
+import type { SessionInfo } from '../../src/shared/ipc';
 import { EMPTY_AGENT_ACTIVITY_SNAPSHOT, type AgentActivitySnapshot } from '../../src/shared/agent';
+import { formatCwd } from '../../src/renderer/format-cwd';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { quoteEzArgument } from '../../src/shared/quote-ez-argument';
 import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
-import { Button, IconButton } from '../../src/renderer/ui/Button';
 import { e2eLog } from './e2e-telemetry';
+import { MobileHomeView, type HomeSessionRow } from './MobileHomeView';
+import { MobileMoreSheet } from './MobileMoreSheet';
 import { MobilePageHeader } from './MobilePageHeader';
-import { MobileRemoteHub } from './MobileRemoteHub';
+import { MobileSessionSheet } from './MobileSessionSheet';
 import { MobileSessionView } from './MobileSessionView';
+import { MobileTabBar, type MobileShellTab } from './MobileTabBar';
+import { MobileToastProvider } from './MobileToast';
 import { MobileWorkbenchCoordinator } from './MobileWorkbenchCoordinator';
 import { loadOpenClawMode, saveOpenClawMode } from './openclaw-mode';
-import { mobileTerminalPanelId, mobileTerminalTabId, TabStrip } from './TabStrip';
+import { mobileTerminalPanelId } from './TabStrip';
+import { decideTabSwipe } from './tab-swipe';
 import { ThemeMenu } from './ThemeMenu';
 import {
   ACTIVE_MOBILE_TAB_CHANGE_EVENT,
@@ -25,7 +31,7 @@ import { initialTabsState, tabsReducer } from './tabs';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 import { usePageVisible } from './use-page-visible';
 
-const AgentHub = lazy(async () => ({ default: (await import('../../src/renderer/AgentHub')).AgentHub }));
+const MobileAgentView = lazy(async () => ({ default: (await import('./MobileAgentView')).MobileAgentView }));
 const MobileFileView = lazy(async () => ({ default: (await import('./MobileFileView')).MobileFileView }));
 const MobileOpenClawView = lazy(async () => ({ default: (await import('./MobileOpenClawView')).MobileOpenClawView }));
 const MobileRemoteDesktopView = lazy(async () => ({ default: (await import('./MobileRemoteDesktopView')).MobileRemoteDesktopView }));
@@ -37,39 +43,27 @@ function countAgentAttention(snapshot: AgentActivitySnapshot): number {
   return snapshot.items.filter((item) => item.status === 'blocked' || item.status === 'error' || item.status === 'waiting').length;
 }
 
-type MobileDestination =
-  | 'hub'
-  | 'terminal'
-  | 'sessions'
-  | 'agents'
-  | 'stats'
-  | 'files'
-  | 'settings'
-  | 'openclaw'
-  | 'pc-control';
+/** Full-screen destinations reachable from a tab root. Each one owns the Back
+ * stop above the tab layer, so Back unwinds sheet -> sub-page -> tab -> exit. */
+type MobileSubPage = 'files' | 'stats' | 'openclaw' | 'settings' | 'pc-control' | 'sessions';
 
-// MobileWorkspace — the authed shell (M5, mobile-parity plan D5). Replaces
-// App.tsx's old direct SessionSwitcher <-> MobileSessionView switching: this
-// owns multi-tab state (tabsReducer), which of possibly several open
-// sessions is active, the full-screen destinations, the remote hub root, and
-// the theme menu (there is exactly one owner for the authenticated shell).
+type MobileSheet = 'more' | 'sessions';
+
+// MobileWorkspace — the authed shell. The commercial pass replaces the old
+// "hub -> full-screen destination" tree with a five-item bottom bar (a 72dp
+// left rail from 600dp up): Home | Terminal | PC | Agents | More. PC Control
+// is an explicit start action rather than a destination, and More is a sheet.
 //
-// KEEP-ALIVE: every open tab's MobileSessionView stays MOUNTED for as long as
-// its tab exists — switching tabs only toggles `display: none` on the
-// wrapper div, it never unmounts. This is deliberate: a fresh mount would
-// tear down that tab's BlockController(s)/FakeMessagePort and lose the
-// running PTY stream's UI state. `display:none` keeps React state alive (and
-// the compile-time E2E output probe active); the one thing it
-// breaks is xterm's internal measurement of a now-zero-size container, which
-// is why activating a tab dispatches a `resize` event on the next animation
-// frame — xterm/any ResizeObserver-driven view re-measures once it's visible
-// again. (Mobile renders PtyBlock/xterm too, via the shared Block.tsx — this
-// keep-alive is what makes that survive tab switches, per the mobile-parity
-// plan's risk #1.)
-//
-// Zero-tab state remains inside the Terminal destination, whose compact
-// header still exposes New and Sessions. The hub remains the only
-// authenticated history root regardless of tab count.
+// KEEP-ALIVE (unchanged contract): every open tab's MobileSessionView stays
+// MOUNTED for as long as its tab exists. Switching shell tabs only renders an
+// opaque page layer OVER the terminal layer (MobileWorkbenchCoordinator) and
+// switching terminal tabs only toggles `display: none` on the wrapper div —
+// neither ever unmounts. A fresh mount would tear down that tab's
+// BlockController(s)/FakeMessagePort and lose the running PTY stream's UI
+// state. `display: none` keeps React state alive (and the compile-time E2E
+// output probe active); the one thing it breaks is xterm's internal
+// measurement of a now-zero-size container, which is why activating a tab
+// dispatches a `resize` event on the next animation frame.
 export function MobileWorkspace({
   transport,
   connectionUrl = '',
@@ -81,68 +75,81 @@ export function MobileWorkspace({
 }): JSX.Element {
   const { t } = useAppTranslation();
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
-  const [view, setView] = useState<MobileDestination>('hub');
+  const [tab, setTab] = useState<MobileShellTab>('home');
+  const [subPage, setSubPage] = useState<MobileSubPage | null>(null);
+  const [sheet, setSheet] = useState<MobileSheet | null>(null);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<ThemeName>(() => loadTheme());
   const [agentSnapshot, setAgentSnapshot] = useState<AgentActivitySnapshot>(EMPTY_AGENT_ACTIVITY_SNAPSHOT);
   const [connected, setConnected] = useState(false);
-  const [sessionCount, setSessionCount] = useState(0);
-  const appearanceButtonRef = useRef<HTMLButtonElement>(null);
+  const [connectedSince, setConnectedSince] = useState<number | null>(null);
+  const [sessions, setSessions] = useState<readonly SessionInfo[]>([]);
   const themeReturnFocusRef = useRef<HTMLElement | null>(null);
-  const hubReturnTargetRef = useRef('hub-terminal');
-  const restoreHubFocusRef = useRef(false);
+  const sheetReturnFocusRef = useRef<HTMLElement | null>(null);
+  const subPageReturnTargetRef = useRef('shell-tab-home');
+  const restoreTabFocusRef = useRef(false);
 
-  const openDestination = useCallback((destination: MobileDestination, returnTarget: string) => {
-    hubReturnTargetRef.current = returnTarget;
-    setView(destination);
+  const openSubPage = useCallback((next: MobileSubPage, returnTarget: string) => {
+    subPageReturnTargetRef.current = returnTarget;
+    setSheet(null);
+    setSubPage(next);
   }, []);
 
-  const returnToHub = useCallback(() => {
-    restoreHubFocusRef.current = true;
-    setView('hub');
+  const closeSubPage = useCallback(() => {
+    restoreTabFocusRef.current = true;
+    setSubPage(null);
+  }, []);
+
+  const selectTab = useCallback((next: MobileShellTab) => {
+    setSheet(null);
+    setSubPage(null);
+    setTab(next);
   }, []);
 
   useEffect(() => {
-    if (view !== 'hub' || !restoreHubFocusRef.current) return;
-    restoreHubFocusRef.current = false;
+    if (subPage !== null || !restoreTabFocusRef.current) return;
+    restoreTabFocusRef.current = false;
     const frame = requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(`[data-testid="${hubReturnTargetRef.current}"]`)?.focus();
+      document.querySelector<HTMLElement>(`[data-testid="${subPageReturnTargetRef.current}"]`)?.focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [view]);
+  }, [subPage]);
 
   useEffect(() => {
     const openTerminalKeySettings = (): void => {
-      openDestination('settings', 'hub-settings');
+      openSubPage('settings', 'shell-tab-more');
     };
     window.addEventListener(OPEN_TERMINAL_KEY_SETTINGS_EVENT, openTerminalKeySettings);
     return () => window.removeEventListener(OPEN_TERMINAL_KEY_SETTINGS_EVENT, openTerminalKeySettings);
-  }, [openDestination]);
+  }, [openSubPage]);
 
-  useEffect(() => transport.onAuthChange(setConnected), [transport]);
+  useEffect(() => transport.onAuthChange((authed) => {
+    setConnected(authed);
+    // First authentication of this link wins; a reconnect that never dropped
+    // `connected` keeps the original start so the uptime doesn't reset.
+    setConnectedSince((current) => authed ? current ?? Date.now() : null);
+  }), [transport]);
 
+  // Full session list (not just a count) — the Home tab's recent rows and the
+  // terminal's session sheet both read it, and both need cwd for their labels.
   useEffect(() => {
     if (!connected) {
-      setSessionCount(0);
+      setSessions([]);
       return;
     }
     let alive = true;
-    const sessionIds = new Set<string>();
-    const publish = (): void => {
-      if (alive) setSessionCount(sessionIds.size);
-    };
     const unsubscribeAdded = transport.onSessionAdded((session) => {
-      sessionIds.add(session.sessionId);
-      publish();
+      if (!alive) return;
+      setSessions((current) =>
+        current.some((entry) => entry.sessionId === session.sessionId) ? current : [...current, session],
+      );
     });
     const unsubscribeRemoved = transport.onSessionRemoved((sessionId) => {
-      sessionIds.delete(sessionId);
-      publish();
+      if (!alive) return;
+      setSessions((current) => current.filter((entry) => entry.sessionId !== sessionId));
     });
-    void transport.listSessions().then((sessions) => {
-      sessionIds.clear();
-      sessions.forEach((session) => sessionIds.add(session.sessionId));
-      publish();
+    void transport.listSessions().then((list) => {
+      if (alive) setSessions(list);
     }).catch(() => undefined);
     return () => {
       alive = false;
@@ -233,7 +240,9 @@ export function MobileWorkspace({
 
   const openTab = useCallback((sessionId: string, cwd: string) => {
     dispatch({ type: 'open', sessionId, cwd });
-    setView('terminal');
+    setSheet(null);
+    setSubPage(null);
+    setTab('terminal');
   }, []);
 
   useEffect(() => {
@@ -304,6 +313,56 @@ export function MobileWorkspace({
     ?? activeSession?.cwd
     ?? '';
 
+  // The bridge's session list, annotated with whether this device already has
+  // it open as a tab. Tabs open HERE come first, in tab order, so the session
+  // sheet and the mounted terminal layers agree on ordering; the remaining
+  // desktop-side sessions follow. Locally-created tabs are folded in so a
+  // session created here shows up before the next `session-list` broadcast.
+  const sessionRows = useMemo<readonly HomeSessionRow[]>(() => {
+    const byId = new Map(sessions.map((session) => [session.sessionId, session]));
+    const rows: HomeSessionRow[] = tabsState.tabs.map((entry) => ({
+      session: byId.get(entry.sessionId) ?? { sessionId: entry.sessionId, cwd: entry.cwd },
+      open: true,
+    }));
+    const openIds = new Set(tabsState.tabs.map((entry) => entry.sessionId));
+    for (const session of sessions) {
+      if (!openIds.has(session.sessionId)) rows.push({ session, open: false });
+    }
+    return rows;
+  }, [sessions, tabsState.tabs]);
+
+  const openSessionFromList = useCallback((session: SessionInfo) => {
+    openTab(session.sessionId, session.cwd);
+  }, [openTab]);
+
+  const agentAttention = countAgentAttention(agentSnapshot);
+
+  // Swipe-between-tabs used to live on the tab strip the session sheet
+  // replaced. Keeping it on the terminal header preserves the gesture (and
+  // `decideTabSwipe`'s scroll-suppression contract) rather than dropping a
+  // capability the redesign never asked to remove.
+  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const onHeaderTouchStart = useCallback((event: React.TouchEvent<HTMLElement>) => {
+    const touch = event.touches[0];
+    swipeStartRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+  }, []);
+  const onHeaderTouchEnd = useCallback((event: React.TouchEvent<HTMLElement>) => {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    const touch = event.changedTouches[0];
+    if (!start || !touch) return;
+    const decision = decideTabSwipe({
+      dx: touch.clientX - start.x,
+      dy: touch.clientY - start.y,
+      scrollDelta: 0,
+    });
+    if (!decision) return;
+    const index = tabsState.tabs.findIndex((entry) => entry.sessionId === tabsState.activeSessionId);
+    if (index === -1) return;
+    const next = decision === 'next' ? tabsState.tabs[index + 1] : tabsState.tabs[index - 1];
+    if (next) activateTab(next.sessionId);
+  }, [activateTab, tabsState.activeSessionId, tabsState.tabs]);
+
   const auxiliaryPageFallback = (
     <div className="status-loading mobile-auxiliary-page-loading" role="status" data-testid="mobile-auxiliary-page-loading">
       {t('common.loading')}
@@ -311,39 +370,55 @@ export function MobileWorkspace({
   );
 
   let page: JSX.Element | undefined;
-  if (view === 'hub') {
+  if (subPage === 'pc-control') {
+    page = <MobileRemoteDesktopView transport={transport} onClose={closeSubPage} />;
+  } else if (subPage === 'openclaw') {
     page = (
-      <MobileRemoteHub
-        connected={connected}
-        connectionUrl={connectionUrl}
-        desktopControlSupported={transport.supportsDesktopControl}
-        sessionCount={sessionCount}
-        agentAttention={countAgentAttention(agentSnapshot)}
-        openclawVisible={effectiveOpenClawVisible}
-        openclawState={openclawState?.state}
-        currentTheme={currentTheme}
-        appearanceButtonRef={appearanceButtonRef}
-        onOpenPcControl={() => openDestination('pc-control', 'hub-pc-control')}
-        onOpenTerminal={() => openDestination('terminal', 'hub-terminal')}
-        onOpenSessions={() => openDestination('sessions', 'hub-sessions')}
-        onOpenAgents={() => openDestination('agents', 'hub-agents')}
-        onOpenFiles={() => openDestination('files', 'hub-files')}
-        onOpenStats={() => openDestination('stats', 'hub-stats')}
-        onOpenAppearance={() => {
-          themeReturnFocusRef.current = appearanceButtonRef.current;
-          setThemeMenuOpen(true);
-        }}
-        onOpenClaw={() => openDestination('openclaw', 'hub-openclaw')}
-        onOpenSettings={() => openDestination('settings', 'hub-settings')}
+      <MobileOpenClawView
+        transport={transport}
+        onClose={closeSubPage}
+        openclawAvailable={openclawAvailable}
       />
     );
-  } else if (view === 'sessions') {
+  } else if (subPage === 'settings') {
+    page = (
+      <MobileSettingsView
+        connectionUrl={connectionUrl}
+        connectedSince={connectedSince}
+        onClose={closeSubPage}
+        onDisconnect={onDisconnect}
+        openclawMode={openclawMode}
+        onOpenClawModeChange={handleOpenClawModeChange}
+        openclawState={openclawState?.state}
+        currentTheme={currentTheme}
+        onOpenTheme={(trigger) => {
+          themeReturnFocusRef.current = trigger;
+          setThemeMenuOpen(true);
+        }}
+      />
+    );
+  } else if (subPage === 'files') {
+    page = (
+      <MobileFileView
+        transport={transport}
+        initialPath={initialFilePath}
+        onClose={closeSubPage}
+        onOpenTerminalAt={onOpenTerminalAt}
+        onPastePath={onPastePath}
+      />
+    );
+  } else if (subPage === 'stats') {
+    page = <MobileStatsView onClose={closeSubPage} />;
+  } else if (subPage === 'sessions') {
+    // The session SHEET is the fast switcher; this full manager is what still
+    // owns create/destroy with the guarded close-risk flow, so the redesign
+    // does not cost a capability.
     page = (
       <div className="mobile-destination mobile-sessions-destination">
         <MobilePageHeader
           title={t('mobile.sessions')}
           backLabel={t('common.back')}
-          onBack={returnToHub}
+          onBack={closeSubPage}
         />
         <div className="mobile-destination__body">
           <SessionSwitcher
@@ -354,17 +429,31 @@ export function MobileWorkspace({
         </div>
       </div>
     );
-  } else if (view === 'stats') {
-    page = <MobileStatsView onClose={returnToHub} />;
-  } else if (view === 'pc-control') {
-    page = <MobileRemoteDesktopView transport={transport} onClose={returnToHub} />;
-  } else if (view === 'agents') {
+  } else if (tab === 'home') {
     page = (
-      <AgentHub
-        mobile
+      <MobileHomeView
+        connected={connected}
+        connectionUrl={connectionUrl}
+        desktopControlSupported={transport.supportsDesktopControl}
+        sessions={sessionRows}
+        activeSessionId={tabsState.activeSessionId}
+        agentSnapshot={agentSnapshot}
+        agentAttention={agentAttention}
+        openclawVisible={effectiveOpenClawVisible}
+        openclawState={openclawState?.state}
+        onOpenPcControl={() => openSubPage('pc-control', 'shell-tab-pc')}
+        onOpenSession={openSessionFromList}
+        onOpenTerminal={() => selectTab('terminal')}
+        onOpenAgents={() => selectTab('agents')}
+        onOpenClaw={() => openSubPage('openclaw', 'shell-tab-home')}
+      />
+    );
+  } else if (tab === 'agents') {
+    page = (
+      <MobileAgentView
         snapshot={agentSnapshot}
         disconnected={!connected}
-        onClose={returnToHub}
+        onBack={() => selectTab('home')}
         onSendFollowup={(activityId, text) => transport.sendAgentFollowup(activityId, text)}
         onFocusSession={(sessionId) => {
           const activity = agentSnapshot.items.find((item) => item.sessionId === sessionId);
@@ -372,146 +461,172 @@ export function MobileWorkspace({
         }}
       />
     );
-  } else if (view === 'openclaw') {
-    page = (
-      <MobileOpenClawView
-        transport={transport}
-        onClose={returnToHub}
-        openclawAvailable={openclawAvailable}
-      />
-    );
-  } else if (view === 'settings') {
-    page = (
-      <MobileSettingsView
-        connectionUrl={connectionUrl}
-        onClose={returnToHub}
-        onDisconnect={onDisconnect}
-        openclawMode={openclawMode}
-        onOpenClawModeChange={handleOpenClawModeChange}
-        currentTheme={currentTheme}
-        onOpenTheme={(trigger) => {
-          themeReturnFocusRef.current = trigger;
-          setThemeMenuOpen(true);
-        }}
-      />
-    );
-  } else if (view === 'files') {
-    page = (
-      <MobileFileView
-        transport={transport}
-        initialPath={initialFilePath}
-        onClose={returnToHub}
-        onOpenTerminalAt={onOpenTerminalAt}
-        onPastePath={onPastePath}
-      />
-    );
   }
 
+  const immersive = subPage === 'pc-control';
+
   return (
-    <MobileWorkbenchCoordinator
-      onRequestRoot={returnToHub}
-      terminalActive={view === 'terminal'}
-      destinationActive={view !== 'hub'}
-      page={page ? <Suspense fallback={auxiliaryPageFallback}>{page}</Suspense> : undefined}
-      terminal={(
-        <div className="mobile-workspace" data-testid="mobile-workspace">
-          <header className="workspace-header">
-          <IconButton
-              type="button"
-              className="workspace-hub-btn"
-              size="sm"
-              variant="ghost"
-              icon={ArrowLeft}
-              onClick={returnToHub}
-              aria-label={t('common.back')}
-              data-testid="workspace-hub-btn"
-            />
-            <TabStrip
-              tabs={tabsState.tabs}
-              activeSessionId={tabsState.activeSessionId}
-              onActivate={activateTab}
-              onClose={closeTab}
-            />
-            <Button
-              type="button"
-              className="workspace-new-tab-btn"
-              size="sm"
-              variant="secondary"
-              leadingIcon={<Plus />}
-              onClick={quickNewTab}
-              disabled={!connected}
-              aria-label={t('mobile.newTab')}
-              data-testid="tab-add-btn"
+    <MobileToastProvider>
+      <MobileWorkbenchCoordinator
+        terminalActive={tab === 'terminal' && subPage === null}
+        destinationActive={subPage !== null}
+        tabRootActive={tab !== 'home'}
+        onRequestRoot={closeSubPage}
+        onRequestTabRoot={() => setTab('home')}
+        page={page ? <Suspense fallback={auxiliaryPageFallback}>{page}</Suspense> : undefined}
+        navigation={immersive ? undefined : (
+          <MobileTabBar
+            tab={tab}
+            agentAttention={agentAttention}
+            onSelectTab={selectTab}
+            onOpenPcControl={() => openSubPage('pc-control', 'shell-tab-pc')}
+            onOpenMore={() => {
+              sheetReturnFocusRef.current = document.activeElement instanceof HTMLElement
+                ? document.activeElement
+                : null;
+              setSheet('more');
+            }}
+            onOpenSettings={() => openSubPage('settings', 'shell-rail-settings')}
+          />
+        )}
+        terminal={(
+          <div className="mobile-workspace" data-testid="mobile-workspace">
+            <header
+              className="mob-term-head"
+              onTouchStart={onHeaderTouchStart}
+              onTouchEnd={onHeaderTouchEnd}
             >
-              <span className="workspace-action-label">{t('mobile.newTerminal')}</span>
-            </Button>
-            <Button
-              type="button"
-              className="workspace-menu-btn"
-              size="sm"
-              variant="secondary"
-              leadingIcon={<List />}
-              onClick={() => setView('sessions')}
-              disabled={!connected}
-              aria-label={t('mobile.sessions')}
-              data-testid="menu-btn"
-            >
-              <span className="workspace-action-label">{t('mobile.sessions')}</span>
-            </Button>
-          </header>
+              <button
+                type="button"
+                className="mob-icon-btn"
+                onClick={() => selectTab('home')}
+                aria-label={t('common.back')}
+                data-testid="workspace-hub-btn"
+              >
+                <ChevronLeft aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="mob-term-head__session"
+                onClick={() => {
+                  sheetReturnFocusRef.current = document.activeElement instanceof HTMLElement
+                    ? document.activeElement
+                    : null;
+                  setSheet('sessions');
+                }}
+                aria-haspopup="dialog"
+                aria-label={t('mobile.sessions')}
+                data-testid="menu-btn"
+              >
+                <span
+                  className={activeSession ? 'mob-dot mob-dot--live' : 'mob-dot'}
+                  aria-hidden="true"
+                />
+                <span className="mob-term-head__label">
+                  {activeSession ? formatCwd(activeSession.cwd, 28) : t('mobile.noTerminalTabs')}
+                </span>
+                <ChevronsUpDown aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="mob-icon-btn mob-icon-btn--accent"
+                onClick={quickNewTab}
+                disabled={!connected}
+                aria-label={t('mobile.newTab')}
+                data-testid="tab-add-btn"
+              >
+                <Plus aria-hidden="true" />
+              </button>
+            </header>
 
-          {tabsState.tabs.length === 0 && (
-            <div className="mobile-terminal-empty" data-testid="mobile-terminal-empty">
-              <div>
-                <h1>{t('mobile.noTerminalTabs')}</h1>
-                <p>{t('mobile.noTerminalTabsHint')}</p>
+            {tabsState.tabs.length === 0 && (
+              <div className="mobile-terminal-empty" data-testid="mobile-terminal-empty">
+                <div>
+                  <h1>{t('mobile.noTerminalTabs')}</h1>
+                  <p>{t('mobile.noTerminalTabsHint')}</p>
+                </div>
+                <div className="mobile-terminal-empty-actions">
+                  <button type="button" className="mob-cta" onClick={quickNewTab} disabled={!connected}>
+                    <Plus aria-hidden="true" /> {t('mobile.home.newSession')}
+                  </button>
+                </div>
               </div>
-              <div className="mobile-terminal-empty-actions">
-                <button type="button" className="btn btn-run" onClick={quickNewTab} disabled={!connected}>
-                  <Plus aria-hidden="true" /> {t('mobile.newTerminal')}
-                </button>
-                <button type="button" className="btn" onClick={() => setView('sessions')}>
-                  <List aria-hidden="true" /> {t('mobile.sessions')}
-                </button>
-                <button type="button" className="btn" onClick={() => setView('settings')}>
-                  {t('common.settings')}
-                </button>
-              </div>
-            </div>
-          )}
+            )}
 
-          {tabsState.tabs.map((tab) => (
-            <div
-              key={tab.sessionId}
-              id={mobileTerminalPanelId(tab.sessionId)}
-              className="tab-page"
-              role="tabpanel"
-              aria-labelledby={mobileTerminalTabId(tab.sessionId)}
-              tabIndex={0}
-              style={{ display: tab.sessionId === tabsState.activeSessionId ? undefined : 'none' }}
-            >
-              <MobileSessionView
-                sessionId={tab.sessionId}
-                active={tab.sessionId === tabsState.activeSessionId}
-                quickCommandSource={transport}
-                quickCommandsSupported={transport.supportsRemoteQuickCommands}
-                connected={connected}
-                onSessionDead={() => handleSessionDead(tab.sessionId)}
-                onCwdChange={handleCwdChange}
+            {tabsState.tabs.map((entry) => (
+              <div
+                key={entry.sessionId}
+                id={mobileTerminalPanelId(entry.sessionId)}
+                className="tab-page"
+                role="group"
+                aria-label={entry.cwd}
+                data-testid="terminal-tab-page"
+                data-active={entry.sessionId === tabsState.activeSessionId ? 'true' : 'false'}
+                style={{ display: entry.sessionId === tabsState.activeSessionId ? undefined : 'none' }}
+              >
+                <MobileSessionView
+                  sessionId={entry.sessionId}
+                  cwd={entry.cwd}
+                  active={entry.sessionId === tabsState.activeSessionId}
+                  quickCommandSource={transport}
+                  quickCommandsSupported={transport.supportsRemoteQuickCommands}
+                  connected={connected}
+                  onSessionDead={() => handleSessionDead(entry.sessionId)}
+                  onCwdChange={handleCwdChange}
+                  onCloseTab={() => closeTab(entry.sessionId)}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+        overlays={(
+          <>
+            {sheet === 'more' && (
+              <MobileMoreSheet
+                currentTheme={currentTheme}
+                openclawVisible={effectiveOpenClawVisible}
+                openclawState={openclawState?.state}
+                returnFocusRef={sheetReturnFocusRef}
+                onClose={() => setSheet(null)}
+                onOpenSessions={() => openSubPage('sessions', 'shell-tab-more')}
+                onOpenFiles={() => openSubPage('files', 'shell-tab-more')}
+                onOpenStats={() => openSubPage('stats', 'shell-tab-more')}
+                onOpenClaw={() => openSubPage('openclaw', 'shell-tab-more')}
+                onOpenTheme={(trigger) => {
+                  themeReturnFocusRef.current = trigger;
+                  setSheet(null);
+                  setThemeMenuOpen(true);
+                }}
+                onOpenSettings={() => openSubPage('settings', 'shell-tab-more')}
               />
-            </div>
-          ))}
-        </div>
-      )}
-      overlays={(
-        <ThemeMenu
-          open={themeMenuOpen}
-          current={currentTheme}
-          onSelect={handleThemeSelect}
-          onClose={() => setThemeMenuOpen(false)}
-          returnFocusRef={themeReturnFocusRef}
-        />
-      )}
-    />
+            )}
+            {sheet === 'sessions' && (
+              <MobileSessionSheet
+                sessions={sessionRows}
+                activeSessionId={tabsState.activeSessionId}
+                canCreate={connected}
+                returnFocusRef={sheetReturnFocusRef}
+                onClose={() => setSheet(null)}
+                onSelect={(session) => {
+                  setSheet(null);
+                  openSessionFromList(session);
+                }}
+                onCreate={() => {
+                  setSheet(null);
+                  quickNewTab();
+                }}
+              />
+            )}
+            <ThemeMenu
+              open={themeMenuOpen}
+              current={currentTheme}
+              onSelect={handleThemeSelect}
+              onClose={() => setThemeMenuOpen(false)}
+              returnFocusRef={themeReturnFocusRef}
+            />
+          </>
+        )}
+      />
+    </MobileToastProvider>
   );
 }

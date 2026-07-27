@@ -257,60 +257,76 @@ and diagnostic metadata live in About & Diagnostics.
 
 ## 5. Mobile application shell
 
-### 5.1 Selected direction: remote hub with full-screen destinations
+### 5.1 Selected direction: bottom tab bar with full-screen destinations
 
 Three information-architecture directions were considered for the accumulated
 mobile surface:
 
-1. **Remote hub with full-screen destinations — selected.** Authentication
-   lands on a lightweight control hub. Every capability opens as a focused
-   full-screen destination and returns to the hub.
+1. **Bottom tab bar with full-screen destinations — selected.** Authentication
+   lands on a Home tab. Five persistent items — Home, Terminal, PC, Agents
+   (attention badge), More — carry lateral navigation; anything they cannot
+   hold opens from the More sheet as a focused full-screen destination.
+   Supersedes the earlier hub-only root, which cost a round-trip through Home
+   for every lateral move.
 2. **Persistent remote command dock — rejected.** It provides one-tap lateral
    switching but permanently consumes scarce terminal and remote-video height.
 3. **Top mode switcher — rejected.** It preserves content height but becomes
    cramped at 360px, with Korean labels, and at 150% UI scale.
 
-The accepted tradeoff is one hub round-trip between unrelated capabilities in
-exchange for a stable hierarchy and maximum working area inside Terminal and
-PC Control. No capability is removed: Terminal, Sessions, Agents, Files,
-Monitor, OpenClaw, Appearance, Settings, Quick Commands, terminal accessory
-keys, and PC Control remain reachable.
+The bar costs ~54dp of height in exchange for a stable hierarchy and one-tap
+lateral movement. PC is an explicit start action rather than a destination, so
+the bar never begins capture. No capability is removed: Terminal, Sessions,
+Agents, Files, Monitor, OpenClaw, Appearance, Settings, Quick Commands,
+terminal accessory keys, and PC Control remain reachable.
 
-### 5.2 Persistent workbench and hub structure
+From 600dp the bar becomes a 72px left rail carrying the same five items in
+the same order, plus Settings at its foot. Content stays a single centred
+column capped at 520px; a second column is explicitly out of scope.
+
+### 5.2 Persistent workbench and tab structure
 
 After authentication, the DOM structure is composed as siblings:
 
 ```text
 MobileWorkbenchCoordinator
 ├── TerminalLayer          (always mounted)
-├── MobilePageShell        (hub or current full-screen destination)
+├── MobilePageShell        (current tab root or full-screen destination)
+├── MobileTabBar           (bottom bar, or left rail from 600dp)
 └── SheetDialogHost        (sheets, menus, dialogs)
 ```
 
-The hub is the authenticated history root. It contains:
+Home is the authenticated history root. It contains:
 
-1. PC Control availability and one explicit `Start PC Control` action;
-2. connection state, active-session count, and agent-attention count;
-3. Terminal, Sessions, Agents, and Files work destinations;
-4. Monitor, conditional OpenClaw, Appearance, and Settings tools.
+1. a PC Control hero with availability and one explicit `Start` action;
+2. connection state and the host endpoint;
+3. the three most recent sessions, linking out to the Terminal tab;
+4. the first agent awaiting attention, when there is one;
+5. an OpenClaw shortcut, only while the gateway state is `running`.
 
-The hub does not start PC capture/input and does not subscribe to live system
+Home does not start PC capture/input and does not subscribe to live system
 stats. Detailed polling begins only while Monitor is visible. PC Control starts
 only after its explicit action and retains the existing lease, background, and
 disconnect safety contract.
 
-Opening the hub or any opaque page never unmounts the terminal layer and never
-applies `display: none` to the terminal root. While Terminal is not selected,
-the layer is inert and `aria-hidden="true"`; it retains drafts, controllers,
-xterm geometry, scroll position, selection, output, and reconnect state.
+Switching tabs or opening any opaque page never unmounts the terminal layer and
+never applies `display: none` to the terminal root. While Terminal is not
+selected, the layer is inert and `aria-hidden="true"`; it retains drafts,
+controllers, xterm geometry, scroll position, selection, output, and reconnect
+state.
+
+Android Back unwinds sheet → sub-page → tab root → delegate. The tab-root stop
+is registered by the coordinator ahead of the sub-page stop, so the order holds
+however a destination was reached.
 
 ### 5.3 Full-screen destination and settings anatomy
 
-Every non-terminal destination uses one `MobilePageHeader` composition:
-Back-to-hub, localized title, optional status, and only destination-specific
-actions. PC Control retains its specialized immersive toolbar. Terminal uses a
-compact header with Back, flexible TabStrip, New, and Sessions; global
-destinations do not accumulate in that header.
+Every non-terminal destination uses one page-header composition: Back,
+localized title, optional status, and only destination-specific actions. PC
+Control retains its specialized immersive chrome. Terminal uses a compact
+header with Back, a session dropdown that opens the session sheet, and New;
+global destinations do not accumulate in that header. Below the block list the
+terminal stacks a status line, the composer, a recent-command chip row, and the
+accessory keybar.
 
 Settings is an index plus full-screen categories:
 
@@ -456,7 +472,7 @@ The Matrix default is the **CRT Signature** profile:
 - restrained phosphor glow;
 - one slow, low-opacity CRT roll band.
 
-On Android, the connection surface and remote hub intentionally use a stronger
+On Android, the connection surface and Home tab intentionally use a stronger
 static cyber-CRT composition than the desktop workbench: signal framing,
 accent-lit separators, inset panels, and code-native grid/scanline texture.
 These treatments are gated to Matrix and the existing effect attributes. They
@@ -777,10 +793,11 @@ The redesign is complete only when:
 - the activity rail and single responsive sidebar own all specified
   destinations without duplicates;
 - desktop settings match the six approved categories;
-- authentication lands on the remote hub and PC Control starts from one
-  explicit hub action;
-- every existing mobile capability remains reachable from the hub;
-- mobile terminal DOM identity survives every hub/destination round trip;
+- authentication lands on the Home tab and PC Control starts from one
+  explicit action;
+- every existing mobile capability remains reachable from the tab bar or the
+  More sheet;
+- mobile terminal DOM identity survives every tab/destination round trip;
 - all supported mobile viewports expose the approved hub actions and zero tabs
   remains navigable;
 - all new chrome uses semantic tokens and Lucide icons;
@@ -849,9 +866,10 @@ it over Tailscale, WireGuard, or another explicitly trusted VPN.
 
 Three mobile information-architecture directions were evaluated:
 
-1. **Remote hub with full-screen PC Control — selected by the user.** The hub
-   makes remote control primary without starting capture automatically. One
-   explicit action opens the immersive page above the still-mounted terminal.
+1. **Tab-bar shell with full-screen PC Control — selected by the user.** Home
+   and the bar's PC item both make remote control primary without starting
+   capture automatically. One explicit action opens the immersive page above
+   the still-mounted terminal.
 2. **Persistent remote command dock — rejected.** Faster lateral switching does
    not justify consuming terminal and video height.
 3. **Top mode switcher — rejected.** It overloads narrow and scaled headers.
@@ -862,15 +880,17 @@ application-wide banner and the Windows tray provide the local safety affordance
 
 ### 16.2 Screen and component inventory
 
-- `MobileRemoteHub` owns the primary **Start PC Control** action. It is disabled
+- `MobileHomeView` (the Home tab) owns the primary **Start PC Control** action,
+  and `MobileTabBar`'s PC item is the same explicit start. Both are disabled
   with a connected reason when the authenticated server does not advertise
   `desktop-control-v1`.
-- `MobileRemoteDesktopView` is an auxiliary page containing
-  `RemoteDesktopToolbar`, `RemoteVideoSurface`, connection-state overlay, and
-  an action sheet for special keys, clipboard, quality, and diagnostics.
-- The toolbar owns Back, device/status label, monitor selection, Trackpad/Direct
-  mode, keyboard, overflow, and Disconnect. Landscape moves secondary controls
-  into overflow but retains Back, mode, keyboard, and Disconnect.
+- `MobileRemoteDesktopView` is an immersive auxiliary page: the remote video
+  fills the screen and every control floats over it, auto-hiding 3.5s after the
+  last touch and returning on the next one.
+- The floating chrome owns Back, a status pill (device, RTT, fps),
+  Trackpad/Direct mode, keyboard, clipboard send/fetch, an overflow row for
+  special keys, and Disconnect. Monitor selection joins the cluster when the
+  host reports more than one display.
 - `RemoteVideoSurface` uses a video element with a separately composited remote
   cursor. It owns zoom/pan and maps pointer coordinates through the current
   fit/zoom/rotation transform.

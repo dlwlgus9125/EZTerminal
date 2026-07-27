@@ -6,9 +6,20 @@ import {
   useState,
 } from 'react';
 import { Clipboard } from '@capacitor/clipboard';
-import { ArrowLeft, ClipboardCopy, ClipboardPaste, Keyboard, Monitor, MousePointer2, Power, Touchpad } from 'lucide-react';
+import {
+  ArrowLeft,
+  ClipboardCopy,
+  ClipboardPaste,
+  Keyboard,
+  Monitor,
+  MoreHorizontal,
+  MousePointer2,
+  Power,
+  Touchpad,
+} from 'lucide-react';
 
 import { useAppTranslation } from '../../src/renderer/i18n';
+import { useMobileToast } from './MobileToast';
 import {
   MAX_DESKTOP_VIEWPORT_PIXELS,
   MIN_DESKTOP_VIEWPORT_PIXELS,
@@ -48,6 +59,8 @@ const TAP_MOVE_PX = 8;
 const LONG_PRESS_MS = 550;
 const DOUBLE_TAP_MS = 350;
 const VIEWPORT_UPDATE_DELAY_MS = 200;
+/** Handoff §5: floating controls fade out 3.5s after the last interaction. */
+const CHROME_AUTOHIDE_MS = 3500;
 
 interface TwoFingerGesture {
   readonly startedAt: number;
@@ -161,6 +174,7 @@ export function MobileRemoteDesktopView({
   presentationAdapterFactory = createPresentationAdapter,
 }: MobileRemoteDesktopViewProps): JSX.Element {
   const { t } = useAppTranslation();
+  const showToast = useMobileToast();
   const presentationAdapter = useMemo(
     () => presentationAdapterFactory(transport),
     [presentationAdapterFactory, transport],
@@ -180,7 +194,13 @@ export function MobileRemoteDesktopView({
     window.localStorage.getItem(INPUT_MODE_STORAGE_KEY) === 'direct' ? 'direct' : 'trackpad'
   ));
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [extrasOpen, setExtrasOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
+  // Immersive chrome (handoff §5): visible on entry and after every touch,
+  // gone 3.5s later so the remote screen is unobstructed while you work.
+  const [chromeVisible, setChromeVisible] = useState(true);
+  const [showHint, setShowHint] = useState(true);
+  const chromeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -188,6 +208,24 @@ export function MobileRemoteDesktopView({
   const twoFingerRef = useRef<TwoFingerGesture | null>(null);
   const holdTimersRef = useRef(new Map<number, number>());
   const lastTrackpadTapRef = useRef<{ at: number; x: number; y: number } | null>(null);
+
+  const revealChrome = useCallback((): void => {
+    setChromeVisible(true);
+    if (chromeTimerRef.current !== null) clearTimeout(chromeTimerRef.current);
+    chromeTimerRef.current = setTimeout(() => {
+      chromeTimerRef.current = null;
+      setChromeVisible(false);
+      setShowHint(false);
+      setExtrasOpen(false);
+    }, CHROME_AUTOHIDE_MS);
+  }, []);
+
+  useEffect(() => {
+    revealChrome();
+    return () => {
+      if (chromeTimerRef.current !== null) clearTimeout(chromeTimerRef.current);
+    };
+  }, [revealChrome]);
 
   let detail = '';
   const detailState: DesktopPresentationDetail = presentation.detail;
@@ -312,7 +350,16 @@ export function MobileRemoteDesktopView({
 
   const close = (): void => {
     presentationAdapterRef.current?.stop('client-stop');
+    showToast(t('mobile.pcControl.endedToast'));
     onClose();
+  };
+
+  const selectMode = (next: InputMode): void => {
+    setMode(next);
+    showToast(next === 'trackpad'
+      ? t('mobile.pcControl.trackpadToast')
+      : t('mobile.pcControl.directToast'));
+    revealChrome();
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
@@ -536,43 +583,7 @@ export function MobileRemoteDesktopView({
   };
 
   return (
-    <div className="mobile-pc-control" data-testid="mobile-pc-control">
-      <header className="mobile-pc-toolbar" aria-label={t('mobile.pcControl.toolbar')}>
-        <button type="button" onClick={close} aria-label={t('common.back')}><ArrowLeft /></button>
-        <span className={`mobile-pc-state mobile-pc-state--${phase}`} role="status" aria-live="polite">
-          {t(`mobile.pcControl.state.${phase}`)}
-        </span>
-        {displays.length > 1 ? (
-          <label className="mobile-pc-display-select">
-            <Monitor aria-hidden="true" />
-            <span className="sr-only">{t('mobile.pcControl.monitor')}</span>
-            <select
-              value={selectedDisplayId ?? displays[0]?.id ?? ''}
-              onChange={(event) => {
-                presentationAdapterRef.current?.selectDisplay(event.target.value);
-                setZoom(1);
-              }}
-            >
-              {displays.map((display) => <option key={display.id} value={display.id}>{display.name}</option>)}
-            </select>
-          </label>
-        ) : <Monitor className="mobile-pc-toolbar-icon" aria-hidden="true" />}
-        <button
-          type="button"
-          aria-pressed={mode === 'direct'}
-          onClick={() => setMode((current) => current === 'trackpad' ? 'direct' : 'trackpad')}
-          aria-label={mode === 'trackpad' ? t('mobile.pcControl.trackpad') : t('mobile.pcControl.direct')}
-        >
-          {mode === 'trackpad' ? <Touchpad /> : <MousePointer2 />}
-        </button>
-        <button type="button" aria-pressed={keyboardOpen} onClick={() => setKeyboardOpen((open) => !open)} aria-label={t('mobile.pcControl.keyboard')}>
-          <Keyboard />
-        </button>
-        <button type="button" className="mobile-pc-disconnect" onClick={close} aria-label={t('mobile.pcControl.disconnect')}>
-          <Power />
-        </button>
-      </header>
-
+    <div className="mobile-pc-control mobile-pc-control--immersive" data-testid="mobile-pc-control">
       <div
         ref={viewportRef}
         className="mobile-pc-video-viewport"
@@ -580,7 +591,10 @@ export function MobileRemoteDesktopView({
         aria-label={t('mobile.pcControl.videoLabel')}
         aria-describedby="mobile-pc-gesture-help"
         onContextMenu={(event) => event.preventDefault()}
-        onPointerDown={onPointerDown}
+        onPointerDown={(event) => {
+          revealChrome();
+          onPointerDown(event);
+        }}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
@@ -608,26 +622,132 @@ export function MobileRemoteDesktopView({
         </span>
       </div>
 
-      <footer className="mobile-pc-actions">
-        <button type="button" onClick={() => void sendMobileClipboard()}><ClipboardPaste />{t('mobile.pcControl.sendClipboard')}</button>
-        <button type="button" onClick={copyPcClipboard}><ClipboardCopy />{t('mobile.pcControl.copyClipboard')}</button>
-        <button type="button" onClick={() => sendKey('Escape')}>Esc</button>
-        <button type="button" onClick={() => sendKey('Tab')}>Tab</button>
-        <button type="button" onClick={() => sendKey('Enter')}>Enter</button>
-        <button
-          type="button"
-          disabled={!capabilities?.ctrlAltDelete}
-          title={!capabilities?.ctrlAltDelete ? t('mobile.pcControl.cadUnavailable') : undefined}
-          onClick={() => sendControl({ type: 'secure-attention' })}
-        >Ctrl+Alt+Del</button>
-      </footer>
-      {(clipboardStatus || status) && (
-        <div className="mobile-pc-metrics" aria-live="polite">
-          {clipboardStatus || [
-            status?.framesPerSecond !== undefined ? `${Math.round(status.framesPerSecond)} fps` : null,
-            status?.roundTripTimeMs !== undefined ? `${status.roundTripTimeMs} ms` : null,
-            status?.qualityTier,
-          ].filter(Boolean).join(' · ')}
+      {/* Floating chrome (handoff §5). Auto-hides 3.5s after the last touch and
+          returns on the next one. It deliberately does NOT toggle on tap the
+          way the prototype does: a tap on this screen is a remote click, so
+          swallowing it to hide a toolbar would break remote input. */}
+      {chromeVisible && (
+        <div className="mob-pc-chrome" data-testid="mobile-pc-chrome">
+          <button type="button" className="mob-pc-back" onClick={close} aria-label={t('common.back')}>
+            <ArrowLeft aria-hidden="true" />
+          </button>
+
+          <span
+            className={phase === 'error' || phase === 'busy' ? 'mob-pc-status mob-pc-status--error' : 'mob-pc-status'}
+            role="status"
+            aria-live="polite"
+            data-phase={phase}
+            data-testid="mobile-pc-state"
+          >
+            <span className={phase === 'active' ? 'mob-dot mob-dot--live' : 'mob-dot'} aria-hidden="true" />
+            <span>
+              {clipboardStatus || [
+                t(`mobile.pcControl.state.${phase}`),
+                status?.roundTripTimeMs !== undefined ? `${status.roundTripTimeMs}ms` : null,
+                status?.framesPerSecond !== undefined ? `${Math.round(status.framesPerSecond)}fps` : null,
+              ].filter(Boolean).join(' · ')}
+            </span>
+          </span>
+
+          <div className="mob-pc-cluster" role="toolbar" aria-label={t('mobile.pcControl.toolbar')}>
+            <span className="mob-pc-segment">
+              <button
+                type="button"
+                aria-pressed={mode === 'trackpad'}
+                onClick={() => selectMode('trackpad')}
+              >
+                <Touchpad aria-hidden="true" />{t('mobile.pcControl.trackpadShort')}
+              </button>
+              <button
+                type="button"
+                aria-pressed={mode === 'direct'}
+                onClick={() => selectMode('direct')}
+              >
+                <MousePointer2 aria-hidden="true" />{t('mobile.pcControl.directShort')}
+              </button>
+            </span>
+            {displays.length > 1 && (
+              <label className="mobile-pc-display-select mob-pc-round">
+                <Monitor aria-hidden="true" />
+                <span className="sr-only">{t('mobile.pcControl.monitor')}</span>
+                <select
+                  value={selectedDisplayId ?? displays[0]?.id ?? ''}
+                  onChange={(event) => {
+                    presentationAdapterRef.current?.selectDisplay(event.target.value);
+                    setZoom(1);
+                    revealChrome();
+                  }}
+                >
+                  {displays.map((display) => <option key={display.id} value={display.id}>{display.name}</option>)}
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              className="mob-pc-round"
+              aria-pressed={keyboardOpen}
+              onClick={() => { setKeyboardOpen((open) => !open); revealChrome(); }}
+              aria-label={t('mobile.pcControl.keyboard')}
+            >
+              <Keyboard aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="mob-pc-round"
+              onClick={() => { void sendMobileClipboard(); revealChrome(); }}
+              aria-label={t('mobile.pcControl.sendClipboard')}
+            >
+              <ClipboardPaste aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="mob-pc-round"
+              onClick={() => { copyPcClipboard(); revealChrome(); }}
+              aria-label={t('mobile.pcControl.copyClipboard')}
+            >
+              <ClipboardCopy aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="mob-pc-round"
+              aria-pressed={extrasOpen}
+              onClick={() => { setExtrasOpen((open) => !open); revealChrome(); }}
+              aria-label={t('mobile.pcControl.specialKeys')}
+            >
+              <MoreHorizontal aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="mob-pc-round mob-pc-round--danger"
+              onClick={close}
+              aria-label={t('mobile.pcControl.disconnect')}
+            >
+              <Power aria-hidden="true" />
+            </button>
+          </div>
+
+          {extrasOpen && (
+            <div className="mob-pc-cluster mob-pc-cluster--extras" role="group" aria-label={t('mobile.pcControl.specialKeys')}>
+              <button type="button" className="mob-pc-round" onClick={() => { sendKey('Escape'); revealChrome(); }}>Esc</button>
+              <button type="button" className="mob-pc-round" onClick={() => { sendKey('Tab'); revealChrome(); }}>Tab</button>
+              <button type="button" className="mob-pc-round" onClick={() => { sendKey('Enter'); revealChrome(); }}>⏎</button>
+              <button
+                type="button"
+                className="mob-pc-round"
+                disabled={!capabilities?.ctrlAltDelete}
+                title={!capabilities?.ctrlAltDelete ? t('mobile.pcControl.cadUnavailable') : undefined}
+                onClick={() => { sendControl({ type: 'secure-attention' }); revealChrome(); }}
+              >
+                C+A+D
+              </button>
+            </div>
+          )}
+
+          {showHint && (
+            <p className="mob-pc-hint" role="note">
+              {mode === 'trackpad' ? t('mobile.pcControl.trackpadHelp') : t('mobile.pcControl.directHelp')}
+            </p>
+          )}
         </div>
       )}
       <input

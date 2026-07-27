@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+﻿import { existsSync } from 'node:fs';
 
 import {
   APK_PATH,
@@ -8,7 +8,7 @@ import {
   connectAndAuth,
   getWebViewHistorySnapshot,
   launchDesktop,
-  openHubDestination,
+  openShellDestination,
   runAdb,
   sleep,
   tapTestId,
@@ -22,16 +22,16 @@ interface Destination {
 }
 
 const DESTINATIONS: readonly Destination[] = [
-  { action: 'hub-sessions', view: 'session-switcher' },
-  { action: 'hub-files', view: 'mobile-file-view' },
-  { action: 'hub-stats', view: 'mobile-stats-view' },
-  { action: 'hub-openclaw', view: 'mobile-openclaw-view' },
-  { action: 'hub-settings', view: 'mobile-settings-view' },
+  { action: 'more-sessions', view: 'session-switcher' },
+  { action: 'more-files', view: 'mobile-file-view' },
+  { action: 'more-stats', view: 'mobile-stats-view' },
+  { action: 'more-openclaw', view: 'mobile-openclaw-view' },
+  { action: 'more-settings', view: 'mobile-settings-view' },
 ];
 
 async function openFromHub(destination: Destination): Promise<void> {
   console.log(`[apk-stabilization] opening ${destination.action}`);
-  await openHubDestination(destination.action, destination.view);
+  await openShellDestination(destination.action, destination.view);
   await sleep(600); // cross the history registration task boundary
   console.log('[apk-stabilization] history:', JSON.stringify(await getWebViewHistorySnapshot()));
 }
@@ -41,7 +41,7 @@ async function androidBackToHub(closedView: string): Promise<void> {
   runAdb(['shell', 'input', 'keyevent', '4']);
   await sleep(500);
   await waitForTestIdHidden(closedView);
-  await waitForTestId('mobile-remote-hub');
+  await waitForTestId('mobile-home-view');
 }
 
 async function main(): Promise<void> {
@@ -54,13 +54,13 @@ async function main(): Promise<void> {
 
     // Keep the OpenClaw destination visible even when the fixture machine has
     // no CLI. The page must then render its typed unavailable guidance.
-    await openFromHub({ action: 'hub-settings', view: 'mobile-settings-view' });
+    await openFromHub({ action: 'more-settings', view: 'mobile-settings-view' });
     await tapTestId('settings-category-integrations');
     await tapTestId('settings-openclaw-mode-on');
     await tapTestId('mobile-settings-close');
     await waitForTestId('settings-category-integrations');
     await tapTestId('mobile-settings-close');
-    await waitForTestId('mobile-remote-hub');
+    await waitForTestId('mobile-home-view');
     await sleep(600);
     console.log('[apk-stabilization] post-settings history:', JSON.stringify(await getWebViewHistorySnapshot()));
 
@@ -70,12 +70,12 @@ async function main(): Promise<void> {
     }
 
     // Back closes the appearance sheet before it can leave the hub root.
-    await openFromHub({ action: 'hub-appearance', view: 'theme-menu' });
+    await openFromHub({ action: 'more-theme', view: 'theme-menu' });
     await androidBackToHub('theme-menu');
 
     // A Settings category is an internal layer: first Back returns to the
     // Settings index, then a second Back returns to the hub.
-    await openFromHub({ action: 'hub-settings', view: 'mobile-settings-view' });
+    await openFromHub({ action: 'more-settings', view: 'mobile-settings-view' });
     await tapTestId('settings-category-general');
     runAdb(['shell', 'input', 'keyevent', '4']);
     await waitForTestId('settings-category-general');

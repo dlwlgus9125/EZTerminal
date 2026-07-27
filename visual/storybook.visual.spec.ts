@@ -480,8 +480,8 @@ test.describe("mobile-width Storybook visual contracts", () => {
             "true",
           );
           if (visualCase.surface === "hub") {
-            await expect(page.getByTestId("mobile-remote-hub")).toBeVisible();
-            await expect(page.getByTestId("hub-pc-control")).toBeVisible();
+            await expect(page.getByTestId("mobile-home-view")).toBeVisible();
+            await expect(page.getByTestId("home-pc-control")).toBeVisible();
           } else {
             await expect(page.getByTestId("mobile-settings-view")).toBeVisible();
           }

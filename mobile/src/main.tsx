@@ -17,6 +17,7 @@ import '../../src/renderer/mobile-shared.css';
 import '../../src/renderer/ui/styles.css';
 import './mobile.css';
 import './workbench.css';
+import './mobile-shell.css';
 
 // Keep theme/font hydration in this eager entrypoint. MobileWorkspace is lazy,
 // so putting these side effects in that chunk would make the first loadTheme()

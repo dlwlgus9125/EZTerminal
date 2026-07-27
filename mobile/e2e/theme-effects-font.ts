@@ -1,4 +1,4 @@
-/**
+﻿/**
  * theme-effects-font Wave 3 (mobile) — e2e (theme-effects-font plan M4).
  *
  * Runs against the same real desktop app + Android emulator setup as
@@ -62,7 +62,7 @@ import {
   createTerminalSession,
   getTestIdTextContent,
   launchDesktop,
-  openHubDestination,
+  openShellDestination,
   pollLogcat,
   runAdb,
   setTestIdTextValue,
@@ -118,7 +118,7 @@ async function main(): Promise<void> {
     // ThemeMenu's fixed overlay is unreliable in native accessibility dumps,
     // so use the WebView test-id path for every import interaction.
     console.log('[theme-e2e] opening the theme sheet and importing a custom theme...');
-    await openHubDestination('hub-appearance', 'theme-menu');
+    await openShellDestination('more-theme', 'theme-menu');
     await setTestIdTextValue('theme-menu-import-textarea', CUSTOM_THEME_JSON);
     await tapTestId('theme-menu-import-btn');
     const importOutcome = await waitForAnyTestId(
@@ -139,7 +139,7 @@ async function main(): Promise<void> {
 
     // ── b. FONT + c. EFFECTS ────────────────────────────────────────────
     console.log('[theme-e2e] opening Settings...');
-    await openHubDestination('hub-settings', 'mobile-settings-view');
+    await openShellDestination('more-settings', 'mobile-settings-view');
     await tapTestId('settings-category-appearance');
 
     console.log('[theme-e2e] checking the Scanlines toggle is present and OFF by default...');
@@ -162,8 +162,8 @@ async function main(): Promise<void> {
     await tapTestId('mobile-settings-close');
     await waitForTestId('settings-category-appearance');
     await tapTestId('mobile-settings-close');
-    await waitForTestId('mobile-remote-hub');
-    await openHubDestination('hub-settings', 'mobile-settings-view');
+    await waitForTestId('mobile-home-view');
+    await openShellDestination('more-settings', 'mobile-settings-view');
     await tapTestId('settings-category-appearance');
     await waitForTestIdAttribute('settings-font-fira-code', 'aria-pressed', 'true');
     await waitForTestIdAttribute('settings-effect-scanlines', 'aria-pressed', 'true');

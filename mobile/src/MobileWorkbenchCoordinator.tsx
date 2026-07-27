@@ -15,17 +15,28 @@ export function MobileWorkbenchCoordinator({
   terminal,
   page,
   overlays,
+  navigation,
   terminalActive,
   destinationActive,
+  tabRootActive,
   onRequestRoot,
+  onRequestTabRoot,
   onRequestTerminal,
 }: {
   readonly terminal: ReactNode;
   readonly page?: ReactNode;
   readonly overlays?: ReactNode;
+  /** Persistent shell navigation (tab bar / rail). Rendered outside both the
+   * terminal and page layers so a tab switch never remounts it. */
+  readonly navigation?: ReactNode;
   readonly terminalActive?: boolean;
   readonly destinationActive?: boolean;
+  /** True while the shell is parked on a non-root tab. Owns the Back stop
+   * BELOW any open sub-page, which is why the coordinator (rather than each
+   * screen) registers it. */
+  readonly tabRootActive?: boolean;
   readonly onRequestRoot?: () => void;
+  readonly onRequestTabRoot?: () => void;
   /** @deprecated Use onRequestRoot for the hub-centred shell. */
   readonly onRequestTerminal?: () => void;
 }): JSX.Element {
@@ -35,9 +46,12 @@ export function MobileWorkbenchCoordinator({
         terminal={terminal}
         page={page}
         overlays={overlays}
+        navigation={navigation}
         terminalActive={terminalActive}
         destinationActive={destinationActive}
+        tabRootActive={tabRootActive}
         onRequestRoot={onRequestRoot}
+        onRequestTabRoot={onRequestTabRoot}
         onRequestTerminal={onRequestTerminal}
       />
     </MobileNavigationHistoryProvider>
@@ -48,28 +62,38 @@ function MobileWorkbenchLayers({
   terminal,
   page,
   overlays,
+  navigation: navigationSlot,
   terminalActive,
   destinationActive,
+  tabRootActive,
   onRequestRoot,
+  onRequestTabRoot,
   onRequestTerminal,
 }: {
   readonly terminal: ReactNode;
   readonly page?: ReactNode;
   readonly overlays?: ReactNode;
+  readonly navigation?: ReactNode;
   readonly terminalActive?: boolean;
   readonly destinationActive?: boolean;
+  readonly tabRootActive?: boolean;
   readonly onRequestRoot?: () => void;
+  readonly onRequestTabRoot?: () => void;
   readonly onRequestTerminal?: () => void;
 }): JSX.Element {
   const terminalLayerRef = useRef<HTMLDivElement | null>(null);
   const pageIsolationOwnerRef = useRef(Symbol('mobile-page-isolation'));
-  const pageLayerId = `mobile-page-${useId()}`;
+  const layerScope = useId();
+  const tabLayerId = `mobile-tab-${layerScope}`;
+  const pageLayerId = `mobile-page-${layerScope}`;
   const pageActive = page !== undefined && page !== null;
   const resolvedTerminalActive = terminalActive ?? !pageActive;
   const resolvedDestinationActive = destinationActive ?? pageActive;
   const navigation = useMobileNavigationHistory();
   const requestRootRef = useRef(onRequestRoot ?? onRequestTerminal ?? (() => undefined));
   requestRootRef.current = onRequestRoot ?? onRequestTerminal ?? (() => undefined);
+  const requestTabRootRef = useRef(onRequestTabRoot ?? (() => undefined));
+  requestTabRootRef.current = onRequestTabRoot ?? (() => undefined);
 
   useLayoutEffect(() => {
     const terminalLayer = terminalLayerRef.current;
@@ -78,6 +102,17 @@ function MobileWorkbenchLayers({
     setElementIsolated(terminalLayer, owner, !resolvedTerminalActive);
     return () => setElementIsolated(terminalLayer, owner, false);
   }, [resolvedTerminalActive]);
+
+  // Declaration order IS Back order: the tab-root stop must be pushed before
+  // the sub-page stop so Back unwinds sub-page -> tab root -> delegate.
+  useEffect(() => {
+    if (!tabRootActive) return;
+    return navigation.pushLayer({
+      id: tabLayerId,
+      kind: 'page',
+      onBack: () => requestTabRootRef.current(),
+    });
+  }, [navigation, tabLayerId, tabRootActive]);
 
   useEffect(() => {
     if (!resolvedDestinationActive) return;
@@ -94,6 +129,7 @@ function MobileWorkbenchLayers({
       data-page-active={pageActive ? 'true' : 'false'}
       data-destination-active={resolvedDestinationActive ? 'true' : 'false'}
       data-terminal-active={resolvedTerminalActive ? 'true' : 'false'}
+      data-nav={navigationSlot ? 'true' : 'false'}
     >
       <div
         ref={terminalLayerRef}
@@ -107,6 +143,7 @@ function MobileWorkbenchLayers({
           {page}
         </section>
       )}
+      {navigationSlot}
       <div className="mobile-sheet-dialog-host" data-testid="mobile-sheet-dialog-host">
         {overlays}
       </div>

@@ -834,6 +834,15 @@ export function getSelectedTestIdIndex(testId: string): Promise<number> {
     .findIndex((node) => node.getAttribute('aria-selected') === 'true')`);
 }
 
+/** Index of the first matching node whose `attribute` reads "true". Used where
+ * the active item is not an ARIA-selected control — the mounted terminal
+ * layers, for instance, are keep-alive panels rather than tabs. */
+export function getActiveTestIdIndex(testId: string, attribute = 'data-active'): Promise<number> {
+  return evaluateWebView<number>(`[...document.querySelectorAll('[data-testid]')]
+    .filter((node) => node.getAttribute('data-testid') === ${JSON.stringify(testId)})
+    .findIndex((node) => node.getAttribute(${JSON.stringify(attribute)}) === 'true')`);
+}
+
 function visibleTestIdExpression(testId: string, scrollIntoView = false): string {
   return `(() => {
     const nodes = [...document.querySelectorAll('[data-testid]')]
@@ -1445,49 +1454,70 @@ export async function connectAndAuth(token: string): Promise<void> {
   await submitConnectionOnce();
 }
 
+/** The authenticated shell's root tab. */
+export const SHELL_ROOT_TEST_ID = 'mobile-home-view';
+
 /** Submit a prepared ConnectScreen exactly once and require its first product
- * result to be the authenticated remote hub. Sharing this helper prevents individual RC
+ * result to be the authenticated Home tab. Sharing this helper prevents individual RC
  * scenarios from quietly re-introducing connection retries. */
 export async function submitConnectionOnce(): Promise<void> {
   console.log('[e2e] connecting (single attempt)...');
   await tapTestId('connect-submit');
   const outcome = await waitForAnyTestId(
-    ['mobile-remote-hub', 'connect-error', 'connect-protocol-incompatible'],
+    [SHELL_ROOT_TEST_ID, 'connect-error', 'connect-protocol-incompatible'],
     10000,
   );
-  if (outcome !== 'mobile-remote-hub') {
+  if (outcome !== SHELL_ROOT_TEST_ID) {
     throw new Error(`Connection failed on the only allowed attempt: ${outcome}`);
   }
   await assertColdConnectionUsedOneSocket();
 }
 
-/** Enters Terminal from the authenticated hub, creates a session through the
+/** Enters the Terminal tab from Home, creates a session through the
  * locale-independent header action, and waits for command input. */
 export async function createTerminalSession(): Promise<void> {
-  await waitForTestId('mobile-remote-hub', 30_000);
-  await tapTestId('hub-terminal');
+  await waitForTestId(SHELL_ROOT_TEST_ID, 30_000);
+  await tapTestId('shell-tab-terminal');
   await waitForTestId('workspace-hub-btn', 30_000);
   await tapTestId('tab-add-btn');
   await waitForTestId('mobile-session-view', 30_000);
 }
 
-/** Opens a full-screen destination from the remote hub with real Android taps.
- * A caller may begin in Terminal or at the hub; every retry re-observes that
- * state so a missed native tap cannot be mistaken for completed navigation. */
-export async function openHubDestination(
+/** Switches the terminal layer to the Nth mounted tab through the session
+ * sheet (which replaced the tab strip). Ordering is stable: tabs open on this
+ * device come first, in tab order. */
+export async function activateTerminalTab(index: number, timeoutMs = 15_000): Promise<void> {
+  await tapTestId('menu-btn', timeoutMs);
+  await waitForTestId('mobile-session-sheet', timeoutMs);
+  await tapTestIdAt('session-sheet-row', index, timeoutMs);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await getActiveTestIdIndex('terminal-tab-page') === index) return;
+    if (Date.now() > deadline) throw new Error(`Tab ${index + 1} did not become active`);
+    await sleep(200);
+  }
+}
+
+/** Opens a full-screen destination with real Android taps. `actionTestId` is
+ * either a tab-bar item (`shell-tab-*`) or a More-sheet row (`more-*`), in
+ * which case the sheet is opened first. A caller may begin on any tab; every
+ * retry re-observes that state so a missed native tap cannot be mistaken for
+ * completed navigation. */
+export async function openShellDestination(
   actionTestId: string,
   destinationTestId: string,
   timeoutMs = 30_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   const remaining = (): number => Math.max(250, deadline - Date.now());
+  const viaMoreSheet = actionTestId.startsWith('more-');
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= 3 && Date.now() < deadline; attempt += 1) {
     let state: string;
     try {
       state = await waitForAnyTestId(
-        [destinationTestId, actionTestId, 'mobile-remote-hub', 'workspace-hub-btn'],
+        [destinationTestId, actionTestId, 'shell-tab-more', SHELL_ROOT_TEST_ID, 'workspace-hub-btn'],
         Math.min(3_000, remaining()),
       );
     } catch (error) {
@@ -1496,17 +1526,17 @@ export async function openHubDestination(
     }
     if (state === destinationTestId) return;
 
-    if (state === 'workspace-hub-btn') {
+    if (viaMoreSheet && state !== actionTestId) {
       try {
-        await tapTestId('workspace-hub-btn', remaining());
+        await tapTestId('shell-tab-more', remaining());
         state = await waitForAnyTestId(
-          [destinationTestId, actionTestId, 'mobile-remote-hub'],
+          [destinationTestId, actionTestId],
           Math.min(5_000, remaining()),
         );
         if (state === destinationTestId) return;
       } catch (error) {
         lastError = error;
-        console.log(`[e2e] Hub return attempt ${attempt} did not settle: ${String(error)}`);
+        console.log(`[e2e] More sheet attempt ${attempt} did not settle: ${String(error)}`);
         continue;
       }
     }
@@ -1524,6 +1554,6 @@ export async function openHubDestination(
   }
 
   throw new Error(
-    `Unable to open ${destinationTestId} from hub action ${actionTestId} within ${timeoutMs}ms: ${String(lastError)}`,
+    `Unable to open ${destinationTestId} from action ${actionTestId} within ${timeoutMs}ms: ${String(lastError)}`,
   );
 }

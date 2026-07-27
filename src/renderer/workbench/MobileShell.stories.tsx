@@ -1,13 +1,16 @@
-import { ArrowLeft, List, Play, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronsUpDown, Play, Plus } from 'lucide-react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 
+import type { AgentActivitySnapshot } from '../../shared/agent';
 import { ConnectScreen } from '../../../mobile/src/ConnectScreen';
-import { MobileRemoteHub } from '../../../mobile/src/MobileRemoteHub';
+import { MobileHomeView } from '../../../mobile/src/MobileHomeView';
 import { MobileSettingsView } from '../../../mobile/src/MobileSettingsView';
+import { MobileTabBar } from '../../../mobile/src/MobileTabBar';
 import { MobileWorkbenchCoordinator } from '../../../mobile/src/MobileWorkbenchCoordinator';
 import { AppI18nProvider } from '../i18n';
-import { Button, Field, IconButton, Input, Status } from '../ui';
+import { Button, Field, Input, Status } from '../ui';
 import '../../../mobile/src/workbench.css';
+import '../../../mobile/src/mobile-shell.css';
 import './mobile-shell-story.css';
 
 type Locale = 'en' | 'ko';
@@ -49,29 +52,23 @@ function MobileTerminal({ locale }: { readonly locale: Locale }): JSX.Element {
   const copy = COPY[locale];
   return (
     <main className="mobile-workspace mobile-story-workspace" data-testid="mobile-workspace">
-      <header className="workspace-header">
-        <IconButton icon={ArrowLeft} size="sm" aria-label={copy.back} data-testid="workspace-hub-btn" />
-        <div className="tab-strip mobile-story-tabs" role="tablist" aria-label={copy.sessions}>
-          <button type="button" role="tab" aria-selected="true">{copy.terminal}</button>
-        </div>
-        <Button
-          className="workspace-new-tab-btn"
-          variant="secondary"
-          size="sm"
-          leadingIcon={<Plus />}
+      <header className="mob-term-head">
+        <button type="button" className="mob-icon-btn" aria-label={copy.back} data-testid="workspace-hub-btn">
+          <ChevronLeft aria-hidden="true" />
+        </button>
+        <button type="button" className="mob-term-head__session" aria-label={copy.sessions} data-testid="menu-btn">
+          <span className="mob-dot mob-dot--live" aria-hidden="true" />
+          <span className="mob-term-head__label">{copy.terminal}</span>
+          <ChevronsUpDown aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="mob-icon-btn mob-icon-btn--accent"
           aria-label={copy.newTerminal}
+          data-testid="tab-add-btn"
         >
-          <span className="workspace-action-label">{copy.newTerminal}</span>
-        </Button>
-        <Button
-          className="workspace-menu-btn"
-          variant="secondary"
-          size="sm"
-          leadingIcon={<List />}
-          aria-label={copy.sessions}
-        >
-          <span className="workspace-action-label">{copy.sessions}</span>
-        </Button>
+          <Plus aria-hidden="true" />
+        </button>
       </header>
       <section className="mobile-story-terminal" aria-label={copy.terminal}>
         <header className="mobile-story-session-header">
@@ -93,26 +90,53 @@ function MobileTerminal({ locale }: { readonly locale: Locale }): JSX.Element {
   );
 }
 
-function HubFixture(): JSX.Element {
+const STORY_AGENTS: AgentActivitySnapshot = {
+  revision: 1,
+  items: [
+    {
+      id: 'agent-1',
+      sessionId: 'session-1',
+      provider: 'claude',
+      cwd: 'C:/Workspace/ezterminal',
+      status: 'blocked',
+      createdAt: 0,
+      updatedAt: 0,
+    },
+    {
+      id: 'agent-2',
+      sessionId: 'session-2',
+      provider: 'codex',
+      cwd: 'C:/Workspace/docs',
+      status: 'working',
+      createdAt: 0,
+      updatedAt: 0,
+    },
+  ],
+};
+
+const STORY_SESSIONS = [
+  { session: { sessionId: 'session-1', cwd: 'C:/Workspace/ezterminal' }, open: true },
+  { session: { sessionId: 'session-2', cwd: 'C:/Workspace/docs' }, open: false },
+  { session: { sessionId: 'session-3', cwd: 'C:/Workspace/scratch' }, open: false },
+];
+
+function HomeFixture(): JSX.Element {
   return (
-    <MobileRemoteHub
+    <MobileHomeView
       connected
       connectionUrl="ws://100.64.0.10:7420"
       desktopControlSupported
-      sessionCount={3}
-      agentAttention={2}
+      sessions={STORY_SESSIONS}
+      activeSessionId="session-1"
+      agentSnapshot={STORY_AGENTS}
+      agentAttention={1}
       openclawVisible
       openclawState="running"
-      currentTheme="matrix"
       onOpenPcControl={() => undefined}
+      onOpenSession={() => undefined}
       onOpenTerminal={() => undefined}
-      onOpenSessions={() => undefined}
       onOpenAgents={() => undefined}
-      onOpenFiles={() => undefined}
-      onOpenStats={() => undefined}
-      onOpenAppearance={() => undefined}
       onOpenClaw={() => undefined}
-      onOpenSettings={() => undefined}
     />
   );
 }
@@ -147,15 +171,27 @@ function MobileShellStory({ locale, page }: MobileShellStoryProps): JSX.Element 
 
   const hubActive = page === 'hub';
   const terminalActive = page === 'terminal';
-  const currentPage = hubActive ? <HubFixture /> : page === 'settings' ? <SettingsFixture /> : undefined;
+  const currentPage = hubActive ? <HomeFixture /> : page === 'settings' ? <SettingsFixture /> : undefined;
   return (
     <AppI18nProvider locale={locale} languages={[locale]}>
       <MobileWorkbenchCoordinator
         terminal={<MobileTerminal locale={locale} />}
         page={currentPage}
+        navigation={(
+          <MobileTabBar
+            tab={terminalActive ? 'terminal' : 'home'}
+            agentAttention={1}
+            onSelectTab={() => undefined}
+            onOpenPcControl={() => undefined}
+            onOpenMore={() => undefined}
+            onOpenSettings={() => undefined}
+          />
+        )}
         terminalActive={terminalActive}
-        destinationActive={!hubActive}
+        destinationActive={page === 'settings'}
+        tabRootActive={terminalActive}
         onRequestRoot={() => undefined}
+        onRequestTabRoot={() => undefined}
       />
     </AppI18nProvider>
   );

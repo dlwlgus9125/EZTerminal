@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Reproduces the mobile process-restart path for a live Codex session:
  *
  *   create on mobile -> start Codex -> force-stop Android app -> relaunch
@@ -24,7 +24,7 @@ import {
   createTerminalSession,
   getVisibleXtermBufferText,
   launchDesktop,
-  openHubDestination,
+  openShellDestination,
   runAdb,
   setTestIdTextValue,
   sleep,
@@ -111,7 +111,7 @@ async function main(): Promise<void> {
 
     await waitForTestId('connect-screen', 45_000);
     await submitConnectionOnce();
-    await openHubDestination('hub-sessions', 'session-switcher');
+    await openShellDestination('more-sessions', 'session-switcher');
     await waitForTestId('session-open', 15_000);
     await tapTestId('session-open');
     await waitForTestId('mobile-session-view', 20_000);

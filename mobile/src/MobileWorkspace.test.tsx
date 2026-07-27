@@ -76,6 +76,18 @@ function renderWorkspace(transport: WsEzTerminalTransport): HTMLDivElement {
   return container;
 }
 
+function tap(el: HTMLElement, testId: string): void {
+  const target = el.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`);
+  if (!target) throw new Error(`missing [data-testid="${testId}"]`);
+  act(() => target.click());
+}
+
+/** The More sheet renders in the overlay host, outside `container`'s page
+ * shell but inside the same React tree — query the document for it. */
+function openMoreSheet(el: HTMLElement): void {
+  tap(el, 'shell-tab-more');
+}
+
 beforeEach(() => {
   localStorage.clear();
 });
@@ -89,26 +101,31 @@ afterEach(() => {
   Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true });
 });
 
-describe('MobileWorkspace — remote hub root', () => {
-  it('lands on the hub with every existing top-level capability reachable', () => {
+describe('MobileWorkspace — tab-bar shell root', () => {
+  it('lands on Home with every existing top-level capability reachable', () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'off');
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
 
-    expect(el.querySelector('[data-testid="mobile-remote-hub"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeTruthy();
     for (const testId of [
-      'hub-pc-control',
-      'hub-terminal',
-      'hub-sessions',
-      'hub-agents',
-      'hub-files',
-      'hub-stats',
-      'hub-appearance',
-      'hub-settings',
+      'shell-tab-home',
+      'shell-tab-terminal',
+      'shell-tab-pc',
+      'shell-tab-agents',
+      'shell-tab-more',
+      'shell-rail-settings',
+      'home-pc-control',
     ]) {
       expect(el.querySelector(`[data-testid="${testId}"]`)).toBeTruthy();
     }
-    expect(el.querySelector('[data-testid="hub-openclaw"]')).toBeNull();
+
+    openMoreSheet(el);
+    for (const testId of ['more-sessions', 'more-files', 'more-stats', 'more-theme', 'more-settings']) {
+      expect(el.querySelector(`[data-testid="${testId}"]`)).toBeTruthy();
+    }
+    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeNull();
+
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(true);
     expect(socket.sentKinds()).not.toContain('desktop-control-start');
   });
@@ -117,14 +134,15 @@ describe('MobileWorkspace — remote hub root', () => {
     const { transport, socket } = makeAuthedTransport(['desktop-control-v1']);
     const el = renderWorkspace(transport);
 
-    expect(el.querySelector<HTMLButtonElement>('[data-testid="hub-pc-control"]')?.disabled).toBe(false);
+    expect(el.querySelector<HTMLButtonElement>('[data-testid="home-pc-control"]')?.disabled).toBe(false);
     expect(socket.sentKinds()).not.toContain('desktop-control-start');
   });
 
-  it('updates the lightweight session count without opening Monitor', async () => {
+  it('lists live sessions on Home without opening Monitor', async () => {
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
-    expect(el.querySelector('[data-testid="hub-session-count"]')?.textContent).toBe('0');
+    expect(el.querySelectorAll('[data-testid="home-session-row"]')).toHaveLength(0);
+    expect(el.querySelector('[data-testid="home-sessions-empty"]')).toBeTruthy();
 
     await act(async () => {
       socket.triggerMessage({
@@ -136,36 +154,44 @@ describe('MobileWorkspace — remote hub root', () => {
       });
       await Promise.resolve();
     });
-    expect(el.querySelector('[data-testid="hub-session-count"]')?.textContent).toBe('2');
+    expect(el.querySelectorAll('[data-testid="home-session-row"]')).toHaveLength(2);
     expect(socket.sentKinds()).not.toContain('stats-subscribe');
   });
 
-  it('opens the preserved terminal with a compact semantic header and returns to the hub', () => {
+  it('opens the preserved terminal with a compact semantic header and returns Home', () => {
     const { transport } = makeAuthedTransport();
     const el = renderWorkspace(transport);
-    act(() => el.querySelector<HTMLButtonElement>('[data-testid="hub-terminal"]')!.click());
+    tap(el, 'shell-tab-terminal');
 
-    expect(el.querySelector('[data-testid="mobile-remote-hub"]')).toBeNull();
+    expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeNull();
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
-    for (const [testId, label, className] of [
-      ['workspace-hub-btn', 'Back', 'ez-ui-icon-button'],
-      ['tab-add-btn', 'New tab', 'ez-ui-button'],
-      ['menu-btn', 'Sessions', 'ez-ui-button'],
+    for (const [testId, label] of [
+      ['workspace-hub-btn', 'Back'],
+      ['tab-add-btn', 'New tab'],
+      ['menu-btn', 'Sessions'],
     ] as const) {
-      const button = el.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`);
-      expect(button?.classList.contains(className)).toBe(true);
-      expect(button?.getAttribute('aria-label')).toBe(label);
+      expect(el.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)?.getAttribute('aria-label')).toBe(label);
     }
 
-    act(() => el.querySelector<HTMLButtonElement>('[data-testid="workspace-hub-btn"]')!.click());
-    expect(el.querySelector('[data-testid="mobile-remote-hub"]')).toBeTruthy();
+    tap(el, 'workspace-hub-btn');
+    expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeTruthy();
   });
 
-  it('mode "on" shows OpenClaw on the hub regardless of availability', () => {
+  it('opens the session sheet from the terminal header', () => {
+    const { transport } = makeAuthedTransport();
+    const el = renderWorkspace(transport);
+    tap(el, 'shell-tab-terminal');
+    tap(el, 'menu-btn');
+    expect(el.querySelector('[data-testid="mobile-session-sheet"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="session-sheet-create"]')).toBeTruthy();
+  });
+
+  it('mode "on" shows OpenClaw in the More sheet regardless of availability', () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport } = makeAuthedTransport();
     const el = renderWorkspace(transport);
-    expect(el.querySelector('[data-testid="hub-openclaw"]')).toBeTruthy();
+    openMoreSheet(el);
+    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeTruthy();
   });
 
   it('mode "off" hides OpenClaw even if availability is pushed true', () => {
@@ -173,40 +199,46 @@ describe('MobileWorkspace — remote hub root', () => {
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
     act(() => socket.triggerMessage({ kind: 'openclaw-availability', visible: true }));
-    expect(el.querySelector('[data-testid="hub-openclaw"]')).toBeNull();
+    openMoreSheet(el);
+    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeNull();
   });
 
   it('mode "auto" follows the availability push', () => {
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
-    expect(el.querySelector('[data-testid="hub-openclaw"]')).toBeNull();
+    openMoreSheet(el);
+    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeNull();
 
     act(() => socket.triggerMessage({ kind: 'openclaw-availability', visible: true }));
-    expect(el.querySelector('[data-testid="hub-openclaw"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeTruthy();
 
     act(() => socket.triggerMessage({ kind: 'openclaw-availability', visible: false }));
-    expect(el.querySelector('[data-testid="hub-openclaw"]')).toBeNull();
+    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeNull();
   });
 
   it('reflects the pushed OpenClaw status without opening its detailed page', () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
+    openMoreSheet(el);
     const state = (): string | null => (
-      el.querySelector('[data-testid="hub-openclaw"] .mobile-hub-action__status')?.textContent ?? null
+      el.querySelector('[data-testid="more-openclaw-state"]')?.textContent ?? null
     );
-    expect(state()).toBeNull();
+    expect(state()).toBe('Checking');
     act(() => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } }));
-    expect(state()).toBe('running');
+    expect(state()).toBe('Running');
     act(() => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'stopped', port: 18789 } }));
-    expect(state()).toBe('stopped');
+    expect(state()).toBe('Stopped');
   });
 
-  it('opens the lazy OpenClaw page directly from the hub with immediate feedback', async () => {
+  it('surfaces the running gateway as a Home shortcut and opens the lazy page from it', async () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
-    const { transport } = makeAuthedTransport();
+    const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
-    act(() => el.querySelector<HTMLButtonElement>('[data-testid="hub-openclaw"]')!.click());
+    expect(el.querySelector('[data-testid="home-openclaw"]')).toBeNull();
+
+    act(() => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } }));
+    tap(el, 'home-openclaw');
     expect(el.querySelector('[data-testid="mobile-page-shell"]')).toBeTruthy();
     await act(async () => {
       for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -317,23 +349,22 @@ describe('MobileWorkspace - worktree open', () => {
     });
 
     expect(el.querySelector('[data-testid="mobile-session-view"]')).toBeTruthy();
-    expect(el.querySelectorAll('[data-testid="tab-pill"]')).toHaveLength(1);
     expect(el.querySelector('[data-testid="workspace-hub-btn"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="stats-btn"]')).toBeNull();
     expect(el.querySelector('[data-testid="theme-btn"]')).toBeNull();
     expect(el.querySelector('[data-testid="settings-btn"]')).toBeNull();
-    expect(el.querySelector('[data-testid="menu-btn"]')?.classList.contains('workspace-wide-action')).toBe(false);
     expect(el.querySelector('[data-testid="files-btn"]')).toBeNull();
     expect(el.querySelector('[data-testid="agents-btn"]')).toBeNull();
     expect(el.querySelector('[data-testid="workspace-more-btn"]')).toBeNull();
 
     Object.defineProperty(window, 'innerWidth', { value: 360, configurable: true });
     act(() => window.dispatchEvent(new Event('resize')));
-    act(() => el.querySelector<HTMLButtonElement>('[data-testid="workspace-hub-btn"]')!.click());
-    expect(el.querySelector('[data-testid="hub-sessions"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="hub-files"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="hub-stats"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="hub-appearance"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="hub-settings"]')).toBeTruthy();
+    tap(el, 'workspace-hub-btn');
+    openMoreSheet(el);
+    expect(el.querySelector('[data-testid="more-sessions"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="more-files"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="more-stats"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="more-theme"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="more-settings"]')).toBeTruthy();
   });
 });
