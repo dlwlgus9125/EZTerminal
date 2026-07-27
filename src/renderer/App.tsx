@@ -1092,8 +1092,13 @@ export function App(): JSX.Element {
             alternateLabel: t('safetyDialog.keepInBackground'),
             onAlternate: () => {
               setCloseDialog(null);
+              // Hand the session over before the pane goes: closing alone would
+              // still let unmount tear it down, which would make this button a
+              // promise the app does not keep.
+              const kept = getPaneHandle(panelId)?.releaseSessionOwnership() ?? null;
               close();
               focusActivePane();
+              if (kept) pushToast({ title: t('safetyDialog.keptRunning'), variant: 'info' });
             },
             onConfirm: () => {
               const latest = getPaneHandle(panelId)?.getSnapshot();
@@ -1116,7 +1121,7 @@ export function App(): JSX.Element {
           },
       );
     },
-    [agentSessionIds, confirmRiskyPaneClose, focusActivePane, t],
+    [agentSessionIds, confirmRiskyPaneClose, focusActivePane, pushToast, t],
   );
   const paneCloseContextValue = useMemo<PaneCloseContextValue>(() => ({ requestPanelClose }), [requestPanelClose]);
 
@@ -1912,33 +1917,31 @@ export function App(): JSX.Element {
     if (quickOpenMode === null) return;
     let alive = true;
     void window.ezterminal.listSessions().then((sessions) => {
-      if (!alive) return;
-      // Compared against what panes actually display, not against tracker
-      // bookkeeping: "no pane is showing this session" is the definition, and
-      // reading it from the panes keeps the two from disagreeing.
-      const shown = new Set(
-        listPaneSnapshots()
-          .map((pane) => pane.sessionId)
-          .filter((id): id is string => id !== null),
-      );
-      setBackgroundSessions(sessions.filter((session) => !shown.has(session.sessionId)));
+      if (alive) setBackgroundSessions(sessions);
     }, () => undefined);
     return () => {
       alive = false;
     };
   }, [quickOpenMode]);
 
-  const backgroundSessionRows = useMemo<readonly AppQuickOpenRow[]>(
-    () =>
-      backgroundSessions.map((session) => ({
+  // Filtered at render against the current panes rather than inside the fetch
+  // callback. "No pane is showing this session" is the definition, and pane
+  // teardown is asynchronous: resolving the list first would race the removal
+  // and hide a session that had in fact just been left running.
+  const backgroundSessionRows = useMemo<readonly AppQuickOpenRow[]>(() => {
+    const shown = new Set(
+      paneSnapshots.map((pane) => pane.sessionId).filter((id): id is string => id !== null),
+    );
+    return backgroundSessions
+      .filter((session) => !shown.has(session.sessionId))
+      .map((session) => ({
         id: session.sessionId,
         kind: 'background-session',
         title: session.cwd || t('commandCenter.cwdUnavailable'),
         detail: t('commandCenter.reclaimSession'),
         target: { type: 'background-session', sessionId: session.sessionId },
-      })),
-    [backgroundSessions, t],
-  );
+      }));
+  }, [backgroundSessions, paneSnapshots, t]);
 
   const paneRows = useMemo<readonly AppQuickOpenRow[]>(
     () =>

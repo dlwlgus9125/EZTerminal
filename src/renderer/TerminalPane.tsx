@@ -643,6 +643,15 @@ export function TerminalPane({
         handledSessionDestroyRef.current = destroyedSessionId;
         return true;
       },
+      releaseSessionOwnership: (): string | null => {
+        const snapshot = getSnapshot();
+        if (!snapshot.destroysSessionOnClose || snapshot.sessionId === null) return null;
+        // The same flag a guarded destroy sets, for the same reason: unmount
+        // must not issue a teardown for a session somebody else now owns. Here
+        // "somebody else" is the user, who asked to keep it running.
+        handledSessionDestroyRef.current = snapshot.sessionId;
+        return snapshot.sessionId;
+      },
       insertText: (text): PaneActionResult => {
         if (sessionDead) return { ok: false, reason: 'dead' };
         setCommand((previous) =>

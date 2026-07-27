@@ -48,6 +48,10 @@ export interface PaneHandle {
   /** Called only after guarded destruction was acknowledged (or shared-fate
    * death is known), so unmount does not issue a redundant second destroy. */
   markSessionDestroyHandled(destroyedSessionId: string): boolean;
+  /** Give up ownership of the bound session so unmount detaches instead of
+   * destroying it. Returns the session left running, or null if this pane owns
+   * none. Used by "keep running", which closes the pane and leaves the work. */
+  releaseSessionOwnership(): string | null;
   insertText(text: string): PaneActionResult;
   runText(text: string): PaneActionResult;
   pasteToPty(text: string): PaneActionResult;

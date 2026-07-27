@@ -90,6 +90,7 @@ export const appResources = {
         terminalStateUnavailableDescription:
           'EZTerminal could not verify whether closing this pane would stop an active session. Close is blocked until its state can be checked.',
         keepInBackground: 'Keep running',
+        keptRunning: 'Session kept running — reopen it from the Command Center',
         closeActiveTitle: 'Close active terminal?',
         closeActiveDescription: 'Closing this pane destroys its session, including {{risk}}.',
         closeTerminal: 'Close terminal',
@@ -1280,6 +1281,7 @@ export const appResources = {
         terminalStateUnavailableDescription:
           'EZTerminal에서 이 창을 닫을 때 활성 세션이 중단되는지 확인할 수 없습니다. 상태를 확인할 때까지 닫기가 차단됩니다.',
         keepInBackground: '계속 실행',
+        keptRunning: '세션을 계속 실행합니다 — 명령 센터에서 다시 열 수 있습니다',
         closeActiveTitle: '활성 터미널을 닫으시겠습니까?',
         closeActiveDescription: '이 창을 닫으면 세션과 다음 작업이 종료됩니다: {{risk}}.',
         closeTerminal: '터미널 닫기',
