@@ -6,6 +6,7 @@ import { ConnectionInfoPanel } from '../ConnectionInfoPanel';
 import { PairingQrDialog } from '../PairingQrDialog';
 import { SshForwardSettings } from '../SshForwardSettings';
 import { RemoteDesktopStatusCard, useRemoteDesktopHostStatus } from '../RemoteDesktopStatusCard';
+import { rendererCapabilities } from '../capability-access';
 import { useAppTranslation } from '../i18n';
 import { RemoteDeviceRoster } from './RemoteDeviceRoster';
 import { RemoteTopology } from './RemoteTopology';
@@ -18,6 +19,7 @@ export function RemotePanel(): JSX.Element {
   const [code, setCode] = useState<PairingCode | null>(null);
   const [redeemed, setRedeemed] = useState(false);
   const [endpoint, setEndpoint] = useState('');
+  const [listening, setListening] = useState(false);
 
   useEffect(() => {
     const desktop = window.ezterminalDesktop;
@@ -32,12 +34,16 @@ export function RemotePanel(): JSX.Element {
   }, []);
 
   // The first advertised URL is the one the pairing QR should carry: it is
-  // what the desktop itself tells a user to type.
-  useEffect(() => {
-    void window.ezterminal.getRemoteConnectionInfo()
-      .then((info) => setEndpoint(info.urls[0] ?? ''))
-      .catch(() => undefined);
-  }, [qrOpen]);
+  // what the desktop itself tells a user to type. `listening` gates the card:
+  // a code issued while the bridge is off is a code nothing can redeem, and
+  // offering one would be a working-looking button that cannot work.
+  useEffect(() => rendererCapabilities.remotePairing.observe({
+    onConnectionInfo: (info) => setEndpoint(info.urls[0] ?? ''),
+    onRuntime: (runtime) => setListening(runtime.state === 'running'),
+    onSecurity: () => undefined,
+    onToken: () => undefined,
+    onError: () => setListening(false),
+  }), []);
 
   const issue = useCallback((): void => {
     setRedeemed(false);
@@ -52,6 +58,8 @@ export function RemotePanel(): JSX.Element {
         <button
           type="button"
           className="remote-pairing-card"
+          disabled={!listening}
+          title={listening ? undefined : t('pairing.unavailable')}
           onClick={() => {
             setQrOpen(true);
             if (!code) issue();
@@ -60,7 +68,7 @@ export function RemotePanel(): JSX.Element {
         >
           <QrCode aria-hidden="true" />
           <b>{t('pairing.card')}</b>
-          <span>{t('pairing.cardHint')}</span>
+          <span>{listening ? t('pairing.cardHint') : t('pairing.unavailable')}</span>
         </button>
         <RemoteDesktopStatusCard />
       </div>

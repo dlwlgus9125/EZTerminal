@@ -2817,8 +2817,18 @@ body {
   cursor: pointer;
 }
 
-.remote-pairing-card:hover {
+.remote-pairing-card:hover:not(:disabled) {
   box-shadow: var(--ui-glow-box);
+}
+
+.remote-pairing-card:disabled {
+  border-color: var(--ui-border-subtle);
+  background: var(--ui-surface-inset);
+  cursor: not-allowed;
+}
+
+.remote-pairing-card:disabled b {
+  color: var(--ui-text-muted);
 }
 
 .remote-pairing-card b {
