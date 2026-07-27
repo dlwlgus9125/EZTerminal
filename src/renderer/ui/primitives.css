@@ -550,6 +550,21 @@
   margin: var(--ui-space-1);
 }
 
+/* Shared modal entry. Declared here because both the shared Dialog and the
+   Command Center use it, and --ui-motion-modal collapses to 0ms under reduced
+   motion so neither needs its own media query. */
+@keyframes ez-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .ez-ui-dialog-backdrop {
   align-items: center;
   background: var(--ui-backdrop);
