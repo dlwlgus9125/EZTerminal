@@ -1224,11 +1224,47 @@
   line-height: 1.5;
 }
 
+/* The pending call, verbatim. Wrapping is allowed here — on a phone the
+   alternative is a command the reader can only see the first third of. */
+.mob-agent-card__command {
+  display: block;
+  margin-top: 8px;
+  padding: 7px 9px;
+  max-block-size: 7rem;
+  overflow-y: auto;
+  border-radius: 7px;
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-terminal);
+  font-size: 0.688rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.mob-agent-card__command[data-risk='danger'] {
+  border: 1px solid var(--mob-danger-line);
+}
+
 .mob-agent-card__actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 7px;
   margin-top: 10px;
+}
+
+.mob-agent-diff {
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 9px;
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-secondary);
+  font-family: var(--ui-font-terminal);
+  font-size: 0.688rem;
+  line-height: 1.6;
+  white-space: pre;
 }
 
 .mob-agent-card__time {

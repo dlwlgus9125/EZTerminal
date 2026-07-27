@@ -41,6 +41,7 @@ import type {
 } from './agent';
 import type { TerminalFileLocationRequest, TerminalFileLocationResult } from './terminal-file-location';
 import type { WorktreeRequest, WorktreeResult } from './worktree';
+import type { GitDiffResult, GitDirectoryStatus } from './git-status';
 import type {
   OpenClawAgentSession,
   OpenClawCoreConfig,
@@ -355,6 +356,18 @@ export interface WorktreeRequestMessage {
   readonly request: WorktreeRequest;
 }
 
+export interface GitStatusRequest {
+  readonly kind: 'git-status';
+  readonly requestId: string;
+  readonly directory: string;
+}
+
+export interface GitDiffRequest {
+  readonly kind: 'git-diff';
+  readonly requestId: string;
+  readonly directory: string;
+}
+
 // ── File explorer (file-explorer plan, M3) ───────────────────────────────────
 // Mirrors the desktop drawer's IPC surface (src/shared/ipc.ts's 8 members),
 // framed for the wire — `FileService` on main is the single fs authority for
@@ -552,6 +565,8 @@ export type ClientToServerMessage =
   | AgentSnapshotRequest
   | AgentFollowupRequest
   | AgentDecisionRequest
+  | GitStatusRequest
+  | GitDiffRequest
   | WorktreeRequestMessage
   | FileListRequest
   | FileRootsRequest
@@ -768,6 +783,18 @@ export interface AgentDecisionReply {
   readonly kind: 'agent-decision-reply';
   readonly requestId: string;
   readonly result: AgentDecisionResult;
+}
+
+export interface GitStatusReply {
+  readonly kind: 'git-status-reply';
+  readonly requestId: string;
+  readonly status: GitDirectoryStatus;
+}
+
+export interface GitDiffReply {
+  readonly kind: 'git-diff-reply';
+  readonly requestId: string;
+  readonly result: GitDiffResult;
 }
 
 /** One 1Hz stats push while this connection has `stats-visible:true`. */
@@ -990,6 +1017,8 @@ export type ServerToClientMessage =
   | AgentSnapshotMessage
   | AgentFollowupReply
   | AgentDecisionReply
+  | GitStatusReply
+  | GitDiffReply
   | WorktreeReplyMessage
   | StatsUpdateMessage
   | StatsHistoryReply

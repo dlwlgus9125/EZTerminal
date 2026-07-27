@@ -2678,6 +2678,174 @@ body {
   }
 }
 
+/* The pending call itself: what the agent wants to run, how bad it would be,
+   and how long the window stays open. */
+.agent-approval {
+  margin-top: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+}
+
+.agent-approval[data-risk='danger'] {
+  border-color: color-mix(in srgb, var(--ui-danger) 55%, var(--ui-border-mid));
+  background: var(--ui-danger-muted);
+}
+
+.agent-approval[data-risk='write'] {
+  border-color: color-mix(in srgb, var(--ui-warning) 55%, var(--ui-border-mid));
+  background: var(--ui-warning-muted);
+}
+
+.agent-approval-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--ui-font-size-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ui-text-muted);
+}
+
+.agent-approval-risk {
+  color: var(--ui-text-secondary);
+  font-weight: 700;
+}
+
+.agent-approval[data-risk='danger'] .agent-approval-risk {
+  color: var(--ui-danger);
+}
+
+.agent-approval[data-risk='write'] .agent-approval-risk {
+  color: var(--ui-warning);
+}
+
+.agent-approval-tool {
+  font-family: var(--ui-font-terminal);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.agent-approval-countdown {
+  margin-inline-start: auto;
+  font-family: var(--ui-font-terminal);
+  letter-spacing: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The command is machine text and is never wrapped into ambiguity: a broken
+   line could read as two commands. */
+.agent-approval-command {
+  display: block;
+  padding: 7px 9px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-canvas);
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-block-size: 8rem;
+  overflow-y: auto;
+}
+
+.agent-approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agent-approval-expired {
+  margin: 0;
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-text-secondary);
+}
+
+.agent-diff {
+  margin: 0;
+  max-block-size: 60vh;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-canvas);
+  color: var(--ui-text-secondary);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-xs);
+  line-height: 1.6;
+  white-space: pre;
+}
+
+.agent-diff-note {
+  margin: 8px 0 0;
+  font-size: var(--ui-font-size-xs);
+  color: var(--ui-text-muted);
+}
+
+/* The pane-level echo of the approval card. One row, because it sits above a
+   composer that must not be pushed off screen. */
+.pane-approval {
+  flex: none;
+  margin: 0 var(--ui-pane-inset) 6px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-inline-size: 0;
+  border: 1px solid color-mix(in srgb, var(--ui-warning) 55%, var(--ui-border-mid));
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-warning-muted);
+  font-size: var(--ui-font-size-xs);
+}
+
+.pane-approval[data-risk='danger'] {
+  border-color: color-mix(in srgb, var(--ui-danger) 55%, var(--ui-border-mid));
+  background: var(--ui-danger-muted);
+}
+
+.pane-approval-risk {
+  flex: none;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: var(--ui-font-size-2xs);
+  color: var(--ui-warning);
+}
+
+.pane-approval[data-risk='danger'] .pane-approval-risk {
+  color: var(--ui-danger);
+}
+
+.pane-approval-command {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  font-family: var(--ui-font-terminal);
+  color: var(--ui-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pane-approval-actions {
+  flex: none;
+  display: flex;
+  gap: 6px;
+}
+
+.agent-hub-footer {
+  flex: none;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ui-border-subtle);
+  display: flex;
+  gap: 8px;
+}
+
 .agent-progress {
   margin-top: 8px;
   display: flex;
@@ -2960,6 +3128,15 @@ body {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
+}
+
+/* Explanatory copy under a setting whose consequence is not obvious from its
+   label — here, what happens when the gate cannot answer in time. */
+.settings-hint {
+  margin: 4px 0 0;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+  line-height: 1.6;
 }
 
 .settings-agent-generic-head {

@@ -25,6 +25,7 @@ import type {
   WorktreeRequestOrigin,
   WorktreeResult,
 } from './worktree';
+import type { GitDiffResult, GitDirectoryStatus } from './git-status';
 import type { ThemeMod } from './theme-schema';
 import type {
   AgentActivitySnapshot,
@@ -1166,6 +1167,13 @@ export interface EzTerminalApi {
 
   /** Main-owned Git worktree operations. Mobile is restricted to list/open. */
   executeWorktree: (request: WorktreeRequest) => Promise<WorktreeResult>;
+
+  // ── Git working tree (read-only) ────────────────────────────────────────
+  /** Branch and per-file change counts for one directory. Returns an untracked
+   * result rather than an error when the directory is not in a work tree. */
+  getGitStatus: (directory: string) => Promise<GitDirectoryStatus>;
+  /** The directory's uncommitted diff against HEAD, bounded. */
+  getGitDiff: (directory: string) => Promise<GitDiffResult>;
 }
 
 // ── Desktop-only preload bridge API (theme-effects-font M3) ──────────────────

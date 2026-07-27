@@ -181,6 +181,14 @@ const api: EzTerminalApi = {
   ): Promise<import('../shared/agent').AgentDecisionResult> =>
     ipcRenderer.invoke('agents:decide', activityId, decision),
 
+  // Read-only Git working-tree queries (explorer tags, branch, approval diff).
+  getGitStatus: (
+    directory: string,
+  ): Promise<import('../shared/git-status').GitDirectoryStatus> =>
+    ipcRenderer.invoke('git:status', directory),
+  getGitDiff: (directory: string): Promise<import('../shared/git-status').GitDiffResult> =>
+    ipcRenderer.invoke('git:diff', directory),
+
   // Layout persistence (Track A ③): thin invoke wrappers — main validates all.
   loadLayout: () => ipcRenderer.invoke('layout:load'),
   saveLayout: (rawLayout: unknown) => ipcRenderer.invoke('layout:save', rawLayout),

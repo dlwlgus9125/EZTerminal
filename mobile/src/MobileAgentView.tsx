@@ -4,12 +4,16 @@ import { useEffect, useMemo, useState } from 'react';
 import type {
   AgentActivity,
   AgentActivitySnapshot,
+  AgentDecision,
+  AgentDecisionResult,
   AgentFollowupResult,
   AgentProvider,
   AgentStatus,
 } from '../../src/shared/agent';
+import type { GitDiffResult } from '../../src/shared/git-status';
 import { formatCwd } from '../../src/renderer/format-cwd';
 import { useAppTranslation } from '../../src/renderer/i18n';
+import { MobileActionSheet } from './MobileActionSheet';
 import { useMobileToast } from './MobileToast';
 
 const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'waiting']);
@@ -58,9 +62,11 @@ function sortRecent(a: AgentActivity, b: AgentActivity): number {
  * alone, since this is a presentation split, not a data one: both read the
  * same `AgentActivitySnapshot` and use the same follow-up call.
  *
- * There is no "approve" verb in the agent contract, so the prototype's
- * approve/diff pair maps to the two real affordances: focus the session that
- * is blocked, and send a follow-up to one that is waiting.
+ * Approve and deny answer the permission hook the desktop is holding open for
+ * that agent; "view diff" shows its uncommitted work. When no hook is parked —
+ * an older desktop, an ungated provider, or a window that has already closed —
+ * the card falls back to the two affordances that always exist: focus the
+ * blocked session, and follow up on a waiting one.
  */
 export function MobileAgentView({
   snapshot,
@@ -68,12 +74,16 @@ export function MobileAgentView({
   onBack,
   onFocusSession,
   onSendFollowup,
+  onDecideApproval,
+  onLoadDiff,
 }: {
   readonly snapshot: AgentActivitySnapshot;
   readonly disconnected?: boolean;
   readonly onBack: () => void;
   readonly onFocusSession: (sessionId: string) => void;
   readonly onSendFollowup: (activityId: string, text: string) => Promise<AgentFollowupResult>;
+  readonly onDecideApproval?: (activityId: string, decision: AgentDecision) => Promise<AgentDecisionResult>;
+  readonly onLoadDiff?: (directory: string) => Promise<GitDiffResult>;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const showToast = useMobileToast();
@@ -82,16 +92,53 @@ export function MobileAgentView({
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
+  const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [diff, setDiff] = useState<string | null>(null);
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const relativeTime = useMemo(
     () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),
     [locale],
   );
 
+  // A pending approval expires on a deadline, so while one is open the clock
+  // has to move fast enough for the buttons to disappear when it closes.
+  const hasPendingApproval = snapshot.items.some((item) => item.approval !== undefined);
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    const timer = setInterval(() => setNow(Date.now()), hasPendingApproval ? 1_000 : 30_000);
     return () => clearInterval(timer);
-  }, []);
+  }, [hasPendingApproval]);
+
+  const decide = async (item: AgentActivity, decision: AgentDecision): Promise<void> => {
+    if (!onDecideApproval || decidingId !== null) return;
+    setDecidingId(item.id);
+    const result = await onDecideApproval(item.id, decision).catch((): AgentDecisionResult => ({
+      ok: false,
+      error: 'delivery-failed',
+    }));
+    setDecidingId(null);
+    if (result.ok) {
+      showToast(
+        decision === 'allow'
+          ? t('mobile.agentView.approved', { provider: PROVIDER_LABEL[item.provider] })
+          : t('mobile.agentView.denied', { provider: PROVIDER_LABEL[item.provider] }),
+      );
+      return;
+    }
+    setErrors((previous) => ({
+      ...previous,
+      [item.id]: result.error === 'expired' ? t('agentHub.approvalExpired') : t('agentHub.approvalFailed'),
+    }));
+  };
+
+  const openDiff = async (directory: string): Promise<void> => {
+    if (!onLoadDiff) return;
+    const result = await onLoadDiff(directory).catch((): GitDiffResult => ({ ok: false, error: 'git-failed' }));
+    if (!result.ok) {
+      showToast(result.error === 'not-a-repository' ? t('agentHub.diffUnavailable') : t('agentHub.approvalFailed'));
+      return;
+    }
+    setDiff(result.text.trim().length > 0 ? result.text : '');
+  };
 
   const counts = useMemo(() => {
     const tally = { all: snapshot.items.length, attention: 0, running: 0, done: 0 };
@@ -188,6 +235,9 @@ export function MobileAgentView({
           {visible.map((item) => {
             const bucket = bucketOf(item.status);
             const age = ageLabel(item.updatedAt, now, relativeTime);
+            // A decision is only offered while the desktop is still holding the
+            // provider's hook open. Past that the answer belongs in the terminal.
+            const live = item.approval !== undefined && item.approval.expiresAt > now;
 
             if (bucket === 'done') {
               return (
@@ -228,7 +278,9 @@ export function MobileAgentView({
                   <span className="mob-agent-card__name">{PROVIDER_LABEL[item.provider]}</span>
                   <span className="mob-badge mob-badge--warning">{t(STATUS_LABEL_KEY[item.status])}</span>
                 </div>
-                <p className="mob-agent-card__branch" title={item.cwd}>{formatCwd(item.cwd, 30)}</p>
+                <p className="mob-agent-card__branch" title={item.cwd}>
+                  {item.branch ?? formatCwd(item.cwd, 30)}
+                </p>
                 <p className="mob-agent-card__body">
                   {item.status === 'waiting'
                     ? t('mobile.agentView.waitingBody')
@@ -236,15 +288,53 @@ export function MobileAgentView({
                       ? t('mobile.agentView.blockedBody')
                       : t('mobile.agentView.errorBody')}
                 </p>
+                {live && (
+                  <code className="mob-agent-card__command" data-risk={item.approval?.risk}>
+                    {item.approval?.command ?? item.approval?.toolName}
+                  </code>
+                )}
                 <div className="mob-agent-card__actions">
-                  <button
-                    type="button"
-                    className="mob-btn-warning"
-                    onClick={() => onFocusSession(item.sessionId)}
-                    data-testid="agent-focus"
-                  >
-                    {t('agentHub.review')} →
-                  </button>
+                  {live ? (
+                    <>
+                      <button
+                        type="button"
+                        className="mob-btn-warning"
+                        disabled={disconnected || decidingId !== null}
+                        onClick={() => void decide(item, 'allow')}
+                        data-testid="agent-approve"
+                      >
+                        {t('mobile.agentView.approveAndContinue')}
+                      </button>
+                      <button
+                        type="button"
+                        className="mob-btn-ghost"
+                        disabled={disconnected || decidingId !== null}
+                        onClick={() => void decide(item, 'deny')}
+                        data-testid="agent-deny"
+                      >
+                        {t('agentHub.deny')}
+                      </button>
+                      {onLoadDiff && (
+                        <button
+                          type="button"
+                          className="mob-btn-ghost"
+                          onClick={() => void openDiff(item.cwd)}
+                          data-testid="agent-view-diff"
+                        >
+                          {t('agentHub.viewDiff')}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="mob-btn-warning"
+                      onClick={() => onFocusSession(item.sessionId)}
+                      data-testid="agent-focus"
+                    >
+                      {t('agentHub.review')} →
+                    </button>
+                  )}
                   <span className="mob-agent-card__time">{age}</span>
                 </div>
                 {item.status === 'waiting' && (
@@ -288,6 +378,18 @@ export function MobileAgentView({
           })}
         </div>
       </div>
+      {diff !== null && (
+        <MobileActionSheet
+          title={t('agentHub.diffTitle')}
+          onClose={() => setDiff(null)}
+          variant="fullscreen"
+          testId="mobile-agent-diff"
+        >
+          {diff === ''
+            ? <p className="mob-empty">{t('agentHub.diffEmpty')}</p>
+            : <pre className="mob-agent-diff">{diff}</pre>}
+        </MobileActionSheet>
+      )}
     </main>
   );
 }

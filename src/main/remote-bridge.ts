@@ -78,6 +78,11 @@ import type {
   AgentFollowupResult,
 } from '../shared/agent';
 import {
+  EMPTY_GIT_DIRECTORY_STATUS,
+  type GitDiffResult,
+  type GitDirectoryStatus,
+} from '../shared/git-status';
+import {
   isWorktreeRequest,
   type WorktreeRequest,
   type WorktreeRequestOrigin,
@@ -384,6 +389,9 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
       );
     case 'worktree-request':
       return typeof value.requestId === 'string';
+    case 'git-status':
+    case 'git-diff':
+      return typeof value.requestId === 'string' && typeof value.directory === 'string';
     case 'file-list':
       return typeof value.requestId === 'string' && typeof value.path === 'string';
     case 'file-roots':
@@ -631,6 +639,13 @@ export interface RemoteAgentSource {
   decideApproval(activityId: string, decision: AgentDecision): AgentDecisionResult;
 }
 
+/** Read-only Git working-tree queries. Nothing here can mutate a repository,
+ * so unlike the worktree service it needs no origin and no gate. */
+export interface RemoteGitSource {
+  getStatus(directory: string): Promise<GitDirectoryStatus>;
+  getDiff(directory: string): Promise<GitDiffResult>;
+}
+
 /** Main-owned Git worktree service. The bridge always supplies the `mobile`
  * origin so the service itself remains the authority that denies mutations. */
 export interface RemoteWorktreeSource {
@@ -686,6 +701,8 @@ export interface RemoteBridgeOptions {
   /** Optional so existing fixtures/tests without OpenClaw wiring keep working. */
   readonly openclawSource?: RemoteOpenClawSource;
   readonly agentSource?: RemoteAgentSource;
+  /** Optional so existing fixtures without Git wiring keep working. */
+  readonly gitSource?: RemoteGitSource;
   /** Optional so older bridge fixtures remain valid. */
   readonly worktreeSource?: RemoteWorktreeSource;
   /** Optional capability: old hosts omit it and mobile hides the surface. */
@@ -1429,6 +1446,25 @@ export function attachConnection(
           },
         });
         break;
+
+      case 'git-status': {
+        const { requestId, directory } = msg;
+        void Promise.resolve(
+          options.gitSource?.getStatus(directory) ?? EMPTY_GIT_DIRECTORY_STATUS,
+        )
+          .catch(() => EMPTY_GIT_DIRECTORY_STATUS)
+          .then((status) => send({ kind: 'git-status-reply', requestId, status }));
+        break;
+      }
+
+      case 'git-diff': {
+        const { requestId, directory } = msg;
+        const failed: GitDiffResult = { ok: false, error: 'git-failed' };
+        void Promise.resolve(options.gitSource?.getDiff(directory) ?? failed)
+          .catch(() => failed)
+          .then((result) => send({ kind: 'git-diff-reply', requestId, result }));
+        break;
+      }
 
       case 'packets-subscribe': {
         if (!options.packetSource) break;

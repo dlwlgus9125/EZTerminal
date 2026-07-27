@@ -1,16 +1,20 @@
-import { ArrowLeft } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, Check, GitCompareArrows, Settings, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type {
   AgentActivity,
+  AgentApprovalRisk,
   AgentActivitySnapshot,
+  AgentDecision,
+  AgentDecisionResult,
   AgentFollowupResult,
   AgentProvider,
   AgentStatus,
 } from '../shared/agent';
+import type { GitDiffResult } from '../shared/git-status';
 import { formatCwd } from './format-cwd';
 import { useAppTranslation } from './i18n';
-import { IconButton } from './ui';
+import { Button, Dialog, IconButton } from './ui';
 
 const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'waiting']);
 const ACTIVE = new Set<AgentStatus>(['starting', 'working']);
@@ -29,6 +33,12 @@ const PROVIDER_LABEL: Record<AgentProvider, string> = {
   claude: 'Claude',
   generic: 'CLI',
 };
+
+const RISK_LABEL_KEY = {
+  danger: 'agentHub.approvalRisk.danger',
+  write: 'agentHub.approvalRisk.write',
+  read: 'agentHub.approvalRisk.read',
+} as const satisfies Record<AgentApprovalRisk, string>;
 
 function ageLabel(
   updatedAt: number,
@@ -51,6 +61,12 @@ function sortRecent(a: AgentActivity, b: AgentActivity): number {
 /** Wall-clock run time for an in-flight agent, as mm:ss (hh:mm:ss past an hour).
  * Deliberately not a percentage: AgentActivity carries no progress field, and
  * inventing one would put a number on screen that nothing measures. */
+/** Time left before the gate lets go, as mm:ss. */
+function remainingLabel(expiresAt: number, now: number): string {
+  const total = Math.max(0, Math.ceil((expiresAt - now) / 1000));
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
 function elapsedLabel(startedAt: number, now: number): string {
   const total = Math.max(0, Math.floor((now - startedAt) / 1000));
   const seconds = String(total % 60).padStart(2, '0');
@@ -63,15 +79,28 @@ export interface AgentHubProps {
   readonly snapshot: AgentActivitySnapshot;
   readonly onFocusSession: (sessionId: string) => void;
   readonly onSendFollowup: (activityId: string, text: string) => Promise<AgentFollowupResult>;
+  /** Answers a parked permission hook. Absent leaves the queue read-only. */
+  readonly onDecideApproval?: (activityId: string, decision: AgentDecision) => Promise<AgentDecisionResult>;
+  /** The agent's uncommitted work, for the reviewer who wants to look first. */
+  readonly onLoadDiff?: (directory: string) => Promise<GitDiffResult>;
+  readonly onOpenAgentSettings?: () => void;
   readonly onClose?: () => void;
   readonly mobile?: boolean;
   readonly disconnected?: boolean;
 }
 
+type DiffView =
+  | { readonly state: 'loading' }
+  | { readonly state: 'ready'; readonly text: string; readonly truncated: boolean }
+  | { readonly state: 'error'; readonly message: string };
+
 export function AgentHub({
   snapshot,
   onFocusSession,
   onSendFollowup,
+  onDecideApproval,
+  onLoadDiff,
+  onOpenAgentSettings,
   onClose,
   mobile = false,
   disconnected = false,
@@ -81,6 +110,8 @@ export function AgentHub({
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
+  const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [diffView, setDiffView] = useState<DiffView | null>(null);
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const relativeTime = useMemo(
     () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),
@@ -114,11 +145,53 @@ export function AgentHub({
   // second while one exists. With nothing running the coarse relative ages only
   // need the original slow tick. Neither is announced: elapsed time is on the
   // accessibility exclusion list for live regions.
+  // A pending approval also needs the fast tick: its window closes on a
+  // deadline, and a card must stop offering buttons the moment it does.
+  const hasPendingApproval = snapshot.items.some((item) => item.approval !== undefined);
   const hasActive = groups.active.length > 0;
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), hasActive ? 1_000 : 30_000);
+    const timer = setInterval(() => setNow(Date.now()), hasActive || hasPendingApproval ? 1_000 : 30_000);
     return () => clearInterval(timer);
-  }, [hasActive]);
+  }, [hasActive, hasPendingApproval]);
+
+  const decide = useCallback(
+    async (item: AgentActivity, decision: AgentDecision): Promise<void> => {
+      if (!onDecideApproval || decidingId !== null) return;
+      setDecidingId(item.id);
+      setErrors((previous) => ({ ...previous, [item.id]: '' }));
+      const result = await onDecideApproval(item.id, decision).catch((): AgentDecisionResult => ({
+        ok: false,
+        error: 'delivery-failed',
+      }));
+      setDecidingId(null);
+      if (result.ok) return;
+      setErrors((previous) => ({
+        ...previous,
+        [item.id]: result.error === 'expired' ? t('agentHub.approvalExpired') : t('agentHub.approvalFailed'),
+      }));
+    },
+    [decidingId, onDecideApproval, t],
+  );
+
+  const openDiff = useCallback(
+    async (directory: string): Promise<void> => {
+      if (!onLoadDiff) return;
+      setDiffView({ state: 'loading' });
+      const result = await onLoadDiff(directory).catch((): GitDiffResult => ({
+        ok: false,
+        error: 'git-failed',
+      }));
+      if (!result.ok) {
+        setDiffView({
+          state: 'error',
+          message: result.error === 'not-a-repository' ? t('agentHub.diffUnavailable') : t('agentHub.approvalFailed'),
+        });
+        return;
+      }
+      setDiffView({ state: 'ready', text: result.text, truncated: result.truncated });
+    },
+    [onLoadDiff, t],
+  );
 
   const send = async (item: AgentActivity): Promise<void> => {
     const text = (drafts[item.id] ?? '').trim();
@@ -195,6 +268,62 @@ export function AgentHub({
                 </time>
               </div>
               <div className="agent-cwd" title={item.cwd}>{formatCwd(item.cwd)}</div>
+              {item.approval && (
+                <div className="agent-approval" data-risk={item.approval.risk} data-testid="agent-approval">
+                  <div className="agent-approval-head">
+                    {/* Risk is spelled out as well as coloured: status must
+                        never depend on colour alone (a11y hard gate). */}
+                    <span className="agent-approval-risk">{t(RISK_LABEL_KEY[item.approval.risk])}</span>
+                    <span className="agent-approval-tool">{item.approval.toolName}</span>
+                    {item.approval.expiresAt > now && (
+                      <span className="agent-approval-countdown">
+                        {remainingLabel(item.approval.expiresAt, now)}
+                      </span>
+                    )}
+                  </div>
+                  {item.approval.command && (
+                    <code className="agent-approval-command">{item.approval.command}</code>
+                  )}
+                  {item.approval.expiresAt <= now ? (
+                    <p className="agent-approval-expired" role="status">{t('agentHub.approvalExpired')}</p>
+                  ) : (
+                    <div className="agent-approval-actions">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        leadingIcon={<Check aria-hidden="true" />}
+                        disabled={disconnected || !onDecideApproval}
+                        loading={decidingId === item.id}
+                        onClick={() => void decide(item, 'allow')}
+                        data-testid="agent-approve"
+                      >
+                        {t('agentHub.approve')}
+                      </Button>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        leadingIcon={<X aria-hidden="true" />}
+                        disabled={disconnected || decidingId !== null || !onDecideApproval}
+                        onClick={() => void decide(item, 'deny')}
+                        data-testid="agent-deny"
+                      >
+                        {t('agentHub.deny')}
+                      </Button>
+                      {onLoadDiff && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          leadingIcon={<GitCompareArrows aria-hidden="true" />}
+                          onClick={() => void openDiff(item.cwd)}
+                          data-testid="agent-view-diff"
+                        >
+                          {t('agentHub.viewDiff')}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="agent-row-actions">
                 <button
                   type="button"
@@ -303,6 +432,46 @@ export function AgentHub({
           {renderGroup('recent', t('agentHub.groups.recent'), groups.recent)}
         </div>
       )}
+      {/* The handoff draws a footer with a "new agent run" action beside the
+          settings gear. There is no such verb: an agent starts by typing its
+          name in a terminal, which the empty state already says. The gear is
+          the one real destination, so it is the one thing here. */}
+      {onOpenAgentSettings && (
+        <footer className="agent-hub-footer">
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={<Settings aria-hidden="true" />}
+            onClick={onOpenAgentSettings}
+            data-testid="agent-open-settings"
+          >
+            {t('agentHub.openAgentSettings')}
+          </Button>
+        </footer>
+      )}
+      <Dialog
+        open={diffView !== null}
+        onOpenChange={(next) => { if (!next) setDiffView(null); }}
+        title={t('agentHub.diffTitle')}
+        size="lg"
+        closeLabel={t('agentHub.diffClose')}
+        testId="agent-diff-dialog"
+      >
+        {diffView?.state === 'loading' && <p className="agent-diff-note">{t('agentHub.diffTitle')}…</p>}
+        {diffView?.state === 'error' && <p className="agent-diff-note" role="alert">{diffView.message}</p>}
+        {diffView?.state === 'ready' && (
+          diffView.text.trim().length === 0
+            ? <p className="agent-diff-note">{t('agentHub.diffEmpty')}</p>
+            : (
+              <>
+                <pre className="agent-diff" data-testid="agent-diff-text">{diffView.text}</pre>
+                {diffView.truncated && (
+                  <p className="agent-diff-note" role="status">{t('agentHub.diffTruncated')}</p>
+                )}
+              </>
+            )
+        )}
+      </Dialog>
     </div>
   );
 }

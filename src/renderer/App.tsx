@@ -17,6 +17,8 @@ import {
 import {
   EMPTY_AGENT_ACTIVITY_SNAPSHOT,
   type AgentActivitySnapshot,
+  type AgentDecision,
+  type AgentDecisionResult,
   type AgentIntegrationStatus,
   type AgentStatus,
   type GenericAgentProfile,
@@ -73,7 +75,7 @@ import { PaneHeaderMeta } from './PaneHeaderMeta';
 import { RiskyCloseDialog } from './RiskyCloseDialog';
 import { SettingsPanel, type SettingsCategory } from './SettingsPanel';
 import { StatusPanel } from './StatusPanel';
-import { TerminalPane } from './TerminalPane';
+import { TerminalPane, type PaneApproval } from './TerminalPane';
 import { TerminalPasteWarningDialog } from './TerminalPasteWarningDialog';
 import { WorkspaceTab } from './WorkspaceTab';
 import { preflightLayoutEnvelope } from './layout-preflight';
@@ -163,6 +165,13 @@ interface SessionBindingContextValue {
 const SessionBindingContext = createContext<SessionBindingContextValue | null>(null);
 
 const AgentTabStatusContext = createContext<ReadonlyMap<string, AgentStatus>>(new Map());
+
+interface PaneApprovalContextValue {
+  readonly byPanel: ReadonlyMap<string, PaneApproval>;
+  readonly onDecide: (activityId: string, decision: AgentDecision) => Promise<AgentDecisionResult>;
+}
+
+const PaneApprovalContext = createContext<PaneApprovalContextValue | null>(null);
 const TerminalRuntimeContext = createContext<TerminalRuntimeOptions>(DEFAULT_TERMINAL_RUNTIME_OPTIONS);
 interface PresetMutationContextValue {
   readonly locked: boolean;
@@ -246,9 +255,12 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
   const terminalRuntimeOptions = useContext(TerminalRuntimeContext);
   const presetMutation = useContext(PresetMutationContext);
   const quickCommandShelf = useContext(QuickCommandShelfContext);
+  const paneApprovals = useContext(PaneApprovalContext);
   return (
     <TerminalPane
       panelId={props.api.id}
+      pendingApproval={paneApprovals?.byPanel.get(props.api.id)}
+      onDecideApproval={paneApprovals?.onDecide}
       paneInstanceToken={props.api}
       initialCwd={props.params?.cwd as string | undefined}
       adoptSessionId={props.params?.adoptSessionId as string | undefined}
@@ -988,6 +1000,26 @@ export function App(): JSX.Element {
       }
     }
     return result;
+  }, [agentSnapshot, sessionPanelRevision, sessionPanelTracker]);
+
+  const paneApprovalValue = useMemo<PaneApprovalContextValue>(() => {
+    const byPanel = new Map<string, PaneApproval>();
+    for (const activity of agentSnapshot.items) {
+      if (!activity.approval) continue;
+      for (const binding of sessionPanelTracker.getBound(activity.sessionId)) {
+        if (apiRef.current?.getPanel(binding.panelId)?.api !== binding.instanceToken) continue;
+        byPanel.set(binding.panelId, { activityId: activity.id, approval: activity.approval });
+      }
+    }
+    return {
+      byPanel,
+      onDecide: (activityId, decision) => window.ezterminal.decideAgentApproval(activityId, decision),
+    };
+    // `sessionPanelRevision` looks unused because the panel identity this reads
+    // lives behind `apiRef.current`, which React cannot track. Bumping the
+    // revision is how a layout change tells this map to be rebuilt — the same
+    // signal `agentTabStatuses` above depends on for the same reason.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentSnapshot, sessionPanelRevision, sessionPanelTracker]);
 
   const attentionCount = countAgentAttention(agentSnapshot);
@@ -2474,6 +2506,12 @@ export function App(): JSX.Element {
         snapshot={agentSnapshot}
         onFocusSession={focusAgentSession}
         onSendFollowup={(activityId, text) => window.ezterminal.sendAgentFollowup(activityId, text)}
+        onDecideApproval={(activityId, decision) => window.ezterminal.decideAgentApproval(activityId, decision)}
+        onLoadDiff={(directory) => window.ezterminal.getGitDiff(directory)}
+        onOpenAgentSettings={() => {
+          setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
+          setSidebarDestination('settings');
+        }}
         onClose={() => setSidebarDestination(null)}
       />
     ) : sidebarDestination === 'monitor' ? (
@@ -2631,6 +2669,7 @@ export function App(): JSX.Element {
           <SessionBindingContext.Provider value={sessionBindingValue}>
             <OpenClawOverlayContext.Provider value={chatOverlayOpen}>
               <AgentTabStatusContext.Provider value={agentTabStatuses}>
+                <PaneApprovalContext.Provider value={paneApprovalValue}>
                 <PaneCloseContext.Provider value={paneCloseContextValue}>
                   <WorkspaceTabActionContext.Provider value={workspaceTabActionValue}>
                     <QuickCommandShelfContext.Provider value={quickCommandShelfValue}>
@@ -2649,6 +2688,7 @@ export function App(): JSX.Element {
                     </QuickCommandShelfContext.Provider>
                   </WorkspaceTabActionContext.Provider>
                 </PaneCloseContext.Provider>
+                </PaneApprovalContext.Provider>
               </AgentTabStatusContext.Provider>
             </OpenClawOverlayContext.Provider>
           </SessionBindingContext.Provider>

@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import type {
+  AgentApproval,
+  AgentDecision,
+  AgentDecisionResult,
+} from '../shared/agent';
 import { BlockController } from './block-controller';
 import { Block } from './Block';
+import { Button } from './ui';
 import { formatCwd } from './format-cwd';
 import { useAppTranslation } from './i18n';
 import {
@@ -119,6 +125,30 @@ interface TerminalPaneProps {
   readonly isCommandSubmissionLocked?: () => boolean;
   readonly quickCommands?: readonly QuickCommand[];
   readonly onManageQuickCommands?: () => void;
+  /** The permission call the agent in THIS pane is parked on, if any. */
+  readonly pendingApproval?: PaneApproval;
+  readonly onDecideApproval?: (activityId: string, decision: AgentDecision) => Promise<AgentDecisionResult>;
+}
+
+/** The pending permission call for the agent running in a given pane, so the
+ * pane can offer the same decision the Agent Hub does without the user having
+ * to leave the terminal they are already looking at. */
+export interface PaneApproval {
+  readonly activityId: string;
+  readonly approval: AgentApproval;
+}
+
+/** A one-second clock that only runs while `active`. The approval banner has a
+ * deadline; nothing else in this pane needs to re-render on a timer. */
+function useNowWhile(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return undefined;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [active]);
+  return now;
 }
 
 export function TerminalPane({
@@ -132,8 +162,13 @@ export function TerminalPane({
   isCommandSubmissionLocked,
   quickCommands = [],
   onManageQuickCommands,
+  pendingApproval,
+  onDecideApproval,
 }: TerminalPaneProps): JSX.Element {
   const { t } = useAppTranslation();
+  // Only ticks while a decision is actually parked here, so an idle pane keeps
+  // its old render cadence.
+  const approvalNow = useNowWhile(pendingApproval !== undefined);
   const resolvedTerminalRuntimeOptions = terminalRuntimeOptions ?? DEFAULT_TERMINAL_RUNTIME_OPTIONS;
   const [command, setCommand] = useState('');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
@@ -1001,6 +1036,46 @@ export function TerminalPane({
           ),
         )}
       </div>
+
+      {/* The same decision the Agent Hub offers, in the pane the agent is
+          actually running in — asking someone to switch panels to answer a
+          question about the terminal they are looking at is the long way. */}
+      {pendingApproval && pendingApproval.approval.expiresAt > approvalNow && (
+        <div
+          className="pane-approval"
+          data-risk={pendingApproval.approval.risk}
+          data-testid="pane-approval"
+          role="group"
+          aria-label={t('agentHub.approvalPending')}
+        >
+          <span className="pane-approval-risk">
+            {t(`agentHub.approvalRisk.${pendingApproval.approval.risk}`)}
+          </span>
+          <code className="pane-approval-command">
+            {pendingApproval.approval.command ?? pendingApproval.approval.toolName}
+          </code>
+          <span className="pane-approval-actions">
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={!onDecideApproval}
+              onClick={() => void onDecideApproval?.(pendingApproval.activityId, 'allow')}
+              data-testid="pane-approve"
+            >
+              {t('agentHub.approve')}
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={!onDecideApproval}
+              onClick={() => void onDecideApproval?.(pendingApproval.activityId, 'deny')}
+              data-testid="pane-deny"
+            >
+              {t('agentHub.deny')}
+            </Button>
+          </span>
+        </div>
+      )}
 
       <div className="cmd-row">
         {currentCwd && (

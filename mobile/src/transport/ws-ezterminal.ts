@@ -86,6 +86,11 @@ import {
   type AgentFollowupResult,
 } from '../../../src/shared/agent';
 import {
+  EMPTY_GIT_DIRECTORY_STATUS,
+  type GitDiffResult,
+  type GitDirectoryStatus,
+} from '../../../src/shared/git-status';
+import {
   base64ToUint8Array,
   decodeFrame,
   REMOTE_CAPABILITY_DESKTOP_CONTROL,
@@ -493,6 +498,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     string,
     { readonly action: WorktreeAction; readonly resolve: (result: WorktreeResult) => void }
   >();
+  private readonly pendingGitStatus = new Map<string, (status: GitDirectoryStatus) => void>();
+  private readonly pendingGitDiffs = new Map<string, (result: GitDiffResult) => void>();
   private readonly worktreeOpenListeners = new Set<(worktree: WorktreeInfo) => void>();
   /** Survives socket generations so attach replay repairs a lost intent
    * without opening a second tab when the original frame was already seen. */
@@ -769,6 +776,32 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     Object.defineProperty(event, 'ports', { value: [port], enumerable: true, configurable: true });
     window.dispatchEvent(event);
     return Promise.resolve();
+  }
+
+  getGitStatus(directory: string): Promise<GitDirectoryStatus> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'git-status', requestId, directory },
+        this.pendingGitStatus,
+        requestId,
+        resolve,
+        // Offline is indistinguishable from "not a repository" to the caller,
+        // and both mean the same thing to a status line: show nothing.
+      )) resolve(EMPTY_GIT_DIRECTORY_STATUS);
+    });
+  }
+
+  getGitDiff(directory: string): Promise<GitDiffResult> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'git-diff', requestId, directory },
+        this.pendingGitDiffs,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'git-failed' });
+    });
   }
 
   executeWorktree(request: WorktreeRequest): Promise<WorktreeResult> {
@@ -1752,6 +1785,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve({ ok: false, error: 'delivery-failed' });
     }
     this.pendingAgentDecisions.clear();
+    for (const resolve of this.pendingGitStatus.values()) resolve(EMPTY_GIT_DIRECTORY_STATUS);
+    this.pendingGitStatus.clear();
+    for (const resolve of this.pendingGitDiffs.values()) resolve({ ok: false, error: 'git-failed' });
+    this.pendingGitDiffs.clear();
     for (const resolve of this.pendingFileList.values()) {
       resolve({ ok: false, error: 'Connection to EZTerminal lost' });
     }
@@ -2283,6 +2320,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       case 'agent-decision-reply':
         this.pendingAgentDecisions.get(msg.requestId)?.(msg.result);
         this.pendingAgentDecisions.delete(msg.requestId);
+        break;
+      case 'git-status-reply':
+        this.pendingGitStatus.get(msg.requestId)?.(msg.status);
+        this.pendingGitStatus.delete(msg.requestId);
+        break;
+      case 'git-diff-reply':
+        this.pendingGitDiffs.get(msg.requestId)?.(msg.result);
+        this.pendingGitDiffs.delete(msg.requestId);
         break;
       case 'stats-update':
         for (const listener of this.statsListeners) listener(msg.snapshot);

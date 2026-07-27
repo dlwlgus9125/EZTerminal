@@ -163,6 +163,18 @@ export function AgentIntegrationSettings({
         ))}
       </div>
 
+      <h3 className="settings-agent-subtitle">{t('agentSettings.approvalGateTitle')}</h3>
+      <label className="settings-radio-row">
+        <input
+          type="checkbox"
+          checked={settings.approvalGate}
+          onChange={(change) => void persist({ ...settings, approvalGate: change.target.checked })}
+          data-testid="agent-approval-gate"
+        />
+        {t('agentSettings.approvalGate')}
+      </label>
+      <p className="settings-hint">{t('agentSettings.approvalGateHint')}</p>
+
       <h3 className="settings-agent-subtitle">{t('agentSettings.desktopNotifications')}</h3>
       {(['waiting', 'blocked', 'error'] as const).map((event) => (
         <label className="settings-radio-row" key={event}>

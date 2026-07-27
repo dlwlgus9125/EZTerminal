@@ -43,6 +43,7 @@ import { AgentActivityService, type AgentActivityTransition } from './agent-acti
 import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
 import { AgentHookInstaller } from './agent-hook-installer';
 import { AgentSettingsStore } from './agent-settings-store';
+import { GitStatusService } from './git-status-service';
 import { QuickCommandStore } from './quick-command-store';
 import { WorkspaceFileSearchService } from './workspace-file-search-service';
 import { WorktreeService } from './worktree-service';
@@ -423,6 +424,8 @@ app.on('ready', () => {
   // 127.0.0.1 and its bearer descriptor is injected into interpreter shell
   // sessions below; it never crosses preload or the mobile bridge.
   const agentSettingsStore = new AgentSettingsStore(path.join(app.getPath('userData')));
+  // Read-only, cached, argv-only. Safe to call on every directory listing.
+  const gitStatusService = new GitStatusService();
   let agentActivityService: AgentActivityService | null = null;
   let agentRelayReady = false;
   const agentHookRelay = new AgentHookRelay(
@@ -805,6 +808,8 @@ app.on('ready', () => {
     if (typeof activityId !== 'string' || typeof text !== 'string') return { ok: false, error: 'invalid-text' };
     return agentActivityService?.sendFollowup(activityId, text) ?? { ok: false, error: 'delivery-failed' };
   });
+  ipcMain.handle('git:status', (_event, directory: string) => gitStatusService.getStatus(directory));
+  ipcMain.handle('git:diff', (_event, directory: string) => gitStatusService.getDiff(directory));
   ipcMain.handle('agents:decide', (_event, activityId: string, decision: string): AgentDecisionResult => {
     if (typeof activityId !== 'string' || (decision !== 'allow' && decision !== 'deny')) {
       return { ok: false, error: 'not-found' };
@@ -1500,6 +1505,7 @@ app.on('ready', () => {
       quickCommandSource: remoteQuickCommandSource,
       openclawSource: remoteOpenClawSource,
       agentSource: agentActivityService ?? undefined,
+      gitSource: gitStatusService,
     },
     getMainWindow: () => (
       mainWindowRef

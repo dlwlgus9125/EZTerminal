@@ -455,6 +455,8 @@ export function MobileWorkspace({
         disconnected={!connected}
         onBack={() => selectTab('home')}
         onSendFollowup={(activityId, text) => transport.sendAgentFollowup(activityId, text)}
+        onDecideApproval={(activityId, decision) => transport.decideAgentApproval(activityId, decision)}
+        onLoadDiff={(directory) => transport.getGitDiff(directory)}
         onFocusSession={(sessionId) => {
           const activity = agentSnapshot.items.find((item) => item.sessionId === sessionId);
           openTab(sessionId, activity?.cwd ?? '');
