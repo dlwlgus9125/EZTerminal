@@ -1,10 +1,12 @@
-import { Activity, ChevronRight, Files, List, Palette, Settings, Wrench } from 'lucide-react';
+﻿import { Activity, ChevronRight, Files, List, Palette, Settings, Wrench } from 'lucide-react';
+import { flushSync } from 'react-dom';
 import type { RefObject } from 'react';
 
 import type { ThemeName } from '../../src/shared/layout-schema';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobileActionSheet } from './MobileActionSheet';
+import { useMobileNavigationHistory } from './MobileNavigationHistory';
 import { OPENCLAW_STATE_LABEL_KEY } from './openclaw-mode';
 
 /**
@@ -38,6 +40,20 @@ export function MobileMoreSheet({
   readonly onOpenSettings: () => void;
 }): JSX.Element {
   const { t } = useAppTranslation();
+  const navigation = useMobileNavigationHistory();
+
+  // Every row here turns this SHEET into a PAGE. Without `replaceTopLayer`
+  // the sheet's release and the page's push each touch history independently,
+  // which leaks one entry per transition — after a few rounds Android Back
+  // walks past the app root and Capacitor exits the app. This is exactly the
+  // case the coordinator's sheet-to-page test pins down: pop the sheet's stop
+  // first, unmount it synchronously, then let the page REPLACE its entry.
+  const replaceWith = (open: () => void) => (): void => {
+    navigation.replaceTopLayer(() => {
+      flushSync(onClose);
+      open();
+    });
+  };
 
   return (
     <MobileActionSheet
@@ -47,20 +63,20 @@ export function MobileMoreSheet({
       returnFocusRef={returnFocusRef}
       testId="mobile-more-sheet"
     >
-      <button type="button" className="mobile-action-sheet-row" onClick={onOpenSessions} data-testid="more-sessions">
+      <button type="button" className="mobile-action-sheet-row" onClick={replaceWith(onOpenSessions)} data-testid="more-sessions">
         <List aria-hidden="true" />
         <span className="mobile-action-sheet-row-label">{t('mobile.sessions')}</span>
       </button>
-      <button type="button" className="mobile-action-sheet-row" onClick={onOpenFiles} data-testid="more-files">
+      <button type="button" className="mobile-action-sheet-row" onClick={replaceWith(onOpenFiles)} data-testid="more-files">
         <Files aria-hidden="true" />
         <span className="mobile-action-sheet-row-label">{t('mobile.files')}</span>
       </button>
-      <button type="button" className="mobile-action-sheet-row" onClick={onOpenStats} data-testid="more-stats">
+      <button type="button" className="mobile-action-sheet-row" onClick={replaceWith(onOpenStats)} data-testid="more-stats">
         <Activity aria-hidden="true" />
         <span className="mobile-action-sheet-row-label">{t('mobile.moreActions.stats')}</span>
       </button>
       {openclawVisible && (
-        <button type="button" className="mobile-action-sheet-row" onClick={onOpenClaw} data-testid="more-openclaw">
+        <button type="button" className="mobile-action-sheet-row" onClick={replaceWith(onOpenClaw)} data-testid="more-openclaw">
           <Wrench aria-hidden="true" />
           <span className="mobile-action-sheet-row-label">OpenClaw</span>
           <span className="mob-sheet__state" data-testid="more-openclaw-state">
@@ -72,14 +88,14 @@ export function MobileMoreSheet({
       <button
         type="button"
         className="mobile-action-sheet-row"
-        onClick={(event) => onOpenTheme(event.currentTarget)}
+        onClick={(event) => { const trigger = event.currentTarget; replaceWith(() => onOpenTheme(trigger))(); }}
         data-testid="more-theme"
       >
         <Palette aria-hidden="true" />
         <span className="mobile-action-sheet-row-label">{t('mobile.moreActions.theme')}</span>
         <span className="mob-sheet__value">{currentTheme}</span>
       </button>
-      <button type="button" className="mobile-action-sheet-row" onClick={onOpenSettings} data-testid="more-settings">
+      <button type="button" className="mobile-action-sheet-row" onClick={replaceWith(onOpenSettings)} data-testid="more-settings">
         <Settings aria-hidden="true" />
         <span className="mobile-action-sheet-row-label">{t('common.settings')}</span>
         <ChevronRight aria-hidden="true" />

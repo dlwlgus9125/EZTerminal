@@ -72,6 +72,7 @@ import {
   waitForAnyTestId,
   waitForTestId,
   waitForTestIdAttribute,
+  waitForTestIdHidden,
 } from './lib.ts';
 
 const CUSTOM_THEME_ID = 'e2e-neon';
@@ -162,7 +163,10 @@ async function main(): Promise<void> {
     await tapTestId('mobile-settings-close');
     await waitForTestId('settings-category-appearance');
     await tapTestId('mobile-settings-close');
-    await waitForTestId('mobile-home-view');
+    // Closing a sub-page returns to the TAB you were on, not to Home — this
+    // scenario is parked on Terminal (it opened a session up top). The
+    // assertion that matters here is only that Settings actually closed.
+    await waitForTestIdHidden('mobile-settings-view');
     await openShellDestination('more-settings', 'mobile-settings-view');
     await tapTestId('settings-category-appearance');
     await waitForTestIdAttribute('settings-font-fira-code', 'aria-pressed', 'true');

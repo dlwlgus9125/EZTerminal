@@ -177,6 +177,25 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeTruthy();
   });
 
+  it('routes to the Agents tab and back to Home without unmounting the terminal', async () => {
+    const { transport } = makeAuthedTransport();
+    const el = renderWorkspace(transport);
+
+    tap(el, 'shell-tab-agents');
+    await act(async () => {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (el.querySelector('[data-testid="mobile-agent-view"]')) break;
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      }
+    });
+    expect(el.querySelector('[data-testid="mobile-agent-view"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(true);
+
+    tap(el, 'mobile-agent-close');
+    expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeTruthy();
+  });
+
   it('opens the session sheet from the terminal header', () => {
     const { transport } = makeAuthedTransport();
     const el = renderWorkspace(transport);
