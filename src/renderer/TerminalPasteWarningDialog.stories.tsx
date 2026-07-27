@@ -41,7 +41,8 @@ export const MultilineAndLarge: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     const dialog = page.getByRole('alertdialog');
-    await expect(dialog).toBeVisible();
+    // The panel fades in, so it is briefly transparent on mount.
+    await waitFor(() => expect(dialog).toBeVisible());
     await waitFor(() => expect(page.getByTestId('terminal-paste-warning-cancel')).toHaveFocus());
   },
 };

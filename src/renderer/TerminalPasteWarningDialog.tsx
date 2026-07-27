@@ -31,6 +31,7 @@ export function TerminalPasteWarningDialog({
       description={t('terminalPasteWarning.description')}
       role="alertdialog"
       size="sm"
+      tone="warning"
       initialFocusRef={cancelRef}
       closeLabel={t('terminalPasteWarning.close')}
       testId="terminal-paste-warning-dialog"

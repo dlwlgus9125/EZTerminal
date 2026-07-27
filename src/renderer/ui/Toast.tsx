@@ -61,7 +61,7 @@ export function Toast({
   className,
   description,
   dismissLabel = 'Dismiss notification',
-  duration = 6000,
+  duration = 4200,
   onDismiss,
   title,
   variant = 'info',

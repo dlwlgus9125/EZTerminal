@@ -3082,20 +3082,41 @@ body {
   background: rgba(0, 0, 0, 0.68);
 }
 
+/* Restyled in place rather than ported onto the shared Dialog: its hand-rolled
+   focus trap, Escape handling, and invoker restoration are pinned by
+   RiskyCloseDialog.test.tsx, and the preset-apply e2e drives this exact
+   confirm path. The look moves; the behaviour does not. */
 .risky-close-dialog {
-  width: min(440px, 100%);
+  position: relative;
+  width: min(480px, 100%);
   padding: 20px;
-  border: 1px solid var(--term-border);
-  border-radius: 8px;
-  background: var(--term-bg-raised);
-  color: var(--term-fg);
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 55%, var(--ui-border-mid));
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-surface-raised);
+  color: var(--ui-text-secondary);
+  box-shadow:
+    0 0 34px color-mix(in srgb, var(--ui-danger) 12%, transparent),
+    0 24px 60px rgb(0 0 0 / 70%);
+  animation: ez-modal-in var(--ui-motion-modal) var(--ui-ease-standard);
+}
+
+.risky-close-dialog::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  block-size: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--ui-danger),
+    color-mix(in srgb, var(--ui-danger) 35%, transparent)
+  );
 }
 
 .risky-close-dialog h2 {
   margin: 0 0 10px;
-  color: var(--term-fg-bright);
-  font-size: 1rem;
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-lg);
 }
 
 .risky-close-dialog p {
@@ -3269,18 +3290,36 @@ body {
   }
 }
 
+/* The work that would be destroyed, in its own inset box so it reads as a list
+   of consequences rather than body copy. */
 .risky-close-details {
   margin: 12px 0 0;
-  padding-left: 20px;
-  color: var(--term-fg-dim);
+  padding: var(--ui-space-3) var(--ui-space-3) var(--ui-space-3) var(--ui-space-6);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-lg);
+  color: var(--ui-text-muted);
+  background: var(--ui-surface-inset);
 }
 
+/* Risk facts read as a stat block rather than a bullet list. Only the risks
+   that actually triggered are listed, so the dialog never pads itself out with
+   figures the paste did not breach. */
 .terminal-paste-warning__details {
-  color: var(--ui-text-muted);
+  color: var(--ui-text-primary);
   display: grid;
-  gap: var(--ui-space-1);
+  gap: var(--ui-space-2);
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
   margin: 0;
-  padding-inline-start: var(--ui-space-5);
+  padding: 0;
+  list-style: none;
+}
+
+.terminal-paste-warning__details li {
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid color-mix(in srgb, var(--ui-warning) 40%, var(--ui-border-mid));
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-warning-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .risky-close-actions {

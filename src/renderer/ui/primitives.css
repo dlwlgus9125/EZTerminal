@@ -577,16 +577,55 @@
 }
 
 .ez-ui-dialog {
+  position: relative;
   background: var(--ui-surface-raised);
-  border: 1px solid var(--ui-border-strong);
-  border-radius: var(--ui-radius-lg);
-  box-shadow: var(--ui-shadow-overlay);
+  border: 1px solid var(--ui-border-focus-soft);
+  border-radius: var(--ui-radius-xl);
+  box-shadow:
+    var(--ui-glow-box),
+    var(--ui-shadow-overlay);
   color: var(--ui-text-primary);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   max-block-size: min(44rem, calc(100vh - 2rem));
   overflow: hidden;
-  width: min(100%, 32rem);
+  width: min(100%, 30rem);
+  animation: ez-modal-in var(--ui-motion-modal) var(--ui-ease-standard);
+}
+
+/* Severity rail. Colour alone never carries the meaning: the title, body copy,
+   and the destructive action's own styling all say it too. */
+.ez-ui-dialog[data-tone='warning']::before,
+.ez-ui-dialog[data-tone='danger']::before {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  inset: 0 0 auto;
+  block-size: 4px;
+}
+
+.ez-ui-dialog[data-tone='warning'] {
+  border-color: color-mix(in srgb, var(--ui-warning) 55%, var(--ui-border-mid));
+}
+
+.ez-ui-dialog[data-tone='warning']::before {
+  background: linear-gradient(
+    90deg,
+    var(--ui-warning),
+    color-mix(in srgb, var(--ui-warning) 35%, transparent)
+  );
+}
+
+.ez-ui-dialog[data-tone='danger'] {
+  border-color: color-mix(in srgb, var(--ui-danger) 55%, var(--ui-border-mid));
+}
+
+.ez-ui-dialog[data-tone='danger']::before {
+  background: linear-gradient(
+    90deg,
+    var(--ui-danger),
+    color-mix(in srgb, var(--ui-danger) 35%, transparent)
+  );
 }
 
 .ez-ui-dialog[data-size='sm'] { width: min(100%, 24rem); }
@@ -777,10 +816,13 @@
   transform: translateY(-50%);
 }
 
+/* Bottom-right: the top-right corner belongs to the header's own controls, and
+   completed-action feedback should not appear over navigation the user is
+   still reaching for. */
 .ez-ui-toast-viewport {
   display: grid;
   gap: var(--ui-space-2);
-  inset-block-start: var(--ui-space-4);
+  inset-block-end: var(--ui-space-4);
   inset-inline-end: var(--ui-space-4);
   max-inline-size: min(24rem, calc(100vw - 2rem));
   pointer-events: none;
@@ -794,7 +836,7 @@
   background: var(--ui-surface-raised);
   border: 1px solid var(--ui-border-strong);
   border-inline-start: 3px solid var(--ui-info);
-  border-radius: var(--ui-radius-md);
+  border-radius: var(--ui-radius-lg);
   box-shadow: var(--ui-shadow-overlay);
   color: var(--ui-text-primary);
   display: grid;
@@ -802,6 +844,19 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   padding: var(--ui-space-3);
   pointer-events: auto;
+  animation: ez-toast-in var(--ui-motion-toast) var(--ui-ease-standard);
+}
+
+@keyframes ez-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .ez-ui-toast[data-variant='success'] { border-inline-start-color: var(--ui-success); }

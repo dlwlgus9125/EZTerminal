@@ -26,6 +26,9 @@ export interface DialogProps {
   readonly initialFocusRef?: RefObject<HTMLElement>;
   readonly className?: string;
   readonly variant?: 'dialog' | 'sheet';
+  /** Severity rail across the top of the panel. Presentation only — it never
+   * changes focus, dismissal, or the announced role. */
+  readonly tone?: 'neutral' | 'warning' | 'danger';
   /** Stable integration-test seam for the rendered modal panel. */
   readonly testId?: string;
   /** Stable integration-test seam for the built-in dismiss action. */
@@ -48,6 +51,7 @@ export function Dialog({
   size = 'md',
   title,
   testId,
+  tone = 'neutral',
   variant = 'dialog',
 }: DialogProps): JSX.Element | null {
   const titleId = `ez-ui-dialog-title-${useId()}`;
@@ -116,6 +120,7 @@ export function Dialog({
         data-testid={testId}
         data-size={size}
         data-variant={variant}
+        data-tone={tone}
         role={role}
         aria-modal="true"
         aria-labelledby={titleId}

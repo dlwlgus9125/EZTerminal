@@ -54,11 +54,16 @@ export const DialogInteraction: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Delete preset' }));
     const page = within(canvasElement.ownerDocument.body);
-    await expect(page.getByRole('alertdialog')).toBeVisible();
+    // The panel fades in, so it is briefly transparent on mount.
+    await waitFor(() => expect(page.getByRole('alertdialog')).toBeVisible());
     await waitFor(() => expect(page.getByRole('button', { name: 'Cancel' })).toHaveFocus());
     await userEvent.keyboard('{Escape}');
     await expect(page.queryByRole('alertdialog')).not.toBeInTheDocument();
-    await expect(canvas.getByRole('button', { name: 'Delete preset' })).toHaveFocus();
+    // Dialog restores the invoker in a requestAnimationFrame, so this is only
+    // true on a later frame.
+    await waitFor(() =>
+      expect(canvas.getByRole('button', { name: 'Delete preset' })).toHaveFocus(),
+    );
   },
 };
 
