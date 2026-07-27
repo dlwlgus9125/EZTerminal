@@ -62,7 +62,10 @@ test('direct Codex uses terminal-safe keys and Windows-style clipboard routing',
   await window.keyboard.press('Control+v');
   const warning = window.getByTestId('terminal-paste-warning-dialog');
   await expect(warning).toBeVisible();
-  await expect(warning).toContainText('2 lines');
+  // The dialog states all three measurements and marks the ones that tripped,
+  // rather than listing only the breaches as prose.
+  await expect(warning).toContainText('Lines');
+  await expect(warning).toContainText('Multi-line');
   await expect(window.getByTestId('terminal-paste-warning-cancel')).toBeFocused();
   await window.keyboard.press('Escape');
   await expect(warning).toHaveCount(0);

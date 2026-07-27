@@ -199,6 +199,10 @@ interface CloseDialogState {
   readonly details?: readonly string[];
   readonly confirmLabel: string;
   readonly onConfirm: () => void;
+  /** Optional middle course between cancelling and destroying. Only offered
+   * where the work can genuinely outlive the pane. */
+  readonly alternateLabel?: string;
+  readonly onAlternate?: () => void;
 }
 
 interface PendingPasteConfirmation {
@@ -272,7 +276,8 @@ type QuickOpenTarget =
   | { readonly type: 'file'; readonly path: string }
   | { readonly type: 'command'; readonly command: string }
   | { readonly type: 'action'; readonly action: QuickOpenBuiltinAction }
-  | { readonly type: 'preset'; readonly name: string };
+  | { readonly type: 'preset'; readonly name: string }
+  | { readonly type: 'background-session'; readonly sessionId: string };
 
 type AppQuickOpenRow = QuickOpenRow & { readonly target: QuickOpenTarget };
 
@@ -1080,6 +1085,16 @@ export function App(): JSX.Element {
               risk: t(CLOSE_RISK_I18N_KEY[risk]),
             }),
             confirmLabel: t('safetyDialog.closeTerminal'),
+            // Closing the pane without destroying the session. The session keeps
+            // running and stays reclaimable from the Command Center, which is
+            // what makes this a real third option rather than a way to strand a
+            // PTY with no route back to it.
+            alternateLabel: t('safetyDialog.keepInBackground'),
+            onAlternate: () => {
+              setCloseDialog(null);
+              close();
+              focusActivePane();
+            },
             onConfirm: () => {
               const latest = getPaneHandle(panelId)?.getSnapshot();
               setCloseDialog(null);
@@ -1889,6 +1904,42 @@ export function App(): JSX.Element {
       ? t('commandCenter.paneFailure.dead')
       : undefined;
 
+  // Sessions that outlived their pane. "Keep running" would otherwise strand a
+  // PTY with no route back: the mirror only reacts to add/remove events, so
+  // nothing re-surfaces a session whose pane simply went away.
+  const [backgroundSessions, setBackgroundSessions] = useState<readonly SessionInfo[]>([]);
+  useEffect(() => {
+    if (quickOpenMode === null) return;
+    let alive = true;
+    void window.ezterminal.listSessions().then((sessions) => {
+      if (!alive) return;
+      // Compared against what panes actually display, not against tracker
+      // bookkeeping: "no pane is showing this session" is the definition, and
+      // reading it from the panes keeps the two from disagreeing.
+      const shown = new Set(
+        listPaneSnapshots()
+          .map((pane) => pane.sessionId)
+          .filter((id): id is string => id !== null),
+      );
+      setBackgroundSessions(sessions.filter((session) => !shown.has(session.sessionId)));
+    }, () => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [quickOpenMode]);
+
+  const backgroundSessionRows = useMemo<readonly AppQuickOpenRow[]>(
+    () =>
+      backgroundSessions.map((session) => ({
+        id: session.sessionId,
+        kind: 'background-session',
+        title: session.cwd || t('commandCenter.cwdUnavailable'),
+        detail: t('commandCenter.reclaimSession'),
+        target: { type: 'background-session', sessionId: session.sessionId },
+      })),
+    [backgroundSessions, t],
+  );
+
   const paneRows = useMemo<readonly AppQuickOpenRow[]>(
     () =>
       paneSnapshots.map((pane) => {
@@ -2109,9 +2160,26 @@ export function App(): JSX.Element {
   const localQuickOpenRows = useMemo<readonly AppQuickOpenRow[]>(
     () =>
       quickOpenMode === 'all'
-        ? [...paneRows, ...historyRows, ...quickCommandRows, ...actionRows, ...presetRows, ...agentRows]
+        ? [
+          ...paneRows,
+          ...backgroundSessionRows,
+          ...historyRows,
+          ...quickCommandRows,
+          ...actionRows,
+          ...presetRows,
+          ...agentRows,
+        ]
         : [...historyRows, ...quickCommandRows, ...actionRows, ...presetRows, ...agentRows],
-    [actionRows, agentRows, historyRows, paneRows, presetRows, quickCommandRows, quickOpenMode],
+    [
+      actionRows,
+      agentRows,
+      backgroundSessionRows,
+      historyRows,
+      paneRows,
+      presetRows,
+      quickCommandRows,
+      quickOpenMode,
+    ],
   );
 
   const quickOpenRows = useMemo<readonly AppQuickOpenRow[]>(() => {
@@ -2132,10 +2200,31 @@ export function App(): JSX.Element {
       ...row,
       groupLabel: t('commandCenter.groups.recentQuickCommands'),
     }));
+    // Backgrounded sessions belong in the empty state, not behind a guessed
+    // search term: something still running with no pane should be the first
+    // thing the Command Center offers, not something you have to look for.
     return quickOpenMode === 'all'
-      ? [...paneRows, ...recentHistory, ...recentQuick, ...actionRows, ...presetRows, ...agentRows]
+      ? [
+        ...paneRows,
+        ...backgroundSessionRows,
+        ...recentHistory,
+        ...recentQuick,
+        ...actionRows,
+        ...presetRows,
+        ...agentRows,
+      ]
       : [...recentHistory, ...recentQuick, ...actionRows, ...presetRows, ...agentRows];
-  }, [actionRows, agentRows, historyRows, paneRows, presetRows, quickCommandRows, quickOpenMode, t]);
+  }, [
+    actionRows,
+    agentRows,
+    backgroundSessionRows,
+    historyRows,
+    paneRows,
+    presetRows,
+    quickCommandRows,
+    quickOpenMode,
+    t,
+  ]);
 
   const loadQuickPreview = useCallback(
     async (path: string): Promise<void> => {
@@ -2180,6 +2269,13 @@ export function App(): JSX.Element {
       setQuickOpenActionMessage(null);
       if (target.type === 'pane') {
         workbenchCoordinator.activatePanel(target.panelId);
+        closeQuickOpen();
+        return;
+      }
+      if (target.type === 'background-session') {
+        // Same adoption path the session mirror uses for a session that appears
+        // on another surface.
+        workbenchCoordinator.openTerminal({ adoptSessionId: target.sessionId });
         closeQuickOpen();
         return;
       }
@@ -2559,6 +2655,8 @@ export function App(): JSX.Element {
               description={closeDialog.description}
               details={closeDialog.details}
               confirmLabel={closeDialog.confirmLabel}
+              alternateLabel={closeDialog.alternateLabel}
+              onAlternate={closeDialog.onAlternate}
               onCancel={() => setCloseDialog(null)}
               onConfirm={closeDialog.onConfirm}
             />

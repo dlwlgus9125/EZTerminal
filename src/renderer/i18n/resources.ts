@@ -89,6 +89,7 @@ export const appResources = {
         terminalStateUnavailableTitle: 'Terminal state unavailable',
         terminalStateUnavailableDescription:
           'EZTerminal could not verify whether closing this pane would stop an active session. Close is blocked until its state can be checked.',
+        keepInBackground: 'Keep running',
         closeActiveTitle: 'Close active terminal?',
         closeActiveDescription: 'Closing this pane destroys its session, including {{risk}}.',
         closeTerminal: 'Close terminal',
@@ -359,12 +360,14 @@ export const appResources = {
         runUnavailableDraft: 'Run unavailable while the pane draft is not empty',
         selectPaneFirst: 'Select an active terminal pane first.',
         cwdUnavailable: 'Working directory unavailable',
+        reclaimSession: 'Reopen in a new pane',
         activePaneHistory: 'Active pane history',
         applyPreset: 'Apply layout preset',
         workspaceSearchFailed: 'Workspace file search failed.',
         fileCannotRun: 'Files can be previewed or inserted, but not run.',
         groups: {
           panes: 'Open panes',
+          backgroundSessions: 'Running in background',
           files: 'Files',
           history: 'History',
           quickCommands: 'Quick Commands',
@@ -376,6 +379,7 @@ export const appResources = {
         },
         kinds: {
           pane: 'Pane',
+          'background-session': 'Session',
           file: 'File',
           history: 'History',
           'quick-command': 'Quick',
@@ -1272,6 +1276,7 @@ export const appResources = {
         terminalStateUnavailableTitle: '터미널 상태를 확인할 수 없음',
         terminalStateUnavailableDescription:
           'EZTerminal에서 이 창을 닫을 때 활성 세션이 중단되는지 확인할 수 없습니다. 상태를 확인할 때까지 닫기가 차단됩니다.',
+        keepInBackground: '계속 실행',
         closeActiveTitle: '활성 터미널을 닫으시겠습니까?',
         closeActiveDescription: '이 창을 닫으면 세션과 다음 작업이 종료됩니다: {{risk}}.',
         closeTerminal: '터미널 닫기',
@@ -1540,12 +1545,14 @@ export const appResources = {
         runUnavailableDraft: '창 입력란이 비어 있지 않아 실행할 수 없습니다',
         selectPaneFirst: '먼저 활성 터미널 창을 선택하세요.',
         cwdUnavailable: '작업 디렉터리를 확인할 수 없음',
+        reclaimSession: '새 창으로 다시 열기',
         activePaneHistory: '활성 창 기록',
         applyPreset: '레이아웃 프리셋 적용',
         workspaceSearchFailed: '작업 공간 파일 검색에 실패했습니다.',
         fileCannotRun: '파일은 미리보거나 삽입할 수 있지만 실행할 수 없습니다.',
         groups: {
           panes: '열린 창',
+          backgroundSessions: '백그라운드 실행 중',
           files: '파일',
           history: '기록',
           quickCommands: '빠른 명령',
@@ -1557,6 +1564,7 @@ export const appResources = {
         },
         kinds: {
           pane: '창',
+          'background-session': '세션',
           file: '파일',
           history: '기록',
           'quick-command': '빠른 명령',

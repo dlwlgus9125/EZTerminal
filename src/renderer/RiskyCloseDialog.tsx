@@ -8,6 +8,9 @@ export interface RiskyCloseDialogProps {
   readonly description: string;
   readonly details?: readonly string[];
   readonly confirmLabel: string;
+  /** Middle course, offered only when the work can outlive the pane. */
+  readonly alternateLabel?: string;
+  readonly onAlternate?: () => void;
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
 }
@@ -26,6 +29,8 @@ export function RiskyCloseDialog({
   description,
   details = [],
   confirmLabel,
+  alternateLabel,
+  onAlternate,
   onCancel,
   onConfirm,
 }: RiskyCloseDialogProps): JSX.Element {
@@ -61,6 +66,11 @@ export function RiskyCloseDialog({
           >
             {t('common.cancel')}
           </Button>
+          {alternateLabel && onAlternate && (
+            <Button variant="secondary" onClick={onAlternate} data-testid="risky-close-alternate">
+              {alternateLabel}
+            </Button>
+          )}
           <Button variant="danger" onClick={onConfirm} data-testid="risky-close-confirm">
             {confirmLabel}
           </Button>

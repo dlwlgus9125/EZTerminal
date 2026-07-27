@@ -21,7 +21,15 @@ import { useAppTranslation } from './i18n';
 import './quick-open.css';
 
 export type QuickOpenMode = 'all' | 'commands';
-export type QuickOpenRowKind = 'pane' | 'file' | 'history' | 'quick-command' | 'action' | 'preset' | 'agent';
+export type QuickOpenRowKind =
+  | 'pane'
+  | 'background-session'
+  | 'file'
+  | 'history'
+  | 'quick-command'
+  | 'action'
+  | 'preset'
+  | 'agent';
 export type QuickOpenActionVariant = 'enter' | 'shift-enter' | 'mod-enter';
 
 export interface QuickOpenRow {
@@ -84,6 +92,7 @@ export interface QuickOpenModalProps {
 
 const KIND_GROUP: Record<QuickOpenRowKind, string> = {
   pane: 'Open panes',
+  'background-session': 'Running in background',
   file: 'Files',
   history: 'History',
   'quick-command': 'Quick Commands',
@@ -191,6 +200,7 @@ export function QuickOpenModal({
     () =>
       groupQuickOpenRows(displayedRows, {
         pane: t('commandCenter.groups.panes'),
+        'background-session': t('commandCenter.groups.backgroundSessions'),
         file: t('commandCenter.groups.files'),
         history: t('commandCenter.groups.history'),
         'quick-command': t('commandCenter.groups.quickCommands'),
