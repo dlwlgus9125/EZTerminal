@@ -749,6 +749,63 @@ body {
   background: var(--ui-warning-muted);
 }
 
+/* Clickable ancestors plus the literal path underneath. The free-text input
+   above stays: it is the keyboard route and what the file-explorer e2e drives. */
+.file-breadcrumb {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border-bottom: 1px solid var(--ui-border-mid);
+}
+
+.file-breadcrumb-trail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file-breadcrumb-trail li:not(:first-child)::before {
+  content: '\203A';
+  margin-inline: 2px;
+  color: var(--ui-text-dim);
+}
+
+.file-breadcrumb-segment {
+  padding: 1px 4px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-text-secondary);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.file-breadcrumb-segment:hover {
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-hover);
+}
+
+/* The deepest segment is where you already are, so it is emphasis, not a
+   control — disabled keeps it out of the tab order too. */
+.file-breadcrumb-segment[aria-current='page'] {
+  color: var(--ui-text-primary);
+  cursor: default;
+}
+
+.file-breadcrumb-full {
+  overflow: hidden;
+  color: var(--ui-text-dim);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-3xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* Three live gateway numbers, read at a glance above the session list. */
 .openclaw-metrics {
   display: grid;

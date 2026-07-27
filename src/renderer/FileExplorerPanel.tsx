@@ -1,5 +1,5 @@
 import { ArrowUp, File as FileIcon, Folder, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../shared/files';
 import type { FilePreviewResult } from '../shared/file-preview';
@@ -10,6 +10,35 @@ import { setInternalPathDrag } from './FileDropOverlay';
 import { useAppTranslation } from './i18n';
 import { getPaneCwd, insertIntoPaneInput } from './pane-registry';
 import { RichFileViewerOverlay } from './RichFileViewerOverlay';
+
+interface BreadcrumbSegment {
+  readonly label: string;
+  readonly target: string;
+}
+
+/**
+ * Split an absolute path into clickable ancestors. Both separators are accepted
+ * because a path can arrive from a drop, a paste, or the free-text input, but
+ * the rebuilt targets always use the platform separator the path itself
+ * declared — a drive letter means Windows, anything else means POSIX.
+ */
+function breadcrumbSegments(path: string): readonly BreadcrumbSegment[] {
+  if (!path) return [];
+  const windows = /^[A-Za-z]:/.test(path);
+  const separator = windows ? '\\' : '/';
+  const parts = path.split(/[\\/]+/).filter((part) => part !== '');
+  const segments: BreadcrumbSegment[] = [];
+  let prefix = '';
+  for (const [index, part] of parts.entries()) {
+    // The first segment carries the root: `C:` becomes `C:\`, and a POSIX
+    // first segment has to regain the leading slash the split removed.
+    prefix = index === 0
+      ? windows ? `${part}${separator}` : `${separator}${part}`
+      : `${prefix.replace(/[\\/]+$/, '')}${separator}${part}`;
+    segments.push({ label: part, target: prefix });
+  }
+  return segments;
+}
 
 interface FileExplorerPanelProps {
   readonly activePanelId: string | null | undefined;
@@ -324,6 +353,8 @@ export function FileExplorerPanel({
     ],
   );
 
+  const crumbs = useMemo(() => breadcrumbSegments(currentPath ?? ''), [currentPath]);
+
   return (
     <div className="file-drawer" data-testid="file-explorer-panel">
       <div className="file-drawer-header">
@@ -358,6 +389,37 @@ export function FileExplorerPanel({
           <X aria-hidden="true" size={16} />
         </button>
       </div>
+
+      {!rootsMode && crumbs.length > 0 && (
+        <nav
+          className="file-breadcrumb"
+          aria-label={t('fileExplorer.breadcrumb')}
+          data-testid="file-breadcrumb"
+        >
+          <ol className="file-breadcrumb-trail">
+            {crumbs.map((crumb, index) => {
+              const current = index === crumbs.length - 1;
+              return (
+                <li key={crumb.target}>
+                  <button
+                    type="button"
+                    className="file-breadcrumb-segment"
+                    aria-current={current ? 'page' : undefined}
+                    disabled={current}
+                    onClick={() => void loadPath(crumb.target)}
+                    data-testid="file-breadcrumb-segment"
+                  >
+                    {crumb.label}
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+          <span className="file-breadcrumb-full" title={currentPath ?? undefined}>
+            {currentPath}
+          </span>
+        </nav>
+      )}
 
       {error && (
         <div className="file-error" data-testid="file-error">
