@@ -2,6 +2,47 @@
 
 ## [Unreleased]
 
+## [1.0.12] - 2026-07-27
+
+### Changed
+- Rebuilt the desktop workbench around the commercial CRT language: a 60px
+  header whose Command Center zone is now a central search field, a 62px
+  activity rail with 44px targets, workspace panes as bordered cards with a
+  14px gutter and a focus glow, and the command row as a floating pill at the
+  bottom of its own pane. The header still has exactly four zones; the FX
+  profile control moved beside Agent Attention so the search field can occupy
+  the middle.
+- Reskinned the Command Center, Agent Hub, Monitor, OpenClaw drawer, dialogs
+  and toasts onto the same card language. Toasts moved to the bottom-right and
+  shortened to 4.2s; dialogs gained a severity rail and a 180ms entry.
+- Promoted the Monitor's hardcoded English section abbreviations to resource
+  keys, and made the panel state on screen that detailed metrics are collected
+  only while it is open.
+
+### Added
+- A CRT boot sequence on launch, on by default, skippable by click or key, and
+  controlled by a new Appearance switch. It never blocks first paint and is
+  skipped outright under reduced motion.
+- A clickable breadcrumb path bar in the file explorer, with the full path on a
+  monospace line beneath it.
+- Card-scale radii, metadata type tiers, a pane gutter, phosphor glow and
+  boot/critical z-layers in the semantic token layer. The decorative roles fall
+  back to contrast-corrected ones so a custom theme supplying only the
+  seventeen required colours stays readable, and the token contract test now
+  computes their contrast across every built-in theme and surface.
+- `bootIntro` in the settings schema, optional at schema version 1 so existing
+  `settings.json` files keep parsing.
+
+### Fixed
+- Removed a phantom horizontal scrollbar under every sidebar destination. The
+  resize handle lives inside the scrolling panel body and its negative inset
+  placed 4px outside the scroll width.
+- Kept the header controls disjoint at 1024px and 150% scale, where the elastic
+  search column collapsed to zero and the brand zone overflowed its own track.
+- Corrected the terminal paste warning's visual baseline, which had been
+  capturing a browser-default list because the story never loaded the
+  stylesheet the dialog is styled by.
+
 ## [1.0.11] - 2026-07-27
 
 ### Changed
