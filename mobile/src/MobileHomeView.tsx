@@ -34,6 +34,7 @@ export function MobileHomeView({
   activeSessionId,
   agentSnapshot,
   activeRuns,
+  roundTripMs = null,
   agentAttention,
   openclawVisible,
   openclawState,
@@ -51,6 +52,8 @@ export function MobileHomeView({
   readonly agentSnapshot: AgentActivitySnapshot;
   /** sessionId -> the command it is currently running, from `listRuns`. */
   readonly activeRuns: ReadonlyMap<string, string>;
+  /** Measured link latency, or null before the first probe answers. */
+  readonly roundTripMs?: number | null;
   readonly agentAttention: number;
   readonly openclawVisible: boolean;
   readonly openclawState?: OpenClawStatus['state'];
@@ -103,7 +106,16 @@ export function MobileHomeView({
                   {pcControlReason ? t('common.unavailable') : t('mobile.hub.ready')}
                 </span>
               </h2>
-              <p className="mob-hero__hint">{pcControlReason ?? t('mobile.home.pcIdleHint')}</p>
+              {/* RTT first when it exists — the handoff's "RTT 12ms · capture
+                  off until start" is one line saying both how good the link is
+                  and that nothing is being captured yet. */}
+              <p className="mob-hero__hint">
+                {pcControlReason ?? (
+                  roundTripMs === null
+                    ? t('mobile.home.pcIdleHint')
+                    : `${t('mobile.home.rtt', { value: roundTripMs })} · ${t('mobile.home.pcIdleHint')}`
+                )}
+              </p>
             </div>
             <button
               type="button"

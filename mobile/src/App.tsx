@@ -299,6 +299,7 @@ export function App(): JSX.Element {
           <MobileWorkspace
             transport={transport}
             connectionUrl={currentConnection?.url ?? savedConnection?.url ?? ''}
+            roundTripMs={connectionHealth?.roundTripMs ?? null}
             onDisconnect={disconnect}
           />
         </Suspense>

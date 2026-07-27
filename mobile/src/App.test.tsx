@@ -34,7 +34,7 @@ vi.mock('./transport/ws-ezterminal', () => ({
       attempt: 0,
       nextRetryAt: null,
       lastConnectedAt: null,
-      endpointKind: 'tailscale',
+      endpointKind: 'tailscale', roundTripMs: null,
     };
     private readonly authListeners = new Set<(authed: boolean) => void>();
     private readonly stateListeners = new Set<(state: RemoteConnectionState) => void>();
@@ -155,7 +155,7 @@ describe('App connection health banner', () => {
         attempt: 0,
         nextRetryAt: null,
         lastConnectedAt: Date.now(),
-        endpointKind: 'tailscale',
+        endpointKind: 'tailscale', roundTripMs: null,
       });
       transport().emitAuth(true);
       await Promise.resolve();
@@ -169,7 +169,7 @@ describe('App connection health banner', () => {
         attempt: 3,
         nextRetryAt: null,
         lastConnectedAt: null,
-        endpointKind: 'tailscale',
+        endpointKind: 'tailscale', roundTripMs: null,
       });
     });
 

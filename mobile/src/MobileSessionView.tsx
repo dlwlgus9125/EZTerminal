@@ -216,6 +216,7 @@ export function MobileSessionView({
   onCwdChange,
   onCloseTab,
   onReadGitStatus,
+  roundTripMs = null,
 }: {
   sessionId: string;
   /** The session's cwd as the workspace knows it — seeds the status line
@@ -239,6 +240,9 @@ export function MobileSessionView({
   /** Resolves the branch shown in the status line. Absent on a host that
    * predates the Git arms, which then shows the directory instead. */
   onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
+  /** Measured link latency for the status line, or null before the first
+   * probe answers. */
+  roundTripMs?: number | null;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const showToast = useMobileToast();
@@ -854,6 +858,12 @@ export function MobileSessionView({
           </span>
         )}
         {ptyDims && <span>{ptyDims.cols}×{ptyDims.rows}</span>}
+        {roundTripMs !== null && roundTripMs !== undefined && (
+          <span className="mob-status-line__rtt" data-testid="terminal-rtt">
+            <span className="mob-dot mob-dot--live" aria-hidden="true" />
+            {roundTripMs}ms
+          </span>
+        )}
         {onCloseTab && (
           <button
             type="button"

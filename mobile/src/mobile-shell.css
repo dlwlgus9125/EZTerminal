@@ -1254,6 +1254,13 @@
   margin-top: 10px;
 }
 
+.mob-status-line__rtt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
 .mob-agent-diff {
   margin: 0;
   padding: 10px 12px;

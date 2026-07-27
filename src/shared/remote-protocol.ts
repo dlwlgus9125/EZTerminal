@@ -356,6 +356,21 @@ export interface WorktreeRequestMessage {
   readonly request: WorktreeRequest;
 }
 
+/**
+ * Application-level round-trip probe.
+ *
+ * WebSocket's own ping/pong is answered by the browser's socket stack before
+ * any of this code runs, so it proves the connection is alive and tells the
+ * app nothing about how long anything took. This one is echoed by the peer's
+ * message loop, which is the path every other request actually travels.
+ */
+export interface PingMessage {
+  readonly kind: 'ping';
+  /** Client clock. Echoed verbatim — the server never interprets it, so the
+   * two peers do not need agreeing clocks for the difference to be right. */
+  readonly sentAt: number;
+}
+
 export interface GitStatusRequest {
   readonly kind: 'git-status';
   readonly requestId: string;
@@ -565,6 +580,7 @@ export type ClientToServerMessage =
   | AgentSnapshotRequest
   | AgentFollowupRequest
   | AgentDecisionRequest
+  | PingMessage
   | GitStatusRequest
   | GitDiffRequest
   | WorktreeRequestMessage
@@ -783,6 +799,11 @@ export interface AgentDecisionReply {
   readonly kind: 'agent-decision-reply';
   readonly requestId: string;
   readonly result: AgentDecisionResult;
+}
+
+export interface PongMessage {
+  readonly kind: 'pong';
+  readonly sentAt: number;
 }
 
 export interface GitStatusReply {
@@ -1017,6 +1038,7 @@ export type ServerToClientMessage =
   | AgentSnapshotMessage
   | AgentFollowupReply
   | AgentDecisionReply
+  | PongMessage
   | GitStatusReply
   | GitDiffReply
   | WorktreeReplyMessage

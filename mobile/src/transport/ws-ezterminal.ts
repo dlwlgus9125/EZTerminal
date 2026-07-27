@@ -129,6 +129,7 @@ import {
 } from '../../../src/shared/openclaw';
 import {
   classifyEndpoint,
+  smoothRoundTrip,
   type ConnectionHealthSnapshot,
   type RemoteConnectionState,
 } from './connection-health';
@@ -240,6 +241,11 @@ const WS_OPEN = 1;
  * foreground return the throttled timers fire and a dead socket is detected
  * immediately.
  */
+/** Often enough that the pill is current, rare enough to be free on a radio. */
+const RTT_PROBE_INTERVAL_MS = 5_000;
+/** Anything past this is a suspended tab or a clock jump, not a round trip. */
+const RTT_MAX_PLAUSIBLE_MS = 60_000;
+
 const LIVENESS_IDLE_MS = 45_000;
 const LIVENESS_PROBE_TIMEOUT_MS = 10_000;
 const LIVENESS_CHECK_INTERVAL_MS = 15_000;
@@ -498,6 +504,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     string,
     { readonly action: WorktreeAction; readonly resolve: (result: WorktreeResult) => void }
   >();
+  private roundTripMs: number | null = null;
+  private roundTripTimer: ReturnType<typeof setInterval> | null = null;
   private readonly pendingGitStatus = new Map<string, (status: GitDirectoryStatus) => void>();
   private readonly pendingGitDiffs = new Map<string, (result: GitDiffResult) => void>();
   private readonly worktreeOpenListeners = new Set<(worktree: WorktreeInfo) => void>();
@@ -1682,6 +1690,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private setAuthed(value: boolean): void {
     if (this.authed === value) return;
     this.authed = value;
+    if (value) this.startRoundTripProbe();
+    else this.stopRoundTripProbe();
     for (const listener of this.authListeners) listener(value);
   }
 
@@ -1702,7 +1712,27 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       nextRetryAt: this.nextRetryAt,
       lastConnectedAt: this.lastConnectedAt,
       endpointKind: classifyEndpoint(this.url),
+      roundTripMs: this.roundTripMs,
     };
+  }
+
+  /** Probe on a timer while authenticated. Stops on every disconnect and
+   * forgets the old number, because a latency from the previous link is not a
+   * measurement of this one. */
+  private startRoundTripProbe(): void {
+    this.stopRoundTripProbe();
+    const probe = (): void => {
+      if (!this.authed) return;
+      this.send({ kind: 'ping', sentAt: Date.now() });
+    };
+    probe();
+    this.roundTripTimer = setInterval(probe, RTT_PROBE_INTERVAL_MS);
+  }
+
+  private stopRoundTripProbe(): void {
+    if (this.roundTripTimer !== null) clearInterval(this.roundTripTimer);
+    this.roundTripTimer = null;
+    this.roundTripMs = null;
   }
 
   private emitConnectionHealth(): void {
@@ -2321,6 +2351,16 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         this.pendingAgentDecisions.get(msg.requestId)?.(msg.result);
         this.pendingAgentDecisions.delete(msg.requestId);
         break;
+      case 'pong': {
+        const sample = Date.now() - msg.sentAt;
+        // A clock that jumped backwards would otherwise report a negative or
+        // absurd latency; ignore the sample rather than publish a lie.
+        if (sample >= 0 && sample < RTT_MAX_PLAUSIBLE_MS) {
+          this.roundTripMs = smoothRoundTrip(this.roundTripMs, sample);
+          this.emitConnectionHealth();
+        }
+        break;
+      }
       case 'git-status-reply':
         this.pendingGitStatus.get(msg.requestId)?.(msg.status);
         this.pendingGitStatus.delete(msg.requestId);

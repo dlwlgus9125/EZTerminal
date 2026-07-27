@@ -784,6 +784,7 @@ export const appResources = {
         home: {
           start: 'Start',
           pcIdleHint: 'Capture stays off until you start',
+          rtt: 'RTT {{value}}ms',
           recentSessions: 'RECENT SESSIONS',
           allSessions: 'all {{value}} →',
           sessionOpen: 'open here',
@@ -2012,6 +2013,7 @@ export const appResources = {
         home: {
           start: '시작',
           pcIdleHint: '시작하기 전까지 캡처는 꺼져 있습니다',
+          rtt: 'RTT {{value}}ms',
           recentSessions: '최근 세션',
           allSessions: '전체 {{value}} →',
           sessionOpen: '여기서 열림',

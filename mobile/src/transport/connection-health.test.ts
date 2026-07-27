@@ -4,6 +4,7 @@ import { createAppI18n } from '../../../src/renderer/i18n';
 import {
   classifyConnectionHealth,
   classifyEndpoint,
+  smoothRoundTrip,
   type ConnectionHealthSnapshot,
 } from './connection-health';
 
@@ -16,6 +17,7 @@ const snapshot = (overrides: Partial<ConnectionHealthSnapshot> = {}): Connection
   nextRetryAt: 1_000,
   lastConnectedAt: 0,
   endpointKind: 'other',
+  roundTripMs: null,
   ...overrides,
 });
 
@@ -107,5 +109,20 @@ describe('classifyEndpoint', () => {
     expect(classifyEndpoint('wss://100.64.0.3:8443')).toBe('tailscale');
     expect(classifyEndpoint('wss://desktop.example.ts.net')).toBe('tailscale');
     expect(classifyEndpoint('ws://192.168.1.4:8080')).toBe('other');
+  });
+});
+
+describe('smoothRoundTrip', () => {
+  it('takes the first sample whole, then follows changes without chasing them', () => {
+    // Nothing to smooth against yet, so the first probe is the answer.
+    expect(smoothRoundTrip(null, 42.4)).toBe(42);
+    // A single slow probe on a mobile radio moves the number, but not to it.
+    const afterSpike = smoothRoundTrip(40, 200);
+    expect(afterSpike).toBeGreaterThan(40);
+    expect(afterSpike).toBeLessThan(100);
+    // A sustained change is followed rather than resisted.
+    let value = 40;
+    for (let i = 0; i < 20; i += 1) value = smoothRoundTrip(value, 200);
+    expect(value).toBeGreaterThan(190);
   });
 });

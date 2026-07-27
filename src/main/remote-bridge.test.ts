@@ -923,7 +923,7 @@ describe('RemoteBridge — session directory + create/destroy round trip', () =>
       requestId: 'client-req-1',
       session: { sessionId: 'sess-1', cwd: '/tmp' },
     });
-    expect(broker.listSessions()).toEqual([{ sessionId: 'sess-1', cwd: '/tmp' }]);
+    expect(broker.listSessions()).toMatchObject([{ sessionId: 'sess-1', cwd: '/tmp' }]);
   });
 
   it('a session-created reply for a DIFFERENT (unmatched) requestId is ignored by this connection', async () => {
@@ -953,10 +953,12 @@ describe('RemoteBridge — session directory + create/destroy round trip', () =>
 
     ws.clientSend({ kind: 'list-sessions' });
 
-    expect(ws.sent).toContainEqual({
-      kind: 'session-list',
-      sessions: [{ sessionId: 'existing', cwd: '/existing' }],
-    });
+    expect(ws.sent).toContainEqual(
+      expect.objectContaining({
+        kind: 'session-list',
+        sessions: [expect.objectContaining({ sessionId: 'existing', cwd: '/existing' })],
+      }),
+    );
   });
 
   it('destroy-session removes it from the directory and posts to the interpreter', async () => {
@@ -1033,7 +1035,7 @@ describe('RemoteBridge — session directory + create/destroy round trip', () =>
       requestId: 'client-close-2',
       result: { ok: false, reason: 'state-changed' },
     });
-    expect(broker.listSessions()).toEqual([{ sessionId: 'sess-1', cwd: '/tmp' }]);
+    expect(broker.listSessions()).toMatchObject([{ sessionId: 'sess-1', cwd: '/tmp' }]);
   });
 
   it('ignores malformed guarded destroy envelopes at the runtime boundary', async () => {

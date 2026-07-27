@@ -24,6 +24,18 @@ export interface ConnectionHealthSnapshot {
   readonly nextRetryAt: number | null;
   readonly lastConnectedAt: number | null;
   readonly endpointKind: 'tailscale' | 'other';
+  /** Smoothed application-level round trip, or null before the first probe
+   * answers. Null is shown as nothing, never as zero. */
+  readonly roundTripMs: number | null;
+}
+
+/** Weight of the newest sample. Low enough that one slow probe on a mobile
+ * radio does not make the pill jump, high enough to follow a real change. */
+export const RTT_SMOOTHING = 0.25;
+
+export function smoothRoundTrip(previous: number | null, sample: number): number {
+  if (previous === null) return Math.round(sample);
+  return Math.round(previous + RTT_SMOOTHING * (sample - previous));
 }
 
 export interface ConnectionHealthVerdict {

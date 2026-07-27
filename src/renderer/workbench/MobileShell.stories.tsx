@@ -120,6 +120,9 @@ const STORY_SESSIONS = [
   { session: { sessionId: 'session-3', cwd: 'C:/Workspace/scratch' }, open: false },
 ];
 
+/** One session executing something, so the story shows both row states. */
+const STORY_ACTIVE_RUNS = new Map([['session-1', 'pnpm vitest run']]);
+
 function HomeFixture(): JSX.Element {
   return (
     <MobileHomeView
@@ -129,6 +132,7 @@ function HomeFixture(): JSX.Element {
       sessions={STORY_SESSIONS}
       activeSessionId="session-1"
       agentSnapshot={STORY_AGENTS}
+      activeRuns={STORY_ACTIVE_RUNS}
       agentAttention={1}
       openclawVisible
       openclawState="running"

@@ -392,6 +392,8 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
     case 'git-status':
     case 'git-diff':
       return typeof value.requestId === 'string' && typeof value.directory === 'string';
+    case 'ping':
+      return isFiniteNumber(value.sentAt);
     case 'file-list':
       return typeof value.requestId === 'string' && typeof value.path === 'string';
     case 'file-roots':
@@ -1445,6 +1447,12 @@ export function attachConnection(
             error: 'not-found',
           },
         });
+        break;
+
+      // Echoed from the message loop rather than the socket layer, so what the
+      // client measures is the path its real requests take.
+      case 'ping':
+        send({ kind: 'pong', sentAt: msg.sentAt });
         break;
 
       case 'git-status': {

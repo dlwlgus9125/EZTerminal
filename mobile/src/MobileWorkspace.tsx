@@ -71,10 +71,13 @@ type MobileSheet = 'more' | 'sessions';
 export function MobileWorkspace({
   transport,
   connectionUrl = '',
+  roundTripMs = null,
   onDisconnect,
 }: {
   transport: WsEzTerminalTransport;
   connectionUrl?: string;
+  /** Smoothed link latency, or null before the first probe answers. */
+  roundTripMs?: number | null;
   onDisconnect: () => void;
 }): JSX.Element {
   const { t } = useAppTranslation();
@@ -468,6 +471,7 @@ export function MobileWorkspace({
         activeSessionId={tabsState.activeSessionId}
         agentSnapshot={agentSnapshot}
         activeRuns={activeRuns}
+        roundTripMs={roundTripMs}
         agentAttention={agentAttention}
         openclawVisible={effectiveOpenClawVisible}
         openclawState={openclawState?.state}
@@ -607,6 +611,7 @@ export function MobileWorkspace({
                   onSessionDead={() => handleSessionDead(entry.sessionId)}
                   onCwdChange={handleCwdChange}
                   onReadGitStatus={(directory) => transport.getGitStatus(directory)}
+                  roundTripMs={roundTripMs}
                   onCloseTab={() => closeTab(entry.sessionId)}
                 />
               </div>
