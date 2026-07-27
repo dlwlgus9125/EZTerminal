@@ -32,9 +32,14 @@
   gap: var(--ui-space-3);
 }
 
+/* A grid track, centred by auto margins rather than by alignment. Alignment
+   centring gives an item a negative offset once the track is narrower than the
+   item, which at the tightest scaled widths pushed the field back over New
+   Terminal; auto margins clamp to zero instead of going negative. */
 .workbench-header-zone--search {
   min-width: 0;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .workbench-header-zone--attention {
@@ -67,6 +72,7 @@
   inline-size: 100%;
   min-inline-size: 0;
   max-inline-size: 37.5rem;
+  margin-inline: auto;
   block-size: var(--ui-control-height-lg);
   box-sizing: border-box;
   display: flex;
@@ -787,11 +793,6 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
     font-size: var(--ui-font-size-20);
   }
 
-  .workbench-version-chip,
-  .workbench-header-divider {
-    display: none;
-  }
-
   .workbench-header .ez-ui-button {
     padding-inline: var(--ui-space-2);
   }
@@ -824,11 +825,21 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
     display: none;
   }
 
+  /* The version chip and its divider are the first things to go once the header
+     is under pressure. They are informational, not navigational, and the same
+     value is in Settings. Keeping them costs about 90px, which at 1024px and
+     150% scale is the difference between the elastic search column having room
+     and collapsing to nothing while zone one overflows its own track. */
+  .workbench-version-chip,
+  .workbench-header-divider {
+    display: none;
+  }
+
   /* The search field collapses to its icon rather than disappearing, so the
      Command Center keeps a stable pointer target at every width. The label
      stays in the accessibility tree — it is the button's accessible name. */
   .workbench-command-field {
-    max-inline-size: var(--ui-control-height-lg);
+    max-inline-size: min(var(--ui-control-height-lg), 100%);
     justify-content: center;
     padding-inline: 0;
   }

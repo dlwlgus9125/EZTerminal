@@ -3,6 +3,10 @@ import { expect, waitFor, within } from 'storybook/test';
 
 import { AppI18nProvider } from './i18n';
 import { TerminalPasteWarningDialog } from './TerminalPasteWarningDialog';
+// The dialog's own styling lives in the desktop foundation sheet, which the
+// Storybook preview does not load. Without this the baseline shows the browser
+// default list and never matches what ships.
+import './index.css';
 
 const meta = {
   title: 'Compositions/Terminal paste warning',

@@ -702,7 +702,13 @@ action stay next to the failed operation. Skeletons preserve final geometry.
   contract.
 - Browser zoom is permitted, text survives 200% zoom, and layouts are verified
   at the required 150% product QA axis.
-- Reduced motion disables moving CRT effects and nonessential transitions.
+- Reduced motion disables moving CRT effects and nonessential transitions. The
+  desktop boot sequence is skipped entirely rather than replayed at zero
+  duration, because its whole content is timing.
+- The boot sequence is decorative and additive. It never blocks first paint,
+  never traps focus, is hidden from assistive technology, is skippable by
+  pointer or keyboard, and is controlled by one Appearance switch that takes
+  effect on the next launch.
 - Product Storybook stories use `parameters.a11y.test = 'error'`; unreviewed
   accessibility violations are release blockers.
 
@@ -786,6 +792,19 @@ Required axes:
   reduced motion, using a deterministic animation phase for screenshots;
 - sidebar closed/open, wide reflow/narrow overlay, and loading/empty/error
   panel states.
+
+The desktop commercial pass adds surfaces whose correctness is behavioural
+rather than pictorial, and those are owned by Playwright against the real
+application rather than by a screenshot:
+
+- workspace panes as cards — the gutter is produced by padding on dockview's
+  leaf views, so split, drag, tab, and layout-persistence coverage is what
+  proves the grid maths still holds;
+- the floating composer — it remains a child of its pane, so per-pane drafts,
+  paste safety, IME composition, and plain-PTY keystroke routing are the
+  contract, not its position;
+- the boot sequence — that it clears itself and leaves an interactive
+  workbench behind.
 - Codex paste warning states for multiline, large, and combined risks, including
   Korean/English text, Cancel focus, and a deterministic Matrix-theme screenshot.
 
