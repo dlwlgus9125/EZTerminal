@@ -1,5 +1,6 @@
 import {
   AGENT_SETTINGS_SCHEMA_VERSION,
+  AGENT_SETTINGS_SCHEMA_VERSION_LEGACY,
   type AgentSettings,
   type GenericAgentProfile,
 } from '../shared/agent';
@@ -13,6 +14,7 @@ export function defaultAgentSettings(): AgentSettings {
     schemaVersion: AGENT_SETTINGS_SCHEMA_VERSION,
     notifications: { waiting: true, blocked: true, error: true },
     genericProfiles: [],
+    approvalGate: true,
   };
 }
 
@@ -34,11 +36,17 @@ function parseProfile(raw: unknown): GenericAgentProfile | null {
 }
 
 export function validateAgentSettings(raw: unknown): AgentSettings | null {
-  if (!isPlainObject(raw) || raw.schemaVersion !== AGENT_SETTINGS_SCHEMA_VERSION) return null;
+  if (!isPlainObject(raw)) return null;
+  // v1 is read, not rejected. Failing it would quarantine the file and silently
+  // discard the user's notification choices and generic profiles on upgrade.
+  const legacy = raw.schemaVersion === AGENT_SETTINGS_SCHEMA_VERSION_LEGACY;
+  if (!legacy && raw.schemaVersion !== AGENT_SETTINGS_SCHEMA_VERSION) return null;
   if (!isPlainObject(raw.notifications)) return null;
   const { waiting, blocked, error } = raw.notifications;
   if (typeof waiting !== 'boolean' || typeof blocked !== 'boolean' || typeof error !== 'boolean') return null;
   if (!Array.isArray(raw.genericProfiles) || raw.genericProfiles.length > MAX_GENERIC_PROFILES) return null;
+  if (!legacy && typeof raw.approvalGate !== 'boolean') return null;
+  const approvalGate = legacy ? true : (raw.approvalGate as boolean);
 
   const profiles: GenericAgentProfile[] = [];
   const ids = new Set<string>();
@@ -58,6 +66,7 @@ export function validateAgentSettings(raw: unknown): AgentSettings | null {
     schemaVersion: AGENT_SETTINGS_SCHEMA_VERSION,
     notifications: { waiting, blocked, error },
     genericProfiles: profiles,
+    approvalGate,
   };
 }
 

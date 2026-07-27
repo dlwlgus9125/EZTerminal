@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS: AgentSettings = {
   schemaVersion: AGENT_SETTINGS_SCHEMA_VERSION,
   notifications: { waiting: true, blocked: true, error: true },
   genericProfiles: [],
+  approvalGate: true,
 };
 
 type AgentSettingsMessage =

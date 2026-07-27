@@ -7,6 +7,7 @@ import type {
   AgentIntegrationProvider,
   AgentIntegrationStatus,
 } from '../shared/agent';
+import { APPROVAL_HOOK_EVENT, RELAY_APPROVAL_TIMEOUT_SEC, canGateProvider } from './agent-hook-relay';
 
 const OWNED_STATUS_PREFIX = 'EZTerminal agent activity';
 const CODEX_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'Stop'] as const;
@@ -34,7 +35,16 @@ function quoteWindowsCommandArgument(value: string): string {
   return `"${value.replace(/"/gu, '\\"')}"`;
 }
 
-function handlerFor(provider: AgentIntegrationProvider, scriptPath: string): JsonObject {
+/** Lifecycle hooks are pure observability and must never cost an agent more
+ * than a moment. The approval hook is the opposite: it exists to be waited on,
+ * so it gets a budget that outlasts the gate window — but only for a provider
+ * whose decision grammar we can actually speak. */
+function timeoutFor(provider: AgentIntegrationProvider, event: string): number {
+  if (event !== APPROVAL_HOOK_EVENT || !canGateProvider(provider)) return 5;
+  return RELAY_APPROVAL_TIMEOUT_SEC + 5;
+}
+
+function handlerFor(provider: AgentIntegrationProvider, scriptPath: string, event: string): JsonObject {
   if (provider === 'codex') {
     const command = [
       'powershell.exe',
@@ -50,7 +60,7 @@ function handlerFor(provider: AgentIntegrationProvider, scriptPath: string): Jso
       type: 'command',
       command,
       commandWindows: command,
-      timeout: 5,
+      timeout: timeoutFor(provider, event),
       statusMessage: marker(provider),
     };
   }
@@ -68,13 +78,13 @@ function handlerFor(provider: AgentIntegrationProvider, scriptPath: string): Jso
       '-Provider',
       'claude',
     ],
-    timeout: 5,
+    timeout: timeoutFor(provider, event),
     statusMessage: marker(provider),
   };
 }
 
 function groupFor(provider: AgentIntegrationProvider, event: string, scriptPath: string): JsonObject {
-  const base: JsonObject = { hooks: [handlerFor(provider, scriptPath)] };
+  const base: JsonObject = { hooks: [handlerFor(provider, scriptPath, event)] };
   if (provider === 'claude' && event === 'Notification') {
     // agent_needs_input/agent_completed describe Claude background sessions,
     // not the foreground CLI represented by this activity record. Mapping

@@ -88,3 +88,7 @@ native/**/target/
 # M3 emulator smoke test's own scratch working file (mobile/e2e/smoke.ts
 # deletes it on a clean exit; this guards against a crashed run leaving it)
 mobile/e2e/.ez_e2e_dump.xml
+
+# Design handoff bundles dropped in the repo root. One of them is 1.2 GB of
+# build output; none of them belong in history.
+/*.zip

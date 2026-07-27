@@ -3,13 +3,26 @@ import { promises as fs } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import path from 'node:path';
 
-import type { AgentHookEvent, AgentIntegrationProvider } from '../shared/agent';
+import type { AgentDecision, AgentHookEvent, AgentIntegrationProvider } from '../shared/agent';
 
 const MAX_HOOK_BODY_BYTES = 64 * 1024;
+const MAX_COMMAND_CHARS = 4096;
 const RATE_WINDOW_MS = 10_000;
 const MAX_REQUESTS_PER_WINDOW = 120;
 const RELAY_PATH = '/agent-hook/v1';
 const RELAY_SCRIPT = 'agent-hook-relay.ps1';
+
+/** The provider hook event this relay is allowed to hold open. */
+export const APPROVAL_HOOK_EVENT = 'PermissionRequest';
+
+/** How long a human gets before the gate lets go and the provider asks in the
+ * terminal itself. Long enough to walk back to the machine, short enough that
+ * a forgotten window does not wedge an agent. */
+export const APPROVAL_GATE_WINDOW_MS = 120_000;
+
+/** Sockets held open at once. Past this the gate fails open immediately rather
+ * than letting a stuck consumer exhaust the loopback server. */
+const MAX_HELD_REQUESTS = 16;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -38,7 +51,8 @@ export function parseAgentHookEvent(raw: unknown): AgentHookEvent | null {
   const turnId = optional(raw.turnId, 256);
   const toolName = optional(raw.toolName, 256);
   const notificationType = optional(raw.notificationType, 128);
-  if (turnId === null || toolName === null || notificationType === null) return null;
+  const command = optional(raw.command, MAX_COMMAND_CHARS);
+  if (turnId === null || toolName === null || notificationType === null || command === null) return null;
   return {
     provider,
     ezSessionId,
@@ -48,7 +62,41 @@ export function parseAgentHookEvent(raw: unknown): AgentHookEvent | null {
     ...(turnId ? { turnId } : {}),
     ...(toolName ? { toolName } : {}),
     ...(notificationType ? { notificationType } : {}),
+    // Only the event that can be decided is allowed to carry tool text.
+    ...(command && event === APPROVAL_HOOK_EVENT ? { command } : {}),
   };
+}
+
+/**
+ * The provider-shaped reply that actually decides the call.
+ *
+ * Claude Code's `PermissionRequest` hook reads `hookSpecificOutput.decision.
+ * behavior` from stdout on exit 0 — note this is *not* the `permissionDecision`
+ * shape `PreToolUse` uses; the two events take different schemas.
+ *
+ * Returns null for any provider whose decision grammar we have not verified.
+ * Codex is that case today: it accepts the same hook registration, but nothing
+ * we can check documents what it reads back, and a guessed schema would either
+ * be ignored silently or — worse — read as something we did not intend. A null
+ * here means the relay answers 204, the script prints nothing, and the provider
+ * falls back to asking in the terminal. That is the honest failure.
+ */
+export function buildDecisionPayload(
+  provider: AgentIntegrationProvider,
+  decision: AgentDecision,
+): string | null {
+  if (provider !== 'claude') return null;
+  return JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: APPROVAL_HOOK_EVENT,
+      decision: { behavior: decision },
+    },
+  });
+}
+
+/** Whether the gate can drive this provider at all. */
+export function canGateProvider(provider: AgentIntegrationProvider): boolean {
+  return buildDecisionPayload(provider, 'allow') !== null;
 }
 
 function bearerMatches(candidate: string | undefined, token: string): boolean {
@@ -58,14 +106,29 @@ function bearerMatches(candidate: string | undefined, token: string): boolean {
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 
+/** Script-side ceiling for a held approval request. Must outlast the gate
+ * window, or the script would give up before the human did. */
+export const RELAY_APPROVAL_TIMEOUT_SEC = Math.ceil(APPROVAL_GATE_WINDOW_MS / 1000) + 10;
+
 /**
  * PowerShell performs the first and most important privacy boundary: it reads
  * provider stdin, constructs a new allowlisted object, and sends only that
- * object to main. It is deliberately silent and non-blocking on every failure;
- * exit 0 with no output never approves or denies a provider action.
+ * object to main. It stays silent and non-blocking on every failure; exit 0
+ * with no output never approves or denies a provider action.
+ *
+ * The one event it will wait on is the approval hook, and only because the
+ * whole point of that hook is to be decided. Everything else keeps the old
+ * two-second fire-and-forget budget so ordinary lifecycle observability can
+ * never slow an agent down.
  */
 export function buildPowerShellRelayScript(): string {
-  return String.raw`param(
+  return RELAY_SCRIPT_TEMPLATE.replaceAll('__APPROVAL_EVENT__', APPROVAL_HOOK_EVENT).replaceAll(
+    '__APPROVAL_TIMEOUT_SEC__',
+    String(RELAY_APPROVAL_TIMEOUT_SEC),
+  );
+}
+
+const RELAY_SCRIPT_TEMPLATE = String.raw`param(
   [Parameter(Mandatory = $true)]
   [ValidateSet('codex', 'claude')]
   [string]$Provider
@@ -81,6 +144,22 @@ function Read-StringField($Object, [string]$Name) {
   return [string]$property.Value
 }
 
+# One string out of tool_input, never the object. Whichever of these names is
+# present is the thing a human would read on the approval card.
+function Read-ToolInputText($Object) {
+  $container = $Object.PSObject.Properties['tool_input']
+  if ($null -eq $container -or $null -eq $container.Value) { return '' }
+  foreach ($name in @('command', 'file_path', 'path', 'pattern', 'url')) {
+    $property = $container.Value.PSObject.Properties[$name]
+    if ($null -ne $property -and $null -ne $property.Value) {
+      $text = [string]$property.Value
+      if ($text.Length -gt 4096) { $text = $text.Substring(0, 4096) }
+      return $text
+    }
+  }
+  return ''
+}
+
 try {
   $descriptorText = $env:EZTERMINAL_AGENT_HOOK_DESCRIPTOR
   $ezSessionId = $env:EZTERMINAL_SESSION_ID
@@ -93,45 +172,69 @@ try {
   if ([Text.Encoding]::UTF8.GetByteCount($inputText) -gt 65536) { exit 0 }
   $inputObject = $inputText | ConvertFrom-Json
 
+  $eventName = Read-StringField $inputObject 'hook_event_name'
+  $isApproval = $eventName -eq '__APPROVAL_EVENT__'
+
   $sanitized = [ordered]@{
     provider = $Provider
     ezSessionId = [string]$ezSessionId
     providerSessionId = Read-StringField $inputObject 'session_id'
     cwd = Read-StringField $inputObject 'cwd'
-    event = Read-StringField $inputObject 'hook_event_name'
+    event = $eventName
     turnId = Read-StringField $inputObject 'turn_id'
     toolName = Read-StringField $inputObject 'tool_name'
     notificationType = Read-StringField $inputObject 'notification_type'
+    command = ''
   }
+  if ($isApproval) { $sanitized['command'] = Read-ToolInputText $inputObject }
+
+  $timeoutSec = 2
+  if ($isApproval) { $timeoutSec = __APPROVAL_TIMEOUT_SEC__ }
 
   $body = $sanitized | ConvertTo-Json -Compress
   $headers = @{ Authorization = "Bearer $([string]$descriptor.token)" }
-  $null = Invoke-WebRequest -UseBasicParsing -Method Post -Uri ([string]$descriptor.url) -Headers $headers -ContentType 'application/json' -Body $body -TimeoutSec 2
+  $response = Invoke-WebRequest -UseBasicParsing -Method Post -Uri ([string]$descriptor.url) -Headers $headers -ContentType 'application/json' -Body $body -TimeoutSec $timeoutSec
+
+  # A body comes back only when a human decided. Anything else — 204, a
+  # timeout, a dead app — prints nothing, which is the provider's own prompt.
+  if ($isApproval -and $null -ne $response -and $response.StatusCode -eq 200) {
+    $content = [string]$response.Content
+    if (-not [string]::IsNullOrWhiteSpace($content)) { [Console]::Out.Write($content) }
+  }
 } catch {
   # Observability must never break or decide an agent lifecycle hook.
 }
 
 exit 0
 `;
-}
 
 export interface AgentHookRelayDescriptor {
   readonly url: string;
   readonly token: string;
 }
 
+/** Resolves to the human's decision, or to null to fail open. */
+export type AgentApprovalResolver = (event: AgentHookEvent) => Promise<AgentDecision | null>;
+
 export class AgentHookRelay {
   private readonly token = randomBytes(32).toString('base64url');
   private readonly scriptPathValue: string;
   private readonly onEvent: (event: AgentHookEvent) => void;
+  private readonly resolveApproval: AgentApprovalResolver | null;
   private server: Server | null = null;
   private descriptor: AgentHookRelayDescriptor | null = null;
   private windowStartedAt = 0;
   private requestsInWindow = 0;
+  private heldRequests = 0;
 
-  constructor(dataDir: string, onEvent: (event: AgentHookEvent) => void) {
+  constructor(
+    dataDir: string,
+    onEvent: (event: AgentHookEvent) => void,
+    resolveApproval?: AgentApprovalResolver,
+  ) {
     this.scriptPathValue = path.join(dataDir, 'agent-hooks', RELAY_SCRIPT);
     this.onEvent = onEvent;
+    this.resolveApproval = resolveApproval ?? null;
   }
 
   get scriptPath(): string {
@@ -235,6 +338,13 @@ export class AgentHookRelay {
         this.reply(res, 400);
         return;
       }
+      if (this.shouldGate(event)) {
+        // The consumer needs the event on record before it can be asked to
+        // decide it, so this one is delivered synchronously.
+        this.onEvent(event);
+        void this.awaitDecision(event, res);
+        return;
+      }
       // Ack first. Provider hook latency never waits for UI/event consumers.
       this.reply(res, 204);
       setImmediate(() => this.onEvent(event));
@@ -242,6 +352,45 @@ export class AgentHookRelay {
     req.on('error', () => {
       if (!res.headersSent) this.reply(res, 400);
     });
+  }
+
+  private shouldGate(event: AgentHookEvent): boolean {
+    return (
+      this.resolveApproval !== null &&
+      event.event === APPROVAL_HOOK_EVENT &&
+      canGateProvider(event.provider) &&
+      this.heldRequests < MAX_HELD_REQUESTS
+    );
+  }
+
+  /** Holds the provider's hook open until a human answers. Every path out of
+   * here that is not an explicit decision replies 204, which the script turns
+   * into no output at all — the provider then prompts in the terminal. */
+  private async awaitDecision(event: AgentHookEvent, res: ServerResponse): Promise<void> {
+    this.heldRequests += 1;
+    let closed = false;
+    const onClose = (): void => {
+      closed = true;
+    };
+    res.on('close', onClose);
+    try {
+      const decision = await this.resolveApproval?.(event);
+      if (closed || res.writableEnded) return;
+      const payload = decision ? buildDecisionPayload(event.provider, decision) : null;
+      if (!payload) {
+        this.reply(res, 204);
+        return;
+      }
+      res.statusCode = 200;
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Content-Type', 'application/json');
+      res.end(payload);
+    } catch {
+      this.reply(res, 204);
+    } finally {
+      res.off('close', onClose);
+      this.heldRequests -= 1;
+    }
   }
 
   private consumeRateSlot(): boolean {

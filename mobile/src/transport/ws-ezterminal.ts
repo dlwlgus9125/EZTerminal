@@ -81,6 +81,8 @@ import type {
 import {
   EMPTY_AGENT_ACTIVITY_SNAPSHOT,
   type AgentActivitySnapshot,
+  type AgentDecision,
+  type AgentDecisionResult,
   type AgentFollowupResult,
 } from '../../../src/shared/agent';
 import {
@@ -460,6 +462,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly agentSnapshotListeners = new Set<(snapshot: AgentActivitySnapshot) => void>();
   private readonly pendingAgentSnapshots = new Map<string, (snapshot: AgentActivitySnapshot) => void>();
   private readonly pendingAgentFollowups = new Map<string, (result: AgentFollowupResult) => void>();
+  private readonly pendingAgentDecisions = new Map<string, (result: AgentDecisionResult) => void>();
 
   /** The desired stats-visible state, remembered across reconnects — see the
    * 'auth-ok' replay in `handleServerMessage`. */
@@ -834,6 +837,21 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         this.pendingAgentFollowups,
         requestId,
         resolve,
+      )) resolve({ ok: false, error: 'delivery-failed' });
+    });
+  }
+
+  decideAgentApproval(activityId: string, decision: AgentDecision): Promise<AgentDecisionResult> {
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-decision', requestId, activityId, decision },
+        this.pendingAgentDecisions,
+        requestId,
+        resolve,
+        // A desktop older than protocol v3 does not know this verb. Reporting
+        // it as not-found keeps the phone honest instead of showing a success
+        // the gate never granted.
       )) resolve({ ok: false, error: 'delivery-failed' });
     });
   }
@@ -1730,6 +1748,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve({ ok: false, error: 'delivery-failed' });
     }
     this.pendingAgentFollowups.clear();
+    for (const resolve of this.pendingAgentDecisions.values()) {
+      resolve({ ok: false, error: 'delivery-failed' });
+    }
+    this.pendingAgentDecisions.clear();
     for (const resolve of this.pendingFileList.values()) {
       resolve({ ok: false, error: 'Connection to EZTerminal lost' });
     }
@@ -2257,6 +2279,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       case 'agent-followup-reply':
         this.pendingAgentFollowups.get(msg.requestId)?.(msg.result);
         this.pendingAgentFollowups.delete(msg.requestId);
+        break;
+      case 'agent-decision-reply':
+        this.pendingAgentDecisions.get(msg.requestId)?.(msg.result);
+        this.pendingAgentDecisions.delete(msg.requestId);
         break;
       case 'stats-update':
         for (const listener of this.statsListeners) listener(msg.snapshot);

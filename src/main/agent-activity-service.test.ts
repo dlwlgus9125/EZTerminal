@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { AGENT_SETTINGS_SCHEMA_VERSION, type AgentHookEvent, type AgentSettings } from '../shared/agent';
 import type { InterpreterFrame, RunStartedInfo, SessionInfo } from '../shared/ipc';
@@ -7,12 +7,14 @@ import {
   classifyAgentCommand,
   type AgentActivityBroker,
 } from './agent-activity-service';
+import { APPROVAL_GATE_WINDOW_MS } from './agent-hook-relay';
 import type { RemotePort } from './interpreter-broker';
 
 const settings: AgentSettings = {
   schemaVersion: AGENT_SETTINGS_SCHEMA_VERSION,
   notifications: { waiting: true, blocked: true, error: true },
   genericProfiles: [{ id: 'aider', name: 'Aider', executable: 'aider.cmd', enabled: true }],
+  approvalGate: true,
 };
 
 class FakePort implements RemotePort {
@@ -243,5 +245,121 @@ describe('AgentActivityService', () => {
     const activity = service.getSnapshot().items[0];
     expect(activity.status).toBe('waiting');
     expect(service.sendFollowup(activity.id, 'continue')).toEqual({ ok: false, error: 'delivery-failed' });
+  });
+});
+
+describe('AgentActivityService — approval gate', () => {
+  const claudeHook = (partial: Partial<AgentHookEvent> = {}): AgentHookEvent =>
+    hook({ provider: 'claude', providerSessionId: 'claude-session', ...partial });
+
+  function blockedClaude(): { service: AgentActivityService; activityId: string } {
+    const { service, broker } = makeService();
+    broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'claude' });
+    service.handleHookEvent(claudeHook({ event: 'SessionStart' }));
+    return { service, activityId: service.getSnapshot().items[0].id };
+  }
+
+  it('publishes the pending call, then allows it', async () => {
+    const { service, activityId } = blockedClaude();
+    const event = claudeHook({ event: 'PermissionRequest', toolName: 'Bash', command: 'rm -rf out' });
+    service.handleHookEvent(event);
+    const pending = service.requestApproval(event);
+
+    const blocked = service.getSnapshot().items[0];
+    expect(blocked.status).toBe('blocked');
+    expect(blocked.approval).toMatchObject({ toolName: 'Bash', command: 'rm -rf out', risk: 'danger' });
+
+    expect(service.decideApproval(activityId, 'allow')).toEqual({ ok: true });
+    await expect(pending).resolves.toBe('allow');
+    const after = service.getSnapshot().items[0];
+    expect(after.status).toBe('working');
+    // The command is what the promise said it would not keep.
+    expect(after.approval).toBeUndefined();
+  });
+
+  it('carries a denial back to the provider', async () => {
+    const { service, activityId } = blockedClaude();
+    const event = claudeHook({ event: 'PermissionRequest', toolName: 'Bash', command: 'ls' });
+    service.handleHookEvent(event);
+    const pending = service.requestApproval(event);
+    expect(service.decideApproval(activityId, 'deny')).toEqual({ ok: true });
+    await expect(pending).resolves.toBe('deny');
+  });
+
+  it('fails open when the window closes, and drops the command text', async () => {
+    vi.useFakeTimers();
+    try {
+      const { service, activityId } = blockedClaude();
+      const event = claudeHook({ event: 'PermissionRequest', toolName: 'Bash', command: 'pnpm build' });
+      service.handleHookEvent(event);
+      const pending = service.requestApproval(event);
+
+      vi.advanceTimersByTime(APPROVAL_GATE_WINDOW_MS + 1);
+      await expect(pending).resolves.toBeNull();
+
+      const expired = service.getSnapshot().items[0];
+      expect(expired.status).toBe('blocked');
+      expect(expired.approval).toBeDefined();
+      expect(expired.approval).not.toHaveProperty('command');
+      expect(service.decideApproval(activityId, 'allow')).toEqual({ ok: false, error: 'expired' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails open for a provider whose decision grammar is unverified', async () => {
+    const { service, broker } = makeService();
+    broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'codex' });
+    // Same shape, `codex` instead of `claude`. The run is tracked and blocked,
+    // but nothing we can check documents what codex reads back from a hook, so
+    // the gate declines to answer rather than guessing.
+    const event = hook({ event: 'PermissionRequest', toolName: 'Bash', command: 'rm -rf out' });
+    service.handleHookEvent(event);
+    expect(service.getSnapshot().items[0].status).toBe('blocked');
+    await expect(service.requestApproval(event)).resolves.toBeNull();
+    expect(service.getSnapshot().items[0].approval).toBeUndefined();
+  });
+
+  it('fails open when the gate is switched off', async () => {
+    const broker = new FakeBroker();
+    let gate = false;
+    const service = new AgentActivityService({
+      broker,
+      getSettings: () => ({ ...settings, approvalGate: gate }),
+      newId: () => 'activity-1',
+    });
+    broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'claude' });
+    const event = claudeHook({ event: 'PermissionRequest', toolName: 'Bash', command: 'ls' });
+    service.handleHookEvent(event);
+    await expect(service.requestApproval(event)).resolves.toBeNull();
+    expect(service.getSnapshot().items[0].approval).toBeUndefined();
+
+    gate = true;
+    const pending = service.requestApproval(event);
+    expect(service.getSnapshot().items[0].approval).toBeDefined();
+    service.decideApproval('activity-1', 'allow');
+    await expect(pending).resolves.toBe('allow');
+  });
+
+  it('releases a parked hook when the run ends underneath it', async () => {
+    const broker = new FakeBroker();
+    const service = new AgentActivityService({
+      broker,
+      getSettings: () => settings,
+      newId: () => 'activity-1',
+    });
+    const port = broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'claude' });
+    const event = claudeHook({ event: 'PermissionRequest', toolName: 'Bash', command: 'ls' });
+    service.handleHookEvent(event);
+    const pending = service.requestApproval(event);
+    port.frame({ type: 'end', exitCode: 0 });
+    await expect(pending).resolves.toBeNull();
+    expect(service.getSnapshot().items[0].approval).toBeUndefined();
+  });
+
+  it('rejects a decision for an activity that never asked', () => {
+    const { service, activityId } = blockedClaude();
+    expect(service.decideApproval(activityId, 'allow')).toEqual({ ok: false, error: 'not-pending' });
+    expect(service.decideApproval('nope', 'allow')).toEqual({ ok: false, error: 'not-found' });
   });
 });

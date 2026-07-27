@@ -42,7 +42,10 @@ import {
   REMOTE_CAPABILITY_DESKTOP_CONTROL,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL,
   REMOTE_PROTOCOL_VERSION_LEGACY,
+  SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
+  isRemoteProtocolVersion,
   MAX_DESKTOP_VIEWPORT_PIXELS,
   MIN_DESKTOP_VIEWPORT_PIXELS,
   base64ToUint8Array,
@@ -57,6 +60,7 @@ import {
   type DesktopSessionSignal,
   type DesktopSignalMessage,
   type RemoteClientIdentity,
+  type RemoteProtocolVersion,
   type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../shared/remote-protocol';
@@ -67,7 +71,12 @@ import {
 } from '../shared/quick-command';
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
 import type { FileReadStream } from './file-service';
-import type { AgentActivitySnapshot, AgentFollowupResult } from '../shared/agent';
+import type {
+  AgentActivitySnapshot,
+  AgentDecision,
+  AgentDecisionResult,
+  AgentFollowupResult,
+} from '../shared/agent';
 import {
   isWorktreeRequest,
   type WorktreeRequest,
@@ -367,6 +376,12 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         typeof value.activityId === 'string' &&
         typeof value.text === 'string'
       );
+    case 'agent-decision':
+      return (
+        typeof value.requestId === 'string' &&
+        typeof value.activityId === 'string' &&
+        (value.decision === 'allow' || value.decision === 'deny')
+      );
     case 'worktree-request':
       return typeof value.requestId === 'string';
     case 'file-list':
@@ -613,6 +628,7 @@ export interface RemoteAgentSource {
   getSnapshot(): AgentActivitySnapshot;
   onSnapshot(listener: (snapshot: AgentActivitySnapshot) => void): () => void;
   sendFollowup(activityId: string, text: string): AgentFollowupResult;
+  decideApproval(activityId: string, decision: AgentDecision): AgentDecisionResult;
 }
 
 /** Main-owned Git worktree service. The bridge always supplies the `mobile`
@@ -732,7 +748,7 @@ export function attachConnection(
   },
 ): void {
   let authed = false;
-  let negotiatedProtocol = REMOTE_PROTOCOL_VERSION_LEGACY as 1 | 2;
+  let negotiatedProtocol: RemoteProtocolVersion = REMOTE_PROTOCOL_VERSION_LEGACY;
   let clientIdentity: RemoteClientIdentity | null = null;
   let authPending = false;
   let releaseRunsOnClose = false;
@@ -1074,11 +1090,10 @@ export function attachConnection(
       }
       const requestedProtocol = parsed.protocolVersion;
       const protocolCompatible = (
-        (requestedProtocol === REMOTE_PROTOCOL_VERSION_LEGACY
-          || requestedProtocol === REMOTE_PROTOCOL_VERSION)
+        isRemoteProtocolVersion(requestedProtocol)
         && typeof parsed.clientVersion === 'string'
         && parsed.clientVersion.trim().length > 0
-        && (requestedProtocol !== REMOTE_PROTOCOL_VERSION
+        && (requestedProtocol < REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL
           || parsed.clientIdentity === undefined
           || isRemoteClientIdentity(parsed.clientIdentity))
       );
@@ -1092,14 +1107,15 @@ export function attachConnection(
               kind: 'auth-fail',
               reason: 'incompatible-protocol',
               supportedProtocolVersion: REMOTE_PROTOCOL_VERSION,
+              supportedProtocolVersions: SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
               hostVersion: options.hostVersion,
             });
             ws.close(PROTOCOL_CLOSE_CODE);
             return;
           }
           authed = true;
-          negotiatedProtocol = requestedProtocol as 1 | 2;
-          clientIdentity = negotiatedProtocol === REMOTE_PROTOCOL_VERSION
+          negotiatedProtocol = requestedProtocol as RemoteProtocolVersion;
+          clientIdentity = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL
             && isRemoteClientIdentity(parsed.clientIdentity)
             ? parsed.clientIdentity
             : null;
@@ -1107,7 +1123,7 @@ export function attachConnection(
           hooks?.onAuthenticated?.();
           const capabilities = [
             ...(options.quickCommandSource ? [REMOTE_CAPABILITY_QUICK_COMMANDS_READ] : []),
-            ...(negotiatedProtocol === REMOTE_PROTOCOL_VERSION
+            ...(negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL
               && clientIdentity
               && options.desktopSource
               && (options.desktopSource.isAvailable?.() ?? true)
@@ -1146,7 +1162,7 @@ export function attachConnection(
       case 'desktop-control-start': {
         const { requestId } = msg;
         if (
-          negotiatedProtocol !== REMOTE_PROTOCOL_VERSION
+          negotiatedProtocol < REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL
           || !clientIdentity
           || !options.desktopSource
           || !(options.desktopSource.isAvailable?.() ?? true)
@@ -1399,6 +1415,17 @@ export function attachConnection(
           result: options.agentSource?.sendFollowup(msg.activityId, msg.text) ?? {
             ok: false,
             error: 'delivery-failed',
+          },
+        });
+        break;
+
+      case 'agent-decision':
+        send({
+          kind: 'agent-decision-reply',
+          requestId: msg.requestId,
+          result: options.agentSource?.decideApproval(msg.activityId, msg.decision) ?? {
+            ok: false,
+            error: 'not-found',
           },
         });
         break;

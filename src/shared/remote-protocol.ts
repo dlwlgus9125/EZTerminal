@@ -33,7 +33,12 @@ import type {
 } from './ipc';
 import type { FileListResult, FileOpResult } from './files';
 import type { FilePreviewStreamMetadata } from './file-preview';
-import type { AgentActivitySnapshot, AgentFollowupResult } from './agent';
+import type {
+  AgentActivitySnapshot,
+  AgentDecision,
+  AgentDecisionResult,
+  AgentFollowupResult,
+} from './agent';
 import type { TerminalFileLocationRequest, TerminalFileLocationResult } from './terminal-file-location';
 import type { WorktreeRequest, WorktreeResult } from './worktree';
 import type {
@@ -53,12 +58,26 @@ export type RemoteCapability =
   | typeof REMOTE_CAPABILITY_QUICK_COMMANDS_READ
   | typeof REMOTE_CAPABILITY_DESKTOP_CONTROL;
 
-/** v1 remains accepted for terminal-only clients; v2 adds desktop control. */
+/**
+ * Every version ever shipped stays accepted, because the desktop is upgraded
+ * before the phone far more often than the reverse. Features are gated by the
+ * version that introduced them, never by "is this the newest" — otherwise each
+ * bump would silently take a capability away from the peers that still work.
+ *
+ * v1 terminal only · v2 adds desktop control and client identity · v3 adds
+ * agent approval decisions.
+ */
 export const REMOTE_PROTOCOL_VERSION_LEGACY = 1 as const;
-export const REMOTE_PROTOCOL_VERSION = 2 as const;
-export type RemoteProtocolVersion =
-  | typeof REMOTE_PROTOCOL_VERSION_LEGACY
-  | typeof REMOTE_PROTOCOL_VERSION;
+export const REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL = 2 as const;
+export const REMOTE_PROTOCOL_VERSION_AGENT_DECISION = 3 as const;
+export const REMOTE_PROTOCOL_VERSION = 3 as const;
+export type RemoteProtocolVersion = 1 | 2 | 3;
+
+export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [1, 2, 3];
+
+export function isRemoteProtocolVersion(value: unknown): value is RemoteProtocolVersion {
+  return SUPPORTED_REMOTE_PROTOCOL_VERSIONS.includes(value as RemoteProtocolVersion);
+}
 
 /** Copy-safe identity shown in About/Diagnostics and release evidence. */
 export interface BuildInfo {
@@ -322,6 +341,14 @@ export interface AgentFollowupRequest {
   readonly text: string;
 }
 
+/** Protocol v3. A v2 peer never sends this and never has to understand it. */
+export interface AgentDecisionRequest {
+  readonly kind: 'agent-decision';
+  readonly requestId: string;
+  readonly activityId: string;
+  readonly decision: AgentDecision;
+}
+
 export interface WorktreeRequestMessage {
   readonly kind: 'worktree-request';
   readonly requestId: string;
@@ -524,6 +551,7 @@ export type ClientToServerMessage =
   | PacketsUnsubscribeMessage
   | AgentSnapshotRequest
   | AgentFollowupRequest
+  | AgentDecisionRequest
   | WorktreeRequestMessage
   | FileListRequest
   | FileRootsRequest
@@ -734,6 +762,12 @@ export interface AgentFollowupReply {
   readonly kind: 'agent-followup-reply';
   readonly requestId: string;
   readonly result: AgentFollowupResult;
+}
+
+export interface AgentDecisionReply {
+  readonly kind: 'agent-decision-reply';
+  readonly requestId: string;
+  readonly result: AgentDecisionResult;
 }
 
 /** One 1Hz stats push while this connection has `stats-visible:true`. */
@@ -955,6 +989,7 @@ export type ServerToClientMessage =
   | SessionDeadMessage
   | AgentSnapshotMessage
   | AgentFollowupReply
+  | AgentDecisionReply
   | WorktreeReplyMessage
   | StatsUpdateMessage
   | StatsHistoryReply

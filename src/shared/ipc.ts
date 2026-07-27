@@ -28,6 +28,8 @@ import type {
 import type { ThemeMod } from './theme-schema';
 import type {
   AgentActivitySnapshot,
+  AgentDecision,
+  AgentDecisionResult,
   AgentFollowupResult,
   AgentIntegrationMutationResult,
   AgentIntegrationProvider,
@@ -1127,8 +1129,6 @@ export interface EzTerminalApi {
   // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
   /** Every currently-live session, oldest-created first (mirrors `SessionDirectory.list()`). */
   listSessions: () => Promise<readonly SessionInfo[]>;
-  /** Devices seen by the remote bridge during this run. */
-  listRemoteDevices: () => Promise<readonly RemoteDeviceEntry[]>;
   /** Every currently-active run across every session (M1 mirror-active-runs
    * gap fix) — lets a client that connects/mounts AFTER a run already started
    * learn its `runId` to call `attachRun` (`onRunStarted` below is edge-
@@ -1153,12 +1153,16 @@ export interface EzTerminalApi {
   attachRun: (sessionId: string, runId: string) => Promise<void>;
 
   // ── Agent Activity (desktop + connected mobile) ─────────────────────────
-  /** Level-triggered seed; snapshots never contain prompts, transcripts or tool input. */
+  /** Level-triggered seed. Snapshots never contain prompts or transcripts; the
+   * only tool text they carry is the command of a live pending approval. */
   getAgentActivitySnapshot: () => Promise<AgentActivitySnapshot>;
   /** Revisioned activity push. Returns an unsubscribe. */
   onAgentActivitySnapshot: (listener: (snapshot: AgentActivitySnapshot) => void) => () => void;
   /** Deliver one trimmed line to a waiting agent PTY. Never auto-submits approvals. */
   sendAgentFollowup: (activityId: string, text: string) => Promise<AgentFollowupResult>;
+  /** Answer a parked permission hook. Only valid while the activity carries a
+   * live `approval`; past its `expiresAt` the gate has already let go. */
+  decideAgentApproval: (activityId: string, decision: AgentDecision) => Promise<AgentDecisionResult>;
 
   /** Main-owned Git worktree operations. Mobile is restricted to list/open. */
   executeWorktree: (request: WorktreeRequest) => Promise<WorktreeResult>;
@@ -1172,6 +1176,10 @@ export interface EzTerminalApi {
 // shared/window.d.ts) so every call site guards with `?.`.
 
 export interface EzTerminalDesktopApi {
+  /** Devices this desktop's remote bridge has seen during this run. Desktop
+   * state about its own clients — a phone has no use for, and no way to
+   * answer, the question. */
+  listRemoteDevices: () => Promise<readonly RemoteDeviceEntry[]>;
   /** Local privileged service and graphical-control lease state. */
   getRemoteDesktopStatus: () => Promise<RemoteDesktopHostStatus>;
   /** End the active graphical-control lease locally. */

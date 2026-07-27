@@ -2,16 +2,40 @@
  * Transport-safe Agent Activity contracts.
  *
  * Deliberately absent from every public shape: provider transcript paths,
- * prompts/responses, tool input, the provider's session id, and EZTerminal's
- * internal run id. Those values are either discarded by the hook relay or
- * kept private inside AgentActivityService.
+ * prompts/responses, the provider's session id, and EZTerminal's internal run
+ * id. Those values are either discarded by the hook relay or kept private
+ * inside AgentActivityService.
+ *
+ * One narrow exception exists: `AgentApproval.command`. You cannot ask a human
+ * to approve a command without showing them the command. It is admitted under
+ * strict terms — it lives only while the agent is blocked on that one call, it
+ * is dropped the instant a decision is delivered or the request expires, and
+ * it is never written to disk or to a log. `scripts/guard-approval-privacy.mjs`
+ * is what keeps that true.
  */
 
-export const AGENT_SETTINGS_SCHEMA_VERSION = 1 as const;
+export const AGENT_SETTINGS_SCHEMA_VERSION = 2 as const;
+/** v1 files predate `approvalGate` and are migrated forward on read. */
+export const AGENT_SETTINGS_SCHEMA_VERSION_LEGACY = 1 as const;
 
 export type AgentStatus = 'starting' | 'working' | 'waiting' | 'blocked' | 'done' | 'error';
 
 export type AgentProvider = 'codex' | 'claude' | 'generic';
+
+export type AgentApprovalRisk = 'danger' | 'write' | 'read';
+
+/** The tool call a `blocked` agent is waiting on. Present only while the
+ * provider hook is still holding its request open. */
+export interface AgentApproval {
+  readonly toolName: string;
+  /** Shell text for shell-shaped tools. Absent when the provider sent none. */
+  readonly command?: string;
+  readonly risk: AgentApprovalRisk;
+  readonly requestedAt: number;
+  /** Wall-clock deadline. Past it the gate fails open and the provider asks in
+   * the terminal itself, so the card must stop offering buttons. */
+  readonly expiresAt: number;
+}
 
 export interface AgentActivity {
   readonly id: string;
@@ -21,7 +45,17 @@ export interface AgentActivity {
   readonly status: AgentStatus;
   readonly createdAt: number;
   readonly updatedAt: number;
+  /** Set iff `status === 'blocked'` and the approval gate captured the call. */
+  readonly approval?: AgentApproval;
+  /** Branch of `cwd`, when it is inside a work tree. */
+  readonly branch?: string;
 }
+
+export type AgentDecision = 'allow' | 'deny';
+
+export type AgentDecisionError = 'not-found' | 'not-pending' | 'expired' | 'delivery-failed';
+
+export type AgentDecisionResult = { readonly ok: true } | { readonly ok: false; readonly error: AgentDecisionError };
 
 export interface AgentActivitySnapshot {
   readonly revision: number;
@@ -56,6 +90,9 @@ export interface AgentSettings {
   readonly schemaVersion: typeof AGENT_SETTINGS_SCHEMA_VERSION;
   readonly notifications: AgentNotificationSettings;
   readonly genericProfiles: readonly GenericAgentProfile[];
+  /** Whether EZTerminal answers the provider's permission hook instead of
+   * letting it fall through to the provider's own terminal prompt. */
+  readonly approvalGate: boolean;
 }
 
 export type AgentIntegrationProvider = Exclude<AgentProvider, 'generic'>;
@@ -93,6 +130,11 @@ export interface AgentHookEvent {
   readonly turnId?: string;
   readonly toolName?: string;
   readonly notificationType?: string;
+  /** The single human-readable line the pending tool call is about — the shell
+   * command, or the file path for file tools. The relay picks one string
+   * rather than forwarding the provider's whole `tool_input` object, so the
+   * allowlist stays an allowlist. Only sent for permission events. */
+  readonly command?: string;
 }
 
 export const EMPTY_AGENT_ACTIVITY_SNAPSHOT: AgentActivitySnapshot = Object.freeze({

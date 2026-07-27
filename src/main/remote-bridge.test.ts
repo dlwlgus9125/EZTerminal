@@ -43,13 +43,14 @@ import { MAX_GUARDED_DESTROY_RUN_IDS } from '../shared/ipc';
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
 import {
   REMOTE_PROTOCOL_VERSION,
+  SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
   uint8ArrayToBase64,
   type AuthMessage,
   type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../shared/remote-protocol';
 import type { OpenClawAgentSession, OpenClawLifecycleResult, OpenClawLogLine, OpenClawStatus } from '../shared/openclaw';
-import type { AgentActivitySnapshot, AgentFollowupResult } from '../shared/agent';
+import type { AgentActivitySnapshot, AgentDecisionResult, AgentFollowupResult } from '../shared/agent';
 import type { WorktreeRequest } from '../shared/worktree';
 
 const TOKEN = 'the-secret-token';
@@ -243,6 +244,7 @@ class FakePacketSource implements RemotePacketSource {
 class FakeAgentSource implements RemoteAgentSource {
   snapshot: AgentActivitySnapshot = { revision: 1, items: [] };
   readonly sendFollowup = vi.fn((): AgentFollowupResult => ({ ok: true }));
+  readonly decideApproval = vi.fn((): AgentDecisionResult => ({ ok: true }));
   private readonly listeners = new Set<(snapshot: AgentActivitySnapshot) => void>();
 
   getSnapshot(): AgentActivitySnapshot {
@@ -551,6 +553,7 @@ describe('RemoteBridge — auth gate', () => {
       kind: 'auth-fail',
       reason: 'incompatible-protocol',
       supportedProtocolVersion: REMOTE_PROTOCOL_VERSION,
+      supportedProtocolVersions: SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
       hostVersion: HOST_VERSION,
     });
     expect(ws.closeCode).toBe(PROTOCOL_CLOSE_CODE);

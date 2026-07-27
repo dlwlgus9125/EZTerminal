@@ -138,8 +138,6 @@ const api: EzTerminalApi = {
 
   // Session mirroring (M2): full mirroring across desktop tabs + mobile.
   listSessions: (): Promise<readonly SessionInfo[]> => ipcRenderer.invoke('list-sessions'),
-  listRemoteDevices: (): Promise<readonly RemoteDeviceEntry[]> =>
-    ipcRenderer.invoke('remote:list-devices'),
   listRuns: (): Promise<readonly RunStartedInfo[]> => ipcRenderer.invoke('list-runs'),
   onSessionAdded: (listener: (session: SessionInfo) => void): (() => void) => {
     const handler = (_event: unknown, session: SessionInfo): void => listener(session);
@@ -177,6 +175,11 @@ const api: EzTerminalApi = {
     text: string,
   ): Promise<import('../shared/agent').AgentFollowupResult> =>
     ipcRenderer.invoke('agents:followup', activityId, text),
+  decideAgentApproval: (
+    activityId: string,
+    decision: import('../shared/agent').AgentDecision,
+  ): Promise<import('../shared/agent').AgentDecisionResult> =>
+    ipcRenderer.invoke('agents:decide', activityId, decision),
 
   // Layout persistence (Track A ③): thin invoke wrappers — main validates all.
   loadLayout: () => ipcRenderer.invoke('layout:load'),
@@ -264,6 +267,8 @@ contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
 // for why: mobile has no implementation of these, and folding them into the
 // shared EzTerminalApi would force mobile's transport to stub every one).
 const desktopApi: EzTerminalDesktopApi = {
+  listRemoteDevices: (): Promise<readonly RemoteDeviceEntry[]> =>
+    ipcRenderer.invoke('remote:list-devices'),
   getRemoteDesktopStatus: () => ipcRenderer.invoke('remote:get-desktop-status'),
   disconnectRemoteDesktop: () => ipcRenderer.invoke('remote:disconnect-desktop'),
   onRemoteDesktopStatus: (listener: (status: RemoteDesktopHostStatus) => void): (() => void) => {

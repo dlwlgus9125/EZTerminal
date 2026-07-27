@@ -19,6 +19,7 @@ describe('AgentSettingsStore', () => {
       schemaVersion: AGENT_SETTINGS_SCHEMA_VERSION,
       notifications: { waiting: false, blocked: true, error: false },
       genericProfiles: [{ id: 'aider', name: 'Aider', executable: 'aider.cmd', enabled: true }],
+      approvalGate: false,
     } as const;
     await expect(store.set(next)).resolves.toEqual(next);
 
@@ -48,5 +49,32 @@ describe('AgentSettingsStore', () => {
       }),
     ).resolves.toBeNull();
     expect(store.current).toEqual(defaultAgentSettings());
+  });
+
+  it('reads a v1 file forward instead of quarantining it', async () => {
+    // A rejected file is a quarantined file, and a quarantined file silently
+    // costs the user every generic profile they configured. v1 predates
+    // `approvalGate`, so it is filled in rather than refused.
+    const migrated = validateAgentSettings({
+      schemaVersion: 1,
+      notifications: { waiting: false, blocked: true, error: true },
+      genericProfiles: [{ id: 'aider', name: 'Aider', executable: 'aider.cmd', enabled: true }],
+    });
+    expect(migrated).toEqual({
+      schemaVersion: AGENT_SETTINGS_SCHEMA_VERSION,
+      notifications: { waiting: false, blocked: true, error: true },
+      genericProfiles: [{ id: 'aider', name: 'Aider', executable: 'aider.cmd', enabled: true }],
+      approvalGate: true,
+    });
+  });
+
+  it('requires approvalGate once the file claims the current version', () => {
+    expect(
+      validateAgentSettings({
+        schemaVersion: AGENT_SETTINGS_SCHEMA_VERSION,
+        notifications: { waiting: true, blocked: true, error: true },
+        genericProfiles: [],
+      }),
+    ).toBeNull();
   });
 });

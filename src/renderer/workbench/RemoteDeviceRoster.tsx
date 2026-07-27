@@ -24,7 +24,7 @@ export function RemoteDeviceRoster(): JSX.Element | null {
   useEffect(() => {
     let alive = true;
     const read = (): void => {
-      void window.ezterminal.listRemoteDevices().then(
+      void window.ezterminalDesktop?.listRemoteDevices().then(
         (next) => {
           if (alive) setDevices(next);
         },

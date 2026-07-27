@@ -80,7 +80,7 @@ import type {
   SystemStatsSnapshot,
 } from '../shared/ipc';
 import type { OpenClawAutostartAction, OpenClawLifecycleAction, OpenClawVisibility } from '../shared/openclaw';
-import type { AgentFollowupResult } from '../shared/agent';
+import type { AgentDecisionResult, AgentFollowupResult } from '../shared/agent';
 import { normalizeExternalHttpUrl } from '../shared/external-url';
 import { classifyRecentPanelInput } from './recent-panel-input';
 import type { WorkspaceFileSearchRequest } from '../shared/workspace-search';
@@ -425,9 +425,14 @@ app.on('ready', () => {
   const agentSettingsStore = new AgentSettingsStore(path.join(app.getPath('userData')));
   let agentActivityService: AgentActivityService | null = null;
   let agentRelayReady = false;
-  const agentHookRelay = new AgentHookRelay(app.getPath('userData'), (event) => {
-    agentActivityService?.handleHookEvent(event);
-  });
+  const agentHookRelay = new AgentHookRelay(
+    app.getPath('userData'),
+    (event) => {
+      agentActivityService?.handleHookEvent(event);
+    },
+    // No service means no one to ask, so the provider keeps its own prompt.
+    async (event) => (await agentActivityService?.requestApproval(event)) ?? null,
+  );
   const agentInfrastructureReady = Promise.all([agentSettingsStore.init(), agentHookRelay.start()])
     .then(() => {
       agentRelayReady = true;
@@ -799,6 +804,12 @@ app.on('ready', () => {
   ipcMain.handle('agents:followup', (_event, activityId: string, text: string): AgentFollowupResult => {
     if (typeof activityId !== 'string' || typeof text !== 'string') return { ok: false, error: 'invalid-text' };
     return agentActivityService?.sendFollowup(activityId, text) ?? { ok: false, error: 'delivery-failed' };
+  });
+  ipcMain.handle('agents:decide', (_event, activityId: string, decision: string): AgentDecisionResult => {
+    if (typeof activityId !== 'string' || (decision !== 'allow' && decision !== 'deny')) {
+      return { ok: false, error: 'not-found' };
+    }
+    return agentActivityService?.decideApproval(activityId, decision) ?? { ok: false, error: 'not-found' };
   });
   ipcMain.handle('agents:list-integrations', async () => {
     await agentInfrastructureReady;
