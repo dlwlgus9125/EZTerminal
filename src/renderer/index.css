@@ -3836,8 +3836,10 @@ body {
 .terminal-paste-warning__details {
   color: var(--ui-text-primary);
   display: grid;
+  /* Three equal columns, one row. auto-fit wrapped the third cell onto its own
+     half-width line, which read as an afterthought rather than a third figure. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--ui-space-2);
-  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
   margin: 0;
   padding: 0;
   list-style: none;
@@ -3868,5 +3870,12 @@ body {
   color: var(--ui-text-primary);
   font-family: var(--ui-font-terminal);
   font-variant-numeric: tabular-nums;
+}
+
+/* Prose, not a measurement. The terminal face renders Korean full-width and
+   the tracking falls apart, so the shape cell keeps the body face. */
+.terminal-paste-warning__stat--prose dd {
+  font-family: var(--ui-font-body);
+  font-size: var(--ui-font-size-13);
 }
 

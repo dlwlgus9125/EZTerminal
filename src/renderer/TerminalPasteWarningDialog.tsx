@@ -72,7 +72,10 @@ export function TerminalPasteWarningDialog({
           <dt>{t('terminalPasteWarning.statSize')}</dt>
           <dd>{t('terminalPasteWarning.bytes', { value: numberFormatter.format(risk.byteLength) })}</dd>
         </div>
-        <div className="terminal-paste-warning__stat" data-breach={risk.multiline ? 'true' : undefined}>
+        <div
+          className="terminal-paste-warning__stat terminal-paste-warning__stat--prose"
+          data-breach={risk.multiline ? 'true' : undefined}
+        >
           <dt>{t('terminalPasteWarning.statShape')}</dt>
           <dd>
             {risk.multiline
