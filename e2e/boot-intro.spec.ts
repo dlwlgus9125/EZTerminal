@@ -11,10 +11,14 @@ test('harness seed suppresses the intro and is not quarantined', async () => {
   const app = await launchApp(dir);
   const window = await app.firstWindow();
   await window.waitForSelector('[data-testid="cmd-input"]');
+  // Long enough that a playing overlay would certainly be on screen.
   await window.waitForTimeout(1200);
-  console.log('SEEDCHECK intro=', await window.getByTestId('boot-intro').count());
-  console.log('SEEDCHECK files=', JSON.stringify(readdirSync(dir).filter((f) => f.startsWith('settings'))));
   await expect(window.getByTestId('boot-intro')).toHaveCount(0);
+  // The seed has to satisfy SettingsSchema. If it does not, the store
+  // quarantines it and the flag is silently lost, which is how this regressed
+  // the first time: the overlay played over every spec and the suite still
+  // passed because Playwright waits it out.
+  expect(readdirSync(dir).filter((name) => name.startsWith('settings'))).toEqual(['settings.json']);
   expect(existsSync(path.join(dir, 'settings.json.corrupt'))).toBe(false);
   await app.close();
 });
