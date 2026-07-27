@@ -613,6 +613,7 @@ body {
    dockview panel content box. min-height:0 lets the nested block-list scroll instead
    of overflowing the pane. */
 .pane {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -630,6 +631,15 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   position: relative;
+  /* Half the pane gutter. Each leaf view contributes the other half, so the
+     spacing at the window edge matches the spacing between two panes. */
+  padding: var(--ui-pane-inset);
+  background:
+    radial-gradient(
+      ellipse 90% 70% at 50% 30%,
+      color-mix(in srgb, var(--ui-accent) 6%, var(--ui-canvas)),
+      var(--ui-canvas) 70%
+    );
 }
 .ez-dock {
   height: 100%;
@@ -1364,8 +1374,8 @@ body {
   --dv-activegroup-hiddenpanel-tab-color: var(--term-fg-faint);
   --dv-inactivegroup-visiblepanel-tab-color: var(--term-fg);
   --dv-inactivegroup-hiddenpanel-tab-color: var(--term-fg-faint);
-  --dv-separator-border: var(--term-border);
-  --dv-tabs-and-actions-container-height: 30px;
+  --dv-separator-border: transparent;
+  --dv-tabs-and-actions-container-height: 36px;
   /* Tab strip overflow (v0.2.0 M3): the built-in scrollbar + "N hidden" chip
      + its popover only ship pre-themed for dockview's "-spaced" theme
      variants — our plain dockview-theme-dark class left these on generic
@@ -1373,6 +1383,46 @@ body {
   --dv-tabs-container-scrollbar-color: var(--term-fg-dim);
   --dv-icon-hover-background-color: var(--term-bg-hover);
   --dv-tab-divider-color: var(--term-border);
+}
+
+/* == WORKSPACE PANES AS CARDS ==
+   dockview positions every .dv-view absolutely with an exact pixel rect, so the
+   gutter has to come from padding on the leaf view rather than a margin on the
+   group: .dv-groupview is height:100%, which resolves against the view's
+   reduced content box. A margin would be measured out from under it.
+   :has() restricts this to views that actually hold a group, so nested branch
+   nodes do not compound the spacing. */
+.ez-dock .dv-view:has(> .dv-groupview) {
+  padding: var(--ui-pane-inset);
+}
+
+.ez-dock .dv-groupview {
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-xl);
+  /* Unfocused panes recede. The active group is the one the keyboard is
+     talking to, and at four panes that has to be readable at a glance. */
+  opacity: 0.82;
+  transition:
+    border-color var(--ui-motion-pane-focus) var(--ui-ease-standard),
+    box-shadow var(--ui-motion-pane-focus) var(--ui-ease-standard),
+    opacity var(--ui-motion-pane-focus) var(--ui-ease-standard);
+}
+
+.ez-dock .dv-groupview.dv-active-group {
+  border-color: var(--ui-border-focus-soft);
+  box-shadow: var(--ui-glow-box);
+  opacity: 1;
+}
+
+.ez-dock .dv-groupview > .dv-tabs-and-actions-container {
+  border-bottom: 1px solid var(--ui-border-mid);
+  border-start-start-radius: var(--ui-radius-xl);
+  border-start-end-radius: var(--ui-radius-xl);
+}
+
+.ez-dock .dv-groupview > .dv-content-container {
+  border-end-start-radius: var(--ui-radius-xl);
+  border-end-end-radius: var(--ui-radius-xl);
 }
 
 /* The overflow chip has no border/background of its own in its base rule
@@ -1454,7 +1504,9 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 0.35rem 0 0.5rem;
+  /* The tail clears the floating composer so the newest output is never parked
+     underneath it: pill height + its offset + a breathing gap. */
+  padding: 0.35rem 0 calc(48px + 18px + var(--ui-space-3));
 }
 
 /* Each command + its output. Minimal chrome: a thin top rule between blocks,
@@ -1908,29 +1960,33 @@ body {
   justify-content: space-between;
 }
 
+/* The state colour travels on `color` rather than `background` so the phosphor
+   halo can reference it through currentColor instead of repeating every hue. */
 .agent-status-dot {
   width: 8px;
   height: 8px;
   flex: 0 0 8px;
   border-radius: 50%;
-  background: var(--term-fg-faint);
+  color: var(--term-fg-faint);
+  background: currentColor;
+  box-shadow: 0 0 7px currentColor;
 }
 
 .agent-status-dot--starting {
-  background: var(--term-fg-faint);
+  color: var(--term-fg-faint);
 }
 .agent-status-dot--working {
-  background: var(--term-blue);
+  color: var(--term-blue);
 }
 .agent-status-dot--waiting {
-  background: var(--term-amber);
+  color: var(--term-amber);
 }
 .agent-status-dot--blocked,
 .agent-status-dot--error {
-  background: var(--term-red);
+  color: var(--term-red);
 }
 .agent-status-dot--done {
-  background: var(--term-green);
+  color: var(--term-green);
 }
 
 .agent-provider {
@@ -2220,6 +2276,9 @@ body {
    height. Released the moment the block leaves 'running' (TerminalPane.tsx). */
 .pane--tui-takeover .block-list {
   overflow: hidden;
+  /* The composer is hidden during a takeover, so the reserved strip below it
+     would otherwise steal rows from the full-screen TUI. */
+  padding-block-end: 0;
 }
 .pane--tui-takeover .block:not(.block--takeover) {
   display: none;
@@ -2671,17 +2730,42 @@ body {
 }
 
 /* ── command input — the live prompt line, pinned to the bottom ───────────── */
+/* The composer floats over the bottom of its own pane rather than being docked
+   under the feed. It stays a child of the pane on purpose: routing is then
+   structural — every handler is already that pane's closure — so per-pane draft
+   isolation, the paste-warning path, and IME composition all keep working
+   untouched. A single workspace-level composer would have had to look the
+   focused pane up and re-dispatch into it. */
 .cmd-row {
-  flex: 0 0 auto;
+  position: absolute;
+  z-index: 5;
+  inset-block-end: 18px;
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  inline-size: min(820px, calc(100% - 2 * var(--ui-space-4)));
+  min-block-size: 48px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 0.55rem;
-  padding: 0.5rem 0.6rem;
-  /* Same surface as the feed above it (not a distinct raised toolbar) — the
-     live prompt reads as the next line of the transcript, just pinned. */
-  background: var(--term-bg);
-  border-top: 1px solid var(--term-border-faint);
+  padding: 0.4rem var(--ui-space-4);
+  border: 1px solid var(--ui-border-focus-soft);
+  border-radius: var(--ui-radius-round);
+  background: color-mix(in srgb, var(--ui-surface-inset) 94%, transparent);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 55%);
 }
+
+/* Only the pane the keyboard is talking to lights its composer up, so a split
+   workspace still reads as having one live prompt. Inactive composers stay
+   fully interactive — clicking one is how you move focus to that pane. */
+.dv-groupview.dv-active-group .cmd-row {
+  border-color: var(--ui-accent);
+  box-shadow:
+    var(--ui-glow-box),
+    0 10px 28px rgb(0 0 0 / 55%);
+}
+
 
 /* Live cwd path in the input prompt — dim cyan, like a terminal's `cwd ❯`. */
 .prompt-cwd {
