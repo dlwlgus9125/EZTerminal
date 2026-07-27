@@ -45,7 +45,19 @@ function disableBootIntro(dir: string): void {
   // spec deliberately opting in, and a relaunch against a shared userData dir
   // must not undo what the previous launch persisted.
   if ('bootIntro' in settings) return;
-  writeFileSync(file, JSON.stringify({ ...settings, bootIntro: false }, null, 2), 'utf8');
+  // schemaVersion and startup are the two required fields of SettingsSchema.
+  // Without them the file fails validation, the store quarantines it to
+  // settings.json.corrupt, and the flag is silently lost — which reinstates the
+  // very overlay this is here to suppress.
+  writeFileSync(
+    file,
+    JSON.stringify(
+      { schemaVersion: 1, startup: { mode: 'last' }, ...settings, bootIntro: false },
+      null,
+      2,
+    ),
+    'utf8',
+  );
 }
 
 export function launchApp(

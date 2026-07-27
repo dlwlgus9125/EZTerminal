@@ -3,6 +3,8 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { calculateContrastRatio } from '../theme-contrast';
+
 const css = readFileSync(resolve(process.cwd(), 'src/renderer/styles/ui-tokens.css'), 'utf8');
 const desktopFoundation = readFileSync(resolve(process.cwd(), 'src/renderer/index.css'), 'utf8');
 const mobileFoundation = readFileSync(resolve(process.cwd(), 'src/renderer/mobile-shared.css'), 'utf8');
@@ -87,6 +89,56 @@ describe('UI token contract', () => {
         new RegExp(`--ui-motion-${token}\\s*:\\s*0ms`).test(reducedMotionBlock),
         `--ui-motion-${token} must collapse under reduced motion`,
       ).toBe(true);
+    }
+  });
+
+  // theme-contrast.ts only corrects the seventeen required roles, so the
+  // decorative ones added by the commercial pass have no runtime safety net and
+  // are gated here instead.
+  const BUILT_IN_THEMES = ['dark', 'light', 'high-contrast', 'matrix'] as const;
+  const SURFACES = ['--ui-canvas', '--ui-surface', '--ui-surface-raised', '--ui-surface-inset'] as const;
+
+  function themeColor(theme: string, token: string): string {
+    const value = scopedDeclaration(`[data-theme='${theme}']`, token);
+    expect(value, `${theme} must declare ${token}`).toBeDefined();
+    return value!;
+  }
+
+  it('declares every decorative role in all four built-in themes', () => {
+    // A custom property computes to its substituted value, so a theme that
+    // leans on the :root aliases inherits whatever an ancestor scope resolved
+    // them to. The token gallery renders all four themes as nested scopes.
+    for (const theme of BUILT_IN_THEMES) {
+      for (const token of [
+        '--ui-text-dim',
+        '--ui-border-mid',
+        '--ui-border-focus-soft',
+        '--ui-glow-color',
+      ]) {
+        expect(
+          scopedDeclaration(`[data-theme='${theme}']`, token),
+          `${theme} must declare ${token} rather than inherit it`,
+        ).toBeDefined();
+      }
+    }
+  });
+
+  it('keeps dim text readable and soft borders perceivable in every theme', () => {
+    for (const theme of BUILT_IN_THEMES) {
+      const dim = themeColor(theme, '--ui-text-dim');
+      for (const surface of SURFACES) {
+        const ratio = calculateContrastRatio(dim, themeColor(theme, surface));
+        expect(ratio, `${theme} --ui-text-dim on ${surface}`).not.toBeNull();
+        expect(ratio!, `${theme} --ui-text-dim on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      }
+
+      // This role draws modal and pane boundaries, which is non-text UI.
+      const border = themeColor(theme, '--ui-border-focus-soft');
+      for (const surface of ['--ui-surface', '--ui-surface-raised'] as const) {
+        const ratio = calculateContrastRatio(border, themeColor(theme, surface));
+        expect(ratio, `${theme} --ui-border-focus-soft on ${surface}`).not.toBeNull();
+        expect(ratio!, `${theme} --ui-border-focus-soft on ${surface}`).toBeGreaterThanOrEqual(3);
+      }
     }
   });
 

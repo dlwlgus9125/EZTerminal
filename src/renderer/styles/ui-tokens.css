@@ -152,7 +152,9 @@
   --ui-border-strong: #637a70;
   --ui-text-dim: #71857b;
   --ui-border-mid: #1e2926;
-  --ui-border-focus-soft: #3d5f53;
+  /* Carries modal and pane boundaries, so it holds 3:1 against the surfaces it
+     separates even though no automated gate covers this role. */
+  --ui-border-focus-soft: #4a7264;
   --ui-accent: #2fe0a0;
   --ui-on-accent: #04110c;
   --ui-focus: #65f4c0;
@@ -174,9 +176,11 @@
   --ui-text-inverse: #ffffff;
   --ui-border-subtle: #c9d2cd;
   --ui-border-strong: #66776e;
-  --ui-text-dim: #63736a;
+  /* Dark enough to clear 4.5:1 against the inset surface, which is the darkest
+     background this role sits on in the light theme. */
+  --ui-text-dim: #5d6c64;
   --ui-border-mid: #dde3e0;
-  --ui-border-focus-soft: #9fb3a9;
+  --ui-border-focus-soft: #7d938a;
   --ui-accent: #087847;
   --ui-on-accent: #ffffff;
   --ui-focus: #075fca;
@@ -196,6 +200,14 @@
   --ui-text-primary: #ffffff;
   --ui-text-secondary: #ffffff;
   --ui-text-muted: #d0d0d0;
+  /* Declared rather than left to the :root aliases. A custom property's
+     computed value is the substituted one, so a nested [data-theme] scope — the
+     token gallery renders all four themes that way — would otherwise inherit
+     whatever the root theme resolved them to, and Matrix green would leak into
+     the High Contrast card. */
+  --ui-text-dim: #d0d0d0;
+  --ui-border-mid: #808080;
+  --ui-border-focus-soft: #ffffff;
   --ui-text-inverse: #000000;
   --ui-border-subtle: #808080;
   --ui-border-strong: #ffffff;

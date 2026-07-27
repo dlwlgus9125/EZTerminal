@@ -32,29 +32,36 @@ export function BootIntroOverlay(): JSX.Element | null {
   const reducedMotion = useReducedMotion();
   const [phase, setPhase] = useState<Phase>('unknown');
   const [visibleLines, setVisibleLines] = useState(0);
-  // Read once. Toggling the setting should take effect on the next launch, not
-  // start an intro over a workbench the user is already using.
-  const startedRef = useRef(false);
+  // Latched when the preference has actually been answered — not when a read
+  // was merely started. Guarding on "started" instead would strand the overlay
+  // under StrictMode, whose simulated remount cancels the first read's callback
+  // and would then skip issuing a second one, leaving phase at 'unknown'
+  // forever. Latching on the answer also means toggling the setting takes
+  // effect next launch rather than starting an intro over a workbench in use.
+  const resolvedRef = useRef(false);
 
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
+    if (resolvedRef.current) return;
+    const settle = (next: Phase): void => {
+      resolvedRef.current = true;
+      setPhase(next);
+    };
     if (reducedMotion) {
-      setPhase('done');
+      settle('done');
+      return;
+    }
+    const desktop = window.ezterminalDesktop;
+    if (!desktop?.getBootIntro) {
+      settle('done');
       return;
     }
     let alive = true;
-    const desktop = window.ezterminalDesktop;
-    if (!desktop?.getBootIntro) {
-      setPhase('done');
-      return;
-    }
     void desktop.getBootIntro().then(
       (enabled) => {
-        if (alive) setPhase(enabled ? 'playing' : 'done');
+        if (alive) settle(enabled ? 'playing' : 'done');
       },
       () => {
-        if (alive) setPhase('done');
+        if (alive) settle('done');
       },
     );
     return () => {
