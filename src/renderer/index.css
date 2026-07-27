@@ -1881,14 +1881,6 @@ body {
   outline-offset: -2px;
 }
 
-/* Transient action feedback (M2) — "Copied" / "No active terminal", same
-   auto-clearing pattern as ConnectionInfoPanel's copy buttons. */
-.file-toast {
-  padding: 0.3rem 0.6rem;
-  font-size: 0.72rem;
-  color: var(--term-green);
-}
-
 /* Delete confirmation (M2) — centered overlay like the viewer, same z-index
    (never shown at the same time: the viewer opens from a row click, this
    from a row's context menu). NEVER a permanent-delete option — trash only. */
@@ -2286,21 +2278,6 @@ body {
   color: var(--term-bg);
 }
 
-.terminal-path-toast {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 180;
-  display: flex;
-  max-width: min(520px, calc(100vw - 32px));
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--term-border);
-  background: var(--term-bg-raised, var(--term-bg));
-  color: var(--term-fg);
-}
-
 .rich-file-viewer {
   width: min(920px, calc(100vw - 48px));
   height: min(760px, calc(100vh - 48px));
@@ -2429,19 +2406,6 @@ body {
   max-width: 520px;
   color: var(--term-fg-dim);
   text-align: center;
-}
-
-.file-drop-toast {
-  position: absolute;
-  left: 50%;
-  bottom: 24px;
-  z-index: 171;
-  max-width: min(520px, calc(100% - 32px));
-  padding: 8px 12px;
-  transform: translateX(-50%);
-  border: 1px solid var(--term-amber);
-  background: var(--term-bg-raised);
-  color: var(--term-amber);
 }
 
 .agent-hub-head {

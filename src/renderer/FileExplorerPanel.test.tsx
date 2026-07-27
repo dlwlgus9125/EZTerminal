@@ -10,6 +10,7 @@ import { quoteEzArgument } from '../shared/quote-ez-argument';
 import { createCapabilityAccess, type CapabilityAccess } from './capability-access';
 import { FileExplorerPanel } from './FileExplorerPanel';
 import { registerPaneInput, unregisterPaneInput } from './pane-registry';
+import { ToastProvider } from './ui';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -69,12 +70,16 @@ function openContextMenu(row: HTMLButtonElement): void {
 async function renderPanel(activePanelId: string | null = null): Promise<void> {
   act(() => {
     root.render(
-      <FileExplorerPanel
-        activePanelId={activePanelId}
-        onClose={vi.fn()}
-        onOpenTerminalAt={onOpenTerminalAt}
-        capabilities={capabilities}
-      />,
+      // The panel reports file operations through the shared toast system, so
+      // it mounts under the provider here exactly as it does in the app.
+      <ToastProvider>
+        <FileExplorerPanel
+          activePanelId={activePanelId}
+          onClose={vi.fn()}
+          onOpenTerminalAt={onOpenTerminalAt}
+          capabilities={capabilities}
+        />
+      </ToastProvider>,
     );
   });
   await flush();

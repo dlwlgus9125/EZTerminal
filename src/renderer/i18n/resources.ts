@@ -46,6 +46,9 @@ export const appResources = {
       },
       workspace: {
         split: 'Split',
+        presetSaved: 'Preset "{{name}}" saved',
+        presetSaveFailed: 'Could not save preset "{{name}}"',
+        presetDeleted: 'Preset "{{name}}" deleted',
         splitRight: 'Split right',
         splitBelow: 'Split below',
         layout: 'Layout',
@@ -1213,6 +1216,9 @@ export const appResources = {
       },
       workspace: {
         split: '분할',
+        presetSaved: '프리셋 "{{name}}" 저장됨',
+        presetSaveFailed: '프리셋 "{{name}}" 저장 실패',
+        presetDeleted: '프리셋 "{{name}}" 삭제됨',
         splitRight: '오른쪽으로 분할',
         splitBelow: '아래쪽으로 분할',
         layout: '레이아웃',

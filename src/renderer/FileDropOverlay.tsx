@@ -4,6 +4,7 @@ import { quoteEzArgument } from '../shared/quote-ez-argument';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 import { getPaneHandle } from './pane-registry';
+import { useToast } from './ui';
 
 export const EZTERMINAL_PATHS_MIME = 'application/x-ezterminal-paths';
 export const MAX_DROPPED_PATHS = 20;
@@ -49,26 +50,24 @@ export function FileDropOverlay({
 }: FileDropOverlayProps): JSX.Element | null {
   const { t, i18n } = useAppTranslation();
   const [dragDepth, setDragDepth] = useState(0);
-  const [toast, setToast] = useState<string | null>(null);
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const maxDroppedPaths = useMemo(
     () => new Intl.NumberFormat(locale).format(MAX_DROPPED_PATHS),
     [locale],
   );
+  const { pushToast } = useToast();
+  // Read through a ref: the drop listeners are registered once, and depending on
+  // pushToast directly would re-subscribe them on every provider render.
+  const pushToastRef = useRef(pushToast);
+  pushToastRef.current = pushToast;
   const activePanelIdRef = useRef(activePanelId);
   activePanelIdRef.current = activePanelId;
   const agentSessionsRef = useRef(agentSessionIds);
   agentSessionsRef.current = agentSessionIds;
 
   useEffect(() => {
-    let toastTimer: number | null = null;
     const showToast = (message: string): void => {
-      setToast(message);
-      if (toastTimer !== null) window.clearTimeout(toastTimer);
-      toastTimer = window.setTimeout(() => {
-        setToast((current) => current === message ? null : current);
-        toastTimer = null;
-      }, 2200);
+      pushToastRef.current({ title: message, variant: 'warning' });
     };
     const onDragEnter = (event: DragEvent): void => {
       if (!supportsPathDrop(event.dataTransfer)) return;
@@ -153,20 +152,14 @@ export function FileDropOverlay({
       window.removeEventListener('dragover', onDragOver, true);
       window.removeEventListener('dragleave', onDragLeave, true);
       window.removeEventListener('drop', onDrop, true);
-      if (toastTimer !== null) window.clearTimeout(toastTimer);
     };
   }, [capabilities, maxDroppedPaths, t]);
 
-  if (dragDepth <= 0 && !toast) return null;
+  if (dragDepth <= 0) return null;
   return (
-    <>
-      {dragDepth > 0 && (
-        <div className="file-drop-overlay" aria-hidden="true" data-testid="file-drop-overlay">
-          <span>{t('fileDrop.prompt')}</span>
-          <small>{t('fileDrop.safety')}</small>
-        </div>
-      )}
-      {toast && <div className="file-drop-toast" role="status">{toast}</div>}
-    </>
+    <div className="file-drop-overlay" aria-hidden="true" data-testid="file-drop-overlay">
+      <span>{t('fileDrop.prompt')}</span>
+      <small>{t('fileDrop.safety')}</small>
+    </div>
   );
 }

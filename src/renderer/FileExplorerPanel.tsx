@@ -10,6 +10,7 @@ import { setInternalPathDrag } from './FileDropOverlay';
 import { useAppTranslation } from './i18n';
 import { getPaneCwd, insertIntoPaneInput } from './pane-registry';
 import { RichFileViewerOverlay } from './RichFileViewerOverlay';
+import { useToast } from './ui';
 
 interface BreadcrumbSegment {
   readonly label: string;
@@ -83,6 +84,7 @@ export function FileExplorerPanel({
   capabilities = rendererCapabilities,
 }: FileExplorerPanelProps): JSX.Element {
   const { t } = useAppTranslation();
+  const { pushToast } = useToast();
   const [currentPath, setCurrentPath] = useState<string | null>(null);
   const [parent, setParent] = useState<string | null>(null);
   const [entries, setEntries] = useState<readonly FileEntry[]>([]);
@@ -94,7 +96,6 @@ export function FileExplorerPanel({
 
   // ── M2: context menu + mutations ──────────────────────────────────────────
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [renamingEntry, setRenamingEntry] = useState<string | null>(null);
@@ -179,9 +180,8 @@ export function FileExplorerPanel({
   // ── M2 action handlers ────────────────────────────────────────────────────
 
   const showToast = useCallback((msg: string): void => {
-    setToast(msg);
-    setTimeout(() => setToast((current) => (current === msg ? null : current)), 1500);
-  }, []);
+    pushToast({ title: msg, variant: 'success' });
+  }, [pushToast]);
 
   const handleCopy = useCallback(
     (text: string): void => {
@@ -429,11 +429,6 @@ export function FileExplorerPanel({
       {binaryNotice && (
         <div className="file-binary-notice" data-testid="file-binary-notice">
           {binaryNotice}
-        </div>
-      )}
-      {toast && (
-        <div className="file-toast" data-testid="file-toast">
-          {toast}
         </div>
       )}
 

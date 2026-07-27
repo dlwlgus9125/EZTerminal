@@ -412,7 +412,6 @@ export function App(): JSX.Element {
   );
   const [quickPreview, setQuickPreview] = useState<QuickOpenFilePreview | null>(null);
   const quickPreviewSequenceRef = useRef(0);
-  const [terminalPathMessage, setTerminalPathMessage] = useState<string | null>(null);
   const [confirmRiskyPaneClose, setConfirmRiskyPaneClose] = useState(true);
   useEffect(() => {
     let alive = true;
@@ -1168,10 +1167,10 @@ export function App(): JSX.Element {
                 'not-file': t('terminalFiles.notFile'),
                 unreadable: t('terminalFiles.unreadable'),
               } as const;
-              setTerminalPathMessage(messages[resolved.reason]);
+              pushToast({ title: messages[resolved.reason], variant: 'warning' });
               return;
             }
-            setTerminalPathMessage(null);
+
             const preview = await window.ezterminal
               .readFilePreview(resolved.path, resolved.capability)
               .catch((): FilePreviewResult => ({
@@ -1189,7 +1188,7 @@ export function App(): JSX.Element {
           })
           .catch(() => {
             if (sequence === quickPreviewSequenceRef.current) {
-              setTerminalPathMessage(t('terminalFiles.resolveFailed'));
+              pushToast({ title: t('terminalFiles.resolveFailed'), variant: 'danger' });
             }
           });
       },
@@ -1197,6 +1196,7 @@ export function App(): JSX.Element {
     [
       allowOsc52Clipboard,
       notifyTerminal,
+      pushToast,
       requestPasteConfirmation,
       t,
       terminalPastePreferences,
@@ -1489,8 +1489,11 @@ export function App(): JSX.Element {
       setPresetNameDraft('');
       setSavingPreset(false);
       await refreshPresets();
+      pushToast({ title: t('workspace.presetSaved', { name }), variant: 'success' });
+      return;
     }
-  }, [presetNameDraft, refreshPresets]);
+    pushToast({ title: t('workspace.presetSaveFailed', { name }), variant: 'danger' });
+  }, [presetNameDraft, pushToast, refreshPresets, t]);
 
   const applyPreset = useCallback(
     (name: string): void => {
@@ -1670,8 +1673,9 @@ export function App(): JSX.Element {
       await window.ezterminal.deletePreset(name);
       if (startupPreset === name) await window.ezterminal.setStartup({ mode: 'last' });
       await refreshPresets();
+      pushToast({ title: t('workspace.presetDeleted', { name }), variant: 'info' });
     },
-    [startupPreset, refreshPresets],
+    [pushToast, refreshPresets, startupPreset, t],
   );
 
   const openSavePresetDialog = useCallback((): void => {
@@ -2583,14 +2587,6 @@ export function App(): JSX.Element {
             void window.ezterminalDesktop?.openExternalHttpUrl(url);
           }}
         />
-      )}
-      {terminalPathMessage && (
-        <div className="terminal-path-toast" role="status" data-testid="terminal-path-toast">
-          <span>{terminalPathMessage}</span>
-          <button type="button" className="btn btn-split" onClick={() => setTerminalPathMessage(null)}>
-            {t('common.close')}
-          </button>
-        </div>
       )}
     </main>
   );
