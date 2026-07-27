@@ -1,5 +1,5 @@
 import { ChevronDown, ScanLine, SlidersHorizontal } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useRef } from 'react';
 
 import {
   EFFECT_PROFILE_IDS,
@@ -9,6 +9,7 @@ import {
 } from '../effect-profiles';
 import { useAppTranslation } from '../i18n';
 import { Button, Menu, MenuItem, MenuLabel, MenuRadioItem, MenuSeparator, VisuallyHidden } from '../ui';
+import { useReducedMotion } from '../use-reduced-motion';
 
 const PROFILE_LABEL_KEYS = {
   clean: 'header.profileClean',
@@ -24,27 +25,6 @@ const PROFILE_DESCRIPTION_KEYS = {
   'crt-signature': 'header.profileCrtSignatureDescription',
   'full-crt': 'header.profileFullCrtDescription',
 } as const;
-
-function useReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true,
-  );
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const onChange = (): void => setReduced(media.matches);
-    onChange();
-    if (typeof media.addEventListener === 'function') {
-      media.addEventListener('change', onChange);
-      return () => media.removeEventListener('change', onChange);
-    }
-    media.addListener(onChange);
-    return () => media.removeListener(onChange);
-  }, []);
-
-  return reduced;
-}
 
 export function EffectProfileMenu({
   activeThemeEffects,

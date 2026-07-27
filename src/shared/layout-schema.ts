@@ -163,6 +163,10 @@ export const SettingsSchema = z.object({
   // Creator-owned pane close confirmation. Mobile session destruction is
   // intentionally always guarded and does not read this desktop preference.
   confirmRiskyPaneClose: z.boolean().optional(),
+  /** Plays the CRT boot sequence over the workbench on launch. Optional like
+   * every field added since schema version 1, so an older settings file still
+   * parses and simply takes the default. */
+  bootIntro: z.boolean().optional(),
   // Terminal-originated OSC 52 writes are privileged and default off.
   allowOsc52Clipboard: z.boolean().optional(),
   // Windows Terminal-style text paste warnings. Both default on in

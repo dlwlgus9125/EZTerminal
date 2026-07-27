@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron as electron, type ElectronApplication } from '@playwright/test';
@@ -18,11 +18,42 @@ export const MAIN_ENTRY = path.resolve(__dirname, '..', '.vite', 'build', 'main.
  * sets `EZTERMINAL_REMOTE_PORT` to a dedicated test port so it never binds the
  * same port a real, already-running desktop instance would use.
  */
+/**
+ * Turn the boot sequence off for every harness launch.
+ *
+ * It defaults on and covers the workbench for roughly three seconds, which
+ * would add that to each of the ~40 specs and hide the controls they click
+ * first. Specs that deliberately share a userData dir call this on a directory
+ * that may already hold settings, so the existing file is merged rather than
+ * replaced — clobbering it would wipe the state a restart-restore test just
+ * saved. A spec that wants the intro can set the flag back afterwards.
+ */
+function disableBootIntro(dir: string): void {
+  const file = path.join(dir, 'settings.json');
+  let settings: Record<string, unknown> = {};
+  if (existsSync(file)) {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+      if (parsed && typeof parsed === 'object') settings = parsed as Record<string, unknown>;
+    } catch {
+      // A corrupt settings file is the app's problem to quarantine, not ours to
+      // repair; fall through and write a minimal one.
+      settings = {};
+    }
+  }
+  // Only fill in the default. An explicit value — including `true` — is a
+  // spec deliberately opting in, and a relaunch against a shared userData dir
+  // must not undo what the previous launch persisted.
+  if ('bootIntro' in settings) return;
+  writeFileSync(file, JSON.stringify({ ...settings, bootIntro: false }, null, 2), 'utf8');
+}
+
 export function launchApp(
   userDataDir?: string,
   extraEnv: Record<string, string> = {},
 ): Promise<ElectronApplication> {
   const dir = userDataDir ?? mkdtempSync(path.join(tmpdir(), 'ezterm-e2e-'));
+  disableBootIntro(dir);
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;

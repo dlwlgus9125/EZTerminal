@@ -1,0 +1,119 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { useAppTranslation } from './i18n';
+import { useReducedMotion } from './use-reduced-motion';
+
+/** Milliseconds between init lines. Five lines plus the screen-open and beam
+ * phases put the whole sequence just over three seconds. */
+const LINE_INTERVAL_MS = 320;
+
+const LINE_KEYS = [
+  'bootIntro.linePty',
+  'bootIntro.lineTheme',
+  'bootIntro.lineAgents',
+  'bootIntro.lineGateway',
+  'bootIntro.lineSessions',
+] as const;
+
+type Phase = 'unknown' | 'playing' | 'done';
+
+/**
+ * CRT power-on sequence layered over the workbench.
+ *
+ * It is purely additive: the app mounts, paints, and becomes interactive
+ * underneath regardless of what this does. The overlay renders nothing until
+ * the stored preference has been read, so a user who turned it off never sees
+ * a flash of it, and reduced motion skips it outright rather than replaying it
+ * at zero duration — a sequence whose whole content is timing has nothing left
+ * to show once the timing is removed.
+ */
+export function BootIntroOverlay(): JSX.Element | null {
+  const { t } = useAppTranslation();
+  const reducedMotion = useReducedMotion();
+  const [phase, setPhase] = useState<Phase>('unknown');
+  const [visibleLines, setVisibleLines] = useState(0);
+  // Read once. Toggling the setting should take effect on the next launch, not
+  // start an intro over a workbench the user is already using.
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    if (reducedMotion) {
+      setPhase('done');
+      return;
+    }
+    let alive = true;
+    const desktop = window.ezterminalDesktop;
+    if (!desktop?.getBootIntro) {
+      setPhase('done');
+      return;
+    }
+    void desktop.getBootIntro().then(
+      (enabled) => {
+        if (alive) setPhase(enabled ? 'playing' : 'done');
+      },
+      () => {
+        if (alive) setPhase('done');
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [reducedMotion]);
+
+  useEffect(() => {
+    if (phase !== 'playing') return;
+    const timers: number[] = [];
+    for (let index = 0; index < LINE_KEYS.length; index += 1) {
+      timers.push(
+        window.setTimeout(() => setVisibleLines(index + 1), 1500 + index * LINE_INTERVAL_MS),
+      );
+    }
+    timers.push(
+      window.setTimeout(() => setPhase('done'), 1500 + LINE_KEYS.length * LINE_INTERVAL_MS + 400),
+    );
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [phase]);
+
+  const skip = useCallback(() => setPhase('done'), []);
+
+  useEffect(() => {
+    if (phase !== 'playing') return;
+    const onKeyDown = (): void => skip();
+    document.addEventListener('keydown', onKeyDown, { once: true });
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [phase, skip]);
+
+  if (phase !== 'playing') return null;
+
+  return (
+    <div
+      className="boot-intro"
+      data-testid="boot-intro"
+      // aria-hidden with no focusable content: the workbench underneath is
+      // already mounted and announced, and assistive technology should not be
+      // made to sit through a decoration.
+      aria-hidden="true"
+      onClick={skip}
+    >
+      <div className="boot-intro-screen">
+        <span className="boot-intro-beam" />
+        <div className="boot-intro-brand">
+          <span className="boot-intro-signal">
+            <i />
+            <i />
+            <i />
+          </span>
+          <span className="boot-intro-wordmark">EZTerminal</span>
+        </div>
+        <ol className="boot-intro-log">
+          {LINE_KEYS.slice(0, visibleLines).map((key) => (
+            <li key={key}>{t(key)}</li>
+          ))}
+        </ol>
+        <p className="boot-intro-skip">{t('bootIntro.skip')}</p>
+      </div>
+    </div>
+  );
+}

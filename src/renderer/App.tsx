@@ -426,6 +426,20 @@ export function App(): JSX.Element {
     setConfirmRiskyPaneClose(enabled);
     void window.ezterminalDesktop?.setConfirmRiskyPaneClose(enabled);
   }, []);
+  const [bootIntro, setBootIntro] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    void window.ezterminalDesktop?.getBootIntro().then((enabled) => {
+      if (alive) setBootIntro(enabled);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const changeBootIntro = useCallback((enabled: boolean): void => {
+    setBootIntro(enabled);
+    void window.ezterminalDesktop?.setBootIntro(enabled);
+  }, []);
   const [allowOsc52Clipboard, setAllowOsc52Clipboard] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -2354,6 +2368,8 @@ export function App(): JSX.Element {
         onChangeTerminalRendererPreference={changeTerminalRendererPreference}
         confirmRiskyPaneClose={confirmRiskyPaneClose}
         onChangeConfirmRiskyPaneClose={changeConfirmRiskyPaneClose}
+        bootIntro={bootIntro}
+        onChangeBootIntro={changeBootIntro}
         allowOsc52Clipboard={allowOsc52Clipboard}
         onChangeAllowOsc52Clipboard={changeAllowOsc52Clipboard}
         terminalPastePreferences={terminalPastePreferences}

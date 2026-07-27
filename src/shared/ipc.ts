@@ -1184,6 +1184,9 @@ export interface EzTerminalDesktopApi {
   /** Whether creator-owned panes ask before destroying an active/risky session. */
   getConfirmRiskyPaneClose: () => Promise<boolean>;
   setConfirmRiskyPaneClose: (enabled: boolean) => Promise<void>;
+  /** Whether the CRT boot sequence plays over the workbench on launch. */
+  getBootIntro: () => Promise<boolean>;
+  setBootIntro: (enabled: boolean) => Promise<void>;
   getAllowOsc52Clipboard: () => Promise<boolean>;
   setAllowOsc52Clipboard: (enabled: boolean) => Promise<void>;
   /** Windows Terminal-style multiline/large text paste warning preferences. */

@@ -252,6 +252,14 @@ export class LayoutStore {
     );
   }
 
+  async getBootIntro(): Promise<boolean> {
+    return (await this.loadSettingsFile()).bootIntro ?? true;
+  }
+
+  async setBootIntro(bootIntro: boolean): Promise<void> {
+    await this.updateSettings((current) => ({ ...current, bootIntro }), 'bootIntro');
+  }
+
   async getAllowOsc52Clipboard(): Promise<boolean> {
     return (await this.loadSettingsFile()).allowOsc52Clipboard ?? false;
   }

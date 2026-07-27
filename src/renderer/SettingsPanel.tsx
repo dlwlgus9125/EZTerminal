@@ -72,6 +72,8 @@ interface SettingsPanelProps {
   readonly onChangeTerminalRendererPreference: (preference: TerminalRendererPreference) => void;
   readonly confirmRiskyPaneClose: boolean;
   readonly onChangeConfirmRiskyPaneClose: (enabled: boolean) => void;
+  readonly bootIntro: boolean;
+  readonly onChangeBootIntro: (enabled: boolean) => void;
   readonly allowOsc52Clipboard: boolean;
   readonly onChangeAllowOsc52Clipboard: (enabled: boolean) => void;
   readonly terminalPastePreferences: TerminalPastePreferences;
@@ -113,6 +115,8 @@ export function SettingsPanel({
   onChangeTerminalRendererPreference,
   confirmRiskyPaneClose,
   onChangeConfirmRiskyPaneClose,
+  bootIntro,
+  onChangeBootIntro,
   allowOsc52Clipboard,
   onChangeAllowOsc52Clipboard,
   terminalPastePreferences,
@@ -409,6 +413,12 @@ export function SettingsPanel({
       </section>
 
       <section className="status-section" hidden={category !== 'appearance'}>
+        <Switch
+          checked={bootIntro}
+          onChange={(event) => onChangeBootIntro(event.target.checked)}
+          label={t('settings.bootIntro')}
+          data-testid="settings-boot-intro"
+        />
         <h2 className="status-section-title">{t('settings.crtEffects')}</h2>
         {activeThemeEffects.length === 0 ? (
           <div className="status-loading" data-testid="settings-effects-empty">

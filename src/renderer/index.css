@@ -749,6 +749,152 @@ body {
   background: var(--ui-warning-muted);
 }
 
+/* == BOOT SEQUENCE ==
+   Sits above every other layer, including the destructive-confirmation tier,
+   because it paints before the workbench underneath is meant to be read. It
+   never traps focus and is hidden from assistive technology: the app beneath is
+   already mounted and announced. */
+.boot-intro {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ui-z-boot);
+  display: grid;
+  place-items: center;
+  background: var(--ui-canvas);
+  cursor: pointer;
+}
+
+.boot-intro-screen {
+  position: relative;
+  inline-size: min(560px, calc(100vw - 4rem));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ui-space-4);
+  padding: var(--ui-space-8);
+  text-align: center;
+  transform-origin: center;
+  animation: boot-open 0.5s var(--ui-ease-standard);
+}
+
+/* The CRT "switch-on": a hairline that snaps open into the full screen. */
+@keyframes boot-open {
+  from {
+    transform: scaleY(0.004);
+    filter: brightness(3);
+  }
+
+  60% {
+    transform: scaleY(1.02);
+  }
+
+  to {
+    transform: scaleY(1);
+    filter: brightness(1);
+  }
+}
+
+.boot-intro-beam {
+  inline-size: 100%;
+  block-size: 2px;
+  background: linear-gradient(90deg, transparent, var(--ui-accent), transparent);
+  box-shadow: var(--ui-glow-text);
+  transform-origin: center;
+  animation: boot-beam 1s var(--ui-ease-standard) 0.4s backwards;
+}
+
+@keyframes boot-beam {
+  from {
+    transform: scaleX(0);
+    opacity: 1;
+  }
+
+  70% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+
+  to {
+    transform: scaleX(1);
+    opacity: 0;
+  }
+}
+
+.boot-intro-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-3);
+  animation: boot-fade 0.6s var(--ui-ease-standard) 0.9s backwards;
+}
+
+@keyframes boot-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.boot-intro-signal {
+  block-size: 2rem;
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 0.25rem;
+  color: var(--ui-accent);
+}
+
+.boot-intro-signal i {
+  inline-size: 0.5rem;
+  border-radius: 1px 1px 0 0;
+  background: currentcolor;
+  box-shadow: var(--ui-glow-text);
+}
+
+.boot-intro-signal i:nth-child(1) { block-size: 42%; }
+.boot-intro-signal i:nth-child(2) { block-size: 71%; }
+.boot-intro-signal i:nth-child(3) { block-size: 100%; }
+
+.boot-intro-wordmark {
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-heading);
+  font-size: var(--ui-font-size-3xl);
+  letter-spacing: 0.04em;
+  text-shadow: var(--ui-glow-text);
+}
+
+[data-theme='matrix'] .boot-intro-wordmark {
+  font-family: 'VT323', 'Share Tech Mono', var(--ui-font-heading), monospace;
+}
+
+.boot-intro-log {
+  min-block-size: 6rem;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+  color: var(--ui-text-muted);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-12);
+  /* Left-aligned against the centred block: an init log reads as a log, not as
+     a stack of centred captions. */
+  text-align: start;
+}
+
+.boot-intro-log li::before {
+  content: '\2022 ';
+  color: var(--ui-accent);
+}
+
+.boot-intro-skip {
+  margin: 0;
+  color: var(--ui-text-dim);
+  font-size: var(--ui-font-size-2xs);
+}
+
 /* Clickable ancestors plus the literal path underneath. The free-text input
    above stays: it is the keyboard route and what the file-explorer e2e drives. */
 .file-breadcrumb {

@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { AppErrorBoundary } from './AppErrorBoundary';
+import { BootIntroOverlay } from './BootIntroOverlay';
 import { useAppTranslation } from './i18n';
 import { DesktopUiPreferencesProvider } from './ui-preferences';
 import { ToastProvider } from './ui';
@@ -19,6 +20,10 @@ function DesktopApplication(): JSX.Element {
   return (
     <ToastProvider viewportLabel={t('common.notifications')}>
       <App />
+      {/* Sibling of the app, not a wrapper: the workbench mounts, paints, and
+          becomes interactive on its own schedule and the intro simply covers
+          it. Placed here so it can use the resolved locale. */}
+      <BootIntroOverlay />
     </ToastProvider>
   );
 }

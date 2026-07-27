@@ -708,6 +708,15 @@ app.on('ready', () => {
     await storeReady;
     await layoutStore.setConfirmRiskyPaneClose(enabled);
   });
+  ipcMain.handle('settings:get-boot-intro', async () => {
+    await storeReady;
+    return layoutStore.getBootIntro();
+  });
+  ipcMain.handle('settings:set-boot-intro', async (_event, enabled: unknown) => {
+    if (typeof enabled !== 'boolean') return;
+    await storeReady;
+    await layoutStore.setBootIntro(enabled);
+  });
   ipcMain.handle('settings:get-allow-osc52-clipboard', async () => {
     await storeReady;
     return layoutStore.getAllowOsc52Clipboard();

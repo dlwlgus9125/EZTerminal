@@ -304,6 +304,9 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.invoke('settings:get-confirm-risky-pane-close'),
   setConfirmRiskyPaneClose: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke('settings:set-confirm-risky-pane-close', enabled),
+  getBootIntro: (): Promise<boolean> => ipcRenderer.invoke('settings:get-boot-intro'),
+  setBootIntro: (enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke('settings:set-boot-intro', enabled),
   getAllowOsc52Clipboard: (): Promise<boolean> =>
     ipcRenderer.invoke('settings:get-allow-osc52-clipboard'),
   setAllowOsc52Clipboard: (enabled: boolean): Promise<void> =>
