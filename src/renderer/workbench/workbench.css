@@ -32,6 +32,26 @@
   gap: var(--ui-space-3);
 }
 
+/* The one primary action in the chrome: taller than the secondary controls
+   beside it, and breathing so the eye finds it without reading. The glow is a
+   box-shadow rather than a transform, so nothing here becomes a containing
+   block for anything positioned. */
+.workbench-new-terminal {
+  min-block-size: 2.25rem;
+  animation: workbench-pulse 3s ease-in-out infinite;
+}
+
+@keyframes workbench-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 8px color-mix(in srgb, var(--ui-glow-color) 35%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 0 18px color-mix(in srgb, var(--ui-glow-color) 65%, transparent);
+  }
+}
+
 /* A grid track, centred by auto margins rather than by alignment. Alignment
    centring gives an item a negative offset once the track is narrower than the
    item, which at the tightest scaled widths pushed the field back over New
@@ -219,10 +239,14 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   background: var(--ui-surface-hover);
 }
 
+/* Informational, not primary. The header already has exactly one accent-green
+   action; a second green control beside it would read as a second thing to
+   press rather than as a read-out you can adjust. */
 .effect-profile-trigger[data-profile='static'],
 .effect-profile-trigger[data-profile='crt-signature'],
 .effect-profile-trigger[data-profile='full-crt'] {
-  color: var(--ui-accent);
+  color: var(--ui-info);
+  border-color: color-mix(in srgb, var(--ui-info) 45%, var(--ui-border-subtle));
 }
 
 .effect-profile-trigger .ez-ui-button__label {
@@ -873,7 +897,8 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
 @media (prefers-reduced-motion: reduce) {
   .workbench-brand-mark,
   .workbench-brand-mark__name,
-  .workbench-brand-mark__signal-bar {
+  .workbench-brand-mark__signal-bar,
+  .workbench-new-terminal {
     animation: none !important;
     transition: none !important;
   }

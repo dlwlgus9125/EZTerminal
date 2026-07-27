@@ -181,12 +181,23 @@ export function ConnectScreen({
           </label>
         </div>
 
-        {!secureWs && (
-          <p className="mob-connect__warning" role="note" data-testid="connect-ws-warning">
-            <ShieldAlert aria-hidden="true" />
-            <span>{t('mobile.connect.trustedNetworkWarning')}</span>
-          </p>
-        )}
+        {/* Always shown, per the handoff. The rule this states — reach the
+            desktop only over a trusted VPN — is true of every EZTerminal link,
+            not just the plaintext ones, and hiding it behind `wss://` taught
+            the opposite. `wss` gets the softer wording instead of silence. */}
+        <p
+          className="mob-connect__warning"
+          data-secure={secureWs ? 'true' : undefined}
+          role="note"
+          data-testid="connect-ws-warning"
+        >
+          <ShieldAlert aria-hidden="true" />
+          <span>
+            {secureWs
+              ? t('mobile.connect.trustedNetworkNote')
+              : t('mobile.connect.trustedNetworkWarning')}
+          </span>
+        </p>
 
         {protocolIncompatible ? (
           <div className="mob-connect__error" role="alert" data-testid="connect-protocol-incompatible">

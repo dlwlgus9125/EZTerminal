@@ -2,9 +2,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_INTERFERENCE_PARAMS,
+  DEFAULT_ROLLBAR_PARAMS,
   clampInterferenceParams,
 } from '../../src/renderer/effect-params';
-import { applyTheme, loadEffectParams, loadTheme, saveEffectParams, saveTheme } from './theme';
+import { EFFECT_CATALOG } from '../../src/renderer/effects';
+import {
+  MOBILE_EFFECT_DEFAULTS,
+  MOBILE_ROLLBAR_DEFAULTS,
+  applyTheme,
+  loadEffectParams,
+  loadTheme,
+  saveEffectParams,
+  saveTheme,
+} from './theme';
 
 describe('theme', () => {
   beforeEach(() => {
@@ -75,5 +85,34 @@ describe('effect params persistence (crt-interference)', () => {
     applyTheme('matrix');
     expect(document.documentElement.style.getPropertyValue('--fx-burst-period')).toBe('9s');
     expect(document.getElementById('ez-fx-keyframes')?.textContent).toContain('@keyframes fx-jitter-burst');
+  });
+});
+
+describe('mobile effect defaults', () => {
+  it('starts a fresh install in the CRT Signature profile and nothing heavier', () => {
+    // A default of "everything off" made a new install disagree with its own
+    // design: a bare grid, and a settings preview reading "0 effects".
+    expect(MOBILE_EFFECT_DEFAULTS.scanlines).toBe(true);
+    expect(MOBILE_EFFECT_DEFAULTS['phosphor-glow']).toBe(true);
+    expect(MOBILE_EFFECT_DEFAULTS['crt-rollbar']).toBe(true);
+    // The interference effects cost frames on a phone and were never part of
+    // the signature.
+    expect(MOBILE_EFFECT_DEFAULTS.flicker).toBe(false);
+    expect(MOBILE_EFFECT_DEFAULTS['jitter-burst']).toBe(false);
+    expect(MOBILE_EFFECT_DEFAULTS['micro-jitter']).toBe(false);
+    expect(MOBILE_EFFECT_DEFAULTS['static-noise']).toBe(false);
+  });
+
+  it('covers every catalog entry, so a future effect is off unless it opts in', () => {
+    for (const id of Object.keys(EFFECT_CATALOG)) {
+      expect(typeof MOBILE_EFFECT_DEFAULTS[id as keyof typeof MOBILE_EFFECT_DEFAULTS]).toBe('boolean');
+    }
+  });
+
+  it('uses the handoff band on mobile, not the desktop one', () => {
+    // A monitor-tuned band reads as haze over text at phone reading distance.
+    expect(MOBILE_ROLLBAR_DEFAULTS.thickness).toBe(130);
+    expect(MOBILE_ROLLBAR_DEFAULTS.opacity).toBe(5);
+    expect(MOBILE_ROLLBAR_DEFAULTS.thickness).not.toBe(DEFAULT_ROLLBAR_PARAMS.thickness);
   });
 });

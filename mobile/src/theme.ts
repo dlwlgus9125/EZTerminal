@@ -141,13 +141,22 @@ export function saveFont(id: string): void {
 }
 
 // ── effect toggles (Wave 3) ──────────────────────────────────────────────────
-// Mobile's default is OFF for every effect (AC-E5) — unlike desktop, which
-// defaults an unset toggle to the active theme's own declared default. Built
-// from EFFECT_CATALOG rather than hand-listed so a future catalog entry is
-// off by default here with no edit needed.
+// Mobile used to default every effect OFF (AC-E5). That made a fresh install
+// disagree with its own design: the handoff specifies a CRT layer on every
+// screen and a settings preview reading "Matrix · FX Signature", while what
+// actually shipped was a bare grid and a preview saying "0 effects".
+//
+// The default is now the CRT Signature profile — the same three the desktop
+// calls a signature — and nothing more. The heavier interference effects
+// (jitter, static, flicker) stay off, because they cost frames on a phone and
+// were never part of the signature. An explicit user toggle still wins over
+// every value here, and reduced motion still strips the moving ones.
+
+/** The profile a new mobile install starts in. */
+const MOBILE_DEFAULT_ON: readonly EffectId[] = ['scanlines', 'phosphor-glow', 'crt-rollbar'];
 
 export const MOBILE_EFFECT_DEFAULTS: Partial<Record<EffectId, boolean>> = Object.fromEntries(
-  Object.values(EFFECT_CATALOG).map((entry) => [entry.id, false]),
+  Object.values(EFFECT_CATALOG).map((entry) => [entry.id, MOBILE_DEFAULT_ON.includes(entry.id)]),
 );
 
 export function loadEffectToggles(): Record<string, boolean> {
@@ -174,14 +183,30 @@ export function saveEffectToggles(toggles: Record<string, boolean>): void {
 // happens in effect-params.ts's clampRollbarParams (shared with desktop), not
 // here — a corrupt/partial stored value is handed to it as-is.
 
+/**
+ * Mobile's own band, per the handoff: 130px thick, a 13-second loop, 5%.
+ *
+ * The shared desktop default is a wider, slower, stronger pass tuned for a
+ * monitor. On a phone held at reading distance the same band reads as haze
+ * over text, so the two platforms keep different starting points rather than
+ * one compromise that suits neither. A stored value still wins over this.
+ */
+export const MOBILE_ROLLBAR_DEFAULTS: RollbarParams = {
+  ...DEFAULT_ROLLBAR_PARAMS,
+  thickness: 130,
+  opacity: 5,
+  // speed 1 crosses in 24s at a 70% pitch; 2 lands near the specified 13s.
+  speed: 2,
+};
+
 export function loadRollbar(): Partial<RollbarParams> {
   try {
     const raw = localStorage.getItem(ROLLBAR_KEY);
-    if (!raw) return DEFAULT_ROLLBAR_PARAMS;
+    if (!raw) return MOBILE_ROLLBAR_DEFAULTS;
     const parsed: unknown = JSON.parse(raw);
-    return parsed !== null && typeof parsed === 'object' ? (parsed as Partial<RollbarParams>) : DEFAULT_ROLLBAR_PARAMS;
+    return parsed !== null && typeof parsed === 'object' ? (parsed as Partial<RollbarParams>) : MOBILE_ROLLBAR_DEFAULTS;
   } catch {
-    return DEFAULT_ROLLBAR_PARAMS;
+    return MOBILE_ROLLBAR_DEFAULTS;
   }
 }
 

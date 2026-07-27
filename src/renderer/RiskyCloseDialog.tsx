@@ -1,3 +1,4 @@
+import { TriangleAlert } from 'lucide-react';
 import { useCallback, useRef } from 'react';
 
 import { useAppTranslation } from './i18n';
@@ -49,7 +50,8 @@ export function RiskyCloseDialog({
       title={title}
       description={description}
       role="alertdialog"
-      size="sm"
+      size="md"
+      icon={<TriangleAlert aria-hidden="true" />}
       tone="danger"
       // Cancel takes focus, so the destructive action is never one stray Enter
       // away, and the close affordance is the same one every dialog has.

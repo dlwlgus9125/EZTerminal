@@ -154,6 +154,7 @@ export const appResources = {
         pcControlDuration: 'Duration',
         pcControlEndpoint: 'VPN endpoint',
         pcControlQuality: 'Quality / bitrate',
+        pcControlRate: 'FPS / RTT',
         pcControlIdle: 'No device is controlling this PC.',
         pcControlDisconnect: 'Disconnect',
         pcControlBanner: '{{device}} is controlling this PC.',
@@ -725,6 +726,8 @@ export const appResources = {
         localPeer: 'Local → peer',
         state: 'State',
         processTable: 'Processes',
+        cpuColumn: 'CPU%',
+        memColumn: 'MEM',
         name: 'Name',
       },
       openClaw: {
@@ -982,6 +985,8 @@ export const appResources = {
           tokenDescription: 'Use the pairing token shown by the desktop Remote panel.',
         trustedNetworkWarning:
             'ws:// is protected only by the VPN tunnel. Connect through Tailscale, WireGuard, or another explicitly trusted VPN.',
+          trustedNetworkNote:
+            'Reach your desktop over a trusted VPN such as Tailscale or WireGuard — EZTerminal is not meant to be exposed to the open internet.',
           serverUrl: 'Server URL',
           token: 'Token',
           failed: 'Connection failed — check the URL and token.',
@@ -1402,6 +1407,7 @@ export const appResources = {
         pcControlDuration: '연결 시간',
         pcControlEndpoint: 'VPN 엔드포인트',
         pcControlQuality: '화질 / 비트레이트',
+        pcControlRate: 'FPS / RTT',
         pcControlIdle: '현재 이 PC를 제어하는 기기가 없습니다.',
         pcControlDisconnect: '연결 끊기',
         pcControlBanner: '{{device}} 기기가 이 PC를 제어하고 있습니다.',
@@ -1975,6 +1981,8 @@ export const appResources = {
         localPeer: '로컬 → 피어',
         state: '상태',
         processTable: '프로세스',
+        cpuColumn: 'CPU%',
+        memColumn: 'MEM',
         name: '이름',
       },
       openClaw: {
@@ -2232,6 +2240,8 @@ export const appResources = {
           tokenDescription: '데스크톱 원격 패널에 표시된 페어링 토큰을 사용하세요.',
           trustedNetworkWarning:
             'ws:// 연결은 VPN 터널로만 보호됩니다. Tailscale, WireGuard 또는 명시적으로 신뢰한 VPN을 통해 연결하세요.',
+          trustedNetworkNote:
+            'Tailscale, WireGuard 같은 신뢰된 VPN을 통해 데스크톱에 연결하세요. EZTerminal은 인터넷에 직접 노출하도록 만들어지지 않았습니다.',
           serverUrl: '서버 URL',
           token: '토큰',
           failed: '연결하지 못했습니다. URL과 토큰을 확인해 주세요.',

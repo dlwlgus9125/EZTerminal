@@ -1018,7 +1018,12 @@ export function MobileSessionView({
               key={snippet}
               type="button"
               className={index === 0 ? 'mob-chip mob-chip--accent' : 'mob-chip'}
-              onClick={() => setCommand(snippet)}
+              // Insert, not replace. A chip tapped after half a command was
+              // typed should extend the draft; overwriting it silently threw
+              // the typing away.
+              onClick={() => setCommand((previous) => (
+                previous === '' || /\s$/u.test(previous) ? `${previous}${snippet}` : `${previous} ${snippet}`
+              ))}
               data-testid="terminal-snippet"
             >
               {snippet}

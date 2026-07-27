@@ -1,3 +1,4 @@
+import { TriangleAlert } from 'lucide-react';
 import { useCallback, useMemo, useRef } from 'react';
 
 import type { TerminalPasteRisk } from '../shared/terminal-clipboard';
@@ -34,7 +35,8 @@ export function TerminalPasteWarningDialog({
       title={t('terminalPasteWarning.title')}
       description={t('terminalPasteWarning.description')}
       role="alertdialog"
-      size="sm"
+      size="md"
+      icon={<TriangleAlert aria-hidden="true" />}
       tone="warning"
       initialFocusRef={cancelRef}
       closeLabel={t('terminalPasteWarning.close')}

@@ -3,9 +3,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppTranslation } from './i18n';
 import { useReducedMotion } from './use-reduced-motion';
 
-/** Milliseconds between init lines. Five lines plus the screen-open and beam
- * phases put the whole sequence just over three seconds. */
+/** Milliseconds between init lines. */
 const LINE_INTERVAL_MS = 320;
+/** The first log line lands exactly as the beam finishes (`boot-beam 1s`
+ * delayed 0.4s in index.css), so the two never overlap. */
+const LOG_START_MS = 1400;
+/** Last line to hand-off. Short: by then the sequence has said everything. */
+const LOG_TAIL_MS = 200;
 
 const LINE_KEYS = [
   'bootIntro.linePty',
@@ -14,6 +18,10 @@ const LINE_KEYS = [
   'bootIntro.lineGateway',
   'bootIntro.lineSessions',
 ] as const;
+
+/** ~3.2s end to end, per the handoff's motion table. Defined after LINE_KEYS
+ * so the count is the list, never a number that can drift from it. */
+export const BOOT_INTRO_TOTAL_MS = LOG_START_MS + LINE_KEYS.length * LINE_INTERVAL_MS + LOG_TAIL_MS;
 
 type Phase = 'unknown' | 'playing' | 'done';
 
@@ -74,12 +82,10 @@ export function BootIntroOverlay(): JSX.Element | null {
     const timers: number[] = [];
     for (let index = 0; index < LINE_KEYS.length; index += 1) {
       timers.push(
-        window.setTimeout(() => setVisibleLines(index + 1), 1500 + index * LINE_INTERVAL_MS),
+        window.setTimeout(() => setVisibleLines(index + 1), LOG_START_MS + index * LINE_INTERVAL_MS),
       );
     }
-    timers.push(
-      window.setTimeout(() => setPhase('done'), 1500 + LINE_KEYS.length * LINE_INTERVAL_MS + 400),
-    );
+    timers.push(window.setTimeout(() => setPhase('done'), BOOT_INTRO_TOTAL_MS));
     return () => timers.forEach((timer) => window.clearTimeout(timer));
   }, [phase]);
 

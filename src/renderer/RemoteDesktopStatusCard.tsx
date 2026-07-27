@@ -77,8 +77,8 @@ export function RemoteDesktopStatusCard({
               <>
                 <div className="status-metric"><span>{t('remote.pcControlDevice')}</span><strong>{status.controllerName}</strong></div>
                 <div className="status-metric"><span>{t('remote.pcControlDuration')}</span><strong>{elapsed}</strong></div>
-                <div className="status-metric"><span>{t('remote.pcControlEndpoint')}</span><strong>{status.localAddress ?? '—'}:7422</strong></div>
-                <div className="status-metric"><span>FPS / RTT</span><strong>{status.framesPerSecond === null ? '—' : Math.round(status.framesPerSecond)} / {status.roundTripTimeMs === null ? '—' : `${Math.round(status.roundTripTimeMs)} ms`}</strong></div>
+                <div className="status-metric"><span>{t('remote.pcControlEndpoint')}</span><strong>{status.localAddress ?? '—'}</strong></div>
+                <div className="status-metric"><span>{t('remote.pcControlRate')}</span><strong>{status.framesPerSecond === null ? '—' : Math.round(status.framesPerSecond)} / {status.roundTripTimeMs === null ? '—' : `${Math.round(status.roundTripTimeMs)} ms`}</strong></div>
                 <div className="status-metric"><span>{t('remote.pcControlQuality')}</span><strong>{status.qualityTier ?? '—'} / {status.bitrateKbps === null ? '—' : `${Math.round(status.bitrateKbps)} kbps`}</strong></div>
                 <button className="btn btn-split remote-desktop-disconnect" type="button" onClick={disconnect} disabled={disconnecting}>
                   <Power aria-hidden="true" size={14} />

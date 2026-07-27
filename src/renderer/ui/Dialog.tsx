@@ -15,6 +15,8 @@ export interface DialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly title: ReactNode;
+  /** Optional severity glyph beside the title. Presentation only. */
+  readonly icon?: ReactNode;
   readonly description?: ReactNode;
   readonly children: ReactNode;
   readonly footer?: ReactNode;
@@ -44,6 +46,7 @@ export function Dialog({
   description,
   dismissible = true,
   footer,
+  icon,
   initialFocusRef,
   onOpenChange,
   open,
@@ -128,6 +131,10 @@ export function Dialog({
         tabIndex={-1}
       >
         <header className="ez-ui-dialog__header">
+          {/* Decorative by construction: the tone rail, the title and the body
+              already carry the severity, so the glyph is hidden from assistive
+              technology rather than announced as a second copy of it. */}
+          {icon && <span className="ez-ui-dialog__icon" aria-hidden="true">{icon}</span>}
           <div className="ez-ui-dialog__heading">
             <h2 id={titleId} className="ez-ui-dialog__title">{title}</h2>
             {description && (

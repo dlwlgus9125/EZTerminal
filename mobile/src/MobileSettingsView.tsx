@@ -33,7 +33,7 @@ import {
 } from '../../src/renderer/EffectParamSliders';
 import { FONT_CATALOG } from '../../src/renderer/fonts';
 import { applyThemeVarsAndEffects, setUserFontId } from '../../src/renderer/theme-runtime';
-import { getActiveTheme, getActiveThemeName } from '../../src/renderer/themes';
+import { getActiveTheme, getActiveThemeName, listThemes } from '../../src/renderer/themes';
 import {
   UI_SCALE_DEFAULT,
   UI_SCALE_STEP,
@@ -144,6 +144,12 @@ interface MobileSettingsViewProps {
   readonly onOpenClawModeChange: (mode: OpenClawMode) => void;
   readonly currentTheme: ThemeName;
   readonly onOpenTheme: (trigger: HTMLElement) => void;
+}
+
+/** A theme id is a storage key, not a name. The preview and the theme button
+ * both show what the theme calls itself. */
+function themeDisplayName(id: string): string {
+  return listThemes().find((theme) => theme.id === id)?.name ?? id;
 }
 
 export function MobileSettingsView({
@@ -298,7 +304,7 @@ export function MobileSettingsView({
   ].join(' · ');
   const activeEffectCount = declaredEffects.filter((id) => effectToggles[id] ?? false).length;
   const appearancePreview = [
-    currentTheme,
+    themeDisplayName(currentTheme),
     t('mobile.settingsView.effectsOn', { value: activeEffectCount }),
     FONT_CATALOG.find((font) => font.id === fontId)?.label ?? t('mobile.settingsView.fontTheme'),
   ].join(' · ');
@@ -495,7 +501,7 @@ export function MobileSettingsView({
               onClick={(event) => onOpenTheme(event.currentTarget)}
               data-testid="settings-open-theme"
             >
-              {t('mobile.settingsView.categories.chooseTheme')}: {currentTheme}
+              {t('mobile.settingsView.categories.chooseTheme')}: {themeDisplayName(currentTheme)}
             </button>
           </section>
         )}

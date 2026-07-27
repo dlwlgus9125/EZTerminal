@@ -143,20 +143,24 @@ async function main(): Promise<void> {
     await openShellDestination('more-settings', 'mobile-settings-view');
     await tapTestId('settings-category-appearance');
 
-    console.log('[theme-e2e] checking the Scanlines toggle is present and OFF by default...');
+    // The CRT Signature profile is the mobile default now, so scanlines start
+    // ON. Flicker is the one that must still be off: it is not part of the
+    // signature and costs frames on a phone.
+    console.log('[theme-e2e] checking the default effect profile...');
     await waitForTestId('settings-effect-scanlines');
-    await waitForTestIdAttribute('settings-effect-scanlines', 'aria-pressed', 'false');
-    console.log('[theme-e2e] step OK: Scanlines present and OFF by default');
+    await waitForTestIdAttribute('settings-effect-scanlines', 'aria-pressed', 'true');
+    await waitForTestIdAttribute('settings-effect-flicker', 'aria-pressed', 'false');
+    console.log('[theme-e2e] step OK: CRT Signature on by default, flicker off');
 
     console.log('[theme-e2e] selecting a non-default font...');
     await tapTestId('settings-font-fira-code');
     await waitForTestIdAttribute('settings-font-fira-code', 'aria-pressed', 'true');
     console.log('[theme-e2e] step OK: font selection reflected live');
 
-    console.log('[theme-e2e] toggling Scanlines on...');
+    console.log('[theme-e2e] toggling Scanlines off...');
     await tapTestId('settings-effect-scanlines');
-    await waitForTestIdAttribute('settings-effect-scanlines', 'aria-pressed', 'true');
-    console.log('[theme-e2e] step OK: Scanlines toggled on live');
+    await waitForTestIdAttribute('settings-effect-scanlines', 'aria-pressed', 'false');
+    console.log('[theme-e2e] step OK: Scanlines toggled off live');
 
     // ── d(i). FONT + EFFECTS PERSISTENCE (remount, no process kill) ─────
     console.log('[theme-e2e] closing and reopening Settings to check the localStorage round-trip...');
@@ -170,7 +174,7 @@ async function main(): Promise<void> {
     await openShellDestination('more-settings', 'mobile-settings-view');
     await tapTestId('settings-category-appearance');
     await waitForTestIdAttribute('settings-font-fira-code', 'aria-pressed', 'true');
-    await waitForTestIdAttribute('settings-effect-scanlines', 'aria-pressed', 'true');
+    await waitForTestIdAttribute('settings-effect-scanlines', 'aria-pressed', 'false');
     console.log('[theme-e2e] step OK: font + effect toggle survive a Settings remount');
 
     // ── d(ii). CUSTOM THEME PERSISTENCE (real restart) ───────────────────

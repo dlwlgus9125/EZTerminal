@@ -162,6 +162,8 @@ function createPresentationAdapter(
 
 export interface MobileRemoteDesktopViewProps {
   readonly transport: WsEzTerminalTransport;
+  /** Host shown in the floating status pill. Empty falls back to the phase. */
+  readonly hostLabel?: string;
   readonly onClose: () => void;
   readonly presentationAdapterFactory?: (
     transport: WsEzTerminalTransport,
@@ -170,6 +172,7 @@ export interface MobileRemoteDesktopViewProps {
 
 export function MobileRemoteDesktopView({
   transport,
+  hostLabel = '',
   onClose,
   presentationAdapterFactory = createPresentationAdapter,
 }: MobileRemoteDesktopViewProps): JSX.Element {
@@ -642,7 +645,10 @@ export function MobileRemoteDesktopView({
             <span className={phase === 'active' ? 'mob-dot mob-dot--live' : 'mob-dot'} aria-hidden="true" />
             <span>
               {clipboardStatus || [
-                t(`mobile.pcControl.state.${phase}`),
+                // Which machine, then how well. The handoff's pill leads with
+                // the host because on a phone it is the only place that says
+                // what you are driving.
+                hostLabel || t(`mobile.pcControl.state.${phase}`),
                 status?.roundTripTimeMs !== undefined ? `${status.roundTripTimeMs}ms` : null,
                 status?.framesPerSecond !== undefined ? `${Math.round(status.framesPerSecond)}fps` : null,
               ].filter(Boolean).join(' · ')}

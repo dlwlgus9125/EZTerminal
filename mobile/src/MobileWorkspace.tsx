@@ -6,6 +6,7 @@ import type { OpenClawStatus } from '../../src/shared/openclaw';
 import type { SessionInfo } from '../../src/shared/ipc';
 import { EMPTY_AGENT_ACTIVITY_SNAPSHOT, type AgentActivitySnapshot } from '../../src/shared/agent';
 import { formatCwd } from '../../src/renderer/format-cwd';
+import { formatEndpointHost } from './mobile-endpoint';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { quoteEzArgument } from '../../src/shared/quote-ez-argument';
 import { insertIntoPaneInput } from '../../src/renderer/pane-registry';
@@ -403,7 +404,13 @@ export function MobileWorkspace({
 
   let page: JSX.Element | undefined;
   if (subPage === 'pc-control') {
-    page = <MobileRemoteDesktopView transport={transport} onClose={closeSubPage} />;
+    page = (
+      <MobileRemoteDesktopView
+        transport={transport}
+        hostLabel={formatEndpointHost(connectionUrl)}
+        onClose={closeSubPage}
+      />
+    );
   } else if (subPage === 'openclaw') {
     page = (
       <MobileOpenClawView

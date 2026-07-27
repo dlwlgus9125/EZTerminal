@@ -405,6 +405,20 @@
   margin: 0 auto;
 }
 
+/* Unfolded (>=600dp) content stays one centred column, per the handoff's 2b.
+   The tab-bar surfaces already opt in with `.mob-column`; these four predate
+   the pass and would otherwise stretch a settings-shaped page across a tablet
+   width, which is the two-column layout the design explicitly rejected. */
+@media (min-width: 600px) {
+  .mobile-file-viewer,
+  .mobile-stats-view,
+  .mobile-openclaw-view,
+  .session-switcher {
+    width: min(100%, var(--mob-column));
+    margin-inline: auto;
+  }
+}
+
 .mob-icon-btn {
   display: grid;
   width: 44px;
@@ -980,6 +994,11 @@
   background: var(--ui-surface);
   overflow-x: auto;
   scrollbar-width: none;
+  /* The right edge has to say the row scrolls. A mask is used rather than an
+     absolutely positioned overlay because an overlay inside a scroll container
+     scrolls away with the content it is meant to be fading. */
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
 }
 
 .mob-snippets::-webkit-scrollbar { display: none; }

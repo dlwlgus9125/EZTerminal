@@ -631,6 +631,32 @@
 .ez-ui-dialog[data-size='sm'] { width: min(100%, 24rem); }
 .ez-ui-dialog[data-size='lg'] { width: min(100%, 44rem); }
 
+/* Square tile so the glyph reads as part of the header's severity, not as an
+   inline character in the title. */
+.ez-ui-dialog__icon {
+  flex: none;
+  inline-size: 2.125rem;
+  block-size: 2.125rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-secondary);
+}
+
+.ez-ui-dialog[data-tone='warning'] .ez-ui-dialog__icon {
+  border-color: color-mix(in srgb, var(--ui-warning) 55%, var(--ui-border-mid));
+  background: var(--ui-warning-muted);
+  color: var(--ui-warning);
+}
+
+.ez-ui-dialog[data-tone='danger'] .ez-ui-dialog__icon {
+  border-color: color-mix(in srgb, var(--ui-danger) 55%, var(--ui-border-mid));
+  background: var(--ui-danger-muted);
+  color: var(--ui-danger);
+}
+
 .ez-ui-dialog__header,
 .ez-ui-panel__header {
   align-items: flex-start;
@@ -645,6 +671,9 @@
   display: grid;
   gap: var(--ui-space-1);
   min-inline-size: 0;
+  /* Claims the middle so the close control stays pinned right whether or not
+     an icon tile precedes the title. */
+  flex: 1 1 auto;
 }
 
 .ez-ui-dialog__title,
@@ -824,7 +853,9 @@
   gap: var(--ui-space-2);
   inset-block-end: var(--ui-space-4);
   inset-inline-end: var(--ui-space-4);
-  max-inline-size: min(24rem, calc(100vw - 2rem));
+  /* 300px: the handoff's stack width. Wide enough for a title and a line of
+     detail, narrow enough not to cover the pane it is describing. */
+  max-inline-size: min(18.75rem, calc(100vw - 2rem));
   pointer-events: none;
   position: fixed;
   width: 100%;

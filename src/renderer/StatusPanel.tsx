@@ -485,8 +485,8 @@ export function StatusPanel({
             <thead>
               <tr>
                 <th>{t('monitor.name')}</th>
-                <th>CPU%</th>
-                <th>MEM</th>
+                <th>{t('monitor.cpuColumn')}</th>
+                <th>{t('monitor.memColumn')}</th>
               </tr>
             </thead>
             <tbody>
