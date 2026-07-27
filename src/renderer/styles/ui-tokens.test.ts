@@ -65,6 +65,51 @@ describe('UI token contract', () => {
     expect(declaration('--ui-z-sidebar')).toBe('300');
     expect(declaration('--ui-z-dialog')).toBe('700');
     expect(declaration('--ui-z-modal')).toBe('var(--ui-z-dialog)');
+    expect(declaration('--ui-z-critical')).toBe('1200');
+    expect(declaration('--ui-z-boot')).toBe('1300');
+  });
+
+  it('adds the commercial-pass card scale without disturbing the base scales', () => {
+    expect(declaration('--ui-radius-xl')).toBe('0.75rem');
+    expect(declaration('--ui-radius-2xl')).toBe('0.875rem');
+    expect(declaration('--ui-radius-round')).toBe('999px');
+    expect(declaration('--ui-font-size-3xs')).toBe('0.625rem');
+    expect(declaration('--ui-font-size-2xs')).toBe('0.65625rem');
+    expect(declaration('--ui-font-size-3xl')).toBe('1.625rem');
+    expect(declaration('--ui-pane-gap')).toBe('0.875rem');
+    expect(declaration('--ui-pane-inset')).toBe('0.4375rem');
+    expect(declaration('--ui-motion-modal')).toBe('180ms');
+
+    const reducedMotionBlock =
+      /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]+?)\n\}/.exec(css)?.[1] ?? '';
+    for (const token of ['modal', 'toast', 'pane-focus']) {
+      expect(
+        new RegExp(`--ui-motion-${token}\\s*:\\s*0ms`).test(reducedMotionBlock),
+        `--ui-motion-${token} must collapse under reduced motion`,
+      ).toBe(true);
+    }
+  });
+
+  it('keeps decorative roles falling back to contrast-corrected ones', () => {
+    // A sparse custom theme only supplies the seventeen semantic colours. The
+    // decorative roles must therefore resolve through those rather than baking
+    // in Matrix greens, which would bleed into every custom and light theme.
+    expect(declaration('--ui-text-dim')).toBe('var(--ui-text-muted)');
+    expect(declaration('--ui-border-mid')).toBe('var(--ui-border-subtle)');
+    expect(declaration('--ui-border-focus-soft')).toBe('var(--ui-border-strong)');
+    expect(declaration('--ui-glow-color')).toBe('var(--ui-accent)');
+
+    // Light and High Contrast opt out of phosphor bloom through the glow
+    // colour, not the shadows: `[data-theme]` and `[data-theme='light']` have
+    // equal specificity, so the recompute block would win on source order.
+    for (const theme of ['light', 'high-contrast']) {
+      expect(scopedDeclaration(`[data-theme='${theme}']`, '--ui-glow-color')).toBe('transparent');
+    }
+    for (const theme of ['dark', 'matrix']) {
+      expect(scopedDeclaration(`[data-theme='${theme}']`, '--ui-glow-color')).toBe(
+        'var(--ui-accent)',
+      );
+    }
   });
 
   it('maps density preferences to the approved 32px, 40px, and 44px control tiers', () => {

@@ -433,10 +433,32 @@ Fixed scales:
 
 | Role | Scale |
 | --- | --- |
-| Type | 12, 13, 14, 16, 20px |
-| Space | 4, 8, 12, 16, 24, 32px |
-| Radius | 2, 4, 8px |
+| Type | 12, 13, 14, 16, 20px; 10, 10.5, 26px are metadata/display only |
+| Space | 4, 8, 12, 16, 24, 32px; 14px is the workspace pane gutter |
+| Radius | 2, 4, 8px for controls; 12, 14px for cards; `round` for pills |
 | Controls | 32, 40, 44px touch minimum |
+
+The card, metadata, and display tiers were added by the desktop commercial pass
+as an explicit product decision. They are additive: the control scales above are
+unchanged, and the token contract test pins both sets.
+
+- **10px and 10.5px** are reserved for non-essential monospace metadata —
+  Command Center group headings, Explorer full paths, and telemetry read-outs.
+  Body copy, labels, settings, and any text carrying a required action never
+  use them, so the 4.5:1 gate still applies at a readable size.
+- **26px** is the desktop wordmark only.
+- **12px and 14px radii** belong to surfaces that read as cards: workspace
+  panes, panel cards, and modals. Buttons, inputs, and menu items keep 2/4/8.
+- **14px** is the gutter between workspace panes, composed from two 7px pane
+  insets so neighbouring panes contribute equally.
+
+Decorative roles — `--ui-text-dim`, `--ui-border-mid`, `--ui-border-focus-soft`,
+and the phosphor `--ui-glow-*` shadows — are additive to the seventeen required
+roles and must fall back to a contrast-corrected role. A custom theme that
+supplies only the required roles therefore stays readable, and a theme opts out
+of phosphor bloom through `--ui-glow-color` rather than by overriding the
+shadows. `--ui-border-strong` continues to carry the 3:1 non-text gate, so a
+dimmer decorative border is a separate token rather than a weakening of it.
 
 Z-index values are semantic tokens for base, sticky chrome, sidebar scrim,
 sidebar, popover, dialog, toast, and tooltip. Components do not invent local

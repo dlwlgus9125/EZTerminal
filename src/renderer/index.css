@@ -182,12 +182,18 @@ html[data-effect-scanlines='on']::after {
   inset: 0;
   z-index: 200;
   pointer-events: none;
+  /* Commercial pass: a 2px band on a 5px pitch, neutral rather than
+     green-tinted, so the texture reads as glass over the phosphor instead of
+     tinting every surface. Average darkening stays close to the previous
+     1px-on-4px line (8% vs 5.5%), which is what keeps body copy legible under
+     the overlay — axe measures CSS colours and never sees this layer, so the
+     budget has to be held here by hand. */
   background: repeating-linear-gradient(
     0deg,
-    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0.2) 0px,
+    rgba(0, 0, 0, 0.2) 2px,
     rgba(0, 0, 0, 0) 2px,
-    rgba(0, 20, 8, 0.22) 3px,
-    rgba(0, 0, 0, 0) 4px
+    rgba(0, 0, 0, 0) 5px
   );
 }
 /* == FLICKER (upgraded, crt-interference) == brightness-only CRT flicker on
@@ -227,7 +233,7 @@ html[data-effect-crt-curvature='on']::before {
   inset: 0;
   z-index: 199;
   pointer-events: none;
-  background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.35) 100%);
+  background: radial-gradient(ellipse at center, transparent 60%, rgba(0, 0, 0, 0.4) 100%);
 }
 
 /* == CRT ROLL BAR (crt-rollbar effect) == an ENDLESS CONVEYOR of horizontal
@@ -2779,7 +2785,7 @@ body {
 .risky-close-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1200;
+  z-index: var(--ui-z-critical);
   display: grid;
   place-items: center;
   padding: 20px;
