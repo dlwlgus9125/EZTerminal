@@ -498,9 +498,11 @@ test.describe("mobile-width Storybook visual contracts", () => {
       await expectNoAccessibilityViolations(page);
       await expect(page).toHaveScreenshot(visualCase.screenshot, {
         animations: "disabled",
-        // The mobile settings surface prints the build SHA, which is "dev"
-        // locally and the real commit in CI. Mask it so the contract covers
-        // layout and type rather than which build produced the screenshot.
+        // The mobile settings and connection surfaces print the build SHA and
+        // the app version. The SHA is "dev" locally and the real commit in CI,
+        // and the version moves on every release. Mask both so the contract
+        // covers layout and type rather than which build produced the
+        // screenshot — otherwise a version bump alone fails the suite.
         mask: [page.locator("[data-build-stamp]")],
       });
     });

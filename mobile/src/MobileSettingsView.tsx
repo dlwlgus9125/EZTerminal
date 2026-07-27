@@ -104,8 +104,10 @@ function SettingsCategoryButton({
   /** Handoff §6: every row states its CURRENT value, so the index answers
    * "what is this set to?" without opening the category. */
   readonly preview: string;
-  /** Part of the preview that changes with every build (the build SHA), split
-   * out so a visual snapshot can mask it instead of pinning one build. */
+  /** The part of the preview that changes with every build — the version and
+   * the build SHA — split out so a visual snapshot can mask it instead of
+   * pinning one build. Anything derived from the release contract belongs here,
+   * or the baseline has to be refreshed on every version bump. */
   readonly previewSuffix?: string;
   readonly testId: string;
   readonly onClick: () => void;
@@ -117,7 +119,9 @@ function SettingsCategoryButton({
         <span className="mob-settings-row__title">{title}</span>
         <span className="mob-settings-row__preview">
           {preview}
-          {previewSuffix && <span data-build-stamp> {previewSuffix}</span>}
+          {previewSuffix && (
+            <span data-build-stamp>{preview ? ` ${previewSuffix}` : previewSuffix}</span>
+          )}
         </span>
       </span>
       <ChevronRight aria-hidden="true" />
@@ -384,8 +388,8 @@ export function MobileSettingsView({
             <SettingsCategoryButton
               icon={Info}
               title={t('mobile.settingsView.categories.connectionAbout')}
-              preview={`v${MOBILE_BUILD_INFO.appVersion}`}
-              previewSuffix={`(${MOBILE_BUILD_INFO.buildSha})`}
+              preview=""
+              previewSuffix={`v${MOBILE_BUILD_INFO.appVersion} (${MOBILE_BUILD_INFO.buildSha})`}
               testId="settings-category-connection-about"
               onClick={() => openCategory('connection-about', 'settings-category-connection-about')}
             />

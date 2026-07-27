@@ -198,7 +198,7 @@ export function ConnectScreen({
         </button>
 
         <p className="mob-signal mob-connect__footer" aria-hidden="true">
-          <span>EZT://PAIR</span><span>v{MOBILE_BUILD_INFO.appVersion}</span>
+          <span>EZT://PAIR</span><span data-build-stamp>v{MOBILE_BUILD_INFO.appVersion}</span>
         </p>
       </form>
     </main>
