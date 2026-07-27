@@ -671,12 +671,15 @@ body {
   border-bottom: 1px solid var(--term-border-faint);
 }
 
+/* Shared section heading for every sidebar destination: a dim, wide-tracked
+   label that groups without competing with the content under it. */
 .status-section-title {
-  margin: 0 0 0.35rem;
-  font-size: 0.68rem;
+  margin: 0 0 0.5rem;
+  font-size: var(--ui-font-size-2xs);
   font-weight: 600;
-  letter-spacing: 0.06em;
-  color: var(--term-cyan);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ui-text-dim);
 }
 
 .status-metric {
@@ -690,12 +693,93 @@ body {
   color: var(--term-fg-faint);
 }
 
+/* Monitor sections read as instrument cards. Scoped by the section test ids so
+   the Settings panel, which shares the .status-section class for its
+   categories, keeps its plain full-width layout. */
+.status-section[data-testid^='status-section-'] {
+  margin: 0 0.6rem 0.6rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--ui-border-mid);
+  border-bottom: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-raised);
+}
+
+/* The pairing token is read off the screen and typed into a phone, so it gets
+   display sizing and wide tracking rather than inline-code sizing. */
+.pairing-token {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ui-space-2);
+  margin-block: var(--ui-space-2);
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-inset);
+}
+
+.pairing-token-label {
+  inline-size: 100%;
+  color: var(--ui-text-dim);
+  font-size: var(--ui-font-size-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.pairing-token-value {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-xl);
+  letter-spacing: 0.22em;
+  text-shadow: var(--ui-glow-text);
+}
+
+/* Plain ws:// is a standing condition of the 1.0 contract, not a transient
+   notice, so it keeps a persistent amber strip rather than a toast. */
+[data-testid='pairing-ws-warning'] {
+  margin-block-end: var(--ui-space-3);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px dashed color-mix(in srgb, var(--ui-warning) 60%, var(--ui-border-mid));
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-warning);
+  background: var(--ui-warning-muted);
+}
+
+.status-polling-note {
+  margin: 0;
+  padding: 0 0.85rem 0.9rem;
+  color: var(--ui-text-dim);
+  font-size: var(--ui-font-size-2xs);
+  line-height: var(--ui-line-height-normal);
+}
+
+/* The scope grid sits behind the trace at the same 24px pitch the handoff
+   specifies, so the sparkline reads as an instrument rather than a decoration. */
 .sparkline {
   display: block;
   width: 100%;
-  height: 24px;
+  height: 40px;
   margin-top: 0.3rem;
-  color: var(--term-green);
+  padding: 2px 0;
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-accent);
+  background-color: var(--ui-surface-inset);
+  background-image:
+    repeating-linear-gradient(
+      to right,
+      color-mix(in srgb, var(--ui-accent) 9%, transparent) 0 1px,
+      transparent 1px 24px
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--ui-accent) 9%, transparent) 0 1px,
+      transparent 1px 24px
+    );
+  filter: drop-shadow(0 0 4px color-mix(in srgb, currentcolor 55%, transparent));
 }
 
 .status-disk-list {
@@ -1933,18 +2017,100 @@ body {
 }
 
 .agent-row {
-  padding: 9px;
-  border: 1px solid var(--term-border-faint);
-  background: var(--term-bg-inset);
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-raised);
 }
 
+/* Risk reads from the border and a tinted wash, never from colour alone — the
+   status word and the dot shape carry the same meaning. */
 .agent-row[data-status='blocked'],
 .agent-row[data-status='error'] {
-  border-color: color-mix(in srgb, var(--term-red) 55%, var(--term-border));
+  border-color: color-mix(in srgb, var(--ui-danger) 55%, var(--ui-border-mid));
+  background: var(--ui-danger-muted);
 }
 
 .agent-row[data-status='waiting'] {
-  border-color: color-mix(in srgb, var(--term-amber) 55%, var(--term-border));
+  border-color: color-mix(in srgb, var(--ui-warning) 55%, var(--ui-border-mid));
+  background: var(--ui-warning-muted);
+}
+
+/* Only a blocked agent blinks: it is the one state where nothing moves until a
+   person answers. Steps(1) keeps it a hard on/off, not a pulse. */
+.agent-row[data-status='blocked'] .agent-status-dot {
+  animation: agent-attention-blink 1.4s steps(1) infinite;
+}
+
+@keyframes agent-attention-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0.25;
+  }
+}
+
+.agent-progress {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-progress-track {
+  flex: 1 1 auto;
+  block-size: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ui-accent) 18%, var(--ui-surface-inset));
+}
+
+/* Indeterminate on purpose. The activity snapshot reports no completion ratio,
+   so the bar says "still working" rather than claiming a percentage. */
+.agent-progress-sweep {
+  display: block;
+  inline-size: 38%;
+  block-size: 100%;
+  border-radius: 2px;
+  background: var(--ui-accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--ui-accent) 60%, transparent);
+  animation: agent-progress-sweep 1.9s var(--ui-ease-standard) infinite;
+}
+
+@keyframes agent-progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(365%);
+  }
+}
+
+.agent-elapsed {
+  flex: 0 0 auto;
+  color: var(--ui-text-muted);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-row[data-status='blocked'] .agent-status-dot,
+  .agent-progress-sweep {
+    animation: none;
+  }
+
+  /* Without the sweep the track would read as an empty bar, so the fill stays
+     put and still says "running". */
+  .agent-progress-sweep {
+    inline-size: 100%;
+    opacity: 0.55;
+  }
 }
 
 .agent-row-main,
@@ -1998,13 +2164,20 @@ body {
   text-transform: uppercase;
 }
 
+/* The working directory is machine text, so it gets the monospace inset
+   treatment that every path and command in this product uses. */
 .agent-cwd {
   min-width: 0;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--term-fg);
+  padding: 3px 7px;
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-inset);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-12);
 }
 
 .agent-status {

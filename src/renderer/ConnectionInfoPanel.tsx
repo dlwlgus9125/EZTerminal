@@ -140,8 +140,9 @@ export function ConnectionInfoPanel({
                 </button>
               </div>
             ))}
-            <div className="status-metric" data-testid="connection-token">
-              {t('remote.token')}: <code>{token}</code>{' '}
+            <div className="status-metric pairing-token" data-testid="connection-token">
+              <span className="pairing-token-label">{t('remote.token')}</span>
+              <code className="pairing-token-value">{token}</code>
               <button className="btn btn-split" onClick={() => handleCopy(token!)}>
                 {copiedText === token ? t('remote.copied') : t('remote.copy')}
               </button>

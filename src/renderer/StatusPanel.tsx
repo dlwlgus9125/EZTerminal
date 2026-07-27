@@ -174,7 +174,7 @@ export function StatusPanel({
       aria-label={t('monitor.label')}
     >
       <section className="status-section" data-testid="status-section-cpu">
-        <h2 className="status-section-title">CPU</h2>
+        <h2 className="status-section-title">{t('monitor.cpu')}</h2>
         {latest ? (
           <>
             <div className="status-metric">{latest.cpu.loadPct.toFixed(0)}%</div>
@@ -216,7 +216,7 @@ export function StatusPanel({
       </section>
 
       <section className="status-section" data-testid="status-section-mem">
-        <h2 className="status-section-title">MEM</h2>
+        <h2 className="status-section-title">{t('monitor.mem')}</h2>
         {latest ? (
           <>
             <div className="status-metric">
@@ -280,7 +280,7 @@ export function StatusPanel({
       </section>
 
       <section className="status-section" data-testid="status-section-net">
-        <h2 className="status-section-title">NET</h2>
+        <h2 className="status-section-title">{t('monitor.net')}</h2>
         {latest?.net ? (
           <>
             <div className="status-metric">
@@ -402,7 +402,7 @@ export function StatusPanel({
       </section>
 
       <section className="status-section" data-testid="status-section-disk">
-        <h2 className="status-section-title">DISK</h2>
+        <h2 className="status-section-title">{t('monitor.disk')}</h2>
         {latest?.disks ? (
           <div className="status-disk-list">
             {latest.disks.map((d) => {
@@ -429,7 +429,7 @@ export function StatusPanel({
       </section>
 
       <section className="status-section" data-testid="status-section-proc">
-        <h2 className="status-section-title">PROC</h2>
+        <h2 className="status-section-title">{t('monitor.proc')}</h2>
         {latest?.procs ? (
           <table className="status-proc-table" aria-label={t('monitor.processTable')}>
             <thead>
@@ -453,6 +453,9 @@ export function StatusPanel({
           <div className="status-loading">{t('monitor.measuring')}</div>
         )}
       </section>
+      {/* States the collection contract on screen: the expensive collectors are
+          gated on this panel being visible, so the values stop when it closes. */}
+      <p className="status-polling-note">{t('monitor.pollingNote')}</p>
     </div>
   );
 }

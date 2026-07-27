@@ -48,6 +48,17 @@ function sortRecent(a: AgentActivity, b: AgentActivity): number {
   return b.updatedAt - a.updatedAt || a.id.localeCompare(b.id);
 }
 
+/** Wall-clock run time for an in-flight agent, as mm:ss (hh:mm:ss past an hour).
+ * Deliberately not a percentage: AgentActivity carries no progress field, and
+ * inventing one would put a number on screen that nothing measures. */
+function elapsedLabel(startedAt: number, now: number): string {
+  const total = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const seconds = String(total % 60).padStart(2, '0');
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) return `${String(minutes).padStart(2, '0')}:${seconds}`;
+  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${seconds}`;
+}
+
 export interface AgentHubProps {
   readonly snapshot: AgentActivitySnapshot;
   readonly onFocusSession: (sessionId: string) => void;
@@ -77,11 +88,6 @@ export function AgentHub({
   );
   const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
 
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-
   const groups = useMemo(() => {
     const attention: AgentActivity[] = [];
     const active: AgentActivity[] = [];
@@ -99,6 +105,16 @@ export function AgentHub({
     recent.sort(sortRecent);
     return { attention, active, recent };
   }, [snapshot]);
+
+  // A running agent shows a ticking mm:ss, so the clock has to move every
+  // second while one exists. With nothing running the coarse relative ages only
+  // need the original slow tick. Neither is announced: elapsed time is on the
+  // accessibility exclusion list for live regions.
+  const hasActive = groups.active.length > 0;
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), hasActive ? 1_000 : 30_000);
+    return () => clearInterval(timer);
+  }, [hasActive]);
 
   const send = async (item: AgentActivity): Promise<void> => {
     const text = (drafts[item.id] ?? '').trim();
@@ -157,6 +173,14 @@ export function AgentHub({
                   {item.status === 'blocked' ? t('agentHub.review') : t('agentHub.focus')}
                 </button>
               </div>
+              {group === 'active' && (
+                <div className="agent-progress">
+                  <span className="agent-progress-track" aria-hidden="true">
+                    <span className="agent-progress-sweep" />
+                  </span>
+                  <span className="agent-elapsed">{elapsedLabel(item.createdAt, now)}</span>
+                </div>
+              )}
               {item.status === 'waiting' && (
                 <form
                   className="agent-followup"

@@ -570,10 +570,14 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   padding: 0;
 }
 
+/* Sits flush with the panel edge rather than overhanging it. The handle lives
+   inside the scrolling panel body, so a negative inset put 4px outside the
+   scroll width and left a phantom horizontal scrollbar under every sidebar
+   destination. The grab zone is still the full 8px. */
 .workbench-sidebar-resizer {
   position: absolute;
   z-index: 2;
-  inset: 0 -4px 0 auto;
+  inset: 0 0 0 auto;
   width: 8px;
   cursor: col-resize;
   touch-action: none;
