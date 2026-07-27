@@ -1,4 +1,4 @@
-import { ArrowUp, File as FileIcon, Folder, X } from 'lucide-react';
+import { ArrowUp, File as FileIcon, Folder } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../shared/files';
@@ -43,7 +43,6 @@ function breadcrumbSegments(path: string): readonly BreadcrumbSegment[] {
 
 interface FileExplorerPanelProps {
   readonly activePanelId: string | null | undefined;
-  readonly onClose: () => void;
   /** Open a new terminal pane whose session starts in `dirPath` (M2 — "open terminal here"). */
   readonly onOpenTerminalAt: (dirPath: string) => void;
   readonly capabilities?: CapabilityAccess;
@@ -79,7 +78,6 @@ interface ContextMenuState {
  */
 export function FileExplorerPanel({
   activePanelId,
-  onClose,
   onOpenTerminalAt,
   capabilities = rendererCapabilities,
 }: FileExplorerPanelProps): JSX.Element {
@@ -379,15 +377,6 @@ export function FileExplorerPanel({
           aria-label={t('fileExplorer.currentFolderPath')}
           data-testid="file-path-input"
         />
-        <button
-          className="btn btn-split"
-          onClick={onClose}
-          title={t('common.close')}
-          aria-label={t('common.close')}
-          data-testid="file-explorer-close"
-        >
-          <X aria-hidden="true" size={16} />
-        </button>
       </div>
 
       {!rootsMode && crumbs.length > 0 && (

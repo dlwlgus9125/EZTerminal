@@ -47,7 +47,13 @@ describe('BrandMark', () => {
     expect(css).toMatch(
       /html\[data-effect-phosphor-glow=["']on["']\]\s+\.workbench-brand-mark__name\s*\{[^}]*text-shadow/s,
     );
-    expect(css).toMatch(/html\[data-effect-scanlines=["']on["']\]\s+\.workbench-brand-mark::after\s*\{[^}]*opacity/s);
+    // The wordmark carries no panel and no scanline overlay of its own: it sits
+    // directly on the header, so the CRT character comes from the glow on the
+    // letters and bars. The global scanline layer already covers the window.
+    expect(css).not.toMatch(/\.workbench-brand-mark::after/);
+    expect(css).toMatch(
+      /html\[data-effect-phosphor-glow=["']on["']\]\s+\.workbench-brand-mark__signal-bar\s*\{[^}]*box-shadow/s,
+    );
     expect(css).toContain('@media (forced-colors: active)');
     expect(css).toContain('@media (prefers-reduced-motion: reduce)');
     expect(css).toMatch(/@media \(min-width: 800px\) and \(max-width: 1199px\)/);

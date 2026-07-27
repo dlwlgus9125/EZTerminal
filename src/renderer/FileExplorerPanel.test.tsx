@@ -75,7 +75,6 @@ async function renderPanel(activePanelId: string | null = null): Promise<void> {
       <ToastProvider>
         <FileExplorerPanel
           activePanelId={activePanelId}
-          onClose={vi.fn()}
           onOpenTerminalAt={onOpenTerminalAt}
           capabilities={capabilities}
         />

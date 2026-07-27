@@ -50,18 +50,22 @@ afterEach(() => {
 });
 
 describe('RiskyCloseDialog', () => {
+  // The dialog renders through the shared Dialog primitive, which portals to
+  // document.body. The opener stays in the harness container; the dialog's own
+  // nodes are queried from the document.
+
   it('is modal, gives Cancel the initial focus, and restores focus on cancel', () => {
     const opener = container.querySelector<HTMLButtonElement>('[data-testid="opener"]')!;
     opener.focus();
     act(() => opener.click());
 
-    const dialog = container.querySelector('[role="alertdialog"]')!;
-    const cancel = container.querySelector<HTMLButtonElement>('[data-testid="risky-close-cancel"]')!;
+    const dialog = document.querySelector('[role="alertdialog"]')!;
+    const cancel = document.querySelector<HTMLButtonElement>('[data-testid="risky-close-cancel"]')!;
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     expect(document.activeElement).toBe(cancel);
 
     act(() => cancel.click());
-    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     expect(document.activeElement).toBe(opener);
   });
 
@@ -70,23 +74,27 @@ describe('RiskyCloseDialog', () => {
     opener.focus();
     act(() => opener.click());
     act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
-    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     expect(document.activeElement).toBe(opener);
   });
 
-  it('keeps keyboard focus inside the modal actions', () => {
+  it('keeps keyboard focus inside the modal', () => {
     const opener = container.querySelector<HTMLButtonElement>('[data-testid="opener"]')!;
     act(() => opener.click());
-    const cancel = container.querySelector<HTMLButtonElement>('[data-testid="risky-close-cancel"]')!;
-    const confirm = container.querySelector<HTMLButtonElement>('[data-testid="risky-close-confirm"]')!;
+    const dialog = document.querySelector('[role="alertdialog"]')!;
+    const cancel = document.querySelector<HTMLButtonElement>('[data-testid="risky-close-cancel"]')!;
+    const confirm = document.querySelector<HTMLButtonElement>('[data-testid="risky-close-confirm"]')!;
 
+    // Containment is the contract, not a fixed cycle length: the shared dialog
+    // also offers a header close, and asserting an exact two-stop loop would
+    // break every time the panel gains or loses chrome.
     confirm.focus();
     act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' })));
-    expect(document.activeElement).toBe(cancel);
+    expect(dialog.contains(document.activeElement)).toBe(true);
 
     cancel.focus();
     act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true })));
-    expect(document.activeElement).toBe(confirm);
+    expect(dialog.contains(document.activeElement)).toBe(true);
   });
 
   it('localizes the safe Cancel action through the application i18n provider', () => {
@@ -94,6 +102,6 @@ describe('RiskyCloseDialog', () => {
     const opener = container.querySelector<HTMLButtonElement>('[data-testid="opener"]')!;
     act(() => opener.click());
 
-    expect(container.querySelector('[data-testid="risky-close-cancel"]')?.textContent).toBe('취소');
+    expect(document.querySelector('[data-testid="risky-close-cancel"]')?.textContent).toBe('취소');
   });
 });

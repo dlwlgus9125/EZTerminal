@@ -2367,7 +2367,6 @@ export function App(): JSX.Element {
     sidebarDestination === 'explorer' ? (
       <FileExplorerPanel
         activePanelId={activePanelId}
-        onClose={() => setSidebarDestination(null)}
         onOpenTerminalAt={onOpenTerminalAt}
       />
     ) : sidebarDestination === 'agents' ? (
@@ -2382,7 +2381,7 @@ export function App(): JSX.Element {
     ) : sidebarDestination === 'remote' ? (
       <RemotePanel />
     ) : sidebarDestination === 'openclaw' && openclawVisible ? (
-      <OpenClawPanel onClose={() => setSidebarDestination(null)} onOpenChat={openOpenClawChat} />
+      <OpenClawPanel onOpenChat={openOpenClawChat} />
     ) : sidebarDestination === 'settings' ? (
       <SettingsPanel
         requestedCategory={settingsCategoryRequest.category}

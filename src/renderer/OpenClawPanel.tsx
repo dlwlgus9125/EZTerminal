@@ -1,4 +1,3 @@
-import { X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -31,7 +30,6 @@ const STATE_LABEL_KEY = {
 } as const satisfies Record<OpenClawStatusState, string>;
 
 interface OpenClawPanelProps {
-  readonly onClose: () => void;
   /** Opens (or focuses, if already open) the singleton chat dockview panel —
    * see App.tsx's `openOpenClawChat` (openclaw-management M3). */
   readonly onOpenChat: () => void;
@@ -50,7 +48,6 @@ interface OpenClawPanelProps {
  * with a calm CTA — never an error toast (AC6).
  */
 export function OpenClawPanel({
-  onClose,
   onOpenChat,
   capabilities = rendererCapabilities,
 }: OpenClawPanelProps): JSX.Element {
@@ -258,19 +255,6 @@ export function OpenClawPanel({
       role="region"
       aria-label={t('rail.openClaw')}
     >
-      <div className="openclaw-drawer-header">
-        <h2 className="status-section-title">{t('rail.openClaw')}</h2>
-        <button
-          className="btn btn-split"
-          onClick={onClose}
-          title={t('common.close')}
-          aria-label={t('common.close')}
-          data-testid="openclaw-close"
-        >
-          <X aria-hidden="true" size={16} />
-        </button>
-      </div>
-
       <section
         className="status-section"
         data-testid="openclaw-state"

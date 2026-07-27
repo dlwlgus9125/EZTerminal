@@ -6,7 +6,6 @@ import {
   HISTORY_MAX,
   PACKET_ROW_CAP,
   Scope,
-  Sparkline,
   formatBytes,
   formatPacketTime,
   formatRate,
@@ -325,10 +324,8 @@ export function StatusPanel({
             <div className="status-metric">
               {latest.net.iface} &nbsp;↓{formatRate(latest.net.rxSec)} ↑{formatRate(latest.net.txSec)}
             </div>
-            <div className="status-net-sparks" data-testid="status-net-sparks">
-              <Sparkline values={netRxValues} max={netMax} />
-              <Sparkline values={netTxValues} max={netMax} />
-            </div>
+            {/* The waterfall replaced a pair of rx/tx sparklines that plotted
+                exactly this data. One representation of a series is enough. */}
             <div className="status-waterfall-title">{t('monitor.waterfall')}</div>
             <div className="status-waterfall" data-testid="status-waterfall">
               {waterfall.map((row) => (

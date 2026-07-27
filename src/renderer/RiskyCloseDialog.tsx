@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 
 import { useAppTranslation } from './i18n';
+import { Button, Dialog } from './ui';
 
 export interface RiskyCloseDialogProps {
   readonly title: string;
@@ -11,6 +12,15 @@ export interface RiskyCloseDialogProps {
   readonly onConfirm: () => void;
 }
 
+/**
+ * Confirmation for an action that destroys live work.
+ *
+ * Built on the shared Dialog rather than hand-rolling a second one. It used to
+ * carry its own backdrop, focus trap, Escape handling, and z-index, which meant
+ * the most consequential dialog in the product was the one that shared none of
+ * the system's behaviour — and drifted from it every time the primitive
+ * improved.
+ */
 export function RiskyCloseDialog({
   title,
   description,
@@ -20,91 +30,48 @@ export function RiskyCloseDialog({
   onConfirm,
 }: RiskyCloseDialogProps): JSX.Element {
   const { t } = useAppTranslation();
-  const titleId = useId();
-  const descriptionId = useId();
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(
-    document.activeElement instanceof HTMLElement ? document.activeElement : null,
-  );
-  const onCancelRef = useRef(onCancel);
-  onCancelRef.current = onCancel;
-
-  useEffect(() => {
-    const previous = previousFocusRef.current;
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onCancelRef.current();
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const controls = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
-      ) ?? [])];
-      const first = controls[0];
-      const last = controls[controls.length - 1];
-      if (!first || !last) return;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-      requestAnimationFrame(() => {
-        if (previous?.isConnected) previous.focus();
-      });
-    };
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const cancelCallbackRef = useRef(onCancel);
+  cancelCallbackRef.current = onCancel;
+  const handleOpenChange = useCallback((open: boolean): void => {
+    if (!open) cancelCallbackRef.current();
   }, []);
 
   return (
-    <div
-      className={'risky-close-backdrop'}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onCancel();
-      }}
-      data-testid={'risky-close-backdrop'}
-    >
-      <div
-        ref={dialogRef}
-        className={'risky-close-dialog'}
-        role={'alertdialog'}
-        aria-modal={'true'}
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        data-testid={'risky-close-dialog'}
-      >
-        <h2 id={titleId}>{title}</h2>
-        <p id={descriptionId}>{description}</p>
-        {details.length > 0 && (
-          <ul className={'risky-close-details'}>
-            {details.map((detail) => <li key={detail}>{detail}</li>)}
-          </ul>
-        )}
-        <div className={'risky-close-actions'}>
-          <button
-            type={'button'}
-            className={'btn btn-split'}
+    <Dialog
+      open
+      onOpenChange={handleOpenChange}
+      title={title}
+      description={description}
+      role="alertdialog"
+      size="sm"
+      tone="danger"
+      // Cancel takes focus, so the destructive action is never one stray Enter
+      // away, and the close affordance is the same one every dialog has.
+      initialFocusRef={cancelRef}
+      closeLabel={t('common.cancel')}
+      testId="risky-close-dialog"
+      footer={(
+        <>
+          <Button
+            ref={cancelRef}
+            variant="secondary"
             onClick={onCancel}
-            autoFocus
-            data-testid={'risky-close-cancel'}
+            data-testid="risky-close-cancel"
           >
             {t('common.cancel')}
-          </button>
-          <button
-            type={'button'}
-            className={'btn risky-close-confirm'}
-            onClick={onConfirm}
-            data-testid={'risky-close-confirm'}
-          >
+          </Button>
+          <Button variant="danger" onClick={onConfirm} data-testid="risky-close-confirm">
             {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </>
+      )}
+    >
+      {details.length > 0 && (
+        <ul className="risky-close-details">
+          {details.map((detail) => <li key={detail}>{detail}</li>)}
+        </ul>
+      )}
+    </Dialog>
   );
 }

@@ -3584,58 +3584,6 @@ body {
   background: rgba(240, 85, 106, 0.1);
 }
 
-.risky-close-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--ui-z-critical);
-  display: grid;
-  place-items: center;
-  padding: 20px;
-  background: rgba(0, 0, 0, 0.68);
-}
-
-/* Restyled in place rather than ported onto the shared Dialog: its hand-rolled
-   focus trap, Escape handling, and invoker restoration are pinned by
-   RiskyCloseDialog.test.tsx, and the preset-apply e2e drives this exact
-   confirm path. The look moves; the behaviour does not. */
-.risky-close-dialog {
-  position: relative;
-  width: min(480px, 100%);
-  padding: 20px;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--ui-danger) 55%, var(--ui-border-mid));
-  border-radius: var(--ui-radius-xl);
-  background: var(--ui-surface-raised);
-  color: var(--ui-text-secondary);
-  box-shadow:
-    0 0 34px color-mix(in srgb, var(--ui-danger) 12%, transparent),
-    0 24px 60px rgb(0 0 0 / 70%);
-  animation: ez-modal-in var(--ui-motion-modal) var(--ui-ease-standard);
-}
-
-.risky-close-dialog::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto;
-  block-size: 4px;
-  background: linear-gradient(
-    90deg,
-    var(--ui-danger),
-    color-mix(in srgb, var(--ui-danger) 35%, transparent)
-  );
-}
-
-.risky-close-dialog h2 {
-  margin: 0 0 10px;
-  color: var(--ui-text-primary);
-  font-size: var(--ui-font-size-lg);
-}
-
-.risky-close-dialog p {
-  margin: 0;
-  line-height: 1.5;
-}
-
 /* Ctrl+Tab MRU pane switcher. It never accepts pointer input or DOM focus:
    capture-phase keyboard handling keeps the terminal focused until Ctrl is
    released, while the live region exposes the preview to screen readers. */
@@ -3834,19 +3782,3 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.risky-close-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 20px;
-}
-
-.risky-close-confirm {
-  color: var(--term-red);
-  border-color: rgba(240, 85, 106, 0.45);
-}
-
-.risky-close-confirm:hover:not(:disabled) {
-  border-color: var(--term-red);
-  background: rgba(240, 85, 106, 0.12);
-}

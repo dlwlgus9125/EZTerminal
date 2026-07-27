@@ -63,7 +63,6 @@ async function render(capabilities: CapabilityAccess): Promise<void> {
   await act(async () => {
     root.render(
       <OpenClawPanel
-        onClose={vi.fn()}
         onOpenChat={vi.fn()}
         capabilities={capabilities}
       />,
