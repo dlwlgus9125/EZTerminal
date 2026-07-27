@@ -1,5 +1,4 @@
 import { Browser } from '@capacitor/browser';
-import { X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
@@ -16,6 +15,7 @@ import type {
 import { usePageVisible } from './use-page-visible';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { Tab, TabList, TabPanel, Tabs } from '../../src/renderer/ui/Tabs';
+import { MobilePageHeader } from './MobilePageHeader';
 
 type OpenClawTab = 'status' | 'logs' | 'settings' | 'chat';
 
@@ -330,17 +330,13 @@ export function MobileOpenClawView({
       className="mobile-openclaw-view"
       data-testid="mobile-openclaw-view"
     >
-      <header className="mobile-openclaw-head">
-        <button
-          type="button"
-          className="btn"
-          onClick={onClose}
-          aria-label={t('mobile.openClaw.close')}
-          data-testid="mobile-openclaw-close"
-        >
-          <X aria-hidden="true" size={18} />
-        </button>
-        <TabList className="mobile-openclaw-tabs" label="OpenClaw">
+      <MobilePageHeader
+        title="OpenClaw"
+        backLabel={t('mobile.openClaw.close')}
+        backTestId="mobile-openclaw-close"
+        onBack={onClose}
+      />
+      <TabList className="mobile-openclaw-tabs" label="OpenClaw">
           <Tab
             value="status"
             className={tab === 'status' ? 'mobile-openclaw-tab mobile-openclaw-tab--active' : 'mobile-openclaw-tab'}
@@ -369,8 +365,7 @@ export function MobileOpenClawView({
           >
             {t('mobile.openClaw.chat')}
           </Tab>
-        </TabList>
-      </header>
+      </TabList>
 
       <div className="mobile-openclaw-body">
         <TabPanel value="status" className="mobile-openclaw-tab-panel">

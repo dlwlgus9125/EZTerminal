@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
 import { act, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileActionSheet } from './MobileActionSheet';
-import { MobileHeaderMoreActions } from './MobileHeaderMoreActions';
+import { useMobileNavigationHistory } from './MobileNavigationHistory';
 import { MobileWorkbenchCoordinator } from './MobileWorkbenchCoordinator';
 
 let root: Root;
@@ -26,8 +27,32 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function MoreToSettingsHarness(): JSX.Element {
-  const [moreOpen, setMoreOpen] = useState(false);
+function SheetDestinationAction({
+  onClose,
+  onOpen,
+}: {
+  readonly onClose: () => void;
+  readonly onOpen: () => void;
+}): JSX.Element {
+  const navigation = useMobileNavigationHistory();
+  return (
+    <button
+      type="button"
+      data-testid="open-settings"
+      onClick={() => {
+        navigation.replaceTopLayer(() => {
+          flushSync(onClose);
+          onOpen();
+        });
+      }}
+    >
+      Settings
+    </button>
+  );
+}
+
+function SheetToSettingsHarness(): JSX.Element {
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
@@ -37,8 +62,8 @@ function MoreToSettingsHarness(): JSX.Element {
         <button
           ref={triggerRef}
           type="button"
-          data-testid="open-more"
-          onClick={() => setMoreOpen(true)}
+          data-testid="open-actions"
+          onClick={() => setSheetOpen(true)}
         >
           More
         </button>
@@ -49,21 +74,13 @@ function MoreToSettingsHarness(): JSX.Element {
           <button type="button" data-testid="close-settings" onClick={() => setSettingsOpen(false)}>Close</button>
         </div>
       ) : undefined}
-      overlays={moreOpen ? (
-        <MobileHeaderMoreActions
-          wide
-          connected
-          themeName="dark"
-          openclawVisible
-          triggerRef={triggerRef}
-          onClose={() => setMoreOpen(false)}
-          onOpenSessions={() => undefined}
-          onOpenFiles={() => undefined}
-          onOpenStats={() => undefined}
-          onOpenTheme={() => undefined}
-          onOpenClaw={() => undefined}
-          onOpenSettings={() => setSettingsOpen(true)}
-        />
+      overlays={sheetOpen ? (
+        <MobileActionSheet title="Actions" onClose={() => setSheetOpen(false)} returnFocusRef={triggerRef}>
+          <SheetDestinationAction
+            onClose={() => setSheetOpen(false)}
+            onOpen={() => setSettingsOpen(true)}
+          />
+        </MobileActionSheet>
       ) : undefined}
       onRequestTerminal={() => setSettingsOpen(false)}
     />
@@ -107,6 +124,48 @@ function NestedSheetsHarness(): JSX.Element {
 }
 
 describe('MobileWorkbenchCoordinator', () => {
+  it('renders the hub as an inert-terminal history root without a synthetic entry', () => {
+    const onRequestRoot = vi.fn();
+    act(() => root.render(
+      <MobileWorkbenchCoordinator
+        terminal={<button type="button">terminal</button>}
+        page={<main data-testid="hub-root">hub</main>}
+        terminalActive={false}
+        destinationActive={false}
+        onRequestRoot={onRequestRoot}
+      />,
+    ));
+
+    expect(host.querySelector('[data-testid="hub-root"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(true);
+    expect(window.history.state.ezterminalNavigation).toBeUndefined();
+
+    act(() => window.dispatchEvent(new PopStateEvent('popstate')));
+    expect(onRequestRoot).not.toHaveBeenCalled();
+  });
+
+  it('owns one destination history layer for Terminal even though no page shell covers it', () => {
+    const onRequestRoot = vi.fn();
+    act(() => root.render(
+      <MobileWorkbenchCoordinator
+        terminal={<div data-testid="terminal-destination">terminal</div>}
+        terminalActive
+        destinationActive
+        onRequestRoot={onRequestRoot}
+      />,
+    ));
+
+    expect(host.querySelector('[data-testid="mobile-page-shell"]')).toBeNull();
+    expect(host.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
+    expect(window.history.state.ezterminalNavigation).toBeDefined();
+
+    act(() => {
+      window.history.replaceState({}, '');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    expect(onRequestRoot).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves terminal DOM identity and makes it inert under an auxiliary page', () => {
     const render = (page?: JSX.Element): void => {
       act(() => root.render(
@@ -236,7 +295,7 @@ describe('MobileWorkbenchCoordinator', () => {
     dynamicBackground.remove();
   });
 
-  it('keeps a More destination mounted after the sheet history traversal would run', async () => {
+  it('keeps a destination mounted after the source sheet history traversal would run', async () => {
     const back = vi.spyOn(window.history, 'back').mockImplementation(() => {
       queueMicrotask(() => {
         window.history.replaceState({}, '');
@@ -244,9 +303,9 @@ describe('MobileWorkbenchCoordinator', () => {
       });
     });
 
-    act(() => root.render(<MoreToSettingsHarness />));
-    act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-more"]')!.click());
-    act(() => host.querySelector<HTMLButtonElement>('[data-testid="more-settings"]')!.click());
+    act(() => root.render(<SheetToSettingsHarness />));
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-actions"]')!.click());
+    act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-settings"]')!.click());
 
     expect(host.querySelector('[data-testid="settings-page"]')).not.toBeNull();
     await act(async () => {
@@ -264,11 +323,11 @@ describe('MobileWorkbenchCoordinator', () => {
         window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
       });
     });
-    act(() => root.render(<MoreToSettingsHarness />));
+    act(() => root.render(<SheetToSettingsHarness />));
 
     for (let index = 0; index < 20; index += 1) {
-      act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-more"]')!.click());
-      act(() => host.querySelector<HTMLButtonElement>('[data-testid="more-settings"]')!.click());
+      act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-actions"]')!.click());
+      act(() => host.querySelector<HTMLButtonElement>('[data-testid="open-settings"]')!.click());
       await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 0)));
       expect(host.querySelector('[data-testid="settings-page"]')).not.toBeNull();
 

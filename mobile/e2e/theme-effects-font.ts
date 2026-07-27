@@ -62,7 +62,7 @@ import {
   createTerminalSession,
   getTestIdTextContent,
   launchDesktop,
-  openWorkspaceMoreAction,
+  openHubDestination,
   pollLogcat,
   runAdb,
   setTestIdTextValue,
@@ -118,7 +118,7 @@ async function main(): Promise<void> {
     // ThemeMenu's fixed overlay is unreliable in native accessibility dumps,
     // so use the WebView test-id path for every import interaction.
     console.log('[theme-e2e] opening the theme sheet and importing a custom theme...');
-    await openWorkspaceMoreAction('more-theme', 'theme-menu');
+    await openHubDestination('hub-appearance', 'theme-menu');
     await setTestIdTextValue('theme-menu-import-textarea', CUSTOM_THEME_JSON);
     await tapTestId('theme-menu-import-btn');
     const importOutcome = await waitForAnyTestId(
@@ -139,7 +139,8 @@ async function main(): Promise<void> {
 
     // ── b. FONT + c. EFFECTS ────────────────────────────────────────────
     console.log('[theme-e2e] opening Settings...');
-    await openWorkspaceMoreAction('more-settings', 'mobile-settings-view');
+    await openHubDestination('hub-settings', 'mobile-settings-view');
+    await tapTestId('settings-category-appearance');
 
     console.log('[theme-e2e] checking the Scanlines toggle is present and OFF by default...');
     await waitForTestId('settings-effect-scanlines');
@@ -159,7 +160,11 @@ async function main(): Promise<void> {
     // ── d(i). FONT + EFFECTS PERSISTENCE (remount, no process kill) ─────
     console.log('[theme-e2e] closing and reopening Settings to check the localStorage round-trip...');
     await tapTestId('mobile-settings-close');
-    await openWorkspaceMoreAction('more-settings', 'mobile-settings-view');
+    await waitForTestId('settings-category-appearance');
+    await tapTestId('mobile-settings-close');
+    await waitForTestId('mobile-remote-hub');
+    await openHubDestination('hub-settings', 'mobile-settings-view');
+    await tapTestId('settings-category-appearance');
     await waitForTestIdAttribute('settings-font-fira-code', 'aria-pressed', 'true');
     await waitForTestIdAttribute('settings-effect-scanlines', 'aria-pressed', 'true');
     console.log('[theme-e2e] step OK: font + effect toggle survive a Settings remount');

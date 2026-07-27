@@ -24,7 +24,7 @@ import {
   createTerminalSession,
   getVisibleXtermBufferText,
   launchDesktop,
-  openWorkspaceMoreAction,
+  openHubDestination,
   runAdb,
   setTestIdTextValue,
   sleep,
@@ -111,7 +111,7 @@ async function main(): Promise<void> {
 
     await waitForTestId('connect-screen', 45_000);
     await submitConnectionOnce();
-    await openWorkspaceMoreAction('more-sessions', 'session-switcher');
+    await openHubDestination('hub-sessions', 'session-switcher');
     await waitForTestId('session-open', 15_000);
     await tapTestId('session-open');
     await waitForTestId('mobile-session-view', 20_000);

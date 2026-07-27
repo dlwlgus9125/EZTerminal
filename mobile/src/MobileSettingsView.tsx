@@ -1,7 +1,18 @@
-import { Check, Minus, Plus, X } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import {
+  ArrowRight,
+  Check,
+  Globe2,
+  Keyboard,
+  Minus,
+  Palette,
+  PlugZap,
+  Plus,
+  Wifi,
+  type LucideIcon,
+} from 'lucide-react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
-import type { OpenClawMode } from '../../src/shared/layout-schema';
+import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
 import { UiDensitySchema, UiLocalePreferenceSchema } from '../../src/shared/ui-preferences';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import type { EffectId } from '../../src/renderer/effects';
@@ -39,6 +50,8 @@ import {
   saveRollbar,
 } from './theme';
 import { loadUiScale, saveUiScale } from './ui-scale';
+import { MobilePageHeader } from './MobilePageHeader';
+import { useMobileNavigationHistory } from './MobileNavigationHistory';
 import { TerminalAccessorySettings } from './TerminalAccessorySettings';
 import { useMobileUiPreferences } from './MobileUiPreferencesProvider';
 import { MOBILE_BUILD_INFO } from './build-info';
@@ -66,6 +79,38 @@ const OPENCLAW_MODE_LABEL_KEY = {
   off: 'mobile.settingsView.modeOff',
 } as const satisfies Record<OpenClawMode, string>;
 
+type MobileSettingsCategory =
+  | 'general'
+  | 'appearance'
+  | 'terminal-input'
+  | 'integrations'
+  | 'connection-about';
+
+function SettingsCategoryButton({
+  icon: Icon,
+  title,
+  description,
+  testId,
+  onClick,
+}: {
+  readonly icon: LucideIcon;
+  readonly title: string;
+  readonly description: string;
+  readonly testId: string;
+  readonly onClick: () => void;
+}): JSX.Element {
+  return (
+    <button type="button" className="mobile-settings-category" onClick={onClick} data-testid={testId}>
+      <span className="mobile-settings-category__icon" aria-hidden="true"><Icon /></span>
+      <span className="mobile-settings-category__copy">
+        <strong>{title}</strong>
+        <span>{description}</span>
+      </span>
+      <ArrowRight aria-hidden="true" />
+    </button>
+  );
+}
+
 interface MobileSettingsViewProps {
   readonly connectionUrl?: string;
   readonly onClose: () => void;
@@ -76,6 +121,8 @@ interface MobileSettingsViewProps {
    * the workspace, not just this settings screen. */
   readonly openclawMode: OpenClawMode;
   readonly onOpenClawModeChange: (mode: OpenClawMode) => void;
+  readonly currentTheme: ThemeName;
+  readonly onOpenTheme: (trigger: HTMLElement) => void;
 }
 
 export function MobileSettingsView({
@@ -84,11 +131,46 @@ export function MobileSettingsView({
   onDisconnect,
   openclawMode,
   onOpenClawModeChange,
+  currentTheme,
+  onOpenTheme,
 }: MobileSettingsViewProps): JSX.Element {
   const { t } = useAppTranslation();
   const { preferences, setPreferences } = useMobileUiPreferences();
+  const navigation = useMobileNavigationHistory();
+  const categoryLayerId = `mobile-settings-category-${useId()}`;
+  const [category, setCategory] = useState<MobileSettingsCategory | null>(null);
+  const categoryReturnTargetRef = useRef('settings-category-general');
+  const restoreCategoryFocusRef = useRef(false);
   const [preferenceSaveFailed, setPreferenceSaveFailed] = useState(false);
   const [uiScale, setUiScale] = useState(() => loadUiScale());
+
+  const openCategory = useCallback((next: MobileSettingsCategory, returnTarget: string) => {
+    categoryReturnTargetRef.current = returnTarget;
+    setCategory(next);
+  }, []);
+
+  const closeCategory = useCallback(() => {
+    restoreCategoryFocusRef.current = true;
+    setCategory(null);
+  }, []);
+
+  useEffect(() => {
+    if (category === null) return;
+    return navigation.pushLayer({
+      id: categoryLayerId,
+      kind: 'page',
+      onBack: closeCategory,
+    });
+  }, [category, categoryLayerId, closeCategory, navigation]);
+
+  useEffect(() => {
+    if (category !== null || !restoreCategoryFocusRef.current) return;
+    restoreCategoryFocusRef.current = false;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(`[data-testid="${categoryReturnTargetRef.current}"]`)?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [category]);
   const formatEffectParamLabel = useCallback((effectId: InterferenceEffectId, key: string, value: number): string => {
     const labelKey = {
       'jitter-burst:period': 'mobile.settingsView.burstPeriod',
@@ -128,8 +210,8 @@ export function MobileSettingsView({
 
   // ── Effects (theme-effects-font Wave 3) ─────────────────────────────────
   // Filtered to the ACTIVE theme's own declared effects (AC-E4) — nothing
-  // changes theme while this view is open (there's no route to ThemeMenu from
-  // here), so reading it once per render (no state) is safe.
+  // selecting a theme rerenders this view through the currentTheme prop, so
+  // reading the active definition once per render needs no duplicate state.
   const activeTheme = getActiveTheme();
   const declaredEffects = (activeTheme.effects ?? []) as EffectId[];
   const [effectToggles, setEffectToggles] = useState(() => loadEffectToggles());
@@ -171,23 +253,70 @@ export function MobileSettingsView({
     [],
   );
 
+  const categoryTitle = category === 'general'
+    ? t('mobile.settingsView.categories.general')
+    : category === 'appearance'
+      ? t('mobile.settingsView.categories.appearance')
+      : category === 'terminal-input'
+        ? t('mobile.settingsView.categories.terminalInput')
+        : category === 'integrations'
+          ? t('mobile.settingsView.categories.integrations')
+          : category === 'connection-about'
+            ? t('mobile.settingsView.categories.connectionAbout')
+            : t('settings.title');
+
   return (
     <div className="mobile-settings-view" data-testid="mobile-settings-view">
-      <header className="mobile-settings-head">
-        <button
-          type="button"
-          className="btn"
-          onClick={onClose}
-          aria-label={t('mobile.settingsView.close')}
-          data-testid="mobile-settings-close"
-        >
-          <X aria-hidden="true" size={18} />
-        </button>
-        <h2 className="mobile-settings-title">{t('settings.title')}</h2>
-      </header>
+      <MobilePageHeader
+        title={categoryTitle}
+        backLabel={category === null ? t('mobile.settingsView.close') : t('common.back')}
+        backTestId="mobile-settings-close"
+        onBack={category === null ? onClose : closeCategory}
+      />
 
       <div className="mobile-settings-body">
-        <section className="status-section">
+        {category === null && (
+          <div className="mobile-settings-index" aria-label={t('mobile.settingsView.categories.indexLabel')}>
+            <p className="mobile-settings-index__intro">{t('mobile.settingsView.categories.indexDescription')}</p>
+            <SettingsCategoryButton
+              icon={Globe2}
+              title={t('mobile.settingsView.categories.general')}
+              description={t('mobile.settingsView.categories.generalDescription')}
+              testId="settings-category-general"
+              onClick={() => openCategory('general', 'settings-category-general')}
+            />
+            <SettingsCategoryButton
+              icon={Palette}
+              title={t('mobile.settingsView.categories.appearance')}
+              description={t('mobile.settingsView.categories.appearanceDescription')}
+              testId="settings-category-appearance"
+              onClick={() => openCategory('appearance', 'settings-category-appearance')}
+            />
+            <SettingsCategoryButton
+              icon={Keyboard}
+              title={t('mobile.settingsView.categories.terminalInput')}
+              description={t('mobile.settingsView.categories.terminalInputDescription')}
+              testId="settings-category-terminal-input"
+              onClick={() => openCategory('terminal-input', 'settings-category-terminal-input')}
+            />
+            <SettingsCategoryButton
+              icon={PlugZap}
+              title={t('mobile.settingsView.categories.integrations')}
+              description={t('mobile.settingsView.categories.integrationsDescription')}
+              testId="settings-category-integrations"
+              onClick={() => openCategory('integrations', 'settings-category-integrations')}
+            />
+            <SettingsCategoryButton
+              icon={Wifi}
+              title={t('mobile.settingsView.categories.connectionAbout')}
+              description={t('mobile.settingsView.categories.connectionAboutDescription')}
+              testId="settings-category-connection-about"
+              onClick={() => openCategory('connection-about', 'settings-category-connection-about')}
+            />
+          </div>
+        )}
+
+        {category === 'general' && <section className="status-section">
           <h2 className="status-section-title">{t('settings.language')}</h2>
           <p>{t('settings.languageDescription')}</p>
           <select
@@ -205,9 +334,9 @@ export function MobileSettingsView({
             <option value="ko">{t('settings.korean')}</option>
             <option value="en">{t('settings.english')}</option>
           </select>
-        </section>
+        </section>}
 
-        <section className="status-section">
+        {category === 'general' && <section className="status-section">
           <h2 className="status-section-title">{t('settings.density')}</h2>
           <select
             className="mobile-file-path-input"
@@ -224,17 +353,17 @@ export function MobileSettingsView({
             <option value="compact">{t('settings.compact')}</option>
             <option value="comfortable">{t('settings.comfortable')}</option>
           </select>
-        </section>
+        </section>}
 
-        {preferenceSaveFailed && (
+        {category === 'general' && preferenceSaveFailed && (
           <div className="settings-theme-import-error" role="alert">
             {t('settings.preferenceSaveFailed')}
           </div>
         )}
 
-        <TerminalAccessorySettings />
+        {category === 'terminal-input' && <TerminalAccessorySettings />}
 
-        <section className="status-section">
+        {category === 'general' && <section className="status-section">
           <h2 className="status-section-title">{t('mobile.settingsView.uiScale')}</h2>
           <div className="settings-scale-stepper">
             <button
@@ -268,9 +397,24 @@ export function MobileSettingsView({
               {t('common.reset')}
             </button>
           </div>
-        </section>
+        </section>}
 
-        <section className="status-section">
+        {category === 'appearance' && (
+          <section className="status-section">
+            <h2 className="status-section-title">{t('mobile.moreActions.theme')}</h2>
+            <p>{t('mobile.settingsView.categories.themeDescription')}</p>
+            <button
+              type="button"
+              className="btn"
+              onClick={(event) => onOpenTheme(event.currentTarget)}
+              data-testid="settings-open-theme"
+            >
+              {t('mobile.settingsView.categories.chooseTheme')}: {currentTheme}
+            </button>
+          </section>
+        )}
+
+        {category === 'appearance' && <section className="status-section">
           <h2 className="status-section-title">{t('mobile.settingsView.font')}</h2>
           <div className="status-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {FONT_CATALOG.map((font) => (
@@ -287,9 +431,9 @@ export function MobileSettingsView({
               </button>
             ))}
           </div>
-        </section>
+        </section>}
 
-        <section className="status-section">
+        {category === 'appearance' && <section className="status-section">
           <h2 className="status-section-title">{t('mobile.settingsView.effects')}</h2>
           {declaredEffects.length === 0 ? (
             <div className="status-metric" data-testid="settings-effects-empty">
@@ -398,9 +542,9 @@ export function MobileSettingsView({
               flashLabel={t('mobile.settingsView.noiseFlash')}
             />
           ))}
-        </section>
+        </section>}
 
-        <section className="status-section">
+        {category === 'integrations' && <section className="status-section">
           <h2 className="status-section-title">{t('mobile.settingsView.openClaw')}</h2>
           <div className="status-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {(['auto', 'on', 'off'] as const).map((mode) => (
@@ -417,9 +561,9 @@ export function MobileSettingsView({
               </button>
             ))}
           </div>
-        </section>
+        </section>}
 
-        <section className="status-section">
+        {category === 'connection-about' && <section className="status-section">
           <h2 className="status-section-title">{t('mobile.settingsView.connection')}</h2>
           <div className="status-metric" data-testid="settings-app-version">
             {t('settings.appVersion')}: {MOBILE_BUILD_INFO.appVersion}
@@ -444,7 +588,7 @@ export function MobileSettingsView({
           >
             {t('mobile.settingsView.disconnect')}
           </button>
-        </section>
+        </section>}
       </div>
     </div>
   );

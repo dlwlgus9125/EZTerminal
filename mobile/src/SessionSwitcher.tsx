@@ -1,9 +1,8 @@
-import { Bot, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { SessionInfo } from '../../src/shared/ipc';
 import { classifyCloseRisk, type CloseRisk } from '../../src/shared/close-risk';
-import type { OpenClawStatus } from '../../src/shared/openclaw';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobileActionSheet } from './MobileActionSheet';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
@@ -16,52 +15,22 @@ const CLOSE_RISK_LABEL_KEY = {
   unknown: 'mobile.sessionManager.risk.unknown',
 } as const satisfies Record<CloseRisk, string>;
 
-/** Maps an OpenClaw status state (or `undefined` — not pushed yet) to the bot
- * entry button's status-dot color class (M4): green=running, gray=stopped/
- * not-installed, yellow=starting/unknown/not-yet-known. A coarser 3-color
- * grouping than the full status tab's own `openclaw-status-dot--<state>`
- * classes (MobileOpenClawView.tsx) — deliberately not reused, since those
- * grade 'unknown' as red (an alarm), which reads wrong on a small compact
- * badge that also has to represent "haven't heard yet". Exported so
- * MobileWorkspace's own workspace-header Agents button applies the identical dot. */
-export function openclawEntryDotClass(state: OpenClawStatus['state'] | undefined): string {
-  const modifier = state === 'running' ? 'running' : state === 'stopped' || state === 'not-installed' ? 'stopped' : 'pending';
-  return `openclaw-entry-dot openclaw-entry-dot--${modifier}`;
-}
-
 // SessionSwitcher — the session manager listing every session currently live
 // on the desktop bridge (`list-sessions`), with create/destroy/open-as-tab.
-// Dual variant (M5, mobile-parity plan D5): 'page' renders in normal document
-// flow — MobileWorkspace shows this as the zero-tab home screen, which MUST
-// stay in-flow (not a fixed overlay) so uiautomator's accessibility dump can
-// see '+ New Session' with no WebView running (see mobile/e2e/smoke.ts).
-// 'sheet' is a More-actions fixed bottom sheet, a convenience surface while tabs
-// are already open — not e2e-load-bearing.
+// It renders as the full-screen Sessions destination in normal document flow
+// so Android accessibility tooling can reach every session operation.
 //
 // Selecting a session hands `(sessionId, cwd)` up so MobileWorkspace can open
 // it as a tab; this component itself never creates a BlockController/port.
-// The M4 theme button that used to live here has moved to MobileWorkspace's
-// header (it owns theme state for the whole authed shell now).
+// Global integrations and appearance live on the remote hub.
 export function SessionSwitcher({
-  variant,
   transport,
   onSelect,
   onDisconnect,
-  onCloseSheet,
-  onOpenClaw,
-  openclawState,
 }: {
-  variant: 'page' | 'sheet';
   transport: WsEzTerminalTransport;
   onSelect: (sessionId: string, cwd: string) => void;
   onDisconnect: () => void;
-  onCloseSheet?: () => void;
-  /** OpenClaw entry point (openclaw-stabilization M4) — only passed by the
-   * zero-tab 'page' variant (MobileWorkspace), gated there on effective
-   * OpenClaw visibility; the 'sheet' variant never passes these (the
-   * workspace-header's own Agents button already covers that surface once tabs exist). */
-  onOpenClaw?: () => void;
-  openclawState?: OpenClawStatus['state'];
 }): JSX.Element {
   const { t } = useAppTranslation();
   const [sessions, setSessions] = useState<readonly SessionInfo[]>([]);
@@ -228,22 +197,10 @@ export function SessionSwitcher({
     });
   }, [destroyPrompt, transport]);
 
-  const content = (
+  return (
     <div className="session-switcher" data-testid="session-switcher">
       <header className="session-switcher-head">
         <h2>{t('mobile.sessions')}</h2>
-        {onOpenClaw && (
-          <button
-            type="button"
-            className="btn openclaw-btn"
-            onClick={onOpenClaw}
-            aria-label="OpenClaw"
-            data-testid="btn-toggle-openclaw"
-          >
-            <Bot aria-hidden="true" size={18} />
-            <span className={openclawEntryDotClass(openclawState)} data-testid="openclaw-entry-dot" />
-          </button>
-        )}
         <button className="btn" onClick={onDisconnect} data-testid="disconnect-btn">
           {t('mobile.sessionManager.disconnect')}
         </button>
@@ -331,19 +288,4 @@ export function SessionSwitcher({
     </div>
   );
 
-  if (variant === 'page') {
-    return content;
-  }
-
-  return (
-    <div
-      className="session-switcher-backdrop"
-      data-testid="session-switcher-backdrop"
-      onClick={onCloseSheet}
-    >
-      <div className="session-switcher-sheet" onClick={(e) => e.stopPropagation()}>
-        {content}
-      </div>
-    </div>
-  );
 }

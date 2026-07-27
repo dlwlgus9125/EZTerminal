@@ -1446,34 +1446,35 @@ export async function connectAndAuth(token: string): Promise<void> {
 }
 
 /** Submit a prepared ConnectScreen exactly once and require its first product
- * result to be the workspace. Sharing this helper prevents individual RC
+ * result to be the authenticated remote hub. Sharing this helper prevents individual RC
  * scenarios from quietly re-introducing connection retries. */
 export async function submitConnectionOnce(): Promise<void> {
   console.log('[e2e] connecting (single attempt)...');
   await tapTestId('connect-submit');
   const outcome = await waitForAnyTestId(
-    ['mobile-workspace', 'connect-error', 'connect-protocol-incompatible'],
+    ['mobile-remote-hub', 'connect-error', 'connect-protocol-incompatible'],
     10000,
   );
-  if (outcome !== 'mobile-workspace') {
+  if (outcome !== 'mobile-remote-hub') {
     throw new Error(`Connection failed on the only allowed attempt: ${outcome}`);
   }
   await assertColdConnectionUsedOneSocket();
 }
 
-/** Creates a terminal from the 1.0 workspace's locale-independent header
- * action and waits until its command surface is ready for input. */
+/** Enters Terminal from the authenticated hub, creates a session through the
+ * locale-independent header action, and waits for command input. */
 export async function createTerminalSession(): Promise<void> {
-  await waitForTestId('mobile-workspace', 30_000);
+  await waitForTestId('mobile-remote-hub', 30_000);
+  await tapTestId('hub-terminal');
+  await waitForTestId('workspace-hub-btn', 30_000);
   await tapTestId('tab-add-btn');
   await waitForTestId('mobile-session-view', 30_000);
 }
 
-/** Opens a More destination with real Android taps and verifies each state
- * transition. A missed native row tap may either leave the sheet open or hit
- * its backdrop and close it, so every attempt re-observes destination/sheet/
- * trigger state instead of treating "sheet closed" as proof of navigation. */
-export async function openWorkspaceMoreAction(
+/** Opens a full-screen destination from the remote hub with real Android taps.
+ * A caller may begin in Terminal or at the hub; every retry re-observes that
+ * state so a missed native tap cannot be mistaken for completed navigation. */
+export async function openHubDestination(
   actionTestId: string,
   destinationTestId: string,
   timeoutMs = 30_000,
@@ -1486,7 +1487,7 @@ export async function openWorkspaceMoreAction(
     let state: string;
     try {
       state = await waitForAnyTestId(
-        [destinationTestId, 'workspace-more-sheet', 'workspace-more-btn'],
+        [destinationTestId, actionTestId, 'mobile-remote-hub', 'workspace-hub-btn'],
         Math.min(3_000, remaining()),
       );
     } catch (error) {
@@ -1495,17 +1496,17 @@ export async function openWorkspaceMoreAction(
     }
     if (state === destinationTestId) return;
 
-    if (state === 'workspace-more-btn') {
+    if (state === 'workspace-hub-btn') {
       try {
-        await tapTestId('workspace-more-btn', remaining());
+        await tapTestId('workspace-hub-btn', remaining());
         state = await waitForAnyTestId(
-          [destinationTestId, 'workspace-more-sheet'],
+          [destinationTestId, actionTestId, 'mobile-remote-hub'],
           Math.min(5_000, remaining()),
         );
         if (state === destinationTestId) return;
       } catch (error) {
         lastError = error;
-        console.log(`[e2e] More open attempt ${attempt} did not settle: ${String(error)}`);
+        console.log(`[e2e] Hub return attempt ${attempt} did not settle: ${String(error)}`);
         continue;
       }
     }
@@ -1523,6 +1524,6 @@ export async function openWorkspaceMoreAction(
   }
 
   throw new Error(
-    `Unable to open ${destinationTestId} through ${actionTestId} within ${timeoutMs}ms: ${String(lastError)}`,
+    `Unable to open ${destinationTestId} from hub action ${actionTestId} within ${timeoutMs}ms: ${String(lastError)}`,
   );
 }

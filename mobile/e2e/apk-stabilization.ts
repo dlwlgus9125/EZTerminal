@@ -8,6 +8,7 @@ import {
   connectAndAuth,
   getWebViewHistorySnapshot,
   launchDesktop,
+  openHubDestination,
   runAdb,
   sleep,
   tapTestId,
@@ -21,29 +22,26 @@ interface Destination {
 }
 
 const DESTINATIONS: readonly Destination[] = [
-  { action: 'more-sessions', view: 'session-switcher' },
-  { action: 'more-files', view: 'mobile-file-view' },
-  { action: 'more-stats', view: 'mobile-stats-view' },
-  { action: 'more-theme', view: 'theme-menu' },
-  { action: 'more-openclaw', view: 'mobile-openclaw-view' },
-  { action: 'more-settings', view: 'mobile-settings-view' },
+  { action: 'hub-sessions', view: 'session-switcher' },
+  { action: 'hub-files', view: 'mobile-file-view' },
+  { action: 'hub-stats', view: 'mobile-stats-view' },
+  { action: 'hub-openclaw', view: 'mobile-openclaw-view' },
+  { action: 'hub-settings', view: 'mobile-settings-view' },
 ];
 
-async function openFromMore(destination: Destination): Promise<void> {
+async function openFromHub(destination: Destination): Promise<void> {
   console.log(`[apk-stabilization] opening ${destination.action}`);
-  await tapTestId('workspace-more-btn');
-  await tapTestId(destination.action);
-  await sleep(600); // cross the history cleanup microtask/task boundary
-  await waitForTestId(destination.view);
+  await openHubDestination(destination.action, destination.view);
+  await sleep(600); // cross the history registration task boundary
   console.log('[apk-stabilization] history:', JSON.stringify(await getWebViewHistorySnapshot()));
 }
 
-async function androidBackToTerminal(closedView: string): Promise<void> {
+async function androidBackToHub(closedView: string): Promise<void> {
   console.log(`[apk-stabilization] Android Back from ${closedView}`);
   runAdb(['shell', 'input', 'keyevent', '4']);
   await sleep(500);
   await waitForTestIdHidden(closedView);
-  await waitForTestId('workspace-more-btn');
+  await waitForTestId('mobile-remote-hub');
 }
 
 async function main(): Promise<void> {
@@ -56,24 +54,35 @@ async function main(): Promise<void> {
 
     // Keep the OpenClaw destination visible even when the fixture machine has
     // no CLI. The page must then render its typed unavailable guidance.
-    await openFromMore({ action: 'more-settings', view: 'mobile-settings-view' });
+    await openFromHub({ action: 'hub-settings', view: 'mobile-settings-view' });
+    await tapTestId('settings-category-integrations');
     await tapTestId('settings-openclaw-mode-on');
     await tapTestId('mobile-settings-close');
-    await waitForTestId('workspace-more-btn');
+    await waitForTestId('settings-category-integrations');
+    await tapTestId('mobile-settings-close');
+    await waitForTestId('mobile-remote-hub');
     await sleep(600);
     console.log('[apk-stabilization] post-settings history:', JSON.stringify(await getWebViewHistorySnapshot()));
 
     for (const destination of DESTINATIONS) {
-      await openFromMore(destination);
-      await androidBackToTerminal(destination.view);
+      await openFromHub(destination);
+      await androidBackToHub(destination.view);
     }
 
-    // Back closes the More sheet itself before it can leave the workspace.
-    await tapTestId('workspace-more-btn');
-    await waitForTestId('workspace-more-sheet');
-    await androidBackToTerminal('workspace-more-sheet');
+    // Back closes the appearance sheet before it can leave the hub root.
+    await openFromHub({ action: 'hub-appearance', view: 'theme-menu' });
+    await androidBackToHub('theme-menu');
 
-    console.log('[apk-stabilization] PASS: More destinations, async history, and Android Back');
+    // A Settings category is an internal layer: first Back returns to the
+    // Settings index, then a second Back returns to the hub.
+    await openFromHub({ action: 'hub-settings', view: 'mobile-settings-view' });
+    await tapTestId('settings-category-general');
+    runAdb(['shell', 'input', 'keyevent', '4']);
+    await waitForTestId('settings-category-general');
+    await waitForTestIdHidden('settings-language');
+    await androidBackToHub('mobile-settings-view');
+
+    console.log('[apk-stabilization] PASS: hub destinations, nested history, and Android Back');
   } finally {
     closeMobileE2eResources();
     try {

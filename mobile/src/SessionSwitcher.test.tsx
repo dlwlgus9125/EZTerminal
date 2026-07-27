@@ -75,7 +75,6 @@ async function renderSwitcher(transport: WsEzTerminalTransport): Promise<HTMLDiv
     root!.render(
       <MobileNavigationHistoryProvider>
         <SessionSwitcher
-          variant="page"
           transport={transport}
           onSelect={vi.fn()}
           onDisconnect={vi.fn()}

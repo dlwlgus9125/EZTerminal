@@ -264,14 +264,6 @@ body,
   height: 100%;
 }
 
-.mobile-stats-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--term-border-faint, #222);
-}
-
 .mobile-stats-tabs {
   display: flex;
   flex: 1;
@@ -319,20 +311,6 @@ body,
   display: flex;
   flex-direction: column;
   height: 100%;
-}
-
-.mobile-settings-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--term-border-faint, #222);
-}
-
-.mobile-settings-title {
-  margin: 0;
-  font-size: 1rem;
-  color: var(--term-fg-bright, inherit);
 }
 
 .mobile-settings-body {
@@ -526,17 +504,6 @@ body,
   height: 100%;
 }
 
-.workspace-more-status-dot {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ui-warning);
-  pointer-events: none;
-}
-
 .credential-warning {
   position: fixed;
   z-index: 30;
@@ -585,40 +552,6 @@ body,
 .mobile-agent-hub .btn,
 .mobile-agent-hub .agent-followup-input {
   min-height: 44px;
-}
-
-/* OpenClaw entry button + status dot (openclaw-stabilization M4) — shared by
- * the workspace-header's own 🤖 button above and the zero-tab SessionSwitcher
- * page header's (session-switcher-head) — same `.openclaw-btn`/`data-testid`
- * on both, only one ever rendered at a time. `position: relative` anchors the
- * badge; color grouping mirrors (but does not reuse) the full status tab's
- * `openclaw-status-dot--<state>` classes — see SessionSwitcher.tsx's
- * `openclawEntryDotClass` doc for why this collapses to 3 colors. */
-.openclaw-btn {
-  position: relative;
-}
-
-.openclaw-entry-dot {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--term-fg-faint, #888);
-  pointer-events: none;
-}
-
-.openclaw-entry-dot--running {
-  background: var(--term-green, #29d398);
-}
-
-.openclaw-entry-dot--pending {
-  background: var(--term-amber, #e0c341);
-}
-
-.openclaw-entry-dot--stopped {
-  background: var(--term-fg-faint, #888);
 }
 
 /* Keep-alive: an inactive tab is hidden, never unmounted (see
@@ -688,31 +621,6 @@ body,
 .tab-pill-close:focus-visible {
   outline: 2px solid var(--ui-focus);
   outline-offset: 2px;
-}
-
-/* ── Session switcher: fixed bottom-sheet variant (the `☰` convenience
- * surface used while tabs already exist — the zero-tab 'page' variant reuses
- * `.session-switcher` in normal flow with no wrapper) ──────────────────── */
-
-.session-switcher-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 300;
-  display: flex;
-  align-items: flex-end;
-  background: rgba(0, 0, 0, 0.5);
-}
-
-.session-switcher-sheet {
-  width: 100%;
-  max-width: 720px;
-  margin-inline: auto;
-  max-height: 80vh;
-  overflow-y: auto;
-  background: var(--term-bg-raised, #161616);
-  border: 1px solid var(--term-border, #444);
-  border-bottom: none;
-  border-radius: 12px 12px 0 0;
 }
 
 /* ── Mobile file view (file-explorer plan, M4) — full-screen overlay, same
@@ -1088,14 +996,6 @@ body,
   display: flex;
   flex-direction: column;
   height: 100%;
-}
-
-.mobile-openclaw-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--term-border-faint, #222);
 }
 
 .mobile-openclaw-tabs {

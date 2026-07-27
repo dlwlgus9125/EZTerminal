@@ -13,7 +13,8 @@ describe('physical mobile E2E locale contract', () => {
 
     expect(library).toContain("waitForTestId('connect-screen', 45_000)");
     expect(library).toContain("tapTestId('connect-submit')");
-    expect(library).toContain("['mobile-workspace', 'connect-error', 'connect-protocol-incompatible']");
+    expect(library).toContain("['mobile-remote-hub', 'connect-error', 'connect-protocol-incompatible']");
+    expect(library).toContain("tapTestId('hub-terminal')");
     expect(library).toContain("tapTestId('tab-add-btn')");
     expect(library).not.toContain("waitForText('Connect')");
     expect(smoke).toContain('createTerminalSession()');

@@ -54,7 +54,7 @@ import {
   launchDesktop,
   logcatLines,
   longPress,
-  openWorkspaceMoreAction,
+  openHubDestination,
   parseMediaStoreDownloadUri,
   parseEzTerminalMediaStoreDownloadIds,
   pollLogcat,
@@ -71,7 +71,6 @@ import {
   waitForAnyNodeText,
   waitForAnyTestId,
   waitForResumedActivity,
-  waitForTestId,
   waitForTestIdHidden,
   waitForVisibleTestIdEnabled,
 } from './lib.ts';
@@ -291,7 +290,7 @@ async function main(): Promise<void> {
 
     // ── c. STATS ─────────────────────────────────────────────────────────
     console.log('[parity] opening stats...');
-    await openWorkspaceMoreAction('more-stats', 'mobile-stats-view');
+    await openHubDestination('hub-stats', 'mobile-stats-view');
     await pollLogcat('[ez-e2e] stats:', 20000, hasCoreCount);
     await pollLogcat('[ez-e2e] stats:', 30000, (l) => /conns=\d+/.test(l));
     console.log('[parity] step OK: stats cores + conns (refcount proof)');
@@ -322,7 +321,7 @@ async function main(): Promise<void> {
 
     try {
       console.log('[parity] opening Files and navigating to the fixture dir...');
-      await openWorkspaceMoreAction('more-files', 'mobile-file-view');
+      await openHubDestination('hub-files', 'mobile-file-view');
       // Set the controlled value exactly, then focus it before sending the
       // native Enter used by the product's path-navigation handler.
       await setTestIdTextValue('mobile-file-path-input', filesFixtureDir.replaceAll('\\', '/'));
@@ -491,11 +490,11 @@ async function main(): Promise<void> {
     // must tolerate the emulator's harsher behavior). If that happens, allow
     // exactly one product connection result for this geometry transition.
     const ensureWorkspace = async (): Promise<void> => {
-      const state = await waitForAnyTestId(['workspace-more-btn', 'connect-submit'], 45000);
+      const state = await waitForAnyTestId(['mobile-remote-hub', 'workspace-hub-btn', 'connect-submit'], 45000);
       if (state === 'connect-submit') {
         await submitConnectionOnce();
       }
-      await waitForTestId('workspace-more-btn', 45000);
+      await waitForAnyTestId(['mobile-remote-hub', 'workspace-hub-btn'], 45_000);
       await waitForTestIdHidden('mobile-reconnect-scrim', 45000);
     };
 
@@ -512,7 +511,7 @@ async function main(): Promise<void> {
       // Tapping 'Stats' both proves the workspace UI (header + tab strip)
       // survived the geometry change AND opens the stats view for the marker
       // poll below — a broken layout would make this wait time out.
-      await openWorkspaceMoreAction('more-stats', 'mobile-stats-view');
+      await openHubDestination('hub-stats', 'mobile-stats-view');
       await pollLogcat('[ez-e2e] stats:', 20000, hasCoreCount);
       await tapTestId('mobile-stats-close');
       console.log(`[parity] step OK: ${profile.name} geometry reachable + stats live`);
@@ -523,7 +522,7 @@ async function main(): Promise<void> {
     runAdb(['shell', 'settings', 'put', 'system', 'user_rotation', '1']);
     await sleep(1500);
     await ensureWorkspace();
-    await waitForTestId('workspace-more-btn'); // still reachable post-rotation
+    await waitForAnyTestId(['mobile-remote-hub', 'workspace-hub-btn']); // hub navigation remains reachable post-rotation
     runAdb(['shell', 'settings', 'put', 'system', 'user_rotation', '0']);
     await sleep(1000);
     console.log('[parity] step OK: rotation smoke');

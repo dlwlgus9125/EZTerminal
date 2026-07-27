@@ -52,14 +52,14 @@ class FakeSocket implements WsLike {
   }
 }
 
-function makeAuthedTransport(): { transport: WsEzTerminalTransport; socket: FakeSocket } {
+function makeAuthedTransport(capabilities: readonly string[] = []): { transport: WsEzTerminalTransport; socket: FakeSocket } {
   let socket: FakeSocket;
   const createSocket: CreateSocket = () => {
     socket = new FakeSocket();
     return socket;
   };
   const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
-  socket!.triggerMessage({ kind: 'auth-ok' });
+  socket!.triggerMessage({ kind: 'auth-ok', capabilities });
   return { transport, socket: socket! };
 }
 
@@ -89,115 +89,124 @@ afterEach(() => {
   Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true });
 });
 
-// Zero tabs retains the common mobile shell. OpenClaw lives in More, matching
-// the authenticated header at every tab count.
-describe('MobileWorkspace — zero-tab OpenClaw entry', () => {
-  const openMore = (el: HTMLElement): void => {
-    act(() => el.querySelector<HTMLButtonElement>('[data-testid="workspace-more-btn"]')!.click());
-  };
-
-  it('renders the header actions through the shared button primitives with stable accessible names', () => {
+describe('MobileWorkspace — remote hub root', () => {
+  it('lands on the hub with every existing top-level capability reachable', () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'off');
-    const { transport } = makeAuthedTransport();
+    const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
 
-    for (const [testId, label] of [
-      ['tab-add-btn', 'New tab'],
-      ['menu-btn', 'Sessions'],
-      ['files-btn', 'Files'],
-      ['agents-btn', 'Agents'],
+    expect(el.querySelector('[data-testid="mobile-remote-hub"]')).toBeTruthy();
+    for (const testId of [
+      'hub-pc-control',
+      'hub-terminal',
+      'hub-sessions',
+      'hub-agents',
+      'hub-files',
+      'hub-stats',
+      'hub-appearance',
+      'hub-settings',
+    ]) {
+      expect(el.querySelector(`[data-testid="${testId}"]`)).toBeTruthy();
+    }
+    expect(el.querySelector('[data-testid="hub-openclaw"]')).toBeNull();
+    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(true);
+    expect(socket.sentKinds()).not.toContain('desktop-control-start');
+  });
+
+  it('keeps PC Control idle on arrival even when the host advertises support', () => {
+    const { transport, socket } = makeAuthedTransport(['desktop-control-v1']);
+    const el = renderWorkspace(transport);
+
+    expect(el.querySelector<HTMLButtonElement>('[data-testid="hub-pc-control"]')?.disabled).toBe(false);
+    expect(socket.sentKinds()).not.toContain('desktop-control-start');
+  });
+
+  it('updates the lightweight session count without opening Monitor', async () => {
+    const { transport, socket } = makeAuthedTransport();
+    const el = renderWorkspace(transport);
+    expect(el.querySelector('[data-testid="hub-session-count"]')?.textContent).toBe('0');
+
+    await act(async () => {
+      socket.triggerMessage({
+        kind: 'session-list',
+        sessions: [
+          { sessionId: 'session-a', cwd: '/a' },
+          { sessionId: 'session-b', cwd: '/b' },
+        ],
+      });
+      await Promise.resolve();
+    });
+    expect(el.querySelector('[data-testid="hub-session-count"]')?.textContent).toBe('2');
+    expect(socket.sentKinds()).not.toContain('stats-subscribe');
+  });
+
+  it('opens the preserved terminal with a compact semantic header and returns to the hub', () => {
+    const { transport } = makeAuthedTransport();
+    const el = renderWorkspace(transport);
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="hub-terminal"]')!.click());
+
+    expect(el.querySelector('[data-testid="mobile-remote-hub"]')).toBeNull();
+    expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(false);
+    for (const [testId, label, className] of [
+      ['workspace-hub-btn', 'Back', 'ez-ui-icon-button'],
+      ['tab-add-btn', 'New tab', 'ez-ui-button'],
+      ['menu-btn', 'Sessions', 'ez-ui-button'],
     ] as const) {
       const button = el.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`);
-      expect(button?.classList.contains('ez-ui-button')).toBe(true);
-      expect(button?.classList.contains('btn')).toBe(false);
+      expect(button?.classList.contains(className)).toBe(true);
       expect(button?.getAttribute('aria-label')).toBe(label);
     }
 
-    const more = el.querySelector<HTMLButtonElement>('[data-testid="workspace-more-btn"]');
-    expect(more?.classList.contains('ez-ui-icon-button')).toBe(true);
-    expect(more?.classList.contains('btn')).toBe(false);
-    expect(more?.getAttribute('aria-label')).toBe('Open more options');
-    expect(more?.getAttribute('aria-haspopup')).toBe('dialog');
-    expect(more?.getAttribute('aria-expanded')).toBe('false');
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="workspace-hub-btn"]')!.click());
+    expect(el.querySelector('[data-testid="mobile-remote-hub"]')).toBeTruthy();
   });
 
-  it('mode "on": shows OpenClaw in More regardless of availability', () => {
+  it('mode "on" shows OpenClaw on the hub regardless of availability', () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport } = makeAuthedTransport();
     const el = renderWorkspace(transport);
-    openMore(el);
-
-    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="hub-openclaw"]')).toBeTruthy();
   });
 
-  it('mode "off": hides OpenClaw from More even if availability is pushed true', () => {
+  it('mode "off" hides OpenClaw even if availability is pushed true', () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'off');
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
-    act(() => {
-      socket.triggerMessage({ kind: 'openclaw-availability', visible: true });
-    });
-    openMore(el);
-
-    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeFalsy();
+    act(() => socket.triggerMessage({ kind: 'openclaw-availability', visible: true }));
+    expect(el.querySelector('[data-testid="hub-openclaw"]')).toBeNull();
   });
 
-  it('mode "auto" + availability:true: shows the entry button', () => {
-    // Nothing persisted -> defaults to 'auto' (openclaw-mode.ts).
+  it('mode "auto" follows the availability push', () => {
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
-    openMore(el);
-    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeFalsy(); // not yet available
-    act(() => el.querySelector<HTMLButtonElement>('.mobile-action-sheet-cancel')!.click());
+    expect(el.querySelector('[data-testid="hub-openclaw"]')).toBeNull();
 
-    act(() => {
-      socket.triggerMessage({ kind: 'openclaw-availability', visible: true });
-    });
-    openMore(el);
+    act(() => socket.triggerMessage({ kind: 'openclaw-availability', visible: true }));
+    expect(el.querySelector('[data-testid="hub-openclaw"]')).toBeTruthy();
 
-    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeTruthy();
+    act(() => socket.triggerMessage({ kind: 'openclaw-availability', visible: false }));
+    expect(el.querySelector('[data-testid="hub-openclaw"]')).toBeNull();
   });
 
-  it('mode "auto" + no availability push (or availability:false): hides the entry button', () => {
-    const { transport, socket } = makeAuthedTransport();
-    const el = renderWorkspace(transport);
-
-    act(() => {
-      socket.triggerMessage({ kind: 'openclaw-availability', visible: false });
-    });
-    openMore(el);
-    expect(el.querySelector('[data-testid="more-openclaw"]')).toBeFalsy();
-  });
-
-  it('the More row starts pending, then reflects pushed OpenClaw status', () => {
+  it('reflects the pushed OpenClaw status without opening its detailed page', () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport, socket } = makeAuthedTransport();
     const el = renderWorkspace(transport);
-    openMore(el);
-
     const state = (): string | null => (
-      el.querySelector('[data-testid="more-openclaw"] .mobile-action-sheet-row-state')?.textContent ?? null
+      el.querySelector('[data-testid="hub-openclaw"] .mobile-hub-action__status')?.textContent ?? null
     );
-    expect(state()).toBe('Checking');
-
-    act(() => {
-      socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } });
-    });
+    expect(state()).toBeNull();
+    act(() => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } }));
     expect(state()).toBe('running');
-
-    act(() => {
-      socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'stopped', port: 18789 } });
-    });
+    act(() => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'stopped', port: 18789 } }));
     expect(state()).toBe('stopped');
   });
 
-  it('tapping the entry button opens the lazy OpenClaw view with immediate feedback', async () => {
+  it('opens the lazy OpenClaw page directly from the hub with immediate feedback', async () => {
     localStorage.setItem('ezterminal-mobile-openclaw-mode', 'on');
     const { transport } = makeAuthedTransport();
     const el = renderWorkspace(transport);
-    openMore(el);
-
-    act(() => el.querySelector<HTMLButtonElement>('[data-testid="more-openclaw"]')!.click());
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="hub-openclaw"]')!.click());
     expect(el.querySelector('[data-testid="mobile-page-shell"]')).toBeTruthy();
     await act(async () => {
       for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -309,20 +318,22 @@ describe('MobileWorkspace - worktree open', () => {
 
     expect(el.querySelector('[data-testid="mobile-session-view"]')).toBeTruthy();
     expect(el.querySelectorAll('[data-testid="tab-pill"]')).toHaveLength(1);
-    expect(el.querySelector('[data-testid="workspace-more-btn"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="workspace-hub-btn"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="stats-btn"]')).toBeNull();
     expect(el.querySelector('[data-testid="theme-btn"]')).toBeNull();
     expect(el.querySelector('[data-testid="settings-btn"]')).toBeNull();
-    expect(el.querySelector('[data-testid="menu-btn"]')?.classList.contains('workspace-wide-action')).toBe(true);
-    expect(el.querySelector('[data-testid="files-btn"]')?.classList.contains('workspace-wide-action')).toBe(true);
+    expect(el.querySelector('[data-testid="menu-btn"]')?.classList.contains('workspace-wide-action')).toBe(false);
+    expect(el.querySelector('[data-testid="files-btn"]')).toBeNull();
+    expect(el.querySelector('[data-testid="agents-btn"]')).toBeNull();
+    expect(el.querySelector('[data-testid="workspace-more-btn"]')).toBeNull();
 
     Object.defineProperty(window, 'innerWidth', { value: 360, configurable: true });
     act(() => window.dispatchEvent(new Event('resize')));
-    act(() => el.querySelector<HTMLButtonElement>('[data-testid="workspace-more-btn"]')!.click());
-    expect(el.querySelector('[data-testid="more-sessions"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="more-files"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="more-stats"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="more-theme"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="more-settings"]')).toBeTruthy();
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="workspace-hub-btn"]')!.click());
+    expect(el.querySelector('[data-testid="hub-sessions"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="hub-files"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="hub-stats"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="hub-appearance"]')).toBeTruthy();
+    expect(el.querySelector('[data-testid="hub-settings"]')).toBeTruthy();
   });
 });

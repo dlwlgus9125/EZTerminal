@@ -1,3 +1,4 @@
+import { ArrowLeft } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import type {
@@ -9,6 +10,7 @@ import type {
 } from '../shared/agent';
 import { formatCwd } from './format-cwd';
 import { useAppTranslation } from './i18n';
+import { IconButton } from './ui';
 
 const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'waiting']);
 const ACTIVE = new Set<AgentStatus>(['starting', 'working']);
@@ -205,13 +207,21 @@ export function AgentHub({
       aria-label={t('agentHub.activity')}
     >
       <header className="agent-hub-head">
+        {mobile && onClose && (
+          <IconButton
+            icon={ArrowLeft}
+            aria-label={t('agentHub.closeHub')}
+            onClick={onClose}
+            data-testid="mobile-agent-close"
+          />
+        )}
         <div>
           <h1 className="agent-hub-title">{t('rail.agents')}</h1>
           <span className="agent-hub-summary">
             {t('agentHub.tracked', { value: numberFormatter.format(snapshot.items.length) })}
           </span>
         </div>
-        {onClose && (
+        {!mobile && onClose && (
           <button type="button" className="btn btn-split" onClick={onClose} aria-label={t('agentHub.closeHub')}>
             {t('common.close')}
           </button>

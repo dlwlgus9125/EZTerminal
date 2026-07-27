@@ -1,6 +1,6 @@
 import { Browser } from '@capacitor/browser';
-import { ArrowUp, File as FileIcon, Folder, FolderPlus, RefreshCw, Upload, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowUp, File as FileIcon, Folder, FolderPlus, RefreshCw, Upload } from 'lucide-react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../../src/shared/files';
 import type { FilePreviewResult } from '../../src/shared/file-preview';
@@ -11,6 +11,8 @@ import { saveDownloadToDevice } from './download-storage';
 import { e2eLog } from './e2e-telemetry';
 import { useLongPress } from './long-press';
 import { MobileActionSheet } from './MobileActionSheet';
+import { MobilePageHeader } from './MobilePageHeader';
+import { useMobileNavigationHistory } from './MobileNavigationHistory';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 import { createUploadQueue, type UploadItem } from './upload-queue';
 
@@ -86,6 +88,8 @@ export function MobileFileView({
   onPastePath,
 }: MobileFileViewProps): JSX.Element {
   const { t } = useAppTranslation();
+  const navigation = useMobileNavigationHistory();
+  const viewerLayerId = `mobile-file-viewer-${useId()}`;
   const [currentPath, setCurrentPath] = useState<string | null>(null);
   const [parent, setParent] = useState<string | null>(null);
   const [entries, setEntries] = useState<readonly FileEntry[]>([]);
@@ -95,7 +99,35 @@ export function MobileFileView({
   const [binaryNotice, setBinaryNotice] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [viewing, setViewing] = useState<ViewingFile | null>(null);
+  const viewerActive = viewing !== null;
+  const viewerReturnFocusRef = useRef<HTMLElement | null>(null);
+  const viewerReturnNameRef = useRef<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
+
+  const closeViewer = useCallback((): void => {
+    setViewing(null);
+    const previous = viewerReturnFocusRef.current;
+    const previousName = viewerReturnNameRef.current;
+    requestAnimationFrame(() => {
+      if (previous?.isConnected) {
+        previous.focus();
+        return;
+      }
+      const replacement = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="mobile-file-entry"]'),
+      ).find((element) => element.dataset.fileName === previousName);
+      replacement?.focus();
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!viewerActive) return;
+    return navigation.pushLayer({
+      id: viewerLayerId,
+      kind: 'page',
+      onBack: closeViewer,
+    });
+  }, [closeViewer, navigation, viewerActive, viewerLayerId]);
 
   const [sheetEntry, setSheetEntry] = useState<FileEntry | null>(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -169,6 +201,10 @@ export function MobileFileView({
 
   const loadPreview = useCallback(
     async (entry: FileEntry, fullPath: string): Promise<void> => {
+      viewerReturnFocusRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+      viewerReturnNameRef.current = entry.name;
       setBinaryNotice(null);
       const result = await transport.readFilePreview(fullPath);
       if (!result.ok) setError(result.error);
@@ -376,17 +412,13 @@ export function MobileFileView({
   if (viewing) {
     return (
       <div className="mobile-file-viewer" data-testid="mobile-file-viewer">
-        <header className="mobile-file-head">
-          <button
-            type="button"
-            className="btn"
-            onClick={() => setViewing(null)}
-            disabled={downloadProgress !== null}
-            data-testid="viewer-back"
-          >
-            ‹ {t('mobile.filesView.back')}
-          </button>
-          <div className="mobile-file-viewer-title">{viewing.result.ok ? viewing.result.name : viewing.entry.name}</div>
+        <MobilePageHeader
+          title={viewing.result.ok ? viewing.result.name : viewing.entry.name}
+          backLabel={t('mobile.filesView.back')}
+          backTestId="viewer-back"
+          onBack={closeViewer}
+        />
+        <div className="mobile-file-viewer-actions">
           <button type="button" className="btn" onClick={() => onPastePath(viewing.path)} data-testid="viewer-insert">
             {t('mobile.filesView.insert')}
           </button>
@@ -404,7 +436,7 @@ export function MobileFileView({
               {t('common.retry')}
             </button>
           )}
-        </header>
+        </div>
         {downloadProgress && (
           <div className="mobile-file-progress" data-testid="mobile-file-progress">
             {downloadProgress.name}: {formatSize(downloadProgress.received)} / {formatSize(downloadProgress.total)}
@@ -437,78 +469,80 @@ export function MobileFileView({
 
   return (
     <div className="mobile-file-view" data-testid="mobile-file-view">
-      <header className="mobile-file-head">
-        <button
-          type="button"
-          className="btn"
-          onClick={handleUp}
-          disabled={rootsMode}
-          aria-label={t('mobile.filesView.up')}
-          data-testid="mobile-file-up"
-        >
-          <ArrowUp aria-hidden="true" size={18} />
-        </button>
-        <input
-          className="mobile-file-path-input"
-          value={pathInput}
-          onChange={(e) => setPathInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void loadPath(pathInput);
-          }}
-          aria-label={t('mobile.filesView.currentFolder')}
-          data-testid="mobile-file-path-input"
-        />
-        <button
-          type="button"
-          className="btn"
-          onClick={handleRefresh}
-          aria-label={t('mobile.filesView.refresh')}
-          data-testid="mobile-file-refresh"
-        >
-          <RefreshCw aria-hidden="true" size={18} />
-        </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={startNewFolder}
-          aria-label={t('mobile.filesView.newFolder')}
-          data-testid="mobile-file-new-folder-btn"
-        >
-          <FolderPlus aria-hidden="true" size={18} />
-        </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={currentPath === null}
-          aria-label={t('mobile.filesView.upload')}
-          data-testid="mobile-file-upload-btn"
-        >
-          <Upload aria-hidden="true" size={18} />
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="mobile-file-hidden-input"
-          onChange={(e) => {
-            const { files } = e.target;
-            if (files && files.length > 0) void handleFilesPicked(files);
-            e.target.value = ''; // allow re-picking the same file(s) again
-          }}
-          data-testid="mobile-file-upload-input"
-        />
-        <button
-          type="button"
-          className="btn"
-          onClick={onClose}
-          disabled={downloadProgress !== null}
-          aria-label={t('common.close')}
-          data-testid="mobile-file-close"
-        >
-          <X aria-hidden="true" size={18} />
-        </button>
-      </header>
+      <MobilePageHeader
+        title={t('mobile.files')}
+        backLabel={t('common.back')}
+        backTestId="mobile-file-close"
+        onBack={onClose}
+      />
+      <div className="mobile-file-toolbar">
+        <div className="mobile-file-pathbar">
+          <button
+            type="button"
+            className="btn"
+            onClick={handleUp}
+            disabled={rootsMode}
+            aria-label={t('mobile.filesView.up')}
+            data-testid="mobile-file-up"
+          >
+            <ArrowUp aria-hidden="true" size={18} />
+          </button>
+          <input
+            className="mobile-file-path-input"
+            value={pathInput}
+            onChange={(e) => setPathInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void loadPath(pathInput);
+            }}
+            aria-label={t('mobile.filesView.currentFolder')}
+            data-testid="mobile-file-path-input"
+          />
+          <button
+            type="button"
+            className="btn"
+            onClick={handleRefresh}
+            aria-label={t('mobile.filesView.refresh')}
+            data-testid="mobile-file-refresh"
+          >
+            <RefreshCw aria-hidden="true" size={18} />
+          </button>
+        </div>
+        <div className="mobile-file-toolbar-actions">
+          <button
+            type="button"
+            className="btn"
+            onClick={startNewFolder}
+            aria-label={t('mobile.filesView.newFolder')}
+            data-testid="mobile-file-new-folder-btn"
+          >
+            <FolderPlus aria-hidden="true" size={18} />
+            <span>{t('mobile.filesView.newFolder')}</span>
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={currentPath === null}
+            aria-label={t('mobile.filesView.upload')}
+            data-testid="mobile-file-upload-btn"
+          >
+            <Upload aria-hidden="true" size={18} />
+            <span>{t('mobile.filesView.upload')}</span>
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="mobile-file-hidden-input"
+            onChange={(e) => {
+              const { files } = e.target;
+              if (files && files.length > 0) void handleFilesPicked(files);
+              e.target.value = ''; // allow re-picking the same file(s) again
+            }}
+            data-testid="mobile-file-upload-input"
+          />
+        </div>
+      </div>
 
       {error && (
         <div className="mobile-file-error" data-testid="mobile-file-error">
@@ -588,8 +622,9 @@ export function MobileFileView({
             <button
               type="button"
               key={entry.name}
-              className="mobile-file-row mobile-file-entry-action"
-              data-testid="mobile-file-entry"
+             className="mobile-file-row mobile-file-entry-action"
+             data-testid="mobile-file-entry"
+             data-file-name={entry.name}
               onClick={() => void openEntry(entry)}
               onPointerDown={(e) => {
                 pressedEntryRef.current = entry;

@@ -1,4 +1,3 @@
-import { X } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import {
@@ -15,6 +14,7 @@ import type { RemotePacketFrame, RemotePacketStatus } from '../../src/shared/rem
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { Tab, TabList, TabPanel, Tabs } from '../../src/renderer/ui/Tabs';
 import { e2eLog } from './e2e-telemetry';
+import { MobilePageHeader } from './MobilePageHeader';
 
 type StatsTab = 'summary' | 'conns' | 'capture';
 
@@ -166,11 +166,13 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
       className="mobile-stats-view"
       data-testid="mobile-stats-view"
     >
-      <header className="mobile-stats-head">
-        <button type="button" className="btn" onClick={onClose} aria-label={t('mobile.stats.close')} data-testid="mobile-stats-close">
-          <X aria-hidden="true" size={18} />
-        </button>
-        <TabList className="mobile-stats-tabs" label={t('mobile.moreActions.stats')}>
+      <MobilePageHeader
+        title={t('mobile.moreActions.stats')}
+        backLabel={t('mobile.stats.close')}
+        backTestId="mobile-stats-close"
+        onBack={onClose}
+      />
+      <TabList className="mobile-stats-tabs" label={t('mobile.moreActions.stats')}>
           <Tab
             value="summary"
             className={tab === 'summary' ? 'mobile-stats-tab mobile-stats-tab--active' : 'mobile-stats-tab'}
@@ -192,8 +194,7 @@ export function MobileStatsView({ onClose }: { onClose: () => void }): JSX.Eleme
           >
             {t('mobile.stats.capture')}
           </Tab>
-        </TabList>
-      </header>
+      </TabList>
 
       <div className="mobile-stats-body">
         <TabPanel value="summary" className="mobile-stats-tab-panel">

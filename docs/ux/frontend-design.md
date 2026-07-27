@@ -30,16 +30,18 @@ Out of scope:
 
 ## 2. Product, audience, and experience principles
 
-EZTerminal is a terminal-first operational workbench for developers running
-long-lived shells, structured commands, SSH sessions, and coding agents. The
-desktop is the authoring and control surface; the Android client is a durable
-companion for observing and controlling the same work without losing terminal
-state when auxiliary pages open.
+EZTerminal is an operational workbench for developers running long-lived
+shells, structured commands, SSH sessions, coding agents, and remote desktop
+control. The desktop remains the terminal-first authoring surface. The Android
+client is a remote-control-first companion: it opens on a lightweight control
+hub while preserving the terminal runtime behind every full-screen
+destination.
 
 Every UI decision follows these principles, in order:
 
-1. **Terminal remains primary.** Chrome supports the work and never turns the
-   application into a dashboard.
+1. **The platform's primary job remains primary.** Desktop chrome protects the
+   terminal canvas. Android gives PC control the shortest explicit path without
+   auto-starting capture or input.
 2. **One destination, several efficient entry points.** Navigation may expose a
    destination in the rail and Command Center, but must not create duplicate
    implementations or conflicting state.
@@ -255,101 +257,129 @@ and diagnostic metadata live in About & Diagnostics.
 
 ## 5. Mobile application shell
 
-### 5.1 Persistent workbench structure
+### 5.1 Selected direction: remote hub with full-screen destinations
+
+Three information-architecture directions were considered for the accumulated
+mobile surface:
+
+1. **Remote hub with full-screen destinations — selected.** Authentication
+   lands on a lightweight control hub. Every capability opens as a focused
+   full-screen destination and returns to the hub.
+2. **Persistent remote command dock — rejected.** It provides one-tap lateral
+   switching but permanently consumes scarce terminal and remote-video height.
+3. **Top mode switcher — rejected.** It preserves content height but becomes
+   cramped at 360px, with Korean labels, and at 150% UI scale.
+
+The accepted tradeoff is one hub round-trip between unrelated capabilities in
+exchange for a stable hierarchy and maximum working area inside Terminal and
+PC Control. No capability is removed: Terminal, Sessions, Agents, Files,
+Monitor, OpenClaw, Appearance, Settings, Quick Commands, terminal accessory
+keys, and PC Control remain reachable.
+
+### 5.2 Persistent workbench and hub structure
 
 After authentication, the DOM structure is composed as siblings:
 
 ```text
 MobileWorkbenchCoordinator
 ├── TerminalLayer          (always mounted)
-├── MobilePageShell        (opaque auxiliary page)
+├── MobilePageShell        (hub or current full-screen destination)
 └── SheetDialogHost        (sheets, menus, dialogs)
 ```
 
-Opening Sessions, Files, Agents, Settings, or another auxiliary page never
-unmounts the terminal layer and never applies `display: none` to the terminal
-root. While an opaque auxiliary page is active, the terminal layer is inert and
-`aria-hidden="true"`; it retains drafts, controllers, xterm geometry, scroll
-position, selection, and reconnect state. Returning to Terminal restores the
-previous usable focus without recreating the session view.
+The hub is the authenticated history root. It contains:
+
+1. PC Control availability and one explicit `Start PC Control` action;
+2. connection state, active-session count, and agent-attention count;
+3. Terminal, Sessions, Agents, and Files work destinations;
+4. Monitor, conditional OpenClaw, Appearance, and Settings tools.
+
+The hub does not start PC capture/input and does not subscribe to live system
+stats. Detailed polling begins only while Monitor is visible. PC Control starts
+only after its explicit action and retains the existing lease, background, and
+disconnect safety contract.
+
+Opening the hub or any opaque page never unmounts the terminal layer and never
+applies `display: none` to the terminal root. While Terminal is not selected,
+the layer is inert and `aria-hidden="true"`; it retains drafts, controllers,
+xterm geometry, scroll position, selection, output, and reconnect state.
+
+### 5.3 Full-screen destination and settings anatomy
+
+Every non-terminal destination uses one `MobilePageHeader` composition:
+Back-to-hub, localized title, optional status, and only destination-specific
+actions. PC Control retains its specialized immersive toolbar. Terminal uses a
+compact header with Back, flexible TabStrip, New, and Sessions; global
+destinations do not accumulate in that header.
+
+Settings is an index plus full-screen categories:
+
+1. General — language, density, and UI scale;
+2. Appearance — theme, custom-theme import, font, effects, and effect params;
+3. Terminal & Input — accessory-key visibility and ordering;
+4. Integrations — OpenClaw visibility;
+5. Connection & About — endpoint, connection state, build information, and
+   Disconnect.
+
+The existing setting keys and theme/custom-theme formats remain unchanged.
+
+### 5.4 First connection, responsive behavior, and CSS boundary
+
+The connection surface remains manual URL/token pairing. A saved secure
+connection may be summarized and re-used explicitly, with editing available;
+there is no QR scanner, camera permission, deep link, discovery, multiple
+profiles, or automatic connection.
+
+Loading credentials, ready, connecting, trusted-network warning, authentication
+failure, incompatible protocol, secure-storage warning, and success transition
+all retain stable geometry and inline recovery.
+
+All touch targets are at least 44×44 CSS pixels. Supported viewports are
+360×800, 412×915, 600×960, and 915×412. The hub uses a single-column hero and
+two-column action grid on compact portrait screens, then reflows to a wider
+summary/grid without changing destination order. The document never scrolls
+horizontally; tab and accessory strips may scroll internally. User zoom remains
+enabled.
+
+Mobile consumes shared semantic tokens, reset/accessibility utilities, terminal
+runtime styling, and effect definitions. New application chrome uses `--ui-*`;
+`--term-*` remains only for terminal/runtime compatibility. Mobile does not
+import the complete desktop stylesheet.
+
+### 5.5 Mobile layer history and recoverable operations
+
+The authenticated shell owns browser history through one serialized controller.
+The hub has no synthetic entry. Any non-hub destination uses one stable page
+layer; changing destination context does not create duplicate Back stops.
+Nested pages, sheets, and dialogs register above it.
 
 Android Back precedence is:
 
 1. close the top sheet or dialog;
-2. leave the auxiliary page and reveal Terminal;
-3. use the platform/application default behavior.
+2. leave an internal subpage such as a Settings category or file preview;
+3. leave the full-screen destination and restore its hub invoker;
+4. exit/delegate at the hub root.
 
-### 5.2 Responsive mobile header
+Explicit close consumes its layer once. Repeated transitions leave no ghost
+entries. Closing a transient layer restores its invoker unless the action
+intentionally transfers focus.
 
-Below 600px, the direct header actions are:
-
-- flexible TabStrip
-- New
-- Agents
-- More
-
-At 600px and above, Sessions and Files become direct actions in addition to the
-same controls. Other destinations remain in More. There is no bottom navigation
-bar. If there are zero terminal tabs, the shell still exposes New, Settings,
-pairing/connection recovery, and all locally usable actions.
-
-All touch targets are at least 44×44 CSS pixels. Supported viewports are
-360×800, 412×915, 600×960, and 915×412. The page itself never scrolls
-horizontally; tab and accessory strips may scroll internally.
-
-The mobile viewport must permit user zoom. `maximum-scale=1` and
-`user-scalable=no` are prohibited.
-
-### 5.3 Mobile CSS boundary
-
-Mobile consumes shared semantic tokens, reset/accessibility utilities, terminal
-runtime styling, and effect definitions. It does not import the complete
-desktop stylesheet. Desktop shell/Dockview/sidebar rules and mobile shell/page/
-sheet rules live in platform-specific files so selectors cannot accidentally
-override one another.
-
-### 5.4 Mobile layer history and recoverable operations
-
-The authenticated mobile shell owns browser history through one serialized
-navigation controller. Auxiliary pages, action sheets, and dialogs register a
-typed layer with that controller; they do not install independent `popstate`
-listeners or call `history.back()` during component cleanup.
-
-- Opening a layer pushes one history entry.
-- Choosing a More-sheet destination atomically replaces the sheet layer with
-  the destination page. The sheet cleanup must not pop the new page.
-- An explicit close consumes its layer exactly once. Repeated open/close and
-  sheet-to-page transitions must not leave ghost entries.
-- Android Back closes the top sheet/dialog, then the auxiliary page, then
-  delegates to the application/platform default.
-- Closing a transient layer restores its invoker. A sheet action that opens a
-  page intentionally transfers focus into the page and skips invoker restore.
-
-Remote and OpenClaw operations use contextual recovery rather than toast-only
-feedback or a separate diagnostics route:
+Remote and OpenClaw operations keep their existing contextual recovery:
 
 | Operation | Pending | Recoverable failure | Success |
 | --- | --- | --- | --- |
-| Remote listener | Stable inline `Starting` state; duplicate toggles disabled | Distinguish token security, address-in-use, and bind failure; retain the desired setting and offer Retry | Show QR and endpoint only after the listener is running |
 | OpenClaw availability | Bounded check with the page still dismissible | Distinguish unavailable, gateway stopped, gateway unreachable, and timeout | Show live service state and available actions |
 | Lifecycle/config mutation | Keep the initiating control and value visible; disable duplicate mutation | Show busy, invalid value, CLI failure, or timeout beside the control with Retry | Refresh the affected value/status without replacing the page |
 | Chat ticket/frame | Stable loading surface with a bounded deadline | Distinguish proxy, token, gateway, insecure-auth, and frame-load failures; Retry always mints a fresh ticket | Reveal the frame only after its current generation loads |
 | External browser | Button enters a bounded busy state | Native-browser failure remains beside the button | Open through the Capacitor Browser integration with a fresh ticket |
 
-The desktop OpenClaw visibility preference is not a mobile API authorization
-control. Mobile `auto` shows the destination only when available, `on` keeps a
-diagnostic destination visible even when unavailable, and `off` hides it.
+Mobile OpenClaw `auto` shows the destination only when available, `on` keeps a
+diagnostic destination visible, and `off` hides it. Backgrounding releases the
+frame and its subscriptions; foreground recovery obtains a fresh ticket.
 
-When the app is backgrounded, the OpenClaw frame and its subscriptions are
-released. Foreground recovery obtains a fresh ticket and never reuses an
-expired frame URL. The connect screen and terminal/session runtime remain
-eager; auxiliary pages may be code-split, but every tap must render feedback in
-the next frame so lazy loading never appears unresponsive.
-
-Safe-area ownership is singular: the mobile root applies platform insets, the
-workbench fills that inherited content box with `height: 100%`, and headers do
-not add the top inset again. Folded, unfolded, and landscape layouts preserve
-the 44px touch target contract.
+Safe-area ownership remains singular at the mobile root. Headers do not apply
+the top inset again. Folded, unfolded, landscape, and software-keyboard layouts
+preserve the 44px target contract.
 
 ## 6. Responsive and density behavior
 
@@ -425,6 +455,14 @@ The Matrix default is the **CRT Signature** profile:
 - static scanlines;
 - restrained phosphor glow;
 - one slow, low-opacity CRT roll band.
+
+On Android, the connection surface and remote hub intentionally use a stronger
+static cyber-CRT composition than the desktop workbench: signal framing,
+accent-lit separators, inset panels, and code-native grid/scanline texture.
+These treatments are gated to Matrix and the existing effect attributes. They
+introduce no new animation engine, raster asset, or semantic color role.
+Light, Dark, High Contrast, and custom themes keep their own readable
+presentation.
 
 The compact header control offers four named profiles without creating a second
 effect implementation:
@@ -590,7 +628,8 @@ tests hard-fail a built-in theme regression.
 | OpenClaw | Native view loading belongs inside panel | Integration unavailable guidance | Recoverable load error; narrow overlay remains closable | Wide view reflows; narrow view owns occlusion |
 | Settings | Local values render immediately | Not applicable | Save failure keeps edited value and offers Retry | Atomic preference save; focus remains on control |
 | Command Center | Stale searches are discarded | Recent/useful actions or no-match message | Disabled result explains why | Explicit action closes only when its operation completes |
-| Mobile auxiliary page | Terminal remains mounted underneath | Page-specific empty state | Offline/local capabilities are distinguished | Back reveals the same terminal instance |
+| Mobile hub | Stable summary placeholders | Zero sessions/attention remain actionable | Connection and PC-control availability give inline reasons | PC Control starts only from explicit action; destination focus moves predictably |
+| Mobile full-screen destination | Terminal remains mounted underneath | Page-specific empty state | Offline/local capabilities are distinguished | Back returns to the invoking hub action and preserves terminal identity |
 | Dialog / ActionSheet | Duplicate submission disabled | Not applicable | Error remains within labelled surface | Close restores invoker unless action intentionally moves focus |
 | Terminal paste safety | Clipboard read is a bounded user-initiated action | Empty or unavailable format gets a brief status notice | Read failure sends no PTY input; warning cancellation is silent | Confirmed text is delivered once; focus returns to the same terminal |
 
@@ -673,6 +712,19 @@ Playwright provides deterministic `toHaveScreenshot()` baselines and
 fixtures, animation, caret, and time-sensitive content are fixed in the visual
 environment. Product accessibility errors hard-fail CI.
 
+Baseline updates are never accepted merely because an update command completed.
+The changed screenshots are reviewed against this artifact, expected
+differences are approved, and the ordinary visual command must then pass
+without rewriting them. A baseline becomes stale whenever a mapped token,
+primitive, component state, locale axis, or responsive contract changes and is
+updated in the same change.
+
+There is no normative Figma, raster mock, or separate prototype for the mobile
+redesign. Storybook compositions and deterministic adapters are reference-only
+fixtures; the product components, semantic tokens, and this document remain
+normative. Token/component mapping and prototype freshness are therefore not
+applicable to a separate mock artifact.
+
 Required axes:
 
 - desktop: 800×600, 1024×720, 1200×800, 1440×900;
@@ -705,8 +757,8 @@ Implementation order is:
 1. semantic tokens, typography, effects, and shared primitives;
 2. localization, desktop/mobile preferences, and theme resolution;
 3. desktop shell, navigation, sidebar destinations, and settings;
-4. mobile persistent coordinator, responsive header, pages, sheets, and CSS
-   boundary;
+4. mobile hub root, persistent coordinator, full-screen destinations, pages,
+   sheets, and CSS boundary;
 5. Storybook, accessibility, screenshots, and CI;
 6. remove legacy components/selectors only after reference searches are zero;
 7. run the complete regression matrix.
@@ -725,9 +777,12 @@ The redesign is complete only when:
 - the activity rail and single responsive sidebar own all specified
   destinations without duplicates;
 - desktop settings match the six approved categories;
-- mobile terminal DOM identity survives every auxiliary-page round trip;
-- both breakpoints expose the approved mobile actions and zero tabs remains
-  navigable;
+- authentication lands on the remote hub and PC Control starts from one
+  explicit hub action;
+- every existing mobile capability remains reachable from the hub;
+- mobile terminal DOM identity survives every hub/destination round trip;
+- all supported mobile viewports expose the approved hub actions and zero tabs
+  remains navigable;
 - all new chrome uses semantic tokens and Lucide icons;
 - Korean/English, density, theme v1/v2 compatibility, contrast correction, and
   reduced motion meet this contract;
@@ -794,15 +849,12 @@ it over Tailscale, WireGuard, or another explicitly trusted VPN.
 
 Three mobile information-architecture directions were evaluated:
 
-1. **Auxiliary full-screen page — selected by the user.** `More > PC Control`
-   opens an opaque page above the still-mounted terminal layer. This preserves
-   terminal state, gives the remote video enough area, and follows the existing
-   `MobileWorkbenchCoordinator`/Android Back model.
-2. **Top-level header mode — rejected.** It makes PC control faster to reach but
-   overloads the compact header and turns a secondary capability into primary
-   navigation.
-3. **Pseudo terminal tab — rejected.** It reuses tab chrome but falsely implies
-   that a graphical desktop is a terminal session and complicates tab lifetime.
+1. **Remote hub with full-screen PC Control — selected by the user.** The hub
+   makes remote control primary without starting capture automatically. One
+   explicit action opens the immersive page above the still-mounted terminal.
+2. **Persistent remote command dock — rejected.** Faster lateral switching does
+   not justify consuming terminal and video height.
+3. **Top mode switcher — rejected.** It overloads narrow and scaled headers.
 
 The desktop does not gain a new activity-rail destination. The existing Remote
 panel owns service, VPN, pairing, and active-controller state. A non-dismissible
@@ -810,8 +862,8 @@ application-wide banner and the Windows tray provide the local safety affordance
 
 ### 16.2 Screen and component inventory
 
-- `MobileHeaderMoreActions` adds **PC Control**. It is disabled with a connected
-  reason when the authenticated server does not advertise
+- `MobileRemoteHub` owns the primary **Start PC Control** action. It is disabled
+  with a connected reason when the authenticated server does not advertise
   `desktop-control-v1`.
 - `MobileRemoteDesktopView` is an auxiliary page containing
   `RemoteDesktopToolbar`, `RemoteVideoSurface`, connection-state overlay, and

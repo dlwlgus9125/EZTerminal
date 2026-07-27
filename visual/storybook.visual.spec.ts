@@ -400,11 +400,12 @@ const mobileCases = [
       density: "adaptive",
       motion: "default",
     },
+    surface: "terminal",
   },
   {
-    name: "412x915 portrait Korean Matrix workbench",
+    name: "412x915 portrait Korean Matrix remote hub",
     viewport: { width: 412, height: 915 },
-    storyId: "compositions-mobile-workbench-shell--terminal-korean",
+    storyId: "compositions-mobile-workbench-shell--hub-korean",
     screenshot: "mobile-412x915-shell-matrix-ko.png",
     options: {
       theme: "matrix",
@@ -412,6 +413,7 @@ const mobileCases = [
       density: "comfortable",
       motion: "reduced",
     },
+    surface: "hub",
   },
   {
     name: "600x960 compact Korean auxiliary settings page",
@@ -424,12 +426,12 @@ const mobileCases = [
       density: "compact",
       motion: "reduced",
     },
-    page: true,
+    surface: "destination",
   },
   {
-    name: "915x412 landscape English terminal shell",
+    name: "915x412 landscape English remote hub",
     viewport: { width: 915, height: 412 },
-    storyId: "compositions-mobile-workbench-shell--terminal-english",
+    storyId: "compositions-mobile-workbench-shell--hub-english",
     screenshot: "mobile-915x412-shell-matrix-en.png",
     options: {
       theme: "matrix",
@@ -437,6 +439,20 @@ const mobileCases = [
       density: "adaptive",
       motion: "default",
     },
+    surface: "hub",
+  },
+  {
+    name: "360x800 first manual connection",
+    viewport: { width: 360, height: 800 },
+    storyId: "compositions-mobile-workbench-shell--connect-english",
+    screenshot: "mobile-360x800-connect-matrix-en.png",
+    options: {
+      theme: "matrix",
+      locale: "en",
+      density: "adaptive",
+      motion: "reduced",
+    },
+    surface: "connect",
   },
 ] as const;
 
@@ -445,25 +461,36 @@ test.describe("mobile-width Storybook visual contracts", () => {
     test(visualCase.name, async ({ page }) => {
       await page.setViewportSize(visualCase.viewport);
       await openStory(page, visualCase.storyId, visualCase.options);
-      await expect(page.getByTestId("mobile-terminal-layer")).toBeVisible();
-      const coordinatorBox = await page.locator(".mobile-workbench-coordinator").boundingBox();
-      expect(coordinatorBox, "mobile workbench must have measurable geometry").not.toBeNull();
-      expect(coordinatorBox!.height).toBeCloseTo(visualCase.viewport.height, 0);
-      if ("page" in visualCase) {
-        await expect(page.getByTestId("mobile-page-shell")).toBeVisible();
-        await expect(page.getByTestId("mobile-terminal-layer")).toHaveAttribute(
-          "aria-hidden",
-          "true",
-        );
+      if (visualCase.surface === "connect") {
+        await expect(page.getByTestId("connect-screen")).toBeVisible();
+        await expect(page.getByTestId("connect-submit")).toBeVisible();
+        await expect(page.getByTestId("mobile-terminal-layer")).toHaveCount(0);
       } else {
-        await expect(page.getByTestId("mobile-page-shell")).toHaveCount(0);
+        await expect(page.getByTestId("mobile-terminal-layer")).toBeVisible();
+        const coordinatorBox = await page.locator(".mobile-workbench-coordinator").boundingBox();
+        expect(coordinatorBox, "mobile workbench must have measurable geometry").not.toBeNull();
+        expect(coordinatorBox!.height).toBeCloseTo(visualCase.viewport.height, 0);
+        if (visualCase.surface === "terminal") {
+          await expect(page.getByTestId("mobile-page-shell")).toHaveCount(0);
+          await expect(page.getByTestId("workspace-hub-btn")).toBeVisible();
+        } else {
+          await expect(page.getByTestId("mobile-page-shell")).toBeVisible();
+          await expect(page.getByTestId("mobile-terminal-layer")).toHaveAttribute(
+            "aria-hidden",
+            "true",
+          );
+          if (visualCase.surface === "hub") {
+            await expect(page.getByTestId("mobile-remote-hub")).toBeVisible();
+            await expect(page.getByTestId("hub-pc-control")).toBeVisible();
+          } else {
+            await expect(page.getByTestId("mobile-settings-view")).toBeVisible();
+          }
+        }
       }
-      const wideActions = page.locator(".workspace-wide-action");
-      if (visualCase.viewport.width >= 600) {
-        await expect(wideActions.first()).toBeVisible();
-      } else {
-        await expect(wideActions.first()).toBeHidden();
-      }
+
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
 
       await expectNoAccessibilityViolations(page);
       await expect(page).toHaveScreenshot(visualCase.screenshot, {

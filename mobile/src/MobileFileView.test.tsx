@@ -71,6 +71,26 @@ afterEach(() => {
 });
 
 describe('MobileFileView accessibility', () => {
+  it('uses Android Back to close the file preview before leaving Files', async () => {
+    const row = host.querySelector<HTMLButtonElement>('[data-testid="mobile-file-entry"]')!;
+    row.focus();
+    await act(async () => {
+      row.click();
+      await Promise.resolve();
+    });
+    expect(host.querySelector('[data-testid="mobile-file-viewer"]')).not.toBeNull();
+
+    act(() => {
+      window.history.replaceState({}, '');
+      window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+    });
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+
+    expect(host.querySelector('[data-testid="mobile-file-viewer"]')).toBeNull();
+    expect(host.querySelector('[data-testid="mobile-file-view"]')).not.toBeNull();
+    expect(document.activeElement).toBe(host.querySelector('[data-testid="mobile-file-entry"]'));
+  });
+
   it('uses a keyboard-operable file button and opens the shared action sheet', () => {
     const row = host.querySelector<HTMLButtonElement>('[data-testid="mobile-file-entry"]')!;
     expect(row.tagName).toBe('BUTTON');

@@ -15,12 +15,19 @@ export function MobileWorkbenchCoordinator({
   terminal,
   page,
   overlays,
+  terminalActive,
+  destinationActive,
+  onRequestRoot,
   onRequestTerminal,
 }: {
   readonly terminal: ReactNode;
   readonly page?: ReactNode;
   readonly overlays?: ReactNode;
-  readonly onRequestTerminal: () => void;
+  readonly terminalActive?: boolean;
+  readonly destinationActive?: boolean;
+  readonly onRequestRoot?: () => void;
+  /** @deprecated Use onRequestRoot for the hub-centred shell. */
+  readonly onRequestTerminal?: () => void;
 }): JSX.Element {
   return (
     <MobileNavigationHistoryProvider>
@@ -28,6 +35,9 @@ export function MobileWorkbenchCoordinator({
         terminal={terminal}
         page={page}
         overlays={overlays}
+        terminalActive={terminalActive}
+        destinationActive={destinationActive}
+        onRequestRoot={onRequestRoot}
         onRequestTerminal={onRequestTerminal}
       />
     </MobileNavigationHistoryProvider>
@@ -38,40 +48,53 @@ function MobileWorkbenchLayers({
   terminal,
   page,
   overlays,
+  terminalActive,
+  destinationActive,
+  onRequestRoot,
   onRequestTerminal,
 }: {
   readonly terminal: ReactNode;
   readonly page?: ReactNode;
   readonly overlays?: ReactNode;
-  readonly onRequestTerminal: () => void;
+  readonly terminalActive?: boolean;
+  readonly destinationActive?: boolean;
+  readonly onRequestRoot?: () => void;
+  readonly onRequestTerminal?: () => void;
 }): JSX.Element {
   const terminalLayerRef = useRef<HTMLDivElement | null>(null);
   const pageIsolationOwnerRef = useRef(Symbol('mobile-page-isolation'));
   const pageLayerId = `mobile-page-${useId()}`;
   const pageActive = page !== undefined && page !== null;
+  const resolvedTerminalActive = terminalActive ?? !pageActive;
+  const resolvedDestinationActive = destinationActive ?? pageActive;
   const navigation = useMobileNavigationHistory();
-  const requestTerminalRef = useRef(onRequestTerminal);
-  requestTerminalRef.current = onRequestTerminal;
+  const requestRootRef = useRef(onRequestRoot ?? onRequestTerminal ?? (() => undefined));
+  requestRootRef.current = onRequestRoot ?? onRequestTerminal ?? (() => undefined);
 
   useLayoutEffect(() => {
     const terminalLayer = terminalLayerRef.current;
     if (!terminalLayer) return;
     const owner = pageIsolationOwnerRef.current;
-    setElementIsolated(terminalLayer, owner, pageActive);
+    setElementIsolated(terminalLayer, owner, !resolvedTerminalActive);
     return () => setElementIsolated(terminalLayer, owner, false);
-  }, [pageActive]);
+  }, [resolvedTerminalActive]);
 
   useEffect(() => {
-    if (!pageActive) return;
+    if (!resolvedDestinationActive) return;
     return navigation.pushLayer({
       id: pageLayerId,
       kind: 'page',
-      onBack: () => requestTerminalRef.current(),
+      onBack: () => requestRootRef.current(),
     });
-  }, [navigation, pageActive, pageLayerId]);
+  }, [navigation, pageLayerId, resolvedDestinationActive]);
 
   return (
-    <div className="mobile-workbench-coordinator" data-page-active={pageActive ? 'true' : 'false'}>
+    <div
+      className="mobile-workbench-coordinator"
+      data-page-active={pageActive ? 'true' : 'false'}
+      data-destination-active={resolvedDestinationActive ? 'true' : 'false'}
+      data-terminal-active={resolvedTerminalActive ? 'true' : 'false'}
+    >
       <div
         ref={terminalLayerRef}
         className="mobile-terminal-layer"
