@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [1.0.13] - 2026-07-28
+
+### Added
+- Added protocol-v3 remote surfaces for expiring one-time QR pairing, device
+  presence and RTT, mobile Agent Attention decisions, bounded Git review, and
+  the desktop handoff's Remote and Agent Hub states.
+- Added a product-component Storybook and visual contract for the fourteen
+  desktop handoff surfaces, including Korean/English, reduced-motion,
+  high-contrast, scaled, and adaptive-width states.
+- Added an honest local release-candidate stage whose functional evidence is
+  exact-SHA bound while the separately authorized release performance
+  measurement remains explicitly pending.
+
+### Changed
+- Completed the commercial desktop handoff with contextual `Ctrl/Cmd+K`,
+  `FX·NEON` intensity, production-safe layout presets, a full boot stage, and
+  real-data Monitor, Remote, OpenClaw, Settings, dialog, and Explorer states.
+- Updated the Android companion to versionCode 34 and made stored credentials
+  negotiate the highest compatible v1-v3 remote protocol while keeping v3-only
+  capabilities gated.
+
+### Fixed
+- Bound agent decisions to an opaque approval request id so a delayed click
+  cannot authorize a later tool call for the same activity.
+- Made one-time pairing redemption transactional, expiry exactly-once, camera
+  teardown deterministic, device presence multi-connection safe, and mobile
+  session reconciliation generation-aware.
+- Included bounded untracked-file evidence and explicit omissions in approval
+  Git review instead of presenting incomplete or failed reads as clean.
+
+See [1.0.13 release notes](docs/release/release-notes-1.0.13.md).
+
 ## [1.0.12] - 2026-07-27
 
 ### Changed

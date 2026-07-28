@@ -20,6 +20,7 @@ import {
   type Ref,
 } from 'react';
 
+import { useNativeOverlayRegistration } from '../native-overlay';
 import { classNames, mergeRefs } from './utils';
 
 interface MenuTriggerProps extends HTMLAttributes<HTMLElement> {
@@ -58,6 +59,7 @@ export function Menu({
 }: MenuProps): JSX.Element {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
   const isOpen = open ?? uncontrolledOpen;
+  useNativeOverlayRegistration(isOpen);
   const menuId = `ez-ui-menu-${useId()}`;
   const rootRef = useRef<HTMLSpanElement>(null);
   const triggerRef = useRef<HTMLElement>(null);

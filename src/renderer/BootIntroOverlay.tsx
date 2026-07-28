@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAppTranslation } from './i18n';
+import { useNativeOverlayRegistration } from './native-overlay';
 import { useReducedMotion } from './use-reduced-motion';
 
 /** Milliseconds between init lines. */
@@ -35,11 +36,12 @@ type Phase = 'unknown' | 'playing' | 'done';
  * at zero duration — a sequence whose whole content is timing has nothing left
  * to show once the timing is removed.
  */
-export function BootIntroOverlay(): JSX.Element | null {
+export function BootIntroOverlay({ preview = false }: { readonly preview?: boolean } = {}): JSX.Element | null {
   const { t } = useAppTranslation();
   const reducedMotion = useReducedMotion();
-  const [phase, setPhase] = useState<Phase>('unknown');
-  const [visibleLines, setVisibleLines] = useState(0);
+  const [phase, setPhase] = useState<Phase>(preview ? 'playing' : 'unknown');
+  const [visibleLines, setVisibleLines] = useState(preview ? LINE_KEYS.length : 0);
+  useNativeOverlayRegistration(phase === 'playing');
   // Latched when the preference has actually been answered — not when a read
   // was merely started. Guarding on "started" instead would strand the overlay
   // under StrictMode, whose simulated remount cancels the first read's callback
@@ -49,6 +51,7 @@ export function BootIntroOverlay(): JSX.Element | null {
   const resolvedRef = useRef(false);
 
   useEffect(() => {
+    if (preview) return;
     if (resolvedRef.current) return;
     const settle = (next: Phase): void => {
       resolvedRef.current = true;
@@ -75,9 +78,10 @@ export function BootIntroOverlay(): JSX.Element | null {
     return () => {
       alive = false;
     };
-  }, [reducedMotion]);
+  }, [preview, reducedMotion]);
 
   useEffect(() => {
+    if (preview) return;
     if (phase !== 'playing') return;
     const timers: number[] = [];
     for (let index = 0; index < LINE_KEYS.length; index += 1) {
@@ -87,16 +91,24 @@ export function BootIntroOverlay(): JSX.Element | null {
     }
     timers.push(window.setTimeout(() => setPhase('done'), BOOT_INTRO_TOTAL_MS));
     return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [phase]);
+  }, [phase, preview]);
 
   const skip = useCallback(() => setPhase('done'), []);
 
   useEffect(() => {
+    if (preview) return;
     if (phase !== 'playing') return;
-    const onKeyDown = (): void => skip();
-    document.addEventListener('keydown', onKeyDown, { once: true });
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [phase, skip]);
+    const onKeyDown = (event: globalThis.KeyboardEvent): void => {
+      // The key is the user's explicit "skip" command. Consume it in capture
+      // phase so it can never become a composer draft or PTY/readline input
+      // while the workbench is still visually covered.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      skip();
+    };
+    document.addEventListener('keydown', onKeyDown, { capture: true, once: true });
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [phase, preview, skip]);
 
   if (phase !== 'playing') return null;
 

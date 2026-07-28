@@ -67,6 +67,9 @@ export interface DesktopRuntimeOptions {
   readonly stopAuxiliaryRuntime: () => Promise<void>;
   readonly publishRuntimeStatus: (status: RemoteRuntimeStatus) => void;
   readonly publishDesktopStatus: (status: RemoteDesktopHostStatus) => void;
+  /** Invalidates every outstanding one-time pairing code whenever the
+   * listener is not authoritatively running. */
+  readonly revokePairingCodes?: () => void;
   readonly reportError?: (context: string, error: unknown) => void;
 }
 
@@ -153,7 +156,16 @@ export class ManagedDesktopRuntime implements DesktopRuntime {
       readDesiredEnabled: options.readDesiredEnabled,
       writeDesiredEnabled: options.writeDesiredEnabled,
       start: () => this.startBridge(),
-      onStatus: (status) => this.publishRuntimeStatus(status),
+      onStatus: (status) => {
+        if (status.state !== 'running') {
+          try {
+            options.revokePairingCodes?.();
+          } catch (error) {
+            this.reportError('pairing code revocation failed', error);
+          }
+        }
+        this.publishRuntimeStatus(status);
+      },
       onError: (error) => this.reportError('remote runtime operation failed', error),
     });
   }

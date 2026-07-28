@@ -509,8 +509,9 @@ semantic blue/success/amber/danger colors. Status meaning is never encoded only
 as green variants.
 
 The code-native `BrandMark` uses an `aria-hidden` three-bar signal mark and a
-visible `EZTerminal` heading. Matrix uses the existing VT323 display face with
-the existing monospace fallback; other themes use the semantic heading font.
+visible `EZTerminal` heading. Matrix uses the self-hosted Share Tech Mono
+display face with the existing monospace fallback; other themes use the
+semantic heading font.
 Phosphor glow is applied only while the corresponding effect is enabled rather
 than being permanently baked into the wordmark.
 
@@ -1044,3 +1045,139 @@ this interaction contract or the relevant tokens/components change.
 
 There are no unresolved appearance, navigation, responsive, asset, or
 accessibility decisions for this feature.
+
+## 17. Desktop commercial handoff completion (1.0.13)
+
+This section is the latest desktop visual and interaction contract. It
+supersedes earlier desktop guidance where that guidance conflicts with the
+2026-07-28 handoff, but it does not weaken terminal semantics, security,
+accessibility, or truthful runtime state.
+
+### 17.1 Direction decision and source authority
+
+Three directions were evaluated:
+
+1. **Keep the existing adaptive shell and named FX profiles — rejected.** It
+   preserves the current implementation but does not match the supplied header,
+   settings, workbench density, or fourteen reference surfaces.
+2. **Copy the fixed prototype literally — rejected.** It would hard-code
+   version strings, invent monitor/OpenClaw values, claim `wss://` over the
+   trusted-VPN `ws://` transport, and break narrow/scaled layouts.
+3. **Prototype-led, production-safe adaptive workbench — selected.** Geometry,
+   hierarchy, density, labels, interaction targets, and visual rhythm follow
+   the package-2 prototype. Existing real services and adaptive behavior supply
+   the data and supported states.
+
+The tracked source set is
+`docs/ux/reference/desktop-handoff/manifest.json`. Package 2 is the
+authoritative superset. Its desktop prototype owns visual and interaction
+intent, the handoff README owns implementation and QA acceptance, and this
+document owns responsive, accessibility, state, and compatibility behavior.
+Security, data integrity, core terminal behavior, accessibility, and honest
+real-state rendering always take precedence.
+
+The first two captured shots depict nearly the same workbench state and are not
+a reliable boot timing oracle. Boot composition, phases, and approximately
+3.2-second duration come from the prototype source and README.
+
+### 17.2 Shell, typography, effects, and commands
+
+- The desktop keeps exactly four header zones at 60px and a 62px activity rail
+  with 44px targets. Pane cards use 12px radii and a 14px leaf-view gutter.
+- Share Tech Mono owns the Matrix wordmark, boot identity, and UI display
+  labels. The selected terminal monospace font remains independent.
+- The active pane composer is 48px high and at most 820px wide; below that
+  width it shrinks without document-level horizontal scrolling.
+- The header effect control reads `FX·NEON n`, where `n` is a persisted integer
+  from 0 through 10 and defaults to 7. It opens the Appearance settings at the
+  same slider. Existing per-effect toggles remain available, but named profile
+  names are no longer the header or status-bar presentation. Level 0 suppresses
+  decoration; moving CRT effects require level 5 or greater. Reduced motion
+  suppresses moving effects and high contrast suppresses decorative noise.
+- `Ctrl/Cmd+K` opens Command Center only from non-editable application UI.
+  xterm, the terminal composer, input, textarea, and contenteditable surfaces
+  retain their native key. `Ctrl/Cmd+Shift+P` remains a global compatibility
+  shortcut.
+- Command Center keeps pane, command, history, saved command, preset, and agent
+  search, and adds actual Explorer, Agents, Monitor, Remote, conditional
+  OpenClaw, Settings, and locale destinations. No row may claim an action that
+  the product cannot perform.
+- The 1+2, 2x1, and single presets are non-destructive Dockview transactions.
+  Active and MRU panes determine placement, overflow panes remain tabbed, and
+  every hidden pane, PTY, draft, and restorable layout remains live.
+
+### 17.3 Fourteen-surface state contract
+
+| Surface | Loading / progress | Empty / unavailable | Error / stale | Ready / action |
+| --- | --- | --- | --- | --- |
+| Boot | Five real phases, deterministic timing | Disabled preference and reduced motion skip immediately | First key is captured and consumed; timers clean up | Click/key skip or automatic completion never leaks input to PTY |
+| Workbench + Agent Hub | Elapsed time and indeterminate activity only | Localized recent/empty/disconnected states | Expired or stale approvals lose actions | Pending approvals sort by danger, write, read, expiry, then recency |
+| Command Center | Search results update without focus loss | No-results row preserves query and escape route | Unsupported destinations are omitted | Keyboard navigation runs real destinations/actions and restores focus |
+| Monitor | Last real sample and collection scope are visible | Unsupported packet capture is explicit | Collection failure never renders zero as healthy | Data is collected only while visible and never interpolated into fake facts |
+| Remote | Service and connection transitions are explicit | Bridge-off, no VPN, no controller, and empty roster differ | Stale generations cannot restore an old QR or device | Actual endpoint, controller, RTT, SSH, roster, and PC-control state |
+| Pairing QR | Single in-flight issuance and five-minute countdown | Bridge off disables issuance | Expired/redeemed QR and code are removed; retry is explicit | Successful v3 auth consumes exactly one code |
+| Pairing detected | No simulated scan progress | Not applicable until redemption | Superseded code events are ignored | Real redeemed event identifies completion without inventing a device fact |
+| OpenClaw console | Real lifecycle/config/session/log loading | `auto`, `on`, and `off` visibility remain distinct | Missing CLI and lifecycle errors are honest | Running/stopped/error controls invoke existing lifecycle APIs |
+| OpenClaw chat | EZTerminal chrome owns loading | Stopped/unavailable placeholder | External view errors stay in the pane | Dockview and WebContentsView remain the actual chat implementation |
+| Paste warning | Not applicable | Not applicable | Risk reasons remain visible | Cancel is initially safe-focused; confirm preserves existing paste semantics |
+| Risky close | Background/force work stays explicit | No active risk uses the normal close path | State comparison failure closes nothing | Cancel, background, and force retain their current transactional semantics |
+| Settings | Categories remain stable while data loads | Unsupported effects are disabled with a reason | Invalid persisted intensity is clamped | Six categories, FX level, overflow, and 150% scale remain usable |
+| English mode | Effective locale changes all product labels together | Missing resources fail tests | Mixed locale is a defect | Layout and meaning match Korean without clipping |
+| Explorer | Git/path work has bounded progress | Root, empty folder, and non-repository differ | Git unavailable/incomplete and destructive errors are explicit | Breadcrumb, full path, up, folders-first, tags, and shared dialogs work |
+
+Approval cards show only a memory-resident command while that exact
+`approvalId` is pending. New Agent opens the existing launcher group; it does
+not synthesize a provider action. Only providers with a verified decision hook
+offer approve/deny controls.
+
+Monitor and OpenClaw use the closest real metrics available rather than the
+prototype's illustrative totals. Remote displays the actual `ws://` VPN
+endpoint. The external OpenClaw WebContentsView body is excluded from pixel
+comparison; EZTerminal-owned chrome and loading/stopped/error states are not.
+
+### 17.4 Responsive and accessibility contract
+
+- Required desktop viewports are 800x600, 1024x720, 1200x800, 1440x900, and
+  the 1920 reference. 800/1024 use an overlay sidebar; 1200/1440 reflow the
+  workbench once. The 1920 prototype is not permission to fix the product
+  width.
+- Header controls, rail, composer, breadcrumbs, tabs, dialogs, and sidebars
+  remain disjoint at 100% and 150% scale with no page-level horizontal scroll.
+- Command Center is 660px at a top offset of 84px when space permits. QR,
+  paste, and risky-close dialogs shrink below their reference widths while
+  keeping 44px actions and readable code/text.
+- Korean and English, Matrix, Light, Dark, High Contrast, and system
+  reduced-motion are required axes. Text contrast is at least 4.5:1 and
+  component boundaries/focus indicators at least 3:1.
+- Every overlay traps focus, closes with Escape where safe, restores the stable
+  invoker, and exposes one concise localized name. State never relies on color,
+  glow, ticker motion, or icon shape alone.
+- Boot, ticker, pulse, rollbar, and entry transitions stop under reduced motion.
+  Terminal output and user-requested external content are not decorative
+  motion and retain their product behavior.
+
+### 17.5 Visual QA, mapping, and freshness
+
+`DesktopHandoff.stories.tsx` uses real product components with deterministic
+capability adapters and exports one story for every manifest surface. The old
+fake terminal/explorer workbench remains only a primitive responsive fixture.
+Each handoff story runs axe and a 1920 reference screenshot; Korean and English
+both run for product content.
+
+The pairwise visual matrix additionally covers:
+
+- 800x600 and 1024x720 overlay behavior;
+- 1200x800 and 1440x900 reflow;
+- 100% and 150% scale for shell, sidebar, and dialogs;
+- Matrix/Light/Dark/High Contrast on a real workbench and representative
+  sidebar/dialog; and
+- reduced-motion boot, ticker, pulse, rollbar, and transition behavior.
+
+The manifest pins every extracted source hash and story id. A contract test
+must fail when one of the fourteen references, stories, or required axes is
+missing. Snapshot refresh requires a side-by-side reference review; differences
+are accepted only when recorded as an adaptive, external-content, security, or
+truthful-data exception in the manifest.
+
+There are no unresolved desktop appearance, command, responsive, state,
+compatibility, or accessibility decisions for the 1.0.13 handoff.

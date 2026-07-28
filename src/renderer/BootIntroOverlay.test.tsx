@@ -77,6 +77,24 @@ describe('BootIntroOverlay', () => {
     expect(container.querySelector('[data-testid="boot-intro"]')).toBeNull();
   });
 
+  it('consumes the first key in capture phase while skipping', async () => {
+    stubDesktop(() => Promise.resolve(true));
+    mount();
+    await settle();
+    const reachedWorkbench = vi.fn();
+    document.addEventListener('keydown', reachedWorkbench);
+
+    const event = new KeyboardEvent('keydown', { key: 'x', bubbles: true, cancelable: true });
+    act(() => {
+      document.querySelector('[data-testid="boot-intro"]')?.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(reachedWorkbench).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="boot-intro"]')).toBeNull();
+    document.removeEventListener('keydown', reachedWorkbench);
+  });
+
   it('renders nothing when the preference cannot be read', async () => {
     stubDesktop(() => Promise.reject(new Error('no bridge')));
     mount();

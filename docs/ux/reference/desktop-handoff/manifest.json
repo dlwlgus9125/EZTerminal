@@ -1,0 +1,201 @@
+{
+  "schemaVersion": 1,
+  "authority": {
+    "visualAndInteraction": "EZTerminal-desktop-prototype.dc.html",
+    "implementationAndQa": "HANDOFF-README.md",
+    "responsiveAccessibilityAndState": "../../frontend-design.md",
+    "supportingImportClosure": "support.js is a required import of the canonical prototype and is preserved so that prototype source can be audited in full; it is not an independent acceptance authority.",
+    "historicalNonAcceptance": "EZTerminal-desktop-options.dc.html records explored option history only. It is explicitly non-canonical and cannot establish current acceptance behavior.",
+    "precedenceException": "Security, data integrity, terminal semantics, accessibility, and truthful runtime state override simulated prototype data."
+  },
+  "source": {
+    "package1": {
+      "name": "데스크톱 UI 핸드오프 패키지.zip",
+      "bytes": 295238,
+      "sha256": "c18a4de877e008ffeabf39fce7d39ed5171cde41c7974472a3f521e2564bbdad",
+      "relationship": "Byte-identical 14-shot plus handoff README subset of package2."
+    },
+    "package2": {
+      "name": "데스크톱 UI 핸드오프 패키지2.zip",
+      "bytes": 1214632333,
+      "sha256": "3bd6eece2d320e9a7cdbd1c6204375bb8498285cc6eddb76ac5fd083e72afe67",
+      "relationship": "Authoritative superset; source snapshot baseline is commit 4046d9b."
+    }
+  },
+  "extractedFiles": {
+    "PACKAGE2-README.md": "0fb1e08a697741cedf167acabcaf725d1d6c213dded002063c6a7340d52ddb5c",
+    "EZTerminal-desktop-prototype.dc.html": "adc2c760dc68416c4a93f9f1042983518a49a71f310f687095d7817fd92ea914",
+    "support.js": "8fe7df74405f3c55f49b7249c74ea1397e65d07dea2b1bd3b4a489bec2e28cbe",
+    "EZTerminal-desktop-options.dc.html": "984792afa7add39c3b961a37c6009e430c400cf84d2501ddcb3f9ab45c90212c",
+    "HANDOFF-README.md": "2e0d334d63e1dd426d8416c7b093ae7d0b3f9c028b45f5a17ef8d7bb0d6da3de",
+    "01-shot.png": "f0213179ba1c8871fcdc39b7a20fa790f16be7b13c047fe39cd29d86a01ce7de",
+    "02-shot.png": "ad53cece6226a6184466aeddc13ff2207b686e1b275c50f529ed6a98f97d529a",
+    "03-shot.png": "fb1ce96e2b1ad71d3cfde0cb6940ea640be9d91162e080ee61faa46cf0fed83b",
+    "04-shot.png": "2167634c73254844326e366ecc2503a92dde3662eae6a6fb8fc56ea7623d7ef9",
+    "05-shot.png": "dff55b8106e58deba2e78e6e3522ff6b03b60fedfd10a2ccb6935186351377de",
+    "06-shot.png": "d329e7e169940a063feb341618b84c31fb9b7a5d4a221d0cb53e8db5f41b6ba2",
+    "07-shot.png": "680b6a40d108aefdf7a4216827dfa88c2b8584fcbb9ecd1b61a162c6a5f0fe08",
+    "08-shot.png": "cce403d9baeeef6b12093b39858fead25b11733206e7e9d1218e8c2d0828dda0",
+    "09-shot.png": "4f833e769c28aea23c9683e835daad7bb7fcc228c0a2e57df28c36bac19113a8",
+    "10-shot.png": "7c961f9384dbe976bd4aad8ea436b8cb842524037290d3014ae5771c71c50fc1",
+    "11-shot.png": "6318780a1001413a2bd728b8c2740e9a833dd549c081ed97b7ea375e1ab61366",
+    "12-shot.png": "a883896549dfbd78467af5ffd689d4514c62a99e0600f1ca5f1a0662daaed56c",
+    "13-shot.png": "73cbb16db99d870dd7b2d4f49438ee29d1cdd2f0c3bb7ee30785b0097483883f",
+    "14-shot.png": "06290afcc7564a9876829674ff0077d4addf56a7f133e9d16daadbe6e78640dd"
+  },
+  "sourceRoles": {
+    "canonicalPrototype": [
+      "EZTerminal-desktop-prototype.dc.html"
+    ],
+    "supportingImportClosure": [
+      "support.js"
+    ],
+    "historicalNonAcceptance": [
+      "EZTerminal-desktop-options.dc.html"
+    ],
+    "implementationAndQa": [
+      "HANDOFF-README.md"
+    ],
+    "packageContext": [
+      "PACKAGE2-README.md"
+    ],
+    "visualReferences": [
+      "01-shot.png",
+      "02-shot.png",
+      "03-shot.png",
+      "04-shot.png",
+      "05-shot.png",
+      "06-shot.png",
+      "07-shot.png",
+      "08-shot.png",
+      "09-shot.png",
+      "10-shot.png",
+      "11-shot.png",
+      "12-shot.png",
+      "13-shot.png",
+      "14-shot.png"
+    ]
+  },
+  "surfaces": [
+    {
+      "id": "boot",
+      "reference": "01-shot.png",
+      "storyId": "compositions-desktop-handoff--boot",
+      "storyExport": "Boot",
+      "oracle": "prototype-source-and-readme",
+      "note": "01 and 02 depict nearly the same workbench state; boot timing and composition come from source and README."
+    },
+    {
+      "id": "workbench-agent-hub",
+      "reference": "02-shot.png",
+      "storyId": "compositions-desktop-handoff--workbench-agent-hub",
+      "storyExport": "WorkbenchAgentHub"
+    },
+    {
+      "id": "command-center",
+      "reference": "03-shot.png",
+      "storyId": "compositions-desktop-handoff--command-center",
+      "storyExport": "CommandCenter"
+    },
+    {
+      "id": "monitor",
+      "reference": "04-shot.png",
+      "storyId": "compositions-desktop-handoff--monitor",
+      "storyExport": "Monitor",
+      "truthfulData": true
+    },
+    {
+      "id": "remote",
+      "reference": "05-shot.png",
+      "storyId": "compositions-desktop-handoff--remote",
+      "storyExport": "Remote",
+      "truthfulData": true
+    },
+    {
+      "id": "pairing-qr",
+      "reference": "06-shot.png",
+      "storyId": "compositions-desktop-handoff--pairing-qr",
+      "storyExport": "PairingQr"
+    },
+    {
+      "id": "pairing-detected",
+      "reference": "07-shot.png",
+      "storyId": "compositions-desktop-handoff--pairing-detected",
+      "storyExport": "PairingDetected"
+    },
+    {
+      "id": "openclaw-console",
+      "reference": "08-shot.png",
+      "storyId": "compositions-desktop-handoff--openclaw-console",
+      "storyExport": "OpenclawConsole",
+      "truthfulData": true
+    },
+    {
+      "id": "openclaw-chat",
+      "reference": "09-shot.png",
+      "storyId": "compositions-desktop-handoff--openclaw-chat",
+      "storyExport": "OpenclawChat",
+      "pixelOracleException": "External WebContentsView content; gate only EZTerminal chrome and loading, stopped, and error states."
+    },
+    {
+      "id": "paste-warning",
+      "reference": "10-shot.png",
+      "storyId": "compositions-desktop-handoff--paste-warning",
+      "storyExport": "PasteWarning"
+    },
+    {
+      "id": "risky-close",
+      "reference": "11-shot.png",
+      "storyId": "compositions-desktop-handoff--risky-close",
+      "storyExport": "RiskyClose"
+    },
+    {
+      "id": "settings",
+      "reference": "12-shot.png",
+      "storyId": "compositions-desktop-handoff--settings",
+      "storyExport": "Settings"
+    },
+    {
+      "id": "english-workbench",
+      "reference": "13-shot.png",
+      "storyId": "compositions-desktop-handoff--english-workbench",
+      "storyExport": "EnglishWorkbench"
+    },
+    {
+      "id": "explorer-breadcrumb",
+      "reference": "14-shot.png",
+      "storyId": "compositions-desktop-handoff--explorer-breadcrumb",
+      "storyExport": "ExplorerBreadcrumb"
+    }
+  ],
+  "requiredAxes": {
+    "viewports": [
+      "800x600",
+      "1024x720",
+      "1200x800",
+      "1440x900",
+      "1920-reference"
+    ],
+    "locales": [
+      "ko",
+      "en"
+    ],
+    "scalePercent": [
+      100,
+      150
+    ],
+    "themes": [
+      "matrix",
+      "light",
+      "dark",
+      "high-contrast"
+    ],
+    "accessibility": [
+      "axe",
+      "keyboard",
+      "focus-restore",
+      "reduced-motion",
+      "no-horizontal-scroll"
+    ]
+  }
+}

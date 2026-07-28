@@ -204,6 +204,21 @@ describe('layout-schema — additive Adaptive Workbench preferences', () => {
       sidebarWidth: 500,
     }).success).toBe(false);
   });
+
+  it('clamps only persisted numeric effect intensity while keeping the IPC schema strict', () => {
+    const above = SettingsSchema.parse({
+      schemaVersion: 1,
+      startup: { mode: 'last' },
+      effectIntensity: 11,
+    });
+    const below = SettingsSchema.parse({
+      schemaVersion: 1,
+      startup: { mode: 'last' },
+      effectIntensity: -2.4,
+    });
+    expect(above.effectIntensity).toBe(10);
+    expect(below.effectIntensity).toBe(0);
+  });
 });
 
 describe('layout-schema — maxTabSuffix (F6 reseed)', () => {

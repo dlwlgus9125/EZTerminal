@@ -10,16 +10,49 @@ describe('mobile UI preferences', () => {
       locale: 'system',
       density: 'adaptive',
       sidebarWidth: 320,
+      effectIntensity: 7,
     });
   });
 
   it('round-trips the complete device-local snapshot', () => {
-    const preferences = { locale: 'ko', density: 'compact', sidebarWidth: 380 } as const;
+    const preferences = {
+      locale: 'ko',
+      density: 'compact',
+      sidebarWidth: 380,
+      effectIntensity: 7,
+    } as const;
     expect(saveMobileUiPreferences(preferences)).toBe(true);
     expect(loadMobileUiPreferences()).toEqual(preferences);
     expect(JSON.parse(localStorage.getItem('ezterminal-mobile-ui-preferences') ?? '{}')).toEqual({
-      version: 1,
+      version: 2,
       preferences,
+    });
+  });
+
+  it('migrates the legacy v1 snapshot without discarding valid device choices', () => {
+    localStorage.setItem('ezterminal-mobile-ui-preferences', JSON.stringify({
+      version: 1,
+      preferences: {
+        locale: 'ko',
+        density: 'compact',
+        sidebarWidth: 380,
+      },
+    }));
+
+    expect(loadMobileUiPreferences()).toEqual({
+      locale: 'ko',
+      density: 'compact',
+      sidebarWidth: 380,
+      effectIntensity: 7,
+    });
+    expect(JSON.parse(localStorage.getItem('ezterminal-mobile-ui-preferences') ?? '{}')).toEqual({
+      version: 2,
+      preferences: {
+        locale: 'ko',
+        density: 'compact',
+        sidebarWidth: 380,
+        effectIntensity: 7,
+      },
     });
   });
 
@@ -39,6 +72,11 @@ describe('mobile UI preferences', () => {
       setItem: vi.fn(() => { throw new Error('blocked'); }),
     };
     expect(loadMobileUiPreferences(storage).density).toBe('adaptive');
-    expect(saveMobileUiPreferences({ locale: 'en', density: 'comfortable', sidebarWidth: 320 }, storage)).toBe(false);
+    expect(saveMobileUiPreferences({
+      locale: 'en',
+      density: 'comfortable',
+      sidebarWidth: 320,
+      effectIntensity: 7,
+    }, storage)).toBe(false);
   });
 });

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { QuickCommand } from '../shared/quick-command';
 import { useAppTranslation } from './i18n';
+import { useNativeOverlayRegistration } from './native-overlay';
 import './quick-command-shelf.css';
 
 const LAST_USED_ID_KEY = 'ezterminal.quick-command.last-used-id';
@@ -67,6 +68,7 @@ export function QuickCommandShelf({
 }: QuickCommandShelfProps): JSX.Element {
   const { t } = useAppTranslation();
   const [open, setOpen] = useState(false);
+  useNativeOverlayRegistration(open);
   const [query, setQuery] = useState('');
   const [lastUsedId, setLastUsedId] = useState(readLastUsedId);
   const rootRef = useRef<HTMLDivElement>(null);

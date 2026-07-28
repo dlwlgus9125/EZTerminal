@@ -248,7 +248,7 @@ export function parseWebViewDeviceBounds(
     if (!inViewHierarchy) continue;
 
     const boundsMatch = line.match(
-      /(?:^|\s)(-?\d+),(-?\d+)-(-?\d+),(-?\d+)(?=\s|[}\[]|$)/,
+      /(?:^|\s)(-?\d+),(-?\d+)-(-?\d+),(-?\d+)(?=\s|}|\[|$)/,
     );
     if (!boundsMatch) continue;
     const indent = line.match(/^\s*/)?.[0].length ?? 0;
@@ -1355,7 +1355,9 @@ export async function pollLogcat(
  * token. `getRemoteToken()` (M4) mints+persists on first call — no need to
  * wait for a WS client to connect first (the WS-triggered mint path only
  * fires on first `auth`). */
-export async function launchDesktop(): Promise<{ app: ElectronApplication; token: string }> {
+export async function launchDesktop(
+  options: { readonly cwd?: string } = {},
+): Promise<{ app: ElectronApplication; token: string }> {
   const userDataDir = mkdtempSync(path.join(tmpdir(), 'ezterm-e2e-'));
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
@@ -1365,7 +1367,11 @@ export async function launchDesktop(): Promise<{ app: ElectronApplication; token
   env.EZTERMINAL_OPENCLAW_PROXY_PORT = String(OPENCLAW_PROXY_PORT);
   env.EZTERMINAL_REMOTE_VPN_INTERFACE =
     process.env.EZTERMINAL_REMOTE_VPN_INTERFACE?.trim() || '127.0.0.1';
-  const app = await electron.launch({ args: [MAIN_ENTRY], env });
+  const app = await electron.launch({
+    args: [MAIN_ENTRY],
+    env,
+    ...(options.cwd ? { cwd: options.cwd } : {}),
+  });
   try {
     const win = await app.firstWindow();
     await win.waitForLoadState('domcontentloaded');

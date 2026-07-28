@@ -1,8 +1,9 @@
 ﻿import { Bot, Check, ChevronLeft } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
   AgentActivity,
+  AgentApprovalRisk,
   AgentActivitySnapshot,
   AgentDecision,
   AgentDecisionResult,
@@ -12,6 +13,7 @@ import type {
 } from '../../src/shared/agent';
 import {
   EMPTY_GIT_DIRECTORY_STATUS,
+  type GitDiffOmission,
   type GitDiffResult,
   type GitDirectoryStatus,
 } from '../../src/shared/git-status';
@@ -26,6 +28,12 @@ const readNothing = (): Promise<GitDirectoryStatus> => Promise.resolve(EMPTY_GIT
 
 const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'waiting']);
 const RUNNING = new Set<AgentStatus>(['starting', 'working']);
+
+const RISK_RANK = {
+  danger: 0,
+  write: 1,
+  read: 2,
+} as const satisfies Record<AgentApprovalRisk, number>;
 
 const PROVIDER_LABEL: Record<AgentProvider, string> = {
   codex: 'Codex',
@@ -64,6 +72,29 @@ function sortRecent(a: AgentActivity, b: AgentActivity): number {
   return b.updatedAt - a.updatedAt || a.id.localeCompare(b.id);
 }
 
+function sortAttention(a: AgentActivity, b: AgentActivity): number {
+  const aApproval = a.approval;
+  const bApproval = b.approval;
+  if (aApproval && !bApproval) return -1;
+  if (!aApproval && bApproval) return 1;
+  if (aApproval && bApproval) {
+    const approvalOrder = RISK_RANK[aApproval.risk] - RISK_RANK[bApproval.risk]
+      || aApproval.expiresAt - bApproval.expiresAt;
+    if (approvalOrder !== 0) return approvalOrder;
+  }
+  const rank = (status: AgentStatus): number => status === 'blocked' ? 0 : status === 'error' ? 1 : 2;
+  return rank(a.status) - rank(b.status) || sortRecent(a, b);
+}
+
+type MobileDiffView =
+  | { readonly state: 'loading' }
+  | {
+      readonly state: 'ready';
+      readonly text: string;
+      readonly truncated: boolean;
+      readonly omissions: readonly GitDiffOmission[];
+    };
+
 /**
  * The mobile Agents tab (handoff §4). A filtered card list rather than the
  * desktop's three fixed groups — the desktop AgentHub is deliberately left
@@ -91,7 +122,11 @@ export function MobileAgentView({
   readonly onBack: () => void;
   readonly onFocusSession: (sessionId: string) => void;
   readonly onSendFollowup: (activityId: string, text: string) => Promise<AgentFollowupResult>;
-  readonly onDecideApproval?: (activityId: string, decision: AgentDecision) => Promise<AgentDecisionResult>;
+  readonly onDecideApproval?: (
+    activityId: string,
+    approvalId: string,
+    decision: AgentDecision,
+  ) => Promise<AgentDecisionResult>;
   readonly onLoadDiff?: (directory: string) => Promise<GitDiffResult>;
   readonly onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
 }): JSX.Element {
@@ -103,7 +138,8 @@ export function MobileAgentView({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
-  const [diff, setDiff] = useState<string | null>(null);
+  const [diff, setDiff] = useState<MobileDiffView | null>(null);
+  const diffRequestGeneration = useRef(0);
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const branches = useGitBranches(
     snapshot.items.map((item) => item.cwd),
@@ -117,18 +153,22 @@ export function MobileAgentView({
 
   // A pending approval expires on a deadline, so while one is open the clock
   // has to move fast enough for the buttons to disappear when it closes.
-  const hasPendingApproval = snapshot.items.some((item) => item.approval !== undefined);
+  const hasPendingApproval = snapshot.items.some((item) => item.approval?.pending === true);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), hasPendingApproval ? 1_000 : 30_000);
     return () => clearInterval(timer);
   }, [hasPendingApproval]);
 
   const decide = async (item: AgentActivity, decision: AgentDecision): Promise<void> => {
-    if (!onDecideApproval || decidingId !== null) return;
+    if (!onDecideApproval || decidingId !== null || !item.approval) return;
     setDecidingId(item.id);
-    const result = await onDecideApproval(item.id, decision).catch((): AgentDecisionResult => ({
+    const result = await onDecideApproval(
+      item.id,
+      item.approval.approvalId,
+      decision,
+    ).catch((): AgentDecisionResult => ({
       ok: false,
-      error: 'delivery-failed',
+      error: 'outcome-unknown',
     }));
     setDecidingId(null);
     if (result.ok) {
@@ -141,19 +181,36 @@ export function MobileAgentView({
     }
     setErrors((previous) => ({
       ...previous,
-      [item.id]: result.error === 'expired' ? t('agentHub.approvalExpired') : t('agentHub.approvalFailed'),
+      [item.id]: result.error === 'expired' || result.error === 'stale'
+        ? t('agentHub.approvalExpired')
+        : result.error === 'outcome-unknown'
+          ? t('agentHub.approvalOutcomeUnknown')
+          : t('agentHub.approvalFailed'),
     }));
   };
 
   const openDiff = async (directory: string): Promise<void> => {
     if (!onLoadDiff) return;
+    const generation = ++diffRequestGeneration.current;
+    setDiff({ state: 'loading' });
     const result = await onLoadDiff(directory).catch((): GitDiffResult => ({ ok: false, error: 'git-failed' }));
+    if (generation !== diffRequestGeneration.current) return;
     if (!result.ok) {
+      setDiff(null);
       showToast(result.error === 'not-a-repository' ? t('agentHub.diffUnavailable') : t('agentHub.approvalFailed'));
       return;
     }
-    setDiff(result.text.trim().length > 0 ? result.text : '');
+    setDiff({
+      state: 'ready',
+      text: result.text,
+      truncated: result.truncated,
+      omissions: result.omissions,
+    });
   };
+
+  useEffect(() => () => {
+    diffRequestGeneration.current += 1;
+  }, []);
 
   const counts = useMemo(() => {
     const tally = { all: snapshot.items.length, attention: 0, running: 0, done: 0 };
@@ -162,7 +219,6 @@ export function MobileAgentView({
   }, [snapshot]);
 
   const visible = useMemo(() => {
-    const rank = (status: AgentStatus): number => status === 'blocked' ? 0 : status === 'error' ? 1 : 2;
     return snapshot.items
       .filter((item) => filter === 'all' || bucketOf(item.status) === filter)
       .slice()
@@ -170,7 +226,7 @@ export function MobileAgentView({
         const bucketDelta = ['attention', 'running', 'done'].indexOf(bucketOf(a.status))
           - ['attention', 'running', 'done'].indexOf(bucketOf(b.status));
         if (bucketDelta !== 0) return bucketDelta;
-        return rank(a.status) - rank(b.status) || sortRecent(a, b);
+        return bucketOf(a.status) === 'attention' ? sortAttention(a, b) : sortRecent(a, b);
       });
   }, [filter, snapshot]);
 
@@ -252,7 +308,7 @@ export function MobileAgentView({
             const age = ageLabel(item.updatedAt, now, relativeTime);
             // A decision is only offered while the desktop is still holding the
             // provider's hook open. Past that the answer belongs in the terminal.
-            const live = item.approval !== undefined && item.approval.expiresAt > now;
+            const live = item.approval?.pending === true;
 
             if (bucket === 'done') {
               return (
@@ -333,6 +389,7 @@ export function MobileAgentView({
                         <button
                           type="button"
                           className="mob-btn-ghost"
+                          disabled={disconnected || diff?.state === 'loading'}
                           onClick={() => void openDiff(item.cwd)}
                           data-testid="agent-view-diff"
                         >
@@ -396,13 +453,46 @@ export function MobileAgentView({
       {diff !== null && (
         <MobileActionSheet
           title={t('agentHub.diffTitle')}
-          onClose={() => setDiff(null)}
+          onClose={() => {
+            diffRequestGeneration.current += 1;
+            setDiff(null);
+          }}
           variant="fullscreen"
           testId="mobile-agent-diff"
         >
-          {diff === ''
-            ? <p className="mob-empty">{t('agentHub.diffEmpty')}</p>
-            : <pre className="mob-agent-diff">{diff}</pre>}
+          {diff.state === 'loading' ? (
+            <p className="mob-empty" role="status">{t('common.loading')}</p>
+          ) : (
+            <>
+              {diff.text.trim().length > 0 && <pre className="mob-agent-diff">{diff.text}</pre>}
+              {diff.text.trim().length === 0 && !diff.truncated && diff.omissions.length === 0 && (
+                <p className="mob-empty">{t('agentHub.diffEmpty')}</p>
+              )}
+              {diff.truncated && (
+                <p
+                  className="mob-agent-diff-note"
+                  role="status"
+                  data-testid="mobile-agent-diff-truncated"
+                >
+                  {t('agentHub.diffTruncated')}
+                </p>
+              )}
+              {diff.omissions.length > 0 && (
+                <ul
+                  className="mob-agent-diff-omissions"
+                  data-testid="mobile-agent-diff-omissions"
+                >
+                  {diff.omissions.map((omission) => (
+                    <li key={`${omission.path}\0${omission.reason}`}>
+                      <code>{omission.path}</code>
+                      {' — '}
+                      {t(`agentHub.diffOmissionReason.${omission.reason}`)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
         </MobileActionSheet>
       )}
     </main>

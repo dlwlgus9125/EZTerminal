@@ -13,10 +13,51 @@ function declaration(name: string): string | undefined {
   return new RegExp(`${name}\\s*:\\s*([^;]+);`).exec(css)?.[1].trim();
 }
 
-function scopedDeclaration(selector: string, name: string): string | undefined {
+function scopedDeclarationFrom(
+  source: string,
+  selector: string,
+  name: string,
+): string | undefined {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const block = new RegExp(`${escapedSelector}\\s*\\{([^}]+)\\}`).exec(css)?.[1];
+  const block = new RegExp(`${escapedSelector}\\s*\\{([^}]+)\\}`).exec(source)?.[1];
   return block ? new RegExp(`${name}\\s*:\\s*([^;]+);`).exec(block)?.[1].trim() : undefined;
+}
+
+function scopedDeclaration(selector: string, name: string): string | undefined {
+  return scopedDeclarationFrom(css, selector, name);
+}
+
+function compositeHex(foreground: string, background: string, opacity: number): string {
+  const channel = (color: string, offset: number): number =>
+    Number.parseInt(color.slice(offset, offset + 2), 16);
+  const blended = [1, 3, 5].map((offset) =>
+    Math.round(
+      channel(foreground, offset) * opacity
+        + channel(background, offset) * (1 - opacity),
+    ).toString(16).padStart(2, '0'));
+  return `#${blended.join('')}`;
+}
+
+function mediaBlocks(source: string, condition: string): string[] {
+  const blocks: string[] = [];
+  let cursor = 0;
+  const marker = `@media ${condition}`;
+  while (cursor < source.length) {
+    const start = source.indexOf(marker, cursor);
+    if (start < 0) break;
+    const open = source.indexOf('{', start + marker.length);
+    if (open < 0) break;
+    let depth = 1;
+    let end = open + 1;
+    while (end < source.length && depth > 0) {
+      if (source[end] === '{') depth += 1;
+      else if (source[end] === '}') depth -= 1;
+      end += 1;
+    }
+    blocks.push(source.slice(open + 1, end - 1));
+    cursor = end;
+  }
+  return blocks;
 }
 
 describe('UI token contract', () => {
@@ -182,5 +223,45 @@ describe('UI token contract', () => {
       const matrixBlock = /\[data-theme=(?:'matrix'|"matrix")\]\s*\{([^}]+)\}/.exec(foundation)?.[1] ?? '';
       expect(matrixBlock).not.toMatch(/font-size\s*:/);
     }
+  });
+
+  it('keeps inactive pane header metadata above 4.5:1 in every built-in theme', () => {
+    expect(
+      scopedDeclarationFrom(desktopFoundation, '.pane-header-meta', 'color'),
+    ).toBe('var(--ui-text-secondary)');
+    expect(
+      scopedDeclarationFrom(desktopFoundation, '.pane-header-meta', 'opacity'),
+    ).toBe('1');
+    const groupOpacity = Number(
+      scopedDeclarationFrom(desktopFoundation, '.ez-dock .dv-groupview', 'opacity'),
+    );
+    expect(groupOpacity).toBe(0.82);
+
+    for (const theme of BUILT_IN_THEMES) {
+      const foreground = themeColor(theme, '--ui-text-secondary');
+      const background = theme === 'dark'
+        ? new RegExp('--term-bg-raised\\s*:\\s*(#[0-9a-f]+)').exec(desktopFoundation)?.[1]
+        : scopedDeclarationFrom(
+          desktopFoundation,
+          `[data-theme='${theme}']`,
+          '--term-bg-raised',
+        );
+      expect(background, `${theme} must define the pane header background`).toMatch(/^#[0-9a-f]{6}$/);
+      const effectiveForeground = compositeHex(foreground, background!, groupOpacity);
+      expect(
+        calculateContrastRatio(effectiveForeground, background!),
+        `${theme} inactive pane metadata`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('stops terminal block entry and running-status pulse under reduced motion', () => {
+    const reducedMotion = mediaBlocks(desktopFoundation, '(prefers-reduced-motion: reduce)').join('\n');
+    const animationNoneRule = /\.block,\s*\.block-status--running::before\s*\{([^}]+)\}/
+      .exec(reducedMotion)?.[1] ?? '';
+    expect(animationNoneRule).toMatch(/animation\s*:\s*none\s*!important/);
+
+    const waitingRule = /\.pty-plain-waiting\s*\{([^}]+)\}/.exec(reducedMotion)?.[1] ?? '';
+    expect(waitingRule).toMatch(/animation\s*:\s*none\s*!important/);
   });
 });

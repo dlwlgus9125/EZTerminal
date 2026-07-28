@@ -35,6 +35,11 @@ class FakeSocket implements WsLike {
     this.closed = true;
   }
 
+  triggerClose(): void {
+    this.closed = true;
+    for (const h of this.handlers.close) h();
+  }
+
   addEventListener(type: 'open' | 'message' | 'close' | 'error', listener: never): void {
     this.handlers[type].push(listener as Handler);
   }
@@ -158,6 +163,28 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     expect(socket.sentKinds()).not.toContain('stats-subscribe');
   });
 
+  it('replays session deltas that arrive while the initial snapshot is in flight', async () => {
+    const { transport, socket } = makeAuthedTransport();
+    const el = renderWorkspace(transport);
+
+    act(() => {
+      socket.triggerMessage({
+        kind: 'session-added',
+        session: { sessionId: 'session-new', cwd: '/new' },
+      });
+    });
+    expect(el.querySelectorAll('[data-testid="home-session-row"]')).toHaveLength(1);
+
+    await act(async () => {
+      // This snapshot was captured before session-new was added.
+      socket.triggerMessage({ kind: 'session-list', sessions: [] });
+      await Promise.resolve();
+    });
+
+    expect(el.querySelectorAll('[data-testid="home-session-row"]')).toHaveLength(1);
+    expect(el.textContent).toContain('/new');
+  });
+
   it('opens the preserved terminal with a compact semantic header and returns Home', () => {
     const { transport } = makeAuthedTransport();
     const el = renderWorkspace(transport);
@@ -194,6 +221,59 @@ describe('MobileWorkspace — tab-bar shell root', () => {
 
     tap(el, 'mobile-agent-close');
     expect(el.querySelector('[data-testid="mobile-home-view"]')).toBeTruthy();
+  });
+
+  it('replaces a stale agent snapshot with the authoritative seed after desktop restart', () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeSocket[] = [];
+      const transport = new WsEzTerminalTransport({
+        url: 'ws://x',
+        token: 'tok',
+        createSocket: () => {
+          const socket = new FakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
+        initialBackoffMs: 100,
+      });
+      sockets[0].triggerMessage({ kind: 'auth-ok' });
+      const el = renderWorkspace(transport);
+
+      act(() => {
+        sockets[0].triggerMessage({
+          kind: 'agent-snapshot',
+          snapshot: {
+            revision: 50,
+            items: [{
+              id: 'old-activity',
+              sessionId: 'session-old',
+              provider: 'codex',
+              cwd: '/old',
+              status: 'blocked',
+              createdAt: 1,
+              updatedAt: 2,
+            }],
+          },
+        });
+      });
+      expect(el.querySelector('[data-testid="home-agent-attention"]')).toBeTruthy();
+
+      act(() => {
+        sockets[0].triggerClose();
+        vi.advanceTimersByTime(100);
+        sockets[1].triggerMessage({ kind: 'auth-ok' });
+        sockets[1].triggerMessage({
+          kind: 'agent-snapshot',
+          snapshot: { revision: 0, items: [] },
+        });
+      });
+
+      expect(el.querySelector('[data-testid="home-agent-attention"]')).toBeNull();
+      transport.disconnect();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('opens the session sheet from the terminal header', () => {

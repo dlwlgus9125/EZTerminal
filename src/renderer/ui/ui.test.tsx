@@ -240,6 +240,54 @@ function DialogHarness(): JSX.Element {
   );
 }
 
+function StackedDialogHarness(): JSX.Element {
+  const [outerOpen, setOuterOpen] = useState(false);
+  const [innerOpen, setInnerOpen] = useState(false);
+  return (
+    <>
+      <button type="button" data-testid="outer-opener" onClick={() => setOuterOpen(true)}>
+        Open outer
+      </button>
+      <Dialog open={outerOpen} onOpenChange={setOuterOpen} title="Outer" testId="outer-dialog">
+        <button type="button" data-testid="inner-opener" onClick={() => setInnerOpen(true)}>
+          Open inner
+        </button>
+        <button type="button">Outer action</button>
+        <Dialog open={innerOpen} onOpenChange={setInnerOpen} title="Inner" testId="inner-dialog">
+          <button type="button" data-testid="inner-action">Inner action</button>
+        </Dialog>
+      </Dialog>
+    </>
+  );
+}
+
+function RerenderingDialogHarness(): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [revision, setRevision] = useState(0);
+  return (
+    <>
+      <button type="button" data-testid="rerender-dialog-opener" onClick={() => setOpen(true)}>
+        Open rerendering dialog
+      </button>
+      <Dialog
+        open={open}
+        onOpenChange={(nextOpen) => setOpen(nextOpen)}
+        title={`Rerendering dialog ${revision}`}
+        testId="rerendering-dialog"
+      >
+        <button type="button">First action</button>
+        <button
+          type="button"
+          data-testid="rerender-dialog-action"
+          onClick={() => setRevision((current) => current + 1)}
+        >
+          Rerender
+        </button>
+      </Dialog>
+    </>
+  );
+}
+
 describe('modal and feedback semantics', () => {
   it('focuses the safe dialog action, closes with Escape, and restores opener focus', () => {
     render(<DialogHarness />);
@@ -248,10 +296,58 @@ describe('modal and feedback semantics', () => {
     act(() => opener.click());
     const dialog = document.body.querySelector('[role="dialog"]')!;
     expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(container.hasAttribute('inert')).toBe(true);
+    expect(container.getAttribute('aria-hidden')).toBe('true');
     expect(document.activeElement?.textContent).toBe('Cancel');
     press(document, 'Escape');
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.hasAttribute('inert')).toBe(false);
+    expect(container.hasAttribute('aria-hidden')).toBe(false);
     expect(document.activeElement).toBe(opener);
+  });
+
+  it('lets only the topmost nested dialog trap focus and consume Escape', () => {
+    render(<StackedDialogHarness />);
+    const outerOpener = container.querySelector<HTMLButtonElement>('[data-testid="outer-opener"]')!;
+    outerOpener.focus();
+    act(() => outerOpener.click());
+    const innerOpener = document.body.querySelector<HTMLButtonElement>('[data-testid="inner-opener"]')!;
+    innerOpener.focus();
+    act(() => innerOpener.click());
+
+    const outer = document.body.querySelector<HTMLElement>('[data-testid="outer-dialog"]')!;
+    const inner = document.body.querySelector<HTMLElement>('[data-testid="inner-dialog"]')!;
+    outer.querySelector<HTMLButtonElement>('button')!.focus();
+    press(document, 'Tab');
+    expect(inner.contains(document.activeElement)).toBe(true);
+
+    press(document, 'Escape');
+    expect(document.body.querySelector('[data-testid="inner-dialog"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="outer-dialog"]')).not.toBeNull();
+    expect(document.activeElement).toBe(innerOpener);
+
+    press(document, 'Escape');
+    expect(document.body.querySelector('[data-testid="outer-dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(outerOpener);
+  });
+
+  it('preserves the active control when an open dialog parent rerenders', () => {
+    render(<RerenderingDialogHarness />);
+    const opener = container.querySelector<HTMLButtonElement>('[data-testid="rerender-dialog-opener"]')!;
+    opener.focus();
+    act(() => opener.click());
+
+    const rerenderAction = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="rerender-dialog-action"]',
+    )!;
+    rerenderAction.focus();
+    act(() => rerenderAction.click());
+
+    expect(document.body.querySelector('[data-testid="rerendering-dialog"]')?.textContent)
+      .toContain('Rerendering dialog 1');
+    expect(document.activeElement).toBe(rerenderAction);
+    expect(container.hasAttribute('inert')).toBe(true);
+    expect(container.getAttribute('aria-hidden')).toBe('true');
   });
 
   it('announces loading and error states without relying on colour alone', () => {

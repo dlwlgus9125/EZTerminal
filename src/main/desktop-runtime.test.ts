@@ -217,6 +217,20 @@ describe('ManagedDesktopRuntime Interface', () => {
     await runtime.dispose();
   });
 
+  it('revokes one-time pairing codes before every non-running listener state', async () => {
+    const revokePairingCodes = vi.fn();
+    const h = harness({ revokePairingCodes });
+    const runtime = new ManagedDesktopRuntime(h.options);
+    await runtime.initialize();
+    revokePairingCodes.mockClear();
+
+    await h.ipc.invoke('remote:set-enabled', false);
+
+    expect(revokePairingCodes).toHaveBeenCalled();
+    expect(runtime.isRunning()).toBe(false);
+    await runtime.dispose();
+  });
+
   it('removes handlers/listeners synchronously and disposes every resource exactly once', async () => {
     const h = harness();
     const runtime = new ManagedDesktopRuntime(h.options);

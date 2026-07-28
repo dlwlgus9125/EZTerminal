@@ -18,6 +18,8 @@ import {
   type QuickCommandInput,
 } from '../shared/quick-command';
 import { useAppTranslation } from './i18n';
+import { useNativeOverlayRegistration } from './native-overlay';
+import { isolateModalBackground } from './ui/modal-isolation';
 import './quick-open.css';
 
 export type QuickOpenMode = 'all' | 'commands';
@@ -184,10 +186,12 @@ export function QuickOpenModal({
   onClose,
   quickCommandManager,
 }: QuickOpenModalProps): JSX.Element {
+  useNativeOverlayRegistration();
   const { t } = useAppTranslation();
   const [view, setView] = useState<'results' | 'manage'>('results');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const queryRef = useRef<HTMLInputElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const rowRefs = useRef(new Map<number, HTMLDivElement>());
@@ -218,8 +222,12 @@ export function QuickOpenModal({
 
   useLayoutEffect(() => {
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const releaseBackground = overlayRef.current
+      ? isolateModalBackground(overlayRef.current)
+      : () => undefined;
     queryRef.current?.focus();
     return () => {
+      releaseBackground();
       const previous = previousFocusRef.current;
       if (previous?.isConnected) previous.focus();
     };
@@ -302,7 +310,7 @@ export function QuickOpenModal({
   };
 
   return (
-    <div className="quick-open-overlay" data-testid="quick-open-overlay">
+    <div ref={overlayRef} className="quick-open-overlay" data-testid="quick-open-overlay">
       <div
         ref={dialogRef}
         className="quick-open-modal"
@@ -372,14 +380,14 @@ export function QuickOpenModal({
               data-testid="quick-open-input"
             />
             <div className="quick-open-list" id={listId} role="listbox" aria-label={t('commandCenter.results')}>
-              {indexedGroups.map((group, groupIndex) => (
+              {indexedGroups.map((group) => (
                 <section
                   className="quick-open-group"
                   role="group"
-                  aria-labelledby={`${instanceId}-group-${groupIndex}`}
+                  aria-label={group.label}
                   key={group.label}
                 >
-                  <h2 id={`${instanceId}-group-${groupIndex}`}>{group.label}</h2>
+                  <h2 aria-hidden="true">{group.label}</h2>
                   {group.rows.map(({ row, index }) => {
                     const selected = index === selectedIndex;
                     return (

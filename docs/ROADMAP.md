@@ -1,6 +1,6 @@
 # EZTerminal Roadmap
 
-> Current as of the official **v1.0.9** release (2026-07-26).
+> Current for the **v1.0.13 release candidate** (2026-07-28).
 > This document describes present direction and remaining work. Historical
 > implementation detail belongs in `CHANGELOG.md`, `docs/design/`,
 > `docs/research/`, and versioned release documents.
@@ -66,7 +66,7 @@ See:
 
 - `docs/design/mobile-remote-control-design.md`
 - `docs/design/remote-desktop-design.md`
-- `docs/release/validation-policy-1.0.9.md`
+- `docs/release/validation-policy-1.0.13.md`
 
 ## Maintenance contracts
 

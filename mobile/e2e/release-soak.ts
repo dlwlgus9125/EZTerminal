@@ -63,6 +63,7 @@ const RECOVERY_TIMEOUT_MS = 30_000;
 const MARKER_SETTLE_MS = 1_500;
 const PSS_SLACK_KB = 16 * 1_024;
 const RENDERER_HEAP_SLACK_BYTES = 4 * 1_024 * 1_024;
+const APK_EVIDENCE_PATH = path.relative(ROOT, APK_PATH).split(path.sep).join('/');
 
 type SamplePhase = 'baseline' | 'soak' | 'final';
 
@@ -118,7 +119,6 @@ interface SoakReport {
   finishedAt?: string;
   elapsedMs?: number;
   readonly apkPath: string;
-  readonly reportPath: string;
   releaseIdentity?: {
     readonly appVersion: string;
     readonly buildSha: string;
@@ -347,10 +347,10 @@ async function waitForResume(generation: number): Promise<TransportMarker> {
   }
 }
 
-function writeReport(report: SoakReport): void {
-  mkdirSync(path.dirname(report.reportPath), { recursive: true });
-  writeFileSync(report.reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
-  console.log(`[release-soak] report: ${report.reportPath}`);
+function writeReport(report: SoakReport, reportPath: string): void {
+  mkdirSync(path.dirname(reportPath), { recursive: true });
+  writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+  console.log(`[release-soak] report: ${reportPath}`);
 }
 
 async function main(): Promise<void> {
@@ -360,8 +360,7 @@ async function main(): Promise<void> {
     schemaVersion: 1,
     status: 'running',
     startedAt: new Date(startedAtMs).toISOString(),
-    apkPath: APK_PATH,
-    reportPath,
+    apkPath: APK_EVIDENCE_PATH,
     cycles: [],
     memorySamples: [],
     cleanupErrors: [],
@@ -620,7 +619,7 @@ async function main(): Promise<void> {
     }
     report.finishedAt = new Date().toISOString();
     report.elapsedMs = Date.now() - startedAtMs;
-    writeReport(report);
+    writeReport(report, reportPath);
   }
 }
 

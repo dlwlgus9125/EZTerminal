@@ -1,7 +1,7 @@
 import { Smartphone } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import type { RemoteDeviceEntry } from '../../shared/ipc';
+import type { EzTerminalDesktopApi, RemoteDeviceEntry } from '../../shared/ipc';
 import { useAppTranslation } from '../i18n';
 
 /** Matches the SSH forward list's cadence — the bridge pushes no device events,
@@ -16,20 +16,49 @@ const POLL_MS = 2000;
  * record of someone's hardware to disk for a panel only read while the app is
  * open. The empty state says as much rather than implying history was lost.
  */
-export function RemoteDeviceRoster(): JSX.Element | null {
+type RemoteDeviceAccess = Pick<EzTerminalDesktopApi, 'listRemoteDevices'>;
+type RosterState =
+  | { readonly kind: 'loading'; readonly devices: readonly RemoteDeviceEntry[] }
+  | { readonly kind: 'ready'; readonly devices: readonly RemoteDeviceEntry[] }
+  | { readonly kind: 'unavailable'; readonly devices: readonly RemoteDeviceEntry[] };
+
+export function RemoteDeviceRoster({
+  desktopApi = window.ezterminalDesktop,
+}: {
+  readonly desktopApi?: RemoteDeviceAccess;
+} = {}): JSX.Element {
   const { t, i18n } = useAppTranslation();
-  const [devices, setDevices] = useState<readonly RemoteDeviceEntry[]>([]);
+  const [roster, setRoster] = useState<RosterState>({ kind: 'loading', devices: [] });
   const locale = i18n.resolvedLanguage ?? i18n.language;
 
   useEffect(() => {
     let alive = true;
+    let inFlight = false;
+    let generation = 0;
+    if (!desktopApi) {
+      setRoster({ kind: 'unavailable', devices: [] });
+      return () => {
+        alive = false;
+      };
+    }
     const read = (): void => {
-      void window.ezterminalDesktop?.listRemoteDevices().then(
+      if (inFlight) return;
+      inFlight = true;
+      const ownGeneration = ++generation;
+      void desktopApi.listRemoteDevices().then(
         (next) => {
-          if (alive) setDevices(next);
+          if (alive && generation === ownGeneration) {
+            setRoster({ kind: 'ready', devices: next });
+          }
         },
-        () => undefined,
-      );
+        () => {
+          if (alive && generation === ownGeneration) {
+            setRoster((current) => ({ kind: 'unavailable', devices: current.devices }));
+          }
+        },
+      ).finally(() => {
+        if (generation === ownGeneration) inFlight = false;
+      });
     };
     read();
     const timer = window.setInterval(read, POLL_MS);
@@ -37,17 +66,28 @@ export function RemoteDeviceRoster(): JSX.Element | null {
       alive = false;
       window.clearInterval(timer);
     };
-  }, []);
-
-  if (devices.length === 0) return null;
+  }, [desktopApi]);
 
   const time = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false });
 
   return (
     <section className="status-section" data-testid="remote-device-roster">
       <h2 className="status-section-title">{t('remote.pairedDevices')}</h2>
-      <div className="remote-devices">
-        {devices.map((device) => (
+      {roster.kind === 'loading' ? (
+        <p className="status-empty" role="status" data-testid="remote-device-loading">
+          {t('common.loading')}
+        </p>
+      ) : roster.kind === 'unavailable' ? (
+        <p className="status-empty" role="status" data-testid="remote-device-unavailable">
+          {t('remote.deviceListUnavailable')}
+        </p>
+      ) : roster.devices.length === 0 ? (
+        <p className="status-empty" data-testid="remote-device-empty">
+          {t('remote.topologyNoDevice')}
+        </p>
+      ) : (
+        <div className="remote-devices">
+          {roster.devices.map((device) => (
           <div className="remote-device" key={device.clientId} data-testid="remote-device">
             <Smartphone aria-hidden="true" className="remote-device-icon" />
             <span className="remote-device-name">{device.clientName}</span>
@@ -60,8 +100,9 @@ export function RemoteDeviceRoster(): JSX.Element | null {
                 : t('remote.deviceLastSeen', { time: time.format(new Date(device.lastSeenAt)) })}
             </span>
           </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

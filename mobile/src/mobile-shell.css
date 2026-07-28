@@ -1343,6 +1343,23 @@
   white-space: pre;
 }
 
+.mob-agent-diff-note,
+.mob-agent-diff-omissions {
+  margin: 10px 2px 0;
+  color: var(--ui-text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.mob-agent-diff-omissions {
+  padding-left: 20px;
+}
+
+.mob-agent-diff-omissions code {
+  color: var(--ui-text);
+  font-family: var(--ui-font-terminal);
+}
+
 .mob-agent-card__time {
   margin-left: auto;
   flex: none;

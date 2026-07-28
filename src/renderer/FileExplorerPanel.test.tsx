@@ -27,6 +27,17 @@ let onOpenTerminalAt: ReturnType<typeof vi.fn>;
 let gitStatus: ReturnType<typeof vi.fn>;
 let capabilities: CapabilityAccess;
 
+function deferred<T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 function listing(entries: readonly FileEntry[], path = 'C:\\workspace', parent: string | null = 'C:\\'): FileListResult {
   return {
     ok: true,
@@ -178,6 +189,24 @@ describe('FileExplorerPanel navigation and previews', () => {
     expect(listFiles).toHaveBeenLastCalledWith('C:\\');
   });
 
+  it('keeps a UNC share root intact when navigating with breadcrumbs', async () => {
+    listFiles.mockResolvedValue(listing(
+      [{ name: 'child', kind: 'dir', isSymlink: false, size: 0, mtimeMs: 0 }],
+      '\\\\server\\share\\folder',
+      '\\\\server\\share\\',
+    ));
+    await renderPanel();
+
+    const shareRoot = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="file-breadcrumb-segment"]'),
+    ).find((segment) => segment.textContent?.includes('share'));
+    expect(shareRoot).toBeDefined();
+    act(() => shareRoot!.click());
+    await flush();
+
+    expect(listFiles).toHaveBeenLastCalledWith('\\\\server\\share\\');
+  });
+
   it('renders unsupported binary and truncated text preview states', async () => {
     listFiles.mockResolvedValue(listing([
       file('archive.bin', 1024),
@@ -251,6 +280,7 @@ describe('FileExplorerPanel context actions', () => {
   it('tags listed files with what Git says changed about them', async () => {
     listFiles.mockResolvedValue(listing([file('changed.ts'), file('fresh.ts'), file('quiet.ts')]));
     gitStatus.mockResolvedValue({
+      availability: 'ready',
       tracked: true,
       branch: 'main',
       truncated: false,
@@ -268,9 +298,52 @@ describe('FileExplorerPanel context actions', () => {
     expect(tags[1]?.dataset.kind).toBe('untracked');
   });
 
+  it('does not carry a previous folder Git badge into a newly listed folder', async () => {
+    const nextStatus = deferred<typeof EMPTY_GIT_DIRECTORY_STATUS>();
+    listFiles.mockImplementation(async (path: string) => path === 'C:\\workspace\\other'
+      ? listing([file('same.ts')], 'C:\\workspace\\other', 'C:\\workspace')
+      : listing([
+        { name: 'other', kind: 'dir' as const, isSymlink: false, size: 0, mtimeMs: 0 },
+        file('same.ts'),
+      ]));
+    gitStatus.mockImplementation((path: string) => path === 'C:\\workspace\\other'
+      ? nextStatus.promise
+      : Promise.resolve({
+        availability: 'ready' as const,
+        tracked: true,
+        branch: 'main',
+        truncated: false,
+        changes: [{ path: 'same.ts', kind: 'modified' as const, added: 4, removed: 1 }],
+      }));
+    await renderPanel();
+    expect(container.querySelector('[data-testid="file-entry-change"]')?.textContent)
+      .toBe('+4 \u22121');
+
+    const destination = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="file-entry"]'),
+    ).find((entry) => entry.textContent?.includes('other'));
+    expect(destination).toBeDefined();
+    act(() => destination!.click());
+    await flush();
+
+    expect(listFiles).toHaveBeenLastCalledWith('C:\\workspace\\other');
+    expect(container.querySelector('[data-testid="file-entry"]')?.textContent).toContain('same.ts');
+    expect(container.querySelector('[data-testid="file-entry-change"]')).toBeNull();
+
+    nextStatus.resolve(EMPTY_GIT_DIRECTORY_STATUS);
+    await flush();
+  });
+
   it('leaves the listing alone when the folder is not in a work tree', async () => {
     listFiles.mockResolvedValue(listing([file('a.ts')]));
     await renderPanel();
+    expect(container.querySelector('[data-testid="file-entry-change"]')).toBeNull();
+  });
+
+  it('does not disguise a Git reader failure as a clean folder', async () => {
+    gitStatus.mockRejectedValue(new Error('git unavailable'));
+    await renderPanel();
+    expect(container.querySelector('[data-testid="file-git-unavailable"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="file-entry-change"]')).toBeNull();
   });
 

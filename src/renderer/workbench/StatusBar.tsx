@@ -6,7 +6,7 @@ export interface StatusBarProps {
   readonly attentionCount: number;
   /** Remote desktop host status, or null while it is still unknown. */
   readonly remoteDesktop: RemoteDesktopHostStatus | null;
-  readonly effectProfile: string;
+  readonly effectIntensity: number;
 }
 
 /**
@@ -22,11 +22,11 @@ export interface StatusBarProps {
 export function StatusBar({
   attentionCount,
   remoteDesktop,
-  effectProfile,
+  effectIntensity,
 }: StatusBarProps): JSX.Element {
-  const { t } = useAppTranslation();
-  const { preferences, updatePreferences } = useUiPreferences();
-  const korean = preferences.locale === 'ko';
+  const { i18n, t } = useAppTranslation();
+  const { updatePreferences } = useUiPreferences();
+  const korean = (i18n.resolvedLanguage ?? i18n.language).toLowerCase().startsWith('ko');
   const rtt = remoteDesktop?.roundTripTimeMs ?? null;
 
   return (
@@ -73,7 +73,7 @@ export function StatusBar({
       </button>
 
       <span className="workbench-status-bar__item workbench-status-bar__item--fx">
-        {`FX · ${effectProfile}`}
+        {`FX · NEON ${effectIntensity}`}
       </span>
     </footer>
   );

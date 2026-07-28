@@ -32,11 +32,13 @@
  * Run locally: `node mobile/e2e/handoff-surfaces.ts`.
  */
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import {
   APP_ID,
   EMULATOR_HOST_URL,
-  ROOT,
   assertNoWebViewJavaScriptRuntimeErrors,
   closeMobileE2eResources,
   connectAndAuth,
@@ -56,6 +58,8 @@ import {
 const RTT_TIMEOUT_MS = 30_000;
 /** A git-status round trip spawns a real `git` process on the desktop. */
 const BRANCH_TIMEOUT_MS = 30_000;
+const GIT_FIXTURE_PREFIX = 'ezterminal-git-e2e-';
+const GIT_FIXTURE_BRANCH = 'ezterminal-e2e';
 
 interface AppliedEffects {
   readonly scanlines: string | null;
@@ -87,26 +91,68 @@ function expect(actual: unknown, expected: unknown, what: string): void {
   }
 }
 
+function removeGitFixture(directory: string): void {
+  const resolved = path.resolve(directory);
+  const temporaryRoot = path.resolve(tmpdir());
+  if (
+    path.dirname(resolved) !== temporaryRoot
+    || !path.basename(resolved).startsWith(GIT_FIXTURE_PREFIX)
+  ) {
+    throw new Error(`refusing to remove unexpected Git fixture path: ${resolved}`);
+  }
+  rmSync(resolved, { force: true, recursive: true });
+}
+
+function runFixtureGit(directory: string, args: readonly string[]): string {
+  return execFileSync('git', [...args], {
+    cwd: directory,
+    encoding: 'utf8',
+  }).trim();
+}
+
+function createGitFixture(): { readonly branch: string; readonly directory: string } {
+  const directory = mkdtempSync(path.join(tmpdir(), GIT_FIXTURE_PREFIX));
+  try {
+    runFixtureGit(directory, ['init', '--quiet']);
+    writeFileSync(path.join(directory, 'fixture.txt'), 'EZTerminal mobile Git status fixture\n', 'utf8');
+    runFixtureGit(directory, ['add', '--', 'fixture.txt']);
+    runFixtureGit(directory, [
+      '-c',
+      'user.name=EZTerminal E2E',
+      '-c',
+      'user.email=e2e@ezterminal.invalid',
+      'commit',
+      '--quiet',
+      '-m',
+      'Create deterministic Git status fixture',
+    ]);
+    runFixtureGit(directory, ['branch', '-M', GIT_FIXTURE_BRANCH]);
+    const branch = runFixtureGit(directory, ['branch', '--show-current']);
+    expect(branch, GIT_FIXTURE_BRANCH, 'temporary Git fixture branch');
+    return { branch, directory };
+  } catch (error) {
+    removeGitFixture(directory);
+    throw error;
+  }
+}
+
 async function main(): Promise<void> {
+  // Release workflows commonly check out a detached HEAD. Give the desktop a
+  // tiny independent repository with a deterministic branch so the device
+  // lane always proves the v3 git-status reply instead of silently skipping
+  // the assertion based on the checkout shape.
+  const gitFixture = createGitFixture();
   console.log('[surfaces] launching desktop app (isolated userData)...');
-  const { app, token } = await launchDesktop();
+  let launched: Awaited<ReturnType<typeof launchDesktop>>;
+  try {
+    launched = await launchDesktop({ cwd: gitFixture.directory });
+  } catch (error) {
+    removeGitFixture(gitFixture.directory);
+    throw error;
+  }
+  const { app, token } = launched;
 
   try {
-    // The phone's status line reports the branch of the SESSION's cwd, and a
-    // session created through the bridge inherits the desktop's cwd — which is
-    // this harness's cwd. Ask Git directly rather than through the app, so the
-    // expectation cannot be produced by the same code path it is checking.
-    let branch = '';
-    try {
-      branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-        cwd: ROOT,
-        encoding: 'utf8',
-      }).trim();
-      if (branch === 'HEAD') branch = '';
-    } catch {
-      branch = '';
-    }
-
     await connectAndAuth(token);
     console.log('[surfaces] step OK: connected');
 
@@ -117,8 +163,8 @@ async function main(): Promise<void> {
     expect(effects.rollbar, 'on', 'html[data-effect-crt-rollbar] on a fresh install');
     // Not part of the signature: it costs frames on a phone.
     expect(effects.flicker, null, 'html[data-effect-flicker] on a fresh install');
-    expect(effects.thickness, '130', 'mobile roll-band thickness (desktop default is 120)');
-    expect(effects.opacity, '0.05', 'mobile roll-band opacity (desktop default is 0.20)');
+    expect(effects.thickness, '130', 'mobile roll-band thickness (desktop default is 150)');
+    expect(effects.opacity, '0.05', 'mobile roll-band opacity (desktop default is 0.09)');
     console.log('[surfaces] step OK: CRT Signature applied to the live DOM with mobile band params');
 
     // ── 2 + 3. the terminal status line ──────────────────────────────────
@@ -131,30 +177,24 @@ async function main(): Promise<void> {
     if (!/\d+\s*ms/u.test(rtt)) throw new Error(`RTT chip did not render a latency: ${JSON.stringify(rtt)}`);
     console.log(`[surfaces] step OK: latency probe round-tripped over v3 (${rtt.trim()})`);
 
-    if (branch) {
-      // The status line shows the cwd until the reply lands — that fallback is
-      // the product's design, so this polls rather than reading once. On a
-      // WebView 74 device the round trip is comfortably slower than the RTT
-      // chip appearing, and the chip is not a synchronisation point for it.
-      const deadline = Date.now() + BRANCH_TIMEOUT_MS;
-      let line = '';
-      for (;;) {
-        line = (await getTestIdTextContent('terminal-status-line')) ?? '';
-        if (line.includes(branch)) break;
-        if (Date.now() > deadline) {
-          throw new Error(
-            `status line never showed the desktop's branch ${JSON.stringify(branch)} `
-            + `within ${BRANCH_TIMEOUT_MS}ms: ${JSON.stringify(line)}`,
-          );
-        }
-        await sleep(500);
+    // The status line shows the cwd until the reply lands — that fallback is
+    // the product's design, so this polls rather than reading once. On a
+    // WebView 74 device the round trip is comfortably slower than the RTT
+    // chip appearing, and the chip is not a synchronisation point for it.
+    const deadline = Date.now() + BRANCH_TIMEOUT_MS;
+    let line = '';
+    for (;;) {
+      line = (await getTestIdTextContent('terminal-status-line')) ?? '';
+      if (line.includes(gitFixture.branch)) break;
+      if (Date.now() > deadline) {
+        throw new Error(
+          `status line never showed the desktop's branch ${JSON.stringify(gitFixture.branch)} `
+          + `within ${BRANCH_TIMEOUT_MS}ms: ${JSON.stringify(line)}`,
+        );
       }
-      console.log(`[surfaces] step OK: git-status arm round-tripped (branch ${branch})`);
-    } else {
-      // Never silently skip: a run that could not establish the fixture has to
-      // say so, or a green log would imply coverage it did not have.
-      console.log('[surfaces] SKIPPED: desktop cwd is not a Git work tree, branch assertion not run');
+      await sleep(500);
     }
+    console.log(`[surfaces] step OK: git-status arm round-tripped (branch ${gitFixture.branch})`);
 
     // ── 4. one-time pairing, end to end ──────────────────────────────────
     const code: string = await app.evaluate(async ({ BrowserWindow }) => {
@@ -212,8 +252,12 @@ async function main(): Promise<void> {
     console.log('[surfaces] ALL STEPS PASSED');
   } finally {
     console.log('[surfaces] teardown...');
-    closeMobileE2eResources();
-    await app.close().catch(() => undefined);
+    try {
+      closeMobileE2eResources();
+    } finally {
+      await app.close().catch(() => undefined);
+      removeGitFixture(gitFixture.directory);
+    }
   }
 }
 

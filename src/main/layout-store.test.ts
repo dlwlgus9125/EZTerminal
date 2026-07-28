@@ -125,6 +125,7 @@ describe('LayoutStore — atomic Adaptive Workbench preferences', () => {
       locale: 'system',
       density: 'adaptive',
       sidebarWidth: 320,
+      effectIntensity: 7,
     });
   });
 
@@ -136,11 +137,13 @@ describe('LayoutStore — atomic Adaptive Workbench preferences', () => {
       locale: 'ko',
       density: 'compact',
       sidebarWidth: 404,
+      effectIntensity: 9,
     });
     expect(await store.getUiPreferences()).toEqual({
       locale: 'ko',
       density: 'compact',
       sidebarWidth: 404,
+      effectIntensity: 9,
     });
     expect(await store.getTheme()).toBe('light');
   });
@@ -152,6 +155,7 @@ describe('LayoutStore — atomic Adaptive Workbench preferences', () => {
       locale: 'en',
       density: 'comfortable',
       sidebarWidth: 360,
+      effectIntensity: 3,
     });
     await store.setStartup({ mode: 'preset', presetName: 'focus' });
     await store.setUiScale(125);
@@ -159,6 +163,7 @@ describe('LayoutStore — atomic Adaptive Workbench preferences', () => {
       locale: 'en',
       density: 'comfortable',
       sidebarWidth: 360,
+      effectIntensity: 3,
     });
   });
 
@@ -171,9 +176,29 @@ describe('LayoutStore — atomic Adaptive Workbench preferences', () => {
       store.setUiPreferences({ density: 'compact' }),
     ]);
 
-    expect(afterLocale).toEqual({ locale: 'ko', density: 'adaptive', sidebarWidth: 320 });
-    expect(afterDensity).toEqual({ locale: 'ko', density: 'compact', sidebarWidth: 320 });
+    expect(afterLocale).toEqual({ locale: 'ko', density: 'adaptive', sidebarWidth: 320, effectIntensity: 7 });
+    expect(afterDensity).toEqual({ locale: 'ko', density: 'compact', sidebarWidth: 320, effectIntensity: 7 });
     expect(await store.getUiPreferences()).toEqual(afterDensity);
+  });
+
+  it('clamps an out-of-range persisted intensity without quarantining unrelated settings', async () => {
+    const dir = makeDir();
+    const store = new LayoutStore(dir);
+    await store.init();
+    writeFileSync(
+      path.join(dir, 'settings.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        startup: { mode: 'last' },
+        theme: 'light',
+        effectIntensity: 11,
+      }),
+      'utf8',
+    );
+
+    expect((await store.getUiPreferences()).effectIntensity).toBe(10);
+    expect(await store.getTheme()).toBe('light');
+    expect(existsSync(path.join(dir, 'settings.json.corrupt'))).toBe(false);
   });
 });
 

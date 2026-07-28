@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useNativeOverlayRegistration } from './native-overlay';
+
 export interface TerminalContextMenuItem {
   /** Used verbatim in `data-testid="term-ctx-<action>"` — keep these stable, e2e depends on them. */
   readonly action: string;
@@ -136,6 +138,7 @@ export function TerminalContextMenu({
   testId = 'terminal-context-menu',
   itemTestIdPrefix = 'term-ctx',
 }: TerminalContextMenuProps): JSX.Element {
+  useNativeOverlayRegistration();
   const menuRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   // Rendered at the raw cursor position first, then clamped to the viewport

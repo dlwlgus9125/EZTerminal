@@ -127,7 +127,11 @@ interface TerminalPaneProps {
   readonly onManageQuickCommands?: () => void;
   /** The permission call the agent in THIS pane is parked on, if any. */
   readonly pendingApproval?: PaneApproval;
-  readonly onDecideApproval?: (activityId: string, decision: AgentDecision) => Promise<AgentDecisionResult>;
+  readonly onDecideApproval?: (
+    activityId: string,
+    approvalId: string,
+    decision: AgentDecision,
+  ) => Promise<AgentDecisionResult>;
 }
 
 /** The pending permission call for the agent running in a given pane, so the
@@ -136,19 +140,6 @@ interface TerminalPaneProps {
 export interface PaneApproval {
   readonly activityId: string;
   readonly approval: AgentApproval;
-}
-
-/** A one-second clock that only runs while `active`. The approval banner has a
- * deadline; nothing else in this pane needs to re-render on a timer. */
-function useNowWhile(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return undefined;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1_000);
-    return () => clearInterval(timer);
-  }, [active]);
-  return now;
 }
 
 export function TerminalPane({
@@ -166,9 +157,6 @@ export function TerminalPane({
   onDecideApproval,
 }: TerminalPaneProps): JSX.Element {
   const { t } = useAppTranslation();
-  // Only ticks while a decision is actually parked here, so an idle pane keeps
-  // its old render cadence.
-  const approvalNow = useNowWhile(pendingApproval !== undefined);
   const resolvedTerminalRuntimeOptions = terminalRuntimeOptions ?? DEFAULT_TERMINAL_RUNTIME_OPTIONS;
   const [command, setCommand] = useState('');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
@@ -1040,7 +1028,7 @@ export function TerminalPane({
       {/* The same decision the Agent Hub offers, in the pane the agent is
           actually running in — asking someone to switch panels to answer a
           question about the terminal they are looking at is the long way. */}
-      {pendingApproval && pendingApproval.approval.expiresAt > approvalNow && (
+      {pendingApproval?.approval.pending && (
         <div
           className="pane-approval"
           data-risk={pendingApproval.approval.risk}
@@ -1059,7 +1047,11 @@ export function TerminalPane({
               variant="primary"
               size="sm"
               disabled={!onDecideApproval}
-              onClick={() => void onDecideApproval?.(pendingApproval.activityId, 'allow')}
+              onClick={() => void onDecideApproval?.(
+                pendingApproval.activityId,
+                pendingApproval.approval.approvalId,
+                'allow',
+              )}
               data-testid="pane-approve"
             >
               {t('agentHub.approve')}
@@ -1068,7 +1060,11 @@ export function TerminalPane({
               variant="danger"
               size="sm"
               disabled={!onDecideApproval}
-              onClick={() => void onDecideApproval?.(pendingApproval.activityId, 'deny')}
+              onClick={() => void onDecideApproval?.(
+                pendingApproval.activityId,
+                pendingApproval.approval.approvalId,
+                'deny',
+              )}
               data-testid="pane-deny"
             >
               {t('agentHub.deny')}
@@ -1147,6 +1143,23 @@ export function TerminalPane({
               if (bytes === null) return; // unsupported key — leave default input behavior alone
               e.preventDefault();
               activeController.current?.sendPtyInput(bytes);
+              return;
+            }
+            if (
+              e.code === 'KeyK'
+              && (e.ctrlKey || e.metaKey)
+              && !e.altKey
+              && !e.shiftKey
+              && !e.nativeEvent.isComposing
+            ) {
+              // Readline parity while the composer is idle: kill from the
+              // caret to end-of-line. During a live plain PTY the branch above
+              // sends the real ^K byte instead.
+              e.preventDefault();
+              const input = e.currentTarget;
+              const caret = input.selectionStart ?? command.length;
+              setCommand(command.slice(0, caret));
+              requestAnimationFrame(() => input.setSelectionRange(caret, caret));
               return;
             }
             if (e.key === 'Enter') {

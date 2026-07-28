@@ -4,6 +4,7 @@ import type { IDockviewPanelProps } from 'dockview-react';
 import type { OpenClawChatViewState, OpenClawStatus, OpenClawStatusState } from '../shared/openclaw';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
+import { useNativeOverlayOpen } from './native-overlay';
 
 /**
  * Whether any overlay that visually sits above the dockview area (drawer/
@@ -62,6 +63,7 @@ export function OpenClawChatPanel(
   const capabilities = props.capabilities ?? rendererCapabilities;
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
   const [viewState, setViewState] = useState<OpenClawChatViewState>({ hasError: false, loading: false });
+  const [observationFailed, setObservationFailed] = useState(false);
   const [busyLifecycle, setBusyLifecycle] = useState(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -69,7 +71,9 @@ export function OpenClawChatPanel(
 
   // ── Effective visibility: this tab's own dockview visibility (hidden when
   // another tab in its group is active) ANDed with "no overlay above it".
-  const overlayOpen = useContext(OpenClawOverlayContext);
+  const contextOverlayOpen = useContext(OpenClawOverlayContext);
+  const registeredOverlayOpen = useNativeOverlayOpen();
+  const overlayOpen = contextOverlayOpen || registeredOverlayOpen;
   const [panelVisible, setPanelVisible] = useState(props.api.isVisible);
   useEffect(() => {
     setPanelVisible(props.api.isVisible);
@@ -92,8 +96,18 @@ export function OpenClawChatPanel(
   // the panel detects a stopped->running transition and requests the view.
   useEffect(() => {
     return capabilities.openClaw.observeChat({
-      onStatus: setStatus,
-      onViewState: setViewState,
+      onStatus: (nextStatus) => {
+        setObservationFailed(false);
+        setStatus(nextStatus);
+      },
+      onViewState: (nextState) => {
+        setObservationFailed(false);
+        setViewState(nextState);
+      },
+      onError: () => {
+        setObservationFailed(true);
+        setViewState({ hasError: true, loading: false });
+      },
     });
   }, [capabilities]);
 
@@ -105,6 +119,7 @@ export function OpenClawChatPanel(
   // healthy again (openclaw-stabilization M5).
   useEffect(() => {
     if (status?.state === 'running') {
+      if (observationFailed) return;
       if (!openedRef.current) {
         openedRef.current = true;
         if (viewState.hasError) {
@@ -116,7 +131,7 @@ export function OpenClawChatPanel(
     } else {
       openedRef.current = false;
     }
-  }, [capabilities, status?.state, viewState.hasError]);
+  }, [capabilities, observationFailed, status?.state, viewState.hasError]);
 
   // ── Bounds reporting: rAF-throttled ResizeObserver + scroll/layout nudges.
   const reportBounds = useThrottledRaf(() => {
@@ -170,9 +185,10 @@ export function OpenClawChatPanel(
   }, [capabilities]);
 
   const state = status?.state;
-  const showGuidance = state !== 'running';
-  const showReconnect = state === 'running' && viewState.hasError;
-  const showLoading = state === 'running' && viewState.loading && !viewState.hasError;
+  const showGuidance = !observationFailed && state !== 'running';
+  const showReconnect = observationFailed || (state === 'running' && viewState.hasError);
+  const showLoading =
+    !observationFailed && state === 'running' && viewState.loading && !viewState.hasError;
 
   return (
     <div
@@ -216,7 +232,7 @@ export function OpenClawChatPanel(
       )}
       {showReconnect && (
         <div className="openclaw-chat-guidance" data-testid="openclaw-chat-reconnect">
-          <p className="openclaw-guidance-text">{t('openClaw.chatDisconnected')}</p>
+          <p className="openclaw-guidance-text">{t('openClaw.chatUnavailable')}</p>
           <button type="button" className="btn btn-split" onClick={reconnect} data-testid="openclaw-chat-reconnect-btn">
             {t('openClaw.reconnect')}
           </button>

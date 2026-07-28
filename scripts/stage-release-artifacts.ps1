@@ -1,12 +1,6 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Version,
-
-    [Parameter(Mandatory = $true)]
-    [int]$AndroidVersionCode,
-
-    [Parameter(Mandatory = $true)]
     [string]$AndroidApkPath,
 
     [Parameter(Mandatory = $true)]
@@ -19,13 +13,20 @@ param(
 
     [string]$LocalRcReportPath = '',
 
+    [string]$MobileSoakReportPath = '',
+
+    [string]$PerformanceBaselineReportPath = '',
+
+    [string]$PerformanceCandidateReportPath = '',
+
+    [string]$EvidenceBundleSha256 = '',
+
     [string]$ExpectedCommit = $env:GITHUB_SHA,
-    [string]$ReleaseAssetsPath = 'release-assets',
-    [ValidateSet('full', 'functional-hotfix')]
-    [string]$ValidationProfile = 'full',
+    [string]$ReleaseAssetsPath = '',
+    [ValidateSet('candidate', 'release')]
+    [string]$ArtifactStage = 'candidate',
     [ValidateSet('NotSigned', 'Valid')]
     [string]$ExpectedWindowsSignature = 'NotSigned',
-    [int]$ProtocolVersion = 2,
     [switch]$RequireCleanTree
 )
 
@@ -55,8 +56,54 @@ try {
         return $actual
     }
 
-    if ($Version -notmatch '^\d+\.\d+\.\d+$') {
-        throw "Version must be a three-part semantic version, got '$Version'."
+    function Assert-CleanReleaseTree {
+        param([string]$Phase, [string]$ExpectedSha)
+        $head = (& git rev-parse HEAD).Trim()
+        if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
+            throw "Could not resolve the release source HEAD ($Phase)."
+        }
+        if ($head -cne $ExpectedSha) {
+            throw "Release source HEAD changed from $ExpectedSha to $head ($Phase)."
+        }
+        $status = @(git status --porcelain --untracked-files=all)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not inspect the release source tree ($Phase)."
+        }
+        if ($status.Count -ne 0) {
+            $status | ForEach-Object { Write-Host $_ }
+            throw "Release source contains tracked or untracked changes ($Phase)."
+        }
+    }
+
+    function Get-BytesSha256 {
+        param([byte[]]$Bytes)
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try {
+            return (
+                [BitConverter]::ToString($sha256.ComputeHash($Bytes)) -replace '-', ''
+            ).ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+        }
+    }
+
+    function Resolve-NormalEvidenceFile {
+        param([string]$Path, [string]$Label)
+        if ([string]::IsNullOrWhiteSpace($Path)) {
+            throw "$Label path is required."
+        }
+        $resolved = (Resolve-Path -LiteralPath $Path).Path
+        $item = Get-Item -LiteralPath $resolved -Force
+        if (
+            $item.PSIsContainer -or
+            ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        ) {
+            throw "$Label must be a normal file: $resolved"
+        }
+        if ($item.Length -lt 1 -or $item.Length -gt 16777216) {
+            throw "$Label must be between 1 and 16777216 bytes: $resolved"
+        }
+        return $item.FullName
     }
 
     & node scripts/verify-version-contract.mjs
@@ -64,16 +111,41 @@ try {
         throw 'Version contract verification failed.'
     }
     $versionContract = Get-Content release/version.json -Raw | ConvertFrom-Json
-    Assert-Equal ([string]$versionContract.version) $Version 'release contract version'
-    Assert-Equal ([int]$versionContract.androidVersionCode) $AndroidVersionCode 'Android versionCode'
-    Assert-Equal ([int]$versionContract.protocolVersion) $ProtocolVersion 'protocol version'
-    Assert-Equal (
-        [string]$versionContract.validationProfile
-    ) $ValidationProfile 'release validation profile'
+    $Version = [string]$versionContract.version
+    $AndroidVersionCode = [int]$versionContract.androidVersionCode
+    $ProtocolVersion = [int]$versionContract.protocolVersion
+    $ValidationProfile = [string]$versionContract.validationProfile
+    if ($Version -notmatch '^\d+\.\d+\.\d+$') {
+        throw "Version must be a three-part semantic version, got '$Version'."
+    }
+    if ($ValidationProfile -notin @('full', 'functional-hotfix')) {
+        throw "Unsupported release validation profile '$ValidationProfile'."
+    }
+    $commit = (& git rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
+        throw 'Could not resolve the release source commit.'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit)) {
+        if ($ExpectedCommit -notmatch '^[0-9A-Fa-f]{40}$') {
+            throw "ExpectedCommit must be the complete 40-digit source SHA, got '$ExpectedCommit'."
+        }
+        Assert-Equal $commit $ExpectedCommit.ToLowerInvariant() 'release source commit'
+    }
+    if ($ArtifactStage -eq 'release' -and -not $RequireCleanTree) {
+        throw 'Release artifact staging requires -RequireCleanTree.'
+    }
+    if ($RequireCleanTree) {
+        Assert-CleanReleaseTree 'before release evidence verification' $commit
+    }
 
     $normalizedRcReportHash = $null
+    $normalizedEvidenceBundleHash = $null
     $localRcReportBytes = $null
     $localRcReport = $null
+    $mobileSoakReportBytes = $null
+    $performanceBaselineReportBytes = $null
+    $performanceCandidateReportBytes = $null
+    $sourceEvidence = $null
     if ($ValidationProfile -eq 'full') {
         $normalizedRcReportHash = (
             $LocalRcReportSha256 -replace '[^0-9A-Fa-f]', ''
@@ -81,7 +153,8 @@ try {
         if ($normalizedRcReportHash -notmatch '^[0-9a-f]{64}$') {
             throw 'LocalRcReportSha256 must contain exactly 64 hexadecimal digits.'
         }
-        $resolvedRcReport = (Resolve-Path -LiteralPath $LocalRcReportPath).Path
+        $resolvedRcReport = Resolve-NormalEvidenceFile `
+            $LocalRcReportPath 'Local RC report'
         $localRcReportBytes = [IO.File]::ReadAllBytes($resolvedRcReport)
         $actualRcReportHash = (
             Get-FileHash -LiteralPath $resolvedRcReport -Algorithm SHA256
@@ -95,11 +168,86 @@ try {
         } catch {
             throw 'LocalRcReportPath does not contain valid UTF-8 JSON.'
         }
-        Assert-Equal ([int]$localRcReport.schemaVersion) 1 'local RC report schema'
+        Assert-Equal ([int]$localRcReport.schemaVersion) 2 'local RC report schema'
         Assert-Equal ([string]$localRcReport.appVersion) $Version 'local RC report appVersion'
+        Assert-Equal ([string]$localRcReport.releaseStage) $ArtifactStage 'local RC report releaseStage'
+        $expectedEvidenceCompleteness = if ($ArtifactStage -eq 'candidate') {
+            'functional-complete-performance-pending'
+        } else {
+            'complete'
+        }
+        Assert-Equal (
+            [string]$localRcReport.evidenceCompleteness
+        ) $expectedEvidenceCompleteness 'local RC evidence completeness'
         Assert-Equal (
             [string]$localRcReport.validationPolicy
         ) 'current-windows-host-and-api-29-35-emulators' 'local RC validation policy'
+        $resolvedMobileSoakReport = Resolve-NormalEvidenceFile `
+            $MobileSoakReportPath 'Mobile soak source evidence'
+        $sourceEvidenceArguments = @(
+            'scripts/verify-release-source-evidence.mjs',
+            '--report', $resolvedRcReport,
+            '--mobile-soak', $resolvedMobileSoakReport,
+            '--expected-version', $Version,
+            '--expected-build-sha', $commit,
+            '--expected-stage', $ArtifactStage
+        )
+        if ($ArtifactStage -eq 'candidate') {
+            if (
+                -not [string]::IsNullOrWhiteSpace($PerformanceBaselineReportPath) -or
+                -not [string]::IsNullOrWhiteSpace($PerformanceCandidateReportPath) -or
+                -not [string]::IsNullOrWhiteSpace($EvidenceBundleSha256)
+            ) {
+                throw 'Candidate staging must not attach final performance or bundle evidence.'
+            }
+        } else {
+            $resolvedPerformanceBaselineReport = Resolve-NormalEvidenceFile `
+                $PerformanceBaselineReportPath 'Performance baseline source evidence'
+            $resolvedPerformanceCandidateReport = Resolve-NormalEvidenceFile `
+                $PerformanceCandidateReportPath 'Performance candidate source evidence'
+            $normalizedEvidenceBundleHash = (
+                $EvidenceBundleSha256 -replace '[^0-9A-Fa-f]', ''
+            ).ToLowerInvariant()
+            if ($normalizedEvidenceBundleHash -notmatch '^[0-9a-f]{64}$') {
+                throw 'EvidenceBundleSha256 must contain exactly 64 hexadecimal digits.'
+            }
+            $sourceEvidenceArguments += @(
+                '--performance-baseline', $resolvedPerformanceBaselineReport,
+                '--performance-candidate', $resolvedPerformanceCandidateReport
+            )
+        }
+        $sourceEvidenceJson = & node @sourceEvidenceArguments | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host $sourceEvidenceJson
+            throw 'Release source evidence validation failed.'
+        }
+        $sourceEvidence = $sourceEvidenceJson | ConvertFrom-Json
+        if ($sourceEvidence.ok -ne $true) {
+            throw 'Release source-evidence validator did not report success.'
+        }
+        $mobileSoakReportBytes = [IO.File]::ReadAllBytes(
+            $resolvedMobileSoakReport
+        )
+        Assert-Equal (
+            Get-BytesSha256 $mobileSoakReportBytes
+        ) ([string]$localRcReport.mobileSoak.reportSha256) `
+            'mobile soak source SHA-256'
+        if ($ArtifactStage -eq 'release') {
+            $performanceBaselineReportBytes = [IO.File]::ReadAllBytes(
+                $resolvedPerformanceBaselineReport
+            )
+            $performanceCandidateReportBytes = [IO.File]::ReadAllBytes(
+                $resolvedPerformanceCandidateReport
+            )
+            Assert-Equal (
+                Get-BytesSha256 $performanceBaselineReportBytes
+            ) ([string]$localRcReport.desktopPerformance.baselineReportSha256) `
+                'performance baseline source SHA-256'
+            Assert-Equal (
+                Get-BytesSha256 $performanceCandidateReportBytes
+            ) ([string]$localRcReport.desktopPerformance.candidateReportSha256) `
+                'performance candidate source SHA-256'
+        }
     $requiredFunctionalLimits = @(
         'Lock and UAC secure-desktop capture and input are not supported.',
         'Software SAS and Ctrl+Alt+Delete are not supported.',
@@ -111,6 +259,34 @@ try {
         }
     }
     $desktopPerformance = $localRcReport.desktopPerformance
+    if ($ArtifactStage -eq 'candidate') {
+        if ($null -eq $desktopPerformance) {
+            throw 'Candidate staging requires an explicit pending desktop performance state.'
+        }
+        $candidatePerformanceProperties = @(
+            $desktopPerformance.PSObject.Properties |
+                ForEach-Object { [string]$_.Name }
+        )
+        $expectedCandidatePerformanceProperties = @('status', 'reason')
+        if (
+            $candidatePerformanceProperties.Count -ne
+                $expectedCandidatePerformanceProperties.Count -or
+            @($expectedCandidatePerformanceProperties | Where-Object {
+                $candidatePerformanceProperties -notcontains $_
+            }).Count -ne 0
+        ) {
+            throw (
+                'Candidate staging accepts only status/reason desktop performance fields; ' +
+                'stale performance evidence must not be attached.'
+            )
+        }
+        Assert-Equal (
+            [string]$desktopPerformance.status
+        ) 'pending-final-release-measurement' 'candidate desktop performance status'
+        Assert-Equal (
+            [string]$desktopPerformance.reason
+        ) 'not-requested-for-this-local-rc' 'candidate desktop performance reason'
+    } else {
     Assert-Equal ([string]$desktopPerformance.status) 'passed' 'desktop performance status'
     Assert-Equal ([int]$desktopPerformance.schemaVersion) 2 'desktop performance comparison schema'
     if ([string]$desktopPerformance.baselineBuildSha -notmatch '^[0-9a-f]{40}$') {
@@ -354,23 +530,18 @@ try {
     if ($failedPerformanceResults.Count -ne 0) {
         throw 'Desktop performance evidence exceeds a relative regression or target-improvement budget.'
     }
+    }
     } elseif (
         -not [string]::IsNullOrWhiteSpace($LocalRcReportSha256) -or
-        -not [string]::IsNullOrWhiteSpace($LocalRcReportPath)
+        -not [string]::IsNullOrWhiteSpace($LocalRcReportPath) -or
+        -not [string]::IsNullOrWhiteSpace($MobileSoakReportPath) -or
+        -not [string]::IsNullOrWhiteSpace($PerformanceBaselineReportPath) -or
+        -not [string]::IsNullOrWhiteSpace($PerformanceCandidateReportPath) -or
+        -not [string]::IsNullOrWhiteSpace($EvidenceBundleSha256)
     ) {
-        throw 'functional-hotfix staging must not attach or claim a full local RC report.'
+        throw 'functional-hotfix staging must not attach or claim full source evidence.'
     }
 
-    $commit = (& git rev-parse HEAD).Trim()
-    if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
-        throw 'Could not resolve the release source commit.'
-    }
-    if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit)) {
-        if ($ExpectedCommit -notmatch '^[0-9A-Fa-f]{40}$') {
-            throw "ExpectedCommit must be the complete 40-digit source SHA, got '$ExpectedCommit'."
-        }
-        Assert-Equal $commit $ExpectedCommit.ToLowerInvariant() 'release source commit'
-    }
     if ($ValidationProfile -eq 'full') {
     Assert-Equal ([string]$localRcReport.buildSha) $commit 'local RC report buildSha'
     Assert-Equal ([int]$localRcReport.playwrightRetries) 0 'local RC Playwright retry count'
@@ -398,6 +569,21 @@ try {
     if ($passedApi29.Count -lt 1 -or $passedApi35.Count -lt 1) {
         throw 'Local RC report lacks passing API 29 and API 35 emulator evidence.'
     }
+    foreach ($device in @($passedApi29 + $passedApi35)) {
+        $deviceLanes = @($device.lanes | ForEach-Object { [string]$_ })
+        foreach ($requiredLane in @(
+            'instrumentation',
+            'smoke',
+            'stabilization',
+            'parity',
+            'theme-effects',
+            'handoff-surfaces'
+        )) {
+            if ($deviceLanes -notcontains $requiredLane) {
+                throw "Local RC device evidence for API $($device.api) omits '$requiredLane'."
+            }
+        }
+    }
     Assert-Equal ([string]$localRcReport.mobileSoak.status) 'passed' 'mobile soak status'
     Assert-Equal ([string]$localRcReport.mobileSoak.buildSha) $commit 'mobile soak buildSha'
     Assert-Equal ([string]$localRcReport.mobileSoak.appVersion) $Version 'mobile soak appVersion'
@@ -413,11 +599,7 @@ try {
     }
     }
     if ($RequireCleanTree) {
-        $status = @(git status --porcelain --untracked-files=all)
-        if ($status.Count -ne 0) {
-            $status | ForEach-Object { Write-Host $_ }
-            throw 'Release source contains tracked changes after the build.'
-        }
+        Assert-CleanReleaseTree 'before artifact staging' $commit
     }
 
     $appExe = (Resolve-Path -LiteralPath 'out/EZTerminal-win32-x64/EZTerminal.exe').Path
@@ -445,12 +627,67 @@ try {
     $appSignature = Assert-Authenticode $appExe $ExpectedWindowsSignature
     $setupSignature = Assert-Authenticode $setupExe $ExpectedWindowsSignature
 
-    $assets = [IO.Path]::GetFullPath((Join-Path $repoRoot $ReleaseAssetsPath))
+    $sha8 = $commit.Substring(0, 8)
+    $expectedAssetsName = if ($ArtifactStage -eq 'candidate') {
+        "$Version-rc-$sha8"
+    } else {
+        "$Version-release-$sha8"
+    }
     $repoPrefix = $repoRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    $releaseAssetsRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot 'release-assets'))
+    $requestedAssetsPath = if ([string]::IsNullOrWhiteSpace($ReleaseAssetsPath)) {
+        Join-Path $releaseAssetsRoot $expectedAssetsName
+    } elseif ([IO.Path]::IsPathRooted($ReleaseAssetsPath)) {
+        $ReleaseAssetsPath
+    } else {
+        Join-Path $repoRoot $ReleaseAssetsPath
+    }
+    $assets = [IO.Path]::GetFullPath($requestedAssetsPath)
     if (-not $assets.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
         throw "ReleaseAssetsPath must remain inside the repository: $assets"
     }
+    if (
+        -not [string]::Equals(
+            [IO.Path]::GetDirectoryName($assets),
+            $releaseAssetsRoot,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        -not [string]::Equals(
+            [IO.Path]::GetFileName($assets),
+            $expectedAssetsName,
+            [StringComparison]::OrdinalIgnoreCase
+        )
+    ) {
+        throw (
+            'ReleaseAssetsPath must be the exact version/SHA-scoped child ' +
+            "$expectedAssetsName below release-assets: $assets"
+        )
+    }
+    if (
+        (Test-Path -LiteralPath $releaseAssetsRoot) -and
+        ((Get-Item -LiteralPath $releaseAssetsRoot -Force).Attributes -band
+            [IO.FileAttributes]::ReparsePoint)
+    ) {
+        throw "release-assets must not be a reparse point: $releaseAssetsRoot"
+    }
     if (Test-Path -LiteralPath $assets) {
+        $existingAssets = Get-Item -LiteralPath $assets -Force
+        if (
+            -not $existingAssets.PSIsContainer -or
+            ($existingAssets.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        ) {
+            throw "The scoped release target must be a normal directory: $assets"
+        }
+        $unsafeChildren = @(
+            Get-ChildItem -LiteralPath $assets -Force |
+                Where-Object {
+                    $_.PSIsContainer -or
+                    ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)
+                }
+        )
+        if ($unsafeChildren.Count -ne 0) {
+            throw "The scoped release target contains unsafe nested or linked entries: $assets"
+        }
         Remove-Item -LiteralPath $assets -Recurse -Force
     }
     New-Item -ItemType Directory -Path $assets | Out-Null
@@ -460,6 +697,20 @@ try {
             (Join-Path $assets 'local-rc-report.json'),
             $localRcReportBytes
         )
+        [IO.File]::WriteAllBytes(
+            (Join-Path $assets 'mobile-soak-report.json'),
+            $mobileSoakReportBytes
+        )
+        if ($ArtifactStage -eq 'release') {
+            [IO.File]::WriteAllBytes(
+                (Join-Path $assets 'desktop-performance-baseline.json'),
+                $performanceBaselineReportBytes
+            )
+            [IO.File]::WriteAllBytes(
+                (Join-Path $assets 'desktop-performance-report.json'),
+                $performanceCandidateReportBytes
+            )
+        }
     }
 
     Copy-Item -LiteralPath $setupExe -Destination (Join-Path $assets 'EZTerminal-Setup.exe')
@@ -494,28 +745,76 @@ try {
         "$androidName.sha256"
     )
     if ($ValidationProfile -eq 'full') {
-        $manifestArtifacts = @(
+        $sourceArtifacts = @(
             'EZTerminal-Setup.exe',
             'local-rc-report.json',
+            'mobile-soak-report.json',
             'sbom.cdx.json',
             $androidName,
             "$androidName.sha256"
         )
+        if ($ArtifactStage -eq 'release') {
+            $sourceArtifacts = @(
+                'EZTerminal-Setup.exe',
+                'local-rc-report.json',
+                'mobile-soak-report.json',
+                'desktop-performance-baseline.json',
+                'desktop-performance-report.json',
+                'sbom.cdx.json',
+                $androidName,
+                "$androidName.sha256"
+            )
+        }
+        $manifestArtifacts = $sourceArtifacts
     }
 
     $manifest = [ordered]@{
         appVersion = $Version
         androidVersionCode = $AndroidVersionCode
-        protocolVersion = $ProtocolVersion
+        protocolVersion = [int]$versionContract.protocolVersion
         validationProfile = $ValidationProfile
+        artifactStage = if ($ArtifactStage -eq 'candidate') {
+            'local-release-candidate'
+        } else {
+            'release'
+        }
+        publicationEligible = ($ArtifactStage -eq 'release')
+        evidenceCompleteness = if ($ArtifactStage -eq 'candidate') {
+            'functional-complete-performance-pending'
+        } else {
+            'complete'
+        }
         buildSha = $commit
         embeddedBuildShaVerified = $true
         localRcReportSha256 = $normalizedRcReportHash
         localRcReportVerified = ($ValidationProfile -eq 'full')
+        sourceEvidence = if ($ValidationProfile -eq 'full') {
+            [ordered]@{
+                verified = $true
+                approvalBundleSha256 = $normalizedEvidenceBundleHash
+                mobileSoakReportSha256 = [string]$localRcReport.mobileSoak.reportSha256
+                performanceBaselineReportSha256 = if ($ArtifactStage -eq 'release') {
+                    [string]$localRcReport.desktopPerformance.baselineReportSha256
+                } else {
+                    $null
+                }
+                performanceCandidateReportSha256 = if ($ArtifactStage -eq 'release') {
+                    [string]$localRcReport.desktopPerformance.candidateReportSha256
+                } else {
+                    $null
+                }
+            }
+        } else {
+            $null
+        }
         generatedAtUtc = [DateTime]::UtcNow.ToString('o')
         validation = [ordered]@{
             commonFunctionalGates = 'passed'
-            performanceBenchmark = if ($ValidationProfile -eq 'full') {
+            performanceBenchmark = if (
+                $ValidationProfile -eq 'full' -and $ArtifactStage -eq 'candidate'
+            ) {
+                'pending-final-release-measurement'
+            } elseif ($ValidationProfile -eq 'full') {
                 'passed'
             } else {
                 'not-run-by-explicit-operator-request'
@@ -534,7 +833,7 @@ try {
         androidSigningCertSha256 = ($AndroidCertSha256 -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
         artifacts = $manifestArtifacts
     }
-    $manifest | ConvertTo-Json -Depth 5 |
+    $manifest | ConvertTo-Json -Depth 6 |
         Set-Content -LiteralPath (Join-Path $assets 'release-manifest.json') -Encoding utf8
 
     $hashLines = Get-ChildItem -LiteralPath $assets -File |
@@ -546,6 +845,9 @@ try {
         }
     $hashLines | Set-Content -LiteralPath (Join-Path $assets 'SHA256SUMS.txt') -Encoding ascii
 
+    if ($RequireCleanTree) {
+        Assert-CleanReleaseTree 'after artifact staging' $commit
+    }
     Write-Host "Staged verified release assets for $Version from $commit"
     Get-ChildItem -LiteralPath $assets -File | Sort-Object Name |
         Select-Object Name, Length | Format-Table -AutoSize

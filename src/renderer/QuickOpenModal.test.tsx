@@ -206,6 +206,8 @@ describe('QuickOpenModal results', () => {
     const input = container.querySelector<HTMLInputElement>('[data-testid="quick-open-input"]')!;
     const close = container.querySelector<HTMLButtonElement>('.quick-open-close')!;
     expect(document.activeElement).toBe(input);
+    expect(invoker.hasAttribute('inert')).toBe(true);
+    expect(invoker.getAttribute('aria-hidden')).toBe('true');
 
     key(input, 'Tab');
     expect(document.activeElement).toBe(close);
@@ -215,6 +217,8 @@ describe('QuickOpenModal results', () => {
 
     expect(onClose).toHaveBeenCalledOnce();
     expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(invoker.hasAttribute('inert')).toBe(false);
+    expect(invoker.hasAttribute('aria-hidden')).toBe(false);
     expect(document.activeElement).toBe(invoker);
   });
 });

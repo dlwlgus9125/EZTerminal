@@ -25,11 +25,33 @@ const GIT_MAX_BUFFER = 1024 * 1024;
 
 export type ExecFileLike = typeof execFile;
 
+export interface GitRunnerOptions {
+  readonly timeoutMs?: number;
+  readonly maxBuffer?: number;
+}
+
+function gitEnvironment(): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    // Git gives these variables precedence over cwd, repository config, and
+    // command-line discovery. A parent shell must not be able to redirect an
+    // EZTerminal query to another repository or inject Git configuration.
+    if (key.toUpperCase().startsWith('GIT_')) continue;
+    if (value !== undefined) environment[key] = value;
+  }
+  environment.GIT_TERMINAL_PROMPT = '0';
+  environment.LC_ALL = 'C';
+  return environment;
+}
+
 export class GitCommandError extends Error {
   constructor(
     readonly args: readonly string[],
     readonly stderr: string,
     readonly exitCode: number | string | null,
+    /** Bounded output retained for readers that intentionally accept a
+     * max-buffer truncation. Mutating worktree callers ignore it. */
+    readonly partialStdout: string,
     options?: ErrorOptions,
   ) {
     super('git command failed', options);
@@ -38,7 +60,10 @@ export class GitCommandError extends Error {
 
 /** Bounded, non-interactive, argv-only Git CLI runner. */
 export class GitRunner {
-  constructor(private readonly execute: ExecFileLike = execFile) {}
+  constructor(
+    private readonly execute: ExecFileLike = execFile,
+    private readonly options: GitRunnerOptions = {},
+  ) {}
 
   run(cwd: string, args: readonly string[], signal?: AbortSignal): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -47,20 +72,22 @@ export class GitRunner {
         encoding: 'utf8',
         windowsHide: true,
         shell: false,
-        timeout: GIT_TIMEOUT_MS,
-        maxBuffer: GIT_MAX_BUFFER,
+        timeout: this.options.timeoutMs ?? GIT_TIMEOUT_MS,
+        maxBuffer: this.options.maxBuffer ?? GIT_MAX_BUFFER,
         signal,
-        env: {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: '0',
-          GIT_CONFIG_NOSYSTEM: '0',
-          LC_ALL: 'C',
-        },
+        env: gitEnvironment(),
       };
       this.execute('git', [...args], options, (error, stdout, stderr) => {
         if (error) {
           const code = (error as NodeJS.ErrnoException & { code?: number | string }).code ?? null;
-          reject(new GitCommandError(args, String(stderr).slice(0, GIT_MAX_BUFFER), code, { cause: error }));
+          const maxBuffer = this.options.maxBuffer ?? GIT_MAX_BUFFER;
+          reject(new GitCommandError(
+            args,
+            String(stderr).slice(0, maxBuffer),
+            code,
+            String(stdout).slice(0, maxBuffer),
+            { cause: error },
+          ));
           return;
         }
         resolve(String(stdout));

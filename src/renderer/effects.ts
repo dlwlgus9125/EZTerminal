@@ -1,4 +1,9 @@
 import type { ThemeDefinition } from './themes';
+import {
+  DEFAULT_EFFECT_INTENSITY,
+  MAX_EFFECT_INTENSITY,
+  MIN_EFFECT_INTENSITY,
+} from '../shared/ui-preferences';
 
 // Effect catalog (theme-effects-font M0/M1) — a curated, finite set of visual
 // effects a theme MAY declare (`ThemeDefinition.effects`) and the user MAY
@@ -85,6 +90,9 @@ export function resolveActiveEffects(
  * `::before`, phosphor-glow -> text-shadow, flicker -> an opacity keyframe). */
 let requestedEffects = new Set<EffectId>();
 let reducedMotionQuery: MediaQueryList | undefined;
+let effectIntensity = DEFAULT_EFFECT_INTENSITY;
+
+export const MIN_MOTION_EFFECT_INTENSITY = 5;
 
 function writeEffectAttributes(active: ReadonlySet<EffectId>): void {
   for (const id of EFFECT_IDS) {
@@ -98,7 +106,13 @@ function writeEffectAttributes(active: ReadonlySet<EffectId>): void {
 }
 
 function effectiveEffectsForMotionPreference(active: ReadonlySet<EffectId>): Set<EffectId> {
-  if (!reducedMotionQuery?.matches) return new Set(active);
+  // Intensity zero is a durable master-off presentation state. Theme changes
+  // and individual-toggle updates both call `applyEffects`, so this guard must
+  // live in the shared resolver rather than only in `applyEffectIntensity`.
+  if (effectIntensity === 0) return new Set();
+  if (!reducedMotionQuery?.matches && effectIntensity >= MIN_MOTION_EFFECT_INTENSITY) {
+    return new Set(active);
+  }
   return new Set([...active].filter((id) => !MOVING_EFFECT_IDS.has(id)));
 }
 
@@ -118,5 +132,22 @@ function ensureReducedMotionQuery(): void {
 export function applyEffects(active: Set<EffectId>): void {
   requestedEffects = new Set(active);
   ensureReducedMotionQuery();
+  writeEffectAttributes(effectiveEffectsForMotionPreference(requestedEffects));
+}
+
+/**
+ * Apply the persisted presentation intensity without changing the user's
+ * individual effect toggles. Motion is suppressed below level 5, and level 0
+ * removes every decorative effect from the live document while preserving the
+ * requested set for a later level increase.
+ */
+export function applyEffectIntensity(value: number): void {
+  effectIntensity = Math.min(MAX_EFFECT_INTENSITY, Math.max(MIN_EFFECT_INTENSITY, Math.round(value)));
+  const root = document.documentElement;
+  root.dataset.effectIntensity = String(effectIntensity);
+  root.style.setProperty(
+    '--ui-effect-intensity',
+    String(Math.min(MAX_EFFECT_INTENSITY, effectIntensity + 1) / MAX_EFFECT_INTENSITY),
+  );
   writeEffectAttributes(effectiveEffectsForMotionPreference(requestedEffects));
 }

@@ -62,10 +62,20 @@ import {
   type SessionInfo,
   type SystemStatsSnapshot,
 } from '../../../src/shared/ipc';
-import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult, type FileReadTextResult } from '../../../src/shared/files';
-import type {
-  FilePreviewResult,
-  FilePreviewStreamMetadata,
+import {
+  DOWNLOAD_MAX_FILE_BYTES,
+  FILE_CHUNK_BYTES,
+  TEXT_VIEW_MAX_BYTES,
+  type FileListResult,
+  type FileOpResult,
+  type FileReadTextResult,
+} from '../../../src/shared/files';
+import {
+  IMAGE_PREVIEW_MAX_BYTES,
+  IMAGE_PREVIEW_MAX_DIMENSION,
+  IMAGE_PREVIEW_MAX_PIXELS,
+  type FilePreviewResult,
+  type FilePreviewStreamMetadata,
 } from '../../../src/shared/file-preview';
 import type { StartupPref, ThemeName } from '../../../src/shared/layout-schema';
 import type {
@@ -78,6 +88,7 @@ import type {
   WorktreeRequest,
   WorktreeResult,
 } from '../../../src/shared/worktree';
+import { isPairingCode, isRemoteBearerToken } from '../../../src/shared/pairing';
 import {
   EMPTY_AGENT_ACTIVITY_SNAPSHOT,
   type AgentActivitySnapshot,
@@ -86,7 +97,7 @@ import {
   type AgentFollowupResult,
 } from '../../../src/shared/agent';
 import {
-  EMPTY_GIT_DIRECTORY_STATUS,
+  UNAVAILABLE_GIT_DIRECTORY_STATUS,
   type GitDiffResult,
   type GitDirectoryStatus,
 } from '../../../src/shared/git-status';
@@ -96,6 +107,7 @@ import {
   REMOTE_CAPABILITY_DESKTOP_CONTROL,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_PROTOCOL_VERSION,
+  SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
   uint8ArrayToBase64,
   type BuildInfo,
   type ClientToServerMessage,
@@ -109,6 +121,7 @@ import {
   type RemoteCapability,
   type RemoteClientIdentity,
   type RemotePacketFrame,
+  type RemoteProtocolVersion,
   type ServerToClientMessage,
 } from '../../../src/shared/remote-protocol';
 import {
@@ -163,12 +176,18 @@ type FileReadResult =
     }
   | { readonly ok: false; readonly error: string };
 
+type FileReadMode = 'text' | 'raw' | 'preview';
+
 /** Tracks one in-flight `file-read` request between `file-read-meta` and the
  * last `file-read-chunk` — `buffer` is allocated once `sendBytes` is known
  * (null beforehand, and stays null for a binary file in `'text'` mode, which
  * never streams any chunk). `onProgress` is only used by `downloadFile`. */
 interface FileReadAssembly {
   buffer: Uint8Array | null;
+  metaReceived: boolean;
+  expectedOffset: number | null;
+  readonly mode: FileReadMode;
+  readonly maxSendBytes: number;
   fileSize: number;
   isText: boolean;
   truncated: boolean;
@@ -253,6 +272,294 @@ const RESUME_RETRY_INITIAL_MS = 250;
 const RESUME_RETRY_MAX_MS = 4000;
 const RESUME_RETRY_MAX_ATTEMPTS = 5;
 const MAX_GUARDED_DESTROY_ID_LENGTH = 256;
+const MAX_REMOTE_AGENT_ITEMS = 2_048;
+const MAX_REMOTE_AGENT_ID_LENGTH = 256;
+const MAX_REMOTE_AGENT_CWD_LENGTH = 8_192;
+const MAX_REMOTE_AGENT_TOOL_LENGTH = 256;
+const MAX_REMOTE_AGENT_COMMAND_LENGTH = 64 * 1_024;
+const MAX_REMOTE_AGENT_FOLLOWUP_LENGTH = 8_192;
+const MAX_REMOTE_GIT_CHANGES = 2_000;
+const MAX_REMOTE_GIT_OMISSIONS = 2_000;
+const MAX_REMOTE_GIT_PATH_LENGTH = 8_192;
+const MAX_REMOTE_GIT_BRANCH_LENGTH = 1_024;
+const MAX_REMOTE_GIT_DIFF_LENGTH = 200_000;
+const MAX_FILE_CHUNK_BASE64_CHARS = Math.ceil(FILE_CHUNK_BYTES / 3) * 4 + 4;
+
+function maxFileReadBytes(mode: FileReadMode): number {
+  if (mode === 'text') return TEXT_VIEW_MAX_BYTES;
+  if (mode === 'preview') return IMAGE_PREVIEW_MAX_BYTES;
+  return DOWNLOAD_MAX_FILE_BYTES;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isFilePreviewStreamMetadata(value: unknown): value is FilePreviewStreamMetadata {
+  if (!isRecord(value) || typeof value.name !== 'string') return false;
+  switch (value.kind) {
+    case 'text':
+      return value.mime === 'text/plain' || value.mime === 'text/markdown';
+    case 'image':
+      return (
+        (
+          value.mime === 'image/png'
+          || value.mime === 'image/jpeg'
+          || value.mime === 'image/gif'
+          || value.mime === 'image/webp'
+        )
+        && Number.isSafeInteger(value.width)
+        && Number.isSafeInteger(value.height)
+        && (value.width as number) > 0
+        && (value.height as number) > 0
+        && (value.width as number) <= IMAGE_PREVIEW_MAX_DIMENSION
+        && (value.height as number) <= IMAGE_PREVIEW_MAX_DIMENSION
+        && (value.width as number) * (value.height as number) <= IMAGE_PREVIEW_MAX_PIXELS
+      );
+    case 'pdf':
+      return value.mime === 'application/pdf';
+    case 'unsupported':
+      return (
+        value.reason === 'binary'
+        || value.reason === 'image-too-large'
+        || value.reason === 'image-dimensions'
+        || value.reason === 'invalid-image'
+      );
+    default:
+      return false;
+  }
+}
+
+function isFileReadMetaConsistent(
+  assembly: FileReadAssembly,
+  fileSize: number,
+  sendBytes: number,
+  isText: boolean,
+  truncated: boolean,
+  preview: unknown,
+): boolean {
+  if (assembly.mode === 'raw') {
+    return (
+      preview === undefined
+      && isText
+      && !truncated
+      && sendBytes === fileSize
+      && fileSize <= DOWNLOAD_MAX_FILE_BYTES
+    );
+  }
+
+  const expectedTextBytes = Math.min(fileSize, TEXT_VIEW_MAX_BYTES);
+  if (assembly.mode === 'text') {
+    if (preview !== undefined) return false;
+    return isText
+      ? sendBytes === expectedTextBytes && truncated === (fileSize > TEXT_VIEW_MAX_BYTES)
+      : sendBytes === 0 && !truncated;
+  }
+
+  if (!isFilePreviewStreamMetadata(preview)) return false;
+  switch (preview.kind) {
+    case 'text':
+      return isText
+        && sendBytes === expectedTextBytes
+        && truncated === (fileSize > TEXT_VIEW_MAX_BYTES);
+    case 'image':
+      return !isText
+        && !truncated
+        && fileSize <= IMAGE_PREVIEW_MAX_BYTES
+        && sendBytes === fileSize;
+    case 'pdf':
+    case 'unsupported':
+      return !isText && !truncated && sendBytes === 0;
+  }
+}
+
+function isFiniteTimestamp(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isBoundedString(value: unknown, maxLength: number, allowEmpty = false): value is string {
+  return (
+    typeof value === 'string'
+    && value.length <= maxLength
+    && (allowEmpty || value.length > 0)
+  );
+}
+
+/**
+ * `JSON.parse` does not make a wire payload trustworthy. Keep malformed or
+ * unbounded desktop snapshots out of React state instead of relying on a
+ * compile-time cast that disappears at runtime.
+ */
+function isAgentActivitySnapshot(value: unknown): value is AgentActivitySnapshot {
+  if (
+    !isRecord(value)
+    || !Number.isSafeInteger(value.revision)
+    || (value.revision as number) < 0
+    || !Array.isArray(value.items)
+    || value.items.length > MAX_REMOTE_AGENT_ITEMS
+  ) return false;
+
+  return value.items.every((item) => {
+    if (
+      !isRecord(item)
+      || !isBoundedString(item.id, MAX_REMOTE_AGENT_ID_LENGTH)
+      || !isBoundedString(item.sessionId, MAX_REMOTE_AGENT_ID_LENGTH)
+      || (item.provider !== 'codex' && item.provider !== 'claude' && item.provider !== 'generic')
+      || !isBoundedString(item.cwd, MAX_REMOTE_AGENT_CWD_LENGTH, true)
+      || (
+        item.status !== 'starting'
+        && item.status !== 'working'
+        && item.status !== 'waiting'
+        && item.status !== 'blocked'
+        && item.status !== 'done'
+        && item.status !== 'error'
+      )
+      || !isFiniteTimestamp(item.createdAt)
+      || !isFiniteTimestamp(item.updatedAt)
+    ) return false;
+    if (item.approval === undefined) return true;
+    if (
+      !isRecord(item.approval)
+      || !isBoundedString(item.approval.approvalId, MAX_REMOTE_AGENT_ID_LENGTH)
+      || !isBoundedString(item.approval.toolName, MAX_REMOTE_AGENT_TOOL_LENGTH, true)
+      || (
+        item.approval.command !== undefined
+        && !isBoundedString(item.approval.command, MAX_REMOTE_AGENT_COMMAND_LENGTH, true)
+      )
+      || (
+        item.approval.risk !== 'danger'
+        && item.approval.risk !== 'write'
+        && item.approval.risk !== 'read'
+      )
+      || typeof item.approval.pending !== 'boolean'
+      || !isFiniteTimestamp(item.approval.requestedAt)
+      || !isFiniteTimestamp(item.approval.expiresAt)
+      || item.approval.expiresAt < item.approval.requestedAt
+    ) return false;
+    return true;
+  });
+}
+
+function isAgentFollowupResult(value: unknown): value is AgentFollowupResult {
+  return isRecord(value) && (
+    value.ok === true
+    || (
+      value.ok === false
+      && (
+        value.error === 'not-found'
+        || value.error === 'not-waiting'
+        || value.error === 'invalid-text'
+        || value.error === 'session-ended'
+        || value.error === 'delivery-failed'
+      )
+    )
+  );
+}
+
+function isAgentDecisionResult(value: unknown): value is AgentDecisionResult {
+  return isRecord(value) && (
+    value.ok === true
+    || (
+      value.ok === false
+      && (
+        value.error === 'not-found'
+        || value.error === 'not-pending'
+        || value.error === 'expired'
+        || value.error === 'stale'
+        || value.error === 'conflict'
+        || value.error === 'delivery-failed'
+        || value.error === 'outcome-unknown'
+      )
+    )
+  );
+}
+
+function isOptionalNonNegativeInteger(value: unknown): boolean {
+  return value === undefined || (
+    Number.isSafeInteger(value)
+    && (value as number) >= 0
+  );
+}
+
+function isSafeRelativeGitPath(value: unknown): value is string {
+  if (
+    !isBoundedString(value, MAX_REMOTE_GIT_PATH_LENGTH)
+    || value.includes('\0')
+    || value.startsWith('/')
+    || value.startsWith('\\')
+    || /^[A-Za-z]:[\\/]/u.test(value)
+  ) return false;
+  return value.split(/[\\/]/u).every((segment) => segment !== '..');
+}
+
+function isGitDirectoryStatus(value: unknown): value is GitDirectoryStatus {
+  if (
+    !isRecord(value)
+    || !Array.isArray(value.changes)
+    || value.changes.length > MAX_REMOTE_GIT_CHANGES
+  ) return false;
+  if (value.availability === 'ready') {
+    if (
+      value.tracked !== true
+      || typeof value.truncated !== 'boolean'
+      || (
+        value.branch !== undefined
+        && !isBoundedString(value.branch, MAX_REMOTE_GIT_BRANCH_LENGTH)
+      )
+    ) return false;
+    return value.changes.every((change) => (
+      isRecord(change)
+      && isSafeRelativeGitPath(change.path)
+      && (
+        change.kind === 'added'
+        || change.kind === 'modified'
+        || change.kind === 'deleted'
+        || change.kind === 'renamed'
+        || change.kind === 'untracked'
+        || change.kind === 'conflicted'
+      )
+      && isOptionalNonNegativeInteger(change.added)
+      && isOptionalNonNegativeInteger(change.removed)
+    ));
+  }
+  return (
+    (value.availability === 'not-a-repository' || value.availability === 'unavailable')
+    && value.tracked === false
+    && value.branch === undefined
+    && value.changes.length === 0
+    && value.truncated === false
+  );
+}
+
+function isGitDiffResult(value: unknown): value is GitDiffResult {
+  if (!isRecord(value) || typeof value.ok !== 'boolean') return false;
+  if (!value.ok) {
+    return (
+      value.error === 'not-a-repository'
+      || value.error === 'invalid-path'
+      || value.error === 'git-failed'
+    );
+  }
+  if (
+    typeof value.text !== 'string'
+    || value.text.length > MAX_REMOTE_GIT_DIFF_LENGTH
+    || typeof value.truncated !== 'boolean'
+    || !Array.isArray(value.omissions)
+    || value.omissions.length > MAX_REMOTE_GIT_OMISSIONS
+  ) return false;
+  return value.omissions.every((omission) => (
+    isRecord(omission)
+    && isSafeRelativeGitPath(omission.path)
+    && (
+      omission.reason === 'binary'
+      || omission.reason === 'symlink'
+      || omission.reason === 'too-large'
+      || omission.reason === 'unsupported'
+      || omission.reason === 'read-failed'
+      || omission.reason === 'budget-exhausted'
+    )
+  ));
+}
 
 function isGuardedDestroyId(value: unknown): value is string {
   return (
@@ -277,6 +584,18 @@ export type RemoteQuickCommandsResult =
  * reconnect loop forever because reconnects are only scheduled on `close`.
  */
 const DEFAULT_AUTH_TIMEOUT_MS = 6000;
+/** An approval may already have executed when its reply is lost. Keep the
+ * exact idempotency key alive across a short reconnect window instead of
+ * reporting a false failure. */
+const AGENT_DECISION_RETRY_WINDOW_MS = 60_000;
+
+interface PendingAgentDecision {
+  readonly activityId: string;
+  readonly approvalId: string;
+  readonly decision: AgentDecision;
+  readonly resolve: (result: AgentDecisionResult) => void;
+  timer: ReturnType<typeof setTimeout> | null;
+}
 
 /**
  * A duck-typed stand-in for a real `MessagePort` — see the module doc for why
@@ -406,6 +725,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private lastConnectedAt: number | null = null;
   private hostVersion = 'unknown';
   private hostBuildSha = 'unknown';
+  /** Starts at v3; a stored bearer may negotiate one common lower version on explicit host evidence. */
+  private requestedProtocolVersion: RemoteProtocolVersion = REMOTE_PROTOCOL_VERSION;
+  private negotiatedProtocolVersion: RemoteProtocolVersion | null = null;
+  private protocolDowngradeAttempted = false;
   private reattachPrioritySessionId: string | null = null;
 
   /** Stable renderer-side ports. They deliberately survive transient sockets;
@@ -438,6 +761,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * an immediate replay of the CURRENT state to a listener that just subscribed. */
   private readonly authListeners = new Set<(authed: boolean) => void>();
   private readonly tokenIssuedListeners = new Set<(token: string) => void>();
+  /** Retained separately from `token` so a listener mounted after a fast
+   * pairing handshake can distinguish and persist the issued bearer. */
+  private pairingIssuedToken: string | null = null;
   private readonly connectionStateListeners = new Set<(state: RemoteConnectionState) => void>();
   private readonly connectionHealthListeners = new Set<(snapshot: ConnectionHealthSnapshot) => void>();
   private remoteCapabilities = new Set<RemoteCapability>();
@@ -475,7 +801,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly agentSnapshotListeners = new Set<(snapshot: AgentActivitySnapshot) => void>();
   private readonly pendingAgentSnapshots = new Map<string, (snapshot: AgentActivitySnapshot) => void>();
   private readonly pendingAgentFollowups = new Map<string, (result: AgentFollowupResult) => void>();
-  private readonly pendingAgentDecisions = new Map<string, (result: AgentDecisionResult) => void>();
+  private readonly pendingAgentDecisions = new Map<string, PendingAgentDecision>();
 
   /** The desired stats-visible state, remembered across reconnects — see the
    * 'auth-ok' replay in `handleServerMessage`. */
@@ -508,6 +834,11 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   >();
   private roundTripMs: number | null = null;
   private roundTripTimer: ReturnType<typeof setInterval> | null = null;
+  private roundTripProbeSequence = 0;
+  private readonly pendingRoundTripProbes = new Map<
+    string,
+    { readonly sentAt: number; readonly generation: number }
+  >();
   private readonly pendingGitStatus = new Map<string, (status: GitDirectoryStatus) => void>();
   private readonly pendingGitDiffs = new Map<string, (result: GitDiffResult) => void>();
   private readonly worktreeOpenListeners = new Set<(worktree: WorktreeInfo) => void>();
@@ -789,6 +1120,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   }
 
   getGitStatus(directory: string): Promise<GitDirectoryStatus> {
+    if (this.negotiatedProtocolVersion !== REMOTE_PROTOCOL_VERSION) {
+      return Promise.resolve(UNAVAILABLE_GIT_DIRECTORY_STATUS);
+    }
     return new Promise((resolve) => {
       const requestId = this.newId();
       if (!this.tryStartMapRequest(
@@ -796,13 +1130,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         this.pendingGitStatus,
         requestId,
         resolve,
-        // Offline is indistinguishable from "not a repository" to the caller,
-        // and both mean the same thing to a status line: show nothing.
-      )) resolve(EMPTY_GIT_DIRECTORY_STATUS);
+      )) resolve(UNAVAILABLE_GIT_DIRECTORY_STATUS);
     });
   }
 
   getGitDiff(directory: string): Promise<GitDiffResult> {
+    if (this.negotiatedProtocolVersion !== REMOTE_PROTOCOL_VERSION) {
+      return Promise.resolve({ ok: false, error: 'git-failed' });
+    }
     return new Promise((resolve) => {
       const requestId = this.newId();
       if (!this.tryStartMapRequest(
@@ -855,6 +1190,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   }
 
   getAgentActivitySnapshot(): Promise<AgentActivitySnapshot> {
+    if (this.negotiatedProtocolVersion !== REMOTE_PROTOCOL_VERSION) {
+      return Promise.resolve(this.agentSnapshot);
+    }
     return new Promise((resolve) => {
       const requestId = this.newId();
       if (!this.tryStartMapRequest(
@@ -873,6 +1211,17 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   }
 
   sendAgentFollowup(activityId: string, text: string): Promise<AgentFollowupResult> {
+    if (this.negotiatedProtocolVersion !== REMOTE_PROTOCOL_VERSION) {
+      return Promise.resolve({ ok: false, error: 'delivery-failed' });
+    }
+    if (
+      !isBoundedString(activityId, MAX_REMOTE_AGENT_ID_LENGTH)
+      || /[\r\n]/u.test(text)
+      || text.trim().length === 0
+      || text.trim().length > MAX_REMOTE_AGENT_FOLLOWUP_LENGTH
+    ) {
+      return Promise.resolve({ ok: false, error: 'invalid-text' });
+    }
     return new Promise((resolve) => {
       const requestId = this.newId();
       if (!this.tryStartMapRequest(
@@ -884,26 +1233,64 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     });
   }
 
-  decideAgentApproval(activityId: string, decision: AgentDecision): Promise<AgentDecisionResult> {
+  decideAgentApproval(
+    activityId: string,
+    approvalId: string,
+    decision: AgentDecision,
+  ): Promise<AgentDecisionResult> {
+    if (this.negotiatedProtocolVersion !== REMOTE_PROTOCOL_VERSION) {
+      return Promise.resolve({ ok: false, error: 'delivery-failed' });
+    }
+    if (
+      !isBoundedString(activityId, MAX_REMOTE_AGENT_ID_LENGTH)
+      || !isBoundedString(approvalId, MAX_REMOTE_AGENT_ID_LENGTH)
+    ) {
+      return Promise.resolve({ ok: false, error: 'delivery-failed' });
+    }
     return new Promise((resolve) => {
       const requestId = this.newId();
+      const pending: PendingAgentDecision = {
+        activityId,
+        approvalId,
+        decision,
+        resolve,
+        timer: null,
+      };
+      pending.timer = setTimeout(() => {
+        if (this.pendingAgentDecisions.get(requestId) !== pending) return;
+        this.pendingAgentDecisions.delete(requestId);
+        pending.timer = null;
+        pending.resolve({ ok: false, error: 'outcome-unknown' });
+      }, AGENT_DECISION_RETRY_WINDOW_MS);
       if (!this.tryStartMapRequest(
-        { kind: 'agent-decision', requestId, activityId, decision },
+        { kind: 'agent-decision', requestId, activityId, approvalId, decision },
         this.pendingAgentDecisions,
         requestId,
-        resolve,
+        pending,
         // A desktop older than protocol v3 does not know this verb. Reporting
         // it as not-found keeps the phone honest instead of showing a success
         // the gate never granted.
-      )) resolve({ ok: false, error: 'delivery-failed' });
+      )) {
+        if (pending.timer !== null) clearTimeout(pending.timer);
+        pending.timer = null;
+        resolve({ ok: false, error: 'delivery-failed' });
+      }
     });
   }
 
   /** Mobile-only: the host handed over a long-lived bearer after this link
    * authenticated with a one-time pairing code. The app persists it so the
-   * next launch does not need the desktop's screen. */
+   * next launch does not need the desktop's screen. Replays the issued bearer
+   * because the constructor starts the socket before React can mount effects. */
   onTokenIssued(listener: (token: string) => void): () => void {
     this.tokenIssuedListeners.add(listener);
+    if (this.pairingIssuedToken !== null) {
+      try {
+        listener(this.pairingIssuedToken);
+      } catch {
+        // A persistence observer cannot invalidate the adopted credential.
+      }
+    }
     return () => this.tokenIssuedListeners.delete(listener);
   }
 
@@ -1571,9 +1958,18 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * preallocates the receive buffer once `file-read-meta` reports `sendBytes`,
    * copies each `file-read-chunk` at its offset, and acks (ack-gated — see
    * remote-protocol.ts's streaming contract) until `done`. */
+  private failFileReadResponse(requestId: string, assembly: FileReadAssembly): void {
+    if (this.pendingFileReads.get(requestId) !== assembly) return;
+    this.pendingFileReads.delete(requestId);
+    assembly.buffer = null;
+    assembly.expectedOffset = null;
+    this.send({ kind: 'file-read-cancel', requestId });
+    assembly.resolve({ ok: false, error: 'Invalid file read response' });
+  }
+
   private requestFileRead(
     path: string,
-    mode: 'text' | 'raw' | 'preview',
+    mode: FileReadMode,
     onProgress?: (received: number, total: number) => void,
     terminalCapability?: string,
   ): Promise<FileReadResult> {
@@ -1581,6 +1977,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       const requestId = this.newId();
       const pending: FileReadAssembly = {
         buffer: null,
+        metaReceived: false,
+        expectedOffset: null,
+        mode,
+        maxSendBytes: maxFileReadBytes(mode),
         fileSize: 0,
         isText: true,
         truncated: false,
@@ -1624,7 +2024,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       socket.send(JSON.stringify({
         kind: 'auth',
         token: this.token,
-        protocolVersion: REMOTE_PROTOCOL_VERSION,
+        protocolVersion: this.requestedProtocolVersion,
         clientVersion: this.buildInfo.appVersion,
         buildSha: this.buildInfo.buildSha,
         ...(this.clientIdentity ? { clientIdentity: this.clientIdentity } : {}),
@@ -1731,9 +2131,18 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * measurement of this one. */
   private startRoundTripProbe(): void {
     this.stopRoundTripProbe();
+    if (this.negotiatedProtocolVersion !== REMOTE_PROTOCOL_VERSION) return;
     const probe = (): void => {
       if (!this.authed) return;
-      this.send({ kind: 'ping', sentAt: Date.now() });
+      const sentAt = Date.now();
+      const probeId = `${this.generation}:${++this.roundTripProbeSequence}`;
+      while (this.pendingRoundTripProbes.size >= 4) {
+        const oldest = this.pendingRoundTripProbes.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        this.pendingRoundTripProbes.delete(oldest);
+      }
+      this.pendingRoundTripProbes.set(probeId, { sentAt, generation: this.generation });
+      this.send({ kind: 'ping', probeId, sentAt });
     };
     probe();
     this.roundTripTimer = setInterval(probe, RTT_PROBE_INTERVAL_MS);
@@ -1742,6 +2151,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private stopRoundTripProbe(): void {
     if (this.roundTripTimer !== null) clearInterval(this.roundTripTimer);
     this.roundTripTimer = null;
+    this.pendingRoundTripProbes.clear();
     this.roundTripMs = null;
   }
 
@@ -1773,11 +2183,36 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.ports.clear();
   }
 
+  private settlePendingAgentDecision(
+    requestId: string,
+    pending: PendingAgentDecision,
+    result: AgentDecisionResult,
+  ): void {
+    if (this.pendingAgentDecisions.get(requestId) !== pending) return;
+    this.pendingAgentDecisions.delete(requestId);
+    if (pending.timer !== null) clearTimeout(pending.timer);
+    pending.timer = null;
+    pending.resolve(result);
+  }
+
+  private replayPendingAgentDecisions(): void {
+    if (this.negotiatedProtocolVersion !== REMOTE_PROTOCOL_VERSION) return;
+    for (const [requestId, pending] of this.pendingAgentDecisions) {
+      this.send({
+        kind: 'agent-decision',
+        requestId,
+        activityId: pending.activityId,
+        approvalId: pending.approvalId,
+        decision: pending.decision,
+      });
+    }
+  }
+
   /** Settle every request/reply waiter that belonged to the ending socket.
    * Shared by transient close, auth rejection, and explicit disconnect so no
    * public Promise can remain orphaned when `disconnect()` nulls the socket
    * before its eventual close event reaches `endConnection`. */
-  private resolvePendingRequestsUnavailable(): void {
+  private resolvePendingRequestsUnavailable(preserveAgentDecisions = false): void {
     for (const [requestId, resolve] of this.pendingDesktopStarts) {
       resolve({
         kind: 'desktop-control-start-result',
@@ -1821,11 +2256,18 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve({ ok: false, error: 'delivery-failed' });
     }
     this.pendingAgentFollowups.clear();
-    for (const resolve of this.pendingAgentDecisions.values()) {
-      resolve({ ok: false, error: 'delivery-failed' });
+    if (!preserveAgentDecisions) {
+      for (const [requestId, pending] of [...this.pendingAgentDecisions]) {
+        this.settlePendingAgentDecision(
+          requestId,
+          pending,
+          { ok: false, error: 'outcome-unknown' },
+        );
+      }
     }
-    this.pendingAgentDecisions.clear();
-    for (const resolve of this.pendingGitStatus.values()) resolve(EMPTY_GIT_DIRECTORY_STATUS);
+    for (const resolve of this.pendingGitStatus.values()) {
+      resolve(UNAVAILABLE_GIT_DIRECTORY_STATUS);
+    }
     this.pendingGitStatus.clear();
     for (const resolve of this.pendingGitDiffs.values()) resolve({ ok: false, error: 'git-failed' });
     this.pendingGitDiffs.clear();
@@ -1897,7 +2339,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     // MessagePort going away: no further send/receive).
     // Stable local ports survive transient sockets; the next authenticated
     // generation resumes them against the bridge's bounded run lease.
-    this.resolvePendingRequestsUnavailable();
+    this.resolvePendingRequestsUnavailable(true);
     // OpenClaw availability (M3): a dropped connection can't know the
     // desktop's current mode anymore — reset to "unknown" so a stale `true`
     // doesn't keep an entry point visible while disconnected (mirrors
@@ -2075,6 +2517,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private rejectIncompatibleProtocol(hostVersion?: unknown): void {
     if (typeof hostVersion === 'string' && hostVersion.trim()) this.hostVersion = hostVersion;
     this.remoteCapabilities.clear();
+    this.negotiatedProtocolVersion = null;
     this.setAuthed(false);
     this.stopped = true;
     this.nextRetryAt = null;
@@ -2083,6 +2526,111 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.emitConnectionHealth();
     this.resolvePendingRequestsUnavailable();
     this.closeTerminalSocket();
+  }
+
+  /** Fail closed for a syntactically valid handshake that violates the
+   * credential handoff contract (for example a pairing auth without a valid
+   * replacement bearer). */
+  private rejectAuthentication(): void {
+    this.remoteCapabilities.clear();
+    this.negotiatedProtocolVersion = null;
+    this.setAuthed(false);
+    this.stopped = true;
+    this.nextRetryAt = null;
+    this.setConnectionState('auth-rejected');
+    this.recordConnectionDiagnostic('auth-rejected');
+    this.emitConnectionHealth();
+    this.resolvePendingRequestsUnavailable();
+    this.closeTerminalSocket();
+  }
+
+  /** v3-only state must not survive a negotiated downgrade. Otherwise a v2
+   * host can appear to have the previous v3 host's approvals, Git status, or
+   * latency even though it cannot authoritatively update any of them. */
+  private resetV3OnlyState(): void {
+    const hadAgentState = this.agentSnapshot.revision !== 0 || this.agentSnapshot.items.length !== 0;
+    this.agentSnapshot = EMPTY_AGENT_ACTIVITY_SNAPSHOT;
+    this.awaitingAgentSeed = false;
+    for (const resolve of this.pendingAgentSnapshots.values()) {
+      resolve(EMPTY_AGENT_ACTIVITY_SNAPSHOT);
+    }
+    this.pendingAgentSnapshots.clear();
+    for (const resolve of this.pendingAgentFollowups.values()) {
+      resolve({ ok: false, error: 'delivery-failed' });
+    }
+    this.pendingAgentFollowups.clear();
+    for (const [requestId, pending] of [...this.pendingAgentDecisions]) {
+      this.settlePendingAgentDecision(
+        requestId,
+        pending,
+        { ok: false, error: 'outcome-unknown' },
+      );
+    }
+    for (const resolve of this.pendingGitStatus.values()) {
+      resolve(UNAVAILABLE_GIT_DIRECTORY_STATUS);
+    }
+    this.pendingGitStatus.clear();
+    for (const resolve of this.pendingGitDiffs.values()) {
+      resolve({ ok: false, error: 'git-failed' });
+    }
+    this.pendingGitDiffs.clear();
+    this.pendingRoundTripProbes.clear();
+    this.roundTripMs = null;
+    if (hadAgentState) {
+      for (const listener of this.agentSnapshotListeners) {
+        listener(EMPTY_AGENT_ACTIVITY_SNAPSHOT);
+      }
+    }
+  }
+
+  /**
+   * One conservative compatibility retry for a persisted bearer. Pairing
+   * codes are single-use and must never be spent probing an older protocol.
+   */
+  private tryProtocolDowngrade(message: {
+    readonly supportedProtocolVersion?: unknown;
+    readonly supportedProtocolVersions?: unknown;
+    readonly hostVersion?: unknown;
+  }): boolean {
+    if (
+      this.protocolDowngradeAttempted
+      || this.requestedProtocolVersion !== REMOTE_PROTOCOL_VERSION
+      || isPairingCode(this.token)
+      || typeof message.hostVersion !== 'string'
+      || message.hostVersion.trim().length === 0
+    ) return false;
+    const advertised = Array.isArray(message.supportedProtocolVersions)
+      ? message.supportedProtocolVersions
+      : [message.supportedProtocolVersion];
+    let downgradeVersion: RemoteProtocolVersion | null = null;
+    for (const version of SUPPORTED_REMOTE_PROTOCOL_VERSIONS) {
+      if (
+        version < REMOTE_PROTOCOL_VERSION
+        && advertised.includes(version)
+        && (downgradeVersion === null || version > downgradeVersion)
+      ) {
+        downgradeVersion = version;
+      }
+    }
+    if (downgradeVersion === null) return false;
+
+    this.protocolDowngradeAttempted = true;
+    this.requestedProtocolVersion = downgradeVersion;
+    this.hostVersion = message.hostVersion;
+    this.clearWatchdog();
+    this.stopLivenessMonitor();
+    const previous = this.socket;
+    this.socket = null;
+    try {
+      previous?.close();
+    } catch {
+      // The old generation is already detached by socket identity.
+    }
+    this.setAuthed(false);
+    this.nextRetryAt = null;
+    this.setConnectionState('connecting');
+    this.connect();
+    return true;
   }
 
   /** Close and synchronously invalidate a socket after a fail-closed decision
@@ -2120,22 +2668,46 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     if (!this.authed && msg.kind !== 'auth-ok' && msg.kind !== 'auth-fail') return;
     switch (msg.kind) {
       case 'auth-ok':
+        // Auth is a one-shot transition for a socket. Late duplicate
+        // envelopes cannot renegotiate or kill a healthy connection while
+        // correlated requests are in flight.
+        if (this.authed) break;
         if (
-          msg.protocolVersion !== REMOTE_PROTOCOL_VERSION
+          msg.protocolVersion !== this.requestedProtocolVersion
           || typeof msg.hostVersion !== 'string'
           || msg.hostVersion.trim().length === 0
         ) {
           this.rejectIncompatibleProtocol(msg.hostVersion);
           break;
         }
-        if (this.authed) break;
+        {
+          const pairingAttempt = isPairingCode(this.token);
+          const hasIssuedToken = msg.issuedToken !== undefined;
+          if (
+            (pairingAttempt && !isRemoteBearerToken(msg.issuedToken))
+            || (!pairingAttempt && hasIssuedToken)
+          ) {
+            this.rejectAuthentication();
+            break;
+          }
+        }
         this.hostVersion = msg.hostVersion;
+        this.negotiatedProtocolVersion = msg.protocolVersion;
+        if (msg.protocolVersion < REMOTE_PROTOCOL_VERSION) this.resetV3OnlyState();
         // A pairing code buys exactly one connection; the bearer that comes
         // back with it is what makes the next one work without the desktop
         // being in the room. Adopt it before anything else can fail.
-        if (typeof msg.issuedToken === 'string' && msg.issuedToken.trim()) {
+        if (isRemoteBearerToken(msg.issuedToken)) {
           this.token = msg.issuedToken;
-          for (const listener of this.tokenIssuedListeners) listener(msg.issuedToken);
+          this.pairingIssuedToken = msg.issuedToken;
+          for (const listener of this.tokenIssuedListeners) {
+            try {
+              listener(msg.issuedToken);
+            } catch {
+              // Credential adoption is authoritative even if an observer has
+              // already unmounted or its persistence callback fails.
+            }
+          }
         }
         this.hostBuildSha = typeof msg.hostBuildSha === 'string' && msg.hostBuildSha.trim()
           ? msg.hostBuildSha
@@ -2194,6 +2766,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         // that keeps briefly reconnecting shouldn't creep toward the cap.
         this.backoffMs = this.initialBackoffMs;
         this.startLivenessMonitor();
+        this.replayPendingAgentDecisions();
         // Replay the stats subscription across reconnects — the bridge's own
         // `statsVisible` is per-connection state that does NOT survive a new
         // socket (see `setStatsPanelVisible`'s doc comment).
@@ -2207,19 +2780,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         if (this.openclawLogsSubscribed) this.send({ kind: 'openclaw-logs-subscribe' });
         break;
       case 'auth-fail':
+        if (this.authed) break;
         if (msg.reason === 'incompatible-protocol') {
+          if (this.tryProtocolDowngrade(msg)) break;
           this.rejectIncompatibleProtocol(msg.hostVersion);
           break;
         }
-        this.remoteCapabilities.clear();
-        this.setAuthed(false);
-        this.stopped = true;
-        this.nextRetryAt = null;
-        this.setConnectionState('auth-rejected');
-        this.recordConnectionDiagnostic('auth-rejected');
-        this.emitConnectionHealth();
-        this.resolvePendingRequestsUnavailable();
-        this.closeTerminalSocket();
+        this.rejectAuthentication();
         break;
       case 'session-created': {
         const pending = this.pendingCreates.get(msg.requestId);
@@ -2348,6 +2915,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         }
         break;
       case 'agent-snapshot': {
+        if (this.negotiatedProtocolVersion !== REMOTE_PROTOCOL_VERSION) break;
+        if (!isAgentActivitySnapshot(msg.snapshot)) {
+          if (typeof msg.requestId === 'string') {
+            this.pendingAgentSnapshots.get(msg.requestId)?.(this.agentSnapshot);
+            this.pendingAgentSnapshots.delete(msg.requestId);
+          }
+          break;
+        }
         const accept = this.awaitingAgentSeed || msg.snapshot.revision > this.agentSnapshot.revision;
         this.awaitingAgentSeed = false;
         if (accept) {
@@ -2361,15 +2936,40 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         break;
       }
       case 'agent-followup-reply':
-        this.pendingAgentFollowups.get(msg.requestId)?.(msg.result);
+        if (this.negotiatedProtocolVersion !== REMOTE_PROTOCOL_VERSION) break;
+        this.pendingAgentFollowups.get(msg.requestId)?.(
+          isAgentFollowupResult(msg.result)
+            ? msg.result
+            : { ok: false, error: 'delivery-failed' },
+        );
         this.pendingAgentFollowups.delete(msg.requestId);
         break;
       case 'agent-decision-reply':
-        this.pendingAgentDecisions.get(msg.requestId)?.(msg.result);
-        this.pendingAgentDecisions.delete(msg.requestId);
+        if (this.negotiatedProtocolVersion !== REMOTE_PROTOCOL_VERSION) break;
+        {
+          const pending = this.pendingAgentDecisions.get(msg.requestId);
+          if (pending) {
+            this.settlePendingAgentDecision(
+              msg.requestId,
+              pending,
+              isAgentDecisionResult(msg.result)
+                ? msg.result
+                : { ok: false, error: 'outcome-unknown' },
+            );
+          }
+        }
         break;
       case 'pong': {
-        const sample = Date.now() - msg.sentAt;
+        if (this.negotiatedProtocolVersion !== REMOTE_PROTOCOL_VERSION) break;
+        if (
+          typeof msg.probeId !== 'string'
+          || typeof msg.sentAt !== 'number'
+          || !Number.isFinite(msg.sentAt)
+        ) break;
+        const pending = this.pendingRoundTripProbes.get(msg.probeId);
+        if (!pending || pending.generation !== this.generation) break;
+        this.pendingRoundTripProbes.delete(msg.probeId);
+        const sample = Date.now() - pending.sentAt;
         // A clock that jumped backwards would otherwise report a negative or
         // absurd latency; ignore the sample rather than publish a lie.
         if (sample >= 0 && sample < RTT_MAX_PLAUSIBLE_MS) {
@@ -2379,11 +2979,21 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         break;
       }
       case 'git-status-reply':
-        this.pendingGitStatus.get(msg.requestId)?.(msg.status);
+        if (this.negotiatedProtocolVersion !== REMOTE_PROTOCOL_VERSION) break;
+        this.pendingGitStatus.get(msg.requestId)?.(
+          isGitDirectoryStatus(msg.status)
+            ? msg.status
+            : UNAVAILABLE_GIT_DIRECTORY_STATUS,
+        );
         this.pendingGitStatus.delete(msg.requestId);
         break;
       case 'git-diff-reply':
-        this.pendingGitDiffs.get(msg.requestId)?.(msg.result);
+        if (this.negotiatedProtocolVersion !== REMOTE_PROTOCOL_VERSION) break;
+        this.pendingGitDiffs.get(msg.requestId)?.(
+          isGitDiffResult(msg.result)
+            ? msg.result
+            : { ok: false, error: 'git-failed' },
+        );
         this.pendingGitDiffs.delete(msg.requestId);
         break;
       case 'stats-update':
@@ -2428,12 +3038,41 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       case 'file-read-meta': {
         const assembly = this.pendingFileReads.get(msg.requestId);
         if (!assembly) break;
-        if (!msg.ok) {
-          this.pendingFileReads.delete(msg.requestId);
-          assembly.resolve({ ok: false, error: msg.error });
+        if (assembly.metaReceived) {
+          this.failFileReadResponse(msg.requestId, assembly);
           break;
         }
-        if (msg.sendBytes <= 0) {
+        if (!msg.ok) {
+          this.pendingFileReads.delete(msg.requestId);
+          assembly.resolve({
+            ok: false,
+            error: typeof msg.error === 'string' ? msg.error : 'Invalid file read response',
+          });
+          break;
+        }
+        if (
+          !Number.isSafeInteger(msg.fileSize)
+          || msg.fileSize < 0
+          || !Number.isSafeInteger(msg.sendBytes)
+          || msg.sendBytes < 0
+          || msg.sendBytes > assembly.maxSendBytes
+          || msg.sendBytes > msg.fileSize
+          || typeof msg.isText !== 'boolean'
+          || typeof msg.truncated !== 'boolean'
+          || !isFileReadMetaConsistent(
+            assembly,
+            msg.fileSize,
+            msg.sendBytes,
+            msg.isText,
+            msg.truncated,
+            msg.preview,
+          )
+        ) {
+          this.failFileReadResponse(msg.requestId, assembly);
+          break;
+        }
+        assembly.metaReceived = true;
+        if (msg.sendBytes === 0) {
           // Binary file in 'text' mode (or a genuinely empty file) — no
           // chunk ever follows (remote-protocol.ts's streaming contract).
           this.pendingFileReads.delete(msg.requestId);
@@ -2447,7 +3086,13 @@ export class WsEzTerminalTransport implements EzTerminalApi {
           });
           break;
         }
-        assembly.buffer = new Uint8Array(msg.sendBytes);
+        try {
+          assembly.buffer = new Uint8Array(msg.sendBytes);
+        } catch {
+          this.failFileReadResponse(msg.requestId, assembly);
+          break;
+        }
+        assembly.expectedOffset = 0;
         assembly.fileSize = msg.fileSize;
         assembly.isText = msg.isText;
         assembly.truncated = msg.truncated;
@@ -2457,13 +3102,44 @@ export class WsEzTerminalTransport implements EzTerminalApi {
 
       case 'file-read-chunk': {
         const assembly = this.pendingFileReads.get(msg.requestId);
-        if (!assembly || !assembly.buffer) break;
-        const data = base64ToUint8Array(msg.data);
-        assembly.buffer.set(data, msg.offset);
+        if (!assembly) break;
+        if (
+          !assembly.metaReceived
+          || !assembly.buffer
+          || assembly.expectedOffset === null
+          || !Number.isSafeInteger(msg.offset)
+          || typeof msg.data !== 'string'
+          || msg.data.length > MAX_FILE_CHUNK_BASE64_CHARS
+          || typeof msg.done !== 'boolean'
+        ) {
+          this.failFileReadResponse(msg.requestId, assembly);
+          break;
+        }
+        let data: Uint8Array;
+        try {
+          data = base64ToUint8Array(msg.data);
+        } catch {
+          this.failFileReadResponse(msg.requestId, assembly);
+          break;
+        }
         const received = msg.offset + data.length;
+        if (
+          msg.offset !== assembly.expectedOffset
+          || data.length <= 0
+          || data.length > FILE_CHUNK_BYTES
+          || !Number.isSafeInteger(received)
+          || received > assembly.buffer.length
+          || msg.done !== (received === assembly.buffer.length)
+        ) {
+          this.failFileReadResponse(msg.requestId, assembly);
+          break;
+        }
+        assembly.buffer.set(data, msg.offset);
+        assembly.expectedOffset = received;
         assembly.onProgress?.(received, assembly.buffer.length);
         if (msg.done) {
           this.pendingFileReads.delete(msg.requestId);
+          assembly.expectedOffset = null;
           assembly.resolve({
             ok: true,
             fileSize: assembly.fileSize,

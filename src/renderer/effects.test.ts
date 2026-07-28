@@ -1,7 +1,14 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it } from 'vitest';
 
-import { EFFECT_CATALOG, MOVING_EFFECT_IDS, applyEffects, resolveActiveEffects, type EffectId } from './effects';
+import {
+  EFFECT_CATALOG,
+  MOVING_EFFECT_IDS,
+  applyEffectIntensity,
+  applyEffects,
+  resolveActiveEffects,
+  type EffectId,
+} from './effects';
 import type { ThemeDefinition } from './themes';
 
 function theme(effects?: EffectId[]): ThemeDefinition {
@@ -115,6 +122,41 @@ describe('applyEffects', () => {
     expect(document.documentElement.getAttribute('data-effect-scanlines')).toBe('on');
     applyEffects(new Set());
     expect(document.documentElement.getAttribute('data-effect-scanlines')).toBeNull();
+  });
+
+  it('uses the handoff intensity curve and suppresses motion below level 5', () => {
+    applyEffects(new Set(['scanlines', 'phosphor-glow', 'crt-rollbar']));
+    for (const [level, opacity] of [[0, 0.1], [4, 0.5], [5, 0.6], [7, 0.8], [10, 1]] as const) {
+      applyEffectIntensity(level);
+      expect(document.documentElement.dataset.effectIntensity).toBe(String(level));
+      expect(document.documentElement.style.getPropertyValue('--ui-effect-intensity')).toBe(String(opacity));
+    }
+
+    applyEffectIntensity(4);
+    expect(document.documentElement.getAttribute('data-effect-scanlines')).toBe('on');
+    expect(document.documentElement.getAttribute('data-effect-crt-rollbar')).toBeNull();
+
+    applyEffectIntensity(0);
+    expect(document.documentElement.getAttribute('data-effect-scanlines')).toBeNull();
+
+    applyEffectIntensity(7);
+    expect(document.documentElement.getAttribute('data-effect-scanlines')).toBe('on');
+    expect(document.documentElement.getAttribute('data-effect-crt-rollbar')).toBe('on');
+  });
+
+  it('keeps intensity zero authoritative across later theme and toggle applications', () => {
+    applyEffects(new Set(['scanlines', 'phosphor-glow', 'crt-rollbar']));
+    applyEffectIntensity(0);
+
+    applyEffects(new Set(['scanlines', 'crt-curvature', 'static-noise']));
+    expect(document.documentElement.getAttribute('data-effect-scanlines')).toBeNull();
+    expect(document.documentElement.getAttribute('data-effect-crt-curvature')).toBeNull();
+    expect(document.documentElement.getAttribute('data-effect-static-noise')).toBeNull();
+
+    applyEffectIntensity(7);
+    expect(document.documentElement.getAttribute('data-effect-scanlines')).toBe('on');
+    expect(document.documentElement.getAttribute('data-effect-crt-curvature')).toBe('on');
+    expect(document.documentElement.getAttribute('data-effect-static-noise')).toBe('on');
   });
 
   it('force-disables every moving effect while reduced motion is requested', () => {

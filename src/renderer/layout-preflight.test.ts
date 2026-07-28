@@ -4,7 +4,10 @@ import { DockviewApi } from 'dockview-react';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { LAYOUT_SCHEMA_VERSION, type LayoutEnvelope } from '../shared/layout-schema';
-import { preflightLayoutEnvelope } from './layout-preflight';
+import {
+  preflightLayoutEnvelope,
+  removePanelFromLayoutEnvelope,
+} from './layout-preflight';
 
 class NoopResizeObserver implements ResizeObserver {
   disconnect(): void {}
@@ -104,5 +107,37 @@ describe('preflightLayoutEnvelope', () => {
     });
 
     expect(preflightLayoutEnvelope(makeEnvelope())).toBe(false);
+  });
+});
+
+describe('removePanelFromLayoutEnvelope', () => {
+  it('removes a gated panel through dockview while preserving a valid terminal layout', () => {
+    const envelope = makeEnvelope(['tab-1', 'openclaw-chat']);
+    envelope.layout.panels['openclaw-chat'] = {
+      id: 'openclaw-chat',
+      contentComponent: 'openclaw-chat',
+      renderer: 'always',
+      title: 'OpenClaw Chat',
+    };
+
+    const filtered = removePanelFromLayoutEnvelope(envelope, 'openclaw-chat');
+
+    expect(filtered).not.toBeNull();
+    expect(filtered?.layout.panels['openclaw-chat']).toBeUndefined();
+    expect(filtered?.layout.panels['tab-1']).toBeDefined();
+    expect(filtered && preflightLayoutEnvelope(filtered)).toBe(true);
+    expect(envelope.layout.panels['openclaw-chat']).toBeDefined();
+  });
+
+  it('returns null when the gated panel was the only restorable panel', () => {
+    const envelope = makeEnvelope(['openclaw-chat']);
+    envelope.layout.panels['openclaw-chat'] = {
+      id: 'openclaw-chat',
+      contentComponent: 'openclaw-chat',
+      renderer: 'always',
+      title: 'OpenClaw Chat',
+    };
+
+    expect(removePanelFromLayoutEnvelope(envelope, 'openclaw-chat')).toBeNull();
   });
 });

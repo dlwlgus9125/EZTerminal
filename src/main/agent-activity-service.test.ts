@@ -98,6 +98,7 @@ function hook(partial: Partial<AgentHookEvent> = {}): AgentHookEvent {
 function makeService(): { service: AgentActivityService; broker: FakeBroker } {
   const broker = new FakeBroker();
   let id = 0;
+  let approvalId = 0;
   let now = 100;
   return {
     broker,
@@ -105,6 +106,7 @@ function makeService(): { service: AgentActivityService; broker: FakeBroker } {
       broker,
       getSettings: () => settings,
       newId: () => `activity-${++id}`,
+      newApprovalId: () => `approval-${++approvalId}`,
       now: () => ++now,
     }),
   };
@@ -259,6 +261,12 @@ describe('AgentActivityService — approval gate', () => {
     return { service, activityId: service.getSnapshot().items[0].id };
   }
 
+  function liveApprovalId(service: AgentActivityService): string {
+    const approvalId = service.getSnapshot().items[0]?.approval?.approvalId;
+    if (!approvalId) throw new Error('expected a live approval');
+    return approvalId;
+  }
+
   it('publishes the pending call, then allows it', async () => {
     const { service, activityId } = blockedClaude();
     const event = claudeHook({ event: 'PermissionRequest', toolName: 'Bash', command: 'rm -rf out' });
@@ -267,9 +275,14 @@ describe('AgentActivityService — approval gate', () => {
 
     const blocked = service.getSnapshot().items[0];
     expect(blocked.status).toBe('blocked');
-    expect(blocked.approval).toMatchObject({ toolName: 'Bash', command: 'rm -rf out', risk: 'danger' });
+    expect(blocked.approval).toMatchObject({
+      approvalId: 'approval-1',
+      toolName: 'Bash',
+      command: 'rm -rf out',
+      risk: 'danger',
+    });
 
-    expect(service.decideApproval(activityId, 'allow')).toEqual({ ok: true });
+    expect(service.decideApproval(activityId, liveApprovalId(service), 'allow')).toEqual({ ok: true });
     await expect(pending).resolves.toBe('allow');
     const after = service.getSnapshot().items[0];
     expect(after.status).toBe('working');
@@ -277,13 +290,98 @@ describe('AgentActivityService — approval gate', () => {
     expect(after.approval).toBeUndefined();
   });
 
+  it('lets a synchronous snapshot observer answer the exact published hook', async () => {
+    const { service, activityId } = blockedClaude();
+    const event = claudeHook({
+      event: 'PermissionRequest',
+      toolName: 'Bash',
+      command: 'pnpm test',
+    });
+    service.handleHookEvent(event);
+    let result: ReturnType<AgentActivityService['decideApproval']> | undefined;
+    const unsubscribeDecision = service.onSnapshot((snapshot) => {
+      const approval = snapshot.items[0]?.approval;
+      if (approval) {
+        result = service.decideApproval(activityId, approval.approvalId, 'allow');
+      }
+    });
+    const unsubscribeThrowing = service.onSnapshot(() => {
+      throw new Error('stale renderer');
+    });
+    const revisions: number[] = [];
+    const unsubscribeRevision = service.onSnapshot((snapshot) => {
+      revisions.push(snapshot.revision);
+    });
+
+    const pending = service.requestApproval(event);
+
+    expect(result).toEqual({ ok: true });
+    await expect(pending).resolves.toBe('allow');
+    expect(revisions).toHaveLength(2);
+    expect(revisions[1]).toBeGreaterThan(revisions[0]!);
+    unsubscribeDecision();
+    unsubscribeThrowing();
+    unsubscribeRevision();
+  });
+
   it('carries a denial back to the provider', async () => {
     const { service, activityId } = blockedClaude();
     const event = claudeHook({ event: 'PermissionRequest', toolName: 'Bash', command: 'ls' });
     service.handleHookEvent(event);
     const pending = service.requestApproval(event);
-    expect(service.decideApproval(activityId, 'deny')).toEqual({ ok: true });
+    expect(service.decideApproval(activityId, liveApprovalId(service), 'deny')).toEqual({ ok: true });
     await expect(pending).resolves.toBe('deny');
+  });
+
+  it('retains a bounded decision receipt so an identical retry is idempotent', async () => {
+    const { service, activityId } = blockedClaude();
+    const event = claudeHook({
+      event: 'PermissionRequest',
+      toolName: 'Bash',
+      command: 'pnpm build',
+    });
+    service.handleHookEvent(event);
+    const pending = service.requestApproval(event);
+    const approvalId = liveApprovalId(service);
+
+    expect(service.decideApproval(activityId, approvalId, 'allow')).toEqual({ ok: true });
+    await expect(pending).resolves.toBe('allow');
+    expect(service.decideApproval(activityId, approvalId, 'allow')).toEqual({ ok: true });
+    expect(service.decideApproval(activityId, approvalId, 'deny')).toEqual({
+      ok: false,
+      error: 'conflict',
+    });
+    expect(service.decideApproval('another-activity', approvalId, 'allow')).toEqual({
+      ok: false,
+      error: 'conflict',
+    });
+  });
+
+  it('rejects a delayed decision after a newer request supersedes it', async () => {
+    const { service, activityId } = blockedClaude();
+    const firstEvent = claudeHook({ event: 'PermissionRequest', toolName: 'Bash', command: 'git clean -fd' });
+    service.handleHookEvent(firstEvent);
+    const firstPending = service.requestApproval(firstEvent);
+    const firstId = liveApprovalId(service);
+
+    const secondEvent = claudeHook({ event: 'PermissionRequest', toolName: 'Read', command: 'README.md' });
+    service.handleHookEvent(secondEvent);
+    const secondPending = service.requestApproval(secondEvent);
+    const secondId = liveApprovalId(service);
+
+    expect(secondId).not.toBe(firstId);
+    await expect(firstPending).resolves.toBeNull();
+    expect(service.decideApproval(activityId, firstId, 'allow')).toEqual({
+      ok: false,
+      error: 'stale',
+    });
+    expect(service.getSnapshot().items[0].approval).toMatchObject({
+      approvalId: secondId,
+      command: 'README.md',
+    });
+
+    expect(service.decideApproval(activityId, secondId, 'deny')).toEqual({ ok: true });
+    await expect(secondPending).resolves.toBe('deny');
   });
 
   it('fails open when the window closes, and drops the command text', async () => {
@@ -301,7 +399,10 @@ describe('AgentActivityService — approval gate', () => {
       expect(expired.status).toBe('blocked');
       expect(expired.approval).toBeDefined();
       expect(expired.approval).not.toHaveProperty('command');
-      expect(service.decideApproval(activityId, 'allow')).toEqual({ ok: false, error: 'expired' });
+      expect(service.decideApproval(activityId, liveApprovalId(service), 'allow')).toEqual({
+        ok: false,
+        error: 'expired',
+      });
     } finally {
       vi.useRealTimers();
     }
@@ -327,6 +428,7 @@ describe('AgentActivityService — approval gate', () => {
       broker,
       getSettings: () => ({ ...settings, approvalGate: gate }),
       newId: () => 'activity-1',
+      newApprovalId: () => 'approval-1',
     });
     broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'claude' });
     const event = claudeHook({ event: 'PermissionRequest', toolName: 'Bash', command: 'ls' });
@@ -337,8 +439,39 @@ describe('AgentActivityService — approval gate', () => {
     gate = true;
     const pending = service.requestApproval(event);
     expect(service.getSnapshot().items[0].approval).toBeDefined();
-    service.decideApproval('activity-1', 'allow');
+    service.decideApproval('activity-1', 'approval-1', 'allow');
     await expect(pending).resolves.toBe('allow');
+  });
+
+  it('immediately releases every parked hook when the live gate is disabled', async () => {
+    const broker = new FakeBroker();
+    let current = settings;
+    let approvalId = 0;
+    const service = new AgentActivityService({
+      broker,
+      getSettings: () => current,
+      newId: () => 'activity-1',
+      newApprovalId: () => `approval-${++approvalId}`,
+    });
+    broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'claude' });
+    const firstEvent = claudeHook({ event: 'PermissionRequest', toolName: 'Bash', command: 'secret one' });
+    const secondEvent = claudeHook({ event: 'PermissionRequest', toolName: 'Write', command: 'secret two' });
+    service.handleHookEvent(firstEvent);
+    const firstPending = service.requestApproval(firstEvent);
+    // The service supports one current request per activity; make a second
+    // activity so disabling exercises the full pending set.
+    broker.sessions.push({ sessionId: 'ez-2', cwd: 'C:\\other' });
+    broker.run({ sessionId: 'ez-2', runId: 'run-2', commandText: 'claude' });
+    const secondActivityEvent = { ...secondEvent, ezSessionId: 'ez-2', providerSessionId: 'claude-session-2' };
+    service.handleHookEvent(secondActivityEvent);
+    const secondPending = service.requestApproval(secondActivityEvent);
+
+    current = { ...settings, approvalGate: false };
+    service.applySettings(current);
+
+    await expect(firstPending).resolves.toBeNull();
+    await expect(secondPending).resolves.toBeNull();
+    expect(service.getSnapshot().items.every((item) => item.approval === undefined)).toBe(true);
   });
 
   it('releases a parked hook when the run ends underneath it', async () => {
@@ -359,7 +492,13 @@ describe('AgentActivityService — approval gate', () => {
 
   it('rejects a decision for an activity that never asked', () => {
     const { service, activityId } = blockedClaude();
-    expect(service.decideApproval(activityId, 'allow')).toEqual({ ok: false, error: 'not-pending' });
-    expect(service.decideApproval('nope', 'allow')).toEqual({ ok: false, error: 'not-found' });
+    expect(service.decideApproval(activityId, 'missing', 'allow')).toEqual({
+      ok: false,
+      error: 'not-pending',
+    });
+    expect(service.decideApproval('nope', 'missing', 'allow')).toEqual({
+      ok: false,
+      error: 'not-found',
+    });
   });
 });

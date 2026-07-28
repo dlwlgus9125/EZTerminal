@@ -5,7 +5,8 @@ import {
 } from '../../src/shared/ui-preferences';
 
 const MOBILE_UI_PREFERENCES_KEY = 'ezterminal-mobile-ui-preferences';
-const MOBILE_UI_PREFERENCES_VERSION = 1;
+const MOBILE_UI_PREFERENCES_VERSION = 2;
+const LEGACY_MOBILE_UI_PREFERENCES_VERSION = 1;
 
 interface StorageLike {
   getItem(key: string): string | null;
@@ -24,6 +25,22 @@ function defaults(): UiPreferences {
   return { ...DEFAULT_UI_PREFERENCES };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function storeSnapshot(storage: StorageLike, preferences: UiPreferences): boolean {
+  try {
+    storage.setItem(MOBILE_UI_PREFERENCES_KEY, JSON.stringify({
+      version: MOBILE_UI_PREFERENCES_VERSION,
+      preferences,
+    }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Mobile preferences are device-local by design. They never cross the remote
  * transport and cannot alter the paired desktop's settings.json.
@@ -36,9 +53,26 @@ export function loadMobileUiPreferences(
     const raw = storage.getItem(MOBILE_UI_PREFERENCES_KEY);
     if (!raw) return defaults();
     const envelope = JSON.parse(raw) as { version?: unknown; preferences?: unknown };
-    if (envelope.version !== MOBILE_UI_PREFERENCES_VERSION) return defaults();
-    const parsed = UiPreferencesSchema.safeParse(envelope.preferences);
-    return parsed.success ? parsed.data : defaults();
+    if (envelope.version === MOBILE_UI_PREFERENCES_VERSION) {
+      const parsed = UiPreferencesSchema.safeParse(envelope.preferences);
+      return parsed.success ? parsed.data : defaults();
+    }
+    if (
+      envelope.version === LEGACY_MOBILE_UI_PREFERENCES_VERSION
+      && isRecord(envelope.preferences)
+    ) {
+      const parsed = UiPreferencesSchema.safeParse({
+        effectIntensity: DEFAULT_UI_PREFERENCES.effectIntensity,
+        ...envelope.preferences,
+      });
+      if (parsed.success) {
+        // Best-effort in-place migration. A blocked write must not discard a
+        // valid device-local choice that was already read successfully.
+        storeSnapshot(storage, parsed.data);
+        return parsed.data;
+      }
+    }
+    return defaults();
   } catch {
     return defaults();
   }
@@ -51,13 +85,5 @@ export function saveMobileUiPreferences(
 ): boolean {
   const parsed = UiPreferencesSchema.safeParse(preferences);
   if (!storage || !parsed.success) return false;
-  try {
-    storage.setItem(MOBILE_UI_PREFERENCES_KEY, JSON.stringify({
-      version: MOBILE_UI_PREFERENCES_VERSION,
-      preferences: parsed.data,
-    }));
-    return true;
-  } catch {
-    return false;
-  }
+  return storeSnapshot(storage, parsed.data);
 }

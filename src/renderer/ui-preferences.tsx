@@ -18,6 +18,7 @@ import {
   type UiPreferencesPatch,
 } from '../shared/ui-preferences';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
+import { applyEffectIntensity } from './effects';
 import { AppI18nProvider } from './i18n';
 
 interface UiPreferencesContextValue {
@@ -75,6 +76,10 @@ export function DesktopUiPreferencesProvider({
   useEffect(() => {
     document.documentElement.dataset.density = preferences.density;
   }, [preferences.density]);
+
+  useEffect(() => {
+    applyEffectIntensity(preferences.effectIntensity);
+  }, [preferences.effectIntensity]);
 
   const updatePreferences = useCallback((partial: UiPreferencesPatch): Promise<void> => {
     const patch = UiPreferencesPatchSchema.safeParse(partial);

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 
+import { useNativeOverlayRegistration } from './native-overlay';
+
 export interface FileContextMenuItem {
   /** Used verbatim in `data-testid="ctx-<action>"` — keep these stable, e2e depends on them. */
   readonly action: string;
@@ -23,6 +25,7 @@ interface FileContextMenuProps {
  * on an outside click, Escape, or picking any item.
  */
 export function FileContextMenu({ x, y, items, onClose }: FileContextMenuProps): JSX.Element {
+  useNativeOverlayRegistration();
   const menuRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const restoreFocusRef = useRef(true);

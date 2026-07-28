@@ -5,7 +5,13 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DOWNLOAD_MAX_FILE_BYTES, FILE_CHUNK_BYTES, TEXT_VIEW_MAX_BYTES, UPLOAD_MAX_FILE_BYTES } from '../shared/files';
-import { FileService, resolveCollisionName, validateEntryName, type FileServiceOptions } from './file-service';
+import {
+  FileService,
+  MAX_OPEN_UPLOADS,
+  resolveCollisionName,
+  validateEntryName,
+  type FileServiceOptions,
+} from './file-service';
 
 // Probed once at collection time (sync) so `it.skipIf` has its condition
 // before any test runs — Windows without symlink privilege is expected here.
@@ -38,7 +44,7 @@ function makeService(overrides: Partial<FileServiceOptions> = {}): FileService {
 }
 
 afterEach(async () => {
-  for (const service of services.splice(0)) service.dispose();
+  await Promise.all(services.splice(0).map((service) => service.dispose()));
   for (const dir of tempDirs.splice(0)) await fs.rm(dir, { recursive: true, force: true });
 });
 
@@ -200,6 +206,364 @@ describe('resolveCollisionName', () => {
 });
 
 describe('FileService upload lifecycle', () => {
+  it('serializes concurrent chunks before validating their offsets', async () => {
+    const dir = await makeDir();
+    const service = makeService();
+    const begin = await service.beginUpload(dir, 'concurrent.txt', 6);
+    if (!begin.ok) throw new Error('begin failed');
+
+    const first = service.writeUploadChunk(begin.uploadId, 0, Buffer.from('abc'));
+    const second = service.writeUploadChunk(begin.uploadId, 3, Buffer.from('def'));
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult).toEqual({ ok: true, receivedBytes: 3 });
+    expect(secondResult).toEqual({ ok: true, receivedBytes: 6 });
+    const commit = await service.commitUpload(begin.uploadId);
+    expect(commit.ok).toBe(true);
+    if (!commit.ok) return;
+    await expect(fs.readFile(path.join(dir, commit.finalName), 'utf8')).resolves.toBe('abcdef');
+  });
+
+  it('refuses and cleans up a commit before every declared byte arrived', async () => {
+    const dir = await makeDir();
+    const service = makeService();
+    const begin = await service.beginUpload(dir, 'short.txt', 5);
+    if (!begin.ok) throw new Error('begin failed');
+
+    await service.writeUploadChunk(begin.uploadId, 0, Buffer.from('abc'));
+    const commit = await service.commitUpload(begin.uploadId);
+
+    expect(commit).toEqual({ ok: false, error: 'upload is incomplete' });
+    expect(await fs.readdir(dir)).toEqual([]);
+  });
+
+  it('bounds concurrent upload reservations and their open file handles globally', async () => {
+    const dir = await makeDir();
+    const service = makeService();
+    const expectedGlobalLimit = MAX_OPEN_UPLOADS;
+
+    const results = await Promise.all(
+      Array.from({ length: expectedGlobalLimit + 1 }, (_, index) => (
+        service.beginUpload(dir, `bounded-${index}.bin`, 0)
+      )),
+    );
+    const accepted = results.filter((result) => result.ok);
+    const rejected = results.filter((result) => !result.ok);
+
+    expect(accepted).toHaveLength(expectedGlobalLimit);
+    expect(rejected).toEqual([
+      { ok: false, error: 'too many active uploads' },
+    ]);
+    await Promise.all(accepted.map((result) => (
+      result.ok ? service.abortUpload(result.uploadId) : Promise.resolve()
+    )));
+    expect(await fs.readdir(dir)).toEqual([]);
+  });
+
+  it('reserves an upload id before a concurrent begin can reuse it', async () => {
+    const dir = await makeDir();
+    const service = makeService({ newId: () => 'shared-upload-id' });
+    const realOpen = fs.open.bind(fs);
+    let releaseFirstOpen!: () => void;
+    const firstOpenGate = new Promise<void>((resolve) => {
+      releaseFirstOpen = resolve;
+    });
+    let openCalls = 0;
+    const openSpy = vi.spyOn(fs, 'open').mockImplementation(async (file, flags, mode) => {
+      openCalls += 1;
+      if (openCalls === 1) await firstOpenGate;
+      return realOpen(file, flags, mode);
+    });
+
+    let firstResult: Awaited<ReturnType<FileService['beginUpload']>>;
+    let secondResult: Awaited<ReturnType<FileService['beginUpload']>>;
+    try {
+      const firstBegin = service.beginUpload(dir, 'first.bin', 0);
+      await vi.waitFor(() => {
+        expect(openSpy).toHaveBeenCalledTimes(1);
+      });
+      secondResult = await service.beginUpload(dir, 'second.bin', 0);
+      releaseFirstOpen();
+      firstResult = await firstBegin;
+    } finally {
+      releaseFirstOpen();
+      openSpy.mockRestore();
+    }
+
+    const results = [firstResult, secondResult];
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => !result.ok)).toEqual([
+      { ok: false, error: 'upload id collision' },
+    ]);
+
+    const accepted = results.find((result) => result.ok);
+    if (accepted?.ok) await service.abortUpload(accepted.uploadId);
+    expect(await fs.readdir(dir)).toEqual([]);
+  });
+
+  it('keeps aborting uploads inside the global cap through close and unlink', async () => {
+    const dir = await makeDir();
+    const service = makeService();
+    const begins = await Promise.all(
+      Array.from({ length: MAX_OPEN_UPLOADS }, (_, index) => (
+        service.beginUpload(dir, `abort-cap-${index}.bin`, 0)
+      )),
+    );
+    const accepted = begins.filter((result) => result.ok);
+    expect(accepted).toHaveLength(MAX_OPEN_UPLOADS);
+
+    const records = [
+      ...(service as unknown as {
+        uploads: Map<string, { fd: { close(): Promise<void> } }>;
+      }).uploads.values(),
+    ];
+    let releaseCloses!: () => void;
+    const closeGate = new Promise<void>((resolve) => {
+      releaseCloses = resolve;
+    });
+    const closeSpies = records.map((record) => {
+      const realClose = record.fd.close.bind(record.fd);
+      return vi.spyOn(record.fd, 'close').mockImplementation(async () => {
+        await closeGate;
+        await realClose();
+      });
+    });
+    const realUnlink = fs.unlink.bind(fs);
+    let releaseUnlinks!: () => void;
+    const unlinkGate = new Promise<void>((resolve) => {
+      releaseUnlinks = resolve;
+    });
+    let unlinkCalls = 0;
+    const unlinkSpy = vi.spyOn(fs, 'unlink').mockImplementation(async (file) => {
+      if (String(file).endsWith('.ezpart')) {
+        unlinkCalls += 1;
+        await unlinkGate;
+      }
+      await realUnlink(file);
+    });
+    const aborts = accepted.map((result) => (
+      result.ok ? service.abortUpload(result.uploadId) : Promise.resolve()
+    ));
+    const unexpectedBegins: Awaited<ReturnType<FileService['beginUpload']>>[] = [];
+    try {
+      await vi.waitFor(() => {
+        expect(closeSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
+      });
+      const duringClose = await service.beginUpload(dir, 'must-wait-for-close.bin', 0);
+      unexpectedBegins.push(duringClose);
+      expect(duringClose).toEqual({ ok: false, error: 'too many active uploads' });
+
+      releaseCloses();
+      await vi.waitFor(() => {
+        expect(unlinkCalls).toBe(MAX_OPEN_UPLOADS);
+      });
+      const duringUnlink = await service.beginUpload(dir, 'must-wait-for-unlink.bin', 0);
+      unexpectedBegins.push(duringUnlink);
+      expect(duringUnlink).toEqual({ ok: false, error: 'too many active uploads' });
+    } finally {
+      releaseCloses();
+      releaseUnlinks();
+      await Promise.all(aborts);
+      closeSpies.forEach((spy) => spy.mockRestore());
+      unlinkSpy.mockRestore();
+      await Promise.all(unexpectedBegins.map((result) => (
+        result.ok ? service.abortUpload(result.uploadId) : Promise.resolve()
+      )));
+    }
+
+    const afterSettlement = await service.beginUpload(dir, 'after-aborts.bin', 0);
+    expect(afterSettlement.ok).toBe(true);
+    if (afterSettlement.ok) await service.abortUpload(afterSettlement.uploadId);
+    expect(await fs.readdir(dir)).toEqual([]);
+  });
+
+  it('keeps committing uploads inside the global cap through close and rename', async () => {
+    const dir = await makeDir();
+    const service = makeService();
+    const begins = await Promise.all(
+      Array.from({ length: MAX_OPEN_UPLOADS }, (_, index) => (
+        service.beginUpload(dir, `commit-cap-${index}.bin`, 0)
+      )),
+    );
+    const accepted = begins.filter((result) => result.ok);
+    expect(accepted).toHaveLength(MAX_OPEN_UPLOADS);
+
+    const records = [
+      ...(service as unknown as {
+        uploads: Map<string, { fd: { close(): Promise<void> } }>;
+      }).uploads.values(),
+    ];
+    let releaseCloses!: () => void;
+    const closeGate = new Promise<void>((resolve) => {
+      releaseCloses = resolve;
+    });
+    const closeSpies = records.map((record) => {
+      const realClose = record.fd.close.bind(record.fd);
+      return vi.spyOn(record.fd, 'close').mockImplementation(async () => {
+        await closeGate;
+        await realClose();
+      });
+    });
+    const realRename = fs.rename.bind(fs);
+    let releaseRenames!: () => void;
+    const renameGate = new Promise<void>((resolve) => {
+      releaseRenames = resolve;
+    });
+    let renameCalls = 0;
+    const renameSpy = vi.spyOn(fs, 'rename').mockImplementation(async (oldPath, newPath) => {
+      if (String(oldPath).endsWith('.ezpart')) {
+        renameCalls += 1;
+        await renameGate;
+      }
+      await realRename(oldPath, newPath);
+    });
+    const commits = accepted.map((result) => (
+      result.ok
+        ? service.commitUpload(result.uploadId)
+        : Promise.resolve({ ok: false as const, error: 'begin failed' })
+    ));
+    const unexpectedBegins: Awaited<ReturnType<FileService['beginUpload']>>[] = [];
+    let commitResults: Awaited<(typeof commits)[number]>[] = [];
+    try {
+      await vi.waitFor(() => {
+        expect(closeSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
+      });
+      const duringClose = await service.beginUpload(dir, 'must-wait-for-close.bin', 0);
+      unexpectedBegins.push(duringClose);
+      expect(duringClose).toEqual({ ok: false, error: 'too many active uploads' });
+
+      releaseCloses();
+      await vi.waitFor(() => {
+        expect(renameCalls).toBe(MAX_OPEN_UPLOADS);
+      });
+      const duringRename = await service.beginUpload(dir, 'must-wait-for-rename.bin', 0);
+      unexpectedBegins.push(duringRename);
+      expect(duringRename).toEqual({ ok: false, error: 'too many active uploads' });
+    } finally {
+      releaseCloses();
+      releaseRenames();
+      commitResults = await Promise.all(commits);
+      closeSpies.forEach((spy) => spy.mockRestore());
+      renameSpy.mockRestore();
+      await Promise.all(unexpectedBegins.map((result) => (
+        result.ok ? service.abortUpload(result.uploadId) : Promise.resolve()
+      )));
+    }
+
+    expect(commitResults.every((result) => result.ok)).toBe(true);
+    const afterSettlement = await service.beginUpload(dir, 'after-commits.bin', 0);
+    expect(afterSettlement.ok).toBe(true);
+    if (afterSettlement.ok) await service.abortUpload(afterSettlement.uploadId);
+    expect((await fs.readdir(dir)).some((name) => name.endsWith('.ezpart'))).toBe(false);
+  });
+
+  it('dispose is idempotent, rejects new begins, and waits for close plus unlink', async () => {
+    const dir = await makeDir();
+    const service = makeService();
+    const begin = await service.beginUpload(dir, 'dispose-active.bin', 0);
+    if (!begin.ok) throw new Error('begin failed');
+    const record = (service as unknown as {
+      uploads: Map<string, { fd: { close(): Promise<void> } }>;
+    }).uploads.get(begin.uploadId);
+    if (!record) throw new Error('missing upload record');
+
+    let releaseClose!: () => void;
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    const realClose = record.fd.close.bind(record.fd);
+    const closeSpy = vi.spyOn(record.fd, 'close').mockImplementation(async () => {
+      await closeGate;
+      await realClose();
+    });
+    let releaseUnlink!: () => void;
+    const unlinkGate = new Promise<void>((resolve) => {
+      releaseUnlink = resolve;
+    });
+    const realUnlink = fs.unlink.bind(fs);
+    let unlinkStarted = false;
+    const unlinkSpy = vi.spyOn(fs, 'unlink').mockImplementation(async (file) => {
+      if (String(file).endsWith('.ezpart')) {
+        unlinkStarted = true;
+        await unlinkGate;
+      }
+      await realUnlink(file);
+    });
+
+    const firstDisposal = service.dispose();
+    const duplicateDisposal = service.dispose();
+    expect(duplicateDisposal).toBe(firstDisposal);
+    let disposalSettled = false;
+    const disposal = Promise.resolve(firstDisposal).then(() => {
+      disposalSettled = true;
+    });
+    let rejectedBegin: Awaited<ReturnType<FileService['beginUpload']>> | undefined;
+    try {
+      rejectedBegin = await service.beginUpload(dir, 'after-dispose.bin', 0);
+      expect(rejectedBegin).toEqual({ ok: false, error: 'file service is disposed' });
+      expect(disposalSettled).toBe(false);
+
+      releaseClose();
+      await vi.waitFor(() => {
+        expect(unlinkStarted).toBe(true);
+      });
+      expect(disposalSettled).toBe(false);
+
+      releaseUnlink();
+      await disposal;
+      expect(disposalSettled).toBe(true);
+      expect(await fs.readdir(dir)).toEqual([]);
+    } finally {
+      releaseClose();
+      releaseUnlink();
+      await service.abortUpload(begin.uploadId);
+      if (rejectedBegin?.ok) await service.abortUpload(rejectedBegin.uploadId);
+      await disposal;
+      closeSpy.mockRestore();
+      unlinkSpy.mockRestore();
+    }
+  });
+
+  it('dispose drains a begin already waiting in fs.open and removes its late part file', async () => {
+    const dir = await makeDir();
+    const service = makeService();
+    const realOpen = fs.open.bind(fs);
+    let releaseOpen!: () => void;
+    const openGate = new Promise<void>((resolve) => {
+      releaseOpen = resolve;
+    });
+    const openSpy = vi.spyOn(fs, 'open').mockImplementation(async (file, flags, mode) => {
+      await openGate;
+      return realOpen(file, flags, mode);
+    });
+    const pendingBegin = service.beginUpload(dir, 'dispose-pending.bin', 0);
+    await vi.waitFor(() => {
+      expect(openSpy).toHaveBeenCalledTimes(1);
+    });
+
+    const disposal = Promise.resolve(service.dispose());
+    let disposalSettled = false;
+    void disposal.then(() => {
+      disposalSettled = true;
+    });
+    let beginResult: Awaited<typeof pendingBegin> | undefined;
+    try {
+      await Promise.resolve();
+      expect(disposalSettled).toBe(false);
+      releaseOpen();
+      beginResult = await pendingBegin;
+      await disposal;
+      expect(beginResult).toEqual({ ok: false, error: 'file service is disposed' });
+      expect(await fs.readdir(dir)).toEqual([]);
+    } finally {
+      releaseOpen();
+      beginResult ??= await pendingBegin;
+      if (beginResult.ok) await service.abortUpload(beginResult.uploadId);
+      await disposal;
+      openSpy.mockRestore();
+    }
+  });
+
   it('uploads a file across 3 chunks and commits with identical bytes', async () => {
     const dir = await makeDir();
     const service = makeService();
@@ -390,6 +754,21 @@ describe('FileService.openReadStream', () => {
     }
     await stream.close();
     expect(Buffer.concat(parts)).toEqual(data);
+  });
+
+  it('rejects a short read when the file shrinks after stream metadata is captured', async () => {
+    const dir = await makeDir();
+    const file = path.join(dir, 'shrinking.bin');
+    await fs.writeFile(file, 'abcdef');
+
+    const stream = await makeService().openReadStream(file, 'raw');
+    expect(stream.ok).toBe(true);
+    if (!stream.ok) return;
+    expect(stream.meta).toMatchObject({ fileSize: 6, sendBytes: 6 });
+
+    await fs.truncate(file, 2);
+    await expect(stream.next()).rejects.toThrow(/changed during read/);
+    await stream.close();
   });
 
   it('fails a pre-aborted open and aborts an established stream idempotently', async () => {

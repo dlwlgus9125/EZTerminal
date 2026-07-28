@@ -16,6 +16,8 @@ import { useAppTranslation } from './i18n';
 /** One-time local acknowledgement that packet metadata will be shown — never the packet data itself. */
 const PACKET_ACK_KEY = 'ezterminal.packetAckSeen';
 
+type MonitorState = 'measuring' | 'healthy' | 'unavailable';
+
 /** 300px overlay drawer: CPU/MEM (always-on sparklines) + NET/DISK/PROC (populated
  * only while the panel is visible — main gates their collection accordingly, so
  * those fields read null here until the panel-open-only collectors report in). */
@@ -24,6 +26,7 @@ export function StatusPanel({
 }: { readonly capabilities?: CapabilityAccess }): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const [history, setHistory] = useState<SystemStatsSnapshot[]>([]);
+  const [monitorState, setMonitorState] = useState<MonitorState>('measuring');
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const timeFormatter = useMemo(
     () => new Intl.DateTimeFormat(locale, {
@@ -34,15 +37,32 @@ export function StatusPanel({
     }),
     [locale],
   );
+  const lastUpdatedFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }),
+    [locale],
+  );
 
   useEffect(() => {
     return capabilities.systemStatus.observe({
       onSeed: (seed) => {
         setHistory((current) => (current.length === 0 ? seed.slice(-HISTORY_MAX) : current));
+        setMonitorState((current) => {
+          if (current === 'unavailable') return current;
+          return seed.length > 0 ? 'healthy' : 'measuring';
+        });
       },
       onSnapshot: (snapshot) => {
         setHistory((current) => mergeSnapshot(current, snapshot));
+        setMonitorState('healthy');
       },
+      onError: () => setMonitorState('unavailable'),
     });
   }, [capabilities]);
 
@@ -152,6 +172,9 @@ export function StatusPanel({
   }, [capabilities, packetCapturing]);
 
   const latest = history[history.length - 1] ?? null;
+  const emptyMetricsLabel = t(
+    monitorState === 'unavailable' ? 'common.unavailable' : 'monitor.measuring',
+  );
   const cpuValues = history.map((s) => s.cpu.loadPct);
   const memValues = history.map((s) => (s.mem.usedBytes / s.mem.totalBytes) * 100);
 
@@ -189,9 +212,34 @@ export function StatusPanel({
     <div
       className="status-drawer"
       data-testid="status-panel"
+      data-state={monitorState}
       role="region"
       aria-label={t('monitor.label')}
+      aria-describedby={monitorState === 'unavailable' ? 'status-monitor-error' : undefined}
     >
+      {(monitorState === 'unavailable' || latest) && (
+        <div
+          className={`status-freshness status-freshness--${monitorState}`}
+          data-testid="status-freshness"
+        >
+          {monitorState === 'unavailable' && (
+            <p id="status-monitor-error" className="status-freshness-error" role="alert">
+              {t('monitor.unavailable')}
+            </p>
+          )}
+          {latest && (
+            <time
+              className="status-last-updated"
+              data-testid="status-last-updated"
+              dateTime={new Date(latest.at).toISOString()}
+            >
+              {t('monitor.lastUpdated', {
+                value: lastUpdatedFormatter.format(new Date(latest.at)),
+              })}
+            </time>
+          )}
+        </div>
+      )}
       {/* One trace for both series. They share a time axis, so overlaying them
           is what makes "memory climbed while the CPU was idle" readable. */}
       <section className="status-section status-scope-card" data-testid="status-section-scope">
@@ -250,7 +298,7 @@ export function StatusPanel({
             )}
           </>
         ) : (
-          <div className="status-loading">{t('monitor.measuring')}</div>
+          <div className="status-loading">{emptyMetricsLabel}</div>
         )}
       </section>
 
@@ -313,7 +361,7 @@ export function StatusPanel({
             )}
           </>
         ) : (
-          <div className="status-loading">{t('monitor.measuring')}</div>
+          <div className="status-loading">{emptyMetricsLabel}</div>
         )}
       </section>
 
@@ -342,7 +390,7 @@ export function StatusPanel({
             </div>
           </>
         ) : (
-          <div className="status-loading">{t('monitor.measuring')}</div>
+          <div className="status-loading">{emptyMetricsLabel}</div>
         )}
         <button
           type="button"
@@ -447,7 +495,7 @@ export function StatusPanel({
             </tbody>
           </table>
         ) : (
-          <div className="status-loading">{t('monitor.measuring')}</div>
+          <div className="status-loading">{emptyMetricsLabel}</div>
         )}
       </section>
 
@@ -474,7 +522,7 @@ export function StatusPanel({
             })}
           </div>
         ) : (
-          <div className="status-loading">{t('monitor.measuring')}</div>
+          <div className="status-loading">{emptyMetricsLabel}</div>
         )}
       </section>
 
@@ -500,7 +548,7 @@ export function StatusPanel({
             </tbody>
           </table>
         ) : (
-          <div className="status-loading">{t('monitor.measuring')}</div>
+          <div className="status-loading">{emptyMetricsLabel}</div>
         )}
       </section>
       {/* States the collection contract on screen: the expensive collectors are

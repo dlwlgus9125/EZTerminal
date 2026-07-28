@@ -18,6 +18,10 @@ export const PAIRING_CODE_GROUPS = 2;
  * the whole code is dead within minutes. */
 export const PAIRING_CODE_LENGTH = PAIRING_CODE_GROUP * PAIRING_CODE_GROUPS;
 export const PAIRING_CODE_TTL_MS = 5 * 60_000;
+/** Persisted remote bearer tokens are 32 random bytes rendered as canonical
+ * lowercase hex. Keep this validator shared so a pairing client never adopts
+ * an attacker-controlled or malformed replacement credential. */
+export const REMOTE_BEARER_TOKEN_LENGTH = 64;
 
 export interface PairingCode {
   /** Grouped for reading aloud: `7C2F-91KD`. */
@@ -62,6 +66,12 @@ export function isPairingCode(value: string): boolean {
   const normalized = normalizePairingCode(value);
   if (normalized.length !== PAIRING_CODE_LENGTH) return false;
   return [...normalized].every((character) => PAIRING_CODE_ALPHABET.includes(character));
+}
+
+export function isRemoteBearerToken(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length === REMOTE_BEARER_TOKEN_LENGTH
+    && /^[0-9a-f]+$/u.test(value);
 }
 
 export function formatPairingCode(normalized: string): string {

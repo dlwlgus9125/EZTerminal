@@ -62,7 +62,14 @@ export interface PairingQrDialogProps {
   readonly code: PairingCode | null;
   /** True once a device has actually redeemed the code. */
   readonly redeemed: boolean;
+  readonly issuing: boolean;
+  readonly issueFailed: boolean;
   readonly onIssue: () => void;
+  /**
+   * Deterministic clock seam for handoff/reference rendering. Production
+   * omits it and receives the live one-second countdown.
+   */
+  readonly currentTime?: number;
 }
 
 export function PairingQrDialog({
@@ -71,21 +78,29 @@ export function PairingQrDialog({
   endpoint,
   code,
   redeemed,
+  issuing,
+  issueFailed,
   onIssue,
+  currentTime,
 }: PairingQrDialogProps): JSX.Element {
   const { t } = useAppTranslation();
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => currentTime ?? Date.now());
 
   useEffect(() => {
     if (!open || !code) return undefined;
+    if (currentTime !== undefined) {
+      setNow(currentTime);
+      return undefined;
+    }
     setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(timer);
-  }, [open, code]);
+  }, [open, code, currentTime]);
 
   const remaining = code ? Math.max(0, code.expiresAt - now) : 0;
+  const expired = Boolean(code && remaining <= 0);
   const percent = Math.round((remaining / PAIRING_CODE_TTL_MS) * 100);
-  const uri = code && endpoint ? buildPairingUri(endpoint, code.code) : null;
+  const uri = code && !expired && endpoint ? buildPairingUri(endpoint, code.code) : null;
 
   return (
     <Dialog
@@ -102,6 +117,18 @@ export function PairingQrDialog({
         {redeemed ? (
           <p className="pairing-qr__detected" role="status" data-testid="pairing-redeemed">
             {t('pairing.redeemed')}
+          </p>
+        ) : issuing ? (
+          <p className="pairing-qr__hint" role="status" data-testid="pairing-issuing">
+            {t('common.loading')}
+          </p>
+        ) : issueFailed ? (
+          <p className="pairing-qr__hint" role="alert" data-testid="pairing-error">
+            {t('pairing.issueFailed')}
+          </p>
+        ) : expired ? (
+          <p className="pairing-qr__hint" role="status" data-testid="pairing-expired">
+            {t('pairing.expired')}
           </p>
         ) : uri ? (
           <>
@@ -126,8 +153,17 @@ export function PairingQrDialog({
         )}
       </div>
       <div className="pairing-qr__actions">
-        <Button variant="secondary" onClick={onIssue} data-testid="pairing-issue">
-          {code && !redeemed ? t('pairing.reissue') : t('pairing.issue')}
+        <Button
+          variant="secondary"
+          onClick={onIssue}
+          disabled={issuing}
+          data-testid="pairing-issue"
+        >
+          {issueFailed
+            ? t('common.retry')
+            : code && !redeemed && !expired
+              ? t('pairing.reissue')
+              : t('pairing.issue')}
         </Button>
         <Button variant="ghost" onClick={() => onOpenChange(false)}>{t('common.close')}</Button>
       </div>

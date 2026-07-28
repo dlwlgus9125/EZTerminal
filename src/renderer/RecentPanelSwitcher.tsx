@@ -1,4 +1,5 @@
 import { useAppTranslation } from './i18n';
+import { useNativeOverlayRegistration } from './native-overlay';
 
 export interface RecentPanelSwitcherItem {
   readonly panelId: string;
@@ -20,6 +21,7 @@ export function RecentPanelSwitcher({
   items,
   selectedPanelId,
 }: RecentPanelSwitcherProps): JSX.Element {
+  useNativeOverlayRegistration();
   const { t } = useAppTranslation();
   const selected = items.find((item) => item.panelId === selectedPanelId) ?? items[0];
   const selectedId = selected ? optionId(selected.panelId) : undefined;

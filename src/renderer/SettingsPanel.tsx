@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { OpenClawMode, TerminalRendererPreference, ThemeName } from '../shared/layout-schema';
 import type { RemoteRuntimeStatus } from '../shared/ipc';
 import type { TerminalPastePreferences } from '../shared/terminal-clipboard';
+import {
+  MAX_EFFECT_INTENSITY,
+  MIN_EFFECT_INTENSITY,
+} from '../shared/ui-preferences';
 import { AgentIntegrationSettings } from './AgentIntegrationSettings';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { EFFECT_CATALOG, type EffectId } from './effects';
@@ -419,25 +423,43 @@ export function SettingsPanel({
           label={t('settings.bootIntro')}
           data-testid="settings-boot-intro"
         />
+        <label className="settings-effect-intensity">
+          <span className="settings-effect-intensity__heading">
+            <span>{t('settings.effectIntensity')}</span>
+            <output htmlFor="settings-effect-intensity">
+              {`FX · NEON ${uiPreferences.effectIntensity}`}
+            </output>
+          </span>
+          <input
+            id="settings-effect-intensity"
+            type="range"
+            min={MIN_EFFECT_INTENSITY}
+            max={MAX_EFFECT_INTENSITY}
+            step={1}
+            value={uiPreferences.effectIntensity}
+            aria-valuetext={t('settings.effectIntensityValue', { value: uiPreferences.effectIntensity })}
+            onChange={(event) => updateUiPreference({ effectIntensity: Number(event.target.value) })}
+            data-testid="settings-effect-intensity"
+          />
+          <span className="settings-effect-intensity__description">
+            {t('settings.effectIntensityDescription')}
+          </span>
+        </label>
         <h2 className="status-section-title">{t('settings.crtEffects')}</h2>
-        {activeThemeEffects.length === 0 ? (
-          <div className="status-loading" data-testid="settings-effects-empty">
-            {t('settings.noEffects')}
-          </div>
-        ) : (
-          activeThemeEffects.map((id) => {
-            const entry = EFFECT_CATALOG[id as EffectId];
-            if (!entry) return null;
-            const on = effectToggles[id] ?? entry.defaultOn;
+        {Object.values(EFFECT_CATALOG).map((entry) => {
+            const supported = activeThemeEffects.includes(entry.id);
+            const on = supported && (effectToggles[entry.id] ?? entry.defaultOn);
             return (
-              <div key={id}>
+              <div key={entry.id}>
                 <Switch
                   checked={on}
-                  onChange={(e) => onToggleEffect(id, e.target.checked)}
+                  disabled={!supported}
+                  description={!supported ? t('settings.effectUnavailableForTheme') : undefined}
+                  onChange={(e) => onToggleEffect(entry.id, e.target.checked)}
                   label={t(EFFECT_LABEL_KEYS[entry.id])}
-                  data-testid={`settings-effect-${id}`}
+                  data-testid={`settings-effect-${entry.id}`}
                 />
-                {id === 'crt-rollbar' && (
+                {supported && on && entry.id === 'crt-rollbar' && (
                   <div className="settings-rollbar-params" data-testid="settings-rollbar-params">
                     <label className="settings-rollbar-row">
                       <span>{t('settings.lineThickness', { value: rollbar.thickness })}</span>
@@ -510,9 +532,9 @@ export function SettingsPanel({
                     </label>
                   </div>
                 )}
-                {isInterferenceEffectId(id) && (
+                {supported && on && isInterferenceEffectId(entry.id) && (
                   <EffectParamSliders
-                    effectId={id}
+                    effectId={entry.id}
                     params={interference}
                     onChange={onChangeEffectParams}
                     formatLabel={formatEffectParamLabel}
@@ -521,8 +543,7 @@ export function SettingsPanel({
                 )}
               </div>
             );
-          })
-        )}
+          })}
       </section>
 
       <section className="status-section" hidden={category !== 'agents'}>

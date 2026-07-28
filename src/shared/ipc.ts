@@ -1166,9 +1166,13 @@ export interface EzTerminalApi {
   onAgentActivitySnapshot: (listener: (snapshot: AgentActivitySnapshot) => void) => () => void;
   /** Deliver one trimmed line to a waiting agent PTY. Never auto-submits approvals. */
   sendAgentFollowup: (activityId: string, text: string) => Promise<AgentFollowupResult>;
-  /** Answer a parked permission hook. Only valid while the activity carries a
-   * live `approval`; past its `expiresAt` the gate has already let go. */
-  decideAgentApproval: (activityId: string, decision: AgentDecision) => Promise<AgentDecisionResult>;
+  /** Answer one exact parked permission hook. Both ids must still match the
+   * live `approval`; superseded or expired approval ids are rejected. */
+  decideAgentApproval: (
+    activityId: string,
+    approvalId: string,
+    decision: AgentDecision,
+  ) => Promise<AgentDecisionResult>;
 
   /** Main-owned Git worktree operations. Mobile is restricted to list/open. */
   executeWorktree: (request: WorktreeRequest) => Promise<WorktreeResult>;

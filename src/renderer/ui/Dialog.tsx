@@ -8,7 +8,13 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useNativeOverlayRegistration } from '../native-overlay';
 import { IconButton } from './Button';
+import {
+  isolateModalBackground,
+  isTopModalLayer,
+  registerModalLayer,
+} from './modal-isolation';
 import { classNames, getFocusableElements } from './utils';
 
 export interface DialogProps {
@@ -61,22 +67,36 @@ export function Dialog({
   const descriptionId = `ez-ui-dialog-description-${useId()}`;
   const panelRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const dismissibleRef = useRef(dismissible);
+  const initialFocusTargetRef = useRef(initialFocusRef);
+  const onOpenChangeRef = useRef(onOpenChange);
+  dismissibleRef.current = dismissible;
+  initialFocusTargetRef.current = initialFocusRef;
+  onOpenChangeRef.current = onOpenChange;
+  useNativeOverlayRegistration(open);
 
   useEffect(() => {
     if (!open) return;
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const backdrop = panelRef.current?.closest<HTMLElement>('.ez-ui-dialog-backdrop');
+    const releaseBackground = backdrop
+      ? isolateModalBackground(backdrop)
+      : () => undefined;
+    const releaseLayer = backdrop
+      ? registerModalLayer(backdrop)
+      : () => undefined;
     const animationFrame = requestAnimationFrame(() => {
       const panel = panelRef.current;
       if (!panel) return;
-      (initialFocusRef?.current ?? getFocusableElements(panel)[0] ?? panel).focus();
+      (initialFocusTargetRef.current?.current ?? getFocusableElements(panel)[0] ?? panel).focus();
     });
 
     const handleKeyDown = (event: KeyboardEvent): void => {
       const panel = panelRef.current;
-      if (!panel) return;
-      if (event.key === 'Escape' && dismissible) {
+      if (!panel || !isTopModalLayer(backdrop ?? null)) return;
+      if (event.key === 'Escape' && dismissibleRef.current) {
         event.preventDefault();
-        onOpenChange(false);
+        onOpenChangeRef.current(false);
         return;
       }
       if (event.key !== 'Tab') return;
@@ -104,9 +124,11 @@ export function Dialog({
     return () => {
       cancelAnimationFrame(animationFrame);
       document.removeEventListener('keydown', handleKeyDown);
+      releaseBackground();
+      releaseLayer();
       requestAnimationFrame(() => previousFocusRef.current?.focus());
     };
-  }, [dismissible, initialFocusRef, onOpenChange, open]);
+  }, [open]);
 
   if (!open || typeof document === 'undefined') return null;
   return createPortal(
@@ -114,7 +136,14 @@ export function Dialog({
       className="ez-ui-dialog-backdrop"
       data-variant={variant}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && dismissible && closeOnBackdrop) onOpenChange(false);
+        if (
+          event.target === event.currentTarget
+          && isTopModalLayer(event.currentTarget)
+          && dismissible
+          && closeOnBackdrop
+        ) {
+          onOpenChange(false);
+        }
       }}
     >
       <div

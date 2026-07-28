@@ -5,15 +5,15 @@ import type { RemoteDesktopHostStatus } from '../shared/ipc';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 
-function useElapsed(connectedAt: number | null): string {
+function useElapsed(connectedAt: number | null, currentTime?: number): string {
   const [, setTick] = useState(0);
   useEffect(() => {
-    if (connectedAt === null) return undefined;
+    if (connectedAt === null || currentTime !== undefined) return undefined;
     const timer = window.setInterval(() => setTick((value) => value + 1), 1_000);
     return () => window.clearInterval(timer);
-  }, [connectedAt]);
+  }, [connectedAt, currentTime]);
   if (connectedAt === null) return '—';
-  const total = Math.max(0, Math.floor((Date.now() - connectedAt) / 1_000));
+  const total = Math.max(0, Math.floor(((currentTime ?? Date.now()) - connectedAt) / 1_000));
   const hours = Math.floor(total / 3_600);
   const minutes = Math.floor((total % 3_600) / 60);
   const seconds = total % 60;
@@ -41,10 +41,15 @@ export function useRemoteDesktopHostStatus(
 
 export function RemoteDesktopStatusCard({
   capabilities = rendererCapabilities,
-}: { readonly capabilities?: CapabilityAccess }): JSX.Element {
+  currentTime,
+}: {
+  readonly capabilities?: CapabilityAccess;
+  /** Fixed clock for deterministic product handoff/reference rendering. */
+  readonly currentTime?: number;
+}): JSX.Element {
   const { t } = useAppTranslation();
   const status = useRemoteDesktopHostStatus(capabilities);
-  const elapsed = useElapsed(status?.connectedAt ?? null);
+  const elapsed = useElapsed(status?.connectedAt ?? null, currentTime);
   const [disconnecting, setDisconnecting] = useState(false);
   const disconnect = useCallback(() => {
     if (capabilities.snapshot().desktop === 'unavailable') return;

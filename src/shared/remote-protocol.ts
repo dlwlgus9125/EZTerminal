@@ -350,6 +350,8 @@ export interface AgentDecisionRequest {
   readonly kind: 'agent-decision';
   readonly requestId: string;
   readonly activityId: string;
+  /** Opaque id of the exact parked provider hook being answered. */
+  readonly approvalId: string;
   readonly decision: AgentDecision;
 }
 
@@ -369,6 +371,8 @@ export interface WorktreeRequestMessage {
  */
 export interface PingMessage {
   readonly kind: 'ping';
+  /** Connection-generation-scoped correlation id. */
+  readonly probeId: string;
   /** Client clock. Echoed verbatim — the server never interprets it, so the
    * two peers do not need agreeing clocks for the difference to be right. */
   readonly sentAt: number;
@@ -810,6 +814,7 @@ export interface AgentDecisionReply {
 
 export interface PongMessage {
   readonly kind: 'pong';
+  readonly probeId: string;
   readonly sentAt: number;
 }
 

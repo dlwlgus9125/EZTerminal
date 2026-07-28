@@ -43,7 +43,9 @@ describe('BrandMark', () => {
   });
 
   it('keeps CRT decoration theme-aware, effect-gated, and accessibility-safe', () => {
-    expect(css).toMatch(/\[data-theme=["']matrix["']\]\s+\.workbench-brand-mark__name\s*\{[^}]*["']VT323["']/s);
+    expect(css).toMatch(
+      /\[data-theme=["']matrix["']\]\s+\.workbench-brand-mark__name\s*\{[^}]*["']Share Tech Mono["']/s,
+    );
     expect(css).toMatch(
       /html\[data-effect-phosphor-glow=["']on["']\]\s+\.workbench-brand-mark__name\s*\{[^}]*text-shadow/s,
     );

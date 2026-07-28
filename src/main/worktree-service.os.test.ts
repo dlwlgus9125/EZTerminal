@@ -1,11 +1,37 @@
 import { execFile, execFileSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GitRunner, parseWorktreePorcelain, WorktreeService } from './worktree-service';
 import { SessionWorktreeGuard } from './session-worktree-guard';
+
+const temporaryRepoBases = new Set<string>();
+
+async function cleanupTemporaryRepoBases(): Promise<void> {
+  const failures: unknown[] = [];
+  for (const base of temporaryRepoBases) {
+    try {
+      await fs.rm(base, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      });
+      temporaryRepoBases.delete(base);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'Failed to remove one or more temporary worktree repositories.');
+  }
+}
+
+afterEach(cleanupTemporaryRepoBases);
+afterAll(cleanupTemporaryRepoBases);
 
 function git(cwd: string, args: readonly string[]): string {
   return execFileSync('git', [...args], {
@@ -18,6 +44,7 @@ function git(cwd: string, args: readonly string[]): string {
 
 function makeRepo(): { base: string; repo: string; userData: string } {
   const base = mkdtempSync(path.join(tmpdir(), 'ezterm-worktree-'));
+  temporaryRepoBases.add(base);
   const repo = path.join(base, 'source repo');
   const userData = path.join(base, 'user-data');
   mkdirSync(repo);
@@ -98,6 +125,50 @@ describe('GitRunner', () => {
     expect(options.timeout).toBeGreaterThan(0);
     expect(options.maxBuffer).toBeLessThanOrEqual(1024 * 1024);
     expect(options.env.GIT_TERMINAL_PROMPT).toBe('0');
+  });
+
+  it('does not inherit caller-controlled Git repository or configuration environment', async () => {
+    const poison = {
+      GIT_DIR: 'C:\\attacker\\repo\\.git',
+      GIT_WORK_TREE: 'C:\\attacker\\repo',
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.fsmonitor',
+      GIT_CONFIG_VALUE_0: 'attacker-helper',
+      GIT_EXTERNAL_DIFF: 'attacker-diff',
+    } as const;
+    const previous = new Map<string, string | undefined>();
+    for (const [key, value] of Object.entries(poison)) {
+      previous.set(key, process.env[key]);
+      process.env[key] = value;
+    }
+
+    let childEnv: NodeJS.ProcessEnv | undefined;
+    const executeMock = vi.fn((
+      _file: string,
+      _args: readonly string[],
+      options: { env?: NodeJS.ProcessEnv },
+      callback: (error: Error | null, stdout?: string, stderr?: string) => void,
+    ) => {
+      childEnv = options.env;
+      callback(null, 'ok', '');
+      return {} as ChildProcess;
+    });
+
+    try {
+      await new GitRunner(executeMock as unknown as typeof execFile).run('C:\\repo', ['status']);
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+
+    expect(childEnv?.GIT_TERMINAL_PROMPT).toBe('0');
+    expect(
+      Object.keys(childEnv ?? {}).filter(
+        (key) => key.toUpperCase().startsWith('GIT_') && key.toUpperCase() !== 'GIT_TERMINAL_PROMPT',
+      ),
+    ).toEqual([]);
   });
 });
 

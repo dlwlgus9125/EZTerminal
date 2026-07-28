@@ -194,7 +194,10 @@ export function saveEffectToggles(toggles: Record<string, boolean>): void {
 export const MOBILE_ROLLBAR_DEFAULTS: RollbarParams = {
   ...DEFAULT_ROLLBAR_PARAMS,
   thickness: 130,
+  gap: 70,
+  color: '#2fd06d',
   opacity: 5,
+  softness: 99,
   // speed 1 crosses in 24s at a 70% pitch; 2 lands near the specified 13s.
   speed: 2,
 };

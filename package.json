@@ -1,8 +1,8 @@
 {
   "name": "ezterminal",
   "productName": "EZTerminal",
-  "version": "1.0.12",
-  "description": "EZTerminal ??a structured-data shell terminal (Phase 1 shell core).",
+  "version": "1.0.13",
+  "description": "EZTerminal — a structured-data shell terminal (Phase 1 shell core).",
   "main": ".vite/build/main.js",
   "private": true,
   "packageManager": "pnpm@10.33.4",
@@ -18,7 +18,7 @@
     "lint": "eslint --ext .ts,.tsx .",
     "typecheck": "tsc --noEmit && pnpm typecheck:mobile-e2e",
     "typecheck:mobile-e2e": "tsc -p mobile/tsconfig.e2e.json --noEmit",
-    "test": "pnpm test:unit && pnpm test:os",
+    "test": "pnpm test:unit && pnpm test:os && pnpm guard:approval-privacy && pnpm guard:pairing-offline && pnpm guard:desktop-handoff",
     "test:unit": "vitest run",
     "test:os": "vitest --config vitest.os.config.ts run",
     "test:watch": "vitest",
@@ -38,6 +38,7 @@
     "guard:pty-routing": "node scripts/guard-pty-routing.mjs",
     "guard:approval-privacy": "node scripts/guard-approval-privacy.mjs",
     "guard:pairing-offline": "node scripts/guard-pairing-offline.mjs",
+    "guard:desktop-handoff": "node scripts/guard-desktop-handoff.mjs",
     "verify:mobile-release": "node scripts/verify-no-e2e-markers.mjs mobile/dist"
   },
   "keywords": [],

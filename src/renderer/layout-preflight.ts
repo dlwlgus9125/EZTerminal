@@ -6,7 +6,7 @@ import {
   type SerializedDockview,
 } from 'dockview-react';
 
-import type { LayoutEnvelope } from '../shared/layout-schema';
+import { buildLayoutEnvelope, type LayoutEnvelope } from '../shared/layout-schema';
 
 function createInertContentRenderer(): IContentRenderer {
   return {
@@ -57,4 +57,50 @@ export function preflightLayoutEnvelope(envelope: LayoutEnvelope): boolean {
   }
 
   return valid;
+}
+
+/**
+ * Removes one panel through dockview's own deserializer/serializer instead of
+ * manually rewriting its nested grid. This is used by capability-gated startup
+ * restore: a hidden native panel must never mount just so it can be closed.
+ *
+ * `null` is fail-closed and tells the caller to open its normal default pane.
+ * The input envelope is never mutated.
+ */
+export function removePanelFromLayoutEnvelope(
+  envelope: LayoutEnvelope,
+  panelId: string,
+): LayoutEnvelope | null {
+  if (!envelope.layout.panels[panelId]) return envelope;
+
+  const host = document.createElement('div');
+  let api: DockviewApi | undefined;
+  let result: LayoutEnvelope | null = null;
+
+  try {
+    api = createDockview(host, {
+      announcements: false,
+      createComponent: createInertContentRenderer,
+      createTabComponent: createInertTabRenderer,
+      disableAutoResizing: true,
+      disableDnd: true,
+      disableFloatingGroups: true,
+    });
+    api.fromJSON(envelope.layout as unknown as SerializedDockview);
+    api.getPanel(panelId)?.api.close();
+    if (api.panels.length > 0) {
+      const filtered = buildLayoutEnvelope(api.toJSON(), envelope.savedAt);
+      result = filtered?.layout.panels[panelId] ? null : filtered;
+    }
+  } catch {
+    result = null;
+  } finally {
+    try {
+      api?.dispose();
+    } catch {
+      result = null;
+    }
+  }
+
+  return result;
 }

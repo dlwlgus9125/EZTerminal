@@ -57,6 +57,20 @@ describe('remote-protocol - guarded session destroy', () => {
   });
 });
 
+describe('remote-protocol - agent approval identity', () => {
+  it('carries the exact parked approval id across the wire', () => {
+    const request = {
+      kind: 'agent-decision',
+      requestId: 'request-1',
+      activityId: 'activity-1',
+      approvalId: 'approval-1',
+      decision: 'allow',
+    } satisfies ClientToServerMessage;
+
+    expect(JSON.parse(JSON.stringify(request))).toEqual(request);
+  });
+});
+
 describe('remote-protocol - Quick Commands capability', () => {
   it('keeps the capability and bounded read-only reply JSON-safe', () => {
     const auth = {

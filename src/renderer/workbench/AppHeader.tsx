@@ -1,45 +1,33 @@
-import { BellRing, ChevronDown, PanelsTopLeft, Plus, Search } from 'lucide-react';
+import { BellRing, ChevronDown, PanelsTopLeft, Plus, ScanLine, Search } from 'lucide-react';
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 
-import type { EffectProfileId, ResolvedEffectProfileId } from '../effect-profiles';
 import { useAppTranslation } from '../i18n';
 import { Badge, Button } from '../ui';
 import { BrandMark } from './BrandMark';
-import { EffectProfileMenu } from './EffectProfileMenu';
 
-/** The real Command Center accelerator. The handoff draws `Ctrl K`, but Ctrl+K
- * is readline's kill-to-end-of-line and the global handler runs in the capture
- * phase, so claiming it would swallow the key before any terminal saw it. The
- * keycaps therefore advertise the binding the app actually has. */
-const COMMAND_CENTER_KEYS = ['Ctrl', 'Shift', 'P'] as const;
+const COMMAND_CENTER_KEYS = ['Ctrl', 'K'] as const;
 
 export function AppHeader({
   appVersion,
   attentionCount,
-  activeThemeEffects,
   commandCenterOpen,
-  effectProfile,
-  motionEffectsRequested,
+  effectIntensity,
   onNewTerminal,
   onOpenAttention,
   onOpenCommandCenter,
   onOpenEffectSettings,
-  onSelectEffectProfile,
   onWorkspaceOpenChange,
   workspaceMenu,
   workspaceOpen,
 }: {
   readonly appVersion?: string | null;
   readonly attentionCount: number;
-  readonly activeThemeEffects: readonly string[];
   readonly commandCenterOpen: boolean;
-  readonly effectProfile: ResolvedEffectProfileId;
-  readonly motionEffectsRequested: boolean;
+  readonly effectIntensity: number;
   readonly onNewTerminal: () => void;
   readonly onOpenAttention: () => void;
   readonly onOpenCommandCenter: () => void;
   readonly onOpenEffectSettings: () => void;
-  readonly onSelectEffectProfile: (profile: EffectProfileId) => void;
   readonly onWorkspaceOpenChange: (open: boolean) => void;
   readonly workspaceMenu?: ReactNode;
   readonly workspaceOpen: boolean;
@@ -119,7 +107,7 @@ export function AppHeader({
           className="workbench-command-field"
           aria-expanded={commandCenterOpen}
           aria-haspopup="dialog"
-          aria-keyshortcuts="Control+Shift+P"
+          aria-keyshortcuts="Control+K Meta+K Control+Shift+P Meta+Shift+P"
           onClick={onOpenCommandCenter}
           data-testid="btn-command-center"
           title={t('header.commandCenter')}
@@ -160,13 +148,20 @@ export function AppHeader({
         {workspaceMenu}
       </div>
       <div className="workbench-header-zone workbench-header-zone--attention">
-        <EffectProfileMenu
-          activeThemeEffects={activeThemeEffects}
-          motionEffectsRequested={motionEffectsRequested}
-          profile={effectProfile}
-          onSelectProfile={onSelectEffectProfile}
-          onOpenAdvanced={onOpenEffectSettings}
-        />
+        <Button
+          size="sm"
+          variant="ghost"
+          className="effect-profile-trigger"
+          leadingIcon={<ScanLine />}
+          onClick={onOpenEffectSettings}
+          aria-label={t('header.effectIntensity', { value: effectIntensity })}
+          data-testid="btn-effect-profile"
+          data-effect-intensity={effectIntensity}
+        >
+          <span className="effect-profile-trigger__fx" aria-hidden="true">FX</span>
+          <span className="effect-profile-trigger__separator" aria-hidden="true">·</span>
+          <span className="effect-profile-trigger__value">{`NEON ${effectIntensity}`}</span>
+        </Button>
         <Button
           variant={attentionCount > 0 ? 'secondary' : 'ghost'}
           leadingIcon={<BellRing />}

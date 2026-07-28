@@ -31,6 +31,7 @@ export function PairingScanner({
 }): JSX.Element {
   const { t } = useAppTranslation();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const stopRef = useRef<() => void>(() => undefined);
   const [error, setError] = useState<ScannerError | null>(null);
 
   useEffect(() => {
@@ -43,8 +44,11 @@ export function PairingScanner({
       if (timer !== null) clearInterval(timer);
       timer = null;
       for (const track of stream?.getTracks() ?? []) track.stop();
+      const video = videoRef.current;
+      if (video && video.srcObject === stream) video.srcObject = null;
       stream = null;
     };
+    stopRef.current = stop;
 
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d', { willReadFrequently: true });
@@ -64,6 +68,7 @@ export function PairingScanner({
         // A QR that is not ours is worth saying so about, once, rather than
         // silently continuing to look like nothing is happening.
         setError('unreadable');
+        stop();
         return;
       }
       stop();
@@ -71,7 +76,7 @@ export function PairingScanner({
     };
 
     void (async () => {
-      if (!navigator.mediaDevices?.getUserMedia) {
+      if (!context || !navigator.mediaDevices?.getUserMedia) {
         setError('unavailable');
         return;
       }
@@ -81,7 +86,7 @@ export function PairingScanner({
           audio: false,
         });
       } catch {
-        setError('denied');
+        if (!stopped) setError('denied');
         return;
       }
       if (stopped) {
@@ -89,20 +94,36 @@ export function PairingScanner({
         return;
       }
       const video = videoRef.current;
-      if (video) {
-        video.srcObject = stream;
-        await video.play().catch(() => undefined);
+      if (!video) {
+        setError('unavailable');
+        stop();
+        return;
       }
+      video.srcObject = stream;
+      try {
+        await video.play();
+      } catch {
+        if (!stopped) setError('unavailable');
+        stop();
+        return;
+      }
+      if (stopped) return;
       timer = setInterval(decode, DECODE_INTERVAL_MS);
     })();
 
-    return stop;
+    return () => {
+      stop();
+      if (stopRef.current === stop) stopRef.current = () => undefined;
+    };
   }, [onDetected]);
 
   return (
     <MobileActionSheet
       title={t('pairing.scanTitle')}
-      onClose={onClose}
+      onClose={() => {
+        stopRef.current();
+        onClose();
+      }}
       variant="fullscreen"
       testId="pairing-scanner"
     >

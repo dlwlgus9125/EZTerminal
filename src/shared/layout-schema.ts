@@ -23,6 +23,8 @@
  */
 import { z } from 'zod';
 import {
+  MAX_EFFECT_INTENSITY,
+  MIN_EFFECT_INTENSITY,
   SidebarWidthSchema,
   UiDensitySchema,
   UiLocalePreferenceSchema,
@@ -147,6 +149,15 @@ export const EffectParamsSchema = z.record(
 );
 export type EffectParamsSettings = z.infer<typeof EffectParamsSchema>;
 
+// Disk input is recoverable configuration, unlike the strict IPC payload.
+// Clamp an old/manual out-of-range numeric value in isolation so one cosmetic
+// setting cannot quarantine otherwise valid startup, theme, or layout choices.
+const PersistedEffectIntensitySchema = z.number().finite().transform((value) =>
+  Math.min(
+    MAX_EFFECT_INTENSITY,
+    Math.max(MIN_EFFECT_INTENSITY, Math.round(value)),
+  ));
+
 export const SettingsSchema = z.object({
   schemaVersion: z.literal(LAYOUT_SCHEMA_VERSION),
   startup: StartupPrefSchema,
@@ -204,6 +215,7 @@ export const SettingsSchema = z.object({
   locale: UiLocalePreferenceSchema.optional(),
   density: UiDensitySchema.optional(),
   sidebarWidth: SidebarWidthSchema.optional(),
+  effectIntensity: PersistedEffectIntensitySchema.optional(),
 });
 export type StartupPref = z.infer<typeof StartupPrefSchema>;
 export type SettingsFile = z.infer<typeof SettingsSchema>;

@@ -9,12 +9,12 @@
  */
 import { randomBytes } from 'node:crypto';
 
+import { isRemoteBearerToken } from '../shared/pairing';
 import { SecureAtomicFile, type SecureAtomicFileOptions } from './secure-atomic-file';
 
 const REMOTE_TOKEN_FILE = 'remote-token.json';
 const LEGACY_REMOTE_TOKEN_SCHEMA_VERSION = 1 as const;
 const REMOTE_TOKEN_SCHEMA_VERSION = 2 as const;
-const REMOTE_TOKEN_RE = /^[0-9a-f]{64}$/u;
 const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 
 interface LegacyRemoteTokenFile {
@@ -45,7 +45,7 @@ function isLegacyTokenFile(data: unknown): data is LegacyRemoteTokenFile {
     data !== null &&
     (data as { schemaVersion?: unknown }).schemaVersion === LEGACY_REMOTE_TOKEN_SCHEMA_VERSION &&
     typeof (data as { token?: unknown }).token === 'string' &&
-    REMOTE_TOKEN_RE.test((data as { token: string }).token)
+    isRemoteBearerToken((data as { token: string }).token)
   );
 }
 
@@ -213,7 +213,7 @@ export class RemoteTokenStore {
       // destructive. The remote listener remains disabled instead.
       throw new Error('Unable to decrypt the remote pairing token with OS-backed storage.', { cause: error });
     }
-    if (!REMOTE_TOKEN_RE.test(token)) {
+    if (!isRemoteBearerToken(token)) {
       throw new Error('OS-backed storage returned an invalid remote pairing token.');
     }
     return token;

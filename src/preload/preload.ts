@@ -177,9 +177,10 @@ const api: EzTerminalApi = {
     ipcRenderer.invoke('agents:followup', activityId, text),
   decideAgentApproval: (
     activityId: string,
+    approvalId: string,
     decision: import('../shared/agent').AgentDecision,
   ): Promise<import('../shared/agent').AgentDecisionResult> =>
-    ipcRenderer.invoke('agents:decide', activityId, decision),
+    ipcRenderer.invoke('agents:decide', activityId, approvalId, decision),
 
   // Read-only Git working-tree queries (explorer tags, branch, approval diff).
   getGitStatus: (

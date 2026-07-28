@@ -5,7 +5,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentActivity, AgentActivitySnapshot, AgentStatus } from '../../src/shared/agent';
+import type { GitDiffResult } from '../../src/shared/git-status';
 import { MobileAgentView } from './MobileAgentView';
+import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -32,7 +34,11 @@ let container: HTMLDivElement;
 let root: Root;
 
 function render(node: JSX.Element): void {
-  act(() => root.render(node));
+  act(() => root.render(
+    <MobileNavigationHistoryProvider>
+      {node}
+    </MobileNavigationHistoryProvider>,
+  ));
 }
 
 function testIds(id: string): HTMLElement[] {
@@ -116,12 +122,89 @@ describe('MobileAgentView', () => {
       .toEqual(['blocked', 'waiting', 'working', 'done']);
   });
 
+  it('orders parked approvals first by risk, expiry, then recency', () => {
+    const approval = (
+      approvalId: string,
+      risk: 'danger' | 'write' | 'read',
+      expiresAt: number,
+    ) => ({
+      approvalId,
+      toolName: 'Shell',
+      command: approvalId,
+      risk,
+      pending: true,
+      requestedAt: NOW - 1_000,
+      expiresAt,
+    });
+    render(
+      <MobileAgentView
+        snapshot={snapshotOf(
+          activity('none', 'blocked', { updatedAt: NOW }),
+          activity('read-late', 'blocked', {
+            approval: approval('read-late', 'read', NOW + 20_000),
+          }),
+          activity('write', 'blocked', {
+            approval: approval('write', 'write', NOW + 30_000),
+          }),
+          activity('danger', 'blocked', {
+            approval: approval('danger', 'danger', NOW + 40_000),
+          }),
+          activity('read-soon', 'blocked', {
+            approval: approval('read-soon', 'read', NOW + 10_000),
+          }),
+        )}
+        {...noop}
+      />,
+    );
+
+    expect(testIds('agent-card').map((card) => card.querySelector('code')?.textContent ?? 'none'))
+      .toEqual(['danger', 'write', 'read-soon', 'read-late', 'none']);
+  });
+
   it('offers the follow-up composer only for a waiting agent', () => {
     render(<MobileAgentView snapshot={snapshotOf(activity('a', 'blocked'))} {...noop} />);
     expect(testIds('agent-followup-input')).toHaveLength(0);
 
     render(<MobileAgentView snapshot={snapshotOf(activity('a', 'waiting'))} {...noop} />);
     expect(testIds('agent-followup-input')).toHaveLength(1);
+  });
+
+  it('uses host pending truth instead of the mobile wall clock', () => {
+    render(
+      <MobileAgentView
+        snapshot={snapshotOf(activity('pending', 'blocked', {
+          approval: {
+            approvalId: 'approval-pending',
+            toolName: 'Shell',
+            risk: 'danger',
+            pending: true,
+            requestedAt: NOW - 120_000,
+            expiresAt: NOW - 60_000,
+          },
+        }))}
+        {...noop}
+        onDecideApproval={async () => ({ ok: true })}
+      />,
+    );
+    expect(testIds('agent-approve')).toHaveLength(1);
+
+    render(
+      <MobileAgentView
+        snapshot={snapshotOf(activity('released', 'blocked', {
+          approval: {
+            approvalId: 'approval-released',
+            toolName: 'Shell',
+            risk: 'danger',
+            pending: false,
+            requestedAt: NOW - 1_000,
+            expiresAt: NOW + 60_000,
+          },
+        }))}
+        {...noop}
+        onDecideApproval={async () => ({ ok: true })}
+      />,
+    );
+    expect(testIds('agent-approve')).toHaveLength(0);
   });
 
   it('sends a follow-up and clears the draft on success', async () => {
@@ -186,6 +269,119 @@ describe('MobileAgentView', () => {
     );
     act(() => testIds('agent-focus')[0]!.click());
     expect(onFocusSession).toHaveBeenCalledWith('session-a');
+  });
+
+  it('shows diff truncation and omission reasons even when no text remains', async () => {
+    render(
+      <MobileAgentView
+        snapshot={snapshotOf(activity('a', 'blocked', {
+          approval: {
+            approvalId: 'approval-a',
+            toolName: 'Shell',
+            risk: 'write',
+            pending: true,
+            requestedAt: NOW - 1_000,
+            expiresAt: NOW + 30_000,
+          },
+        }))}
+        {...noop}
+        onLoadDiff={async () => ({
+          ok: true,
+          text: '',
+          truncated: true,
+          omissions: [{ path: 'artifacts/large.bin', reason: 'too-large' }],
+        })}
+      />,
+    );
+
+    await act(async () => {
+      testIds('agent-view-diff')[0]!.click();
+      await Promise.resolve();
+    });
+
+    expect(testIds('mobile-agent-diff')).toHaveLength(1);
+    expect(testIds('mobile-agent-diff-truncated')).toHaveLength(1);
+    expect(testIds('mobile-agent-diff-omissions')[0]?.textContent).toContain('artifacts/large.bin');
+    expect(testIds('mobile-agent-diff-omissions')[0]?.textContent).toContain('file exceeds the review limit');
+  });
+
+  it('keeps the newest diff when an older request resolves last', async () => {
+    let resolveFirst!: (result: GitDiffResult) => void;
+    let resolveSecond!: (result: GitDiffResult) => void;
+    const first = new Promise<GitDiffResult>((resolve) => { resolveFirst = resolve; });
+    const second = new Promise<GitDiffResult>((resolve) => { resolveSecond = resolve; });
+    const onLoadDiff = vi.fn((directory: string) => directory.endsWith('/first') ? first : second);
+    const approval = (id: string): AgentActivity => activity(id, 'blocked', {
+      approval: {
+        approvalId: `approval-${id}`,
+        toolName: 'Shell',
+        risk: 'write',
+        pending: true,
+        requestedAt: NOW - 1_000,
+        expiresAt: NOW + 30_000,
+      },
+    });
+    render(
+      <MobileAgentView
+        snapshot={snapshotOf(approval('first'), approval('second'))}
+        {...noop}
+        onLoadDiff={onLoadDiff}
+      />,
+    );
+
+    const buttons = testIds('agent-view-diff') as HTMLButtonElement[];
+    act(() => {
+      buttons[0]!.click();
+      buttons[1]!.click();
+    });
+    expect(testIds('mobile-agent-diff')).toHaveLength(1);
+
+    await act(async () => {
+      resolveSecond({ ok: true, text: 'second diff', truncated: false, omissions: [] });
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.mob-agent-diff')?.textContent).toBe('second diff');
+
+    await act(async () => {
+      resolveFirst({ ok: true, text: 'first diff', truncated: false, omissions: [] });
+      await Promise.resolve();
+    });
+    expect(container.querySelector('.mob-agent-diff')?.textContent).toBe('second diff');
+  });
+
+  it('does not reopen a closed diff after its request resolves', async () => {
+    let resolveDiff!: (result: GitDiffResult) => void;
+    const pending = new Promise<GitDiffResult>((resolve) => { resolveDiff = resolve; });
+    render(
+      <MobileAgentView
+        snapshot={snapshotOf(activity('a', 'blocked', {
+          approval: {
+            approvalId: 'approval-a',
+            toolName: 'Shell',
+            risk: 'write',
+            pending: true,
+            requestedAt: NOW - 1_000,
+            expiresAt: NOW + 30_000,
+          },
+        }))}
+        {...noop}
+        onLoadDiff={() => pending}
+      />,
+    );
+
+    act(() => testIds('agent-view-diff')[0]!.click());
+    const sheet = testIds('mobile-agent-diff')[0]!;
+    act(() => {
+      const buttons = sheet.querySelectorAll<HTMLButtonElement>('button');
+      buttons[buttons.length - 1]!.click();
+    });
+    expect(testIds('mobile-agent-diff')).toHaveLength(0);
+
+    await act(async () => {
+      resolveDiff({ ok: true, text: 'late diff', truncated: false, omissions: [] });
+      await Promise.resolve();
+    });
+    expect(testIds('mobile-agent-diff')).toHaveLength(0);
   });
 
   it('distinguishes an empty snapshot from an empty filter', () => {

@@ -57,6 +57,20 @@ describe('PairingCodeService', () => {
     expect(service.consume(issued.code)).toBe(false);
   });
 
+  it('publishes a clock-observed expiry exactly once', () => {
+    const { service, advance } = makeService();
+    const seen: (string | null)[] = [];
+    service.onChange((code) => seen.push(code?.code ?? null));
+    const issued = service.issue();
+
+    advance(PAIRING_CODE_TTL_MS + 1);
+    expect(service.current()).toBeNull();
+    expect(service.current()).toBeNull();
+    service.revoke();
+
+    expect(seen).toEqual([issued.code, null]);
+  });
+
   it('replaces a previous code rather than leaving two live', () => {
     const { service } = makeService();
     const first = service.issue();
@@ -72,6 +86,22 @@ describe('PairingCodeService', () => {
     service.onChange((code) => seen.push(code?.code ?? null));
     const issued = service.issue();
     service.revoke();
+    expect(seen).toEqual([issued.code, null]);
+  });
+
+  it('keeps issue and consume atomic when an observer throws', () => {
+    const { service } = makeService();
+    const seen: (string | null)[] = [];
+    service.onChange(() => {
+      throw new Error('destroyed renderer');
+    });
+    service.onChange((code) => seen.push(code?.code ?? null));
+
+    const issued = service.issue();
+    const generation = service.match(issued.code);
+    expect(generation).not.toBeNull();
+    expect(service.consume(issued.code, generation!)).toBe(true);
+    expect(service.current()).toBeNull();
     expect(seen).toEqual([issued.code, null]);
   });
 

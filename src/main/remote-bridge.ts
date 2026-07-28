@@ -24,7 +24,7 @@
  * half-open phone socket (app backgrounded/killed without a clean close)
  * doesn't keep a `statsSource`/packet-mirror acquire alive forever.
  */
-import { timingSafeEqual } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import type { FileHandle } from 'node:fs/promises';
 
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -78,7 +78,7 @@ import type {
   AgentFollowupResult,
 } from '../shared/agent';
 import {
-  EMPTY_GIT_DIRECTORY_STATUS,
+  UNAVAILABLE_GIT_DIRECTORY_STATUS,
   type GitDiffResult,
   type GitDirectoryStatus,
 } from '../shared/git-status';
@@ -133,6 +133,16 @@ export const MAX_REMOTE_FILE_READS = 16;
 /** Opening operations remain counted after socket close until the source
  * settles, preventing reconnect churn from accumulating slow filesystem work. */
 export const MAX_REMOTE_PENDING_FILE_OPENS = 16;
+/** Pending begin calls and ready upload FileHandles share this per-connection
+ * budget. FileService independently enforces a process-wide ceiling. */
+export const MAX_REMOTE_FILE_UPLOADS = 8;
+/** Shared correlation-id ceiling for low-cost control requests. */
+const MAX_REMOTE_REQUEST_ID_LENGTH = 128;
+const MAX_REMOTE_AGENT_ID_LENGTH = 256;
+const MAX_REMOTE_AGENT_TEXT_LENGTH = 8_192;
+/** Agent Hub resolves several branches in parallel. Keep Git work bounded
+ * without orphaning earlier request/reply promises. */
+const MAX_REMOTE_GIT_REQUESTS = 16;
 /** A socket that hasn't authenticated within this window is terminated, so an
  * unauthenticated client can't sit holding a connection slot indefinitely
  * (which, with `MAX_REMOTE_CONNECTIONS`, would otherwise starve real clients). */
@@ -196,6 +206,17 @@ type RemoteFileReadRecord = {
   nextOffset: number;
   sendBytes: number;
 };
+
+type RemoteFileUploadRecord = {
+  /** False once commit/abort (or a fatal protocol rejection) owns terminal. */
+  acceptingMessages: boolean;
+  /** The wire contract permits exactly one unacknowledged chunk. */
+  chunkInFlight: boolean;
+  /** Distinguishes a queued commit from an abort that close/error must dedupe. */
+  terminalKind: 'none' | 'commit' | 'abort';
+  /** Per-upload promise chain: the source never observes overlapping fd work. */
+  operationTail: Promise<void>;
+};
 type DispatchableClientMessage =
   | Exclude<ClientToServerMessage, { readonly kind: 'worktree-request' | 'file-read' }>
   | WorktreeDispatchMessage
@@ -252,7 +273,19 @@ function isRemoteClientIdentity(value: unknown): value is RemoteClientIdentity {
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.clientId)
     && typeof value.clientName === 'string'
     && value.clientName.trim().length > 0
-    && value.clientName.length <= 80;
+    && value.clientName.length <= 80
+    && ![...value.clientName].some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return (
+        codePoint <= 0x1f
+        || (codePoint >= 0x7f && codePoint <= 0x9f)
+        || codePoint === 0x061c
+        || codePoint === 0x200e
+        || codePoint === 0x200f
+        || (codePoint >= 0x202a && codePoint <= 0x202e)
+        || (codePoint >= 0x2066 && codePoint <= 0x2069)
+      );
+    });
 }
 
 function isDesktopSignal(value: unknown): value is DesktopSessionSignal {
@@ -374,26 +407,54 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
     case 'stats-visible':
       return typeof value.visible === 'boolean';
     case 'agent-snapshot-get':
-      return typeof value.requestId === 'string';
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+      );
     case 'agent-followup':
       return (
-        typeof value.requestId === 'string' &&
-        typeof value.activityId === 'string' &&
-        typeof value.text === 'string'
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.activityId === 'string'
+        && value.activityId.length > 0
+        && value.activityId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof value.text === 'string'
+        && value.text.length <= MAX_REMOTE_AGENT_TEXT_LENGTH
       );
     case 'agent-decision':
       return (
-        typeof value.requestId === 'string' &&
-        typeof value.activityId === 'string' &&
-        (value.decision === 'allow' || value.decision === 'deny')
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.activityId === 'string'
+        && value.activityId.length > 0
+        && value.activityId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof value.approvalId === 'string'
+        && value.approvalId.length > 0
+        && value.approvalId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && (value.decision === 'allow' || value.decision === 'deny')
       );
     case 'worktree-request':
       return typeof value.requestId === 'string';
     case 'git-status':
     case 'git-diff':
-      return typeof value.requestId === 'string' && typeof value.directory === 'string';
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.directory === 'string'
+        && value.directory.length > 0
+        && value.directory.length <= 8_192
+      );
     case 'ping':
-      return isFiniteNumber(value.sentAt);
+      return (
+        typeof value.probeId === 'string'
+        && value.probeId.length > 0
+        && value.probeId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && isFiniteNumber(value.sentAt)
+      );
     case 'file-list':
       return typeof value.requestId === 'string' && typeof value.path === 'string';
     case 'file-roots':
@@ -638,14 +699,14 @@ export interface RemoteAgentSource {
   getSnapshot(): AgentActivitySnapshot;
   onSnapshot(listener: (snapshot: AgentActivitySnapshot) => void): () => void;
   sendFollowup(activityId: string, text: string): AgentFollowupResult;
-  decideApproval(activityId: string, decision: AgentDecision): AgentDecisionResult;
+  decideApproval(activityId: string, approvalId: string, decision: AgentDecision): AgentDecisionResult;
 }
 
 /** Read-only Git working-tree queries. Nothing here can mutate a repository,
  * so unlike the worktree service it needs no origin and no gate. */
 export interface RemoteGitSource {
-  getStatus(directory: string): Promise<GitDirectoryStatus>;
-  getDiff(directory: string): Promise<GitDiffResult>;
+  getStatus(directory: string, signal?: AbortSignal): Promise<GitDirectoryStatus>;
+  getDiff(directory: string, signal?: AbortSignal): Promise<GitDiffResult>;
 }
 
 /** Main-owned Git worktree service. The bridge always supplies the `mobile`
@@ -672,15 +733,23 @@ type DistributedOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K &
 export interface RemoteDesktopSource {
   /** False suppresses capability advertisement before the installed host is ready. */
   isAvailable?(): boolean;
+  /** Establishes socket-generation authority immediately after authentication. */
+  connected(clientId: string, connectionId: string): void;
   start(
     identity: RemoteClientIdentity,
+    connectionId: string,
     endpoint: { readonly localAddress: string; readonly peerAddress: string },
     emit: (event: RemoteDesktopServerEvent) => void,
     viewport?: DesktopVideoViewport,
   ): Promise<DistributedOmit<DesktopControlStartResultMessage, 'kind' | 'requestId'>>;
-  signal(clientId: string, sessionId: string, signal: DesktopSessionSignal): boolean;
-  stop(clientId: string, sessionId: string): Promise<boolean>;
-  disconnected(clientId: string): void;
+  signal(
+    clientId: string,
+    connectionId: string,
+    sessionId: string,
+    signal: DesktopSessionSignal,
+  ): boolean;
+  stop(clientId: string, connectionId: string, sessionId: string): Promise<boolean>;
+  disconnected(clientId: string, connectionId: string): void;
 }
 
 export interface RemoteBridgeOptions {
@@ -707,7 +776,12 @@ export interface RemoteBridgeOptions {
   readonly gitSource?: RemoteGitSource;
   /** Redeems a one-time pairing code. Absent means pairing is unavailable and
    * only the bearer token authenticates. */
-  readonly pairingSource?: { consume(code: string): boolean };
+  readonly pairingSource?: {
+    /** Non-consuming constant-time match; returns an opaque issue generation. */
+    match(code: string): number | null;
+    /** Atomically consumes only the same issue generation that was matched. */
+    consume(code: string, generation: number): boolean;
+  };
   /** Optional so older bridge fixtures remain valid. */
   readonly worktreeSource?: RemoteWorktreeSource;
   /** Optional capability: old hosts omit it and mobile hides the surface. */
@@ -726,6 +800,7 @@ export interface RemoteBridgeOptions {
   readonly onClientPresence?: (
     identity: RemoteClientIdentity,
     presence: 'connected' | 'disconnected',
+    connectionId: string,
   ) => void;
 }
 
@@ -765,6 +840,7 @@ export function attachConnection(
   options: RemoteBridgeOptions,
   hooks?: {
     onAuthenticated?: () => void;
+    onUploadDrain?: (drain: Promise<void>) => void;
     readonly localAddress?: string;
     readonly peerAddress?: string;
   },
@@ -775,6 +851,7 @@ export function attachConnection(
   let authPending = false;
   let releaseRunsOnClose = false;
   let connectionClosed = false;
+  const connectionId = randomUUID();
   const runLeases = leasesFor(options);
   const runInitiators = initiatorsFor(options);
   const terminalCapabilities = new TerminalFileCapabilityStore();
@@ -784,6 +861,7 @@ export function attachConnection(
     readonly initiatedHere: boolean;
   }>();
   const pendingLeaseResumes = new Map<string, { readonly sessionId: string; readonly runId: string }>();
+  const pendingResumeAttempts = new Set<string>();
   // This connection's own stats subscription (independent of the desktop panel
   // and of every other connection — statsSource.acquire()/release() combine
   // them all via refcount, see StatsVisibility).
@@ -802,7 +880,10 @@ export function attachConnection(
   // FileService's own idle sweep is a backstop, not relied on here).
   const fileReads = new Map<string, RemoteFileReadRecord>();
   const pendingFileOpens = options.fileSource ? pendingFileOpensFor(options.fileSource) : null;
-  const fileUploads = new Set<string>();
+  const fileUploads = new Map<string, RemoteFileUploadRecord>();
+  const pendingUploadBegins = new Set<string>();
+  const pendingUploadBeginOperations = new Set<Promise<void>>();
+  const pendingGitRequests = new Map<string, AbortController>();
   // OpenClaw management (M4): this connection's own status/logs subscription
   // state — same shape as stats/packets above (refcounted on the service
   // side via `subscribeStatus`/`subscribeLogs`; per-connection here is just
@@ -821,6 +902,32 @@ export function attachConnection(
       // A close can race the readyState check. The socket close path owns all
       // pending cleanup; transport exceptions must not escape into main.
     }
+  };
+
+  const queueFileUploadAbort = (
+    uploadId: string,
+    record: RemoteFileUploadRecord,
+    afterAbort?: () => void,
+  ): void => {
+    if (record.terminalKind === 'abort') return;
+    record.acceptingMessages = false;
+    record.chunkInFlight = false;
+    record.terminalKind = 'abort';
+    const abort = record.operationTail.then(async () => {
+      try {
+        await options.fileSource?.abortUpload(uploadId);
+      } catch {
+        // Source failures are contained; the slot is still released exactly
+        // once when this terminal operation settles.
+      }
+      if (!connectionClosed) afterAbort?.();
+    });
+    record.operationTail = abort.then(() => undefined, () => undefined);
+    // A terminating upload still owns its per-connection slot until the
+    // underlying source has actually released its fd/part-file resources.
+    void record.operationTail.then(() => {
+      if (fileUploads.get(uploadId) === record) fileUploads.delete(uploadId);
+    });
   };
 
   const closeFileRead = async (requestId: string, record: RemoteFileReadRecord): Promise<void> => {
@@ -850,6 +957,8 @@ export function attachConnection(
 
   const resumeRun = async (sessionId: string, runId: string, generation: number): Promise<void> => {
     const pendingKey = `${sessionId}\0${runId}`;
+    if (pendingResumeAttempts.has(pendingKey)) return;
+    pendingResumeAttempts.add(pendingKey);
     const leaseWasPresent = runLeases.has(sessionId, runId);
     const initiatedByClient = clientIdentity !== null
       && runInitiators.isInitiatedBy(
@@ -858,9 +967,24 @@ export function attachConnection(
         clientIdentity.clientId,
       );
     if (leaseWasPresent) pendingLeaseResumes.set(pendingKey, { sessionId, runId });
-    const attached = await options.broker.attachRunChecked(sessionId, runId);
+    const attached = await options.broker.attachRunChecked(sessionId, runId)
+      .catch(() => null)
+      .finally(() => pendingResumeAttempts.delete(pendingKey));
     if (leaseWasPresent) pendingLeaseResumes.delete(pendingKey);
 
+    if (!attached) {
+      if (!connectionClosed && !releaseRunsOnClose) {
+        send({
+          kind: 'resume-run-busy',
+          sessionId,
+          runId,
+          generation,
+          reason: 'unavailable',
+          retryable: true,
+        });
+      }
+      return;
+    }
     if (!attached.accepted) {
       if (releaseRunsOnClose && leaseWasPresent) runLeases.release(sessionId, runId);
       if (connectionClosed || releaseRunsOnClose) return;
@@ -969,13 +1093,14 @@ export function attachConnection(
   const stopPacketsSubscription = (): void => {
     if (!packetsSubscribed) return;
     packetsSubscribed = false;
-    packetsUnsub?.();
+    const unsubscribe = packetsUnsub;
     packetsUnsub = null;
     if (packetFlushTimer !== null) {
       clearInterval(packetFlushTimer);
       packetFlushTimer = null;
     }
     pendingPacketRows = [];
+    unsubscribe?.();
   };
 
   // OpenClaw management (M4): status/logs subscription teardown — same
@@ -983,8 +1108,9 @@ export function attachConnection(
   const stopOpenClawStatusSubscription = (): void => {
     if (!openclawStatusSubscribed) return;
     openclawStatusSubscribed = false;
-    openclawStatusUnsub?.();
+    const unsubscribe = openclawStatusUnsub;
     openclawStatusUnsub = null;
+    unsubscribe?.();
   };
 
   const flushPendingOpenClawLogs = (): void => {
@@ -1001,13 +1127,14 @@ export function attachConnection(
   const stopOpenClawLogsSubscription = (): void => {
     if (!openclawLogsSubscribed) return;
     openclawLogsSubscribed = false;
-    openclawLogsUnsub?.();
+    const unsubscribe = openclawLogsUnsub;
     openclawLogsUnsub = null;
     if (openclawLogFlushTimer !== null) {
       clearInterval(openclawLogFlushTimer);
       openclawLogFlushTimer = null;
     }
     pendingOpenClawLogLines = [];
+    unsubscribe?.();
   };
 
   // Session/run mirroring (M2): every connection observes every session/run
@@ -1047,45 +1174,69 @@ export function attachConnection(
     }) ?? (() => undefined);
   const unsubAgentSnapshot =
     options.agentSource?.onSnapshot((snapshot) => {
-      if (authed) send({ kind: 'agent-snapshot', snapshot });
+      if (authed && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION) {
+        send({ kind: 'agent-snapshot', snapshot });
+      }
     }) ?? (() => undefined);
 
   ws.on('close', () => {
+    if (connectionClosed) return;
     connectionClosed = true;
-    if (clientIdentity) {
-      options.desktopSource?.disconnected(clientIdentity.clientId);
-      options.onClientPresence?.(clientIdentity, 'disconnected');
+    const contain = (operation: () => void | Promise<unknown>): void => {
+      try {
+        void Promise.resolve(operation()).catch(() => undefined);
+      } catch {
+        // Teardown is a collection of independent ownership releases. One
+        // stale observer or native handle must not strand the rest.
+      }
+    };
+    const disconnectedIdentity = clientIdentity;
+    if (disconnectedIdentity) {
+      contain(() => options.desktopSource?.disconnected(disconnectedIdentity.clientId, connectionId));
+      contain(() => options.onClientPresence?.(disconnectedIdentity, 'disconnected', connectionId));
     }
     terminalCapabilities.clear();
-    if (releaseRunsOnClose) releasePendingResumeLeases();
-    unsubSessionAdded();
-    unsubSessionRemoved();
-    unsubRunStarted();
-    unsubOpenClawVisibility();
-    unsubAgentSnapshot();
+    if (releaseRunsOnClose) contain(releasePendingResumeLeases);
+    contain(unsubSessionAdded);
+    contain(unsubSessionRemoved);
+    contain(unsubRunStarted);
+    contain(unsubOpenClawVisibility);
+    contain(unsubAgentSnapshot);
     for (const [runId, record] of runs) {
-      if (releaseRunsOnClose) record.port.close();
+      if (releaseRunsOnClose) contain(() => record.port.close());
       else {
-        runLeases.park(record.sessionId, runId, record.port);
+        contain(() => runLeases.park(record.sessionId, runId, record.port));
       }
     }
     runs.clear();
     if (statsVisible) {
       statsVisible = false;
-      statsUnsub?.();
+      const unsubscribe = statsUnsub;
       statsUnsub = null;
-      options.statsSource?.release();
+      contain(() => unsubscribe?.());
+      contain(() => options.statsSource?.release());
     }
-    stopPacketsSubscription();
+    contain(stopPacketsSubscription);
     // File explorer (M3): a dropped connection is the only owner of its open
     // reads/uploads — close every stream and abort every upload rather than
     // leaving a `.ezpart` file or an fd open until the idle sweep gets to it.
-    for (const [requestId, record] of fileReads) void closeFileRead(requestId, record);
-    for (const uploadId of fileUploads) void options.fileSource?.abortUpload(uploadId);
-    fileUploads.clear();
+    for (const [requestId, record] of fileReads) {
+      contain(() => closeFileRead(requestId, record));
+    }
+    for (const [uploadId, record] of fileUploads) {
+      record.acceptingMessages = false;
+      queueFileUploadAbort(uploadId, record);
+    }
+    const uploadDrain = Promise.all([
+      ...pendingUploadBeginOperations,
+      ...[...fileUploads.values()].map((record) => record.operationTail),
+    ]).then(() => undefined);
+    hooks?.onUploadDrain?.(uploadDrain);
     // OpenClaw management (M4): same teardown discipline as stats/packets above.
-    stopOpenClawStatusSubscription();
-    stopOpenClawLogsSubscription();
+    contain(stopOpenClawStatusSubscription);
+    contain(stopOpenClawLogsSubscription);
+    for (const controller of pendingGitRequests.values()) contain(() => controller.abort());
+    pendingGitRequests.clear();
   });
 
   ws.on('message', (data, isBinary) => {
@@ -1126,9 +1277,17 @@ export function attachConnection(
         // The bearer is checked first so an ordinary reconnect never burns the
         // pairing code the user is still looking at on screen.
         const byBearer = tokensMatch(candidateToken, token);
-        const byPairingCode = !byBearer && (options.pairingSource?.consume(candidateToken) ?? false);
-        if (byBearer || byPairingCode) {
-          if (!protocolCompatible) {
+        const pairingGeneration = !byBearer
+          ? (options.pairingSource?.match(candidateToken) ?? null)
+          : null;
+        if (byBearer || pairingGeneration !== null) {
+          // One-time pairing is introduced and security-reviewed as a v3
+          // handshake. Legacy v1/v2 remains available only to an already
+          // persisted bearer; it must never be a way to redeem a photographed
+          // pairing code with weaker message/state contracts.
+          const pairingProtocolCompatible = pairingGeneration === null
+            || requestedProtocol === REMOTE_PROTOCOL_VERSION;
+          if (!protocolCompatible || !pairingProtocolCompatible) {
             send({
               kind: 'auth-fail',
               reason: 'incompatible-protocol',
@@ -1139,14 +1298,41 @@ export function attachConnection(
             ws.close(PROTOCOL_CLOSE_CODE);
             return;
           }
-          authed = true;
+          const byPairingCode = pairingGeneration !== null
+            && (options.pairingSource?.consume(candidateToken, pairingGeneration) ?? false);
+          // A replacement issue/redeem can invalidate the claim between
+          // validation and this final consume. Fail closed instead of
+          // authenticating a connection that did not consume its code.
+          if (!byBearer && !byPairingCode) {
+            send({ kind: 'auth-fail', reason: 'invalid-token' });
+            ws.close(AUTH_CLOSE_CODE);
+            return;
+          }
           negotiatedProtocol = requestedProtocol as RemoteProtocolVersion;
           clientIdentity = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL
             && isRemoteClientIdentity(parsed.clientIdentity)
             ? parsed.clientIdentity
             : null;
-          if (clientIdentity) options.onClientPresence?.(clientIdentity, 'connected');
-          hooks?.onAuthenticated?.();
+          if (clientIdentity) {
+            // This is control authority, not observational presence: register
+            // it before auth-ok so an older live socket cannot later reclaim a
+            // desktop lease from the newest authenticated generation.
+            options.desktopSource?.connected(clientIdentity.clientId, connectionId);
+          }
+          authed = true;
+          if (clientIdentity) {
+            try {
+              options.onClientPresence?.(clientIdentity, 'connected', connectionId);
+            } catch {
+              // Presence is observational and cannot veto authentication.
+            }
+          }
+          try {
+            hooks?.onAuthenticated?.();
+          } catch {
+            // The bridge handshake remains authoritative if a lifecycle
+            // observer has already been disposed.
+          }
           const capabilities = [
             ...(options.quickCommandSource ? [REMOTE_CAPABILITY_QUICK_COMMANDS_READ] : []),
             ...(negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL
@@ -1169,7 +1355,9 @@ export function attachConnection(
             // same channel the bearer itself uses on every later connect.
             ...(byPairingCode ? { issuedToken: token } : {}),
           });
-          if (options.agentSource) send({ kind: 'agent-snapshot', snapshot: options.agentSource.getSnapshot() });
+          if (options.agentSource && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION) {
+            send({ kind: 'agent-snapshot', snapshot: options.agentSource.getSnapshot() });
+          }
           // OpenClaw availability (M3): initial state, right after auth —
           // `subscribeVisibility` above only covers CHANGES from here on.
           if (options.openclawSource) send({ kind: 'openclaw-availability', visible: options.openclawSource.isVisible() });
@@ -1210,6 +1398,7 @@ export function attachConnection(
         }
         void options.desktopSource.start(
           clientIdentity,
+          connectionId,
           { localAddress: hooks.localAddress, peerAddress: hooks.peerAddress },
           send,
           msg.viewport,
@@ -1236,13 +1425,18 @@ export function attachConnection(
 
       case 'desktop-signal':
         if (clientIdentity && msg.signal.type !== 'answer') {
-          options.desktopSource?.signal(clientIdentity.clientId, msg.sessionId, msg.signal);
+          options.desktopSource?.signal(
+            clientIdentity.clientId,
+            connectionId,
+            msg.sessionId,
+            msg.signal,
+          );
         }
         break;
 
       case 'desktop-control-stop':
         if (clientIdentity) {
-          void options.desktopSource?.stop(clientIdentity.clientId, msg.sessionId);
+          void options.desktopSource?.stop(clientIdentity.clientId, connectionId, msg.sessionId);
         }
         break;
 
@@ -1431,6 +1625,7 @@ export function attachConnection(
         break;
 
       case 'agent-snapshot-get':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
         send({
           kind: 'agent-snapshot',
           requestId: msg.requestId,
@@ -1439,6 +1634,7 @@ export function attachConnection(
         break;
 
       case 'agent-followup':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
         send({
           kind: 'agent-followup-reply',
           requestId: msg.requestId,
@@ -1450,10 +1646,11 @@ export function attachConnection(
         break;
 
       case 'agent-decision':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
         send({
           kind: 'agent-decision-reply',
           requestId: msg.requestId,
-          result: options.agentSource?.decideApproval(msg.activityId, msg.decision) ?? {
+          result: options.agentSource?.decideApproval(msg.activityId, msg.approvalId, msg.decision) ?? {
             ok: false,
             error: 'not-found',
           },
@@ -1463,25 +1660,84 @@ export function attachConnection(
       // Echoed from the message loop rather than the socket layer, so what the
       // client measures is the path its real requests take.
       case 'ping':
-        send({ kind: 'pong', sentAt: msg.sentAt });
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
+        send({ kind: 'pong', probeId: msg.probeId, sentAt: msg.sentAt });
         break;
 
       case 'git-status': {
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
         const { requestId, directory } = msg;
-        void Promise.resolve(
-          options.gitSource?.getStatus(directory) ?? EMPTY_GIT_DIRECTORY_STATUS,
-        )
-          .catch(() => EMPTY_GIT_DIRECTORY_STATUS)
-          .then((status) => send({ kind: 'git-status-reply', requestId, status }));
+        if (pendingGitRequests.has(requestId)) {
+          send({
+            kind: 'git-status-reply',
+            requestId,
+            status: UNAVAILABLE_GIT_DIRECTORY_STATUS,
+          });
+          break;
+        }
+        if (pendingGitRequests.size >= MAX_REMOTE_GIT_REQUESTS) {
+          send({
+            kind: 'git-status-reply',
+            requestId,
+            status: UNAVAILABLE_GIT_DIRECTORY_STATUS,
+          });
+          break;
+        }
+        const controller = new AbortController();
+        pendingGitRequests.set(requestId, controller);
+        void (async () => {
+          let status: GitDirectoryStatus;
+          try {
+            status = options.gitSource
+              ? await options.gitSource.getStatus(directory, controller.signal)
+              : UNAVAILABLE_GIT_DIRECTORY_STATUS;
+          } catch {
+            status = UNAVAILABLE_GIT_DIRECTORY_STATUS;
+          }
+          if (
+            authed
+            && !controller.signal.aborted
+            && pendingGitRequests.get(requestId) === controller
+          ) send({ kind: 'git-status-reply', requestId, status });
+          if (pendingGitRequests.get(requestId) === controller) {
+            pendingGitRequests.delete(requestId);
+          }
+        })();
         break;
       }
 
       case 'git-diff': {
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
         const { requestId, directory } = msg;
         const failed: GitDiffResult = { ok: false, error: 'git-failed' };
-        void Promise.resolve(options.gitSource?.getDiff(directory) ?? failed)
-          .catch(() => failed)
-          .then((result) => send({ kind: 'git-diff-reply', requestId, result }));
+        if (pendingGitRequests.has(requestId)) {
+          send({ kind: 'git-diff-reply', requestId, result: failed });
+          break;
+        }
+        if (pendingGitRequests.size >= MAX_REMOTE_GIT_REQUESTS) {
+          send({ kind: 'git-diff-reply', requestId, result: failed });
+          break;
+        }
+        const controller = new AbortController();
+        pendingGitRequests.set(requestId, controller);
+        void (async () => {
+          let result: GitDiffResult;
+          try {
+            result = options.gitSource
+              ? await options.gitSource.getDiff(directory, controller.signal)
+              : failed;
+          } catch {
+            result = failed;
+          }
+          if (
+            authed
+            && !controller.signal.aborted
+            && pendingGitRequests.get(requestId) === controller
+          ) send({ kind: 'git-diff-reply', requestId, result });
+          if (pendingGitRequests.get(requestId) === controller) {
+            pendingGitRequests.delete(requestId);
+          }
+        })();
         break;
       }
 
@@ -1751,8 +2007,30 @@ export function attachConnection(
         const fileSource = options.fileSource;
         if (!fileSource) break;
         const { requestId } = msg;
-        void fileSource.beginUpload(msg.dirPath, msg.name, msg.size)
-          .then(async (result) => {
+        if (pendingUploadBegins.has(requestId)) {
+          send({
+            kind: 'file-upload-begin-reply',
+            requestId,
+            ok: false,
+            error: 'duplicate file upload request id',
+          });
+          break;
+        }
+        if (fileUploads.size + pendingUploadBegins.size >= MAX_REMOTE_FILE_UPLOADS) {
+          send({
+            kind: 'file-upload-begin-reply',
+            requestId,
+            ok: false,
+            error: 'too many active uploads',
+          });
+          break;
+        }
+        // Reserve before beginUpload's first await so a burst cannot open more
+        // FileHandles than this connection's budget.
+        pendingUploadBegins.add(requestId);
+        const beginOperation = (async (): Promise<void> => {
+          try {
+            const result = await fileSource.beginUpload(msg.dirPath, msg.name, msg.size);
             if (!result.ok) {
               send({ kind: 'file-upload-begin-reply', requestId, ok: false, error: result.error });
               return;
@@ -1761,10 +2039,33 @@ export function attachConnection(
               // beginUpload may finish after close teardown enumerated the
               // tracked ids. Abort this late fd/.ezpart directly instead of
               // leaving it for FileService's idle sweep.
-              await fileSource.abortUpload(result.uploadId).catch(() => undefined);
+              try {
+                await fileSource.abortUpload(result.uploadId);
+              } catch {
+                // The connection drain still settles and contains source errors.
+              }
               return;
             }
-            fileUploads.add(result.uploadId);
+            if (fileUploads.has(result.uploadId)) {
+              try {
+                await fileSource.abortUpload(result.uploadId);
+              } catch {
+                // Duplicate source identifiers are terminal and contained.
+              }
+              send({
+                kind: 'file-upload-begin-reply',
+                requestId,
+                ok: false,
+                error: 'duplicate upload id',
+              });
+              return;
+            }
+            fileUploads.set(result.uploadId, {
+              acceptingMessages: true,
+              chunkInFlight: false,
+              terminalKind: 'none',
+              operationTail: Promise.resolve(),
+            });
             send({
               kind: 'file-upload-begin-reply',
               requestId,
@@ -1772,64 +2073,163 @@ export function attachConnection(
               uploadId: result.uploadId,
               finalName: result.finalName,
             });
-          })
-          .catch(() => {
+          } catch {
             send({ kind: 'file-upload-begin-reply', requestId, ok: false, error: 'file upload failed' });
-          });
+          } finally {
+            pendingUploadBegins.delete(requestId);
+          }
+        })();
+        pendingUploadBeginOperations.add(beginOperation);
+        void beginOperation.then(() => pendingUploadBeginOperations.delete(beginOperation));
         break;
       }
 
       case 'file-upload-chunk': {
-        if (!options.fileSource) break;
+        const fileSource = options.fileSource;
+        if (!fileSource) break;
         const { uploadId, offset } = msg;
+        const record = fileUploads.get(uploadId);
+        // Ownership is checked before decode and before every abort path: a
+        // guessed id from another socket can never mutate a global upload.
+        if (!record || !record.acceptingMessages) {
+          send({ kind: 'file-upload-ack', uploadId, ok: false, error: 'unknown uploadId' });
+          break;
+        }
+        // Uploads are ACK-paced. Reject before decoding when a chunk is
+        // already in source I/O so payloads cannot accumulate in closures.
+        if (record.chunkInFlight) {
+          queueFileUploadAbort(uploadId, record, () => {
+            send({
+              kind: 'file-upload-ack',
+              uploadId,
+              ok: false,
+              error: 'upload chunk already in flight',
+            });
+          });
+          break;
+        }
+        record.chunkInFlight = true;
         let bytes: Uint8Array;
         try {
           bytes = base64ToUint8Array(msg.data);
         } catch {
-          fileUploads.delete(uploadId);
-          void options.fileSource.abortUpload(uploadId);
-          send({ kind: 'file-upload-ack', uploadId, ok: false, error: 'malformed chunk' });
+          queueFileUploadAbort(uploadId, record, () => {
+            send({ kind: 'file-upload-ack', uploadId, ok: false, error: 'malformed chunk' });
+          });
           break;
         }
         // Hard cap regardless of what the client claims — never trust size alone.
         if (bytes.length > FILE_CHUNK_BYTES * 2) {
-          fileUploads.delete(uploadId);
-          void options.fileSource.abortUpload(uploadId);
-          send({ kind: 'file-upload-ack', uploadId, ok: false, error: 'chunk exceeds the wire chunk limit' });
+          queueFileUploadAbort(uploadId, record, () => {
+            send({
+              kind: 'file-upload-ack',
+              uploadId,
+              ok: false,
+              error: 'chunk exceeds the wire chunk limit',
+            });
+          });
           break;
         }
-        void options.fileSource.writeUploadChunk(uploadId, offset, bytes).then((result) => {
-          if (!result.ok) {
-            // FileService already aborted+unlinked on any rejection (out-of-
-            // order/oversized/write-error) — this id is done either way.
-            fileUploads.delete(uploadId);
-            send({ kind: 'file-upload-ack', uploadId, ok: false, error: result.error });
+        const write = record.operationTail.then(async () => {
+          if (
+            connectionClosed
+            || fileUploads.get(uploadId) !== record
+            || record.terminalKind !== 'none'
+          ) {
             return;
           }
+          let result: Awaited<ReturnType<RemoteFileSource['writeUploadChunk']>>;
+          try {
+            result = await fileSource.writeUploadChunk(uploadId, offset, bytes);
+          } catch {
+            result = { ok: false, error: 'file upload failed' };
+          }
+          if (
+            connectionClosed
+            || fileUploads.get(uploadId) !== record
+            || record.terminalKind !== 'none'
+          ) {
+            return;
+          }
+          if (!result.ok) {
+            queueFileUploadAbort(uploadId, record, () => {
+              send({ kind: 'file-upload-ack', uploadId, ok: false, error: result.error });
+            });
+            return;
+          }
+          record.chunkInFlight = false;
           send({ kind: 'file-upload-ack', uploadId, ok: true, receivedBytes: result.receivedBytes });
         });
+        record.operationTail = write.then(() => undefined, () => undefined);
         break;
       }
 
       case 'file-upload-commit': {
-        if (!options.fileSource) break;
+        const fileSource = options.fileSource;
+        if (!fileSource) break;
         const { uploadId } = msg;
-        void options.fileSource.commitUpload(uploadId).then((result) => {
-          fileUploads.delete(uploadId);
-          if (!result.ok) {
-            send({ kind: 'file-upload-done', uploadId, ok: false, error: result.error });
+        const record = fileUploads.get(uploadId);
+        if (!record || !record.acceptingMessages) {
+          send({ kind: 'file-upload-done', uploadId, ok: false, error: 'unknown uploadId' });
+          break;
+        }
+        if (record.chunkInFlight) {
+          queueFileUploadAbort(uploadId, record, () => {
+            send({
+              kind: 'file-upload-done',
+              uploadId,
+              ok: false,
+              error: 'upload chunk is still in flight',
+            });
+          });
+          break;
+        }
+        // Terminal reservation is synchronous, but chunks already accepted on
+        // operationTail finish before the commit.
+        record.acceptingMessages = false;
+        record.terminalKind = 'commit';
+        const commit = record.operationTail.then(async () => {
+          if (
+            connectionClosed
+            || fileUploads.get(uploadId) !== record
+            || record.terminalKind !== 'commit'
+          ) {
             return;
           }
+          let result: Awaited<ReturnType<RemoteFileSource['commitUpload']>>;
+          try {
+            result = await fileSource.commitUpload(uploadId);
+          } catch {
+            result = { ok: false, error: 'file upload failed' };
+          }
+          if (
+            connectionClosed
+            || fileUploads.get(uploadId) !== record
+            || record.terminalKind !== 'commit'
+          ) {
+            return;
+          }
+          if (!result.ok) {
+            queueFileUploadAbort(uploadId, record, () => {
+              send({ kind: 'file-upload-done', uploadId, ok: false, error: result.error });
+            });
+            return;
+          }
+          fileUploads.delete(uploadId);
           send({ kind: 'file-upload-done', uploadId, ok: true, finalName: result.finalName });
         });
+        record.operationTail = commit.then(() => undefined, () => undefined);
         break;
       }
 
-      case 'file-upload-abort':
-        if (!options.fileSource) break;
-        fileUploads.delete(msg.uploadId);
-        void options.fileSource.abortUpload(msg.uploadId);
+      case 'file-upload-abort': {
+        const fileSource = options.fileSource;
+        if (!fileSource) break;
+        const record = fileUploads.get(msg.uploadId);
+        if (!record || !record.acceptingMessages) break;
+        queueFileUploadAbort(msg.uploadId, record);
         break;
+      }
 
       // ── OpenClaw management (openclaw-management M4) ────────────────────
       // Every arm below guards `if (!options.openclawSource) break;` — silent
@@ -2022,6 +2422,7 @@ export async function startRemoteBridge(options: RemoteBridgeOptions): Promise<R
   const runLeases = leasesFor(options);
   const runInitiators = initiatorsFor(options);
   const connectionOptions = { ...options, runLeases, runInitiators };
+  const uploadDrains = new Set<Promise<void>>();
   const wss = new WebSocketServer({
     port: options.port,
     host: options.bindHost ?? '0.0.0.0',
@@ -2065,8 +2466,18 @@ export async function startRemoteBridge(options: RemoteBridgeOptions): Promise<R
     missedPongs.set(ws, 0);
     ws.on('pong', () => missedPongs.set(ws, 0));
     ws.on('close', () => clearTimeout(authTimer));
+    let resolveConnectionUploadDrain!: () => void;
+    const connectionUploadDrain = new Promise<void>((resolve) => {
+      resolveConnectionUploadDrain = resolve;
+    });
+    // Register before attach/close can race the server's close callback.
+    uploadDrains.add(connectionUploadDrain);
+    void connectionUploadDrain.then(() => uploadDrains.delete(connectionUploadDrain));
     attachConnection(ws as unknown as RemoteWs, connectionOptions, {
       onAuthenticated: () => clearTimeout(authTimer),
+      onUploadDrain: (drain) => {
+        void drain.then(resolveConnectionUploadDrain, resolveConnectionUploadDrain);
+      },
       localAddress: normalizeSocketAddress(request.socket.localAddress),
       peerAddress: normalizeSocketAddress(request.socket.remoteAddress),
     });
@@ -2094,15 +2505,17 @@ export async function startRemoteBridge(options: RemoteBridgeOptions): Promise<R
         clearInterval(heartbeat);
         for (const ws of wss.clients) ws.terminate();
         wss.close((err) => {
-          runLeases.dispose();
-          // `runInitiators` deliberately survives stop(): initiator identity
-          // has the RUN's lifetime (registry doc) and the broker-scoped
-          // registry serves later bridge generations, so a remote toggle
-          // off/on cannot demote an install's own still-active run to
-          // viewing-only on resume. Its run-lifecycle subscriptions keep
-          // cleanup exact without any bridge-lifetime wipe.
-          if (err) console.error('[remote-bridge] error closing WebSocketServer:', err);
-          resolve();
+          void Promise.all([...uploadDrains]).then(() => {
+            runLeases.dispose();
+            // `runInitiators` deliberately survives stop(): initiator identity
+            // has the RUN's lifetime (registry doc) and the broker-scoped
+            // registry serves later bridge generations, so a remote toggle
+            // off/on cannot demote an install's own still-active run to
+            // viewing-only on resume. Its run-lifecycle subscriptions keep
+            // cleanup exact without any bridge-lifetime wipe.
+            if (err) console.error('[remote-bridge] error closing WebSocketServer:', err);
+            resolve();
+          });
         });
       });
       return stopPromise;

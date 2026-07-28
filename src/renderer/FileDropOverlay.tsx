@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
+import { useNativeOverlayRegistration } from './native-overlay';
 import { getPaneHandle } from './pane-registry';
 import { useToast } from './ui';
 
@@ -50,6 +51,7 @@ export function FileDropOverlay({
 }: FileDropOverlayProps): JSX.Element | null {
   const { t, i18n } = useAppTranslation();
   const [dragDepth, setDragDepth] = useState(0);
+  useNativeOverlayRegistration(dragDepth > 0);
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const maxDroppedPaths = useMemo(
     () => new Intl.NumberFormat(locale).format(MAX_DROPPED_PATHS),

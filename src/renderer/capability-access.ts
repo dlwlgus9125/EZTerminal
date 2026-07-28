@@ -6,7 +6,10 @@ import type {
 } from '../shared/agent';
 import type { FilePreviewResult } from '../shared/file-preview';
 import type { FileListResult, FileOpResult } from '../shared/files';
-import { EMPTY_GIT_DIRECTORY_STATUS, type GitDirectoryStatus } from '../shared/git-status';
+import {
+  UNAVAILABLE_GIT_DIRECTORY_STATUS,
+  type GitDirectoryStatus,
+} from '../shared/git-status';
 import type {
   EzTerminalApi,
   EzTerminalDesktopApi,
@@ -56,6 +59,17 @@ export class RequiredCapabilityUnavailableError extends Error {
   constructor(readonly operation: keyof EzTerminalApi | 'versions') {
     super(`Required renderer capability is unavailable: core.${String(operation)}`);
     this.name = 'RequiredCapabilityUnavailableError';
+  }
+}
+
+function reportOptionalCapabilityUnavailable(
+  onError: ((error: unknown) => void) | undefined,
+  operation: string,
+): void {
+  try {
+    onError?.(new Error(`Optional renderer capability is unavailable: desktop.${operation}`));
+  } catch {
+    // Consumer-owned error callbacks must not destabilize the capability Seam.
   }
 }
 
@@ -294,6 +308,10 @@ function createSeedPushGate<TSeed, TPush>(
       const expectedGeneration = pushGeneration;
       load(start, (value) => {
         if (pushGeneration === expectedGeneration) onSeed(value);
+      }, (error) => {
+        // A newer push is the current level-triggered state. A late rejection
+        // from the older seed must not roll that state back to "unavailable".
+        if (pushGeneration === expectedGeneration) report(error);
       });
     },
     push(value): void {
@@ -398,6 +416,7 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
         typeof api.onOpenClawStatus !== 'function' ||
         typeof api.onOpenClawChatViewState !== 'function'
       ) {
+        reportOptionalCapabilityUnavailable(observer.onError, 'observeOpenClawChat');
         return NOOP_CLEANUP;
       }
       const gate = createSeedPushGate(
@@ -428,6 +447,7 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     observeVisibility(onVisibility, onError) {
       const api = desktopFor('getOpenClawVisibility');
       if (!api || typeof api.onOpenClawVisibilityChanged !== 'function') {
+        reportOptionalCapabilityUnavailable(onError, 'observeOpenClawVisibility');
         return NOOP_CLEANUP;
       }
       const gate = createSeedPushGate(onVisibility, onVisibility, onError);
@@ -695,8 +715,8 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     },
     gitStatus(path) {
       const api = source.readCore();
-      if (!api?.getGitStatus) return Promise.resolve(EMPTY_GIT_DIRECTORY_STATUS);
-      return api.getGitStatus(path).catch(() => EMPTY_GIT_DIRECTORY_STATUS);
+      if (!api?.getGitStatus) return Promise.resolve(UNAVAILABLE_GIT_DIRECTORY_STATUS);
+      return api.getGitStatus(path).catch(() => UNAVAILABLE_GIT_DIRECTORY_STATUS);
     },
     openInApp(path) {
       return requireCore('openFileInApp').openFileInApp(path);

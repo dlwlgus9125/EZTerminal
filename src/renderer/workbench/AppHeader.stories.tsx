@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
 
-import { mergeEffectProfileToggles, type EffectProfileId, type ResolvedEffectProfileId } from '../effect-profiles';
 import { applyEffects, type EffectId } from '../effects';
 import { AppI18nProvider } from '../i18n';
 import { AppHeader } from './AppHeader';
@@ -11,56 +10,45 @@ import './workbench.css';
 
 interface AppHeaderStoryProps {
   readonly activeThemeEffects: readonly string[];
-  readonly initialProfile: ResolvedEffectProfileId;
+  readonly initialIntensity: number;
   readonly locale: 'en' | 'ko';
-  readonly motionEffectsRequested: boolean;
 }
 
 const MATRIX_EFFECTS = ['scanlines', 'phosphor-glow', 'crt-rollbar', 'flicker'] as const;
 
 function AppHeaderStory({
   activeThemeEffects,
-  initialProfile,
+  initialIntensity,
   locale,
-  motionEffectsRequested,
 }: AppHeaderStoryProps): JSX.Element {
-  const [profile, setProfile] = useState<ResolvedEffectProfileId>(initialProfile);
+  const [intensity] = useState(initialIntensity);
   const matrixTheme = document.documentElement.dataset.theme === 'matrix';
   useEffect(() => {
     if (!matrixTheme) {
       applyEffects(new Set());
       return;
     }
-    const toggles =
-      profile === 'custom'
-        ? { scanlines: true }
-        : mergeEffectProfileToggles({ effects: activeThemeEffects }, {}, profile);
     applyEffects(
       new Set(
-        Object.entries(toggles)
-          .filter(([, enabled]) => enabled)
-          .map(([id]) => id as EffectId),
+        activeThemeEffects.map((id) => id as EffectId),
       ),
     );
     return () => applyEffects(new Set());
-  }, [activeThemeEffects, matrixTheme, profile]);
+  }, [activeThemeEffects, matrixTheme]);
   return (
     <AppI18nProvider locale={locale} languages={[locale]}>
       <main lang={locale} style={{ minWidth: 0, width: '100vw' }}>
         <AppHeader
           // Pinned rather than read from the runtime so the version chip cannot
           // make a screenshot depend on which build produced it.
-          appVersion="1.0.11"
-          activeThemeEffects={activeThemeEffects}
+          appVersion="1.0.13"
           attentionCount={3}
           commandCenterOpen={false}
-          effectProfile={profile}
-          motionEffectsRequested={motionEffectsRequested}
+          effectIntensity={intensity}
           onNewTerminal={() => undefined}
           onOpenAttention={() => undefined}
           onOpenCommandCenter={() => undefined}
           onOpenEffectSettings={() => undefined}
-          onSelectEffectProfile={(next: EffectProfileId) => setProfile(next)}
           onWorkspaceOpenChange={() => undefined}
           workspaceOpen={false}
         />
@@ -78,9 +66,8 @@ const meta = {
   },
   args: {
     activeThemeEffects: MATRIX_EFFECTS,
-    initialProfile: 'crt-signature',
+    initialIntensity: 7,
     locale: 'en',
-    motionEffectsRequested: true,
   },
 } satisfies Meta<typeof AppHeaderStory>;
 
@@ -94,15 +81,14 @@ export const Korean: Story = {
   globals: { locale: 'ko' },
 };
 
-export const CustomProfile: Story = {
-  args: { initialProfile: 'custom' },
+export const EffectsOff: Story = {
+  args: { initialIntensity: 0 },
 };
 
 export const EffectsUnavailable: Story = {
   args: {
     activeThemeEffects: [],
-    initialProfile: 'clean',
-    motionEffectsRequested: false,
+    initialIntensity: 0,
   },
   globals: { theme: 'dark' },
 };
@@ -110,8 +96,8 @@ export const EffectsUnavailable: Story = {
 export const ProfileMenuOpen: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByTestId('btn-effect-profile'));
-    await expect(canvas.getByRole('menu', { name: 'CRT effect profile' })).toBeVisible();
-    await expect(canvas.getAllByRole('menuitemradio')).toHaveLength(4);
+    const button = canvas.getByTestId('btn-effect-profile');
+    await expect(button).toHaveAttribute('data-effect-intensity', '7');
+    await userEvent.click(button);
   },
 };

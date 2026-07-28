@@ -28,17 +28,15 @@ export interface RollbarParams {
   readonly softness: number;
 }
 
-// Default look: a very wide (120px), very faint (20%) near-fully-soft band
-// in a deep Matrix green (#2fd06d), drifting slowly (speed 1 -> a line
-// crosses the screen in 24s) at a 70% screen-height pitch — a subtle old-CRT
-// glow pass, not a hard stripe.
+// Authoritative desktop handoff signature: one 150px fully-soft Matrix-green
+// band per viewport, with a 9% centre and an exact eight-second loop.
 export const DEFAULT_ROLLBAR_PARAMS: RollbarParams = {
-  thickness: 120,
-  gap: 70,
-  color: '#2fd06d',
-  speed: 1,
-  opacity: 20,
-  softness: 99,
+  thickness: 150,
+  gap: 100,
+  color: '#35e58f',
+  speed: 3,
+  opacity: 9,
+  softness: 100,
 };
 
 const THICKNESS_MIN = 1;

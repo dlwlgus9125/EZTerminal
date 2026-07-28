@@ -11,6 +11,7 @@ import {
   type Ref,
 } from 'react';
 
+import { useNativeOverlayRegistration } from '../native-overlay';
 import { classNames, getFocusableElements, mergeRefs } from './utils';
 
 interface PopoverTriggerProps extends HTMLAttributes<HTMLElement> {
@@ -45,6 +46,7 @@ export function Popover({
 }: PopoverProps): JSX.Element {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
   const isOpen = open ?? uncontrolledOpen;
+  useNativeOverlayRegistration(isOpen);
   const contentId = `ez-ui-popover-${useId()}`;
   const rootRef = useRef<HTMLSpanElement>(null);
   const triggerRef = useRef<HTMLElement>(null);

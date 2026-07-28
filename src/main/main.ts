@@ -811,16 +811,36 @@ app.on('ready', () => {
     if (typeof activityId !== 'string' || typeof text !== 'string') return { ok: false, error: 'invalid-text' };
     return agentActivityService?.sendFollowup(activityId, text) ?? { ok: false, error: 'delivery-failed' };
   });
-  ipcMain.handle('pairing:issue', () => pairingCodeService.issue());
+  ipcMain.handle('pairing:issue', () => {
+    if (!desktopRuntime?.isRunning()) {
+      pairingCodeService.revoke();
+      throw new Error('Remote pairing is unavailable while the trusted listener is stopped.');
+    }
+    return pairingCodeService.issue();
+  });
   ipcMain.handle('pairing:get', () => pairingCodeService.current());
   ipcMain.handle('pairing:revoke', () => { pairingCodeService.revoke(); });
   ipcMain.handle('git:status', (_event, directory: string) => gitStatusService.getStatus(directory));
   ipcMain.handle('git:diff', (_event, directory: string) => gitStatusService.getDiff(directory));
-  ipcMain.handle('agents:decide', (_event, activityId: string, decision: string): AgentDecisionResult => {
-    if (typeof activityId !== 'string' || (decision !== 'allow' && decision !== 'deny')) {
+  ipcMain.handle('agents:decide', (
+    _event,
+    activityId: unknown,
+    approvalId: unknown,
+    decision: unknown,
+  ): AgentDecisionResult => {
+    if (
+      typeof activityId !== 'string'
+      || activityId.length < 1
+      || activityId.length > 128
+      || typeof approvalId !== 'string'
+      || approvalId.length < 1
+      || approvalId.length > 128
+      || (decision !== 'allow' && decision !== 'deny')
+    ) {
       return { ok: false, error: 'not-found' };
     }
-    return agentActivityService?.decideApproval(activityId, decision) ?? { ok: false, error: 'not-found' };
+    return agentActivityService?.decideApproval(activityId, approvalId, decision)
+      ?? { ok: false, error: 'not-found' };
   });
   ipcMain.handle('agents:list-integrations', async () => {
     await agentInfrastructureReady;
@@ -847,7 +867,9 @@ app.on('ready', () => {
   });
   ipcMain.handle('agents:set-settings', async (_event, settings: unknown) => {
     await agentInfrastructureReady;
-    return agentSettingsStore.set(settings);
+    const saved = await agentSettingsStore.set(settings);
+    if (saved) agentActivityService?.applySettings(saved);
+    return saved;
   });
 
   // ── Custom themes + font/effects settings (theme-effects-font M3) ────────
@@ -916,11 +938,18 @@ app.on('ready', () => {
       { name: 'system stats', run: () => systemStatsService?.stop() },
       { name: 'packet capture', run: () => packetCaptureRegistry?.kill() },
       {
-        name: 'desktop runtime',
-        run: () => {
+        name: 'desktop runtime and file uploads',
+        run: async () => {
           const runtime = desktopRuntime;
           desktopRuntime = null;
-          return runtime?.dispose();
+          try {
+            await runtime?.dispose();
+          } finally {
+            // Stop the bridge first so no remote begin can race the service
+            // drain. FileService then closes/unlinks every active or late
+            // pending `.ezpart` before the quit gate is released.
+            await fileService.dispose();
+          }
         },
       },
       { name: 'OpenClaw endpoint subscription', run: () => unsubscribeOpenClawEndpoint() },
@@ -1490,6 +1519,7 @@ app.on('ready', () => {
 
   const runtime = createElectronDesktopRuntime({
     deviceRoster,
+    revokePairingCodes: () => pairingCodeService.revoke(),
     readDesiredEnabled: async () => {
       await storeReady;
       return layoutStore.getRemoteEnabled();
@@ -1521,8 +1551,9 @@ app.on('ready', () => {
       agentSource: agentActivityService ?? undefined,
       gitSource: gitStatusService,
       pairingSource: {
-        consume: (code) => {
-          const redeemed = pairingCodeService.consume(code);
+        match: (code) => pairingCodeService.match(code),
+        consume: (code, generation) => {
+          const redeemed = pairingCodeService.consume(code, generation);
           // Announced separately from the code going null, so the dialog can
           // tell "a device just paired" from "the code simply expired".
           if (redeemed) broadcast('pairing:redeemed');

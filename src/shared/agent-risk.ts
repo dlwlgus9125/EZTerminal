@@ -39,10 +39,9 @@ const READ_ONLY_HEADS = new Set([
 
 /** `git` is neither: its subcommand decides. Anything not listed here is a
  * write, which is correct for commit/push/merge/rebase/checkout. */
-const READ_ONLY_GIT_SUBCOMMANDS = new Set([
+const ALWAYS_READ_ONLY_GIT_SUBCOMMANDS = new Set([
   'status', 'log', 'diff', 'show', 'blame', 'describe',
   'rev-parse', 'ls-files', 'ls-remote', 'ls-tree', 'cat-file', 'shortlog',
-  'config', 'remote', 'branch', 'tag', 'stash', 'worktree',
 ]);
 
 /** Subcommands above stop being read-only the moment one of these shows up. */
@@ -50,6 +49,7 @@ const GIT_MUTATING_FLAGS = new Set([
   '-d', '-D', '-f', '-m', '-M', '-u',
   '--delete', '--force', '--move', '--rename', '--set-url', '--unset',
   '--add', '--prune', '--push', '--pop', '--apply', '--drop', '--edit',
+  '--replace-all', '--unset-all', '--rename-section', '--remove-section',
 ]);
 
 /** Heads that end a machine's current state outright. */
@@ -68,6 +68,9 @@ interface Segment {
   /** Everything after the head, quotes stripped. */
   readonly args: readonly string[];
 }
+
+type ShellDialect = 'posix' | 'powershell' | 'cmd';
+const MAX_RISK_RECURSION_DEPTH = 8;
 
 /** Split on whitespace while honouring quotes, then drop the quote characters
  * so a quoted argument is compared by its value. */
@@ -101,17 +104,36 @@ function tokenize(text: string): string[] {
 
 /** Split a chain on its unquoted separators. A chain is exactly as risky as
  * its riskiest link, so `ls && rm -rf build` must not read as a listing. */
-function splitSegments(command: string): string[] {
+function splitSegments(command: string, dialect: ShellDialect): string[] {
   const parts: string[] = [];
   let current = '';
   let quote: '"' | "'" | '`' | null = null;
-  for (const char of command) {
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index] ?? '';
     if (quote) {
       current += char;
+      if (
+        dialect === 'powershell'
+        && quote !== "'"
+        && char === '`'
+        && index + 1 < command.length
+      ) {
+        current += command[index + 1] ?? '';
+        index += 1;
+        continue;
+      }
       if (char === quote) quote = null;
       continue;
     }
-    if (char === '"' || char === "'" || char === '`') {
+    if (dialect === 'powershell' && char === '`') {
+      current += char;
+      if (index + 1 < command.length) {
+        current += command[index + 1] ?? '';
+        index += 1;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'" || (dialect === 'posix' && char === '`')) {
       quote = char;
       current += char;
       continue;
@@ -202,14 +224,114 @@ function isDangerous(segment: Segment): boolean {
   return false;
 }
 
-function classifySegment(text: string): AgentApprovalRisk {
+function firstPositional(args: readonly string[]): string | undefined {
+  return args.find((arg) => !arg.startsWith('-'))?.toLocaleLowerCase('en-US');
+}
+
+function isReadOnlyGitCommand(args: readonly string[]): boolean {
+  const subcommand = args[0]?.toLocaleLowerCase('en-US') ?? '';
+  const rest = args.slice(1);
+  if (ALWAYS_READ_ONLY_GIT_SUBCOMMANDS.has(subcommand)) return true;
+  if (rest.some((arg) => GIT_MUTATING_FLAGS.has(arg))) return false;
+
+  switch (subcommand) {
+    case 'config': {
+      const lower = rest.map((arg) => arg.toLocaleLowerCase('en-US'));
+      if (lower.some((arg) => (
+        arg === '--get'
+        || arg === '--get-all'
+        || arg === '--get-regexp'
+        || arg === '--get-urlmatch'
+        || arg === '--list'
+        || arg === '-l'
+      ))) return true;
+      const harmlessOptions = new Set([
+        '--global', '--local', '--system', '--worktree',
+        '--includes', '--no-includes', '--show-origin', '--show-scope',
+        '--fixed-value', '--null', '-z', '--name-only',
+      ]);
+      const operands = lower.filter((arg) => (
+        !harmlessOptions.has(arg)
+        && !arg.startsWith('--type=')
+        && !arg.startsWith('--file=')
+        && !arg.startsWith('--blob=')
+      ));
+      // No operand lists config; one operand reads a key. A second operand is
+      // a value and therefore a write. Unknown options are kept as operands
+      // so an unfamiliar form fails conservative.
+      return operands.length <= 1 && operands.every((arg) => !arg.startsWith('-'));
+    }
+    case 'remote': {
+      const verb = firstPositional(rest);
+      return verb === undefined || verb === 'show' || verb === 'get-url';
+    }
+    case 'branch': {
+      if (rest.length === 0) return true;
+      const readFlags = new Set([
+        '-a', '--all', '-r', '--remotes', '-l', '--list', '--show-current',
+        '--contains', '--no-contains', '--merged', '--no-merged', '-v', '-vv',
+      ]);
+      if (rest.some((arg) => arg === '-l' || arg === '--list')) return true;
+      return rest.every((arg) => readFlags.has(arg));
+    }
+    case 'tag': {
+      if (rest.length === 0) return true;
+      if (rest.some((arg) => arg === '-l' || arg === '--list')) return true;
+      const readFlags = new Set([
+        '-n', '--contains', '--no-contains', '--merged', '--no-merged',
+        '--points-at', '--sort', '--column', '--no-column',
+      ]);
+      return rest.every((arg) => readFlags.has(arg) || arg.startsWith('--sort='));
+    }
+    case 'stash': {
+      const verb = firstPositional(rest);
+      return verb === 'list' || verb === 'show';
+    }
+    case 'worktree':
+      return firstPositional(rest) === 'list';
+    default:
+      return false;
+  }
+}
+
+function delegatedShellCommand(
+  segment: Segment,
+): { readonly command: string; readonly dialect: ShellDialect } | null {
+  const lower = segment.args.map((arg) => arg.toLocaleLowerCase('en-US'));
+  if (segment.head === 'sh' || segment.head === 'bash' || segment.head === 'zsh' || segment.head === 'dash') {
+    const optionIndex = lower.findIndex((arg) => /^-[^-]*c[^-]*$/u.test(arg));
+    const command = optionIndex >= 0 ? segment.args[optionIndex + 1] : undefined;
+    return command ? { command, dialect: 'posix' } : null;
+  }
+  if (segment.head === 'powershell' || segment.head === 'pwsh') {
+    const optionIndex = lower.findIndex((arg) => arg === '-command' || arg === '-c');
+    const command = optionIndex >= 0 ? segment.args.slice(optionIndex + 1).join(' ') : '';
+    return command ? { command, dialect: 'powershell' } : null;
+  }
+  if (segment.head === 'cmd') {
+    const optionIndex = lower.findIndex((arg) => arg === '/c' || arg === '/k');
+    const command = optionIndex >= 0 ? segment.args.slice(optionIndex + 1).join(' ') : '';
+    return command ? { command, dialect: 'cmd' } : null;
+  }
+  return null;
+}
+
+function classifySegment(
+  text: string,
+  depth: number,
+): AgentApprovalRisk {
   const segment = parseSegment(text);
   if (!segment) return 'read';
   if (isDangerous(segment)) return 'danger';
+  const delegated = delegatedShellCommand(segment);
+  if (delegated) {
+    if (depth >= MAX_RISK_RECURSION_DEPTH) return 'danger';
+    if (
+      classifyCommandRiskInternal(delegated.command, delegated.dialect, depth + 1) === 'danger'
+    ) return 'danger';
+  }
   if (segment.head === 'git') {
-    const subcommand = segment.args[0]?.toLocaleLowerCase('en-US') ?? '';
-    if (!READ_ONLY_GIT_SUBCOMMANDS.has(subcommand)) return 'write';
-    return segment.args.slice(1).some((arg) => GIT_MUTATING_FLAGS.has(arg)) ? 'write' : 'read';
+    return isReadOnlyGitCommand(segment.args) ? 'read' : 'write';
   }
   return READ_ONLY_HEADS.has(segment.head) ? 'read' : 'write';
 }
@@ -229,18 +351,115 @@ function pipesDownloadIntoShell(segments: readonly string[]): boolean {
   return false;
 }
 
-/** Classify a shell command on its own. */
-export function classifyCommandRisk(command: string): AgentApprovalRisk {
-  const segments = splitSegments(command);
+function shellMetaRisk(
+  command: string,
+  dialect: ShellDialect,
+  depth: number,
+): AgentApprovalRisk {
+  const backslashEscapes = dialect === 'posix';
+  let quote: "'" | '"' | null = null;
+  let risk: AgentApprovalRisk = 'read';
+  const raise = (next: AgentApprovalRisk): void => {
+    if (RANK[next] > RANK[risk]) risk = next;
+  };
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index] ?? '';
+    if (quote === "'") {
+      if (character === "'") quote = null;
+      continue;
+    }
+    if (backslashEscapes && character === '\\') {
+      index += 1;
+      continue;
+    }
+    if (character === "'" && quote === null) {
+      quote = "'";
+      continue;
+    }
+    if (character === '"') {
+      quote = quote === '"' ? null : '"';
+      continue;
+    }
+    const substitution = (
+      character === '$' && command[index + 1] === '('
+    ) || (
+      quote === null
+      && (character === '<' || character === '>')
+      && command[index + 1] === '('
+    );
+    if (substitution) {
+      raise('write');
+      if (depth >= MAX_RISK_RECURSION_DEPTH) return 'danger';
+      const contentStart = index + 2;
+      let parenDepth = 1;
+      let cursor = contentStart;
+      let nestedQuote: "'" | '"' | null = null;
+      for (; cursor < command.length; cursor += 1) {
+        const nested = command[cursor] ?? '';
+        if (nestedQuote === "'") {
+          if (nested === "'") nestedQuote = null;
+          continue;
+        }
+        if (backslashEscapes && nested === '\\') {
+          cursor += 1;
+          continue;
+        }
+        if (nested === "'" && nestedQuote === null) {
+          nestedQuote = "'";
+          continue;
+        }
+        if (nested === '"') {
+          nestedQuote = nestedQuote === '"' ? null : '"';
+          continue;
+        }
+        if (nested === '(') parenDepth += 1;
+        else if (nested === ')' && --parenDepth === 0) break;
+      }
+      if (parenDepth === 0) {
+        raise(classifyCommandRiskInternal(command.slice(contentStart, cursor), dialect, depth + 1));
+        index = cursor;
+      }
+      continue;
+    }
+    if (character === '`') {
+      if (dialect === 'powershell') {
+        index += 1;
+        continue;
+      }
+      raise('write');
+      if (depth >= MAX_RISK_RECURSION_DEPTH) return 'danger';
+      const end = command.indexOf('`', index + 1);
+      if (end > index + 1) {
+        raise(classifyCommandRiskInternal(command.slice(index + 1, end), dialect, depth + 1));
+        index = end;
+      }
+      continue;
+    }
+    if (quote === null && character === '>') raise('write');
+  }
+  return risk;
+}
+
+function classifyCommandRiskInternal(
+  command: string,
+  dialect: ShellDialect,
+  depth = 0,
+): AgentApprovalRisk {
+  const segments = splitSegments(command, dialect);
   if (segments.length === 0) return 'write';
   if (pipesDownloadIntoShell(segments)) return 'danger';
-  let worst: AgentApprovalRisk = 'read';
+  let worst: AgentApprovalRisk = shellMetaRisk(command, dialect, depth);
   for (const segment of segments) {
-    const risk = classifySegment(segment);
+    const risk = classifySegment(segment, depth);
     if (RANK[risk] > RANK[worst]) worst = risk;
     if (worst === 'danger') break;
   }
   return worst;
+}
+
+/** Classify a POSIX-shaped shell command on its own. */
+export function classifyCommandRisk(command: string): AgentApprovalRisk {
+  return classifyCommandRiskInternal(command, 'posix');
 }
 
 /**
@@ -254,7 +473,12 @@ export function classifyApprovalRisk(toolName: string, command?: string): AgentA
   if (WRITE_TOOLS.has(tool)) return 'write';
   if (SHELL_TOOLS.has(tool) || tool === '') {
     const text = command?.trim();
-    return text ? classifyCommandRisk(text) : 'write';
+    const dialect: ShellDialect = tool === 'powershell' || tool === 'pwsh'
+      ? 'powershell'
+      : tool === 'cmd'
+        ? 'cmd'
+        : 'posix';
+    return text ? classifyCommandRiskInternal(text, dialect) : 'write';
   }
   return 'write';
 }

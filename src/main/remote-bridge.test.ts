@@ -9,6 +9,7 @@ import {
   AUTH_CLOSE_CODE,
   PROTOCOL_CLOSE_CODE,
   MAX_REMOTE_FILE_READS,
+  MAX_REMOTE_FILE_UPLOADS,
   MAX_REMOTE_PENDING_FILE_OPENS,
   isRemoteOriginAllowed,
   startRemoteBridge,
@@ -51,6 +52,7 @@ import {
 } from '../shared/remote-protocol';
 import type { OpenClawAgentSession, OpenClawLifecycleResult, OpenClawLogLine, OpenClawStatus } from '../shared/openclaw';
 import type { AgentActivitySnapshot, AgentDecisionResult, AgentFollowupResult } from '../shared/agent';
+import { EMPTY_GIT_DIRECTORY_STATUS } from '../shared/git-status';
 import type { WorktreeRequest } from '../shared/worktree';
 
 const TOKEN = 'the-secret-token';
@@ -559,6 +561,56 @@ describe('RemoteBridge — auth gate', () => {
     expect(ws.closeCode).toBe(PROTOCOL_CLOSE_CODE);
   });
 
+  it('validates the handshake before atomically consuming a pairing code', async () => {
+    let live = true;
+    const pairingSource = {
+      match: vi.fn((candidate: string) => (
+        live && candidate === 'PAIR-CODE' ? 1 : null
+      )),
+      consume: vi.fn((candidate: string, generation: number) => {
+        if (!live || candidate !== 'PAIR-CODE' || generation !== 1) return false;
+        live = false;
+        return true;
+      }),
+    };
+    const { options } = makeOptions({ pairingSource });
+
+    const incompatible = new FakeWs();
+    attachConnection(incompatible, options);
+    incompatible.clientSend({
+      ...authMessage('PAIR-CODE'),
+      protocolVersion: REMOTE_PROTOCOL_VERSION + 1,
+    });
+    await flush();
+    expect(incompatible.closeCode).toBe(PROTOCOL_CLOSE_CODE);
+    expect(pairingSource.consume).not.toHaveBeenCalled();
+
+    const legacy = new FakeWs();
+    attachConnection(legacy, options);
+    legacy.clientSend({
+      ...authMessage('PAIR-CODE'),
+      protocolVersion: 2,
+    });
+    await flush();
+    expect(legacy.sent).toContainEqual(expect.objectContaining({
+      kind: 'auth-fail',
+      reason: 'incompatible-protocol',
+    }));
+    expect(legacy.closeCode).toBe(PROTOCOL_CLOSE_CODE);
+    expect(pairingSource.consume).not.toHaveBeenCalled();
+
+    const compatible = new FakeWs();
+    attachConnection(compatible, options);
+    compatible.clientSend(authMessage('PAIR-CODE'));
+    await flush();
+
+    expect(compatible.sent).toContainEqual(expect.objectContaining({
+      kind: 'auth-ok',
+      issuedToken: TOKEN,
+    }));
+    expect(pairingSource.consume).toHaveBeenCalledTimes(1);
+  });
+
   it('does not expose protocol metadata until the token is valid', async () => {
     const ws = new FakeWs();
     const { options } = makeOptions();
@@ -572,6 +624,132 @@ describe('RemoteBridge — auth gate', () => {
       message.kind === 'auth-fail' && message.reason === 'incompatible-protocol'
     ))).toBe(false);
     expect(ws.closeCode).toBe(AUTH_CLOSE_CODE);
+  });
+
+  it('rejects control and bidi characters in a device display name', async () => {
+    for (const clientName of ['Galaxy\nInjected', 'Galaxy\u202Etxt.exe']) {
+      const ws = new FakeWs();
+      const onClientPresence = vi.fn();
+      const { options } = makeOptions({ onClientPresence });
+      attachConnection(ws, options);
+
+      ws.clientSend({
+        ...authMessage(),
+        clientIdentity: {
+          clientId: '01947000-0000-4000-8000-000000000001',
+          clientName,
+          platform: 'android',
+        },
+      });
+      await flush();
+
+      expect(ws.closeCode).toBe(PROTOCOL_CLOSE_CODE);
+      expect(onClientPresence).not.toHaveBeenCalled();
+    }
+  });
+
+  it('uses one opaque connection id for matching presence transitions', async () => {
+    const ws = new FakeWs();
+    const onClientPresence = vi.fn();
+    const identity = {
+      clientId: '01947000-0000-4000-8000-000000000001',
+      clientName: 'Galaxy A',
+      platform: 'android' as const,
+    };
+    const { options } = makeOptions({ onClientPresence });
+    attachConnection(ws, options);
+
+    ws.clientSend({ ...authMessage(), clientIdentity: identity });
+    await flush();
+    ws.close();
+
+    expect(onClientPresence).toHaveBeenCalledTimes(2);
+    const connectedId = onClientPresence.mock.calls[0]?.[2];
+    const disconnectedId = onClientPresence.mock.calls[1]?.[2];
+    expect(connectedId).toEqual(expect.any(String));
+    expect(disconnectedId).toBe(connectedId);
+  });
+
+  it('finishes every owned teardown when desktop and presence observers throw', async () => {
+    const ws = new FakeWs();
+    const statsSource = new FakeStatsSource();
+    const packetSource = new FakePacketSource();
+    const openclawSource = new FakeOpenClawSource();
+    const agentSource = new FakeAgentSource();
+    const fileSource = makeFileSource();
+    let gitSignal: AbortSignal | undefined;
+    const gitSource = {
+      getStatus: vi.fn((_directory: string, signal?: AbortSignal) => {
+        gitSignal = signal;
+        return new Promise<import('../shared/git-status').GitDirectoryStatus>(() => undefined);
+      }),
+      getDiff: vi.fn(async () => ({ ok: false as const, error: 'git-failed' as const })),
+    };
+    const desktopSource = {
+      connected: vi.fn(),
+      start: vi.fn(async () => ({
+        ok: false as const,
+        reason: 'unavailable' as const,
+        errorCode: 'OFFLINE',
+      })),
+      signal: vi.fn(() => false),
+      stop: vi.fn(async () => false),
+      disconnected: vi.fn(() => {
+        throw new Error('destroyed desktop observer');
+      }),
+    } satisfies NonNullable<RemoteBridgeOptions['desktopSource']>;
+    const onClientPresence = vi.fn((
+      _identity: import('../shared/remote-protocol').RemoteClientIdentity,
+      presence: 'connected' | 'disconnected',
+    ) => {
+      if (presence === 'disconnected') throw new Error('destroyed roster observer');
+    });
+    const { options } = makeOptions({
+      statsSource,
+      packetSource,
+      openclawSource,
+      agentSource,
+      fileSource,
+      gitSource,
+      desktopSource,
+      onClientPresence,
+    });
+    attachConnection(ws, options);
+    ws.clientSend({
+      ...authMessage(),
+      clientIdentity: {
+        clientId: '01947000-0000-4000-8000-000000000001',
+        clientName: 'Galaxy A',
+        platform: 'android',
+      },
+    });
+    await flush();
+    ws.clientSend({ kind: 'stats-visible', visible: true });
+    ws.clientSend({ kind: 'packets-subscribe' });
+    ws.clientSend({ kind: 'openclaw-status-subscribe' });
+    ws.clientSend({ kind: 'openclaw-logs-subscribe' });
+    ws.clientSend({
+      kind: 'file-upload-begin',
+      requestId: 'upload-1',
+      dirPath: 'C:\\repo',
+      name: 'file.txt',
+      size: 1,
+    });
+    await flush();
+    ws.clientSend({ kind: 'git-status', requestId: 'git-1', directory: 'C:\\repo' });
+
+    expect(() => ws.close()).not.toThrow();
+    await flush();
+
+    expect(desktopSource.disconnected).toHaveBeenCalledOnce();
+    expect(statsSource.releaseCount).toBe(1);
+    expect(packetSource.listenerCount).toBe(0);
+    expect(openclawSource.statusListenerCount).toBe(0);
+    expect(openclawSource.logListenerCount).toBe(0);
+    expect(openclawSource.visibilityListenerCount).toBe(0);
+    expect(agentSource.listenerCount).toBe(0);
+    expect(fileSource.abortUpload).toHaveBeenCalledWith('up-1');
+    expect(gitSignal?.aborted).toBe(true);
   });
 
   it('never throws when pre-auth null is repeated after the socket is already closing', () => {
@@ -635,7 +813,8 @@ describe('RemoteBridge — desktop control', () => {
     const sessionId = '01947000-0000-4000-8000-000000000099';
     let emit: ((event: never) => void) | null = null;
     const desktopSource = {
-      start: vi.fn(async (_identity, _endpoint, nextEmit) => {
+      connected: vi.fn(),
+      start: vi.fn(async (_identity, _connectionId, _endpoint, nextEmit) => {
         emit = nextEmit;
         return {
           ok: true as const,
@@ -667,28 +846,41 @@ describe('RemoteBridge — desktop control', () => {
     await flush();
     expect(desktopSource.start).toHaveBeenCalledWith(
       identity,
+      expect.any(String),
       { localAddress: '100.64.0.1', peerAddress: '100.64.0.2' },
       expect.any(Function),
       { pixelWidth: 1_170, pixelHeight: 2_160 },
+    );
+    const connectionId = desktopSource.start.mock.calls[0]?.[1];
+    expect(connectionId).toEqual(expect.any(String));
+    expect(desktopSource.connected).toHaveBeenCalledWith(
+      identity.clientId,
+      connectionId,
     );
     expect(ws.sent).toContainEqual(expect.objectContaining({
       kind: 'desktop-control-start-result', requestId: 'desktop-1', ok: true, sessionId,
     }));
 
     ws.clientSend({ kind: 'desktop-signal', sessionId, signal: { type: 'offer', sdp: 'v=0' } });
-    expect(desktopSource.signal).toHaveBeenCalledWith(identity.clientId, sessionId, { type: 'offer', sdp: 'v=0' });
+    expect(desktopSource.signal).toHaveBeenCalledWith(
+      identity.clientId,
+      connectionId,
+      sessionId,
+      { type: 'offer', sdp: 'v=0' },
+    );
     (emit as unknown as (event: unknown) => void)({ kind: 'desktop-control-status', sessionId, state: 'active' });
     expect(ws.sent).toContainEqual({ kind: 'desktop-control-status', sessionId, state: 'active' });
 
     ws.clientSend({ kind: 'desktop-control-stop', sessionId, reason: 'client-stop' });
     await flush();
-    expect(desktopSource.stop).toHaveBeenCalledWith(identity.clientId, sessionId);
+    expect(desktopSource.stop).toHaveBeenCalledWith(identity.clientId, connectionId, sessionId);
     ws.close();
-    expect(desktopSource.disconnected).toHaveBeenCalledWith(identity.clientId);
+    expect(desktopSource.disconnected).toHaveBeenCalledWith(identity.clientId, connectionId);
   });
 
   it('does not expose desktop control without both identity and trusted socket addresses', async () => {
     const desktopSource = {
+      connected: vi.fn(),
       start: vi.fn(), signal: vi.fn(), stop: vi.fn(), disconnected: vi.fn(),
     };
     const withoutIdentity = new FakeWs();
@@ -708,6 +900,7 @@ describe('RemoteBridge — desktop control', () => {
   it('does not advertise desktop control while the installed host is unavailable', async () => {
     const desktopSource = {
       isAvailable: vi.fn(() => false),
+      connected: vi.fn(),
       start: vi.fn(), signal: vi.fn(), stop: vi.fn(), disconnected: vi.fn(),
     };
     const ws = new FakeWs();
@@ -832,7 +1025,7 @@ describe('RemoteBridge terminal file capabilities', () => {
     } finally {
       first.close();
       second.close();
-      fileService.dispose();
+      await fileService.dispose();
       await fs.rm(base, { recursive: true, force: true });
     }
   });
@@ -1523,6 +1716,44 @@ describe('RemoteBridge — connection teardown', () => {
     expect(interpreter.listenerCount).toBe(1);
   });
 
+  it('coalesces duplicate in-flight resumes without changing a viewing-only lease into control', async () => {
+    const first = new FakeWs();
+    const leases = new RemoteRunLeaseRegistry({ ttlMs: 60_000 });
+    const { options, interpreter, channels } = makeOptions({ runLeases: leases });
+    await authed(first, options);
+    first.clientSend({
+      kind: 'run-command',
+      runId: 'run-1',
+      sessionId: 'sess-1',
+      commandText: 'ls',
+    });
+    first.close();
+    expect(leases.size).toBe(1);
+
+    const resumed = new FakeWs();
+    await authed(resumed, options);
+    const request = {
+      kind: 'resume-run' as const,
+      sessionId: 'sess-1',
+      runId: 'run-1',
+      generation: 2,
+    };
+    resumed.clientSend(request);
+    resumed.clientSend(request);
+
+    expect(channels).toHaveLength(2);
+    acceptLatestAttach(interpreter);
+    await flush();
+    expect(resumed.sent).toContainEqual({
+      kind: 'resume-run-ready',
+      sessionId: 'sess-1',
+      runId: 'run-1',
+      generation: 2,
+    });
+    expect(channels[1].port1.posted).not.toContainEqual({ type: 'pty-claim-control' });
+    leases.dispose();
+  });
+
   it('keeps a parked lease authoritative when checked attach is busy', async () => {
     const ws = new FakeWs();
     const leases = new RemoteRunLeaseRegistry({ ttlMs: 60_000 });
@@ -2085,11 +2316,326 @@ describe('RemoteBridge — file explorer (M3)', () => {
     expect(ws.sent).toContainEqual({ kind: 'file-upload-done', uploadId: 'up-1', ok: true, finalName: 'photo.png' });
   });
 
-  it('an oversized chunk (>2x FILE_CHUNK_BYTES decoded) is hard-rejected: ack ok:false + abortUpload, writeUploadChunk never called', async () => {
-    const fileSource = makeFileSource();
+  it('fails closed instead of decoding or queueing chunks while one ack is pending', async () => {
+    type ChunkResult = Awaited<ReturnType<RemoteFileSource['writeUploadChunk']>>;
+    let resolveFirstChunk!: (result: ChunkResult) => void;
+    const firstChunk = new Promise<ChunkResult>((resolve) => {
+      resolveFirstChunk = resolve;
+    });
+    const writeUploadChunk = vi.fn()
+      .mockImplementationOnce(() => firstChunk)
+      .mockResolvedValue({ ok: true as const, receivedBytes: 4 });
+    const fileSource = makeFileSource({
+      beginUpload: vi.fn(async () => ({
+        ok: true as const,
+        uploadId: 'one-in-flight-upload',
+        finalName: 'bounded.bin',
+      })),
+      writeUploadChunk,
+    });
     const ws = new FakeWs();
     const { options } = makeOptions({ fileSource });
     await authed(ws, options);
+    ws.clientSend({
+      kind: 'file-upload-begin',
+      requestId: 'one-in-flight-begin',
+      dirPath: 'C:\\x',
+      name: 'bounded.bin',
+      size: 103,
+    });
+    await flush();
+
+    ws.clientSend({
+      kind: 'file-upload-chunk',
+      uploadId: 'one-in-flight-upload',
+      offset: 0,
+      data: uint8ArrayToBase64(new Uint8Array([1, 2, 3])),
+    });
+    await flush();
+    expect(writeUploadChunk).toHaveBeenCalledTimes(1);
+
+    for (let index = 0; index < 100; index += 1) {
+      ws.clientSend({
+        kind: 'file-upload-chunk',
+        uploadId: 'one-in-flight-upload',
+        offset: 3 + index,
+        data: uint8ArrayToBase64(new Uint8Array([index])),
+      });
+    }
+    await flush();
+
+    resolveFirstChunk({ ok: true, receivedBytes: 3 });
+    await flush();
+    await flush();
+
+    expect(writeUploadChunk).toHaveBeenCalledTimes(1);
+    expect(fileSource.abortUpload).toHaveBeenCalledTimes(1);
+    expect(fileSource.commitUpload).not.toHaveBeenCalled();
+    expect(ws.sent).toContainEqual({
+      kind: 'file-upload-ack',
+      uploadId: 'one-in-flight-upload',
+      ok: false,
+      error: 'upload chunk already in flight',
+    });
+  });
+
+  it('fails closed when commit arrives before the current chunk acknowledgement', async () => {
+    type ChunkResult = Awaited<ReturnType<RemoteFileSource['writeUploadChunk']>>;
+    let resolveChunk!: (result: ChunkResult) => void;
+    const chunk = new Promise<ChunkResult>((resolve) => {
+      resolveChunk = resolve;
+    });
+    const fileSource = makeFileSource({
+      beginUpload: vi.fn(async () => ({
+        ok: true as const,
+        uploadId: 'early-commit-upload',
+        finalName: 'early-commit.bin',
+      })),
+      writeUploadChunk: vi.fn(() => chunk),
+    });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+    ws.clientSend({
+      kind: 'file-upload-begin',
+      requestId: 'early-commit-begin',
+      dirPath: 'C:\\x',
+      name: 'early-commit.bin',
+      size: 1,
+    });
+    await flush();
+
+    ws.clientSend({
+      kind: 'file-upload-chunk',
+      uploadId: 'early-commit-upload',
+      offset: 0,
+      data: uint8ArrayToBase64(new Uint8Array([1])),
+    });
+    await flush();
+    expect(fileSource.writeUploadChunk).toHaveBeenCalledTimes(1);
+
+    ws.clientSend({ kind: 'file-upload-commit', uploadId: 'early-commit-upload' });
+    await flush();
+    resolveChunk({ ok: true, receivedBytes: 1 });
+    await flush();
+    await flush();
+
+    expect(fileSource.commitUpload).not.toHaveBeenCalled();
+    expect(fileSource.abortUpload).toHaveBeenCalledTimes(1);
+    expect(ws.sent).toContainEqual({
+      kind: 'file-upload-done',
+      uploadId: 'early-commit-upload',
+      ok: false,
+      error: 'upload chunk is still in flight',
+    });
+  });
+
+  it('enforces upload ownership for chunk, commit, and abort across connections', async () => {
+    const fileSource = makeFileSource({
+      beginUpload: vi.fn(async () => ({
+        ok: true as const,
+        uploadId: 'socket-a-upload',
+        finalName: 'owned.bin',
+      })),
+    });
+    const { options } = makeOptions({ fileSource });
+    const owner = new FakeWs();
+    const attacker = new FakeWs();
+    await authed(owner, options);
+    await authed(attacker, options);
+    owner.clientSend({
+      kind: 'file-upload-begin',
+      requestId: 'owned-begin',
+      dirPath: 'C:\\x',
+      name: 'owned.bin',
+      size: 1,
+    });
+    await flush();
+    vi.mocked(fileSource.writeUploadChunk).mockClear();
+    vi.mocked(fileSource.commitUpload).mockClear();
+    vi.mocked(fileSource.abortUpload).mockClear();
+
+    attacker.clientSend({
+      kind: 'file-upload-chunk',
+      uploadId: 'socket-a-upload',
+      offset: 0,
+      data: uint8ArrayToBase64(new Uint8Array([1])),
+    });
+    attacker.clientSend({
+      kind: 'file-upload-chunk',
+      uploadId: 'socket-a-upload',
+      offset: 0,
+      data: '***not-base64***',
+    });
+    attacker.clientSend({
+      kind: 'file-upload-chunk',
+      uploadId: 'socket-a-upload',
+      offset: 0,
+      data: uint8ArrayToBase64(new Uint8Array(FILE_CHUNK_BYTES * 2 + 1)),
+    });
+    attacker.clientSend({ kind: 'file-upload-commit', uploadId: 'socket-a-upload' });
+    attacker.clientSend({ kind: 'file-upload-abort', uploadId: 'socket-a-upload' });
+    await flush();
+
+    expect(fileSource.writeUploadChunk).not.toHaveBeenCalled();
+    expect(fileSource.commitUpload).not.toHaveBeenCalled();
+    expect(fileSource.abortUpload).not.toHaveBeenCalled();
+    expect(attacker.sent).toContainEqual({
+      kind: 'file-upload-ack',
+      uploadId: 'socket-a-upload',
+      ok: false,
+      error: 'unknown uploadId',
+    });
+    expect(attacker.sent).toContainEqual({
+      kind: 'file-upload-done',
+      uploadId: 'socket-a-upload',
+      ok: false,
+      error: 'unknown uploadId',
+    });
+
+    owner.clientSend({ kind: 'file-upload-abort', uploadId: 'socket-a-upload' });
+    await flush();
+    expect(fileSource.abortUpload).toHaveBeenCalledTimes(1);
+    expect(fileSource.abortUpload).toHaveBeenCalledWith('socket-a-upload');
+  });
+
+  it('bounds pending plus open uploads per connection before opening more files', async () => {
+    type BeginResult = Awaited<ReturnType<RemoteFileSource['beginUpload']>>;
+    const expectedPerConnectionLimit = MAX_REMOTE_FILE_UPLOADS;
+    const pending: Array<(result: BeginResult) => void> = [];
+    const beginUpload = vi.fn(() => new Promise<BeginResult>((resolve) => {
+      pending.push(resolve);
+    }));
+    const fileSource = makeFileSource({ beginUpload });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    for (let index = 0; index < expectedPerConnectionLimit + 1; index += 1) {
+      ws.clientSend({
+        kind: 'file-upload-begin',
+        requestId: `bounded-upload-${index}`,
+        dirPath: 'C:\\x',
+        name: `bounded-${index}.bin`,
+        size: 0,
+      });
+    }
+    const callsBeforeSettlement = beginUpload.mock.calls.length;
+    pending.forEach((resolve, index) => resolve({
+      ok: true,
+      uploadId: `bounded-id-${index}`,
+      finalName: `bounded-${index}.bin`,
+    }));
+    await flush();
+
+    expect(callsBeforeSettlement).toBe(expectedPerConnectionLimit);
+    expect(ws.sent).toContainEqual({
+      kind: 'file-upload-begin-reply',
+      requestId: `bounded-upload-${expectedPerConnectionLimit}`,
+      ok: false,
+      error: 'too many active uploads',
+    });
+    ws.close();
+    await flush();
+    expect(fileSource.abortUpload).toHaveBeenCalledTimes(expectedPerConnectionLimit);
+  });
+
+  it('keeps terminating uploads inside the connection cap until source abort settles', async () => {
+    let nextUpload = 0;
+    const beginUpload = vi.fn(async (_dirPath: string, name: string) => {
+      const uploadId = `terminating-id-${nextUpload}`;
+      nextUpload += 1;
+      return { ok: true as const, uploadId, finalName: name };
+    });
+    const pendingAborts: Array<() => void> = [];
+    const abortUpload = vi.fn(() => new Promise<void>((resolve) => {
+      pendingAborts.push(resolve);
+    }));
+    const fileSource = makeFileSource({ beginUpload, abortUpload });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+
+    for (let index = 0; index < MAX_REMOTE_FILE_UPLOADS; index += 1) {
+      ws.clientSend({
+        kind: 'file-upload-begin',
+        requestId: `terminating-begin-${index}`,
+        dirPath: 'C:\\x',
+        name: `terminating-${index}.bin`,
+        size: 0,
+      });
+    }
+    await flush();
+    for (let index = 0; index < MAX_REMOTE_FILE_UPLOADS; index += 1) {
+      ws.clientSend({ kind: 'file-upload-abort', uploadId: `terminating-id-${index}` });
+    }
+    await flush();
+    expect(abortUpload).toHaveBeenCalledTimes(MAX_REMOTE_FILE_UPLOADS);
+
+    try {
+      ws.clientSend({
+        kind: 'file-upload-begin',
+        requestId: 'blocked-by-terminating',
+        dirPath: 'C:\\x',
+        name: 'blocked.bin',
+        size: 0,
+      });
+      await flush();
+      expect(beginUpload).toHaveBeenCalledTimes(MAX_REMOTE_FILE_UPLOADS);
+      expect(ws.sent).toContainEqual({
+        kind: 'file-upload-begin-reply',
+        requestId: 'blocked-by-terminating',
+        ok: false,
+        error: 'too many active uploads',
+      });
+
+      pendingAborts.splice(0).forEach((resolve) => resolve());
+      await flush();
+      await flush();
+      ws.clientSend({
+        kind: 'file-upload-begin',
+        requestId: 'after-terminating',
+        dirPath: 'C:\\x',
+        name: 'after-terminating.bin',
+        size: 0,
+      });
+      await flush();
+      expect(beginUpload).toHaveBeenCalledTimes(MAX_REMOTE_FILE_UPLOADS + 1);
+
+      ws.clientSend({
+        kind: 'file-upload-abort',
+        uploadId: `terminating-id-${MAX_REMOTE_FILE_UPLOADS}`,
+      });
+      await flush();
+      pendingAborts.splice(0).forEach((resolve) => resolve());
+      await flush();
+    } finally {
+      pendingAborts.splice(0).forEach((resolve) => resolve());
+      ws.close();
+      await flush();
+      pendingAborts.splice(0).forEach((resolve) => resolve());
+    }
+  });
+
+  it('an oversized chunk (>2x FILE_CHUNK_BYTES decoded) is hard-rejected: ack ok:false + abortUpload, writeUploadChunk never called', async () => {
+    const fileSource = makeFileSource({
+      beginUpload: vi.fn(async () => ({
+        ok: true as const,
+        uploadId: 'up-1',
+        finalName: 'oversized.bin',
+      })),
+    });
+    const ws = new FakeWs();
+    const { options } = makeOptions({ fileSource });
+    await authed(ws, options);
+    ws.clientSend({
+      kind: 'file-upload-begin',
+      requestId: 'oversized-begin',
+      dirPath: 'C:\\x',
+      name: 'oversized.bin',
+      size: FILE_CHUNK_BYTES * 2 + 1,
+    });
+    await flush();
 
     const oversized = new Uint8Array(FILE_CHUNK_BYTES * 2 + 1);
     ws.clientSend({ kind: 'file-upload-chunk', uploadId: 'up-1', offset: 0, data: uint8ArrayToBase64(oversized) });
@@ -2100,7 +2646,7 @@ describe('RemoteBridge — file explorer (M3)', () => {
     expect(ws.sent).toContainEqual(expect.objectContaining({ kind: 'file-upload-ack', uploadId: 'up-1', ok: false }));
   });
 
-  it('a chunk for an unknown uploadId gets an ok:false ack (relayed from the fileSource)', async () => {
+  it('rejects a chunk for an unowned uploadId without reaching the file source', async () => {
     const fileSource = makeFileSource({
       writeUploadChunk: vi.fn(async () => ({ ok: false as const, error: 'unknown uploadId' })),
     });
@@ -2116,6 +2662,7 @@ describe('RemoteBridge — file explorer (M3)', () => {
     });
     await flush();
 
+    expect(fileSource.writeUploadChunk).not.toHaveBeenCalled();
     expect(ws.sent).toContainEqual({
       kind: 'file-upload-ack',
       uploadId: 'no-such-upload',
@@ -2156,6 +2703,7 @@ describe('RemoteBridge — file explorer (M3)', () => {
     await flush();
 
     ws.close();
+    await flush();
 
     expect(fileSource.abortUpload).toHaveBeenCalledWith('up-1');
   });
@@ -2701,6 +3249,23 @@ describe('RemoteBridge — OpenClaw availability (openclaw-stabilization M3)', (
 });
 
 describe('RemoteBridge — Agent Activity parity', () => {
+  it('does not expose v3 agent snapshots to a negotiated v2 client', async () => {
+    const agentSource = new FakeAgentSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ agentSource });
+    attachConnection(ws, options);
+    ws.clientSend({
+      ...authMessage(),
+      protocolVersion: 2,
+    });
+    await flush();
+
+    expect(ws.sent.some((message) => message.kind === 'agent-snapshot')).toBe(false);
+    agentSource.emit({ revision: 2, items: [] });
+    ws.clientSend({ kind: 'agent-snapshot-get', requestId: 'v2-snapshot' });
+    expect(ws.sent.some((message) => message.kind === 'agent-snapshot')).toBe(false);
+  });
+
   it('pushes the auth snapshot, relays revisions, and correlates snapshot/followup replies', async () => {
     const agentSource = new FakeAgentSource();
     const ws = new FakeWs();
@@ -2731,8 +3296,182 @@ describe('RemoteBridge — Agent Activity parity', () => {
     expect(agentSource.sendFollowup).toHaveBeenCalledWith('activity-1', 'continue');
     expect(ws.sent).toContainEqual({ kind: 'agent-followup-reply', requestId: 'follow-1', result: { ok: true } });
 
+    ws.clientSend({
+      kind: 'agent-decision',
+      requestId: 'decision-1',
+      activityId: 'activity-1',
+      approvalId: 'approval-1',
+      decision: 'allow',
+    });
+    expect(agentSource.decideApproval).toHaveBeenCalledWith('activity-1', 'approval-1', 'allow');
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-decision-reply',
+      requestId: 'decision-1',
+      result: { ok: true },
+    });
+
     ws.close();
     expect(agentSource.listenerCount).toBe(0);
+  });
+});
+
+describe('RemoteBridge - correlated latency probe', () => {
+  it('echoes a bounded probe id and ignores malformed probes', async () => {
+    const ws = new FakeWs();
+    const { options } = makeOptions();
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'ping', probeId: 'probe-1', sentAt: 123 });
+    ws.clientSend({ kind: 'ping', sentAt: 124 });
+    ws.clientSend({ kind: 'ping', probeId: 'x'.repeat(129), sentAt: 125 });
+
+    expect(ws.sent.filter((message) => message.kind === 'pong')).toEqual([
+      { kind: 'pong', probeId: 'probe-1', sentAt: 123 },
+    ]);
+  });
+});
+
+describe('RemoteBridge - bounded Git request ownership', () => {
+  it('keeps distinct concurrent status requests alive and correlates every reply', async () => {
+    const pending: Array<{
+      readonly signal: AbortSignal | undefined;
+      readonly resolve: (status: import('../shared/git-status').GitDirectoryStatus) => void;
+    }> = [];
+    const gitSource = {
+      getStatus: vi.fn((_directory: string, signal?: AbortSignal) => (
+        new Promise<import('../shared/git-status').GitDirectoryStatus>((resolve) => {
+          pending.push({ signal, resolve });
+        })
+      )),
+      getDiff: vi.fn(async () => ({ ok: false as const, error: 'git-failed' as const })),
+    };
+    const ws = new FakeWs();
+    const { options } = makeOptions({ gitSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'git-status', requestId: 'status-1', directory: '/old' });
+    ws.clientSend({ kind: 'git-status', requestId: 'status-2', directory: '/new' });
+    expect(pending).toHaveLength(2);
+    expect(pending[0].signal?.aborted).toBe(false);
+    expect(pending[1].signal?.aborted).toBe(false);
+
+    pending[0].resolve({
+      availability: 'ready',
+      tracked: true,
+      branch: 'old',
+      changes: [],
+      truncated: false,
+    });
+    await flush();
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'git-status-reply',
+      requestId: 'status-1',
+      status: expect.objectContaining({ branch: 'old' }),
+    }));
+
+    pending[1].resolve({
+      availability: 'ready',
+      tracked: true,
+      branch: 'new',
+      changes: [],
+      truncated: false,
+    });
+    await flush();
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'git-status-reply',
+      requestId: 'status-2',
+      status: expect.objectContaining({ branch: 'new' }),
+    }));
+  });
+
+  it('bounds concurrent Git work and fails the excess request closed', async () => {
+    const pending: AbortSignal[] = [];
+    const gitSource = {
+      getStatus: vi.fn((_directory: string, signal?: AbortSignal) => (
+        new Promise<import('../shared/git-status').GitDirectoryStatus>(() => {
+          if (signal) pending.push(signal);
+        })
+      )),
+      getDiff: vi.fn(async () => ({ ok: false as const, error: 'git-failed' as const })),
+    };
+    const ws = new FakeWs();
+    const { options } = makeOptions({ gitSource });
+    await authed(ws, options);
+
+    for (let index = 0; index < 17; index += 1) {
+      ws.clientSend({
+        kind: 'git-status',
+        requestId: `status-${index}`,
+        directory: `/repo-${index}`,
+      });
+    }
+
+    expect(gitSource.getStatus).toHaveBeenCalledTimes(16);
+    expect(pending).toHaveLength(16);
+    expect(ws.sent).toContainEqual({
+      kind: 'git-status-reply',
+      requestId: 'status-16',
+      status: expect.objectContaining({ availability: 'unavailable', tracked: false }),
+    });
+
+    ws.close();
+    expect(pending.every((signal) => signal.aborted)).toBe(true);
+  });
+
+  it('fails a cross-family duplicate id without orphaning the original request', async () => {
+    let resolveStatus!: (
+      status: import('../shared/git-status').GitDirectoryStatus,
+    ) => void;
+    const gitSource = {
+      getStatus: vi.fn(() => (
+        new Promise<import('../shared/git-status').GitDirectoryStatus>((resolve) => {
+          resolveStatus = resolve;
+        })
+      )),
+      getDiff: vi.fn(async () => ({ ok: true as const, text: '', truncated: false, omissions: [] })),
+    };
+    const ws = new FakeWs();
+    const { options } = makeOptions({ gitSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'git-status', requestId: 'shared-id', directory: '/repo' });
+    ws.clientSend({ kind: 'git-diff', requestId: 'shared-id', directory: '/repo' });
+    expect(gitSource.getDiff).not.toHaveBeenCalled();
+    expect(ws.sent).toContainEqual({
+      kind: 'git-diff-reply',
+      requestId: 'shared-id',
+      result: { ok: false, error: 'git-failed' },
+    });
+
+    resolveStatus({
+      availability: 'ready',
+      tracked: true,
+      branch: 'main',
+      changes: [],
+      truncated: false,
+    });
+    await flush();
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'git-status-reply',
+      requestId: 'shared-id',
+      status: expect.objectContaining({ branch: 'main' }),
+    }));
+  });
+
+  it('rejects oversized Git request ids and directories before the service', async () => {
+    const gitSource = {
+      getStatus: vi.fn(async () => EMPTY_GIT_DIRECTORY_STATUS),
+      getDiff: vi.fn(async () => ({ ok: false as const, error: 'git-failed' as const })),
+    };
+    const ws = new FakeWs();
+    const { options } = makeOptions({ gitSource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'git-status', requestId: 'x'.repeat(129), directory: '/repo' });
+    ws.clientSend({ kind: 'git-diff', requestId: 'diff-1', directory: `/${'x'.repeat(8_192)}` });
+
+    expect(gitSource.getStatus).not.toHaveBeenCalled();
+    expect(gitSource.getDiff).not.toHaveBeenCalled();
   });
 });
 
@@ -3058,6 +3797,31 @@ describe('startRemoteBridge — real WS server lifecycle (v0.2.0 D2)', () => {
     });
   }
 
+  function waitForRealMessage(
+    client: RealWebSocket,
+    kind: ServerToClientMessage['kind'],
+  ): Promise<ServerToClientMessage> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        client.off('message', onMessage);
+        reject(new Error(`timed out waiting for ${kind}`));
+      }, 2_000);
+      const onMessage = (data: Parameters<Parameters<RealWebSocket['on']>[1]>[0]): void => {
+        let parsed: ServerToClientMessage;
+        try {
+          parsed = JSON.parse(data.toString()) as ServerToClientMessage;
+        } catch {
+          return;
+        }
+        if (parsed.kind !== kind) return;
+        clearTimeout(timer);
+        client.off('message', onMessage);
+        resolve(parsed);
+      };
+      client.on('message', onMessage);
+    });
+  }
+
   it('returns a promise that settles only after the listener is accepting connections', async () => {
     const { options } = makeOptions({ port: TEST_PORT });
     const started = startRemoteBridge(options);
@@ -3103,6 +3867,90 @@ describe('startRemoteBridge — real WS server lifecycle (v0.2.0 D2)', () => {
     const client2 = await connect(TEST_PORT);
     client2.close();
     await handle2.stop();
+  }, 10_000);
+
+  it('stop() waits for active aborts and a begin that resolves after connection close', async () => {
+    type BeginResult = Awaited<ReturnType<RemoteFileSource['beginUpload']>>;
+    let resolveLateBegin!: (result: BeginResult) => void;
+    const lateBegin = new Promise<BeginResult>((resolve) => {
+      resolveLateBegin = resolve;
+    });
+    const beginUpload = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true as const,
+        uploadId: 'stop-active-upload',
+        finalName: 'active.bin',
+      })
+      .mockImplementationOnce(() => lateBegin);
+    let releaseAborts!: () => void;
+    const abortGate = new Promise<void>((resolve) => {
+      releaseAborts = resolve;
+    });
+    const abortUpload = vi.fn(() => abortGate);
+    const fileSource = makeFileSource({ beginUpload, abortUpload });
+    const { options } = makeOptions({ port: TEST_PORT, fileSource });
+    const handle = await startRemoteBridge(options);
+    const client = await connect(TEST_PORT);
+    let stopPromise: Promise<void> | undefined;
+
+    try {
+      const authReply = waitForRealMessage(client, 'auth-ok');
+      client.send(JSON.stringify(authMessage()));
+      await authReply;
+
+      const activeReply = waitForRealMessage(client, 'file-upload-begin-reply');
+      client.send(JSON.stringify({
+        kind: 'file-upload-begin',
+        requestId: 'stop-active-begin',
+        dirPath: 'C:\\x',
+        name: 'active.bin',
+        size: 0,
+      }));
+      await activeReply;
+      client.send(JSON.stringify({
+        kind: 'file-upload-begin',
+        requestId: 'stop-late-begin',
+        dirPath: 'C:\\x',
+        name: 'late.bin',
+        size: 0,
+      }));
+      await vi.waitFor(() => {
+        expect(beginUpload).toHaveBeenCalledTimes(2);
+      });
+
+      let stopSettled = false;
+      stopPromise = handle.stop().then(() => {
+        stopSettled = true;
+      });
+      await vi.waitFor(() => {
+        expect(abortUpload).toHaveBeenCalledWith('stop-active-upload');
+      });
+      await flush();
+      expect(stopSettled).toBe(false);
+
+      resolveLateBegin({
+        ok: true,
+        uploadId: 'stop-late-upload',
+        finalName: 'late.bin',
+      });
+      await vi.waitFor(() => {
+        expect(abortUpload).toHaveBeenCalledWith('stop-late-upload');
+      });
+      await flush();
+      expect(stopSettled).toBe(false);
+
+      releaseAborts();
+      await stopPromise;
+      expect(stopSettled).toBe(true);
+    } finally {
+      resolveLateBegin({
+        ok: false,
+        error: 'test cleanup',
+      });
+      releaseAborts();
+      client.terminate();
+      await (stopPromise ?? handle.stop());
+    }
   }, 10_000);
 
   it('stop() preserves initiator identities for later bridge generations (run lifetime, not bridge lifetime)', async () => {

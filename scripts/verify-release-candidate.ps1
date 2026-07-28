@@ -3,12 +3,10 @@ param(
     [string]$Api29Avd = 'EZTerminalApi29',
     [string]$Api35Avd = 'EZTerminalApi35',
 
-    [Parameter(Mandatory = $true)]
-    [string]$PerformanceBaselinePath,
+    [string]$PerformanceBaselinePath = '',
 
-    [Parameter(Mandatory = $true)]
-    [ValidatePattern('^[0-9A-Fa-f]{40}$')]
-    [string]$PerformanceBaselineBuildSha,
+    [ValidatePattern('^$|^[0-9A-Fa-f]{40}$')]
+    [string]$PerformanceBaselineBuildSha = '',
 
     [switch]$RunPerformanceMeasurement
 )
@@ -16,10 +14,43 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-if (-not $RunPerformanceMeasurement) {
+if (
+    -not $RunPerformanceMeasurement -and
+    (
+        -not [string]::IsNullOrWhiteSpace($PerformanceBaselinePath) -or
+        -not [string]::IsNullOrWhiteSpace($PerformanceBaselineBuildSha)
+    )
+) {
+    throw 'Performance baseline arguments require the explicit -RunPerformanceMeasurement switch.'
+}
+if (
+    $RunPerformanceMeasurement -and
+    (
+        [string]::IsNullOrWhiteSpace($PerformanceBaselinePath) -or
+        $PerformanceBaselineBuildSha -notmatch '^[0-9A-Fa-f]{40}$'
+    )
+) {
     throw (
-        'The release performance E2E is opt-in. Run this RC gate with ' +
-        '-RunPerformanceMeasurement only after the user explicitly requests a performance measurement.'
+        '-RunPerformanceMeasurement requires PerformanceBaselinePath and a complete ' +
+        'PerformanceBaselineBuildSha.'
+    )
+}
+if (
+    -not $RunPerformanceMeasurement -and
+    -not [string]::IsNullOrWhiteSpace($env:EZTERMINAL_RUN_RELEASE_PERFORMANCE)
+) {
+    throw (
+        'The non-performance candidate refuses an inherited ' +
+        'EZTERMINAL_RUN_RELEASE_PERFORMANCE value.'
+    )
+}
+if (
+    -not $RunPerformanceMeasurement -and
+    -not [string]::IsNullOrWhiteSpace($env:EZTERMINAL_RUN_PERFORMANCE_DIAGNOSTIC)
+) {
+    throw (
+        'The non-performance candidate refuses an inherited ' +
+        'EZTERMINAL_RUN_PERFORMANCE_DIAGNOSTIC value.'
     )
 }
 
@@ -30,6 +61,7 @@ $emulator = Join-Path $androidHome 'emulator\emulator.exe'
 $mainApk = Join-Path $repoRoot 'mobile\android\app\build\outputs\apk\debug\app-debug.apk'
 $testApk = Join-Path $repoRoot 'mobile\android\app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk'
 $results = [Collections.Generic.List[object]]::new()
+$script:soakReportPath = Join-Path $repoRoot 'release-assets\mobile-soak-report.json'
 
 function Invoke-Checked {
     param([string]$File, [string[]]$Arguments, [string]$WorkingDirectory = $repoRoot)
@@ -60,9 +92,25 @@ function Assert-EmbeddedBuildSha {
     }
 }
 
-function Assert-CleanGitTree {
-    param([string]$Phase)
+function Assert-FrozenGitTree {
+    param(
+        [string]$Phase,
+        [string]$ExpectedSha = ''
+    )
+    $head = (& git rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
+        throw "Could not resolve the exact Git HEAD ($Phase)."
+    }
+    if (
+        -not [string]::IsNullOrWhiteSpace($ExpectedSha) -and
+        $head -cne $ExpectedSha
+    ) {
+        throw "The RC source HEAD changed from $ExpectedSha to $head ($Phase)."
+    }
     $dirty = @(git status --porcelain --untracked-files=all)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not inspect the Git worktree ($Phase)."
+    }
     if ($dirty.Count -ne 0) {
         $dirty | ForEach-Object { Write-Host $_ }
         throw "The RC gate must have a clean, frozen commit ($Phase)."
@@ -268,6 +316,7 @@ function Invoke-MobileE2e {
         if ($Full) {
             Invoke-Checked 'pnpm' @('--dir', 'mobile', 'e2e:parity')
             Invoke-Checked 'pnpm' @('--dir', 'mobile', 'e2e:theme-effects')
+            Invoke-Checked 'pnpm' @('--dir', 'mobile', 'e2e:handoff-surfaces')
         }
         if ($Soak) {
             Invoke-Checked 'pnpm' @('--dir', 'mobile', 'e2e:release-soak')
@@ -306,12 +355,40 @@ function Invoke-AvdGate {
         Invoke-Instrumentation $serial
         Invoke-MobileE2e $serial -Full
         if ($Soak) {
-            $env:EZTERMINAL_SOAK_DURATION_MS = '1800000'
-            $env:EZTERMINAL_SOAK_QUIESCENCE_MS = '15000'
-            $env:EZTERMINAL_SOAK_REPORT_PATH = Join-Path $repoRoot 'release-assets\mobile-soak-report.json'
-            Invoke-MobileE2e $serial -Soak
+            $previousSoakEnvironment = [ordered]@{
+                EZTERMINAL_SOAK_DURATION_MS = $env:EZTERMINAL_SOAK_DURATION_MS
+                EZTERMINAL_SOAK_QUIESCENCE_MS = $env:EZTERMINAL_SOAK_QUIESCENCE_MS
+                EZTERMINAL_SOAK_REPORT_PATH = $env:EZTERMINAL_SOAK_REPORT_PATH
+            }
+            try {
+                $env:EZTERMINAL_SOAK_DURATION_MS = '1800000'
+                $env:EZTERMINAL_SOAK_QUIESCENCE_MS = '15000'
+                $env:EZTERMINAL_SOAK_REPORT_PATH = $script:soakReportPath
+                Invoke-MobileE2e $serial -Soak
+            } finally {
+                foreach ($name in $previousSoakEnvironment.Keys) {
+                    [Environment]::SetEnvironmentVariable(
+                        $name,
+                        $previousSoakEnvironment[$name],
+                        'Process'
+                    )
+                }
+            }
         }
-        $results.Add([ordered]@{ device = $serial; api = $Api; avd = $Avd; status = 'passed' })
+        $results.Add([ordered]@{
+            device = $serial
+            api = $Api
+            avd = $Avd
+            status = 'passed'
+            lanes = @(
+                'instrumentation',
+                'smoke',
+                'stabilization',
+                'parity',
+                'theme-effects',
+                'handoff-surfaces'
+            )
+        })
     } finally {
         try { Invoke-Adb $serial @('emu', 'kill') | Out-Null } catch { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
         if (-not $process.WaitForExit(30000)) {
@@ -345,9 +422,17 @@ if (-not (Test-Path -LiteralPath $adb) -or -not (Test-Path -LiteralPath $emulato
 }
 Push-Location $repoRoot
 try {
-    Assert-CleanGitTree 'before validation'
     $sha = (& git rev-parse HEAD).Trim()
-    $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+    if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') {
+        throw 'Could not resolve the exact 40-character candidate SHA.'
+    }
+    Assert-FrozenGitTree 'before validation' $sha
+    $versionContract = Get-Content release/version.json -Raw | ConvertFrom-Json
+    $version = [string]$versionContract.version
+    $packageVersion = [string](Get-Content package.json -Raw | ConvertFrom-Json).version
+    if ($version -notmatch '^\d+\.\d+\.\d+$' -or $packageVersion -cne $version) {
+        throw 'The candidate version contract is invalid or differs from package.json.'
+    }
     $expectedNodeVersion = (Get-Content .nvmrc -Raw).Trim().TrimStart('v')
     $actualNodeVersion = (& node -p 'process.versions.node').Trim()
     if ($LASTEXITCODE -ne 0 -or $actualNodeVersion -cne $expectedNodeVersion) {
@@ -359,43 +444,129 @@ try {
     $env:ANDROID_HOME = $androidHome
     $env:ANDROID_SDK_ROOT = $androidHome
 
-    $reportDirectory = Join-Path $repoRoot 'release-assets'
-    New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
-    $resolvedPerformanceBaseline = (Resolve-Path -LiteralPath $PerformanceBaselinePath).Path
-    $normalizedPerformanceBaselineBuildSha = $PerformanceBaselineBuildSha.ToLowerInvariant()
-    $performanceBaseline = Get-Content -LiteralPath $resolvedPerformanceBaseline -Raw |
-        ConvertFrom-Json
+    $reportStage = if ($RunPerformanceMeasurement) { 'release' } else { 'candidate' }
+    $sha8 = $sha.Substring(0, 8)
+    $reportDirectory = Join-Path $repoRoot (
+        "release-assets\.evidence-$version-$sha8-$reportStage"
+    )
+    $releaseAssetsRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot 'release-assets'))
+    $resolvedReportDirectory = [IO.Path]::GetFullPath($reportDirectory)
+    $releaseAssetsPrefix = (
+        $releaseAssetsRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) +
+        [IO.Path]::DirectorySeparatorChar
+    )
+    if (-not $resolvedReportDirectory.StartsWith(
+        $releaseAssetsPrefix,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "Candidate evidence path escaped release-assets: $resolvedReportDirectory"
+    }
     if (
-        [int]$performanceBaseline.schemaVersion -ne 2 -or
-        [string]$performanceBaseline.evidenceMode -cne 'release' -or
-        [string]$performanceBaseline.buildSha -cne $normalizedPerformanceBaselineBuildSha -or
-        [string]$performanceBaseline.provenance.product.buildSha -cne `
-            $normalizedPerformanceBaselineBuildSha -or
-        [string]$performanceBaseline.provenance.product.source.gitHeadSha -cne `
-            $normalizedPerformanceBaselineBuildSha -or
-        [string]$performanceBaseline.provenance.harness.runner.node -cne $actualNodeVersion -or
-        [string]$performanceBaseline.environment.hostFingerprint.algorithm -cne `
-            'windows-machine-guid-sha256-v1' -or
-        [string]$performanceBaseline.environment.hostFingerprint.sha256 -cnotmatch `
-            '^[0-9a-f]{64}$' -or
-        [string]$performanceBaseline.environment.powerPlan.schemeGuid -cnotmatch `
-            '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
-        [string]$performanceBaseline.environment.powerPlan.powerSource -cnotmatch `
-            '^(ac|dc)$' -or
-        [string]$performanceBaseline.environment.powerPlan.effectivePowerMode -cnotmatch `
-            '^(battery-saver|better-battery|balanced|high-performance|max-performance)$' -or
-        [string]$performanceBaseline.environment.powerPlan.baseSettingsSha256 -cnotmatch `
-            '^[0-9a-f]{64}$' -or
-        [string]$performanceBaseline.environment.powerPlan.effectiveSettingsSha256 -cnotmatch `
-            '^[0-9a-f]{64}$'
+        (Test-Path -LiteralPath $releaseAssetsRoot) -and
+        ((Get-Item -LiteralPath $releaseAssetsRoot -Force).Attributes -band
+            [IO.FileAttributes]::ReparsePoint)
     ) {
-        throw 'The baseline report is not same-host/power-plan schema-v2 evidence for this Node toolchain and -PerformanceBaselineBuildSha.'
+        throw "Candidate evidence root must not be a reparse point: $releaseAssetsRoot"
     }
-    $performanceReportPath = Join-Path $reportDirectory 'desktop-performance-report.json'
-    if (Test-Path -LiteralPath $performanceReportPath) {
-        Remove-Item -LiteralPath $performanceReportPath -Force
+    if (Test-Path -LiteralPath $resolvedReportDirectory) {
+        $existingReportDirectory = Get-Item -LiteralPath $resolvedReportDirectory -Force
+        if (
+            -not $existingReportDirectory.PSIsContainer -or
+            ($existingReportDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        ) {
+            throw "Candidate evidence directory must not be a reparse point: $resolvedReportDirectory"
+        }
+        $unsafeEvidenceChildren = @(
+            Get-ChildItem -LiteralPath $resolvedReportDirectory -Force |
+                Where-Object {
+                    $_.PSIsContainer -or
+                    ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)
+                }
+        )
+        if ($unsafeEvidenceChildren.Count -ne 0) {
+            throw "Candidate evidence directory contains unsafe nested or linked entries: $resolvedReportDirectory"
+        }
+        Remove-Item -LiteralPath $resolvedReportDirectory -Recurse -Force
     }
-    $env:EZTERMINAL_PERFORMANCE_REPORT_PATH = $performanceReportPath
+    New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
+    $script:soakReportPath = Join-Path $reportDirectory 'mobile-soak-report.json'
+    $performanceReport = $null
+    $performanceComparison = $null
+    $normalizedPerformanceBaselineBuildSha = $null
+    $performanceBaselineHash = $null
+    $performanceReportHash = $null
+    $performanceBaselineEvidencePath = $null
+    $performanceReportPath = $null
+    $evidenceBundlePath = $null
+    if ($RunPerformanceMeasurement) {
+        $baselineSourcePath = (
+            Resolve-Path -LiteralPath $PerformanceBaselinePath
+        ).Path
+        $baselineSource = Get-Item -LiteralPath $baselineSourcePath -Force
+        if (
+            $baselineSource.PSIsContainer -or
+            ($baselineSource.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        ) {
+            throw "Performance baseline must be a normal file: $baselineSourcePath"
+        }
+        if ($baselineSource.Length -lt 1 -or $baselineSource.Length -gt 16777216) {
+            throw (
+                'Performance baseline must be between 1 and 16777216 bytes: ' +
+                $baselineSourcePath
+            )
+        }
+        $performanceBaselineEvidencePath = Join-Path (
+            $reportDirectory
+        ) 'desktop-performance-baseline.json'
+        [IO.File]::WriteAllBytes(
+            $performanceBaselineEvidencePath,
+            [IO.File]::ReadAllBytes($baselineSourcePath)
+        )
+        $normalizedPerformanceBaselineBuildSha = (
+            $PerformanceBaselineBuildSha.ToLowerInvariant()
+        )
+        $performanceBaselineHash = (
+            Get-FileHash -LiteralPath $performanceBaselineEvidencePath -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
+        $performanceBaseline = Get-Content `
+            -LiteralPath $performanceBaselineEvidencePath -Raw |
+            ConvertFrom-Json
+        if (
+            [int]$performanceBaseline.schemaVersion -ne 2 -or
+            [string]$performanceBaseline.evidenceMode -cne 'release' -or
+            [string]$performanceBaseline.buildSha -cne
+                $normalizedPerformanceBaselineBuildSha -or
+            [string]$performanceBaseline.provenance.product.buildSha -cne
+                $normalizedPerformanceBaselineBuildSha -or
+            [string]$performanceBaseline.provenance.product.source.gitHeadSha -cne
+                $normalizedPerformanceBaselineBuildSha -or
+            [string]$performanceBaseline.provenance.harness.runner.node -cne
+                $actualNodeVersion -or
+            [string]$performanceBaseline.environment.hostFingerprint.algorithm -cne
+                'windows-machine-guid-sha256-v1' -or
+            [string]$performanceBaseline.environment.hostFingerprint.sha256 -cnotmatch
+                '^[0-9a-f]{64}$' -or
+            [string]$performanceBaseline.environment.powerPlan.schemeGuid -cnotmatch
+                '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
+            [string]$performanceBaseline.environment.powerPlan.powerSource -cnotmatch
+                '^(ac|dc)$' -or
+            [string]$performanceBaseline.environment.powerPlan.effectivePowerMode -cnotmatch
+                '^(battery-saver|better-battery|balanced|high-performance|max-performance)$' -or
+            [string]$performanceBaseline.environment.powerPlan.baseSettingsSha256 -cnotmatch
+                '^[0-9a-f]{64}$' -or
+            [string]$performanceBaseline.environment.powerPlan.effectiveSettingsSha256 -cnotmatch
+                '^[0-9a-f]{64}$'
+        ) {
+            throw (
+                'The baseline report is not same-host/power-plan schema-v2 ' +
+                'evidence for this Node toolchain and -PerformanceBaselineBuildSha.'
+            )
+        }
+        $performanceReportPath = Join-Path (
+            $reportDirectory
+        ) 'desktop-performance-report.json'
+        $env:EZTERMINAL_PERFORMANCE_REPORT_PATH = $performanceReportPath
+    }
 
     Invoke-Checked 'pnpm' @('install', '--frozen-lockfile')
     Invoke-Checked 'pnpm' @('verify:version')
@@ -407,69 +578,124 @@ try {
     }
     Invoke-Checked 'pnpm' @('audit', '--prod', '--audit-level=low')
     Invoke-Checked 'pnpm' @('audit', '--audit-level=low')
+    Invoke-Checked 'pnpm' @('--dir', 'mobile', 'lint')
+    Invoke-Checked 'pnpm' @('--dir', 'mobile', 'typecheck')
+    1..3 | ForEach-Object {
+        Write-Host "Mobile unit stability run $_/3"
+        Invoke-Checked 'pnpm' @('--dir', 'mobile', 'test')
+    }
+    Invoke-Checked 'pnpm' @('test:storybook')
+    Invoke-Checked 'pnpm' @('storybook:build')
+    Invoke-Checked 'pnpm' @('test:visual')
+    Invoke-Checked 'cargo' @('fmt', '--all', '--', '--check') (
+        Join-Path $repoRoot 'native\remote-host'
+    )
+    Invoke-Checked 'cargo' @('test', '--locked', '--all-targets') (
+        Join-Path $repoRoot 'native\remote-host'
+    )
+    Invoke-Checked 'cargo' @('clippy', '--locked', '--all-targets', '--', '-D', 'warnings') (
+        Join-Path $repoRoot 'native\remote-host'
+    )
+    Invoke-Checked 'cargo' @('audit', '--deny', 'warnings') (
+        Join-Path $repoRoot 'native\remote-host'
+    )
+    Invoke-Checked 'cargo' @('deny', 'check') (
+        Join-Path $repoRoot 'native\remote-host'
+    )
+    Invoke-Checked 'pnpm' @('build:remote-host')
     # Force an exact-SHA Vite build before Playwright. Its ordinary global
     # setup may reuse mtime-fresh local artifacts, which is valid for
     # development but not for release evidence.
     Invoke-Checked 'pnpm' @('package')
     Assert-EmbeddedBuildSha $sha
     Invoke-Checked 'pnpm' @('e2e')
-    Invoke-Checked 'pnpm' @('e2e:performance')
-    if (-not (Test-Path -LiteralPath $performanceReportPath)) {
-        throw 'The desktop E2E gate did not produce desktop-performance-report.json.'
-    }
-    $performanceReport = Get-Content -LiteralPath $performanceReportPath -Raw | ConvertFrom-Json
-    if (
-        [int]$performanceReport.schemaVersion -ne 2 -or
-        [string]$performanceReport.evidenceMode -cne 'release' -or
-        [string]$performanceReport.buildSha -cne $sha -or
-        [int]$performanceReport.warmupRuns -ne 5 -or
-        [int]$performanceReport.measurementRuns -ne 25 -or
-        (@($performanceReport.metricOrder) -join ',') -cne (
-            'cancellationLatencyMs,rows100kCompletionMs,' +
-            'plainOutput1_1MiBCompletionMs,plainOutput12MiBRetentionPressureMs'
+    Invoke-Checked 'pnpm' @('make')
+    Invoke-Checked 'pnpm' @('guard:native')
+    Invoke-Checked 'pnpm' @('guard:native-cap')
+    Invoke-Checked 'pnpm' @('guard:pty-routing')
+    Invoke-Checked 'pnpm' @('guard:approval-privacy')
+    Invoke-Checked 'pnpm' @('guard:pairing-offline')
+    Invoke-Checked 'pnpm' @('guard:desktop-handoff')
+    Invoke-Checked 'pnpm' @('test:e2e:packaged')
+    if ($RunPerformanceMeasurement) {
+        Invoke-Checked 'pnpm' @('e2e:performance')
+        if (-not (Test-Path -LiteralPath $performanceReportPath)) {
+            throw 'The desktop E2E gate did not produce desktop-performance-report.json.'
+        }
+        $performanceReportBytes = [IO.File]::ReadAllBytes($performanceReportPath)
+        $performanceReportHash = (
+            Get-FileHash -LiteralPath $performanceReportPath -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
+        $performanceReport = (
+            [Text.Encoding]::UTF8.GetString($performanceReportBytes)
+        ).TrimStart([char]0xFEFF) | ConvertFrom-Json
+        if (
+            [int]$performanceReport.schemaVersion -ne 2 -or
+            [string]$performanceReport.evidenceMode -cne 'release' -or
+            [string]$performanceReport.buildSha -cne $sha -or
+            [int]$performanceReport.warmupRuns -ne 5 -or
+            [int]$performanceReport.measurementRuns -ne 25 -or
+            (@($performanceReport.metricOrder) -join ',') -cne (
+                'cancellationLatencyMs,rows100kCompletionMs,' +
+                'plainOutput1_1MiBCompletionMs,plainOutput12MiBRetentionPressureMs'
+            )
+        ) {
+            throw (
+                'The desktop performance report is not schema-v2 exact-SHA ' +
+                'evidence using the approved ordered 5/25 protocol.'
+            )
+        }
+        Assert-CandidatePerformanceProvenance $performanceReport $sha $version
+        $performanceComparisonJson = & node scripts/verify-performance-report.mjs `
+            --baseline $performanceBaselineEvidencePath `
+            --candidate $performanceReportPath `
+            --max-regression-percent 5 `
+            --min-target-improvement-percent 15 `
+            --expected-baseline-build-sha $normalizedPerformanceBaselineBuildSha `
+            --expected-candidate-build-sha $sha `
+            --target-metrics plainOutput12MiBRetentionPressureMs | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host $performanceComparisonJson
+            throw 'The desktop performance report exceeded its relative or absolute budget.'
+        }
+        $performanceComparison = $performanceComparisonJson | ConvertFrom-Json
+        if ($performanceComparison.ok -ne $true) {
+            throw 'The desktop performance comparison did not report a passing result.'
+        }
+        Assert-FrozenGitTree 'after desktop performance measurement' $sha
+    } else {
+        Write-Host (
+            'Desktop performance remains pending: this local candidate was ' +
+            'not authorized to run a performance measurement.'
         )
-    ) {
-        throw 'The desktop performance report is not schema-v2 exact-SHA evidence using the approved ordered 5/25 protocol.'
     }
-    Assert-CandidatePerformanceProvenance $performanceReport $sha $version
-    $performanceComparisonJson = & node scripts/verify-performance-report.mjs `
-        --baseline $resolvedPerformanceBaseline `
-        --candidate $performanceReportPath `
-        --max-regression-percent 5 `
-        --min-target-improvement-percent 15 `
-        --expected-baseline-build-sha $normalizedPerformanceBaselineBuildSha `
-        --expected-candidate-build-sha $sha `
-        --target-metrics plainOutput12MiBRetentionPressureMs | Out-String
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host $performanceComparisonJson
-        throw 'The desktop performance report exceeded its relative or absolute budget.'
-    }
-    $performanceComparison = $performanceComparisonJson | ConvertFrom-Json
-    if ($performanceComparison.ok -ne $true) {
-        throw 'The desktop performance comparison did not report a passing result.'
-    }
-    Assert-CleanGitTree 'after desktop performance measurement'
-    $performanceBaselineHash = (
-        Get-FileHash -LiteralPath $resolvedPerformanceBaseline -Algorithm SHA256
-    ).Hash.ToLowerInvariant()
-    $performanceReportHash = (
-        Get-FileHash -LiteralPath $performanceReportPath -Algorithm SHA256
-    ).Hash.ToLowerInvariant()
 
     Invoke-Checked 'pnpm' @('--dir', 'mobile', 'build:e2e')
     Invoke-Checked 'pnpm' @('--dir', 'mobile', 'cap:sync')
     Invoke-Checked (Join-Path $repoRoot 'mobile\android\gradlew.bat') `
-        @('assembleDebug', 'assembleDebugAndroidTest', '--no-daemon', '--stacktrace') `
+        @(
+            'lintDebug',
+            'lintRelease',
+            'testDebugUnitTest',
+            'testReleaseUnitTest',
+            'assembleDebug',
+            'assembleDebugAndroidTest',
+            '--no-daemon',
+            '--stacktrace'
+        ) `
         (Join-Path $repoRoot 'mobile\android')
 
     Invoke-AvdGate $Api29Avd 29 5556
     Invoke-AvdGate $Api35Avd 35 5558 -Soak
 
-    $soakReportPath = Join-Path $repoRoot 'release-assets\mobile-soak-report.json'
+    $soakReportPath = $script:soakReportPath
     if (-not (Test-Path -LiteralPath $soakReportPath)) {
         throw 'The API 35 emulator soak did not produce mobile-soak-report.json.'
     }
-    $soak = Get-Content -LiteralPath $soakReportPath -Raw | ConvertFrom-Json
+    $soakReportBytes = [IO.File]::ReadAllBytes($soakReportPath)
+    $soak = (
+        [Text.Encoding]::UTF8.GetString($soakReportBytes)
+    ).TrimStart([char]0xFEFF) | ConvertFrom-Json
     $soakGrowthFailures = @($soak.growthChecks | Where-Object { $_.passed -ne $true })
     if (
         $soak.status -ne 'passed' -or
@@ -484,21 +710,52 @@ try {
     ) {
         throw 'The API 35 emulator soak report does not satisfy the exact-SHA gate.'
     }
-    $soakReportHash = (Get-FileHash -LiteralPath $soakReportPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $soakReportHash = (
+        Get-FileHash -LiteralPath $soakReportPath -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
 
     # Restore the exact production web assets after the E2E-only APK gate.
     Invoke-Checked 'pnpm' @('--dir', 'mobile', 'build:release')
     Invoke-Checked 'pnpm' @('--dir', 'mobile', 'cap:sync')
     $androidStatus = @(git status --porcelain --untracked-files=all -- mobile/android)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not inspect the restored production Android source.'
+    }
     if ($androidStatus.Count -ne 0) {
         $androidStatus | ForEach-Object { Write-Host $_ }
         throw 'Production Capacitor sync changed Android source. Commit generated updates before release.'
     }
-    Assert-CleanGitTree 'after all candidate validation'
+    Assert-FrozenGitTree 'after all candidate validation' $sha
 
     $reportPath = Join-Path $reportDirectory 'local-rc-report.json'
-    [ordered]@{
-        schemaVersion = 1
+    $desktopPerformanceEvidence = if ($RunPerformanceMeasurement) {
+        [ordered]@{
+            status = 'passed'
+            schemaVersion = 2
+            baselineBuildSha = $normalizedPerformanceBaselineBuildSha
+            candidateBuildSha = $sha
+            baselineReportSha256 = $performanceBaselineHash
+            candidateReportSha256 = $performanceReportHash
+            maxP95RegressionPercent = 5
+            minTargetP95ImprovementPercent = 15
+            targetMetrics = @('plainOutput12MiBRetentionPressureMs')
+            results = @($performanceComparison.results)
+            candidate = $performanceReport
+        }
+    } else {
+        [ordered]@{
+            status = 'pending-final-release-measurement'
+            reason = 'not-requested-for-this-local-rc'
+        }
+    }
+    $localRcReport = [ordered]@{
+        schemaVersion = 2
+        releaseStage = $reportStage
+        evidenceCompleteness = if ($RunPerformanceMeasurement) {
+            'complete'
+        } else {
+            'functional-complete-performance-pending'
+        }
         appVersion = $version
         buildSha = $sha
         completedAtUtc = [DateTime]::UtcNow.ToString('o')
@@ -521,19 +778,21 @@ try {
         mobileTransport = 'adb-reverse-loopback'
         mobileRemotePort = 17420
         emulatorBootMode = 'cold-no-snapshot'
-        desktopPerformance = [ordered]@{
-            status = 'passed'
-            schemaVersion = 2
-            baselineBuildSha = $normalizedPerformanceBaselineBuildSha
-            candidateBuildSha = $sha
-            baselineReportSha256 = $performanceBaselineHash
-            candidateReportSha256 = $performanceReportHash
-            maxP95RegressionPercent = 5
-            minTargetP95ImprovementPercent = 15
-            targetMetrics = @('plainOutput12MiBRetentionPressureMs')
-            results = @($performanceComparison.results)
-            candidate = $performanceReport
-        }
+        functionalLanes = @(
+            'version-contract',
+            'desktop-typecheck-lint-unit-x3-os',
+            'mobile-typecheck-lint-unit-x3',
+            'dependency-audit',
+            'storybook-interaction-build-visual-axe',
+            'rust-fmt-test-clippy-audit-deny',
+            'desktop-e2e',
+            'windows-make-and-packaged-smoke',
+            'native-pty-and-handoff-security-guards',
+            'android-api29-api35-instrumentation-and-handoff',
+            'android-api35-functional-soak',
+            'mobile-production-marker-gate'
+        )
+        desktopPerformance = $desktopPerformanceEvidence
         devices = $results
         mobileSoak = [ordered]@{
             status = [string]$soak.status
@@ -547,16 +806,164 @@ try {
             cleanupPassed = (@($soak.cleanupErrors).Count -eq 0)
             reportSha256 = $soakReportHash
         }
-    } | ConvertTo-Json -Depth 8 |
+    }
+    $localRcReport | ConvertTo-Json -Depth 12 |
         Set-Content -LiteralPath $reportPath -Encoding utf8
     $reportHash = (Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+    $sourceEvidenceArguments = @(
+        'scripts/verify-release-source-evidence.mjs',
+        '--report', $reportPath,
+        '--mobile-soak', $soakReportPath,
+        '--expected-version', $version,
+        '--expected-build-sha', $sha,
+        '--expected-stage', $reportStage
+    )
+    if ($RunPerformanceMeasurement) {
+        $sourceEvidenceArguments += @(
+            '--performance-baseline', $performanceBaselineEvidencePath,
+            '--performance-candidate', $performanceReportPath
+        )
+    }
+    $sourceEvidenceJson = & node @sourceEvidenceArguments | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host $sourceEvidenceJson
+        throw 'The local RC source evidence is not self-consistent.'
+    }
+    $sourceEvidence = $sourceEvidenceJson | ConvertFrom-Json
+    if ($sourceEvidence.ok -ne $true) {
+        throw 'The local RC source-evidence validator did not report success.'
+    }
+
+    $evidenceBundleHash = $null
+    if ($RunPerformanceMeasurement) {
+        $evidenceBundlePath = Join-Path $reportDirectory 'local-rc-evidence.zip'
+        $bundleJson = & (Join-Path $PSScriptRoot 'release-evidence-bundle.ps1') `
+            -Create `
+            -BundlePath $evidenceBundlePath `
+            -SourcePaths @(
+                $reportPath,
+                $soakReportPath,
+                $performanceBaselineEvidencePath,
+                $performanceReportPath
+            ) `
+            -EntryNames @(
+                'local-rc-report.json',
+                'mobile-soak-report.json',
+                'desktop-performance-baseline.json',
+                'desktop-performance-report.json'
+            ) | Out-String
+        $bundle = $bundleJson | ConvertFrom-Json
+        if (
+            [string]$bundle.operation -cne 'create' -or
+            [string]$bundle.bundleSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            [int]$bundle.base64Length -gt 30000
+        ) {
+            throw 'The approved local RC evidence bundle is invalid or too large.'
+        }
+        $evidenceBundleHash = [string]$bundle.bundleSha256
+        $bundleVerificationDirectory = Join-Path (
+            $reportDirectory
+        ) '.bundle-verification'
+        try {
+            $roundTripJson = & (
+                Join-Path $PSScriptRoot 'release-evidence-bundle.ps1'
+            ) `
+                -Extract `
+                -BundlePath $evidenceBundlePath `
+                -DestinationDirectory $bundleVerificationDirectory `
+                -ExpectedEntryNames @(
+                    'local-rc-report.json',
+                    'mobile-soak-report.json',
+                    'desktop-performance-baseline.json',
+                    'desktop-performance-report.json'
+                ) | Out-String
+            $roundTrip = $roundTripJson | ConvertFrom-Json
+            if (
+                [string]$roundTrip.operation -cne 'extract' -or
+                [string]$roundTrip.bundleSha256 -cne $evidenceBundleHash -or
+                @($roundTrip.files).Count -ne 4
+            ) {
+                throw 'The local RC evidence bundle failed its extraction round trip.'
+            }
+            $roundTripReportPath = Join-Path (
+                $bundleVerificationDirectory
+            ) 'local-rc-report.json'
+            $roundTripReportHash = (
+                Get-FileHash -LiteralPath $roundTripReportPath -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            if ($roundTripReportHash -cne $reportHash) {
+                throw 'The approval bundle does not contain the approved local RC report.'
+            }
+            $roundTripEvidenceJson = & node `
+                scripts/verify-release-source-evidence.mjs `
+                --report $roundTripReportPath `
+                --mobile-soak (
+                    Join-Path $bundleVerificationDirectory 'mobile-soak-report.json'
+                ) `
+                --performance-baseline (
+                    Join-Path (
+                        $bundleVerificationDirectory
+                    ) 'desktop-performance-baseline.json'
+                ) `
+                --performance-candidate (
+                    Join-Path (
+                        $bundleVerificationDirectory
+                    ) 'desktop-performance-report.json'
+                ) `
+                --expected-version $version `
+                --expected-build-sha $sha `
+                --expected-stage release | Out-String
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host $roundTripEvidenceJson
+                throw 'The approval bundle source evidence failed round-trip validation.'
+            }
+            $roundTripEvidence = $roundTripEvidenceJson | ConvertFrom-Json
+            if (
+                $roundTripEvidence.ok -ne $true -or
+                [string]$roundTripEvidence.reportSha256 -cne $reportHash
+            ) {
+                throw 'The approval bundle round trip did not preserve verified evidence.'
+            }
+        } finally {
+            if (Test-Path -LiteralPath $bundleVerificationDirectory) {
+                $resolvedBundleVerification = [IO.Path]::GetFullPath(
+                    $bundleVerificationDirectory
+                )
+                $expectedBundleVerification = [IO.Path]::GetFullPath(
+                    (Join-Path $reportDirectory '.bundle-verification')
+                )
+                if ($resolvedBundleVerification -cne $expectedBundleVerification) {
+                    throw (
+                        'Refusing to clean an unexpected bundle-verification path: ' +
+                        $resolvedBundleVerification
+                    )
+                }
+                Remove-Item `
+                    -LiteralPath $resolvedBundleVerification `
+                    -Recurse `
+                    -Force
+            }
+        }
+    }
+    Assert-FrozenGitTree 'after source-evidence finalization' $sha
+
     Write-Host "Local RC gate passed for EZTerminal $version at $sha."
     Write-Host "RC report: $reportPath"
     Write-Host "RC report SHA-256: $reportHash"
-    Write-Host 'After reviewing the report, publish its approval to the protected GitHub Environment:'
-    Write-Host "gh variable set EZTERMINAL_LOCAL_RC_APPROVED_SHA --env release --body `"$sha`""
-    Write-Host "gh variable set EZTERMINAL_LOCAL_RC_REPORT_SHA256 --env release --body `"$reportHash`""
-    Write-Host "[Convert]::ToBase64String([IO.File]::ReadAllBytes(`"$reportPath`")) | gh secret set EZTERMINAL_LOCAL_RC_REPORT_BASE64 --env release"
+    if ($RunPerformanceMeasurement) {
+        Write-Host 'After reviewing the final report, publish its approval to the protected GitHub Environment:'
+        Write-Host "gh variable set EZTERMINAL_LOCAL_RC_APPROVED_SHA --env release --body `"$sha`""
+        Write-Host "gh variable set EZTERMINAL_LOCAL_RC_REPORT_SHA256 --env release --body `"$reportHash`""
+        Write-Host "gh variable set EZTERMINAL_LOCAL_RC_EVIDENCE_SHA256 --env release --body `"$evidenceBundleHash`""
+        Write-Host (
+            "[Convert]::ToBase64String([IO.File]::ReadAllBytes(" +
+            "`"$evidenceBundlePath`")) | gh secret set " +
+            'EZTERMINAL_LOCAL_RC_EVIDENCE_BASE64 --env release'
+        )
+    } else {
+        Write-Host 'Candidate is publication-ineligible until an explicitly requested performance measurement passes.'
+    }
 } finally {
     Pop-Location
 }

@@ -14,23 +14,38 @@ describe('UI preferences', () => {
       locale: 'system',
       density: 'adaptive',
       sidebarWidth: 320,
+      effectIntensity: 7,
     });
   });
 
   it('accepts every supported preference and bounds sidebar width', () => {
     for (const locale of ['system', 'ko', 'en']) {
       for (const density of ['adaptive', 'compact', 'comfortable']) {
-        expect(UiPreferencesSchema.safeParse({ locale, density, sidebarWidth: 280 }).success).toBe(true);
-        expect(UiPreferencesSchema.safeParse({ locale, density, sidebarWidth: 440 }).success).toBe(true);
+        expect(UiPreferencesSchema.safeParse({
+          locale,
+          density,
+          sidebarWidth: 280,
+          effectIntensity: 0,
+        }).success).toBe(true);
+        expect(UiPreferencesSchema.safeParse({
+          locale,
+          density,
+          sidebarWidth: 440,
+          effectIntensity: 10,
+        }).success).toBe(true);
       }
     }
     expect(UiPreferencesSchema.safeParse({ ...DEFAULT_UI_PREFERENCES, sidebarWidth: 279 }).success).toBe(false);
     expect(UiPreferencesSchema.safeParse({ ...DEFAULT_UI_PREFERENCES, sidebarWidth: 441 }).success).toBe(false);
+    expect(UiPreferencesSchema.safeParse({ ...DEFAULT_UI_PREFERENCES, effectIntensity: 0 }).success).toBe(true);
+    expect(UiPreferencesSchema.safeParse({ ...DEFAULT_UI_PREFERENCES, effectIntensity: 10 }).success).toBe(true);
+    expect(UiPreferencesSchema.safeParse({ ...DEFAULT_UI_PREFERENCES, effectIntensity: 11 }).success).toBe(false);
   });
 
   it('accepts only non-empty partial IPC updates with known fields', () => {
     expect(UiPreferencesPatchSchema.safeParse({ locale: 'ko' }).success).toBe(true);
     expect(UiPreferencesPatchSchema.safeParse({ density: 'compact', sidebarWidth: 360 }).success).toBe(true);
+    expect(UiPreferencesPatchSchema.safeParse({ effectIntensity: 4 }).success).toBe(true);
     expect(UiPreferencesPatchSchema.safeParse({}).success).toBe(false);
     expect(UiPreferencesPatchSchema.safeParse({ locale: 'ko', extra: true }).success).toBe(false);
   });

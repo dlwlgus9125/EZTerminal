@@ -5,6 +5,10 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
+    // The suite mixes jsdom and child-process-heavy contracts. Bounding forks
+    // keeps Windows scheduling pressure below Vitest's fixed 60s worker-RPC
+    // deadline while preserving useful file-level parallelism.
+    maxWorkers: 4,
     passWithNoTests: false,
     retry: 0,
     include: ['src/**/*.{test,spec}.{ts,tsx}', 'test/**/*.{test,spec}.ts'],

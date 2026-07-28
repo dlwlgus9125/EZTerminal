@@ -31,6 +31,40 @@
 
 1.0 이전 APK는 Android Debug 인증서로 서명됐다. 새 키와 서명 연속성이 없으므로 기존 앱을 한 번 삭제하고 다시 설치해야 한다. 이후 공개 APK는 반드시 같은 장기키를 사용한다.
 
+### 로컬 1.0.13 후보
+
+이 저장소의 로컬 검증 PC는 무시된 `.release-secrets/` 아래에 기존 장기
+keystore와 현재 Windows 사용자에게 묶인 DPAPI 비밀번호를 보관한다.
+
+- `android-release.jks`
+- `android-release-password.dpapi.key`
+
+`scripts/build-local-release-candidate.ps1`만 이 credential을 사용한다.
+복호화한 비밀번호는 출력·파일 저장하지 않고 Gradle child process 환경에만
+잠시 주입한 뒤 제거한다. 기본 별칭은 `ezterminal-release`다. DPAPI 복호화,
+별칭, 서명 또는 커밋된 인증서 지문 검증이 실패하면 새 키나 임시 비밀번호를
+생성하지 말고 기존 키 관리 절차로 복구한다.
+
+### GitHub workflow 비밀 수명
+
+보호된 Environment의 최종 승인 증거는 단일
+`EZTERMINAL_LOCAL_RC_EVIDENCE_BASE64` secret으로 전달한다. 이 값은 증거
+검증 단계에만 주입하고, SHA-256을 확인한 ZIP을 `RUNNER_TEMP`의 새 디렉터리에
+안전하게 추출한다. 추출된 증거와 ZIP은 릴리스 스테이징 직후 삭제하며 종료
+정리 단계가 실패 경로의 잔여 파일도 제거한다.
+
+Android 서명 secret도 작업 전체에 노출하지 않는다.
+`ANDROID_KEYSTORE_BASE64`와 인증서 지문은 keystore 복원·확인 단계에만,
+keystore/키 비밀번호와 별칭은 APK를 조립하는 Gradle 단계에만 주입한다.
+keystore 파일은 APK 조립 직후 삭제한다. 후속 단계는 비밀번호나 base64
+원문 대신 검증된 APK와 인증서 지문만 사용한다.
+
+검증과 빌드는 read-only repository token 및 `persist-credentials: false`로
+수행한다. `contents: write`는 별도 publish job에만 부여한다. publish job은
+보호 secret이나 저장소 빌드 명령을 사용하지 않으며, 다운로드한 artifact의
+빌드-job `SHA256SUMS.txt` 해시와 manifest/file 해시를 재검증한 뒤에만 draft
+GitHub Release를 생성한다.
+
 ## Windows 1.0
 
 Windows 1.0 공개 산출물은 의도적으로 무서명이다. Release workflow는 `EZTerminal.exe`와 `EZTerminal-Setup.exe`의 Authenticode 상태가 정확히 `NotSigned`인지 확인하고 `release-manifest.json`에 기록한다. 사용자는 첫 실행 때 SmartScreen의 알 수 없는 게시자 경고를 볼 수 있다.

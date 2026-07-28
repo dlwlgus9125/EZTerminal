@@ -42,8 +42,7 @@ import {
 } from '../shared/close-risk';
 import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from '../shared/workspace-search';
 import { AgentHub, countAgentAttention } from './AgentHub';
-import { EFFECT_CATALOG, MOVING_EFFECT_IDS, resolveActiveEffects, type EffectId } from './effects';
-import { mergeEffectProfileToggles, resolveEffectProfile, type EffectProfileId } from './effect-profiles';
+import { EFFECT_CATALOG, type EffectId } from './effects';
 import {
   DEFAULT_INTERFERENCE_PARAMS,
   DEFAULT_ROLLBAR_PARAMS,
@@ -60,6 +59,7 @@ import { subsequenceMatch } from './fuzzy';
 import { useAppTranslation } from './i18n';
 import { OpenClawChatPanel, OpenClawOverlayContext } from './OpenClawChatPanel';
 import { OpenClawPanel } from './OpenClawPanel';
+import { OpenClawVisibilitySeedLatch } from './openclaw-visibility-seed';
 import {
   QuickOpenModal,
   type QuickCommandManageResult,
@@ -78,7 +78,10 @@ import { StatusPanel } from './StatusPanel';
 import { TerminalPane, type PaneApproval } from './TerminalPane';
 import { TerminalPasteWarningDialog } from './TerminalPasteWarningDialog';
 import { WorkspaceTab } from './WorkspaceTab';
-import { preflightLayoutEnvelope } from './layout-preflight';
+import {
+  preflightLayoutEnvelope,
+  removePanelFromLayoutEnvelope,
+} from './layout-preflight';
 import { SessionPanelTracker, type PaneInstanceToken, type SessionPaneLease } from './session-panel-tracker';
 import { applyThemeVarsAndEffects, setUserFontId, themeModToDefinition } from './theme-runtime';
 import { THEME_ORDER, THEMES, listThemes, registerTheme, type ThemeDefinition } from './themes';
@@ -86,6 +89,11 @@ import { applyScrollback, clampScrollback, SCROLLBACK_DEFAULT } from './scrollba
 import { applyUiScale, clampUiScale, UI_SCALE_DEFAULT } from './ui-scale';
 import { useUiPreferences } from './ui-preferences';
 import { rendererCapabilities } from './capability-access';
+import {
+  buildCommandCenterActionRows,
+  type QuickOpenBuiltinAction,
+} from './command-center-actions';
+import { commandCenterShortcutMode } from './command-center-shortcut';
 import { useToast } from './ui';
 import type { TerminalNoticeKind } from './terminal-paste';
 import {
@@ -122,6 +130,7 @@ import {
   type LayoutTransactionOptions,
   type WorkbenchPanelPosition,
 } from './workbench-coordinator';
+import { applyWorkbenchLayoutPreset, type WorkbenchLayoutPreset } from './workbench-layout-presets';
 import { DEFAULT_TERMINAL_RUNTIME_OPTIONS, type TerminalRuntimeOptions } from './xterm-runtime';
 
 // Desktop's per-effect default-on state (App.tsx's `applyTheme`/`onToggleEffect`
@@ -168,7 +177,11 @@ const AgentTabStatusContext = createContext<ReadonlyMap<string, AgentStatus>>(ne
 
 interface PaneApprovalContextValue {
   readonly byPanel: ReadonlyMap<string, PaneApproval>;
-  readonly onDecide: (activityId: string, decision: AgentDecision) => Promise<AgentDecisionResult>;
+  readonly onDecide: (
+    activityId: string,
+    approvalId: string,
+    decision: AgentDecision,
+  ) => Promise<AgentDecisionResult>;
 }
 
 const PaneApprovalContext = createContext<PaneApprovalContextValue | null>(null);
@@ -281,8 +294,6 @@ const components = {
 
 type OpenStateUpdate = boolean | ((open: boolean) => boolean);
 
-type QuickOpenBuiltinAction = 'new-tab' | 'split-right' | 'split-down' | 'cycle-theme' | 'save-preset';
-
 type QuickOpenTarget =
   | { readonly type: 'pane'; readonly panelId: string }
   | { readonly type: 'file'; readonly path: string }
@@ -342,7 +353,7 @@ async function pickStartupLayout(): Promise<LayoutEnvelope | null> {
 }
 
 export function App(): JSX.Element {
-  const { t } = useAppTranslation();
+  const { i18n, t } = useAppTranslation();
   const { pushToast } = useToast();
   const remoteDesktopStatus = useRemoteDesktopHostStatus();
   const paneActionMessage = useCallback(
@@ -547,18 +558,48 @@ export function App(): JSX.Element {
   // ── OpenClaw desktop visibility (openclaw-stabilization M2) ───────────────
   // Tri-state `openclawMode` setting resolved main-side into one effective
   // boolean (main.ts's resolveOpenClawVisibility) — gates the header button,
-  // drawer, and openOpenClawChat below. Starts `true` (same "flash before
-  // settle" tradeoff as `theme`'s boot fetch further down) until the first
-  // capability seed or visibility push
-  // (Settings panel toggle, any window) resolves it. Declared this early
-  // (ahead of openOpenClawChat right below) so its useCallback can depend on
-  // the current value, not just the stable setter.
-  const [openclawVisible, setOpenclawVisible] = useState(true);
-  useEffect(() => {
-    return rendererCapabilities.openClaw.observeVisibility(
-      (visibility) => setOpenclawVisible(visibility.visible),
-    );
+  // drawer, and openOpenClawChat below. Unknown starts hidden and the startup
+  // layout restore waits for the first seed/push (or a fail-closed error), so
+  // a persisted native chat view cannot flash before capability resolution.
+  const [openclawVisible, setOpenclawVisible] = useState(false);
+  const openclawVisibleRef = useRef(false);
+  const openclawVisibilitySeedLatchRef = useRef<OpenClawVisibilitySeedLatch | null>(null);
+  const settleOpenClawVisibility = useCallback((visible: boolean): void => {
+    openclawVisibleRef.current = visible;
+    setOpenclawVisible(visible);
+    openclawVisibilitySeedLatchRef.current?.settle();
   }, []);
+  if (!openclawVisibilitySeedLatchRef.current) {
+    openclawVisibilitySeedLatchRef.current = new OpenClawVisibilitySeedLatch(
+      () => settleOpenClawVisibility(false),
+    );
+  }
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    try {
+      unsubscribe = rendererCapabilities.openClaw.observeVisibility(
+        (visibility) => settleOpenClawVisibility(visibility.visible),
+        () => settleOpenClawVisibility(false),
+      );
+    } catch {
+      settleOpenClawVisibility(false);
+    }
+    return () => {
+      unsubscribe?.();
+      openclawVisibilitySeedLatchRef.current?.cancelPending();
+    };
+  }, [settleOpenClawVisibility]);
+
+  const waitForOpenClawVisibility = useCallback((): Promise<void> => {
+    return openclawVisibilitySeedLatchRef.current?.wait() ?? Promise.resolve();
+  }, []);
+
+  const pickCapabilitySafeStartupLayout = useCallback(async (): Promise<LayoutEnvelope | null> => {
+    await waitForOpenClawVisibility();
+    const envelope = await pickStartupLayout();
+    if (!envelope || openclawVisibleRef.current) return envelope;
+    return removePanelFromLayoutEnvelope(envelope, 'openclaw-chat');
+  }, [waitForOpenClawVisibility]);
 
   // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
   // sessionId -> panelId for every panel this window has bound (created OR
@@ -769,13 +810,13 @@ export function App(): JSX.Element {
     api.addPanel({
       id: 'openclaw-chat',
       component: 'openclaw-chat',
-      title: 'OpenClaw Chat',
+      title: t('workspaceTab.openClawChat'),
       renderer: 'always',
     });
     // setOpenclawOpen is a stable state adapter declared below this callback;
     // reading it only when invoked avoids a render-order dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openclawVisible]);
+  }, [openclawVisible, t]);
 
   // Split the pane the user last focused. Omitting `direction` would default to
   // 'within' (a tab, not a split), so it is always explicit.
@@ -898,12 +939,14 @@ export function App(): JSX.Element {
   // adds per-window unread bookkeeping and session-to-panel presentation.
   const [agentSnapshot, setAgentSnapshot] = useState<AgentActivitySnapshot>(EMPTY_AGENT_ACTIVITY_SNAPSHOT);
   const [unreadAgentIds, setUnreadAgentIds] = useState<ReadonlySet<string>>(() => new Set());
+  const latestAgentRevisionRef = useRef(-1);
   const previousAgentStatusesRef = useRef<Map<string, AgentStatus>>(new Map());
   useEffect(() => {
     let alive = true;
     const applySnapshot = (next: AgentActivitySnapshot): void => {
-      if (!alive) return;
-      setAgentSnapshot((current) => (next.revision >= current.revision ? next : current));
+      if (!alive || next.revision <= latestAgentRevisionRef.current) return;
+      latestAgentRevisionRef.current = next.revision;
+      setAgentSnapshot(next);
       const previous = previousAgentStatusesRef.current;
       const nextStatuses = new Map(next.items.map((item) => [item.id, item.status] as const));
       setUnreadAgentIds((current) => {
@@ -1013,7 +1056,8 @@ export function App(): JSX.Element {
     }
     return {
       byPanel,
-      onDecide: (activityId, decision) => window.ezterminal.decideAgentApproval(activityId, decision),
+      onDecide: (activityId, approvalId, decision) =>
+        window.ezterminal.decideAgentApproval(activityId, approvalId, decision),
     };
     // `sessionPanelRevision` looks unused because the panel identity this reads
     // lives behind `apiRef.current`, which React cannot track. Bumping the
@@ -1414,31 +1458,6 @@ export function App(): JSX.Element {
     [theme, setEffectToggles],
   );
 
-  const effectProfile = useMemo(
-    () => resolveEffectProfile(activeThemeDef, effectToggles, DESKTOP_EFFECT_DEFAULTS),
-    [activeThemeDef, effectToggles],
-  );
-  const motionEffectsRequested = useMemo(
-    () =>
-      [...resolveActiveEffects(activeThemeDef, effectToggles, DESKTOP_EFFECT_DEFAULTS)].some((id) =>
-        MOVING_EFFECT_IDS.has(id),
-      ),
-    [activeThemeDef, effectToggles],
-  );
-
-  const onSelectEffectProfile = useCallback(
-    (profile: EffectProfileId): void => {
-      const next = mergeEffectProfileToggles(activeThemeDef, effectTogglesRef.current, profile);
-      setEffectToggles(next);
-      void window.ezterminalDesktop?.setEffectToggles(next).catch(() => undefined);
-      applyThemeVarsAndEffects(theme, {
-        effectToggles: next,
-        platformDefaults: DESKTOP_EFFECT_DEFAULTS,
-      });
-    },
-    [activeThemeDef, setEffectToggles, theme],
-  );
-
   const onChangeRollbar = useCallback(
     (partial: Partial<RollbarParams>): void => {
       const next = clampRollbarParams({ ...rollbarRef.current, ...partial });
@@ -1530,6 +1549,27 @@ export function App(): JSX.Element {
   const [startupPreset, setStartupPreset] = useState<string | null>(null);
   const [savingPreset, setSavingPreset] = useState(false);
   const [presetNameDraft, setPresetNameDraft] = useState('');
+
+  const applyLayoutPreset = useCallback(
+    (preset: WorkbenchLayoutPreset): void => {
+      const api = apiRef.current;
+      if (!api || presetApplyPendingRef.current) return;
+      try {
+        if (!applyWorkbenchLayoutPreset(api, preset)) return;
+        const name = preset === 'two-by-one'
+          ? t('workspace.layoutTwoByOne')
+          : preset === 'one-plus-two'
+            ? t('workspace.layoutOnePlusTwo')
+            : t('workspace.layoutSingle');
+        setAppliedPreset(name);
+        scheduleSave();
+        requestAnimationFrame(focusActivePane);
+      } catch (error) {
+        console.error('[renderer] could not apply workspace layout:', error);
+      }
+    },
+    [focusActivePane, scheduleSave, t],
+  );
 
   const refreshPresets = useCallback(async (): Promise<void> => {
     try {
@@ -2024,44 +2064,8 @@ export function App(): JSX.Element {
   );
 
   const actionRows = useMemo<readonly AppQuickOpenRow[]>(
-    () => [
-      {
-        id: 'new-tab',
-        kind: 'action',
-        title: t('commandCenter.actions.newTab'),
-        detail: t('commandCenter.actions.newTabDetail'),
-        target: { type: 'action', action: 'new-tab' },
-      },
-      {
-        id: 'split-right',
-        kind: 'action',
-        title: t('workspace.splitRight'),
-        detail: t('commandCenter.actions.splitRightDetail'),
-        target: { type: 'action', action: 'split-right' },
-      },
-      {
-        id: 'split-down',
-        kind: 'action',
-        title: t('workspace.splitBelow'),
-        detail: t('commandCenter.actions.splitBelowDetail'),
-        target: { type: 'action', action: 'split-down' },
-      },
-      {
-        id: 'cycle-theme',
-        kind: 'action',
-        title: t('commandCenter.actions.cycleTheme'),
-        detail: t('commandCenter.actions.cycleThemeDetail'),
-        target: { type: 'action', action: 'cycle-theme' },
-      },
-      {
-        id: 'save-preset',
-        kind: 'action',
-        title: t('commandCenter.actions.savePreset'),
-        detail: t('commandCenter.actions.savePresetDetail'),
-        target: { type: 'action', action: 'save-preset' },
-      },
-    ],
-    [t],
+    () => buildCommandCenterActionRows(t, openclawVisible),
+    [openclawVisible, t],
   );
 
   const presetRows = useMemo<readonly AppQuickOpenRow[]>(
@@ -2352,6 +2356,30 @@ export function App(): JSX.Element {
         case 'save-preset':
           openSavePresetDialog();
           break;
+        case 'open-explorer':
+          setSidebarDestination('explorer');
+          break;
+        case 'open-agents':
+          setSidebarDestination('agents');
+          break;
+        case 'open-monitor':
+          setSidebarDestination('monitor');
+          break;
+        case 'open-remote':
+          setSidebarDestination('remote');
+          break;
+        case 'open-openclaw':
+          if (openclawVisible) setSidebarDestination('openclaw');
+          break;
+        case 'open-settings':
+          setSettingsCategoryRequest((current) => ({ category: 'general', id: current.id + 1 }));
+          setSidebarDestination('settings');
+          break;
+        case 'toggle-locale': {
+          const korean = (i18n.resolvedLanguage ?? i18n.language).toLowerCase().startsWith('ko');
+          void updatePreferences({ locale: korean ? 'en' : 'ko' });
+          break;
+        }
       }
     },
     [
@@ -2360,10 +2388,13 @@ export function App(): JSX.Element {
       applyTextToActivePane,
       closeQuickOpen,
       cycleTheme,
+      i18n,
       loadQuickPreview,
+      openclawVisible,
       openSavePresetDialog,
       splitActive,
       t,
+      updatePreferences,
       workbenchCoordinator,
     ],
   );
@@ -2393,7 +2424,7 @@ export function App(): JSX.Element {
       (window as Window & { __ezLayoutFlush?: () => Promise<void> }).__ezLayoutFlush = () =>
         workbenchCoordinator.flushLayoutSave();
 
-      void runLayoutTransaction(pickStartupLayout, {
+      void runLayoutTransaction(pickCapabilitySafeStartupLayout, {
         quarantineOnCorrupt: true,
         restoreBackupOnFailure: false,
       }).then(() => {
@@ -2406,7 +2437,13 @@ export function App(): JSX.Element {
       });
       void refreshPresets();
     },
-    [refreshPresets, runLayoutTransaction, scheduleSave, workbenchCoordinator],
+    [
+      pickCapabilitySafeStartupLayout,
+      refreshPresets,
+      runLayoutTransaction,
+      scheduleSave,
+      workbenchCoordinator,
+    ],
   );
 
   // Ctrl+Tab is owned by the pane switcher in capture phase. Keeping this
@@ -2433,17 +2470,16 @@ export function App(): JSX.Element {
     };
   }, [cancelRecentPanelSwitch, commitRecentPanelSwitch, cycleRecentPanel, workbenchCoordinator]);
 
-  // Global keybindings: Ctrl/Cmd+Shift+P (commands/actions), plus the existing
-  // Alt split shortcuts. Ctrl/Cmd+P is intentionally left to terminal apps.
-  // Capture phase
-  // wins before xterm's textarea and the cmd-input, so a bound combo is never
-  // typed into the terminal. e.code is keyboard-layout independent.
+  // Ctrl/Cmd+K is contextual: app chrome opens all Command Center results,
+  // while xterm and the terminal composer retain readline kill-to-end-of-line.
+  // Ctrl/Cmd+Shift+P remains the global fallback from every focus surface.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.code === 'KeyP' && e.shiftKey && !e.altKey && (e.ctrlKey || e.metaKey)) {
+      const commandCenterMode = commandCenterShortcutMode(e);
+      if (commandCenterMode) {
         e.preventDefault();
         e.stopPropagation();
-        openQuickOpen('commands');
+        openQuickOpen(commandCenterMode);
         return;
       }
       if (e.metaKey || e.ctrlKey || !e.altKey || !e.shiftKey) return;
@@ -2506,9 +2542,11 @@ export function App(): JSX.Element {
         snapshot={agentSnapshot}
         onFocusSession={focusAgentSession}
         onSendFollowup={(activityId, text) => window.ezterminal.sendAgentFollowup(activityId, text)}
-        onDecideApproval={(activityId, decision) => window.ezterminal.decideAgentApproval(activityId, decision)}
+        onDecideApproval={(activityId, approvalId, decision) =>
+          window.ezterminal.decideAgentApproval(activityId, approvalId, decision)}
         onLoadDiff={(directory) => window.ezterminal.getGitDiff(directory)}
         onReadGitStatus={(directory) => window.ezterminal.getGitStatus(directory)}
+        onNewAgentRun={() => openQuickOpen('all')}
         onOpenAgentSettings={() => {
           setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
           setSidebarDestination('settings');
@@ -2560,10 +2598,8 @@ export function App(): JSX.Element {
       <AppHeader
         appVersion={rendererCapabilities.runtimeVersions()?.app ?? null}
         attentionCount={Math.max(attentionCount, unreadAgentIds.size)}
-        activeThemeEffects={activeThemeDef.effects ?? []}
         commandCenterOpen={quickOpenMode !== null}
-        effectProfile={effectProfile}
-        motionEffectsRequested={motionEffectsRequested}
+        effectIntensity={uiPreferences.effectIntensity}
         onNewTerminal={addTab}
         onOpenAttention={() => setAgentsOpen((open) => !open)}
         onOpenCommandCenter={() => openQuickOpen('all')}
@@ -2574,7 +2610,6 @@ export function App(): JSX.Element {
           }));
           setSidebarDestination('settings');
         }}
-        onSelectEffectProfile={onSelectEffectProfile}
         onWorkspaceOpenChange={(open) => {
           setPresetsOpen(open);
           setSavingPreset(false);
@@ -2663,9 +2698,9 @@ export function App(): JSX.Element {
           <WorkspaceBar
             presetName={appliedPreset}
             paneCount={paneCount}
-            onSplitRight={() => splitActive('right')}
-            onSplitDown={() => splitActive('below')}
-            onFocusSingle={focusActivePane}
+            onApplyTwoByOne={() => applyLayoutPreset('two-by-one')}
+            onApplyOnePlusTwo={() => applyLayoutPreset('one-plus-two')}
+            onApplySingle={() => applyLayoutPreset('single')}
           />
           <SessionBindingContext.Provider value={sessionBindingValue}>
             <OpenClawOverlayContext.Provider value={chatOverlayOpen}>
@@ -2723,7 +2758,7 @@ export function App(): JSX.Element {
       <StatusBar
         attentionCount={attentionCount}
         remoteDesktop={remoteDesktopStatus}
-        effectProfile={effectProfile}
+        effectIntensity={uiPreferences.effectIntensity}
       />
 
       {quickOpenMode && (

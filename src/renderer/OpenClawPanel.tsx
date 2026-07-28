@@ -21,6 +21,11 @@ const SESSIONS_POLL_MS = 5000;
  * packet preview's PACKET_ROW_CAP pattern in status-shared.ts). */
 const LOG_LINE_MAX = 500;
 
+interface SessionsLoadState {
+  readonly phase: 'idle' | 'loading' | 'ready' | 'error' | 'stale';
+  readonly updatedAt: number | null;
+}
+
 const STATE_LABEL_KEY = {
   'not-installed': 'openClaw.state.notInstalled',
   stopped: 'openClaw.state.stopped',
@@ -34,6 +39,8 @@ interface OpenClawPanelProps {
    * see App.tsx's `openOpenClawChat` (openclaw-management M3). */
   readonly onOpenChat: () => void;
   readonly capabilities?: CapabilityAccess;
+  /** Deterministic story/test clock; production uses the wall clock. */
+  readonly readCurrentTime?: () => number;
 }
 
 /**
@@ -50,10 +57,16 @@ interface OpenClawPanelProps {
 export function OpenClawPanel({
   onOpenChat,
   capabilities = rendererCapabilities,
+  readCurrentTime = Date.now,
 }: OpenClawPanelProps): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
   const [sessions, setSessions] = useState<readonly OpenClawAgentSession[]>([]);
+  const [sessionsLoad, setSessionsLoad] = useState<SessionsLoadState>({
+    phase: 'idle',
+    updatedAt: null,
+  });
+  const sessionsGenerationRef = useRef(0);
   const [logLines, setLogLines] = useState<OpenClawLogLine[]>([]);
 
   const [busyAction, setBusyAction] = useState<OpenClawLifecycleAction | null>(null);
@@ -129,23 +142,46 @@ export function OpenClawPanel({
 
   // ── Sessions: on-demand poll while running (no push channel) ─────────────
   useEffect(() => {
+    const generation = sessionsGenerationRef.current + 1;
+    sessionsGenerationRef.current = generation;
     if (status?.state !== 'running') {
       setSessions([]);
+      setSessionsLoad({ phase: 'idle', updatedAt: null });
       return;
     }
     let alive = true;
-    const load = (): void => {
-      void capabilities.openClaw.listSessions().then((list) => {
-        if (alive && list) setSessions(list);
-      }, () => undefined);
+    let inFlight = false;
+    setSessions([]);
+    setSessionsLoad({ phase: 'loading', updatedAt: null });
+    const load = async (): Promise<void> => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const list = await capabilities.openClaw.listSessions();
+        if (!alive || sessionsGenerationRef.current !== generation) return;
+        if (!list) throw new Error('OpenClaw sessions unavailable');
+        setSessions(list);
+        setSessionsLoad({ phase: 'ready', updatedAt: readCurrentTime() });
+      } catch {
+        if (!alive || sessionsGenerationRef.current !== generation) return;
+        setSessionsLoad((current) => ({
+          ...current,
+          phase: current.updatedAt === null ? 'error' : 'stale',
+        }));
+      } finally {
+        inFlight = false;
+      }
     };
-    load();
-    const timer = setInterval(load, SESSIONS_POLL_MS);
+    void load();
+    const timer = setInterval(() => void load(), SESSIONS_POLL_MS);
     return () => {
       alive = false;
+      if (sessionsGenerationRef.current === generation) {
+        sessionsGenerationRef.current += 1;
+      }
       clearInterval(timer);
     };
-  }, [capabilities, status?.state]);
+  }, [capabilities, readCurrentTime, status?.state]);
 
   // ── Core config: fetched once, editable via local drafts ─────────────────
   const refreshConfig = useCallback(async (): Promise<void> => {
@@ -243,6 +279,7 @@ export function OpenClawPanel({
   }, []);
 
   const state = status?.state;
+  const hasSessionsSnapshot = sessionsLoad.updatedAt !== null;
   const busy = busyAction !== null;
   const startDisabled = busy || state === undefined || state === 'running' || state === 'starting';
   const stopDisabled = busy || state === undefined || state === 'stopped' || state === 'not-installed';
@@ -305,18 +342,24 @@ export function OpenClawPanel({
       {state === 'running' && status && (
         <section className="status-section openclaw-metrics" data-testid="openclaw-metrics">
           <div className="openclaw-metric">
-            <span className="openclaw-metric-value">{numberFormatter.format(channels.length)}</span>
+            <span className="openclaw-metric-value">
+              {hasSessionsSnapshot ? numberFormatter.format(channels.length) : '—'}
+            </span>
             <span className="openclaw-metric-label">{t('openClaw.metricChannels')}</span>
           </div>
           <div className="openclaw-metric">
-            <span className="openclaw-metric-value">{numberFormatter.format(sessions.length)}</span>
+            <span className="openclaw-metric-value">
+              {hasSessionsSnapshot ? numberFormatter.format(sessions.length) : '—'}
+            </span>
             <span className="openclaw-metric-label">{t('openClaw.metricSessions')}</span>
           </div>
           <div className="openclaw-metric">
             <span className="openclaw-metric-value">
-              {numberFormatter.format(
-                sessions.reduce((total, session) => total + (session.totalTokens ?? 0), 0),
-              )}
+              {hasSessionsSnapshot
+                ? numberFormatter.format(
+                  sessions.reduce((total, session) => total + (session.totalTokens ?? 0), 0),
+                )
+                : '—'}
             </span>
             <span className="openclaw-metric-label">{t('openClaw.metricTokens')}</span>
           </div>
@@ -444,9 +487,33 @@ export function OpenClawPanel({
           )}
             <section className="status-section">
               <h2 className="status-section-title">{t('openClaw.sessions')}</h2>
-              {sessions.length === 0 ? (
-                <div className="status-loading">{t('openClaw.noActiveSessions')}</div>
-              ) : (
+              {(sessionsLoad.phase === 'error' || sessionsLoad.phase === 'stale') && (
+                <div
+                  className="openclaw-error-inline"
+                  role="alert"
+                  data-testid="openclaw-sessions-error"
+                >
+                  {sessionsLoad.phase === 'stale'
+                    ? t('openClaw.sessionsRefreshFailed')
+                    : t('openClaw.sessionsLoadFailed')}
+                </div>
+              )}
+              {sessionsLoad.updatedAt !== null && (
+                <div className="openclaw-session-updated" data-testid="openclaw-sessions-updated">
+                  {t('openClaw.sessionsUpdated', {
+                    time: timeFormatter.format(new Date(sessionsLoad.updatedAt)),
+                  })}
+                </div>
+              )}
+              {sessionsLoad.phase === 'loading' ? (
+                <div className="status-loading" data-testid="openclaw-sessions-loading">
+                  {t('openClaw.sessionsLoading')}
+                </div>
+              ) : hasSessionsSnapshot && sessions.length === 0 ? (
+                <div className="status-loading" data-testid="openclaw-sessions-empty">
+                  {t('openClaw.noActiveSessions')}
+                </div>
+              ) : hasSessionsSnapshot ? (
                 <div className="openclaw-sessions" data-testid="openclaw-sessions">
                   {sessions.map((s) => (
                     <div key={s.sessionId} className="openclaw-session-row" data-testid="openclaw-session-row">
@@ -469,7 +536,7 @@ export function OpenClawPanel({
                     </div>
                   ))}
                 </div>
-              )}
+              ) : null}
             </section>
             </>
           )}

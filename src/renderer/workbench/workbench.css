@@ -203,7 +203,7 @@
 }
 
 [data-theme='matrix'] .workbench-brand-mark__name {
-  font-family: 'VT323', 'Share Tech Mono', var(--ui-font-heading), monospace;
+  font-family: 'Share Tech Mono', var(--ui-font-heading), monospace;
   letter-spacing: 0.075em;
 }
 
@@ -220,11 +220,8 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   box-shadow: 0 0 5px color-mix(in srgb, var(--ui-accent) 48%, transparent);
 }
 
-.effect-profile-menu {
-  flex: 0 0 auto;
-}
-
 .effect-profile-trigger.ez-ui-button {
+  flex: 0 0 auto;
   border: 1px solid var(--ui-border-subtle);
   color: var(--ui-text-secondary);
   background: var(--ui-surface-inset);
@@ -240,11 +237,8 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
 }
 
 /* Informational, not primary. The header already has exactly one accent-green
-   action; a second green control beside it would read as a second thing to
-   press rather than as a read-out you can adjust. */
-.effect-profile-trigger[data-profile='static'],
-.effect-profile-trigger[data-profile='crt-signature'],
-.effect-profile-trigger[data-profile='full-crt'] {
+   action; this read-out opens the one advanced effects surface. */
+.effect-profile-trigger[data-effect-intensity]:not([data-effect-intensity='0']) {
   color: var(--ui-info);
   border-color: color-mix(in srgb, var(--ui-info) 45%, var(--ui-border-subtle));
 }
@@ -271,47 +265,6 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-}
-
-.effect-profile-menu .ez-ui-menu__content {
-  width: min(19rem, calc(100vw - 1rem));
-}
-
-.effect-profile-menu .ez-ui-menu-item {
-  min-height: 3rem;
-  align-items: start;
-  padding-block: var(--ui-space-2);
-}
-
-.effect-profile-menu .ez-ui-menu-item__label {
-  overflow: visible;
-  white-space: normal;
-}
-
-.effect-profile-option {
-  display: grid;
-  gap: 2px;
-}
-
-.effect-profile-option__name {
-  color: var(--ui-text-primary);
-  font-weight: 650;
-}
-
-.effect-profile-option__description {
-  color: var(--ui-text-muted);
-  font-size: var(--ui-font-size-12);
-  line-height: 1.35;
-}
-
-.effect-profile-motion-note {
-  margin: var(--ui-space-1) var(--ui-space-2);
-  padding: var(--ui-space-2);
-  border-inline-start: 2px solid var(--ui-warning);
-  color: var(--ui-text-secondary);
-  background: color-mix(in srgb, var(--ui-warning) 7%, transparent);
-  font-size: var(--ui-font-size-12);
-  line-height: 1.4;
 }
 
 /* The full product name remains visible throughout the supported desktop
@@ -344,6 +297,92 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
     color: CanvasText;
     text-shadow: none !important;
   }
+}
+
+/* Deterministic product-component compositions used to review the fourteen
+   desktop handoff reference surfaces. These styles stay story-scoped and do
+   not create a second production implementation. */
+.desktop-handoff-story {
+  block-size: 100vh;
+  min-block-size: 100vh;
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  background:
+    radial-gradient(ellipse at 50% 15%, color-mix(in srgb, var(--ui-accent) 8%, transparent), transparent 55%),
+    var(--ui-canvas);
+}
+
+.desktop-handoff-story--sidebar {
+  inline-size: min(440px, 100vw);
+  min-block-size: 100vh;
+  border-inline-end: 1px solid var(--ui-border-mid);
+  background: var(--ui-surface);
+}
+
+.desktop-handoff-story--sidebar > .status-drawer,
+.desktop-handoff-story--sidebar > .file-drawer,
+.desktop-handoff-story--sidebar > .agent-hub {
+  position: relative;
+  inset: auto;
+  inline-size: 100%;
+  min-block-size: 100vh;
+}
+
+.desktop-handoff-workbench {
+  block-size: 100vh;
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+.desktop-handoff-workbench__canvas {
+  min-inline-size: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.desktop-handoff-dock {
+  min-block-size: 0;
+  flex: 1 1 auto;
+  display: flex;
+  padding: var(--ui-pane-inset);
+}
+
+.desktop-handoff-dock > .ez-dock {
+  min-block-size: 0;
+  flex: 1 1 auto;
+}
+
+.desktop-handoff-dialog-invoker {
+  position: fixed;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.desktop-handoff-story--panel {
+  display: grid;
+  place-items: stretch end;
+}
+
+.desktop-handoff-story--panel .settings-workbench {
+  position: relative;
+  inset: auto;
+  inline-size: min(720px, 100vw);
+  min-block-size: 100vh;
+}
+
+.desktop-handoff-story--chat {
+  padding: var(--ui-space-6);
+}
+
+.desktop-handoff-story--chat .openclaw-chat-panel {
+  min-block-size: calc(100vh - 3rem);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-12);
+  background: var(--ui-surface-raised);
 }
 
 .workbench-shortcut {
@@ -443,6 +482,11 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
 }
 
 .workbench-body {
+  /* The 62px handoff baseline expands only when scaled 44px targets plus
+     their horizontal breathing room no longer fit. Rail and narrow overlays
+     consume the same value so their edges cannot drift. */
+  --workbench-rail-inline-size: max(62px, calc(2.75rem + var(--ui-space-2)));
+
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
@@ -533,8 +577,8 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
 .activity-rail {
   position: relative;
   z-index: var(--ui-z-sticky);
-  flex: 0 0 62px;
-  width: 62px;
+  flex: 0 0 var(--workbench-rail-inline-size);
+  width: var(--workbench-rail-inline-size);
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -580,6 +624,10 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
 
 .workbench-sidebar-scrim {
   display: none;
+}
+
+.workbench-sidebar-layer {
+  display: contents;
 }
 
 .workbench-sidebar.ez-ui-panel {
@@ -770,6 +818,37 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   color: var(--ui-text-secondary);
 }
 
+.settings-effect-intensity {
+  display: grid;
+  gap: var(--ui-space-2);
+  margin-block: var(--ui-space-4);
+  color: var(--ui-text-secondary);
+}
+
+.settings-effect-intensity__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+}
+
+.settings-effect-intensity__heading output {
+  color: var(--ui-info);
+  font-family: var(--ui-font-heading);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-effect-intensity input[type='range'] {
+  inline-size: 100%;
+  accent-color: var(--ui-accent);
+}
+
+.settings-effect-intensity__description {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-12);
+  line-height: var(--ui-line-height-normal);
+}
+
 .settings-category-content [hidden] {
   display: none !important;
 }
@@ -796,7 +875,7 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   .workbench-sidebar-scrim {
     position: absolute;
     z-index: var(--ui-z-sidebar-scrim);
-    inset: 0 0 0 52px;
+    inset: 0 0 0 var(--workbench-rail-inline-size);
     display: block;
     width: auto;
     height: auto;
@@ -808,9 +887,9 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   .workbench-sidebar.ez-ui-panel {
     position: absolute;
     z-index: var(--ui-z-sidebar);
-    inset: 0 auto 0 52px;
-    width: min(440px, calc(100vw - 52px)) !important;
-    max-width: calc(100vw - 52px);
+    inset: 0 auto 0 var(--workbench-rail-inline-size);
+    width: min(440px, calc(100% - var(--workbench-rail-inline-size))) !important;
+    max-width: calc(100% - var(--workbench-rail-inline-size));
     height: auto;
     box-shadow: var(--ui-shadow-overlay);
   }

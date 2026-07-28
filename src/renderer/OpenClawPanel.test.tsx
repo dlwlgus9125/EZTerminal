@@ -4,7 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { OpenClawStatus } from '../shared/openclaw';
+import type { OpenClawAgentSession, OpenClawStatus } from '../shared/openclaw';
 import type { CapabilityAccess, OpenClawAccess } from './capability-access';
 import { OpenClawPanel } from './OpenClawPanel';
 
@@ -12,6 +12,39 @@ import { OpenClawPanel } from './OpenClawPanel';
 
 let container: HTMLDivElement;
 let root: Root;
+
+function deferred<T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+  readonly reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+const SESSION: OpenClawAgentSession = {
+  key: 'telegram:release',
+  sessionId: 'oc-release',
+  status: 'working',
+  model: 'claude-sonnet-4',
+  updatedAt: 1_753_680_000_000,
+  hasActiveRun: true,
+  lastChannel: 'telegram',
+  totalTokens: 18_420,
+};
+
+const NEW_SESSION: OpenClawAgentSession = {
+  ...SESSION,
+  key: 'slack:current',
+  sessionId: 'oc-current',
+  lastChannel: 'slack',
+  totalTokens: 24_100,
+};
 
 function setInputValue(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
@@ -89,6 +122,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -151,4 +185,124 @@ describe('OpenClawPanel', () => {
     expect(container.querySelector('[data-testid="openclaw-autostart-result"]')?.textContent?.trim())
       .not.toBe('');
   });
+
+  it('keeps session polling single-flight while the previous RPC is unresolved', async () => {
+    vi.useFakeTimers();
+    const pending = deferred<readonly OpenClawAgentSession[]>();
+    const listSessions = vi.fn(() => pending.promise);
+    const { capabilities } = makeCapabilities(
+      { state: 'running', port: 18_789 },
+      { listSessions },
+    );
+
+    await render(capabilities);
+    expect(listSessions).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+      await Promise.resolve();
+    });
+    expect(listSessions).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      pending.resolve([]);
+      await pending.promise;
+    });
+  });
+
+  it('shows an honest loading state until the first session snapshot arrives', async () => {
+    const pending = deferred<readonly OpenClawAgentSession[]>();
+    const { capabilities } = makeCapabilities(
+      { state: 'running', port: 18_789 },
+      { listSessions: vi.fn(() => pending.promise) },
+    );
+
+    await render(capabilities);
+
+    expect(container.querySelector('[data-testid="openclaw-sessions-loading"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="openclaw-sessions-empty"]')).toBeNull();
+
+    await act(async () => {
+      pending.resolve([]);
+      await pending.promise;
+    });
+  });
+
+  it('retains the last snapshot and marks it stale when a later poll fails', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-28T05:00:00.000Z'));
+    const listSessions = vi.fn()
+      .mockResolvedValueOnce([SESSION])
+      .mockRejectedValueOnce(new Error('timeout'));
+    const { capabilities } = makeCapabilities(
+      { state: 'running', port: 18_789 },
+      { listSessions },
+    );
+
+    await render(capabilities);
+    expect(container.querySelector('[data-testid="openclaw-session-row"]')?.textContent)
+      .toContain('telegram:release');
+    expect(container.querySelector('[data-testid="openclaw-sessions-updated"]')).not.toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="openclaw-sessions-error"]')?.getAttribute('role'))
+      .toBe('alert');
+    expect(container.querySelector('[data-testid="openclaw-session-row"]')?.textContent)
+      .toContain('telegram:release');
+  });
+
+  it.each(['resolve', 'reject'] as const)(
+    'ignores a late %s from an older running generation',
+    async (lateOutcome) => {
+      const oldRequest = deferred<readonly OpenClawAgentSession[]>();
+      let pushStatus: ((status: OpenClawStatus) => void) | undefined;
+      const listSessions = vi.fn()
+        .mockImplementationOnce(() => oldRequest.promise)
+        .mockResolvedValueOnce([NEW_SESSION]);
+      const { capabilities } = makeCapabilities(
+        { state: 'running', port: 18_789 },
+        {
+          observeDrawer: (observer) => {
+            pushStatus = observer.onStatus;
+            observer.onStatus({ state: 'running', port: 18_789 });
+            return vi.fn();
+          },
+          listSessions,
+        },
+      );
+
+      await render(capabilities);
+      expect(listSessions).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        pushStatus?.({ state: 'stopped', port: 18_789 });
+        await Promise.resolve();
+      });
+      await act(async () => {
+        pushStatus?.({ state: 'running', port: 18_789 });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(listSessions).toHaveBeenCalledTimes(2);
+      expect(container.querySelector('[data-testid="openclaw-session-row"]')?.textContent)
+        .toContain('slack:current');
+
+      await act(async () => {
+        if (lateOutcome === 'resolve') oldRequest.resolve([SESSION]);
+        else oldRequest.reject(new Error('late timeout'));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(container.querySelector('[data-testid="openclaw-session-row"]')?.textContent)
+        .toContain('slack:current');
+      expect(container.querySelector('[data-testid="openclaw-sessions-error"]')).toBeNull();
+    },
+  );
 });

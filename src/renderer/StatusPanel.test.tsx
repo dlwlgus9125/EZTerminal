@@ -36,11 +36,18 @@ const snapshot: SystemStatsSnapshot = {
 };
 
 function makeCore(history: readonly SystemStatsSnapshot[] = []) {
+  let statsListener: ((next: SystemStatsSnapshot) => void) | null = null;
   return {
     getStatsHistory: vi.fn(async () => history),
-    onStatsUpdate: vi.fn(() => vi.fn()),
+    onStatsUpdate: vi.fn((listener: (next: SystemStatsSnapshot) => void) => {
+      statsListener = listener;
+      return vi.fn();
+    }),
     subscribePackets: vi.fn(),
     unsubscribePackets: vi.fn(),
+    emitStats(next: SystemStatsSnapshot): void {
+      statsListener?.(next);
+    },
   };
 }
 
@@ -97,6 +104,59 @@ describe('StatusPanel rendering', () => {
     expect(container.querySelector('[data-testid="status-section-disk"]')?.textContent).toContain('75%');
     expect(container.querySelector('[data-testid="status-section-proc"]')?.textContent).toContain('fixture-node.exe');
     expect(container.querySelector('[data-testid="status-section-conns"]')?.textContent).toContain('ESTABLISHED');
+    expect(
+      container.querySelector<HTMLTimeElement>('[data-testid="status-last-updated"]')?.dateTime,
+    ).toBe(new Date(snapshot.at).toISOString());
+  });
+
+  it('reports an unavailable monitor instead of measuring forever when the initial read fails', async () => {
+    const core = makeCore();
+    core.getStatsHistory.mockRejectedValueOnce(new Error('stats bridge unavailable'));
+
+    await render(core);
+
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('Measuring');
+  });
+
+  it('marks the last successful sample stale when the live subscription fails', async () => {
+    const core = makeCore([snapshot]);
+    core.onStatsUpdate.mockImplementationOnce(() => {
+      throw new Error('stats subscription unavailable');
+    });
+
+    await render(core);
+
+    expect(container.querySelector('[data-testid="status-panel"]')?.getAttribute('data-state')).toBe(
+      'unavailable',
+    );
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="status-section-net"]')?.textContent).toContain(
+      'Ethernet-fixture',
+    );
+    expect(
+      container.querySelector<HTMLTimeElement>('[data-testid="status-last-updated"]')?.dateTime,
+    ).toBe(new Date(snapshot.at).toISOString());
+  });
+
+  it('returns to current data after a fresh snapshot follows an initial read error', async () => {
+    const core = makeCore();
+    core.getStatsHistory.mockRejectedValueOnce(new Error('stats history unavailable'));
+    await render(core);
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+
+    await act(async () => {
+      core.emitStats(snapshot);
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="status-panel"]')?.getAttribute('data-state')).toBe(
+      'healthy',
+    );
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector('[data-testid="status-section-net"]')?.textContent).toContain(
+      'Ethernet-fixture',
+    );
   });
 });
 

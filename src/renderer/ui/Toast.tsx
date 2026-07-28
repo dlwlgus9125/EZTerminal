@@ -18,6 +18,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useNativeOverlayRegistration } from '../native-overlay';
 import { IconButton } from './Button';
 import { classNames } from './utils';
 
@@ -67,6 +68,7 @@ export function Toast({
   variant = 'info',
   ...props
 }: ToastProps): JSX.Element {
+  useNativeOverlayRegistration();
   const [paused, setPaused] = useState(false);
   const Icon = TOAST_ICONS[variant];
 

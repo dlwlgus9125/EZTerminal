@@ -2,7 +2,11 @@ import { ArrowUp, CornerLeftUp, File as FileIcon, Folder } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../shared/files';
-import { EMPTY_GIT_DIRECTORY_STATUS, type GitDirectoryStatus } from '../shared/git-status';
+import {
+  EMPTY_GIT_DIRECTORY_STATUS,
+  UNAVAILABLE_GIT_DIRECTORY_STATUS,
+  type GitDirectoryStatus,
+} from '../shared/git-status';
 import type { FilePreviewResult } from '../shared/file-preview';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
@@ -11,7 +15,7 @@ import { setInternalPathDrag } from './FileDropOverlay';
 import { useAppTranslation } from './i18n';
 import { getPaneCwd, insertIntoPaneInput } from './pane-registry';
 import { RichFileViewerOverlay } from './RichFileViewerOverlay';
-import { useToast } from './ui';
+import { Button, Dialog, useToast } from './ui';
 
 interface BreadcrumbSegment {
   readonly label: string;
@@ -22,10 +26,29 @@ interface BreadcrumbSegment {
  * Split an absolute path into clickable ancestors. Both separators are accepted
  * because a path can arrive from a drop, a paste, or the free-text input, but
  * the rebuilt targets always use the platform separator the path itself
- * declared — a drive letter means Windows, anything else means POSIX.
+ * declared. A UNC server and share form one indivisible Windows root: `\\server`
+ * on its own is not an absolute share path and must never become a breadcrumb
+ * target.
  */
 function breadcrumbSegments(path: string): readonly BreadcrumbSegment[] {
   if (!path) return [];
+
+  const uncRoot = path.match(/^[\\/]{2}([^\\/]+)[\\/]+([^\\/]+)(?:[\\/]+|$)/);
+  if (uncRoot) {
+    const root = `\\\\${uncRoot[1]}\\${uncRoot[2]}\\`;
+    const segments: BreadcrumbSegment[] = [{
+      label: `\\\\${uncRoot[1]}\\${uncRoot[2]}`,
+      target: root,
+    }];
+    let prefix = root;
+    const remainder = path.slice(uncRoot[0].length);
+    for (const part of remainder.split(/[\\/]+/).filter((entry) => entry !== '')) {
+      prefix = `${prefix.replace(/[\\/]+$/, '')}\\${part}`;
+      segments.push({ label: part, target: prefix });
+    }
+    return segments;
+  }
+
   const windows = /^[A-Za-z]:/.test(path);
   const separator = windows ? '\\' : '/';
   const parts = path.split(/[\\/]+/).filter((part) => part !== '');
@@ -100,6 +123,7 @@ export function FileExplorerPanel({
   const [renamingEntry, setRenamingEntry] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<{ name: string; fullPath: string } | null>(null);
+  const deleteCancelRef = useRef<HTMLButtonElement>(null);
   // M6 hardening: a rapid double-click/double-Enter before a mutation's
   // response arrives could fire it twice (e.g. two trashFile calls for the
   // same path — the second fails confusingly once the first already
@@ -357,17 +381,33 @@ export function FileExplorerPanel({
   // Which of these files Git considers changed. Re-read whenever the listing
   // does, so a save in another window shows up on the next refresh rather than
   // going stale behind a cached tag.
-  const [gitStatus, setGitStatus] = useState<GitDirectoryStatus>(EMPTY_GIT_DIRECTORY_STATUS);
+  const [gitStatusSnapshot, setGitStatusSnapshot] = useState<{
+    readonly path: string | null;
+    readonly status: GitDirectoryStatus;
+  }>({ path: null, status: EMPTY_GIT_DIRECTORY_STATUS });
+  const gitStatus = gitStatusSnapshot.path === currentPath
+    ? gitStatusSnapshot.status
+    : EMPTY_GIT_DIRECTORY_STATUS;
   useEffect(() => {
     if (!currentPath) {
-      setGitStatus(EMPTY_GIT_DIRECTORY_STATUS);
+      setGitStatusSnapshot({ path: null, status: EMPTY_GIT_DIRECTORY_STATUS });
       return undefined;
     }
+    setGitStatusSnapshot({ path: null, status: EMPTY_GIT_DIRECTORY_STATUS });
     let alive = true;
     void capabilities.files
       .gitStatus(currentPath)
-      .then((status) => { if (alive) setGitStatus(status); })
-      .catch(() => { if (alive) setGitStatus(EMPTY_GIT_DIRECTORY_STATUS); });
+      .then((status) => {
+        if (alive) setGitStatusSnapshot({ path: currentPath, status });
+      })
+      .catch(() => {
+        if (alive) {
+          setGitStatusSnapshot({
+            path: currentPath,
+            status: UNAVAILABLE_GIT_DIRECTORY_STATUS,
+          });
+        }
+      });
     return () => { alive = false; };
   }, [capabilities, currentPath, entries]);
 
@@ -449,6 +489,11 @@ export function FileExplorerPanel({
       {error && (
         <div className="file-error" data-testid="file-error">
           {error}
+        </div>
+      )}
+      {gitStatus.availability === 'unavailable' && (
+        <div className="file-error" data-testid="file-git-unavailable" role="status">
+          {t('fileExplorer.gitUnavailable')}
         </div>
       )}
       {binaryNotice && (
@@ -591,27 +636,41 @@ export function FileExplorerPanel({
       )}
 
       {deleteTarget && (
-        <div className="file-confirm-overlay" data-testid="delete-confirm">
-          <div className="file-confirm-box">
-            <p>{t('fileExplorer.moveToTrash', { name: deleteTarget.name })}</p>
-            <div className="file-confirm-actions">
-              <button
-                className="btn btn-split"
+        <Dialog
+          open
+          role="alertdialog"
+          tone="danger"
+          size="sm"
+          title={t('fileExplorer.deleteTitle')}
+          description={t('fileExplorer.moveToTrash', { name: deleteTarget.name })}
+          onOpenChange={(open) => {
+            if (!open && !mutatingRef.current) setDeleteTarget(null);
+          }}
+          initialFocusRef={deleteCancelRef}
+          testId="delete-confirm"
+          closeLabel={t('common.close')}
+          footer={(
+            <>
+              <Button
+                variant="danger"
                 onClick={() => void confirmDelete()}
                 data-testid="delete-confirm-yes"
               >
                 {t('fileExplorer.delete')}
-              </button>
-              <button
-                className="btn btn-split"
+              </Button>
+              <Button
+                ref={deleteCancelRef}
+                variant="secondary"
                 onClick={() => setDeleteTarget(null)}
                 data-testid="delete-confirm-cancel"
               >
                 {t('common.cancel')}
-              </button>
-            </div>
-          </div>
-        </div>
+              </Button>
+            </>
+          )}
+        >
+          <p>{t('fileExplorer.deleteDescription')}</p>
+        </Dialog>
       )}
     </div>
   );

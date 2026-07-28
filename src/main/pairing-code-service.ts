@@ -21,7 +21,12 @@ import {
  * so a code left on screen in another window cannot still be redeemed.
  */
 export class PairingCodeService {
-  private active: { readonly normalized: string; readonly expiresAt: number } | null = null;
+  private active: {
+    readonly normalized: string;
+    readonly expiresAt: number;
+    readonly generation: number;
+  } | null = null;
+  private generation = 0;
   private readonly listeners = new Set<(code: PairingCode | null) => void>();
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -37,7 +42,8 @@ export class PairingCodeService {
       normalized += PAIRING_CODE_ALPHABET[this.randomSymbol(PAIRING_CODE_ALPHABET.length)];
     }
     const expiresAt = this.now() + PAIRING_CODE_TTL_MS;
-    this.active = { normalized, expiresAt };
+    this.generation += 1;
+    this.active = { normalized, expiresAt, generation: this.generation };
     this.expiryTimer = setTimeout(() => this.revoke(), PAIRING_CODE_TTL_MS);
     this.expiryTimer.unref?.();
     const issued = this.current();
@@ -49,7 +55,7 @@ export class PairingCodeService {
   current(): PairingCode | null {
     if (!this.active) return null;
     if (this.active.expiresAt <= this.now()) {
-      this.active = null;
+      this.revoke();
       return null;
     }
     return { code: formatPairingCode(this.active.normalized), expiresAt: this.active.expiresAt };
@@ -67,12 +73,18 @@ export class PairingCodeService {
    * same string fails even a millisecond later — that is the whole point of a
    * one-time code, and it is also what makes a replayed QR photo useless.
    */
-  consume(candidate: string): boolean {
+  /**
+   * Constant-time non-consuming match used by the remote handshake. The
+   * generation is an opaque claim: the caller must present it back to
+   * `consume`, so issuing a replacement between validation and redemption
+   * cannot consume the replacement.
+   */
+  match(candidate: string): number | null {
     const active = this.active;
-    if (!active) return false;
+    if (!active) return null;
     if (active.expiresAt <= this.now()) {
       this.revoke();
-      return false;
+      return null;
     }
     const normalized = normalizePairingCode(candidate);
     // Compare a fixed number of bytes so a wrong length is not distinguishable
@@ -81,7 +93,14 @@ export class PairingCodeService {
     supplied.write(normalized.slice(0, PAIRING_CODE_LENGTH), 'utf8');
     const expected = Buffer.alloc(PAIRING_CODE_LENGTH);
     expected.write(active.normalized, 'utf8');
-    if (normalized.length !== PAIRING_CODE_LENGTH || !timingSafeEqual(supplied, expected)) return false;
+    if (normalized.length !== PAIRING_CODE_LENGTH || !timingSafeEqual(supplied, expected)) return null;
+    return active.generation;
+  }
+
+  consume(candidate: string, expectedGeneration?: number): boolean {
+    const generation = this.match(candidate);
+    if (generation === null) return false;
+    if (expectedGeneration !== undefined && generation !== expectedGeneration) return false;
     this.revoke();
     return true;
   }
@@ -103,6 +122,14 @@ export class PairingCodeService {
   }
 
   private publish(code: PairingCode | null): void {
-    for (const listener of this.listeners) listener(code);
+    for (const listener of [...this.listeners]) {
+      try {
+        listener(code);
+      } catch {
+        // Pairing state is a credential transaction. A destroyed renderer or
+        // faulty observer must not turn a committed issue/redeem into an IPC
+        // rejection after the code has already changed.
+      }
+    }
   }
 }

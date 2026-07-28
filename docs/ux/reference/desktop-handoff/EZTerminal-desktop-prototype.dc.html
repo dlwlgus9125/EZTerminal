@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#020403;font-family:system-ui,-apple-system,'Segoe UI','Malgun Gothic',sans-serif;color:#dfeee5;overflow-x:hidden}
+a{color:#35ff8d}a:hover{color:#8fffc2}
+[data-lang='ko'] [lang='en']{display:none!important}
+[data-lang='en'] [lang='ko']{display:none!important}
+@keyframes ezroll{0%{transform:translateY(-160px)}100%{transform:translateY(1180px)}}
+@keyframes ezblink{0%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes ezpulse{0%,100%{box-shadow:0 0 8px rgba(53,229,143,.35)}50%{box-shadow:0 0 18px rgba(53,229,143,.65)}}
+@keyframes ezbeam{0%{transform:scaleX(0);opacity:1}70%{transform:scaleX(1);opacity:1}100%{transform:scaleX(1);opacity:0}}
+@keyframes ezopen{0%{transform:scaleY(.004);filter:brightness(3)}60%{transform:scaleY(1.02)}100%{transform:scaleY(1);filter:brightness(1)}}
+@keyframes ezfadein{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:translateY(0)}}
+@keyframes ezmodal{0%{opacity:0;transform:translate(-50%,-8px) scale(.97)}100%{opacity:1;transform:translate(-50%,0) scale(1)}}
+@keyframes eztoast{0%{opacity:0;transform:translateX(24px)}100%{opacity:1;transform:translateX(0)}}
+@keyframes ezflick{0%,100%{opacity:1}93%{opacity:.88}94%{opacity:1}97%{opacity:.94}98%{opacity:1}}
+</style>
+</helmet>
+<div data-lang="{{ lang }}" style="min-height:100vh;display:flex;align-items:flex-start;justify-content:center;background:radial-gradient(ellipse 80% 60% at 50% 0%,#04120a12,transparent),#020403;padding:16px 0">
+
+<sc-if value="{{ isBoot }}" hint-placeholder-val="{{ true }}">
+<div onClick="{{ skipBoot }}" data-screen-label="부팅 시퀀스" style="width:{{ stageW }}px;height:{{ stageH }}px;position:relative;cursor:pointer;overflow:hidden;border-radius:10px;border:1px solid #0d1f15;background:#000">
+<div style="width:1920px;height:1080px;transform:scale({{ scale }});transform-origin:0 0;background:#010301;position:relative;display:flex;align-items:center;justify-content:center;animation:ezopen .5s cubic-bezier(.2,0,0,1) both">
+<sc-if value="{{ bootBeam }}" hint-placeholder-val="{{ true }}">
+<div style="position:absolute;left:8%;right:8%;top:50%;height:3px;background:#8affba;box-shadow:0 0 24px rgba(53,229,143,.9),0 0 60px rgba(53,229,143,.5);animation:ezbeam 1s cubic-bezier(.2,0,0,1) both"></div>
+</sc-if>
+<sc-if value="{{ bootLogo }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;align-items:center;gap:34px;animation:ezfadein .5s ease both">
+<div style="display:flex;align-items:flex-end;gap:18px">
+<span style="display:inline-flex;align-items:flex-end;gap:7px;height:64px;filter:drop-shadow(0 0 16px rgba(53,229,143,.7))"><i style="width:15px;height:26px;background:#35e58f"></i><i style="width:15px;height:45px;background:#35e58f"></i><i style="width:15px;height:64px;background:#35e58f"></i></span>
+<span style="font-family:'Share Tech Mono',monospace;font-size:76px;color:#b7fbd4;text-shadow:0 0 30px rgba(53,229,143,.65);letter-spacing:.03em;line-height:1">EZTerminal</span>
+</div>
+<div style="width:560px;min-height:190px;font-family:'JetBrains Mono',monospace;font-size:16px;line-height:2;color:#78dba5">
+<sc-for list="{{ bootLog }}" as="bl" hint-placeholder-count="1">
+<div style="animation:ezfadein .25s ease both"><span style="color:{{ bl.c }}">{{ bl.tag }}</span> {{ bl.t }}</div>
+</sc-for>
+<div><span style="display:inline-block;width:10px;height:19px;background:#35e58f;vertical-align:-3px;animation:ezblink 1s steps(1) infinite"></span></div>
+</div>
+<div style="font-family:'Share Tech Mono',monospace;font-size:14px;color:#3f8f63;letter-spacing:.14em">클릭하여 건너뛰기 · v1.0.6</div>
+</div>
+</sc-if>
+<div style="position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.22) 0 2px,transparent 2px 5px)"></div>
+<div style="position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse 120% 90% at 50% 45%,transparent 55%,rgba(0,0,0,.55))"></div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isApp }}" hint-placeholder-val="{{ false }}">
+<div style="width:{{ stageW }}px;height:{{ stageH }}px;position:relative;overflow:hidden;border-radius:10px;border:1px solid #0d1f15">
+<div data-screen-label="워크벤치" style="width:1920px;height:1080px;transform:scale({{ scale }});transform-origin:0 0;background:#010301;display:flex;flex-direction:column;position:relative;font-family:'Share Tech Mono',monospace;animation:ezflick 11s linear infinite">
+
+<div style="height:60px;flex:none;display:flex;align-items:center;gap:14px;padding:0 20px;background:linear-gradient(180deg,#08130c,#040a06);border-bottom:1px solid #1c4630;position:relative;z-index:30">
+<span style="display:inline-flex;align-items:flex-end;gap:3px;height:24px;filter:drop-shadow(0 0 6px rgba(53,229,143,.6))"><i style="width:6px;height:10px;background:#35e58f"></i><i style="width:6px;height:17px;background:#35e58f"></i><i style="width:6px;height:24px;background:#35e58f"></i></span>
+<span style="font-size:26px;letter-spacing:.04em;color:#b7fbd4;text-shadow:0 0 14px rgba(53,229,143,.55)">EZTerminal</span>
+<span style="font-size:13px;color:#3f8f63;border:1px solid #245b3d;border-radius:4px;padding:2px 7px">v1.0.6</span>
+<span style="width:1px;height:28px;background:#1c4630"></span>
+<button onClick="{{ newTerminal }}" style="display:flex;align-items:center;gap:8px;height:36px;padding:0 16px;background:#35e58f;color:#001c0d;border:none;border-radius:5px;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;animation:ezpulse 3s ease-in-out infinite" style-hover="background:#5df0ab"><span lang="ko">＋ 새 터미널</span><span lang="en">＋ New Terminal</span></button>
+<div onClick="{{ openCC }}" style="flex:1;max-width:600px;margin:0 auto;height:36px;display:flex;align-items:center;gap:10px;padding:0 14px;background:#020704;border:1px solid #245b3d;border-radius:6px;color:#5cbd87;font-size:14px;cursor:pointer" style-hover="border-color:#4bbd7a;box-shadow:0 0 12px rgba(53,229,143,.15)">⌕ <span lang="ko">명령·파일·세션·설정 검색</span><span lang="en">Search commands · files · sessions</span><span style="margin-left:auto;display:flex;gap:4px"><i style="font-style:normal;font-size:12px;border:1px solid #2c6a47;border-radius:3px;padding:1px 6px;color:#78dba5">Ctrl</i><i style="font-style:normal;font-size:12px;border:1px solid #2c6a47;border-radius:3px;padding:1px 6px;color:#78dba5">K</i></span></div>
+<div style="position:relative">
+<button onClick="{{ toggleWsMenu }}" style="height:36px;padding:0 14px;background:{{ wsBtnBg }};color:#78dba5;border:1px solid #245b3d;border-radius:5px;font-family:inherit;font-size:14px;cursor:pointer" style-hover="color:#b7fbd4;border-color:#4bbd7a"><span lang="ko">작업영역 ▾</span><span lang="en">Workspace ▾</span></button>
+<sc-if value="{{ wsMenu }}" hint-placeholder-val="{{ false }}">
+<div data-screen-label="작업영역 메뉴" style="position:absolute;right:0;top:44px;width:250px;background:#040a06;border:1px solid #2c6a47;border-radius:9px;box-shadow:0 0 26px rgba(53,229,143,.14),0 18px 44px rgba(0,0,0,.7);padding:7px;z-index:60;animation:ezfadein .16s ease both">
+<div style="padding:6px 10px;font-size:10.5px;color:#3f8f63;letter-spacing:.12em"><span lang="ko">레이아웃</span><span lang="en">LAYOUT</span></div>
+<sc-for list="{{ layoutRows }}" as="lr" hint-placeholder-count="3">
+<div onClick="{{ lr.on }}" style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:6px;font-size:13.5px;color:{{ lr.color }};background:{{ lr.bg }};cursor:pointer" style-hover="background:#0b2416">{{ lr.icon }} {{ lr.label }}<span style="margin-left:auto;font-size:11px;color:#5cbd87">{{ lr.right }}</span></div>
+</sc-for>
+<div style="height:1px;background:#143523;margin:7px 4px"></div>
+<div onClick="{{ savePreset }}" style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:6px;font-size:13.5px;color:#9fd8bb;cursor:pointer" style-hover="background:#0b2416">💾 <span lang="ko">현재 배치를 프리셋으로 저장</span><span lang="en">Save as preset</span></div>
+</div>
+</sc-if>
+</div>
+<button onClick="{{ openSettings }}" style="height:36px;padding:0 12px;background:transparent;color:#62d8ff;border:1px solid #1e4a66;border-radius:5px;font-family:inherit;font-size:13px;cursor:pointer" style-hover="box-shadow:0 0 10px rgba(98,216,255,.2)">FX·NEON {{ fx }}</button>
+<button onClick="{{ bellClick }}" style="position:relative;height:36px;width:40px;background:transparent;color:#78dba5;border:1px solid #245b3d;border-radius:5px;font-size:16px;cursor:pointer" style-hover="color:#b7fbd4">🔔<sc-if value="{{ hasAttention }}" hint-placeholder-val="{{ true }}"><span style="position:absolute;top:-7px;right:-7px;background:#ff6b7a;color:#1a0407;font-size:12px;font-weight:700;border-radius:8px;padding:1px 6px">{{ attention }}</span></sc-if></button>
+</div>
+
+<div style="flex:1;display:flex;min-height:0;position:relative;z-index:10">
+<div style="width:62px;flex:none;background:#030805;border-right:1px solid #12301f;display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:8px;z-index:20">
+<sc-for list="{{ railItems }}" as="ri" hint-placeholder-count="6">
+<span onClick="{{ ri.on }}" title="{{ ri.label }}" style="position:relative;width:44px;height:44px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:19px;cursor:pointer;color:{{ ri.color }};background:{{ ri.bg }};box-shadow:{{ ri.shadow }};margin-top:{{ ri.mt }}" style-hover="background:#0b2416;color:#8affba">{{ ri.icon }}<sc-if value="{{ ri.badge }}" hint-placeholder-val="{{ false }}"><i style="position:absolute;top:2px;right:2px;font-style:normal;background:#ff6b7a;color:#1a0407;font-size:11px;font-weight:700;border-radius:7px;padding:0 5px">{{ ri.badge }}</i></sc-if></span>
+</sc-for>
+</div>
+<sc-if value="{{ sidebarOpen }}" hint-placeholder-val="{{ true }}">
+<div data-screen-label="사이드바" style="width:376px;flex:none;background:#040a06;border-right:1px solid #12301f;display:flex;flex-direction:column;min-height:0;animation:ezfadein .18s ease both">
+<div style="padding:14px 16px;border-bottom:1px solid #12301f;display:flex;align-items:center;gap:8px;flex:none">
+<b style="font-size:15px;color:#b7fbd4">{{ destTitle }}</b>
+<sc-if value="{{ isAgents }}" hint-placeholder-val="{{ true }}"><span style="font-size:11px;color:#5cbd87"><span lang="ko">3 실행중 · {{ approvalCount }} 승인대기</span><span lang="en">3 running · {{ approvalCount }} pending</span></span></sc-if>
+<span onClick="{{ closeSidebar }}" style="margin-left:auto;color:#5cbd87;cursor:pointer;font-size:13px;padding:2px 6px" style-hover="color:#b7fbd4">✕</span>
+</div>
+
+<sc-if value="{{ isAgents }}" hint-placeholder-val="{{ true }}">
+<div data-screen-label="에이전트 허브" style="flex:1;overflow:hidden;padding:12px;display:flex;flex-direction:column;gap:12px;min-height:0">
+<sc-if value="{{ hasApprovals }}" hint-placeholder-val="{{ true }}">
+<div style="flex:none">
+<div style="font-size:10.5px;color:#ff9aa5;letter-spacing:.12em;margin:0 2px 8px"><span lang="ko">승인 대기 · {{ approvalCount }}</span><span lang="en">PENDING · {{ approvalCount }}</span></div>
+<div style="display:flex;flex-direction:column;gap:8px">
+<sc-for list="{{ approvals }}" as="ap" hint-placeholder-count="2">
+<div style="border:1px solid {{ ap.border }};border-radius:8px;background:{{ ap.bg }};padding:10px 12px;animation:ezfadein .2s ease both">
+<div style="display:flex;align-items:center;gap:7px;font-size:12px;color:{{ ap.hc }};margin-bottom:6px"><span style="width:7px;height:7px;border-radius:50%;background:{{ ap.dotc }};animation:ezblink 1.4s steps(1) infinite"></span><b>{{ ap.agent }} · {{ ap.target }}</b><span style="margin-left:auto;color:#5cbd87">{{ ap.agoT }}</span></div>
+<div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#dfeee5;background:#020704;border-radius:5px;padding:7px 9px;margin-bottom:8px">{{ ap.cmd }}</div>
+<div style="display:flex;gap:7px">
+<button onClick="{{ ap.onOk }}" style="flex:1;height:28px;background:#35e58f;color:#001c0d;border:none;border-radius:5px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer" style-hover="background:#5df0ab"><span lang="ko">승인</span><span lang="en">Allow</span></button>
+<button onClick="{{ ap.onNo }}" style="flex:1;height:28px;background:transparent;color:#ff9aa5;border:1px solid #6b3540;border-radius:5px;font-family:inherit;font-size:12px;cursor:pointer" style-hover="background:rgba(255,107,122,.1)"><span lang="ko">거부</span><span lang="en">Deny</span></button>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+<sc-if value="{{ hasApprovals }}" hint-placeholder-val="{{ false }}"></sc-if>
+<div style="flex:none">
+<div style="font-size:10.5px;color:#3f8f63;letter-spacing:.12em;margin:0 2px 8px"><span lang="ko">실행중</span><span lang="en">RUNNING</span></div>
+<div style="display:flex;flex-direction:column;gap:7px;font-size:12.5px">
+<div onClick="{{ goCodex }}" style="display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid #17301f;border-radius:8px;background:#051009;cursor:pointer" style-hover="border-color:#2c6a47">
+<span style="width:8px;height:8px;border-radius:50%;background:#35e58f;box-shadow:0 0 6px #35e58f"></span>
+<div style="flex:1;min-width:0"><div style="color:#d9ffe9"><span lang="ko">codex — vitest 실패 수정</span><span lang="en">codex — fix failing vitest</span></div>
+<div style="display:flex;align-items:center;gap:8px;margin-top:5px"><div style="flex:1;height:3px;background:#123122;border-radius:2px;overflow:hidden"><i style="display:block;width:{{ runCodexPct }}%;height:100%;background:#35e58f;box-shadow:0 0 6px rgba(53,229,143,.6);transition:width 1s linear"></i></div><span style="font-size:10.5px;color:#5cbd87">{{ runCodexEl }}</span></div></div>
+<span style="color:#5cbd87;font-size:14px">↗</span>
+</div>
+<div style="display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid #17301f;border-radius:8px;background:#051009">
+<span style="width:8px;height:8px;border-radius:50%;background:#35e58f;box-shadow:0 0 6px #35e58f"></span>
+<div style="flex:1;min-width:0"><div style="color:#d9ffe9"><span lang="ko">claude — 릴리스 노트</span><span lang="en">claude — release notes</span></div>
+<div style="display:flex;align-items:center;gap:8px;margin-top:5px"><div style="flex:1;height:3px;background:#123122;border-radius:2px;overflow:hidden"><i style="display:block;width:{{ runClaudePct }}%;height:100%;background:#35e58f;transition:width 1s linear"></i></div><span style="font-size:10.5px;color:#5cbd87">{{ runClaudeEl }}</span></div></div>
+<span style="color:#5cbd87;font-size:14px">↗</span>
+</div>
+<div style="display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid #17301f;border-radius:8px">
+<span style="width:8px;height:8px;border-radius:50%;background:#62d8ff"></span>
+<div style="flex:1"><div style="color:#9fd8bb">gemini — <span lang="ko">e2e 로그 분석</span><span lang="en">e2e log analysis</span> <span style="font-size:10.5px;color:#5cbd87">(build-01)</span></div></div>
+<span style="color:#5cbd87;font-size:14px">↗</span>
+</div>
+</div>
+</div>
+<div style="flex:1;min-height:0">
+<div style="font-size:10.5px;color:#3f8f63;letter-spacing:.12em;margin:0 2px 8px"><span lang="ko">최근 활동</span><span lang="en">RECENT</span></div>
+<div style="display:flex;flex-direction:column;gap:2px;font-size:11.5px;color:#78dba5;font-family:'JetBrains Mono',monospace">
+<sc-for list="{{ activity }}" as="ac" hint-placeholder-count="3">
+<div style="display:flex;gap:8px;padding:4px 2px"><span style="color:#3f8f63">{{ ac.t }}</span><span><b style="color:#35e58f">{{ ac.a }}</b> {{ ac.txtT }}</span></div>
+</sc-for>
+</div>
+</div>
+<div style="flex:none;padding-top:10px;border-top:1px solid #12301f;display:flex;gap:8px">
+<button onClick="{{ newAgent }}" style="flex:1;height:32px;background:transparent;color:#8affba;border:1px solid #2c6a47;border-radius:6px;font-family:inherit;font-size:12px;cursor:pointer" style-hover="background:#0b2416">✳ <span lang="ko">새 에이전트 실행</span><span lang="en">New agent run</span></button>
+<button onClick="{{ openSettings }}" style="width:40px;height:32px;background:transparent;color:#78dba5;border:1px solid #245b3d;border-radius:6px;font-size:13px;cursor:pointer" style-hover="color:#b7fbd4">⚙</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isMonitor }}" hint-placeholder-val="{{ false }}">
+<div data-screen-label="모니터" style="flex:1;padding:14px;display:flex;flex-direction:column;gap:13px;overflow:hidden;min-height:0">
+<div style="border:1px solid #143523;border-radius:9px;background:#020604;padding:12px;position:relative;overflow:hidden">
+<div style="display:flex;justify-content:space-between;font-size:11px;color:#78dba5;margin-bottom:8px"><span><span lang="ko">CPU / MEM 스코프</span><span lang="en">CPU / MEM scope</span></span><span><b style="color:#35e58f">{{ cpuPct }}%</b> · <b style="color:#62d8ff">{{ memPct }}%</b></span></div>
+<div style="height:96px;position:relative;overflow:hidden;background:repeating-linear-gradient(0deg,transparent 0 23px,rgba(53,229,143,.08) 23px 24px),repeating-linear-gradient(90deg,transparent 0 23px,rgba(53,229,143,.08) 23px 24px)">
+<svg width="100%" height="96" viewBox="0 0 320 96" preserveAspectRatio="none" style="position:absolute;inset:0;transform:translateX({{ scopeShift }}px)"><polyline points="0,60 20,58 40,64 60,50 80,54 100,40 120,46 140,30 160,38 180,26 200,34 220,44 240,36 260,48 280,42 300,50 320,44 340,52 360,46" fill="none" stroke="#35e58f" stroke-width="2" style="filter:drop-shadow(0 0 4px rgba(53,229,143,.8))"></polyline><polyline points="0,76 20,74 40,75 60,70 80,72 100,66 120,69 140,62 160,66 180,60 200,64 220,66 240,61 260,65 280,60 300,63 320,60 340,64 360,61" fill="none" stroke="#62d8ff" stroke-width="1.5" opacity=".7"></polyline></svg>
+<i style="position:absolute;top:0;bottom:0;width:34px;right:0;background:linear-gradient(90deg,transparent,rgba(53,229,143,.12));border-right:2px solid rgba(53,229,143,.6)"></i>
+</div>
+</div>
+<div>
+<div style="font-size:10.5px;color:#3f8f63;letter-spacing:.12em;margin-bottom:8px"><span lang="ko">트래픽 워터폴 · 초당</span><span lang="en">TRAFFIC WATERFALL · /s</span></div>
+<div style="display:flex;flex-direction:column;gap:3px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#78dba5">
+<sc-for list="{{ waterfall }}" as="wf" hint-placeholder-count="5">
+<div style="display:flex;align-items:center;gap:8px"><span style="width:48px">{{ wf.t }}</span><i style="height:12px;width:{{ wf.wpx }};background:{{ wf.color }};transition:width .6s ease"></i><span style="color:{{ wf.kc }}">{{ wf.kb }}</span></div>
+</sc-for>
+</div>
+</div>
+<div style="flex:1;min-height:0">
+<div style="font-size:10.5px;color:#3f8f63;letter-spacing:.12em;margin-bottom:8px"><span lang="ko">활성 연결</span><span lang="en">CONNECTIONS</span></div>
+<div style="display:flex;flex-direction:column;gap:7px;font-size:11.5px">
+<div style="display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid #17301f;border-radius:7px"><span style="color:#62d8ff">⇅</span><span style="font-family:'JetBrains Mono',monospace;color:#9fd8bb">wss://build-01:8443</span><span style="margin-left:auto;color:#62d8ff">{{ rtt }}ms</span></div>
+<div style="display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid #17301f;border-radius:7px"><span style="color:#78dba5">⇅</span><span style="font-family:'JetBrains Mono',monospace;color:#9fd8bb">ws://192.168.0.24 (Fold5)</span><span style="margin-left:auto;color:#62d8ff">41ms</span></div>
+<div style="display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid #17301f;border-radius:7px"><span style="color:#35e58f">⛁</span><span style="font-family:'JetBrains Mono',monospace;color:#9fd8bb">pty ×2 <span lang="ko">로컬</span><span lang="en">local</span></span><span style="margin-left:auto;color:#5cbd87">6.3MB</span></div>
+</div>
+</div>
+<div style="flex:none;padding-top:10px;border-top:1px solid #12301f;display:flex;gap:14px;font-size:11px;color:#5cbd87"><span style="color:#35e58f">● <span lang="ko">스코프 30fps</span><span lang="en">scope 30fps</span></span><span><span lang="ko">숨기면 폴링 중지</span><span lang="en">polls only while visible</span></span></div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isRemote }}" hint-placeholder-val="{{ false }}">
+<div data-screen-label="리모트" style="flex:1;padding:14px;display:flex;flex-direction:column;gap:13px;overflow:hidden;min-height:0">
+<div style="border:1px solid #143523;border-radius:9px;background:#020604;padding:16px 12px;position:relative">
+<div style="display:flex;align-items:center;justify-content:space-between;position:relative">
+<div style="width:104px;text-align:center">
+<div style="width:56px;height:44px;margin:0 auto;border:2px solid #35e58f;border-radius:6px;position:relative;box-shadow:0 0 14px rgba(53,229,143,.3)"><i style="font-style:normal;position:absolute;left:50%;bottom:-9px;transform:translateX(-50%);width:22px;height:3px;background:#35e58f"></i><span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:16px">🖥</span></div>
+<div style="font-size:11px;color:#d9ffe9;margin-top:12px"><b><span lang="ko">이 PC</span><span lang="en">This PC</span></b></div>
+<div style="font-size:9.5px;color:#5cbd87">DESKTOP-K3P · :8443</div>
+</div>
+<div style="flex:1;position:relative;height:44px">
+<i style="font-style:normal;position:absolute;left:0;right:0;top:50%;height:2px;background:repeating-linear-gradient(90deg,#35e58f 0 8px,transparent 8px 15px);box-shadow:0 0 6px rgba(53,229,143,.4)"></i>
+<span style="position:absolute;left:50%;top:2px;transform:translateX(-50%);font-size:9.5px;color:#35e58f;background:#020604;padding:0 6px"><span lang="ko">wss 암호화</span><span lang="en">wss encrypted</span></span>
+<span style="position:absolute;left:50%;bottom:0;transform:translateX(-50%);font-size:9.5px;color:#5cbd87;background:#020604;padding:0 6px">41ms</span>
+</div>
+<div style="width:104px;text-align:center">
+<div style="width:30px;height:50px;margin:0 auto;border:2px solid #62d8ff;border-radius:7px;position:relative"><span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:14px">📱</span></div>
+<div style="font-size:11px;color:#d9ffe9;margin-top:6px"><b>Fold5</b></div>
+<div style="font-size:9.5px;color:#62d8ff"><span lang="ko">미러 + 제어중</span><span lang="en">mirror + control</span></div>
+</div>
+</div>
+<div style="margin-top:14px;padding-top:12px;border-top:1px dashed #143523;display:flex;justify-content:space-between;font-size:10.5px;color:#78dba5"><span><span lang="ko">세션 미러: codex pty#1</span><span lang="en">mirror: codex pty#1</span></span><span><span lang="ko">입력 권한: 허용</span><span lang="en">input: allowed</span></span><span style="color:#ff9aa5;cursor:pointer"><span lang="ko">연결 해제</span><span lang="en">disconnect</span></span></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">
+<div onClick="{{ openQr }}" style="border:1px solid #2c6a47;border-radius:8px;padding:12px 10px;text-align:center;cursor:pointer;background:rgba(53,229,143,.04)" style-hover="background:#0b2416;box-shadow:0 0 14px rgba(53,229,143,.15)">
+<div style="font-size:20px;margin-bottom:6px">▦</div>
+<div style="font-size:12px;color:#8affba"><b><span lang="ko">QR 페어링</span><span lang="en">QR Pairing</span></b></div>
+<div style="font-size:9.5px;color:#5cbd87;margin-top:4px"><span lang="ko">새 기기 스캔 연결 ▸</span><span lang="en">scan to connect ▸</span></div>
+</div>
+<div style="border:1px solid #17301f;border-radius:8px;padding:12px 10px;text-align:center"><div style="font-size:10px;color:#5cbd87;margin-bottom:4px"><span lang="ko">원격 데스크톱 호스트</span><span lang="en">Remote desktop host</span></div><div style="font-size:13px;color:#35e58f;margin-top:6px">● <span lang="ko">대기중</span><span lang="en">standby</span></div><div style="font-size:9.5px;color:#5cbd87;margin-top:5px"><span lang="ko">캡처는 요청 시에만</span><span lang="en">capture on request only</span></div></div>
+</div>
+<div>
+<div style="font-size:10.5px;color:#3f8f63;letter-spacing:.12em;margin-bottom:8px"><span lang="ko">페어링된 기기</span><span lang="en">PAIRED DEVICES</span></div>
+<div style="display:flex;flex-direction:column;gap:7px;font-size:11.5px">
+<div style="display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid #17301f;border-radius:7px;background:#051009"><span>📱</span><b style="color:#d9ffe9">Galaxy Fold5</b><span style="margin-left:auto;color:#35e58f;font-size:10.5px">● <span lang="ko">미러 접속중</span><span lang="en">mirroring</span></span></div>
+<div style="display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid #17301f;border-radius:7px"><span>📱</span><b style="color:#9fd8bb">Pixel 8</b><span style="margin-left:auto;font-size:10.5px;color:{{ pixelColor }}">{{ pixelStatus }}</span></div>
+</div>
+</div>
+<div style="flex:1;min-height:0">
+<div style="font-size:10.5px;color:#3f8f63;letter-spacing:.12em;margin-bottom:8px"><span lang="ko">SSH 터널</span><span lang="en">SSH TUNNELS</span></div>
+<div style="display:flex;flex-direction:column;font-family:'JetBrains Mono',monospace;font-size:11.5px">
+<div style="display:flex;gap:8px;padding:9px 8px;color:#9fd8bb;border-bottom:1px solid #0c1f14;align-items:center"><span style="flex:1;color:#d9ffe9">build-01</span><span style="width:110px;color:#78dba5">5173, 9229</span><span style="width:64px;text-align:right;color:{{ tunnelColor }}">{{ tunnelStatus }}</span><span onClick="{{ toggleTunnel }}" style="width:34px;height:18px;border-radius:9px;background:{{ tunnelKnobBg }};position:relative;cursor:pointer;margin-left:8px;border:1px solid #245b3d"><i style="font-style:normal;position:absolute;top:2px;width:12px;height:12px;border-radius:50%;background:{{ tunnelKnobC }};left:{{ tunnelKnobL }};right:{{ tunnelKnobR }};transition:all .2s"></i></span></div>
+<div style="display:flex;gap:8px;padding:9px 8px;color:#9fd8bb;align-items:center;opacity:.7"><span style="flex:1">staging-kr</span><span style="width:110px;color:#78dba5">443</span><span style="width:64px;text-align:right;color:#5cbd87"><span lang="ko">중지</span><span lang="en">off</span></span><span style="width:34px;margin-left:8px"></span></div>
+</div>
+</div>
+<div style="flex:none;padding:9px 12px;border:1px dashed #245b3d;border-radius:8px;display:flex;align-items:center;gap:9px;font-size:11px;color:#dcc08a;background:rgba(232,180,95,.04)"><span>⚠</span><span><span lang="ko">평문 ws:// — 신뢰된 VPN 안에서만 사용</span><span lang="en">plain ws:// — trusted VPN only</span></span></div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isClaw }}" hint-placeholder-val="{{ false }}">
+<sc-if value="{{ clawConsole }}" hint-placeholder-val="{{ true }}">
+<div data-screen-label="OpenClaw 콘솔" style="flex:1;padding:14px;display:flex;flex-direction:column;gap:13px;overflow:hidden;min-height:0">
+<div style="border:1px solid #2c6a47;border-radius:9px;background:#030805;padding:12px;box-shadow:0 0 16px rgba(53,229,143,.07)">
+<div style="display:flex;align-items:center;gap:9px;margin-bottom:10px"><b style="font-size:13px;color:#d9ffe9">gateway.local:18789</b><span style="font-size:10.5px;color:#5cbd87">uptime 6h 12m</span><span style="margin-left:auto;font-size:11px;color:#ff9aa5;border:1px solid #6b3540;border-radius:4px;padding:2px 10px;cursor:pointer" style-hover="background:rgba(255,107,122,.1)"><span lang="ko">중지</span><span lang="en">Stop</span></span></div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center">
+<div style="border:1px solid #17301f;border-radius:6px;padding:8px 4px"><div style="font-size:17px;color:#8affba;text-shadow:0 0 8px rgba(53,229,143,.4)">2</div><div style="font-size:9.5px;color:#5cbd87;margin-top:2px"><span lang="ko">채널</span><span lang="en">channels</span></div></div>
+<div style="border:1px solid #17301f;border-radius:6px;padding:8px 4px"><div style="font-size:17px;color:#8affba;text-shadow:0 0 8px rgba(53,229,143,.4)">14</div><div style="font-size:9.5px;color:#5cbd87;margin-top:2px"><span lang="ko">오늘 메시지</span><span lang="en">msgs today</span></div></div>
+<div style="border:1px solid #17301f;border-radius:6px;padding:8px 4px"><div style="font-size:17px;color:#ffd166">{{ approvalCount }}</div><div style="font-size:9.5px;color:#5cbd87;margin-top:2px"><span lang="ko">대기 작업</span><span lang="en">pending</span></div></div>
+</div>
+</div>
+<div>
+<div style="font-size:10.5px;color:#3f8f63;letter-spacing:.12em;margin-bottom:8px"><span lang="ko">채널</span><span lang="en">CHANNELS</span></div>
+<div style="display:flex;flex-direction:column;gap:8px">
+<div style="border:1px solid #17301f;border-radius:8px;padding:10px 12px;background:#051009;display:flex;align-items:center;gap:10px"><span style="font-size:14px">💬</span><div style="flex:1"><b style="font-size:12px;color:#d9ffe9">Telegram — @ez_ops_bot</b><div style="font-size:10.5px;color:#78dba5;margin-top:2px"><span lang="ko">마지막: "빌드 상태 알려줘" · 2분 전</span><span lang="en">last: "build status?" · 2m ago</span></div></div><span style="font-size:10.5px;color:#35e58f">● <span lang="ko">연결</span><span lang="en">up</span></span></div>
+<div style="border:1px solid #17301f;border-radius:8px;padding:10px 12px;display:flex;align-items:center;gap:10px"><span style="font-size:14px">💬</span><div style="flex:1"><b style="font-size:12px;color:#9fd8bb">Discord — #ops</b><div style="font-size:10.5px;color:#5cbd87;margin-top:2px"><span lang="ko">유휴 41분</span><span lang="en">idle 41m</span></div></div><span style="font-size:10.5px;color:#35e58f">● <span lang="ko">연결</span><span lang="en">up</span></span></div>
+</div>
+</div>
+<div style="flex:1;min-height:0;display:flex;flex-direction:column">
+<div style="display:flex;align-items:center;font-size:10.5px;color:#3f8f63;letter-spacing:.12em;margin-bottom:8px"><span><span lang="ko">게이트웨이 로그</span><span lang="en">GATEWAY LOG</span></span></div>
+<div style="flex:1;border:1px solid #143523;border-radius:8px;background:#020604;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:1.8;color:#78dba5;overflow:hidden">
+<div><span style="color:#3f8f63">12:44:31</span> <span style="color:#62d8ff">[tg]</span> ← "빌드 상태 알려줘"</div>
+<div><span style="color:#3f8f63">12:44:32</span> <span style="color:#35e58f">[agent]</span> monitor.query build-01</div>
+<div><span style="color:#3f8f63">12:44:33</span> <span style="color:#62d8ff">[tg]</span> → "artifact 82% 업로드중"</div>
+<div><span style="color:#3f8f63">12:41:07</span> <span style="color:#ffd166">[approval]</span> rm -rf out/probe 보류</div>
+<div><span style="color:#3f8f63">12:38:54</span> <span style="color:#35e58f">[agent]</span> codex.attach pty#1</div>
+<div><span style="color:#35e58f">▸</span> <span style="display:inline-block;width:7px;height:13px;background:#35e58f;vertical-align:-2px;animation:ezblink 1.1s steps(1) infinite"></span></div>
+</div>
+</div>
+<div style="flex:none;display:flex;gap:8px">
+<button onClick="{{ openChat }}" style="flex:1;height:34px;background:#35e58f;color:#001c0d;border:none;border-radius:6px;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer" style-hover="background:#5df0ab">💬 {{ chatBtnLabel }}</button>
+<button onClick="{{ dashToast }}" style="flex:1;height:34px;background:transparent;color:#8affba;border:1px solid #2c6a47;border-radius:6px;font-family:inherit;font-size:12.5px;cursor:pointer" style-hover="background:#0b2416"><span lang="ko">대시보드 ↗</span><span lang="en">Dashboard ↗</span></button>
+</div>
+</div>
+</sc-if>
+<sc-if value="{{ clawChat }}" hint-placeholder-val="{{ false }}">
+<div data-screen-label="OpenClaw 채팅" style="flex:1;display:flex;flex-direction:column;min-height:0">
+<div style="flex:none;padding:10px 14px;border-bottom:1px solid #12301f;display:flex;gap:10px;font-size:10.5px;color:#78dba5;align-items:center">
+<span onClick="{{ backConsole }}" style="cursor:pointer;color:#8affba;font-size:13px;padding:2px 6px;border:1px solid #2c6a47;border-radius:5px" style-hover="background:#0b2416">← <span lang="ko">콘솔</span><span lang="en">console</span></span>
+<span style="color:#35e58f">● :18789</span><span><span lang="ko">채널 2</span><span lang="en">2 channels</span></span><span style="margin-left:auto;color:#ffd166"><span lang="ko">대기 {{ approvalCount }}</span><span lang="en">{{ approvalCount }} pending</span></span>
+</div>
+<div style="flex:1;padding:14px;display:flex;flex-direction:column;gap:10px;overflow:hidden;background:linear-gradient(180deg,#040a06,#020604);justify-content:flex-end">
+<sc-for list="{{ chat }}" as="msg" hint-placeholder-count="2">
+<div style="display:flex;flex-direction:column;animation:ezfadein .2s ease both">
+<sc-if value="{{ msg.isIn }}" hint-placeholder-val="{{ true }}">
+<div style="align-self:flex-start;max-width:84%"><div style="font-size:10px;color:#5cbd87;margin:0 0 4px 2px">{{ msg.metaT }}</div><div style="border:1px solid #1e4a66;border-radius:10px 10px 10px 3px;background:rgba(98,216,255,.06);padding:9px 12px;font-size:12.5px;color:#cfeeff;line-height:1.6">{{ msg.tT }}</div></div>
+</sc-if>
+<sc-if value="{{ msg.isOut }}" hint-placeholder-val="{{ false }}">
+<div style="align-self:flex-end;max-width:86%"><div style="font-size:10px;color:#5cbd87;margin:0 2px 4px 0;text-align:right">{{ msg.metaT }}</div><div style="border:1px solid #2c6a47;border-radius:10px 10px 3px 10px;background:rgba(53,229,143,.06);padding:9px 12px;font-size:12.5px;color:#c9f5dd;line-height:1.6">{{ msg.tT }}</div></div>
+</sc-if>
+</div>
+</sc-for>
+<sc-if value="{{ chatApproval }}" hint-placeholder-val="{{ false }}">
+<div style="align-self:flex-end;max-width:86%"><div style="border:1px solid #6b5a2a;border-radius:10px;background:rgba(255,209,102,.06);padding:10px 12px;font-size:12px;color:#ffd166;line-height:1.6">⚠ <span lang="ko">승인 필요 — codex가 요청:</span><span lang="en">Approval needed — codex requests:</span><div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#dfeee5;background:#020704;border-radius:5px;padding:6px 9px;margin:7px 0">{{ chatApprovalCmd }}</div><div style="display:flex;gap:7px"><span onClick="{{ chatOk }}" style="background:#35e58f;color:#001c0d;border-radius:4px;padding:3px 14px;font-size:11px;font-weight:700;cursor:pointer" style-hover="background:#5df0ab"><span lang="ko">승인</span><span lang="en">Allow</span></span><span onClick="{{ chatNo }}" style="border:1px solid #6b3540;color:#ff9aa5;border-radius:4px;padding:3px 14px;font-size:11px;cursor:pointer" style-hover="background:rgba(255,107,122,.1)"><span lang="ko">거부</span><span lang="en">Deny</span></span></div></div></div>
+</sc-if>
+<sc-if value="{{ typing }}" hint-placeholder-val="{{ false }}">
+<div style="align-self:flex-end"><span style="display:inline-flex;gap:3px;padding:8px 12px;border:1px solid #2c6a47;border-radius:10px;background:rgba(53,229,143,.05)"><i style="width:5px;height:5px;border-radius:50%;background:#35e58f;animation:ezblink 1s steps(1) infinite"></i><i style="width:5px;height:5px;border-radius:50%;background:#35e58f;animation:ezblink 1s steps(1) .33s infinite"></i><i style="width:5px;height:5px;border-radius:50%;background:#35e58f;animation:ezblink 1s steps(1) .66s infinite"></i></span></div>
+</sc-if>
+</div>
+<div style="flex:none;padding:10px 12px;border-top:1px solid #12301f;display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;gap:6px;font-size:10.5px"><span style="border:1px solid #245b3d;border-radius:10px;padding:3px 10px;color:#78dba5">/status</span><span style="border:1px solid #245b3d;border-radius:10px;padding:3px 10px;color:#78dba5">/approve</span><span style="border:1px solid #245b3d;border-radius:10px;padding:3px 10px;color:#78dba5">/logs</span></div>
+<div style="display:flex;align-items:center;gap:9px;height:38px;padding:0 12px;background:#020704;border:1px solid #245b3d;border-radius:7px">
+<input value="{{ chatInput }}" onChange="{{ chatChange }}" onKeyDown="{{ chatKey }}" placeholder="{{ chatPh }}" style="flex:1;background:transparent;border:none;outline:none;font-family:inherit;font-size:12px;color:#dfeee5"></input>
+<span onClick="{{ chatSend }}" style="color:#35e58f;cursor:pointer;font-size:14px" style-hover="text-shadow:0 0 8px rgba(53,229,143,.8)">➤</span>
+</div>
+</div>
+</div>
+</sc-if>
+</sc-if>
+
+<sc-if value="{{ isExplorer }}" hint-placeholder-val="{{ false }}">
+<div data-screen-label="탐색기" style="flex:1;padding:10px 8px;display:flex;flex-direction:column;gap:2px;overflow:hidden;min-height:0;font-size:12.5px">
+<div style="flex:none;display:flex;align-items:center;gap:6px;padding:2px 4px 8px;flex-wrap:wrap">
+<span onClick="{{ goUp }}" title="상위 폴더" style="width:26px;height:26px;flex:none;display:flex;align-items:center;justify-content:center;border:1px solid #245b3d;border-radius:5px;color:{{ upColor }};cursor:pointer;font-size:13px" style-hover="background:#0b2416">↰</span>
+<sc-for list="{{ crumbs }}" as="cr" hint-placeholder-count="4">
+<span style="display:inline-flex;align-items:center;gap:6px">
+<span onClick="{{ cr.on }}" style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:{{ cr.color }};cursor:pointer;padding:3px 6px;border-radius:4px" style-hover="background:#0b2416;color:#8affba">{{ cr.n }}</span>
+<sc-if value="{{ cr.last }}" hint-placeholder-val="{{ false }}"></sc-if>
+<sc-if value="{{ cr.notLast }}" hint-placeholder-val="{{ true }}"><span style="color:#3f8f63;font-size:10px">›</span></sc-if>
+</span>
+</sc-for>
+</div>
+<div style="flex:none;font-family:'JetBrains Mono',monospace;font-size:10px;color:#3f8f63;padding:0 6px 8px;border-bottom:1px solid #12301f;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ fullPath }}</div>
+<sc-for list="{{ files }}" as="f" hint-placeholder-count="6">
+<div onClick="{{ f.on }}" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;cursor:pointer;color:{{ f.color }};background:{{ f.bg }}" style-hover="background:#0b2416">
+<span style="color:#3f8f63;width:16px;text-align:center;flex:none">{{ f.icon }}</span><span style="font-family:'JetBrains Mono',monospace">{{ f.n }}</span>
+<sc-if value="{{ f.tag }}" hint-placeholder-val="{{ false }}"><span style="margin-left:auto;font-size:10px;color:{{ f.tagC }};border:1px solid #17301f;border-radius:3px;padding:1px 6px">{{ f.tag }}</span></sc-if>
+</div>
+</sc-for>
+<div style="margin-top:auto;padding:10px 12px;border:1px dashed #245b3d;border-radius:8px;font-size:11px;color:#5cbd87;line-height:1.6"><span lang="ko">파일을 클릭하면 리치 뷰어로 미리보기 (프로토타입은 토스트 시뮬레이션)</span><span lang="en">Click a file for rich preview (simulated as toast)</span></div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+<div data-screen-label="설정" style="flex:1;padding:14px;display:flex;flex-direction:column;gap:14px;overflow:hidden;min-height:0">
+<div style="border:1px solid #17301f;border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:10px">
+<div style="font-size:10.5px;color:#3f8f63;letter-spacing:.12em"><span lang="ko">외관 · CRT</span><span lang="en">APPEARANCE · CRT</span></div>
+<div style="display:flex;align-items:center;gap:10px;font-size:12.5px;color:#9fd8bb"><span style="width:90px"><span lang="ko">FX 강도</span><span lang="en">FX level</span></span>
+<input type="range" min="0" max="10" step="1" value="{{ fx }}" onChange="{{ setFx }}" style="flex:1;accent-color:#35e58f"></input>
+<b style="color:#8affba;width:22px;text-align:right">{{ fx }}</b></div>
+<div style="display:flex;align-items:center;gap:10px;font-size:12.5px;color:#9fd8bb"><span style="width:90px"><span lang="ko">모션 효과</span><span lang="en">Motion</span></span>
+<span onClick="{{ toggleMotion }}" style="width:38px;height:20px;border-radius:10px;background:{{ motionBg }};position:relative;cursor:pointer;transition:background .2s"><i style="font-style:normal;position:absolute;top:2px;left:{{ motionKnob }};right:{{ motionKnobR }};width:16px;height:16px;border-radius:50%;background:#001c0d;transition:all .2s"></i></span>
+<span style="font-size:11px;color:#5cbd87"><span lang="ko">롤바 · 전환 애니메이션</span><span lang="en">rollbar · transitions</span></span></div>
+<div style="display:flex;align-items:center;gap:10px;font-size:12.5px;color:#9fd8bb"><span style="width:90px"><span lang="ko">테마</span><span lang="en">Theme</span></span><span style="border:1px solid #2c6a47;background:#0b2416;color:#8affba;border-radius:5px;padding:4px 12px;font-size:11.5px">MATRIX</span><span style="border:1px solid #17301f;color:#5cbd87;border-radius:5px;padding:4px 12px;font-size:11.5px">DARK</span><span style="border:1px solid #17301f;color:#5cbd87;border-radius:5px;padding:4px 12px;font-size:11.5px">LIGHT</span></div>
+</div>
+<div style="border:1px solid #17301f;border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:10px">
+<div style="font-size:10.5px;color:#3f8f63;letter-spacing:.12em"><span lang="ko">언어</span><span lang="en">LANGUAGE</span></div>
+<div style="display:flex;gap:8px">
+<span onClick="{{ langKoBtn }}" style="flex:1;text-align:center;border:1px solid #2c6a47;border-radius:6px;padding:8px 0;font-size:12.5px;cursor:pointer;background:{{ langKoBg }};color:{{ langKoC }}">한국어</span>
+<span onClick="{{ langEnBtn }}" style="flex:1;text-align:center;border:1px solid #2c6a47;border-radius:6px;padding:8px 0;font-size:12.5px;cursor:pointer;background:{{ langEnBg }};color:{{ langEnC }}">English</span>
+</div>
+</div>
+<div style="border:1px solid #17301f;border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:12px;color:#78dba5">
+<div style="font-size:10.5px;color:#3f8f63;letter-spacing:.12em"><span lang="ko">터미널 & 안전</span><span lang="en">TERMINAL & SAFETY</span></div>
+<div style="display:flex;justify-content:space-between"><span><span lang="ko">대용량 붙여넣기 경고</span><span lang="en">Large paste warning</span></span><span style="color:#35e58f">ON</span></div>
+<div style="display:flex;justify-content:space-between"><span><span lang="ko">Codex Ctrl+C 보호</span><span lang="en">Codex Ctrl+C guard</span></span><span style="color:#35e58f">ON</span></div>
+<div style="display:flex;justify-content:space-between"><span><span lang="ko">위험 종료 확인</span><span lang="en">Risky close confirm</span></span><span style="color:#35e58f">ON</span></div>
+</div>
+<div style="font-size:11px;color:#3f8f63;line-height:1.7;padding:0 2px"><span lang="ko">전체 설정 IA(연결·에이전트·스크립팅 등)는 실제 앱의 SettingsPanel 카테고리를 따릅니다 — 프로토타입은 외관·언어·안전만 동작.</span><span lang="en">Full settings IA follows the app's SettingsPanel categories — prototype wires appearance · language · safety only.</span></div>
+</div>
+</sc-if>
+</div>
+</sc-if>
+
+<div style="flex:1;display:flex;flex-direction:column;min-width:0;background:radial-gradient(ellipse 90% 70% at 50% 30%,#04120a,#010301 70%);position:relative">
+<div style="height:46px;flex:none;display:flex;align-items:center;gap:10px;padding:0 18px">
+<span style="font-size:13px;color:#5cbd87"><span lang="ko">작업영역:</span><span lang="en">Workspace:</span></span>
+<span style="height:30px;display:flex;align-items:center;gap:8px;padding:0 14px;background:#07130c;border:1px solid #1c4630;border-radius:15px;color:#b7fbd4;font-size:13px"><span lang="ko">에이전트 데스크</span><span lang="en">Agent Desk</span></span>
+<span style="margin-left:auto;display:flex;gap:8px;font-size:12.5px">
+<sc-for list="{{ layoutChips }}" as="lc" hint-placeholder-count="3">
+<i onClick="{{ lc.on }}" style="font-style:normal;border:1px solid {{ lc.border }};border-radius:4px;padding:4px 12px;cursor:pointer;color:{{ lc.color }};background:{{ lc.bg }}" style-hover="border-color:#4bbd7a;color:#b7fbd4">{{ lc.label }}</i>
+</sc-for>
+</span>
+</div>
+<div style="flex:1;display:grid;gap:14px;padding:2px 18px 78px;min-height:0;grid-template-columns:{{ gridCols }};grid-template-rows:{{ gridRows }}">
+<sc-for list="{{ panes }}" as="pane" hint-placeholder-count="3">
+<div onClick="{{ pane.onFocus }}" data-screen-label="터미널 페인" style="display:flex;flex-direction:column;background:#020805;border:1px solid {{ pane.border }};border-radius:12px;overflow:hidden;min-height:0;cursor:pointer;opacity:{{ pane.dim }};box-shadow:{{ pane.glow }};grid-area:{{ pane.area }};transition:box-shadow .25s,opacity .25s,border-color .25s">
+<div style="height:36px;flex:none;display:flex;align-items:center;gap:9px;padding:0 14px;background:linear-gradient(180deg,#0a1f13,#051009);border-bottom:1px solid #143523">
+<i style="font-style:normal;width:8px;height:8px;border-radius:50%;background:{{ pane.dot }};box-shadow:0 0 7px {{ pane.dot }}"></i>
+<b style="font-size:13px;color:#b7fbd4">{{ pane.title }}</b>
+<span style="font-size:11.5px;color:#5cbd87">{{ pane.meta }}</span>
+<span style="margin-left:auto;display:flex;gap:12px;color:#78dba5;font-size:13px;align-items:center">
+<span style="font-size:11.5px;color:{{ pane.badgeC }}">{{ pane.badge }}</span>
+<i onClick="{{ pane.onClose }}" style="font-style:normal;cursor:pointer;padding:2px 4px" style-hover="color:#ff9aa5">✕</i>
+</span>
+</div>
+<div style="flex:1;padding:12px 16px;font-family:'JetBrains Mono',monospace;font-size:13.5px;line-height:1.7;color:#9fe8c0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end">
+<sc-if value="{{ pane.isChat }}" hint-placeholder-val="{{ false }}">
+<div data-screen-label="OpenClaw 채팅 페인" style="flex:1;display:flex;flex-direction:column;gap:9px;min-height:0;justify-content:flex-end;font-family:'Share Tech Mono',monospace">
+<sc-for list="{{ chat }}" as="msg" hint-placeholder-count="2">
+<div style="display:flex;flex-direction:column;animation:ezfadein .2s ease both">
+<sc-if value="{{ msg.isIn }}" hint-placeholder-val="{{ true }}">
+<div style="align-self:flex-start;max-width:78%"><div style="font-size:10px;color:#5cbd87;margin:0 0 4px 2px">{{ msg.metaT }}</div><div style="border:1px solid #1e4a66;border-radius:10px 10px 10px 3px;background:rgba(98,216,255,.06);padding:8px 12px;font-size:12.5px;color:#cfeeff;line-height:1.6">{{ msg.tT }}</div></div>
+</sc-if>
+<sc-if value="{{ msg.isOut }}" hint-placeholder-val="{{ false }}">
+<div style="align-self:flex-end;max-width:82%"><div style="font-size:10px;color:#5cbd87;margin:0 2px 4px 0;text-align:right">{{ msg.metaT }}</div><div style="border:1px solid #2c6a47;border-radius:10px 10px 3px 10px;background:rgba(53,229,143,.06);padding:8px 12px;font-size:12.5px;color:#c9f5dd;line-height:1.6">{{ msg.tT }}</div></div>
+</sc-if>
+</div>
+</sc-for>
+<sc-if value="{{ chatApproval }}" hint-placeholder-val="{{ false }}">
+<div style="align-self:flex-end;max-width:82%"><div style="border:1px solid #6b5a2a;border-radius:10px;background:rgba(255,209,102,.06);padding:9px 12px;font-size:12px;color:#ffd166;line-height:1.6">⚠ <span lang="ko">승인 필요 — codex가 요청:</span><span lang="en">Approval needed — codex requests:</span><div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#dfeee5;background:#020704;border-radius:5px;padding:6px 9px;margin:7px 0">{{ chatApprovalCmd }}</div><div style="display:flex;gap:7px"><span onClick="{{ chatOk }}" style="background:#35e58f;color:#001c0d;border-radius:4px;padding:3px 14px;font-size:11px;font-weight:700;cursor:pointer" style-hover="background:#5df0ab"><span lang="ko">승인</span><span lang="en">Allow</span></span><span onClick="{{ chatNo }}" style="border:1px solid #6b3540;color:#ff9aa5;border-radius:4px;padding:3px 14px;font-size:11px;cursor:pointer" style-hover="background:rgba(255,107,122,.1)"><span lang="ko">거부</span><span lang="en">Deny</span></span></div></div></div>
+</sc-if>
+<sc-if value="{{ typing }}" hint-placeholder-val="{{ false }}">
+<div style="align-self:flex-end"><span style="display:inline-flex;gap:3px;padding:7px 11px;border:1px solid #2c6a47;border-radius:10px;background:rgba(53,229,143,.05)"><i style="width:5px;height:5px;border-radius:50%;background:#35e58f;animation:ezblink 1s steps(1) infinite"></i><i style="width:5px;height:5px;border-radius:50%;background:#35e58f;animation:ezblink 1s steps(1) .33s infinite"></i><i style="width:5px;height:5px;border-radius:50%;background:#35e58f;animation:ezblink 1s steps(1) .66s infinite"></i></span></div>
+</sc-if>
+<div style="flex:none;display:flex;align-items:center;gap:9px;height:36px;padding:0 12px;background:#020704;border:1px solid #245b3d;border-radius:7px;margin-top:2px">
+<span style="color:#35e58f;font-size:12px">💬</span>
+<input value="{{ chatInput }}" onChange="{{ chatChange }}" onKeyDown="{{ chatKey }}" placeholder="{{ chatPh }}" style="flex:1;background:transparent;border:none;outline:none;font-family:inherit;font-size:12px;color:#dfeee5"></input>
+<span onClick="{{ chatSend }}" style="color:#35e58f;cursor:pointer;font-size:13px" style-hover="text-shadow:0 0 8px rgba(53,229,143,.8)">➤</span>
+</div>
+</div>
+</sc-if>
+<sc-for list="{{ pane.lines }}" as="ln" hint-placeholder-count="4">
+<div style="animation:ezfadein .2s ease both"><span style="color:{{ ln.pc }}">{{ ln.pre }}</span> <span style="color:{{ ln.c }}">{{ ln.t }}</span></div>
+</sc-for>
+<sc-if value="{{ pane.approval }}" hint-placeholder-val="{{ false }}">
+<div style="margin-top:8px;display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid #6b5a2a;border-radius:6px;background:rgba(255,209,102,.07);font-size:12.5px;color:#ffd166;flex:none">⚠ <span lang="ko">권한 요청</span><span lang="en">Approval</span> <b style="font-family:inherit">{{ pane.approvalCmd }}</b><span style="margin-left:auto;display:flex;gap:8px"><i onClick="{{ pane.onApprove }}" style="font-style:normal;background:#35e58f;color:#001c0d;border-radius:4px;padding:2px 12px;font-weight:700;cursor:pointer" style-hover="background:#5df0ab"><span lang="ko">승인</span><span lang="en">Allow</span></i><i onClick="{{ pane.onDeny }}" style="font-style:normal;border:1px solid #6b3540;color:#ff9aa5;border-radius:4px;padding:2px 12px;cursor:pointer" style-hover="background:rgba(255,107,122,.1)"><span lang="ko">거부</span><span lang="en">Deny</span></i></span></div>
+</sc-if>
+<sc-if value="{{ pane.cursor }}" hint-placeholder-val="{{ true }}">
+<div><span style="color:#35e58f">❯</span> <span style="display:inline-block;width:8px;height:15px;background:#35e58f;vertical-align:-2px;animation:ezblink 1.1s steps(1) infinite"></span></div>
+</sc-if>
+</div>
+</div>
+</sc-for>
+</div>
+<div style="position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:820px;height:48px;display:flex;align-items:center;gap:10px;padding:0 18px;background:rgba(2,7,4,.94);border:1px solid {{ composerBorder }};border-radius:24px;box-shadow:0 0 22px rgba(53,229,143,.2),0 10px 28px rgba(0,0,0,.55);z-index:15">
+<span style="color:#35e58f;font-size:15px">❯</span>
+<input value="{{ composer }}" onChange="{{ composerChange }}" onKeyDown="{{ composerKey }}" onFocus="{{ composerFocus }}" onBlur="{{ composerBlur }}" placeholder="{{ composerPh }}" style="flex:1;background:transparent;border:none;outline:none;font-family:'JetBrains Mono',monospace;font-size:13.5px;color:#dfeee5"></input>
+<i onClick="{{ openPaste }}" title="붙여넣기 시뮬레이션" style="font-style:normal;font-size:11px;border:1px solid #2c6a47;border-radius:3px;padding:3px 9px;color:#78dba5;cursor:pointer" style-hover="color:#ffd166;border-color:#6b5a2a">📋 <span lang="ko">142줄 붙여넣기</span><span lang="en">Paste 142 lines</span></i>
+<i style="font-style:normal;font-size:11px;border:1px solid #2c6a47;border-radius:3px;padding:3px 9px;color:#78dba5">Ctrl+K</i>
+</div>
+</div>
+</div>
+
+<div style="height:30px;flex:none;display:flex;align-items:center;gap:18px;padding:0 16px;background:#030805;border-top:1px solid #12301f;font-size:12.5px;color:#5cbd87;position:relative;z-index:30">
+<span style="color:#35e58f">● <span lang="ko">로컬 · PowerShell 7.4</span><span lang="en">Local · PowerShell 7.4</span></span>
+<span>SSH build-01 · {{ rtt }}ms</span>
+<span>↓ {{ netKb }} KB/s ↑ 0.4</span>
+<span style="color:#78dba5">{{ statusHint }}</span>
+<span onClick="{{ toggleLang }}" style="margin-left:auto;cursor:pointer;border:1px solid #245b3d;border-radius:4px;padding:2px 10px;color:#8affba" style-hover="border-color:#4bbd7a">{{ langLabel }}</span>
+<span>FX {{ fx }}</span>
+<span><span lang="ko">GPU 가속</span><span lang="en">GPU accel</span></span>
+</div>
+
+<div style="position:absolute;inset:0;pointer-events:none;z-index:40;background:repeating-linear-gradient(0deg,rgba(0,0,0,.20) 0 2px,transparent 2px 5px);opacity:{{ scanOp }}"></div>
+<sc-if value="{{ showRoll }}" hint-placeholder-val="{{ true }}">
+<div style="position:absolute;left:0;right:0;height:150px;top:0;pointer-events:none;z-index:40;background:linear-gradient(180deg,transparent,rgba(53,229,143,.05) 45%,rgba(53,229,143,.09) 50%,rgba(53,229,143,.05) 55%,transparent);animation:ezroll 8s linear infinite"></div>
+</sc-if>
+<div style="position:absolute;inset:0;pointer-events:none;z-index:40;background:radial-gradient(ellipse 120% 90% at 50% 45%,transparent 60%,rgba(0,0,0,.4))"></div>
+<sc-if value="{{ ccOpen }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ ccClose }}" data-screen-label="커맨드 센터" style="position:absolute;inset:0;background:rgba(0,3,1,.72);z-index:50">
+<div onClick="{{ ccStop }}" style="position:absolute;left:50%;top:84px;transform:translateX(-50%);width:660px;background:#040a06;border:1px solid #2c6a47;border-radius:12px;box-shadow:0 0 0 1px rgba(53,229,143,.15),0 0 40px rgba(53,229,143,.14),0 24px 60px rgba(0,0,0,.7);overflow:hidden;animation:ezmodal .18s cubic-bezier(.2,0,0,1) both">
+<div style="display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid #143523">
+<span style="color:#35e58f;font-size:18px">⌕</span>
+<input value="{{ ccQ }}" onChange="{{ ccChange }}" onKeyDown="{{ ccKey }}" autoFocus="{{ true }}" placeholder="{{ ccPh }}" style="flex:1;background:transparent;border:none;outline:none;font-family:inherit;font-size:16px;color:#dfeee5"></input>
+<span style="display:flex;gap:6px"><i style="font-style:normal;font-size:11px;border:1px solid #2c6a47;border-radius:3px;padding:2px 8px;color:#78dba5">↑↓</i><i style="font-style:normal;font-size:11px;border:1px solid #2c6a47;border-radius:3px;padding:2px 8px;color:#78dba5">Esc</i></span>
+</div>
+<div style="padding:8px 8px 4px;font-size:13px;max-height:430px;overflow:hidden">
+<sc-for list="{{ ccRows }}" as="row" hint-placeholder-count="5">
+<div>
+<sc-if value="{{ row.head }}" hint-placeholder-val="{{ false }}"><div style="padding:6px 10px 4px;font-size:10.5px;color:#3f8f63;letter-spacing:.12em">{{ row.head }}</div></sc-if>
+<div onClick="{{ row.onClick }}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:7px;background:{{ row.bg }};box-shadow:{{ row.shadow }};cursor:pointer" style-hover="background:#0b2416">
+<span style="color:{{ row.ic }}">{{ row.icon }}</span>
+<span style="color:{{ row.lc }};font-family:{{ row.fam }}">{{ row.label }}</span>
+<span style="font-size:11px;color:#5cbd87">{{ row.hint }}</span>
+<span style="margin-left:auto;font-size:11px;color:#8affba">{{ row.right }}</span>
+</div>
+</div>
+</sc-for>
+<sc-if value="{{ ccEmpty }}" hint-placeholder-val="{{ false }}">
+<div style="padding:22px;text-align:center;color:#5cbd87;font-size:13px"><span lang="ko">일치하는 결과 없음</span><span lang="en">No matches</span></div>
+</sc-if>
+</div>
+<div style="display:flex;gap:16px;padding:10px 16px;border-top:1px solid #143523;font-size:11px;color:#5cbd87"><span>↑↓ <span lang="ko">이동</span><span lang="en">move</span></span><span>Enter <span lang="ko">실행</span><span lang="en">run</span></span><span style="margin-left:auto;color:#3f8f63">esc <span lang="ko">닫기 · 포커스 복원</span><span lang="en">close · restore focus</span></span></div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ qrOpen }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ qrClose }}" data-screen-label="QR 페어링 패널" style="position:absolute;inset:0;background:rgba(0,3,1,.72);z-index:50">
+<div onClick="{{ qrStop }}" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:480px;background:#040a06;border:1px solid #2c6a47;border-radius:14px;box-shadow:0 0 0 1px rgba(53,229,143,.15),0 0 44px rgba(53,229,143,.16),0 24px 60px rgba(0,0,0,.7);overflow:hidden;animation:ezmodal .18s cubic-bezier(.2,0,0,1) both;margin-top:-40px">
+<div style="height:4px;background:linear-gradient(90deg,#35e58f,#1e7a4e);box-shadow:0 0 12px rgba(53,229,143,.6)"></div>
+<div style="padding:18px 20px;display:flex;flex-direction:column;gap:14px">
+<div style="display:flex;align-items:center;gap:10px"><b style="font-size:16px;color:#b7fbd4"><span lang="ko">새 기기 페어링</span><span lang="en">Pair a new device</span></b><span onClick="{{ qrClose }}" style="margin-left:auto;color:#5cbd87;cursor:pointer;padding:2px 6px" style-hover="color:#b7fbd4">✕</span></div>
+<div style="display:flex;gap:18px;align-items:center">
+<div style="width:170px;height:170px;flex:none;background:#e8fff2;border-radius:8px;padding:12px;display:grid;grid-template-columns:repeat(7,1fr);grid-template-rows:repeat(7,1fr);gap:3px;box-shadow:0 0 24px rgba(53,229,143,.25)">
+<i style="background:#04140a"></i><i style="background:#04140a"></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i><i style="background:#04140a"></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i><i style="background:#04140a"></i><i style="background:#04140a"></i><i></i><i></i><i style="background:#04140a"></i><i style="background:#04140a"></i><i style="background:#04140a"></i><i></i><i></i><i style="background:#04140a"></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i><i></i><i style="background:#04140a"></i>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:9px">
+<div style="font-size:12px;color:#78dba5;line-height:1.7"><span lang="ko">모바일 앱 → <b style="color:#9fd8bb">리모트 → QR 스캔</b><br>또는 아래 코드를 직접 입력</span><span lang="en">Mobile app → <b style="color:#9fd8bb">Remote → Scan QR</b><br>or enter the code below</span></div>
+<div style="font-family:'JetBrains Mono',monospace;font-size:24px;letter-spacing:.22em;color:#8affba;text-shadow:0 0 12px rgba(53,229,143,.55)">7C2F-91KD</div>
+<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:#5cbd87"><span lang="ko">유효</span><span lang="en">valid</span> <b style="color:#9fd8bb">{{ qrMMSS }}</b><span style="flex:1;height:3px;background:#123122;border-radius:2px;overflow:hidden"><i style="font-style:normal;display:block;width:{{ qrPct }}%;height:100%;background:#35e58f;transition:width 1s linear"></i></span></div>
+<div style="font-size:10.5px;color:#3f8f63;line-height:1.6"><span lang="ko">코드는 1회용 · 페어링 즉시 만료</span><span lang="en">One-time code · expires on pairing</span></div>
+</div>
+</div>
+<sc-if value="{{ qrDetect }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid #1e4a66;border-radius:8px;background:rgba(98,216,255,.06);font-size:12.5px;color:#cfeeff;animation:ezfadein .2s ease both">
+<span style="display:inline-flex;gap:3px"><i style="width:5px;height:5px;border-radius:50%;background:#62d8ff;animation:ezblink 1s steps(1) infinite"></i><i style="width:5px;height:5px;border-radius:50%;background:#62d8ff;animation:ezblink 1s steps(1) .33s infinite"></i><i style="width:5px;height:5px;border-radius:50%;background:#62d8ff;animation:ezblink 1s steps(1) .66s infinite"></i></span>
+<span lang="ko"><b>Pixel 8</b> 감지 — 키 교환중…</span><span lang="en"><b>Pixel 8</b> detected — exchanging keys…</span>
+</div>
+</sc-if>
+<div style="display:flex;gap:9px">
+<button onClick="{{ simScan }}" style="flex:1;height:36px;background:transparent;color:#8affba;border:1px solid #2c6a47;border-radius:6px;font-family:inherit;font-size:12.5px;cursor:pointer" style-hover="background:#0b2416"><span lang="ko">📱 스캔 시뮬레이션</span><span lang="en">📱 Simulate scan</span></button>
+<button onClick="{{ qrClose }}" style="width:100px;height:36px;background:transparent;color:#78dba5;border:1px solid #245b3d;border-radius:6px;font-family:inherit;font-size:12.5px;cursor:pointer" style-hover="color:#b7fbd4"><span lang="ko">닫기</span><span lang="en">Close</span></button>
+</div>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ dialogIsPaste }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ dlgCancel }}" data-screen-label="붙여넣기 경고" style="position:absolute;inset:0;background:rgba(0,3,1,.68);z-index:55">
+<div onClick="{{ qrStop }}" style="position:absolute;left:50%;top:120px;transform:translateX(-50%);width:480px;background:#040a06;border:1px solid #6b5a2a;border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px rgba(255,209,102,.12),0 0 34px rgba(255,209,102,.1),0 24px 60px rgba(0,0,0,.7);animation:ezmodal .18s cubic-bezier(.2,0,0,1) both">
+<div style="height:4px;background:linear-gradient(90deg,#ffd166,#8a6a1e);box-shadow:0 0 12px rgba(255,209,102,.6)"></div>
+<div style="padding:16px 18px 14px">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><span style="width:34px;height:34px;border-radius:8px;background:rgba(255,209,102,.1);border:1px solid #6b5a2a;display:flex;align-items:center;justify-content:center;font-size:16px">⚠</span><div><b style="font-size:14.5px;color:#ffe4a3"><span lang="ko">대용량 텍스트 붙여넣기</span><span lang="en">Large text paste</span></b><div style="font-size:11px;color:#78dba5;margin-top:2px"><span lang="ko">codex 세션 — 내용은 표시·기록되지 않습니다</span><span lang="en">codex session — content is never shown or logged</span></div></div></div>
+<div style="display:flex;gap:10px;margin-bottom:12px">
+<div style="flex:1;border:1px solid #17301f;border-radius:7px;padding:9px;text-align:center;background:#030805"><div style="font-family:'JetBrains Mono',monospace;font-size:16px;color:#b7fbd4">142<span lang="ko">줄</span><span lang="en"> ln</span></div><div style="font-size:9.5px;color:#5cbd87;margin-top:2px"><span lang="ko">라인 수</span><span lang="en">lines</span></div></div>
+<div style="flex:1;border:1px solid #17301f;border-radius:7px;padding:9px;text-align:center;background:#030805"><div style="font-family:'JetBrains Mono',monospace;font-size:16px;color:#b7fbd4">18.2 KiB</div><div style="font-size:9.5px;color:#5cbd87;margin-top:2px"><span lang="ko">크기</span><span lang="en">size</span></div></div>
+<div style="flex:1;border:1px solid #3a2f1a;border-radius:7px;padding:9px;text-align:center;background:rgba(255,209,102,.04)"><div style="font-size:15px;color:#ffd166"><span lang="ko">멀티라인</span><span lang="en">multiline</span></div><div style="font-size:9.5px;color:#5cbd87;margin-top:2px"><span lang="ko">각 줄 즉시 실행 위험</span><span lang="en">each line may execute</span></div></div>
+</div>
+<div style="display:flex;gap:9px;justify-content:flex-end">
+<button onClick="{{ dlgCancel }}" autoFocus="{{ true }}" style="height:34px;padding:0 18px;background:#0b2416;color:#b7fbd4;border:1px solid #2c6a47;border-radius:6px;font-family:inherit;font-size:12.5px;cursor:pointer;box-shadow:0 0 0 2px rgba(138,255,186,.25)" style-hover="background:#123626"><span lang="ko">취소</span><span lang="en">Cancel</span> <i style="font-style:normal;font-size:10px;color:#5cbd87">Esc</i></button>
+<button onClick="{{ dlgPasteOk }}" style="height:34px;padding:0 18px;background:transparent;color:#ffd166;border:1px solid #6b5a2a;border-radius:6px;font-family:inherit;font-size:12.5px;cursor:pointer" style-hover="background:rgba(255,209,102,.08)"><span lang="ko">붙여넣기</span><span lang="en">Paste</span></button>
+</div>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ dialogIsClose }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ dlgCancel }}" data-screen-label="위험 종료 확인" style="position:absolute;inset:0;background:rgba(0,3,1,.68);z-index:55">
+<div onClick="{{ qrStop }}" style="position:absolute;left:50%;top:120px;transform:translateX(-50%);width:480px;background:#040a06;border:1px solid #6b3540;border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px rgba(255,107,122,.12),0 0 34px rgba(255,107,122,.12),0 24px 60px rgba(0,0,0,.7);animation:ezmodal .18s cubic-bezier(.2,0,0,1) both">
+<div style="height:4px;background:linear-gradient(90deg,#ff6b7a,#8a2f3a);box-shadow:0 0 12px rgba(255,107,122,.5)"></div>
+<div style="padding:16px 18px 14px">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><span style="width:34px;height:34px;border-radius:8px;background:rgba(255,107,122,.1);border:1px solid #6b3540;display:flex;align-items:center;justify-content:center;font-size:16px">⚠</span><div><b style="font-size:14.5px;color:#ffb3bb"><span lang="ko">위험한 페인 닫기</span><span lang="en">Risky pane close</span></b><div style="font-size:11px;color:#78dba5;margin-top:2px">{{ closePaneName }}</div></div></div>
+<div style="border:1px solid #17301f;border-radius:7px;background:#030805;padding:10px 12px;margin-bottom:12px;font-size:12.5px;line-height:1.9">
+<div><span style="color:#35e58f">●</span> <span style="color:#d9ffe9"><span lang="ko">실행중 에이전트 작업</span><span lang="en">agent run in progress</span></span> <span style="color:#5cbd87">{{ runCodexEl }}</span></div>
+<div><span style="color:#62d8ff">●</span> <span style="color:#9fd8bb"><span lang="ko">SSH 스트림 tail 실행중</span><span lang="en">SSH tail streaming</span></span></div>
+<div style="color:#78dba5;font-size:11.5px;margin-top:4px"><span lang="ko">닫으면 실행중인 작업이 중단됩니다.</span><span lang="en">Closing will interrupt active runs.</span></div>
+</div>
+<div style="display:flex;gap:9px;justify-content:flex-end">
+<button onClick="{{ dlgCancel }}" autoFocus="{{ true }}" style="height:34px;padding:0 16px;background:#0b2416;color:#b7fbd4;border:1px solid #2c6a47;border-radius:6px;font-family:inherit;font-size:12.5px;cursor:pointer;box-shadow:0 0 0 2px rgba(138,255,186,.25)" style-hover="background:#123626"><span lang="ko">취소</span><span lang="en">Cancel</span></button>
+<button onClick="{{ dlgKeepBg }}" style="height:34px;padding:0 16px;background:transparent;color:#78dba5;border:1px solid #245b3d;border-radius:6px;font-family:inherit;font-size:12.5px;cursor:pointer" style-hover="color:#b7fbd4"><span lang="ko">백그라운드 유지</span><span lang="en">Keep in background</span></button>
+<button onClick="{{ dlgForce }}" style="height:34px;padding:0 16px;background:transparent;color:#ff9aa5;border:1px solid #6b3540;border-radius:6px;font-family:inherit;font-size:12.5px;cursor:pointer" style-hover="background:rgba(255,107,122,.1)"><span lang="ko">강제 종료</span><span lang="en">Force kill</span></button>
+</div>
+</div>
+</div>
+</div>
+</sc-if>
+
+<div style="position:absolute;right:16px;bottom:44px;display:flex;flex-direction:column;gap:9px;width:300px;z-index:58;pointer-events:none">
+<sc-for list="{{ toasts }}" as="toast" hint-placeholder-count="0">
+<div style="border:1px solid {{ toast.border }};border-radius:9px;background:rgba(4,12,7,.96);padding:11px 13px;box-shadow:0 0 18px rgba(53,229,143,.1),0 10px 26px rgba(0,0,0,.5);animation:eztoast .22s cubic-bezier(.2,0,0,1) both;pointer-events:auto;position:relative;overflow:hidden">
+<div style="display:flex;gap:9px;align-items:center"><span style="color:{{ toast.icc }};font-size:14px">{{ toast.ic }}</span><div style="flex:1;min-width:0"><b style="font-size:12px;color:{{ toast.tc }}">{{ toast.title }}</b><div style="font-size:10.5px;color:#78dba5;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ toast.sub }}</div></div><span onClick="{{ toast.onX }}" style="color:#5cbd87;font-size:11px;cursor:pointer" style-hover="color:#b7fbd4">✕</span></div>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+</sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:860},&quot;fxDefault&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:7,&quot;min&quot;:0,&quot;max&quot;:10,&quot;step&quot;:1,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;CRT&quot;},&quot;bootEnabled&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;동작&quot;},&quot;defaultLang&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;ko&quot;,&quot;options&quot;:[&quot;ko&quot;,&quot;en&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;동작&quot;}}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    const boot = this.props.bootEnabled ?? true;
+    this.state = {
+      screen: boot ? 'boot' : 'app', bootBeam: true, bootLogo: false, bootLog: [],
+      lang: this.props.defaultLang ?? 'ko', fx: this.props.fxDefault ?? 7, motion: true,
+      scale: 0.6, dest: 'agents', sidebarOpen: true, wsMenu: false,
+      layout: '1+2', focus: 'codex', hasPwsh: false, chatDock: false,
+      running: { codex: true, claude: true, ssh: true, pwsh: true },
+      elapsed: { codex: 760, claude: 192 }, rtt: 23, netKb: '2.1', tick: 0,
+      tunnelOn: true, pixelOnline: false,
+      approvals: [
+        { id: 'a1', agent: 'codex', target: 'pty-keys', cmd: 'rm -rf out/probe && pnpm rebuild', risk: 'danger', ago: '1분 전', agoEn: '1m ago' },
+        { id: 'a2', agent: 'claude', target: '릴리스 노트', cmd: 'Write(docs/release/v1.0.7.md)', risk: 'write', ago: '4분 전', agoEn: '4m ago' },
+        { id: 'a3', agent: 'gemini', target: 'e2e 로그', cmd: 'Read(/var/log/e2e/*.log)', risk: 'write', ago: '12분 전', agoEn: '12m ago' },
+      ],
+      lines: {
+        codex: [
+          { pre: '', pc: '', c: '#5cbd87', t: '~/ezterminal · main* · codex v0.34' },
+          { pre: '❯', pc: '#35e58f', c: '#dfeee5', t: 'codex exec "fix failing vitest in pty-keys"' },
+          { pre: '◐', pc: '#78dba5', c: '#78dba5', t: '분석중 src/renderer/pty-keys.ts…' },
+          { pre: '✓', pc: '#35e58f', c: '#dfeee5', t: '패치 적용 (2 files, +18 −6)' },
+          { pre: '❯', pc: '#35e58f', c: '#dfeee5', t: 'pnpm vitest run pty-keys' },
+          { pre: '✓', pc: '#35e58f', c: '#dfeee5', t: 'Test Files 1 passed · Tests 14 passed · 214ms' },
+        ],
+        claude: [
+          { pre: '', pc: '', c: '#5cbd87', t: 'claude — session #4f2a' },
+          { pre: '●', pc: '#dfeee5', c: '#dfeee5', t: 'Bash(pnpm build:renderer)' },
+          { pre: '⎿', pc: '#78dba5', c: '#78dba5', t: 'built in 4.2s' },
+          { pre: '●', pc: '#dfeee5', c: '#dfeee5', t: 'Write(docs/release/v1.0.7.md)' },
+          { pre: '⚠', pc: '#ffd166', c: '#ffd166', t: '승인 대기: 파일 쓰기' },
+        ],
+        ssh: [
+          { pre: '', pc: '', c: '#5cbd87', t: 'ssh build-01 · deploy watch' },
+          { pre: '❯', pc: '#35e58f', c: '#dfeee5', t: 'tail -f /var/log/deploy.log' },
+          { pre: '', pc: '', c: '#78dba5', t: '[12:44:02] artifact upload 82%…' },
+        ],
+        pwsh: [{ pre: '', pc: '', c: '#5cbd87', t: 'PowerShell 7.4 · ~/ezterminal' }],
+      },
+      activity: [
+        { t: '12:44', a: 'codex', txt: '패치 적용 +18 −6', txtEn: 'patch applied +18 −6' },
+        { t: '12:41', a: 'vitest', txt: '14 passed', txtEn: '14 passed' },
+        { t: '12:38', a: 'claude', txt: 'build:renderer 4.2s', txtEn: 'build:renderer 4.2s' },
+      ],
+      ccOpen: false, ccQ: '', ccSel: 0,
+      qrOpen: false, qrSec: 272, qrScan: 0,
+      clawView: 'console',
+      chat: [
+        { side: 'in', meta: 'Telegram · 나 · 12:44', metaEn: 'Telegram · me · 12:44', t: '빌드 상태 알려줘', tEn: 'What is the build status?' },
+        { side: 'out', meta: 'openclaw · 12:44', metaEn: 'openclaw · 12:44', t: 'build-01 artifact 82% 업로드중. vitest 14 passed · codex 패치 적용 완료.', tEn: 'build-01 artifact 82% uploading. vitest 14 passed · codex patch applied.' },
+      ],
+      typing: false, chatInput: '',
+      dialog: null, toasts: [], composer: '', composerFocused: false,
+      explorerSel: 'pty-keys.ts',
+      cwd: ['C:', 'Users', 'dev', 'ezterminal', 'src', 'renderer'],
+    };
+    this._toastId = 0;
+    this._fs = {
+      'C:': { d: ['Users'] },
+      'C:/Users': { d: ['dev'] },
+      'C:/Users/dev': { d: ['ezterminal', '.ssh'], f: [{ n: '.gitconfig' }] },
+      'C:/Users/dev/.ssh': { f: [{ n: 'config' }, { n: 'id_ed25519.pub' }] },
+      'C:/Users/dev/ezterminal': { d: ['src', 'docs', 'e2e', 'out'], f: [{ n: 'package.json' }, { n: 'forge.config.ts' }, { n: 'README.md' }] },
+      'C:/Users/dev/ezterminal/src': { d: ['renderer', 'main', 'shared'] },
+      'C:/Users/dev/ezterminal/src/renderer': { d: ['workbench', 'ui'], f: [{ n: 'App.tsx' }, { n: 'pty-keys.ts', tag: '+18 −6', hot: 1 }, { n: 'AgentHub.tsx' }, { n: 'themes.ts' }, { n: 'SettingsPanel.tsx' }] },
+      'C:/Users/dev/ezterminal/src/renderer/workbench': { f: [{ n: 'AppHeader.tsx' }, { n: 'ActivityRail.tsx' }, { n: 'SidebarShell.tsx' }] },
+      'C:/Users/dev/ezterminal/src/renderer/ui': { f: [{ n: 'Button.tsx' }, { n: 'Dialog.tsx' }, { n: 'Toast.tsx' }] },
+      'C:/Users/dev/ezterminal/src/main': { f: [{ n: 'main.ts' }, { n: 'pty-host.ts' }] },
+      'C:/Users/dev/ezterminal/src/shared': { f: [{ n: 'ipc.ts' }, { n: 'agent.ts' }] },
+      'C:/Users/dev/ezterminal/docs': { d: ['release', 'ux'], f: [{ n: 'ROADMAP.md' }] },
+      'C:/Users/dev/ezterminal/docs/release': { f: [{ n: 'v1.0.7.md', tag: 'new', nw: 1 }] },
+      'C:/Users/dev/ezterminal/docs/ux': { f: [{ n: 'frontend-design.md' }] },
+      'C:/Users/dev/ezterminal/e2e': { f: [{ n: 'pty.spec.ts' }, { n: 'tabs.spec.ts' }] },
+      'C:/Users/dev/ezterminal/out': { d: ['EZTerminal-win32-x64'] },
+      'C:/Users/dev/ezterminal/out/EZTerminal-win32-x64': { f: [{ n: 'EZTerminal.exe' }] },
+    };
+  }
+  componentDidMount() {
+    this._setScale = () => {
+      const w = Math.min(window.innerWidth - 24, 1920);
+      this.setState({ scale: Math.max(0.3, w / 1920) });
+    };
+    this._setScale();
+    window.addEventListener('resize', this._setScale);
+    this._keyH = (e) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); this.setState({ ccOpen: true, ccQ: '', ccSel: 0 }); return; }
+      if (e.key === 'Escape') this.setState({ ccOpen: false, wsMenu: false, qrOpen: false, dialog: null });
+    };
+    window.addEventListener('keydown', this._keyH);
+    if (this.state.screen === 'boot') this.runBoot();
+    this._tickIv = setInterval(() => {
+      this.setState((s) => {
+        const next = { tick: s.tick + 1, elapsed: { codex: s.elapsed.codex + (s.running.codex ? 1 : 0), claude: s.elapsed.claude + (s.running.claude ? 1 : 0) } };
+        if (s.tick % 3 === 0) { next.rtt = 21 + Math.floor(Math.random() * 7); next.netKb = (1.4 + Math.random() * 2.4).toFixed(1); }
+        if (s.qrOpen && s.qrSec > 0) next.qrSec = s.qrSec - 1;
+        return next;
+      });
+    }, 1000);
+    this._sshLines = ['[12:44:19] checksum verify OK', '[12:44:26] artifact upload 91%…', '[12:44:33] symbol strip 완료', '[12:44:41] artifact upload 100%', '[12:44:47] release stage → rc-30156', '[12:44:55] smoke boot 1024×720 OK'];
+    this._sshIdx = 0;
+    this._sshIv = setInterval(() => {
+      if (this.state.screen !== 'app' || !this.state.running.ssh) return;
+      const t = this._sshLines[this._sshIdx % this._sshLines.length];
+      this._sshIdx += 1;
+      this.appendLines('ssh', [{ pre: '', pc: '', c: '#78dba5', t }], 7);
+    }, 3200);
+  }
+  componentWillUnmount() {
+    window.removeEventListener('resize', this._setScale);
+    window.removeEventListener('keydown', this._keyH);
+    clearInterval(this._tickIv); clearInterval(this._sshIv);
+    (this._timeouts || []).forEach(clearTimeout);
+  }
+  later(fn, ms) { this._timeouts = this._timeouts || []; this._timeouts.push(setTimeout(fn, ms)); }
+  runBoot() {
+    const L = [
+      { tag: '[ ok ]', c: '#35e58f', t: 'PTY 브리지 초기화 · conpty' },
+      { tag: '[ ok ]', c: '#35e58f', t: '테마 로드: MATRIX · FX NEON 7' },
+      { tag: '[ ok ]', c: '#35e58f', t: '에이전트 커넥터: codex · claude · gemini' },
+      { tag: '[ ok ]', c: '#35e58f', t: 'OpenClaw 게이트웨이 :18789 대기' },
+      { tag: '[ .. ]', c: '#ffd166', t: '세션 복원 3/3 · 레이아웃 1+2' },
+    ];
+    this.later(() => this.setState({ bootLogo: true }), 700);
+    L.forEach((l, i) => this.later(() => this.setState((s) => ({ bootLog: [...s.bootLog, l] })), 1000 + i * 320));
+    this.later(() => this.setState({ screen: 'app' }), 1000 + L.length * 320 + 700);
+  }
+  appendLines(pane, arr, cap) {
+    this.setState((s) => {
+      let ls = [...s.lines[pane], ...arr];
+      const max = cap || 9;
+      if (ls.length > max) ls = ls.slice(ls.length - max);
+      return { lines: { ...s.lines, [pane]: ls } };
+    });
+  }
+  pushToast(kind, title, sub) {
+    const id = ++this._toastId;
+    this.setState((s) => ({ toasts: [...s.toasts, { id, kind, title, sub }] }));
+    this.later(() => this.setState((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 4200);
+  }
+  ko() { return this.state.lang === 'ko'; }
+  approve(id) {
+    const a = this.state.approvals.find((x) => x.id === id);
+    if (!a) return;
+    this.setState((s) => ({ approvals: s.approvals.filter((x) => x.id !== id) }));
+    if (a.agent === 'codex') {
+      this.appendLines('codex', [
+        { pre: '✓', pc: '#35e58f', c: '#dfeee5', t: this.ko() ? '승인됨 — rm -rf out/probe' : 'approved — rm -rf out/probe' },
+        { pre: '❯', pc: '#35e58f', c: '#dfeee5', t: 'pnpm rebuild' },
+        { pre: '◐', pc: '#78dba5', c: '#78dba5', t: this.ko() ? '네이티브 모듈 재빌드중…' : 'rebuilding native modules…' },
+      ]);
+    } else if (a.agent === 'claude') {
+      this.appendLines('claude', [{ pre: '✓', pc: '#35e58f', c: '#dfeee5', t: 'Write 승인 — v1.0.7.md 저장됨' }]);
+    }
+    this.pushToast('ok', this.ko() ? '승인됨' : 'Approved', a.agent + ' — ' + a.cmd);
+  }
+  deny(id) {
+    const a = this.state.approvals.find((x) => x.id === id);
+    if (!a) return;
+    this.setState((s) => ({ approvals: s.approvals.filter((x) => x.id !== id) }));
+    if (a.agent === 'codex') this.appendLines('codex', [{ pre: '✗', pc: '#ff6b7a', c: '#ff9aa5', t: this.ko() ? '거부됨 — 대체 경로 탐색중' : 'denied — finding alternative' }]);
+    this.pushToast('warn', this.ko() ? '거부됨' : 'Denied', a.agent + ' — ' + a.cmd);
+  }
+  execCmd(raw) {
+    const cmd = raw.trim();
+    if (!cmd) return;
+    const p = this.state.focus;
+    if (p === 'claw') { this.chatFromText(cmd); this.setState({ composer: '' }); return; }
+    this.appendLines(p, [{ pre: '❯', pc: '#35e58f', c: '#dfeee5', t: cmd }]);
+    this.setState({ composer: '' });
+    this.later(() => {
+      let out;
+      if (cmd === 'clear') { this.setState((s) => ({ lines: { ...s.lines, [p]: [] } })); return; }
+      if (cmd.startsWith('git status')) out = [{ pre: '', pc: '', c: '#9fe8c0', t: 'On branch main — 2 modified, 1 staged' }];
+      else if (cmd.startsWith('pnpm vitest')) out = [{ pre: '✓', pc: '#35e58f', c: '#dfeee5', t: 'Test Files 1 passed · Tests 14 passed' }];
+      else if (cmd.startsWith('ls')) out = [{ pre: '', pc: '', c: '#9fe8c0', t: 'src/  docs/  e2e/  package.json  forge.config.ts' }];
+      else if (cmd.startsWith('ssh')) out = [{ pre: '⇄', pc: '#62d8ff', c: '#9fe8c0', t: 'build-01 연결됨 · RTT ' + this.state.rtt + 'ms' }];
+      else out = [{ pre: '', pc: '', c: '#78dba5', t: this.ko() ? "'" + cmd + "' 실행 시뮬레이션 완료" : "'" + cmd + "' simulated" }];
+      this.appendLines(p, out);
+    }, 380);
+  }
+  ccRows() {
+    const q = this.state.ccQ.toLowerCase();
+    const ko = this.ko();
+    const nav = (d) => () => { this.setState({ ccOpen: false, dest: d, sidebarOpen: true }); };
+    const all = [
+      { g: ko ? 'QUICK COMMAND' : 'QUICK COMMANDS', icon: '▸', ic: '#35e58f', label: 'ssh build-01', hint: ko ? '저장된 명령 · 원격 빌드 머신' : 'saved · remote build host', mono: true, on: () => { this.setState({ ccOpen: false }); this.execCmd('ssh build-01'); } },
+      { g: ko ? 'QUICK COMMAND' : 'QUICK COMMANDS', icon: '▸', ic: '#35e58f', label: 'pnpm vitest run', hint: ko ? '테스트 실행' : 'run tests', mono: true, on: () => { this.setState({ ccOpen: false }); this.execCmd('pnpm vitest run'); } },
+      { g: ko ? 'QUICK COMMAND' : 'QUICK COMMANDS', icon: '▸', ic: '#35e58f', label: 'git status', hint: ko ? '작업트리 상태' : 'worktree status', mono: true, on: () => { this.setState({ ccOpen: false }); this.execCmd('git status'); } },
+      { g: ko ? '이동' : 'GO TO', icon: '✳', ic: '#8affba', label: ko ? '에이전트 허브 열기' : 'Open Agent Hub', hint: this.state.approvals.length ? (ko ? '승인 ' + this.state.approvals.length + ' 대기' : this.state.approvals.length + ' pending') : '', on: nav('agents') },
+      { g: ko ? '이동' : 'GO TO', icon: '📈', ic: '#78dba5', label: ko ? '모니터 열기' : 'Open Monitor', hint: 'CPU · NET · PTY', on: nav('monitor') },
+      { g: ko ? '이동' : 'GO TO', icon: '📡', ic: '#78dba5', label: ko ? '리모트 · 페어링' : 'Remote · Pairing', hint: 'QR / SSH', on: nav('remote') },
+      { g: ko ? '이동' : 'GO TO', icon: '🦞', ic: '#78dba5', label: 'OpenClaw', hint: ko ? '게이트웨이 콘솔' : 'gateway console', on: nav('openclaw') },
+      { g: ko ? '이동' : 'GO TO', icon: '💬', ic: '#8affba', label: ko ? 'OpenClaw 채팅 페인 열기' : 'Open OpenClaw chat pane', hint: ko ? '새 터미널처럼 도킹' : 'docks like a terminal', on: () => { this.setState({ ccOpen: false, chatDock: true, focus: 'claw' }); } },
+      { g: ko ? '레이아웃' : 'LAYOUT', icon: '⊞', ic: '#62d8ff', label: ko ? '레이아웃: 1+2' : 'Layout: 1+2', hint: '', on: () => this.setState({ ccOpen: false, layout: '1+2' }) },
+      { g: ko ? '레이아웃' : 'LAYOUT', icon: '⊞', ic: '#62d8ff', label: ko ? '레이아웃: 2×1' : 'Layout: 2×1', hint: '', on: () => this.setState({ ccOpen: false, layout: '2x1' }) },
+      { g: ko ? '레이아웃' : 'LAYOUT', icon: '▭', ic: '#62d8ff', label: ko ? '레이아웃: 단일' : 'Layout: single', hint: '', on: () => this.setState({ ccOpen: false, layout: 'single' }) },
+      { g: ko ? '설정' : 'SETTINGS', icon: '⚙', ic: '#78dba5', label: ko ? 'FX·테마 설정 열기' : 'Open FX · theme settings', hint: 'NEON ' + this.state.fx, on: nav('settings') },
+      { g: ko ? '설정' : 'SETTINGS', icon: '文', ic: '#78dba5', label: ko ? '언어 전환 (한 ↔ EN)' : 'Toggle language (KO ↔ EN)', hint: '', on: () => { this.setState({ ccOpen: false }); this.toggleLang(); } },
+    ];
+    const sub = (s) => { let i = 0; for (const ch of s.toLowerCase()) { if (ch === q[i]) i += 1; if (i >= q.length) return true; } return q.length === 0; };
+    return all.filter((r) => sub(r.label + ' ' + r.hint));
+  }
+  toggleLang() { this.setState((s) => ({ lang: s.lang === 'ko' ? 'en' : 'ko' })); }
+  sendChat() { this.chatFromText(this.state.chatInput); }
+  chatFromText(raw) {
+    const t = (raw || '').trim();
+    if (!t) return;
+    this.setState((s) => ({ chat: [...s.chat, { side: 'in', meta: 'Telegram · 나 · 12:46', metaEn: 'Telegram · me · 12:46', t, tEn: t }], chatInput: '', typing: true }));
+    this.later(() => {
+      const ko = this.ko();
+      const reply = ko ? '확인했습니다. codex 실행 ' + this.fmt(this.state.elapsed.codex) + ' 경과 · 승인 ' + this.state.approvals.length + '건 대기중입니다.' : 'Got it. codex running ' + this.fmt(this.state.elapsed.codex) + ' · ' + this.state.approvals.length + ' approvals pending.';
+      this.setState((s) => ({ typing: false, chat: [...s.chat, { side: 'out', meta: 'openclaw · 12:46', metaEn: 'openclaw · 12:46', t: reply, tEn: reply }] }));
+    }, 1100);
+  }
+  fmt(sec) { const m = Math.floor(sec / 60); const s = sec % 60; return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s; }
+  closePane(id) {
+    if (id === 'claw') { this.setState((s) => ({ chatDock: false, focus: s.focus === 'claw' ? 'codex' : s.focus })); this.pushToast('info', this.ko() ? '채팅 페인 닫힘' : 'Chat pane closed', this.ko() ? '게이트웨이는 계속 실행중' : 'gateway keeps running'); return; }
+    if (this.state.running[id] && (id === 'codex' || id === 'ssh')) this.setState({ dialog: { type: 'close', pane: id } });
+    else this.pushToast('info', this.ko() ? '페인 닫기' : 'Pane closed', id + ' — ' + (this.ko() ? '실행중 작업 없음' : 'no active runs'));
+  }
+  renderVals() {
+    const s = this.state; const ko = s.lang === 'ko';
+    const focusOf = (id) => () => this.setState({ focus: id });
+    const a1 = s.approvals.find((a) => a.id === 'a1') || null;
+    const paneDefs = {
+      codex: { title: ko ? 'codex — pty-keys 수정' : 'codex — fix pty-keys', dot: s.running.codex ? '#35e58f' : '#5cbd87', meta: '~/ezterminal · main*', badge: s.running.codex ? (ko ? '● 실행중 ' + this.fmt(s.elapsed.codex) : '● running ' + this.fmt(s.elapsed.codex)) : (ko ? '중지됨' : 'stopped'), badgeC: s.running.codex ? '#8affba' : '#5cbd87', approval: a1, cursor: true },
+      claude: { title: ko ? 'claude — 릴리스 노트' : 'claude — release notes', dot: '#ffd166', meta: 'session #4f2a', badge: s.approvals.find((a) => a.agent === 'claude') ? (ko ? '승인 1' : '1 pending') : (ko ? '● ' + this.fmt(s.elapsed.claude) : '● ' + this.fmt(s.elapsed.claude)), badgeC: '#ffd166', approval: null, cursor: false },
+      ssh: { title: 'ssh build-01', dot: '#62d8ff', meta: 'deploy watch', badge: s.rtt + 'ms', badgeC: '#62d8ff', approval: null, cursor: false },
+      pwsh: { title: 'pwsh — 새 세션', dot: '#35e58f', meta: '~/ezterminal', badge: ko ? '유휴' : 'idle', badgeC: '#5cbd87', approval: null, cursor: true },
+      claw: { title: ko ? '🦞 OpenClaw — 채팅' : '🦞 OpenClaw — Chat', dot: '#35e58f', meta: 'Telegram · Discord', badge: a1 ? (ko ? '⚠ 승인 1' : '⚠ 1 pending') : (ko ? '● 연결됨' : '● connected'), badgeC: a1 ? '#ffd166' : '#8affba', approval: null, cursor: false, isChat: true },
+    };
+    const layoutMap = {
+      '1+2': { cols: '1.3fr 1fr', rows: '1fr 1fr', areas: { codex: '1 / 1 / 3 / 2', claude: '1 / 2 / 2 / 3', ssh: '2 / 2 / 3 / 3' } },
+      '2x1': { cols: '1fr 1fr', rows: '1fr', areas: { codex: '1 / 1 / 2 / 2', claude: '1 / 2 / 2 / 3' } },
+      single: { cols: '1fr', rows: '1fr', areas: { [s.focus]: '1 / 1 / 2 / 2' } },
+    };
+    const lm = s.chatDock
+      ? { cols: '1.25fr 1fr', rows: '1fr', areas: { codex: '1 / 1 / 2 / 2', claw: '1 / 2 / 2 / 3' } }
+      : layoutMap[s.layout];
+    const panes = Object.keys(lm.areas).filter((id) => id !== 'pwsh' || s.hasPwsh).map((id) => {
+      const d = paneDefs[id]; const focused = s.focus === id;
+      return {
+        id, ...d, lines: s.lines[id] || [], area: lm.areas[id],
+        border: focused ? '#2c6a47' : '#143523',
+        glow: focused ? '0 0 0 1px rgba(53,229,143,.25), 0 0 28px rgba(53,229,143,.18), 0 14px 34px rgba(0,0,0,.5)' : '0 8px 22px rgba(0,0,0,.4)',
+        dim: focused ? '1' : '.82',
+        approvalCmd: d.approval ? d.approval.cmd : '',
+        onFocus: focusOf(id),
+        onClose: (e) => { e.stopPropagation(); this.closePane(id); },
+        onApprove: (e) => { e.stopPropagation(); this.approve('a1'); },
+        onDeny: (e) => { e.stopPropagation(); this.deny('a1'); },
+      };
+    });
+    const dests = [
+      { id: 'explorer', icon: '🗂', label: ko ? '탐색기' : 'Explorer' },
+      { id: 'agents', icon: '🤖', label: ko ? '에이전트' : 'Agents', badge: s.approvals.length || false },
+      { id: 'monitor', icon: '📈', label: ko ? '모니터' : 'Monitor' },
+      { id: 'remote', icon: '📡', label: ko ? '리모트' : 'Remote' },
+      { id: 'openclaw', icon: '🦞', label: 'OpenClaw' },
+      { id: 'settings', icon: '⚙', label: ko ? '설정' : 'Settings', bottom: true },
+    ];
+    const railItems = dests.map((d) => ({
+      ...d,
+      color: s.dest === d.id && s.sidebarOpen ? '#8affba' : '#5cbd87',
+      bg: s.dest === d.id && s.sidebarOpen ? '#0b2416' : 'transparent',
+      shadow: s.dest === d.id && s.sidebarOpen ? 'inset 3px 0 0 #35e58f' : 'none',
+      mt: d.bottom ? 'auto' : '0',
+      on: () => this.setState((st) => (st.dest === d.id && st.sidebarOpen ? { sidebarOpen: false } : { dest: d.id, sidebarOpen: true, clawView: 'console' })),
+    }));
+    const mkLayout = (id, label, icon) => ({
+      id, label, icon,
+      on: () => this.setState({ layout: id, wsMenu: false, chatDock: false, focus: this.state.focus === 'claw' ? 'codex' : this.state.focus }),
+      bg: s.layout === id ? '#0b2416' : 'transparent', color: s.layout === id ? '#8affba' : '#9fd8bb',
+      border: s.layout === id ? '#2c6a47' : '#245b3d', right: s.layout === id ? '✓' : '',
+    });
+    const layoutRows = [mkLayout('1+2', ko ? '포커스 1 + 스택 2' : 'Focus 1 + stack 2', '⊞'), mkLayout('2x1', ko ? '나란히 2열' : 'Side by side', '⿲'), mkLayout('single', ko ? '단일 페인' : 'Single pane', '▭')];
+    const layoutChips = [{ ...mkLayout('2x1', '⊞ 2×1') , label:'⊞ 2×1'}, { ...mkLayout('1+2', '⊞ 1+2'), label:'⊞ 1+2' }, { ...mkLayout('single', ko ? '▭ 단일' : '▭ Single'), label: ko ? '▭ 단일' : '▭ Single' }];
+    const ccList = s.ccOpen ? this.ccRows() : [];
+    this._ccFlat = ccList;
+    let lastG = null;
+    const ccRender = ccList.map((r, i) => {
+      const head = r.g !== lastG ? r.g : ''; lastG = r.g;
+      return { ...r, head, sel: i === s.ccSel, bg: i === s.ccSel ? '#0b2416' : 'transparent', shadow: i === s.ccSel ? 'inset 2px 0 0 #35e58f' : 'none', lc: i === s.ccSel ? '#d9ffe9' : '#9fd8bb', right: i === s.ccSel ? (ko ? 'Enter 실행 ↵' : 'Enter ↵') : '', onClick: () => r.on(), fam: r.mono ? "'JetBrains Mono',monospace" : 'inherit' };
+    });
+    const qrTotal = 300;
+    return {
+      isBoot: s.screen === 'boot', isApp: s.screen === 'app', bootBeam: s.bootBeam, bootLogo: s.bootLogo, bootLog: s.bootLog,
+      skipBoot: () => this.setState({ screen: 'app' }),
+      lang: s.lang, langLabel: ko ? '한국어 ⇄ EN' : 'EN ⇄ 한국어', toggleLang: () => this.toggleLang(),
+      fx: s.fx, scanOp: String(Math.min(1, s.fx / 10 + 0.1)), showRoll: s.motion && s.fx >= 5,
+      motion: s.motion,
+      scale: s.scale, stageW: Math.round(1920 * s.scale), stageH: Math.round(1080 * s.scale),
+      rtt: s.rtt, netKb: s.netKb,
+      statusHint: ko ? '모바일 미러: Fold5 접속중' : 'Mobile mirror: Fold5 connected',
+      attention: s.approvals.length, hasAttention: s.approvals.length > 0,
+      bellClick: () => this.setState({ dest: 'agents', sidebarOpen: true }),
+      newTerminal: () => { this.setState((st) => ({ hasPwsh: true, layout: 'single', focus: 'pwsh' })); this.pushToast('ok', ko ? '새 터미널' : 'New terminal', ko ? 'pwsh 세션 생성 · 단일 레이아웃' : 'pwsh created · single layout'); },
+      openCC: () => this.setState({ ccOpen: true, ccQ: '', ccSel: 0 }),
+      ccOpen: s.ccOpen, ccQ: s.ccQ, ccRows: ccRender, ccEmpty: s.ccOpen && ccRender.length === 0,
+      ccClose: () => this.setState({ ccOpen: false }),
+      ccStop: (e) => e.stopPropagation(),
+      ccChange: (e) => this.setState({ ccQ: e.target.value, ccSel: 0 }),
+      ccKey: (e) => {
+        if (e.key === 'ArrowDown') { e.preventDefault(); this.setState((st) => ({ ccSel: Math.min(this._ccFlat.length - 1, st.ccSel + 1) })); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); this.setState((st) => ({ ccSel: Math.max(0, st.ccSel - 1) })); }
+        else if (e.key === 'Enter') { const r = this._ccFlat[s.ccSel]; if (r) r.on(); }
+        else if (e.key === 'Escape') this.setState({ ccOpen: false });
+      },
+      wsMenu: s.wsMenu, toggleWsMenu: () => this.setState((st) => ({ wsMenu: !st.wsMenu })), wsBtnBg: s.wsMenu ? '#0b2416' : 'transparent',
+      layoutRows, layoutChips,
+      savePreset: () => { this.setState({ wsMenu: false }); this.pushToast('ok', ko ? '프리셋 저장됨' : 'Preset saved', ko ? '에이전트 데스크 · ' + s.layout : 'Agent Desk · ' + s.layout); },
+      openSettings: () => this.setState({ dest: 'settings', sidebarOpen: true }),
+      railItems, sidebarOpen: s.sidebarOpen,
+      gridCols: lm.cols, gridRows: lm.rows, panes,
+      composer: s.composer, composerChange: (e) => this.setState({ composer: e.target.value }),
+      composerKey: (e) => { if (e.key === 'Enter') this.execCmd(s.composer); },
+      composerFocus: () => this.setState({ composerFocused: true }), composerBlur: () => this.setState({ composerFocused: false }),
+      composerBorder: s.composerFocused ? '#4bbd7a' : '#2c6a47',
+      composerPh: (ko ? '' : '→ ') + s.focus + (ko ? ' 페인에 명령 · Enter 실행 · clear 지우기' : ' pane · Enter to run · clear'),
+      openPaste: () => this.setState({ dialog: { type: 'paste' } }),
+      dialog: s.dialog, dialogIsPaste: !!s.dialog && s.dialog.type === 'paste', dialogIsClose: !!s.dialog && s.dialog.type === 'close',
+      dlgCancel: () => this.setState({ dialog: null }),
+      dlgPasteOk: () => { this.setState({ dialog: null }); this.appendLines(s.focus, [{ pre: '⇩', pc: '#ffd166', c: '#78dba5', t: ko ? '[142줄 · 18.2 KiB 붙여넣음]' : '[pasted 142 lines · 18.2 KiB]' }]); },
+      dlgKeepBg: () => { this.setState({ dialog: null }); this.pushToast('info', ko ? '백그라운드 유지' : 'Kept in background', ko ? '작업은 계속 실행됩니다' : 'runs continue'); },
+      dlgForce: () => {
+        const p = s.dialog ? s.dialog.pane : 'codex';
+        this.setState((st) => ({ dialog: null, running: { ...st.running, [p]: false } }));
+        this.appendLines(p, [{ pre: '✗', pc: '#ff6b7a', c: '#ff9aa5', t: ko ? '세션 강제 종료됨' : 'session force-killed' }]);
+        this.pushToast('warn', ko ? '강제 종료' : 'Force killed', p + (ko ? ' 세션 중단됨' : ' session stopped'));
+      },
+      closePaneName: s.dialog && s.dialog.pane ? paneDefs[s.dialog.pane].title : '',
+      toasts: s.toasts.map((t) => ({ ...t, border: t.kind === 'ok' ? '#2c6a47' : t.kind === 'warn' ? '#6b3540' : '#1e4a66', ic: t.kind === 'ok' ? '✓' : t.kind === 'warn' ? '⚠' : 'ℹ', icc: t.kind === 'ok' ? '#35e58f' : t.kind === 'warn' ? '#ff6b7a' : '#62d8ff', tc: t.kind === 'ok' ? '#c9f5dd' : t.kind === 'warn' ? '#ffb3bb' : '#cfeeff', onX: () => this.setState((st) => ({ toasts: st.toasts.filter((x) => x.id !== t.id) })) })),
+      // sidebar
+      dest: s.dest, isExplorer: s.dest === 'explorer', isAgents: s.dest === 'agents', isMonitor: s.dest === 'monitor', isRemote: s.dest === 'remote', isClaw: s.dest === 'openclaw', isSettings: s.dest === 'settings',
+      destTitle: (dests.find((d) => d.id === s.dest) || {}).label || '',
+      closeSidebar: () => this.setState({ sidebarOpen: false }),
+      approvals: s.approvals.map((a) => ({
+        ...a, agoT: ko ? a.ago : a.agoEn,
+        border: a.risk === 'danger' ? '#6b3540' : '#3a2f1a', bg: a.risk === 'danger' ? 'rgba(255,107,122,.06)' : 'rgba(255,209,102,.05)',
+        hc: a.risk === 'danger' ? '#ffb3bb' : '#ffd166', dotc: a.risk === 'danger' ? '#ff6b7a' : '#ffd166',
+        isDanger: a.risk === 'danger',
+        onOk: () => this.approve(a.id), onNo: () => this.deny(a.id),
+      })),
+      approvalCount: s.approvals.length, hasApprovals: s.approvals.length > 0,
+      runCodexEl: this.fmt(s.elapsed.codex), runClaudeEl: this.fmt(s.elapsed.claude),
+      runCodexPct: String(60 + (s.elapsed.codex % 30)), runClaudePct: String(30 + (s.elapsed.claude % 40)),
+      codexRunning: s.running.codex,
+      activity: s.activity.map((a) => ({ ...a, txtT: ko ? a.txt : a.txtEn })),
+      goCodex: () => this.setState({ focus: 'codex', layout: s.layout === 'single' ? 'single' : s.layout }),
+      newAgent: () => this.pushToast('info', ko ? '새 에이전트' : 'New agent', ko ? '연동 설정에서 프로필 선택' : 'choose a profile in settings'),
+      // monitor
+      cpuPct: String(38 + (s.tick % 9)), memPct: '35',
+      scopeShift: String(-(s.tick % 24)),
+      waterfall: [
+        { t: '12:44:' + String(31 + (s.tick % 9)).padStart(2, '0'), w: 40 + (s.tick * 13) % 45, kb: s.netKb + 'K', warn: false },
+        { t: '12:44:30', w: 78, kb: '42.0K', warn: true },
+        { t: '12:44:29', w: 34, kb: '9.2K', warn: false },
+        { t: '12:44:28', w: 22, kb: '5.1K', warn: false },
+        { t: '12:44:27', w: 41, kb: '11.8K', warn: false },
+      ].map((r) => ({ ...r, wpx: r.w + '%', color: r.warn ? 'linear-gradient(90deg,#ffd166,#8a6a1e)' : 'linear-gradient(90deg,#35e58f,#1e7a4e)', kc: r.warn ? '#ffd166' : '#78dba5' })),
+      // remote
+      tunnelOn: s.tunnelOn,
+      toggleTunnel: () => { this.setState((st) => ({ tunnelOn: !st.tunnelOn })); this.pushToast(s.tunnelOn ? 'warn' : 'ok', s.tunnelOn ? (ko ? '터널 중지' : 'Tunnel stopped') : (ko ? '터널 연결됨' : 'Tunnel up'), 'build-01'); },
+      tunnelStatus: s.tunnelOn ? '● ' + s.rtt + 'ms' : (ko ? '중지' : 'off'), tunnelColor: s.tunnelOn ? '#35e58f' : '#5cbd87',
+      tunnelKnobBg: s.tunnelOn ? '#35e58f' : '#123122', tunnelKnobC: s.tunnelOn ? '#001c0d' : '#245b3d',
+      tunnelKnobL: s.tunnelOn ? 'auto' : '2px', tunnelKnobR: s.tunnelOn ? '2px' : 'auto',
+      chatPh: ko ? '메시지 입력… (Enter 전송)' : 'Type a message… (Enter to send)',
+      ccPh: ko ? '명령·파일·세션·설정 검색' : 'Search commands · files · sessions · settings',
+      pixelOnline: s.pixelOnline, pixelStatus: s.pixelOnline ? (ko ? '● 온라인 · 미러 대기' : '● online · mirror ready') : (ko ? '마지막 접속 2일 전' : 'last seen 2d ago'), pixelColor: s.pixelOnline ? '#35e58f' : '#5cbd87',
+      openQr: () => this.setState({ qrOpen: true, qrSec: 272, qrScan: 0 }),
+      qrOpen: s.qrOpen, qrClose: () => this.setState({ qrOpen: false }),
+      qrStop: (e) => e.stopPropagation(),
+      qrMMSS: this.fmt(s.qrSec), qrPct: String(Math.round((s.qrSec / qrTotal) * 100)),
+      qrScan: s.qrScan, qrIdle: s.qrScan === 0, qrDetect: s.qrScan === 1,
+      simScan: () => {
+        this.setState({ qrScan: 1 });
+        this.later(() => { this.setState({ qrOpen: false, qrScan: 0, pixelOnline: true }); this.pushToast('ok', ko ? '페어링 완료' : 'Paired', 'Pixel 8 — ' + (ko ? '미러 대기중' : 'mirror ready')); }, 1600);
+      },
+      // openclaw
+      clawConsole: true, clawChat: false, chatDock: s.chatDock,
+      openChat: () => { this.setState({ chatDock: true, focus: 'claw' }); this.pushToast('ok', ko ? '채팅 페인 도킹' : 'Chat pane docked', ko ? '작업영역 우측에 열림 — 컴포저로 바로 전송' : 'docked right — composer sends to chat'); },
+      chatBtnLabel: s.chatDock ? (ko ? '채팅 페인으로 이동' : 'Focus chat pane') : (ko ? '채팅을 페인으로 열기' : 'Open chat as pane'),
+      backConsole: () => this.setState({ clawView: 'console' }),
+      chat: s.chat.map((m) => ({ ...m, metaT: ko ? m.meta : m.metaEn, tT: ko ? m.t : m.tEn, isIn: m.side === 'in', isOut: m.side === 'out' })),
+      typing: s.typing, chatInput: s.chatInput,
+      chatChange: (e) => this.setState({ chatInput: e.target.value }),
+      chatKey: (e) => { if (e.key === 'Enter') this.sendChat(); },
+      chatSend: () => this.sendChat(),
+      chatApproval: a1, chatApprovalCmd: a1 ? a1.cmd : '',
+      chatOk: () => this.approve('a1'), chatNo: () => this.deny('a1'),
+      dashToast: () => this.pushToast('info', ko ? '대시보드' : 'Dashboard', ko ? '외부 브라우저에서 열림 (시뮬레이션)' : 'opens in browser (simulated)'),
+      // explorer
+      crumbs: s.cwd.map((seg, i) => ({
+        n: seg, last: i === s.cwd.length - 1, notLast: i !== s.cwd.length - 1,
+        color: i === s.cwd.length - 1 ? '#d9ffe9' : '#78dba5',
+        on: () => this.setState({ cwd: s.cwd.slice(0, i + 1) }),
+      })),
+      fullPath: s.cwd.join('\\'),
+      canUp: s.cwd.length > 1,
+      goUp: () => { if (s.cwd.length > 1) this.setState({ cwd: s.cwd.slice(0, -1) }); },
+      upColor: s.cwd.length > 1 ? '#8affba' : '#3f8f63',
+      files: (() => {
+        const node = this._fs[s.cwd.join('/')] || {};
+        const dirs = (node.d || []).map((n) => ({
+          n, dir: true, icon: '📁', color: '#9fd8bb', bg: 'transparent', tag: '', tagC: '',
+          on: () => this.setState({ cwd: [...s.cwd, n] }),
+        }));
+        const files = (node.f || []).map((f) => ({
+          n: f.n, dir: false, icon: '·', color: f.n === s.explorerSel ? '#d9ffe9' : '#9fd8bb',
+          bg: f.n === s.explorerSel ? '#0b2416' : 'transparent',
+          tag: f.tag || '', tagC: f.hot ? '#35e58f' : '#62d8ff',
+          on: () => { this.setState({ explorerSel: f.n }); this.pushToast('info', ko ? '파일 열기' : 'Open file', f.n + (ko ? ' — 미리보기 (시뮬레이션)' : ' — preview (simulated)')); },
+        }));
+        const up = s.cwd.length > 1 ? [{ n: '..', dir: true, icon: '↰', color: '#78dba5', bg: 'transparent', tag: '', tagC: '', on: () => this.setState({ cwd: s.cwd.slice(0, -1) }) }] : [];
+        return [...up, ...dirs, ...files];
+      })(),
+      // settings
+      setFx: (e) => this.setState({ fx: Number(e.target.value) }),
+      langKoBtn: () => this.setState({ lang: 'ko' }), langEnBtn: () => this.setState({ lang: 'en' }),
+      langKoBg: ko ? '#0b2416' : 'transparent', langEnBg: ko ? 'transparent' : '#0b2416',
+      langKoC: ko ? '#8affba' : '#78dba5', langEnC: ko ? '#78dba5' : '#8affba',
+      toggleMotion: () => this.setState((st) => ({ motion: !st.motion })),
+      motionBg: s.motion ? '#35e58f' : '#123122', motionKnob: s.motion ? 'auto' : '2px', motionKnobR: s.motion ? '2px' : 'auto',
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -61,6 +61,8 @@ export interface ElectronDesktopRuntimeOptions {
   readonly desktopControlEnabled?: boolean;
   /** Injected so main can read the roster the bridge feeds. */
   readonly deviceRoster?: RemoteDeviceRoster;
+  /** Invalidates one-time codes as the managed listener leaves running. */
+  readonly revokePairingCodes?: () => void;
 }
 
 function reportDesktopRuntimeError(context: string, error: unknown): void {
@@ -278,8 +280,8 @@ export function createElectronDesktopRuntime(options: ElectronDesktopRuntimeOpti
         hostVersion: app.getVersion(),
         buildSha: process.env.EZTERMINAL_BUILD_SHA ?? process.env.GITHUB_SHA,
         desktopSource: desktopControlEnabled ? desktopHost : undefined,
-        onClientPresence: (identity, presence) =>
-          deviceRoster.record(identity, presence, Date.now()),
+        onClientPresence: (identity, presence, connectionId) =>
+          deviceRoster.record(identity, connectionId, presence, Date.now()),
       });
       return {
         port: bridge.port,
@@ -293,6 +295,7 @@ export function createElectronDesktopRuntime(options: ElectronDesktopRuntimeOpti
     stopAuxiliaryRuntime: options.stopAuxiliaryRuntime,
     publishRuntimeStatus: (status) => publishToDesktopWindows('remote:runtime-status', status),
     publishDesktopStatus: (status) => publishToDesktopWindows('remote:desktop-status', status),
+    revokePairingCodes: options.revokePairingCodes,
     reportError: reportDesktopRuntimeError,
   });
 }

@@ -214,6 +214,223 @@ describe('WsEzTerminalTransport — auth handshake', () => {
     expect(sockets[0].closed).toBe(true);
   });
 
+  it('downgrades one time from v3 to v2 only for a stored bearer', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'stored-bearer-token',
+      createSocket,
+    });
+    sockets[0].triggerOpen();
+    expect(sockets[0].lastSent()).toMatchObject({ kind: 'auth', protocolVersion: 3 });
+
+    sockets[0].triggerRawMessage({
+      kind: 'auth-fail',
+      reason: 'incompatible-protocol',
+      supportedProtocolVersion: 2,
+      supportedProtocolVersions: [1, 2],
+      hostVersion: '1.0.12',
+    });
+
+    expect(sockets).toHaveLength(2);
+    sockets[1].triggerOpen();
+    expect(sockets[1].lastSent()).toMatchObject({ kind: 'auth', protocolVersion: 2 });
+    sockets[1].triggerRawMessage({
+      kind: 'auth-ok',
+      protocolVersion: 2,
+      hostVersion: '1.0.12',
+    });
+    expect(transport.isAuthed).toBe(true);
+
+    const [snapshot, followup, decision, status, diff] = await Promise.all([
+      transport.getAgentActivitySnapshot(),
+      transport.sendAgentFollowup('activity-1', 'continue'),
+      transport.decideAgentApproval('activity-1', 'approval-1', 'allow'),
+      transport.getGitStatus('/repo'),
+      transport.getGitDiff('/repo'),
+    ]);
+    expect(snapshot).toEqual({ revision: 0, items: [] });
+    expect(followup).toEqual({ ok: false, error: 'delivery-failed' });
+    expect(decision).toEqual({ ok: false, error: 'delivery-failed' });
+    expect(status).toMatchObject({ availability: 'unavailable', tracked: false });
+    expect(diff).toEqual({ ok: false, error: 'git-failed' });
+    const v3OnlyKinds = new Set([
+      'agent-snapshot-get',
+      'agent-followup',
+      'agent-decision',
+      'git-status',
+      'git-diff',
+      'ping',
+    ]);
+    expect(
+      sockets[1].sent
+        .map((raw) => (JSON.parse(raw) as { kind: string }).kind)
+        .filter((kind) => v3OnlyKinds.has(kind)),
+    ).toEqual([]);
+  });
+
+  it('selects v1 when it is the only advertised common lower protocol', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'stored-bearer-token',
+      createSocket,
+    });
+    sockets[0].triggerOpen();
+    sockets[0].triggerRawMessage({
+      kind: 'auth-fail',
+      reason: 'incompatible-protocol',
+      supportedProtocolVersion: 1,
+      supportedProtocolVersions: [1],
+      hostVersion: '1.0.11',
+    });
+
+    expect(sockets).toHaveLength(2);
+    sockets[1].triggerOpen();
+    expect(sockets[1].lastSent()).toMatchObject({ kind: 'auth', protocolVersion: 1 });
+    sockets[1].triggerRawMessage({
+      kind: 'auth-ok',
+      protocolVersion: 1,
+      hostVersion: '1.0.11',
+    });
+    expect(transport.isAuthed).toBe(true);
+  });
+
+  it('never downgrades a one-time pairing credential', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'ABCD-EFGH',
+      createSocket,
+    });
+    sockets[0].triggerOpen();
+    sockets[0].triggerRawMessage({
+      kind: 'auth-fail',
+      reason: 'incompatible-protocol',
+      supportedProtocolVersion: 2,
+      supportedProtocolVersions: [1, 2],
+      hostVersion: '1.0.12',
+    });
+
+    expect(sockets).toHaveLength(1);
+    expect(transport.currentConnectionState).toBe('protocol-incompatible');
+  });
+
+  it('adopts only a canonical bearer returned by a one-time pairing handshake', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'ABCD-EFGH',
+      createSocket,
+    });
+    const issued = 'a'.repeat(64);
+    const seen: string[] = [];
+    transport.onTokenIssued((token) => seen.push(token));
+
+    sockets[0].triggerMessage({ kind: 'auth-ok', issuedToken: issued });
+
+    expect(transport.isAuthed).toBe(true);
+    await expect(transport.getRemoteToken()).resolves.toBe(issued);
+    expect(seen).toEqual([issued]);
+  });
+
+  it('replays a pairing-issued bearer to a listener that subscribes after auth completes', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'ABCD-EFGH',
+      createSocket,
+    });
+    const issued = 'a'.repeat(64);
+
+    sockets[0].triggerMessage({ kind: 'auth-ok', issuedToken: issued });
+    const seen: string[] = [];
+    transport.onTokenIssued((token) => seen.push(token));
+
+    expect(seen).toEqual([issued]);
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['empty', ''],
+    ['uppercase', 'A'.repeat(64)],
+    ['short', 'a'.repeat(63)],
+  ])('rejects a pairing auth-ok with a %s replacement bearer', (_label, issuedToken) => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'ABCD-EFGH',
+      createSocket,
+    });
+
+    sockets[0].triggerMessage({
+      kind: 'auth-ok',
+      ...(issuedToken === undefined ? {} : { issuedToken }),
+    });
+
+    expect(transport.isAuthed).toBe(false);
+    expect(transport.currentConnectionState).toBe('auth-rejected');
+    expect(sockets[0].closed).toBe(true);
+  });
+
+  it('rejects an unsolicited replacement bearer on stored-bearer authentication', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'b'.repeat(64),
+      createSocket,
+    });
+
+    sockets[0].triggerMessage({ kind: 'auth-ok', issuedToken: 'a'.repeat(64) });
+
+    expect(transport.isAuthed).toBe(false);
+    expect(transport.currentConnectionState).toBe('auth-rejected');
+    expect(sockets[0].closed).toBe(true);
+  });
+
+  it('ignores late auth envelopes after a socket is already authenticated', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'stored-bearer-token',
+      createSocket,
+      newId: () => 'status-1',
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    const status = transport.getGitStatus('/repo');
+
+    sockets[0].triggerRawMessage({
+      kind: 'auth-fail',
+      reason: 'incompatible-protocol',
+      supportedProtocolVersion: 2,
+      supportedProtocolVersions: [1, 2],
+      hostVersion: '1.0.12',
+    });
+    sockets[0].triggerRawMessage({
+      kind: 'auth-ok',
+      protocolVersion: 99,
+      hostVersion: '',
+    });
+
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0].closed).toBe(false);
+    expect(transport.isAuthed).toBe(true);
+    expect(transport.currentConnectionState).toBe('connected');
+
+    sockets[0].triggerMessage({
+      kind: 'git-status-reply',
+      requestId: 'status-1',
+      status: {
+        availability: 'ready',
+        tracked: true,
+        branch: 'main',
+        changes: [],
+        truncated: false,
+      },
+    });
+    await expect(status).resolves.toMatchObject({ availability: 'ready', branch: 'main' });
+  });
+
   it('ignores application messages before auth and after a protocol rejection', () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
@@ -248,13 +465,13 @@ describe('WsEzTerminalTransport — auth handshake', () => {
     },
   );
 
-  it('isAuthed flips true on auth-ok and false on auth-fail', () => {
+  it('isAuthed flips true on auth-ok and false when the authenticated socket closes', () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
     expect(transport.isAuthed).toBe(false);
     sockets[0].triggerMessage({ kind: 'auth-ok' });
     expect(transport.isAuthed).toBe(true);
-    sockets[0].triggerMessage({ kind: 'auth-fail' });
+    sockets[0].triggerClose();
     expect(transport.isAuthed).toBe(false);
   });
 
@@ -269,11 +486,134 @@ describe('WsEzTerminalTransport — auth handshake', () => {
     sockets[0].triggerMessage({ kind: 'auth-ok' });
     sockets[0].triggerMessage({ kind: 'auth-ok' }); // repeat — must NOT re-fire (no transition)
     sockets[0].triggerMessage({ kind: 'auth-fail' });
+    expect(seen).toEqual([false, true]);
+    sockets[0].triggerClose();
     expect(seen).toEqual([false, true, false]);
 
     unsub();
-    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    transport.retryNow();
+    sockets.at(-1)?.triggerMessage({ kind: 'auth-ok' });
     expect(seen).toEqual([false, true, false]); // no further calls after unsubscribe
+  });
+});
+
+describe('WsEzTerminalTransport - correlated RTT probes', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('accepts only the outstanding probe id and measures against the local clock', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    const health: ConnectionHealthSnapshot[] = [];
+    transport.onConnectionHealthChange((snapshot) => health.push(snapshot));
+
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    const ping = sockets[0].sent
+      .map((raw) => JSON.parse(raw) as Record<string, unknown>)
+      .find((message) => message.kind === 'ping');
+    expect(ping).toMatchObject({ kind: 'ping', probeId: expect.any(String) });
+
+    vi.setSystemTime(10_025);
+    sockets[0].triggerMessage({ kind: 'pong', probeId: 'unsolicited', sentAt: 0 });
+    expect(health.at(-1)?.roundTripMs).toBeNull();
+
+    sockets[0].triggerMessage({ kind: 'pong', probeId: ping!.probeId, sentAt: 0 });
+    expect(health.at(-1)?.roundTripMs).toBe(25);
+
+    vi.setSystemTime(10_050);
+    sockets[0].triggerMessage({ kind: 'pong', probeId: ping!.probeId, sentAt: 0 });
+    expect(health.at(-1)?.roundTripMs).toBe(25);
+    transport.disconnect();
+  });
+});
+
+describe('WsEzTerminalTransport - bounded Git replies', () => {
+  it('accepts a valid correlated status and diff payload', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const ids = ['status-1', 'diff-1'];
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      newId: () => ids.shift()!,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const status = transport.getGitStatus('/repo');
+    const diff = transport.getGitDiff('/repo');
+    sockets[0].triggerMessage({
+      kind: 'git-status-reply',
+      requestId: 'status-1',
+      status: {
+        availability: 'ready',
+        tracked: true,
+        branch: 'feat/handoff',
+        changes: [{ path: 'src/App.tsx', kind: 'modified', added: 2, removed: 1 }],
+        truncated: false,
+      },
+    });
+    sockets[0].triggerMessage({
+      kind: 'git-diff-reply',
+      requestId: 'diff-1',
+      result: {
+        ok: true,
+        text: 'diff --git a/src/App.tsx b/src/App.tsx',
+        truncated: true,
+        omissions: [{ path: 'assets/large.bin', reason: 'too-large' }],
+      },
+    });
+
+    await expect(status).resolves.toMatchObject({
+      availability: 'ready',
+      branch: 'feat/handoff',
+    });
+    await expect(diff).resolves.toMatchObject({
+      ok: true,
+      truncated: true,
+      omissions: [{ path: 'assets/large.bin', reason: 'too-large' }],
+    });
+  });
+
+  it('settles malformed or path-escaping replies with explicit unavailable results', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const ids = ['status-1', 'diff-1'];
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      newId: () => ids.shift()!,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const status = transport.getGitStatus('/repo');
+    const diff = transport.getGitDiff('/repo');
+    sockets[0].triggerRawMessage({
+      kind: 'git-status-reply',
+      requestId: 'status-1',
+      status: {
+        availability: 'ready',
+        tracked: true,
+        changes: [{ path: '../outside.txt', kind: 'modified' }],
+        truncated: false,
+      },
+    });
+    sockets[0].triggerRawMessage({
+      kind: 'git-diff-reply',
+      requestId: 'diff-1',
+      result: {
+        ok: true,
+        text: 'x'.repeat(200_001),
+        truncated: true,
+        omissions: [],
+      },
+    });
+
+    await expect(status).resolves.toMatchObject({
+      availability: 'unavailable',
+      tracked: false,
+    });
+    await expect(diff).resolves.toEqual({ ok: false, error: 'git-failed' });
   });
 });
 
@@ -570,6 +910,9 @@ describe('WsEzTerminalTransport — createSession / destroySession / listSession
     const worktrees = transport.executeWorktree({ action: 'list', cwd: '/repo' });
     const agentSnapshot = transport.getAgentActivitySnapshot();
     const followup = transport.sendAgentFollowup('agent-1', 'continue');
+    const decision = transport.decideAgentApproval('agent-1', 'approval-1', 'allow');
+    const gitStatus = transport.getGitStatus('/repo');
+    const gitDiff = transport.getGitDiff('/repo');
     const files = transport.listFiles('/repo');
     const roots = transport.listFileRoots();
     const location = transport.resolveTerminalFileLocation({
@@ -598,6 +941,9 @@ describe('WsEzTerminalTransport — createSession / destroySession / listSession
     await expect(worktrees).resolves.toMatchObject({ ok: false, error: 'IO_ERROR' });
     await expect(agentSnapshot).resolves.toEqual({ revision: 0, items: [] });
     await expect(followup).resolves.toEqual({ ok: false, error: 'delivery-failed' });
+    await expect(decision).resolves.toEqual({ ok: false, error: 'outcome-unknown' });
+    await expect(gitStatus).resolves.toMatchObject({ availability: 'unavailable', tracked: false });
+    await expect(gitDiff).resolves.toEqual({ ok: false, error: 'git-failed' });
     await expect(files).resolves.toEqual({ ok: false, error: expect.any(String) });
     await expect(roots).resolves.toEqual([]);
     await expect(location).resolves.toEqual({ ok: false, reason: 'unreadable' });
@@ -626,11 +972,15 @@ describe('WsEzTerminalTransport — createSession / destroySession / listSession
     const sentBefore = sockets[0].sent.length;
 
     const sessions = transport.listSessions();
+    const gitStatus = transport.getGitStatus('/repo');
+    const gitDiff = transport.getGitDiff('/repo');
     const files = transport.listFiles('/repo');
     const create = transport.createSession();
     const createAssertion = expect(create).rejects.toThrow('Not connected to EZTerminal');
 
     await expect(sessions).resolves.toEqual([]);
+    await expect(gitStatus).resolves.toMatchObject({ availability: 'unavailable', tracked: false });
+    await expect(gitDiff).resolves.toEqual({ ok: false, error: 'git-failed' });
     await expect(files).resolves.toEqual({ ok: false, error: 'Not connected to EZTerminal' });
     await createAssertion;
     expect(sockets[0].sent).toHaveLength(sentBefore);
@@ -1394,7 +1744,6 @@ describe('WsEzTerminalTransport — connection health and explicit retry', () =>
   it('allows one explicit fresh handshake after auth rejection', () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
-    sockets[0].triggerMessage({ kind: 'auth-ok' });
     sockets[0].triggerMessage({ kind: 'auth-fail', reason: 'transient' });
     expect(transport.currentConnectionState).toBe('auth-rejected');
 
@@ -1661,6 +2010,58 @@ describe('WsEzTerminalTransport — session mirroring (M2)', () => {
 });
 
 describe('WsEzTerminalTransport — Agent Activity', () => {
+  it('ignores a malformed v3 snapshot instead of throwing or replacing the cache', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    const seen: number[] = [];
+    transport.onAgentActivitySnapshot((snapshot) => seen.push(snapshot.revision));
+
+    expect(() => {
+      sockets[0].triggerMessage({ kind: 'agent-snapshot', snapshot: null });
+      sockets[0].triggerMessage({
+        kind: 'agent-snapshot',
+        snapshot: { revision: 1, items: [{ id: 'missing-everything-else' }] },
+      });
+    }).not.toThrow();
+    expect(seen).toEqual([0]);
+  });
+
+  it('settles malformed correlated agent replies with fail-closed results', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    let id = 0;
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      newId: () => `req-${++id}`,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const snapshot = transport.getAgentActivitySnapshot();
+    const followup = transport.sendAgentFollowup('activity-1', 'continue');
+    const decision = transport.decideAgentApproval('activity-1', 'approval-1', 'allow');
+    sockets[0].triggerRawMessage({
+      kind: 'agent-snapshot',
+      requestId: 'req-1',
+      snapshot: null,
+    });
+    sockets[0].triggerRawMessage({
+      kind: 'agent-followup-reply',
+      requestId: 'req-2',
+      result: { ok: false, error: 'invented' },
+    });
+    sockets[0].triggerRawMessage({
+      kind: 'agent-decision-reply',
+      requestId: 'req-3',
+      result: null,
+    });
+
+    await expect(snapshot).resolves.toEqual({ revision: 0, items: [] });
+    await expect(followup).resolves.toEqual({ ok: false, error: 'delivery-failed' });
+    await expect(decision).resolves.toEqual({ ok: false, error: 'outcome-unknown' });
+  });
+
   it('keeps the newest revision, correlates snapshot requests, and forwards followup results', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     let id = 0;
@@ -1706,7 +2107,63 @@ describe('WsEzTerminalTransport — Agent Activity', () => {
     });
     sockets[0].triggerMessage({ kind: 'agent-followup-reply', requestId: 'req-2', result: { ok: true } });
     await expect(followupPromise).resolves.toEqual({ ok: true });
+
+    const decisionPromise = transport.decideAgentApproval('activity-1', 'approval-1', 'allow');
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-decision',
+      requestId: 'req-3',
+      activityId: 'activity-1',
+      approvalId: 'approval-1',
+      decision: 'allow',
+    });
+    sockets[0].triggerMessage({ kind: 'agent-decision-reply', requestId: 'req-3', result: { ok: true } });
+    await expect(decisionPromise).resolves.toEqual({ ok: true });
     unsubscribe();
+  });
+
+  it('retries an ambiguous approval decision with the same idempotency key after reconnect', async () => {
+    vi.useFakeTimers();
+    try {
+      const { createSocket, sockets } = makeCreateSocket();
+      const transport = new WsEzTerminalTransport({
+        url: 'ws://x',
+        token: 'b'.repeat(64),
+        createSocket,
+        newId: () => 'decision-1',
+        initialBackoffMs: 100,
+      });
+      sockets[0].triggerMessage({ kind: 'auth-ok' });
+      let settled = false;
+      const decision = transport
+        .decideAgentApproval('activity-1', 'approval-1', 'allow')
+        .finally(() => {
+          settled = true;
+        });
+
+      sockets[0].triggerClose();
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      vi.advanceTimersByTime(100);
+      sockets[1].triggerMessage({ kind: 'auth-ok' });
+      expect(sockets[1].sent.map((raw) => JSON.parse(raw))).toContainEqual({
+        kind: 'agent-decision',
+        requestId: 'decision-1',
+        activityId: 'activity-1',
+        approvalId: 'approval-1',
+        decision: 'allow',
+      });
+      sockets[1].triggerMessage({
+        kind: 'agent-decision-reply',
+        requestId: 'decision-1',
+        result: { ok: true },
+      });
+
+      await expect(decision).resolves.toEqual({ ok: true });
+      transport.disconnect();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('fails followup locally while unauthenticated', async () => {
@@ -1757,6 +2214,64 @@ describe('WsEzTerminalTransport — Agent Activity', () => {
         { revision: 0, count: 0 },
         { revision: 1, count: 1 },
       ]);
+      transport.disconnect();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears cached v3 state and ignores unsolicited v3 messages after a v2 downgrade', async () => {
+    vi.useFakeTimers();
+    try {
+      const { createSocket, sockets } = makeCreateSocket();
+      const transport = new WsEzTerminalTransport({
+        url: 'ws://x',
+        token: 'b'.repeat(64),
+        createSocket,
+        initialBackoffMs: 100,
+      });
+      const activity = {
+        id: 'old-activity',
+        sessionId: 'sess-1',
+        provider: 'codex' as const,
+        cwd: '/old',
+        status: 'working' as const,
+        createdAt: 1,
+        updatedAt: 2,
+      };
+      const seen: number[] = [];
+      transport.onAgentActivitySnapshot((snapshot) => seen.push(snapshot.revision));
+      sockets[0].triggerMessage({ kind: 'auth-ok' });
+      sockets[0].triggerMessage({
+        kind: 'agent-snapshot',
+        snapshot: { revision: 50, items: [activity] },
+      });
+
+      sockets[0].triggerClose();
+      vi.advanceTimersByTime(100);
+      sockets[1].triggerOpen();
+      sockets[1].triggerRawMessage({
+        kind: 'auth-fail',
+        reason: 'incompatible-protocol',
+        supportedProtocolVersions: [2],
+        hostVersion: '1.0.12',
+      });
+      sockets[2].triggerOpen();
+      sockets[2].triggerRawMessage({
+        kind: 'auth-ok',
+        protocolVersion: 2,
+        hostVersion: '1.0.12',
+      });
+      sockets[2].triggerRawMessage({
+        kind: 'agent-snapshot',
+        snapshot: { revision: 99, items: [activity] },
+      });
+
+      expect(seen).toEqual([0, 50, 0]);
+      await expect(transport.getAgentActivitySnapshot()).resolves.toEqual({
+        revision: 0,
+        items: [],
+      });
       transport.disconnect();
     } finally {
       vi.useRealTimers();
@@ -2295,6 +2810,174 @@ describe('WsEzTerminalTransport — file explorer (M4)', () => {
     });
   });
 
+  it.each([
+    ['unsafe allocation', { fileSize: 1, sendBytes: 2 ** 40, isText: true, truncated: false }],
+    ['negative length', { fileSize: 1, sendBytes: -1, isText: true, truncated: false }],
+    ['non-integer length', { fileSize: 1, sendBytes: 0.5, isText: true, truncated: false }],
+  ])('fails a malformed file-read meta closed without throwing (%s)', async (_label, meta) => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.readTextFile('C:\\a.txt');
+    expect(() => sockets[0].triggerMessage({
+      kind: 'file-read-meta',
+      requestId: 'req-1',
+      ok: true,
+      ...meta,
+    })).not.toThrow();
+
+    await expect(promise).resolves.toEqual({
+      ok: false,
+      error: 'Invalid file read response',
+    });
+    expect(sockets[0].lastSent()).toEqual({ kind: 'file-read-cancel', requestId: 'req-1' });
+    expect(() => sockets[0].triggerMessage({
+      kind: 'file-read-chunk',
+      requestId: 'req-1',
+      offset: 0,
+      data: uint8ArrayToBase64(new Uint8Array([1])),
+      done: true,
+    })).not.toThrow();
+  });
+
+  it('rejects a text meta that silently omits bytes for a non-empty text file', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.readTextFile('C:\\a.txt');
+    sockets[0].triggerMessage({
+      kind: 'file-read-meta',
+      requestId: 'req-1',
+      ok: true,
+      fileSize: 5,
+      sendBytes: 0,
+      isText: true,
+      truncated: false,
+    });
+
+    await expect(promise).resolves.toEqual({
+      ok: false,
+      error: 'Invalid file read response',
+    });
+    expect(sockets[0].lastSent()).toEqual({ kind: 'file-read-cancel', requestId: 'req-1' });
+  });
+
+  it('rejects a raw download meta whose byte count does not match the file size', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.downloadFile('C:\\a.bin', () => undefined);
+    sockets[0].triggerMessage({
+      kind: 'file-read-meta',
+      requestId: 'req-1',
+      ok: true,
+      fileSize: 5,
+      sendBytes: 0,
+      isText: true,
+      truncated: false,
+    });
+
+    await expect(promise).rejects.toThrow('Invalid file read response');
+    expect(sockets[0].lastSent()).toEqual({ kind: 'file-read-cancel', requestId: 'req-1' });
+  });
+
+  it('rejects preview metadata whose classification and streamed byte count disagree', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.readFilePreview('C:\\photo.png');
+    sockets[0].triggerMessage({
+      kind: 'file-read-meta',
+      requestId: 'req-1',
+      ok: true,
+      fileSize: 5,
+      sendBytes: 0,
+      isText: false,
+      truncated: false,
+      preview: { kind: 'image', name: 'photo.png', mime: 'image/png', width: 20, height: 10 },
+    });
+
+    await expect(promise).resolves.toEqual({
+      ok: false,
+      error: 'Invalid file read response',
+    });
+    expect(sockets[0].lastSent()).toEqual({ kind: 'file-read-cancel', requestId: 'req-1' });
+  });
+
+  it.each([
+    ['out-of-order offset', { offset: 1, data: new Uint8Array([1]), done: false }],
+    ['oversized write', { offset: 4, data: new Uint8Array([1, 2]), done: true }],
+    ['premature final chunk', { offset: 0, data: new Uint8Array([1, 2]), done: true }],
+    ['missing final marker', { offset: 0, data: new Uint8Array([1, 2, 3, 4, 5]), done: false }],
+  ])('fails a malformed file-read chunk closed without returning corrupt bytes (%s)', async (
+    _label,
+    chunk,
+  ) => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.readTextFile('C:\\a.txt');
+    sockets[0].triggerMessage({
+      kind: 'file-read-meta',
+      requestId: 'req-1',
+      ok: true,
+      fileSize: 5,
+      sendBytes: 5,
+      isText: true,
+      truncated: false,
+    });
+    expect(() => sockets[0].triggerMessage({
+      kind: 'file-read-chunk',
+      requestId: 'req-1',
+      offset: chunk.offset,
+      data: uint8ArrayToBase64(chunk.data),
+      done: chunk.done,
+    })).not.toThrow();
+
+    await expect(promise).resolves.toEqual({
+      ok: false,
+      error: 'Invalid file read response',
+    });
+    expect(sockets[0].lastSent()).toEqual({ kind: 'file-read-cancel', requestId: 'req-1' });
+  });
+
+  it('rejects a duplicate file-read meta and ignores every later frame for the failed request', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.readTextFile('C:\\a.txt');
+    const meta = {
+      kind: 'file-read-meta' as const,
+      requestId: 'req-1',
+      ok: true as const,
+      fileSize: 5,
+      sendBytes: 5,
+      isText: true,
+      truncated: false,
+    };
+    sockets[0].triggerMessage(meta);
+    sockets[0].triggerMessage(meta);
+
+    await expect(promise).resolves.toEqual({
+      ok: false,
+      error: 'Invalid file read response',
+    });
+    expect(() => sockets[0].triggerMessage({
+      kind: 'file-read-chunk',
+      requestId: 'req-1',
+      offset: 0,
+      data: uint8ArrayToBase64(new Uint8Array([1, 2, 3, 4, 5])),
+      done: true,
+    })).not.toThrow();
+    expect(sockets[0].lastSent()).toEqual({ kind: 'file-read-cancel', requestId: 'req-1' });
+  });
+
   it('readFilePreview reconstructs a magic-classified image from metadata and streamed bytes', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
@@ -2367,6 +3050,32 @@ describe('WsEzTerminalTransport — file explorer (M4)', () => {
       kind: 'pdf',
       name: 'report.bin',
       mime: 'application/pdf',
+      fileSize: 42,
+    });
+  });
+
+  it('readFilePreview resolves unsupported metadata without receiving file bytes', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket, newId: () => 'req-1' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const promise = transport.readFilePreview('C:\\archive.bin');
+    sockets[0].triggerMessage({
+      kind: 'file-read-meta',
+      requestId: 'req-1',
+      ok: true,
+      fileSize: 42,
+      sendBytes: 0,
+      isText: false,
+      truncated: false,
+      preview: { kind: 'unsupported', name: 'archive.bin', reason: 'binary' },
+    });
+
+    await expect(promise).resolves.toEqual({
+      ok: true,
+      kind: 'unsupported',
+      name: 'archive.bin',
+      reason: 'binary',
       fileSize: 42,
     });
   });

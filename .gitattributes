@@ -13,3 +13,10 @@ mobile/android/gradlew text eol=lf
 /e2e/release-performance.spec.ts text eol=lf
 /e2e/fixtures/large-plain-output.js text eol=lf
 /e2e/fixtures/retention-pressure-output.js text eol=lf
+
+# The audited desktop handoff sources are hash-pinned byte-for-byte.
+/docs/ux/reference/desktop-handoff/*.md text eol=lf
+/docs/ux/reference/desktop-handoff/*.html text eol=lf
+/docs/ux/reference/desktop-handoff/*.js text eol=lf
+/docs/ux/reference/desktop-handoff/*.json text eol=lf
+/docs/ux/reference/desktop-handoff/*.png binary

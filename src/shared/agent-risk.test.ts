@@ -36,6 +36,52 @@ describe('classifyCommandRisk — danger', () => {
   it('takes the worst link in a chain', () => {
     expect(classifyCommandRisk('ls && rm -rf build')).toBe('danger');
     expect(classifyCommandRisk('git status; pnpm build')).toBe('write');
+    expect(classifyCommandRisk('echo $(rm -rf out)')).toBe('danger');
+  });
+
+  it('does not let an apostrophe inside double quotes hide command substitution', () => {
+    expect(classifyCommandRisk('echo "can\'t $(rm -rf out)"')).toBe('danger');
+    expect(classifyCommandRisk('echo "can\'t `rm -rf out`"')).toBe('danger');
+  });
+
+  it('does not treat a PowerShell path separator as a shell escape', () => {
+    expect(classifyApprovalRisk(
+      'PowerShell',
+      'echo \\$(Remove-Item -Recurse out)',
+    )).toBe('danger');
+  });
+
+  it.each([
+    ['Bash', "bash -c 'rm -rf out'"],
+    ['PowerShell', 'powershell -Command "Remove-Item -Recurse C:\\temp"'],
+    ['Cmd', 'cmd /c "rd /s /q C:\\temp"'],
+  ])('inspects a command delegated to a nested shell (%s)', (tool, command) => {
+    expect(classifyApprovalRisk(tool, command)).toBe('danger');
+  });
+
+  it('keeps parsing PowerShell statements after a backtick escape', () => {
+    expect(classifyApprovalRisk(
+      'PowerShell',
+      'echo `x; Remove-Item -Recurse C:\\temp',
+    )).toBe('danger');
+  });
+
+  it('bounds deeply nested POSIX command substitutions conservatively', () => {
+    const command = `echo ${'$('.repeat(32)}echo ok${')'.repeat(32)}`;
+    expect(() => classifyCommandRisk(command)).not.toThrow();
+    expect(classifyCommandRisk(command)).toBe('danger');
+  });
+
+  it('bounds a POSIX backtick substitution reached at the recursion limit', () => {
+    const command = `echo ${'$('.repeat(8)}echo \`echo ok\`${')'.repeat(8)}`;
+    expect(() => classifyCommandRisk(command)).not.toThrow();
+    expect(classifyCommandRisk(command)).toBe('danger');
+  });
+
+  it('bounds a delegated shell reached at the recursion limit', () => {
+    const command = `echo ${'$('.repeat(8)}bash -c 'echo ok'${')'.repeat(8)}`;
+    expect(() => classifyCommandRisk(command)).not.toThrow();
+    expect(classifyCommandRisk(command)).toBe('danger');
   });
 });
 
@@ -49,7 +95,16 @@ describe('classifyCommandRisk — not danger', () => {
 
   it('does not classify quoted text as the command it names', () => {
     expect(classifyCommandRisk('echo "rm -rf /"')).toBe('read');
+    expect(classifyCommandRisk("echo '$(rm -rf /)'")).toBe('read');
+    expect(classifyCommandRisk('echo \\$(rm -rf /)')).toBe('read');
     expect(classifyCommandRisk("git commit -m 'stop using rm -rf here'")).toBe('write');
+  });
+
+  it('treats redirection and command substitution as writes', () => {
+    expect(classifyCommandRisk('echo secret > .env')).toBe('write');
+    expect(classifyCommandRisk('printf x >> config')).toBe('write');
+    expect(classifyCommandRisk('echo "$(touch marker)"')).toBe('write');
+    expect(classifyCommandRisk('echo `whoami`')).toBe('write');
   });
 
   it('treats a plain delete as a write, not a catastrophe', () => {
@@ -86,6 +141,30 @@ describe('classifyCommandRisk — read', () => {
     expect(classifyCommandRisk('git branch -D old-work')).toBe('write');
     expect(classifyCommandRisk('git branch')).toBe('read');
     expect(classifyCommandRisk('git remote --set-url origin git@example.com:x.git')).toBe('write');
+  });
+
+  it.each([
+    'git config user.name x',
+    'git remote add origin git@example.com:x.git',
+    'git branch new-branch',
+    'git tag v1.0.0',
+    'git stash',
+    'git worktree add ../topic topic',
+  ])('does not label mutating porcelain as read: %s', (command) => {
+    expect(classifyCommandRisk(command)).toBe('write');
+  });
+
+  it.each([
+    'git config user.name',
+    'git config --get user.name',
+    'git remote -v',
+    'git remote show origin',
+    'git branch --list topic*',
+    'git tag --list v1*',
+    'git stash list',
+    'git worktree list',
+  ])('keeps explicit inspection porcelain read-only: %s', (command) => {
+    expect(classifyCommandRisk(command)).toBe('read');
   });
 
   it('does not assume an unknown command is safe', () => {

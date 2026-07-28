@@ -72,6 +72,11 @@ export interface FileReadStream {
 
 const IDLE_SWEEP_INTERVAL_MS = 60_000;
 const UPLOAD_IDLE_TIMEOUT_MS = 120_000;
+/** Process-wide ceiling for upload part files/FileHandles. Per-connection
+ * limits live in RemoteBridge; this is the final authority across reconnects
+ * and every caller sharing one FileService instance. Pending opens reserve a
+ * slot before their first filesystem await. */
+export const MAX_OPEN_UPLOADS = 64;
 
 const RESERVED_DEVICE_NAMES = new Set([
   'con', 'prn', 'aux', 'nul',
@@ -141,6 +146,10 @@ interface UploadRecord {
   readonly dir: string;
   readonly finalName: string;
   readonly declaredSize: number;
+  /** False as soon as commit/abort becomes the terminal queued operation. */
+  acceptingChunks: boolean;
+  /** Linearizes every fd mutation for this upload. Always settles. */
+  operationTail: Promise<void>;
   receivedBytes: number;
   lastActivity: number;
 }
@@ -150,6 +159,11 @@ export class FileService {
   private readonly homeDir: string;
   private readonly newId: () => string;
   private readonly uploads = new Map<string, UploadRecord>();
+  private readonly pendingUploadIds = new Set<string>();
+  private readonly pendingUploadBeginSettlements = new Set<Promise<void>>();
+  private pendingUploadBegins = 0;
+  private disposed = false;
+  private disposePromise: Promise<void> | null = null;
   private readonly sweepTimer: ReturnType<typeof setInterval>;
 
   constructor(options: FileServiceOptions) {
@@ -160,9 +174,23 @@ export class FileService {
     this.sweepTimer.unref();
   }
 
-  /** Clears the idle-upload sweep interval — call in tests and on app quit. */
-  dispose(): void {
+  /** Stops new uploads and drains every pending/active upload exactly once. */
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
     clearInterval(this.sweepTimer);
+    this.disposed = true;
+    const pendingBegins = [...this.pendingUploadBeginSettlements];
+    const activeUploadIds = [...this.uploads.keys()];
+    this.disposePromise = (async () => {
+      await Promise.all([
+        ...activeUploadIds.map((uploadId) => this.abortUpload(uploadId)),
+        ...pendingBegins,
+      ]);
+      // Pending begins observe `disposed` before publishing a record, but a
+      // second identity-checked sweep keeps the postcondition explicit.
+      await Promise.all([...this.uploads.keys()].map((uploadId) => this.abortUpload(uploadId)));
+    })();
+    return this.disposePromise;
   }
 
   // ── browsing ──────────────────────────────────────────────────────────────
@@ -443,7 +471,20 @@ export class FileService {
         if (signal?.aborted || closePromise) throw new Error('file read cancelled');
         const len = Math.min(FILE_CHUNK_BYTES, sendBytes - sent);
         const buf = Buffer.alloc(len);
-        if (len > 0) await handle.read(buf, 0, len, sent);
+        let bytesRead = 0;
+        while (bytesRead < len) {
+          if (signal?.aborted || closePromise) throw new Error('file read cancelled');
+          const result = await handle.read(
+            buf,
+            bytesRead,
+            len - bytesRead,
+            sent + bytesRead,
+          );
+          if (result.bytesRead === 0) {
+            throw new Error('file changed during read');
+          }
+          bytesRead += result.bytesRead;
+        }
         const offset = sent;
         sent += len;
         return { offset, data: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength), done: sent >= sendBytes };
@@ -509,38 +550,76 @@ export class FileService {
     name: string,
     size: number,
   ): Promise<{ ok: true; uploadId: string; finalName: string } | { ok: false; error: string }> {
+    if (this.disposed) return { ok: false, error: 'file service is disposed' };
     const nameErr = validateEntryName(name);
     if (nameErr) return { ok: false, error: nameErr };
     if (!Number.isInteger(size) || size < 0 || size > UPLOAD_MAX_FILE_BYTES) {
       return { ok: false, error: `size must be an integer between 0 and ${UPLOAD_MAX_FILE_BYTES} bytes` };
     }
-    const dir = path.resolve(dirPath);
-    try {
-      const dirStat = await fs.stat(dir);
-      if (!dirStat.isDirectory()) return { ok: false, error: 'not a directory' };
-    } catch (err) {
-      return { ok: false, error: errorMessage(err) };
+    if (this.uploads.size + this.pendingUploadBegins >= MAX_OPEN_UPLOADS) {
+      return { ok: false, error: 'too many active uploads' };
     }
 
-    const finalName = await resolveCollisionName(dir, name);
-    const uploadId = this.newId();
-    const partPath = path.join(dir, `${finalName}.${uploadId}.ezpart`);
-    let fd: FileHandle;
-    try {
-      fd = await fs.open(partPath, 'wx');
-    } catch (err) {
-      return { ok: false, error: errorMessage(err) };
-    }
-    this.uploads.set(uploadId, {
-      fd,
-      partPath,
-      dir,
-      finalName,
-      declaredSize: size,
-      receivedBytes: 0,
-      lastActivity: Date.now(),
+    // Reserve synchronously. Without this counter, a burst of begin calls can
+    // all pass the Map-size check before any fs.stat/open promise settles.
+    this.pendingUploadBegins += 1;
+    let settleBegin!: () => void;
+    const beginSettlement = new Promise<void>((resolve) => {
+      settleBegin = resolve;
     });
-    return { ok: true, uploadId, finalName };
+    this.pendingUploadBeginSettlements.add(beginSettlement);
+    try {
+      const dir = path.resolve(dirPath);
+      try {
+        const dirStat = await fs.stat(dir);
+        if (!dirStat.isDirectory()) return { ok: false, error: 'not a directory' };
+      } catch (err) {
+        return { ok: false, error: errorMessage(err) };
+      }
+
+      const finalName = await resolveCollisionName(dir, name);
+      if (this.disposed) return { ok: false, error: 'file service is disposed' };
+      const uploadId = this.newId();
+      if (this.uploads.has(uploadId) || this.pendingUploadIds.has(uploadId)) {
+        return { ok: false, error: 'upload id collision' };
+      }
+      // Reserve the identifier before fs.open's await. Otherwise two parallel
+      // begins can both pass uploads.has(), open distinct part files, and have
+      // the later Map.set overwrite the first record.
+      this.pendingUploadIds.add(uploadId);
+      try {
+        const partPath = path.join(dir, `${finalName}.${uploadId}.ezpart`);
+        let fd: FileHandle;
+        try {
+          fd = await fs.open(partPath, 'wx');
+        } catch (err) {
+          return { ok: false, error: errorMessage(err) };
+        }
+        if (this.disposed) {
+          await fd.close().catch(() => undefined);
+          await fs.unlink(partPath).catch(() => undefined);
+          return { ok: false, error: 'file service is disposed' };
+        }
+        this.uploads.set(uploadId, {
+          fd,
+          partPath,
+          dir,
+          finalName,
+          declaredSize: size,
+          acceptingChunks: true,
+          operationTail: Promise.resolve(),
+          receivedBytes: 0,
+          lastActivity: Date.now(),
+        });
+        return { ok: true, uploadId, finalName };
+      } finally {
+        this.pendingUploadIds.delete(uploadId);
+      }
+    } finally {
+      this.pendingUploadBegins -= 1;
+      this.pendingUploadBeginSettlements.delete(beginSettlement);
+      settleBegin();
+    }
   }
 
   /** Rejects (and auto-aborts) an out-of-order or size-overrunning chunk —
@@ -552,45 +631,86 @@ export class FileService {
     data: Uint8Array,
   ): Promise<{ ok: true; receivedBytes: number } | { ok: false; error: string }> {
     const record = this.uploads.get(uploadId);
-    if (!record) return { ok: false, error: 'unknown uploadId' };
-    if (offset !== record.receivedBytes || record.receivedBytes + data.length > record.declaredSize) {
-      await this.abortUpload(uploadId);
-      return { ok: false, error: 'out-of-order or size-overrunning chunk' };
-    }
-    try {
-      await record.fd.write(data, 0, data.length, offset);
-    } catch (err) {
-      await this.abortUpload(uploadId);
-      return { ok: false, error: errorMessage(err) };
-    }
-    record.receivedBytes += data.length;
-    record.lastActivity = Date.now();
-    return { ok: true, receivedBytes: record.receivedBytes };
+    if (!record || !record.acceptingChunks) return { ok: false, error: 'unknown uploadId' };
+
+    const result = record.operationTail.then(async (): Promise<
+      { ok: true; receivedBytes: number } | { ok: false; error: string }
+    > => {
+      if (this.uploads.get(uploadId) !== record) {
+        return { ok: false, error: 'unknown uploadId' };
+      }
+      if (offset !== record.receivedBytes || record.receivedBytes + data.length > record.declaredSize) {
+        await this.abortUploadRecord(uploadId, record);
+        return { ok: false, error: 'out-of-order or size-overrunning chunk' };
+      }
+      try {
+        let written = 0;
+        while (written < data.length) {
+          const write = await record.fd.write(
+            data,
+            written,
+            data.length - written,
+            offset + written,
+          );
+          if (write.bytesWritten === 0) throw new Error('upload write made no progress');
+          written += write.bytesWritten;
+        }
+      } catch (err) {
+        await this.abortUploadRecord(uploadId, record);
+        return { ok: false, error: errorMessage(err) };
+      }
+      record.receivedBytes += data.length;
+      record.lastActivity = Date.now();
+      return { ok: true, receivedBytes: record.receivedBytes };
+    });
+    record.operationTail = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   async commitUpload(
     uploadId: string,
   ): Promise<{ ok: true; finalName: string } | { ok: false; error: string }> {
     const record = this.uploads.get(uploadId);
-    if (!record) return { ok: false, error: 'unknown uploadId' };
-    this.uploads.delete(uploadId);
-    await record.fd.close().catch(() => undefined);
-
-    // Re-probe: another upload/create may have taken `finalName` while this
-    // one was in flight.
-    let finalName = await resolveCollisionName(record.dir, record.finalName);
-    try {
-      await fs.rename(record.partPath, path.join(record.dir, finalName));
-    } catch (err) {
-      if (!isEexist(err)) return { ok: false, error: errorMessage(err) };
-      finalName = await resolveCollisionName(record.dir, record.finalName);
-      try {
-        await fs.rename(record.partPath, path.join(record.dir, finalName));
-      } catch (err2) {
-        return { ok: false, error: errorMessage(err2) };
+    if (!record || !record.acceptingChunks) return { ok: false, error: 'unknown uploadId' };
+    // No chunk arriving after this call may slip ahead of the terminal commit.
+    // Chunks already queued on operationTail remain part of the upload.
+    record.acceptingChunks = false;
+    const result = record.operationTail.then(async (): Promise<
+      { ok: true; finalName: string } | { ok: false; error: string }
+    > => {
+      if (this.uploads.get(uploadId) !== record) {
+        return { ok: false, error: 'unknown uploadId' };
       }
-    }
-    return { ok: true, finalName };
+      if (record.receivedBytes !== record.declaredSize) {
+        await this.abortUploadRecord(uploadId, record);
+        return { ok: false, error: 'upload is incomplete' };
+      }
+      try {
+        await record.fd.close().catch(() => undefined);
+
+        // Re-probe: another upload/create may have taken `finalName` while this
+        // one was in flight.
+        let finalName = await resolveCollisionName(record.dir, record.finalName);
+        try {
+          await fs.rename(record.partPath, path.join(record.dir, finalName));
+        } catch (err) {
+          if (!isEexist(err)) throw err;
+          finalName = await resolveCollisionName(record.dir, record.finalName);
+          await fs.rename(record.partPath, path.join(record.dir, finalName));
+        }
+        return { ok: true, finalName };
+      } catch (err) {
+        await fs.unlink(record.partPath).catch(() => undefined);
+        return { ok: false, error: errorMessage(err) };
+      } finally {
+        // The global ceiling describes real open/terminating resources, not
+        // merely records still accepting chunks. Release only after close and
+        // rename/unlink have fully settled.
+        if (this.uploads.get(uploadId) === record) this.uploads.delete(uploadId);
+      }
+    });
+    record.operationTail = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   /** Idempotent: safe to call more than once (close-teardown + a 2nd caller
@@ -598,15 +718,32 @@ export class FileService {
   async abortUpload(uploadId: string): Promise<void> {
     const record = this.uploads.get(uploadId);
     if (!record) return;
-    this.uploads.delete(uploadId);
+    if (!record.acceptingChunks) {
+      await record.operationTail;
+      return;
+    }
+    record.acceptingChunks = false;
+    const result = record.operationTail.then(() => this.abortUploadRecord(uploadId, record));
+    record.operationTail = result.then(() => undefined, () => undefined);
+    await result;
+  }
+
+  private async abortUploadRecord(uploadId: string, record: UploadRecord): Promise<void> {
+    record.acceptingChunks = false;
     await record.fd.close().catch(() => undefined);
     await fs.unlink(record.partPath).catch(() => undefined);
+    if (this.uploads.get(uploadId) === record) this.uploads.delete(uploadId);
   }
 
   private sweepIdleUploads(): void {
     const now = Date.now();
     for (const [uploadId, record] of [...this.uploads.entries()]) {
-      if (now - record.lastActivity > UPLOAD_IDLE_TIMEOUT_MS) void this.abortUpload(uploadId);
+      if (
+        record.acceptingChunks
+        && now - record.lastActivity > UPLOAD_IDLE_TIMEOUT_MS
+      ) {
+        void this.abortUpload(uploadId);
+      }
     }
   }
 }

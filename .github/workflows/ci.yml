@@ -9,6 +9,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   ci:
     # Single Windows job: the packaged-exe smoke (Fuses + asar + ConPTY) is
@@ -23,6 +26,8 @@ jobs:
       VITE_BUILD_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
@@ -151,6 +156,12 @@ jobs:
         run: pnpm guard:native-cap
       - name: Verify PTY routing invariants
         run: pnpm guard:pty-routing
+      - name: Verify approval privacy invariants
+        run: pnpm guard:approval-privacy
+      - name: Verify offline pairing invariants
+        run: pnpm guard:pairing-offline
+      - name: Verify desktop handoff source and visual mapping
+        run: pnpm guard:desktop-handoff
       # global-setup re-runs guard:native and reuses the exe packaged above.
       - name: Packaged app smoke tests
         run: pnpm test:e2e:packaged
@@ -182,6 +193,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Resolve pinned Rust toolchain
         run: rustup show active-toolchain
       - name: Format, test, and lint native host
@@ -212,6 +225,8 @@ jobs:
         api-level: [29, 35]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       # The emulator is unstable under full software emulation. GitHub's Linux
       # runners expose KVM, but its device permissions must be enabled first.

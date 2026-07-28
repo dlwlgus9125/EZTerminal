@@ -243,6 +243,65 @@ describe('CapabilityAccess Interface', () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
+  it('does not fail OpenClaw visibility closed from a stale seed rejection after a newer push', async () => {
+    const pushedVisibility: OpenClawVisibility = { mode: 'on', visible: true };
+    let rejectSeed!: (error: unknown) => void;
+    const pendingSeed = new Promise<OpenClawVisibility>((_resolve, reject) => {
+      rejectSeed = reject;
+    });
+    let pushVisibility!: (visibility: OpenClawVisibility) => void;
+    const onVisibility = vi.fn();
+    const onError = vi.fn();
+    const desktop = {
+      getOpenClawVisibility: vi.fn(() => pendingSeed),
+      onOpenClawVisibilityChanged: vi.fn(
+        (listener: (visibility: OpenClawVisibility) => void) => {
+          pushVisibility = listener;
+          return vi.fn();
+        },
+      ),
+    } as unknown as EzTerminalDesktopApi;
+    const access = accessFor({ core: undefined, desktop });
+
+    access.openClaw.observeVisibility(onVisibility, onError);
+    pushVisibility(pushedVisibility);
+    rejectSeed(new Error('stale seed failed'));
+    await pendingSeed.catch(() => undefined);
+    await Promise.resolve();
+
+    expect(onVisibility).toHaveBeenCalledOnce();
+    expect(onVisibility).toHaveBeenCalledWith(pushedVisibility);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('reports an unavailable OpenClaw visibility bridge so callers can fail closed', () => {
+    const access = accessFor({ core: undefined, desktop: undefined });
+    const onVisibility = vi.fn();
+    const onError = vi.fn();
+
+    const cleanup = access.openClaw.observeVisibility(onVisibility, onError);
+
+    expect(onVisibility).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
+    cleanup();
+  });
+
+  it('reports an unavailable OpenClaw chat bridge instead of leaving a blank panel', () => {
+    const access = accessFor({ core: undefined, desktop: undefined });
+    const onError = vi.fn();
+
+    const cleanup = access.openClaw.observeChat({
+      onStatus: vi.fn(),
+      onViewState: vi.fn(),
+      onError,
+    });
+
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
+    cleanup();
+  });
+
   it('drops late stats history after a newer snapshot push', async () => {
     const history = [{ at: 1 }] as unknown as readonly SystemStatsSnapshot[];
     const pushedSnapshot = { at: 2 } as unknown as SystemStatsSnapshot;

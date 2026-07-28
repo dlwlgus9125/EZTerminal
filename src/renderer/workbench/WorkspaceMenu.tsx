@@ -1,6 +1,7 @@
 import { Columns2, Rows2, Save, Star, Trash2 } from 'lucide-react';
 
 import { useAppTranslation } from '../i18n';
+import { useNativeOverlayRegistration } from '../native-overlay';
 import { Button, IconButton, Input } from '../ui';
 
 export function WorkspaceMenu({
@@ -30,6 +31,7 @@ export function WorkspaceMenu({
   readonly saving: boolean;
   readonly startupPreset: string | null;
 }): JSX.Element {
+  useNativeOverlayRegistration();
   const { t } = useAppTranslation();
   return (
     <div

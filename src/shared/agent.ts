@@ -27,10 +27,16 @@ export type AgentApprovalRisk = 'danger' | 'write' | 'read';
 /** The tool call a `blocked` agent is waiting on. Present only while the
  * provider hook is still holding its request open. */
 export interface AgentApproval {
+  /** Opaque identity of this exact parked hook. A later request for the same
+   * activity gets a different id, so a delayed decision cannot approve it. */
+  readonly approvalId: string;
   readonly toolName: string;
   /** Shell text for shell-shaped tools. Absent when the provider sent none. */
   readonly command?: string;
   readonly risk: AgentApprovalRisk;
+  /** Authoritative host-side truth. Client wall clocks are not trusted to
+   * decide whether the provider hook is still parked. */
+  readonly pending: boolean;
   readonly requestedAt: number;
   /** Wall-clock deadline. Past it the gate fails open and the provider asks in
    * the terminal itself, so the card must stop offering buttons. */
@@ -51,7 +57,14 @@ export interface AgentActivity {
 
 export type AgentDecision = 'allow' | 'deny';
 
-export type AgentDecisionError = 'not-found' | 'not-pending' | 'expired' | 'delivery-failed';
+export type AgentDecisionError =
+  | 'not-found'
+  | 'not-pending'
+  | 'expired'
+  | 'stale'
+  | 'conflict'
+  | 'delivery-failed'
+  | 'outcome-unknown';
 
 export type AgentDecisionResult = { readonly ok: true } | { readonly ok: false; readonly error: AgentDecisionError };
 

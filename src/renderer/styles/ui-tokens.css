@@ -43,6 +43,9 @@
      its own token because `[data-theme]` and `[data-theme='light']` have equal
      specificity, so the recompute block would otherwise win on source order. */
   --ui-glow-color: var(--ui-accent);
+  /* Persisted FX · NEON level (0–10) is normalized by the renderer. It scales
+     decoration only; individual effect toggles remain the source of intent. */
+  --ui-effect-intensity: 0.7;
   --ui-glow-text: 0 0 12px color-mix(in srgb, var(--ui-glow-color) 50%, transparent);
   --ui-glow-box: 0 0 0 1px color-mix(in srgb, var(--ui-glow-color) 25%, transparent),
     0 0 28px color-mix(in srgb, var(--ui-glow-color) 18%, transparent);

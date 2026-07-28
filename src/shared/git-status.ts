@@ -18,17 +18,37 @@ export interface GitFileChange {
   readonly removed?: number;
 }
 
-export interface GitDirectoryStatus {
-  /** False when the directory is not inside a work tree at all. */
-  readonly tracked: boolean;
-  /** Branch name, or absent when detached or untracked. */
-  readonly branch?: string;
-  readonly changes: readonly GitFileChange[];
-  /** True when the change list hit its cap and is therefore partial. */
-  readonly truncated: boolean;
-}
+export type GitStatusAvailability = 'ready' | 'not-a-repository' | 'unavailable';
+
+export type GitDirectoryStatus =
+  | {
+      readonly availability: 'ready';
+      readonly tracked: true;
+      /** Branch name, or absent when detached. */
+      readonly branch?: string;
+      readonly changes: readonly GitFileChange[];
+      /** True when the change list hit its cap and is therefore partial. */
+      readonly truncated: boolean;
+    }
+  | {
+      /** `unavailable` distinguishes invalid paths and Git failures from a
+       * real directory that simply is not a repository. */
+      readonly availability: Exclude<GitStatusAvailability, 'ready'>;
+      readonly tracked: false;
+      readonly branch?: undefined;
+      readonly changes: readonly GitFileChange[];
+      readonly truncated: false;
+    };
 
 export const EMPTY_GIT_DIRECTORY_STATUS: GitDirectoryStatus = Object.freeze({
+  availability: 'not-a-repository',
+  tracked: false,
+  changes: Object.freeze([]),
+  truncated: false,
+});
+
+export const UNAVAILABLE_GIT_DIRECTORY_STATUS: GitDirectoryStatus = Object.freeze({
+  availability: 'unavailable',
   tracked: false,
   changes: Object.freeze([]),
   truncated: false,
@@ -36,6 +56,25 @@ export const EMPTY_GIT_DIRECTORY_STATUS: GitDirectoryStatus = Object.freeze({
 
 export type GitDiffError = 'not-a-repository' | 'invalid-path' | 'git-failed';
 
+export type GitDiffOmissionReason =
+  | 'binary'
+  | 'symlink'
+  | 'too-large'
+  | 'unsupported'
+  | 'read-failed'
+  | 'budget-exhausted';
+
+export interface GitDiffOmission {
+  /** Repository-relative path, never an absolute local path. */
+  readonly path: string;
+  readonly reason: GitDiffOmissionReason;
+}
+
 export type GitDiffResult =
-  | { readonly ok: true; readonly text: string; readonly truncated: boolean }
+  | {
+      readonly ok: true;
+      readonly text: string;
+      readonly truncated: boolean;
+      readonly omissions: readonly GitDiffOmission[];
+    }
   | { readonly ok: false; readonly error: GitDiffError };

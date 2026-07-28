@@ -122,7 +122,12 @@ describe('DesktopUiPreferencesProvider write serialization', () => {
 
     expect(setUiPreferences).toHaveBeenNthCalledWith(1, { locale: 'ko' });
     expect(setUiPreferences).toHaveBeenNthCalledWith(2, { density: 'compact' });
-    expect(context.preferences).toEqual({ locale: 'ko', density: 'compact', sidebarWidth: 320 });
+    expect(context.preferences).toEqual({
+      locale: 'ko',
+      density: 'compact',
+      sidebarWidth: 320,
+      effectIntensity: 7,
+    });
   });
 
   it('runs a later write after one IPC write rejects', async () => {

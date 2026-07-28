@@ -59,6 +59,7 @@ interface RemoteDesktopControllerOptions {
 interface ActiveDesktopSession {
   readonly sessionId: string;
   identity: RemoteClientIdentity;
+  connectionId: string;
   endpoint: DesktopConnectionEndpoint;
   transport: NativeTransport | null;
   transportStart: Promise<boolean> | null;
@@ -101,6 +102,10 @@ export class RemoteDesktopController {
   private errorCode: string | null = null;
   private transportTeardown: Promise<void> = Promise.resolve();
   private transportStopsInFlight = 0;
+  private readonly authenticatedConnections = new Map<
+    string,
+    { latestConnectionId: string; readonly liveConnectionIds: Set<string> }
+  >();
   private readonly statusListeners = new Set<(status: RemoteDesktopHostStatus) => void>();
 
   constructor(private readonly options: RemoteDesktopControllerOptions) {
@@ -111,14 +116,34 @@ export class RemoteDesktopController {
     this.clearTimer = options.clearTimer ?? clearTimeout;
   }
 
+  /** Records authenticated socket order before any desktop-control request.
+   * Only the newest still-connected socket for an install may claim/resume its
+   * lease; an older socket cannot arrive late and take ownership back. */
+  connected(clientId: string, connectionId: string): void {
+    const current = this.authenticatedConnections.get(clientId);
+    if (current) {
+      current.liveConnectionIds.add(connectionId);
+      current.latestConnectionId = connectionId;
+      return;
+    }
+    this.authenticatedConnections.set(clientId, {
+      latestConnectionId: connectionId,
+      liveConnectionIds: new Set([connectionId]),
+    });
+  }
+
   async start(
     identity: RemoteClientIdentity,
+    connectionId: string,
     endpoint: DesktopConnectionEndpoint,
     emit: (event: DesktopServerEvent) => void,
     viewport?: DesktopVideoViewport,
   ): Promise<DesktopStartResult> {
     if (this.options.probeService && this.service !== 'ready') await this.probeService();
     if (this.options.probeService && this.service !== 'ready') {
+      return { ok: false, reason: 'unavailable', errorCode: 'SERVICE_UNAVAILABLE' };
+    }
+    if (!this.isAuthoritativeConnection(identity.clientId, connectionId)) {
       return { ok: false, reason: 'unavailable', errorCode: 'SERVICE_UNAVAILABLE' };
     }
     this.expireDisconnectedLease();
@@ -133,6 +158,7 @@ export class RemoteDesktopController {
 
     if (current) {
       current.identity = identity;
+      current.connectionId = connectionId;
       current.endpoint = endpoint;
       current.emit = emit;
       if (viewport) current.viewport = viewport;
@@ -144,7 +170,7 @@ export class RemoteDesktopController {
       if (!current.transport || current.transportStart) {
         const started = await this.ensureTransport(current);
         if (!started) {
-          if (this.active === current) {
+          if (this.active === current && current.connectionId === connectionId) {
             this.active = null;
             this.errorCode = 'SERVICE_UNAVAILABLE';
             this.publishStatus();
@@ -152,7 +178,11 @@ export class RemoteDesktopController {
           return { ok: false, reason: 'unavailable', errorCode: 'SERVICE_UNAVAILABLE' };
         }
       }
-      if (this.active !== current) {
+      if (this.active !== current || current.connectionId !== connectionId) {
+        return { ok: false, reason: 'unavailable', errorCode: 'SERVICE_UNAVAILABLE' };
+      }
+      if (!this.isAuthoritativeConnection(identity.clientId, connectionId)) {
+        await this.discardUnauthorizedStart(current, connectionId);
         return { ok: false, reason: 'unavailable', errorCode: 'SERVICE_UNAVAILABLE' };
       }
       return this.success(current, resumed);
@@ -161,6 +191,7 @@ export class RemoteDesktopController {
     const session: ActiveDesktopSession = {
       sessionId: randomUUID(),
       identity,
+      connectionId,
       endpoint,
       transport: null,
       transportStart: null,
@@ -182,22 +213,36 @@ export class RemoteDesktopController {
     this.errorCode = null;
     this.publishStatus();
     if (!(await this.ensureTransport(session))) {
-      if (this.active === session) {
+      if (this.active === session && session.connectionId === connectionId) {
         this.active = null;
         this.errorCode = 'SERVICE_UNAVAILABLE';
         this.publishStatus();
       }
       return { ok: false, reason: 'unavailable', errorCode: 'SERVICE_UNAVAILABLE' };
     }
-    if (this.active !== session) {
+    if (this.active !== session || session.connectionId !== connectionId) {
+      return { ok: false, reason: 'unavailable', errorCode: 'SERVICE_UNAVAILABLE' };
+    }
+    if (!this.isAuthoritativeConnection(identity.clientId, connectionId)) {
+      await this.discardUnauthorizedStart(session, connectionId);
       return { ok: false, reason: 'unavailable', errorCode: 'SERVICE_UNAVAILABLE' };
     }
     return this.success(session, false);
   }
 
-  signal(clientId: string, sessionId: string, signal: DesktopSessionSignal): boolean {
+  signal(
+    clientId: string,
+    connectionId: string,
+    sessionId: string,
+    signal: DesktopSessionSignal,
+  ): boolean {
     const session = this.active;
-    if (!session || session.identity.clientId !== clientId || session.sessionId !== sessionId) return false;
+    if (
+      !session
+      || session.identity.clientId !== clientId
+      || session.connectionId !== connectionId
+      || session.sessionId !== sessionId
+    ) return false;
     if (!session.transport) return false;
     if (signal.type === 'offer') {
       session.transport.send({ type: 'offer', sessionId, sdp: signal.sdp });
@@ -207,9 +252,19 @@ export class RemoteDesktopController {
     return true;
   }
 
-  async stop(clientId: string, sessionId: string, reason: DesktopControlEndedMessage['reason'] = 'client-stop'): Promise<boolean> {
+  async stop(
+    clientId: string,
+    connectionId: string,
+    sessionId: string,
+    reason: DesktopControlEndedMessage['reason'] = 'client-stop',
+  ): Promise<boolean> {
     const session = this.active;
-    if (!session || session.identity.clientId !== clientId || session.sessionId !== sessionId) return false;
+    if (
+      !session
+      || session.identity.clientId !== clientId
+      || session.connectionId !== connectionId
+      || session.sessionId !== sessionId
+    ) return false;
     this.active = null;
     if (session.releaseTimer) this.clearTimer(session.releaseTimer);
     session.releaseTimer = null;
@@ -227,14 +282,33 @@ export class RemoteDesktopController {
   }
 
   /** A dropped WS stops video/input immediately but reserves the lease briefly. */
-  disconnected(clientId: string): void {
+  disconnected(clientId: string, connectionId: string): void {
+    const authenticatedConnections = this.authenticatedConnections.get(clientId);
+    if (authenticatedConnections) {
+      authenticatedConnections.liveConnectionIds.delete(connectionId);
+      // Never roll generation authority back to an older half-open socket.
+      // Once every socket in this authority epoch is gone, the next
+      // authenticated connection establishes a fresh high-water mark.
+      if (authenticatedConnections.liveConnectionIds.size === 0) {
+        this.authenticatedConnections.delete(clientId);
+      }
+    }
     const session = this.active;
-    if (!session || session.identity.clientId !== clientId || session.disconnectedAt !== null) return;
+    if (
+      !session
+      || session.identity.clientId !== clientId
+      || session.connectionId !== connectionId
+      || session.disconnectedAt !== null
+    ) return;
     session.disconnectedAt = this.now();
     session.state = 'reconnecting';
     session.expectedExit = true;
     const transport = session.transport;
     session.transport = null;
+    // A reconnect owns a new child attempt. The old promise remains attached
+    // to its old caller and settles when that child exits, but must not be
+    // reused by the new socket generation.
+    session.transportStart = null;
     if (transport) void this.trackTransportStop(transport).catch(() => undefined);
     this.publishStatus();
     session.releaseTimer = this.setTimer(() => {
@@ -289,8 +363,45 @@ export class RemoteDesktopController {
 
   async shutdown(reason: DesktopControlEndedMessage['reason'] = 'app-quit'): Promise<void> {
     const session = this.active;
-    if (session) await this.stop(session.identity.clientId, session.sessionId, reason);
+    if (session) {
+      await this.stop(
+        session.identity.clientId,
+        session.connectionId,
+        session.sessionId,
+        reason,
+      );
+    }
     await this.awaitTransportTeardown();
+    this.authenticatedConnections.clear();
+  }
+
+  private isAuthoritativeConnection(clientId: string, connectionId: string): boolean {
+    const authority = this.authenticatedConnections.get(clientId);
+    return !authority || authority.latestConnectionId === connectionId;
+  }
+
+  private async discardUnauthorizedStart(
+    session: ActiveDesktopSession,
+    connectionId: string,
+  ): Promise<void> {
+    if (this.active !== session || session.connectionId !== connectionId) return;
+    this.active = null;
+    if (session.releaseTimer) this.clearTimer(session.releaseTimer);
+    session.releaseTimer = null;
+    session.expectedExit = true;
+    session.transportStart = null;
+    const transport = session.transport;
+    session.transport = null;
+    if (transport) {
+      transport.send({
+        type: 'stop',
+        sessionId: session.sessionId,
+        reason: 'local-disconnect',
+      });
+      await this.trackTransportStop(transport).catch(() => undefined);
+    }
+    this.errorCode = null;
+    this.publishStatus();
   }
 
   private ensureTransport(session: ActiveDesktopSession): Promise<boolean> {
@@ -322,14 +433,25 @@ export class RemoteDesktopController {
         resolve(ready);
       };
       const readyTimer = setTimeout(() => {
-        session.expectedExit = true;
-        session.transport = null;
+        if (session.transport === transport) {
+          session.expectedExit = true;
+          session.transport = null;
+        }
         void this.trackTransportStop(transport).catch(() => undefined);
         settle(false);
       }, NATIVE_READY_TIMEOUT_MS);
 
       transport.onMessage((message) => {
-        if (this.active !== session || !isRecord(message) || typeof message.type !== 'string') return;
+        // A same-client resume reuses the session object but replaces its
+        // native child. The old child may still flush a final answer/error
+        // after stop() resolves; only the child currently owned by the session
+        // is allowed to mutate or emit for that session.
+        if (
+          this.active !== session
+          || session.transport !== transport
+          || !isRecord(message)
+          || typeof message.type !== 'string'
+        ) return;
         if (message.type === 'ready') {
           this.service = nativeServiceHealth(message.service);
           this.publishStatus();
@@ -353,13 +475,19 @@ export class RemoteDesktopController {
         this.handleNativeMessage(session, message);
       });
       transport.onExit(() => {
-        if (session.transport === transport) session.transport = null;
+        const wasCurrentTransport = session.transport === transport;
+        if (wasCurrentTransport) session.transport = null;
         if (!settled) {
-          session.expectedExit = true;
+          if (wasCurrentTransport) session.expectedExit = true;
           settle(false);
           return;
         }
-        if (this.active !== session || session.expectedExit || session.disconnectedAt !== null) return;
+        if (
+          !wasCurrentTransport
+          || this.active !== session
+          || session.expectedExit
+          || session.disconnectedAt !== null
+        ) return;
         session.state = 'error';
         this.errorCode = 'NATIVE_PROCESS_EXITED';
         session.emit({
@@ -537,7 +665,14 @@ export class RemoteDesktopController {
 
   private publishStatus(): void {
     const status = this.getStatus();
-    for (const listener of this.statusListeners) listener(status);
+    for (const listener of this.statusListeners) {
+      try {
+        listener(status);
+      } catch {
+        // A destroyed renderer/tray observer is not part of the controller's
+        // state transition and must never interrupt connection cleanup.
+      }
+    }
   }
 }
 

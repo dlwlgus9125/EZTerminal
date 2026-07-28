@@ -146,19 +146,45 @@ export function MobileWorkspace({
       return;
     }
     let alive = true;
+    type SessionDelta =
+      | { readonly kind: 'added'; readonly session: SessionInfo }
+      | { readonly kind: 'removed'; readonly sessionId: string };
+    const pendingDeltas: SessionDelta[] = [];
+    let seeded = false;
+    const applyDelta = (
+      current: readonly SessionInfo[],
+      delta: SessionDelta,
+    ): readonly SessionInfo[] => {
+      if (delta.kind === 'removed') {
+        return current.filter((entry) => entry.sessionId !== delta.sessionId);
+      }
+      const index = current.findIndex((entry) => entry.sessionId === delta.session.sessionId);
+      if (index < 0) return [...current, delta.session];
+      const next = [...current];
+      next[index] = delta.session;
+      return next;
+    };
     const unsubscribeAdded = transport.onSessionAdded((session) => {
       if (!alive) return;
-      setSessions((current) =>
-        current.some((entry) => entry.sessionId === session.sessionId) ? current : [...current, session],
-      );
+      const delta = { kind: 'added', session } as const;
+      if (!seeded) pendingDeltas.push(delta);
+      setSessions((current) => applyDelta(current, delta));
     });
     const unsubscribeRemoved = transport.onSessionRemoved((sessionId) => {
       if (!alive) return;
-      setSessions((current) => current.filter((entry) => entry.sessionId !== sessionId));
+      const delta = { kind: 'removed', sessionId } as const;
+      if (!seeded) pendingDeltas.push(delta);
+      setSessions((current) => applyDelta(current, delta));
     });
     void transport.listSessions().then((list) => {
-      if (alive) setSessions(list);
-    }).catch(() => undefined);
+      if (!alive) return;
+      seeded = true;
+      setSessions(pendingDeltas.reduce<readonly SessionInfo[]>(applyDelta, list));
+      pendingDeltas.length = 0;
+    }).catch(() => {
+      seeded = true;
+      pendingDeltas.length = 0;
+    });
     return () => {
       alive = false;
       unsubscribeAdded();
@@ -193,7 +219,10 @@ export function MobileWorkspace({
   useEffect(() => {
     let alive = true;
     const apply = (snapshot: AgentActivitySnapshot): void => {
-      if (alive) setAgentSnapshot((current) => snapshot.revision >= current.revision ? snapshot : current);
+      // The transport is the revision/epoch authority. It already suppresses
+      // stale snapshots within one desktop process and deliberately accepts
+      // the first lower revision after reconnect as a new process epoch.
+      if (alive) setAgentSnapshot(snapshot);
     };
     const unsubscribe = transport.onAgentActivitySnapshot(apply);
     void transport.getAgentActivitySnapshot().then(apply).catch(() => undefined);
@@ -495,7 +524,8 @@ export function MobileWorkspace({
         disconnected={!connected}
         onBack={() => selectTab('home')}
         onSendFollowup={(activityId, text) => transport.sendAgentFollowup(activityId, text)}
-        onDecideApproval={(activityId, decision) => transport.decideAgentApproval(activityId, decision)}
+        onDecideApproval={(activityId, approvalId, decision) =>
+          transport.decideAgentApproval(activityId, approvalId, decision)}
         onLoadDiff={(directory) => transport.getGitDiff(directory)}
         onReadGitStatus={(directory) => transport.getGitStatus(directory)}
         onFocusSession={(sessionId) => {

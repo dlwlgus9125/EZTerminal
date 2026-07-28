@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { InterpreterToMain, MainToInterpreter } from '../shared/ipc';
 import { AsyncMutationGate } from './async-mutation-gate';
@@ -12,6 +13,31 @@ import {
 } from './interpreter-broker';
 import { GitRunner, WorktreeService } from './worktree-service';
 import { SessionWorktreeGuard } from './session-worktree-guard';
+
+const temporaryRepoBases = new Set<string>();
+
+async function cleanupTemporaryRepoBases(): Promise<void> {
+  const failures: unknown[] = [];
+  for (const base of temporaryRepoBases) {
+    try {
+      await fs.rm(base, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      });
+      temporaryRepoBases.delete(base);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'Failed to remove one or more temporary worktree repositories.');
+  }
+}
+
+afterEach(cleanupTemporaryRepoBases);
+afterAll(cleanupTemporaryRepoBases);
 
 function git(cwd: string, args: readonly string[]): string {
   return execFileSync('git', [...args], {
@@ -24,6 +50,7 @@ function git(cwd: string, args: readonly string[]): string {
 
 function makeRepo(): { repo: string; userData: string } {
   const base = mkdtempSync(path.join(tmpdir(), 'ezterm-worktree-session-race-'));
+  temporaryRepoBases.add(base);
   const repo = path.join(base, 'source');
   const userData = path.join(base, 'user-data');
   mkdirSync(repo);

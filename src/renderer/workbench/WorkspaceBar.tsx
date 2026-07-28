@@ -6,9 +6,9 @@ export interface WorkspaceBarProps {
   /** Applied preset name, or null when the layout is unsaved/ad hoc. */
   readonly presetName: string | null;
   readonly paneCount: number;
-  readonly onSplitRight: () => void;
-  readonly onSplitDown: () => void;
-  readonly onFocusSingle: () => void;
+  readonly onApplyTwoByOne: () => void;
+  readonly onApplyOnePlusTwo: () => void;
+  readonly onApplySingle: () => void;
 }
 
 /**
@@ -17,15 +17,15 @@ export interface WorkspaceBarProps {
  * Splitting already existed in the Workspace dropdown, the Command Center, the
  * tab context menu, and on the keyboard. What did not exist was any surface
  * that says *which* layout you are looking at, or lets you change it without
- * first opening something. That is what this strip adds — the same three
- * coordinator calls the other entry points make, not a fourth implementation.
+ * first opening something. These presets move existing Dockview panels; they
+ * never create or destroy terminal sessions.
  */
 export function WorkspaceBar({
   presetName,
   paneCount,
-  onSplitRight,
-  onSplitDown,
-  onFocusSingle,
+  onApplyTwoByOne,
+  onApplyOnePlusTwo,
+  onApplySingle,
 }: WorkspaceBarProps): JSX.Element {
   const { t } = useAppTranslation();
 
@@ -40,36 +40,35 @@ export function WorkspaceBar({
         <button
           type="button"
           className="workspace-bar__chip"
-          onClick={onSplitRight}
-          title={t('workspace.splitRight')}
-          data-testid="workspace-bar-split-right"
+          onClick={onApplyTwoByOne}
+          disabled={paneCount < 2}
+          title={t('workspace.layoutTwoByOneDescription')}
+          data-testid="workspace-bar-layout-two-by-one"
         >
           <Columns2 aria-hidden="true" />
-          {t('workspace.splitRight')}
+          {t('workspace.layoutTwoByOne')}
         </button>
         <button
           type="button"
           className="workspace-bar__chip"
-          onClick={onSplitDown}
-          title={t('workspace.splitBelow')}
-          data-testid="workspace-bar-split-down"
+          onClick={onApplyOnePlusTwo}
+          disabled={paneCount < 2}
+          title={t('workspace.layoutOnePlusTwoDescription')}
+          data-testid="workspace-bar-layout-one-plus-two"
         >
           <Rows2 aria-hidden="true" />
-          {t('workspace.splitBelow')}
+          {t('workspace.layoutOnePlusTwo')}
         </button>
-        {/* Focus, not close. Collapsing to a single pane by destroying the
-            others would take live PTY sessions with it, so this maximises
-            attention on the active pane instead. */}
         <button
           type="button"
           className="workspace-bar__chip"
-          onClick={onFocusSingle}
+          onClick={onApplySingle}
           disabled={paneCount < 2}
-          title={t('workspace.focusActive')}
-          data-testid="workspace-bar-focus"
+          title={t('workspace.layoutSingleDescription')}
+          data-testid="workspace-bar-layout-single"
         >
           <Square aria-hidden="true" />
-          {t('workspace.focusActive')}
+          {t('workspace.layoutSingle')}
         </button>
       </span>
     </div>

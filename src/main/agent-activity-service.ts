@@ -26,6 +26,8 @@ const COMPLETED_ACTIVITY_CAP = 100;
 const ENDED_PROVIDER_SESSION_TTL_MS = 60_000;
 const ENDED_PROVIDER_SESSION_CAP = 200;
 const MAX_FOLLOWUP_CHARS = 8192;
+const DECISION_RECEIPT_TTL_MS = 10 * 60_000;
+const DECISION_RECEIPT_CAP = 500;
 
 export interface AgentActivityBroker {
   attachRun(sessionId: string, runId: string): RemotePort | null;
@@ -53,8 +55,15 @@ interface MutableActivity {
 
 /** A provider hook parked on this activity, waiting to be told what to do. */
 interface PendingApproval {
+  readonly approvalId: string;
   readonly settle: (decision: AgentDecision | null) => void;
   readonly timer: ReturnType<typeof setTimeout>;
+}
+
+interface DecisionReceipt {
+  readonly activityId: string;
+  readonly decision: AgentDecision;
+  readonly expiresAt: number;
 }
 
 export interface AgentActivityTransition {
@@ -104,6 +113,7 @@ export class AgentActivityService {
   private readonly broker: AgentActivityBroker;
   private readonly getSettings: () => AgentSettings;
   private readonly newId: () => string;
+  private readonly newApprovalId: () => string;
   private readonly now: () => number;
   private readonly records = new Map<string, MutableActivity>();
   private readonly byRun = new Map<string, MutableActivity>();
@@ -111,23 +121,32 @@ export class AgentActivityService {
   private readonly byProviderSession = new Map<string, MutableActivity>();
   private readonly endedProviderSessions = new Map<string, number>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
+  private readonly decisionReceipts = new Map<string, DecisionReceipt>();
   private readonly completedIds: string[] = [];
   private readonly snapshotListeners = new Set<(snapshot: AgentActivitySnapshot) => void>();
   private readonly transitionListeners = new Set<(transition: AgentActivityTransition) => void>();
   private readonly unsubscribers: Array<() => void> = [];
+  private publishingSnapshots = false;
+  private queuedSnapshot: AgentActivitySnapshot | null = null;
+  private publishingTransitions = false;
+  private readonly queuedTransitions: AgentActivityTransition[] = [];
   private revision = 0;
   private disposed = false;
+  private approvalGateEnabled: boolean;
 
   constructor(deps: {
     broker: AgentActivityBroker;
     getSettings: () => AgentSettings;
     newId?: () => string;
+    newApprovalId?: () => string;
     now?: () => number;
   }) {
     this.broker = deps.broker;
     this.getSettings = deps.getSettings;
     this.newId = deps.newId ?? randomUUID;
+    this.newApprovalId = deps.newApprovalId ?? randomUUID;
     this.now = deps.now ?? Date.now;
+    this.approvalGateEnabled = this.getSettings().approvalGate;
     this.unsubscribers.push(
       this.broker.onRunStarted((info) => this.handleRunStarted(info)),
       this.broker.onInterpreterExited(() => this.handleInterpreterExit()),
@@ -176,41 +195,89 @@ export class AgentActivityService {
    */
   async requestApproval(event: AgentHookEvent): Promise<AgentDecision | null> {
     if (this.disposed) return null;
-    if (!this.getSettings().approvalGate) return null;
+    this.applySettings(this.getSettings());
+    if (!this.approvalGateEnabled) return null;
     if (!canGateProvider(event.provider)) return null;
     const record = this.findRecordForEvent(event);
     if (!record || record.ended) return null;
     // A second request for the same activity supersedes the first; the older
     // hook is released rather than left parked behind the newer one.
-    this.releaseApproval(record, null);
+    const previous = this.pendingApprovals.get(record.id);
+    if (previous) this.releaseApproval(record, previous.approvalId, null, false);
 
     const requestedAt = this.now();
+    const approvalId = this.newApprovalId();
     const toolName = event.toolName ?? '';
     record.approval = {
+      approvalId,
       toolName,
       ...(event.command ? { command: event.command } : {}),
       risk: classifyApprovalRisk(toolName, event.command),
+      pending: true,
       requestedAt,
       expiresAt: requestedAt + APPROVAL_GATE_WINDOW_MS,
     };
-    this.publish();
-
-    return new Promise<AgentDecision | null>((resolve) => {
-      const timer = setTimeout(() => this.releaseApproval(record, null), APPROVAL_GATE_WINDOW_MS);
+    const decision = new Promise<AgentDecision | null>((resolve) => {
+      const timer = setTimeout(
+        () => this.releaseApproval(record, approvalId, null, true),
+        APPROVAL_GATE_WINDOW_MS,
+      );
       timer.unref?.();
-      this.pendingApprovals.set(record.id, { settle: resolve, timer });
+      this.pendingApprovals.set(record.id, { approvalId, settle: resolve, timer });
     });
+    // Reserve the exact hook before notifying observers. An in-process
+    // subscriber is allowed to answer synchronously from the published
+    // snapshot; it must not see a card that is not yet decidable.
+    this.publish();
+    return decision;
   }
 
-  decideApproval(activityId: string, decision: AgentDecision): AgentDecisionResult {
+  decideApproval(activityId: string, approvalId: string, decision: AgentDecision): AgentDecisionResult {
+    const now = this.now();
+    this.pruneDecisionReceipts(now);
+    const receipt = this.decisionReceipts.get(approvalId);
+    if (receipt) {
+      return receipt.activityId === activityId && receipt.decision === decision
+        ? { ok: true }
+        : { ok: false, error: 'conflict' };
+    }
     const record = this.records.get(activityId);
     if (!record) return { ok: false, error: 'not-found' };
     if (record.ended) return { ok: false, error: 'not-pending' };
-    if (!this.pendingApprovals.has(activityId)) {
-      return { ok: false, error: record.approval ? 'expired' : 'not-pending' };
+    const pending = this.pendingApprovals.get(activityId);
+    if (!pending) {
+      if (!record.approval) return { ok: false, error: 'not-pending' };
+      return {
+        ok: false,
+        error: record.approval.approvalId === approvalId ? 'expired' : 'stale',
+      };
     }
-    this.releaseApproval(record, decision);
+    if (pending.approvalId !== approvalId) return { ok: false, error: 'stale' };
+    this.decisionReceipts.set(approvalId, {
+      activityId,
+      decision,
+      expiresAt: now + DECISION_RECEIPT_TTL_MS,
+    });
+    this.pruneDecisionReceipts(now);
+    this.releaseApproval(record, approvalId, decision, false);
     return { ok: true };
+  }
+
+  /**
+   * Reconcile persisted settings with live gates.
+   *
+   * The settings owner calls this after a successful save. Turning the gate
+   * off releases every provider hook immediately; no request remains parked
+   * until its timer merely because the preference changed underneath it.
+   */
+  applySettings(settings: AgentSettings): void {
+    const wasEnabled = this.approvalGateEnabled;
+    this.approvalGateEnabled = settings.approvalGate;
+    if (!wasEnabled || this.approvalGateEnabled) return;
+    for (const [activityId, pending] of [...this.pendingApprovals]) {
+      const record = this.records.get(activityId);
+      if (record) this.releaseApproval(record, pending.approvalId, null, false);
+    }
   }
 
   private findRecordForEvent(event: AgentHookEvent): MutableActivity | null {
@@ -234,9 +301,14 @@ export class AgentActivityService {
    * rather than silently losing the row — but strips the command text, which is
    * the one field this module promised not to keep.
    */
-  private releaseApproval(record: MutableActivity, decision: AgentDecision | null): void {
+  private releaseApproval(
+    record: MutableActivity,
+    approvalId: string,
+    decision: AgentDecision | null,
+    retainExpired: boolean,
+  ): void {
     const pending = this.pendingApprovals.get(record.id);
-    if (!pending) return;
+    if (!pending || pending.approvalId !== approvalId) return;
     this.pendingApprovals.delete(record.id);
     clearTimeout(pending.timer);
     pending.settle(decision);
@@ -245,9 +317,18 @@ export class AgentActivityService {
       this.setStatus(record, 'working');
       return;
     }
-    if (record.approval?.command !== undefined) {
+    if (!retainExpired) {
+      record.approval = null;
+    } else if (record.approval?.approvalId === approvalId) {
       const { toolName, risk, requestedAt, expiresAt } = record.approval;
-      record.approval = { toolName, risk, requestedAt, expiresAt };
+      record.approval = {
+        approvalId,
+        toolName,
+        risk,
+        pending: false,
+        requestedAt,
+        expiresAt,
+      };
     }
     this.publish();
   }
@@ -280,6 +361,7 @@ export class AgentActivityService {
       if (record) record.approval = null;
     }
     this.pendingApprovals.clear();
+    this.decisionReceipts.clear();
     for (const unsubscribe of this.unsubscribers) unsubscribe();
     this.unsubscribers.length = 0;
     for (const record of this.records.values()) {
@@ -295,6 +377,17 @@ export class AgentActivityService {
     this.snapshotListeners.clear();
     this.transitionListeners.clear();
     this.endedProviderSessions.clear();
+  }
+
+  private pruneDecisionReceipts(now: number): void {
+    for (const [approvalId, receipt] of this.decisionReceipts) {
+      if (receipt.expiresAt <= now) this.decisionReceipts.delete(approvalId);
+    }
+    while (this.decisionReceipts.size > DECISION_RECEIPT_CAP) {
+      const oldest = this.decisionReceipts.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.decisionReceipts.delete(oldest);
+    }
   }
 
   private handleRunStarted(info: RunStartedInfo): void {
@@ -418,8 +511,7 @@ export class AgentActivityService {
     record.status = status;
     record.updatedAt = this.now();
     this.publish();
-    const transition = { activity: publicActivity(record), previous };
-    for (const listener of this.transitionListeners) listener(transition);
+    this.publishTransition({ activity: publicActivity(record), previous });
   }
 
   private finish(record: MutableActivity, status: 'done' | 'error', closePort: boolean): void {
@@ -427,7 +519,8 @@ export class AgentActivityService {
     record.ended = true;
     // The provider is gone; anything still parked on it has to be let go, and
     // a finished run has nothing left to approve.
-    this.releaseApproval(record, null);
+    const pending = this.pendingApprovals.get(record.id);
+    if (pending) this.releaseApproval(record, pending.approvalId, null, false);
     record.approval = null;
     this.activeBySessionProvider.delete(providerKey(record.provider, record.sessionId));
     this.byRun.delete(record.runId);
@@ -473,6 +566,51 @@ export class AgentActivityService {
   private publish(): void {
     this.revision += 1;
     const snapshot = this.getSnapshot();
-    for (const listener of this.snapshotListeners) listener(snapshot);
+    if (this.publishingSnapshots) {
+      // Snapshots are level-triggered. Coalesce nested mutations to the newest
+      // state, but finish revision N before publishing N+1.
+      this.queuedSnapshot = snapshot;
+      return;
+    }
+    this.publishingSnapshots = true;
+    try {
+      let next: AgentActivitySnapshot | null = snapshot;
+      while (next) {
+        this.queuedSnapshot = null;
+        for (const listener of [...this.snapshotListeners]) {
+          try {
+            listener(next);
+          } catch {
+            // Observers are not part of the state transaction. A destroyed
+            // WebContents or faulty notification listener cannot break it.
+          }
+        }
+        next = this.queuedSnapshot;
+      }
+    } finally {
+      this.queuedSnapshot = null;
+      this.publishingSnapshots = false;
+    }
+  }
+
+  private publishTransition(transition: AgentActivityTransition): void {
+    this.queuedTransitions.push(transition);
+    if (this.publishingTransitions) return;
+    this.publishingTransitions = true;
+    try {
+      while (this.queuedTransitions.length > 0) {
+        const next = this.queuedTransitions.shift()!;
+        for (const listener of [...this.transitionListeners]) {
+          try {
+            listener(next);
+          } catch {
+            // Best-effort notification of already committed state.
+          }
+        }
+      }
+    } finally {
+      this.queuedTransitions.length = 0;
+      this.publishingTransitions = false;
+    }
   }
 }

@@ -16,11 +16,21 @@ export const MAX_SIDEBAR_WIDTH = 440;
 export const DEFAULT_SIDEBAR_WIDTH = 320;
 export const SidebarWidthSchema = z.number().int().min(MIN_SIDEBAR_WIDTH).max(MAX_SIDEBAR_WIDTH);
 
+export const MIN_EFFECT_INTENSITY = 0;
+export const MAX_EFFECT_INTENSITY = 10;
+export const DEFAULT_EFFECT_INTENSITY = 7;
+export const EffectIntensitySchema = z
+  .number()
+  .int()
+  .min(MIN_EFFECT_INTENSITY)
+  .max(MAX_EFFECT_INTENSITY);
+
 /** Atomic UI preference payload crossing the desktop preload boundary. */
 export const UiPreferencesSchema = z.object({
   locale: UiLocalePreferenceSchema,
   density: UiDensitySchema,
   sidebarWidth: SidebarWidthSchema,
+  effectIntensity: EffectIntensitySchema,
 });
 export type UiPreferences = z.infer<typeof UiPreferencesSchema>;
 
@@ -36,6 +46,7 @@ export const DEFAULT_UI_PREFERENCES: Readonly<UiPreferences> = Object.freeze({
   locale: 'system',
   density: 'adaptive',
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
+  effectIntensity: DEFAULT_EFFECT_INTENSITY,
 });
 
 export type ResolvedUiLocale = 'ko' | 'en';

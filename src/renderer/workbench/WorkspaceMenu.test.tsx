@@ -4,7 +4,6 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { EffectProfileId } from '../effect-profiles';
 import { AppHeader } from './AppHeader';
 import { WorkspaceMenu } from './WorkspaceMenu';
 
@@ -15,19 +14,15 @@ let root: Root;
 
 function Harness(): JSX.Element {
   const [open, setOpen] = useState(false);
-  const [effectProfile, setEffectProfile] = useState<EffectProfileId>('crt-signature');
   return (
     <AppHeader
       attentionCount={0}
-      activeThemeEffects={['scanlines', 'phosphor-glow', 'crt-rollbar']}
       commandCenterOpen={false}
-      effectProfile={effectProfile}
-      motionEffectsRequested={effectProfile === 'crt-signature' || effectProfile === 'full-crt'}
+      effectIntensity={7}
       onNewTerminal={vi.fn()}
       onOpenAttention={vi.fn()}
       onOpenCommandCenter={vi.fn()}
       onOpenEffectSettings={vi.fn()}
-      onSelectEffectProfile={setEffectProfile}
       onWorkspaceOpenChange={setOpen}
       workspaceOpen={open}
       workspaceMenu={open ? (
@@ -68,22 +63,14 @@ afterEach(() => {
 });
 
 describe('WorkspaceMenu accessibility', () => {
-  it('keeps four product zones while exposing the full brand and one effect-profile menu', () => {
+  it('keeps four product zones while exposing the full brand and one effect-intensity control', () => {
     expect(container.querySelectorAll('.workbench-header > .workbench-header-zone')).toHaveLength(4);
     expect(container.querySelector('h1')?.textContent).toBe('EZTerminal');
 
     const trigger = container.querySelector<HTMLButtonElement>('[data-testid="btn-effect-profile"]')!;
-    expect(trigger.dataset.profile).toBe('crt-signature');
+    expect(trigger.dataset.effectIntensity).toBe('7');
+    expect(trigger.textContent).toContain('NEON 7');
     act(() => trigger.click());
-
-    const profiles = container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]');
-    expect(profiles).toHaveLength(4);
-    expect(container.querySelector('[data-testid="effect-profile-crt-signature"]')?.getAttribute('aria-checked')).toBe(
-      'true',
-    );
-
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="effect-profile-static"]')!.click());
-    expect(trigger.dataset.profile).toBe('static');
     expect(container.querySelector('[role="menu"]')).toBeNull();
   });
 

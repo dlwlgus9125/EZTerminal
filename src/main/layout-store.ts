@@ -193,6 +193,7 @@ export class LayoutStore {
       locale: settings.locale ?? DEFAULT_UI_PREFERENCES.locale,
       density: settings.density ?? DEFAULT_UI_PREFERENCES.density,
       sidebarWidth: settings.sidebarWidth ?? DEFAULT_UI_PREFERENCES.sidebarWidth,
+      effectIntensity: settings.effectIntensity ?? DEFAULT_UI_PREFERENCES.effectIntensity,
     };
   }
 
@@ -206,6 +207,7 @@ export class LayoutStore {
       locale: settings.locale ?? DEFAULT_UI_PREFERENCES.locale,
       density: settings.density ?? DEFAULT_UI_PREFERENCES.density,
       sidebarWidth: settings.sidebarWidth ?? DEFAULT_UI_PREFERENCES.sidebarWidth,
+      effectIntensity: settings.effectIntensity ?? DEFAULT_UI_PREFERENCES.effectIntensity,
     };
   }
 
