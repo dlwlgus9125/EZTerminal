@@ -112,6 +112,11 @@ interface TerminalSubmissionState {
   readonly visualViewport: ViewportGeometry | null;
 }
 
+interface TerminalViewportBaseline {
+  readonly innerViewport: ViewportGeometry;
+  readonly visualViewport: ViewportGeometry | null;
+}
+
 async function captureTerminalSubmissionState(): Promise<TerminalSubmissionState> {
   return evaluateWebView<TerminalSubmissionState>(`(() => {
     const visible = (testId) => [...document.querySelectorAll('[data-testid]')]
@@ -193,6 +198,32 @@ async function captureTerminalSubmissionState(): Promise<TerminalSubmissionState
   })()`);
 }
 
+function viewportCoordinateMatches(actual: number | undefined, expected: number | undefined): boolean {
+  if (actual === undefined || expected === undefined) return actual === expected;
+  return Math.abs(actual - expected) <= 1;
+}
+
+function viewportMatchesBaseline(
+  state: TerminalSubmissionState,
+  baseline: TerminalViewportBaseline,
+): boolean {
+  const innerMatches = viewportCoordinateMatches(
+    state.innerViewport.width,
+    baseline.innerViewport.width,
+  ) && viewportCoordinateMatches(
+    state.innerViewport.height,
+    baseline.innerViewport.height,
+  );
+  if (!innerMatches) return false;
+  if (!state.visualViewport || !baseline.visualViewport) {
+    return state.visualViewport === baseline.visualViewport;
+  }
+  return viewportCoordinateMatches(state.visualViewport.width, baseline.visualViewport.width)
+    && viewportCoordinateMatches(state.visualViewport.height, baseline.visualViewport.height)
+    && viewportCoordinateMatches(state.visualViewport.offsetLeft, baseline.visualViewport.offsetLeft)
+    && viewportCoordinateMatches(state.visualViewport.offsetTop, baseline.visualViewport.offsetTop);
+}
+
 function submissionGeometrySignature(state: TerminalSubmissionState): string {
   return JSON.stringify({
     input: state.inputGeometry,
@@ -207,10 +238,14 @@ function submissionGeometrySignature(state: TerminalSubmissionState): string {
 async function stabilizeTerminalSubmissionSurface(
   command: string,
   label: string,
+  expectedViewport?: TerminalViewportBaseline,
 ): Promise<TerminalSubmissionState> {
   // A focused composer can keep Android's IME resize animation in flight.
   // Blurring through the real WebView asks the IME to close without sending
-  // Android Back, which could navigate if the keyboard has already gone.
+  // Android Back, which could navigate if the keyboard has already gone. A
+  // late run-exit focus effect can race this first blur, so the loop repeats
+  // it whenever the composer regains focus and also requires the unobscured
+  // viewport captured before the first command.
   await evaluateWebView<void>(`(() => {
     const active = document.activeElement;
     if (active instanceof HTMLElement) active.blur();
@@ -228,11 +263,20 @@ async function stabilizeTerminalSubmissionSurface(
         `${label} draft changed before native submit: ${JSON.stringify(state)}`,
       );
     }
+    if (state.activeElement?.testId === 'cmd-input') {
+      await evaluateWebView<void>(`(() => {
+        const active = document.activeElement;
+        if (active instanceof HTMLElement) active.blur();
+      })()`);
+    }
+    const viewportReady = expectedViewport === undefined
+      || viewportMatchesBaseline(state, expectedViewport);
     const targetReady = state.inputGeometry !== null
       && state.runGeometry !== null
       && state.runDisabled === false
       && state.activeElement?.testId !== 'cmd-input'
-      && state.runCenterTarget?.testId === 'btn-run';
+      && state.runCenterTarget?.testId === 'btn-run'
+      && viewportReady;
     if (targetReady) {
       const signature = submissionGeometrySignature(state);
       stableSamples = signature === previousSignature ? stableSamples + 1 : 1;
@@ -304,20 +348,30 @@ async function waitForCommandSubmissionAcknowledgement(
 async function submitCommandThroughNativeTap(
   command: string,
   label: string,
-): Promise<void> {
+  expectedViewport?: TerminalViewportBaseline,
+): Promise<TerminalViewportBaseline> {
   await setTestIdTextValue('cmd-input', command);
-  const ready = await stabilizeTerminalSubmissionSurface(command, label);
+  const ready = await stabilizeTerminalSubmissionSurface(
+    command,
+    label,
+    expectedViewport,
+  );
   console.log(`[smoke] ${label} pre-submit state:`, JSON.stringify(ready));
 
   // This is intentionally the only native injection. Even an adb timeout is
   // ambiguous because Android may already have dispatched the tap, so the
   // harness fails red instead of ever issuing a second command.
-  await tapTestIdOnce('btn-run');
+  const tapReceipt = await tapTestIdOnce('btn-run');
+  console.log(`[smoke] ${label} native tap:`, JSON.stringify(tapReceipt));
   await waitForCommandSubmissionAcknowledgement(
     command,
     label,
     ready.blocks.length,
   );
+  return expectedViewport ?? {
+    innerViewport: ready.innerViewport,
+    visualViewport: ready.visualViewport,
+  };
 }
 
 async function logTerminalSubmissionDiagnostics(label: string): Promise<void> {
@@ -369,7 +423,10 @@ async function main(): Promise<void> {
     // so it can never satisfy this assertion. Invoke cmd.exe explicitly so the
     // external-command PTY path actually emits "hello" (verified end-to-end
     // against the real bridge: the pty-data stream carries "hello\r\n").
-    await submitCommandThroughNativeTap('cmd /c echo hello', 'plain PTY');
+    const terminalViewportBaseline = await submitCommandThroughNativeTap(
+      'cmd /c echo hello',
+      'plain PTY',
+    );
 
     console.log('[smoke] polling logcat for [ez-e2e] output containing "hello"...');
     // cmd.exe PTY spawn + output render can take a few seconds on a cold
@@ -387,6 +444,7 @@ async function main(): Promise<void> {
     await submitCommandThroughNativeTap(
       '!cmd /d /c ping -n 11 127.0.0.1',
       'forced xterm',
+      terminalViewportBaseline,
     );
 
     console.log('[smoke] waiting for the real xterm DOM...');

@@ -130,6 +130,10 @@ describe('Android WebView physical geometry', () => {
     expect(start).toBeGreaterThan(0);
     expect(end).toBeGreaterThan(start);
     expect(testIdTapSection).toContain("runAdb(['shell', 'dumpsys', 'activity', APP_ID])");
+    expect(testIdTapSection).toContain('forceRefreshDeviceGeometry');
+    expect(testIdTapSection).toMatch(
+      /forceRefreshDeviceGeometry\s*\|\|\s*!webViewDeviceGeometry/,
+    );
     expect(testIdTapSection).not.toContain('tryDumpUi');
     expect(testIdTapSection).not.toContain('uiautomator');
   });

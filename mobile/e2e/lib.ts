@@ -498,6 +498,28 @@ export function center(bounds: readonly [number, number, number, number]): Point
   return { x: Math.round((x1 + x2) / 2), y: Math.round((y1 + y2) / 2) };
 }
 
+/** Injects one human-length tap gesture through a single adb command.
+ *
+ * Android's `input tap` gives DOWN and UP the same event timestamp, and that
+ * zero-duration gesture was not consistently acknowledged on the observed
+ * Android 15 WebView path. A stationary 80 ms swipe remains well below
+ * long-press timing while giving the native touch pipeline distinct DOWN/UP
+ * times. Keep this primitive retry-free for non-idempotent actions. */
+export async function shortPressOnce(p: Point): Promise<void> {
+  runAdb([
+    'shell',
+    'input',
+    'touchscreen',
+    'swipe',
+    String(p.x),
+    String(p.y),
+    String(p.x),
+    String(p.y),
+    '80',
+  ]);
+  await sleep(400);
+}
+
 export async function tap(p: Point): Promise<void> {
   runAdb(['shell', 'input', 'tap', String(p.x), String(p.y)]);
   await sleep(400);
@@ -923,23 +945,46 @@ function visibleTestIdExpression(testId: string, scrollIntoView = false): string
     if (!(element instanceof HTMLElement)) return null;
     ${scrollIntoView ? "element.scrollIntoView({ block: 'center', inline: 'center' });" : ''}
     const rect = element.getBoundingClientRect();
+    const centerTarget = document.elementFromPoint(
+      rect.left + rect.width / 2,
+      rect.top + rect.height / 2,
+    );
+    const centerOwner = centerTarget instanceof Element
+      ? centerTarget.closest('[data-testid]')
+      : null;
     return {
       x: rect.left + rect.width / 2,
       y: rect.top + rect.height / 2,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
       devicePixelRatio: window.devicePixelRatio,
+      disabled: (
+        ('disabled' in element && Boolean(element.disabled))
+        || element.getAttribute('aria-disabled') === 'true'
+      ),
+      centerTargetMatches: centerOwner === element,
+      centerTargetTestId: centerOwner ? centerOwner.getAttribute('data-testid') : null,
     };
   })()`;
 }
 
 interface WebViewElementGeometry extends WebViewViewportMetrics, Point {}
 
+export interface NativeTapReceipt {
+  readonly cssPoint: Point;
+  readonly viewport: WebViewViewportMetrics;
+  readonly deviceBounds: DeviceBounds;
+  readonly devicePoint: Point;
+  readonly gesture: 'tap' | 'short-press';
+}
+
 function resolveWebViewDeviceGeometry(
   geometry: WebViewElementGeometry,
+  forceRefreshDeviceGeometry = false,
 ): NonNullable<typeof webViewDeviceGeometry> {
   if (
-    !webViewDeviceGeometry
+    forceRefreshDeviceGeometry
+    || !webViewDeviceGeometry
     || webViewDeviceGeometry.viewportWidth !== geometry.viewportWidth
     || webViewDeviceGeometry.viewportHeight !== geometry.viewportHeight
     || webViewDeviceGeometry.devicePixelRatio !== geometry.devicePixelRatio
@@ -964,9 +1009,40 @@ function resolveWebViewDeviceGeometry(
   return webViewDeviceGeometry;
 }
 
-async function tapWebViewElementGeometry(geometry: WebViewElementGeometry): Promise<void> {
-  const deviceGeometry = resolveWebViewDeviceGeometry(geometry);
-  await tap(mapWebViewPointToDevice(geometry, deviceGeometry.bounds, geometry));
+async function tapWebViewElementGeometry(
+  geometry: WebViewElementGeometry,
+  options: {
+    readonly forceRefreshDeviceGeometry?: boolean;
+    readonly gesture?: 'tap' | 'short-press';
+  } = {},
+): Promise<NativeTapReceipt> {
+  // Android 15 edge-to-edge insets and IME teardown can move the physical
+  // WebView frame without changing CDP's CSS viewport or DPR. The fail-closed
+  // one-shot path requests a fresh hierarchy here instead of retrying an
+  // ambiguous native action; ordinary idempotent navigation taps retain the
+  // faster metrics-keyed cache.
+  const deviceGeometry = resolveWebViewDeviceGeometry(
+    geometry,
+    options.forceRefreshDeviceGeometry ?? false,
+  );
+  const devicePoint = mapWebViewPointToDevice(geometry, deviceGeometry.bounds, geometry);
+  const gesture = options.gesture ?? 'tap';
+  if (gesture === 'short-press') {
+    await shortPressOnce(devicePoint);
+  } else {
+    await tap(devicePoint);
+  }
+  return {
+    cssPoint: { x: geometry.x, y: geometry.y },
+    viewport: {
+      viewportWidth: geometry.viewportWidth,
+      viewportHeight: geometry.viewportHeight,
+      devicePixelRatio: geometry.devicePixelRatio,
+    },
+    deviceBounds: deviceGeometry.bounds,
+    devicePoint,
+    gesture,
+  };
 }
 
 /** Locates a DOM test id through CDP, then performs a real device-level tap
@@ -1001,25 +1077,38 @@ export async function tapTestId(testId: string, timeoutMs = 15_000): Promise<voi
 /** Resolves one live DOM geometry and injects exactly one native Android tap.
  *
  * Unlike {@link tapTestId}, this deliberately has no retry boundary around
- * `adb input tap`: a timed-out adb process may already have injected its
- * event, so retrying it could duplicate a non-idempotent product action. Use
+ * the native input gesture: a timed-out adb process may already have injected
+ * its event, so retrying it could duplicate a non-idempotent product action. Use
  * this only after the caller has stabilized and validated the target geometry,
  * then fail closed if the single injection or its product acknowledgement is
  * ambiguous. */
-export async function tapTestIdOnce(testId: string): Promise<void> {
+export async function tapTestIdOnce(testId: string): Promise<NativeTapReceipt> {
   const geometry = await evaluateWebView<{
     readonly x: number;
     readonly y: number;
     readonly viewportWidth: number;
     readonly viewportHeight: number;
     readonly devicePixelRatio: number;
-  } | null>(visibleTestIdExpression(testId, true));
+    readonly disabled: boolean;
+    readonly centerTargetMatches: boolean;
+    readonly centerTargetTestId: string | null;
+  } | null>(visibleTestIdExpression(testId));
   if (!geometry) {
     throw new Error(
       `Cannot single-tap data-testid=${JSON.stringify(testId)} because it is not visible`,
     );
   }
-  await tapWebViewElementGeometry(geometry);
+  if (geometry.disabled || !geometry.centerTargetMatches) {
+    throw new Error(
+      `Cannot single-tap data-testid=${JSON.stringify(testId)} because its final native target `
+      + `is not actionable: disabled=${String(geometry.disabled)}, `
+      + `centerTarget=${JSON.stringify(geometry.centerTargetTestId)}`,
+    );
+  }
+  return tapWebViewElementGeometry(geometry, {
+    forceRefreshDeviceGeometry: true,
+    gesture: 'short-press',
+  });
 }
 
 /** Indexed sibling of {@link tapTestId}. The selected element is first

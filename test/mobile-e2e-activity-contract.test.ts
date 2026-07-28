@@ -6,6 +6,7 @@ import { parseAppCameraClientActive } from '../mobile/e2e/camera-state.ts';
 import {
   parseDump,
   parseResumedActivity,
+  shortPressOnce,
   submitConnectionOnce,
   tapTestIdOnce,
 } from '../mobile/e2e/lib.ts';
@@ -85,10 +86,25 @@ describe('Android resumed-activity parser', () => {
     expect(submission?.match(/tapTestIdOnce\(['"]btn-run['"]\)/g)).toHaveLength(1);
     expect(submission).not.toMatch(/tapTestId\(['"]btn-run['"]\)/);
     expect(submission).toContain('waitForCommandSubmissionAcknowledgement');
+    expect(submission).toContain('expectedViewport');
+    expect(smoke).toContain('viewportMatchesBaseline(state, expectedViewport)');
+    expect(smoke).toContain("state.activeElement?.testId === 'cmd-input'");
+    expect(smoke).toContain('terminalViewportBaseline');
 
     const singleTapImplementation = tapTestIdOnce.toString();
     expect(singleTapImplementation).not.toMatch(/\b(?:for|while)\s*\(/);
     expect(singleTapImplementation).toContain('tapWebViewElementGeometry');
+    expect(singleTapImplementation).toContain('forceRefreshDeviceGeometry: true');
+    expect(singleTapImplementation).toMatch(/gesture:\s*["']short-press["']/);
+    expect(singleTapImplementation).toContain('visibleTestIdExpression(testId)');
+    expect(singleTapImplementation).not.toContain('visibleTestIdExpression(testId, true)');
+
+    const shortPressImplementation = shortPressOnce.toString();
+    expect(shortPressImplementation).not.toMatch(/\b(?:for|while)\s*\(/);
+    expect(shortPressImplementation.match(/\brunAdb\(/g)).toHaveLength(1);
+    expect(shortPressImplementation.replace(/\s/g, '').replace(/"/g, "'")).toContain(
+      "'shell','input','touchscreen','swipe',String(p.x),String(p.y),String(p.x),String(p.y),'80'",
+    );
 
     const geometryTapStart = lib.indexOf(
       'async function tapWebViewElementGeometry',
@@ -103,6 +119,7 @@ describe('Android resumed-activity parser', () => {
     expect(geometryTap).toBeDefined();
     expect(geometryTap).not.toMatch(/\b(?:for|while)\s*\(/);
     expect(geometryTap?.match(/\bawait tap\(/g)).toHaveLength(1);
+    expect(geometryTap?.match(/\bawait shortPressOnce\(/g)).toHaveLength(1);
 
     const nativeTapStart = lib.indexOf('export async function tap(p: Point)');
     const nativeTapEnd = lib.indexOf('interface CdpTarget', nativeTapStart);
