@@ -1,14 +1,18 @@
-import { test, expect, type Page } from '@playwright/test';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import {
+  createRegisteredE2eTempDir,
+  expect,
+  test,
+  type Page,
+} from './test';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
 
 let fixtureDir: string;
 
-test.beforeAll(() => {
-  fixtureDir = mkdtempSync(path.join(tmpdir(), 'ezterm-e2e-files-'));
+test.beforeEach(() => {
+  fixtureDir = createRegisteredE2eTempDir('ezterm-e2e-files-');
   writeFileSync(path.join(fixtureDir, 'plain.txt'), 'hello file explorer\n');
   writeFileSync(path.join(fixtureDir, '.dotfile'), 'dotfile contents\n');
   mkdirSync(path.join(fixtureDir, 'subdir'));

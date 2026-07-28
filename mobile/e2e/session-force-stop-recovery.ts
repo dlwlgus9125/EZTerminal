@@ -8,8 +8,8 @@
  * only looks frozen because the restarted client attached without control.
  *
  * Run directly with Node's native TypeScript stripping:
- *   node mobile/e2e/session-force-stop-recovery.ts
- *   node mobile/e2e/session-force-stop-recovery.ts --offline-ms=330000
+ *   pnpm --dir mobile e2e:session-restart
+ *   pnpm --dir mobile e2e:session-restart-expired
  */
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -91,7 +91,9 @@ async function main(): Promise<void> {
     throw new Error(`Fake Codex fixture is missing: ${FAKE_CODEX}`);
   }
 
-  const { app, token } = await launchDesktop();
+  const { dispose, token } = await launchDesktop();
+  let scenarioFailure: { readonly error: unknown } | undefined;
+  let disposeFailure: { readonly error: unknown } | undefined;
 
   try {
     await connectAndAuth(token);
@@ -130,6 +132,8 @@ async function main(): Promise<void> {
     await tapTestId('touch-key-escape');
     await waitForXtermText('ESC-RECEIVED', 10_000);
     console.log('[repro] PASS: restored mobile input reached the surviving Codex PTY');
+  } catch (error) {
+    scenarioFailure = { error };
   } finally {
     try {
       runAdb(['shell', 'am', 'force-stop', APP_ID]);
@@ -137,8 +141,20 @@ async function main(): Promise<void> {
       // Best-effort cleanup for a disconnected emulator.
     }
     closeMobileE2eResources();
-    await app.close().catch(() => undefined);
+    try {
+      await dispose();
+    } catch (disposeError) {
+      disposeFailure = { error: disposeError };
+    }
   }
+  if (scenarioFailure && disposeFailure) {
+    throw new AggregateError(
+      [scenarioFailure.error, disposeFailure.error],
+      'Session force-stop recovery scenario and desktop disposal both failed',
+    );
+  }
+  if (scenarioFailure) throw scenarioFailure.error;
+  if (disposeFailure) throw disposeFailure.error;
 }
 
 void main().catch((error: unknown) => {

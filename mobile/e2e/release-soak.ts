@@ -22,7 +22,7 @@
  * heap. In equivalent threshold form: final <= baseline * 1.20 + slack.
  *
  * Run directly with Node's native TypeScript stripping:
- *   node mobile/e2e/release-soak.ts
+ *   pnpm --dir mobile e2e:release-soak
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -365,7 +365,10 @@ async function main(): Promise<void> {
     memorySamples: [],
     cleanupErrors: [],
   };
-  let app: Awaited<ReturnType<typeof launchDesktop>>['app'] | undefined;
+  let desktopSession: Awaited<ReturnType<typeof launchDesktop>> | undefined;
+  let scenarioFailure: { readonly error: unknown } | undefined;
+  const cleanupFailures: unknown[] = [];
+  let reportWriteFailure: { readonly error: unknown } | undefined;
 
   try {
     const durationMs = readIntegerEnv('EZTERMINAL_SOAK_DURATION_MS', DEFAULT_DURATION_MS);
@@ -400,8 +403,8 @@ async function main(): Promise<void> {
 
     console.log(`[release-soak] launching ${durationMs}ms soak with ${RECOVERY_CYCLE_COUNT} recovery cycles`);
     const launched = await launchDesktop();
-    app = launched.app;
-    const desktopWindow = await app.firstWindow();
+    desktopSession = launched;
+    const desktopWindow = launched.window;
     await connectAndAuth(launched.token);
 
     // Compile-time proof, not a filename convention: production APKs contain
@@ -598,28 +601,57 @@ async function main(): Promise<void> {
     report.status = 'passed';
     console.log('[release-soak] PASS: 8 sessions, 20 recoveries, marker uniqueness, and memory bounds');
   } catch (error) {
+    scenarioFailure = { error };
     report.status = 'failed';
     report.error = error instanceof Error
       ? { message: error.message, stack: error.stack }
       : { message: String(error) };
-    throw error;
   } finally {
     closeMobileE2eResources();
     try {
       runAdb(['shell', 'am', 'force-stop', APP_ID]);
     } catch (error) {
+      cleanupFailures.push(error);
       report.cleanupErrors.push(`Android force-stop: ${String(error)}`);
     }
-    if (app) {
+    if (desktopSession) {
       try {
-        await app.close();
+        await desktopSession.dispose();
       } catch (error) {
-        report.cleanupErrors.push(`Desktop close: ${String(error)}`);
+        cleanupFailures.push(error);
+        report.cleanupErrors.push(`Desktop dispose: ${String(error)}`);
       }
+    }
+    const cleanupFailure = cleanupFailures.length === 0
+      ? undefined
+      : cleanupFailures.length === 1
+        ? cleanupFailures[0]
+        : new AggregateError(cleanupFailures, 'Release soak cleanup operations failed');
+    if (cleanupFailure !== undefined && !scenarioFailure) {
+      report.status = 'failed';
+      report.error = cleanupFailure instanceof Error
+        ? { message: cleanupFailure.message, stack: cleanupFailure.stack }
+        : { message: String(cleanupFailure) };
     }
     report.finishedAt = new Date().toISOString();
     report.elapsedMs = Date.now() - startedAtMs;
-    writeReport(report, reportPath);
+    try {
+      writeReport(report, reportPath);
+    } catch (error) {
+      reportWriteFailure = { error };
+    }
+  }
+  const failures = [
+    ...(scenarioFailure ? [scenarioFailure.error] : []),
+    ...cleanupFailures,
+    ...(reportWriteFailure ? [reportWriteFailure.error] : []),
+  ];
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(
+      failures,
+      'Release soak scenario, cleanup, or report write failed',
+    );
   }
 }
 

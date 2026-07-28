@@ -1,7 +1,4 @@
-import { test, expect } from '@playwright/test';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { createRegisteredE2eTempDir, test, expect } from './test';
 
 import { launchApp } from './launch-app';
 
@@ -13,7 +10,7 @@ import { launchApp } from './launch-app';
 // M8 as a duplicate of the header cycle button) — see theme.spec.ts.
 
 function tempUserData(): string {
-  return mkdtempSync(path.join(tmpdir(), 'ezterm-settings-e2e-'));
+  return createRegisteredE2eTempDir('ezterm-settings-e2e-');
 }
 
 test('settings drawer: UI scale stepper applies live and persists across relaunch', async () => {

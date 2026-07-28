@@ -1,7 +1,9 @@
-import { test, expect, type Page } from '@playwright/test';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import {
+  createRegisteredE2eTempDir,
+  test,
+  expect,
+  type Page,
+} from './test';
 
 import { launchApp } from './launch-app';
 
@@ -9,7 +11,7 @@ import { launchApp } from './launch-app';
 // selecting a theme applies immediately and persists across relaunches.
 
 function tempUserData(): string {
-  return mkdtempSync(path.join(tmpdir(), 'ezterm-theme-e2e-'));
+  return createRegisteredE2eTempDir('ezterm-theme-e2e-');
 }
 
 async function openThemeSettings(page: Page) {

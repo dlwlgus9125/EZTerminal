@@ -1,8 +1,12 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
+
+import {
+  createRegisteredE2eTempDir,
+  registerE2eResourceCloser,
+} from '../test';
 
 /** The fake gateway/CLI's shared JSON state file shape — see the fixture
  * scripts' own docs for exactly which fields each side reads/writes. */
@@ -65,7 +69,7 @@ export function writeFixtureFiles(state: OpenClawFixtureState): {
   statePath: string;
   configPath: string;
 } {
-  const dir = mkdtempSync(path.join(tmpdir(), 'ezterm-e2e-openclaw-'));
+  const dir = createRegisteredE2eTempDir('ezterm-e2e-openclaw-');
   const statePath = path.join(dir, 'state.json');
   const configPath = path.join(dir, 'openclaw.json');
   writeFileSync(statePath, JSON.stringify(state));
@@ -92,43 +96,113 @@ export interface FakeGatewayHandle {
 
 /**
  * Spawns the fake gateway (fake-openclaw-gateway.mjs) on an ephemeral port
- * and waits for its `READY <port>` stdout line. Uses `spawn` with a fixed
- * `node` executable and an argv ARRAY (never a shell string) — no user input
+ * and waits for its `READY <port>` stdout line. Uses `spawn` with the current
+ * Node executable and an argv ARRAY (never a shell string) — no user input
  * crosses this boundary, `gatewayScript`/`statePath` are both paths this
  * module itself constructed.
  */
-export function startFakeGateway(statePath: string): Promise<FakeGatewayHandle> {
+export async function startFakeGateway(statePath: string): Promise<FakeGatewayHandle> {
   const gatewayScript = path.resolve(__dirname, 'fake-openclaw-gateway.mjs');
-  const proc = spawn('node', [gatewayScript, statePath], { stdio: ['ignore', 'pipe', 'pipe'] });
-  return new Promise((resolve, reject) => {
-    let buf = '';
-    let ready = false;
-    const onExitBeforeReady = (code: number | null, signal: NodeJS.Signals | null): void => {
-      if (!ready) {
-        reject(new Error(`fake OpenClaw gateway exited before READY (code=${String(code)}, signal=${String(signal)})`));
+  const proc = spawn(
+    process.execPath,
+    [gatewayScript, statePath],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  const stopProcess = (): Promise<void> => {
+    if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const cleanup = (): void => {
+        proc.off('exit', onExit);
+        proc.off('error', onError);
+      };
+      const onExit = (): void => {
+        cleanup();
+        resolve();
+      };
+      const onError = (error: Error): void => {
+        cleanup();
+        reject(error);
+      };
+      proc.once('exit', onExit);
+      proc.once('error', onError);
+      try {
+        if (!proc.kill() && proc.pid === undefined) {
+          cleanup();
+          resolve();
+        }
+      } catch (error) {
+        cleanup();
+        reject(error);
       }
+    });
+  };
+
+  let managedCloser: ReturnType<typeof registerE2eResourceCloser>;
+  try {
+    // Register immediately after spawn, before READY. A timed-out startup or a
+    // later launchApp failure must still leave fixture teardown able to stop
+    // this child.
+    managedCloser = registerE2eResourceCloser({ close: stopProcess });
+  } catch (error) {
+    try {
+      await stopProcess();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Fake OpenClaw gateway could not be registered or stopped',
+      );
+    }
+    throw error;
+  }
+
+  try {
+    const port = await new Promise<number>((resolve, reject) => {
+      let buf = '';
+      const cleanup = (): void => {
+        proc.stdout.off('data', onData);
+        proc.off('exit', onExitBeforeReady);
+        proc.off('error', onErrorBeforeReady);
+      };
+      const onExitBeforeReady = (
+        code: number | null,
+        signal: NodeJS.Signals | null,
+      ): void => {
+        cleanup();
+        reject(
+          new Error(
+            `fake OpenClaw gateway exited before READY (code=${String(code)}, signal=${String(signal)})`,
+          ),
+        );
+      };
+      const onErrorBeforeReady = (error: Error): void => {
+        cleanup();
+        reject(error);
+      };
+      const onData = (chunk: Buffer): void => {
+        buf += chunk.toString('utf8');
+        const match = /READY (\d+)/.exec(buf);
+        if (!match) return;
+        cleanup();
+        resolve(Number(match[1]));
+      };
+      proc.stdout.on('data', onData);
+      proc.once('exit', onExitBeforeReady);
+      proc.once('error', onErrorBeforeReady);
+    });
+    return {
+      port,
+      proc,
+      stop: () => managedCloser.close(),
     };
-    const onData = (chunk: Buffer): void => {
-      buf += chunk.toString('utf8');
-      const match = /READY (\d+)/.exec(buf);
-      if (!match) return;
-      ready = true;
-      proc.stdout.off('data', onData);
-      proc.off('exit', onExitBeforeReady);
-      resolve({
-        port: Number(match[1]),
-        proc,
-        stop: () => {
-          if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve();
-          return new Promise<void>((res) => {
-            proc.once('exit', () => res());
-            proc.kill();
-          });
-        },
-      });
-    };
-    proc.stdout.on('data', onData);
-    proc.once('exit', onExitBeforeReady);
-    proc.once('error', reject);
-  });
+  } catch (error) {
+    try {
+      await managedCloser.close();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Fake OpenClaw gateway failed before READY and could not be stopped',
+      );
+    }
+    throw error;
+  }
 }

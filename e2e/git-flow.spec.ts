@@ -1,7 +1,6 @@
-import { test, expect } from '@playwright/test';
+import { createRegisteredE2eTempDir, expect, test } from './test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
@@ -17,7 +16,7 @@ import { launchApp } from './launch-app';
 const GIT_EDITOR_FIXTURE = path.resolve(__dirname, 'fixtures', 'git-editor.js').replace(/\\/g, '/');
 
 test('AC-4: bare `git commit` (no -m) auto-routes to PTY, waits on $GIT_EDITOR, and completes the commit', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'ezterm-e2e-git-commit-'));
+  const dir = createRegisteredE2eTempDir('ezterm-e2e-git-commit-');
   const run = (args: string[]): void => {
     execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
   };

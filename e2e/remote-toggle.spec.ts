@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './test';
 import { WebSocket } from 'ws';
 
 import { launchApp } from './launch-app';

@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
-import { arch, cpus, platform, release, tmpdir, totalmem } from 'node:os';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { arch, cpus, platform, release, totalmem } from 'node:os';
 import path from 'node:path';
 
 import {
@@ -12,7 +12,11 @@ import {
   type ElectronApplication,
   type Locator,
   type Page,
-} from '@playwright/test';
+} from './test';
+import {
+  currentOwnedDesktopProfileRegistry,
+  trackElectronApplicationClose,
+} from './owned-desktop-profile';
 
 const ROOT = path.resolve(__dirname, '..');
 const DEFAULT_MAIN_ENTRY = path.join(ROOT, '.vite', 'build', 'main.js');
@@ -458,15 +462,35 @@ function selectedMainEntry(): string {
   return path.resolve(configured || DEFAULT_MAIN_ENTRY);
 }
 
-async function launchPerformanceApp(mainEntry: string): Promise<ElectronApplication> {
-  const userDataDir = await mkdtemp(path.join(tmpdir(), 'ezterm-perf-e2e-'));
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) env[key] = value;
+interface PerformanceAppSession {
+  readonly app: ElectronApplication;
+  close(): Promise<void>;
+}
+
+async function launchPerformanceApp(mainEntry: string): Promise<PerformanceAppSession> {
+  const registry = currentOwnedDesktopProfileRegistry();
+  const userDataDir = registry.createTempDir('ezterm-perf-e2e-');
+  const lease = registry.reserve(userDataDir);
+  let app: ElectronApplication | undefined;
+  let appCloser: ReturnType<typeof trackElectronApplicationClose> | undefined;
+  try {
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) env[key] = value;
+    }
+    env.EZTERMINAL_USER_DATA_DIR = userDataDir;
+    env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES = '1';
+    app = await electron.launch({ args: [mainEntry, '--lang=en-US'], env });
+    appCloser = trackElectronApplicationClose(app);
+    lease.settle(appCloser);
+    return {
+      app,
+      close: appCloser.close,
+    };
+  } catch (error) {
+    lease.settle(appCloser ?? app);
+    throw error;
   }
-  env.EZTERMINAL_USER_DATA_DIR = userDataDir;
-  env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES = '1';
-  return electron.launch({ args: [mainEntry, '--lang=en-US'], env });
 }
 
 async function launchArtifactEvidence(
@@ -699,7 +723,8 @@ test('performance benchmark records ordered evidence', async ({ browserName }, t
   const protocol = benchmarkProtocol();
   const mainEntry = selectedMainEntry();
   const reportEnvironment = benchmarkEnvironment();
-  const app = await launchPerformanceApp(mainEntry);
+  const performanceApp = await launchPerformanceApp(mainEntry);
+  const { app } = performanceApp;
   const window = await app.firstWindow();
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
@@ -832,6 +857,6 @@ test('performance benchmark records ordered evidence', async ({ browserName }, t
     expect(pageErrors, `renderer page errors:\n${pageErrors.join('\n')}`).toEqual([]);
     expect(consoleErrors, `renderer console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
   } finally {
-    await app.close();
+    await performanceApp.close();
   }
 });

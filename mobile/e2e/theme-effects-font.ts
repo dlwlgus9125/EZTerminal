@@ -51,7 +51,7 @@
  *    swap, not an overlay, so it's dump-visible throughout; no fix needed
  *    there.
  *
- * Run locally: `node mobile/e2e/theme-effects-font.ts`. Not run by the
+ * Run locally: `pnpm --dir mobile e2e:theme-effects`. Not run by the
  * automated test suite — like smoke.ts/parity.ts, this drives a real
  * emulator and is invoked manually / by an orchestrator.
  */
@@ -112,7 +112,9 @@ async function main(): Promise<void> {
   }
 
   console.log('[theme-e2e] launching desktop app (isolated userData)...');
-  const { app, token } = await launchDesktop();
+  const { dispose, token } = await launchDesktop();
+  let scenarioFailure: { readonly error: unknown } | undefined;
+  let disposeFailure: { readonly error: unknown } | undefined;
 
   try {
     await connectAndAuth(token);
@@ -204,6 +206,8 @@ async function main(): Promise<void> {
     console.log('[theme-e2e] step OK: reconnected after restart');
 
     console.log('[theme-e2e] ALL STEPS PASSED');
+  } catch (error) {
+    scenarioFailure = { error };
   } finally {
     closeMobileE2eResources();
     try {
@@ -211,8 +215,20 @@ async function main(): Promise<void> {
     } catch {
       // best-effort cleanup
     }
-    await app.close();
+    try {
+      await dispose();
+    } catch (disposeError) {
+      disposeFailure = { error: disposeError };
+    }
   }
+  if (scenarioFailure && disposeFailure) {
+    throw new AggregateError(
+      [scenarioFailure.error, disposeFailure.error],
+      'Theme effects scenario and desktop disposal both failed',
+    );
+  }
+  if (scenarioFailure) throw scenarioFailure.error;
+  if (disposeFailure) throw disposeFailure.error;
 }
 
 main().catch((err: unknown) => {

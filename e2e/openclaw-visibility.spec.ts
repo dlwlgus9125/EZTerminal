@@ -1,7 +1,6 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
+import { createRegisteredE2eTempDir, test, expect } from './test';
 
 import { launchApp } from './launch-app';
 import {
@@ -24,7 +23,9 @@ test('auto mode shows UI with the CLI present; a runtime toggle to off rips the 
   const { dir: fixtureDir, statePath, configPath } = writeFixtureFiles(state);
   const cliShim = writeFakeCliShim(fixtureDir);
   const gateway = await startFakeGateway(statePath);
-  const userDataDir = mkdtempSync(path.join(tmpdir(), 'ezterm-openclaw-visibility-auto-e2e-'));
+  const userDataDir = createRegisteredE2eTempDir(
+    'ezterm-openclaw-visibility-auto-e2e-',
+  );
   seedSettings(userDataDir, 'auto');
 
   const app = await launchApp(userDataDir, {

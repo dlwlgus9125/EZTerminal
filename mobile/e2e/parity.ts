@@ -27,7 +27,7 @@
  *  - Controlled values use the WebView DOM setter to avoid device-IME
  *    autocorrection; buttons, long-press, Back, and rotation stay native.
  *
- * Run locally: `node mobile/e2e/parity.ts` (see package.json's `e2e:parity`
+ * Run locally: `pnpm --dir mobile e2e:parity` (see package.json's `e2e:parity`
  * script). Not run by the automated test suite — like smoke.ts, this drives a
  * real emulator and is invoked manually / by an orchestrator.
  */
@@ -232,7 +232,9 @@ async function main(): Promise<void> {
   }
 
   console.log('[parity] launching desktop app (isolated userData)...');
-  const { app, token } = await launchDesktop();
+  const { dispose, token } = await launchDesktop();
+  let scenarioFailure: { readonly error: unknown } | undefined;
+  let disposeFailure: { readonly error: unknown } | undefined;
 
   try {
     await connectAndAuth(token);
@@ -529,6 +531,8 @@ async function main(): Promise<void> {
 
     console.log('[parity] ALL PASS');
     runAdb(['shell', 'am', 'force-stop', APP_ID]);
+  } catch (error) {
+    scenarioFailure = { error };
   } finally {
     closeMobileE2eResources();
     try {
@@ -539,13 +543,25 @@ async function main(): Promise<void> {
     } catch {
       // best-effort — device state cleanup, not fatal if it fails
     }
-    await app.close();
+    try {
+      await dispose();
+    } catch (error) {
+      disposeFailure = { error };
+    }
     try {
       unlinkSync(DUMP_LOCAL_PATH);
     } catch {
       // best-effort cleanup
     }
   }
+  if (scenarioFailure && disposeFailure) {
+    throw new AggregateError(
+      [scenarioFailure.error, disposeFailure.error],
+      'Mobile parity scenario and desktop disposal both failed',
+    );
+  }
+  if (scenarioFailure) throw scenarioFailure.error;
+  if (disposeFailure) throw disposeFailure.error;
 }
 
 main().catch((err: unknown) => {

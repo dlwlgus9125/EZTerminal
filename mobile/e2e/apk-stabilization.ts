@@ -48,7 +48,9 @@ async function main(): Promise<void> {
   if (!existsSync(MAIN_ENTRY)) throw new Error(`Desktop build missing: ${MAIN_ENTRY}`);
   if (!existsSync(APK_PATH)) throw new Error(`APK missing: ${APK_PATH}`);
 
-  const { app, token } = await launchDesktop();
+  const { dispose, token } = await launchDesktop();
+  let scenarioFailure: { readonly error: unknown } | undefined;
+  let disposeFailure: { readonly error: unknown } | undefined;
   try {
     await connectAndAuth(token);
 
@@ -83,6 +85,8 @@ async function main(): Promise<void> {
     await androidBackToHub('mobile-settings-view');
 
     console.log('[apk-stabilization] PASS: hub destinations, nested history, and Android Back');
+  } catch (error) {
+    scenarioFailure = { error };
   } finally {
     closeMobileE2eResources();
     try {
@@ -90,8 +94,20 @@ async function main(): Promise<void> {
     } catch {
       // best-effort device cleanup
     }
-    await app.close();
+    try {
+      await dispose();
+    } catch (disposeError) {
+      disposeFailure = { error: disposeError };
+    }
   }
+  if (scenarioFailure && disposeFailure) {
+    throw new AggregateError(
+      [scenarioFailure.error, disposeFailure.error],
+      'APK stabilization scenario and desktop disposal both failed',
+    );
+  }
+  if (scenarioFailure) throw scenarioFailure.error;
+  if (disposeFailure) throw disposeFailure.error;
 }
 
 main().catch((error: unknown) => {

@@ -1,6 +1,11 @@
-import { test, expect, type Locator, type Page } from '@playwright/test';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import {
+  createRegisteredE2eTempDir,
+  expect,
+  test,
+  type Locator,
+  type Page,
+} from './test';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
@@ -17,17 +22,17 @@ const CUSTOM_THEME_MOD = {
 };
 
 function tempUserData(): string {
-  return mkdtempSync(path.join(tmpdir(), 'ezterm-theme-effects-font-e2e-'));
+  return createRegisteredE2eTempDir('ezterm-theme-effects-font-e2e-');
 }
 
 function seededThemesDir(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), 'ezterm-themes-seeded-'));
+  const dir = createRegisteredE2eTempDir('ezterm-themes-seeded-');
   writeFileSync(path.join(dir, `${CUSTOM_THEME_MOD.id}.json`), JSON.stringify(CUSTOM_THEME_MOD), 'utf8');
   return dir;
 }
 
 function emptyThemesDir(): string {
-  return mkdtempSync(path.join(tmpdir(), 'ezterm-themes-empty-'));
+  return createRegisteredE2eTempDir('ezterm-themes-empty-');
 }
 
 function hexToRgb(hex: string): string {
@@ -89,7 +94,7 @@ test('importing a theme mod via the Settings UI persists it and adds it to the p
 
   const themeSelect = window.getByTestId('settings-theme-select');
   await expect(themeSelect.locator('option', { hasText: 'Neon Mod' })).toHaveCount(0);
-  const importDir = mkdtempSync(path.join(tmpdir(), 'ezterm-theme-import-fixture-'));
+  const importDir = createRegisteredE2eTempDir('ezterm-theme-import-fixture-');
   const importFile = path.join(importDir, 'neon-mod.json');
   writeFileSync(importFile, JSON.stringify(CUSTOM_THEME_MOD), 'utf8');
   await window.getByTestId('settings-theme-import-file').setInputFiles(importFile);

@@ -15,8 +15,8 @@
 // and compositionstart/update/end), and read back exactly what bytes reached
 // the PTY via the RX<"..."> framing of fixtures/ime-echo.js.
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import { test, expect } from './test';
+import type { Page } from './test';
 import { launchApp } from './launch-app';
 import { readXtermBuffer } from './xterm-buffer';
 

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './test';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';

@@ -1,7 +1,6 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
+import { createRegisteredE2eTempDir, test, expect } from './test';
 
 import { launchApp } from './launch-app';
 import {
@@ -29,7 +28,7 @@ const SCREENSHOT_DIR = path.join(
 mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
 function tempUserData(): string {
-  return mkdtempSync(path.join(tmpdir(), 'ezterm-openclaw-chat-e2e-'));
+  return createRegisteredE2eTempDir('ezterm-openclaw-chat-e2e-');
 }
 
 /** WebContentsView children of the (single) main window, as reported by the

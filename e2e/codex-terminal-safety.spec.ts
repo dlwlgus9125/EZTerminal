@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 
 import { launchApp } from './launch-app';
 import { readXtermBuffer } from './xterm-buffer';

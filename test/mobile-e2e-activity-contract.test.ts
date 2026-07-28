@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { parseAppCameraClientActive } from '../mobile/e2e/camera-state.ts';
-import { parseDump, parseResumedActivity, submitConnectionOnce } from '../mobile/e2e/lib.ts';
+import {
+  parseDump,
+  parseResumedActivity,
+  submitConnectionOnce,
+  tapTestIdOnce,
+} from '../mobile/e2e/lib.ts';
 
 describe('Android resumed-activity parser', () => {
   it('accepts the API 29 mResumedActivity colon format', () => {
@@ -56,6 +61,58 @@ describe('Android resumed-activity parser', () => {
       .map((name) => readFileSync(new URL(`../mobile/e2e/${name}`, import.meta.url), 'utf8'))
       .join('\n');
     expect(e2eSources.match(/tapTestId\(['"]connect-submit['"]\)/g)).toHaveLength(1);
+  });
+
+  it('keeps each smoke command behind one fail-closed native injection', () => {
+    const smoke = readFileSync(
+      new URL('../mobile/e2e/smoke.ts', import.meta.url),
+      'utf8',
+    );
+    const lib = readFileSync(
+      new URL('../mobile/e2e/lib.ts', import.meta.url),
+      'utf8',
+    );
+    const submissionStart = smoke.indexOf('async function submitCommandThroughNativeTap');
+    const submissionEnd = smoke.indexOf(
+      'async function logTerminalSubmissionDiagnostics',
+      submissionStart,
+    );
+    const submission = submissionStart >= 0 && submissionEnd > submissionStart
+      ? smoke.slice(submissionStart, submissionEnd)
+      : undefined;
+
+    expect(submission).toBeDefined();
+    expect(submission?.match(/tapTestIdOnce\(['"]btn-run['"]\)/g)).toHaveLength(1);
+    expect(submission).not.toMatch(/tapTestId\(['"]btn-run['"]\)/);
+    expect(submission).toContain('waitForCommandSubmissionAcknowledgement');
+
+    const singleTapImplementation = tapTestIdOnce.toString();
+    expect(singleTapImplementation).not.toMatch(/\b(?:for|while)\s*\(/);
+    expect(singleTapImplementation).toContain('tapWebViewElementGeometry');
+
+    const geometryTapStart = lib.indexOf(
+      'async function tapWebViewElementGeometry',
+    );
+    const geometryTapEnd = lib.indexOf(
+      '/** Locates a DOM test id through CDP',
+      geometryTapStart,
+    );
+    const geometryTap = geometryTapStart >= 0 && geometryTapEnd > geometryTapStart
+      ? lib.slice(geometryTapStart, geometryTapEnd)
+      : undefined;
+    expect(geometryTap).toBeDefined();
+    expect(geometryTap).not.toMatch(/\b(?:for|while)\s*\(/);
+    expect(geometryTap?.match(/\bawait tap\(/g)).toHaveLength(1);
+
+    const nativeTapStart = lib.indexOf('export async function tap(p: Point)');
+    const nativeTapEnd = lib.indexOf('interface CdpTarget', nativeTapStart);
+    const nativeTap = nativeTapStart >= 0 && nativeTapEnd > nativeTapStart
+      ? lib.slice(nativeTapStart, nativeTapEnd)
+      : undefined;
+    expect(nativeTap).toBeDefined();
+    expect(nativeTap).not.toMatch(/\b(?:for|while)\s*\(/);
+    expect(nativeTap?.match(/\brunAdb\(/g)).toHaveLength(1);
+    expect(nativeTap).toContain("['shell', 'input', 'tap'");
   });
 
   it('binds the single-attempt policy into the protected RC report', () => {

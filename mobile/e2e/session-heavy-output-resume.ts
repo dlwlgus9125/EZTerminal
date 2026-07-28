@@ -21,8 +21,8 @@
  * render its reply.
  *
  * Run directly with Node's native TypeScript stripping:
- *   node mobile/e2e/session-heavy-output-resume.ts
- *   node mobile/e2e/session-heavy-output-resume.ts --offline-ms=330000
+ *   pnpm --dir mobile e2e:session-heavy-resume
+ *   node --experimental-strip-types mobile/e2e/session-heavy-output-resume.ts --offline-ms=330000
  */
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -313,7 +313,9 @@ async function main(): Promise<void> {
     throw new Error(`PTY flood fixture is missing: ${FLOOD_FIXTURE}`);
   }
 
-  const { app, token } = await launchDesktop();
+  const { dispose, token } = await launchDesktop();
+  let scenarioFailure: { readonly error: unknown } | undefined;
+  let disposeFailure: { readonly error: unknown } | undefined;
 
   try {
     await connectAndAuth(token);
@@ -365,6 +367,8 @@ async function main(): Promise<void> {
     // delivered the byte to a child whose paused PTY could never drain the reply.
     await requireEscEchoDelivered();
     console.log('[repro] PASS: resumed heavy-output run keeps streaming and ESC visibly responds');
+  } catch (error) {
+    scenarioFailure = { error };
   } finally {
     try {
       runAdb(['shell', 'am', 'force-stop', APP_ID]);
@@ -372,8 +376,20 @@ async function main(): Promise<void> {
       // Best-effort cleanup for a disconnected emulator.
     }
     closeMobileE2eResources();
-    await app.close().catch(() => undefined);
+    try {
+      await dispose();
+    } catch (disposeError) {
+      disposeFailure = { error: disposeError };
+    }
   }
+  if (scenarioFailure && disposeFailure) {
+    throw new AggregateError(
+      [scenarioFailure.error, disposeFailure.error],
+      'Heavy-output resume scenario and desktop disposal both failed',
+    );
+  }
+  if (scenarioFailure) throw scenarioFailure.error;
+  if (disposeFailure) throw disposeFailure.error;
 }
 
 void main().catch((error: unknown) => {

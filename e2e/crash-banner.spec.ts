@@ -1,7 +1,6 @@
-import { test, expect } from '@playwright/test';
+import { createRegisteredE2eTempDir, test, expect } from './test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
@@ -12,7 +11,7 @@ import { launchApp } from './launch-app';
 // The interpreter is killed from OUTSIDE (OS-level), exactly like a real crash.
 
 test('interpreter crash: the shell recovers in place and records the exit', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'ezterm-crash-e2e-'));
+  const dir = createRegisteredE2eTempDir('ezterm-crash-e2e-');
   const app = await launchApp(dir);
   const w = await app.firstWindow();
 

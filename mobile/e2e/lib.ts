@@ -11,20 +11,26 @@
  * (prerequisites this file does NOT manage: a booted AVD, a fresh debug APK,
  * a fresh `.vite/build/main.js`, port 17420 free).
  *
- * Run directly via `node <file>.ts` (Node's native TS type-stripping, no
+ * Run directly via `node --experimental-strip-types <file>.ts` (no
  * ts-node/tsx) — relative imports MUST carry the explicit `.ts` extension
  * (verified: Node's ESM resolver does not probe extensions), which is why
  * `smoke.ts`/`parity.ts` import this file as `./lib.ts`, not `./lib`.
  */
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   _electron as electron,
   type ElectronApplication,
+  type Page,
 } from '@playwright/test';
 import { WebSocket, type RawData } from 'ws';
+
+import {
+  type AsyncCloser,
+  createOwnedDesktopProfile,
+  trackElectronApplicationClose,
+} from '../../e2e/owned-desktop-profile.ts';
 
 export const ROOT = path.resolve(import.meta.dirname, '..', '..');
 export const MAIN_ENTRY = path.join(ROOT, '.vite', 'build', 'main.js');
@@ -992,6 +998,30 @@ export async function tapTestId(testId: string, timeoutMs = 15_000): Promise<voi
   }
 }
 
+/** Resolves one live DOM geometry and injects exactly one native Android tap.
+ *
+ * Unlike {@link tapTestId}, this deliberately has no retry boundary around
+ * `adb input tap`: a timed-out adb process may already have injected its
+ * event, so retrying it could duplicate a non-idempotent product action. Use
+ * this only after the caller has stabilized and validated the target geometry,
+ * then fail closed if the single injection or its product acknowledgement is
+ * ambiguous. */
+export async function tapTestIdOnce(testId: string): Promise<void> {
+  const geometry = await evaluateWebView<{
+    readonly x: number;
+    readonly y: number;
+    readonly viewportWidth: number;
+    readonly viewportHeight: number;
+    readonly devicePixelRatio: number;
+  } | null>(visibleTestIdExpression(testId, true));
+  if (!geometry) {
+    throw new Error(
+      `Cannot single-tap data-testid=${JSON.stringify(testId)} because it is not visible`,
+    );
+  }
+  await tapWebViewElementGeometry(geometry);
+}
+
 /** Indexed sibling of {@link tapTestId}. The selected element is first
  * scrolled into view (needed for the horizontally-overflowing eight-tab
  * strip), then tapped through Android input at its real device coordinates. */
@@ -1385,30 +1415,44 @@ export async function pollLogcat(
   }
 }
 
-/** Launches the REAL desktop app (isolated userData dir, same pattern as root
- * `e2e/launch-app.ts`) and returns it along with its real persisted remote
- * token. `getRemoteToken()` (M4) mints+persists on first call — no need to
- * wait for a WS client to connect first (the WS-triggered mint path only
- * fires on first `auth`). */
+export interface DesktopE2eSession {
+  readonly token: string;
+  readonly window: Page;
+  issuePairingCode(): Promise<string>;
+  dispose(): Promise<void>;
+}
+
+/** Launches the REAL desktop app with an owned isolated profile. Callers get
+ * the real persisted remote token and window, but not the raw application:
+ * `dispose()` is the only exit so the temporary profile cannot be orphaned.
+ * `getRemoteToken()` (M4) mints+persists on first call — no need to wait for a
+ * WS client to connect first (the WS-triggered mint path only fires on first
+ * `auth`). */
 export async function launchDesktop(
   options: { readonly cwd?: string } = {},
-): Promise<{ app: ElectronApplication; token: string }> {
-  const userDataDir = mkdtempSync(path.join(tmpdir(), 'ezterm-e2e-'));
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
-  env.EZTERMINAL_USER_DATA_DIR = userDataDir;
-  env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES = '1';
-  env.EZTERMINAL_REMOTE_PORT = String(REMOTE_PORT);
-  env.EZTERMINAL_OPENCLAW_PROXY_PORT = String(OPENCLAW_PROXY_PORT);
-  env.EZTERMINAL_REMOTE_VPN_INTERFACE =
-    process.env.EZTERMINAL_REMOTE_VPN_INTERFACE?.trim() || '127.0.0.1';
-  const app = await electron.launch({
-    args: [MAIN_ENTRY],
-    env,
-    ...(options.cwd ? { cwd: options.cwd } : {}),
-  });
+): Promise<DesktopE2eSession> {
+  const profile = createOwnedDesktopProfile();
+  const { userDataDir } = profile;
+  let app: ElectronApplication | undefined;
+  let appCloser: AsyncCloser | undefined;
   try {
-    const win = await app.firstWindow();
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
+    env.EZTERMINAL_USER_DATA_DIR = userDataDir;
+    env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES = '1';
+    env.EZTERMINAL_REMOTE_PORT = String(REMOTE_PORT);
+    env.EZTERMINAL_OPENCLAW_PROXY_PORT = String(OPENCLAW_PROXY_PORT);
+    env.EZTERMINAL_REMOTE_VPN_INTERFACE =
+      process.env.EZTERMINAL_REMOTE_VPN_INTERFACE?.trim() || '127.0.0.1';
+    const launchedApp = await electron.launch({
+      args: [MAIN_ENTRY],
+      env,
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+    });
+    app = launchedApp;
+    appCloser = trackElectronApplicationClose(launchedApp);
+    profile.settle(appCloser);
+    const win = await launchedApp.firstWindow();
     await win.waitForLoadState('domcontentloaded');
     const token: string = await win.evaluate(() => window.ezterminal.getRemoteToken());
     // Remote control is OFF by default (opt-in, security review). Require the
@@ -1426,9 +1470,28 @@ export async function launchDesktop(
         + `errorCode=${status.errorCode ?? 'none'}, error=${status.error ?? 'none'}`,
       );
     }
-    return { app, token };
+    return {
+      token,
+      window: win,
+      issuePairingCode: () => launchedApp.evaluate(async ({ BrowserWindow }) => {
+        const desktopWindow = BrowserWindow.getAllWindows()[0];
+        const issued = await desktopWindow.webContents.executeJavaScript(
+          'window.ezterminalDesktop.issuePairingCode()',
+        ) as { readonly code: string };
+        return issued.code;
+      }),
+      dispose: profile.dispose,
+    };
   } catch (error) {
-    await app.close().catch(() => undefined);
+    profile.settle(appCloser ?? app);
+    try {
+      await profile.dispose();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Desktop E2E launch failed and its owned resources could not be fully cleaned',
+      );
+    }
     throw error;
   }
 }

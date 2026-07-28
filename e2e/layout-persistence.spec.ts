@@ -1,12 +1,17 @@
-import { test, expect, type Page } from '@playwright/test';
-import { existsSync, mkdtempSync } from 'node:fs';
+import {
+  createRegisteredE2eTempDir,
+  test,
+  expect,
+  type Page,
+} from './test';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
 
 function tempUserData(): string {
-  return mkdtempSync(path.join(tmpdir(), 'ezterm-layout-e2e-'));
+  return createRegisteredE2eTempDir('ezterm-layout-e2e-');
 }
 
 const panes = (window: Page) => window.getByTestId('pane');

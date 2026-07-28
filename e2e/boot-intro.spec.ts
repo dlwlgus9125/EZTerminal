@@ -1,13 +1,12 @@
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { expect, test } from '@playwright/test';
+import { createRegisteredE2eTempDir, expect, test } from './test';
 
 import { launchApp } from './launch-app';
 
 test('harness seed suppresses the intro and is not quarantined', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'ezterm-seed-'));
+  const dir = createRegisteredE2eTempDir('ezterm-seed-');
   const app = await launchApp(dir);
   const window = await app.firstWindow();
   await window.waitForSelector('[data-testid="cmd-input"]');
@@ -24,7 +23,7 @@ test('harness seed suppresses the intro and is not quarantined', async () => {
 });
 
 test('a spec can still opt the intro back in', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'ezterm-optin-'));
+  const dir = createRegisteredE2eTempDir('ezterm-optin-');
   writeFileSync(
     path.join(dir, 'settings.json'),
     JSON.stringify({ schemaVersion: 1, startup: { mode: 'last' }, bootIntro: true }),

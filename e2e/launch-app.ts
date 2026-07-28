@@ -1,7 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, type ElectronApplication } from '@playwright/test';
+
+import {
+  currentOwnedDesktopProfileRegistry,
+  trackElectronApplicationClose,
+} from './owned-desktop-profile';
 
 export const MAIN_ENTRY = path.resolve(__dirname, '..', '.vite', 'build', 'main.js');
 
@@ -60,23 +64,38 @@ function disableBootIntro(dir: string): void {
   );
 }
 
-export function launchApp(
+export async function launchApp(
   userDataDir?: string,
   extraEnv: Record<string, string> = {},
 ): Promise<ElectronApplication> {
-  const dir = userDataDir ?? mkdtempSync(path.join(tmpdir(), 'ezterm-e2e-'));
-  disableBootIntro(dir);
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) env[key] = value;
+  const registry = currentOwnedDesktopProfileRegistry();
+  const dir = userDataDir ?? registry.createTempDir('ezterm-e2e-');
+  const lease = registry.reserve(dir);
+  let launchedApp: ElectronApplication | undefined;
+  let appCloser: ReturnType<typeof trackElectronApplicationClose> | undefined;
+  try {
+    disableBootIntro(dir);
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) env[key] = value;
+    }
+    env.EZTERMINAL_USER_DATA_DIR = dir;
+    // Production is single-instance. Playwright intentionally launches many
+    // isolated app instances, so the harness must opt out explicitly.
+    env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES = '1';
+    Object.assign(env, extraEnv);
+    // The broad legacy E2E suite asserts English copy. Keep its browser locale
+    // deterministic across developer and CI machines; locale-specific product
+    // behavior is covered separately by i18n, Storybook, and visual contracts.
+    launchedApp = await electron.launch({ args: [MAIN_ENTRY, '--lang=en-US'], env });
+    appCloser = trackElectronApplicationClose(launchedApp);
+    lease.settle(appCloser);
+    return launchedApp;
+  } catch (error) {
+    lease.settle(appCloser ?? launchedApp);
+    // The auto fixture owns the global close-then-remove barrier. Cleaning one
+    // profile here could race another pending launch or remove directories
+    // while an unrelated resource remains live.
+    throw error;
   }
-  env.EZTERMINAL_USER_DATA_DIR = dir;
-  // Production is single-instance. Playwright intentionally launches many
-  // isolated app instances, so the harness must opt out explicitly.
-  env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES = '1';
-  Object.assign(env, extraEnv);
-  // The broad legacy E2E suite asserts English copy. Keep its browser locale
-  // deterministic across developer and CI machines; locale-specific product
-  // behavior is covered separately by i18n, Storybook, and visual contracts.
-  return electron.launch({ args: [MAIN_ENTRY, '--lang=en-US'], env });
 }

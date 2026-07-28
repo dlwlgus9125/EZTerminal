@@ -1,7 +1,9 @@
-import { test, expect, type Page } from '@playwright/test';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import {
+  createRegisteredE2eTempDir,
+  test,
+  expect,
+  type Page,
+} from './test';
 import { Server, utils as ssh2Utils } from 'ssh2';
 import type { Connection, ServerChannel } from 'ssh2';
 
@@ -16,7 +18,7 @@ import { readXtermBuffer } from './xterm-buffer';
 // fingerprints ④ cancelling while a prompt is outstanding settles `cancelled`.
 
 function tempUserData(): string {
-  return mkdtempSync(path.join(tmpdir(), 'ezterm-ssh-e2e-'));
+  return createRegisteredE2eTempDir('ezterm-ssh-e2e-');
 }
 
 /** Concatenated text currently rendered in the xterm grid (mirrors pty.spec.ts). */

@@ -29,7 +29,7 @@
  * Prerequisites are the same as smoke.ts (booted AVD, fresh debug APK built in
  * e2e mode, `.vite/build/main.js`, no other desktop instance on the port).
  *
- * Run locally: `node mobile/e2e/handoff-surfaces.ts`.
+ * Run locally: `pnpm --dir mobile e2e:handoff-surfaces`.
  */
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -103,6 +103,19 @@ function removeGitFixture(directory: string): void {
   rmSync(resolved, { force: true, recursive: true });
 }
 
+function throwCapturedFailures(
+  failures: readonly { readonly error: unknown }[],
+  message: string,
+): void {
+  if (failures.length === 1) throw failures[0].error;
+  if (failures.length > 1) {
+    throw new AggregateError(
+      failures.map((failure) => failure.error),
+      message,
+    );
+  }
+}
+
 function runFixtureGit(directory: string, args: readonly string[]): string {
   return execFileSync('git', [...args], {
     cwd: directory,
@@ -131,7 +144,14 @@ function createGitFixture(): { readonly branch: string; readonly directory: stri
     expect(branch, GIT_FIXTURE_BRANCH, 'temporary Git fixture branch');
     return { branch, directory };
   } catch (error) {
-    removeGitFixture(directory);
+    try {
+      removeGitFixture(directory);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Git fixture creation and cleanup both failed',
+      );
+    }
     throw error;
   }
 }
@@ -147,10 +167,20 @@ async function main(): Promise<void> {
   try {
     launched = await launchDesktop({ cwd: gitFixture.directory });
   } catch (error) {
-    removeGitFixture(gitFixture.directory);
+    try {
+      removeGitFixture(gitFixture.directory);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Desktop launch and Git fixture cleanup both failed',
+      );
+    }
     throw error;
   }
-  const { app, token } = launched;
+  const { dispose, issuePairingCode, token } = launched;
+  let scenarioFailure: { readonly error: unknown } | undefined;
+  let disposeFailure: { readonly error: unknown } | undefined;
+  let fixtureRemovalFailure: { readonly error: unknown } | undefined;
 
   try {
     await connectAndAuth(token);
@@ -197,11 +227,7 @@ async function main(): Promise<void> {
     console.log(`[surfaces] step OK: git-status arm round-tripped (branch ${gitFixture.branch})`);
 
     // ── 4. one-time pairing, end to end ──────────────────────────────────
-    const code: string = await app.evaluate(async ({ BrowserWindow }) => {
-      const win = BrowserWindow.getAllWindows()[0];
-      const issued = await win.webContents.executeJavaScript('window.ezterminalDesktop.issuePairingCode()');
-      return issued.code;
-    });
+    const code = await issuePairingCode();
     if (!/^[0-9A-Z]{4}-[0-9A-Z]{4}$/u.test(code)) {
       throw new Error(`desktop issued an unexpected pairing code: ${JSON.stringify(code)}`);
     }
@@ -233,11 +259,7 @@ async function main(): Promise<void> {
     // restart WITHOUT clearing app data and reconnect from the saved card:
     // that credential can only be the bearer the host handed back, because the
     // code it was typed with is dead by now.
-    const second: string = await app.evaluate(async ({ BrowserWindow }) => {
-      const win = BrowserWindow.getAllWindows()[0];
-      const issued = await win.webContents.executeJavaScript('window.ezterminalDesktop.issuePairingCode()');
-      return issued.code;
-    });
+    const second = await issuePairingCode();
     await connectAndAuth(second);
     runAdb(['shell', 'am', 'force-stop', APP_ID]);
     await sleep(1_000);
@@ -250,15 +272,30 @@ async function main(): Promise<void> {
 
     assertNoWebViewJavaScriptRuntimeErrors();
     console.log('[surfaces] ALL STEPS PASSED');
+  } catch (error) {
+    scenarioFailure = { error };
   } finally {
     console.log('[surfaces] teardown...');
     try {
       closeMobileE2eResources();
     } finally {
-      await app.close().catch(() => undefined);
-      removeGitFixture(gitFixture.directory);
+      try {
+        await dispose();
+      } catch (error) {
+        disposeFailure = { error };
+      }
+      try {
+        removeGitFixture(gitFixture.directory);
+      } catch (error) {
+        fixtureRemovalFailure = { error };
+      }
     }
   }
+  throwCapturedFailures(
+    [scenarioFailure, disposeFailure, fixtureRemovalFailure]
+      .filter((failure): failure is { readonly error: unknown } => failure !== undefined),
+    'Handoff surfaces scenario or one of its cleanup operations failed',
+  );
 }
 
 void main().catch((error: unknown) => {

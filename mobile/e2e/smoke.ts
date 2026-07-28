@@ -39,8 +39,9 @@
  *    (`pnpm package`, or just run `pnpm e2e` once — its globalSetup builds them).
  *  - No OTHER desktop app instance (a manual `pnpm start`, a leftover process
  *    from a previous interrupted run of THIS script, etc.) may already be
- *    bound to loopback port 17420. This script's own try/finally always calls
- *    `app.close()`, so back-to-back clean runs are fine — but a prior run
+ *    bound to loopback port 17420. This script's own try/finally always
+ *    disposes the owned desktop session, so back-to-back clean runs are fine
+ *    — but a prior run
  *    that was killed externally (Ctrl-C, a crashed shell) leaves an orphaned
  *    Electron process holding the port. Symptom if this happens: main.log
  *    shows `EADDRINUSE` for `127.0.0.1:17420` and the phone's
@@ -48,8 +49,8 @@
  *    instance, whose token doesn't match the fresh one this run fetched).
  *    Fix: close any stray EZTerminal window before running this script.
  *
- * Run locally: `node mobile/e2e/smoke.ts` (Node's native TS type-stripping —
- * no ts-node/tsx needed; see package.json's `e2e:smoke` script).
+ * Run locally: `pnpm --dir mobile e2e:smoke` (no ts-node/tsx needed; see
+ * package.json's `e2e:smoke` script).
  */
 import { existsSync, unlinkSync } from 'node:fs';
 import {
@@ -61,14 +62,279 @@ import {
   closeMobileE2eResources,
   connectAndAuth,
   createTerminalSession,
+  evaluateWebView,
   launchDesktop,
   pollLogcat,
   runAdb,
   setTestIdTextValue,
+  sleep,
   tapTestId,
+  tapTestIdOnce,
   waitForVisibleTestIdDescendant,
   waitForVisibleTestIdEnabled,
 } from './lib.ts';
+
+interface ElementGeometry {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+interface ElementIdentity {
+  readonly tag: string;
+  readonly testId: string | null;
+}
+
+interface ViewportGeometry {
+  readonly width: number;
+  readonly height: number;
+  readonly offsetLeft?: number;
+  readonly offsetTop?: number;
+}
+
+interface TerminalSubmissionState {
+  readonly command: string | null;
+  readonly inputGeometry: ElementGeometry | null;
+  readonly runDisabled: boolean | null;
+  readonly runGeometry: ElementGeometry | null;
+  readonly runCenterTarget: ElementIdentity | null;
+  readonly activeElement: ElementIdentity | null;
+  readonly blocks: readonly {
+    readonly command: string | null;
+    readonly status: string | null;
+    readonly ptyHosts: number;
+    readonly xtermScreens: number;
+  }[];
+  readonly innerViewport: ViewportGeometry;
+  readonly visualViewport: ViewportGeometry | null;
+}
+
+async function captureTerminalSubmissionState(): Promise<TerminalSubmissionState> {
+  return evaluateWebView<TerminalSubmissionState>(`(() => {
+    const visible = (testId) => [...document.querySelectorAll('[data-testid]')]
+      .filter((node) => node.getAttribute('data-testid') === testId)
+      .reverse()
+      .find((node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return rect.width > 0 && rect.height > 0
+          && style.display !== 'none' && style.visibility !== 'hidden';
+      });
+    const geometry = (node) => {
+      if (!(node instanceof HTMLElement)) return null;
+      const rect = node.getBoundingClientRect();
+      return {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      };
+    };
+    const input = visible('cmd-input');
+    const run = visible('btn-run');
+    const active = document.activeElement;
+    const terminal = visible('mobile-session-view');
+    const runRect = geometry(run);
+    const centerTarget = runRect
+      ? document.elementFromPoint(
+          runRect.left + runRect.width / 2,
+          runRect.top + runRect.height / 2,
+        )
+      : null;
+    const centerTestNode = centerTarget instanceof Element
+      ? centerTarget.closest('[data-testid]')
+      : null;
+    const activeTestNode = active instanceof Element
+      ? active.closest('[data-testid]')
+      : null;
+    return {
+      command: input instanceof HTMLInputElement ? input.value : null,
+      inputGeometry: geometry(input),
+      runDisabled: run instanceof HTMLButtonElement ? run.disabled : null,
+      runGeometry: runRect,
+      runCenterTarget: centerTarget instanceof Element
+        ? {
+            tag: centerTarget.tagName,
+            testId: centerTestNode ? centerTestNode.getAttribute('data-testid') : null,
+          }
+        : null,
+      activeElement: active instanceof Element
+        ? {
+            tag: active.tagName,
+            testId: activeTestNode ? activeTestNode.getAttribute('data-testid') : null,
+          }
+        : null,
+      blocks: terminal
+        ? [...terminal.querySelectorAll('[data-testid="block"]')].map((block) => ({
+            command: block.querySelector('[data-testid="block-command"]')
+              ? block.querySelector('[data-testid="block-command"]').textContent
+              : null,
+            status: block.getAttribute('data-status'),
+            ptyHosts: block.querySelectorAll('[data-testid="pty-block"]').length,
+            xtermScreens: block.querySelectorAll('.xterm-screen').length,
+          }))
+        : [],
+      innerViewport: { width: innerWidth, height: innerHeight },
+      visualViewport: window.visualViewport
+        ? {
+            width: window.visualViewport.width,
+            height: window.visualViewport.height,
+            offsetLeft: window.visualViewport.offsetLeft,
+            offsetTop: window.visualViewport.offsetTop,
+          }
+        : null,
+    };
+  })()`);
+}
+
+function submissionGeometrySignature(state: TerminalSubmissionState): string {
+  return JSON.stringify({
+    input: state.inputGeometry,
+    run: state.runGeometry,
+    innerViewport: state.innerViewport,
+    visualViewport: state.visualViewport,
+    centerTarget: state.runCenterTarget,
+    activeElement: state.activeElement,
+  });
+}
+
+async function stabilizeTerminalSubmissionSurface(
+  command: string,
+  label: string,
+): Promise<TerminalSubmissionState> {
+  // A focused composer can keep Android's IME resize animation in flight.
+  // Blurring through the real WebView asks the IME to close without sending
+  // Android Back, which could navigate if the keyboard has already gone.
+  await evaluateWebView<void>(`(() => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+  })()`);
+
+  const deadline = Date.now() + 7_000;
+  let previousSignature: string | null = null;
+  let stableSamples = 0;
+  let lastState: TerminalSubmissionState | null = null;
+  for (;;) {
+    const state = await captureTerminalSubmissionState();
+    lastState = state;
+    if (state.command !== command) {
+      throw new Error(
+        `${label} draft changed before native submit: ${JSON.stringify(state)}`,
+      );
+    }
+    const targetReady = state.inputGeometry !== null
+      && state.runGeometry !== null
+      && state.runDisabled === false
+      && state.activeElement?.testId !== 'cmd-input'
+      && state.runCenterTarget?.testId === 'btn-run';
+    if (targetReady) {
+      const signature = submissionGeometrySignature(state);
+      stableSamples = signature === previousSignature ? stableSamples + 1 : 1;
+      previousSignature = signature;
+      if (stableSamples >= 3) return state;
+    } else {
+      stableSamples = 0;
+      previousSignature = null;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `${label} native submit surface did not stabilize: ${JSON.stringify(lastState)}`,
+      );
+    }
+    await sleep(200);
+  }
+}
+
+async function waitForCommandSubmissionAcknowledgement(
+  command: string,
+  label: string,
+  initialBlockCount: number,
+): Promise<void> {
+  // The product's run-port handoff may legitimately use its full 15-second
+  // broker deadline before the pending block gains its exact command label.
+  // Keep this observation window outside that contract without ever retrying
+  // the native tap.
+  const deadline = Date.now() + 20_000;
+  let lastState: TerminalSubmissionState | null = null;
+  let lastError: unknown;
+  for (;;) {
+    let state: TerminalSubmissionState | null = null;
+    try {
+      state = await captureTerminalSubmissionState();
+      lastState = state;
+      lastError = undefined;
+    } catch (error) {
+      lastError = error;
+    }
+    if (state) {
+      const addedBlocks = state.blocks.length - initialBlockCount;
+      const submittedBlock = state.blocks[state.blocks.length - 1];
+      if (
+        addedBlocks === 1
+        && (state.command === '' || state.command === null)
+        && submittedBlock?.command === command
+      ) {
+        return;
+      }
+      if (
+        addedBlocks > 1
+        || (state.command !== command && state.command !== '' && state.command !== null)
+      ) {
+        throw new Error(
+          `${label} single native submit reached an ambiguous state: ${JSON.stringify(state)}`,
+        );
+      }
+    }
+    if (Date.now() > deadline) {
+      const detail = lastError ? `; observation error=${String(lastError)}` : '';
+      throw new Error(
+        `${label} single native submit was not acknowledged: ${JSON.stringify(lastState)}${detail}`,
+      );
+    }
+    await sleep(200);
+  }
+}
+
+async function submitCommandThroughNativeTap(
+  command: string,
+  label: string,
+): Promise<void> {
+  await setTestIdTextValue('cmd-input', command);
+  const ready = await stabilizeTerminalSubmissionSurface(command, label);
+  console.log(`[smoke] ${label} pre-submit state:`, JSON.stringify(ready));
+
+  // This is intentionally the only native injection. Even an adb timeout is
+  // ambiguous because Android may already have dispatched the tap, so the
+  // harness fails red instead of ever issuing a second command.
+  await tapTestIdOnce('btn-run');
+  await waitForCommandSubmissionAcknowledgement(
+    command,
+    label,
+    ready.blocks.length,
+  );
+}
+
+async function logTerminalSubmissionDiagnostics(label: string): Promise<void> {
+  try {
+    console.error(
+      `[smoke] ${label} state:`,
+      JSON.stringify(await captureTerminalSubmissionState()),
+    );
+  } catch (diagnosticError) {
+    console.error(`[smoke] ${label} state capture failed:`, diagnosticError);
+  }
+  try {
+    assertNoWebViewJavaScriptRuntimeErrors();
+  } catch (runtimeError) {
+    console.error(`[smoke] ${label} runtime errors:`, runtimeError);
+  }
+}
 
 async function main(): Promise<void> {
   if (!existsSync(MAIN_ENTRY)) {
@@ -83,8 +349,10 @@ async function main(): Promise<void> {
   }
 
   console.log('[smoke] launching desktop app (isolated userData)...');
-  const { app, token } = await launchDesktop();
+  const { dispose, token } = await launchDesktop();
   console.log('[smoke] real remote token acquired:', token.slice(0, 8) + '…');
+  let scenarioFailure: { readonly error: unknown } | undefined;
+  let disposeFailure: { readonly error: unknown } | undefined;
 
   try {
     await connectAndAuth(token);
@@ -101,8 +369,7 @@ async function main(): Promise<void> {
     // so it can never satisfy this assertion. Invoke cmd.exe explicitly so the
     // external-command PTY path actually emits "hello" (verified end-to-end
     // against the real bridge: the pty-data stream carries "hello\r\n").
-    await setTestIdTextValue('cmd-input', 'cmd /c echo hello');
-    await tapTestId('btn-run');
+    await submitCommandThroughNativeTap('cmd /c echo hello', 'plain PTY');
 
     console.log('[smoke] polling logcat for [ez-e2e] output containing "hello"...');
     // cmd.exe PTY spawn + output render can take a few seconds on a cold
@@ -117,11 +384,18 @@ async function main(): Promise<void> {
     await waitForVisibleTestIdEnabled('btn-run', 20_000);
     // Keep the PTY alive long enough for the 250ms CDP polling loop to observe
     // its real DOM. A one-shot `echo` can mount and finish between polls.
-    await setTestIdTextValue('cmd-input', '!cmd /d /c ping -n 11 127.0.0.1');
-    await tapTestId('btn-run');
+    await submitCommandThroughNativeTap(
+      '!cmd /d /c ping -n 11 127.0.0.1',
+      'forced xterm',
+    );
 
     console.log('[smoke] waiting for the real xterm DOM...');
-    await waitForVisibleTestIdDescendant('pty-block', '.xterm-screen', 20_000);
+    try {
+      await waitForVisibleTestIdDescendant('pty-block', '.xterm-screen', 20_000);
+    } catch (error) {
+      await logTerminalSubmissionDiagnostics('forced xterm timeout');
+      throw error;
+    }
 
     // Use a real Android input tap so this reaches xterm's pointer-coordinate
     // path (including the WebView 74 WeakRef compatibility seam). A CDP click
@@ -131,6 +405,8 @@ async function main(): Promise<void> {
     console.log('[smoke] PASS — forced xterm DOM and native pointer path');
 
     console.log('[smoke] PASS teardown...');
+  } catch (error) {
+    scenarioFailure = { error };
   } finally {
     // Always close the WebView, including on assertion failure. Otherwise its
     // CDP socket keeps this Node process alive and hides the original error
@@ -141,13 +417,25 @@ async function main(): Promise<void> {
     } catch {
       // best-effort cleanup; preserve the original smoke failure
     }
-    await app.close();
+    try {
+      await dispose();
+    } catch (error) {
+      disposeFailure = { error };
+    }
     try {
       unlinkSync(DUMP_LOCAL_PATH);
     } catch {
       // best-effort cleanup
     }
   }
+  if (scenarioFailure && disposeFailure) {
+    throw new AggregateError(
+      [scenarioFailure.error, disposeFailure.error],
+      'Mobile smoke scenario and desktop disposal both failed',
+    );
+  }
+  if (scenarioFailure) throw scenarioFailure.error;
+  if (disposeFailure) throw disposeFailure.error;
 }
 
 main().catch((err: unknown) => {

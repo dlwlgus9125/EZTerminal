@@ -191,6 +191,10 @@ const aapt2Metadata = capture(
 
 assert(rootPackage.version === contract.version, 'package.json version differs from release/version.json.');
 assert(
+  rootPackage.engines?.node === '>=22.12 <25',
+  'package.json must match Electron and the direct TypeScript E2E runtime Node range.',
+);
+assert(
   mobilePackage.version === contract.version,
   'mobile/package.json version differs from release/version.json.',
 );
@@ -337,9 +341,17 @@ assert(
   'Local RC verifier does not include the mobile handoff-surface device lane.',
 );
 assert(
-  mobilePackage.scripts?.['e2e:qr-scanner'] === 'node e2e/qr-scanner.ts',
+  mobilePackage.scripts?.['e2e:qr-scanner']
+    === 'node --experimental-strip-types e2e/qr-scanner.ts',
   'mobile/package.json does not expose the QR scanner device lane.',
 );
+for (const [name, command] of Object.entries(mobilePackage.scripts ?? {})) {
+  if (!name.startsWith('e2e:')) continue;
+  assert(
+    /^node --experimental-strip-types e2e\/[a-z0-9-]+\.ts(?:\s|$)/u.test(command),
+    `mobile/package.json ${name} does not explicitly enable Node TypeScript stripping.`,
+  );
+}
 assert(
   releaseVerifier.includes("e2e:qr-scanner"),
   'Local RC verifier does not include the QR scanner device lane.',
