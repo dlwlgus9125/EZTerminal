@@ -4,9 +4,10 @@ import {
   expect,
   type Page,
 } from './test';
-import { Server, utils as ssh2Utils } from 'ssh2';
+import { Server } from 'ssh2';
 import type { Connection, ServerChannel } from 'ssh2';
 
+import { SSH_HOST_KEY_A, SSH_HOST_KEY_B } from './fixtures/ssh-host-keys';
 import { launchApp } from './launch-app';
 import { readXtermBuffer } from './xterm-buffer';
 
@@ -26,9 +27,6 @@ async function terminalText(window: Page): Promise<string> {
   return readXtermBuffer(window.getByTestId('pty-block'));
 }
 
-const HOST_KEY_A = ssh2Utils.generateKeyPairSync('ed25519', {}).private;
-const HOST_KEY_B = ssh2Utils.generateKeyPairSync('ed25519', {}).private; // deliberately DIFFERENT — for the rotation test
-
 interface TestServer {
   readonly port: number;
   close(): Promise<void>;
@@ -36,9 +34,9 @@ interface TestServer {
 
 /** Start a throwaway ssh2 Server: accepts the given password (any username),
  * allocates a pty, and echoes shell input as `ECHO:<input>` by default. */
-function startTestServer(opts: { hostKey?: string; password: string; port?: number }): Promise<TestServer> {
+function startTestServer(opts: { hostKey?: Buffer; password: string; port?: number }): Promise<TestServer> {
   return new Promise((resolve, reject) => {
-    const server = new Server({ hostKeys: [opts.hostKey ?? HOST_KEY_A] }, (client: Connection) => {
+    const server = new Server({ hostKeys: [opts.hostKey ?? SSH_HOST_KEY_A] }, (client: Connection) => {
       // The rotation test deliberately makes the CLIENT reject the (changed) host
       // key mid-KEX; from the server's side that surfaces as a 'error' on this
       // Connection (e.g. KEY_EXCHANGE_FAILED). An EventEmitter 'error' with no
@@ -165,7 +163,7 @@ test('ssh-connect: TOFU accept persists — a relaunch with the same userData do
 
 test('ssh-connect: a rotated host key hard-fails with the old and new fingerprints', async () => {
   const userDataDir = tempUserData();
-  const firstServer = await startTestServer({ hostKey: HOST_KEY_A, password: 'sekrit' });
+  const firstServer = await startTestServer({ hostKey: SSH_HOST_KEY_A, password: 'sekrit' });
   try {
     const app1 = await launchApp(userDataDir);
     const w1 = await app1.firstWindow();
@@ -188,7 +186,11 @@ test('ssh-connect: a rotated host key hard-fails with the old and new fingerprin
   // A second server on the SAME port with a DIFFERENT host key — simulates a
   // reinstalled host / key rotation (or a MITM, which is exactly why this must
   // hard-fail rather than silently re-prompt).
-  const rotatedServer = await startTestServer({ hostKey: HOST_KEY_B, password: 'sekrit', port: firstServer.port });
+  const rotatedServer = await startTestServer({
+    hostKey: SSH_HOST_KEY_B,
+    password: 'sekrit',
+    port: firstServer.port,
+  });
   try {
     const app2 = await launchApp(userDataDir);
     const w2 = await app2.firstWindow();

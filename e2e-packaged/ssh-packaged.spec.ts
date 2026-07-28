@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
+import { SSH_HOST_KEY_A } from '../e2e/fixtures/ssh-host-keys';
 import { packagedExePath } from './paths';
 
 // ── E5 SSH: packaged pure-JS-module proof (gate B4) ─────────────────────────
@@ -34,13 +35,12 @@ function unpackedModuleDir(name: string): string {
 test('packaged ssh2: loads from app.asar.unpacked and round-trips a real localhost shell session', async () => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const ssh2 = require(unpackedModuleDir('ssh2')) as typeof import('ssh2');
-  const { Client, Server, utils } = ssh2;
+  const { Client, Server } = ssh2;
   type ServerChannel = import('ssh2').ServerChannel;
   type ClientChannel = import('ssh2').ClientChannel;
   type Connection = import('ssh2').Connection;
 
-  const hostKey = utils.generateKeyPairSync('ed25519', {}).private;
-  const server = new Server({ hostKeys: [hostKey] }, (client: Connection) => {
+  const server = new Server({ hostKeys: [SSH_HOST_KEY_A] }, (client: Connection) => {
     client.on('authentication', (ctx) => ctx.accept());
     client.on('ready', () => {
       client.on('session', (acceptSession) => {
