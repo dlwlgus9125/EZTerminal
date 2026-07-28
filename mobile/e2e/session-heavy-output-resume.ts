@@ -36,6 +36,7 @@ import {
   closeWebViewDevtools,
   connectAndAuth,
   createTerminalSession,
+  evaluateWebView,
   getVisibleXtermBufferText,
   launchDesktop,
   openShellDestination,
@@ -87,20 +88,90 @@ function parseOfflineMs(): number {
   return value;
 }
 
-async function waitForXtermText(text: string, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastBuffer = '';
-  for (;;) {
-    lastBuffer = await getVisibleXtermBufferText();
-    if (lastBuffer.includes(text)) return;
-    if (Date.now() > deadline) {
-      throw new Error(
-        `Timed out waiting for xterm text ${JSON.stringify(text)}; `
-        + `last buffer: ${JSON.stringify(lastBuffer.slice(-1_000))}`,
-      );
+/** Finds the phone's live terminal the same way `getVisibleXtermBufferText`
+ * does — last `pty-block` that is actually laid out and visible. */
+const FIND_LIVE_TERMINAL = `[...document.querySelectorAll('[data-testid="pty-block"]')]
+  .reverse()
+  .find((node) => {
+    if (!(node instanceof HTMLElement)) return false;
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return rect.width > 0 && rect.height > 0
+      && style.display !== 'none' && style.visibility !== 'hidden';
+  })`;
+
+/** Wraps the terminal's write path so every byte the phone receives is scanned
+ * for the marker, then clears the tap's state so the caller starts from "not
+ * seen". Idempotent: re-arming reuses the wrapper already installed.
+ *
+ * `PtyBlock.tsx` funnels ALL PTY bytes through a single `term.write(bytes, cb)`
+ * (`src/renderer/PtyBlock.tsx:411`), so this observes the whole stream. The scan
+ * is a byte compare with an 11-byte carry rather than a decode, because the tap
+ * sits on the flood's own hot path and must not perturb the throughput the
+ * surrounding assertions measure. */
+async function armEscEchoTap(): Promise<void> {
+  const armed = await retryEvaluation(() => evaluateWebView<boolean>(`(() => {
+    const element = ${FIND_LIVE_TERMINAL};
+    const terminal = element && element.__ezTerm;
+    if (!terminal) return false;
+    if (!terminal.__ezEscTap) {
+      terminal.__ezEscTap = { seen: false, carry: [] };
+      const MARK = [69, 83, 67, 45, 82, 69, 67, 69, 73, 86, 69, 68]; // ESC-RECEIVED
+      const original = terminal.write.bind(terminal);
+      terminal.write = (data, callback) => {
+        const tap = terminal.__ezEscTap;
+        if (!tap.seen) {
+          const bytes = typeof data === 'string'
+            ? Array.from(data, (character) => character.charCodeAt(0) & 0xff)
+            : data;
+          const carry = tap.carry;
+          const total = carry.length + bytes.length;
+          const at = (index) => (index < carry.length ? carry[index] : bytes[index - carry.length]);
+          for (let start = 0; start + MARK.length <= total; start += 1) {
+            let hit = true;
+            for (let offset = 0; offset < MARK.length; offset += 1) {
+              if (at(start + offset) !== MARK[offset]) { hit = false; break; }
+            }
+            if (hit) { tap.seen = true; break; }
+          }
+          const keep = MARK.length - 1;
+          const next = [];
+          for (let index = Math.max(0, total - keep); index < total; index += 1) next.push(at(index));
+          tap.carry = next;
+        }
+        return original(data, callback);
+      };
     }
-    await sleep(250);
+    terminal.__ezEscTap.seen = false;
+    terminal.__ezEscTap.carry = [];
+    return true;
+  })()`));
+  if (!armed) throw new Error('No live terminal on the phone to watch for the ESC echo');
+}
+
+async function escEchoWasDelivered(): Promise<boolean> {
+  return retryEvaluation(() => evaluateWebView<boolean>(`(() => {
+    const element = ${FIND_LIVE_TERMINAL};
+    const terminal = element && element.__ezTerm;
+    return Boolean(terminal && terminal.__ezEscTap && terminal.__ezEscTap.seen);
+  })()`));
+}
+
+/** Same reasoning as `readMaxVisibleSeq`: under a flood a CDP evaluation can
+ * time out and drop the DevTools socket, and a lost transport is not evidence
+ * about the terminal. The tap's state lives in the page, so a retry reads the
+ * same accumulated answer rather than restarting the observation. */
+async function retryEvaluation<T>(read: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await read();
+    } catch (error) {
+      lastError = error;
+      await sleep(500);
+    }
   }
+  throw new Error(`Unable to reach the phone's terminal: ${String(lastError)}`);
 }
 
 /** Highest `SEQ:<n>` marker in an xterm buffer snapshot. A flood line is ~1 KB
@@ -193,23 +264,41 @@ async function requireSeqGrowth(label: string, previous: number): Promise<number
 }
 
 /** Taps the ESC accessory key and requires the fixture's ESC-RECEIVED echo to
- * become visible. The echo is ONE line inside a flood that displaces the whole
- * scrollback in seconds, so a poll can miss a sighting it never got to sample;
- * each attempt therefore re-sends ESC. This cannot mask the defect — a paused
- * PTY drains no echo at all, however many times the child writes one. */
-async function requireVisibleEscEcho(): Promise<void> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    await tapTestId('touch-key-escape');
-    try {
-      await waitForXtermText('ESC-RECEIVED', ESC_ECHO_WINDOW_MS);
-      return;
-    } catch (error) {
-      lastError = error;
-      console.log(`[repro] ESC echo attempt ${attempt} was not sampled in time; re-sending ESC`);
-    }
+ * actually reach the phone's terminal.
+ *
+ * Deliberately NOT a buffer poll. The fixture answers ESC with ONE line while
+ * the flood writes ~640 lines a second, so the echo survives on screen for a
+ * few milliseconds and a quarter-second poll can only sample it by luck — that
+ * check failed and passed on identical builds, which is a coin toss reporting
+ * itself as a verdict. The tap on the write path sees every byte instead, so
+ * the outcome is decided by the product rather than by the sampler.
+ *
+ * It cannot mask the defect: the broken build's PTY was paused, so no echo was
+ * ever drained to the phone and the tap would observe nothing at all. */
+async function requireEscEchoDelivered(): Promise<void> {
+  // An instrument that reports success without the stimulus proves nothing, and
+  // this one is watching a stream of a thousand lines a second. Arm it, let the
+  // flood run through it, and require silence before the first ESC is sent.
+  await armEscEchoTap();
+  await sleep(1_000);
+  if (await escEchoWasDelivered()) {
+    throw new Error('The ESC-echo tap fired on flood traffic alone — it is not a valid probe');
   }
-  throw new Error(`ESC produced no visible response on the phone: ${String(lastError)}`);
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await armEscEchoTap();
+    await tapTestId('touch-key-escape');
+    const deadline = Date.now() + ESC_ECHO_WINDOW_MS;
+    for (;;) {
+      if (await escEchoWasDelivered()) return;
+      if (Date.now() > deadline) break;
+      await sleep(250);
+    }
+    console.log(`[repro] ESC echo attempt ${attempt} produced nothing; re-sending ESC`);
+  }
+  throw new Error(
+    `ESC produced no response on the phone within ${ESC_ECHO_WINDOW_MS}ms across 3 attempts`,
+  );
 }
 
 async function main(): Promise<void> {
@@ -272,9 +361,9 @@ async function main(): Promise<void> {
     seq = await requireSeqGrowth('growth sample 2', seq);
     console.log('[repro] heavy output keeps flowing on the phone after the resume');
 
-    // And ESC must produce a VISIBLE response — the broken build delivered the
-    // byte to a child whose paused PTY could never render the reply.
-    await requireVisibleEscEcho();
+    // And ESC must produce a response that REACHES the phone — the broken build
+    // delivered the byte to a child whose paused PTY could never drain the reply.
+    await requireEscEchoDelivered();
     console.log('[repro] PASS: resumed heavy-output run keeps streaming and ESC visibly responds');
   } finally {
     try {
