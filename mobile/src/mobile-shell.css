@@ -1571,12 +1571,16 @@
 /* Build-stamped text reserves a fixed slot. A visual mask hides the pixels but
    not the layout: the stamp is "dev" locally and a real commit in CI, so a
    content-sized box changes width between environments and the masked region
-   lands on different pixels. Reserving the width makes the snapshot depend on
-   the design rather than on which machine built it. */
+   lands on different pixels. The compact index/footer elide a long exact SHA;
+   the connection/about detail surface remains the authoritative full value. */
 [data-build-stamp] {
   display: inline-block;
-  min-inline-size: 20ch;
+  inline-size: 20ch;
+  max-inline-size: 100%;
+  overflow: hidden;
   text-align: end;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mob-settings-row__preview {
