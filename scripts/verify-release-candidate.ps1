@@ -269,19 +269,290 @@ function Invoke-Adb {
     return $output.Trim()
 }
 
+function Invoke-AdbBounded {
+    param(
+        [string[]]$Arguments,
+        [int]$TimeoutMs
+    )
+
+    if ($TimeoutMs -lt 1) {
+        throw 'A bounded adb invocation requires a positive timeout.'
+    }
+    if (@($Arguments | Where-Object { $_ -match '[\s"]' }).Count -ne 0) {
+        throw 'The bounded adb probe accepts only fixed, whitespace-free arguments.'
+    }
+
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $adb
+    $startInfo.Arguments = $Arguments -join ' '
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $adbProcess = [Diagnostics.Process]::new()
+    $adbProcess.StartInfo = $startInfo
+    $started = $false
+    $stdoutTask = $null
+    $stderrTask = $null
+    try {
+        $started = $adbProcess.Start()
+        if (-not $started) {
+            throw "Could not start bounded adb: $($Arguments -join ' ')"
+        }
+        # Drain both streams asynchronously so a verbose adb failure cannot
+        # block the process while the parent is enforcing its deadline.
+        $stdoutTask = $adbProcess.StandardOutput.ReadToEndAsync()
+        $stderrTask = $adbProcess.StandardError.ReadToEndAsync()
+        $completedBeforeTimeout = $adbProcess.WaitForExit($TimeoutMs)
+        $timedOut = -not $completedBeforeTimeout
+        if ($timedOut) {
+            try {
+                if (-not $adbProcess.HasExited) { $adbProcess.Kill() }
+            } catch [InvalidOperationException] {
+                # The process exited between HasExited and Kill.
+            }
+            if (-not $adbProcess.WaitForExit(5000)) {
+                throw "Timed out and could not terminate adb: $($Arguments -join ' ')"
+            }
+        }
+        # Flush the redirected file handles only after bounded exit was proven.
+        $adbProcess.WaitForExit()
+        return [pscustomobject]@{
+            TimedOut = $timedOut
+            ExitCode = $adbProcess.ExitCode
+            StdOut = $stdoutTask.Result
+            StdErr = $stderrTask.Result
+        }
+    } finally {
+        if ($started -and -not $adbProcess.HasExited) {
+            try {
+                $adbProcess.Kill()
+                [void]$adbProcess.WaitForExit(5000)
+            } catch {
+                # Best effort here must not hide the bounded command failure.
+            }
+        }
+        $adbProcess.Dispose()
+    }
+}
+
+function Get-RemainingProbeTimeout {
+    param(
+        [DateTime]$Deadline,
+        [int]$MaximumMs = 3000
+    )
+
+    $remainingMs = [int64][Math]::Floor(($Deadline - [DateTime]::UtcNow).TotalMilliseconds)
+    if ($remainingMs -le 0) { return 0 }
+    return [int][Math]::Min($remainingMs, $MaximumMs)
+}
+
 function Wait-ForAndroidBoot {
-    param([string]$Serial, [int]$ExpectedApi)
-    & $adb -s $Serial wait-for-device
-    if ($LASTEXITCODE -ne 0) { throw "Device $Serial did not become available." }
+    param(
+        [string]$Serial,
+        [int]$ExpectedApi,
+        [Diagnostics.Process]$EmulatorProcess
+    )
+
     $deadline = [DateTime]::UtcNow.AddMinutes(4)
+    $lastObservation = 'adb did not report a device state'
     do {
-        $booted = (& $adb -s $Serial shell getprop sys.boot_completed 2>$null | Out-String).Trim()
-        if ($booted -eq '1') { break }
-        if ([DateTime]::UtcNow -ge $deadline) { throw "Timed out waiting for $Serial to boot." }
-        Start-Sleep -Seconds 2
+        if ($EmulatorProcess.HasExited) {
+            throw (
+                "Emulator process $($EmulatorProcess.Id) for $Serial exited with code " +
+                "$($EmulatorProcess.ExitCode) before the device became available."
+            )
+        }
+        $probeTimeout = Get-RemainingProbeTimeout $deadline
+        if ($probeTimeout -le 0) {
+            throw "Timed out waiting for $Serial to become available ($lastObservation)."
+        }
+        $stateResult = Invoke-AdbBounded `
+            -Arguments @('-s', $Serial, 'get-state') `
+            -TimeoutMs $probeTimeout
+        $lastObservation = if ($stateResult.TimedOut) {
+            'adb get-state timed out'
+        } elseif ($stateResult.ExitCode -ne 0) {
+            "adb get-state exited $($stateResult.ExitCode): $($stateResult.StdErr.Trim())"
+        } else {
+            "adb get-state returned $($stateResult.StdOut.Trim())"
+        }
+        if ([DateTime]::UtcNow -ge $deadline) {
+            throw "Timed out waiting for $Serial to become available ($lastObservation)."
+        }
+        if (
+            -not $stateResult.TimedOut -and
+            $stateResult.ExitCode -eq 0 -and
+            $stateResult.StdOut.Trim() -ceq 'device'
+        ) {
+            break
+        }
+        $sleepMs = [Math]::Min(1000, (Get-RemainingProbeTimeout $deadline 1000))
+        if ($sleepMs -gt 0) { Start-Sleep -Milliseconds $sleepMs }
     } while ($true)
-    $api = [int](Invoke-Adb $Serial @('shell', 'getprop', 'ro.build.version.sdk'))
+
+    $lastObservation = 'sys.boot_completed was not observable'
+    do {
+        if ($EmulatorProcess.HasExited) {
+            throw (
+                "Emulator process $($EmulatorProcess.Id) for $Serial exited with code " +
+                "$($EmulatorProcess.ExitCode) before Android completed booting."
+            )
+        }
+        $probeTimeout = Get-RemainingProbeTimeout $deadline
+        if ($probeTimeout -le 0) {
+            throw "Timed out waiting for $Serial to boot ($lastObservation)."
+        }
+        $bootResult = Invoke-AdbBounded `
+            -Arguments @('-s', $Serial, 'shell', 'getprop', 'sys.boot_completed') `
+            -TimeoutMs $probeTimeout
+        $lastObservation = if ($bootResult.TimedOut) {
+            'sys.boot_completed probe timed out'
+        } elseif ($bootResult.ExitCode -ne 0) {
+            "sys.boot_completed probe exited $($bootResult.ExitCode): $($bootResult.StdErr.Trim())"
+        } else {
+            "sys.boot_completed=$($bootResult.StdOut.Trim())"
+        }
+        if ([DateTime]::UtcNow -ge $deadline) {
+            throw "Timed out waiting for $Serial to boot ($lastObservation)."
+        }
+        if (
+            -not $bootResult.TimedOut -and
+            $bootResult.ExitCode -eq 0 -and
+            $bootResult.StdOut.Trim() -ceq '1'
+        ) {
+            break
+        }
+        $sleepMs = [Math]::Min(2000, (Get-RemainingProbeTimeout $deadline 2000))
+        if ($sleepMs -gt 0) { Start-Sleep -Milliseconds $sleepMs }
+    } while ($true)
+
+    $probeTimeout = Get-RemainingProbeTimeout $deadline 5000
+    if ($probeTimeout -le 0) {
+        throw "Timed out verifying the Android API level for $Serial."
+    }
+    $apiResult = Invoke-AdbBounded `
+        -Arguments @('-s', $Serial, 'shell', 'getprop', 'ro.build.version.sdk') `
+        -TimeoutMs $probeTimeout
+    if (
+        [DateTime]::UtcNow -ge $deadline -or
+        $apiResult.TimedOut -or
+        $apiResult.ExitCode -ne 0 -or
+        $apiResult.StdOut.Trim() -notmatch '^[0-9]+$'
+    ) {
+        throw "Could not verify the Android API level for $Serial."
+    }
+    $api = [int]$apiResult.StdOut.Trim()
     if ($api -ne $ExpectedApi) { throw "$Serial is API $api; expected API $ExpectedApi." }
+}
+
+function Assert-EmulatedCameraAvailable {
+    param([string]$Serial, [int]$ExpectedApi)
+
+    if ($ExpectedApi -le 29) {
+        # Current emulator hosts can publish qemu.sf.fake_camera just after the
+        # API 29 legacy provider's 500 ms startup deadline. Restarting that
+        # provider once the boot property is present makes the cold gate
+        # deterministic; newer internal-camera providers do not have the race.
+        $rootResult = Invoke-AdbBounded `
+            -Arguments @('-s', $Serial, 'root') `
+            -TimeoutMs 15000
+        if ($rootResult.TimedOut -or $rootResult.ExitCode -ne 0) {
+            throw (
+                "Could not restart adbd as root for the API $ExpectedApi camera gate: " +
+                "$($rootResult.StdOut)$($rootResult.StdErr)"
+            )
+        }
+        $reconnectDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        $lastObservation = 'adb did not report a device state after root'
+        do {
+            $probeTimeout = Get-RemainingProbeTimeout $reconnectDeadline
+            if ($probeTimeout -le 0) {
+                throw (
+                    "Device $Serial did not reconnect after enabling the API " +
+                    "$ExpectedApi camera gate ($lastObservation)."
+                )
+            }
+            $stateResult = Invoke-AdbBounded `
+                -Arguments @('-s', $Serial, 'get-state') `
+                -TimeoutMs $probeTimeout
+            $lastObservation = if ($stateResult.TimedOut) {
+                'adb get-state timed out'
+            } elseif ($stateResult.ExitCode -ne 0) {
+                "adb get-state exited $($stateResult.ExitCode): $($stateResult.StdErr.Trim())"
+            } else {
+                "adb get-state returned $($stateResult.StdOut.Trim())"
+            }
+            if ([DateTime]::UtcNow -ge $reconnectDeadline) {
+                throw (
+                    "Device $Serial did not reconnect after enabling the API " +
+                    "$ExpectedApi camera gate ($lastObservation)."
+                )
+            }
+            if (
+                -not $stateResult.TimedOut -and
+                $stateResult.ExitCode -eq 0 -and
+                $stateResult.StdOut.Trim() -ceq 'device'
+            ) {
+                break
+            }
+            $sleepMs = [Math]::Min(
+                1000,
+                (Get-RemainingProbeTimeout $reconnectDeadline 1000)
+            )
+            if ($sleepMs -gt 0) { Start-Sleep -Milliseconds $sleepMs }
+        } while ($true)
+        $fakeCameraResult = Invoke-AdbBounded `
+            -Arguments @('-s', $Serial, 'shell', 'getprop', 'qemu.sf.fake_camera') `
+            -TimeoutMs 5000
+        if (
+            $fakeCameraResult.TimedOut -or
+            $fakeCameraResult.ExitCode -ne 0 -or
+            $fakeCameraResult.StdOut.Trim() -cne 'back'
+        ) {
+            throw "API $ExpectedApi AVD did not publish qemu.sf.fake_camera=back."
+        }
+        $restartResult = Invoke-AdbBounded `
+            -Arguments @(
+                '-s', $Serial, 'shell', 'setprop',
+                'ctl.restart', 'vendor.camera-provider-2-4'
+            ) `
+            -TimeoutMs 5000
+        if ($restartResult.TimedOut -or $restartResult.ExitCode -ne 0) {
+            throw "Could not restart the API $ExpectedApi legacy camera provider."
+        }
+    }
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    $lastObservation = 'camera service was not observable'
+    do {
+        $probeTimeout = Get-RemainingProbeTimeout $deadline 5000
+        if ($probeTimeout -le 0) {
+            throw "API $ExpectedApi AVD did not expose an emulated camera ($lastObservation)."
+        }
+        $cameraResult = Invoke-AdbBounded `
+            -Arguments @('-s', $Serial, 'shell', 'dumpsys', 'media.camera') `
+            -TimeoutMs $probeTimeout
+        $lastObservation = if ($cameraResult.TimedOut) {
+            'camera service probe timed out'
+        } elseif ($cameraResult.ExitCode -ne 0) {
+            "camera service probe exited $($cameraResult.ExitCode): $($cameraResult.StdErr.Trim())"
+        } else {
+            'camera service reported no emulated devices'
+        }
+        if ([DateTime]::UtcNow -ge $deadline) {
+            throw "API $ExpectedApi AVD did not expose an emulated camera ($lastObservation)."
+        }
+        if (
+            -not $cameraResult.TimedOut -and
+            $cameraResult.ExitCode -eq 0 -and
+            $cameraResult.StdOut -match '(?m)^Number of camera devices:\s+([1-9][0-9]*)\s*$'
+        ) {
+            return
+        }
+        $sleepMs = [Math]::Min(1000, (Get-RemainingProbeTimeout $deadline 1000))
+        if ($sleepMs -gt 0) { Start-Sleep -Milliseconds $sleepMs }
+    } while ($true)
 }
 
 function Invoke-Instrumentation {
@@ -311,6 +582,9 @@ function Invoke-MobileE2e {
     $env:EZTERMINAL_REMOTE_VPN_INTERFACE = '127.0.0.1'
     $env:EZTERMINAL_MOBILE_E2E_HOST_URL = 'ws://127.0.0.1:17420'
     try {
+        if ($Full) {
+            Invoke-Checked 'pnpm' @('--dir', 'mobile', 'e2e:qr-scanner')
+        }
         Invoke-Checked 'pnpm' @('--dir', 'mobile', 'e2e:smoke')
         Invoke-Checked 'pnpm' @('--dir', 'mobile', 'e2e:stabilization')
         if ($Full) {
@@ -337,21 +611,34 @@ function Invoke-AvdGate {
     if ($knownAvds -notcontains $Avd) {
         throw "Required API $Api AVD '$Avd' does not exist. Create it before the RC gate."
     }
-    if ((& $adb devices) -match "(?m)^$([regex]::Escape($serial))\s") {
+    $devicesResult = Invoke-AdbBounded -Arguments @('devices') -TimeoutMs 5000
+    if ($devicesResult.TimedOut -or $devicesResult.ExitCode -ne 0) {
+        throw "Could not inspect attached Android devices before starting $serial."
+    }
+    if ($devicesResult.StdOut -match "(?m)^$([regex]::Escape($serial))\s") {
         throw "$serial is already in use. Stop it before running the RC gate."
     }
 
     $stdout = Join-Path $env:TEMP "ezterminal-$serial.out.log"
     $stderr = Join-Path $env:TEMP "ezterminal-$serial.err.log"
+    $emulatorArguments = @(
+        '-avd', $Avd, '-port', $Port, '-no-window', '-no-audio',
+        '-no-boot-anim', '-no-snapshot-load', '-no-snapshot-save',
+        '-camera-back', 'emulated'
+    )
+    if ($Api -le 29) {
+        $emulatorArguments += @(
+            '-legacy-fake-camera',
+            '-prop', 'qemu.sf.fake_camera=back'
+        )
+    }
+    $emulatorArguments += @('-gpu', 'swiftshader_indirect')
     $process = Start-Process -FilePath $emulator -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
-        -ArgumentList @(
-            '-avd', $Avd, '-port', $Port, '-no-window', '-no-audio',
-            '-no-boot-anim', '-no-snapshot-load', '-no-snapshot-save',
-            '-gpu', 'swiftshader_indirect'
-        )
+        -ArgumentList $emulatorArguments
     try {
-        Wait-ForAndroidBoot $serial $Api
+        Wait-ForAndroidBoot $serial $Api $process
+        Assert-EmulatedCameraAvailable $serial $Api
         Invoke-Instrumentation $serial
         Invoke-MobileE2e $serial -Full
         if ($Soak) {
@@ -382,6 +669,7 @@ function Invoke-AvdGate {
             status = 'passed'
             lanes = @(
                 'instrumentation',
+                'qr-scanner',
                 'smoke',
                 'stabilization',
                 'parity',
@@ -390,30 +678,58 @@ function Invoke-AvdGate {
             )
         })
     } finally {
-        try { Invoke-Adb $serial @('emu', 'kill') | Out-Null } catch { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+        try {
+            $killResult = Invoke-AdbBounded `
+                -Arguments @('-s', $serial, 'emu', 'kill') `
+                -TimeoutMs 5000
+            if ($killResult.TimedOut -or $killResult.ExitCode -ne 0) {
+                throw "adb could not stop $serial."
+            }
+        } catch {
+            try {
+                if (-not $process.HasExited) { $process.Kill() }
+            } catch [InvalidOperationException] {
+                # The emulator exited between HasExited and Kill.
+            }
+        }
         if (-not $process.WaitForExit(30000)) {
             try {
-                Stop-Process -Id $process.Id -Force -ErrorAction Stop
-            } catch {
-                if (-not $process.HasExited) { throw }
+                if (-not $process.HasExited) { $process.Kill() }
+            } catch [InvalidOperationException] {
+                # The emulator exited between HasExited and Kill.
             }
             if (-not $process.WaitForExit(30000)) {
                 throw "Emulator process $($process.Id) for $serial did not exit after forced teardown."
             }
         }
         $deviceDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        $lastObservation = 'adb devices was not observable'
         do {
-            $attachedDevices = & $adb devices
-            if ($LASTEXITCODE -ne 0) {
-                throw "adb devices failed while verifying teardown of $serial."
+            $probeTimeout = Get-RemainingProbeTimeout $deviceDeadline
+            if ($probeTimeout -le 0) {
+                throw "$serial teardown could not be verified ($lastObservation)."
             }
-            $deviceStillAttached = $attachedDevices -match "(?m)^$([regex]::Escape($serial))\s"
-            if (-not $deviceStillAttached) { break }
-            Start-Sleep -Seconds 1
-        } while ([DateTime]::UtcNow -lt $deviceDeadline)
-        if ($deviceStillAttached) {
-            throw "$serial remained attached after emulator teardown."
-        }
+            $devicesResult = Invoke-AdbBounded -Arguments @('devices') -TimeoutMs $probeTimeout
+            $lastObservation = if ($devicesResult.TimedOut) {
+                'adb devices timed out'
+            } elseif ($devicesResult.ExitCode -ne 0) {
+                "adb devices exited $($devicesResult.ExitCode): $($devicesResult.StdErr.Trim())"
+            } else {
+                'adb still reported the emulator'
+            }
+            if ([DateTime]::UtcNow -ge $deviceDeadline) {
+                throw "$serial teardown could not be verified ($lastObservation)."
+            }
+            if (
+                -not $devicesResult.TimedOut -and
+                $devicesResult.ExitCode -eq 0 -and
+                $devicesResult.StdOut -notmatch "(?m)^$([regex]::Escape($serial))\s"
+            ) {
+                break
+            }
+            $sleepMs = [Math]::Min(1000, (Get-RemainingProbeTimeout $deviceDeadline 1000))
+            if ($sleepMs -gt 0) { Start-Sleep -Milliseconds $sleepMs }
+        } while ($true)
     }
 }
 
@@ -789,6 +1105,7 @@ try {
             'windows-make-and-packaged-smoke',
             'native-pty-and-handoff-security-guards',
             'android-api29-api35-instrumentation-and-handoff',
+            'android-api29-api35-qr-scanner-camera-preview',
             'android-api35-functional-soak',
             'mobile-production-marker-gate'
         )

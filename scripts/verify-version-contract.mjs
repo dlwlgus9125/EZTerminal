@@ -114,6 +114,15 @@ const mobileHandoffSurfaces = await readFile(
   resolve(root, 'mobile/e2e/handoff-surfaces.ts'),
   'utf8',
 );
+const mobileQrScanner = await readFile(
+  resolve(root, 'mobile/e2e/qr-scanner.ts'),
+  'utf8',
+);
+const mobileCameraState = await readFile(
+  resolve(root, 'mobile/e2e/camera-state.ts'),
+  'utf8',
+);
+const mobileE2eLibrary = await readFile(resolve(root, 'mobile/e2e/lib.ts'), 'utf8');
 
 assert(contract.schemaVersion === 1, 'release/version.json schemaVersion must be 1.');
 assert(
@@ -327,6 +336,63 @@ assert(
   releaseVerifier.includes("e2e:handoff-surfaces"),
   'Local RC verifier does not include the mobile handoff-surface device lane.',
 );
+assert(
+  mobilePackage.scripts?.['e2e:qr-scanner'] === 'node e2e/qr-scanner.ts',
+  'mobile/package.json does not expose the QR scanner device lane.',
+);
+assert(
+  releaseVerifier.includes("e2e:qr-scanner"),
+  'Local RC verifier does not include the QR scanner device lane.',
+);
+for (const marker of [
+  "tapTestId('connect-scan-qr')",
+  'MIN_NON_BLACK_PIXEL_RATIO',
+  'topmostAtCenter',
+  'currentTime < sample.currentTime + 0.1',
+  'parseAppCameraClientActive',
+  'waitForResumedActivity',
+  "['shell', 'input', 'keyevent', '3']",
+  'QR SCANNER CAMERA ACTIVE IN BACKGROUND',
+  'reopened preview',
+  "['shell', 'input', 'keyevent', '4']",
+  'trigger focus restored',
+]) {
+  assert(
+    mobileQrScanner.includes(marker),
+    `The QR scanner device lane omits required behavior: ${marker}.`,
+  );
+}
+assert(
+  releaseVerifier.includes("'-camera-back', 'emulated'")
+    && releaseVerifier.includes("'-legacy-fake-camera'")
+    && releaseVerifier.includes("'-prop', 'qemu.sf.fake_camera=back'")
+    && releaseVerifier.includes('Assert-EmulatedCameraAvailable $serial $Api'),
+  'Local RC verifier does not provision and verify the emulator camera.',
+);
+assert(
+  releaseVerifier.includes('function Invoke-AdbBounded')
+    && releaseVerifier.includes('$EmulatorProcess.HasExited')
+    && !releaseVerifier.includes('wait-for-device'),
+  'Local RC verifier does not bound adb boot probes and emulator early exit.',
+);
+assert(
+  mobileCameraState.includes('Number of camera devices:')
+    && mobileCameraState.includes('Active Camera Clients:')
+    && mobileCameraState.includes('Allowed user IDs:')
+    && mobileE2eLibrary.includes('ADB_COMMAND_TIMEOUT_MS')
+    && mobileE2eLibrary.includes('timeout: Math.max(1, Math.floor(timeoutMs))'),
+  'Mobile QR evidence does not fail closed on unobservable CameraService or adb state.',
+);
+for (const [label, source] of [
+  ['release staging', releaseStager],
+  ['release workflow', releaseWorkflow],
+]) {
+  assert(
+    /foreach\s*\(\$requiredLane\s+in\s+@\([\s\S]*?'qr-scanner'[\s\S]*?\)\)/u
+      .test(source),
+    `${label} does not require QR scanner device evidence.`,
+  );
+}
 assert(
   mobileHandoffSurfaces.includes(
     'launchDesktop({ cwd: gitFixture.directory })',

@@ -27,8 +27,9 @@ The exact candidate SHA must have a clean tree and pass:
 - ordinary `pnpm e2e`, native guards, packaged Electron smoke, and exact-SHA
   Windows packaging;
 - Android lint, unit and instrumentation plus API 29/API 35 cold-boot smoke,
-  stabilization, parity, theme/effects, handoff-surface validation, and the
-  API 35 functional soak;
+  QR-scanner fullscreen/live-camera/background-release checks, stabilization,
+  parity, theme/effects, handoff-surface validation, and the API 35 functional
+  soak;
 - production mobile asset restoration, E2E-marker rejection, signed APK
   identity/certificate/build-SHA verification, SBOM, manifest, and checksums.
 

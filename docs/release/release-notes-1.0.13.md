@@ -20,6 +20,17 @@ runtime state take precedence over simulated prototype data.
 - The 1+2, 2x1, and single-pane layouts preserve live sessions, drafts, PTYs,
   and restorable Dockview state.
 
+## Mobile QR pairing
+
+- Opening the QR scanner from the disconnected mobile screen no longer drops
+  the React root into a black screen when the navigation layer is unavailable.
+- The camera preview owns the full viewport, verifies a usable live frame, and
+  fails closed when playback, decoding, or the camera track becomes unusable.
+- Android Home, activity pause, Android Back, and unmount paths release the
+  camera exactly once. Returning to the app does not reacquire it until the
+  user explicitly opens the scanner again, and keyboard focus returns to the
+  scan trigger when the sheet closes.
+
 ## Integrity and compatibility
 
 - Every approval carries an opaque request id. A stale desktop or mobile

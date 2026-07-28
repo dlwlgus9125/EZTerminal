@@ -43,7 +43,7 @@
   font-family: var(--ui-font-body);
 }
 
-.connect-screen > * {
+.connect-screen > :not(.mobile-action-sheet-backdrop) {
   position: relative;
   z-index: 1;
 }

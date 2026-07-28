@@ -70,6 +70,8 @@ export const DUMP_LOCAL_PATH = path.join(import.meta.dirname, '.ez_e2e_dump.xml'
 const ANDROID_HOME =
   process.env.ANDROID_HOME ?? path.join(process.env.LOCALAPPDATA ?? '', 'Android', 'Sdk');
 const ADB_BIN = path.join(ANDROID_HOME, 'platform-tools', 'adb.exe');
+const ADB_COMMAND_TIMEOUT_MS = 120_000;
+const ADB_PROBE_TIMEOUT_MS = 4_000;
 
 // ── Device targeting ─────────────────────────────────────────────────────
 // A wireless-debugging phone can show up in `adb devices` alongside the
@@ -87,7 +89,15 @@ function resolveDeviceSerial(): string | undefined {
     deviceSerial = process.env.ANDROID_SERIAL;
     return deviceSerial;
   }
-  const raw = spawnSync(ADB_BIN, ['devices'], { encoding: 'utf8' }).stdout ?? '';
+  const result = spawnSync(ADB_BIN, ['devices'], {
+    encoding: 'utf8',
+    timeout: ADB_PROBE_TIMEOUT_MS,
+  });
+  if (result.error || result.status !== 0) {
+    const failure = result.error?.message ?? `exit ${String(result.status)}`;
+    throw new Error(`Could not enumerate Android devices (${failure}).`);
+  }
+  const raw = result.stdout ?? '';
   const devices = raw
     .split('\n')
     .slice(1)
@@ -111,13 +121,20 @@ function adbArgs(args: readonly string[]): string[] {
   return serial ? ['-s', serial, ...args] : [...args];
 }
 
-export function runAdb(args: string[]): string {
+export function runAdb(args: string[], timeoutMs = ADB_COMMAND_TIMEOUT_MS): string {
   const fullArgs = adbArgs(args);
-  const result = spawnSync(ADB_BIN, fullArgs, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-  if (result.status !== 0) {
-    throw new Error(`adb ${fullArgs.join(' ')} failed (exit ${String(result.status)}): ${result.stderr}`);
+  const result = spawnSync(ADB_BIN, fullArgs, {
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+    timeout: Math.max(1, Math.floor(timeoutMs)),
+  });
+  if (result.error || result.status !== 0) {
+    const failure = result.error
+      ? `${result.error.name}: ${result.error.message}`
+      : `exit ${String(result.status)}`;
+    throw new Error(`adb ${fullArgs.join(' ')} failed (${failure}): ${result.stderr ?? ''}`);
   }
-  return result.stdout;
+  return result.stdout ?? '';
 }
 
 /** Like {@link runAdb}, but returns raw stdout bytes (e.g. a PNG from
@@ -134,24 +151,34 @@ export function runAdb(args: string[]): string {
  */
 export function clearLogcat(attempts = 3): void {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const result = spawnSync(ADB_BIN, adbArgs(['logcat', '-c']), { encoding: 'utf8' });
-    if (result.status === 0) return;
+    const result = spawnSync(ADB_BIN, adbArgs(['logcat', '-c']), {
+      encoding: 'utf8',
+      timeout: ADB_PROBE_TIMEOUT_MS,
+    });
+    if (!result.error && result.status === 0) return;
     if (attempt === attempts) {
-      console.warn(`[e2e] logcat -c kept failing (${result.stderr.trim()}); continuing with a stale buffer`);
+      const detail = result.error?.message ?? result.stderr?.trim() ?? `exit ${String(result.status)}`;
+      console.warn(`[e2e] logcat -c kept failing (${detail}); continuing with a stale buffer`);
       return;
     }
     spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},300)']);
   }
 }
 
-export function runAdbBinary(args: string[]): Buffer {
+export function runAdbBinary(args: string[], timeoutMs = ADB_COMMAND_TIMEOUT_MS): Buffer {
   const serial = resolveDeviceSerial();
   const fullArgs = serial ? ['-s', serial, ...args] : args;
-  const result = spawnSync(ADB_BIN, fullArgs, { maxBuffer: 32 * 1024 * 1024 });
-  if (result.status !== 0) {
-    throw new Error(`adb ${fullArgs.join(' ')} failed (exit ${String(result.status)})`);
+  const result = spawnSync(ADB_BIN, fullArgs, {
+    maxBuffer: 32 * 1024 * 1024,
+    timeout: Math.max(1, Math.floor(timeoutMs)),
+  });
+  if (result.error || result.status !== 0) {
+    const failure = result.error
+      ? `${result.error.name}: ${result.error.message}`
+      : `exit ${String(result.status)}`;
+    throw new Error(`adb ${fullArgs.join(' ')} failed (${failure})`);
   }
-  return result.stdout;
+  return result.stdout ?? Buffer.alloc(0);
 }
 
 /** Returns Android's current resumed-activity record across API levels that
@@ -163,8 +190,8 @@ export function parseResumedActivity(output: string): string {
     ?.trim() ?? '';
 }
 
-export function getResumedActivity(): string {
-  const output = runAdb(['shell', 'dumpsys', 'activity', 'activities']);
+export function getResumedActivity(timeoutMs = ADB_PROBE_TIMEOUT_MS): string {
+  const output = runAdb(['shell', 'dumpsys', 'activity', 'activities'], timeoutMs);
   return parseResumedActivity(output);
 }
 
@@ -174,16 +201,24 @@ export async function waitForResumedActivity(
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   let current = '';
+  let lastError: unknown;
   for (;;) {
-    current = getResumedActivity();
-    if (current.includes(packageFragment)) return current;
-    if (Date.now() > deadline) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      const detail = lastError ? `; lastError=${String(lastError)}` : '';
       throw new Error(
         `Timed out waiting for resumed activity containing ${JSON.stringify(packageFragment)}; `
-        + `current=${JSON.stringify(current)}`,
+        + `current=${JSON.stringify(current)}${detail}`,
       );
     }
-    await sleep(300);
+    try {
+      current = getResumedActivity(Math.min(ADB_PROBE_TIMEOUT_MS, remainingMs));
+      lastError = undefined;
+      if (Date.now() <= deadline && current.includes(packageFragment)) return current;
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(Math.min(300, Math.max(0, deadline - Date.now())));
   }
 }
 

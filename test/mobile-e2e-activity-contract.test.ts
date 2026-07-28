@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { parseAppCameraClientActive } from '../mobile/e2e/camera-state.ts';
 import { parseDump, parseResumedActivity, submitConnectionOnce } from '../mobile/e2e/lib.ts';
 
 describe('Android resumed-activity parser', () => {
@@ -78,14 +79,62 @@ describe('Android resumed-activity parser', () => {
     expect(verifier).toContain("$env:EZTERMINAL_REMOTE_VPN_INTERFACE = '127.0.0.1'");
     expect(verifier).toContain("$env:EZTERMINAL_MOBILE_E2E_HOST_URL = 'ws://127.0.0.1:17420'");
     expect(verifier).toContain("'-no-snapshot-load', '-no-snapshot-save'");
+    expect(verifier).toContain('function Invoke-AdbBounded');
+    expect(verifier).toContain('$EmulatorProcess.HasExited');
+    expect(verifier).not.toContain('wait-for-device');
     expect(releaseWorkflow).toContain('[int]$rcReport.mobileConnectionAttemptsPerScenario -ne 1');
     expect(releaseWorkflow).toContain('[int]$rcReport.mobileSocketAttemptsBeforeInitialAuth -ne 1');
     expect(releaseWorkflow).toContain("[string]$rcReport.mobileTransport -ne 'adb-reverse-loopback'");
     expect(releaseWorkflow).toContain('[int]$rcReport.mobileRemotePort -ne 17420');
     expect(releaseWorkflow).toContain("[string]$rcReport.emulatorBootMode -ne 'cold-no-snapshot'");
+    expect(releaseWorkflow).toMatch(
+      /foreach\s*\(\$requiredLane\s+in\s+@\([\s\S]*?'qr-scanner'[\s\S]*?\)\)/u,
+    );
     expect(releaseStager).toContain('[int]$localRcReport.mobileSocketAttemptsBeforeInitialAuth');
     expect(releaseStager).toContain('[string]$localRcReport.mobileTransport');
     expect(releaseStager).toContain('[int]$localRcReport.mobileRemotePort');
     expect(releaseStager).toContain("[string]$localRcReport.emulatorBootMode");
+  });
+});
+
+describe('Android CameraService client parser', () => {
+  const dump = (activeClients: string): string => [
+    'Camera service events log:',
+    'Number of camera devices: 2',
+    'Number of normal camera devices: 2',
+    'Active Camera Clients:',
+    activeClients,
+    'Allowed user IDs: 0',
+  ].join('\n');
+
+  it('distinguishes the exact app client from an inactive camera service', () => {
+    expect(parseAppCameraClientActive(
+      dump('[com.ezterminal.remote (PID 4123)]'),
+      'com.ezterminal.remote',
+    )).toBe(true);
+    expect(parseAppCameraClientActive(dump('[]'), 'com.ezterminal.remote')).toBe(false);
+  });
+
+  it('does not accept a longer package name with the app id as a prefix', () => {
+    expect(parseAppCameraClientActive(
+      dump('[com.ezterminal.remote.test (PID 4123)]'),
+      'com.ezterminal.remote',
+    )).toBe(false);
+  });
+
+  it.each([
+    '!! No camera HAL available !!',
+    "Can't find service: media.camera",
+    [
+      '!! CameraService may be deadlocked !!',
+      'Number of camera devices: 2',
+      'Active Camera Clients:',
+      '[]',
+      'Allowed user IDs: 0',
+    ].join('\n'),
+    'Number of camera devices: 0\nActive Camera Clients:\n[]\nAllowed user IDs: 0',
+    'Number of camera devices: 2\nAllowed user IDs: 0',
+  ])('rejects unobservable CameraService evidence: %s', (cameraDump) => {
+    expect(() => parseAppCameraClientActive(cameraDump, 'com.ezterminal.remote')).toThrow();
   });
 });

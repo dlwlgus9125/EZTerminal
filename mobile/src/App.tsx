@@ -3,6 +3,7 @@ import { Device } from '@capacitor/device';
 
 import { ConnectScreen, type SavedConnection } from './ConnectScreen';
 import { ConnectionCredentialStore, type StoredConnection } from './connection-credential-store';
+import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
 import {
   classifyConnectionHealth,
   type ConnectionHealthSnapshot,
@@ -265,20 +266,22 @@ export function App(): JSX.Element {
 
   if (!transport || !hasConnected) {
     return (
-      <ConnectScreen
-        saved={savedConnection}
-        connecting={
-          transport !== null
-          && !authed
-          && !connectFailed
-          && connectionState !== 'auth-rejected'
-          && connectionState !== 'protocol-incompatible'
-        }
-        failed={connectFailed}
-        protocolIncompatible={connectionState === 'protocol-incompatible'}
-        storageWarning={localizedCredentialWarning}
-        onConnect={connect}
-      />
+      <MobileNavigationHistoryProvider>
+        <ConnectScreen
+          saved={savedConnection}
+          connecting={
+            transport !== null
+            && !authed
+            && !connectFailed
+            && connectionState !== 'auth-rejected'
+            && connectionState !== 'protocol-incompatible'
+          }
+          failed={connectFailed}
+          protocolIncompatible={connectionState === 'protocol-incompatible'}
+          storageWarning={localizedCredentialWarning}
+          onConnect={connect}
+        />
+      </MobileNavigationHistoryProvider>
     );
   }
 

@@ -573,6 +573,7 @@ try {
         $deviceLanes = @($device.lanes | ForEach-Object { [string]$_ })
         foreach ($requiredLane in @(
             'instrumentation',
+            'qr-scanner',
             'smoke',
             'stabilization',
             'parity',

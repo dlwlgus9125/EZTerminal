@@ -16,6 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "cap:sync": "cap sync android",
+    "e2e:qr-scanner": "node e2e/qr-scanner.ts",
     "e2e:smoke": "node e2e/smoke.ts",
     "e2e:parity": "node e2e/parity.ts",
     "e2e:stabilization": "node e2e/apk-stabilization.ts",

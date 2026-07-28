@@ -1,5 +1,5 @@
 import { Eye, EyeOff, KeyRound, Link2, QrCode, Server, ShieldAlert, ShieldCheck } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MOBILE_BUILD_INFO } from './build-info';
@@ -63,6 +63,7 @@ export function ConnectScreen({
   const [revealToken, setRevealToken] = useState(false);
   const [bootStep, setBootStep] = useState(0);
   const [scanning, setScanning] = useState(false);
+  const scanTriggerRef = useRef<HTMLButtonElement | null>(null);
   const trimmedUrl = url.trim();
   const secureWs = /^wss:\/\//i.test(trimmedUrl);
 
@@ -129,6 +130,7 @@ export function ConnectScreen({
         <p className="mob-connect__divider">{t('mobile.connect.orNew')}</p>
 
         <button
+          ref={scanTriggerRef}
           type="button"
           className="mob-connect__scan"
           disabled={connecting}
@@ -249,6 +251,7 @@ export function ConnectScreen({
       </form>
       {scanning && (
         <PairingScanner
+          returnFocusRef={scanTriggerRef}
           onClose={() => setScanning(false)}
           onDetected={({ endpoint, code }) => {
             setScanning(false);

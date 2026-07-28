@@ -185,3 +185,30 @@ describe('App connection health banner', () => {
       .toContain('이 기기에서 Tailscale이 연결되어 있는지 확인해 주세요.');
   });
 });
+
+describe('App QR pairing entry', () => {
+  it('opens the scanner without destroying the disconnected app root', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue(null);
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="connect-scan-qr"]')!;
+    trigger.focus();
+
+    await act(async () => {
+      trigger.click();
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-testid="connect-screen"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="pairing-scanner"]')).not.toBeNull();
+    expect(host.querySelector('form')?.hasAttribute('inert')).toBe(true);
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="pairing-scanner"] .mobile-action-sheet-cancel')!.click();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+
+    expect(host.querySelector('[data-testid="pairing-scanner"]')).toBeNull();
+    expect(host.querySelector('form')?.hasAttribute('inert')).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+  });
+});

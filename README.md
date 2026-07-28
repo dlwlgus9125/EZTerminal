@@ -180,9 +180,11 @@ input, and text-clipboard control.
 
 The supported targets remain Windows 10 22H2/Windows 11 x64 and Android 10+, while this
 release's validation evidence is limited to the current Windows host and API
-29/API 35 emulators. Elevated/admin service lifecycle and physical-device
-validation were not performed. Certificate provisioning, store publication,
-and automatic-update operations are outside this release; see the
+29/API 35 emulators. The Android lanes cover QR-scanner fullscreen rendering,
+live camera frames, background release, and explicit camera reacquisition.
+Elevated/admin service lifecycle and physical-device validation were not
+performed. Certificate provisioning, store publication, and automatic-update
+operations are outside this release; see the
 [1.0.13 validation policy](docs/release/validation-policy-1.0.13.md).
 
 ## Build from source
