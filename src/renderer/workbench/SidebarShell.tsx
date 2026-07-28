@@ -12,6 +12,7 @@ import { useAppTranslation } from '../i18n';
 import { PanelShell } from '../ui';
 import { isolateModalBackground } from '../ui/modal-isolation';
 import { getFocusableElements } from '../ui/utils';
+import { ACTIVITY_RAIL_ID } from './ActivityRail';
 import type { SidebarDestination } from './types';
 
 const OVERLAY_MEDIA_QUERY = '(max-width: 1199px)';
@@ -39,6 +40,32 @@ function useOverlaySidebar(): boolean {
   }, []);
 
   return matches;
+}
+
+function getSiblingActivityRail(layer: HTMLElement): HTMLElement | null {
+  const rail = layer.parentElement?.querySelector<HTMLElement>(
+    `:scope > #${ACTIVITY_RAIL_ID}.activity-rail`,
+  );
+  return rail ?? null;
+}
+
+function getOverlayFocusableElements(
+  sidebar: HTMLElement,
+  activityRail: HTMLElement | null,
+): HTMLElement[] {
+  return [
+    ...(activityRail ? getFocusableElements(activityRail) : []),
+    ...getFocusableElements(sidebar)
+      .filter((element) => !element.matches('.workbench-sidebar-resizer')),
+  ];
+}
+
+function containsOverlayFocus(
+  sidebar: HTMLElement,
+  activityRail: HTMLElement | null,
+): boolean {
+  const activeElement = document.activeElement;
+  return sidebar.contains(activeElement) || activityRail?.contains(activeElement) === true;
 }
 
 export function SidebarShell({
@@ -104,7 +131,11 @@ export function SidebarShell({
     const sidebar = layer?.querySelector<HTMLElement>('[data-testid="workbench-sidebar"]');
     if (!overlay || !layer || !sidebar) return;
 
-    const releaseBackground = isolateModalBackground(layer);
+    const activityRail = getSiblingActivityRail(layer);
+    const releaseBackground = isolateModalBackground(
+      layer,
+      activityRail ? [activityRail] : [],
+    );
     const animationFrame = requestAnimationFrame(() => {
       // A product dialog can mount in the same commit and schedule its own
       // initial-focus frame. Whichever frame runs last, the nested modal owns
@@ -118,8 +149,7 @@ export function SidebarShell({
       if (event.key !== 'Tab' || event.defaultPrevented) return;
       if (hasNestedModal(sidebar)) return;
 
-      const focusable = getFocusableElements(sidebar)
-        .filter((element) => !element.matches('.workbench-sidebar-resizer'));
+      const focusable = getOverlayFocusableElements(sidebar, activityRail);
       if (focusable.length === 0) {
         event.preventDefault();
         sidebar.focus();
@@ -127,7 +157,7 @@ export function SidebarShell({
       }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (!sidebar.contains(document.activeElement)) {
+      if (!containsOverlayFocus(sidebar, activityRail)) {
         event.preventDefault();
         (event.shiftKey ? last : first).focus();
       } else if (event.shiftKey && document.activeElement === first) {
@@ -181,7 +211,12 @@ export function SidebarShell({
       className="workbench-sidebar-layer"
       data-overlay={overlay || undefined}
     >
-      <button className="workbench-sidebar-scrim" aria-label={t('workbench.closePanel')} onClick={dismiss} />
+      <button
+        className="workbench-sidebar-scrim"
+        aria-label={t('workbench.closePanel')}
+        tabIndex={-1}
+        onClick={dismiss}
+      />
       <PanelShell
         // Keyed on the destination so swapping panels replays the entry
         // animation. Reconciliation would otherwise keep the same element and
@@ -193,6 +228,7 @@ export function SidebarShell({
         style={{ width: previewWidth }}
         role={overlay ? 'dialog' : undefined}
         aria-modal={overlay || undefined}
+        aria-owns={overlay ? ACTIVITY_RAIL_ID : undefined}
         tabIndex={overlay ? -1 : undefined}
         title={title}
         description={description}

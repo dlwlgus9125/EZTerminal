@@ -79,11 +79,11 @@ export function Dialog({
     if (!open) return;
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const backdrop = panelRef.current?.closest<HTMLElement>('.ez-ui-dialog-backdrop');
-    const releaseBackground = backdrop
-      ? isolateModalBackground(backdrop)
-      : () => undefined;
     const releaseLayer = backdrop
       ? registerModalLayer(backdrop)
+      : () => undefined;
+    const releaseBackground = backdrop
+      ? isolateModalBackground(backdrop)
       : () => undefined;
     const animationFrame = requestAnimationFrame(() => {
       const panel = panelRef.current;

@@ -108,6 +108,18 @@ export function FileContextMenu({ x, y, items, onClose }: FileContextMenuProps):
     menuItems[nextIndex]?.focus();
   };
 
+  const selectItem = (item: FileContextMenuItem): void => {
+    // Restore the stable invoker before the selected action can replace this
+    // transient menu with a dialog. Dialog captures focus after React commits;
+    // waiting for this menu's cleanup frame would leave it holding <body> or a
+    // detached menu item as its return target.
+    restoreFocusRef.current = false;
+    const previous = previousFocusRef.current;
+    if (previous?.isConnected) previous.focus({ preventScroll: true });
+    item.onSelect();
+    close(false);
+  };
+
   return (
     <div
       ref={menuRef}
@@ -125,10 +137,7 @@ export function FileContextMenu({ x, y, items, onClose }: FileContextMenuProps):
           tabIndex={-1}
           className="file-context-menu-item"
           data-testid={`ctx-${item.action}`}
-          onClick={() => {
-            item.onSelect();
-            close();
-          }}
+          onClick={() => selectItem(item)}
         >
           {item.label}
         </button>

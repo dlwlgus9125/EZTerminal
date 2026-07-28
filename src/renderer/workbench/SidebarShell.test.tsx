@@ -5,6 +5,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RiskyCloseDialog } from '../RiskyCloseDialog';
+import { isolateModalBackground, registerModalLayer } from '../ui/modal-isolation';
+import { ACTIVITY_RAIL_ID } from './ActivityRail';
 import { SidebarShell } from './SidebarShell';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -39,6 +41,10 @@ function SidebarHarness({ withDialog = false }: { readonly withDialog?: boolean 
   const [dialogOpen, setDialogOpen] = useState(withDialog);
   return (
     <>
+      <nav id={ACTIVITY_RAIL_ID} className="activity-rail" aria-label="Workbench">
+        <button type="button">Explorer rail</button>
+        <button type="button">Settings rail</button>
+      </nav>
       {sidebarOpen && (
         <SidebarShell
           destination="explorer"
@@ -59,6 +65,7 @@ function SidebarHarness({ withDialog = false }: { readonly withDialog?: boolean 
           onConfirm={() => setDialogOpen(false)}
         />
       )}
+      <button type="button" data-testid="workspace-background">Workspace</button>
     </>
   );
 }
@@ -164,6 +171,25 @@ describe('SidebarShell Escape ownership', () => {
 });
 
 describe('SidebarShell narrow overlay focus contract', () => {
+  it('does not isolate the document for an already-detached modal root', () => {
+    const detachedModal = document.createElement('div');
+
+    const release = isolateModalBackground(detachedModal);
+
+    expect(container.closest('[inert]')).toBeNull();
+    release();
+  });
+
+  it('rejects roots from another document instead of silently skipping its background', () => {
+    const foreignDocument = document.implementation.createHTMLDocument('foreign');
+    const foreignModal = foreignDocument.createElement('div');
+    foreignDocument.body.appendChild(foreignModal);
+
+    expect(() => isolateModalBackground(foreignModal))
+      .toThrow('Background isolation roots must belong to the active document.');
+    expect(container.closest('[inert]')).toBeNull();
+  });
+
   it('isolates the background from the accessibility and focus trees', () => {
     const background = document.createElement('button');
     background.textContent = 'Background';
@@ -172,8 +198,14 @@ describe('SidebarShell narrow overlay focus contract', () => {
 
     act(() => root.render(<SidebarHarness />));
 
+    const rail = container.querySelector<HTMLElement>('.activity-rail');
+    const workspace = container.querySelector<HTMLElement>('[data-testid="workspace-background"]');
     expect(background.hasAttribute('inert')).toBe(true);
     expect(background.getAttribute('aria-hidden')).toBe('true');
+    expect(rail?.closest('[inert]')).toBeNull();
+    expect(rail?.getAttribute('aria-hidden')).not.toBe('true');
+    expect(workspace?.hasAttribute('inert')).toBe(true);
+    expect(workspace?.getAttribute('aria-hidden')).toBe('true');
   });
 
   it('initially focuses the close action', () => {
@@ -199,9 +231,12 @@ describe('SidebarShell narrow overlay focus contract', () => {
     act(() => root.render(<SidebarHarness withDialog />));
     const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]');
     const dialogBackdrop = dialog?.closest<HTMLElement>('.ez-ui-dialog-backdrop');
+    const rail = container.querySelector<HTMLElement>('.activity-rail');
+    const workspace = container.querySelector<HTMLElement>('[data-testid="workspace-background"]');
     expect(dialog).not.toBeNull();
     expect(dialogBackdrop?.hasAttribute('inert')).toBe(false);
     expect(container.hasAttribute('inert')).toBe(true);
+    expect(rail?.closest('[inert]')).toBe(container);
     expect(background.hasAttribute('inert')).toBe(true);
     expect(frames.length).toBeGreaterThanOrEqual(2);
 
@@ -220,7 +255,85 @@ describe('SidebarShell narrow overlay focus contract', () => {
 
     expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
     expect(container.hasAttribute('inert')).toBe(false);
+    expect(rail?.closest('[inert]')).toBeNull();
+    expect(workspace?.hasAttribute('inert')).toBe(true);
     expect(background.hasAttribute('inert')).toBe(true);
+  });
+
+  it('keeps an open nested modal above a sidebar that becomes narrow later', () => {
+    let matches = false;
+    const listeners = new Set<(event: MediaQueryListEvent) => void>();
+    const mediaQuery = {
+      get matches() {
+        return matches;
+      },
+      media: '(max-width: 1199px)',
+      onchange: null,
+      addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => {
+        listeners.add(listener);
+      },
+      removeEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => {
+        listeners.delete(listener);
+      },
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    };
+    vi.stubGlobal('matchMedia', vi.fn(() => mediaQuery));
+
+    act(() => root.render(<SidebarHarness withDialog />));
+    const sidebar = container.querySelector<HTMLElement>('[data-testid="workbench-sidebar"]');
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]');
+    const dialogBackdrop = dialog?.closest<HTMLElement>('.ez-ui-dialog-backdrop');
+    expect(sidebar?.getAttribute('aria-modal')).toBeNull();
+    expect(dialogBackdrop?.hasAttribute('inert')).toBe(false);
+
+    act(() => {
+      matches = true;
+      const event = { matches: true, media: mediaQuery.media } as MediaQueryListEvent;
+      for (const listener of listeners) listener(event);
+    });
+
+    expect(sidebar?.getAttribute('aria-modal')).toBe('true');
+    expect(dialogBackdrop?.hasAttribute('inert')).toBe(false);
+    expect(dialogBackdrop?.getAttribute('aria-hidden')).not.toBe('true');
+    expect(dialog?.contains(document.activeElement)).toBe(true);
+  });
+
+  it('restores the previous registered modal when the top dialog closes after a late sidebar layer', () => {
+    const rail = document.createElement('nav');
+    const sidebarLayer = document.createElement('div');
+    const workspace = document.createElement('main');
+    container.append(rail, sidebarLayer, workspace);
+    const outerBackdrop = document.createElement('div');
+    const innerBackdrop = document.createElement('div');
+    document.body.append(outerBackdrop, innerBackdrop);
+
+    const releaseOuterRegistration = registerModalLayer(outerBackdrop);
+    const releaseOuterIsolation = isolateModalBackground(outerBackdrop);
+    const releaseInnerRegistration = registerModalLayer(innerBackdrop);
+    const releaseInnerIsolation = isolateModalBackground(innerBackdrop);
+    const releaseSidebarIsolation = isolateModalBackground(sidebarLayer, [rail]);
+    let outerWasRestored = false;
+    try {
+      expect(innerBackdrop.hasAttribute('inert')).toBe(false);
+      expect(outerBackdrop.hasAttribute('inert')).toBe(true);
+
+      releaseInnerIsolation();
+      releaseInnerRegistration();
+      outerWasRestored = !outerBackdrop.hasAttribute('inert')
+        && outerBackdrop.getAttribute('aria-hidden') !== 'true';
+    } finally {
+      releaseSidebarIsolation();
+      releaseInnerIsolation();
+      releaseInnerRegistration();
+      releaseOuterIsolation();
+      releaseOuterRegistration();
+      outerBackdrop.remove();
+      innerBackdrop.remove();
+    }
+
+    expect(outerWasRestored).toBe(true);
   });
 
   it('restores nested-modal focus inside the sidebar after reapplying its isolation', () => {
@@ -272,15 +385,16 @@ describe('SidebarShell narrow overlay focus contract', () => {
     act(() => root.render(<SidebarHarness />));
 
     const sidebar = container.querySelector<HTMLElement>('[data-testid="workbench-sidebar"]');
-    const close = sidebar?.querySelector<HTMLButtonElement>('button');
+    const firstRailAction = Array.from(container.querySelectorAll<HTMLButtonElement>('.activity-rail button'))
+      .find((button) => button.textContent === 'Explorer rail');
     const lastAction = Array.from(sidebar?.querySelectorAll<HTMLButtonElement>('button') ?? [])
       .find((button) => button.textContent === 'Sidebar action');
-    expect(close).not.toBeNull();
+    expect(firstRailAction).toBeDefined();
     expect(lastAction).toBeDefined();
     act(() => lastAction?.focus());
     const forward = pressTab();
     expect(forward.defaultPrevented).toBe(true);
-    expect(document.activeElement).toBe(close);
+    expect(document.activeElement).toBe(firstRailAction);
 
     const backward = pressTab(true);
     expect(backward.defaultPrevented).toBe(true);

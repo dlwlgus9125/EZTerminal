@@ -33,11 +33,29 @@ test('desktop shell has four header zones and a focus-restoring overlay sidebar'
     await explorer.click();
 
     const sidebar = window.getByTestId('workbench-sidebar');
+    const dockHost = window.locator('.dock-host');
+    const activityRail = window.locator('.activity-rail');
     await expect(sidebar).toBeVisible();
     await expect(sidebar).toHaveAttribute('data-destination', 'explorer');
     expect(await sidebar.evaluate((element) => getComputedStyle(element).position)).toBe('absolute');
     await expect(window.locator('.workbench-sidebar-scrim')).toBeVisible();
-    expect(await window.locator('.dock-host').boundingBox()).toEqual(dockBefore);
+    expect(await dockHost.boundingBox()).toEqual(dockBefore);
+    await expect(dockHost).toHaveAttribute('inert', '');
+    await expect(activityRail).not.toHaveAttribute('inert', '');
+    await expect(activityRail).not.toHaveAttribute('aria-hidden', 'true');
+
+    const settings = window.getByTestId('btn-toggle-settings');
+    await settings.click();
+    await expect(sidebar).toHaveAttribute('data-destination', 'settings');
+    await expect(window.getByTestId('settings-panel')).toBeVisible();
+    await expect(window.getByTestId('file-explorer-panel')).toHaveCount(0);
+    await settings.click();
+    await expect(sidebar).toHaveCount(0);
+
+    // Reopen Explorer so the original Escape/focus-restoration contract remains
+    // covered after the rail switch-and-close regression above.
+    await explorer.click();
+    await expect(sidebar).toHaveAttribute('data-destination', 'explorer');
 
     await window.keyboard.press('Escape');
     await expect(sidebar).toHaveCount(0);
@@ -49,9 +67,9 @@ test('desktop shell has four header zones and a focus-restoring overlay sidebar'
     await window.getByTestId('quick-open-row-action-open-explorer').click();
     await expect(sidebar).toBeVisible();
     await expect.poll(() => sidebar.evaluate((element) => element.contains(document.activeElement))).toBe(true);
-    await expect(window.locator('.dock-host')).toHaveAttribute('inert', '');
+    await expect(dockHost).toHaveAttribute('inert', '');
     await window.keyboard.press('Shift+Tab');
-    await expect.poll(() => sidebar.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+    await expect.poll(() => activityRail.evaluate((element) => element.contains(document.activeElement))).toBe(true);
     await window.keyboard.press('Escape');
     await expect(sidebar).toHaveCount(0);
     await expect.poll(() => commandCenter.evaluate((element) => document.activeElement === element)).toBe(true);
@@ -122,6 +140,58 @@ test('narrow rail, scrim, and sidebar share one scaled geometry at 800 and 1024 
       { label: '1024x720@150', scrimAligned: true, sidebarAligned: true, railContainsButton: true },
       { label: '1024x720@100', scrimAligned: true, sidebarAligned: true, railContainsButton: true },
     ]);
+  } finally {
+    await app.close();
+  }
+});
+
+test('a nested sidebar dialog keeps ownership when the wide shell becomes narrow', async () => {
+  const app = await launchApp();
+  try {
+    const window = await app.firstWindow();
+    await window.setViewportSize({ width: 1440, height: 900 });
+    await expect.poll(() => window.evaluate(
+      () => matchMedia('(min-width: 1200px)').matches,
+    )).toBe(true);
+
+    await window.getByTestId('btn-toggle-files').click();
+    const sidebar = window.getByTestId('workbench-sidebar');
+    await expect(sidebar).toHaveAttribute('data-destination', 'explorer');
+    const packageEntry = window.getByTestId('file-entry').filter({ hasText: 'package.json' });
+    await expect(packageEntry).toBeVisible();
+    await packageEntry.click({ button: 'right' });
+    await window.getByTestId('ctx-delete').click();
+
+    const dialog = window.getByTestId('delete-confirm');
+    const backdrop = dialog.locator('xpath=..');
+    await expect(dialog).toBeVisible();
+    await expect(backdrop).not.toHaveAttribute('inert', '');
+
+    await window.setViewportSize({ width: 1024, height: 720 });
+    await expect(sidebar).toHaveAttribute('aria-modal', 'true');
+    await expect(backdrop).not.toHaveAttribute('inert', '');
+    await expect(backdrop).not.toHaveAttribute('aria-hidden', 'true');
+    await expect.poll(() => dialog.evaluate(
+      (element) => element.contains(document.activeElement),
+    )).toBe(true);
+    await expect.poll(() => window.locator('.dock-host').evaluate(
+      (element) => element.closest('[inert]') !== null,
+    )).toBe(true);
+
+    await window.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(sidebar).toBeVisible();
+    await expect(window.locator('.dock-host')).toHaveAttribute('inert', '');
+    await expect.poll(() => sidebar.evaluate(
+      (element) => element.contains(document.activeElement),
+    )).toBe(true);
+    await expect.poll(() => window.locator('.activity-rail').evaluate(
+      (element) => element.closest('[inert]') === null,
+    )).toBe(true);
+
+    await window.keyboard.press('Escape');
+    await expect(sidebar).toHaveCount(0);
+    await expect(window.locator('.dock-host')).not.toHaveAttribute('inert', '');
   } finally {
     await app.close();
   }

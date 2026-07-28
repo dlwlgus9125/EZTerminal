@@ -29,6 +29,8 @@ const RAIL_ITEMS: readonly RailItem[] = [
   { id: 'settings', labelKey: 'rail.settings', icon: Settings, testId: 'btn-toggle-settings', bottom: true },
 ];
 
+export const ACTIVITY_RAIL_ID = 'workbench-activity-rail';
+
 export function ActivityRail({
   active,
   attentionCount,
@@ -42,7 +44,7 @@ export function ActivityRail({
 }): JSX.Element {
   const { t } = useAppTranslation();
   return (
-    <nav className="activity-rail" aria-label={t('workbench.landmark')}>
+    <nav id={ACTIVITY_RAIL_ID} className="activity-rail" aria-label={t('workbench.landmark')}>
       {RAIL_ITEMS.map((item) => {
         if (item.id === 'openclaw' && !openclawVisible) return null;
         const label = t(item.labelKey);

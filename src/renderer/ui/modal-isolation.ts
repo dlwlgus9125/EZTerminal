@@ -5,7 +5,7 @@ interface IsolationState {
 }
 
 interface IsolationLayer {
-  readonly root: HTMLElement;
+  readonly foregroundRoots: readonly HTMLElement[];
   isolated: HTMLElement[];
 }
 
@@ -40,22 +40,52 @@ function release(element: HTMLElement): void {
   else element.setAttribute('aria-hidden', state.ariaHidden);
 }
 
-function collectBackgroundBranches(modalRoot: HTMLElement): HTMLElement[] {
-  const background: HTMLElement[] = [];
-  let branch: HTMLElement = modalRoot;
-  let parent = branch.parentElement;
+function collectBackgroundBranches(foregroundRoots: readonly HTMLElement[]): HTMLElement[] {
+  const primaryRoot = foregroundRoots[0];
+  const body = primaryRoot?.ownerDocument.body;
+  if (!body) return [];
 
-  while (parent) {
-    for (const sibling of parent.children) {
-      if (sibling === branch || !(sibling instanceof HTMLElement)) continue;
-      background.push(sibling);
+  const roots = Array.from(new Set(foregroundRoots))
+    .filter((root) => root.ownerDocument.body === body && body.contains(root));
+  // A passive-effect cleanup can run after React has already detached its
+  // modal DOM. Never interpret that transient state as "no foreground" and
+  // inert the entire document while the layer is waiting to be released.
+  if (!roots.includes(primaryRoot)) return [];
+  if (roots.includes(body)) return [];
+
+  const rootSet = new Set(roots);
+  const foregroundPaths = new Set<HTMLElement>();
+  for (const root of roots) {
+    let branch: HTMLElement | null = root;
+    while (branch) {
+      foregroundPaths.add(branch);
+      if (branch === body) break;
+      branch = branch.parentElement;
     }
-    if (parent === document.body) break;
-    branch = parent;
-    parent = parent.parentElement;
   }
 
+  const background: HTMLElement[] = [];
+  const visit = (parent: HTMLElement): void => {
+    for (const sibling of parent.children) {
+      if (!(sibling instanceof HTMLElement) || rootSet.has(sibling)) continue;
+      if (foregroundPaths.has(sibling)) visit(sibling);
+      else background.push(sibling);
+    }
+  };
+  visit(body);
+
   return background;
+}
+
+function getTopIsolationLayer(): IsolationLayer | undefined {
+  for (let modalIndex = modalLayers.length - 1; modalIndex >= 0; modalIndex -= 1) {
+    const registeredModal = modalLayers[modalIndex];
+    for (let index = isolationLayers.length - 1; index >= 0; index -= 1) {
+      const layer = isolationLayers[index];
+      if (layer.foregroundRoots.includes(registeredModal)) return layer;
+    }
+  }
+  return isolationLayers[isolationLayers.length - 1];
 }
 
 function applyTopIsolationLayer(): void {
@@ -64,9 +94,12 @@ function applyTopIsolationLayer(): void {
     layer.isolated = [];
   }
 
-  const top = isolationLayers[isolationLayers.length - 1];
+  // Registration order normally mirrors visual order, except when an outer
+  // responsive layer becomes modal after a portaled child dialog is already
+  // open. The registered dialog remains the visual and interaction owner.
+  const top = getTopIsolationLayer();
   if (!top) return;
-  top.isolated = collectBackgroundBranches(top.root);
+  top.isolated = collectBackgroundBranches(top.foregroundRoots);
   for (const element of top.isolated) isolate(element);
 }
 
@@ -77,9 +110,27 @@ function applyTopIsolationLayer(): void {
  * Isolation is layered: only the newest modal branch remains interactive.
  * When it closes, the previous modal's isolation is recomputed so a nested
  * dialog cannot leave its owning sidebar or the page background exposed.
+ *
+ * `additionalForegroundRoots` supports a composite modal surface whose
+ * interactive controls live in sibling DOM branches. A narrow workbench
+ * sidebar uses it for the stable Activity Rail; a nested dialog still becomes
+ * the sole top layer and temporarily isolates every sidebar branch.
  */
-export function isolateModalBackground(modalRoot: HTMLElement): () => void {
-  const layer: IsolationLayer = { root: modalRoot, isolated: [] };
+export function isolateModalBackground(
+  modalRoot: HTMLElement,
+  additionalForegroundRoots: readonly HTMLElement[] = [],
+): () => void {
+  if (
+    modalRoot.ownerDocument !== document
+    || additionalForegroundRoots.some((root) => root.ownerDocument !== document)
+  ) {
+    throw new TypeError('Background isolation roots must belong to the active document.');
+  }
+  if (!document.body.contains(modalRoot)) return () => undefined;
+  const layer: IsolationLayer = {
+    foregroundRoots: [modalRoot, ...additionalForegroundRoots],
+    isolated: [],
+  };
   isolationLayers.push(layer);
   applyTopIsolationLayer();
   let released = false;
@@ -96,6 +147,9 @@ export function isolateModalBackground(modalRoot: HTMLElement): () => void {
 
 /** Registers a modal in visual stacking order and removes it idempotently. */
 export function registerModalLayer(element: HTMLElement): () => void {
+  if (element.ownerDocument !== document) {
+    throw new TypeError('Modal layers must belong to the active document.');
+  }
   modalLayers.push(element);
   let released = false;
   return () => {

@@ -102,12 +102,13 @@ describe('FileContextMenu accessibility', () => {
   });
 
   it('activates the focused item with Space and closes the menu', () => {
-    const { items } = openMenu();
+    const { opener, items } = openMenu();
     press(items[0], 'ArrowDown');
     press(items[1], ' ');
 
     expect(secondAction).toHaveBeenCalledTimes(1);
     expect(container.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(opener);
   });
 
   it('closes with Escape and restores focus to the opener', () => {
