@@ -146,6 +146,19 @@ interface MobileSettingsViewProps {
   readonly onOpenTheme: (trigger: HTMLElement) => void;
 }
 
+/**
+ * Whether an effect is on, resolved the SAME way the apply path resolves it.
+ *
+ * `applyThemeVarsAndEffects` falls back to `MOBILE_EFFECT_DEFAULTS` when the
+ * user has never touched a toggle. Reading `?? false` here instead was harmless
+ * only while every platform default was also false; once the CRT Signature
+ * profile became the default it made the switch say "off" about an effect that
+ * was demonstrably on screen.
+ */
+export function isEffectOn(toggles: Record<string, boolean>, id: EffectId): boolean {
+  return toggles[id] ?? MOBILE_EFFECT_DEFAULTS[id] ?? false;
+}
+
 /** A theme id is a storage key, not a name. The preview and the theme button
  * both show what the theme calls itself. */
 function themeDisplayName(id: string): string {
@@ -246,7 +259,11 @@ export function MobileSettingsView({
   const [effectToggles, setEffectToggles] = useState(() => loadEffectToggles());
   const toggleEffect = useCallback((id: EffectId) => {
     setEffectToggles((prev) => {
-      const next = { ...prev, [id]: !(prev[id] ?? false) };
+      // Negate what is actually on, not what is stored. With a platform
+      // default of true and nothing stored, `!(undefined ?? false)` is true —
+      // so the first tap would write the state it already had and appear to do
+      // nothing at all.
+      const next = { ...prev, [id]: !isEffectOn(prev, id) };
       saveEffectToggles(next);
       applyThemeVarsAndEffects(getActiveThemeName(), {
         effectToggles: next,
@@ -302,7 +319,7 @@ export function MobileSettingsView({
     t(`settings.${preferences.density}`),
     `${uiScale}%`,
   ].join(' · ');
-  const activeEffectCount = declaredEffects.filter((id) => effectToggles[id] ?? false).length;
+  const activeEffectCount = declaredEffects.filter((id) => isEffectOn(effectToggles, id)).length;
   const appearancePreview = [
     themeDisplayName(currentTheme),
     t('mobile.settingsView.effectsOn', { value: activeEffectCount }),
@@ -534,7 +551,7 @@ export function MobileSettingsView({
           ) : (
             <div className="status-metric" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {declaredEffects.map((id) => {
-                const on = effectToggles[id] ?? false;
+                const on = isEffectOn(effectToggles, id);
                 return (
                   <button
                     key={id}

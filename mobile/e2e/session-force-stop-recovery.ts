@@ -18,6 +18,7 @@ import {
   APK_PATH,
   APP_ID,
   MAIN_ENTRY,
+  clearLogcat,
   closeMobileE2eResources,
   closeWebViewDevtools,
   connectAndAuth,
@@ -106,7 +107,7 @@ async function main(): Promise<void> {
     closeWebViewDevtools();
     console.log(`[repro] Android app stopped; waiting ${offlineMs}ms before relaunch`);
     await sleep(offlineMs);
-    runAdb(['logcat', '-c']);
+    clearLogcat();
     runAdb(['shell', 'am', 'start', '-n', `${APP_ID}/.MainActivity`]);
 
     await waitForTestId('connect-screen', 45_000);

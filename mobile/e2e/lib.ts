@@ -106,9 +106,13 @@ function resolveDeviceSerial(): string | undefined {
  * `maxBuffer` matches {@link runAdbBinary}'s 32MiB override — Node's 1MiB
  * default overflows on a long parity run's `logcat -d` (observed crashing a
  * real gate run once the log had accumulated past it). */
-export function runAdb(args: string[]): string {
+function adbArgs(args: readonly string[]): string[] {
   const serial = resolveDeviceSerial();
-  const fullArgs = serial ? ['-s', serial, ...args] : args;
+  return serial ? ['-s', serial, ...args] : [...args];
+}
+
+export function runAdb(args: string[]): string {
+  const fullArgs = adbArgs(args);
   const result = spawnSync(ADB_BIN, fullArgs, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   if (result.status !== 0) {
     throw new Error(`adb ${fullArgs.join(' ')} failed (exit ${String(result.status)}): ${result.stderr}`);
@@ -118,6 +122,28 @@ export function runAdb(args: string[]): string {
 
 /** Like {@link runAdb}, but returns raw stdout bytes (e.g. a PNG from
  * `exec-out screencap -p`). */
+/**
+ * Empty the logcat ring, tolerating the emulator refusing to.
+ *
+ * `logcat -c` intermittently exits non-zero with "failed to clear the 'main'
+ * log" on API 29 while a reader still holds the buffer. That is a device
+ * quirk, never a product failure, and letting it throw turns a green run red
+ * at random. Retried a few times, then given up on with a warning — every
+ * caller polls for a marker afterwards, so a stale buffer costs a little noise
+ * rather than correctness, and the warning keeps that visible.
+ */
+export function clearLogcat(attempts = 3): void {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const result = spawnSync(ADB_BIN, adbArgs(['logcat', '-c']), { encoding: 'utf8' });
+    if (result.status === 0) return;
+    if (attempt === attempts) {
+      console.warn(`[e2e] logcat -c kept failing (${result.stderr.trim()}); continuing with a stale buffer`);
+      return;
+    }
+    spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},300)']);
+  }
+}
+
 export function runAdbBinary(args: string[]): Buffer {
   const serial = resolveDeviceSerial();
   const fullArgs = serial ? ['-s', serial, ...args] : args;
@@ -596,7 +622,7 @@ async function resolveWebViewCdp(): Promise<WebSocket> {
   return client;
 }
 
-async function evaluateWebView<T>(expression: string): Promise<T> {
+export async function evaluateWebView<T>(expression: string): Promise<T> {
   const client = await resolveWebViewCdp();
   const id = webViewCdpRequestId + 1;
   webViewCdpRequestId = id;
@@ -1436,7 +1462,7 @@ export async function connectAndAuth(token: string): Promise<void> {
 
   ensureRemoteBridgeTransport();
   console.log('[e2e] clearing logcat and launching app...');
-  runAdb(['logcat', '-c']);
+  clearLogcat();
   runAdb(['shell', 'am', 'start', '-n', `${APP_ID}/.MainActivity`]);
 
   // The first WebView process after a clean install can take materially longer

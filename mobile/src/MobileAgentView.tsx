@@ -108,6 +108,7 @@ export function MobileAgentView({
   const branches = useGitBranches(
     snapshot.items.map((item) => item.cwd),
     onReadGitStatus ?? readNothing,
+    !disconnected,
   );
   const relativeTime = useMemo(
     () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),

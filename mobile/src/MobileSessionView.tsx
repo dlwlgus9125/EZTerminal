@@ -278,6 +278,7 @@ export function MobileSessionView({
   const branch = useGitBranches(
     liveCwd ? [liveCwd] : [],
     onReadGitStatus ?? readNothing,
+    connected,
   ).get(liveCwd);
   // Ctrl latch (handoff §3). Purely presentational: it reuses the SAME
   // Ctrl+<letter> -> control-byte rule `keyToPtyBytes` already applies, so no

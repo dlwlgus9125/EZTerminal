@@ -15,9 +15,13 @@
  *  b. FONT — Settings' Font section: picking a non-default entry marks it
  *     selected live (dump-visible "✓ " prefix on that button's text).
  *  c. EFFECTS — Settings' Effects section, on the just-imported theme (which
- *     declares `effects: ['scanlines']`): the toggle is present and OFF by
- *     default (AC-E5 — mobile never inherits a theme's own declared
- *     default, unlike desktop), then toggling it on flips the prefix live.
+ *     declares `effects: ['scanlines']`): the toggle is present and ON by
+ *     default, because mobile's default profile is now CRT Signature
+ *     (scanlines + phosphor-glow + crt-rollbar) rather than the old
+ *     everything-off AC-E5. Only effects the ACTIVE theme declares are listed,
+ *     so this theme shows exactly one row. Toggling it flips the prefix live —
+ *     which also proves the switch negates the RESOLVED state and not the
+ *     stored one, since nothing is stored yet at that point.
  *  d. PERSISTENCE — two different mechanisms, deliberately NOT the same one:
  *     - Custom theme + its selection: force-stop + relaunch, then poll for
  *       the SAME boot-time `[ez-e2e] theme: <id>` marker parity.ts's own
@@ -57,6 +61,7 @@ import {
   APP_ID,
   EMULATOR_HOST_URL,
   MAIN_ENTRY,
+  clearLogcat,
   closeMobileE2eResources,
   connectAndAuth,
   createTerminalSession,
@@ -143,14 +148,19 @@ async function main(): Promise<void> {
     await openShellDestination('more-settings', 'mobile-settings-view');
     await tapTestId('settings-category-appearance');
 
-    // The CRT Signature profile is the mobile default now, so scanlines start
-    // ON. Flicker is the one that must still be off: it is not part of the
-    // signature and costs frames on a phone.
+    // Scanlines start ON: the mobile default profile is CRT Signature now.
+    // Nothing is stored for this toggle yet, so this also proves the settings
+    // switch reads the same resolution the apply path uses rather than
+    // defaulting a missing entry to false.
+    //
+    // Only scanlines is asserted here because the imported theme declares only
+    // scanlines, and the Effects list is filtered to the ACTIVE theme's own
+    // declared effects (AC-E4). The rest of the profile is pinned by
+    // src/MobileSettingsView.effects.test.ts.
     console.log('[theme-e2e] checking the default effect profile...');
     await waitForTestId('settings-effect-scanlines');
     await waitForTestIdAttribute('settings-effect-scanlines', 'aria-pressed', 'true');
-    await waitForTestIdAttribute('settings-effect-flicker', 'aria-pressed', 'false');
-    console.log('[theme-e2e] step OK: CRT Signature on by default, flicker off');
+    console.log('[theme-e2e] step OK: scanlines on by default (CRT Signature)');
 
     console.log('[theme-e2e] selecting a non-default font...');
     await tapTestId('settings-font-fira-code');
@@ -181,7 +191,7 @@ async function main(): Promise<void> {
     console.log('[theme-e2e] theme persistence: force-stop + relaunch...');
     runAdb(['shell', 'am', 'force-stop', APP_ID]);
     await sleep(1000);
-    runAdb(['logcat', '-c']);
+    clearLogcat();
     runAdb(['shell', 'am', 'start', '-n', `${APP_ID}/.MainActivity`]);
     // Lands on ConnectScreen after this restart — irrelevant here, only the
     // boot-time applyTheme(loadTheme()) marker matters (same as parity.ts).

@@ -66,11 +66,14 @@ export type RemoteCapability =
  * bump would silently take a capability away from the peers that still work.
  *
  * v1 terminal only · v2 adds desktop control and client identity · v3 adds
- * agent approval decisions.
+ * agent approval decisions, Git queries and the latency probe.
+ *
+ * v3 deliberately has no feature-gate constant of its own: everything it added
+ * is a new message kind, and a peer that does not know a kind simply never
+ * sends it. A gate would be a constant nothing reads.
  */
 export const REMOTE_PROTOCOL_VERSION_LEGACY = 1 as const;
 export const REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL = 2 as const;
-export const REMOTE_PROTOCOL_VERSION_AGENT_DECISION = 3 as const;
 export const REMOTE_PROTOCOL_VERSION = 3 as const;
 export type RemoteProtocolVersion = 1 | 2 | 3;
 
