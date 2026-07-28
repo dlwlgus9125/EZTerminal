@@ -120,6 +120,32 @@ describe('Android resumed-activity parser', () => {
     expect(geometryTap).not.toMatch(/\b(?:for|while)\s*\(/);
     expect(geometryTap?.match(/\bawait tap\(/g)).toHaveLength(1);
     expect(geometryTap?.match(/\bawait shortPressOnce\(/g)).toHaveLength(1);
+    const readinessCallIndex = geometryTap?.indexOf(
+      'await waitForStableWebViewNativeTarget',
+    ) ?? -1;
+    const shortPressCallIndex = geometryTap?.indexOf('await shortPressOnce') ?? -1;
+    expect(readinessCallIndex).toBeGreaterThanOrEqual(0);
+    expect(shortPressCallIndex).toBeGreaterThan(readinessCallIndex);
+
+    const readinessStart = lib.indexOf('let cachedAndroidSdkLevel');
+    const readinessEnd = lib.indexOf(
+      'function resolveWebViewDeviceGeometry',
+      readinessStart,
+    );
+    const readiness = readinessStart >= 0 && readinessEnd > readinessStart
+      ? lib.slice(readinessStart, readinessEnd)
+      : undefined;
+    expect(readiness).toBeDefined();
+    expect(readiness).toContain("'getprop', 'ro.build.version.sdk'");
+    expect(readiness).toContain("'dumpsys', 'activity'");
+    expect(readiness).toContain("'dumpsys', 'input'");
+    expect(readiness).toContain("grep -m 1 'mLiveEntries:'");
+    expect(readiness).not.toMatch(/['"]shell['"]\s*,\s*['"]sh['"]\s*,\s*['"]-c['"]/);
+    expect(readiness).toContain('imeTrackerRequired && ownerReady');
+    expect(readiness).toContain('stableSamples >= 3');
+    expect(readiness).not.toMatch(/['"]input['"]\s*,\s*['"](?:tap|swipe|keyevent)['"]/);
+    expect(readiness).not.toContain('shortPressOnce(');
+    expect(readiness).not.toContain('await tap(');
 
     const nativeTapStart = lib.indexOf('export async function tap(p: Point)');
     const nativeTapEnd = lib.indexOf('interface CdpTarget', nativeTapStart);

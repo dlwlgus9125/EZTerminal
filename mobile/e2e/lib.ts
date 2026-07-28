@@ -239,6 +239,165 @@ export interface Point {
 
 export type DeviceBounds = readonly [number, number, number, number];
 
+export interface InputDispatcherTouchOwner {
+  readonly name: string;
+  readonly applicationName: string | null;
+  readonly inputConfig: string | null;
+  readonly dispatchEnabled: boolean | null;
+  readonly dispatchFrozen: boolean | null;
+  readonly hasInputChannel: boolean;
+  readonly connectionReady: boolean;
+  readonly paused: boolean;
+}
+
+function parseHexField(fields: string, name: string): number | null {
+  const raw = fields.match(new RegExp(`(?:^|,\\s+)${name}=(0x[0-9a-f]+)`, 'i'))?.[1];
+  if (!raw) return null;
+  const value = Number.parseInt(raw.slice(2), 16);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+function inputRegionContainsPoint(region: string, point: Point): boolean {
+  const rectangles = region.matchAll(
+    /\[(-?\d+),(-?\d+)]\[(-?\d+),(-?\d+)]/g,
+  );
+  for (const rectangle of rectangles) {
+    const left = Number(rectangle[1]);
+    const top = Number(rectangle[2]);
+    const right = Number(rectangle[3]);
+    const bottom = Number(rectangle[4]);
+    if (
+      point.x >= left
+      && point.x < right
+      && point.y >= top
+      && point.y < bottom
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function inputChannelNameForWindow(windowName: string): string {
+  const legacyWindow = windowName.match(/^Window\{(\S+)\s+u\d+\s+(.+)}$/);
+  return legacyWindow
+    ? `${legacyWindow[1]} ${legacyWindow[2]}`
+    : windowName;
+}
+
+function inputConnectionIsReady(inputDump: string, windowName: string): boolean {
+  const expectedChannel = `${inputChannelNameForWindow(windowName)} (server)`;
+  for (const line of inputDump.split(/\r?\n/)) {
+    const connection = line.match(
+      /^\s*\d+:\s+channelName='(.+?)',\s+(.+)$/,
+    );
+    if (!connection || connection[1] !== expectedChannel) continue;
+    const fields = connection[2] ?? '';
+    const status = fields.match(/(?:^|,\s+)status=([^,\s]+)/)?.[1];
+    const responsive = fields.match(
+      /(?:^|,\s+)responsive=([^,\s]+)(?:,|$)/,
+    )?.[1];
+    const publisherBlocked = fields.match(
+      /(?:^|,\s+)inputPublisherBlocked=([^,\s]+)(?:,|$)/,
+    )?.[1];
+    return status === 'NORMAL'
+      && (responsive !== undefined || publisherBlocked !== undefined)
+      && (responsive === undefined || responsive === 'true')
+      && (publisherBlocked === undefined || publisherBlocked === 'false');
+  }
+  return false;
+}
+
+/** Mirrors InputDispatcher's non-stylus foreground hit test over a textual
+ * `dumpsys input` snapshot. Window handles are already ordered front-to-back;
+ * invisible/non-touchable handles are skipped, spy handles receive a copy
+ * without owning the gesture, and the first remaining region containing the
+ * physical point is the window Android would target. */
+export function parseInputDispatcherTouchOwner(
+  inputDump: string,
+  point: Point,
+  displayId = 0,
+): InputDispatcherTouchOwner | null {
+  const currentState = inputDump.split(
+    /\r?\nInput Dispatcher State at time of last ANR:/,
+    1,
+  )[0] ?? '';
+  const dispatchEnabled = currentState.match(
+    /^\s*DispatchEnabled:\s*(true|false)\s*$/m,
+  )?.[1];
+  const dispatchFrozen = currentState.match(
+    /^\s*DispatchFrozen:\s*(true|false)\s*$/m,
+  )?.[1];
+
+  for (const line of currentState.split(/\r?\n/)) {
+    const windowMatch = line.match(
+      /^\s*\d+:\s+name=(.+?),\s+(?:id=-?\d+,\s+)?displayId=(-?\d+),\s+(.+)$/,
+    );
+    if (!windowMatch || Number(windowMatch[2]) !== displayId) continue;
+
+    const fields = windowMatch[3] ?? '';
+    const inputConfigMatch = fields.match(
+      /(?:^|,\s+)inputConfig=([^,]*)(?:,|$)/,
+    );
+    const inputConfig = inputConfigMatch
+      ? (inputConfigMatch[1] ?? '').trim()
+      : null;
+    const legacyVisible = fields.match(
+      /(?:^|,\s+)visible=(true|false)(?:,|$)/,
+    )?.[1];
+    const legacyFlags = parseHexField(fields, 'flags');
+    const legacyInputFeatures = parseHexField(fields, 'inputFeatures');
+    const touchableRegion = fields.match(
+      /(?:^|,\s+)touchableRegion=(.*?),\s+(?:inputFeatures|ownerPid)=/,
+    )?.[1]?.trim();
+
+    if (!touchableRegion || legacyVisible === 'false') continue;
+    if (inputConfig && /\b(?:NOT_VISIBLE|NOT_TOUCHABLE)\b/.test(inputConfig)) continue;
+    if (legacyFlags !== null && (legacyFlags & 0x10) !== 0) continue;
+    const containsPoint = inputRegionContainsPoint(touchableRegion, point);
+    const legacyTouchModal = legacyFlags !== null
+      && (legacyFlags & (0x8 | 0x20)) === 0;
+    if (legacyFlags === null ? !containsPoint : !legacyTouchModal && !containsPoint) continue;
+
+    const isSpy = inputConfig ? /\bSPY\b/.test(inputConfig) : false;
+    if (isSpy) continue;
+
+    const rawName = windowMatch[1]?.trim() ?? '';
+    const name = rawName.startsWith("'") && rawName.endsWith("'")
+      ? rawName.slice(1, -1)
+      : rawName;
+    const applicationName = fields.match(
+      /(?:^|,\s+)applicationInfo\.name=(.*?),\s+applicationInfo\.token=/,
+    )?.[1]?.trim() ?? null;
+    return {
+      name,
+      applicationName,
+      inputConfig,
+      dispatchEnabled: dispatchEnabled === undefined ? null : dispatchEnabled === 'true',
+      dispatchFrozen: dispatchFrozen === undefined ? null : dispatchFrozen === 'true',
+      hasInputChannel: inputConfig !== null
+        ? !/\bNO_INPUT_CHANNEL\b/.test(inputConfig)
+        : legacyInputFeatures === null || (legacyInputFeatures & 0x2) === 0,
+      connectionReady: inputConnectionIsReady(currentState, name),
+      paused: fields.match(/(?:^|,\s+)paused=(true|false)(?:,|$)/)?.[1] === 'true',
+    };
+  }
+  return null;
+}
+
+/** Returns the number of currently-running platform IME transitions. Android
+ * 15 records SHOW/HIDE requests here before its input surface changes, so a
+ * zero count closes the race where CDP has already returned to a full viewport
+ * but a delayed IME show can still take ownership of the next native tap. */
+export function parseImeTrackerLiveEntryCount(inputMethodDump: string): number | null {
+  const raw = inputMethodDump.match(
+    /^\s*mImeTrackerService#History:\s*\r?\n\s+mLiveEntries:\s*(\d+)\s+elements?\b/m,
+  )?.[1];
+  if (!raw) return null;
+  const count = Number(raw);
+  return Number.isSafeInteger(count) && count >= 0 ? count : null;
+}
+
 export interface WebViewViewportMetrics {
   readonly viewportWidth: number;
   readonly viewportHeight: number;
@@ -537,15 +696,17 @@ interface CdpPendingRequest {
   readonly timer: ReturnType<typeof setTimeout>;
 }
 
-let webViewCdp: WebSocket | null = null;
-let webViewCdpRequestId = 0;
-let webViewForwardPort: number | null = null;
-let webViewDeviceGeometry: {
+interface WebViewDeviceGeometry {
   readonly bounds: DeviceBounds;
   readonly viewportWidth: number;
   readonly viewportHeight: number;
   readonly devicePixelRatio: number;
-} | null = null;
+}
+
+let webViewCdp: WebSocket | null = null;
+let webViewCdpRequestId = 0;
+let webViewForwardPort: number | null = null;
+let webViewDeviceGeometry: WebViewDeviceGeometry | null = null;
 const webViewCdpPending = new Map<number, CdpPendingRequest>();
 
 function resetWebViewCdp(error?: Error): void {
@@ -978,6 +1139,156 @@ export interface NativeTapReceipt {
   readonly gesture: 'tap' | 'short-press';
 }
 
+let cachedAndroidSdkLevel: number | null = null;
+
+function getAndroidSdkLevel(): number {
+  if (cachedAndroidSdkLevel !== null) return cachedAndroidSdkLevel;
+  const raw = runAdb(
+    ['shell', 'getprop', 'ro.build.version.sdk'],
+    ADB_PROBE_TIMEOUT_MS,
+  ).trim();
+  const sdkLevel = Number(raw);
+  if (!Number.isSafeInteger(sdkLevel) || sdkLevel <= 0) {
+    throw new Error(`Android SDK level is not observable: ${JSON.stringify(raw)}`);
+  }
+  cachedAndroidSdkLevel = sdkLevel;
+  return sdkLevel;
+}
+
+function readImeTrackerLiveEntryCount(timeoutMs: number): number | null {
+  // `grep -m 1` closes the pipe at the server-owned live-entry line, avoiding
+  // the expensive client/Gboard IPC tail of input_method's full dump. The
+  // command is static and read-only; an older Android without the field
+  // returns an empty result through the `true` fallback.
+  const output = runAdb([
+    'shell',
+    "dumpsys input_method | grep -m 1 'mLiveEntries:' || true",
+  ], timeoutMs);
+  if (!output.trim()) return null;
+  return parseImeTrackerLiveEntryCount(`mImeTrackerService#History:\n${output}`);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function inputOwnerBelongsToReadyApp(
+  owner: InputDispatcherTouchOwner | null,
+  appId = APP_ID,
+): boolean {
+  if (
+    !owner
+    || owner.paused
+    || !owner.hasInputChannel
+    || !owner.connectionReady
+    || owner.dispatchEnabled !== true
+    || owner.dispatchFrozen !== false
+  ) {
+    return false;
+  }
+  if (
+    owner.inputConfig
+    && /\b(?:NO_INPUT_CHANNEL|PAUSE_DISPATCHING|DROP_INPUT(?:_IF_OBSCURED)?)\b/.test(
+      owner.inputConfig,
+    )
+  ) {
+    return false;
+  }
+  const fullComponent = `${appId}/${appId}.MainActivity`;
+  const shortComponent = `${appId}/.MainActivity`;
+  const nameMatches = new RegExp(
+    `(?:^|\\s)${escapeRegExp(fullComponent)}(?:}|$)`,
+  ).test(owner.name);
+  const applicationMatches = owner.inputConfig === null
+    ? owner.applicationName === null
+    : owner.applicationName !== null && new RegExp(
+      `(?:^|\\s)${escapeRegExp(shortComponent)}(?:\\s|}|$)`,
+    ).test(owner.applicationName);
+  return nameMatches && applicationMatches;
+}
+
+async function waitForStableWebViewNativeTarget(
+  geometry: WebViewElementGeometry,
+  timeoutMs = 20_000,
+): Promise<WebViewDeviceGeometry> {
+  const sdkLevel = getAndroidSdkLevel();
+  const imeTrackerRequired = sdkLevel >= 35;
+  const deadline = Date.now() + timeoutMs;
+  let previousSignature: string | null = null;
+  let stableSamples = 0;
+  let lastProbe: {
+    readonly bounds: DeviceBounds | null;
+    readonly devicePoint: Point | null;
+    readonly owner: InputDispatcherTouchOwner | null;
+    readonly imeLiveEntries: number | null;
+  } | null = null;
+  let lastError: unknown;
+
+  for (;;) {
+    try {
+      const remainingProbeTimeout = (): number => Math.min(
+        ADB_PROBE_TIMEOUT_MS,
+        Math.max(1, deadline - Date.now()),
+      );
+      const activityDump = runAdb(
+        ['shell', 'dumpsys', 'activity', APP_ID],
+        remainingProbeTimeout(),
+      );
+      const bounds = parseWebViewDeviceBounds(activityDump, geometry);
+      const devicePoint = bounds
+        ? mapWebViewPointToDevice(geometry, bounds, geometry)
+        : null;
+      const owner = devicePoint
+        ? parseInputDispatcherTouchOwner(
+          runAdb(['shell', 'dumpsys', 'input'], remainingProbeTimeout()),
+          devicePoint,
+        )
+        : null;
+      const ownerReady = inputOwnerBelongsToReadyApp(owner);
+      const imeLiveEntries = imeTrackerRequired && ownerReady
+        ? readImeTrackerLiveEntryCount(remainingProbeTimeout())
+        : null;
+      lastProbe = { bounds, devicePoint, owner, imeLiveEntries };
+      lastError = undefined;
+
+      const trackerReady = imeTrackerRequired
+        ? imeLiveEntries === 0
+        : true;
+      if (bounds && devicePoint && ownerReady && trackerReady) {
+        const signature = JSON.stringify(lastProbe);
+        stableSamples = signature === previousSignature ? stableSamples + 1 : 1;
+        previousSignature = signature;
+        if (stableSamples >= 3) {
+          const ready = {
+            bounds,
+            viewportWidth: geometry.viewportWidth,
+            viewportHeight: geometry.viewportHeight,
+            devicePixelRatio: geometry.devicePixelRatio,
+          };
+          webViewDeviceGeometry = ready;
+          return ready;
+        }
+      } else {
+        stableSamples = 0;
+        previousSignature = null;
+      }
+    } catch (error) {
+      lastError = error;
+      stableSamples = 0;
+      previousSignature = null;
+    }
+
+    if (Date.now() >= deadline) {
+      const errorDetail = lastError ? `; lastError=${String(lastError)}` : '';
+      throw new Error(
+        'Android native tap target did not stabilize before the single injection: '
+        + `${JSON.stringify({ sdkLevel, imeTrackerRequired, lastProbe })}${errorDetail}`,
+      );
+    }
+    await sleep(Math.min(250, Math.max(1, deadline - Date.now())));
+  }
+}
+
 function resolveWebViewDeviceGeometry(
   geometry: WebViewElementGeometry,
   forceRefreshDeviceGeometry = false,
@@ -1017,14 +1328,13 @@ async function tapWebViewElementGeometry(
   } = {},
 ): Promise<NativeTapReceipt> {
   // Android 15 edge-to-edge insets and IME teardown can move the physical
-  // WebView frame without changing CDP's CSS viewport or DPR. The fail-closed
-  // one-shot path requests a fresh hierarchy here instead of retrying an
-  // ambiguous native action; ordinary idempotent navigation taps retain the
-  // faster metrics-keyed cache.
-  const deviceGeometry = resolveWebViewDeviceGeometry(
-    geometry,
-    options.forceRefreshDeviceGeometry ?? false,
-  );
+  // WebView frame without changing CDP's CSS viewport or DPR. The one-shot
+  // path proves stable bounds, dispatch ownership, and (on API 35+) IME
+  // quiescence before injecting exactly once. Ordinary idempotent navigation
+  // taps retain the faster metrics-keyed cache.
+  const deviceGeometry = options.forceRefreshDeviceGeometry
+    ? await waitForStableWebViewNativeTarget(geometry)
+    : resolveWebViewDeviceGeometry(geometry);
   const devicePoint = mapWebViewPointToDevice(geometry, deviceGeometry.bounds, geometry);
   const gesture = options.gesture ?? 'tap';
   if (gesture === 'short-press') {

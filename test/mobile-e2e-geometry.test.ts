@@ -4,7 +4,10 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  inputOwnerBelongsToReadyApp,
   mapWebViewPointToDevice,
+  parseImeTrackerLiveEntryCount,
+  parseInputDispatcherTouchOwner,
   parseWebViewDeviceBounds,
   type DeviceBounds,
   type WebViewViewportMetrics,
@@ -28,6 +31,287 @@ function hierarchy(
 }
 
 describe('Android WebView physical geometry', () => {
+  it('resolves the API 35 foreground touch owner at the final device point', () => {
+    const appWindow = [
+      '      6: name=579a5f5 com.ezterminal.remote/com.ezterminal.remote.MainActivity, '
+        + 'id=119, displayId=0, inputConfig=0x0, alpha=1, frame=[0,0][1080,2280], '
+        + 'globalScale=1, applicationInfo.name=ActivityRecord{18d8657 u0 '
+        + 'com.ezterminal.remote/.MainActivity t222}, applicationInfo.token=0x1, '
+        + 'touchableRegion=[0,0][1080,2280], ownerPid=3991',
+    ].join('');
+    const visibleIme = [
+      'Input Dispatcher State:',
+      '  DispatchEnabled: true',
+      '  DispatchFrozen: false',
+      '  Display: 0',
+      '    Windows:',
+      '      5: name=ff1538f InputMethod, id=127, displayId=0, '
+        + 'inputConfig=NOT_FOCUSABLE | TRUSTED_OVERLAY, alpha=1, '
+        + 'frame=[0,1458][1080,2280], globalScale=1, applicationInfo.name=, '
+        + 'applicationInfo.token=<null>, touchableRegion=[0,1458][1080,2280], ownerPid=1280',
+      appWindow,
+      '  Connections:',
+      "    524: channelName='579a5f5 "
+        + "com.ezterminal.remote/com.ezterminal.remote.MainActivity (server)', "
+        + 'status=NORMAL, monitor=false, responsive=true',
+    ].join('\n');
+    const hiddenIme = visibleIme.replace(
+      'inputConfig=NOT_FOCUSABLE | TRUSTED_OVERLAY',
+      'inputConfig=NOT_VISIBLE | NOT_FOCUSABLE | TRUSTED_OVERLAY',
+    );
+
+    expect(parseInputDispatcherTouchOwner(
+      visibleIme,
+      { x: 992, y: 1866 },
+    )).toMatchObject({
+      name: 'ff1538f InputMethod',
+      dispatchEnabled: true,
+      dispatchFrozen: false,
+    });
+    const appOwner = parseInputDispatcherTouchOwner(
+      hiddenIme,
+      { x: 992, y: 1866 },
+    );
+    expect(appOwner?.applicationName).toContain('com.ezterminal.remote/.MainActivity');
+    expect(inputOwnerBelongsToReadyApp(appOwner)).toBe(true);
+  });
+
+  it('skips non-owning API 35 handles and fails closed for blocking handles', () => {
+    const appWindow = '      4: name=579a5f5 '
+      + 'com.ezterminal.remote/com.ezterminal.remote.MainActivity, id=119, '
+      + 'displayId=0, inputConfig=0x0, alpha=1, frame=[0,0][1080,2280], '
+      + 'globalScale=1, applicationInfo.name=ActivityRecord{18d8657 u0 '
+      + 'com.ezterminal.remote/.MainActivity t222}, applicationInfo.token=0x1, '
+      + 'touchableRegion=[0,0][1080,2280], ownerPid=3991';
+    const dump = (overlayConfig: string, options?: {
+      dispatchEnabled?: boolean;
+      dispatchFrozen?: boolean;
+      overlayName?: string;
+    }): string => [
+      'Input Dispatcher State:',
+      `  DispatchEnabled: ${options?.dispatchEnabled ?? true}`,
+      `  DispatchFrozen: ${options?.dispatchFrozen ?? false}`,
+      '  Display: 0',
+      '    Windows:',
+      `      3: name=${options?.overlayName ?? 'InputMethod'}, id=127, displayId=0, `
+        + `inputConfig=${overlayConfig}, alpha=1, frame=[0,1458][1080,2280], `
+        + 'globalScale=1, applicationInfo.name=, applicationInfo.token=<null>, '
+        + 'touchableRegion=[0,1458][1080,2280], ownerPid=1280',
+      appWindow,
+      '  Connections:',
+      "    524: channelName='579a5f5 "
+        + "com.ezterminal.remote/com.ezterminal.remote.MainActivity (server)', "
+        + 'status=NORMAL, monitor=false, responsive=true',
+    ].join('\n');
+    const point = { x: 992, y: 1866 };
+
+    for (const config of [
+      'NOT_VISIBLE | NOT_FOCUSABLE | TRUSTED_OVERLAY',
+      'NOT_TOUCHABLE | NOT_FOCUSABLE | TRUSTED_OVERLAY',
+      'SPY | TRUSTED_OVERLAY',
+    ]) {
+      expect(inputOwnerBelongsToReadyApp(
+        parseInputDispatcherTouchOwner(dump(config), point),
+      )).toBe(true);
+    }
+
+    for (const config of [
+      'NO_INPUT_CHANNEL',
+      'PAUSE_DISPATCHING',
+      'DROP_INPUT',
+      'DROP_INPUT_IF_OBSCURED',
+    ]) {
+      const owner = parseInputDispatcherTouchOwner(
+        dump(config, { overlayName: 'blocking-overlay' }),
+        point,
+      );
+      expect(owner?.name).toBe('blocking-overlay');
+      expect(inputOwnerBelongsToReadyApp(owner)).toBe(false);
+    }
+
+    expect(inputOwnerBelongsToReadyApp(parseInputDispatcherTouchOwner(
+      dump('NOT_VISIBLE', { dispatchEnabled: false }),
+      point,
+    ))).toBe(false);
+    expect(inputOwnerBelongsToReadyApp(parseInputDispatcherTouchOwner(
+      dump('NOT_VISIBLE', { dispatchFrozen: true }),
+      point,
+    ))).toBe(false);
+    expect(inputOwnerBelongsToReadyApp(parseInputDispatcherTouchOwner(
+      dump('NOT_VISIBLE').replace('responsive=true', 'responsive=false'),
+      point,
+    ))).toBe(false);
+    expect(inputOwnerBelongsToReadyApp(parseInputDispatcherTouchOwner(
+      dump('NOT_VISIBLE').replace(
+        'responsive=true',
+        'responsive=false, inputPublisherBlocked=false',
+      ),
+      point,
+    ))).toBe(false);
+    expect(inputOwnerBelongsToReadyApp(parseInputDispatcherTouchOwner(
+      dump('NOT_VISIBLE').replace('status=NORMAL', 'status=BROKEN'),
+      point,
+    ))).toBe(false);
+    expect(parseInputDispatcherTouchOwner('malformed dump', point)).toBeNull();
+  });
+
+  it('fails closed on reordered modern fields and component-prefix spoofing', () => {
+    const point = { x: 992, y: 1866 };
+    const reordered = [
+      'Input Dispatcher State:',
+      '  DispatchEnabled: true',
+      '  DispatchFrozen: false',
+      '  Display: 0',
+      '    Windows:',
+      '      1: name=579a5f5 '
+        + 'com.ezterminal.remote/com.ezterminal.remote.MainActivity, id=119, '
+        + 'displayId=0, alpha=1, inputConfig=NOT_TOUCHABLE, '
+        + 'frame=[0,0][1080,2280], globalScale=1, '
+        + 'applicationInfo.name=ActivityRecord{18d8657 u0 '
+        + 'com.ezterminal.remote/.MainActivity t222}, applicationInfo.token=0x1, '
+        + 'touchableRegion=[0,0][1080,2280], ownerPid=3991',
+      '  Connections:',
+      "    524: channelName='579a5f5 "
+        + "com.ezterminal.remote/com.ezterminal.remote.MainActivity (server)', "
+        + 'status=NORMAL, monitor=false, responsive=true',
+    ].join('\n');
+    expect(parseInputDispatcherTouchOwner(reordered, point)).toBeNull();
+
+    const spoofed = reordered
+      .replace('alpha=1, inputConfig=NOT_TOUCHABLE', 'alpha=1, inputConfig=0x0')
+      .replaceAll(
+        '579a5f5 com.ezterminal.remote/com.ezterminal.remote.MainActivity',
+        'spoofcom.ezterminal.remote/com.ezterminal.remote.MainActivity',
+      );
+    const spoofedOwner = parseInputDispatcherTouchOwner(spoofed, point);
+    expect(spoofedOwner?.name).toBe(
+      'spoofcom.ezterminal.remote/com.ezterminal.remote.MainActivity',
+    );
+    expect(inputOwnerBelongsToReadyApp(spoofedOwner)).toBe(false);
+  });
+
+  it('supports the real API 29 dispatcher format and multiple touch regions', () => {
+    const output = [
+      'Input Dispatcher State:',
+      '  DispatchEnabled: true',
+      '  DispatchFrozen: false',
+      '  Display: 0',
+      '    Windows:',
+      "      0: name='Window{af4622d u0 NavigationBar0}', displayId=0, "
+        + 'portalToDisplayId=-1, paused=false, hasFocus=false, hasWallpaper=false, '
+        + 'visible=true, canReceiveKeys=false, flags=0x21840068, type=0x000007e3, '
+        + 'layer=0, frame=[0,2148][1080,2280], globalScale=1.000000, '
+        + 'windowScale=(1.000000,1.000000), touchableRegion=[0,2148][1080,2280], '
+        + 'inputFeatures=0x00000000, ownerPid=2098',
+      "      1: name='Window{8d6dc9 u0 "
+        + "com.ezterminal.remote/com.ezterminal.remote.MainActivity}', "
+        + 'displayId=0, portalToDisplayId=-1, paused=false, hasFocus=true, '
+        + 'hasWallpaper=false, visible=true, canReceiveKeys=true, flags=0x81810120, '
+        + 'type=0x00000001, layer=0, frame=[0,0][1080,2280], globalScale=1.000000, '
+        + 'windowScale=(1.000000,1.000000), '
+        + 'touchableRegion=[0,0][500,2280]|[500,0][1080,2280], '
+        + 'inputFeatures=0x00000000, ownerPid=5042',
+      '  Connections:',
+      "    1: channelName='8d6dc9 "
+        + "com.ezterminal.remote/com.ezterminal.remote.MainActivity (server)', "
+        + "windowName='8d6dc9 "
+        + "com.ezterminal.remote/com.ezterminal.remote.MainActivity (server)', "
+        + 'status=NORMAL, monitor=false, inputPublisherBlocked=false',
+    ].join('\n');
+
+    const owner = parseInputDispatcherTouchOwner(
+      output,
+      { x: 992, y: 1866 },
+    );
+    expect(owner).toMatchObject({
+      name: 'Window{8d6dc9 u0 com.ezterminal.remote/com.ezterminal.remote.MainActivity}',
+      applicationName: null,
+      dispatchEnabled: true,
+      dispatchFrozen: false,
+      hasInputChannel: true,
+      connectionReady: true,
+      paused: false,
+    });
+    expect(inputOwnerBelongsToReadyApp(owner)).toBe(true);
+  });
+
+  it('mirrors API 29 touch-modal and input-channel blocking behavior', () => {
+    const legacyWindow = (
+      index: number,
+      name: string,
+      flags: string,
+      touchableRegion: string,
+      inputFeatures = '0x00000000',
+    ): string => `      ${index}: name='${name}', displayId=0, portalToDisplayId=-1, `
+      + 'paused=false, hasFocus=false, hasWallpaper=false, visible=true, '
+      + `canReceiveKeys=false, flags=${flags}, type=0x00000001, layer=0, `
+      + 'frame=[0,0][1080,2280], globalScale=1.000000, '
+      + `touchableRegion=${touchableRegion}, inputFeatures=${inputFeatures}, ownerPid=100`;
+    const appWindow = legacyWindow(
+      2,
+      'Window{app u0 com.ezterminal.remote/com.ezterminal.remote.MainActivity}',
+      '0x00000020',
+      '[0,0][1080,2280]',
+    );
+    const dump = (firstWindow: string): string => [
+      'Input Dispatcher State:',
+      '  DispatchEnabled: true',
+      '  DispatchFrozen: false',
+      '  Display: 0',
+      '    Windows:',
+      firstWindow,
+      appWindow,
+      '  Connections:',
+      "    1: channelName='app "
+        + "com.ezterminal.remote/com.ezterminal.remote.MainActivity (server)', "
+        + "windowName='app "
+        + "com.ezterminal.remote/com.ezterminal.remote.MainActivity (server)', "
+        + 'status=NORMAL, monitor=false, inputPublisherBlocked=false',
+    ].join('\n');
+    const point = { x: 992, y: 1866 };
+
+    expect(parseInputDispatcherTouchOwner(
+      dump(legacyWindow(1, 'touch-modal', '0x00000000', '[0,0][10,10]')),
+      point,
+    )?.name).toBe('touch-modal');
+    expect(inputOwnerBelongsToReadyApp(parseInputDispatcherTouchOwner(
+      dump(legacyWindow(1, 'not-touchable', '0x00000010', '[0,0][1080,2280]')),
+      point,
+    ))).toBe(true);
+    expect(inputOwnerBelongsToReadyApp(parseInputDispatcherTouchOwner(
+      dump(legacyWindow(1, 'not-touchable', '0x00000010', '[0,0][1080,2280]'))
+        .replace('inputPublisherBlocked=false', 'inputPublisherBlocked=true'),
+      point,
+    ))).toBe(false);
+
+    const noChannelOwner = parseInputDispatcherTouchOwner(
+      dump(legacyWindow(1, 'no-input-channel', '0x00000020', '[0,0][1080,2280]', '0x2')),
+      point,
+    );
+    expect(noChannelOwner).toMatchObject({
+      name: 'no-input-channel',
+      hasInputChannel: false,
+    });
+    expect(inputOwnerBelongsToReadyApp(noChannelOwner)).toBe(false);
+
+    // API 29 inputFeatures=0x4 is DISABLE_USER_ACTIVITY, not a spy window.
+    expect(parseInputDispatcherTouchOwner(
+      dump(legacyWindow(1, 'ordinary-legacy-window', '0x00000020', '[0,0][1080,2280]', '0x4')),
+      point,
+    )?.name).toBe('ordinary-legacy-window');
+  });
+
+  it('distinguishes a quiescent IME tracker from a pending native transition', () => {
+    expect(parseImeTrackerLiveEntryCount(
+      '  mImeTrackerService#History:\n    mLiveEntries: 2 elements',
+    )).toBe(2);
+    expect(parseImeTrackerLiveEntryCount(
+      '  mImeTrackerService#History:\n    mLiveEntries: 0 elements',
+    )).toBe(0);
+    expect(parseImeTrackerLiveEntryCount('    mLiveEntries: 0 elements')).toBeNull();
+    expect(parseImeTrackerLiveEntryCount('  mInputShown=false')).toBeNull();
+  });
+
   it('accumulates API 29 parent offsets even when DecorView has no bounds', () => {
     const output = [
       '    View Hierarchy:',
