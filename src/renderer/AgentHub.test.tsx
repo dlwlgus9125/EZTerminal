@@ -163,7 +163,7 @@ describe('AgentHub approval integrity', () => {
 });
 
 describe('AgentHub local history paging', () => {
-  it('loads ten sessions, opens by double-click, and appends the next page', async () => {
+  it('loads sessions lazily, opens on one click, and appends the next page', async () => {
     const project = {
       projectId: 'project-1',
       name: 'Project',
@@ -204,15 +204,13 @@ describe('AgentHub local history paging', () => {
       { onOpenHistorySession },
     );
     expect(listAgentProjects).toHaveBeenCalledTimes(1);
-    expect(listAgentProjects).toHaveBeenCalledWith(false);
+    expect(listAgentProjects).toHaveBeenCalledWith(false, undefined, 40, undefined);
     act(() => container.querySelector<HTMLButtonElement>('.agent-project-toggle')!.click());
     await flush();
 
     const rows = container.querySelectorAll<HTMLButtonElement>('.agent-history-row');
     expect(rows).toHaveLength(10);
     act(() => rows[0]!.click());
-    expect(onOpenHistorySession).not.toHaveBeenCalled();
-    act(() => rows[0]!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
     expect(onOpenHistorySession).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Session 1' }),
       project,
@@ -220,8 +218,73 @@ describe('AgentHub local history paging', () => {
 
     act(() => container.querySelector<HTMLButtonElement>('.agent-history-more')!.click());
     await flush();
-    expect(listAgentHistorySessions).toHaveBeenLastCalledWith('project-1', 'page-2', 10);
+    expect(listAgentHistorySessions).toHaveBeenLastCalledWith('project-1', 'page-2', 20);
     expect(container.querySelectorAll('.agent-history-row')).toHaveLength(12);
+  });
+
+  it('prepares a selected provider and hands a prompt-free new-chat bootstrap to the workspace', async () => {
+    const project = {
+      projectId: 'project-1',
+      name: 'Project',
+      primaryRoot: 'C:\\Project',
+      additionalRoots: ['C:\\Shared'],
+      pinned: false,
+      saved: true,
+      sessionCount: 0,
+      providers: [],
+      lastActiveAt: 20,
+    } as const;
+    const launcher = {
+      launcherId: 'claude',
+      provider: 'claude' as const,
+      name: 'Claude Code',
+      supportsAdditionalRoots: true,
+    };
+    const listAgentProjects = vi.fn(async () => ({ items: [project], nextCursor: null }));
+    const listAgentProjectLaunchers = vi.fn(async () => [launcher]);
+    const prepareAgentProjectLaunch = vi.fn(async () => ({
+      ok: true as const,
+      projectId: project.projectId,
+      launcherId: launcher.launcherId,
+      provider: launcher.provider,
+      name: launcher.name,
+      cwd: project.primaryRoot,
+      roots: [project.primaryRoot, ...project.additionalRoots],
+      revision: 'revision-1',
+    }));
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: {
+        listAgentProjects,
+        listAgentProjectLaunchers,
+        prepareAgentProjectLaunch,
+      },
+    });
+    const onLaunchProject = vi.fn();
+    await renderHub({ revision: 1, items: [] }, { onLaunchProject });
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="agent-project-new-chat-project-1"]',
+      )!.click();
+    });
+    await flush();
+    const launcherButton = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((button) => button.textContent?.includes('Claude Code'));
+    act(() => launcherButton!.click());
+    await flush();
+
+    expect(prepareAgentProjectLaunch).toHaveBeenCalledWith('project-1', 'claude');
+    expect(onLaunchProject).toHaveBeenCalledWith({
+      kind: 'new-chat',
+      projectId: 'project-1',
+      launcherId: 'claude',
+      provider: 'claude',
+      name: 'Claude Code',
+      cwd: 'C:\\Project',
+      revision: 'revision-1',
+    });
+    expect(JSON.stringify(onLaunchProject.mock.calls)).not.toContain('prompt');
   });
 });
 

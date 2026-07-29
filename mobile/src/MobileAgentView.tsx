@@ -12,8 +12,7 @@ import type {
   AgentStatus,
 } from '../../src/shared/agent';
 import type {
-  AgentHistorySessionSummary,
-  AgentProjectSummary,
+  AgentProjectLaunchBootstrap,
   AgentResumeBootstrap,
 } from '../../src/shared/agent-history';
 import {
@@ -26,8 +25,9 @@ import { formatCwd } from '../../src/renderer/format-cwd';
 import { useGitBranches } from '../../src/renderer/use-git-branch';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobileActionSheet } from './MobileActionSheet';
-import { MobileAgentHistorySheet } from './MobileAgentHistorySheet';
+import { MobileAgentProjects } from './MobileAgentProjects';
 import { useMobileToast } from './MobileToast';
+import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
 /** Used when the host predates the Git arms; every card then shows its cwd. */
 const readNothing = (): Promise<GitDirectoryStatus> => Promise.resolve(EMPTY_GIT_DIRECTORY_STATUS);
@@ -123,6 +123,8 @@ export function MobileAgentView({
   onLoadDiff,
   onReadGitStatus,
   onResumeHistory,
+  onLaunchProject,
+  transport,
 }: {
   readonly snapshot: AgentActivitySnapshot;
   readonly disconnected?: boolean;
@@ -136,7 +138,9 @@ export function MobileAgentView({
   ) => Promise<AgentDecisionResult>;
   readonly onLoadDiff?: (directory: string) => Promise<GitDiffResult>;
   readonly onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
-  readonly onResumeHistory?: (bootstrap: AgentResumeBootstrap, cwd: string) => Promise<void>;
+  readonly onResumeHistory?: (bootstrap: AgentResumeBootstrap) => Promise<void>;
+  readonly onLaunchProject?: (bootstrap: AgentProjectLaunchBootstrap) => Promise<void>;
+  readonly transport?: WsEzTerminalTransport;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const showToast = useMobileToast();
@@ -147,16 +151,6 @@ export function MobileAgentView({
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [diff, setDiff] = useState<MobileDiffView | null>(null);
-  const [projects, setProjects] = useState<readonly AgentProjectSummary[]>([]);
-  const [expandedProject, setExpandedProject] = useState<string | null>(null);
-  const [projectSessions, setProjectSessions] = useState<
-    Readonly<Record<string, readonly AgentHistorySessionSummary[]>>
-  >({});
-  const [projectSessionCursors, setProjectSessionCursors] = useState<
-    Readonly<Record<string, string | null>>
-  >({});
-  const [loadingSessionProject, setLoadingSessionProject] = useState<string | null>(null);
-  const [historySession, setHistorySession] = useState<AgentHistorySessionSummary | null>(null);
   const diffRequestGeneration = useRef(0);
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const branches = useGitBranches(
@@ -168,57 +162,6 @@ export function MobileAgentView({
     () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),
     [locale],
   );
-
-  useEffect(() => {
-    if (!onResumeHistory) return;
-    const readProjects = window.ezterminal?.listAgentProjects;
-    if (!readProjects) return;
-    let alive = true;
-    void readProjects(false).then((result) => {
-      if (!alive) return;
-      setProjects(result.items);
-      void readProjects(true).then((discovered) => {
-        if (alive) setProjects(discovered.items);
-      }).catch(() => undefined);
-    }).catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, [onResumeHistory]);
-
-  const toggleProject = async (projectId: string): Promise<void> => {
-    if (expandedProject === projectId) {
-      setExpandedProject(null);
-      return;
-    }
-    setExpandedProject(projectId);
-    if (projectSessions[projectId]) return;
-    const readSessions = window.ezterminal?.listAgentHistorySessions;
-    if (!readSessions) return;
-    setLoadingSessionProject(projectId);
-    const result = await readSessions(projectId, undefined, 10).catch(() => null);
-    setLoadingSessionProject(null);
-    if (result) {
-      setProjectSessions((previous) => ({ ...previous, [projectId]: result.items }));
-      setProjectSessionCursors((previous) => ({ ...previous, [projectId]: result.nextCursor }));
-    }
-  };
-
-  const loadMoreSessions = async (projectId: string): Promise<void> => {
-    const cursor = projectSessionCursors[projectId];
-    if (!cursor || loadingSessionProject !== null) return;
-    const readSessions = window.ezterminal?.listAgentHistorySessions;
-    if (!readSessions) return;
-    setLoadingSessionProject(projectId);
-    const result = await readSessions(projectId, cursor, 10).catch(() => null);
-    setLoadingSessionProject(null);
-    if (!result) return;
-    setProjectSessions((previous) => ({
-      ...previous,
-      [projectId]: [...(previous[projectId] ?? []), ...result.items],
-    }));
-    setProjectSessionCursors((previous) => ({ ...previous, [projectId]: result.nextCursor }));
-  };
 
   // A pending approval expires on a deadline, so while one is open the clock
   // has to move fast enough for the buttons to disappear when it closes.
@@ -517,69 +460,15 @@ export function MobileAgentView({
               </article>
             );
           })}
-          {onResumeHistory && (
-            <section className="mob-agent-projects" data-testid="mobile-agent-projects">
-              <h2>Projects</h2>
-              {projects.length === 0 && <p className="mob-empty">No local Agent projects yet.</p>}
-              {projects.map((project) => (
-                <div className="mob-agent-project" key={project.projectId}>
-                  <button
-                    type="button"
-                    className="mob-row"
-                    onClick={() => void toggleProject(project.projectId)}
-                    aria-expanded={expandedProject === project.projectId}
-                  >
-                    <span>
-                      <strong>{project.name}</strong>
-                      <small>{formatCwd(project.primaryRoot, 32)}</small>
-                    </span>
-                    <span>
-                      {projectSessions[project.projectId]
-                        ? `${projectSessions[project.projectId]!.length}${projectSessionCursors[project.projectId] ? '+' : ''}`
-                        : ''}
-                    </span>
-                  </button>
-                  {expandedProject === project.projectId && (
-                    <div className="mob-agent-history-list">
-                      {!projectSessions[project.projectId] && <p className="mob-empty">Loading sessions…</p>}
-                      {projectSessions[project.projectId]?.map((session) => (
-                        <button
-                          type="button"
-                          className="mob-row"
-                          key={session.historyId}
-                          onClick={() => setHistorySession(session)}
-                        >
-                          <span>
-                            <strong>{session.title}</strong>
-                            <small>{session.provider} · {ageLabel(session.updatedAt, now, relativeTime)}</small>
-                          </span>
-                        </button>
-                      ))}
-                      {projectSessionCursors[project.projectId] && (
-                        <button
-                          type="button"
-                          className="mob-btn-ghost"
-                          disabled={loadingSessionProject !== null}
-                          onClick={() => void loadMoreSessions(project.projectId)}
-                        >
-                          {loadingSessionProject === project.projectId ? 'Loading…' : 'More'}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </section>
+          {transport && onResumeHistory && onLaunchProject && (
+            <MobileAgentProjects
+              transport={transport}
+              onResumeHistory={onResumeHistory}
+              onLaunchProject={onLaunchProject}
+            />
           )}
         </div>
       </div>
-      {historySession && onResumeHistory && (
-        <MobileAgentHistorySheet
-          session={historySession}
-          onClose={() => setHistorySession(null)}
-          onResume={onResumeHistory}
-        />
-      )}
       {diff !== null && (
         <MobileActionSheet
           title={t('agentHub.diffTitle')}

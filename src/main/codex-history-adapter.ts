@@ -8,8 +8,10 @@ import {
   type AgentTranscriptPage,
   type AgentTranscriptTurn,
 } from '../shared/agent-history';
+import { quoteEzArgument } from '../shared/quote-ez-argument';
 import type {
   AgentHistoryProviderAdapter,
+  AgentResumeCommand,
   ProviderHistorySession,
   ProviderHistorySessionPage,
   ProviderSessionQuery,
@@ -227,10 +229,38 @@ export class CodexHistoryAdapter implements AgentHistoryProviderAdapter {
     const normalized = thread ? { turns: thread.turns } : result;
     return {
       historyId: '',
+      provider: this.provider,
       turns: pagedTurns
         ? [...normalizeTurns(normalized, cursor ?? 'latest')].reverse()
         : normalizeTurns(normalized, 'full'),
       nextCursor: asString(object?.nextCursor),
+    };
+  }
+
+  /** `!` selects a PTY in EZTerminal. The thread id stays main/interpreter
+   * private; renderer frames and shell history receive only the display text. */
+  buildResumeCommand(privateId: string, roots: readonly string[]): AgentResumeCommand | null {
+    const [primaryRoot, ...additionalRoots] = roots;
+    if (!primaryRoot) return null;
+    return {
+      commandText: [
+        `!codex --cd ${quoteEzArgument(primaryRoot)}`,
+        ...additionalRoots.map((root) => `--add-dir ${quoteEzArgument(root)}`),
+        `resume ${quoteEzArgument(privateId)}`,
+      ].join(' '),
+      displayCommandText: 'codex resume',
+    };
+  }
+
+  buildNewCommand(roots: readonly string[]): AgentResumeCommand | null {
+    const [primaryRoot, ...additionalRoots] = roots;
+    if (!primaryRoot) return null;
+    return {
+      commandText: [
+        `!codex --cd ${quoteEzArgument(primaryRoot)}`,
+        ...additionalRoots.map((root) => `--add-dir ${quoteEzArgument(root)}`),
+      ].join(' '),
+      displayCommandText: 'codex',
     };
   }
 

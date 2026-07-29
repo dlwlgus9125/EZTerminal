@@ -39,6 +39,7 @@ describe('AgentSessionPanel', () => {
   it('reads history without resuming, then converts the same panel after the first send', async () => {
     const readAgentHistory = vi.fn(async () => ({
       historyId: 'codex_opaque',
+      provider: 'codex' as const,
       turns: [{
         id: 'turn_opaque',
         status: 'completed',
@@ -64,13 +65,15 @@ describe('AgentSessionPanel', () => {
       value: { readAgentHistory, prepareAgentResume },
     });
 
+    let handoff: AgentResumeBootstrap | null = null;
     act(() => {
       root.render(
         <AgentSessionPanel
           historyId="codex_opaque"
-          renderTerminal={(bootstrap: AgentResumeBootstrap) => (
-            <div data-testid="resumed-terminal">{bootstrap.initialPrompt}</div>
-          )}
+          renderTerminal={(bootstrap: AgentResumeBootstrap) => {
+            handoff = bootstrap;
+            return <div data-testid="resumed-terminal">{bootstrap.initialPrompt}</div>;
+          }}
         />,
       );
     });
@@ -102,6 +105,44 @@ describe('AgentSessionPanel', () => {
     expect(container.querySelector('[data-testid="agent-session-panel"]')).toBeNull();
     expect(container.querySelector('[data-testid="resumed-terminal"]')?.textContent)
       .toBe('Continue from here');
+    // The handoff carries the provider and the root the shell has to start in;
+    // the terminal never branches on provider itself.
+    expect(handoff).toMatchObject({
+      historyId: 'codex_opaque',
+      provider: 'codex',
+      cwd: 'C:\\project',
+      rootChoice: 'current',
+      revision: 'revision-1',
+      initialPrompt: 'Continue from here',
+    });
+  });
+
+  it('labels replies with the session provider rather than a fixed agent name', async () => {
+    const readAgentHistory = vi.fn(async () => ({
+      historyId: 'claude_opaque',
+      provider: 'claude' as const,
+      turns: [{
+        id: 'turn_opaque',
+        status: 'completed',
+        entries: [
+          { type: 'message' as const, id: 'item_opaque', role: 'assistant' as const, markdown: 'Earlier reply' },
+        ],
+      }],
+      nextCursor: null,
+    }));
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: { readAgentHistory, prepareAgentResume: vi.fn() },
+    });
+
+    act(() => {
+      root.render(
+        <AgentSessionPanel historyId="claude_opaque" renderTerminal={() => <div />} />,
+      );
+    });
+    await flush();
+
+    expect(container.querySelector('.agent-history-terminal__role')?.textContent).toBe('claude');
   });
 
   it('loads the previous twenty turns automatically near the top', async () => {
@@ -111,6 +152,7 @@ describe('AgentSessionPanel', () => {
     ) => cursor
       ? {
           historyId: 'codex_opaque',
+          provider: 'codex' as const,
           turns: [{
             id: 'older',
             status: 'completed',
@@ -120,6 +162,7 @@ describe('AgentSessionPanel', () => {
         }
       : {
           historyId: 'codex_opaque',
+          provider: 'codex' as const,
           turns: [{
             id: 'latest',
             status: 'completed',

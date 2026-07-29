@@ -127,4 +127,14 @@ describe('CodexHistoryAdapter', () => {
     expect(JSON.stringify(page)).not.toContain('turn-1');
     expect(JSON.stringify(page)).not.toContain('item-1');
   });
+
+  it('starts a new chat with --cd and one --add-dir per extra root', () => {
+    const adapter = new CodexHistoryAdapter(requester(vi.fn()));
+
+    expect(adapter.buildNewCommand(['C:\\Work', 'C:\\Shared', 'C:\\Docs'])).toEqual({
+      commandText: "!codex --cd 'C:\\\\Work' --add-dir 'C:\\\\Shared' --add-dir 'C:\\\\Docs'",
+      displayCommandText: 'codex',
+    });
+    expect(adapter.buildNewCommand([])).toBeNull();
+  });
 });

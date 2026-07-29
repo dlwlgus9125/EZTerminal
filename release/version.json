@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "version": "1.0.13",
-  "androidVersionCode": 34,
-  "protocolVersion": 3,
+  "version": "1.0.14",
+  "androidVersionCode": 35,
+  "protocolVersion": 5,
   "validationProfile": "full"
 }

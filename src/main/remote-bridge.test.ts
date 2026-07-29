@@ -3356,6 +3356,7 @@ describe('RemoteBridge — Agent history v4', () => {
       listSessions: vi.fn(async () => ({ items: [session], nextCursor: null })),
       readTranscript: vi.fn(async () => ({
         historyId: session.historyId,
+        provider: 'codex' as const,
         turns: [{
           id: 'turn-1',
           status: 'completed',
@@ -3371,14 +3372,25 @@ describe('RemoteBridge — Agent history v4', () => {
       prepareResume: vi.fn(async () => preparation),
       resolveResume: vi.fn(async () => ({
         ok: true as const,
-        privateId: 'provider-private-thread-id',
         roots: session.roots,
+        commandText: '!codex --cd \'C:\\workspace\' resume \'provider-private-thread-id\'',
+        displayCommandText: 'codex resume',
       })),
       recordTerminalWork: vi.fn(async () => undefined),
     };
     const ws = new FakeWs();
-    const { options, interpreter } = makeOptions({ agentHistorySource: historySource });
+    const { options, interpreter, broker } = makeOptions({ agentHistorySource: historySource });
     await authed(ws, options);
+    const creating = broker.createSession(project.primaryRoot);
+    const createRequest = interpreter.posted.find((entry) => entry.message.type === 'create-session')?.message;
+    if (createRequest?.type !== 'create-session') throw new Error('missing rooted session request');
+    interpreter.emit({
+      type: 'session-created',
+      requestId: createRequest.requestId,
+      sessionId: 'terminal-1',
+      cwd: project.primaryRoot,
+    });
+    await creating;
 
     ws.clientSend({ kind: 'agent-projects-list', requestId: 'projects-1', force: true });
     ws.clientSend({
@@ -3479,6 +3491,263 @@ describe('RemoteBridge — Agent history v4', () => {
     expect(historySource.readTranscript).not.toHaveBeenCalled();
     expect(ws.sent.some((message) => message.kind === 'agent-projects-list-reply')).toBe(false);
     expect(ws.sent.some((message) => message.kind === 'agent-history-read-reply')).toBe(false);
+  });
+
+  it('dispatches a Claude resume with the provider label and no session id on the wire', async () => {
+    const historySource: RemoteAgentHistorySource = {
+      listProjects: vi.fn(async () => ({ items: [], nextCursor: null })),
+      listSessions: vi.fn(async () => ({ items: [], nextCursor: null })),
+      readTranscript: vi.fn(async () => null),
+      prepareResume: vi.fn(async () => null),
+      resolveResume: vi.fn(async () => ({
+        ok: true as const,
+        roots: ['C:\\workspace'],
+        commandText: '!claude --resume \'9f2c1b74-1111-4222-8333-444455556666\'',
+        displayCommandText: 'claude resume',
+      })),
+      recordTerminalWork: vi.fn(async () => undefined),
+    };
+    const ws = new FakeWs();
+    const { options, interpreter, broker } = makeOptions({ agentHistorySource: historySource });
+    await authed(ws, options);
+    const creating = broker.createSession('C:\\workspace');
+    const createRequest = interpreter.posted.find((entry) => entry.message.type === 'create-session')?.message;
+    if (createRequest?.type !== 'create-session') throw new Error('missing rooted session request');
+    interpreter.emit({
+      type: 'session-created',
+      requestId: createRequest.requestId,
+      sessionId: 'terminal-1',
+      cwd: 'C:\\workspace',
+    });
+    await creating;
+
+    ws.clientSend({
+      kind: 'agent-history-start-resume',
+      requestId: 'claude-resume-1',
+      request: {
+        historyId: 'claude_0123456789abcdef01234567',
+        sessionId: 'terminal-1',
+        runId: 'run-1',
+        rootChoice: 'recorded',
+        revision: 'revision-1',
+      },
+    });
+    await flush();
+
+    const run = interpreter.posted.find((entry) => entry.message.type === 'run')?.message;
+    expect(run).toMatchObject({
+      type: 'run',
+      displayCommandText: 'claude resume',
+      requestOrigin: 'mobile',
+    });
+    expect(run?.type === 'run' && run.commandText)
+      .toContain('9f2c1b74-1111-4222-8333-444455556666');
+    expect(JSON.stringify(ws.sent)).not.toContain('9f2c1b74-1111-4222-8333-444455556666');
+    // A resume from mobile is Agent work EZTerminal ran itself, so the project
+    // is recorded exactly as a desktop resume records it.
+    expect(historySource.recordTerminalWork)
+      .toHaveBeenCalledWith(['C:\\workspace'], expect.any(Number));
+  });
+});
+
+describe('RemoteBridge — Agent projects v5', () => {
+  it('correlates CRUD/catalog/search and installs a private new-chat run only at the primary root', async () => {
+    const project = {
+      projectId: 'project-1',
+      name: 'Workspace',
+      primaryRoot: 'C:\\workspace',
+      additionalRoots: ['C:\\shared'],
+      pinned: true,
+      saved: true,
+      sessionCount: 0,
+      providers: [] as const,
+      lastActiveAt: 20,
+    };
+    const launcher = {
+      launcherId: 'codex',
+      provider: 'codex' as const,
+      name: 'Codex',
+      supportsAdditionalRoots: true,
+    };
+    const preparation = {
+      ok: true as const,
+      projectId: project.projectId,
+      launcherId: launcher.launcherId,
+      provider: launcher.provider,
+      name: launcher.name,
+      cwd: project.primaryRoot,
+      roots: [project.primaryRoot, ...project.additionalRoots],
+      revision: 'launch-revision-1',
+    };
+    const historySource: RemoteAgentHistorySource = {
+      listProjects: vi.fn(async () => ({ items: [project], nextCursor: null })),
+      saveProject: vi.fn(async () => ({ ok: true as const, project })),
+      removeProject: vi.fn(async () => true),
+      listLaunchers: vi.fn(() => [launcher]),
+      prepareLaunch: vi.fn(async () => preparation),
+      resolveLaunch: vi.fn(async () => ({
+        ok: true as const,
+        roots: preparation.roots,
+        commandText: "!codex --cd 'C:\\\\workspace' --private-launch-secret",
+        displayCommandText: 'codex',
+      })),
+      listSessions: vi.fn(async () => ({ items: [], nextCursor: null })),
+      readTranscript: vi.fn(async () => null),
+      prepareResume: vi.fn(async () => null),
+      resolveResume: vi.fn(async () => ({ ok: false as const, reason: 'unavailable' as const })),
+      recordTerminalWork: vi.fn(async () => undefined),
+    };
+    const ws = new FakeWs();
+    const { options, interpreter, broker } = makeOptions({ agentHistorySource: historySource });
+    await authed(ws, options);
+
+    ws.clientSend({
+      kind: 'agent-projects-list',
+      requestId: 'projects-query',
+      force: false,
+      query: 'work',
+      limit: 40,
+    });
+    ws.clientSend({
+      kind: 'agent-project-save',
+      requestId: 'project-save',
+      input: {
+        projectId: project.projectId,
+        name: project.name,
+        primaryRoot: project.primaryRoot,
+        additionalRoots: project.additionalRoots,
+        pinned: project.pinned,
+      },
+    });
+    ws.clientSend({
+      kind: 'agent-project-remove',
+      requestId: 'project-remove',
+      projectId: project.projectId,
+    });
+    ws.clientSend({ kind: 'agent-project-launchers', requestId: 'launchers' });
+    ws.clientSend({
+      kind: 'agent-project-prepare-launch',
+      requestId: 'prepare-launch',
+      projectId: project.projectId,
+      launcherId: launcher.launcherId,
+    });
+    await flush();
+
+    expect(historySource.listProjects).toHaveBeenCalledWith(false, undefined, 40, 'work');
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-project-save-reply',
+      requestId: 'project-save',
+      result: { ok: true, project },
+    });
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-project-remove-reply',
+      requestId: 'project-remove',
+      removed: true,
+    });
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-project-launchers-reply',
+      requestId: 'launchers',
+      result: [launcher],
+    });
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-project-prepare-launch-reply',
+      requestId: 'prepare-launch',
+      result: preparation,
+    });
+
+    const creating = broker.createSession(project.primaryRoot);
+    const createRequest = [...interpreter.posted]
+      .reverse()
+      .find((entry) => entry.message.type === 'create-session')?.message;
+    if (createRequest?.type !== 'create-session') throw new Error('missing rooted session request');
+    interpreter.emit({
+      type: 'session-created',
+      requestId: createRequest.requestId,
+      sessionId: 'project-terminal',
+      cwd: project.primaryRoot,
+    });
+    await creating;
+
+    ws.clientSend({
+      kind: 'agent-project-start-launch',
+      requestId: 'start-launch',
+      request: {
+        projectId: project.projectId,
+        launcherId: launcher.launcherId,
+        sessionId: 'project-terminal',
+        runId: 'project-run',
+        revision: preparation.revision,
+      },
+    });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-project-start-launch-reply',
+      requestId: 'start-launch',
+      result: { ok: true },
+    });
+    const run = interpreter.posted.find((entry) => (
+      entry.message.type === 'run' && entry.message.runId === 'project-run'
+    ))?.message;
+    expect(run).toMatchObject({
+      type: 'run',
+      sessionId: 'project-terminal',
+      displayCommandText: 'codex',
+      requestOrigin: 'mobile',
+    });
+    expect(run?.type === 'run' && run.commandText).toContain('--private-launch-secret');
+    expect(JSON.stringify(ws.sent)).not.toContain('--private-launch-secret');
+    expect(historySource.recordTerminalWork)
+      .toHaveBeenCalledWith(preparation.roots, expect.any(Number));
+
+    ws.clientSend({
+      kind: 'agent-project-start-launch',
+      requestId: 'start-mismatch',
+      request: {
+        projectId: project.projectId,
+        launcherId: launcher.launcherId,
+        sessionId: 'missing-terminal',
+        runId: 'mismatch-run',
+        revision: preparation.revision,
+      },
+    });
+    await flush();
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-project-start-launch-reply',
+      requestId: 'start-mismatch',
+      result: { ok: false, reason: 'session-mismatch' },
+    });
+    expect(interpreter.posted.some((entry) => (
+      entry.message.type === 'run' && entry.message.runId === 'mismatch-run'
+    ))).toBe(false);
+  });
+
+  it('ignores v5 mutations after a v4 negotiation', async () => {
+    const saveProject = vi.fn();
+    const historySource = {
+      listProjects: vi.fn(async () => ({ items: [], nextCursor: null })),
+      saveProject,
+    } as unknown as RemoteAgentHistorySource;
+    const ws = new FakeWs();
+    const { options } = makeOptions({ agentHistorySource: historySource });
+    attachConnection(ws, options);
+    ws.clientSend({ ...authMessage(), protocolVersion: 4 });
+    await flush();
+
+    ws.clientSend({
+      kind: 'agent-project-save',
+      requestId: 'v4-save',
+      input: {
+        name: 'Project',
+        primaryRoot: 'C:\\workspace',
+        additionalRoots: [],
+        pinned: false,
+      },
+    });
+    await flush();
+
+    expect(saveProject).not.toHaveBeenCalled();
+    expect(ws.sent.some((message) => message.kind === 'agent-project-save-reply')).toBe(false);
   });
 });
 

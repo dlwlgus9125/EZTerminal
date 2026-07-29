@@ -47,6 +47,7 @@ import { AgentProjectStore } from './agent-project-store';
 import { AgentHistoryService } from './agent-history-service';
 import { CodexAppServerClient } from './codex-app-server-client';
 import { CodexHistoryAdapter } from './codex-history-adapter';
+import { ClaudeHistoryAdapter } from './claude-history-adapter';
 import { GitStatusService } from './git-status-service';
 import { PairingCodeService } from './pairing-code-service';
 import { QuickCommandStore } from './quick-command-store';
@@ -89,11 +90,12 @@ import type { OpenClawAutostartAction, OpenClawLifecycleAction, OpenClawVisibili
 import type { AgentDecisionResult, AgentFollowupResult } from '../shared/agent';
 import { normalizeExternalHttpUrl } from '../shared/external-url';
 import type {
+  AgentProjectLaunchStartRequest,
+  AgentProjectLaunchStartResult,
   AgentProjectInput,
   AgentResumeStartRequest,
   AgentResumeStartResult,
 } from '../shared/agent-history';
-import { quoteEzArgument } from '../shared/quote-ez-argument';
 import { classifyRecentPanelInput } from './recent-panel-input';
 import type { WorkspaceFileSearchRequest } from '../shared/workspace-search';
 import { isWorktreeRequest, type WorktreeInfo, type WorktreeResult } from '../shared/worktree';
@@ -111,6 +113,11 @@ import {
 const osc52LastWrite = new WeakMap<object, number>();
 const OSC52_MAIN_MAX_BYTES = 64 * 1024;
 const OSC52_MAIN_MIN_INTERVAL_MS = 1_000;
+
+function directoryKey(value: string): string {
+  const normalized = path.normalize(path.resolve(value));
+  return process.platform === 'win32' ? normalized.toLocaleLowerCase('en-US') : normalized;
+}
 
 // The main process owns the interpreter utilityProcess lifetime (architecture
 // §1). Per-command MessagePort brokering + session/run correlation live in the
@@ -437,9 +444,13 @@ app.on('ready', () => {
   const agentSettingsStore = new AgentSettingsStore(path.join(app.getPath('userData')));
   const agentProjectStore = new AgentProjectStore(path.join(app.getPath('userData')));
   const codexHistoryAdapter = new CodexHistoryAdapter(new CodexAppServerClient());
+  // Home resolution is left to the adapter so it matches how Claude Code itself
+  // locates `~/.claude`.
+  const claudeHistoryAdapter = new ClaudeHistoryAdapter();
   const agentHistoryService = new AgentHistoryService(
     agentProjectStore,
-    [codexHistoryAdapter],
+    [codexHistoryAdapter, claudeHistoryAdapter],
+    () => agentSettingsStore.current.genericProfiles,
   );
   const agentHistoryReady = agentProjectStore.init().catch((err) => {
     console.error('[main] agent project store init failed:', err);
@@ -831,12 +842,14 @@ app.on('ready', () => {
     force?: unknown,
     cursor?: unknown,
     limit?: unknown,
+    query?: unknown,
   ) => {
     await agentHistoryReady;
     return agentHistoryService.listProjects(
       force === true,
       typeof cursor === 'string' ? cursor : undefined,
       typeof limit === 'number' ? limit : undefined,
+      typeof query === 'string' ? query : undefined,
     );
   });
   ipcMain.handle('agent-history:list-sessions', async (
@@ -908,24 +921,97 @@ app.on('ready', () => {
       candidate.rootChoice,
     );
     if (!resolved.ok) return resolved;
-    const [primaryRoot, ...additionalRoots] = resolved.roots;
-    if (!primaryRoot) return { ok: false, reason: 'missing-root' };
-    // `!` selects a PTY in EZTerminal. The provider id remains main/interpreter
-    // private; renderer frames and shell history receive only "codex resume".
-    const commandText = [
-      `!codex --cd ${quoteEzArgument(primaryRoot)}`,
-      ...additionalRoots.map((root) => `--add-dir ${quoteEzArgument(root)}`),
-      `resume ${quoteEzArgument(resolved.privateId)}`,
-    ].join(' ');
+    const session = broker?.listSessions().find((item) => item.sessionId === candidate.sessionId);
+    if (!session || !resolved.roots[0]
+      || directoryKey(session.cwd) !== directoryKey(resolved.roots[0])) {
+      return { ok: false, reason: 'session-mismatch' };
+    }
+    // The launch line is built by the provider adapter; the provider's session id
+    // remains main/interpreter private and renderer frames and shell history
+    // receive only the redacted display text.
     const port = broker?.runPrivateCommand(
       candidate.sessionId,
       candidate.runId,
-      commandText,
-      'codex',
+      resolved.commandText,
+      resolved.displayCommandText,
     );
     if (!port) return { ok: false, reason: 'unavailable' };
     void agentHistoryService.recordTerminalWork(resolved.roots, Date.now()).catch((err) => {
       console.error('[main] failed to record resumed Agent project:', err);
+    });
+    event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
+    return { ok: true };
+  });
+  ipcMain.handle('agent-projects:list-launchers', async () => {
+    await agentInfrastructureReady;
+    return agentHistoryService.listLaunchers();
+  });
+  ipcMain.handle('agent-projects:prepare-launch', async (
+    _event,
+    projectId: unknown,
+    launcherId: unknown,
+  ) => {
+    await Promise.all([agentHistoryReady, agentInfrastructureReady]);
+    if (
+      typeof projectId !== 'string'
+      || projectId.length === 0
+      || projectId.length > 128
+      || typeof launcherId !== 'string'
+      || launcherId.length === 0
+      || launcherId.length > 128
+    ) {
+      return { ok: false, reason: 'invalid' };
+    }
+    return agentHistoryService.prepareLaunch(projectId, launcherId);
+  });
+  ipcMain.handle('agent-projects:start-launch', async (
+    event,
+    request: unknown,
+  ): Promise<AgentProjectLaunchStartResult> => {
+    await Promise.all([agentHistoryReady, agentInfrastructureReady]);
+    if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+      return { ok: false, reason: 'invalid' };
+    }
+    const candidate = request as Partial<AgentProjectLaunchStartRequest>;
+    if (
+      typeof candidate.projectId !== 'string'
+      || candidate.projectId.length === 0
+      || candidate.projectId.length > 128
+      || typeof candidate.launcherId !== 'string'
+      || candidate.launcherId.length === 0
+      || candidate.launcherId.length > 128
+      || typeof candidate.sessionId !== 'string'
+      || candidate.sessionId.length === 0
+      || candidate.sessionId.length > 256
+      || typeof candidate.runId !== 'string'
+      || candidate.runId.length === 0
+      || candidate.runId.length > 256
+      || typeof candidate.revision !== 'string'
+      || candidate.revision.length === 0
+      || candidate.revision.length > 128
+    ) {
+      return { ok: false, reason: 'invalid' };
+    }
+    const resolved = await agentHistoryService.resolveLaunch(
+      candidate.projectId,
+      candidate.launcherId,
+      candidate.revision,
+    );
+    if (!resolved.ok) return resolved;
+    const session = broker?.listSessions().find((item) => item.sessionId === candidate.sessionId);
+    if (!session || !resolved.roots[0]
+      || directoryKey(session.cwd) !== directoryKey(resolved.roots[0])) {
+      return { ok: false, reason: 'session-mismatch' };
+    }
+    const port = broker?.runPrivateCommand(
+      candidate.sessionId,
+      candidate.runId,
+      resolved.commandText,
+      resolved.displayCommandText,
+    );
+    if (!port) return { ok: false, reason: 'unavailable' };
+    void agentHistoryService.recordTerminalWork(resolved.roots, Date.now()).catch((err) => {
+      console.error('[main] failed to record launched Agent project:', err);
     });
     event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
     return { ok: true };
@@ -1263,7 +1349,9 @@ app.on('ready', () => {
     getSettings: () => agentSettingsStore.current,
   });
   agentActivityService.onObserved((activity) => {
-    if (activity.provider !== 'codex' || !activity.cwd) return;
+    // Every provider EZTerminal has local history for — generic profiles have no
+    // adapter and so no sessions to come back to.
+    if (!isAgentIntegrationProvider(activity.provider) || !activity.cwd) return;
     void agentHistoryReady
       .then(() => agentHistoryService.recordTerminalWork([activity.cwd], activity.updatedAt))
       .catch((err) => {

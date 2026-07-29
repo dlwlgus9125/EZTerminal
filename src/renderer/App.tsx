@@ -27,6 +27,7 @@ import type { FilePreviewResult } from '../shared/file-preview';
 import type { SessionInfo } from '../shared/ipc';
 import type {
   AgentHistorySessionSummary,
+  AgentProjectLaunchBootstrap,
   AgentProjectSummary,
 } from '../shared/agent-history';
 import type { ThemeMod } from '../shared/theme-schema';
@@ -46,6 +47,7 @@ import {
 } from '../shared/close-risk';
 import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from '../shared/workspace-search';
 import { AgentHub, countAgentAttention } from './AgentHub';
+import { peekAgentTerminalBootstrap } from './agent-terminal-bootstrap';
 import { AgentSessionPanel } from './AgentSessionPanel';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import {
@@ -281,6 +283,7 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
       onDecideApproval={paneApprovals?.onDecide}
       paneInstanceToken={props.api}
       initialCwd={props.params?.cwd as string | undefined}
+      agentBootstrap={peekAgentTerminalBootstrap(props.api.id)}
       adoptSessionId={props.params?.adoptSessionId as string | undefined}
       mountSessionPane={binding?.mountPane}
       terminalRuntimeOptions={terminalRuntimeOptions}
@@ -304,13 +307,18 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
   return (
     <AgentSessionPanel
       historyId={historyId}
-      renderTerminal={(resumeBootstrap) => (
+      renderTerminal={(resumeBootstrap, onFailure) => (
         <TerminalPane
           panelId={props.api.id}
           pendingApproval={paneApprovals?.byPanel.get(props.api.id)}
           onDecideApproval={paneApprovals?.onDecide}
           paneInstanceToken={props.api}
           resumeBootstrap={resumeBootstrap}
+          onAgentBootstrapFailure={onFailure}
+          // Providers without a "run in this directory" flag resolve their
+          // session store from the process cwd, so the resumed shell has to
+          // start in the project root.
+          initialCwd={resumeBootstrap.cwd}
           mountSessionPane={binding?.mountPane}
           terminalRuntimeOptions={terminalRuntimeOptions}
           commandSubmissionLocked={presetMutation.locked}
@@ -1140,6 +1148,14 @@ export function App(): JSX.Element {
       params: { historyId: session.historyId },
     });
   }, []);
+
+  const launchAgentProject = useCallback((bootstrap: AgentProjectLaunchBootstrap): void => {
+    workbenchCoordinator.openTerminal({
+      cwd: bootstrap.cwd,
+      title: bootstrap.name,
+      agentBootstrap: bootstrap,
+    });
+  }, [workbenchCoordinator]);
 
   const requestPanelClose = useCallback(
     (panelId: string, component: string, close: () => void): void => {
@@ -2611,6 +2627,7 @@ export function App(): JSX.Element {
         onReadGitStatus={(directory) => window.ezterminal.getGitStatus(directory)}
         onNewAgentRun={() => openQuickOpen('all')}
         onOpenHistorySession={openAgentHistorySession}
+        onLaunchProject={launchAgentProject}
         onOpenAgentSettings={() => {
           setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
           setSidebarDestination('settings');

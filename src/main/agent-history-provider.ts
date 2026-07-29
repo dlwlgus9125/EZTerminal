@@ -27,6 +27,18 @@ export interface ProviderSessionQuery {
   readonly limit: number;
 }
 
+/**
+ * A launch line for one provider's resume, built inside the adapter so the
+ * provider's CLI grammar never leaks into main's dispatch or the mobile bridge.
+ * `displayCommandText` is all the renderer, block list, and shell history see.
+ */
+export interface AgentPrivateCommand {
+  readonly commandText: string;
+  readonly displayCommandText: string;
+}
+
+export type AgentResumeCommand = AgentPrivateCommand;
+
 export interface AgentHistoryProviderAdapter {
   readonly provider: AgentHistoryProvider;
   /**
@@ -35,5 +47,12 @@ export interface AgentHistoryProviderAdapter {
    */
   listSessions(query: ProviderSessionQuery): Promise<ProviderHistorySessionPage>;
   readTranscript(privateId: string, cursor?: string, limit?: number): Promise<AgentTranscriptPage>;
+  /**
+   * Returns null when the provider cannot express this resume — that is the one
+   * place a provider declares a support limit, rather than the caller guessing.
+   */
+  buildResumeCommand(privateId: string, roots: readonly string[]): AgentResumeCommand | null;
+  /** Builds a fresh interactive CLI launch. No prompt is included in argv. */
+  buildNewCommand?(roots: readonly string[]): AgentPrivateCommand | null;
   dispose(): Promise<void>;
 }

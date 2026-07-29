@@ -4,7 +4,10 @@ import path from 'node:path';
 
 import {
   MAX_AGENT_HISTORY_PAGE_SIZE,
+  type AgentHistoryProvider,
   type AgentHistorySessionPage,
+  type AgentProjectLaunchPreparation,
+  type AgentProjectLauncherSummary,
   type AgentHistorySessionSummary,
   type AgentProjectInput,
   type AgentProjectMutationResult,
@@ -14,6 +17,7 @@ import {
   type AgentResumeRootChoice,
   type AgentTranscriptPage,
 } from '../shared/agent-history';
+import type { GenericAgentProfile } from '../shared/agent';
 import type {
   AgentHistoryProviderAdapter,
   ProviderHistorySession,
@@ -27,6 +31,56 @@ interface IndexedSession {
 }
 
 const MAX_INDEXED_SESSIONS = 500;
+
+/**
+ * One provider's position inside a merged session page. `cursor` is the
+ * provider's own opaque cursor for the page currently being consumed and `skip`
+ * is how much of that page earlier pages already showed — so a merged page stays
+ * stateless and survives a restart, even though providers page independently and
+ * cannot be resumed mid-page.
+ */
+interface ProviderCursorState {
+  readonly cursor?: string;
+  readonly skip: number;
+}
+
+type SessionCursorState = Readonly<Record<string, ProviderCursorState>>;
+
+interface ProviderBuffer {
+  readonly adapter: AgentHistoryProviderAdapter;
+  readonly items: readonly ProviderHistorySession[];
+  readonly pageCursor: string | undefined;
+  readonly nextCursor: string | null;
+  readonly skip: number;
+  taken: number;
+}
+
+function decodeSessionCursor(cursor: string | undefined): SessionCursorState | null {
+  if (!cursor) return null;
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    const object = parsed as Record<string, unknown> | null;
+    if (typeof object !== 'object' || object === null || Array.isArray(object)) return null;
+    const state: Record<string, ProviderCursorState> = {};
+    for (const [provider, value] of Object.entries(object)) {
+      const entry = value as Partial<ProviderCursorState> | null;
+      if (typeof entry !== 'object' || entry === null) return null;
+      if (!Number.isSafeInteger(entry.skip) || (entry.skip ?? -1) < 0) return null;
+      if (entry.cursor !== undefined && typeof entry.cursor !== 'string') return null;
+      state[provider] = {
+        ...(entry.cursor === undefined ? {} : { cursor: entry.cursor }),
+        skip: entry.skip as number,
+      };
+    }
+    return state;
+  } catch {
+    return null;
+  }
+}
+
+function encodeSessionCursor(state: SessionCursorState): string {
+  return Buffer.from(JSON.stringify(state), 'utf8').toString('base64url');
+}
 
 function pathKey(value: string): string {
   const normalized = path.normalize(value);
@@ -100,13 +154,26 @@ export class AgentHistoryService {
   constructor(
     private readonly projects: AgentProjectStore,
     adapters: readonly AgentHistoryProviderAdapter[],
+    private readonly getGenericProfiles: () => readonly GenericAgentProfile[] = () => [],
   ) {
     this.adapters = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
   }
 
-  async listProjects(_force = false, cursor?: string, limit = 100): Promise<AgentProjectPage> {
+  async listProjects(
+    _force = false,
+    cursor?: string,
+    limit = 100,
+    query?: string,
+  ): Promise<AgentProjectPage> {
     void _force;
-    const summaries = this.projects.list().map(projectSummary);
+    const needle = query?.trim().toLocaleLowerCase('en-US') ?? '';
+    const summaries = this.projects.list()
+      .map(projectSummary)
+      .filter((project) => needle.length === 0 || [
+        project.name,
+        project.primaryRoot,
+        ...project.additionalRoots,
+      ].some((value) => value.toLocaleLowerCase('en-US').includes(needle)));
     summaries.sort((a, b) =>
       Number(b.pinned) - Number(a.pinned)
       || (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0)
@@ -124,6 +191,11 @@ export class AgentHistoryService {
     });
   }
 
+  /**
+   * One page of the project's most recent work across every provider, merged by
+   * recency. Providers are asked only for what this page can hold; nothing scans
+   * a provider's whole history.
+   */
   async listSessions(
     projectId: string,
     cursor?: string,
@@ -132,23 +204,81 @@ export class AgentHistoryService {
   ): Promise<AgentHistorySessionPage> {
     void _force;
     const project = this.projectForId(projectId);
-    const adapter = this.adapters.get('codex');
-    if (!project || !adapter) return { items: [], nextCursor: null };
+    if (!project) return { items: [], nextCursor: null };
     const roots = [project.primaryRoot, ...project.additionalRoots];
-    const result = await adapter.listSessions({
-      roots,
-      ...(cursor ? { cursor } : {}),
-      limit: Math.max(1, Math.min(MAX_AGENT_HISTORY_PAGE_SIZE, Math.trunc(limit))),
-    });
-    const items = result.items.map((session) => this.indexSession(adapter, session, projectId));
-    return { items, nextCursor: result.nextCursor };
+    const size = Math.max(1, Math.min(MAX_AGENT_HISTORY_PAGE_SIZE, Math.trunc(limit)));
+    const state = decodeSessionCursor(cursor);
+
+    const buffers = (await Promise.all([...this.adapters.values()].map(
+      async (adapter): Promise<ProviderBuffer | null> => {
+        // A provider missing from a continuation cursor ran out on an earlier page.
+        const entry = state ? state[adapter.provider] : undefined;
+        if (state && !entry) return null;
+        const skip = entry?.skip ?? 0;
+        try {
+          const result = await adapter.listSessions({
+            roots,
+            ...(entry?.cursor ? { cursor: entry.cursor } : {}),
+            limit: size,
+          });
+          return {
+            adapter,
+            items: result.items.slice(skip),
+            pageCursor: entry?.cursor,
+            nextCursor: result.nextCursor,
+            skip,
+            taken: 0,
+          };
+        } catch {
+          return null;
+        }
+      },
+    ))).filter((buffer): buffer is ProviderBuffer => buffer !== null);
+
+    // A k-way merge rather than a global sort: each provider's page is already
+    // newest-first, and taking a strict prefix of each is what makes `skip`
+    // accounting — and therefore the continuation cursor — correct.
+    const page: ProviderHistorySession[] = [];
+    const owners: ProviderBuffer[] = [];
+    while (page.length < size) {
+      let best: ProviderBuffer | undefined;
+      for (const buffer of buffers) {
+        const candidate = buffer.items[buffer.taken];
+        if (!candidate) continue;
+        const incumbent = best?.items[best.taken];
+        if (!incumbent || candidate.updatedAt > incumbent.updatedAt) best = buffer;
+      }
+      const session = best?.items[best.taken];
+      if (!best || !session) break;
+      best.taken += 1;
+      page.push(session);
+      owners.push(best);
+    }
+
+    const nextState: Record<string, ProviderCursorState> = {};
+    for (const buffer of buffers) {
+      if (buffer.taken < buffer.items.length) {
+        nextState[buffer.adapter.provider] = {
+          ...(buffer.pageCursor === undefined ? {} : { cursor: buffer.pageCursor }),
+          skip: buffer.skip + buffer.taken,
+        };
+      } else if (buffer.nextCursor) {
+        nextState[buffer.adapter.provider] = { cursor: buffer.nextCursor, skip: 0 };
+      }
+    }
+    const items = page.map((session, index) =>
+      this.indexSession(owners[index]!.adapter, session, projectId));
+    return {
+      items,
+      nextCursor: Object.keys(nextState).length > 0 ? encodeSessionCursor(nextState) : null,
+    };
   }
 
   async readTranscript(historyId: string, cursor?: string, limit = 20): Promise<AgentTranscriptPage | null> {
     const indexed = await this.findSession(historyId);
     if (!indexed) return null;
     const result = await indexed.adapter.readTranscript(indexed.privateSession.privateId, cursor, limit);
-    return { ...result, historyId };
+    return { ...result, historyId, provider: indexed.adapter.provider };
   }
 
   async prepareResume(historyId: string): Promise<AgentResumePreparation | null> {
@@ -157,12 +287,8 @@ export class AgentHistoryService {
     const recordedRoots = indexed.publicSession.roots;
     const project = this.projectForId(indexed.publicSession.projectId);
     const currentRoots = project
-      ? [
-          recordedRoots[0] ?? project.primaryRoot,
-          ...project.additionalRoots.filter((root) =>
-            pathKey(root) !== pathKey(recordedRoots[0] ?? project.primaryRoot)),
-        ]
-      : recordedRoots;
+      ? [project.primaryRoot, ...project.additionalRoots]
+      : [];
     const [missingRecordedRoots, missingCurrentRoots] = await Promise.all([
       missingDirectories(recordedRoots),
       missingDirectories(currentRoots),
@@ -176,32 +302,129 @@ export class AgentHistoryService {
       rootsMatch: rootsEqual(recordedRoots, currentRoots),
       missingRecordedRoots,
       missingCurrentRoots,
-      canResume: indexed.publicSession.provider === 'codex'
-        && ((recordedRoots.length > 0 && missingRecordedRoots.length === 0)
-          || (currentRoots.length > 0 && missingCurrentRoots.length === 0)),
+      canResume: (recordedRoots.length > 0 && missingRecordedRoots.length === 0)
+        || (currentRoots.length > 0 && missingCurrentRoots.length === 0),
       revision,
     };
   }
 
+  /**
+   * Resolves a resume into a ready-to-dispatch launch line. The provider's own
+   * session id never leaves this class: the adapter turns it into `commandText`,
+   * and callers forward only that plus the redacted `displayCommandText`.
+   */
   async resolveResume(
     historyId: string,
     revision: string,
     choice: AgentResumeRootChoice,
   ): Promise<
-    | { readonly ok: true; readonly privateId: string; readonly roots: readonly string[] }
+    | {
+      readonly ok: true;
+      readonly provider: AgentHistoryProvider;
+      readonly roots: readonly string[];
+      readonly commandText: string;
+      readonly displayCommandText: string;
+    }
     | { readonly ok: false; readonly reason: 'not-found' | 'stale' | 'missing-root' | 'unavailable' }
   > {
     const preparation = await this.prepareResume(historyId);
     const indexed = this.index.get(historyId);
     if (!preparation || !indexed) return { ok: false, reason: 'not-found' };
     if (preparation.revision !== revision) return { ok: false, reason: 'stale' };
-    if (preparation.provider !== 'codex') return { ok: false, reason: 'unavailable' };
     const roots = choice === 'recorded' ? preparation.recordedRoots : preparation.currentRoots;
     const missing = choice === 'recorded'
       ? preparation.missingRecordedRoots
       : preparation.missingCurrentRoots;
     if (roots.length === 0 || missing.length > 0) return { ok: false, reason: 'missing-root' };
-    return { ok: true, privateId: indexed.privateSession.privateId, roots };
+    const command = indexed.adapter.buildResumeCommand(indexed.privateSession.privateId, roots);
+    if (!command) return { ok: false, reason: 'unavailable' };
+    return { ok: true, provider: indexed.adapter.provider, roots, ...command };
+  }
+
+  listLaunchers(): readonly AgentProjectLauncherSummary[] {
+    return [
+      ...(this.adapters.has('codex') ? [{
+        launcherId: 'codex',
+        provider: 'codex' as const,
+        name: 'Codex',
+        supportsAdditionalRoots: true,
+      }] : []),
+      ...(this.adapters.has('claude') ? [{
+        launcherId: 'claude',
+        provider: 'claude' as const,
+        name: 'Claude Code',
+        supportsAdditionalRoots: true,
+      }] : []),
+      ...this.getGenericProfiles()
+        .filter((profile) => profile.enabled)
+        .map((profile) => ({
+          launcherId: opaqueId('launcher', profile.id),
+          provider: 'generic' as const,
+          name: profile.name,
+          supportsAdditionalRoots: false,
+        })),
+    ];
+  }
+
+  async prepareLaunch(
+    projectId: string,
+    launcherId: string,
+  ): Promise<AgentProjectLaunchPreparation> {
+    if (!projectId || !launcherId) return { ok: false, reason: 'invalid' };
+    const project = this.projectForId(projectId);
+    if (!project) return { ok: false, reason: 'not-found' };
+    const launcher = this.resolveLauncher(launcherId);
+    if (!launcher) return { ok: false, reason: 'unavailable' };
+    const roots = [project.primaryRoot, ...project.additionalRoots];
+    if (roots.length === 0 || (await missingDirectories(roots)).length > 0) {
+      return { ok: false, reason: 'missing-root' };
+    }
+    return {
+      ok: true,
+      projectId,
+      launcherId,
+      provider: launcher.provider,
+      name: launcher.name,
+      cwd: roots[0]!,
+      roots,
+      revision: this.launchRevision(projectId, launcherId, roots, launcher.executable),
+    };
+  }
+
+  async resolveLaunch(
+    projectId: string,
+    launcherId: string,
+    revision: string,
+  ): Promise<
+    | {
+      readonly ok: true;
+      readonly roots: readonly string[];
+      readonly commandText: string;
+      readonly displayCommandText: string;
+    }
+    | { readonly ok: false; readonly reason: 'not-found' | 'stale' | 'missing-root' | 'unavailable' }
+  > {
+    const preparation = await this.prepareLaunch(projectId, launcherId);
+    if (!preparation.ok) {
+      if (preparation.reason === 'invalid') return { ok: false, reason: 'not-found' };
+      return { ok: false, reason: preparation.reason };
+    }
+    if (preparation.revision !== revision) return { ok: false, reason: 'stale' };
+    const launcher = this.resolveLauncher(launcherId);
+    if (!launcher) return { ok: false, reason: 'unavailable' };
+    if (launcher.provider === 'generic') {
+      if (!launcher.executable) return { ok: false, reason: 'unavailable' };
+      return {
+        ok: true,
+        roots: preparation.roots,
+        commandText: `!${launcher.executable}`,
+        displayCommandText: launcher.name,
+      };
+    }
+    const command = this.adapters.get(launcher.provider)?.buildNewCommand?.(preparation.roots);
+    return command
+      ? { ok: true, roots: preparation.roots, ...command }
+      : { ok: false, reason: 'unavailable' };
   }
 
   async saveProject(input: AgentProjectInput): Promise<AgentProjectMutationResult> {
@@ -293,6 +516,42 @@ export class AgentHistoryService {
 
   private projectForId(projectId: string): AgentProjectRecord | undefined {
     return this.projects.list().find((project) => projectIdForRoot(project.primaryRoot) === projectId);
+  }
+
+  private resolveLauncher(launcherId: string): {
+    readonly provider: AgentHistoryProvider | 'generic';
+    readonly name: string;
+    readonly executable: string;
+  } | null {
+    if (launcherId === 'codex' && this.adapters.has('codex')) {
+      return { provider: 'codex', name: 'Codex', executable: 'codex' };
+    }
+    if (launcherId === 'claude' && this.adapters.has('claude')) {
+      return { provider: 'claude', name: 'Claude Code', executable: 'claude' };
+    }
+    const profile = this.getGenericProfiles().find((candidate) =>
+      candidate.enabled && opaqueId('launcher', candidate.id) === launcherId);
+    return profile
+      ? { provider: 'generic', name: profile.name, executable: profile.executable }
+      : null;
+  }
+
+  private launchRevision(
+    projectId: string,
+    launcherId: string,
+    roots: readonly string[],
+    executable: string,
+  ): string {
+    return createHash('sha256')
+      .update(projectId)
+      .update('\0')
+      .update(launcherId)
+      .update('\0')
+      .update(JSON.stringify(roots))
+      .update('\0')
+      .update(executable)
+      .digest('hex')
+      .slice(0, 24);
   }
 
   private resumeRevision(

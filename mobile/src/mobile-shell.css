@@ -1484,9 +1484,72 @@
   margin-top: 18px;
 }
 
+.mob-agent-projects__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .mob-agent-projects h2 {
   margin: 0;
   font-size: 0.9rem;
+}
+
+.mob-agent-project-search {
+  position: relative;
+  display: block;
+}
+
+.mob-agent-project-search > svg {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 12px;
+  width: 16px;
+  height: 16px;
+  color: var(--ui-text-muted);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.mob-agent-project-search input,
+.mob-agent-project-editor input,
+.mob-agent-history-composer textarea {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border: 1px solid var(--mob-hairline);
+  border-radius: var(--mob-radius-control);
+  outline: none;
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-primary);
+  font: inherit;
+}
+
+.mob-agent-project-search input {
+  padding-inline-start: 36px;
+}
+
+.mob-agent-project-search input:focus,
+.mob-agent-project-editor input:focus,
+.mob-agent-history-composer textarea:focus {
+  border-color: var(--ui-focus);
+  box-shadow: 0 0 0 1px var(--ui-focus);
+}
+
+.mob-agent-project-upgrade {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--mob-warn-line);
+  border-radius: var(--mob-radius-control);
+  background: var(--mob-warn-tint);
+  color: var(--ui-warning);
+  font-size: 0.688rem;
+}
+
+.mob-agent-project-list {
+  display: grid;
+  gap: 8px;
 }
 
 .mob-agent-project,
@@ -1495,8 +1558,85 @@
   gap: 4px;
 }
 
+.mob-agent-project {
+  overflow: hidden;
+  border: 1px solid var(--mob-hairline);
+  border-radius: var(--mob-radius-card);
+  background: var(--ui-surface);
+}
+
+.mob-agent-project__summary {
+  display: grid;
+  width: 100%;
+  min-height: 56px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  background: none;
+  color: var(--ui-text-primary);
+  font: inherit;
+  text-align: start;
+}
+
+.mob-agent-project__summary > svg {
+  width: 16px;
+  height: 16px;
+  color: var(--ui-text-muted);
+}
+
+.mob-agent-project__summary > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.mob-agent-project__summary strong {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+}
+
+.mob-agent-project__summary strong svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: var(--ui-accent);
+}
+
+.mob-agent-project__summary small {
+  overflow: hidden;
+  color: var(--ui-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mob-agent-project__actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 0 6px 6px;
+}
+
+.mob-agent-project__actions .mob-btn-ghost {
+  min-width: 0;
+  gap: 6px;
+}
+
+.mob-agent-project__actions svg,
+.mob-agent-project-editor .mob-btn-ghost svg,
+.mobile-action-sheet-row svg {
+  width: 16px;
+  height: 16px;
+}
+
 .mob-agent-history-list {
-  padding-left: 12px;
+  padding: 6px;
+  border-top: 1px solid var(--mob-hairline);
 }
 
 .mob-agent-project .mob-row span:first-child,
@@ -1559,9 +1699,8 @@
   background: var(--term-bg-raised);
 }
 
-.mob-agent-history-message > div {
+.mob-agent-history-message > .mob-agent-history-markdown {
   margin-top: 4px;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
@@ -1569,20 +1708,77 @@
   margin-left: 24px;
 }
 
-.mob-agent-history-activity {
+.agent-work-activity {
   display: grid;
-  gap: 4px;
-  padding-left: 10px;
-  color: var(--term-fg-dim);
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 6px 0 6px 10px;
+  color: var(--ui-text-muted);
   border-left: 2px solid var(--term-border);
+  font-size: 0.688rem;
 }
 
-.mob-agent-history-activity code {
-  white-space: pre-wrap;
+.agent-work-activity > svg {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+}
+
+.agent-work-activity p {
+  margin: 2px 0 0;
   overflow-wrap: anywhere;
 }
 
-.mob-agent-history-roots,
+.agent-work-activity__type {
+  color: var(--ui-text-secondary);
+  font-weight: 700;
+}
+
+.mob-agent-history-markdown {
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.mob-agent-history-markdown > :first-child { margin-top: 0; }
+.mob-agent-history-markdown > :last-child { margin-bottom: 0; }
+
+.mob-agent-history-markdown pre {
+  max-width: 100%;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--mob-hairline);
+  border-radius: 6px;
+  background: var(--ui-surface-inset);
+}
+
+.mob-agent-history-markdown a {
+  color: var(--ui-accent);
+  text-decoration: underline;
+}
+
+.mob-agent-history-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.mob-agent-history-markdown th,
+.mob-agent-history-markdown td {
+  padding: 4px 6px;
+  border: 1px solid var(--mob-hairline);
+}
+
+.safe-markdown__blocked-image {
+  display: inline-block;
+  padding: 4px 6px;
+  border: 1px dashed var(--ui-border-mid);
+  color: var(--ui-text-muted);
+  font-size: 0.688rem;
+}
+
+.mob-agent-root-decision,
 .mob-agent-history-composer {
   flex: none;
   display: grid;
@@ -1591,9 +1787,154 @@
   border-top: 1px solid var(--term-border-faint);
 }
 
+.mob-agent-root-decision {
+  max-height: 44%;
+  overflow-y: auto;
+}
+
+.mob-agent-root-decision h3,
+.mob-agent-root-decision p {
+  margin: 0;
+}
+
+.mob-agent-root-decision > p {
+  color: var(--ui-text-muted);
+  font-size: 0.688rem;
+}
+
+.mob-agent-root-option {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--mob-hairline);
+  border-radius: var(--mob-radius-control);
+  background: var(--ui-surface-inset);
+}
+
+.mob-agent-root-option[data-disabled] { opacity: 0.6; }
+
+.mob-agent-root-option ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mob-agent-root-option li {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ui-text-secondary);
+  font-size: 0.656rem;
+}
+
+.mob-agent-root-option code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mob-agent-root-option li[data-missing] { color: var(--ui-danger); }
+
 .mob-agent-history-composer textarea {
-  width: 100%;
   resize: vertical;
+}
+
+.mob-agent-project-editor {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mob-agent-project-editor > label {
+  display: grid;
+  gap: 6px;
+  color: var(--ui-text-secondary);
+  font-size: 0.719rem;
+  font-weight: 700;
+}
+
+.mob-agent-project-roots {
+  display: grid;
+  gap: 8px;
+}
+
+.mob-agent-project-root {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--mob-hairline);
+  border-radius: var(--mob-radius-control);
+  background: var(--ui-surface-inset);
+}
+
+.mob-agent-project-root > span {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+}
+
+.mob-agent-project-root small {
+  overflow: hidden;
+  color: var(--ui-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mob-agent-project-editor__footer,
+.mob-agent-delete-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.mob-agent-folder-picker .mobile-action-sheet-list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.mob-agent-folder-picker__toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.mob-agent-folder-picker__toolbar > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font-family: var(--ui-font-terminal);
+  font-size: 0.688rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mob-agent-folder-picker__toolbar .mob-cta {
+  padding-inline: 10px;
+  gap: 5px;
+}
+
+.mob-agent-folder-picker__list {
+  display: grid;
+  min-height: 0;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.mob-agent-folder-picker__list .mob-row > svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--ui-accent);
 }
 
 /* ── Settings index ──────────────────────────────────────────────────────── */

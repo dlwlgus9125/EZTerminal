@@ -2455,6 +2455,188 @@ describe('WsEzTerminalTransport — Agent history v4', () => {
   });
 });
 
+describe('WsEzTerminalTransport — Agent projects v5', () => {
+  it('correlates search, CRUD, catalog, preparation, and installs a launch port only after acceptance', async () => {
+    const requestIds = ['projects', 'save', 'remove', 'launchers', 'prepare', 'start'];
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      newId: () => requestIds.shift()!,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    expect(transport.supportsAgentProjectManagement).toBe(true);
+    const project = {
+      projectId: 'project-1',
+      name: 'Workspace',
+      primaryRoot: '/workspace',
+      additionalRoots: ['/shared'],
+      pinned: false,
+      saved: true,
+      sessionCount: 0,
+      providers: [] as const,
+      lastActiveAt: 20,
+    };
+
+    const projectsPromise = transport.listAgentProjects(false, undefined, 40, 'work');
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-projects-list',
+      requestId: 'projects',
+      force: false,
+      limit: 40,
+      query: 'work',
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-projects-list-reply',
+      requestId: 'projects',
+      result: { items: [project], nextCursor: null },
+    });
+    await expect(projectsPromise).resolves.toEqual({ items: [project], nextCursor: null });
+
+    const input = {
+      projectId: project.projectId,
+      name: project.name,
+      primaryRoot: project.primaryRoot,
+      additionalRoots: project.additionalRoots,
+      pinned: project.pinned,
+    };
+    const savePromise = transport.saveAgentProject(input);
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-project-save',
+      requestId: 'save',
+      input,
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-project-save-reply',
+      requestId: 'save',
+      result: { ok: true, project },
+    });
+    await expect(savePromise).resolves.toEqual({ ok: true, project });
+
+    const removePromise = transport.removeAgentProject(project.projectId);
+    sockets[0].triggerMessage({
+      kind: 'agent-project-remove-reply',
+      requestId: 'remove',
+      removed: true,
+    });
+    await expect(removePromise).resolves.toBe(true);
+
+    const launcher = {
+      launcherId: 'codex',
+      provider: 'codex' as const,
+      name: 'Codex',
+      supportsAdditionalRoots: true,
+    };
+    const launchersPromise = transport.listAgentProjectLaunchers();
+    sockets[0].triggerMessage({
+      kind: 'agent-project-launchers-reply',
+      requestId: 'launchers',
+      result: [launcher],
+    });
+    await expect(launchersPromise).resolves.toEqual([launcher]);
+
+    const preparation = {
+      ok: true as const,
+      projectId: project.projectId,
+      launcherId: launcher.launcherId,
+      provider: launcher.provider,
+      name: launcher.name,
+      cwd: project.primaryRoot,
+      roots: [project.primaryRoot, ...project.additionalRoots],
+      revision: 'revision-1',
+    };
+    const preparationPromise = transport.prepareAgentProjectLaunch(
+      project.projectId,
+      launcher.launcherId,
+    );
+    sockets[0].triggerMessage({
+      kind: 'agent-project-prepare-launch-reply',
+      requestId: 'prepare',
+      result: preparation,
+    });
+    await expect(preparationPromise).resolves.toEqual(preparation);
+
+    const capture = captureEzPort('project-run');
+    const request = {
+      projectId: project.projectId,
+      launcherId: launcher.launcherId,
+      sessionId: 'terminal-1',
+      runId: 'project-run',
+      revision: preparation.revision,
+    };
+    const startPromise = transport.startAgentProjectLaunch(request);
+    expect(capture.port).toBeUndefined();
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-project-start-launch',
+      requestId: 'start',
+      request,
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-project-start-launch-reply',
+      requestId: 'start',
+      result: { ok: true },
+    });
+    await expect(startPromise).resolves.toEqual({ ok: true });
+    expect(capture.port).toBeDefined();
+
+    capture.port!.postMessage({ type: 'pty-input', data: 'x' });
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'control',
+      runId: 'project-run',
+      control: { type: 'pty-input', data: 'x' },
+    });
+    capture.stop();
+    transport.disconnect();
+  });
+
+  it('fails v5 project mutations locally after a v4 downgrade', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'stored-bearer-token',
+      createSocket,
+    });
+    sockets[0].triggerOpen();
+    sockets[0].triggerRawMessage({
+      kind: 'auth-fail',
+      reason: 'incompatible-protocol',
+      supportedProtocolVersions: [4],
+      supportedProtocolVersion: 4,
+      hostVersion: '1.0.12',
+    });
+    sockets[1].triggerOpen();
+    sockets[1].triggerRawMessage({
+      kind: 'auth-ok',
+      protocolVersion: 4,
+      hostVersion: '1.0.12',
+    });
+
+    expect(transport.supportsAgentProjectManagement).toBe(false);
+    await expect(transport.saveAgentProject({
+      name: 'Project',
+      primaryRoot: '/workspace',
+      additionalRoots: [],
+      pinned: false,
+    })).resolves.toEqual({ ok: false, reason: 'invalid' });
+    await expect(transport.removeAgentProject('project-1')).resolves.toBe(false);
+    await expect(transport.listAgentProjectLaunchers()).resolves.toEqual([]);
+    await expect(transport.prepareAgentProjectLaunch('project-1', 'codex')).resolves
+      .toEqual({ ok: false, reason: 'unavailable' });
+    await expect(transport.startAgentProjectLaunch({
+      projectId: 'project-1',
+      launcherId: 'codex',
+      sessionId: 'terminal-1',
+      runId: 'run-1',
+      revision: 'revision-1',
+    })).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    expect(sockets[1].sent.map((raw) => JSON.parse(raw)).filter((message) => (
+      typeof message.kind === 'string' && message.kind.startsWith('agent-project')
+    ))).toEqual([]);
+    transport.disconnect();
+  });
+});
+
 describe('WsEzTerminalTransport — desktop-only EzTerminalApi stubs', () => {
   it('getRemoteToken() resolves with the token this transport actually connected with', async () => {
     const { createSocket } = makeCreateSocket();

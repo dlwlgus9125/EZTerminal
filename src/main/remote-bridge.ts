@@ -26,6 +26,7 @@
  */
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import type { FileHandle } from 'node:fs/promises';
+import path from 'node:path';
 
 import { WebSocketServer, type WebSocket } from 'ws';
 
@@ -43,6 +44,7 @@ import {
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_PROTOCOL_VERSION_AGENT_HISTORY,
+  REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL,
   REMOTE_PROTOCOL_VERSION_LEGACY,
@@ -81,12 +83,15 @@ import type {
 } from '../shared/agent';
 import type {
   AgentHistorySessionPage,
+  AgentProjectInput,
+  AgentProjectLaunchPreparation,
+  AgentProjectLauncherSummary,
+  AgentProjectMutationResult,
   AgentProjectPage,
   AgentResumePreparation,
   AgentResumeRootChoice,
   AgentTranscriptPage,
 } from '../shared/agent-history';
-import { quoteEzArgument } from '../shared/quote-ez-argument';
 import {
   UNAVAILABLE_GIT_DIRECTORY_STATUS,
   type GitDiffResult,
@@ -451,7 +456,76 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         typeof value.requestId === 'string'
         && value.requestId.length > 0
         && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && (value.query === undefined
+          || (typeof value.query === 'string' && value.query.length <= 512))
       );
+    case 'agent-project-save': {
+      const input = isRecord(value.input) ? value.input : null;
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && input !== null
+        && (input.projectId === undefined
+          || (typeof input.projectId === 'string' && input.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH))
+        && typeof input.name === 'string'
+        && typeof input.primaryRoot === 'string'
+        && Array.isArray(input.additionalRoots)
+        && input.additionalRoots.every((root) => typeof root === 'string')
+        && typeof input.pinned === 'boolean'
+      );
+    }
+    case 'agent-project-remove':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.projectId === 'string'
+        && value.projectId.length > 0
+        && value.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    case 'agent-project-launchers':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+      );
+    case 'agent-project-prepare-launch':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.projectId === 'string'
+        && value.projectId.length > 0
+        && value.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof value.launcherId === 'string'
+        && value.launcherId.length > 0
+        && value.launcherId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    case 'agent-project-start-launch': {
+      const request = isRecord(value.request) ? value.request : null;
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && request !== null
+        && typeof request.projectId === 'string'
+        && request.projectId.length > 0
+        && request.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.launcherId === 'string'
+        && request.launcherId.length > 0
+        && request.launcherId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.sessionId === 'string'
+        && request.sessionId.length > 0
+        && request.sessionId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.runId === 'string'
+        && request.runId.length > 0
+        && request.runId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.revision === 'string'
+        && request.revision.length > 0
+        && request.revision.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    }
     case 'agent-history-sessions':
       return (
         typeof value.requestId === 'string'
@@ -760,7 +834,24 @@ export interface RemoteAgentSource {
 }
 
 export interface RemoteAgentHistorySource {
-  listProjects(force?: boolean, cursor?: string, limit?: number): Promise<AgentProjectPage>;
+  listProjects(force?: boolean, cursor?: string, limit?: number, query?: string): Promise<AgentProjectPage>;
+  saveProject?(input: AgentProjectInput): Promise<AgentProjectMutationResult>;
+  removeProject?(projectId: string): Promise<boolean>;
+  listLaunchers?(): readonly AgentProjectLauncherSummary[];
+  prepareLaunch?(projectId: string, launcherId: string): Promise<AgentProjectLaunchPreparation>;
+  resolveLaunch?(
+    projectId: string,
+    launcherId: string,
+    revision: string,
+  ): Promise<
+    | {
+      readonly ok: true;
+      readonly roots: readonly string[];
+      readonly commandText: string;
+      readonly displayCommandText: string;
+    }
+    | { readonly ok: false; readonly reason: 'not-found' | 'stale' | 'missing-root' | 'unavailable' }
+  >;
   listSessions(
     projectId: string,
     cursor?: string,
@@ -775,7 +866,14 @@ export interface RemoteAgentHistorySource {
     revision: string,
     choice: AgentResumeRootChoice,
   ): Promise<
-    | { readonly ok: true; readonly privateId: string; readonly roots: readonly string[] }
+    | {
+      readonly ok: true;
+      readonly roots: readonly string[];
+      /** Built by the provider adapter; carries the provider's private id. */
+      readonly commandText: string;
+      /** All the mobile client and shell history ever see. */
+      readonly displayCommandText: string;
+    }
     | { readonly ok: false; readonly reason: 'not-found' | 'stale' | 'missing-root' | 'unavailable' }
   >;
 }
@@ -981,6 +1079,45 @@ export function attachConnection(
       // A close can race the readyState check. The socket close path owns all
       // pending cleanup; transport exceptions must not escape into main.
     }
+  };
+  const sessionMatchesPrimaryRoot = (sessionId: string, roots: readonly string[]): boolean => {
+    const primaryRoot = roots[0];
+    const session = options.broker.listSessions().find((item) => item.sessionId === sessionId);
+    if (!primaryRoot || !session) return false;
+    const key = (value: string): string => {
+      const normalized = path.normalize(path.resolve(value));
+      return process.platform === 'win32' ? normalized.toLocaleLowerCase('en-US') : normalized;
+    };
+    return key(session.cwd) === key(primaryRoot);
+  };
+  const installPrivateRun = (
+    sessionId: string,
+    runId: string,
+    commandText: string,
+    displayCommandText: string,
+    beforeStart: () => void,
+  ): boolean => {
+    const port = options.broker.runPrivateCommand(
+      sessionId,
+      runId,
+      commandText,
+      displayCommandText,
+      'mobile',
+    );
+    if (!port) return false;
+    if (clientIdentity) runInitiators.remember(sessionId, runId, clientIdentity.clientId);
+    const record = { sessionId, port, initiatedHere: true };
+    runs.get(runId)?.port.close();
+    runs.set(runId, record);
+    port.on('message', (event) => {
+      send({ kind: 'frame', runId, frame: encodeFrame(event.data as InterpreterFrame) });
+    });
+    port.on('close', () => {
+      if (runs.get(runId) === record) runs.delete(runId);
+    });
+    beforeStart();
+    port.start();
+    return true;
   };
 
   const queueFileUploadAbort = (
@@ -1745,6 +1882,7 @@ export function attachConnection(
           msg.force === true,
           msg.cursor,
           msg.limit,
+          negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS ? msg.query : undefined,
         ) ?? Promise.resolve({ items: [], nextCursor: null })).then((result) => {
           if (authed) send({ kind: 'agent-projects-list-reply', requestId: msg.requestId, result });
         }).catch(() => {
@@ -1757,6 +1895,133 @@ export function attachConnection(
           }
         });
         break;
+
+      case 'agent-project-save':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        void (options.agentHistorySource?.saveProject?.(msg.input)
+          ?? Promise.resolve({ ok: false, reason: 'invalid' } as const))
+          .then((result) => {
+            if (authed) send({ kind: 'agent-project-save-reply', requestId: msg.requestId, result });
+          })
+          .catch(() => {
+            if (authed) {
+              send({
+                kind: 'agent-project-save-reply',
+                requestId: msg.requestId,
+                result: { ok: false, reason: 'invalid' },
+              });
+            }
+          });
+        break;
+
+      case 'agent-project-remove':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        void (options.agentHistorySource?.removeProject?.(msg.projectId) ?? Promise.resolve(false))
+          .then((removed) => {
+            if (authed) send({ kind: 'agent-project-remove-reply', requestId: msg.requestId, removed });
+          })
+          .catch(() => {
+            if (authed) send({ kind: 'agent-project-remove-reply', requestId: msg.requestId, removed: false });
+          });
+        break;
+
+      case 'agent-project-launchers':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        send({
+          kind: 'agent-project-launchers-reply',
+          requestId: msg.requestId,
+          result: options.agentHistorySource?.listLaunchers?.() ?? [],
+        });
+        break;
+
+      case 'agent-project-prepare-launch':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        void (options.agentHistorySource?.prepareLaunch?.(msg.projectId, msg.launcherId)
+          ?? Promise.resolve({ ok: false, reason: 'unavailable' } as const))
+          .then((result) => {
+            if (authed) {
+              send({
+                kind: 'agent-project-prepare-launch-reply',
+                requestId: msg.requestId,
+                result,
+              });
+            }
+          })
+          .catch(() => {
+            if (authed) {
+              send({
+                kind: 'agent-project-prepare-launch-reply',
+                requestId: msg.requestId,
+                result: { ok: false, reason: 'unavailable' },
+              });
+            }
+          });
+        break;
+
+      case 'agent-project-start-launch': {
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        const source = options.agentHistorySource;
+        if (!source?.resolveLaunch) {
+          send({
+            kind: 'agent-project-start-launch-reply',
+            requestId: msg.requestId,
+            result: { ok: false, reason: 'unavailable' },
+          });
+          break;
+        }
+        void source.resolveLaunch(
+          msg.request.projectId,
+          msg.request.launcherId,
+          msg.request.revision,
+        ).then((resolved) => {
+          if (!authed) return;
+          if (!resolved.ok) {
+            send({
+              kind: 'agent-project-start-launch-reply',
+              requestId: msg.requestId,
+              result: resolved,
+            });
+            return;
+          }
+          if (!sessionMatchesPrimaryRoot(msg.request.sessionId, resolved.roots)) {
+            send({
+              kind: 'agent-project-start-launch-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'session-mismatch' },
+            });
+            return;
+          }
+          const installed = installPrivateRun(
+            msg.request.sessionId,
+            msg.request.runId,
+            resolved.commandText,
+            resolved.displayCommandText,
+            () => send({
+              kind: 'agent-project-start-launch-reply',
+              requestId: msg.requestId,
+              result: { ok: true },
+            }),
+          );
+          if (!installed) {
+            send({
+              kind: 'agent-project-start-launch-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'unavailable' },
+            });
+            return;
+          }
+          void source.recordTerminalWork(resolved.roots, Date.now()).catch(() => undefined);
+        }).catch(() => {
+          if (authed) {
+            send({
+              kind: 'agent-project-start-launch-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'unavailable' },
+            });
+          }
+        });
+        break;
+      }
 
       case 'agent-history-sessions':
         if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
@@ -1839,8 +2104,7 @@ export function attachConnection(
             });
             return;
           }
-          const [primaryRoot, ...additionalRoots] = resolved.roots;
-          if (!primaryRoot) {
+          if (resolved.roots.length === 0) {
             send({
               kind: 'agent-history-start-resume-reply',
               requestId: msg.requestId,
@@ -1848,49 +2112,34 @@ export function attachConnection(
             });
             return;
           }
-          const commandText = [
-            `!codex --cd ${quoteEzArgument(primaryRoot)}`,
-            ...additionalRoots.map((root) => `--add-dir ${quoteEzArgument(root)}`),
-            `resume ${quoteEzArgument(resolved.privateId)}`,
-          ].join(' ');
-          send({
-            kind: 'agent-history-start-resume-reply',
-            requestId: msg.requestId,
-            result: { ok: true },
-          });
-          queueMicrotask(() => {
-            if (!authed) return;
-            const { runId, sessionId } = msg.request;
-            const port1 = options.broker.runPrivateCommand(
-              sessionId,
-              runId,
-              commandText,
-              'codex resume',
-              'mobile',
-            );
-            if (!port1) {
-              send({
-                kind: 'frame',
-                runId,
-                frame: { type: 'error', message: 'Agent resume is unavailable' },
-              });
-              return;
-            }
-            void source.recordTerminalWork(resolved.roots, Date.now()).catch(() => undefined);
-            if (clientIdentity) {
-              runInitiators.remember(sessionId, runId, clientIdentity.clientId);
-            }
-            const record = { sessionId, port: port1, initiatedHere: true };
-            runs.get(runId)?.port.close();
-            runs.set(runId, record);
-            port1.on('message', (event) => {
-              send({ kind: 'frame', runId, frame: encodeFrame(event.data as InterpreterFrame) });
+          if (!sessionMatchesPrimaryRoot(msg.request.sessionId, resolved.roots)) {
+            send({
+              kind: 'agent-history-start-resume-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'session-mismatch' },
             });
-            port1.on('close', () => {
-              if (runs.get(runId) === record) runs.delete(runId);
+            return;
+          }
+          const installed = installPrivateRun(
+            msg.request.sessionId,
+            msg.request.runId,
+            resolved.commandText,
+            resolved.displayCommandText,
+            () => send({
+              kind: 'agent-history-start-resume-reply',
+              requestId: msg.requestId,
+              result: { ok: true },
+            }),
+          );
+          if (!installed) {
+            send({
+              kind: 'agent-history-start-resume-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'unavailable' },
             });
-            port1.start();
-          });
+            return;
+          }
+          void source.recordTerminalWork(resolved.roots, Date.now()).catch(() => undefined);
         }).catch(() => {
           if (authed) {
             send({

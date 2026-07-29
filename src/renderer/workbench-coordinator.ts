@@ -8,6 +8,11 @@ import {
   startRecentPanelSwitch,
   type RecentPanelSwitchSession,
 } from './recent-panel-switching';
+import type { AgentProjectLaunchBootstrap } from '../shared/agent-history';
+import {
+  clearAgentTerminalBootstrap,
+  registerAgentTerminalBootstrap,
+} from './agent-terminal-bootstrap';
 
 export type WorkbenchSplitDirection = 'right' | 'below';
 
@@ -21,6 +26,9 @@ export interface TerminalPaneOpenRequest {
   readonly cwd?: string;
   readonly adoptSessionId?: string;
   readonly allowDuringRecovery?: boolean;
+  readonly title?: string;
+  /** Runtime-only; deliberately excluded from Dockview params/serialization. */
+  readonly agentBootstrap?: AgentProjectLaunchBootstrap;
 }
 
 export interface OpenedWorkbenchPane {
@@ -177,13 +185,20 @@ export class WorkbenchCoordinator {
     if (!adapter) return null;
     this.panelCounter += 1;
     const panelId = `tab-${this.panelCounter}`;
-    const panel = adapter.addTerminalPane({
-      id: panelId,
-      title: `Terminal ${this.panelCounter}`,
-      ...(request.position ? { position: request.position } : {}),
-      ...(request.cwd ? { cwd: request.cwd } : {}),
-      ...(request.adoptSessionId ? { adoptSessionId: request.adoptSessionId } : {}),
-    });
+    if (request.agentBootstrap) registerAgentTerminalBootstrap(panelId, request.agentBootstrap);
+    let panel;
+    try {
+      panel = adapter.addTerminalPane({
+        id: panelId,
+        title: request.title ?? `Terminal ${this.panelCounter}`,
+        ...(request.position ? { position: request.position } : {}),
+        ...(request.cwd ? { cwd: request.cwd } : {}),
+        ...(request.adoptSessionId ? { adoptSessionId: request.adoptSessionId } : {}),
+      });
+    } catch (error) {
+      clearAgentTerminalBootstrap(panelId);
+      throw error;
+    }
     return { panelId: panel.id, instanceToken: panel.instanceToken };
   }
 

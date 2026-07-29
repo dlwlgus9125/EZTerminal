@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [1.0.14] - 2026-07-30
+
+### Added
+
+- Added a project-first Agent workspace on desktop and Android with name/path
+  search, pinned and recent ordering, lazy session loading, metadata CRUD, and
+  a read-only remote folder picker.
+- Added project-scoped new-chat launchers for Codex, Claude, and enabled
+  generic agents. Codex receives `--cd` plus repeated `--add-dir` arguments;
+  Claude starts in the primary working directory with one variadic
+  `--add-dir`; generic launchers use the primary working directory.
+- Added protocol-v4 history access and protocol-v5 project management and
+  launcher preparation, with authenticated downgrade gating for older hosts.
+
+### Changed
+
+- Reworked agent history into a safe GFM work console with compact activity
+  entries, newest-page loading, scroll-up pagination, and single-click
+  in-place resume.
+- Updated the Android companion to versionCode 35 and the remote protocol to
+  v5 while retaining supported v1-v4 compatibility.
+
+### Fixed
+
+- Preserved history and draft input when agent startup fails, and added an
+  explicit current-root versus recorded-root decision when a session moved.
+- Revalidated project revision, roots, terminal working directory, and private
+  launch commands in the trusted host before starting an agent, preventing
+  stale or forged client launches and phantom success.
+
+See [1.0.14 release notes](docs/release/release-notes-1.0.14.md).
+
 ## [1.0.13] - 2026-07-28
 
 ### Added

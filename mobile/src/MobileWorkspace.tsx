@@ -5,7 +5,7 @@ import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
 import type { SessionInfo } from '../../src/shared/ipc';
 import { EMPTY_AGENT_ACTIVITY_SNAPSHOT, type AgentActivitySnapshot } from '../../src/shared/agent';
-import type { AgentResumeBootstrap } from '../../src/shared/agent-history';
+import type { AgentTerminalBootstrap } from '../../src/shared/agent-history';
 import { formatCwd } from '../../src/renderer/format-cwd';
 import { formatEndpointHost } from './mobile-endpoint';
 import { useAppTranslation } from '../../src/renderer/i18n';
@@ -93,8 +93,8 @@ export function MobileWorkspace({
   const [connectedSince, setConnectedSince] = useState<number | null>(null);
   const [sessions, setSessions] = useState<readonly SessionInfo[]>([]);
   const [activeRuns, setActiveRuns] = useState<ReadonlyMap<string, string>>(new Map());
-  const [agentResumeBootstraps, setAgentResumeBootstraps] = useState<
-    ReadonlyMap<string, AgentResumeBootstrap>
+  const [agentBootstraps, setAgentBootstraps] = useState<
+    ReadonlyMap<string, AgentTerminalBootstrap>
   >(new Map());
   const themeReturnFocusRef = useRef<HTMLElement | null>(null);
   const sheetReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -326,7 +326,7 @@ export function MobileWorkspace({
   const closeTab = useCallback((sessionId: string) => {
     dispatch({ type: 'close', sessionId });
     cwdMapRef.current.delete(sessionId);
-    setAgentResumeBootstraps((previous) => {
+    setAgentBootstraps((previous) => {
       const next = new Map(previous);
       next.delete(sessionId);
       return next;
@@ -336,19 +336,20 @@ export function MobileWorkspace({
   const handleSessionDead = useCallback((sessionId: string) => {
     dispatch({ type: 'sessionDied', sessionId });
     cwdMapRef.current.delete(sessionId);
-    setAgentResumeBootstraps((previous) => {
+    setAgentBootstraps((previous) => {
       const next = new Map(previous);
       next.delete(sessionId);
       return next;
     });
   }, []);
 
-  const resumeAgentHistory = useCallback(async (
-    bootstrap: AgentResumeBootstrap,
-    cwd: string,
+  const startAgentBootstrap = useCallback(async (
+    bootstrap: AgentTerminalBootstrap,
   ): Promise<void> => {
-    const info = await transport.createSession(cwd);
-    setAgentResumeBootstraps((previous) => {
+    // Providers without a "run in this directory" flag resolve their session
+    // store from the process cwd, so the resumed shell starts in the root.
+    const info = await transport.createSession(bootstrap.cwd);
+    setAgentBootstraps((previous) => {
       const next = new Map(previous);
       next.set(info.sessionId, bootstrap);
       return next;
@@ -555,7 +556,9 @@ export function MobileWorkspace({
           transport.decideAgentApproval(activityId, approvalId, decision)}
         onLoadDiff={(directory) => transport.getGitDiff(directory)}
         onReadGitStatus={(directory) => transport.getGitStatus(directory)}
-        onResumeHistory={resumeAgentHistory}
+        onResumeHistory={startAgentBootstrap}
+        onLaunchProject={startAgentBootstrap}
+        transport={transport}
         onFocusSession={(sessionId) => {
           const activity = agentSnapshot.items.find((item) => item.sessionId === sessionId);
           openTab(sessionId, activity?.cwd ?? '');
@@ -672,7 +675,7 @@ export function MobileWorkspace({
                   quickCommandSource={transport}
                   quickCommandsSupported={transport.supportsRemoteQuickCommands}
                   connected={connected}
-                  resumeBootstrap={agentResumeBootstraps.get(entry.sessionId)}
+                  agentBootstrap={agentBootstraps.get(entry.sessionId)}
                   onSessionDead={() => handleSessionDead(entry.sessionId)}
                   onCwdChange={handleCwdChange}
                   onReadGitStatus={(directory) => transport.getGitStatus(directory)}

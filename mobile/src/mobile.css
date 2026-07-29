@@ -161,9 +161,14 @@ body,
 }
 
 .mobile-session-dead-banner {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 8px 12px;
-  background: var(--term-red, #ff4d5e);
-  color: #fff;
+  background: var(--ui-danger-muted);
+  color: var(--ui-danger);
   font-size: 0.85rem;
 }
 

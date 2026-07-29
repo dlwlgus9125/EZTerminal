@@ -181,8 +181,19 @@ const api: EzTerminalApi = {
     decision: import('../shared/agent').AgentDecision,
   ): Promise<import('../shared/agent').AgentDecisionResult> =>
     ipcRenderer.invoke('agents:decide', activityId, approvalId, decision),
-  listAgentProjects: (force?: boolean, cursor?: string, limit?: number) =>
-    ipcRenderer.invoke('agent-history:list-projects', force, cursor, limit),
+  listAgentProjects: (force?: boolean, cursor?: string, limit?: number, query?: string) =>
+    ipcRenderer.invoke('agent-history:list-projects', force, cursor, limit, query),
+  saveAgentProject: (input: import('../shared/agent-history').AgentProjectInput) =>
+    ipcRenderer.invoke('agent-projects:save', input),
+  removeAgentProject: (projectId: string): Promise<boolean> =>
+    ipcRenderer.invoke('agent-projects:remove', projectId),
+  listAgentProjectLaunchers: () =>
+    ipcRenderer.invoke('agent-projects:list-launchers'),
+  prepareAgentProjectLaunch: (projectId: string, launcherId: string) =>
+    ipcRenderer.invoke('agent-projects:prepare-launch', projectId, launcherId),
+  startAgentProjectLaunch: (
+    request: import('../shared/agent-history').AgentProjectLaunchStartRequest,
+  ) => ipcRenderer.invoke('agent-projects:start-launch', request),
   listAgentHistorySessions: (
     projectId: string,
     cursor?: string,

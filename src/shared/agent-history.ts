@@ -6,6 +6,7 @@
  */
 
 export type AgentHistoryProvider = 'codex' | 'claude';
+export type AgentProjectLauncherProvider = AgentHistoryProvider | 'generic';
 
 export interface AgentProjectSummary {
   readonly projectId: string;
@@ -74,6 +75,7 @@ export interface AgentTranscriptTurn {
 
 export interface AgentTranscriptPage {
   readonly historyId: string;
+  readonly provider: AgentHistoryProvider;
   readonly turns: readonly AgentTranscriptTurn[];
   readonly nextCursor: string | null;
 }
@@ -103,7 +105,15 @@ export interface AgentResumeStartRequest {
 
 /** Renderer-only handoff from a read-only history view into a live terminal. */
 export interface AgentResumeBootstrap {
+  readonly kind: 'resume';
   readonly historyId: string;
+  readonly provider: AgentHistoryProvider;
+  /**
+   * Primary root of the chosen roots. The resumed shell session starts here:
+   * providers without a "run in this directory" flag resolve their session
+   * store from the process cwd.
+   */
+  readonly cwd: string;
   readonly rootChoice: AgentResumeRootChoice;
   readonly revision: string;
   readonly initialPrompt: string;
@@ -113,8 +123,73 @@ export type AgentResumeStartResult =
   | { readonly ok: true }
   | {
       readonly ok: false;
-      readonly reason: 'invalid' | 'not-found' | 'stale' | 'missing-root' | 'unavailable';
+      readonly reason:
+        | 'invalid'
+        | 'not-found'
+        | 'stale'
+        | 'missing-root'
+        | 'session-mismatch'
+        | 'unavailable';
     };
+
+export interface AgentProjectLauncherSummary {
+  /** Stable opaque catalog id. Generic executable names never cross this boundary. */
+  readonly launcherId: string;
+  readonly provider: AgentProjectLauncherProvider;
+  readonly name: string;
+  readonly supportsAdditionalRoots: boolean;
+}
+
+export type AgentProjectLaunchPreparation =
+  | {
+      readonly ok: true;
+      readonly projectId: string;
+      readonly launcherId: string;
+      readonly provider: AgentProjectLauncherProvider;
+      readonly name: string;
+      readonly cwd: string;
+      readonly roots: readonly string[];
+      /** Covers the canonical project roots and the current launcher configuration. */
+      readonly revision: string;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: 'invalid' | 'not-found' | 'missing-root' | 'unavailable';
+    };
+
+export interface AgentProjectLaunchStartRequest {
+  readonly projectId: string;
+  readonly launcherId: string;
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly revision: string;
+}
+
+export type AgentProjectLaunchStartResult =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly reason:
+        | 'invalid'
+        | 'not-found'
+        | 'stale'
+        | 'missing-root'
+        | 'session-mismatch'
+        | 'unavailable';
+    };
+
+/** Renderer-only one-shot handoff from a project card into a fresh live terminal. */
+export interface AgentProjectLaunchBootstrap {
+  readonly kind: 'new-chat';
+  readonly projectId: string;
+  readonly launcherId: string;
+  readonly provider: AgentProjectLauncherProvider;
+  readonly name: string;
+  readonly cwd: string;
+  readonly revision: string;
+}
+
+export type AgentTerminalBootstrap = AgentResumeBootstrap | AgentProjectLaunchBootstrap;
 
 export interface AgentProjectInput {
   readonly projectId?: string;

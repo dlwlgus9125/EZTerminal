@@ -98,6 +98,12 @@ import {
 } from '../../../src/shared/agent';
 import type {
   AgentHistorySessionPage,
+  AgentProjectInput,
+  AgentProjectLaunchPreparation,
+  AgentProjectLauncherSummary,
+  AgentProjectLaunchStartRequest,
+  AgentProjectLaunchStartResult,
+  AgentProjectMutationResult,
   AgentProjectPage,
   AgentResumePreparation,
   AgentResumeStartRequest,
@@ -117,6 +123,7 @@ import {
   REMOTE_PROTOCOL_VERSION,
   REMOTE_PROTOCOL_VERSION_AGENT_HISTORY,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
+  REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS,
   SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
   uint8ArrayToBase64,
   type BuildInfo,
@@ -813,6 +820,20 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly pendingAgentFollowups = new Map<string, (result: AgentFollowupResult) => void>();
   private readonly pendingAgentDecisions = new Map<string, PendingAgentDecision>();
   private readonly pendingAgentProjects = new Map<string, (result: AgentProjectPage) => void>();
+  private readonly pendingAgentProjectSaves = new Map<string, (result: AgentProjectMutationResult) => void>();
+  private readonly pendingAgentProjectRemovals = new Map<string, (removed: boolean) => void>();
+  private readonly pendingAgentProjectLaunchers = new Map<
+    string,
+    (result: readonly AgentProjectLauncherSummary[]) => void
+  >();
+  private readonly pendingAgentProjectLaunchPreparation = new Map<
+    string,
+    (result: AgentProjectLaunchPreparation) => void
+  >();
+  private readonly pendingAgentProjectLaunchStarts = new Map<
+    string,
+    (result: AgentProjectLaunchStartResult) => void
+  >();
   private readonly pendingAgentHistorySessions = new Map<string, (result: AgentHistorySessionPage) => void>();
   private readonly pendingAgentHistoryReads = new Map<string, (result: AgentTranscriptPage | null) => void>();
   private readonly pendingAgentResumePreparation = new Map<
@@ -1303,19 +1324,140 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     force?: boolean,
     cursor?: string,
     limit?: number,
+    query?: string,
   ): Promise<AgentProjectPage> {
     if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) {
+      return Promise.resolve({ items: [], nextCursor: null });
+    }
+    if (query && (this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) {
       return Promise.resolve({ items: [], nextCursor: null });
     }
     return new Promise((resolve) => {
       const requestId = this.newId();
       if (!this.tryStartMapRequest(
-        { kind: 'agent-projects-list', requestId, force, cursor, limit },
+        { kind: 'agent-projects-list', requestId, force, cursor, limit, query },
         this.pendingAgentProjects,
         requestId,
         resolve,
       )) resolve({ items: [], nextCursor: null });
     });
+  }
+
+  saveAgentProject(input: AgentProjectInput): Promise<AgentProjectMutationResult> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) {
+      return Promise.resolve({ ok: false, reason: 'invalid' });
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-project-save', requestId, input },
+        this.pendingAgentProjectSaves,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, reason: 'invalid' });
+    });
+  }
+
+  removeAgentProject(projectId: string): Promise<boolean> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) {
+      return Promise.resolve(false);
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-project-remove', requestId, projectId },
+        this.pendingAgentProjectRemovals,
+        requestId,
+        resolve,
+      )) resolve(false);
+    });
+  }
+
+  listAgentProjectLaunchers(): Promise<readonly AgentProjectLauncherSummary[]> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) {
+      return Promise.resolve([]);
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-project-launchers', requestId },
+        this.pendingAgentProjectLaunchers,
+        requestId,
+        resolve,
+      )) resolve([]);
+    });
+  }
+
+  prepareAgentProjectLaunch(
+    projectId: string,
+    launcherId: string,
+  ): Promise<AgentProjectLaunchPreparation> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) {
+      return Promise.resolve({ ok: false, reason: 'unavailable' });
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-project-prepare-launch', requestId, projectId, launcherId },
+        this.pendingAgentProjectLaunchPreparation,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, reason: 'unavailable' });
+    });
+  }
+
+  startAgentProjectLaunch(
+    request: AgentProjectLaunchStartRequest,
+  ): Promise<AgentProjectLaunchStartResult> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) {
+      return Promise.resolve({ ok: false, reason: 'unavailable' });
+    }
+    const port = new FakeMessagePort((control) => {
+      this.send({ kind: 'control', runId: request.runId, control });
+      if (control.type === 'close') {
+        this.clearResumeRetry(request.runId);
+        this.ports.delete(request.runId);
+      }
+    });
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      const settle = (result: AgentProjectLaunchStartResult): void => {
+        if (!result.ok) {
+          port.close();
+          resolve(result);
+          return;
+        }
+        this.clearResumeRetry(request.runId);
+        this.ports.get(request.runId)?.port.close();
+        this.ports.set(request.runId, {
+          sessionId: request.sessionId,
+          runId: request.runId,
+          port,
+          initiatedHere: true,
+        });
+        const event = new MessageEvent('message', {
+          data: { _ezPort: request.runId },
+          source: window,
+        });
+        Object.defineProperty(event, 'ports', {
+          value: [port],
+          enumerable: true,
+          configurable: true,
+        });
+        window.dispatchEvent(event);
+        resolve(result);
+      };
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-project-start-launch', requestId, request },
+        this.pendingAgentProjectLaunchStarts,
+        requestId,
+        settle,
+      )) settle({ ok: false, reason: 'unavailable' });
+    });
+  }
+
+  get supportsAgentProjectManagement(): boolean {
+    return (this.negotiatedProtocolVersion ?? 0) >= REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS;
   }
 
   listAgentHistorySessions(
@@ -2402,6 +2544,22 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve({ items: [], nextCursor: null });
     }
     this.pendingAgentProjects.clear();
+    for (const resolve of this.pendingAgentProjectSaves.values()) {
+      resolve({ ok: false, reason: 'invalid' });
+    }
+    this.pendingAgentProjectSaves.clear();
+    for (const resolve of this.pendingAgentProjectRemovals.values()) resolve(false);
+    this.pendingAgentProjectRemovals.clear();
+    for (const resolve of this.pendingAgentProjectLaunchers.values()) resolve([]);
+    this.pendingAgentProjectLaunchers.clear();
+    for (const resolve of this.pendingAgentProjectLaunchPreparation.values()) {
+      resolve({ ok: false, reason: 'unavailable' });
+    }
+    this.pendingAgentProjectLaunchPreparation.clear();
+    for (const resolve of this.pendingAgentProjectLaunchStarts.values()) {
+      resolve({ ok: false, reason: 'unavailable' });
+    }
+    this.pendingAgentProjectLaunchStarts.clear();
     for (const resolve of this.pendingAgentHistorySessions.values()) {
       resolve({ items: [], nextCursor: null });
     }
@@ -2721,6 +2879,22 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve({ items: [], nextCursor: null });
     }
     this.pendingAgentProjects.clear();
+    for (const resolve of this.pendingAgentProjectSaves.values()) {
+      resolve({ ok: false, reason: 'invalid' });
+    }
+    this.pendingAgentProjectSaves.clear();
+    for (const resolve of this.pendingAgentProjectRemovals.values()) resolve(false);
+    this.pendingAgentProjectRemovals.clear();
+    for (const resolve of this.pendingAgentProjectLaunchers.values()) resolve([]);
+    this.pendingAgentProjectLaunchers.clear();
+    for (const resolve of this.pendingAgentProjectLaunchPreparation.values()) {
+      resolve({ ok: false, reason: 'unavailable' });
+    }
+    this.pendingAgentProjectLaunchPreparation.clear();
+    for (const resolve of this.pendingAgentProjectLaunchStarts.values()) {
+      resolve({ ok: false, reason: 'unavailable' });
+    }
+    this.pendingAgentProjectLaunchStarts.clear();
     for (const resolve of this.pendingAgentHistorySessions.values()) {
       resolve({ items: [], nextCursor: null });
     }
@@ -3137,6 +3311,31 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
         this.pendingAgentProjects.get(msg.requestId)?.(msg.result);
         this.pendingAgentProjects.delete(msg.requestId);
+        break;
+      case 'agent-project-save-reply':
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        this.pendingAgentProjectSaves.get(msg.requestId)?.(msg.result);
+        this.pendingAgentProjectSaves.delete(msg.requestId);
+        break;
+      case 'agent-project-remove-reply':
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        this.pendingAgentProjectRemovals.get(msg.requestId)?.(msg.removed);
+        this.pendingAgentProjectRemovals.delete(msg.requestId);
+        break;
+      case 'agent-project-launchers-reply':
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        this.pendingAgentProjectLaunchers.get(msg.requestId)?.(msg.result);
+        this.pendingAgentProjectLaunchers.delete(msg.requestId);
+        break;
+      case 'agent-project-prepare-launch-reply':
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        this.pendingAgentProjectLaunchPreparation.get(msg.requestId)?.(msg.result);
+        this.pendingAgentProjectLaunchPreparation.delete(msg.requestId);
+        break;
+      case 'agent-project-start-launch-reply':
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        this.pendingAgentProjectLaunchStarts.get(msg.requestId)?.(msg.result);
+        this.pendingAgentProjectLaunchStarts.delete(msg.requestId);
         break;
       case 'agent-history-sessions-reply':
         if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;

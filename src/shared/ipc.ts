@@ -59,6 +59,10 @@ import type {
 } from './terminal-clipboard';
 import type {
   AgentHistorySessionPage,
+  AgentProjectLaunchPreparation,
+  AgentProjectLauncherSummary,
+  AgentProjectLaunchStartRequest,
+  AgentProjectLaunchStartResult,
   AgentProjectFolderSelection,
   AgentProjectInput,
   AgentProjectMutationResult,
@@ -1200,7 +1204,20 @@ export interface EzTerminalApi {
     force?: boolean,
     cursor?: string,
     limit?: number,
+    query?: string,
   ) => Promise<AgentProjectPage>;
+  /** Project presentation metadata is the only Agent history data EZTerminal persists. */
+  saveAgentProject: (input: AgentProjectInput) => Promise<AgentProjectMutationResult>;
+  removeAgentProject: (projectId: string) => Promise<boolean>;
+  listAgentProjectLaunchers: () => Promise<readonly AgentProjectLauncherSummary[]>;
+  prepareAgentProjectLaunch: (
+    projectId: string,
+    launcherId: string,
+  ) => Promise<AgentProjectLaunchPreparation>;
+  /** Starts a private provider CLI in an already-created project-rooted session. */
+  startAgentProjectLaunch: (
+    request: AgentProjectLaunchStartRequest,
+  ) => Promise<AgentProjectLaunchStartResult>;
   listAgentHistorySessions: (
     projectId: string,
     cursor?: string,

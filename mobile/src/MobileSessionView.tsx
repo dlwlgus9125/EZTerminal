@@ -11,7 +11,7 @@ import { keyToPtyBytes } from '../../src/renderer/pty-keys';
 import { TerminalContextMenu, type TerminalContextMenuItem } from '../../src/renderer/TerminalContextMenu';
 import type { TerminalRuntimeOptions } from '../../src/renderer/xterm-runtime';
 import type { RunStartedInfo } from '../../src/shared/ipc';
-import type { AgentResumeBootstrap } from '../../src/shared/agent-history';
+import type { AgentTerminalBootstrap } from '../../src/shared/agent-history';
 import {
   EMPTY_GIT_DIRECTORY_STATUS,
   type GitDirectoryStatus,
@@ -213,7 +213,7 @@ export function MobileSessionView({
   quickCommandSource,
   quickCommandsSupported = false,
   connected = true,
-  resumeBootstrap,
+  agentBootstrap,
   onSessionDead,
   onCwdChange,
   onCloseTab,
@@ -229,8 +229,8 @@ export function MobileSessionView({
   quickCommandSource?: MobileQuickCommandSource;
   quickCommandsSupported?: boolean;
   connected?: boolean;
-  /** First-send transition from a read-only mobile Agent history sheet. */
-  resumeBootstrap?: AgentResumeBootstrap;
+  /** One-shot Agent resume or project-new-chat launch for this rooted session. */
+  agentBootstrap?: AgentTerminalBootstrap;
   onSessionDead?: () => void;
   /** Closes this tab locally (the session itself keeps running on the
    * desktop). Reached from the status line now that the tab strip's per-pill
@@ -265,7 +265,9 @@ export function MobileSessionView({
   // child instead of disabling the input, so a plain PTY program can be
   // driven from the physical/soft keyboard without TouchInputBar.
   const [activePlainPty, setActivePlainPty] = useState(false);
-  const resumeStartedRef = useRef(false);
+  const agentBootstrapStartedRef = useRef(false);
+  const [agentBootstrapError, setAgentBootstrapError] = useState<string | null>(null);
+  const [agentBootstrapRetry, setAgentBootstrapRetry] = useState(0);
   // TUI takeover (TUI scroll parity, M2 — mirrors desktop TerminalPane's
   // `activeTakeover`): while the active run is a RUNNING xterm `pty`, the
   // shared `pane--tui-takeover` CSS (mobile-shared.css) hides sibling blocks and the
@@ -580,14 +582,15 @@ export function MobileSessionView({
 
   useEffect(() => {
     if (
-      !resumeBootstrap
-      || resumeStartedRef.current
+      !agentBootstrap
+      || agentBootstrapStartedRef.current
       || !connected
       || sessionDead
     ) {
       return;
     }
-    resumeStartedRef.current = true;
+    agentBootstrapStartedRef.current = true;
+    setAgentBootstrapError(null);
     const runId = nextRunId();
     const handoffController = new AbortController();
     const handoffSignal = handoffController.signal;
@@ -595,21 +598,36 @@ export function MobileSessionView({
     knownRunIdsRef.current.add(runId);
     pendingHandoffRunIdsRef.current.add(runId);
     stickToBottom.current = true;
-    // The first resumed prompt is one-shot PTY input, not shell history.
-    setBlocks([{ id: runId, command: 'codex resume', controller: null }]);
+    // A resume submits its first prompt once the provider TUI is ready. A new
+    // chat deliberately launches only the provider CLI at the prepared roots.
+    const launchLabel = agentBootstrap.kind === 'resume'
+      ? `${agentBootstrap.provider} resume`
+      : agentBootstrap.name;
+    setBlocks([{ id: runId, command: launchLabel, controller: null }]);
     void getRunPortBroker().request({
       kind: 'run',
       runId,
       signal: handoffSignal,
       send: async () => {
-        const result = await window.ezterminal.startAgentResume({
-          historyId: resumeBootstrap.historyId,
+        if (agentBootstrap.kind === 'resume') {
+          const result = await window.ezterminal.startAgentResume({
+            historyId: agentBootstrap.historyId,
+            sessionId,
+            runId,
+            rootChoice: agentBootstrap.rootChoice,
+            revision: agentBootstrap.revision,
+          });
+          if (!result.ok) throw new Error(`Agent resume failed: ${result.reason}`);
+          return;
+        }
+        const result = await window.ezterminal.startAgentProjectLaunch({
+          projectId: agentBootstrap.projectId,
+          launcherId: agentBootstrap.launcherId,
           sessionId,
           runId,
-          rootChoice: resumeBootstrap.rootChoice,
-          revision: resumeBootstrap.revision,
+          revision: agentBootstrap.revision,
         });
-        if (!result.ok) throw new Error(`Agent resume failed: ${result.reason}`);
+        if (!result.ok) throw new Error(`Agent project launch failed: ${result.reason}`);
       },
     }).then((port) => {
       handoffAbortByRunRef.current.delete(runId);
@@ -620,8 +638,10 @@ export function MobileSessionView({
         return;
       }
       try {
-        const controller = new BlockController('codex resume', port);
-        controller.submitPtyWhenReady(resumeBootstrap.initialPrompt);
+        const controller = new BlockController(launchLabel, port);
+        if (agentBootstrap.kind === 'resume') {
+          controller.submitPtyWhenReady(agentBootstrap.initialPrompt);
+        }
         bindActiveController(controller);
         setBlocks((previous) => previous.map((entry) =>
           entry.id === runId ? { ...entry, controller } : entry));
@@ -636,16 +656,23 @@ export function MobileSessionView({
       knownRunIdsRef.current.delete(runId);
       if (!handoffSignal.aborted) {
         setBlocks([]);
-        setCommand(resumeBootstrap.initialPrompt);
-        console.error('[mobile] Agent resume failed:', error);
+        if (agentBootstrap.kind === 'resume') {
+          setCommand(agentBootstrap.initialPrompt);
+          setAgentBootstrapError(t('agentHub.history.resumeFailed'));
+        } else {
+          setAgentBootstrapError(t('agentHub.projects.launchFailed'));
+        }
+        console.error('[mobile] Agent bootstrap failed:', error);
       }
     });
   }, [
+    agentBootstrap,
+    agentBootstrapRetry,
     bindActiveController,
     connected,
-    resumeBootstrap,
     sessionDead,
     sessionId,
+    t,
   ]);
 
   const handleRun = useCallback(() => {
@@ -857,6 +884,21 @@ export function MobileSessionView({
       {sessionDead && (
         <div className="mobile-session-dead-banner" data-testid="session-dead-banner">
           {t('mobile.terminalView.connectionLost')}
+        </div>
+      )}
+      {agentBootstrapError && (
+        <div className="mobile-session-dead-banner" role="alert" data-testid="agent-bootstrap-error">
+          <span>{agentBootstrapError}</span>
+          <button
+            type="button"
+            className="mob-btn-ghost"
+            onClick={() => {
+              agentBootstrapStartedRef.current = false;
+              setAgentBootstrapRetry((value) => value + 1);
+            }}
+          >
+            {t('common.retry')}
+          </button>
         </div>
       )}
 

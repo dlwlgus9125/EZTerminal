@@ -41,6 +41,12 @@ import type {
 } from './agent';
 import type {
   AgentHistorySessionPage,
+  AgentProjectInput,
+  AgentProjectLaunchPreparation,
+  AgentProjectLauncherSummary,
+  AgentProjectLaunchStartRequest,
+  AgentProjectLaunchStartResult,
+  AgentProjectMutationResult,
   AgentProjectPage,
   AgentResumePreparation,
   AgentResumeStartRequest,
@@ -75,16 +81,18 @@ export type RemoteCapability =
  *
  * v1 terminal only · v2 adds desktop control and client identity · v3 adds
  * live Agent approval decisions, Git queries and the latency probe · v4 adds
- * on-demand Agent project/history reads and explicit history resume.
+ * on-demand Agent project/history reads and explicit history resume; v5 adds
+ * project management/search and project-rooted fresh Agent launches.
  */
 export const REMOTE_PROTOCOL_VERSION_LEGACY = 1 as const;
 export const REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL = 2 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_LIVE = 3 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_HISTORY = 4 as const;
-export const REMOTE_PROTOCOL_VERSION = REMOTE_PROTOCOL_VERSION_AGENT_HISTORY;
-export type RemoteProtocolVersion = 1 | 2 | 3 | 4;
+export const REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS = 5 as const;
+export const REMOTE_PROTOCOL_VERSION = 5 as const;
+export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5;
 
-export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [1, 2, 3, 4];
+export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [1, 2, 3, 4, 5];
 
 export function isRemoteProtocolVersion(value: unknown): value is RemoteProtocolVersion {
   return SUPPORTED_REMOTE_PROTOCOL_VERSIONS.includes(value as RemoteProtocolVersion);
@@ -368,6 +376,38 @@ export interface AgentProjectsListRequest {
   readonly force?: boolean;
   readonly cursor?: string;
   readonly limit?: number;
+  /** Protocol v5. v4 peers omit it and retain the unfiltered history list. */
+  readonly query?: string;
+}
+
+export interface AgentProjectSaveRequest {
+  readonly kind: 'agent-project-save';
+  readonly requestId: string;
+  readonly input: AgentProjectInput;
+}
+
+export interface AgentProjectRemoveRequest {
+  readonly kind: 'agent-project-remove';
+  readonly requestId: string;
+  readonly projectId: string;
+}
+
+export interface AgentProjectLaunchersRequest {
+  readonly kind: 'agent-project-launchers';
+  readonly requestId: string;
+}
+
+export interface AgentProjectPrepareLaunchRequest {
+  readonly kind: 'agent-project-prepare-launch';
+  readonly requestId: string;
+  readonly projectId: string;
+  readonly launcherId: string;
+}
+
+export interface AgentProjectStartLaunchRequest {
+  readonly kind: 'agent-project-start-launch';
+  readonly requestId: string;
+  readonly request: AgentProjectLaunchStartRequest;
 }
 
 export interface AgentHistorySessionsRequest {
@@ -632,6 +672,11 @@ export type ClientToServerMessage =
   | AgentFollowupRequest
   | AgentDecisionRequest
   | AgentProjectsListRequest
+  | AgentProjectSaveRequest
+  | AgentProjectRemoveRequest
+  | AgentProjectLaunchersRequest
+  | AgentProjectPrepareLaunchRequest
+  | AgentProjectStartLaunchRequest
   | AgentHistorySessionsRequest
   | AgentHistoryReadRequest
   | AgentHistoryPrepareResumeRequest
@@ -865,6 +910,36 @@ export interface AgentProjectsListReply {
   readonly kind: 'agent-projects-list-reply';
   readonly requestId: string;
   readonly result: AgentProjectPage;
+}
+
+export interface AgentProjectSaveReply {
+  readonly kind: 'agent-project-save-reply';
+  readonly requestId: string;
+  readonly result: AgentProjectMutationResult;
+}
+
+export interface AgentProjectRemoveReply {
+  readonly kind: 'agent-project-remove-reply';
+  readonly requestId: string;
+  readonly removed: boolean;
+}
+
+export interface AgentProjectLaunchersReply {
+  readonly kind: 'agent-project-launchers-reply';
+  readonly requestId: string;
+  readonly result: readonly AgentProjectLauncherSummary[];
+}
+
+export interface AgentProjectPrepareLaunchReply {
+  readonly kind: 'agent-project-prepare-launch-reply';
+  readonly requestId: string;
+  readonly result: AgentProjectLaunchPreparation;
+}
+
+export interface AgentProjectStartLaunchReply {
+  readonly kind: 'agent-project-start-launch-reply';
+  readonly requestId: string;
+  readonly result: AgentProjectLaunchStartResult;
 }
 
 export interface AgentHistorySessionsReply {
@@ -1130,6 +1205,11 @@ export type ServerToClientMessage =
   | AgentFollowupReply
   | AgentDecisionReply
   | AgentProjectsListReply
+  | AgentProjectSaveReply
+  | AgentProjectRemoveReply
+  | AgentProjectLaunchersReply
+  | AgentProjectPrepareLaunchReply
+  | AgentProjectStartLaunchReply
   | AgentHistorySessionsReply
   | AgentHistoryReadReply
   | AgentHistoryPrepareResumeReply
