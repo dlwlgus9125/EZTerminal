@@ -18,7 +18,7 @@ function makeFixture(): {
   readonly primary: string;
   readonly extra: string;
 } {
-  const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'ez-agent-projects-')));
+  const base = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'ez-agent-projects-')));
   const userData = path.join(base, 'user-data');
   const primary = path.join(base, 'primary');
   const extra = path.join(base, 'extra');

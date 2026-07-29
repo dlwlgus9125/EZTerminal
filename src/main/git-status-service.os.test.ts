@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdtempSync,
   promises as fs,
+  realpathSync,
   renameSync,
   writeFileSync,
 } from 'node:fs';
@@ -20,7 +21,7 @@ const GIT_COMMANDS = new Set(['config', 'rev-parse', 'status', 'diff', 'ls-files
 const temporaryDirectories: string[] = [];
 
 function makeTemporaryDirectory(prefix: string): string {
-  const directory = mkdtempSync(path.join(os.tmpdir(), prefix));
+  const directory = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), prefix)));
   temporaryDirectories.push(directory);
   return directory;
 }

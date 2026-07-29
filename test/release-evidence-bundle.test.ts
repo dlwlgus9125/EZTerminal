@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -154,7 +155,7 @@ describe('release evidence bundle helper', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
       operation: 'create',
-      bundlePath: bundle,
+      bundlePath: realpathSync.native(bundle),
     });
   }, 30_000);
 

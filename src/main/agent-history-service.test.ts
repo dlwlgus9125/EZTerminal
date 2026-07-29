@@ -9,7 +9,7 @@ import { AgentHistoryService } from './agent-history-service';
 import { AgentProjectStore } from './agent-project-store';
 
 function makeTemporaryDirectory(prefix: string): string {
-  return realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)));
+  return realpathSync.native(mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
 function makeDirectory(base: string, name: string): string {
