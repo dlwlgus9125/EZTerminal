@@ -21,16 +21,6 @@ export interface ProviderHistorySessionPage {
   readonly nextCursor: string | null;
 }
 
-export interface ProviderProjectHint {
-  readonly primaryRoot: string;
-  readonly lastActiveAt: number;
-}
-
-export interface ProviderProjectHintPage {
-  readonly items: readonly ProviderProjectHint[];
-  readonly nextCursor: string | null;
-}
-
 export interface ProviderSessionQuery {
   readonly roots: readonly string[];
   readonly cursor?: string;
@@ -44,8 +34,6 @@ export interface AgentHistoryProviderAdapter {
    * not inspect transcript/rollout files.
    */
   listSessions(query: ProviderSessionQuery): Promise<ProviderHistorySessionPage>;
-  /** Discovers project roots a page at a time, without retaining session ids. */
-  discoverProjects(cursor?: string, limit?: number): Promise<ProviderProjectHintPage>;
   readTranscript(privateId: string, cursor?: string, limit?: number): Promise<AgentTranscriptPage>;
   dispose(): Promise<void>;
 }

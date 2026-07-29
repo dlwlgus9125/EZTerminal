@@ -12,7 +12,6 @@ import type {
   AgentHistoryProviderAdapter,
   ProviderHistorySession,
   ProviderHistorySessionPage,
-  ProviderProjectHintPage,
   ProviderSessionQuery,
 } from './agent-history-provider';
 import type { CodexAppServerRequester } from './codex-app-server-client';
@@ -200,31 +199,6 @@ export class CodexHistoryAdapter implements AgentHistoryProviderAdapter {
     }));
     return {
       items: this.normalizeSessions(result),
-      nextCursor: asString(result?.nextCursor),
-    };
-  }
-
-  async discoverProjects(cursor?: string, limit = 100): Promise<ProviderProjectHintPage> {
-    const boundedLimit = Math.max(1, Math.min(MAX_AGENT_HISTORY_PAGE_SIZE, Math.trunc(limit)));
-    const result = asObject(await this.client.request('thread/list', {
-      limit: boundedLimit,
-      ...(cursor ? { cursor } : {}),
-      archived: false,
-      sourceKinds: ['cli', 'vscode', 'exec', 'appServer', 'unknown'],
-      useStateDbOnly: true,
-      sortKey: 'updated_at',
-      sortDirection: 'desc',
-    }));
-    const latestByRoot = new Map<string, number>();
-    for (const session of this.normalizeSessions(result)) {
-      const previous = latestByRoot.get(session.cwd) ?? 0;
-      latestByRoot.set(session.cwd, Math.max(previous, session.updatedAt));
-    }
-    return {
-      items: [...latestByRoot].map(([primaryRoot, lastActiveAt]) => ({
-        primaryRoot,
-        lastActiveAt,
-      })),
       nextCursor: asString(result?.nextCursor),
     };
   }

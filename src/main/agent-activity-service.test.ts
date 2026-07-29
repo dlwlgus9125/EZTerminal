@@ -124,6 +124,27 @@ describe('classifyAgentCommand', () => {
 });
 
 describe('AgentActivityService', () => {
+  it('observes only direct terminal Agent runs and reports cwd changes', () => {
+    const { service, broker } = makeService();
+    const observed = vi.fn();
+    service.onObserved(observed);
+
+    broker.run({ sessionId: 'ez-1', runId: 'plain', commandText: 'echo codex' });
+    expect(observed).not.toHaveBeenCalled();
+
+    const port = broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'codex' });
+    expect(observed).toHaveBeenLastCalledWith(expect.objectContaining({
+      provider: 'codex',
+      cwd: 'C:\\work',
+    }));
+
+    port.frame({ type: 'start', commandText: 'codex', cwd: 'C:\\repo' });
+    expect(observed).toHaveBeenLastCalledWith(expect.objectContaining({
+      provider: 'codex',
+      cwd: 'C:\\repo',
+    }));
+  });
+
   it('maps exact hook lifecycle, updates cwd, and sends one waiting followup line', () => {
     const { service, broker } = makeService();
     const port = broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: '!codex' });

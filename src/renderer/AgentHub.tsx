@@ -209,11 +209,6 @@ export function AgentHub({
       return;
     }
     setProjects(result.items);
-    if (!force) {
-      void read(true).then((discovered) => {
-        setProjects(discovered.items);
-      }).catch(() => undefined);
-    }
   }, []);
 
   useEffect(() => {

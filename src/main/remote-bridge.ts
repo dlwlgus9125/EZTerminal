@@ -769,6 +769,7 @@ export interface RemoteAgentHistorySource {
   ): Promise<AgentHistorySessionPage>;
   readTranscript(historyId: string, cursor?: string, limit?: number): Promise<AgentTranscriptPage | null>;
   prepareResume(historyId: string): Promise<AgentResumePreparation | null>;
+  recordTerminalWork(roots: readonly string[], lastActiveAt?: number): Promise<void>;
   resolveResume(
     historyId: string,
     revision: string,
@@ -1875,6 +1876,7 @@ export function attachConnection(
               });
               return;
             }
+            void source.recordTerminalWork(resolved.roots, Date.now()).catch(() => undefined);
             if (clientIdentity) {
               runInitiators.remember(sessionId, runId, clientIdentity.clientId);
             }

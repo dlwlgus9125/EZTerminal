@@ -4,7 +4,6 @@ import path from 'node:path';
 
 import {
   MAX_AGENT_HISTORY_PAGE_SIZE,
-  MAX_AGENT_PROJECTS,
   type AgentHistorySessionPage,
   type AgentHistorySessionSummary,
   type AgentProjectInput,
@@ -27,8 +26,6 @@ interface IndexedSession {
   readonly adapter: AgentHistoryProviderAdapter;
 }
 
-const DISCOVERY_PAGE_SIZE = 100;
-const DISCOVERY_REFRESH_MS = 30_000;
 const MAX_INDEXED_SESSIONS = 500;
 
 function pathKey(value: string): string {
@@ -87,7 +84,7 @@ function projectSummary(project: AgentProjectRecord): AgentProjectSummary {
     primaryRoot: project.primaryRoot,
     additionalRoots: project.additionalRoots,
     pinned: project.pinned,
-    saved: project.explicit,
+    saved: project.origin === 'manual',
     // Counts and providers belong to the on-demand session page. Persisting
     // either would turn the local project index into a second history DB.
     sessionCount: 0,
@@ -99,8 +96,6 @@ function projectSummary(project: AgentProjectRecord): AgentProjectSummary {
 export class AgentHistoryService {
   private readonly adapters: ReadonlyMap<string, AgentHistoryProviderAdapter>;
   private readonly index = new Map<string, IndexedSession>();
-  private discovery: Promise<void> | null = null;
-  private discoveredAt = 0;
 
   constructor(
     private readonly projects: AgentProjectStore,
@@ -109,18 +104,24 @@ export class AgentHistoryService {
     this.adapters = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
   }
 
-  async listProjects(force = false, cursor?: string, limit = 100): Promise<AgentProjectPage> {
-    const discovery = this.discover(force);
-    // Normal reads are local and immediate. An explicit refresh is allowed to
-    // await the state-DB-only background pass so callers can reconcile newly
-    // discovered roots without polling.
-    if (force) await discovery;
+  async listProjects(_force = false, cursor?: string, limit = 100): Promise<AgentProjectPage> {
+    void _force;
     const summaries = this.projects.list().map(projectSummary);
     summaries.sort((a, b) =>
       Number(b.pinned) - Number(a.pinned)
       || (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0)
       || a.name.localeCompare(b.name));
     return page(summaries, cursor, limit);
+  }
+
+  async recordTerminalWork(roots: readonly string[], lastActiveAt = Date.now()): Promise<void> {
+    const [primaryRoot, ...additionalRoots] = roots;
+    if (!primaryRoot) return;
+    await this.projects.recordWork({
+      primaryRoot,
+      additionalRoots,
+      lastActiveAt,
+    });
   }
 
   async listSessions(
@@ -204,10 +205,9 @@ export class AgentHistoryService {
   }
 
   async saveProject(input: AgentProjectInput): Promise<AgentProjectMutationResult> {
-    await this.discovery?.catch(() => undefined);
     const inferred = !input.projectId
       ? this.projects.list().find((project) =>
-          !project.explicit && pathKey(project.primaryRoot) === pathKey(input.primaryRoot))
+          project.origin === 'terminal' && pathKey(project.primaryRoot) === pathKey(input.primaryRoot))
       : undefined;
     const result = await this.projects.upsert(inferred
       ? { ...input, projectId: inferred.projectId }
@@ -218,40 +218,15 @@ export class AgentHistoryService {
   }
 
   async removeProject(projectId: string): Promise<boolean> {
-    await this.discovery?.catch(() => undefined);
     const record = this.projectForId(projectId);
     return record ? this.projects.remove(record.projectId) : false;
   }
 
   async dispose(): Promise<void> {
-    await this.discovery?.catch(() => undefined);
     await Promise.all([
       this.projects.flush(),
       ...this.adapters.values().map((adapter) => adapter.dispose()),
     ]);
-  }
-
-  private discover(force: boolean): Promise<void> {
-    if (this.discovery) return this.discovery;
-    if (!force && this.discoveredAt > 0 && Date.now() - this.discoveredAt < DISCOVERY_REFRESH_MS) {
-      return Promise.resolve();
-    }
-    this.discovery = (async () => {
-      for (const adapter of this.adapters.values()) {
-        let cursor: string | undefined;
-        const maxPages = Math.ceil(MAX_AGENT_PROJECTS / DISCOVERY_PAGE_SIZE);
-        for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-          const result = await adapter.discoverProjects(cursor, DISCOVERY_PAGE_SIZE);
-          await this.projects.discover(result.items);
-          if (!result.nextCursor) break;
-          cursor = result.nextCursor;
-        }
-      }
-      this.discoveredAt = Date.now();
-    })().catch(() => undefined).finally(() => {
-      this.discovery = null;
-    });
-    return this.discovery;
   }
 
   private indexSession(

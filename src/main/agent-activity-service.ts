@@ -125,6 +125,7 @@ export class AgentActivityService {
   private readonly completedIds: string[] = [];
   private readonly snapshotListeners = new Set<(snapshot: AgentActivitySnapshot) => void>();
   private readonly transitionListeners = new Set<(transition: AgentActivityTransition) => void>();
+  private readonly observationListeners = new Set<(activity: AgentActivity) => void>();
   private readonly unsubscribers: Array<() => void> = [];
   private publishingSnapshots = false;
   private queuedSnapshot: AgentActivitySnapshot | null = null;
@@ -176,6 +177,12 @@ export class AgentActivityService {
   onTransition(listener: (transition: AgentActivityTransition) => void): () => void {
     this.transitionListeners.add(listener);
     return () => this.transitionListeners.delete(listener);
+  }
+
+  /** Emits only runs that EZTerminal directly recognized, including cwd changes. */
+  onObserved(listener: (activity: AgentActivity) => void): () => void {
+    this.observationListeners.add(listener);
+    return () => this.observationListeners.delete(listener);
   }
 
   handleHookEvent(event: AgentHookEvent): void {
@@ -376,6 +383,7 @@ export class AgentActivityService {
     }
     this.snapshotListeners.clear();
     this.transitionListeners.clear();
+    this.observationListeners.clear();
     this.endedProviderSessions.clear();
   }
 
@@ -420,6 +428,7 @@ export class AgentActivityService {
     this.activeBySessionProvider.set(providerKey(provider, record.sessionId), record);
     this.attach(record);
     this.publish();
+    this.publishObservation(record);
     return record;
   }
 
@@ -453,6 +462,7 @@ export class AgentActivityService {
       record.cwd = frame.cwd;
       record.updatedAt = this.now();
       this.publish();
+      this.publishObservation(record);
     } else if (frame.type === 'end') {
       if (frame.cwd !== undefined) record.cwd = frame.cwd;
       this.finish(record, frame.exitCode !== undefined && frame.exitCode !== 0 ? 'error' : 'done', true);
@@ -473,6 +483,7 @@ export class AgentActivityService {
       record.cwd = event.cwd;
       record.updatedAt = this.now();
       this.publish();
+      this.publishObservation(record);
     }
 
     switch (event.event) {
@@ -512,6 +523,7 @@ export class AgentActivityService {
     record.updatedAt = this.now();
     this.publish();
     this.publishTransition({ activity: publicActivity(record), previous });
+    this.publishObservation(record);
   }
 
   private finish(record: MutableActivity, status: 'done' | 'error', closePort: boolean): void {
@@ -611,6 +623,17 @@ export class AgentActivityService {
     } finally {
       this.queuedTransitions.length = 0;
       this.publishingTransitions = false;
+    }
+  }
+
+  private publishObservation(record: MutableActivity): void {
+    const activity = publicActivity(record);
+    for (const listener of [...this.observationListeners]) {
+      try {
+        listener(activity);
+      } catch {
+        // Observers persist secondary metadata only; they cannot break a run.
+      }
     }
   }
 }

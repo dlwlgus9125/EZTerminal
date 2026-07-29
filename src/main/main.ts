@@ -924,6 +924,9 @@ app.on('ready', () => {
       'codex',
     );
     if (!port) return { ok: false, reason: 'unavailable' };
+    void agentHistoryService.recordTerminalWork(resolved.roots, Date.now()).catch((err) => {
+      console.error('[main] failed to record resumed Agent project:', err);
+    });
     event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
     return { ok: true };
   });
@@ -1258,6 +1261,14 @@ app.on('ready', () => {
   agentActivityService = new AgentActivityService({
     broker,
     getSettings: () => agentSettingsStore.current,
+  });
+  agentActivityService.onObserved((activity) => {
+    if (activity.provider !== 'codex' || !activity.cwd) return;
+    void agentHistoryReady
+      .then(() => agentHistoryService.recordTerminalWork([activity.cwd], activity.updatedAt))
+      .catch((err) => {
+        console.error('[main] failed to record terminal Agent project:', err);
+      });
   });
   agentActivityService.onSnapshot((snapshot) => {
     for (const win of BrowserWindow.getAllWindows()) {

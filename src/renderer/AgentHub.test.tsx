@@ -203,6 +203,8 @@ describe('AgentHub local history paging', () => {
       { revision: 1, items: [] },
       { onOpenHistorySession },
     );
+    expect(listAgentProjects).toHaveBeenCalledTimes(1);
+    expect(listAgentProjects).toHaveBeenCalledWith(false);
     act(() => container.querySelector<HTMLButtonElement>('.agent-project-toggle')!.click());
     await flush();
 

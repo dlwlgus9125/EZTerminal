@@ -20,23 +20,59 @@ function makeFixture(): {
 }
 
 describe('AgentProjectStore', () => {
-  it('persists discovered roots and recent activity without session data', async () => {
+  it('drops provider-discovered v2 projects and records only terminal work', async () => {
     const fixture = makeFixture();
+    mkdirSync(fixture.userData);
+    writeFileSync(path.join(fixture.userData, 'agent-projects.json'), JSON.stringify({
+      version: 2,
+      projects: [
+        {
+          projectId: 'manual-project',
+          name: 'Manual project',
+          primaryRoot: fixture.primary,
+          additionalRoots: [],
+          pinned: true,
+          explicit: true,
+          lastActiveAt: null,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        {
+          projectId: 'provider-discovery',
+          name: 'Provider discovery',
+          primaryRoot: fixture.extra,
+          additionalRoots: [],
+          pinned: false,
+          explicit: false,
+          lastActiveAt: 123,
+          createdAt: 2,
+          updatedAt: 2,
+        },
+      ],
+    }));
     const store = new AgentProjectStore(fixture.userData);
     await store.init();
 
-    await store.discover([{
+    expect(store.list()).toMatchObject([{
       primaryRoot: fixture.primary,
-      lastActiveAt: 123,
+      origin: 'manual',
     }]);
+
+    await store.recordWork({
+      primaryRoot: fixture.extra,
+      additionalRoots: [],
+      lastActiveAt: 123,
+    });
     await store.flush();
 
-    expect(store.list()[0]).toMatchObject({
-      primaryRoot: path.normalize(fixture.primary),
-      explicit: false,
+    expect(store.list()[1]).toMatchObject({
+      primaryRoot: path.normalize(fixture.extra),
+      origin: 'terminal',
       lastActiveAt: 123,
     });
     const persisted = readFileSync(path.join(fixture.userData, 'agent-projects.json'), 'utf8');
+    expect(JSON.parse(persisted)).toMatchObject({ version: 3 });
+    expect(persisted).not.toContain('provider-discovery');
     expect(persisted).not.toContain('historyId');
     expect(persisted).not.toContain('privateId');
     expect(persisted).not.toContain('transcript');
@@ -99,6 +135,29 @@ describe('AgentProjectStore', () => {
       pinned: false,
     })).resolves.toEqual({ ok: false, reason: 'duplicate' });
     expect(store.list()).toHaveLength(1);
+  });
+
+  it('serializes a manual save with terminal work without losing either project', async () => {
+    const fixture = makeFixture();
+    const store = new AgentProjectStore(fixture.userData);
+    await store.init();
+
+    await Promise.all([
+      store.upsert({
+        name: 'Manual',
+        primaryRoot: fixture.primary,
+        additionalRoots: [],
+        pinned: false,
+      }),
+      store.recordWork({
+        primaryRoot: fixture.extra,
+        additionalRoots: [],
+        lastActiveAt: 123,
+      }),
+    ]);
+
+    expect(store.list()).toHaveLength(2);
+    expect(store.list().map((project) => project.origin).sort()).toEqual(['manual', 'terminal']);
   });
 
   it('quarantines malformed metadata instead of accepting provider content', async () => {

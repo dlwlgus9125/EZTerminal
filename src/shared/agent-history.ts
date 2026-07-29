@@ -13,7 +13,7 @@ export interface AgentProjectSummary {
   readonly primaryRoot: string;
   readonly additionalRoots: readonly string[];
   readonly pinned: boolean;
-  /** False for a project inferred from provider history but not explicitly saved. */
+  /** False for terminal-observed work that the user has not explicitly saved. */
   readonly saved: boolean;
   readonly sessionCount: number;
   readonly providers: readonly AgentHistoryProvider[];

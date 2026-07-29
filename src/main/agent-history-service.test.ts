@@ -27,17 +27,13 @@ function fakeAdapter(session: ProviderHistorySession): AgentHistoryProviderAdapt
   return {
     provider: 'codex',
     listSessions: vi.fn(async () => ({ items: [session], nextCursor: null })),
-    discoverProjects: vi.fn(async () => ({
-      items: [{ primaryRoot: session.cwd, lastActiveAt: session.updatedAt }],
-      nextCursor: null,
-    })),
     readTranscript: vi.fn(async () => transcript),
     dispose: vi.fn(async () => undefined),
   };
 }
 
 describe('AgentHistoryService', () => {
-  it('returns locally saved projects without waiting for provider discovery', async () => {
+  it('returns locally saved projects without querying provider history', async () => {
     const base = mkdtempSync(path.join(os.tmpdir(), 'ez-agent-history-local-projects-'));
     const primaryRoot = makeDirectory(base, 'primary');
     const store = new AgentProjectStore(path.join(base, 'user-data'));
@@ -51,24 +47,20 @@ describe('AgentHistoryService', () => {
     const adapter: AgentHistoryProviderAdapter = {
       provider: 'codex',
       listSessions: vi.fn(async () => ({ items: [], nextCursor: null })),
-      discoverProjects: vi.fn(() => new Promise<never>(() => undefined)),
       readTranscript: vi.fn(),
       dispose: vi.fn(async () => undefined),
     };
     const service = new AgentHistoryService(store, [adapter]);
 
-    const result = await Promise.race([
-      service.listProjects(),
-      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50)),
-    ]);
+    const result = await service.listProjects(true);
 
-    expect(result).not.toBe('blocked');
     expect(result).toMatchObject({
       items: [{
         name: 'Local project',
         primaryRoot,
       }],
     });
+    expect(adapter.listSessions).not.toHaveBeenCalled();
   });
 
   it('exposes stable opaque ids while retaining the provider id only inside resume resolution', async () => {
@@ -90,6 +82,7 @@ describe('AgentHistoryService', () => {
     });
     const service = new AgentHistoryService(store, [adapter]);
 
+    await service.recordTerminalWork([recordedRoot], 20);
     const projects = await service.listProjects(true);
     const sessions = await service.listSessions(projects.items[0]!.projectId);
     const historyId = sessions.items[0]!.historyId;
@@ -132,6 +125,7 @@ describe('AgentHistoryService', () => {
       rolloutPath: null,
     });
     const service = new AgentHistoryService(store, [adapter]);
+    await service.recordTerminalWork([primary, extra], 30);
     const project = (await service.listProjects(true)).items[0]!;
     const saved = await service.saveProject({
       name: 'Saved project',
@@ -182,6 +176,7 @@ describe('AgentHistoryService', () => {
       rolloutPath: null,
     });
     const service = new AgentHistoryService(store, [adapter]);
+    await service.recordTerminalWork([primary, missing], 30);
     const project = (await service.listProjects(true)).items[0]!;
     const session = (await service.listSessions(project.projectId)).items[0]!;
 

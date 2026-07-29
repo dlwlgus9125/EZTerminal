@@ -3374,6 +3374,7 @@ describe('RemoteBridge — Agent history v4', () => {
         privateId: 'provider-private-thread-id',
         roots: session.roots,
       })),
+      recordTerminalWork: vi.fn(async () => undefined),
     };
     const ws = new FakeWs();
     const { options, interpreter } = makeOptions({ agentHistorySource: historySource });
@@ -3445,6 +3446,7 @@ describe('RemoteBridge — Agent history v4', () => {
     });
     expect(run?.type === 'run' && run.commandText).toContain('provider-private-thread-id');
     expect(JSON.stringify(ws.sent)).not.toContain('provider-private-thread-id');
+    expect(historySource.recordTerminalWork).toHaveBeenCalledWith(session.roots, expect.any(Number));
   });
 
   it('ignores v4 history requests from a negotiated v3 client', async () => {
@@ -3457,6 +3459,7 @@ describe('RemoteBridge — Agent history v4', () => {
         ok: false as const,
         reason: 'unavailable' as const,
       })),
+      recordTerminalWork: vi.fn(async () => undefined),
     };
     const ws = new FakeWs();
     const { options } = makeOptions({ agentHistorySource: historySource });
