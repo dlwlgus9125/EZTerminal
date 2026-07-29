@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -7,6 +7,10 @@ import type { AgentHistoryProvider, AgentTranscriptPage } from '../shared/agent-
 import type { AgentHistoryProviderAdapter, ProviderHistorySession } from './agent-history-provider';
 import { AgentHistoryService } from './agent-history-service';
 import { AgentProjectStore } from './agent-project-store';
+
+function makeTemporaryDirectory(prefix: string): string {
+  return realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
 
 function makeDirectory(base: string, name: string): string {
   const directory = path.join(base, name);
@@ -42,7 +46,7 @@ function fakeAdapter(
 
 describe('AgentHistoryService', () => {
   it('returns locally saved projects without querying provider history', async () => {
-    const base = mkdtempSync(path.join(os.tmpdir(), 'ez-agent-history-local-projects-'));
+    const base = makeTemporaryDirectory('ez-agent-history-local-projects-');
     const primaryRoot = makeDirectory(base, 'primary');
     const store = new AgentProjectStore(path.join(base, 'user-data'));
     await store.init();
@@ -73,7 +77,7 @@ describe('AgentHistoryService', () => {
   });
 
   it('searches project names and every host root while keeping pin and recency order', async () => {
-    const base = mkdtempSync(path.join(os.tmpdir(), 'ez-agent-project-search-'));
+    const base = makeTemporaryDirectory('ez-agent-project-search-');
     const alpha = makeDirectory(base, 'alpha');
     const shared = makeDirectory(base, 'shared-docs');
     const beta = makeDirectory(base, 'beta');
@@ -106,7 +110,7 @@ describe('AgentHistoryService', () => {
   });
 
   it('catalogs enabled launchers and resolves provider and generic new-chat commands privately', async () => {
-    const base = mkdtempSync(path.join(os.tmpdir(), 'ez-agent-project-launch-'));
+    const base = makeTemporaryDirectory('ez-agent-project-launch-');
     const primary = makeDirectory(base, 'primary');
     const extra = makeDirectory(base, 'extra');
     const store = new AgentProjectStore(path.join(base, 'user-data'));
@@ -198,7 +202,7 @@ describe('AgentHistoryService', () => {
   });
 
   it('exposes stable opaque ids while retaining the provider id only inside resume resolution', async () => {
-    const base = mkdtempSync(path.join(os.tmpdir(), 'ez-agent-history-'));
+    const base = makeTemporaryDirectory('ez-agent-history-');
     const recordedRoot = makeDirectory(base, 'recorded');
     const store = new AgentProjectStore(path.join(base, 'user-data'));
     await store.init();
@@ -243,7 +247,7 @@ describe('AgentHistoryService', () => {
   });
 
   it('detects saved multi-root drift and rejects a stale root-choice token', async () => {
-    const base = mkdtempSync(path.join(os.tmpdir(), 'ez-agent-history-roots-'));
+    const base = makeTemporaryDirectory('ez-agent-history-roots-');
     const primary = makeDirectory(base, 'primary');
     const extra = makeDirectory(base, 'extra');
     const replacement = makeDirectory(base, 'replacement');
@@ -295,7 +299,7 @@ describe('AgentHistoryService', () => {
   });
 
   it('falls back to the session cwd when an old recorded extra folder is missing', async () => {
-    const base = mkdtempSync(path.join(os.tmpdir(), 'ez-agent-history-missing-'));
+    const base = makeTemporaryDirectory('ez-agent-history-missing-');
     const primary = makeDirectory(base, 'primary');
     const missing = path.join(base, 'removed-extra');
     const store = new AgentProjectStore(path.join(base, 'user-data'));
@@ -326,7 +330,7 @@ describe('AgentHistoryService', () => {
   });
 
   it('resumes a non-Codex provider through its own adapter command', async () => {
-    const base = mkdtempSync(path.join(os.tmpdir(), 'ez-agent-history-claude-'));
+    const base = makeTemporaryDirectory('ez-agent-history-claude-');
     const root = makeDirectory(base, 'primary');
     const store = new AgentProjectStore(path.join(base, 'user-data'));
     await store.init();
@@ -363,7 +367,7 @@ describe('AgentHistoryService', () => {
   });
 
   it('reports a provider that cannot express the resume as unavailable', async () => {
-    const base = mkdtempSync(path.join(os.tmpdir(), 'ez-agent-history-unsupported-'));
+    const base = makeTemporaryDirectory('ez-agent-history-unsupported-');
     const root = makeDirectory(base, 'primary');
     const store = new AgentProjectStore(path.join(base, 'user-data'));
     await store.init();
@@ -427,7 +431,7 @@ function pagingAdapter(
 
 describe('AgentHistoryService merged provider paging', () => {
   it('interleaves providers by recency and continues past both page boundaries', async () => {
-    const base = mkdtempSync(path.join(os.tmpdir(), 'ez-agent-history-merge-'));
+    const base = makeTemporaryDirectory('ez-agent-history-merge-');
     const root = makeDirectory(base, 'primary');
     const store = new AgentProjectStore(path.join(base, 'user-data'));
     await store.init();
@@ -463,7 +467,7 @@ describe('AgentHistoryService merged provider paging', () => {
   });
 
   it('keeps paging when one provider fails and drops it from the continuation', async () => {
-    const base = mkdtempSync(path.join(os.tmpdir(), 'ez-agent-history-merge-error-'));
+    const base = makeTemporaryDirectory('ez-agent-history-merge-error-');
     const root = makeDirectory(base, 'primary');
     const store = new AgentProjectStore(path.join(base, 'user-data'));
     await store.init();

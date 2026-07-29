@@ -197,13 +197,19 @@ export class AgentProjectStore {
 
     return this.file.enqueue(async () => {
       const current = this.snapshot.projects;
-      const existingIndex = input.projectId
+      let existingIndex = input.projectId
         ? current.findIndex((project) => project.projectId === input.projectId)
         : -1;
       if (input.projectId && existingIndex < 0) return { ok: false, reason: 'not-found' };
-      const duplicate = current.find((project, index) =>
+      const duplicateIndex = current.findIndex((project, index) =>
         index !== existingIndex && pathKey(project.primaryRoot) === pathKey(primaryRoot));
-      if (duplicate) return { ok: false, reason: 'duplicate' };
+      if (duplicateIndex >= 0) {
+        if (existingIndex < 0 && current[duplicateIndex]!.origin === 'terminal') {
+          existingIndex = duplicateIndex;
+        } else {
+          return { ok: false, reason: 'duplicate' };
+        }
+      }
 
       const now = Date.now();
       const project: StoredAgentProject = {

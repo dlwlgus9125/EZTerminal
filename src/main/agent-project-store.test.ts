@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -10,7 +18,7 @@ function makeFixture(): {
   readonly primary: string;
   readonly extra: string;
 } {
-  const base = mkdtempSync(path.join(os.tmpdir(), 'ez-agent-projects-'));
+  const base = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'ez-agent-projects-')));
   const userData = path.join(base, 'user-data');
   const primary = path.join(base, 'primary');
   const extra = path.join(base, 'extra');
@@ -20,6 +28,39 @@ function makeFixture(): {
 }
 
 describe('AgentProjectStore', () => {
+  it('promotes terminal work saved through an equivalent directory alias', async () => {
+    const fixture = makeFixture();
+    const primaryAlias = path.join(path.dirname(fixture.primary), 'primary-alias');
+    symlinkSync(
+      fixture.primary,
+      primaryAlias,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    const store = new AgentProjectStore(fixture.userData);
+    await store.init();
+    await store.recordWork({
+      primaryRoot: fixture.primary,
+      additionalRoots: [],
+      lastActiveAt: 123,
+    });
+
+    const result = await store.upsert({
+      name: 'Saved project',
+      primaryRoot: primaryAlias,
+      additionalRoots: [],
+      pinned: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(store.list()).toHaveLength(1);
+    expect(store.list()[0]).toMatchObject({
+      name: 'Saved project',
+      origin: 'manual',
+      primaryRoot: fixture.primary,
+      lastActiveAt: 123,
+    });
+  });
+
   it('drops provider-discovered v2 projects and records only terminal work', async () => {
     const fixture = makeFixture();
     mkdirSync(fixture.userData);

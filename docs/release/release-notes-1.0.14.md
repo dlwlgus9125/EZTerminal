@@ -44,6 +44,10 @@ read-only host folder picker.
 - The trusted host revalidates project revision, normalized roots, terminal
   session working directory, and the private launch command immediately before
   execution. The renderer and remote client receive redacted summaries only.
+- Equivalent Windows path aliases resolve to the same saved Agent project
+  instead of being rejected as duplicates.
+- Release evidence hashing uses the runtime SHA-256 implementation and does
+  not depend on PowerShell module auto-loading.
 - The Electron-to-Rust native desktop-host protocol remains independently at
   v2.
 

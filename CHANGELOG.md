@@ -31,6 +31,10 @@
 - Revalidated project revision, roots, terminal working directory, and private
   launch commands in the trusted host before starting an agent, preventing
   stale or forged client launches and phantom success.
+- Canonicalized equivalent Windows directory aliases when promoting observed
+  terminal work into a saved Agent project.
+- Removed the release evidence helper's dependency on PowerShell module
+  auto-loading by hashing files through the runtime SHA-256 implementation.
 
 See [1.0.14 release notes](docs/release/release-notes-1.0.14.md).
 

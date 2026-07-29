@@ -46,6 +46,15 @@ function runPowerShell(source: string) {
   );
 }
 
+function runPowerShellWithoutGetFileHash(source: string) {
+  return runPowerShell(
+    'Import-Module Microsoft.PowerShell.Utility; '
+      + 'Remove-Item Function:\\Get-FileHash; '
+      + "$PSModuleAutoLoadingPreference = 'None'; "
+      + source,
+  );
+}
+
 function createFixture() {
   const root = mkdtempSync(path.join(tmpdir(), 'ezterminal-release-evidence-'));
   temporaryRoots.push(root);
@@ -132,6 +141,23 @@ afterEach(() => {
 });
 
 describe('release evidence bundle helper', () => {
+  it('does not depend on the optional Get-FileHash module function', () => {
+    const { root, sources } = createFixture();
+    const bundle = path.join(root, 'module-independent.zip');
+    const result = runPowerShellWithoutGetFileHash(
+      `& ${quotePowerShell(helper)} -Create `
+        + `-BundlePath ${quotePowerShell(bundle)} `
+        + `-SourcePaths ${arrayExpression(sources)} `
+        + `-EntryNames ${arrayExpression(evidenceNames)}`,
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      operation: 'create',
+      bundlePath: bundle,
+    });
+  }, 30_000);
+
   it('returns control to its caller after bundle creation', () => {
     const { root, sources } = createFixture();
     const bundle = path.join(root, 'caller.zip');
