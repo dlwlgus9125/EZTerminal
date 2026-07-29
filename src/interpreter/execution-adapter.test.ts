@@ -46,6 +46,7 @@ function fakes(): Fakes {
   } satisfies BlockHandle;
   const pty = {
     write: vi.fn(),
+    submitOnReady: vi.fn(),
     resize: vi.fn(),
     ack: vi.fn(),
     releasePrimaryWindow: vi.fn(),

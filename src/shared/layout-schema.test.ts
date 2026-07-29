@@ -93,6 +93,34 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     expect(validateLayoutEnvelope(makeEnvelope(layout))).toBeNull();
   });
 
+  it('ACCEPTS an Agent history panel with only a bounded opaque historyId', () => {
+    const layout = makeLayout();
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.id = 'agent-session-codex_0123456789abcdef01234567';
+    panel.contentComponent = 'agent-session';
+    panel.params = { historyId: 'codex_0123456789abcdef01234567' };
+    layout.panels = { [panel.id as string]: panel };
+
+    const env = validateLayoutEnvelope(makeEnvelope(layout));
+
+    expect(env?.layout.panels[panel.id as string]).toMatchObject({
+      contentComponent: 'agent-session',
+      params: { historyId: 'codex_0123456789abcdef01234567' },
+    });
+  });
+
+  it('REJECTS provider ids or transcript data added to Agent history params', () => {
+    const layout = makeLayout();
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.contentComponent = 'agent-session';
+    panel.params = {
+      historyId: 'codex_0123456789abcdef01234567',
+      providerThreadId: 'private-thread-id',
+    };
+
+    expect(validateLayoutEnvelope(makeEnvelope(layout))).toBeNull();
+  });
+
   it('an old terminal-only layout file (pre-M3) still parses unaffected', () => {
     const env = validateLayoutEnvelope(makeEnvelope(makeLayout(['tab-1', 'tab-2'])));
     expect(env).not.toBeNull();

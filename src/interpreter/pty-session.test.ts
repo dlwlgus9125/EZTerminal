@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 import type { InterpreterFrame } from '../shared/ipc';
 import { ptyStreamData, type PtyHandle, type PtyStreamData } from './core';
@@ -155,6 +155,80 @@ describe('runPtySession', () => {
     session.resize(10, 10);
     expect(fake.calls.writes).toEqual(['ls\r']); // unchanged
     expect(fake.calls.resizes).toEqual([[1, 50]]); // unchanged
+  });
+
+  it('holds the one-shot initial submission until bracketed-paste readiness', () => {
+    vi.useFakeTimers();
+    try {
+      const fake = makeFakePty();
+      const session = runPtySession(fake.data, collect().emit, new AbortController().signal, 80, 24);
+
+      session.submitOnReady('continue this task');
+      expect(fake.calls.writes).toEqual([]);
+
+      fake.emitData(new TextEncoder().encode('\x1b[?2004h'));
+      vi.advanceTimersByTime(1_000);
+      expect(fake.calls.writes).toEqual([
+        '\x1b[200~continue this task\x1b[201~',
+        '\r',
+      ]);
+
+      session.submitOnReady('must be ignored');
+      fake.emitData(new TextEncoder().encode('\x1b[?2004h'));
+      vi.advanceTimersByTime(1_000);
+      expect(fake.calls.writes).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for the TUI to settle and sends paste and Enter as separate writes', () => {
+    vi.useFakeTimers();
+    try {
+      const fake = makeFakePty();
+      const session = runPtySession(
+        fake.data,
+        collect().emit,
+        new AbortController().signal,
+        80,
+        24,
+      );
+
+      session.submitOnReady('continue this task');
+      fake.emitData(new TextEncoder().encode('\x1b[?2004h'));
+
+      expect(fake.calls.writes).toEqual([]);
+      vi.advanceTimersByTime(800);
+      expect(fake.calls.writes).toEqual([
+        '\x1b[200~continue this task\x1b[201~',
+      ]);
+      vi.advanceTimersByTime(250);
+      expect(fake.calls.writes).toEqual([
+        '\x1b[200~continue this task\x1b[201~',
+        '\r',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('submits after the settle delay when readiness was observed before the control arrived', () => {
+    vi.useFakeTimers();
+    try {
+      const fake = makeFakePty();
+      const session = runPtySession(fake.data, collect().emit, new AbortController().signal, 80, 24);
+
+      fake.emitData(new TextEncoder().encode('\x1b[?2004h'));
+      session.submitOnReady('resume now');
+      vi.advanceTimersByTime(1_000);
+
+      expect(fake.calls.writes).toEqual([
+        '\x1b[200~resume now\x1b[201~',
+        '\r',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('dispose kills without emitting a terminal frame', () => {

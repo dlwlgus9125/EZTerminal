@@ -1478,6 +1478,124 @@
   font-size: 0.688rem;
 }
 
+.mob-agent-projects {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.mob-agent-projects h2 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.mob-agent-project,
+.mob-agent-history-list {
+  display: grid;
+  gap: 4px;
+}
+
+.mob-agent-history-list {
+  padding-left: 12px;
+}
+
+.mob-agent-project .mob-row span:first-child,
+.mob-agent-history-list .mob-row span:first-child {
+  display: grid;
+  min-width: 0;
+  text-align: left;
+}
+
+.mob-agent-project .mob-row small,
+.mob-agent-history-list .mob-row small {
+  overflow: hidden;
+  color: var(--term-fg-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mob-agent-history-transcript {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 0 12px 24px;
+}
+
+.mob-agent-history-shell {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  padding: max(12px, env(safe-area-inset-top)) 0 env(safe-area-inset-bottom);
+}
+
+.mob-agent-history-shell > .mobile-action-sheet-title {
+  flex: none;
+  margin: 0;
+  padding: 0 12px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mob-agent-history-content {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.mob-agent-history-turn {
+  display: grid;
+  gap: 8px;
+}
+
+.mob-agent-history-message {
+  padding: 10px 12px;
+  border: 1px solid var(--term-border-faint);
+  border-radius: 8px;
+  background: var(--term-bg-raised);
+}
+
+.mob-agent-history-message > div {
+  margin-top: 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mob-agent-history-message--user {
+  margin-left: 24px;
+}
+
+.mob-agent-history-activity {
+  display: grid;
+  gap: 4px;
+  padding-left: 10px;
+  color: var(--term-fg-dim);
+  border-left: 2px solid var(--term-border);
+}
+
+.mob-agent-history-activity code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mob-agent-history-roots,
+.mob-agent-history-composer {
+  flex: none;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 0;
+  border-top: 1px solid var(--term-border-faint);
+}
+
+.mob-agent-history-composer textarea {
+  width: 100%;
+  resize: vertical;
+}
+
 /* ── Settings index ──────────────────────────────────────────────────────── */
 
 .mob-connection-card {

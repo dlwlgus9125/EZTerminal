@@ -11,6 +11,7 @@ import { keyToPtyBytes } from '../../src/renderer/pty-keys';
 import { TerminalContextMenu, type TerminalContextMenuItem } from '../../src/renderer/TerminalContextMenu';
 import type { TerminalRuntimeOptions } from '../../src/renderer/xterm-runtime';
 import type { RunStartedInfo } from '../../src/shared/ipc';
+import type { AgentResumeBootstrap } from '../../src/shared/agent-history';
 import {
   EMPTY_GIT_DIRECTORY_STATUS,
   type GitDirectoryStatus,
@@ -212,6 +213,7 @@ export function MobileSessionView({
   quickCommandSource,
   quickCommandsSupported = false,
   connected = true,
+  resumeBootstrap,
   onSessionDead,
   onCwdChange,
   onCloseTab,
@@ -227,6 +229,8 @@ export function MobileSessionView({
   quickCommandSource?: MobileQuickCommandSource;
   quickCommandsSupported?: boolean;
   connected?: boolean;
+  /** First-send transition from a read-only mobile Agent history sheet. */
+  resumeBootstrap?: AgentResumeBootstrap;
   onSessionDead?: () => void;
   /** Closes this tab locally (the session itself keeps running on the
    * desktop). Reached from the status line now that the tab strip's per-pill
@@ -261,6 +265,7 @@ export function MobileSessionView({
   // child instead of disabling the input, so a plain PTY program can be
   // driven from the physical/soft keyboard without TouchInputBar.
   const [activePlainPty, setActivePlainPty] = useState(false);
+  const resumeStartedRef = useRef(false);
   // TUI takeover (TUI scroll parity, M2 — mirrors desktop TerminalPane's
   // `activeTakeover`): while the active run is a RUNNING xterm `pty`, the
   // shared `pane--tui-takeover` CSS (mobile-shared.css) hides sibling blocks and the
@@ -572,6 +577,76 @@ export function MobileSessionView({
       console.error('[mobile] runCommand failed:', error);
     });
   }, [connected, sessionId, sessionDead, activeRunning, bindActiveController]);
+
+  useEffect(() => {
+    if (
+      !resumeBootstrap
+      || resumeStartedRef.current
+      || !connected
+      || sessionDead
+    ) {
+      return;
+    }
+    resumeStartedRef.current = true;
+    const runId = nextRunId();
+    const handoffController = new AbortController();
+    const handoffSignal = handoffController.signal;
+    handoffAbortByRunRef.current.set(runId, handoffController);
+    knownRunIdsRef.current.add(runId);
+    pendingHandoffRunIdsRef.current.add(runId);
+    stickToBottom.current = true;
+    // The first resumed prompt is one-shot PTY input, not shell history.
+    setBlocks([{ id: runId, command: 'codex resume', controller: null }]);
+    void getRunPortBroker().request({
+      kind: 'run',
+      runId,
+      signal: handoffSignal,
+      send: async () => {
+        const result = await window.ezterminal.startAgentResume({
+          historyId: resumeBootstrap.historyId,
+          sessionId,
+          runId,
+          rootChoice: resumeBootstrap.rootChoice,
+          revision: resumeBootstrap.revision,
+        });
+        if (!result.ok) throw new Error(`Agent resume failed: ${result.reason}`);
+      },
+    }).then((port) => {
+      handoffAbortByRunRef.current.delete(runId);
+      pendingHandoffRunIdsRef.current.delete(runId);
+      if (handoffSignal.aborted) {
+        closeRunPort(port);
+        knownRunIdsRef.current.delete(runId);
+        return;
+      }
+      try {
+        const controller = new BlockController('codex resume', port);
+        controller.submitPtyWhenReady(resumeBootstrap.initialPrompt);
+        bindActiveController(controller);
+        setBlocks((previous) => previous.map((entry) =>
+          entry.id === runId ? { ...entry, controller } : entry));
+      } catch (error) {
+        closeRunPort(port);
+        knownRunIdsRef.current.delete(runId);
+        console.error('[mobile] failed to bind Agent resume port:', error);
+      }
+    }).catch((error: unknown) => {
+      handoffAbortByRunRef.current.delete(runId);
+      pendingHandoffRunIdsRef.current.delete(runId);
+      knownRunIdsRef.current.delete(runId);
+      if (!handoffSignal.aborted) {
+        setBlocks([]);
+        setCommand(resumeBootstrap.initialPrompt);
+        console.error('[mobile] Agent resume failed:', error);
+      }
+    });
+  }, [
+    bindActiveController,
+    connected,
+    resumeBootstrap,
+    sessionDead,
+    sessionId,
+  ]);
 
   const handleRun = useCallback(() => {
     runText(command);

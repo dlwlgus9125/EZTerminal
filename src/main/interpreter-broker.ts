@@ -390,6 +390,23 @@ export class InterpreterBroker {
     return this.tryRunCommand(sessionId, runId, commandText, requestOrigin).port;
   }
 
+  /** Main-only command dispatch with a redacted renderer/history label. */
+  runPrivateCommand(
+    sessionId: string,
+    runId: string,
+    commandText: string,
+    displayCommandText: string,
+    requestOrigin?: WorktreeRequestOrigin,
+  ): RemotePort | null {
+    return this.tryRunCommand(
+      sessionId,
+      runId,
+      commandText,
+      requestOrigin,
+      displayCommandText,
+    ).port;
+  }
+
   /**
    * Distinguishes a command posted to the interpreter from a broker-local
    * rejection while preserving the same terminal error port for adapters.
@@ -400,6 +417,7 @@ export class InterpreterBroker {
     runId: string,
     commandText: string,
     requestOrigin?: WorktreeRequestOrigin,
+    displayCommandText?: string,
   ): RunCommandDispatchResult {
     if (!this.alive) {
       return {
@@ -423,6 +441,7 @@ export class InterpreterBroker {
         {
           type: 'run',
           commandText,
+          ...(displayCommandText ? { displayCommandText } : {}),
           sessionId,
           runId,
           ...(requestOrigin ? { requestOrigin } : {}),

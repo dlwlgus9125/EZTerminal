@@ -25,6 +25,10 @@ import {
 } from '../shared/agent';
 import type { FilePreviewResult } from '../shared/file-preview';
 import type { SessionInfo } from '../shared/ipc';
+import type {
+  AgentHistorySessionSummary,
+  AgentProjectSummary,
+} from '../shared/agent-history';
 import type { ThemeMod } from '../shared/theme-schema';
 import {
   DEFAULT_TERMINAL_PASTE_PREFERENCES,
@@ -42,6 +46,7 @@ import {
 } from '../shared/close-risk';
 import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from '../shared/workspace-search';
 import { AgentHub, countAgentAttention } from './AgentHub';
+import { AgentSessionPanel } from './AgentSessionPanel';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import {
   DEFAULT_INTERFERENCE_PARAMS,
@@ -77,7 +82,7 @@ import { SettingsPanel, type SettingsCategory } from './SettingsPanel';
 import { StatusPanel } from './StatusPanel';
 import { TerminalPane, type PaneApproval } from './TerminalPane';
 import { TerminalPasteWarningDialog } from './TerminalPasteWarningDialog';
-import { WorkspaceTab } from './WorkspaceTab';
+import { agentHistoryTabTitle, WorkspaceTab } from './WorkspaceTab';
 import {
   preflightLayoutEnvelope,
   removePanelFromLayoutEnvelope,
@@ -287,9 +292,41 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
   );
 }
 
+function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
+  const historyId = typeof props.params?.historyId === 'string'
+    ? props.params.historyId
+    : '';
+  const binding = useContext(SessionBindingContext);
+  const terminalRuntimeOptions = useContext(TerminalRuntimeContext);
+  const presetMutation = useContext(PresetMutationContext);
+  const quickCommandShelf = useContext(QuickCommandShelfContext);
+  const paneApprovals = useContext(PaneApprovalContext);
+  return (
+    <AgentSessionPanel
+      historyId={historyId}
+      renderTerminal={(resumeBootstrap) => (
+        <TerminalPane
+          panelId={props.api.id}
+          pendingApproval={paneApprovals?.byPanel.get(props.api.id)}
+          onDecideApproval={paneApprovals?.onDecide}
+          paneInstanceToken={props.api}
+          resumeBootstrap={resumeBootstrap}
+          mountSessionPane={binding?.mountPane}
+          terminalRuntimeOptions={terminalRuntimeOptions}
+          commandSubmissionLocked={presetMutation.locked}
+          isCommandSubmissionLocked={presetMutation.isLocked}
+          quickCommands={quickCommandShelf?.commands}
+          onManageQuickCommands={quickCommandShelf?.onManage}
+        />
+      )}
+    />
+  );
+}
+
 const components = {
   terminal: TerminalPanel,
   'openclaw-chat': OpenClawChatPanel,
+  'agent-session': AgentSessionDockPanel,
 };
 
 type OpenStateUpdate = boolean | ((open: boolean) => boolean);
@@ -1081,9 +1118,35 @@ export function App(): JSX.Element {
     workbenchCoordinator.focusActivePanel();
   }, [workbenchCoordinator]);
 
+  const openAgentHistorySession = useCallback((
+    session: AgentHistorySessionSummary,
+    project: AgentProjectSummary,
+  ): void => {
+    const api = apiRef.current;
+    if (!api) return;
+    const panelId = `agent-session-${session.historyId}`;
+    const title = agentHistoryTabTitle(project.name, session.provider);
+    const existing = api.getPanel(panelId);
+    if (existing) {
+      existing.api.setTitle(title);
+      existing.api.setActive();
+      return;
+    }
+    api.addPanel({
+      id: panelId,
+      component: 'agent-session',
+      title,
+      renderer: 'always',
+      params: { historyId: session.historyId },
+    });
+  }, []);
+
   const requestPanelClose = useCallback(
     (panelId: string, component: string, close: () => void): void => {
-      if (component !== 'terminal') {
+      // A read-only Agent Session has no pane handle and closes immediately.
+      // After its first send it mounts TerminalPane in the same Dockview panel,
+      // so the handle (rather than the component name) becomes the close guard.
+      if (component !== 'terminal' && !getPaneHandle(panelId)) {
         close();
         return;
       }
@@ -2547,6 +2610,7 @@ export function App(): JSX.Element {
         onLoadDiff={(directory) => window.ezterminal.getGitDiff(directory)}
         onReadGitStatus={(directory) => window.ezterminal.getGitStatus(directory)}
         onNewAgentRun={() => openQuickOpen('all')}
+        onOpenHistorySession={openAgentHistorySession}
         onOpenAgentSettings={() => {
           setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
           setSidebarDestination('settings');

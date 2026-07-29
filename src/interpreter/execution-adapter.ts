@@ -197,6 +197,9 @@ function ptyAdapter(session: PtySession): ActiveExecutionAdapter {
         case 'pty-input':
           session.write(control.data);
           return 'handled';
+        case 'pty-submit-on-ready':
+          session.submitOnReady(control.data);
+          return 'handled';
         case 'pty-resize':
           session.resize(control.cols, control.rows);
           return 'handled';

@@ -42,6 +42,8 @@ import {
   REMOTE_CAPABILITY_DESKTOP_CONTROL,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_PROTOCOL_VERSION_AGENT_HISTORY,
+  REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL,
   REMOTE_PROTOCOL_VERSION_LEGACY,
   SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
@@ -77,6 +79,14 @@ import type {
   AgentDecisionResult,
   AgentFollowupResult,
 } from '../shared/agent';
+import type {
+  AgentHistorySessionPage,
+  AgentProjectPage,
+  AgentResumePreparation,
+  AgentResumeRootChoice,
+  AgentTranscriptPage,
+} from '../shared/agent-history';
+import { quoteEzArgument } from '../shared/quote-ez-argument';
 import {
   UNAVAILABLE_GIT_DIRECTORY_STATUS,
   type GitDiffResult,
@@ -436,6 +446,53 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         && value.approvalId.length <= MAX_REMOTE_AGENT_ID_LENGTH
         && (value.decision === 'allow' || value.decision === 'deny')
       );
+    case 'agent-projects-list':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+      );
+    case 'agent-history-sessions':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.projectId === 'string'
+        && value.projectId.length > 0
+        && value.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    case 'agent-history-read':
+    case 'agent-history-prepare-resume':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.historyId === 'string'
+        && value.historyId.length > 0
+        && value.historyId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    case 'agent-history-start-resume': {
+      const request = isRecord(value.request) ? value.request : null;
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && request !== null
+        && typeof request.historyId === 'string'
+        && request.historyId.length > 0
+        && request.historyId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.sessionId === 'string'
+        && request.sessionId.length > 0
+        && request.sessionId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.runId === 'string'
+        && request.runId.length > 0
+        && request.runId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.revision === 'string'
+        && request.revision.length > 0
+        && request.revision.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && (request.rootChoice === 'recorded' || request.rootChoice === 'current')
+      );
+    }
     case 'worktree-request':
       return typeof value.requestId === 'string';
     case 'git-status':
@@ -702,6 +759,26 @@ export interface RemoteAgentSource {
   decideApproval(activityId: string, approvalId: string, decision: AgentDecision): AgentDecisionResult;
 }
 
+export interface RemoteAgentHistorySource {
+  listProjects(force?: boolean, cursor?: string, limit?: number): Promise<AgentProjectPage>;
+  listSessions(
+    projectId: string,
+    cursor?: string,
+    limit?: number,
+    force?: boolean,
+  ): Promise<AgentHistorySessionPage>;
+  readTranscript(historyId: string, cursor?: string, limit?: number): Promise<AgentTranscriptPage | null>;
+  prepareResume(historyId: string): Promise<AgentResumePreparation | null>;
+  resolveResume(
+    historyId: string,
+    revision: string,
+    choice: AgentResumeRootChoice,
+  ): Promise<
+    | { readonly ok: true; readonly privateId: string; readonly roots: readonly string[] }
+    | { readonly ok: false; readonly reason: 'not-found' | 'stale' | 'missing-root' | 'unavailable' }
+  >;
+}
+
 /** Read-only Git working-tree queries. Nothing here can mutate a repository,
  * so unlike the worktree service it needs no origin and no gate. */
 export interface RemoteGitSource {
@@ -772,6 +849,7 @@ export interface RemoteBridgeOptions {
   /** Optional so existing fixtures/tests without OpenClaw wiring keep working. */
   readonly openclawSource?: RemoteOpenClawSource;
   readonly agentSource?: RemoteAgentSource;
+  readonly agentHistorySource?: RemoteAgentHistorySource;
   /** Optional so existing fixtures without Git wiring keep working. */
   readonly gitSource?: RemoteGitSource;
   /** Redeems a one-time pairing code. Absent means pairing is unavailable and
@@ -1174,7 +1252,7 @@ export function attachConnection(
     }) ?? (() => undefined);
   const unsubAgentSnapshot =
     options.agentSource?.onSnapshot((snapshot) => {
-      if (authed && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION) {
+      if (authed && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_LIVE) {
         send({ kind: 'agent-snapshot', snapshot });
       }
     }) ?? (() => undefined);
@@ -1286,7 +1364,10 @@ export function attachConnection(
           // persisted bearer; it must never be a way to redeem a photographed
           // pairing code with weaker message/state contracts.
           const pairingProtocolCompatible = pairingGeneration === null
-            || requestedProtocol === REMOTE_PROTOCOL_VERSION;
+            || (
+              isRemoteProtocolVersion(requestedProtocol)
+              && requestedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_LIVE
+            );
           if (!protocolCompatible || !pairingProtocolCompatible) {
             send({
               kind: 'auth-fail',
@@ -1355,7 +1436,7 @@ export function attachConnection(
             // same channel the bearer itself uses on every later connect.
             ...(byPairingCode ? { issuedToken: token } : {}),
           });
-          if (options.agentSource && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION) {
+          if (options.agentSource && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_LIVE) {
             send({ kind: 'agent-snapshot', snapshot: options.agentSource.getSnapshot() });
           }
           // OpenClaw availability (M3): initial state, right after auth —
@@ -1625,7 +1706,7 @@ export function attachConnection(
         break;
 
       case 'agent-snapshot-get':
-        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
         send({
           kind: 'agent-snapshot',
           requestId: msg.requestId,
@@ -1634,7 +1715,7 @@ export function attachConnection(
         break;
 
       case 'agent-followup':
-        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
         send({
           kind: 'agent-followup-reply',
           requestId: msg.requestId,
@@ -1646,7 +1727,7 @@ export function attachConnection(
         break;
 
       case 'agent-decision':
-        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
         send({
           kind: 'agent-decision-reply',
           requestId: msg.requestId,
@@ -1657,15 +1738,178 @@ export function attachConnection(
         });
         break;
 
+      case 'agent-projects-list':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
+        void (options.agentHistorySource?.listProjects(
+          msg.force === true,
+          msg.cursor,
+          msg.limit,
+        ) ?? Promise.resolve({ items: [], nextCursor: null })).then((result) => {
+          if (authed) send({ kind: 'agent-projects-list-reply', requestId: msg.requestId, result });
+        }).catch(() => {
+          if (authed) {
+            send({
+              kind: 'agent-projects-list-reply',
+              requestId: msg.requestId,
+              result: { items: [], nextCursor: null },
+            });
+          }
+        });
+        break;
+
+      case 'agent-history-sessions':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
+        void (options.agentHistorySource?.listSessions(
+          msg.projectId,
+          msg.cursor,
+          msg.limit,
+          msg.force === true,
+        ) ?? Promise.resolve({ items: [], nextCursor: null })).then((result) => {
+          if (authed) send({ kind: 'agent-history-sessions-reply', requestId: msg.requestId, result });
+        }).catch(() => {
+          if (authed) {
+            send({
+              kind: 'agent-history-sessions-reply',
+              requestId: msg.requestId,
+              result: { items: [], nextCursor: null },
+            });
+          }
+        });
+        break;
+
+      case 'agent-history-read':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
+        void (options.agentHistorySource?.readTranscript(
+          msg.historyId,
+          msg.cursor,
+          msg.limit,
+        ) ?? Promise.resolve(null)).then((result) => {
+          if (authed) send({ kind: 'agent-history-read-reply', requestId: msg.requestId, result });
+        }).catch(() => {
+          if (authed) send({ kind: 'agent-history-read-reply', requestId: msg.requestId, result: null });
+        });
+        break;
+
+      case 'agent-history-prepare-resume':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
+        void (options.agentHistorySource?.prepareResume(msg.historyId) ?? Promise.resolve(null))
+          .then((result) => {
+            if (authed) {
+              send({
+                kind: 'agent-history-prepare-resume-reply',
+                requestId: msg.requestId,
+                result,
+              });
+            }
+          })
+          .catch(() => {
+            if (authed) {
+              send({
+                kind: 'agent-history-prepare-resume-reply',
+                requestId: msg.requestId,
+                result: null,
+              });
+            }
+          });
+        break;
+
+      case 'agent-history-start-resume': {
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
+        const source = options.agentHistorySource;
+        if (!source) {
+          send({
+            kind: 'agent-history-start-resume-reply',
+            requestId: msg.requestId,
+            result: { ok: false, reason: 'unavailable' },
+          });
+          break;
+        }
+        void source.resolveResume(
+          msg.request.historyId,
+          msg.request.revision,
+          msg.request.rootChoice,
+        ).then((resolved) => {
+          if (!authed) return;
+          if (!resolved.ok) {
+            send({
+              kind: 'agent-history-start-resume-reply',
+              requestId: msg.requestId,
+              result: resolved,
+            });
+            return;
+          }
+          const [primaryRoot, ...additionalRoots] = resolved.roots;
+          if (!primaryRoot) {
+            send({
+              kind: 'agent-history-start-resume-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'missing-root' },
+            });
+            return;
+          }
+          const commandText = [
+            `!codex --cd ${quoteEzArgument(primaryRoot)}`,
+            ...additionalRoots.map((root) => `--add-dir ${quoteEzArgument(root)}`),
+            `resume ${quoteEzArgument(resolved.privateId)}`,
+          ].join(' ');
+          send({
+            kind: 'agent-history-start-resume-reply',
+            requestId: msg.requestId,
+            result: { ok: true },
+          });
+          queueMicrotask(() => {
+            if (!authed) return;
+            const { runId, sessionId } = msg.request;
+            const port1 = options.broker.runPrivateCommand(
+              sessionId,
+              runId,
+              commandText,
+              'codex resume',
+              'mobile',
+            );
+            if (!port1) {
+              send({
+                kind: 'frame',
+                runId,
+                frame: { type: 'error', message: 'Agent resume is unavailable' },
+              });
+              return;
+            }
+            if (clientIdentity) {
+              runInitiators.remember(sessionId, runId, clientIdentity.clientId);
+            }
+            const record = { sessionId, port: port1, initiatedHere: true };
+            runs.get(runId)?.port.close();
+            runs.set(runId, record);
+            port1.on('message', (event) => {
+              send({ kind: 'frame', runId, frame: encodeFrame(event.data as InterpreterFrame) });
+            });
+            port1.on('close', () => {
+              if (runs.get(runId) === record) runs.delete(runId);
+            });
+            port1.start();
+          });
+        }).catch(() => {
+          if (authed) {
+            send({
+              kind: 'agent-history-start-resume-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'unavailable' },
+            });
+          }
+        });
+        break;
+      }
+
       // Echoed from the message loop rather than the socket layer, so what the
       // client measures is the path its real requests take.
       case 'ping':
-        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
         send({ kind: 'pong', probeId: msg.probeId, sentAt: msg.sentAt });
         break;
 
       case 'git-status': {
-        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
         const { requestId, directory } = msg;
         if (pendingGitRequests.has(requestId)) {
           send({
@@ -1707,7 +1951,7 @@ export function attachConnection(
       }
 
       case 'git-diff': {
-        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
         const { requestId, directory } = msg;
         const failed: GitDiffResult = { ok: false, error: 'git-failed' };
         if (pendingGitRequests.has(requestId)) {

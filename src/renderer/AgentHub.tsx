@@ -1,4 +1,15 @@
-import { ArrowLeft, Check, GitCompareArrows, Plus, Settings, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  FolderPlus,
+  GitCompareArrows,
+  Pin,
+  Plus,
+  Settings,
+  X,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
@@ -11,6 +22,10 @@ import type {
   AgentProvider,
   AgentStatus,
 } from '../shared/agent';
+import type {
+  AgentHistorySessionSummary,
+  AgentProjectSummary,
+} from '../shared/agent-history';
 import {
   EMPTY_GIT_DIRECTORY_STATUS,
   type GitDiffOmission,
@@ -106,6 +121,11 @@ export interface AgentHubProps {
   readonly onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
   /** Opens the real agent launcher; absent means no launch verb is rendered. */
   readonly onNewAgentRun?: () => void;
+  /** Opens a singleton read-only history tab without disturbing live terminals. */
+  readonly onOpenHistorySession?: (
+    session: AgentHistorySessionSummary,
+    project: AgentProjectSummary,
+  ) => void;
   readonly onOpenAgentSettings?: () => void;
   readonly onClose?: () => void;
   readonly mobile?: boolean;
@@ -132,6 +152,7 @@ export function AgentHub({
   onLoadDiff,
   onReadGitStatus,
   onNewAgentRun,
+  onOpenHistorySession,
   onOpenAgentSettings,
   onClose,
   mobile = false,
@@ -145,6 +166,17 @@ export function AgentHub({
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [diffView, setDiffView] = useState<DiffView | null>(null);
+  const [projects, setProjects] = useState<readonly AgentProjectSummary[]>([]);
+  const [projectSessions, setProjectSessions] = useState<
+    Readonly<Record<string, readonly AgentHistorySessionSummary[]>>
+  >({});
+  const [projectSessionCursors, setProjectSessionCursors] = useState<
+    Readonly<Record<string, string | null>>
+  >({});
+  const [loadingSessionProjects, setLoadingSessionProjects] = useState<ReadonlySet<string>>(new Set());
+  const [expandedProjects, setExpandedProjects] = useState<ReadonlySet<string>>(new Set());
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  const [projectsError, setProjectsError] = useState(false);
   const diffRequestGeneration = useRef(0);
   const branches = useGitBranches(
     snapshot.items.map((item) => item.cwd),
@@ -160,6 +192,119 @@ export function AgentHub({
     () => new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false }),
     [locale],
   );
+
+  const refreshProjects = useCallback(async (force = false): Promise<void> => {
+    setProjectsLoading(true);
+    setProjectsError(false);
+    const read = window.ezterminal?.listAgentProjects;
+    if (!read) {
+      setProjects([]);
+      setProjectsLoading(false);
+      return;
+    }
+    const result = await read(force).catch(() => null);
+    setProjectsLoading(false);
+    if (!result) {
+      setProjectsError(true);
+      return;
+    }
+    setProjects(result.items);
+    if (!force) {
+      void read(true).then((discovered) => {
+        setProjects(discovered.items);
+      }).catch(() => undefined);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshProjects(false);
+  }, [refreshProjects]);
+
+  const toggleProject = useCallback(async (projectId: string): Promise<void> => {
+    const willExpand = !expandedProjects.has(projectId);
+    setExpandedProjects((previous) => {
+      const next = new Set(previous);
+      if (willExpand) next.add(projectId);
+      else next.delete(projectId);
+      return next;
+    });
+    if (!willExpand || projectSessions[projectId] || loadingSessionProjects.has(projectId)) return;
+    const read = window.ezterminal?.listAgentHistorySessions;
+    if (!read) return;
+    setLoadingSessionProjects((previous) => new Set(previous).add(projectId));
+    const result = await read(projectId, undefined, 10).catch(() => null);
+    setLoadingSessionProjects((previous) => {
+      const next = new Set(previous);
+      next.delete(projectId);
+      return next;
+    });
+    if (!result) return;
+    setProjectSessions((previous) => ({ ...previous, [projectId]: result.items }));
+    setProjectSessionCursors((previous) => ({ ...previous, [projectId]: result.nextCursor }));
+  }, [expandedProjects, loadingSessionProjects, projectSessions]);
+
+  const loadMoreSessions = useCallback(async (projectId: string): Promise<void> => {
+    const cursor = projectSessionCursors[projectId];
+    if (!cursor || loadingSessionProjects.has(projectId)) return;
+    const read = window.ezterminal?.listAgentHistorySessions;
+    if (!read) return;
+    setLoadingSessionProjects((previous) => new Set(previous).add(projectId));
+    const result = await read(projectId, cursor, 10).catch(() => null);
+    setLoadingSessionProjects((previous) => {
+      const next = new Set(previous);
+      next.delete(projectId);
+      return next;
+    });
+    if (!result) return;
+    setProjectSessions((previous) => ({
+      ...previous,
+      [projectId]: [...(previous[projectId] ?? []), ...result.items],
+    }));
+    setProjectSessionCursors((previous) => ({ ...previous, [projectId]: result.nextCursor }));
+  }, [loadingSessionProjects, projectSessionCursors]);
+
+  const saveProject = useCallback(async (
+    project: AgentProjectSummary,
+    patch: Partial<Pick<AgentProjectSummary, 'name' | 'pinned' | 'primaryRoot' | 'additionalRoots'>>,
+  ): Promise<void> => {
+    const desktop = window.ezterminalDesktop;
+    if (!desktop) return;
+    const result = await desktop.saveAgentProject({
+      projectId: project.saved ? project.projectId : undefined,
+      name: patch.name ?? project.name,
+      primaryRoot: patch.primaryRoot ?? project.primaryRoot,
+      additionalRoots: patch.additionalRoots ?? project.additionalRoots,
+      pinned: patch.pinned ?? project.pinned,
+    });
+    if (result.ok) void refreshProjects(true);
+  }, [refreshProjects]);
+
+  const addProject = useCallback(async (): Promise<void> => {
+    const desktop = window.ezterminalDesktop;
+    if (!desktop) return;
+    const selection = await desktop.selectAgentProjectFolders(true);
+    const [primaryRoot, ...additionalRoots] = selection.paths;
+    if (selection.canceled || !primaryRoot) return;
+    const name = primaryRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? primaryRoot;
+    const result = await desktop.saveAgentProject({
+      name,
+      primaryRoot,
+      additionalRoots,
+      pinned: false,
+    });
+    if (result.ok) void refreshProjects(true);
+  }, [refreshProjects]);
+
+  const editProjectFolders = useCallback(async (
+    project: AgentProjectSummary,
+  ): Promise<void> => {
+    const desktop = window.ezterminalDesktop;
+    if (!desktop) return;
+    const selection = await desktop.selectAgentProjectFolders(true);
+    const [primaryRoot, ...additionalRoots] = selection.paths;
+    if (selection.canceled || !primaryRoot) return;
+    await saveProject(project, { primaryRoot, additionalRoots });
+  }, [saveProject]);
 
   const groups = useMemo(() => {
     const attention: AgentActivity[] = [];
@@ -496,15 +641,143 @@ export function AgentHub({
             })
             : ''}
       </div>
-      {snapshot.items.length === 0 ? (
-        <div className="agent-empty">{t('agentHub.empty')}</div>
-      ) : (
-        <div className="agent-hub-body">
+      <div className="agent-hub-body">
+          {snapshot.items.length === 0 && (
+            <div className="agent-empty">{t('agentHub.empty')}</div>
+          )}
           {renderGroup('attention', t('agentHub.groups.attention'), groups.attention)}
           {renderGroup('active', t('agentHub.groups.active'), groups.active)}
-          {renderGroup('recent', t('agentHub.groups.recent'), groups.recent)}
-        </div>
-      )}
+          <section className="agent-group agent-projects" data-testid="agent-projects">
+            <div className="agent-projects-heading">
+              <h2 className="status-section-title agent-group-title">Projects</h2>
+              {window.ezterminalDesktop && (
+                <IconButton
+                  icon={FolderPlus}
+                  aria-label="Add project"
+                  onClick={() => void addProject()}
+                  data-testid="agent-add-project"
+                />
+              )}
+            </div>
+            {projectsLoading && <p className="agent-project-note">Loading projects…</p>}
+            {projectsError && (
+              <button type="button" className="agent-project-note" onClick={() => void refreshProjects(true)}>
+                Could not load projects. Retry
+              </button>
+            )}
+            {!projectsLoading && !projectsError && projects.length === 0 && (
+              <p className="agent-project-note">No local Agent projects yet.</p>
+            )}
+            <ol className="agent-project-list">
+              {projects.map((project) => {
+                const expanded = expandedProjects.has(project.projectId);
+                const sessions = projectSessions[project.projectId];
+                const sessionsLoading = loadingSessionProjects.has(project.projectId);
+                const nextCursor = projectSessionCursors[project.projectId];
+                return (
+                  <li className="agent-project" key={project.projectId}>
+                    <div className="agent-project-row">
+                      <button
+                        type="button"
+                        className="agent-project-toggle"
+                        onClick={() => void toggleProject(project.projectId)}
+                        aria-expanded={expanded}
+                      >
+                        {expanded
+                          ? <ChevronDown aria-hidden="true" />
+                          : <ChevronRight aria-hidden="true" />}
+                        <span>
+                          <strong>{project.name}</strong>
+                          <small title={[project.primaryRoot, ...project.additionalRoots].join('\n')}>
+                            {formatCwd(project.primaryRoot)}
+                            {project.additionalRoots.length > 0
+                              ? ` · +${numberFormatter.format(project.additionalRoots.length)}`
+                              : ''}
+                          </small>
+                        </span>
+                        {sessions && (
+                          <span className="agent-project-count">
+                            {sessions.length}{nextCursor ? '+' : ''}
+                          </span>
+                        )}
+                      </button>
+                      {window.ezterminalDesktop && (
+                        <>
+                          <IconButton
+                            icon={Pin}
+                            aria-label={project.pinned ? 'Unpin project' : 'Pin project'}
+                            className={project.pinned ? 'agent-project-pin is-active' : 'agent-project-pin'}
+                            onClick={() => void saveProject(project, { pinned: !project.pinned })}
+                          />
+                          <button
+                            type="button"
+                            className="agent-project-edit"
+                            aria-label={`Rename ${project.name}`}
+                            onClick={() => {
+                              const name = window.prompt('Project name', project.name)?.trim();
+                              if (name) void saveProject(project, { name });
+                            }}
+                          >
+                            Name
+                          </button>
+                          <button
+                            type="button"
+                            className="agent-project-edit"
+                            aria-label={`Edit folders for ${project.name}`}
+                            onClick={() => void editProjectFolders(project)}
+                          >
+                            Folders
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    {expanded && (
+                      <ol className="agent-history-list">
+                        {!sessions && sessionsLoading && <li className="agent-project-note">Loading sessions…</li>}
+                        {sessions?.length === 0 && <li className="agent-project-note">No previous sessions.</li>}
+                        {sessions?.map((session) => (
+                          <li key={session.historyId}>
+                            <button
+                              type="button"
+                              className="agent-history-row"
+                              title={session.title}
+                              onClick={() => {
+                                if (mobile) onOpenHistorySession?.(session, project);
+                              }}
+                              onDoubleClick={() => {
+                                if (!mobile) onOpenHistorySession?.(session, project);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') onOpenHistorySession?.(session, project);
+                              }}
+                            >
+                              <span>{PROVIDER_LABEL[session.provider]}</span>
+                              <strong>{session.title}</strong>
+                              <small>{ageLabel(session.updatedAt, now, relativeTime)}</small>
+                              {session.preview && <p>{session.preview}</p>}
+                            </button>
+                          </li>
+                        ))}
+                        {nextCursor && (
+                          <li>
+                            <button
+                              type="button"
+                              className="agent-history-more"
+                              disabled={sessionsLoading}
+                              onClick={() => void loadMoreSessions(project.projectId)}
+                            >
+                              {sessionsLoading ? 'Loading…' : 'More'}
+                            </button>
+                          </li>
+                        )}
+                      </ol>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          </section>
+      </div>
       {(onNewAgentRun || onOpenAgentSettings) && (
         <footer className="agent-hub-footer">
           {onNewAgentRun && (

@@ -4,8 +4,10 @@ import {
   DockviewDefaultTab,
   type IDockviewPanelHeaderProps,
 } from 'dockview-react';
+import { X } from 'lucide-react';
 
 import type { AgentStatus } from '../shared/agent';
+import type { AgentHistoryProvider } from '../shared/agent-history';
 import { useAppTranslation } from './i18n';
 import {
   isTerminalContextMenuKey,
@@ -54,6 +56,62 @@ interface MenuInvocation {
   readonly x: number;
   readonly y: number;
   readonly invoker: HTMLElement | null;
+}
+
+const AGENT_HISTORY_PROVIDER_LABEL: Record<AgentHistoryProvider, string> = {
+  codex: 'Codex',
+  claude: 'Claude',
+};
+
+export function agentHistoryTabTitle(
+  projectName: string,
+  provider: AgentHistoryProvider,
+): string {
+  const normalizedProjectName = projectName.trim() || 'Project';
+  return `${normalizedProjectName} · ${AGENT_HISTORY_PROVIDER_LABEL[provider]}`;
+}
+
+function AgentHistoryTab({
+  props,
+  requestClose,
+}: {
+  readonly props: IDockviewPanelHeaderProps;
+  readonly requestClose: (close: () => void) => void;
+}): JSX.Element {
+  const [title, setTitle] = useState(props.api.title ?? 'Agent session');
+  useEffect(() => {
+    setTitle(props.api.title ?? 'Agent session');
+    const disposable = props.api.onDidTitleChange((event) => setTitle(event.title));
+    return () => disposable.dispose();
+  }, [props.api]);
+  return (
+    <div
+      className="dv-default-tab agent-history-tab"
+      data-testid="dockview-dv-default-tab"
+      onPointerUp={(event) => {
+        if (event.button === 1) {
+          event.preventDefault();
+          requestClose(() => props.api.close());
+        }
+      }}
+    >
+      <span className="agent-history-tab__viewport" title={title}>
+        <span className="agent-history-tab__label">{title}</span>
+      </span>
+      <button
+        type="button"
+        className="dv-default-tab-action agent-history-tab__close"
+        aria-label="Close"
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={(event) => {
+          event.preventDefault();
+          requestClose(() => props.api.close());
+        }}
+      >
+        <X aria-hidden="true" />
+      </button>
+    </div>
+  );
 }
 
 /** Dockview tab with progressive context actions and an IME-safe inline title
@@ -144,7 +202,9 @@ export function WorkspaceTab({
   return (
     <div
       ref={rootRef}
-      className="agent-aware-tab"
+      className={props.api.component === 'agent-session'
+        ? 'agent-aware-tab agent-aware-tab--history'
+        : 'agent-aware-tab'}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -204,10 +264,14 @@ export function WorkspaceTab({
           }}
         />
       ) : (
-        <DockviewDefaultTab
-          {...props}
-          closeActionOverride={() => requestClose(() => props.api.close())}
-        />
+        props.api.component === 'agent-session' ? (
+          <AgentHistoryTab props={props} requestClose={requestClose} />
+        ) : (
+          <DockviewDefaultTab
+            {...props}
+            closeActionOverride={() => requestClose(() => props.api.close())}
+          />
+        )
       )}
 
       {menu && createPortal(

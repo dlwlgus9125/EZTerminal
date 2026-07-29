@@ -183,11 +183,17 @@ export class DecPrivateModeTracker {
     }
     return Buffer.from(out, 'latin1');
   }
+
+  isSet(mode: number): boolean {
+    return this.state.get(mode) === true;
+  }
 }
 
 export interface PtySession {
   /** Forward keystrokes / pasted text to the PTY child. */
   write(data: string): void;
+  /** Queue exactly one initial submission until bracketed-paste mode is ready. */
+  submitOnReady(data: string): void;
   /** Resize the PTY grid (clamped). */
   resize(cols: number, rows: number): void;
   /**
@@ -323,6 +329,44 @@ export function runPtySession(
   let upgraded = false;
   const detector = new TuiSignalDetector();
   const modeTracker = new DecPrivateModeTracker();
+  let pendingSubmission: string | null = null;
+  let submissionTimer: ReturnType<typeof setTimeout> | null = null;
+  let submissionFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  let submissionEnterTimer: ReturnType<typeof setTimeout> | null = null;
+  let submissionAccepted = false;
+  const flushSubmission = (bracketed: boolean): void => {
+    const submission = pendingSubmission;
+    if (submission === null || settled) return;
+    pendingSubmission = null;
+    if (submissionTimer) {
+      clearTimeout(submissionTimer);
+      submissionTimer = null;
+    }
+    if (submissionFallbackTimer) {
+      clearTimeout(submissionFallbackTimer);
+      submissionFallbackTimer = null;
+    }
+    if (!bracketed) {
+      pty.write(`${submission}\r`);
+      return;
+    }
+    // Ratatui consumes bracketed paste and Enter as separate terminal events.
+    // Combining them in one ConPTY write leaves the text in Codex's composer
+    // without submitting it. Also let startup rendering go quiet first: the
+    // first ?2004h arrives before the composer is ready to accept a command.
+    pty.write(`\x1b[200~${submission}\x1b[201~`);
+    submissionEnterTimer = setTimeout(() => {
+      submissionEnterTimer = null;
+      if (!settled) pty.write('\r');
+    }, 100);
+    submissionEnterTimer.unref();
+  };
+  const scheduleBracketedSubmission = (): void => {
+    if (pendingSubmission === null || settled) return;
+    if (submissionTimer) clearTimeout(submissionTimer);
+    submissionTimer = setTimeout(() => flushSubmission(true), 750);
+    submissionTimer.unref();
+  };
   if (data.forceXterm) {
     upgraded = true;
     emit({ type: 'pty-render-upgrade' });
@@ -365,6 +409,7 @@ export function runPtySession(
       emit({ type: 'pty-render-upgrade' });
     }
     modeTracker.feed(bytes);
+    if (modeTracker.isSet(2004)) scheduleBracketedSubmission();
     semanticRestore.feed(bytes);
     appendToRing(bytes);
     emit({ type: 'pty-data', data: bytes });
@@ -407,6 +452,25 @@ export function runPtySession(
     write(input: string): void {
       if (!settled) pty.write(input);
     },
+    submitOnReady(input: string): void {
+      if (
+        settled
+        || submissionAccepted
+        || typeof input !== 'string'
+        || input.length === 0
+        || Buffer.byteLength(input, 'utf8') > 64 * 1024
+      ) {
+        return;
+      }
+      submissionAccepted = true;
+      pendingSubmission = input;
+      if (modeTracker.isSet(2004)) {
+        scheduleBracketedSubmission();
+        return;
+      }
+      submissionFallbackTimer = setTimeout(() => flushSubmission(false), 30_000);
+      submissionFallbackTimer.unref();
+    },
     resize(c: number, r: number): void {
       if (!settled) {
         const nextCols = clampDim(c);
@@ -432,6 +496,13 @@ export function runPtySession(
       }
     },
     dispose(): void {
+      if (submissionTimer) clearTimeout(submissionTimer);
+      if (submissionFallbackTimer) clearTimeout(submissionFallbackTimer);
+      if (submissionEnterTimer) clearTimeout(submissionEnterTimer);
+      submissionTimer = null;
+      submissionFallbackTimer = null;
+      submissionEnterTimer = null;
+      pendingSubmission = null;
       semanticRestore.dispose();
       for (const sub of attachSubscribers) {
         sub.detached = true;

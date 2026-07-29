@@ -17,6 +17,7 @@ import {
   type OpenClawChatTicketResult,
   type RemoteBridgeOptions,
   type RemoteAgentSource,
+  type RemoteAgentHistorySource,
   type RemoteFileSource,
   type RemoteMessageChannel,
   type RemoteOpenClawSource,
@@ -3312,6 +3313,169 @@ describe('RemoteBridge — Agent Activity parity', () => {
 
     ws.close();
     expect(agentSource.listenerCount).toBe(0);
+  });
+});
+
+describe('RemoteBridge — Agent history v4', () => {
+  it('correlates on-demand history reads and keeps the provider id out of the wire', async () => {
+    const project = {
+      projectId: 'project-1',
+      name: 'Workspace',
+      primaryRoot: 'C:\\workspace',
+      additionalRoots: ['C:\\shared'],
+      pinned: true,
+      saved: true,
+      sessionCount: 1,
+      providers: ['codex' as const],
+      lastActiveAt: 20,
+    };
+    const session = {
+      historyId: 'codex_0123456789abcdef01234567',
+      projectId: project.projectId,
+      provider: 'codex' as const,
+      title: 'Previous task',
+      preview: 'preview',
+      createdAt: 10,
+      updatedAt: 20,
+      roots: [project.primaryRoot, ...project.additionalRoots],
+      source: 'cli',
+    };
+    const preparation = {
+      historyId: session.historyId,
+      provider: 'codex' as const,
+      recordedRoots: session.roots,
+      currentRoots: session.roots,
+      rootsMatch: true,
+      missingRecordedRoots: [],
+      missingCurrentRoots: [],
+      canResume: true,
+      revision: 'revision-1',
+    };
+    const historySource: RemoteAgentHistorySource = {
+      listProjects: vi.fn(async () => ({ items: [project], nextCursor: null })),
+      listSessions: vi.fn(async () => ({ items: [session], nextCursor: null })),
+      readTranscript: vi.fn(async () => ({
+        historyId: session.historyId,
+        turns: [{
+          id: 'turn-1',
+          status: 'completed',
+          entries: [{
+            type: 'message' as const,
+            id: 'message-1',
+            role: 'user' as const,
+            markdown: 'hello',
+          }],
+        }],
+        nextCursor: null,
+      })),
+      prepareResume: vi.fn(async () => preparation),
+      resolveResume: vi.fn(async () => ({
+        ok: true as const,
+        privateId: 'provider-private-thread-id',
+        roots: session.roots,
+      })),
+    };
+    const ws = new FakeWs();
+    const { options, interpreter } = makeOptions({ agentHistorySource: historySource });
+    await authed(ws, options);
+
+    ws.clientSend({ kind: 'agent-projects-list', requestId: 'projects-1', force: true });
+    ws.clientSend({
+      kind: 'agent-history-sessions',
+      requestId: 'sessions-1',
+      projectId: project.projectId,
+    });
+    ws.clientSend({
+      kind: 'agent-history-read',
+      requestId: 'read-1',
+      historyId: session.historyId,
+    });
+    ws.clientSend({
+      kind: 'agent-history-prepare-resume',
+      requestId: 'prepare-1',
+      historyId: session.historyId,
+    });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-projects-list-reply',
+      requestId: 'projects-1',
+      result: { items: [project], nextCursor: null },
+    });
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'agent-history-sessions-reply',
+      requestId: 'sessions-1',
+      result: { items: [session], nextCursor: null },
+    }));
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'agent-history-read-reply',
+      requestId: 'read-1',
+    }));
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-history-prepare-resume-reply',
+      requestId: 'prepare-1',
+      result: preparation,
+    });
+
+    ws.clientSend({
+      kind: 'agent-history-start-resume',
+      requestId: 'resume-1',
+      request: {
+        historyId: session.historyId,
+        sessionId: 'terminal-1',
+        runId: 'run-1',
+        rootChoice: 'recorded',
+        revision: preparation.revision,
+      },
+    });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-history-start-resume-reply',
+      requestId: 'resume-1',
+      result: { ok: true },
+    });
+    const run = interpreter.posted.find((entry) => entry.message.type === 'run')?.message;
+    expect(run).toMatchObject({
+      type: 'run',
+      sessionId: 'terminal-1',
+      runId: 'run-1',
+      displayCommandText: 'codex resume',
+      requestOrigin: 'mobile',
+    });
+    expect(run?.type === 'run' && run.commandText).toContain('provider-private-thread-id');
+    expect(JSON.stringify(ws.sent)).not.toContain('provider-private-thread-id');
+  });
+
+  it('ignores v4 history requests from a negotiated v3 client', async () => {
+    const historySource: RemoteAgentHistorySource = {
+      listProjects: vi.fn(async () => ({ items: [], nextCursor: null })),
+      listSessions: vi.fn(async () => ({ items: [], nextCursor: null })),
+      readTranscript: vi.fn(async () => null),
+      prepareResume: vi.fn(async () => null),
+      resolveResume: vi.fn(async () => ({
+        ok: false as const,
+        reason: 'unavailable' as const,
+      })),
+    };
+    const ws = new FakeWs();
+    const { options } = makeOptions({ agentHistorySource: historySource });
+    attachConnection(ws, options);
+    ws.clientSend({ ...authMessage(), protocolVersion: 3 });
+    await flush();
+
+    ws.clientSend({ kind: 'agent-projects-list', requestId: 'v3-projects' });
+    ws.clientSend({
+      kind: 'agent-history-read',
+      requestId: 'v3-read',
+      historyId: 'codex_0123456789abcdef01234567',
+    });
+    await flush();
+
+    expect(historySource.listProjects).not.toHaveBeenCalled();
+    expect(historySource.readTranscript).not.toHaveBeenCalled();
+    expect(ws.sent.some((message) => message.kind === 'agent-projects-list-reply')).toBe(false);
+    expect(ws.sent.some((message) => message.kind === 'agent-history-read-reply')).toBe(false);
   });
 });
 

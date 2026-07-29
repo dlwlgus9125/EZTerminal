@@ -181,6 +181,20 @@ const api: EzTerminalApi = {
     decision: import('../shared/agent').AgentDecision,
   ): Promise<import('../shared/agent').AgentDecisionResult> =>
     ipcRenderer.invoke('agents:decide', activityId, approvalId, decision),
+  listAgentProjects: (force?: boolean, cursor?: string, limit?: number) =>
+    ipcRenderer.invoke('agent-history:list-projects', force, cursor, limit),
+  listAgentHistorySessions: (
+    projectId: string,
+    cursor?: string,
+    limit?: number,
+    force?: boolean,
+  ) => ipcRenderer.invoke('agent-history:list-sessions', projectId, cursor, limit, force),
+  readAgentHistory: (historyId: string, cursor?: string, limit?: number) =>
+    ipcRenderer.invoke('agent-history:read', historyId, cursor, limit),
+  prepareAgentResume: (historyId: string) =>
+    ipcRenderer.invoke('agent-history:prepare-resume', historyId),
+  startAgentResume: (request: import('../shared/agent-history').AgentResumeStartRequest) =>
+    ipcRenderer.invoke('agent-history:start-resume', request),
 
   // Read-only Git working-tree queries (explorer tags, branch, approval diff).
   getGitStatus: (
@@ -428,6 +442,12 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.on('agents:reveal-session', handler);
     return () => ipcRenderer.removeListener('agents:reveal-session', handler);
   },
+  saveAgentProject: (input: import('../shared/agent-history').AgentProjectInput) =>
+    ipcRenderer.invoke('agent-projects:save', input),
+  removeAgentProject: (projectId: string): Promise<boolean> =>
+    ipcRenderer.invoke('agent-projects:remove', projectId),
+  selectAgentProjectFolders: (multiple = true) =>
+    ipcRenderer.invoke('agent-projects:select-folders', multiple),
 
   // OpenClaw management (openclaw-management M1): thin invoke/send wrappers —
   // main's OpenClawService is the sole authority, same shape as the file

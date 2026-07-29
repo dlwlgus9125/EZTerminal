@@ -16,6 +16,7 @@ import { AgentHub } from './AgentHub';
 
 let container: HTMLDivElement;
 let root: Root;
+let originalEzTerminal: typeof window.ezterminal | undefined;
 
 function activity(input: {
   id: string;
@@ -74,6 +75,7 @@ async function renderHub(
 }
 
 beforeEach(() => {
+  originalEzTerminal = window.ezterminal;
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -82,6 +84,10 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  Object.defineProperty(window, 'ezterminal', {
+    configurable: true,
+    value: originalEzTerminal,
+  });
   vi.restoreAllMocks();
 });
 
@@ -153,6 +159,67 @@ describe('AgentHub approval integrity', () => {
     );
     expect(container.querySelector('[data-testid="agent-approve"]')).toBeNull();
     expect(container.querySelector('.agent-approval-expired')).not.toBeNull();
+  });
+});
+
+describe('AgentHub local history paging', () => {
+  it('loads ten sessions, opens by double-click, and appends the next page', async () => {
+    const project = {
+      projectId: 'project-1',
+      name: 'Project',
+      primaryRoot: 'C:\\Project',
+      additionalRoots: [],
+      pinned: false,
+      saved: false,
+      sessionCount: 0,
+      providers: [],
+      lastActiveAt: 20,
+    } as const;
+    const session = (index: number) => ({
+      historyId: `codex_${String(index).padStart(24, '0')}`,
+      projectId: project.projectId,
+      provider: 'codex' as const,
+      title: `Session ${index}`,
+      preview: '',
+      createdAt: index,
+      updatedAt: index,
+      roots: [project.primaryRoot],
+      source: 'cli',
+    });
+    const listAgentProjects = vi.fn(async () => ({ items: [project], nextCursor: null }));
+    const listAgentHistorySessions = vi.fn(async (
+      _projectId: string,
+      cursor?: string,
+    ) => cursor
+      ? { items: [session(11), session(12)], nextCursor: null }
+      : { items: Array.from({ length: 10 }, (_, index) => session(index + 1)), nextCursor: 'page-2' });
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: { listAgentProjects, listAgentHistorySessions },
+    });
+    const onOpenHistorySession = vi.fn();
+
+    await renderHub(
+      { revision: 1, items: [] },
+      { onOpenHistorySession },
+    );
+    act(() => container.querySelector<HTMLButtonElement>('.agent-project-toggle')!.click());
+    await flush();
+
+    const rows = container.querySelectorAll<HTMLButtonElement>('.agent-history-row');
+    expect(rows).toHaveLength(10);
+    act(() => rows[0]!.click());
+    expect(onOpenHistorySession).not.toHaveBeenCalled();
+    act(() => rows[0]!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+    expect(onOpenHistorySession).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Session 1' }),
+      project,
+    );
+
+    act(() => container.querySelector<HTMLButtonElement>('.agent-history-more')!.click());
+    await flush();
+    expect(listAgentHistorySessions).toHaveBeenLastCalledWith('project-1', 'page-2', 10);
+    expect(container.querySelectorAll('.agent-history-row')).toHaveLength(12);
   });
 });
 

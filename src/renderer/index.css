@@ -73,6 +73,16 @@
 
   --term-selection: rgba(45, 211, 152, 0.22);
 
+  /* Semantic aliases used by the Agent history workbench. They resolve
+     through the active terminal theme instead of introducing fixed colors. */
+  --border-subtle: var(--term-border-faint);
+  --surface-hover: var(--term-bg-hover);
+  --surface-base: var(--term-bg);
+  --surface-raised: var(--term-bg-raised);
+  --text-primary: var(--term-fg);
+  --text-muted: var(--term-fg-dim);
+  --danger: var(--term-red);
+
   font-family: var(--term-font);
   /* Keep rem-based product tokens on the canonical 16px scale. The persisted
      UI scale still enlarges both chrome and terminal typography together. */
@@ -3069,6 +3079,314 @@ body {
   gap: 8px;
 }
 
+.agent-projects {
+  min-height: 0;
+}
+
+.agent-projects-heading,
+.agent-project-row,
+.agent-project-toggle,
+.agent-session-header,
+.agent-session-composer,
+.agent-resume-root-actions {
+  display: flex;
+  align-items: center;
+}
+
+.agent-projects-heading {
+  justify-content: space-between;
+}
+
+.agent-project-list,
+.agent-history-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-project {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.agent-project-row {
+  gap: 0.25rem;
+}
+
+.agent-project-toggle {
+  min-width: 0;
+  flex: 1;
+  gap: 0.4rem;
+  padding: 0.55rem 0.25rem;
+  color: inherit;
+  text-align: left;
+  border: 0;
+  background: transparent;
+}
+
+.agent-project-toggle > svg {
+  width: 0.9rem;
+  flex: 0 0 auto;
+}
+
+.agent-project-toggle > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-project-toggle strong,
+.agent-project-toggle small,
+.agent-history-row strong,
+.agent-history-row p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-project-toggle small,
+.agent-project-note,
+.agent-history-row small {
+  color: var(--text-muted);
+}
+
+.agent-project-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-project-pin.is-active {
+  color: var(--accent);
+}
+
+.agent-project-edit {
+  padding: 0.3rem;
+  color: var(--text-muted);
+  border: 0;
+  background: transparent;
+}
+
+.agent-history-list {
+  padding: 0 0 0.45rem 1.35rem;
+}
+
+.agent-history-row {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.25rem 0.45rem;
+  padding: 0.45rem;
+  color: inherit;
+  text-align: left;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+}
+
+.agent-history-row:hover {
+  background: var(--surface-hover);
+}
+
+.agent-history-row > span {
+  color: var(--accent);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.agent-history-row p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.agent-history-more {
+  inline-size: 100%;
+  padding: 0.45rem;
+  border: 0;
+  color: var(--ui-text-secondary);
+  background: transparent;
+  font: inherit;
+}
+
+.agent-history-more:hover:not(:disabled) {
+  color: var(--ui-accent);
+  background: var(--ui-surface-hover);
+}
+
+.agent-history-terminal__scroll {
+  padding-inline: var(--ui-space-4);
+}
+
+.agent-history-terminal__status,
+.agent-history-terminal__error {
+  max-inline-size: 58rem;
+  margin: 0.75rem auto 0.75rem 0;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-13);
+}
+
+.agent-history-terminal__error {
+  color: var(--ui-danger);
+}
+
+.agent-history-terminal__turn {
+  inline-size: 100%;
+  max-inline-size: 58rem;
+  margin: 0 auto 1.4rem 0;
+}
+
+.agent-history-terminal__message {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: var(--ui-space-3);
+  padding-block: 0.45rem;
+  color: var(--term-fg);
+}
+
+.agent-history-terminal__message > div {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-history-terminal__role {
+  color: var(--ui-accent);
+  font-weight: 700;
+  text-align: start;
+}
+
+.agent-history-terminal__message--user {
+  color: var(--term-fg-bright);
+}
+
+.agent-history-terminal__activity {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr) auto;
+  gap: var(--ui-space-3);
+  padding-block: 0.25rem;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-12);
+}
+
+.agent-history-terminal__activity > span {
+  color: var(--ui-text-dim);
+  text-align: start;
+}
+
+.agent-history-terminal__activity code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-session-panel {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  color: var(--text-primary);
+  background: var(--surface-base);
+}
+
+.agent-session-header {
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.agent-session-header h1,
+.agent-session-header p {
+  margin: 0;
+}
+
+.agent-session-header p,
+.agent-session-note {
+  color: var(--text-muted);
+}
+
+.agent-session-readonly {
+  padding: 0.2rem 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+}
+
+.agent-session-transcript {
+  min-height: 0;
+  padding: 1rem clamp(1rem, 4vw, 4rem);
+  overflow: auto;
+}
+
+.agent-session-turn {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 58rem;
+  margin: 0 auto 1.25rem;
+}
+
+.agent-session-message {
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.65rem;
+  background: var(--surface-raised);
+}
+
+.agent-session-message > div {
+  margin-top: 0.35rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-session-message--user {
+  margin-left: clamp(1rem, 8vw, 7rem);
+}
+
+.agent-session-activity {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding-left: 0.75rem;
+  color: var(--text-muted);
+  border-left: 2px solid var(--border-subtle);
+}
+
+.agent-session-activity code {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-session-error {
+  color: var(--danger);
+}
+
+.agent-resume-roots {
+  padding: 0.8rem 1rem;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+}
+
+.agent-resume-roots p {
+  margin: 0.25rem 0 0.65rem;
+  color: var(--text-muted);
+}
+
+.agent-resume-root-actions {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.agent-session-composer {
+  gap: 0.75rem;
+  padding: 0.8rem 1rem;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+}
+
+.agent-session-composer textarea {
+  min-width: 0;
+  flex: 1;
+  resize: vertical;
+}
+
 .agent-progress {
   margin-top: 8px;
   display: flex;
@@ -3278,6 +3596,37 @@ body {
 .agent-aware-tab > .dv-default-tab {
   min-width: 0;
   flex: 1;
+}
+
+.agent-history-tab {
+  min-inline-size: 0;
+}
+
+.agent-history-tab__viewport {
+  inline-size: auto;
+  max-inline-size: 18ch;
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.agent-history-tab__label {
+  display: block;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-history-tab__close {
+  border: 0;
+  color: inherit;
+  background: transparent;
+}
+
+.agent-history-tab__close svg {
+  inline-size: 14px;
+  block-size: 14px;
 }
 
 .workspace-tab-rename {

@@ -43,6 +43,10 @@ import { AgentActivityService, type AgentActivityTransition } from './agent-acti
 import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
 import { AgentHookInstaller } from './agent-hook-installer';
 import { AgentSettingsStore } from './agent-settings-store';
+import { AgentProjectStore } from './agent-project-store';
+import { AgentHistoryService } from './agent-history-service';
+import { CodexAppServerClient } from './codex-app-server-client';
+import { CodexHistoryAdapter } from './codex-history-adapter';
 import { GitStatusService } from './git-status-service';
 import { PairingCodeService } from './pairing-code-service';
 import { QuickCommandStore } from './quick-command-store';
@@ -84,6 +88,12 @@ import type {
 import type { OpenClawAutostartAction, OpenClawLifecycleAction, OpenClawVisibility } from '../shared/openclaw';
 import type { AgentDecisionResult, AgentFollowupResult } from '../shared/agent';
 import { normalizeExternalHttpUrl } from '../shared/external-url';
+import type {
+  AgentProjectInput,
+  AgentResumeStartRequest,
+  AgentResumeStartResult,
+} from '../shared/agent-history';
+import { quoteEzArgument } from '../shared/quote-ez-argument';
 import { classifyRecentPanelInput } from './recent-panel-input';
 import type { WorkspaceFileSearchRequest } from '../shared/workspace-search';
 import { isWorktreeRequest, type WorktreeInfo, type WorktreeResult } from '../shared/worktree';
@@ -425,6 +435,15 @@ app.on('ready', () => {
   // 127.0.0.1 and its bearer descriptor is injected into interpreter shell
   // sessions below; it never crosses preload or the mobile bridge.
   const agentSettingsStore = new AgentSettingsStore(path.join(app.getPath('userData')));
+  const agentProjectStore = new AgentProjectStore(path.join(app.getPath('userData')));
+  const codexHistoryAdapter = new CodexHistoryAdapter(new CodexAppServerClient());
+  const agentHistoryService = new AgentHistoryService(
+    agentProjectStore,
+    [codexHistoryAdapter],
+  );
+  const agentHistoryReady = agentProjectStore.init().catch((err) => {
+    console.error('[main] agent project store init failed:', err);
+  });
   // Read-only, cached, argv-only. Safe to call on every directory listing.
   const gitStatusService = new GitStatusService();
   // In-memory, single-use, expiring. Never persisted — see the service header.
@@ -807,6 +826,131 @@ app.on('ready', () => {
   );
 
   ipcMain.handle('agents:get-snapshot', () => agentActivityService?.getSnapshot() ?? { revision: 0, items: [] });
+  ipcMain.handle('agent-history:list-projects', async (
+    _event,
+    force?: unknown,
+    cursor?: unknown,
+    limit?: unknown,
+  ) => {
+    await agentHistoryReady;
+    return agentHistoryService.listProjects(
+      force === true,
+      typeof cursor === 'string' ? cursor : undefined,
+      typeof limit === 'number' ? limit : undefined,
+    );
+  });
+  ipcMain.handle('agent-history:list-sessions', async (
+    _event,
+    projectId: unknown,
+    cursor?: unknown,
+    limit?: unknown,
+    force?: unknown,
+  ) => {
+    await agentHistoryReady;
+    if (typeof projectId !== 'string' || projectId.length === 0 || projectId.length > 128) {
+      return { items: [], nextCursor: null };
+    }
+    return agentHistoryService.listSessions(
+      projectId,
+      typeof cursor === 'string' ? cursor : undefined,
+      typeof limit === 'number' ? limit : undefined,
+      force === true,
+    );
+  });
+  ipcMain.handle('agent-history:read', async (
+    _event,
+    historyId: unknown,
+    cursor?: unknown,
+    limit?: unknown,
+  ) => {
+    await agentHistoryReady;
+    if (typeof historyId !== 'string' || historyId.length === 0 || historyId.length > 128) return null;
+    return agentHistoryService.readTranscript(
+      historyId,
+      typeof cursor === 'string' ? cursor : undefined,
+      typeof limit === 'number' ? limit : undefined,
+    );
+  });
+  ipcMain.handle('agent-history:prepare-resume', async (_event, historyId: unknown) => {
+    await agentHistoryReady;
+    if (typeof historyId !== 'string' || historyId.length === 0 || historyId.length > 128) return null;
+    return agentHistoryService.prepareResume(historyId);
+  });
+  ipcMain.handle('agent-history:start-resume', async (
+    event,
+    request: unknown,
+  ): Promise<AgentResumeStartResult> => {
+    await agentHistoryReady;
+    if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+      return { ok: false, reason: 'invalid' };
+    }
+    const candidate = request as Partial<AgentResumeStartRequest>;
+    if (
+      typeof candidate.historyId !== 'string'
+      || candidate.historyId.length === 0
+      || candidate.historyId.length > 128
+      || typeof candidate.sessionId !== 'string'
+      || candidate.sessionId.length === 0
+      || candidate.sessionId.length > 256
+      || typeof candidate.runId !== 'string'
+      || candidate.runId.length === 0
+      || candidate.runId.length > 256
+      || typeof candidate.revision !== 'string'
+      || candidate.revision.length === 0
+      || candidate.revision.length > 128
+      || (candidate.rootChoice !== 'recorded' && candidate.rootChoice !== 'current')
+    ) {
+      return { ok: false, reason: 'invalid' };
+    }
+    const resolved = await agentHistoryService.resolveResume(
+      candidate.historyId,
+      candidate.revision,
+      candidate.rootChoice,
+    );
+    if (!resolved.ok) return resolved;
+    const [primaryRoot, ...additionalRoots] = resolved.roots;
+    if (!primaryRoot) return { ok: false, reason: 'missing-root' };
+    // `!` selects a PTY in EZTerminal. The provider id remains main/interpreter
+    // private; renderer frames and shell history receive only "codex resume".
+    const commandText = [
+      `!codex --cd ${quoteEzArgument(primaryRoot)}`,
+      ...additionalRoots.map((root) => `--add-dir ${quoteEzArgument(root)}`),
+      `resume ${quoteEzArgument(resolved.privateId)}`,
+    ].join(' ');
+    const port = broker?.runPrivateCommand(
+      candidate.sessionId,
+      candidate.runId,
+      commandText,
+      'codex',
+    );
+    if (!port) return { ok: false, reason: 'unavailable' };
+    event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
+    return { ok: true };
+  });
+  ipcMain.handle('agent-projects:save', async (_event, input: unknown) => {
+    await agentHistoryReady;
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+      return { ok: false, reason: 'invalid' };
+    }
+    return agentHistoryService.saveProject(input as AgentProjectInput);
+  });
+  ipcMain.handle('agent-projects:remove', async (_event, projectId: unknown) => {
+    await agentHistoryReady;
+    return typeof projectId === 'string' && projectId.length <= 128
+      ? agentHistoryService.removeProject(projectId)
+      : false;
+  });
+  ipcMain.handle('agent-projects:select-folders', async (event, multiple?: unknown) => {
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef ?? undefined;
+    const options: Electron.OpenDialogOptions = {
+      title: 'Select project folders',
+      properties: ['openDirectory', ...(multiple === false ? [] : ['multiSelections' as const])],
+    };
+    const result = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options);
+    return { canceled: result.canceled, paths: result.canceled ? [] : result.filePaths };
+  });
   ipcMain.handle('agents:followup', (_event, activityId: string, text: string): AgentFollowupResult => {
     if (typeof activityId !== 'string' || typeof text !== 'string') return { ok: false, error: 'invalid-text' };
     return agentActivityService?.sendFollowup(activityId, text) ?? { ok: false, error: 'delivery-failed' };
@@ -956,6 +1100,7 @@ app.on('ready', () => {
       { name: 'OpenClaw service', run: () => openClawService?.dispose() },
       { name: 'OpenClaw chat view', run: () => openClawChatView?.destroy() },
       { name: 'agent activity', run: () => agentActivityService?.dispose() },
+      { name: 'agent history', run: () => agentHistoryService.dispose() },
       { name: 'agent settings', run: () => agentSettingsStore.flush() },
       { name: 'quick commands', run: () => quickCommandStore.flush() },
       { name: 'workspace search', run: () => workspaceFileSearch.dispose() },
@@ -1549,6 +1694,7 @@ app.on('ready', () => {
       quickCommandSource: remoteQuickCommandSource,
       openclawSource: remoteOpenClawSource,
       agentSource: agentActivityService ?? undefined,
+      agentHistorySource: agentHistoryService,
       gitSource: gitStatusService,
       pairingSource: {
         match: (code) => pairingCodeService.match(code),

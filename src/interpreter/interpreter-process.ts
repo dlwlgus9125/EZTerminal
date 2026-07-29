@@ -160,6 +160,7 @@ class ExecutionSession implements Execution {
   private lastDims: { cols: number; rows: number } | null = null;
   private lastSshConnection: SshConnectionFrame | null = null;
   private lastWorktreeOpen: WorktreeOpenFrame | null = null;
+  private pendingPtySubmission: string | null = null;
 
   constructor(
     private readonly shell: ShellSession,
@@ -169,7 +170,7 @@ class ExecutionSession implements Execution {
     private readonly hooks: ExecutionHooks = {},
   ) {}
 
-  run(commandText: string, port: MessagePortMain): ExecutionKind {
+  run(commandText: string, port: MessagePortMain, displayCommandText = commandText): ExecutionKind {
     this.primaryPort = port;
     this.controlPort = port;
     const { signal } = this.ac;
@@ -202,7 +203,7 @@ class ExecutionSession implements Execution {
     // Record the executed command line on the durable session — the authoritative
     // history the `history` builtin reads (recorded before parse, like a real shell,
     // so a command appears in history even if it fails to parse/evaluate).
-    this.shell.addHistory(commandText);
+    this.shell.addHistory(displayCommandText);
 
     try {
       const statement = parse(commandText);
@@ -223,7 +224,7 @@ class ExecutionSession implements Execution {
       );
       const data = evaluate(statement, ctx);
       executionKind = data.kind === 'ssh-stream' ? 'ssh' : 'local';
-      send({ type: 'start', commandText, cwd: startCwd, executionKind });
+      send({ type: 'start', commandText: displayCommandText, cwd: startCwd, executionKind });
       startSent = true;
       this.activeExecution = startExecutionAdapter(data, {
         startStructured: (structuredData) => runBlock(structuredData, send, signal),
@@ -275,10 +276,24 @@ class ExecutionSession implements Execution {
           ),
         ),
       });
+      if (this.pendingPtySubmission !== null) {
+        this.activeExecution.handleControl({
+          type: 'pty-submit-on-ready',
+          data: this.pendingPtySubmission,
+        });
+        this.pendingPtySubmission = null;
+      }
     } catch (err) {
       // Synchronous parse/evaluate failure: there is nothing to page, so emit the
       // terminal frame and dispose immediately.
-      if (!startSent) send({ type: 'start', commandText, cwd: startCwd, executionKind: 'local' });
+      if (!startSent) {
+        send({
+          type: 'start',
+          commandText: displayCommandText,
+          cwd: startCwd,
+          executionKind: 'local',
+        });
+      }
       if (signal.aborted) send({ type: 'cancelled' });
       else send({ type: 'error', message: describeError(err) });
       this.dispose();
@@ -630,6 +645,18 @@ class ExecutionSession implements Execution {
         break;
       case 'pty-input':
         this.activeExecution?.handleControl(control);
+        break;
+      case 'pty-submit-on-ready':
+        if (this.activeExecution) {
+          this.activeExecution.handleControl(control);
+        } else if (
+          this.pendingPtySubmission === null
+          && typeof control.data === 'string'
+          && control.data.length > 0
+          && Buffer.byteLength(control.data, 'utf8') <= 64 * 1024
+        ) {
+          this.pendingPtySubmission = control.data;
+        }
         break;
       case 'pty-resize': {
         // Gated to the CONTROL port only (control handoff, M8a — same pattern
@@ -1092,10 +1119,15 @@ process.parentPort.on('message', (event: ElectronMsgEvent) => {
       registry.begin(record, execution);
       const entry: { execution: ExecutionSession; info: RunStartedInfo } = {
         execution,
-        info: { sessionId: msg.sessionId, runId: msg.runId, commandText: msg.commandText, executionKind: 'local' },
+        info: {
+          sessionId: msg.sessionId,
+          runId: msg.runId,
+          commandText: msg.displayCommandText ?? msg.commandText,
+          executionKind: 'local',
+        },
       };
       executionsByRunId.set(msg.runId, entry);
-      const executionKind = execution.run(msg.commandText, port);
+      const executionKind = execution.run(msg.commandText, port, msg.displayCommandText);
       const announcedInfo: RunStartedInfo = { ...entry.info, executionKind };
       entry.info = announcedInfo;
       // M2 mirroring: announce the run so main can fan out `run-started` to
