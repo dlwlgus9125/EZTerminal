@@ -57,18 +57,18 @@ The Windows installer is intentionally Authenticode `NotSigned`. The Android
 APK must be signed with the existing long-term EZTerminal release certificate
 and match the committed SHA-256 certificate fingerprint.
 
-## Candidate status
+## Release validation profile
 
-The local 1.0.14 candidate runs all non-performance release lanes and records
-the desktop performance benchmark as
-`pending-final-release-measurement`. It is not publication-eligible. A final
-draft release still requires an exact-SHA passing performance report collected
-only after an explicit performance-measurement request.
+The operator selected the repository's `functional-hotfix` validation profile
+for 1.0.14 and explicitly directed publication without the desktop performance
+benchmark. This release therefore does not claim exact-SHA performance or
+30-minute mobile-soak evidence.
 
-Final approval uses one protected evidence ZIP containing exactly
-`local-rc-report.json`, `mobile-soak-report.json`,
-`desktop-performance-baseline.json`, and
-`desktop-performance-report.json`. The release workflow independently
-revalidates the evidence before signing and staging artifacts.
+The tag workflow still rebuilds the exact release SHA and requires the frozen
+dependency install, version contract, desktop and mobile functional suites,
+Android API 29/API 35 instrumentation, Rust quality and supply-chain checks,
+production-marker rejection, package smoke tests, signed APK verification,
+SBOM generation, manifest validation, and checksums before it may create the
+draft release.
 
 See the [1.0.14 validation policy](validation-policy-1.0.14.md).

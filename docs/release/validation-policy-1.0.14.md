@@ -6,7 +6,7 @@
 - Android versionCode: `35`
 - Remote client protocol: `5`
 - Electron-to-Rust native desktop-host protocol: `2`
-- Validation profile: `full`
+- Validation profile: `functional-hotfix`
 
 The shipped remote protocol is v5.
 
@@ -35,26 +35,13 @@ The exact candidate SHA must have a clean tree and pass:
 The approval-privacy and offline-pairing guards are mandatory in ordinary CI,
 the local candidate, and the final release workflow.
 
-## Candidate versus final release
+## Selected release profile
 
-The local candidate report uses schema v2 and records:
-
-```json
-{
-  "releaseStage": "candidate",
-  "desktopPerformance": {
-    "status": "pending-final-release-measurement",
-    "reason": "not-requested-for-this-local-rc"
-  }
-}
-```
-
-Candidate artifacts are staged in a version-and-SHA-specific directory, carry
-`publicationEligible=false`, and must not read or copy an older performance
-report. The final release workflow rejects this pending status and requires a
-same-host, exact-SHA, schema-v2 passing performance comparison. Release staging
-requires an explicit performance measurement, complete passing evidence, a
-clean tree, and the exact HEAD SHA frozen at validation start.
+The operator explicitly directed publication without a desktop performance
+measurement. Release 1.0.14 therefore uses the repository's
+`functional-hotfix` profile. This profile does not claim exact-SHA performance
+or 30-minute mobile-soak evidence and does not consume an older performance
+report or local candidate evidence.
 
 Ordinary build, test, package, update, RC, or release requests do not authorize
 `pnpm e2e:performance`, `e2e/release-performance.spec.ts`,
@@ -62,30 +49,14 @@ Ordinary build, test, package, update, RC, or release requests do not authorize
 `EZTERMINAL_RUN_PERFORMANCE_DIAGNOSTIC=1`, or
 `-RunPerformanceMeasurement`.
 
-## Protected approval evidence
+## Publication evidence
 
-The protected GitHub Environment `release` binds final approval to:
-
-- variable `EZTERMINAL_LOCAL_RC_APPROVED_SHA`
-- variable `EZTERMINAL_LOCAL_RC_REPORT_SHA256`
-- variable `EZTERMINAL_LOCAL_RC_EVIDENCE_SHA256`
-- secret `EZTERMINAL_LOCAL_RC_EVIDENCE_BASE64`
-
-The evidence ZIP contains exactly:
-
-- `local-rc-report.json`
-- `mobile-soak-report.json`
-- `desktop-performance-baseline.json`
-- `desktop-performance-report.json`
-
-The workflow verifies the encoded bundle before extracting it into a new
-temporary directory. It rejects nested paths, unexpected or duplicate entries,
-unsafe file types, invalid numbers, mismatched source hashes, incomplete soak
-results, and a failed baseline-versus-candidate comparison.
-
-Pending candidate evidence is never publication-eligible. Only a complete
-`release` report produced after an explicitly authorized performance
-measurement, with performance status `passed`, can enter release staging.
+The tag workflow freezes the exact checkout SHA and independently rebuilds and
+validates the release. For `functional-hotfix`, it intentionally does not read
+the protected full-profile local RC variables or evidence ZIP. The staged
+manifest records `validationProfile=functional-hotfix`, omits raw performance
+and soak evidence, and must still be publication-eligible with complete
+functional evidence before the tag-only publish job accepts it.
 
 All validation and build jobs use `contents: read`, and every checkout disables
 credential persistence. Only the tag-only publish job receives
@@ -119,5 +90,6 @@ before creating a draft release.
   emulator candidate.
 - OpenClaw's external WebContentsView content is not a pixel oracle;
   EZTerminal chrome and loading/stopped/error states are.
-- Final publication remains blocked until the separately authorized
-  performance measurement passes for the exact candidate SHA.
+- The operator accepted the residual risk of publishing without exact-SHA
+  desktop performance and 30-minute mobile-soak measurements. This release
+  makes no performance or long-soak claim.

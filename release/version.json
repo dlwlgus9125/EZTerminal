@@ -3,5 +3,5 @@
   "version": "1.0.14",
   "androidVersionCode": 35,
   "protocolVersion": 5,
-  "validationProfile": "full"
+  "validationProfile": "functional-hotfix"
 }
