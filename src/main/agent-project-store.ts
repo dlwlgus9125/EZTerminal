@@ -122,7 +122,7 @@ function pathKey(value: string): string {
   return process.platform === 'win32' ? normalized.toLocaleLowerCase('en-US') : normalized;
 }
 
-async function canonicalDirectory(value: string): Promise<string | null> {
+export async function canonicalAgentDirectory(value: string): Promise<string | null> {
   if (typeof value !== 'string' || !path.isAbsolute(value)) return null;
   try {
     const resolved = await fs.realpath(value);
@@ -182,12 +182,12 @@ export class AgentProjectStore {
     ) {
       return { ok: false, reason: 'invalid' };
     }
-    const primaryRoot = await canonicalDirectory(input.primaryRoot);
+    const primaryRoot = await canonicalAgentDirectory(input.primaryRoot);
     if (!primaryRoot) return { ok: false, reason: 'invalid' };
     const additionalRoots: string[] = [];
     const seen = new Set([pathKey(primaryRoot)]);
     for (const root of input.additionalRoots) {
-      const canonical = await canonicalDirectory(root);
+      const canonical = await canonicalAgentDirectory(root);
       if (!canonical) return { ok: false, reason: 'invalid' };
       const key = pathKey(canonical);
       if (seen.has(key)) continue;
@@ -254,13 +254,13 @@ export class AgentProjectStore {
     readonly lastActiveAt: number;
   }): Promise<boolean> {
     if (!Number.isFinite(input.lastActiveAt)) return false;
-    const primaryRoot = await canonicalDirectory(input.primaryRoot);
+    const primaryRoot = await canonicalAgentDirectory(input.primaryRoot);
     if (!primaryRoot) return false;
     const observedRoots: string[] = [];
     const observedKeys = new Set([pathKey(primaryRoot)]);
     for (const root of input.additionalRoots) {
       if (observedRoots.length >= MAX_AGENT_PROJECT_ROOTS - 1) break;
-      const canonical = await canonicalDirectory(root);
+      const canonical = await canonicalAgentDirectory(root);
       if (!canonical) continue;
       const key = pathKey(canonical);
       if (observedKeys.has(key)) continue;

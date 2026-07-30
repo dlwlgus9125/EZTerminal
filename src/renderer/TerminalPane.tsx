@@ -677,12 +677,25 @@ export function TerminalPane({
           if (!result.ok) throw new Error(`Agent resume failed: ${result.reason}`);
           return;
         }
-        const result = await window.ezterminal.startAgentProjectLaunch({
-          projectId: bootstrap.projectId,
+        let launchTarget = bootstrap.target;
+        let launchRevision = bootstrap.revision;
+        if (bootstrapRetryToken > 0) {
+          const preparation = await window.ezterminal.prepareAgentLaunch(
+            bootstrap.target,
+            bootstrap.launcherId,
+          );
+          if (!preparation.ok) {
+            throw new Error(`Agent launch preparation failed: ${preparation.reason}`);
+          }
+          launchTarget = preparation.target;
+          launchRevision = preparation.revision;
+        }
+        const result = await window.ezterminal.startAgentLaunch({
+          target: launchTarget,
           launcherId: bootstrap.launcherId,
           sessionId: runSessionId,
           runId,
-          revision: bootstrap.revision,
+          revision: launchRevision,
         });
         if (!result.ok) throw new Error(`Agent launch failed: ${result.reason}`);
       },

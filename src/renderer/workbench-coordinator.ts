@@ -8,7 +8,7 @@ import {
   startRecentPanelSwitch,
   type RecentPanelSwitchSession,
 } from './recent-panel-switching';
-import type { AgentProjectLaunchBootstrap } from '../shared/agent-history';
+import type { AgentLaunchBootstrap } from '../shared/agent-history';
 import {
   clearAgentTerminalBootstrap,
   registerAgentTerminalBootstrap,
@@ -28,7 +28,7 @@ export interface TerminalPaneOpenRequest {
   readonly allowDuringRecovery?: boolean;
   readonly title?: string;
   /** Runtime-only; deliberately excluded from Dockview params/serialization. */
-  readonly agentBootstrap?: AgentProjectLaunchBootstrap;
+  readonly agentBootstrap?: AgentLaunchBootstrap;
 }
 
 export interface OpenedWorkbenchPane {

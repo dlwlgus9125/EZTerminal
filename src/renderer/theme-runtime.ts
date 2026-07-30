@@ -1,7 +1,11 @@
 import { isBuiltinTheme } from '../shared/layout-schema';
 import type { ThemeMod } from '../shared/theme-schema';
 import { EFFECT_CATALOG, applyEffects, resolveActiveEffects, type EffectId } from './effects';
-import { seedUiThemeColors, uiThemeColorsToCssVars } from './theme-contrast';
+import {
+  resolveProviderIdentityColors,
+  seedUiThemeColors,
+  uiThemeColorsToCssVars,
+} from './theme-contrast';
 import { getActiveTheme, THEMES, type ThemeDefinition } from './themes';
 
 // Theme runtime (theme-effects-font M2/Wave 2) — the platform-agnostic apply-path
@@ -77,9 +81,14 @@ export function applyThemeVarsAndEffects(
   if (isBuiltinTheme(themeName)) {
     styleEl.textContent = '';
   } else {
+    const providerColors = theme.ui ? resolveProviderIdentityColors(theme.ui) : null;
     const effectiveVars = {
       ...theme.cssVars,
       ...(theme.ui ? uiThemeColorsToCssVars(theme.ui) : {}),
+      ...(providerColors ? {
+        '--ui-agent-codex': providerColors.codex,
+        '--ui-agent-claude': providerColors.claude,
+      } : {}),
     };
     const decls = Object.entries(effectiveVars)
       .map(([key, value]) => `${key}:${value};`)

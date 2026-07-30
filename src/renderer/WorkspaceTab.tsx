@@ -79,6 +79,12 @@ function AgentHistoryTab({
   readonly requestClose: (close: () => void) => void;
 }): JSX.Element {
   const [title, setTitle] = useState(props.api.title ?? 'Agent session');
+  const provider = (props.params as { provider?: AgentHistoryProvider } | undefined)?.provider;
+  const providerLabel = provider ? AGENT_HISTORY_PROVIDER_LABEL[provider] : null;
+  const providerSuffix = providerLabel ? ` · ${providerLabel}` : '';
+  const identityTitle = providerSuffix && title.endsWith(providerSuffix)
+    ? title.slice(0, -providerSuffix.length)
+    : title;
   useEffect(() => {
     setTitle(props.api.title ?? 'Agent session');
     const disposable = props.api.onDidTitleChange((event) => setTitle(event.title));
@@ -87,6 +93,7 @@ function AgentHistoryTab({
   return (
     <div
       className="dv-default-tab agent-history-tab"
+      data-provider={provider}
       data-testid="dockview-dv-default-tab"
       onPointerUp={(event) => {
         if (event.button === 1) {
@@ -96,7 +103,13 @@ function AgentHistoryTab({
       }}
     >
       <span className="agent-history-tab__viewport" title={title}>
-        <span className="agent-history-tab__label">{title}</span>
+        <span className="agent-history-tab__label">{identityTitle}</span>
+        {providerLabel && (
+          <>
+            <span className="ez-ui-visually-hidden"> · </span>
+            <span className="agent-provider-badge">{providerLabel}</span>
+          </>
+        )}
       </span>
       <button
         type="button"

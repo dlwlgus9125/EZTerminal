@@ -59,6 +59,10 @@ import type {
 } from './terminal-clipboard';
 import type {
   AgentHistorySessionPage,
+  AgentLaunchPreparation,
+  AgentLaunchStartRequest,
+  AgentLaunchStartResult,
+  AgentLaunchTarget,
   AgentProjectLaunchPreparation,
   AgentProjectLauncherSummary,
   AgentProjectLaunchStartRequest,
@@ -1210,6 +1214,15 @@ export interface EzTerminalApi {
   saveAgentProject: (input: AgentProjectInput) => Promise<AgentProjectMutationResult>;
   removeAgentProject: (projectId: string) => Promise<boolean>;
   listAgentProjectLaunchers: () => Promise<readonly AgentProjectLauncherSummary[]>;
+  prepareAgentLaunch: (
+    target: AgentLaunchTarget,
+    launcherId: string,
+  ) => Promise<AgentLaunchPreparation>;
+  /** Starts a private Agent CLI in an already-created target-rooted session. */
+  startAgentLaunch: (
+    request: AgentLaunchStartRequest,
+  ) => Promise<AgentLaunchStartResult>;
+  /** Protocol-v5/local compatibility wrapper for older project-only callers. */
   prepareAgentProjectLaunch: (
     projectId: string,
     launcherId: string,

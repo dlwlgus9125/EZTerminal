@@ -12,7 +12,7 @@ import type {
   AgentStatus,
 } from '../../src/shared/agent';
 import type {
-  AgentProjectLaunchBootstrap,
+  AgentLaunchBootstrap,
   AgentResumeBootstrap,
 } from '../../src/shared/agent-history';
 import {
@@ -123,7 +123,7 @@ export function MobileAgentView({
   onLoadDiff,
   onReadGitStatus,
   onResumeHistory,
-  onLaunchProject,
+  onLaunchAgent,
   transport,
 }: {
   readonly snapshot: AgentActivitySnapshot;
@@ -139,7 +139,7 @@ export function MobileAgentView({
   readonly onLoadDiff?: (directory: string) => Promise<GitDiffResult>;
   readonly onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
   readonly onResumeHistory?: (bootstrap: AgentResumeBootstrap) => Promise<void>;
-  readonly onLaunchProject?: (bootstrap: AgentProjectLaunchBootstrap) => Promise<void>;
+  readonly onLaunchAgent?: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
   readonly transport?: WsEzTerminalTransport;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
@@ -309,13 +309,21 @@ export function MobileAgentView({
 
       <div className="mob-page__body">
         <div className="mob-column">
-          {visible.length === 0 && (
-            <p className="mob-empty" data-testid="agent-empty">
-              {snapshot.items.length === 0 ? t('agentHub.empty') : t('mobile.agentView.noMatches')}
-            </p>
-          )}
-
-          {visible.map((item) => {
+          {[
+            ...visible.filter((item) => bucketOf(item.status) === 'attention'),
+            ...(transport && onResumeHistory && onLaunchAgent ? [null] : []),
+            ...visible.filter((item) => bucketOf(item.status) !== 'attention'),
+          ].map((item) => {
+            if (item === null) {
+              return (
+                <MobileAgentProjects
+                  key="agent-projects"
+                  transport={transport!}
+                  onResumeHistory={onResumeHistory!}
+                  onLaunchAgent={onLaunchAgent!}
+                />
+              );
+            }
             const bucket = bucketOf(item.status);
             const age = ageLabel(item.updatedAt, now, relativeTime);
             // A decision is only offered while the desktop is still holding the
@@ -460,12 +468,10 @@ export function MobileAgentView({
               </article>
             );
           })}
-          {transport && onResumeHistory && onLaunchProject && (
-            <MobileAgentProjects
-              transport={transport}
-              onResumeHistory={onResumeHistory}
-              onLaunchProject={onLaunchProject}
-            />
+          {visible.length === 0 && (
+            <p className="mob-empty" data-testid="agent-empty">
+              {snapshot.items.length === 0 ? t('agentHub.empty') : t('mobile.agentView.noMatches')}
+            </p>
           )}
         </div>
       </div>

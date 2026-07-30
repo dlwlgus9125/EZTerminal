@@ -143,6 +143,11 @@ describe('AgentSessionPanel', () => {
     await flush();
 
     expect(container.querySelector('.agent-history-terminal__role')?.textContent).toBe('claude');
+    expect(container.querySelector('[data-testid="agent-session-panel"]')?.getAttribute('data-provider'))
+      .toBe('claude');
+    expect(container.querySelector('.agent-provider-badge')?.textContent).toBe('Claude');
+    expect(container.querySelector('.agent-history-terminal__message')?.getAttribute('data-provider'))
+      .toBe('claude');
   });
 
   it('loads the previous twenty turns automatically near the top', async () => {

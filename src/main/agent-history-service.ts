@@ -4,8 +4,11 @@ import path from 'node:path';
 
 import {
   MAX_AGENT_HISTORY_PAGE_SIZE,
+  MAX_AGENT_LAUNCH_DIRECTORY_LENGTH,
   type AgentHistoryProvider,
   type AgentHistorySessionPage,
+  type AgentLaunchPreparation,
+  type AgentLaunchTarget,
   type AgentProjectLaunchPreparation,
   type AgentProjectLauncherSummary,
   type AgentHistorySessionSummary,
@@ -22,7 +25,11 @@ import type {
   AgentHistoryProviderAdapter,
   ProviderHistorySession,
 } from './agent-history-provider';
-import { AgentProjectStore, type AgentProjectRecord } from './agent-project-store';
+import {
+  AgentProjectStore,
+  canonicalAgentDirectory,
+  type AgentProjectRecord,
+} from './agent-project-store';
 
 interface IndexedSession {
   readonly publicSession: AgentHistorySessionSummary;
@@ -367,32 +374,79 @@ export class AgentHistoryService {
   }
 
   async prepareLaunch(
-    projectId: string,
+    target: AgentLaunchTarget,
     launcherId: string,
-  ): Promise<AgentProjectLaunchPreparation> {
-    if (!projectId || !launcherId) return { ok: false, reason: 'invalid' };
-    const project = this.projectForId(projectId);
-    if (!project) return { ok: false, reason: 'not-found' };
+  ): Promise<AgentLaunchPreparation> {
+    if (!launcherId || typeof target !== 'object' || target === null) {
+      return { ok: false, reason: 'invalid' };
+    }
     const launcher = this.resolveLauncher(launcherId);
     if (!launcher) return { ok: false, reason: 'unavailable' };
-    const roots = [project.primaryRoot, ...project.additionalRoots];
+
+    let canonicalTarget: AgentLaunchTarget;
+    let configuredRoots: readonly string[];
+    if (target.kind === 'project') {
+      if (!target.projectId) return { ok: false, reason: 'invalid' };
+      const project = this.projectForId(target.projectId);
+      if (!project) return { ok: false, reason: 'not-found' };
+      canonicalTarget = target;
+      configuredRoots = [project.primaryRoot, ...project.additionalRoots];
+    } else if (target.kind === 'directory') {
+      if (
+        !target.directory
+        || target.directory.length > MAX_AGENT_LAUNCH_DIRECTORY_LENGTH
+        || !path.isAbsolute(target.directory)
+      ) {
+        return { ok: false, reason: 'invalid' };
+      }
+      const directory = await canonicalAgentDirectory(target.directory);
+      if (!directory) return { ok: false, reason: 'missing-root' };
+      canonicalTarget = { kind: 'directory', directory };
+      configuredRoots = [directory];
+    } else {
+      return { ok: false, reason: 'invalid' };
+    }
+
+    const roots = launcher.provider === 'generic'
+      ? configuredRoots.slice(0, 1)
+      : configuredRoots;
     if (roots.length === 0 || (await missingDirectories(roots)).length > 0) {
       return { ok: false, reason: 'missing-root' };
     }
     return {
       ok: true,
-      projectId,
+      target: canonicalTarget,
       launcherId,
       provider: launcher.provider,
       name: launcher.name,
       cwd: roots[0]!,
       roots,
-      revision: this.launchRevision(projectId, launcherId, roots, launcher.executable),
+      ignoredAdditionalRootCount: configuredRoots.length - roots.length,
+      revision: this.launchRevision(canonicalTarget, launcherId, roots, launcher.executable),
+    };
+  }
+
+  /** Protocol-v5 compatibility wrapper for project-only launch clients. */
+  async prepareProjectLaunch(
+    projectId: string,
+    launcherId: string,
+  ): Promise<AgentProjectLaunchPreparation> {
+    const preparation = await this.prepareLaunch({ kind: 'project', projectId }, launcherId);
+    if (!preparation.ok) return preparation;
+    return {
+      ok: true,
+      projectId,
+      launcherId: preparation.launcherId,
+      provider: preparation.provider,
+      name: preparation.name,
+      cwd: preparation.cwd,
+      roots: preparation.roots,
+      revision: preparation.revision,
     };
   }
 
   async resolveLaunch(
-    projectId: string,
+    target: AgentLaunchTarget,
     launcherId: string,
     revision: string,
   ): Promise<
@@ -404,7 +458,7 @@ export class AgentHistoryService {
     }
     | { readonly ok: false; readonly reason: 'not-found' | 'stale' | 'missing-root' | 'unavailable' }
   > {
-    const preparation = await this.prepareLaunch(projectId, launcherId);
+    const preparation = await this.prepareLaunch(target, launcherId);
     if (!preparation.ok) {
       if (preparation.reason === 'invalid') return { ok: false, reason: 'not-found' };
       return { ok: false, reason: preparation.reason };
@@ -537,13 +591,13 @@ export class AgentHistoryService {
   }
 
   private launchRevision(
-    projectId: string,
+    target: AgentLaunchTarget,
     launcherId: string,
     roots: readonly string[],
     executable: string,
   ): string {
     return createHash('sha256')
-      .update(projectId)
+      .update(JSON.stringify(target))
       .update('\0')
       .update(launcherId)
       .update('\0')

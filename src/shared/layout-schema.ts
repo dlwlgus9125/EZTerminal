@@ -9,7 +9,8 @@
  *  - Terminal/OpenClaw `params` are STRICT empty objects: ANY key (a persisted
  *    sessionId above all) fails validation loudly — B1/B5 as a checked
  *    invariant, not a convention. A read-only Agent history panel may persist
- *    only its bounded, opaque EZTerminal `historyId`.
+ *    only its bounded, opaque EZTerminal `historyId` and a bounded provider
+ *    styling hint.
  *  - `contentComponent` must be one of the known panel types ('terminal',
  *    'openclaw-chat', or 'agent-session'): an unknown component would make
  *    dockview-react throw at mount; rejecting here routes to the corrupt path.
@@ -63,8 +64,10 @@ const PanelSchema = z.discriminatedUnion('contentComponent', [
   }),
   PanelBaseSchema.extend({
     contentComponent: z.literal('agent-session'),
-    // The opaque history id is the only durable Agent history field.
-    params: z.strictObject({ historyId: z.string().min(1).max(128) }),
+    params: z.strictObject({
+      historyId: z.string().min(1).max(128),
+      provider: z.enum(['codex', 'claude']).optional(),
+    }),
   }),
 ]);
 

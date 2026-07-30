@@ -103,11 +103,17 @@ describe('WorkspaceTab interactions', () => {
     const fixture = fakeProps();
     fixture.api.component = 'agent-session';
     fixture.api.setTitle('EZTerminal · Codex');
-    renderTab({ api: fixture.api as unknown as IDockviewPanelHeaderProps['api'] });
+    renderTab({
+      api: fixture.api as unknown as IDockviewPanelHeaderProps['api'],
+      params: { historyId: 'codex_opaque', provider: 'codex' },
+    });
 
+    const tab = container.querySelector<HTMLElement>('.agent-history-tab')!;
     const viewport = container.querySelector<HTMLElement>('.agent-history-tab__viewport')!;
+    expect(tab.dataset.provider).toBe('codex');
     expect(viewport.getAttribute('title')).toBe('EZTerminal · Codex');
-    expect(viewport.querySelector('.agent-history-tab__label')?.textContent).toBe('EZTerminal · Codex');
+    expect(viewport.querySelector('.agent-history-tab__label')?.textContent).toBe('EZTerminal');
+    expect(viewport.querySelector('.agent-provider-badge')?.textContent).toBe('Codex');
     expect(viewport.querySelector('.agent-history-tab__label.is-long')).toBeNull();
   });
 

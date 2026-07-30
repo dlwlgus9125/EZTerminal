@@ -12,7 +12,12 @@ import {
   shell,
   utilityProcess,
 } from 'electron';
-import type { UtilityProcess, MessagePortMain, Rectangle } from 'electron';
+import type {
+  IpcMainInvokeEvent,
+  MessagePortMain,
+  Rectangle,
+  UtilityProcess,
+} from 'electron';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -90,12 +95,16 @@ import type { OpenClawAutostartAction, OpenClawLifecycleAction, OpenClawVisibili
 import type { AgentDecisionResult, AgentFollowupResult } from '../shared/agent';
 import { normalizeExternalHttpUrl } from '../shared/external-url';
 import type {
+  AgentLaunchStartRequest,
+  AgentLaunchStartResult,
+  AgentLaunchTarget,
   AgentProjectLaunchStartRequest,
   AgentProjectLaunchStartResult,
   AgentProjectInput,
   AgentResumeStartRequest,
   AgentResumeStartResult,
 } from '../shared/agent-history';
+import { MAX_AGENT_LAUNCH_DIRECTORY_LENGTH } from '../shared/agent-history';
 import { classifyRecentPanelInput } from './recent-panel-input';
 import type { WorkspaceFileSearchRequest } from '../shared/workspace-search';
 import { isWorktreeRequest, type WorktreeInfo, type WorktreeResult } from '../shared/worktree';
@@ -113,6 +122,34 @@ import {
 const osc52LastWrite = new WeakMap<object, number>();
 const OSC52_MAIN_MAX_BYTES = 64 * 1024;
 const OSC52_MAIN_MIN_INTERVAL_MS = 1_000;
+
+function isBoundedAgentString(value: unknown, maxLength: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength;
+}
+
+function isAgentLaunchTarget(value: unknown): value is AgentLaunchTarget {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const target = value as Record<string, unknown>;
+  if (target.kind === 'project') {
+    return isBoundedAgentString(target.projectId, 128);
+  }
+  if (target.kind === 'directory') {
+    return isBoundedAgentString(target.directory, MAX_AGENT_LAUNCH_DIRECTORY_LENGTH);
+  }
+  return false;
+}
+
+function isAgentLaunchStartRequest(value: unknown): value is AgentLaunchStartRequest {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const request = value as Partial<AgentLaunchStartRequest>;
+  return (
+    isAgentLaunchTarget(request.target)
+    && isBoundedAgentString(request.launcherId, 128)
+    && isBoundedAgentString(request.sessionId, 256)
+    && isBoundedAgentString(request.runId, 256)
+    && isBoundedAgentString(request.revision, 128)
+  );
+}
 
 function directoryKey(value: string): string {
   const normalized = path.normalize(path.resolve(value));
@@ -946,6 +983,54 @@ app.on('ready', () => {
     await agentInfrastructureReady;
     return agentHistoryService.listLaunchers();
   });
+  const startAgentLaunchInSession = async (
+    event: IpcMainInvokeEvent,
+    candidate: AgentLaunchStartRequest,
+  ): Promise<AgentLaunchStartResult> => {
+    const resolved = await agentHistoryService.resolveLaunch(
+      candidate.target,
+      candidate.launcherId,
+      candidate.revision,
+    );
+    if (!resolved.ok) return resolved;
+    const session = broker?.listSessions().find((item) => item.sessionId === candidate.sessionId);
+    if (!session || !resolved.roots[0]
+      || directoryKey(session.cwd) !== directoryKey(resolved.roots[0])) {
+      return { ok: false, reason: 'session-mismatch' };
+    }
+    const port = broker?.runPrivateCommand(
+      candidate.sessionId,
+      candidate.runId,
+      resolved.commandText,
+      resolved.displayCommandText,
+    );
+    if (!port) return { ok: false, reason: 'unavailable' };
+    void agentHistoryService.recordTerminalWork(resolved.roots, Date.now()).catch((err) => {
+      console.error('[main] failed to record launched Agent project:', err);
+    });
+    event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
+    return { ok: true };
+  };
+  ipcMain.handle('agent-launch:prepare', async (
+    _event,
+    target: unknown,
+    launcherId: unknown,
+  ) => {
+    await Promise.all([agentHistoryReady, agentInfrastructureReady]);
+    if (!isAgentLaunchTarget(target) || !isBoundedAgentString(launcherId, 128)) {
+      return { ok: false, reason: 'invalid' };
+    }
+    return agentHistoryService.prepareLaunch(target, launcherId);
+  });
+  ipcMain.handle('agent-launch:start', async (
+    event,
+    request: unknown,
+  ): Promise<AgentLaunchStartResult> => {
+    await Promise.all([agentHistoryReady, agentInfrastructureReady]);
+    return isAgentLaunchStartRequest(request)
+      ? startAgentLaunchInSession(event, request)
+      : { ok: false, reason: 'invalid' };
+  });
   ipcMain.handle('agent-projects:prepare-launch', async (
     _event,
     projectId: unknown,
@@ -962,7 +1047,7 @@ app.on('ready', () => {
     ) {
       return { ok: false, reason: 'invalid' };
     }
-    return agentHistoryService.prepareLaunch(projectId, launcherId);
+    return agentHistoryService.prepareProjectLaunch(projectId, launcherId);
   });
   ipcMain.handle('agent-projects:start-launch', async (
     event,
@@ -992,29 +1077,13 @@ app.on('ready', () => {
     ) {
       return { ok: false, reason: 'invalid' };
     }
-    const resolved = await agentHistoryService.resolveLaunch(
-      candidate.projectId,
-      candidate.launcherId,
-      candidate.revision,
-    );
-    if (!resolved.ok) return resolved;
-    const session = broker?.listSessions().find((item) => item.sessionId === candidate.sessionId);
-    if (!session || !resolved.roots[0]
-      || directoryKey(session.cwd) !== directoryKey(resolved.roots[0])) {
-      return { ok: false, reason: 'session-mismatch' };
-    }
-    const port = broker?.runPrivateCommand(
-      candidate.sessionId,
-      candidate.runId,
-      resolved.commandText,
-      resolved.displayCommandText,
-    );
-    if (!port) return { ok: false, reason: 'unavailable' };
-    void agentHistoryService.recordTerminalWork(resolved.roots, Date.now()).catch((err) => {
-      console.error('[main] failed to record launched Agent project:', err);
+    return startAgentLaunchInSession(event, {
+      target: { kind: 'project', projectId: candidate.projectId },
+      launcherId: candidate.launcherId,
+      sessionId: candidate.sessionId,
+      runId: candidate.runId,
+      revision: candidate.revision,
     });
-    event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
-    return { ok: true };
   });
   ipcMain.handle('agent-projects:save', async (_event, input: unknown) => {
     await agentHistoryReady;

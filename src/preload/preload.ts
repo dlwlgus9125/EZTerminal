@@ -189,6 +189,13 @@ const api: EzTerminalApi = {
     ipcRenderer.invoke('agent-projects:remove', projectId),
   listAgentProjectLaunchers: () =>
     ipcRenderer.invoke('agent-projects:list-launchers'),
+  prepareAgentLaunch: (
+    target: import('../shared/agent-history').AgentLaunchTarget,
+    launcherId: string,
+  ) => ipcRenderer.invoke('agent-launch:prepare', target, launcherId),
+  startAgentLaunch: (
+    request: import('../shared/agent-history').AgentLaunchStartRequest,
+  ) => ipcRenderer.invoke('agent-launch:start', request),
   prepareAgentProjectLaunch: (projectId: string, launcherId: string) =>
     ipcRenderer.invoke('agent-projects:prepare-launch', projectId, launcherId),
   startAgentProjectLaunch: (

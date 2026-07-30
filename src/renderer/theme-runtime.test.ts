@@ -93,6 +93,8 @@ describe('applyThemeVarsAndEffects', () => {
     expect(text).toContain('--term-bg:#111111;');
     expect(text).toContain('--term-green:#00ff00;');
     expect(text).toContain('--ui-canvas:#111111;');
+    expect(text).toContain('--ui-agent-codex:');
+    expect(text).toContain('--ui-agent-claude:');
   });
 
   it('writes empty textContent for a built-in theme (matrix)', () => {

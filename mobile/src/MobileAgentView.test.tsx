@@ -8,6 +8,7 @@ import type { AgentActivity, AgentActivitySnapshot, AgentStatus } from '../../sr
 import type { GitDiffResult } from '../../src/shared/git-status';
 import { MobileAgentView } from './MobileAgentView';
 import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
+import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -120,6 +121,38 @@ describe('MobileAgentView', () => {
     );
     expect(testIds('agent-card').map((card) => card.getAttribute('data-status')))
       .toEqual(['blocked', 'waiting', 'working', 'done']);
+  });
+
+  it('places projects between attention and active history in document order', async () => {
+    const transport = {
+      supportsAgentProjectManagement: true,
+      supportsAgentDirectLaunch: true,
+      listAgentProjects: vi.fn(async () => ({ items: [], nextCursor: null })),
+    } as unknown as WsEzTerminalTransport;
+    render(
+      <MobileAgentView
+        snapshot={snapshotOf(
+          activity('done', 'done'),
+          activity('working', 'working'),
+          activity('blocked', 'blocked'),
+        )}
+        {...noop}
+        transport={transport}
+        onResumeHistory={async () => undefined}
+        onLaunchAgent={async () => undefined}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const order = Array.from(container.querySelector('.mob-column')!.children).map((element) => (
+      element.getAttribute('data-testid') === 'mobile-agent-projects'
+        ? 'projects'
+        : element.getAttribute('data-status')
+    ));
+    expect(order).toEqual(['blocked', 'projects', 'working', 'done']);
   });
 
   it('orders parked approvals first by risk, expiry, then recency', () => {

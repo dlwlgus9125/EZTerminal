@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   calculateContrastRatio,
+  resolveProviderIdentityColors,
   resolveAccessibleTheme,
   seedUiThemeColors,
   uiThemeColorsToCssVars,
@@ -14,6 +15,17 @@ describe('theme contrast math', () => {
     expect(calculateContrastRatio('#000', '#fff')).toBeCloseTo(21, 5);
     expect(calculateContrastRatio('rgb(0, 0, 0)', 'hsl(0, 0%, 100%)')).toBeCloseTo(21, 5);
     expect(calculateContrastRatio('white', 'black')).toBeCloseTo(21, 5);
+  });
+
+  it('derives custom-theme provider colors with text contrast on every history surface', () => {
+    for (const ui of [THEMES.dark.ui!, THEMES.light.ui!]) {
+      const providers = resolveProviderIdentityColors(ui);
+      for (const color of Object.values(providers)) {
+        for (const surface of [ui.surface, ui.surfaceRaised, ui.surfaceInset]) {
+          expect(calculateContrastRatio(color, surface)).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
   });
 
   it('minimally corrects functional roles and reports each before/after without mutating source', () => {

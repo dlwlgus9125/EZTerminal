@@ -1181,3 +1181,105 @@ truthful-data exception in the manifest.
 
 There are no unresolved desktop appearance, command, responsive, state,
 compatibility, or accessibility decisions for the 1.0.13 handoff.
+
+## 18. Agent history identity and launch-target addendum
+
+This addendum is normative for the desktop Agent sidebar and the connected
+Android Agent destination. The audience is a developer reviewing local Codex
+and Claude history or starting one enabled Agent CLI at an explicit host
+location.
+
+### 18.1 Direction decision
+
+Three provider-identification directions were evaluated:
+
+1. **Full-row provider tint** — rejected because it competes with approval and
+   runtime status colours.
+2. **Text badge plus start rail — selected by the user.** Codex uses a teal
+   identification token and Claude a coral token on history rows, opened
+   history tabs/panels, and mobile history sheets.
+3. **Provider logos** — rejected because text is clearer at sidebar density and
+   would add brand-asset and recolouring constraints.
+
+Three launch directions were evaluated:
+
+1. Keep nested per-project Agent menus — rejected because the global action
+   still has no location choice and the two entry points would diverge.
+2. **One two-field launch picker — selected by the user.** Agent and location
+   are required, with the project-card entry preselecting only its project.
+3. Extend Command Center into the launch form — rejected for this change
+   because Android has no global Command Center and the existing command rows
+   intentionally retain insertion semantics.
+
+### 18.2 Information architecture and component contract
+
+- Agent content order is Attention, Projects, Active, then Recent when present.
+  Empty activity guidance belongs with the activity groups and never displaces
+  Projects above Attention.
+- Desktop uses the repository `Dialog`; Android uses `MobileActionSheet`.
+  Both own the same launch state: launcher catalog, required Agent selection,
+  required project-or-directory target, preparation state, inline error, and
+  explicit Launch/Cancel actions.
+- The global action opens with both fields empty. Project `New chat` opens the
+  same picker with that project selected and the Agent empty.
+- Location offers searchable saved/observed host projects and one direct host
+  folder. Desktop uses the native directory dialog; Android uses the existing
+  remote folder browser. Merely selecting or cancelling a directory writes
+  nothing.
+- Every accepted launch opens a new terminal tab and session. Codex and Claude
+  receive the selected project's primary and additional roots. A generic
+  launcher uses only the primary root and shows the ignored-root count before
+  launch.
+- A successfully accepted direct-directory launch becomes an unpinned,
+  terminal-observed project. A failed or cancelled launch does not.
+- History rows, desktop history tabs/panels, and Android history sheets use a
+  visible Codex/Claude label plus a 3px provider-coloured start rail. User
+  transcript labels and all live Agent status surfaces remain neutral/provider
+  independent.
+
+No provider raster, logo, font, or generated asset is introduced. Provider
+names remain untranslated product names. Lucide remains the only icon source.
+
+### 18.3 State, responsive, and accessibility contract
+
+| Surface | Loading / progress | Empty / unavailable | Error / offline | Success / cancellation |
+| --- | --- | --- | --- | --- |
+| Launch picker | Stable form; duplicate submit disabled | No enabled launcher explains desktop Agent configuration | Invalid/missing target and unavailable launcher stay inline without clearing selections | Success transfers focus to the new terminal; Cancel writes and runs nothing |
+| Direct folder picker | Current directory skeleton/list | Empty directory remains selectable | Host read/offline failure offers Retry and Back | Select returns the canonical candidate to the parent picker |
+| Generic multi-root selection | Not applicable | No warning for a single root | Ignored additional roots are stated as text, not colour | Launch continues at the primary root only |
+| History list/tab/sheet | Existing history loading geometry | Existing empty-history guidance | Existing retry remains provider-labelled | Provider badge and rail remain visible without replacing focus/status styling |
+| Bootstrap retry | Existing new terminal remains identifiable | Not applicable | Re-prepare the same target; never run in a PTY whose cwd no longer matches | Successful retry clears the one-shot bootstrap |
+
+The picker is keyboard complete on desktop and uses at least 44x44px targets on
+mobile. It traps modal focus, labels both required groups, associates inline
+errors, closes with Escape/Android Back, and restores the invoker on Cancel.
+The nested Android folder picker closes before the launch sheet. Provider
+meaning never relies on colour alone. Supported desktop/mobile viewport,
+locale, scale, reduced-motion, focus, and no-horizontal-scroll axes remain
+those in sections 12, 13, and 17.
+
+### 18.4 Provider tokens and visual oracle
+
+Provider identification is additive to the semantic theme schema:
+
+| Theme class | Codex | Claude |
+| --- | --- | --- |
+| Dark / Matrix | `#48d7c8` | `#e58a6b` |
+| Light | `#006b64` | `#9a3f28` |
+| High Contrast | `#00ffff` | `#ff9b7a` |
+
+Provider text tokens must reach 4.5:1 against every history surface and the
+start rail 3:1 against adjacent surfaces. Custom themes choose and minimally
+correct the bright or dark candidate through the existing contrast resolver;
+the provider roles are not added to the persisted custom-theme schema.
+
+`WorkbenchAgentHub` remains the desktop composition oracle and gains projects,
+both provider histories, the selected ordering, and launch-picker states.
+Mobile Agent stories/fixtures cover the same ordering, provider sheets, and
+360x800/412x915 launch states. Storybook axe, the existing pairwise theme
+visual matrix, component tests, and product Playwright E2E are required.
+Snapshot refresh requires side-by-side review; the pinned desktop handoff
+assets remain unmodified.
+
+There are no unresolved appearance, interaction, responsive, asset,
+compatibility, or accessibility decisions for this addendum.

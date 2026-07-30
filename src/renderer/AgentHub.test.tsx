@@ -210,6 +210,8 @@ describe('AgentHub local history paging', () => {
 
     const rows = container.querySelectorAll<HTMLButtonElement>('.agent-history-row');
     expect(rows).toHaveLength(10);
+    expect(rows[0]?.dataset.provider).toBe('codex');
+    expect(rows[0]?.querySelector('.agent-provider-badge')?.textContent).toBe('Codex');
     act(() => rows[0]!.click());
     expect(onOpenHistorySession).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Session 1' }),
@@ -220,6 +222,33 @@ describe('AgentHub local history paging', () => {
     await flush();
     expect(listAgentHistorySessions).toHaveBeenLastCalledWith('project-1', 'page-2', 20);
     expect(container.querySelectorAll('.agent-history-row')).toHaveLength(12);
+  });
+
+  it('orders attention, projects, active, and recent in the document', async () => {
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: {
+        listAgentProjects: vi.fn(async () => ({ items: [], nextCursor: null })),
+      },
+    });
+    await renderHub({
+      revision: 1,
+      items: [
+        activity({ id: 'recent', status: 'done' }),
+        activity({ id: 'active', status: 'working' }),
+        activity({ id: 'attention', status: 'blocked' }),
+      ],
+    });
+
+    const ordered = Array.from(container.querySelectorAll<HTMLElement>(
+      '.agent-group, [data-testid="agent-projects"]',
+    )).map((element) => element.dataset.testid);
+    expect(ordered).toEqual([
+      'agent-group-attention',
+      'agent-projects',
+      'agent-group-active',
+      'agent-group-recent',
+    ]);
   });
 
   it('prepares a selected provider and hands a prompt-free new-chat bootstrap to the workspace', async () => {
@@ -242,14 +271,15 @@ describe('AgentHub local history paging', () => {
     };
     const listAgentProjects = vi.fn(async () => ({ items: [project], nextCursor: null }));
     const listAgentProjectLaunchers = vi.fn(async () => [launcher]);
-    const prepareAgentProjectLaunch = vi.fn(async () => ({
+    const prepareAgentLaunch = vi.fn(async () => ({
       ok: true as const,
-      projectId: project.projectId,
+      target: { kind: 'project' as const, projectId: project.projectId },
       launcherId: launcher.launcherId,
       provider: launcher.provider,
       name: launcher.name,
       cwd: project.primaryRoot,
       roots: [project.primaryRoot, ...project.additionalRoots],
+      ignoredAdditionalRootCount: 0,
       revision: 'revision-1',
     }));
     Object.defineProperty(window, 'ezterminal', {
@@ -257,11 +287,11 @@ describe('AgentHub local history paging', () => {
       value: {
         listAgentProjects,
         listAgentProjectLaunchers,
-        prepareAgentProjectLaunch,
+        prepareAgentLaunch,
       },
     });
-    const onLaunchProject = vi.fn();
-    await renderHub({ revision: 1, items: [] }, { onLaunchProject });
+    const onLaunchAgent = vi.fn();
+    await renderHub({ revision: 1, items: [] }, { onLaunchAgent });
 
     act(() => {
       container.querySelector<HTMLButtonElement>(
@@ -269,34 +299,57 @@ describe('AgentHub local history paging', () => {
       )!.click();
     });
     await flush();
-    const launcherButton = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
-      .find((button) => button.textContent?.includes('Claude Code'));
-    act(() => launcherButton!.click());
+    const launcherSelect = document.body.querySelector<HTMLSelectElement>(
+      '[data-testid="agent-launch-agent"]',
+    )!;
+    act(() => {
+      launcherSelect.value = 'claude';
+      launcherSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    act(() => {
+      document.body.querySelector<HTMLButtonElement>('[data-testid="agent-launch-submit"]')!.click();
+    });
     await flush();
 
-    expect(prepareAgentProjectLaunch).toHaveBeenCalledWith('project-1', 'claude');
-    expect(onLaunchProject).toHaveBeenCalledWith({
+    expect(prepareAgentLaunch).toHaveBeenCalledWith(
+      { kind: 'project', projectId: 'project-1' },
+      'claude',
+    );
+    expect(onLaunchAgent).toHaveBeenCalledWith({
       kind: 'new-chat',
-      projectId: 'project-1',
+      target: { kind: 'project', projectId: 'project-1' },
       launcherId: 'claude',
       provider: 'claude',
       name: 'Claude Code',
       cwd: 'C:\\Project',
       revision: 'revision-1',
     });
-    expect(JSON.stringify(onLaunchProject.mock.calls)).not.toContain('prompt');
+    expect(JSON.stringify(onLaunchAgent.mock.calls)).not.toContain('prompt');
   });
 });
 
 describe('AgentHub real actions and honest diff', () => {
-  it('renders the new-run action only when a real callback is supplied', async () => {
-    const onNewAgentRun = vi.fn();
-    await renderHub({ revision: 1, items: [] }, { onNewAgentRun });
+  it('opens the unified picker with blank agent and location from the global action', async () => {
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: {
+        listAgentProjects: vi.fn(async () => ({ items: [], nextCursor: null })),
+        listAgentProjectLaunchers: vi.fn(async () => []),
+      },
+    });
+    const onLaunchAgent = vi.fn();
+    await renderHub({ revision: 1, items: [] }, { onLaunchAgent });
 
     const button = container.querySelector<HTMLButtonElement>('[data-testid="agent-new-run"]');
     expect(button).not.toBeNull();
     act(() => button!.click());
-    expect(onNewAgentRun).toHaveBeenCalledOnce();
+    await flush();
+    expect(document.body.querySelector('[data-testid="agent-launch-picker"]')).not.toBeNull();
+    expect(document.body.querySelector<HTMLSelectElement>('[data-testid="agent-launch-agent"]')?.value)
+      .toBe('');
+    expect(document.body.querySelector<HTMLSelectElement>('[data-testid="agent-launch-project"]')?.value)
+      .toBe('');
+    expect(onLaunchAgent).not.toHaveBeenCalled();
   });
 
   it('shows structured omissions even when no file content could be included', async () => {

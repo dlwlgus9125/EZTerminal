@@ -93,23 +93,23 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     expect(validateLayoutEnvelope(makeEnvelope(layout))).toBeNull();
   });
 
-  it('ACCEPTS an Agent history panel with only a bounded opaque historyId', () => {
+  it('ACCEPTS an Agent history panel with a bounded historyId and public provider identity', () => {
     const layout = makeLayout();
     const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
     panel.id = 'agent-session-codex_0123456789abcdef01234567';
     panel.contentComponent = 'agent-session';
-    panel.params = { historyId: 'codex_0123456789abcdef01234567' };
+    panel.params = { historyId: 'codex_0123456789abcdef01234567', provider: 'codex' };
     layout.panels = { [panel.id as string]: panel };
 
     const env = validateLayoutEnvelope(makeEnvelope(layout));
 
     expect(env?.layout.panels[panel.id as string]).toMatchObject({
       contentComponent: 'agent-session',
-      params: { historyId: 'codex_0123456789abcdef01234567' },
+      params: { historyId: 'codex_0123456789abcdef01234567', provider: 'codex' },
     });
   });
 
-  it('REJECTS provider ids or transcript data added to Agent history params', () => {
+  it('REJECTS private provider thread ids or transcript data added to Agent history params', () => {
     const layout = makeLayout();
     const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
     panel.contentComponent = 'agent-session';

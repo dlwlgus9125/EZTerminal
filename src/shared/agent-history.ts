@@ -140,6 +140,70 @@ export interface AgentProjectLauncherSummary {
   readonly supportsAdditionalRoots: boolean;
 }
 
+export type AgentLaunchTarget =
+  | {
+      readonly kind: 'project';
+      readonly projectId: string;
+    }
+  | {
+      readonly kind: 'directory';
+      /** Host directory. The main process returns the canonical path after preparation. */
+      readonly directory: string;
+    };
+
+export type AgentLaunchPreparation =
+  | {
+      readonly ok: true;
+      /** Canonicalized for a direct directory; opaque and unchanged for a project. */
+      readonly target: AgentLaunchTarget;
+      readonly launcherId: string;
+      readonly provider: AgentProjectLauncherProvider;
+      readonly name: string;
+      readonly cwd: string;
+      /** Only roots the selected launcher can actually consume. */
+      readonly roots: readonly string[];
+      readonly ignoredAdditionalRootCount: number;
+      /** Covers the canonical effective roots and current launcher configuration. */
+      readonly revision: string;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: 'invalid' | 'not-found' | 'missing-root' | 'unavailable';
+    };
+
+export interface AgentLaunchStartRequest {
+  readonly target: AgentLaunchTarget;
+  readonly launcherId: string;
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly revision: string;
+}
+
+export type AgentLaunchStartResult =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly reason:
+        | 'invalid'
+        | 'not-found'
+        | 'stale'
+        | 'missing-root'
+        | 'session-mismatch'
+        | 'unavailable';
+    };
+
+/** Renderer-only one-shot handoff from the launch picker into a fresh terminal. */
+export interface AgentLaunchBootstrap {
+  readonly kind: 'new-chat';
+  readonly target: AgentLaunchTarget;
+  readonly launcherId: string;
+  readonly provider: AgentProjectLauncherProvider;
+  readonly name: string;
+  readonly cwd: string;
+  readonly revision: string;
+}
+
+/** Protocol-v5 compatibility shape. New callers use AgentLaunchPreparation. */
 export type AgentProjectLaunchPreparation =
   | {
       readonly ok: true;
@@ -165,31 +229,12 @@ export interface AgentProjectLaunchStartRequest {
   readonly revision: string;
 }
 
-export type AgentProjectLaunchStartResult =
-  | { readonly ok: true }
-  | {
-      readonly ok: false;
-      readonly reason:
-        | 'invalid'
-        | 'not-found'
-        | 'stale'
-        | 'missing-root'
-        | 'session-mismatch'
-        | 'unavailable';
-    };
+export type AgentProjectLaunchStartResult = AgentLaunchStartResult;
 
-/** Renderer-only one-shot handoff from a project card into a fresh live terminal. */
-export interface AgentProjectLaunchBootstrap {
-  readonly kind: 'new-chat';
-  readonly projectId: string;
-  readonly launcherId: string;
-  readonly provider: AgentProjectLauncherProvider;
-  readonly name: string;
-  readonly cwd: string;
-  readonly revision: string;
-}
+/** @deprecated Renderer callers use AgentLaunchBootstrap. */
+export type AgentProjectLaunchBootstrap = AgentLaunchBootstrap;
 
-export type AgentTerminalBootstrap = AgentResumeBootstrap | AgentProjectLaunchBootstrap;
+export type AgentTerminalBootstrap = AgentResumeBootstrap | AgentLaunchBootstrap;
 
 export interface AgentProjectInput {
   readonly projectId?: string;
@@ -212,5 +257,6 @@ export interface AgentProjectFolderSelection {
 export const MAX_AGENT_PROJECTS = 10_000;
 export const MAX_AGENT_PROJECT_ROOTS = 32;
 export const MAX_AGENT_PROJECT_NAME_LENGTH = 80;
+export const MAX_AGENT_LAUNCH_DIRECTORY_LENGTH = 8_192;
 export const MAX_AGENT_HISTORY_PAGE_SIZE = 100;
 export const MAX_AGENT_TRANSCRIPT_PAGE_SIZE = 20;

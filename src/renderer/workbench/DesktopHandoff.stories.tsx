@@ -102,7 +102,7 @@ function storyCapabilities(locale: Locale = 'ko'): CapabilityAccess {
     ...rendererCapabilities,
     snapshot: () => ({ core: 'available', desktop: 'available' }),
     runtimeVersions: () => ({
-      app: '1.0.14',
+      app: '1.0.15',
       protocol: 3,
       buildSha: 'handoff',
       electron: '38',
@@ -306,7 +306,7 @@ function WorkbenchFrame({
     <DesktopUiPreferencesProvider capabilities={capabilities}>
       <main className="app desktop-handoff-workbench">
         <AppHeader
-          appVersion="1.0.14"
+          appVersion="1.0.15"
           attentionCount={2}
           commandCenterOpen={false}
           effectIntensity={7}
@@ -407,7 +407,7 @@ function AgentHubFixture(): JSX.Element {
         omissions: [],
       })}
       onReadGitStatus={async () => EMPTY_GIT_DIRECTORY_STATUS}
-      onNewAgentRun={() => undefined}
+      onLaunchAgent={() => undefined}
       onOpenAgentSettings={() => undefined}
     />
   );

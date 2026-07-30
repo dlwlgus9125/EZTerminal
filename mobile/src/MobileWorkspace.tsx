@@ -557,7 +557,7 @@ export function MobileWorkspace({
         onLoadDiff={(directory) => transport.getGitDiff(directory)}
         onReadGitStatus={(directory) => transport.getGitStatus(directory)}
         onResumeHistory={startAgentBootstrap}
-        onLaunchProject={startAgentBootstrap}
+        onLaunchAgent={startAgentBootstrap}
         transport={transport}
         onFocusSession={(sessionId) => {
           const activity = agentSnapshot.items.find((item) => item.sessionId === sessionId);

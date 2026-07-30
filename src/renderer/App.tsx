@@ -27,7 +27,7 @@ import type { FilePreviewResult } from '../shared/file-preview';
 import type { SessionInfo } from '../shared/ipc';
 import type {
   AgentHistorySessionSummary,
-  AgentProjectLaunchBootstrap,
+  AgentLaunchBootstrap,
   AgentProjectSummary,
 } from '../shared/agent-history';
 import type { ThemeMod } from '../shared/theme-schema';
@@ -1145,11 +1145,11 @@ export function App(): JSX.Element {
       component: 'agent-session',
       title,
       renderer: 'always',
-      params: { historyId: session.historyId },
+      params: { historyId: session.historyId, provider: session.provider },
     });
   }, []);
 
-  const launchAgentProject = useCallback((bootstrap: AgentProjectLaunchBootstrap): void => {
+  const launchAgent = useCallback((bootstrap: AgentLaunchBootstrap): void => {
     workbenchCoordinator.openTerminal({
       cwd: bootstrap.cwd,
       title: bootstrap.name,
@@ -2625,9 +2625,8 @@ export function App(): JSX.Element {
           window.ezterminal.decideAgentApproval(activityId, approvalId, decision)}
         onLoadDiff={(directory) => window.ezterminal.getGitDiff(directory)}
         onReadGitStatus={(directory) => window.ezterminal.getGitStatus(directory)}
-        onNewAgentRun={() => openQuickOpen('all')}
         onOpenHistorySession={openAgentHistorySession}
-        onLaunchProject={launchAgentProject}
+        onLaunchAgent={launchAgent}
         onOpenAgentSettings={() => {
           setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
           setSidebarDestination('settings');

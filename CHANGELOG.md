@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+## [1.0.15] - 2026-07-30
+
+### Added
+
+- Added a shared new-Agent launch picker on desktop and Android that requires
+  an enabled Agent and an explicit saved project or direct host directory.
+- Added protocol-v6 target-neutral Agent launch preparation and correlated
+  start results while retaining the protocol-v5 project launch path for older
+  clients.
+
+### Changed
+
+- Moved Projects ahead of Active and Recent Agent activity so location is
+  selected before session state, with project-card launch actions preselecting
+  only their project.
+- Gave Codex and Claude history rows, opened desktop history, and Android
+  history sheets visible provider labels and accessible teal/coral identity
+  rails across dark, light, Matrix, and high-contrast themes.
+- Updated the Android companion to versionCode 36 and the remote protocol to
+  v6 while retaining supported v1-v5 compatibility.
+
+### Fixed
+
+- Revalidated launch targets, launcher availability, roots, revisions, and
+  terminal working directories immediately before execution.
+- Kept cancelled or failed direct-directory launches from creating project
+  metadata, while successful launches promote the canonical directory as an
+  unpinned observed project.
+- Preserved the selected Agent and location across recoverable launch errors
+  and reported additional roots ignored by generic launchers.
+
+See [1.0.15 release notes](docs/release/release-notes-1.0.15.md).
+
 ## [1.0.14] - 2026-07-30
 
 ### Added

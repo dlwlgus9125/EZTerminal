@@ -3221,6 +3221,7 @@ body {
   color: inherit;
   text-align: left;
   border: 0;
+  border-inline-start: 3px solid var(--agent-provider-color, var(--ui-border-subtle));
   border-radius: 0.35rem;
   background: transparent;
 }
@@ -3229,9 +3230,15 @@ body {
   background: var(--ui-surface-hover);
 }
 
-.agent-history-row > span {
-  color: var(--ui-accent);
+.agent-provider-badge {
+  width: max-content;
+  padding: 0.05rem 0.3rem;
+  color: var(--agent-provider-color, var(--ui-text-secondary));
   font-size: 0.72rem;
+  font-weight: 700;
+  border: 1px solid currentColor;
+  border-radius: var(--ui-radius-sm);
+  background: color-mix(in srgb, var(--agent-provider-color, var(--ui-text-secondary)) 10%, transparent);
   text-transform: uppercase;
 }
 
@@ -3267,6 +3274,58 @@ body {
 
 .agent-projects-more {
   inline-size: 100%;
+}
+
+.agent-launch-picker {
+  display: grid;
+  gap: var(--ui-space-3);
+}
+
+.agent-launch-picker .ez-ui-field {
+  gap: var(--ui-space-2);
+}
+
+.agent-launch-directory {
+  display: grid;
+  gap: var(--ui-space-1);
+  min-inline-size: 0;
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-12);
+}
+
+.agent-launch-directory code {
+  overflow: hidden;
+  padding: var(--ui-space-2);
+  color: var(--ui-text-primary);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-launch-warning {
+  margin: 0;
+  padding: var(--ui-space-2);
+  color: var(--ui-warning);
+  border-inline-start: 3px solid currentColor;
+  background: var(--ui-warning-muted);
+  font-size: var(--ui-font-size-12);
+}
+
+.agent-history-row[data-provider='codex'],
+.agent-history-tab[data-provider='codex'],
+.agent-history-terminal[data-provider='codex'],
+.agent-history-terminal__message[data-provider='codex'] {
+  --agent-provider-color: var(--ui-agent-codex);
+}
+
+.agent-history-row[data-provider='claude'],
+.agent-history-tab[data-provider='claude'],
+.agent-history-terminal[data-provider='claude'],
+.agent-history-terminal__message[data-provider='claude'] {
+  --agent-provider-color: var(--ui-agent-claude);
 }
 
 .agent-project-editor {
@@ -3328,6 +3387,7 @@ body {
 }
 
 .agent-history-terminal {
+  border-inline-start: 3px solid var(--agent-provider-color, var(--ui-border-subtle));
   background: var(--ui-surface-inset);
   color: var(--ui-text-primary);
 }
@@ -3347,7 +3407,7 @@ body {
 }
 
 .agent-history-terminal__header > span {
-  color: var(--ui-accent);
+  color: var(--agent-provider-color, var(--ui-text-secondary));
   font-weight: 700;
 }
 
@@ -3388,6 +3448,10 @@ body {
   color: var(--ui-accent);
   font-weight: 700;
   text-align: start;
+}
+
+.agent-history-terminal__message[data-provider] .agent-history-terminal__role {
+  color: var(--agent-provider-color);
 }
 
 .agent-history-terminal__message--user {
@@ -3870,12 +3934,16 @@ body {
 
 .agent-history-tab {
   min-inline-size: 0;
+  border-inline-start: 3px solid var(--agent-provider-color, transparent);
 }
 
 .agent-history-tab__viewport {
+  display: flex;
   inline-size: auto;
-  max-inline-size: 18ch;
+  max-inline-size: 24ch;
   min-inline-size: 0;
+  align-items: center;
+  gap: var(--ui-space-1);
   overflow: hidden;
   white-space: nowrap;
 }
@@ -3883,9 +3951,15 @@ body {
 .agent-history-tab__label {
   display: block;
   min-inline-size: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.agent-history-tab .agent-provider-badge {
+  flex: none;
+  font-size: var(--ui-font-size-3xs);
 }
 
 .agent-history-tab__close {

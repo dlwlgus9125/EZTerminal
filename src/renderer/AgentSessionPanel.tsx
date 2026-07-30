@@ -24,6 +24,11 @@ export const AGENT_ROLE_LABEL: Record<AgentHistoryProvider, string> = {
   claude: 'claude',
 };
 
+const AGENT_PROVIDER_LABEL: Record<AgentHistoryProvider, string> = {
+  codex: 'Codex',
+  claude: 'Claude',
+};
+
 export interface AgentSessionPanelProps {
   readonly historyId: string;
   readonly renderTerminal: (
@@ -194,7 +199,11 @@ export function AgentSessionPanel({
   };
 
   return (
-    <section className="pane agent-history-terminal" data-testid="agent-session-panel">
+    <section
+      className="pane agent-history-terminal"
+      data-provider={page?.provider}
+      data-testid="agent-session-panel"
+    >
       <div
         className="block-list agent-history-terminal__scroll"
         data-testid="agent-history-transcript"
@@ -203,7 +212,9 @@ export function AgentSessionPanel({
         onScroll={handleScroll}
       >
         <header className="agent-history-terminal__header">
-          <span>{page ? AGENT_ROLE_LABEL[page.provider] : 'Agent'}</span>
+          <span className={page ? 'agent-provider-badge' : undefined}>
+            {page ? AGENT_PROVIDER_LABEL[page.provider] : 'Agent'}
+          </span>
           <small>{t('agentHub.history.continue')}</small>
         </header>
         {loadingMore && (
@@ -230,6 +241,7 @@ export function AgentSessionPanel({
             {turn.entries.map((entry) => entry.type === 'message' ? (
               <article
                 className={`agent-history-terminal__message agent-history-terminal__message--${entry.role}`}
+                data-provider={entry.role === 'assistant' ? page.provider : undefined}
                 key={entry.id}
               >
                 <span className="agent-history-terminal__role">

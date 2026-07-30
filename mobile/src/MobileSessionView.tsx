@@ -620,12 +620,25 @@ export function MobileSessionView({
           if (!result.ok) throw new Error(`Agent resume failed: ${result.reason}`);
           return;
         }
-        const result = await window.ezterminal.startAgentProjectLaunch({
-          projectId: agentBootstrap.projectId,
+        let launchTarget = agentBootstrap.target;
+        let launchRevision = agentBootstrap.revision;
+        if (agentBootstrapRetry > 0) {
+          const preparation = await window.ezterminal.prepareAgentLaunch(
+            agentBootstrap.target,
+            agentBootstrap.launcherId,
+          );
+          if (!preparation.ok) {
+            throw new Error(`Agent launch preparation failed: ${preparation.reason}`);
+          }
+          launchTarget = preparation.target;
+          launchRevision = preparation.revision;
+        }
+        const result = await window.ezterminal.startAgentLaunch({
+          target: launchTarget,
           launcherId: agentBootstrap.launcherId,
           sessionId,
           runId,
-          revision: agentBootstrap.revision,
+          revision: launchRevision,
         });
         if (!result.ok) throw new Error(`Agent project launch failed: ${result.reason}`);
       },

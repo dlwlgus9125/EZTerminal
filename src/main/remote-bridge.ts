@@ -44,6 +44,7 @@ import {
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_PROTOCOL_VERSION_AGENT_HISTORY,
+  REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS,
   REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL,
@@ -83,6 +84,8 @@ import type {
 } from '../shared/agent';
 import type {
   AgentHistorySessionPage,
+  AgentLaunchPreparation,
+  AgentLaunchTarget,
   AgentProjectInput,
   AgentProjectLaunchPreparation,
   AgentProjectLauncherSummary,
@@ -251,6 +254,25 @@ function isOptionalString(value: unknown): value is string | undefined {
 
 function isOptionalNumber(value: unknown): value is number | undefined {
   return value === undefined || isFiniteNumber(value);
+}
+
+function isRemoteAgentLaunchTarget(value: unknown): value is AgentLaunchTarget {
+  if (!isRecord(value)) return false;
+  if (value.kind === 'project') {
+    return (
+      typeof value.projectId === 'string'
+      && value.projectId.length > 0
+      && value.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+    );
+  }
+  if (value.kind === 'directory') {
+    return (
+      typeof value.directory === 'string'
+      && value.directory.length > 0
+      && value.directory.length <= 8_192
+    );
+  }
+  return false;
 }
 
 const MAX_GUARDED_DESTROY_ID_LENGTH = 256;
@@ -512,6 +534,38 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         && typeof request.projectId === 'string'
         && request.projectId.length > 0
         && request.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.launcherId === 'string'
+        && request.launcherId.length > 0
+        && request.launcherId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.sessionId === 'string'
+        && request.sessionId.length > 0
+        && request.sessionId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.runId === 'string'
+        && request.runId.length > 0
+        && request.runId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.revision === 'string'
+        && request.revision.length > 0
+        && request.revision.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    }
+    case 'agent-launch-prepare':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && isRemoteAgentLaunchTarget(value.target)
+        && typeof value.launcherId === 'string'
+        && value.launcherId.length > 0
+        && value.launcherId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    case 'agent-launch-start': {
+      const request = isRecord(value.request) ? value.request : null;
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && request !== null
+        && isRemoteAgentLaunchTarget(request.target)
         && typeof request.launcherId === 'string'
         && request.launcherId.length > 0
         && request.launcherId.length <= MAX_REMOTE_AGENT_ID_LENGTH
@@ -838,9 +892,10 @@ export interface RemoteAgentHistorySource {
   saveProject?(input: AgentProjectInput): Promise<AgentProjectMutationResult>;
   removeProject?(projectId: string): Promise<boolean>;
   listLaunchers?(): readonly AgentProjectLauncherSummary[];
-  prepareLaunch?(projectId: string, launcherId: string): Promise<AgentProjectLaunchPreparation>;
+  prepareLaunch?(target: AgentLaunchTarget, launcherId: string): Promise<AgentLaunchPreparation>;
+  prepareProjectLaunch?(projectId: string, launcherId: string): Promise<AgentProjectLaunchPreparation>;
   resolveLaunch?(
-    projectId: string,
+    target: AgentLaunchTarget,
     launcherId: string,
     revision: string,
   ): Promise<
@@ -1936,7 +1991,22 @@ export function attachConnection(
 
       case 'agent-project-prepare-launch':
         if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
-        void (options.agentHistorySource?.prepareLaunch?.(msg.projectId, msg.launcherId)
+        void (options.agentHistorySource?.prepareProjectLaunch?.(msg.projectId, msg.launcherId)
+          ?? options.agentHistorySource?.prepareLaunch?.(
+            { kind: 'project', projectId: msg.projectId },
+            msg.launcherId,
+          ).then((preparation): AgentProjectLaunchPreparation => preparation.ok
+            ? {
+                ok: true,
+                projectId: msg.projectId,
+                launcherId: preparation.launcherId,
+                provider: preparation.provider,
+                name: preparation.name,
+                cwd: preparation.cwd,
+                roots: preparation.roots,
+                revision: preparation.revision,
+              }
+            : preparation)
           ?? Promise.resolve({ ok: false, reason: 'unavailable' } as const))
           .then((result) => {
             if (authed) {
@@ -1970,7 +2040,7 @@ export function attachConnection(
           break;
         }
         void source.resolveLaunch(
-          msg.request.projectId,
+          { kind: 'project', projectId: msg.request.projectId },
           msg.request.launcherId,
           msg.request.revision,
         ).then((resolved) => {
@@ -2015,6 +2085,95 @@ export function attachConnection(
           if (authed) {
             send({
               kind: 'agent-project-start-launch-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'unavailable' },
+            });
+          }
+        });
+        break;
+      }
+
+      case 'agent-launch-prepare':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) break;
+        void (options.agentHistorySource?.prepareLaunch?.(msg.target, msg.launcherId)
+          ?? Promise.resolve({ ok: false, reason: 'unavailable' } as const))
+          .then((result) => {
+            if (authed) {
+              send({
+                kind: 'agent-launch-prepare-reply',
+                requestId: msg.requestId,
+                result,
+              });
+            }
+          })
+          .catch(() => {
+            if (authed) {
+              send({
+                kind: 'agent-launch-prepare-reply',
+                requestId: msg.requestId,
+                result: { ok: false, reason: 'unavailable' },
+              });
+            }
+          });
+        break;
+
+      case 'agent-launch-start': {
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) break;
+        const source = options.agentHistorySource;
+        if (!source?.resolveLaunch) {
+          send({
+            kind: 'agent-launch-start-reply',
+            requestId: msg.requestId,
+            result: { ok: false, reason: 'unavailable' },
+          });
+          break;
+        }
+        void source.resolveLaunch(
+          msg.request.target,
+          msg.request.launcherId,
+          msg.request.revision,
+        ).then((resolved) => {
+          if (!authed) return;
+          if (!resolved.ok) {
+            send({
+              kind: 'agent-launch-start-reply',
+              requestId: msg.requestId,
+              result: resolved,
+            });
+            return;
+          }
+          if (!sessionMatchesPrimaryRoot(msg.request.sessionId, resolved.roots)) {
+            send({
+              kind: 'agent-launch-start-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'session-mismatch' },
+            });
+            return;
+          }
+          const installed = installPrivateRun(
+            msg.request.sessionId,
+            msg.request.runId,
+            resolved.commandText,
+            resolved.displayCommandText,
+            () => send({
+              kind: 'agent-launch-start-reply',
+              requestId: msg.requestId,
+              result: { ok: true },
+            }),
+          );
+          if (!installed) {
+            send({
+              kind: 'agent-launch-start-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'unavailable' },
+            });
+            return;
+          }
+          void source.recordTerminalWork(resolved.roots, Date.now()).catch(() => undefined);
+        }).catch(() => {
+          if (authed) {
+            send({
+              kind: 'agent-launch-start-reply',
               requestId: msg.requestId,
               result: { ok: false, reason: 'unavailable' },
             });

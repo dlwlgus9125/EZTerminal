@@ -15,7 +15,8 @@ import { formatCwd } from '../../src/renderer/format-cwd';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import type {
   AgentHistorySessionSummary,
-  AgentProjectLaunchBootstrap,
+  AgentLaunchBootstrap,
+  AgentLaunchTarget,
   AgentProjectLauncherSummary,
   AgentProjectSummary,
   AgentResumeBootstrap,
@@ -24,6 +25,11 @@ import { MobileActionSheet } from './MobileActionSheet';
 import { MobileAgentFolderPicker } from './MobileAgentFolderPicker';
 import { MobileAgentHistorySheet } from './MobileAgentHistorySheet';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+
+const HISTORY_PROVIDER_LABEL = {
+  codex: 'Codex',
+  claude: 'Claude',
+} as const;
 
 function ageLabel(updatedAt: number, now: number, formatter: Intl.RelativeTimeFormat): string {
   const seconds = Math.max(0, Math.floor((now - updatedAt) / 1000));
@@ -38,11 +44,11 @@ function ageLabel(updatedAt: number, now: number, formatter: Intl.RelativeTimeFo
 export function MobileAgentProjects({
   transport,
   onResumeHistory,
-  onLaunchProject,
+  onLaunchAgent,
 }: {
   readonly transport: WsEzTerminalTransport;
   readonly onResumeHistory: (bootstrap: AgentResumeBootstrap) => Promise<void>;
-  readonly onLaunchProject: (bootstrap: AgentProjectLaunchBootstrap) => Promise<void>;
+  readonly onLaunchAgent: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const [projects, setProjects] = useState<readonly AgentProjectSummary[]>([]);
@@ -64,12 +70,19 @@ export function MobileAgentProjects({
   const [editorOpen, setEditorOpen] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [rootsDraft, setRootsDraft] = useState<readonly string[]>([]);
-  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  const [folderPickerMode, setFolderPickerMode] = useState<'editor' | 'launch' | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AgentProjectSummary | null>(null);
-  const [launcherProject, setLauncherProject] = useState<AgentProjectSummary | null>(null);
+  const [launchPickerOpen, setLaunchPickerOpen] = useState(false);
+  const [launchTarget, setLaunchTarget] = useState<AgentLaunchTarget | null>(null);
+  const [launchTargetProject, setLaunchTargetProject] = useState<AgentProjectSummary | null>(null);
+  const [launchProjectOptions, setLaunchProjectOptions] = useState<readonly AgentProjectSummary[]>([]);
+  const [launchProjectQuery, setLaunchProjectQuery] = useState('');
+  const [launchProjectsLoading, setLaunchProjectsLoading] = useState(false);
   const [launchers, setLaunchers] = useState<readonly AgentProjectLauncherSummary[]>([]);
   const [launchersLoading, setLaunchersLoading] = useState(false);
+  const [selectedLauncherId, setSelectedLauncherId] = useState('');
+  const [launchError, setLaunchError] = useState<string | null>(null);
   const [launching, setLaunching] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const canManage = transport.supportsAgentProjectManagement;
@@ -161,7 +174,7 @@ export function MobileAgentProjects({
     setRootsDraft(project ? [project.primaryRoot, ...project.additionalRoots] : []);
     setError(null);
     setEditorOpen(true);
-    if (!project) setFolderPickerOpen(true);
+    if (!project) setFolderPickerMode('editor');
   };
 
   const saveProject = async (): Promise<void> => {
@@ -220,31 +233,67 @@ export function MobileAgentProjects({
     await refresh(true);
   };
 
-  const openLaunchers = async (project: AgentProjectSummary): Promise<void> => {
-    setLauncherProject(project);
-    if (launchers.length > 0) return;
+  useEffect(() => {
+    if (!launchPickerOpen) return undefined;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setLaunchProjectsLoading(true);
+      void transport
+        .listAgentProjects(false, undefined, 100, launchProjectQuery.trim() || undefined)
+        .then((result) => {
+          if (cancelled) return;
+          setLaunchProjectOptions(
+            launchTargetProject
+              && !result.items.some((project) => project.projectId === launchTargetProject.projectId)
+              ? [launchTargetProject, ...result.items]
+              : result.items,
+          );
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setLaunchProjectOptions(launchTargetProject ? [launchTargetProject] : []);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLaunchProjectsLoading(false);
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [launchPickerOpen, launchProjectQuery, launchTargetProject, transport]);
+
+  const openLaunchPicker = async (project?: AgentProjectSummary): Promise<void> => {
+    setLaunchTarget(project ? { kind: 'project', projectId: project.projectId } : null);
+    setLaunchTargetProject(project ?? null);
+    setLaunchProjectOptions(project ? [project] : projects);
+    setLaunchProjectQuery('');
+    setSelectedLauncherId('');
+    setLaunchError(null);
+    setLaunchPickerOpen(true);
+    if (launchers.length > 0 || launchersLoading) return;
     setLaunchersLoading(true);
     const result = await transport.listAgentProjectLaunchers().catch(() => []);
     setLaunchers(result);
     setLaunchersLoading(false);
   };
 
-  const launchProject = async (launcher: AgentProjectLauncherSummary): Promise<void> => {
-    if (!launcherProject || launching) return;
+  const launchAgent = async (): Promise<void> => {
+    if (!launchTarget || !selectedLauncherId || launching) return;
     setLaunching(true);
-    setError(null);
+    setLaunchError(null);
     const preparation = await transport
-      .prepareAgentProjectLaunch(launcherProject.projectId, launcher.launcherId)
+      .prepareAgentLaunch(launchTarget, selectedLauncherId)
       .catch(() => ({ ok: false, reason: 'unavailable' } as const));
     if (!preparation.ok) {
       setLaunching(false);
-      setError(t('agentHub.projects.launchFailed'));
-      setLauncherProject(null);
+      setLaunchError(t('agentHub.projects.launchFailed'));
       return;
     }
-    const bootstrap: AgentProjectLaunchBootstrap = {
+    const bootstrap: AgentLaunchBootstrap = {
       kind: 'new-chat',
-      projectId: preparation.projectId,
+      target: preparation.target,
       launcherId: preparation.launcherId,
       provider: preparation.provider,
       name: preparation.name,
@@ -252,29 +301,52 @@ export function MobileAgentProjects({
       revision: preparation.revision,
     };
     try {
-      await onLaunchProject(bootstrap);
+      await onLaunchAgent(bootstrap);
+      setLaunching(false);
+      setLaunchPickerOpen(false);
     } catch {
       setLaunching(false);
-      setError(t('agentHub.projects.launchFailed'));
-      setLauncherProject(null);
+      setLaunchError(t('agentHub.projects.launchFailed'));
     }
   };
+
+  const selectedLauncher = launchers.find(
+    (launcher) => launcher.launcherId === selectedLauncherId,
+  );
+  const ignoredAdditionalRoots = launchTargetProject
+    && selectedLauncher
+    && !selectedLauncher.supportsAdditionalRoots
+    ? launchTargetProject.additionalRoots.length
+    : 0;
 
   return (
     <section className="mob-agent-projects" data-testid="mobile-agent-projects">
       <div className="mob-agent-projects__head">
         <h2>{t('agentHub.projects.title')}</h2>
-        {canManage && (
-          <button
-            type="button"
-            className="mob-icon-btn"
-            aria-label={t('agentHub.projects.add')}
-            onClick={() => openEditor()}
-            data-testid="mobile-agent-add-project"
-          >
-            <FolderPlus aria-hidden="true" />
-          </button>
-        )}
+        <div className="mob-agent-projects__head-actions">
+          {canManage && (
+            <button
+              type="button"
+              className="mob-btn-ghost"
+              onClick={() => void openLaunchPicker()}
+              data-testid="mobile-agent-new-run"
+            >
+              <MessageSquarePlus aria-hidden="true" />
+              {t('agentHub.newAgentRun')}
+            </button>
+          )}
+          {canManage && (
+            <button
+              type="button"
+              className="mob-icon-btn"
+              aria-label={t('agentHub.projects.add')}
+              onClick={() => openEditor()}
+              data-testid="mobile-agent-add-project"
+            >
+              <FolderPlus aria-hidden="true" />
+            </button>
+          )}
+        </div>
       </div>
       <label className="mob-agent-project-search">
         <span className="ez-ui-visually-hidden">{t('agentHub.projects.searchLabel')}</span>
@@ -332,7 +404,7 @@ export function MobileAgentProjects({
                   <button
                     type="button"
                     className="mob-btn-ghost"
-                    onClick={() => void openLaunchers(project)}
+                    onClick={() => void openLaunchPicker(project)}
                   >
                     <MessageSquarePlus aria-hidden="true" />
                     {t('agentHub.projects.newChat')}
@@ -383,14 +455,19 @@ export function MobileAgentProjects({
                   {projectSessions?.map((session) => (
                     <button
                       type="button"
-                      className="mob-row"
+                      className="mob-row mob-agent-history-row"
+                      data-provider={session.provider}
                       key={session.historyId}
                       onClick={() => setHistorySession(session)}
                     >
                       <span>
                         <strong>{session.title}</strong>
                         <small>
-                          {session.provider} · {ageLabel(session.updatedAt, now, relativeTime)}
+                          <span className="mob-agent-provider-badge">
+                            {HISTORY_PROVIDER_LABEL[session.provider]}
+                          </span>
+                          {' · '}
+                          {ageLabel(session.updatedAt, now, relativeTime)}
                         </small>
                       </span>
                     </button>
@@ -497,7 +574,7 @@ export function MobileAgentProjects({
               <button
                 type="button"
                 className="mob-btn-ghost"
-                onClick={() => setFolderPickerOpen(true)}
+                onClick={() => setFolderPickerMode('editor')}
               >
                 <FolderPlus aria-hidden="true" />
                 {t('agentHub.projects.addFolder')}
@@ -519,46 +596,176 @@ export function MobileAgentProjects({
           </form>
         </MobileActionSheet>
       )}
-      {folderPickerOpen && (
+      {folderPickerMode && (
         <MobileAgentFolderPicker
           transport={transport}
-          excludedRoots={rootsDraft}
+          excludedRoots={folderPickerMode === 'editor' ? rootsDraft : []}
           onClose={() => {
-            setFolderPickerOpen(false);
-            if (rootsDraft.length === 0 && !editorProject) setEditorOpen(false);
+            const mode = folderPickerMode;
+            setFolderPickerMode(null);
+            if (mode === 'editor' && rootsDraft.length === 0 && !editorProject) {
+              setEditorOpen(false);
+            }
           }}
           onSelect={(root) => {
-            const name = root.split(/[\\/]/).filter(Boolean).at(-1) ?? root;
-            setRootsDraft((current) => [...current, root]);
-            setNameDraft((current) => current || name);
-            setFolderPickerOpen(false);
+            if (folderPickerMode === 'editor') {
+              const name = root.split(/[\\/]/).filter(Boolean).at(-1) ?? root;
+              setRootsDraft((current) => [...current, root]);
+              setNameDraft((current) => current || name);
+            } else {
+              setLaunchTarget({ kind: 'directory', directory: root });
+              setLaunchTargetProject(null);
+              setLaunchError(null);
+            }
+            setFolderPickerMode(null);
           }}
         />
       )}
-      {launcherProject && (
+      {launchPickerOpen && (
         <MobileActionSheet
-          title={t('agentHub.projects.chooseAgent')}
+          title={t('agentHub.projects.launchTitle')}
+          description={t('agentHub.projects.launchDescription')}
           onClose={() => {
-            if (!launching) setLauncherProject(null);
+            if (!launching) {
+              setLaunchPickerOpen(false);
+              setLaunchError(null);
+            }
           }}
-          testId="mobile-agent-launchers"
+          variant="fullscreen"
+          testId="mobile-agent-launch-picker"
         >
-          {launchersLoading && <p className="mob-empty">{t('agentHub.projects.loadingAgents')}</p>}
-          {!launchersLoading && launchers.length === 0 && (
-            <p className="mob-empty">{t('agentHub.projects.noAgents')}</p>
-          )}
-          {launchers.map((launcher) => (
-            <button
-              type="button"
-              className="mobile-action-sheet-row"
-              key={launcher.launcherId}
-              disabled={launching}
-              onClick={() => void launchProject(launcher)}
-            >
-              <MessageSquarePlus aria-hidden="true" />
-              {launcher.name}
-            </button>
-          ))}
+          <form
+            className="mob-agent-launch-picker"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void launchAgent();
+            }}
+          >
+            <label>
+              <span>{t('agentHub.projects.agent')}</span>
+              <select
+                value={selectedLauncherId}
+                onChange={(event) => {
+                  setSelectedLauncherId(event.currentTarget.value);
+                  setLaunchError(null);
+                }}
+                disabled={launchersLoading}
+                required
+                data-testid="mobile-agent-launch-agent"
+              >
+                <option value="">
+                  {launchersLoading
+                    ? t('agentHub.projects.loadingAgents')
+                    : t('agentHub.projects.selectAgent')}
+                </option>
+                {launchers.map((launcher) => (
+                  <option key={launcher.launcherId} value={launcher.launcherId}>
+                    {launcher.name} · {launcher.provider === 'generic' ? 'CLI' : launcher.provider}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {!launchersLoading && launchers.length === 0 && (
+              <p className="mob-empty">{t('agentHub.projects.noAgents')}</p>
+            )}
+            <fieldset>
+              <legend>{t('agentHub.projects.location')}</legend>
+              <input
+                type="search"
+                value={launchProjectQuery}
+                placeholder={t('agentHub.projects.locationSearch')}
+                aria-label={t('agentHub.projects.locationSearch')}
+                onChange={(event) => setLaunchProjectQuery(event.currentTarget.value)}
+              />
+              <select
+                value={launchTarget?.kind === 'project'
+                  ? launchTarget.projectId
+                  : launchTarget?.kind === 'directory'
+                    ? '__directory__'
+                    : ''}
+                onChange={(event) => {
+                  if (event.currentTarget.value === '__directory__') return;
+                  const project = launchProjectOptions.find(
+                    (candidate) => candidate.projectId === event.currentTarget.value,
+                  );
+                  setLaunchTarget(
+                    project ? { kind: 'project', projectId: project.projectId } : null,
+                  );
+                  setLaunchTargetProject(project ?? null);
+                  setLaunchError(null);
+                }}
+                disabled={launchProjectsLoading}
+                required
+                aria-label={t('agentHub.projects.selectProject')}
+                data-testid="mobile-agent-launch-project"
+              >
+                <option value="">
+                  {launchProjectsLoading
+                    ? t('agentHub.projects.loading')
+                    : t('agentHub.projects.selectProject')}
+                </option>
+                {launchTarget?.kind === 'directory' && (
+                  <option value="__directory__">
+                    {t('agentHub.projects.selectedFolder')} · {formatCwd(launchTarget.directory, 30)}
+                  </option>
+                )}
+                {launchProjectOptions.map((project) => (
+                  <option key={project.projectId} value={project.projectId}>
+                    {project.name} · {formatCwd(project.primaryRoot, 30)}
+                  </option>
+                ))}
+              </select>
+            </fieldset>
+            {transport.supportsAgentDirectLaunch ? (
+              <button
+                type="button"
+                className="mob-btn-ghost"
+                onClick={() => setFolderPickerMode('launch')}
+                data-testid="mobile-agent-launch-folder"
+              >
+                <FolderPlus aria-hidden="true" />
+                {t('agentHub.projects.chooseFolder')}
+              </button>
+            ) : (
+              <p className="mob-agent-project-upgrade" role="status">
+                {t('agentHub.projects.directLaunchUpgrade')}
+              </p>
+            )}
+            {launchTarget?.kind === 'directory' && (
+              <p className="mob-agent-launch-directory" title={launchTarget.directory}>
+                <strong>{t('agentHub.projects.selectedFolder')}</strong>
+                <code>{launchTarget.directory}</code>
+              </p>
+            )}
+            {ignoredAdditionalRoots > 0 && (
+              <p className="mob-agent-launch-warning" role="status">
+                {t('agentHub.projects.genericRootsIgnored', {
+                  value: ignoredAdditionalRoots,
+                })}
+              </p>
+            )}
+            {launchError && <p className="mob-agent-error" role="alert">{launchError}</p>}
+            <div className="mob-agent-project-editor__footer">
+              <button
+                type="button"
+                className="mob-btn-ghost"
+                onClick={() => setLaunchPickerOpen(false)}
+                disabled={launching}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="submit"
+                className="mob-cta"
+                disabled={launching || !launchTarget || !selectedLauncherId}
+                data-testid="mobile-agent-launch-submit"
+              >
+                {launching
+                  ? t('agentHub.projects.launching')
+                  : t('agentHub.projects.launch')}
+              </button>
+            </div>
+          </form>
         </MobileActionSheet>
       )}
       {deleteTarget && (

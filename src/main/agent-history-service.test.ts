@@ -113,6 +113,7 @@ describe('AgentHistoryService', () => {
     const base = makeTemporaryDirectory('ez-agent-project-launch-');
     const primary = makeDirectory(base, 'primary');
     const extra = makeDirectory(base, 'extra');
+    const direct = makeDirectory(base, 'direct');
     const store = new AgentProjectStore(path.join(base, 'user-data'));
     await store.init();
     await store.upsert({
@@ -166,11 +167,18 @@ describe('AgentHistoryService', () => {
     expect(JSON.stringify(launchers)).not.toContain('profile-private-id');
     expect(JSON.stringify(launchers)).not.toContain('my-agent');
 
-    const codexPreparation = await service.prepareLaunch(projectId, 'codex');
-    expect(codexPreparation).toMatchObject({ ok: true, cwd: primary, roots: [primary, extra] });
+    const target = { kind: 'project', projectId } as const;
+    const codexPreparation = await service.prepareLaunch(target, 'codex');
+    expect(codexPreparation).toMatchObject({
+      ok: true,
+      target,
+      cwd: primary,
+      roots: [primary, extra],
+      ignoredAdditionalRootCount: 0,
+    });
     expect(codexPreparation.ok).toBe(true);
     if (!codexPreparation.ok) return;
-    await expect(service.resolveLaunch(projectId, 'codex', codexPreparation.revision)).resolves
+    await expect(service.resolveLaunch(target, 'codex', codexPreparation.revision)).resolves
       .toEqual({
         ok: true,
         roots: [primary, extra],
@@ -178,24 +186,45 @@ describe('AgentHistoryService', () => {
         displayCommandText: 'codex',
       });
 
+    const directPreparation = await service.prepareLaunch(
+      { kind: 'directory', directory: direct },
+      'codex',
+    );
+    expect(directPreparation).toMatchObject({
+      ok: true,
+      target: { kind: 'directory', directory: direct },
+      cwd: direct,
+      roots: [direct],
+    });
+    expect((await service.listProjects()).items).toHaveLength(1);
+    await service.recordTerminalWork([direct], 100);
+    expect((await service.listProjects()).items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ primaryRoot: direct, saved: false, pinned: false }),
+    ]));
+
     const generic = launchers.find((launcher) => launcher.provider === 'generic')!;
-    const genericPreparation = await service.prepareLaunch(projectId, generic.launcherId);
+    const genericPreparation = await service.prepareLaunch(target, generic.launcherId);
+    expect(genericPreparation).toMatchObject({
+      ok: true,
+      roots: [primary],
+      ignoredAdditionalRootCount: 1,
+    });
     expect(genericPreparation.ok).toBe(true);
     if (!genericPreparation.ok) return;
     await expect(service.resolveLaunch(
-      projectId,
+      target,
       generic.launcherId,
       genericPreparation.revision,
     )).resolves.toEqual({
       ok: true,
-      roots: [primary, extra],
+      roots: [primary],
       commandText: '!my-agent',
       displayCommandText: 'My Agent',
     });
 
     profiles = [{ ...profiles[0]!, executable: 'my-agent-v2' }];
     await expect(service.resolveLaunch(
-      projectId,
+      target,
       generic.launcherId,
       genericPreparation.revision,
     )).resolves.toEqual({ ok: false, reason: 'stale' });

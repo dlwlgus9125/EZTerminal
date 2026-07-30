@@ -98,6 +98,10 @@ import {
 } from '../../../src/shared/agent';
 import type {
   AgentHistorySessionPage,
+  AgentLaunchPreparation,
+  AgentLaunchStartRequest,
+  AgentLaunchStartResult,
+  AgentLaunchTarget,
   AgentProjectInput,
   AgentProjectLaunchPreparation,
   AgentProjectLauncherSummary,
@@ -122,6 +126,7 @@ import {
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_PROTOCOL_VERSION_AGENT_HISTORY,
+  REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS,
   SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
@@ -834,6 +839,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     string,
     (result: AgentProjectLaunchStartResult) => void
   >();
+  private readonly pendingAgentLaunchPreparation = new Map<
+    string,
+    (result: AgentLaunchPreparation) => void
+  >();
+  private readonly pendingAgentLaunchStarts = new Map<
+    string,
+    (result: AgentLaunchStartResult) => void
+  >();
   private readonly pendingAgentHistorySessions = new Map<string, (result: AgentHistorySessionPage) => void>();
   private readonly pendingAgentHistoryReads = new Map<string, (result: AgentTranscriptPage | null) => void>();
   private readonly pendingAgentResumePreparation = new Map<
@@ -1388,6 +1401,94 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     });
   }
 
+  async prepareAgentLaunch(
+    target: AgentLaunchTarget,
+    launcherId: string,
+  ): Promise<AgentLaunchPreparation> {
+    if ((this.negotiatedProtocolVersion ?? 0) >= REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) {
+      return new Promise((resolve) => {
+        const requestId = this.newId();
+        if (!this.tryStartMapRequest(
+          { kind: 'agent-launch-prepare', requestId, target, launcherId },
+          this.pendingAgentLaunchPreparation,
+          requestId,
+          resolve,
+        )) resolve({ ok: false, reason: 'unavailable' });
+      });
+    }
+    if (target.kind !== 'project') return { ok: false, reason: 'unavailable' };
+    const preparation = await this.prepareAgentProjectLaunch(target.projectId, launcherId);
+    return preparation.ok
+      ? {
+          ok: true,
+          target,
+          launcherId: preparation.launcherId,
+          provider: preparation.provider,
+          name: preparation.name,
+          cwd: preparation.cwd,
+          roots: preparation.roots,
+          ignoredAdditionalRootCount: 0,
+          revision: preparation.revision,
+        }
+      : preparation;
+  }
+
+  startAgentLaunch(request: AgentLaunchStartRequest): Promise<AgentLaunchStartResult> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) {
+      return request.target.kind === 'project'
+        ? this.startAgentProjectLaunch({
+            projectId: request.target.projectId,
+            launcherId: request.launcherId,
+            sessionId: request.sessionId,
+            runId: request.runId,
+            revision: request.revision,
+          })
+        : Promise.resolve({ ok: false, reason: 'unavailable' });
+    }
+    const port = new FakeMessagePort((control) => {
+      this.send({ kind: 'control', runId: request.runId, control });
+      if (control.type === 'close') {
+        this.clearResumeRetry(request.runId);
+        this.ports.delete(request.runId);
+      }
+    });
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      const settle = (result: AgentLaunchStartResult): void => {
+        if (!result.ok) {
+          port.close();
+          resolve(result);
+          return;
+        }
+        this.clearResumeRetry(request.runId);
+        this.ports.get(request.runId)?.port.close();
+        this.ports.set(request.runId, {
+          sessionId: request.sessionId,
+          runId: request.runId,
+          port,
+          initiatedHere: true,
+        });
+        const event = new MessageEvent('message', {
+          data: { _ezPort: request.runId },
+          source: window,
+        });
+        Object.defineProperty(event, 'ports', {
+          value: [port],
+          enumerable: true,
+          configurable: true,
+        });
+        window.dispatchEvent(event);
+        resolve(result);
+      };
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-launch-start', requestId, request },
+        this.pendingAgentLaunchStarts,
+        requestId,
+        settle,
+      )) settle({ ok: false, reason: 'unavailable' });
+    });
+  }
+
   prepareAgentProjectLaunch(
     projectId: string,
     launcherId: string,
@@ -1458,6 +1559,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
 
   get supportsAgentProjectManagement(): boolean {
     return (this.negotiatedProtocolVersion ?? 0) >= REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS;
+  }
+
+  get supportsAgentDirectLaunch(): boolean {
+    return (this.negotiatedProtocolVersion ?? 0) >= REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS;
   }
 
   listAgentHistorySessions(
@@ -2560,6 +2665,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve({ ok: false, reason: 'unavailable' });
     }
     this.pendingAgentProjectLaunchStarts.clear();
+    for (const resolve of this.pendingAgentLaunchPreparation.values()) {
+      resolve({ ok: false, reason: 'unavailable' });
+    }
+    this.pendingAgentLaunchPreparation.clear();
+    for (const resolve of this.pendingAgentLaunchStarts.values()) {
+      resolve({ ok: false, reason: 'unavailable' });
+    }
+    this.pendingAgentLaunchStarts.clear();
     for (const resolve of this.pendingAgentHistorySessions.values()) {
       resolve({ items: [], nextCursor: null });
     }
@@ -2895,6 +3008,14 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve({ ok: false, reason: 'unavailable' });
     }
     this.pendingAgentProjectLaunchStarts.clear();
+    for (const resolve of this.pendingAgentLaunchPreparation.values()) {
+      resolve({ ok: false, reason: 'unavailable' });
+    }
+    this.pendingAgentLaunchPreparation.clear();
+    for (const resolve of this.pendingAgentLaunchStarts.values()) {
+      resolve({ ok: false, reason: 'unavailable' });
+    }
+    this.pendingAgentLaunchStarts.clear();
     for (const resolve of this.pendingAgentHistorySessions.values()) {
       resolve({ items: [], nextCursor: null });
     }
@@ -3336,6 +3457,16 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
         this.pendingAgentProjectLaunchStarts.get(msg.requestId)?.(msg.result);
         this.pendingAgentProjectLaunchStarts.delete(msg.requestId);
+        break;
+      case 'agent-launch-prepare-reply':
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) break;
+        this.pendingAgentLaunchPreparation.get(msg.requestId)?.(msg.result);
+        this.pendingAgentLaunchPreparation.delete(msg.requestId);
+        break;
+      case 'agent-launch-start-reply':
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) break;
+        this.pendingAgentLaunchStarts.get(msg.requestId)?.(msg.result);
+        this.pendingAgentLaunchStarts.delete(msg.requestId);
         break;
       case 'agent-history-sessions-reply':
         if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;

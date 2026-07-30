@@ -3571,12 +3571,13 @@ describe('RemoteBridge — Agent projects v5', () => {
     };
     const preparation = {
       ok: true as const,
-      projectId: project.projectId,
+      target: { kind: 'project' as const, projectId: project.projectId },
       launcherId: launcher.launcherId,
       provider: launcher.provider,
       name: launcher.name,
       cwd: project.primaryRoot,
       roots: [project.primaryRoot, ...project.additionalRoots],
+      ignoredAdditionalRootCount: 0,
       revision: 'launch-revision-1',
     };
     const historySource: RemoteAgentHistorySource = {
@@ -3652,7 +3653,16 @@ describe('RemoteBridge — Agent projects v5', () => {
     expect(ws.sent).toContainEqual({
       kind: 'agent-project-prepare-launch-reply',
       requestId: 'prepare-launch',
-      result: preparation,
+      result: {
+        ok: true,
+        projectId: project.projectId,
+        launcherId: launcher.launcherId,
+        provider: launcher.provider,
+        name: launcher.name,
+        cwd: project.primaryRoot,
+        roots: preparation.roots,
+        revision: preparation.revision,
+      },
     });
 
     const creating = broker.createSession(project.primaryRoot);
@@ -3720,6 +3730,95 @@ describe('RemoteBridge — Agent projects v5', () => {
     expect(interpreter.posted.some((entry) => (
       entry.message.type === 'run' && entry.message.runId === 'mismatch-run'
     ))).toBe(false);
+  });
+
+  it('prepares and starts a v6 direct-directory launch without exposing its private command', async () => {
+    const target = { kind: 'directory' as const, directory: 'C:\\direct-work' };
+    const preparation = {
+      ok: true as const,
+      target,
+      launcherId: 'claude',
+      provider: 'claude' as const,
+      name: 'Claude Code',
+      cwd: target.directory,
+      roots: [target.directory],
+      ignoredAdditionalRootCount: 0,
+      revision: 'direct-revision-1',
+    };
+    const historySource = {
+      prepareLaunch: vi.fn(async () => preparation),
+      resolveLaunch: vi.fn(async () => ({
+        ok: true as const,
+        roots: preparation.roots,
+        commandText: '!claude --private-direct-secret',
+        displayCommandText: 'claude',
+      })),
+      recordTerminalWork: vi.fn(async () => undefined),
+    } as unknown as RemoteAgentHistorySource;
+    const ws = new FakeWs();
+    const { options, interpreter, broker } = makeOptions({ agentHistorySource: historySource });
+    await authed(ws, options);
+
+    ws.clientSend({
+      kind: 'agent-launch-prepare',
+      requestId: 'direct-prepare',
+      target,
+      launcherId: preparation.launcherId,
+    });
+    await flush();
+    expect(historySource.prepareLaunch).toHaveBeenCalledWith(target, preparation.launcherId);
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-launch-prepare-reply',
+      requestId: 'direct-prepare',
+      result: preparation,
+    });
+
+    const creating = broker.createSession(target.directory);
+    const createRequest = [...interpreter.posted]
+      .reverse()
+      .find((entry) => entry.message.type === 'create-session')?.message;
+    if (createRequest?.type !== 'create-session') throw new Error('missing direct session request');
+    interpreter.emit({
+      type: 'session-created',
+      requestId: createRequest.requestId,
+      sessionId: 'direct-terminal',
+      cwd: target.directory,
+    });
+    await creating;
+
+    ws.clientSend({
+      kind: 'agent-launch-start',
+      requestId: 'direct-start',
+      request: {
+        target,
+        launcherId: preparation.launcherId,
+        sessionId: 'direct-terminal',
+        runId: 'direct-run',
+        revision: preparation.revision,
+      },
+    });
+    await flush();
+
+    expect(historySource.resolveLaunch)
+      .toHaveBeenCalledWith(target, preparation.launcherId, preparation.revision);
+    expect(ws.sent).toContainEqual({
+      kind: 'agent-launch-start-reply',
+      requestId: 'direct-start',
+      result: { ok: true },
+    });
+    const run = interpreter.posted.find((entry) => (
+      entry.message.type === 'run' && entry.message.runId === 'direct-run'
+    ))?.message;
+    expect(run).toMatchObject({
+      type: 'run',
+      sessionId: 'direct-terminal',
+      displayCommandText: 'claude',
+      requestOrigin: 'mobile',
+    });
+    expect(run?.type === 'run' && run.commandText).toContain('--private-direct-secret');
+    expect(JSON.stringify(ws.sent)).not.toContain('--private-direct-secret');
+    expect(historySource.recordTerminalWork)
+      .toHaveBeenCalledWith(preparation.roots, expect.any(Number));
   });
 
   it('ignores v5 mutations after a v4 negotiation', async () => {

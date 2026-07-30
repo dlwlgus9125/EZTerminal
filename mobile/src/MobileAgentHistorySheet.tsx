@@ -19,6 +19,11 @@ import type {
 } from '../../src/shared/agent-history';
 import { MobileActionSheet } from './MobileActionSheet';
 
+const PROVIDER_LABEL = {
+  codex: 'Codex',
+  claude: 'Claude',
+} as const;
+
 interface RootDecision {
   readonly preparation: AgentResumePreparation;
   readonly initialPrompt: string;
@@ -176,7 +181,7 @@ export function MobileAgentHistorySheet({
       onClose={onClose}
       variant="fullscreen"
       testId="mobile-agent-history"
-      className="mob-agent-history-shell"
+      className={`mob-agent-history-shell mob-agent-provider--${session.provider}`}
       contentClassName="mob-agent-history-content"
     >
       <div
@@ -187,6 +192,9 @@ export function MobileAgentHistorySheet({
           if (event.currentTarget.scrollTop <= 80) void loadEarlier();
         }}
       >
+        <div className="mob-agent-history-provider">
+          <span className="mob-agent-provider-badge">{PROVIDER_LABEL[session.provider]}</span>
+        </div>
         {loadingMore && <p className="mob-empty">{t('agentHub.history.loadingEarlier')}</p>}
         {loading && <p className="mob-empty">{t('agentHub.history.loading')}</p>}
         {error && (
@@ -212,6 +220,7 @@ export function MobileAgentHistorySheet({
               <article
                 key={entry.id}
                 className={`mob-agent-history-message mob-agent-history-message--${entry.role}`}
+                data-provider={entry.role === 'assistant' ? session.provider : undefined}
               >
                 <strong>
                   {entry.role === 'user' ? t('agentHub.history.user') : session.provider}
