@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [1.0.16] - 2026-07-30
+
+### Changed
+
+- Promoted the unpublished 1.0.15 candidate as 1.0.16 without moving or
+  reusing the immutable v1.0.15 tag.
+- Updated the Android companion to versionCode 37 while retaining remote
+  protocol v6 and supported v1-v5 compatibility.
+
+### Fixed
+
+- Moved initial menu focus into the DOM commit so immediate keyboard input
+  reaches the first menu item instead of racing the trigger button.
+- Added a deterministic regression test for delayed animation frames and
+  restored the release Storybook interaction gate.
+
+See [1.0.16 release notes](docs/release/release-notes-1.0.16.md).
+
 ## [1.0.15] - 2026-07-30
 
 ### Added
