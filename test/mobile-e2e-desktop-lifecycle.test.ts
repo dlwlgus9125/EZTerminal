@@ -318,6 +318,32 @@ describe('desktop E2E resource ownership', () => {
     expect(closeCalls).toBe(1);
   });
 
+  it('shares one close attempt between explicit app close and fixture cleanup', async () => {
+    let closeCalls = 0;
+    const app = {
+      process: () => ({ exitCode: null, signalCode: null }),
+      once: () => {},
+      close: async () => {
+        closeCalls += 1;
+        if (closeCalls > 1) {
+          await new Promise<void>(() => {});
+        }
+      },
+    } as unknown as Parameters<typeof trackElectronApplicationClose>[0];
+
+    const closer = trackElectronApplicationClose(app);
+    await app.close();
+    const cleanupResult = await Promise.race([
+      closer.close().then(() => 'closed'),
+      new Promise<'timed-out'>((resolve) => {
+        setTimeout(() => resolve('timed-out'), 50);
+      }),
+    ]);
+
+    expect(cleanupResult).toBe('closed');
+    expect(closeCalls).toBe(1);
+  });
+
   it('rejects a matching TEMP path that this registry did not create', async () => {
     const unregistered = createUnregisteredDirectory('ezterm-e2e-');
     const registry = new OwnedDesktopProfileRegistry();

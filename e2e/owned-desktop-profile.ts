@@ -21,6 +21,7 @@ export function trackElectronApplicationClose(
 ): AsyncCloser {
   let closeObserved = false;
   let closing: Promise<void> | null = null;
+  const closeApplication = app.close.bind(app);
   const processExited = (): boolean => {
     try {
       const child = app.process();
@@ -38,28 +39,32 @@ export function trackElectronApplicationClose(
     });
   }
 
-  return {
-    close: () => {
-      if (closing) return closing;
-      if (closeObserved || processExited()) {
-        closeObserved = true;
-        return Promise.resolve();
-      }
+  const close = (): Promise<void> => {
+    if (closing) return closing;
+    if (closeObserved || processExited()) {
+      closeObserved = true;
+      return Promise.resolve();
+    }
 
-      const attempt = (async () => {
-        try {
-          await app.close();
-        } catch (error) {
-          if (!closeObserved && !processExited()) throw error;
-        }
-        closeObserved = true;
-      })().finally(() => {
-        if (closing === attempt) closing = null;
-      });
-      closing = attempt;
-      return attempt;
-    },
+    const attempt = (async () => {
+      try {
+        await closeApplication();
+      } catch (error) {
+        if (!closeObserved && !processExited()) throw error;
+      }
+      closeObserved = true;
+    })().finally(() => {
+      if (closing === attempt) closing = null;
+    });
+    closing = attempt;
+    return attempt;
   };
+
+  // Explicit spec cleanup and automatic fixture teardown must share the same
+  // close attempt. Otherwise a delayed Playwright close event can make fixture
+  // teardown call ElectronApplication.close() a second time and wait forever.
+  app.close = close;
+  return { close };
 }
 
 export interface OwnedDesktopProfileLease {
