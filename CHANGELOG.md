@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [1.0.17] - 2026-07-30
+
+### Changed
+
+- Promoted the unpublished 1.0.16 candidate as 1.0.17 without moving or
+  reusing the immutable v1.0.16 tag.
+- Updated the Android companion to versionCode 38 while retaining remote
+  protocol v6 and supported v1-v5 compatibility.
+
+### Fixed
+
+- Restored xterm focus in the same DOM commit that closes terminal search so
+  an immediate Ctrl+V cannot be lost before the next animation frame.
+- Added an exact E2E regression that holds animation frames across search
+  dismissal and verifies Codex image-paste input still reaches the PTY.
+
+See [1.0.17 release notes](docs/release/release-notes-1.0.17.md).
+
 ## [1.0.16] - 2026-07-30
 
 ### Changed

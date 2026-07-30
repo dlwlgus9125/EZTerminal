@@ -102,7 +102,7 @@ function storyCapabilities(locale: Locale = 'ko'): CapabilityAccess {
     ...rendererCapabilities,
     snapshot: () => ({ core: 'available', desktop: 'available' }),
     runtimeVersions: () => ({
-      app: '1.0.16',
+      app: '1.0.17',
       protocol: 3,
       buildSha: 'handoff',
       electron: '38',
@@ -306,7 +306,7 @@ function WorkbenchFrame({
     <DesktopUiPreferencesProvider capabilities={capabilities}>
       <main className="app desktop-handoff-workbench">
         <AppHeader
-          appVersion="1.0.16"
+          appVersion="1.0.17"
           attentionCount={2}
           commandCenterOpen={false}
           effectIntensity={7}

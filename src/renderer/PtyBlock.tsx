@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 
@@ -116,6 +116,7 @@ function PtyXtermView({
   const [findQuery, setFindQuery] = useState('');
   const [findCaseSensitive, setFindCaseSensitive] = useState(false);
   const [findResults, setFindResults] = useState<TerminalSearchResults>(EMPTY_SEARCH_RESULTS);
+  const restoreFindFocusRef = useRef(false);
   const linkHandlingEnabled = Boolean(runtimeOptions.openExternalHttpUrl);
   const terminalFileLinksEnabled = Boolean(runtimeOptions.openTerminalFileLocation);
   const terminalRuntimeOptionsRef = useRef(runtimeOptions);
@@ -594,6 +595,12 @@ function PtyXtermView({
     runtimeRef.current?.find(findQuery, 'next', findCaseSensitive, true);
   }, [findCaseSensitive, findOpen, findQuery]);
 
+  useLayoutEffect(() => {
+    if (findOpen || !restoreFindFocusRef.current) return;
+    restoreFindFocusRef.current = false;
+    termRef.current?.focus();
+  }, [findOpen]);
+
   // Control transition (control handoff, M8b): gaining control restores the
   // base font size and reports OUR size to the interpreter — a claim's whole
   // point, resizing the shared PTY to the claimer. Losing control switches to
@@ -620,8 +627,8 @@ function PtyXtermView({
     runtimeRef.current?.clearSearch();
     setFindQuery('');
     setFindResults(EMPTY_SEARCH_RESULTS);
+    restoreFindFocusRef.current = true;
     setFindOpen(false);
-    requestAnimationFrame(() => termRef.current?.focus());
   };
 
   const findNext = (): void => {

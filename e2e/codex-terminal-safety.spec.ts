@@ -128,6 +128,19 @@ test('direct Codex keeps the same safety policy after upgrading to xterm', async
   await expect.poll(() => readXtermBuffer(terminal)).toContain('CTRL-F-RECEIVED');
   await window.keyboard.press('Control+Shift+f');
   await expect(window.getByTestId('terminal-find-bar')).toBeVisible();
+  await window.evaluate(() => {
+    const testWindow = globalThis as unknown as Window & {
+      __ezRestoreRequestAnimationFrame?: () => void;
+    };
+    const originalRequestAnimationFrame = testWindow.requestAnimationFrame.bind(testWindow);
+    testWindow.__ezRestoreRequestAnimationFrame = () => {
+      testWindow.requestAnimationFrame = originalRequestAnimationFrame;
+      delete testWindow.__ezRestoreRequestAnimationFrame;
+    };
+    // Exercise the real immediate-keyboard boundary even when the runner
+    // cannot paint another frame before the next input event.
+    testWindow.requestAnimationFrame = () => 1;
+  });
   await window.keyboard.press('Escape');
   await expect(window.getByTestId('terminal-find-bar')).toHaveCount(0);
 
@@ -135,6 +148,12 @@ test('direct Codex keeps the same safety policy after upgrading to xterm', async
     clipboard.writeImage(nativeImage.createFromDataURL(dataUrl));
   }, ONE_PIXEL_PNG);
   await window.keyboard.press('Control+v');
+  await window.evaluate(() => {
+    const testWindow = globalThis as unknown as Window & {
+      __ezRestoreRequestAnimationFrame?: () => void;
+    };
+    testWindow.__ezRestoreRequestAnimationFrame?.();
+  });
   await expect.poll(() => readXtermBuffer(terminal)).toContain('CTRL-V-RECEIVED');
 
   await expect(run.getByTestId('block-cancel')).toHaveText('Force stop');
