@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+## [1.0.19] - 2026-07-31
+
+### Added
+
+- Added stable GitHub Release update discovery at startup and on demand for
+  Windows and Android, with update badges in Settings navigation.
+- Added explicit download progress, cancellation, collision-safe filenames,
+  and user-controlled installer handoff under `Downloads/EZTerminal`.
+- Added native Android APK verification for the published SHA-256 digest,
+  package identity, version, and installed-app signer before the file reaches
+  public Downloads.
+
+### Security
+
+- Restricted update metadata and redirects to the official EZTerminal GitHub
+  repository and approved GitHub release-asset hosts.
+- Required the publication-eligible release manifest and GitHub asset digest
+  before offering the Windows installer, and reverified the downloaded file
+  immediately before opening it.
+- Kept installation user initiated. Unsigned Windows installers require an
+  explicit warning acknowledgement, and Android always hands the verified APK
+  to the system package installer.
+
+### Fixed
+
+- Deferred Downloads-folder resolution until an update is actually downloaded,
+  so an unavailable shell Downloads path cannot prevent EZTerminal from
+  creating its first window.
+
+See [1.0.19 release notes](docs/release/release-notes-1.0.19.md).
+
 ## [1.0.18] - 2026-07-30
 
 ### Changed

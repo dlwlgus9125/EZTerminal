@@ -622,6 +622,23 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   font-size: 10px;
 }
 
+.activity-rail-update-dot,
+.settings-update-dot {
+  display: inline-block;
+  inline-size: 0.625rem;
+  block-size: 0.625rem;
+  border: 2px solid var(--ui-canvas);
+  border-radius: 999px;
+  background: var(--ui-warning);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ui-warning) 60%, transparent);
+}
+
+.activity-rail-update-dot {
+  position: absolute;
+  inset: -1px -2px auto auto;
+  pointer-events: none;
+}
+
 .workbench-sidebar-scrim {
   display: none;
 }
@@ -787,6 +804,10 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   text-align: start;
   font: inherit;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
 }
 
 .settings-category-button:hover {
@@ -865,6 +886,66 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--ui-text-primary);
+}
+
+.app-update-card {
+  display: grid;
+  gap: var(--ui-space-3);
+  margin-block-end: var(--ui-space-4);
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+}
+
+.app-update-card__heading,
+.app-update-card__release {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--ui-space-3);
+}
+
+.app-update-card__heading h3,
+.app-update-card__heading p,
+.app-update-card__status,
+.app-update-card__downloaded p,
+.app-update-card__error p {
+  margin: 0;
+}
+
+.app-update-card__heading h3 {
+  color: var(--ui-text-primary);
+  font: 600 var(--ui-font-size-14)/var(--ui-line-height-tight) var(--ui-font-heading);
+}
+
+.app-update-card__heading p,
+.app-update-card__checked {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-12);
+}
+
+.app-update-card__release {
+  color: var(--ui-text-primary);
+}
+
+.app-update-card__progress,
+.app-update-card__downloaded,
+.app-update-card__error {
+  display: grid;
+  gap: var(--ui-space-2);
+}
+
+.app-update-card__progress progress {
+  inline-size: 100%;
+  accent-color: var(--ui-accent);
+}
+
+.app-update-card__error {
+  padding: var(--ui-space-2);
+  border-inline-start: 3px solid var(--ui-danger);
+  color: var(--ui-danger);
+  background: color-mix(in srgb, var(--ui-danger) 8%, transparent);
 }
 
 @media (max-width: 1199px) {

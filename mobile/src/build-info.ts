@@ -1,4 +1,5 @@
 import mobilePackage from '../package.json';
+import releaseContract from '../../release/version.json';
 
 import {
   REMOTE_PROTOCOL_VERSION,
@@ -11,3 +12,6 @@ export const MOBILE_BUILD_INFO: BuildInfo = Object.freeze({
   protocolVersion: REMOTE_PROTOCOL_VERSION,
   buildSha: import.meta.env.VITE_BUILD_SHA?.trim() || 'dev',
 });
+
+/** Android's monotonic package build number from the same release contract Gradle consumes. */
+export const MOBILE_ANDROID_VERSION_CODE = releaseContract.androidVersionCode;

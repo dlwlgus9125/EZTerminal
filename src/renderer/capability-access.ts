@@ -37,6 +37,10 @@ import type {
 } from '../shared/openclaw';
 import type { SshForwardInfo, SshForwardResult } from '../shared/ssh-forward';
 import type { UiPreferences, UiPreferencesPatch } from '../shared/ui-preferences';
+import type {
+  AppUpdateOpenResult,
+  AppUpdateSnapshot,
+} from '../shared/app-update';
 
 export type CapabilityAvailability = 'available' | 'unavailable';
 export type CapabilityCleanup = () => void;
@@ -177,6 +181,17 @@ export interface UiPreferenceAccess {
   refreshNativeMenuLocale: () => Promise<boolean>;
 }
 
+export interface AppUpdateAccess {
+  observe: (
+    onSnapshot: (snapshot: AppUpdateSnapshot) => void,
+    onError?: (error: unknown) => void,
+  ) => CapabilityCleanup;
+  check: () => Promise<AppUpdateSnapshot | null>;
+  download: () => Promise<AppUpdateSnapshot | null>;
+  cancelDownload: () => Promise<boolean>;
+  openDownloaded: (acknowledgeUnsigned: boolean) => Promise<AppUpdateOpenResult | null>;
+}
+
 export interface FileAccess {
   list: (path: string) => Promise<FileListResult>;
   listRoots: () => Promise<string[]>;
@@ -209,6 +224,7 @@ export interface CapabilityAccess {
   readonly systemStatus: SystemStatusAccess;
   readonly sshForwards: SshForwardAccess;
   readonly uiPreferences: UiPreferenceAccess;
+  readonly appUpdates: AppUpdateAccess;
   readonly files: FileAccess;
 }
 
@@ -694,6 +710,45 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     },
   };
 
+  const appUpdates: AppUpdateAccess = {
+    observe(onSnapshot, onError) {
+      const api = desktopFor('getAppUpdateSnapshot');
+      if (!api || typeof api.onAppUpdateSnapshot !== 'function') {
+        reportOptionalCapabilityUnavailable(onError, 'observeAppUpdates');
+        return NOOP_CLEANUP;
+      }
+      const gate = createSeedPushGate(onSnapshot, onSnapshot, onError);
+      let unsubscribe: CapabilityCleanup;
+      try {
+        unsubscribe = api.onAppUpdateSnapshot((snapshot) => gate.push(snapshot));
+      } catch (error) {
+        gate.event(() => onError?.(error));
+        gate.stop();
+        return NOOP_CLEANUP;
+      }
+      gate.seed(() => api.getAppUpdateSnapshot());
+      return onceCleanup([unsubscribe, () => gate.stop()]);
+    },
+    async check() {
+      const api = desktopFor('checkForAppUpdate');
+      return api ? api.checkForAppUpdate() : null;
+    },
+    async download() {
+      const api = desktopFor('downloadAppUpdate');
+      return api ? api.downloadAppUpdate() : null;
+    },
+    async cancelDownload() {
+      const api = desktopFor('cancelAppUpdateDownload');
+      if (!api) return false;
+      await api.cancelAppUpdateDownload();
+      return true;
+    },
+    async openDownloaded(acknowledgeUnsigned) {
+      const api = desktopFor('openDownloadedAppUpdate');
+      return api ? api.openDownloadedAppUpdate({ acknowledgeUnsigned }) : null;
+    },
+  };
+
   const files: FileAccess = {
     list(path) {
       return requireCore('listFiles').listFiles(path);
@@ -748,6 +803,7 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     systemStatus,
     sshForwards,
     uiPreferences,
+    appUpdates,
     files,
   };
 }

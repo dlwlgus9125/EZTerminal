@@ -31,6 +31,12 @@ import { applyTheme, loadTheme, saveTheme } from './theme';
 import { initialTabsState, mobileTerminalPanelId, tabsReducer } from './tabs';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 import { usePageVisible } from './use-page-visible';
+import {
+  createInitialAppUpdateSnapshot,
+  isAppUpdateAvailable,
+} from '../../src/shared/app-update';
+import type { MobileAppUpdateController } from './use-mobile-app-update';
+import { MOBILE_BUILD_INFO } from './build-info';
 
 const MobileAgentView = lazy(async () => ({ default: (await import('./MobileAgentView')).MobileAgentView }));
 const MobileFileView = lazy(async () => ({ default: (await import('./MobileFileView')).MobileFileView }));
@@ -43,6 +49,14 @@ const SessionSwitcher = lazy(async () => ({ default: (await import('./SessionSwi
 /** Slow enough to be invisible on a battery, fast enough that a finished run
  * stops claiming to be live before the user looks twice. */
 const ACTIVE_RUN_POLL_MS = 4_000;
+
+const UNAVAILABLE_APP_UPDATE_CONTROLLER: MobileAppUpdateController = {
+  snapshot: createInitialAppUpdateSnapshot(MOBILE_BUILD_INFO.appVersion),
+  check: () => Promise.resolve(),
+  download: () => Promise.resolve(),
+  cancelDownload: () => Promise.resolve(),
+  openDownloaded: () => Promise.resolve({ ok: false, reason: 'unavailable' }),
+};
 
 function countAgentAttention(snapshot: AgentActivitySnapshot): number {
   return snapshot.items.filter((item) => item.status === 'blocked' || item.status === 'error' || item.status === 'waiting').length;
@@ -74,12 +88,14 @@ export function MobileWorkspace({
   connectionUrl = '',
   roundTripMs = null,
   onDisconnect,
+  appUpdateController = UNAVAILABLE_APP_UPDATE_CONTROLLER,
 }: {
   transport: WsEzTerminalTransport;
   connectionUrl?: string;
   /** Smoothed link latency, or null before the first probe answers. */
   roundTripMs?: number | null;
   onDisconnect: () => void;
+  readonly appUpdateController?: MobileAppUpdateController;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
@@ -91,6 +107,7 @@ export function MobileWorkspace({
   const [agentSnapshot, setAgentSnapshot] = useState<AgentActivitySnapshot>(EMPTY_AGENT_ACTIVITY_SNAPSHOT);
   const [connected, setConnected] = useState(false);
   const [connectedSince, setConnectedSince] = useState<number | null>(null);
+  const updateAvailable = isAppUpdateAvailable(appUpdateController.snapshot);
   const [sessions, setSessions] = useState<readonly SessionInfo[]>([]);
   const [activeRuns, setActiveRuns] = useState<ReadonlyMap<string, string>>(new Map());
   const [agentBootstraps, setAgentBootstraps] = useState<
@@ -490,6 +507,7 @@ export function MobileWorkspace({
           themeReturnFocusRef.current = trigger;
           setThemeMenuOpen(true);
         }}
+        appUpdateController={appUpdateController}
       />
     );
   } else if (subPage === 'files') {
@@ -582,6 +600,7 @@ export function MobileWorkspace({
           <MobileTabBar
             tab={tab}
             agentAttention={agentAttention}
+            updateAvailable={updateAvailable}
             onSelectTab={selectTab}
             onOpenPcControl={() => openSubPage('pc-control', 'shell-tab-pc')}
             onOpenMore={() => {
@@ -693,6 +712,7 @@ export function MobileWorkspace({
                 currentTheme={currentTheme}
                 openclawVisible={effectiveOpenClawVisible}
                 openclawState={openclawState?.state}
+                updateAvailable={updateAvailable}
                 returnFocusRef={sheetReturnFocusRef}
                 onClose={() => setSheet(null)}
                 onOpenSessions={() => openSubPage('sessions', 'shell-tab-more')}

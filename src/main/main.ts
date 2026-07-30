@@ -113,6 +113,8 @@ import { resolveTerminalFileLocation } from './terminal-path-resolver';
 import { readTerminalClipboardSnapshot } from './terminal-clipboard';
 import { isTerminalPastePreferences } from '../shared/terminal-clipboard';
 import { TerminalFileCapabilityStore } from './terminal-file-capability';
+import { AppUpdateService } from './app-update-service';
+import { ElectronUpdateHttpClient } from './app-update-network';
 import {
   UiPreferencesPatchSchema,
   resolveUiLocale,
@@ -473,6 +475,37 @@ app.on('ready', () => {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
       win.webContents.send('quick-commands:changed', commands);
     }
+  });
+
+  const appUpdateService = new AppUpdateService({
+    currentVersion: app.getVersion(),
+    resolveDownloadsDirectory: () => path.join(app.getPath('downloads'), 'EZTerminal'),
+    http: new ElectronUpdateHttpClient(),
+    openPath: (filePath) => shell.openPath(filePath),
+  });
+  appUpdateService.subscribe((snapshot) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('app-update:snapshot', snapshot);
+    }
+  });
+  ipcMain.handle('app-update:get-snapshot', () => appUpdateService.getSnapshot());
+  ipcMain.handle('app-update:check', () => appUpdateService.check());
+  ipcMain.handle('app-update:download', () => appUpdateService.download());
+  ipcMain.handle('app-update:cancel-download', () => appUpdateService.cancelDownload());
+  ipcMain.handle('app-update:open', (_event, options: unknown) => {
+    if (
+      typeof options !== 'object'
+      || options === null
+      || Array.isArray(options)
+      || Object.keys(options).length !== 1
+      || typeof (options as { acknowledgeUnsigned?: unknown }).acknowledgeUnsigned !== 'boolean'
+    ) {
+      return { ok: false as const, reason: 'failed' as const };
+    }
+    return appUpdateService.openDownloadedUpdate(
+      (options as { acknowledgeUnsigned: boolean }).acknowledgeUnsigned,
+    );
   });
 
   // Agent activity persistence + loopback hook relay. The relay binds only to
@@ -1261,6 +1294,7 @@ app.on('ready', () => {
       { name: 'agent history', run: () => agentHistoryService.dispose() },
       { name: 'agent settings', run: () => agentSettingsStore.flush() },
       { name: 'quick commands', run: () => quickCommandStore.flush() },
+      { name: 'app update', run: () => appUpdateService.dispose() },
       { name: 'workspace search', run: () => workspaceFileSearch.dispose() },
       {
         name: 'SSH forwards',
@@ -2051,6 +2085,9 @@ app.on('ready', () => {
   });
 
   createWindow();
+  if (process.env.EZTERMINAL_DISABLE_UPDATE_CHECK !== '1') {
+    void appUpdateService.check();
+  }
 });
 
 // Quit when all windows are closed, except on macOS.

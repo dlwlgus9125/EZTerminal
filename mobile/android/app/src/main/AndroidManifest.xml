@@ -3,6 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- GitHub-distributed APK updates are user initiated and always handed to
+         Android's package installer; the app never installs silently. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Pairing only. The camera is opened by the scan sheet, decoded on the
          device, and released the moment that sheet closes; no frame is stored

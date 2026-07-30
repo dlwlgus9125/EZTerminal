@@ -480,6 +480,7 @@ async function launchPerformanceApp(mainEntry: string): Promise<PerformanceAppSe
     }
     env.EZTERMINAL_USER_DATA_DIR = userDataDir;
     env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES = '1';
+    env.EZTERMINAL_DISABLE_UPDATE_CHECK = '1';
     app = await electron.launch({ args: [mainEntry, '--lang=en-US'], env });
     appCloser = trackElectronApplicationClose(app);
     lease.settle(appCloser);

@@ -60,6 +60,9 @@ import { TerminalAccessorySettings } from './TerminalAccessorySettings';
 import { useTerminalAccessoryLayout } from './terminal-accessory-layout';
 import { useMobileUiPreferences } from './MobileUiPreferencesProvider';
 import { MOBILE_BUILD_INFO } from './build-info';
+import { isAppUpdateAvailable } from '../../src/shared/app-update';
+import { MobileAppUpdateCard } from './MobileAppUpdateCard';
+import type { MobileAppUpdateController } from './use-mobile-app-update';
 
 // MobileSettingsView — full-screen settings overlay (v0.2.0 M4). Modeled on
 // MobileStatsView.tsx's structure (standalone view, own header, `.btn`/
@@ -97,6 +100,8 @@ function SettingsCategoryButton({
   preview,
   previewSuffix,
   testId,
+  updateAvailable = false,
+  updateLabel,
   onClick,
 }: {
   readonly icon: LucideIcon;
@@ -110,13 +115,24 @@ function SettingsCategoryButton({
    * or the baseline has to be refreshed on every version bump. */
   readonly previewSuffix?: string;
   readonly testId: string;
+  readonly updateAvailable?: boolean;
+  readonly updateLabel?: string;
   readonly onClick: () => void;
 }): JSX.Element {
   return (
-    <button type="button" className="mob-settings-row" onClick={onClick} data-testid={testId}>
+    <button
+      type="button"
+      className="mob-settings-row"
+      onClick={onClick}
+      aria-label={updateAvailable ? `${title}. ${updateLabel ?? ''}`.trim() : undefined}
+      data-testid={testId}
+    >
       <span className="mob-settings-row__icon" aria-hidden="true"><Icon /></span>
       <span>
-        <span className="mob-settings-row__title">{title}</span>
+        <span className="mob-settings-row__title">
+          {title}
+          {updateAvailable && <span className="mobile-update-dot" aria-hidden="true" />}
+        </span>
         <span className="mob-settings-row__preview">
           {preview}
           {previewSuffix && (
@@ -144,6 +160,7 @@ interface MobileSettingsViewProps {
   readonly onOpenClawModeChange: (mode: OpenClawMode) => void;
   readonly currentTheme: ThemeName;
   readonly onOpenTheme: (trigger: HTMLElement) => void;
+  readonly appUpdateController?: MobileAppUpdateController;
 }
 
 /**
@@ -175,6 +192,7 @@ export function MobileSettingsView({
   onOpenClawModeChange,
   currentTheme,
   onOpenTheme,
+  appUpdateController,
 }: MobileSettingsViewProps): JSX.Element {
   const { t } = useAppTranslation();
   const { preferences, setPreferences } = useMobileUiPreferences();
@@ -185,6 +203,9 @@ export function MobileSettingsView({
   const restoreCategoryFocusRef = useRef(false);
   const [preferenceSaveFailed, setPreferenceSaveFailed] = useState(false);
   const [uiScale, setUiScale] = useState(() => loadUiScale());
+  const updateAvailable = appUpdateController
+    ? isAppUpdateAvailable(appUpdateController.snapshot)
+    : false;
 
   const openCategory = useCallback((next: MobileSettingsCategory, returnTarget: string) => {
     categoryReturnTargetRef.current = returnTarget;
@@ -414,6 +435,8 @@ export function MobileSettingsView({
               preview=""
               previewSuffix={`v${MOBILE_BUILD_INFO.appVersion} (${MOBILE_BUILD_INFO.buildSha})`}
               testId="settings-category-connection-about"
+              updateAvailable={updateAvailable}
+              updateLabel={t('settings.update.badge')}
               onClick={() => openCategory('connection-about', 'settings-category-connection-about')}
             />
             <p className="mob-signal" aria-hidden="true">
@@ -672,26 +695,31 @@ export function MobileSettingsView({
           </div>
         </section>}
 
-        {category === 'connection-about' && <section className="status-section">
-          <h2 className="status-section-title">{t('mobile.settingsView.connection')}</h2>
-          <div className="status-metric" data-testid="settings-app-version">
-            {t('settings.appVersion')}: {MOBILE_BUILD_INFO.appVersion}
-          </div>
-          <div className="status-metric" data-testid="settings-protocol-version">
-            {t('settings.protocolVersion')}: {MOBILE_BUILD_INFO.protocolVersion}
-          </div>
-          <div className="status-metric" data-testid="settings-build-sha">
-            {t('settings.buildSha')}: {MOBILE_BUILD_INFO.buildSha}
-          </div>
-          <div className="status-metric" data-testid="settings-connection-url">
-            {connectionUrl || '—'}
-          </div>
-          <div className="status-metric" data-testid="settings-connection-status">
-            {t('state.connected')}
-          </div>
-          {/* Disconnect now lives on the index's connection card (handoff §6),
-              which is strictly more reachable than this sub-page. */}
-        </section>}
+        {category === 'connection-about' && (
+          <>
+            {appUpdateController && <MobileAppUpdateCard controller={appUpdateController} />}
+            <section className="status-section">
+              <h2 className="status-section-title">{t('mobile.settingsView.connection')}</h2>
+              <div className="status-metric" data-testid="settings-app-version">
+                {t('settings.appVersion')}: {MOBILE_BUILD_INFO.appVersion}
+              </div>
+              <div className="status-metric" data-testid="settings-protocol-version">
+                {t('settings.protocolVersion')}: {MOBILE_BUILD_INFO.protocolVersion}
+              </div>
+              <div className="status-metric" data-testid="settings-build-sha">
+                {t('settings.buildSha')}: {MOBILE_BUILD_INFO.buildSha}
+              </div>
+              <div className="status-metric" data-testid="settings-connection-url">
+                {connectionUrl || '—'}
+              </div>
+              <div className="status-metric" data-testid="settings-connection-status">
+                {t('state.connected')}
+              </div>
+              {/* Disconnect now lives on the index's connection card (handoff §6),
+                  which is strictly more reachable than this sub-page. */}
+            </section>
+          </>
+        )}
       </div>
     </div>
   );

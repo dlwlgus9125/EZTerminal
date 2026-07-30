@@ -308,6 +308,19 @@ contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
 // for why: mobile has no implementation of these, and folding them into the
 // shared EzTerminalApi would force mobile's transport to stub every one).
 const desktopApi: EzTerminalDesktopApi = {
+  getAppUpdateSnapshot: () => ipcRenderer.invoke('app-update:get-snapshot'),
+  checkForAppUpdate: () => ipcRenderer.invoke('app-update:check'),
+  downloadAppUpdate: () => ipcRenderer.invoke('app-update:download'),
+  cancelAppUpdateDownload: () => ipcRenderer.invoke('app-update:cancel-download'),
+  openDownloadedAppUpdate: (options) => ipcRenderer.invoke('app-update:open', options),
+  onAppUpdateSnapshot: (listener): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      snapshot: import('../shared/app-update').AppUpdateSnapshot,
+    ): void => listener(snapshot);
+    ipcRenderer.on('app-update:snapshot', handler);
+    return () => ipcRenderer.removeListener('app-update:snapshot', handler);
+  },
   issuePairingCode: () => ipcRenderer.invoke('pairing:issue'),
   getPairingCode: () => ipcRenderer.invoke('pairing:get'),
   revokePairingCode: () => ipcRenderer.invoke('pairing:revoke'),

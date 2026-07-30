@@ -7,6 +7,7 @@ import type {
   SystemStatsSnapshot,
 } from '../shared/ipc';
 import type { OpenClawVisibility } from '../shared/openclaw';
+import type { AppUpdateSnapshot } from '../shared/app-update';
 import {
   createCapabilityAccess,
   RequiredCapabilityUnavailableError,
@@ -240,6 +241,34 @@ describe('CapabilityAccess Interface', () => {
     cleanup();
     pushVisibility(seededVisibility);
     expect(onVisibility).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it('seeds and cleans up the main-owned app update snapshot subscription', async () => {
+    const snapshot: AppUpdateSnapshot = {
+      phase: 'available',
+      currentVersion: '1.0.0',
+      checkedAt: 100,
+      release: {
+        version: '1.2.3',
+        publishedAt: '2026-07-30T00:00:00Z',
+        sizeBytes: 100,
+        assetName: 'EZTerminal-Setup.exe',
+      },
+    };
+    const unsubscribe = vi.fn();
+    const onSnapshot = vi.fn();
+    const desktop = {
+      getAppUpdateSnapshot: vi.fn(async () => snapshot),
+      onAppUpdateSnapshot: vi.fn(() => unsubscribe),
+    } as unknown as EzTerminalDesktopApi;
+    const access = accessFor({ core: undefined, desktop });
+
+    const cleanup = access.appUpdates.observe(onSnapshot);
+    await Promise.resolve();
+    expect(onSnapshot).toHaveBeenCalledWith(snapshot);
+    cleanup();
+    cleanup();
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 

@@ -87,6 +87,7 @@ test('packaged EXE: interpreter utilityProcess forks from app.asar under fuses',
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     EZTERMINAL_USER_DATA_DIR: userDataDir,
+    EZTERMINAL_DISABLE_UPDATE_CHECK: '1',
   };
   const child = spawn(EXE, [], { stdio: ['ignore', 'pipe', 'pipe'], env });
   const out = captureOutput(child);

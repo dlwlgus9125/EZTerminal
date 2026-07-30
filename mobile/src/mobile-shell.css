@@ -36,6 +36,7 @@
   --mob-accent-glow: rgba(var(--mob-accent-rgb), 0.3);
   --mob-warn-tint: rgba(232, 180, 95, 0.08);
   --mob-warn-line: rgba(232, 180, 95, 0.36);
+  --mob-danger-tint: rgba(255, 93, 108, 0.08);
   --mob-danger-line: rgba(255, 93, 108, 0.42);
   --mob-success-tint: rgba(47, 224, 139, 0.06);
   --mob-success-line: rgba(47, 224, 139, 0.35);
@@ -222,6 +223,24 @@
   font-size: 0.594rem;
   font-weight: 700;
   place-items: center;
+}
+
+.mobile-shell-tab__update-dot,
+.mobile-update-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border: 2px solid var(--ui-surface);
+  border-radius: var(--mob-radius-pill);
+  background: var(--ui-warning);
+  box-shadow: 0 0 8px var(--mob-warn-line, rgba(232, 180, 95, 0.36));
+}
+
+.mobile-shell-tab__update-dot {
+  position: absolute;
+  top: 4px;
+  right: 24%;
 }
 
 .mobile-shell-tab:focus-visible {
@@ -2153,7 +2172,9 @@
 .mob-settings-row__icon svg { width: 18px; height: 18px; }
 
 .mob-settings-row__title {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-family: var(--ui-font-body);
   font-size: 0.813rem;
   font-weight: 700;
@@ -2189,6 +2210,53 @@
   width: 16px;
   height: 16px;
   color: var(--ui-text-muted);
+}
+
+.mobile-app-update-card {
+  display: grid;
+  gap: var(--ui-space-3);
+}
+
+.mobile-app-update-card p {
+  margin: 0;
+}
+
+.mobile-app-update-card__heading,
+.mobile-app-update-card__release {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+}
+
+.mobile-app-update-card__heading > div {
+  min-width: 0;
+}
+
+.mobile-app-update-card__heading .btn,
+.mobile-app-update-card > .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-space-1);
+}
+
+.mobile-app-update-card__progress,
+.mobile-app-update-card__error {
+  display: grid;
+  gap: var(--ui-space-2);
+}
+
+.mobile-app-update-card__progress progress {
+  width: 100%;
+  accent-color: var(--ui-accent);
+}
+
+.mobile-app-update-card__error {
+  padding: var(--ui-space-2);
+  border-left: 3px solid var(--ui-danger);
+  color: var(--ui-danger);
+  background: var(--mob-danger-tint, rgba(255, 93, 108, 0.08));
 }
 
 /* ── Connect ─────────────────────────────────────────────────────────────── */

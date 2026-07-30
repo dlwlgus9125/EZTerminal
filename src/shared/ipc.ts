@@ -76,6 +76,10 @@ import type {
   AgentResumeStartResult,
   AgentTranscriptPage,
 } from './agent-history';
+import type {
+  AppUpdateOpenResult,
+  AppUpdateSnapshot,
+} from './app-update';
 
 /** The single key under which the preload bridge is exposed on `window`. */
 export const BRIDGE_KEY = 'ezterminal' as const;
@@ -1266,6 +1270,16 @@ export interface EzTerminalApi {
 // shared/window.d.ts) so every call site guards with `?.`.
 
 export interface EzTerminalDesktopApi {
+  /** Main-owned stable GitHub Release updater. Raw URLs and local paths never cross this bridge. */
+  getAppUpdateSnapshot: () => Promise<AppUpdateSnapshot>;
+  checkForAppUpdate: () => Promise<AppUpdateSnapshot>;
+  downloadAppUpdate: () => Promise<AppUpdateSnapshot>;
+  cancelAppUpdateDownload: () => Promise<void>;
+  openDownloadedAppUpdate: (options: {
+    readonly acknowledgeUnsigned: boolean;
+  }) => Promise<AppUpdateOpenResult>;
+  onAppUpdateSnapshot: (listener: (snapshot: AppUpdateSnapshot) => void) => () => void;
+
   // ── One-time pairing (desktop issues, phone redeems) ────────────────────
   /** Mint a fresh code, replacing any live one. */
   issuePairingCode: () => Promise<PairingCode>;

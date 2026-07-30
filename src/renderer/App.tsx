@@ -46,6 +46,7 @@ import {
   type CloseRisk,
 } from '../shared/close-risk';
 import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from '../shared/workspace-search';
+import { isAppUpdateAvailable } from '../shared/app-update';
 import { AgentHub, countAgentAttention } from './AgentHub';
 import { peekAgentTerminalBootstrap } from './agent-terminal-bootstrap';
 import { AgentSessionPanel } from './AgentSessionPanel';
@@ -96,6 +97,7 @@ import { applyScrollback, clampScrollback, SCROLLBACK_DEFAULT } from './scrollba
 import { applyUiScale, clampUiScale, UI_SCALE_DEFAULT } from './ui-scale';
 import { useUiPreferences } from './ui-preferences';
 import { rendererCapabilities } from './capability-access';
+import { useAppUpdate } from './use-app-update';
 import {
   buildCommandCenterActionRows,
   type QuickOpenBuiltinAction,
@@ -401,6 +403,8 @@ export function App(): JSX.Element {
   const { i18n, t } = useAppTranslation();
   const { pushToast } = useToast();
   const remoteDesktopStatus = useRemoteDesktopHostStatus();
+  const appUpdateController = useAppUpdate();
+  const appUpdateAvailable = isAppUpdateAvailable(appUpdateController.snapshot);
   const paneActionMessage = useCallback(
     (result: PaneActionResult): string | null => {
       if (result.ok) return null;
@@ -2670,6 +2674,7 @@ export function App(): JSX.Element {
         onChangeRollbar={onChangeRollbar}
         interference={interference}
         onChangeEffectParams={onChangeEffectParams}
+        appUpdateController={appUpdateController}
       />
     ) : null;
 
@@ -2746,6 +2751,7 @@ export function App(): JSX.Element {
         <ActivityRail
           active={sidebarDestination}
           attentionCount={attentionCount}
+          updateAvailable={appUpdateAvailable}
           openclawVisible={openclawVisible}
           onSelect={(destination) => {
             if (destination === 'settings' && sidebarDestination !== 'settings') {

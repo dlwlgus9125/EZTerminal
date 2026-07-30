@@ -15,6 +15,8 @@ interface TabItem {
   readonly testId: string;
   readonly selected: boolean;
   readonly badge?: number;
+  readonly updateDot?: boolean;
+  readonly updateLabel?: string;
   readonly onSelect: () => void;
 }
 
@@ -28,7 +30,11 @@ function TabButton({ item, railOnly = false }: { readonly item: TabItem; readonl
       aria-current={item.selected ? 'page' : undefined}
       // Rail-only items render icon-first with the label hidden, so the name
       // has to come from aria-label rather than the (invisible) text node.
-      aria-label={railOnly ? item.label : undefined}
+      aria-label={
+        item.updateDot
+          ? `${item.label}. ${item.updateLabel ?? ''}`.trim()
+          : railOnly ? item.label : undefined
+      }
       className={railOnly ? 'mobile-shell-tab mobile-shell-nav__rail-only' : 'mobile-shell-tab'}
       onClick={item.onSelect}
       data-testid={item.testId}
@@ -37,6 +43,7 @@ function TabButton({ item, railOnly = false }: { readonly item: TabItem; readonl
       {item.badge !== undefined && item.badge > 0 && (
         <span className="mobile-shell-tab__badge">{item.badge}</span>
       )}
+      {item.updateDot && <span className="mobile-shell-tab__update-dot" aria-hidden="true" />}
       <Icon aria-hidden="true" />
       <span className="mobile-shell-tab__label">{item.label}</span>
     </button>
@@ -52,6 +59,7 @@ function TabButton({ item, railOnly = false }: { readonly item: TabItem; readonl
 export function MobileTabBar({
   tab,
   agentAttention,
+  updateAvailable = false,
   onSelectTab,
   onOpenPcControl,
   onOpenMore,
@@ -59,6 +67,7 @@ export function MobileTabBar({
 }: {
   readonly tab: MobileShellTab;
   readonly agentAttention: number;
+  readonly updateAvailable?: boolean;
   readonly onSelectTab: (next: MobileShellTab) => void;
   readonly onOpenPcControl: () => void;
   readonly onOpenMore: () => void;
@@ -129,6 +138,8 @@ export function MobileTabBar({
           label: t('common.settings'),
           testId: 'shell-rail-settings',
           selected: false,
+          updateDot: updateAvailable,
+          updateLabel: t('settings.update.badge'),
           onSelect: onOpenSettings,
         }}
       />
