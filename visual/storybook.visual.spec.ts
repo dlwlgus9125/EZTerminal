@@ -646,6 +646,10 @@ test.describe("desktop handoff responsive and interaction axes", () => {
         scale: handoffCase.scale,
       });
       await expect(page.locator(handoffCase.readySelector)).toBeVisible();
+      // Storybook's root readiness signal can precede TerminalPane's async
+      // session binding. Wait for all three dock panes so screenshots never
+      // alternate between an empty prompt and the settled working directory.
+      await expect(page.getByTestId("prompt-cwd")).toHaveCount(3);
 
       const sidebar = page.getByTestId("workbench-sidebar");
       const scrim = page.locator(".workbench-sidebar-scrim");

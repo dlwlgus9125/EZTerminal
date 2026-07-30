@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [1.0.18] - 2026-07-30
+
+### Changed
+
+- Promoted the unpublished 1.0.17 candidate as 1.0.18 without moving or
+  reusing the immutable v1.0.17 tag.
+- Updated the Android companion to versionCode 39 while retaining remote
+  protocol v6 and supported v1-v5 compatibility.
+
+### Fixed
+
+- Made responsive Storybook screenshots wait for all three terminal panes to
+  finish asynchronous session binding before capture.
+- Removed a release-only visual race that could alternate settled working
+  directories with empty prompts while leaving the product UI unchanged.
+
+See [1.0.18 release notes](docs/release/release-notes-1.0.18.md).
+
 ## [1.0.17] - 2026-07-30
 
 ### Changed
