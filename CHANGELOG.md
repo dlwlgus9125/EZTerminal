@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [1.0.20] - 2026-07-31
+
+### Fixed
+
+- Fixed desktop update checks incorrectly reporting a GitHub network failure
+  when Electron emitted the normal request-side `close` event before the
+  successful response.
+- Added regression coverage for close-before-response ordering while
+  preserving real request errors as retryable network failures.
+
+See [1.0.20 release notes](docs/release/release-notes-1.0.20.md).
+
 ## [1.0.19] - 2026-07-31
 
 ### Added

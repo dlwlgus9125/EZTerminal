@@ -1,4 +1,4 @@
-import { net, type ClientRequest, type IncomingMessage } from 'electron';
+import { net, type ClientRequest } from 'electron';
 
 import { APP_UPDATE_API_URL, APP_UPDATE_OWNER, APP_UPDATE_REPOSITORY } from '../shared/app-update';
 
@@ -96,7 +96,6 @@ export class ElectronUpdateHttpClient implements UpdateHttpClient {
       let settled = false;
       let receivedBytes = 0;
       let redirectCount = 0;
-      let response: IncomingMessage | null = null;
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
       const request: ClientRequest = net.request({
         method: 'GET',
@@ -142,7 +141,6 @@ export class ElectronUpdateHttpClient implements UpdateHttpClient {
         resetIdleTimer();
       });
       request.on('response', (incoming) => {
-        response = incoming;
         const headers = incoming.headers as Readonly<Record<string, string | readonly string[]>>;
         const declaredBytes = contentLengthOf(headers);
         if (declaredBytes !== null && declaredBytes > options.maximumBytes) {
@@ -179,9 +177,6 @@ export class ElectronUpdateHttpClient implements UpdateHttpClient {
         });
       });
       request.on('error', (error) => settleReject(new UpdateHttpError('NETWORK', error)));
-      request.on('close', () => {
-        if (!settled && response === null) settleReject(new UpdateHttpError('NETWORK'));
-      });
       resetIdleTimer();
       request.end();
     });
