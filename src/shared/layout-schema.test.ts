@@ -128,17 +128,58 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     expect(env?.layout.panels['tab-2'].contentComponent).toBe('terminal');
   });
 
-  it('STRIPS floating/popout/edge groups instead of persisting them (Codex B4)', () => {
-    const layout = makeLayout();
+  it('strips floating/edge groups while preserving a validated terminal popout', () => {
+    const layout = makeLayout(['tab-1', 'tab-2']);
     layout.floatingGroups = [{ anything: true }];
-    layout.popoutGroups = [{ anything: true }];
+    layout.popoutGroups = [{
+      data: { id: 'popout-1', views: ['tab-2'], activeView: 'tab-2' },
+      position: { left: -800, top: 40, width: 900, height: 600 },
+      url: 'https://hostile.invalid/',
+      gridReferenceGroup: 'stale-group',
+    }];
     layout.edgeGroups = [{ anything: true }];
     const env = validateLayoutEnvelope(makeEnvelope(layout));
     expect(env).not.toBeNull();
     const persisted = env?.layout as unknown as Record<string, unknown>;
     expect(persisted.floatingGroups).toBeUndefined();
-    expect(persisted.popoutGroups).toBeUndefined();
     expect(persisted.edgeGroups).toBeUndefined();
+    expect(persisted.popoutGroups).toEqual([{
+      data: { id: 'popout-1', views: ['tab-2'], activeView: 'tab-2' },
+      position: { left: -800, top: 40, width: 900, height: 600 },
+    }]);
+  });
+
+  it('rejects non-terminal, duplicate, or non-finite popout panel placement', () => {
+    const nonTerminal = makeLayout(['tab-1']);
+    const panel = (nonTerminal.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.id = 'openclaw-chat';
+    panel.contentComponent = 'openclaw-chat';
+    nonTerminal.panels = { 'openclaw-chat': panel };
+    nonTerminal.popoutGroups = [{
+      data: { id: 'popout-1', views: ['openclaw-chat'] },
+      position: { left: 20, top: 20, width: 800, height: 600 },
+    }];
+    expect(validateLayoutEnvelope(makeEnvelope(nonTerminal))).toBeNull();
+
+    const duplicate = makeLayout(['tab-1']);
+    duplicate.popoutGroups = [
+      {
+        data: { id: 'popout-1', views: ['tab-1'] },
+        position: { left: 20, top: 20, width: 800, height: 600 },
+      },
+      {
+        data: { id: 'popout-2', views: ['tab-1'] },
+        position: { left: 40, top: 40, width: 800, height: 600 },
+      },
+    ];
+    expect(validateLayoutEnvelope(makeEnvelope(duplicate))).toBeNull();
+
+    const nonFinite = makeLayout(['tab-1']);
+    nonFinite.popoutGroups = [{
+      data: { id: 'popout-1', views: ['tab-1'] },
+      position: { left: Number.NaN, top: 20, width: 800, height: 600 },
+    }];
+    expect(validateLayoutEnvelope(makeEnvelope(nonFinite))).toBeNull();
   });
 
   it('forces renderer:always on every panel (PTY survives tab switches)', () => {

@@ -80,6 +80,12 @@ import type {
   AppUpdateOpenResult,
   AppUpdateSnapshot,
 } from './app-update';
+import type {
+  AuxiliaryCloseRequest,
+  AuxiliaryCloseResolution,
+  DesktopWindowAction,
+  DesktopWindowState,
+} from './desktop-window';
 
 /** The single key under which the preload bridge is exposed on `window`. */
 export const BRIDGE_KEY = 'ezterminal' as const;
@@ -1270,6 +1276,20 @@ export interface EzTerminalApi {
 // shared/window.d.ts) so every call site guards with `?.`.
 
 export interface EzTerminalDesktopApi {
+  /** Sender-scoped native window controls; no BrowserWindow id crosses preload. */
+  getWindowState: () => Promise<DesktopWindowState>;
+  performWindowAction: (action: DesktopWindowAction) => Promise<void>;
+  onWindowStateChanged: (listener: (state: DesktopWindowState) => void) => () => void;
+  /** Auxiliary close decisions are coordinated by the sole main renderer. */
+  onAuxiliaryCloseRequested: (listener: (request: AuxiliaryCloseRequest) => void) => () => void;
+  resolveAuxiliaryClose: (
+    requestId: string,
+    resolution: AuxiliaryCloseResolution,
+  ) => Promise<void>;
+  /** Bounded main-renderer handshake used before whole-application shutdown. */
+  onLayoutFlushRequested: (listener: (requestId: string) => void) => () => void;
+  completeLayoutFlush: (requestId: string) => void;
+
   /** Main-owned stable GitHub Release updater. Raw URLs and local paths never cross this bridge. */
   getAppUpdateSnapshot: () => Promise<AppUpdateSnapshot>;
   checkForAppUpdate: () => Promise<AppUpdateSnapshot>;

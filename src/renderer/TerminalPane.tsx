@@ -271,7 +271,7 @@ export function TerminalPane({
   // (.pty-block), which must keep focus for keystrokes to reach the child
   // (PtyBlock.tsx:269). Plain output / tables / empty space refocus the input.
   const handleScreenClick = (e: React.MouseEvent): void => {
-    const sel = window.getSelection();
+    const sel = (e.currentTarget.ownerDocument.defaultView ?? window).getSelection();
     if (sel && !sel.isCollapsed) return; // preserve drag-to-select/copy
     const target = e.target as HTMLElement;
     if (target.closest('.pty-block')) return; // xterm block keeps its own focus
@@ -1011,9 +1011,9 @@ export function TerminalPane({
 
   const selectPaneOutput = useCallback((): void => {
     const output = blockListRef.current;
-    const selection = window.getSelection();
+    const selection = output?.ownerDocument.defaultView?.getSelection();
     if (!output || !selection) return;
-    const range = document.createRange();
+    const range = output.ownerDocument.createRange();
     range.selectNodeContents(output);
     selection.removeAllRanges();
     selection.addRange(range);
@@ -1096,7 +1096,7 @@ export function TerminalPane({
       onContextMenu={(event) => {
         if (
           event.defaultPrevented
-          || window.matchMedia?.('(pointer: coarse)').matches
+          || event.currentTarget.ownerDocument.defaultView?.matchMedia?.('(pointer: coarse)').matches
           || (
             event.target instanceof Element
             && event.target.closest('.terminal-context-menu')
@@ -1417,6 +1417,7 @@ export function TerminalPane({
           items={paneContextMenuItems}
           ariaLabel={t('terminalContext.actionsLabel')}
           shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
+          ownerDocument={paneContextMenu.invocation.originPane?.ownerDocument}
           onClose={(detail) => closeTerminalContextMenu(
             paneContextMenu.invocation,
             detail,

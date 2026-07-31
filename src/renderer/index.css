@@ -622,6 +622,109 @@ body {
   font-family: var(--ui-font-body);
 }
 
+.auxiliary-shell {
+  position: fixed;
+  z-index: 1000;
+  inset: 0 0 auto;
+  block-size: 36px;
+  color: var(--ui-text-primary);
+  background: var(--ui-surface);
+  font-family: var(--ui-font-body);
+}
+
+.auxiliary-titlebar {
+  block-size: 36px;
+  display: flex;
+  align-items: center;
+  border-block-end: 1px solid var(--ui-border-mid);
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.auxiliary-titlebar__mark {
+  margin-inline-start: 12px;
+  color: var(--ui-accent);
+  font-family: var(--ui-font-heading);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.auxiliary-titlebar__title {
+  margin-inline-start: 8px;
+  color: var(--ui-text-muted);
+  font-size: 12px;
+}
+
+.auxiliary-titlebar__drag-space {
+  flex: 1 1 auto;
+}
+
+html[data-ez-window='auxiliary'] .dv-popout-window {
+  top: 36px !important;
+  height: calc(100vh - 36px) !important;
+  background: var(--ui-canvas);
+}
+
+html[data-ez-window='auxiliary'] .dv-popout-window > .dv-dockview,
+html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
+  height: 100%;
+}
+
+.auxiliary-close-summary {
+  margin-block: 0 var(--ui-space-3);
+  color: var(--ui-text-muted);
+}
+
+.auxiliary-close-list {
+  display: grid;
+  gap: var(--ui-space-3);
+}
+
+.auxiliary-close-pane {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-space-2);
+  margin: 0;
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+}
+
+.auxiliary-close-pane legend {
+  max-inline-size: 100%;
+  padding-inline: var(--ui-space-1);
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auxiliary-close-pane p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--ui-warning);
+  font-size: var(--ui-font-size-12);
+}
+
+.auxiliary-close-pane label {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  min-block-size: var(--ui-control-height-md);
+  padding-inline: var(--ui-space-2);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  cursor: pointer;
+}
+
+.auxiliary-close-pane label:has(input:checked) {
+  border-color: var(--ui-accent);
+  background: color-mix(in srgb, var(--ui-accent) 12%, transparent);
+}
+
 /* One terminal surface: block list (fills, scrolls) + pinned prompt below. Fills its
    dockview panel content box. min-height:0 lets the nested block-list scroll instead
    of overflowing the pane. */

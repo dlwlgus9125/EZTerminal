@@ -14,6 +14,12 @@ import {
   type SystemStatsSnapshot,
 } from '../shared/ipc';
 import type { ThemeMod } from '../shared/theme-schema';
+import type {
+  AuxiliaryCloseRequest,
+  AuxiliaryCloseResolution,
+  DesktopWindowAction,
+  DesktopWindowState,
+} from '../shared/desktop-window';
 import { REMOTE_PROTOCOL_VERSION } from '../shared/remote-protocol';
 import packageJson from '../../package.json';
 
@@ -308,6 +314,38 @@ contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
 // for why: mobile has no implementation of these, and folding them into the
 // shared EzTerminalApi would force mobile's transport to stub every one).
 const desktopApi: EzTerminalDesktopApi = {
+  getWindowState: (): Promise<DesktopWindowState> =>
+    ipcRenderer.invoke('desktop-window:get-state'),
+  performWindowAction: (action: DesktopWindowAction): Promise<void> =>
+    ipcRenderer.invoke('desktop-window:perform-action', action),
+  onWindowStateChanged: (listener: (state: DesktopWindowState) => void): (() => void) => {
+    const handler = (_event: unknown, state: DesktopWindowState): void => listener(state);
+    ipcRenderer.on('desktop-window:state-changed', handler);
+    return () => ipcRenderer.removeListener('desktop-window:state-changed', handler);
+  },
+  onAuxiliaryCloseRequested: (
+    listener: (request: AuxiliaryCloseRequest) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, request: AuxiliaryCloseRequest): void => listener(request);
+    ipcRenderer.on('desktop-window:aux-close-requested', handler);
+    return () => ipcRenderer.removeListener('desktop-window:aux-close-requested', handler);
+  },
+  resolveAuxiliaryClose: (
+    requestId: string,
+    resolution: AuxiliaryCloseResolution,
+  ): Promise<void> => ipcRenderer.invoke(
+    'desktop-window:resolve-aux-close',
+    requestId,
+    resolution,
+  ),
+  onLayoutFlushRequested: (listener: (requestId: string) => void): (() => void) => {
+    const handler = (_event: unknown, requestId: string): void => listener(requestId);
+    ipcRenderer.on('desktop-window:flush-layout', handler);
+    return () => ipcRenderer.removeListener('desktop-window:flush-layout', handler);
+  },
+  completeLayoutFlush: (requestId: string): void => {
+    ipcRenderer.send('desktop-window:layout-flushed', requestId);
+  },
   getAppUpdateSnapshot: () => ipcRenderer.invoke('app-update:get-snapshot'),
   checkForAppUpdate: () => ipcRenderer.invoke('app-update:check'),
   downloadAppUpdate: () => ipcRenderer.invoke('app-update:download'),

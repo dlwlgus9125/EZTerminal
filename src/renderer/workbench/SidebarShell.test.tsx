@@ -190,6 +190,21 @@ describe('SidebarShell narrow overlay focus contract', () => {
     expect(container.closest('[inert]')).toBeNull();
   });
 
+  it('isolates an explicitly active auxiliary document without touching the main document', () => {
+    const auxiliaryDocument = document.implementation.createHTMLDocument('auxiliary');
+    const auxiliaryBackground = auxiliaryDocument.createElement('button');
+    const auxiliaryModal = auxiliaryDocument.createElement('div');
+    auxiliaryDocument.body.append(auxiliaryBackground, auxiliaryModal);
+
+    const release = isolateModalBackground(auxiliaryModal, [], auxiliaryDocument);
+
+    expect(auxiliaryBackground.hasAttribute('inert')).toBe(true);
+    expect(auxiliaryBackground.getAttribute('aria-hidden')).toBe('true');
+    expect(container.closest('[inert]')).toBeNull();
+    release();
+    expect(auxiliaryBackground.hasAttribute('inert')).toBe(false);
+  });
+
   it('isolates the background from the accessibility and focus trees', () => {
     const background = document.createElement('button');
     background.textContent = 'Background';

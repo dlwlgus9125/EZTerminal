@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [1.0.21] - 2026-07-31
+
+### Added
+
+- Added terminal-only popout windows: dragging a terminal tab outside the app
+  moves the same live session into a frameless auxiliary window.
+- Persisted detached layouts across restart while creating fresh sessions, and
+  added native window controls plus document-correct menus and dialogs.
+
+### Fixed
+
+- Added guarded auxiliary-window closing for busy terminals, safe bounds on
+  multiple displays, and a real pointer-drag E2E regression.
+- Shipped the popout implementation that was absent from the v1.0.20 installer.
+
+See [1.0.21 release notes](docs/release/release-notes-1.0.21.md).
+
 ## [1.0.20] - 2026-07-31
 
 ### Fixed

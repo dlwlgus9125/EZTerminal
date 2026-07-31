@@ -5,6 +5,7 @@ interface IsolationState {
 }
 
 interface IsolationLayer {
+  readonly document: Document;
   readonly foregroundRoots: readonly HTMLElement[];
   isolated: HTMLElement[];
 }
@@ -65,9 +66,10 @@ function collectBackgroundBranches(foregroundRoots: readonly HTMLElement[]): HTM
   }
 
   const background: HTMLElement[] = [];
+  const HTMLElementCtor = body.ownerDocument.defaultView?.HTMLElement ?? HTMLElement;
   const visit = (parent: HTMLElement): void => {
     for (const sibling of parent.children) {
-      if (!(sibling instanceof HTMLElement) || rootSet.has(sibling)) continue;
+      if (!(sibling instanceof HTMLElementCtor) || rootSet.has(sibling)) continue;
       if (foregroundPaths.has(sibling)) visit(sibling);
       else background.push(sibling);
     }
@@ -77,19 +79,24 @@ function collectBackgroundBranches(foregroundRoots: readonly HTMLElement[]): HTM
   return background;
 }
 
-function getTopIsolationLayer(): IsolationLayer | undefined {
+function getTopIsolationLayer(ownerDocument: Document): IsolationLayer | undefined {
   for (let modalIndex = modalLayers.length - 1; modalIndex >= 0; modalIndex -= 1) {
     const registeredModal = modalLayers[modalIndex];
+    if (registeredModal.ownerDocument !== ownerDocument) continue;
     for (let index = isolationLayers.length - 1; index >= 0; index -= 1) {
       const layer = isolationLayers[index];
       if (layer.foregroundRoots.includes(registeredModal)) return layer;
     }
   }
-  return isolationLayers[isolationLayers.length - 1];
+  for (let index = isolationLayers.length - 1; index >= 0; index -= 1) {
+    if (isolationLayers[index].document === ownerDocument) return isolationLayers[index];
+  }
+  return undefined;
 }
 
-function applyTopIsolationLayer(): void {
+function applyTopIsolationLayer(ownerDocument: Document): void {
   for (const layer of isolationLayers) {
+    if (layer.document !== ownerDocument) continue;
     for (const element of layer.isolated) release(element);
     layer.isolated = [];
   }
@@ -97,7 +104,7 @@ function applyTopIsolationLayer(): void {
   // Registration order normally mirrors visual order, except when an outer
   // responsive layer becomes modal after a portaled child dialog is already
   // open. The registered dialog remains the visual and interaction owner.
-  const top = getTopIsolationLayer();
+  const top = getTopIsolationLayer(ownerDocument);
   if (!top) return;
   top.isolated = collectBackgroundBranches(top.foregroundRoots);
   for (const element of top.isolated) isolate(element);
@@ -119,20 +126,24 @@ function applyTopIsolationLayer(): void {
 export function isolateModalBackground(
   modalRoot: HTMLElement,
   additionalForegroundRoots: readonly HTMLElement[] = [],
+  activeDocument: Document = document,
 ): () => void {
+  const ownerDocument = modalRoot.ownerDocument;
   if (
-    modalRoot.ownerDocument !== document
-    || additionalForegroundRoots.some((root) => root.ownerDocument !== document)
+    ownerDocument !== activeDocument
+    ||
+    additionalForegroundRoots.some((root) => root.ownerDocument !== ownerDocument)
   ) {
     throw new TypeError('Background isolation roots must belong to the active document.');
   }
-  if (!document.body.contains(modalRoot)) return () => undefined;
+  if (!ownerDocument.body.contains(modalRoot)) return () => undefined;
   const layer: IsolationLayer = {
+    document: ownerDocument,
     foregroundRoots: [modalRoot, ...additionalForegroundRoots],
     isolated: [],
   };
   isolationLayers.push(layer);
-  applyTopIsolationLayer();
+  applyTopIsolationLayer(ownerDocument);
   let released = false;
   return () => {
     if (released) return;
@@ -141,13 +152,16 @@ export function isolateModalBackground(
     layer.isolated = [];
     const index = isolationLayers.lastIndexOf(layer);
     if (index >= 0) isolationLayers.splice(index, 1);
-    applyTopIsolationLayer();
+    applyTopIsolationLayer(ownerDocument);
   };
 }
 
 /** Registers a modal in visual stacking order and removes it idempotently. */
-export function registerModalLayer(element: HTMLElement): () => void {
-  if (element.ownerDocument !== document) {
+export function registerModalLayer(
+  element: HTMLElement,
+  activeDocument: Document = document,
+): () => void {
+  if (element.ownerDocument !== activeDocument) {
     throw new TypeError('Modal layers must belong to the active document.');
   }
   modalLayers.push(element);
@@ -162,5 +176,10 @@ export function registerModalLayer(element: HTMLElement): () => void {
 
 /** Keyboard and backdrop dismissal belong exclusively to the topmost modal. */
 export function isTopModalLayer(element: HTMLElement | null): boolean {
-  return element !== null && modalLayers[modalLayers.length - 1] === element;
+  if (element === null) return false;
+  for (let index = modalLayers.length - 1; index >= 0; index -= 1) {
+    const candidate = modalLayers[index];
+    if (candidate.ownerDocument === element.ownerDocument) return candidate === element;
+  }
+  return false;
 }

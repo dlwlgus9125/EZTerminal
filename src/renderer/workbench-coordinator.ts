@@ -1,4 +1,4 @@
-import type { DockviewApi, SerializedDockview } from 'dockview-react';
+import type { DockviewApi } from 'dockview-react';
 
 import { maxTabSuffix, type LayoutEnvelope } from '../shared/layout-schema';
 import {
@@ -13,6 +13,7 @@ import {
   clearAgentTerminalBootstrap,
   registerAgentTerminalBootstrap,
 } from './agent-terminal-bootstrap';
+import { prepareLayoutForDockviewRestore } from './popout-layout';
 
 export type WorkbenchSplitDirection = 'right' | 'below';
 
@@ -478,7 +479,7 @@ export function createDockviewWorkbenchAdapter(api: DockviewApi): WorkbenchDockA
       };
     },
     serialize: () => api.toJSON(),
-    restore: (layout) => api.fromJSON(layout as SerializedDockview),
+    restore: (layout) => api.fromJSON(prepareLayoutForDockviewRestore(layout)),
     focus: () => api.focus(),
     onActivePanelChange: (listener) =>
       api.onDidActivePanelChange((event) => listener(event.panel?.id ?? null)),

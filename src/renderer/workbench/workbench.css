@@ -20,6 +20,77 @@
     var(--ui-surface)
   );
   user-select: none;
+  -webkit-app-region: drag;
+}
+
+.workbench-header:has(> .window-controls) {
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+}
+
+.workbench-header button,
+.workbench-header input,
+.workbench-header [role='dialog'],
+.workbench-header .window-controls {
+  -webkit-app-region: no-drag;
+}
+
+.window-controls {
+  align-self: stretch;
+  justify-self: end;
+  display: flex;
+  min-block-size: 44px;
+  margin: calc(-1 * var(--ui-space-2)) calc(-1 * var(--ui-space-3))
+    calc(-1 * var(--ui-space-2)) 0;
+  -webkit-app-region: no-drag;
+}
+
+.window-control {
+  inline-size: 46px;
+  min-inline-size: 46px;
+  block-size: 100%;
+  min-block-size: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  color: var(--ui-text-secondary);
+  background: transparent;
+  cursor: default;
+}
+
+.window-control svg {
+  inline-size: 15px;
+  block-size: 15px;
+  stroke-width: 1.6;
+}
+
+.window-control:hover,
+.window-control:focus-visible {
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-hover);
+  outline: none;
+}
+
+.window-control:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--ui-accent);
+}
+
+.window-control--close:hover,
+.window-control--close:focus-visible {
+  color: #fff;
+  background: #c42b1c;
+}
+
+.window-controls--compact {
+  align-self: stretch;
+  min-block-size: 36px;
+  margin: 0;
+}
+
+.window-controls--compact .window-control {
+  inline-size: 44px;
+  min-inline-size: 44px;
+  min-block-size: 36px;
 }
 
 .workbench-header-zone {
@@ -994,6 +1065,10 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
 
   .workbench-header .ez-ui-button {
     padding-inline: var(--ui-space-2);
+  }
+
+  .window-controls {
+    margin-inline-end: calc(-1 * var(--ui-space-2));
   }
 
   .workbench-header-zone--attention .ez-ui-button__label {

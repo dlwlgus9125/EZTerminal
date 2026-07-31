@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import {
   DockviewDefaultTab,
   type IDockviewPanelHeaderProps,
@@ -175,7 +174,7 @@ export function WorkspaceTab({
 
   const openMenu = (x: number, y: number): void => {
     props.api.setActive();
-    const active = document.activeElement;
+    const active = rootRef.current?.ownerDocument.activeElement;
     setMenu({
       x,
       y,
@@ -187,7 +186,7 @@ export function WorkspaceTab({
     const invocation = menu;
     setMenu(null);
     if (!invocation || detail.reason !== 'escape') return;
-    requestAnimationFrame(() => {
+    (rootRef.current?.ownerDocument.defaultView ?? window).requestAnimationFrame(() => {
       if (invocation.invoker?.isConnected) invocation.invoker.focus();
       else rootRef.current?.closest<HTMLElement>('[role="tab"]')?.focus();
     });
@@ -287,7 +286,7 @@ export function WorkspaceTab({
         )
       )}
 
-      {menu && createPortal(
+      {menu && (
         <TerminalContextMenu
           x={menu.x}
           y={menu.y}
@@ -297,8 +296,8 @@ export function WorkspaceTab({
           shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
           testId="workspace-tab-context-menu"
           itemTestIdPrefix="tab-ctx"
-        />,
-        document.body,
+          ownerDocument={rootRef.current?.ownerDocument}
+        />
       )}
     </div>
   );

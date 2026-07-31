@@ -40,6 +40,7 @@ interface TerminalContextMenuProps {
   readonly shortcutLabel?: (shortcut: string) => string;
   readonly testId?: string;
   readonly itemTestIdPrefix?: string;
+  readonly ownerDocument?: Document;
 }
 
 export function isTerminalContextMenuKey(
@@ -54,17 +55,18 @@ export function isTerminalContextMenuKey(
 export function mayRestoreTerminalContextMenuFocus(
   originPane: Element | null,
   detail: TerminalContextMenuCloseDetail,
-  activeElement: Element | null = document.activeElement,
+  activeElement: Element | null = originPane?.ownerDocument.activeElement ?? document.activeElement,
 ): boolean {
   if (!originPane?.isConnected) return false;
+  const ownerDocument = originPane.ownerDocument;
   if (
     detail.reason === 'outside'
-    && detail.target instanceof Node
+    && detail.target instanceof (ownerDocument.defaultView?.Node ?? Node)
     && !originPane.contains(detail.target)
   ) {
     return false;
   }
-  if (activeElement === null || activeElement === document.body) return true;
+  if (activeElement === null || activeElement === ownerDocument.body) return true;
   const activePane = activeElement.closest('.pane');
   return activePane === null || activePane === originPane;
 }
@@ -75,7 +77,7 @@ export function captureTerminalContextMenuInvocation(
   y: number,
 ): TerminalContextMenuInvocation {
   const originPane = host.closest('.pane');
-  const active = document.activeElement;
+  const active = host.ownerDocument.activeElement;
   return {
     x,
     y,
@@ -105,12 +107,14 @@ export function closeTerminalContextMenu(
   const shouldRestore = mayRestoreTerminalContextMenuFocus(invocation.originPane, detail);
   clear();
   if (!shouldRestore) return;
-  requestAnimationFrame(() => {
+  const ownerDocument = invocation.originPane?.ownerDocument ?? document;
+  const ownerWindow = ownerDocument.defaultView ?? window;
+  ownerWindow.requestAnimationFrame(() => {
     if (!mayRestoreTerminalContextMenuFocus(invocation.originPane, detail)) return;
-    const active = document.activeElement;
+    const active = ownerDocument.activeElement;
     if (
       active !== null
-      && active !== document.body
+      && active !== ownerDocument.body
       && active !== invocation.invoker
       && !active.closest('.terminal-context-menu')
     ) {
@@ -137,6 +141,7 @@ export function TerminalContextMenu({
   shortcutLabel = (shortcut) => `Shortcut ${shortcut}`,
   testId = 'terminal-context-menu',
   itemTestIdPrefix = 'term-ctx',
+  ownerDocument = document,
 }: TerminalContextMenuProps): JSX.Element {
   useNativeOverlayRegistration();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -155,10 +160,11 @@ export function TerminalContextMenu({
     const el = menuRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const left = Math.max(4, Math.min(x, window.innerWidth - rect.width - 4));
-    const top = Math.max(4, Math.min(y, window.innerHeight - rect.height - 4));
+    const ownerWindow = ownerDocument.defaultView ?? window;
+    const left = Math.max(4, Math.min(x, ownerWindow.innerWidth - rect.width - 4));
+    const top = Math.max(4, Math.min(y, ownerWindow.innerHeight - rect.height - 4));
     setPos({ left, top });
-  }, [x, y]);
+  }, [ownerDocument, x, y]);
 
   useLayoutEffect(() => {
     if (activeIndex >= 0 && !items[activeIndex]?.disabled) return;
@@ -182,13 +188,14 @@ export function TerminalContextMenu({
         onClose({ reason: 'escape', target: e.target });
       }
     };
-    document.addEventListener('mousedown', onDocMouseDown);
-    window.addEventListener('keydown', onKey);
+    const ownerWindow = ownerDocument.defaultView ?? window;
+    ownerDocument.addEventListener('mousedown', onDocMouseDown);
+    ownerWindow.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener('mousedown', onDocMouseDown);
-      window.removeEventListener('keydown', onKey);
+      ownerDocument.removeEventListener('mousedown', onDocMouseDown);
+      ownerWindow.removeEventListener('keydown', onKey);
     };
-  }, [onClose]);
+  }, [onClose, ownerDocument]);
 
   const activate = (index: number, target: EventTarget | null): void => {
     const item = items[index];
@@ -274,5 +281,5 @@ export function TerminalContextMenu({
         </button>
       ))}
     </div>
-  ), document.body);
+  ), ownerDocument.body);
 }

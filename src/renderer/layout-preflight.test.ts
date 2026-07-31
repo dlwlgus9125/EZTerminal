@@ -94,11 +94,11 @@ describe('preflightLayoutEnvelope', () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
-  it('rejects a zero-panel restore and still disposes', () => {
+  it('rejects a zero-panel restore before constructing a detached Dockview', () => {
     const dispose = vi.spyOn(DockviewApi.prototype, 'dispose');
 
     expect(preflightLayoutEnvelope(makeEnvelope([]))).toBe(false);
-    expect(dispose).toHaveBeenCalledOnce();
+    expect(dispose).not.toHaveBeenCalled();
   });
 
   it('fails closed when teardown itself cannot complete', () => {
@@ -107,6 +107,24 @@ describe('preflightLayoutEnvelope', () => {
     });
 
     expect(preflightLayoutEnvelope(makeEnvelope())).toBe(false);
+  });
+
+  it('preflights main and popout grids independently without opening a window', () => {
+    const envelope = makeEnvelope(['tab-1', 'tab-2']);
+    const mainLeaf = envelope.layout.grid.root.data[0] as {
+      data: { activeView: string; views: string[] };
+    };
+    mainLeaf.data.views = ['tab-1'];
+    mainLeaf.data.activeView = 'tab-1';
+    envelope.layout.popoutGroups = [{
+      data: { id: 'popout-group', views: ['tab-2'], activeView: 'tab-2' },
+      position: { left: -700, top: 40, width: 800, height: 600 },
+    }];
+    const fromJSON = vi.spyOn(DockviewApi.prototype, 'fromJSON');
+
+    expect(preflightLayoutEnvelope(envelope)).toBe(true);
+    expect(fromJSON).toHaveBeenCalledTimes(2);
+    expect(fromJSON.mock.calls.every(([layout]) => !('popoutGroups' in layout))).toBe(true);
   });
 });
 
@@ -139,5 +157,30 @@ describe('removePanelFromLayoutEnvelope', () => {
     };
 
     expect(removePanelFromLayoutEnvelope(envelope, 'openclaw-chat')).toBeNull();
+  });
+
+  it('preserves an existing terminal popout while filtering a main-grid panel', () => {
+    const envelope = makeEnvelope(['tab-1', 'openclaw-chat', 'tab-2']);
+    envelope.layout.panels['openclaw-chat'] = {
+      id: 'openclaw-chat',
+      contentComponent: 'openclaw-chat',
+      renderer: 'always',
+      title: 'OpenClaw Chat',
+    };
+    const mainLeaf = envelope.layout.grid.root.data[0] as {
+      data: { activeView: string; views: string[] };
+    };
+    mainLeaf.data.views = ['tab-1', 'openclaw-chat'];
+    mainLeaf.data.activeView = 'tab-1';
+    envelope.layout.popoutGroups = [{
+      data: { id: 'popout-group', views: ['tab-2'], activeView: 'tab-2' },
+      position: { left: 900, top: 40, width: 800, height: 600 },
+    }];
+
+    const filtered = removePanelFromLayoutEnvelope(envelope, 'openclaw-chat');
+
+    expect(filtered?.layout.panels['openclaw-chat']).toBeUndefined();
+    expect(filtered?.layout.panels['tab-2']).toBeDefined();
+    expect(filtered?.layout.popoutGroups).toEqual(envelope.layout.popoutGroups);
   });
 });

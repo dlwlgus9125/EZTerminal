@@ -4,6 +4,7 @@ import {
   DockviewReact,
   type DockviewApi,
   type DockviewReadyEvent,
+  type IDockviewPanel,
   type IDockviewPanelProps,
   type IDockviewPanelHeaderProps,
 } from 'dockview-react';
@@ -25,6 +26,7 @@ import {
 } from '../shared/agent';
 import type { FilePreviewResult } from '../shared/file-preview';
 import type { SessionInfo } from '../shared/ipc';
+import type { AuxiliaryCloseRequest } from '../shared/desktop-window';
 import type {
   AgentHistorySessionSummary,
   AgentLaunchBootstrap,
@@ -48,6 +50,10 @@ import {
 import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from '../shared/workspace-search';
 import { isAppUpdateAvailable } from '../shared/app-update';
 import { AgentHub, countAgentAttention } from './AgentHub';
+import {
+  AuxiliaryCloseDialog,
+  type AuxiliaryCloseChoice,
+} from './AuxiliaryCloseDialog';
 import { peekAgentTerminalBootstrap } from './agent-terminal-bootstrap';
 import { AgentSessionPanel } from './AgentSessionPanel';
 import { EFFECT_CATALOG, type EffectId } from './effects';
@@ -97,6 +103,11 @@ import { applyScrollback, clampScrollback, SCROLLBACK_DEFAULT } from './scrollba
 import { applyUiScale, clampUiScale, UI_SCALE_DEFAULT } from './ui-scale';
 import { useUiPreferences } from './ui-preferences';
 import { rendererCapabilities } from './capability-access';
+import {
+  auxiliaryPopoutUrl,
+  installDockviewPopoutBehavior,
+} from './dockview-popouts';
+import { addAppWindowEventListener } from './desktop-window-registry';
 import { useAppUpdate } from './use-app-update';
 import {
   buildCommandCenterActionRows,
@@ -234,6 +245,21 @@ interface CloseDialogState {
    * where the work can genuinely outlive the pane. */
   readonly alternateLabel?: string;
   readonly onAlternate?: () => void;
+}
+
+interface AuxiliaryCloseCandidate {
+  readonly panelId: string;
+  readonly title: string;
+  readonly instanceToken: object;
+  readonly snapshot: PaneSnapshot;
+  readonly risk: CloseRisk | null;
+}
+
+interface AuxiliaryCloseDialogState {
+  readonly request: AuxiliaryCloseRequest;
+  readonly targetWindow: Window;
+  readonly candidates: readonly AuxiliaryCloseCandidate[];
+  readonly busy: boolean;
 }
 
 interface PendingPasteConfirmation {
@@ -435,7 +461,10 @@ export function App(): JSX.Element {
   const { preferences: uiPreferences, updatePreferences } = useUiPreferences();
   const sidebarReflow = useSidebarReflow();
   const apiRef = useRef<DockviewApi | null>(null);
+  const popoutBehaviorRef = useRef<{ dispose(): void } | null>(null);
   const [closeDialog, setCloseDialog] = useState<CloseDialogState | null>(null);
+  const [auxiliaryCloseDialog, setAuxiliaryCloseDialog] =
+    useState<AuxiliaryCloseDialogState | null>(null);
   const pendingPanelClosesRef = useRef(new Set<string>());
   const presetApplyPendingRef = useRef(false);
   const [presetApplyPending, setPresetApplyPending] = useState(false);
@@ -478,6 +507,8 @@ export function App(): JSX.Element {
   const workbenchCoordinator = workbenchCoordinatorRef.current;
   useEffect(
     () => () => {
+      popoutBehaviorRef.current?.dispose();
+      popoutBehaviorRef.current = null;
       workbenchCoordinator.detach();
       apiRef.current = null;
     },
@@ -646,8 +677,12 @@ export function App(): JSX.Element {
   const pickCapabilitySafeStartupLayout = useCallback(async (): Promise<LayoutEnvelope | null> => {
     await waitForOpenClawVisibility();
     const envelope = await pickStartupLayout();
-    if (!envelope || openclawVisibleRef.current) return envelope;
-    return removePanelFromLayoutEnvelope(envelope, 'openclaw-chat');
+    const capabilitySafe = !envelope || openclawVisibleRef.current
+      ? envelope
+      : removePanelFromLayoutEnvelope(envelope, 'openclaw-chat');
+    if (!capabilitySafe || preflightLayoutEnvelope(capabilitySafe)) return capabilitySafe;
+    await window.ezterminal.quarantineLayout().catch(() => undefined);
+    return null;
   }, [waitForOpenClawVisibility]);
 
   // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
@@ -901,6 +936,14 @@ export function App(): JSX.Element {
     [workbenchCoordinator],
   );
 
+  useEffect(() => {
+    return window.ezterminalDesktop?.onLayoutFlushRequested((requestId) => {
+      void workbenchCoordinator.flushLayoutSave()
+        .catch(() => undefined)
+        .finally(() => window.ezterminalDesktop?.completeLayoutFlush(requestId));
+    });
+  }, [workbenchCoordinator]);
+
   // ── Interpreter-crash banner (B-M5) ───────────────────────────────────────
   // Shared fate: the one utilityProcess backs every session, so its death kills
   // them all. Panes latch dead individually (TerminalPane); this app-level
@@ -1125,6 +1168,241 @@ export function App(): JSX.Element {
       ),
     [agentSnapshot],
   );
+
+  const auxiliaryRisk = useCallback(
+    (snapshot: PaneSnapshot): CloseRisk | null => classifyCloseRisk({
+      destroysSession: snapshot.destroysSessionOnClose,
+      isBusy: snapshot.isBusy,
+      executionKind: snapshot.executionKind,
+      hasSshPrompt: snapshot.hasSshPrompt,
+      hasActiveAgent: snapshot.sessionId !== null && agentSessionIds.has(snapshot.sessionId),
+      isDead: snapshot.isDead,
+    }),
+    [agentSessionIds],
+  );
+
+  const rejectAuxiliaryClose = useCallback(
+    (request: AuxiliaryCloseRequest, stateChanged: boolean): void => {
+      setAuxiliaryCloseDialog(null);
+      void window.ezterminalDesktop?.resolveAuxiliaryClose(request.requestId, 'cancel');
+      setCloseDialog((current) => current ?? {
+        title: stateChanged
+          ? t('safetyDialog.terminalStateChangedTitle')
+          : t('safetyDialog.terminalStateUnavailableTitle'),
+        description: stateChanged
+          ? t('safetyDialog.terminalStateChangedDescription')
+          : t('safetyDialog.terminalStateUnavailableDescription'),
+        confirmLabel: t('common.ok'),
+        onConfirm: () => setCloseDialog(null),
+      });
+    },
+    [t],
+  );
+
+  const completeAuxiliaryClose = useCallback(
+    async (
+      request: AuxiliaryCloseRequest,
+      targetWindow: Window,
+      candidates: readonly AuxiliaryCloseCandidate[],
+      choices: ReadonlyMap<string, AuxiliaryCloseChoice>,
+    ): Promise<void> => {
+      const api = apiRef.current;
+      const desktop = window.ezterminalDesktop;
+      if (!api || !desktop) {
+        rejectAuxiliaryClose(request, false);
+        return;
+      }
+
+      const targetStillOpen = api.getPopouts().some(
+        (popout) => popout.window === targetWindow && popout.window.name === request.windowName,
+      );
+      const currentPanels = api.panels.filter((panel) => {
+        try {
+          return panel.api.getWindow() === targetWindow;
+        } catch {
+          return false;
+        }
+      });
+      if (!targetStillOpen || currentPanels.length !== candidates.length) {
+        rejectAuxiliaryClose(request, true);
+        return;
+      }
+
+      const latest = new Map<string, PaneSnapshot>();
+      for (const candidate of candidates) {
+        const panel = api.getPanel(candidate.panelId);
+        const snapshot = getPaneHandle(candidate.panelId)?.getSnapshot();
+        if (
+          !panel
+          || panel.api !== candidate.instanceToken
+          || !currentPanels.includes(panel)
+          || !snapshot
+          || snapshot.panelId !== candidate.snapshot.panelId
+          || snapshot.sessionId !== candidate.snapshot.sessionId
+          || snapshot.sessionBindingPending !== candidate.snapshot.sessionBindingPending
+          || snapshot.destroysSessionOnClose !== candidate.snapshot.destroysSessionOnClose
+          || snapshot.isBusy !== candidate.snapshot.isBusy
+          || snapshot.isDead !== candidate.snapshot.isDead
+          || snapshot.executionKind !== candidate.snapshot.executionKind
+          || snapshot.hasSshPrompt !== candidate.snapshot.hasSshPrompt
+          || !sameActiveRunSet(snapshot.activeRunIds, candidate.snapshot.activeRunIds)
+          || auxiliaryRisk(snapshot) !== candidate.risk
+          || (candidate.risk !== null && !choices.has(candidate.panelId))
+        ) {
+          rejectAuxiliaryClose(request, true);
+          return;
+        }
+        latest.set(candidate.panelId, snapshot);
+      }
+
+      const terminate = candidates.filter((candidate) => (
+        candidate.snapshot.destroysSessionOnClose
+        && choices.get(candidate.panelId) !== 'keep'
+      ));
+      const keep = candidates.filter((candidate) => (
+        candidate.snapshot.destroysSessionOnClose
+        && choices.get(candidate.panelId) === 'keep'
+      ));
+      const liveTerminate = terminate.filter((candidate) => !candidate.snapshot.isDead);
+      if (liveTerminate.some((candidate) => candidate.snapshot.sessionId === null)) {
+        rejectAuxiliaryClose(request, false);
+        return;
+      }
+
+      try {
+        const destroyResult = liveTerminate.length === 0
+          ? { ok: true as const }
+          : await window.ezterminal.destroySessionsGuarded(
+              liveTerminate.map((candidate) => ({
+                sessionId: candidate.snapshot.sessionId!,
+                expectedActiveRunIds: candidate.snapshot.activeRunIds,
+              })),
+            );
+        if (!destroyResult.ok) {
+          rejectAuxiliaryClose(request, destroyResult.reason === 'state-changed');
+          return;
+        }
+
+        // Dockview panels may not migrate into or out of the target while the
+        // guarded destroy round-trip is in flight.
+        const finalPanels = api.panels.filter((panel) => {
+          try {
+            return panel.api.getWindow() === targetWindow;
+          } catch {
+            return false;
+          }
+        });
+        if (
+          finalPanels.length !== candidates.length
+          || candidates.some((candidate) => (
+            api.getPanel(candidate.panelId)?.api !== candidate.instanceToken
+            || !finalPanels.includes(api.getPanel(candidate.panelId)!)
+          ))
+        ) {
+          rejectAuxiliaryClose(request, true);
+          return;
+        }
+
+        for (const candidate of terminate) {
+          const sessionId = candidate.snapshot.sessionId;
+          if (sessionId) getPaneHandle(candidate.panelId)?.markSessionDestroyHandled(sessionId);
+        }
+        let keptAny = false;
+        for (const candidate of keep) {
+          const expectedSessionId = latest.get(candidate.panelId)?.sessionId;
+          const keptSessionId = getPaneHandle(candidate.panelId)?.releaseSessionOwnership() ?? null;
+          if (!expectedSessionId || keptSessionId !== expectedSessionId) {
+            rejectAuxiliaryClose(request, true);
+            return;
+          }
+          keptAny = true;
+        }
+
+        // Removing the final panel asks Dockview to close the native window.
+        // Main keeps that re-entrant close held until this original request is
+        // explicitly allowed below.
+        for (const candidate of candidates) {
+          api.getPanel(candidate.panelId)?.api.close();
+        }
+        setAuxiliaryCloseDialog(null);
+        await desktop.resolveAuxiliaryClose(request.requestId, 'allow');
+        if (keptAny) {
+          pushToast({ title: t('safetyDialog.keptRunning'), variant: 'info' });
+        }
+      } catch {
+        rejectAuxiliaryClose(request, false);
+      }
+    },
+    [auxiliaryRisk, pushToast, rejectAuxiliaryClose, t],
+  );
+
+  const handleAuxiliaryCloseRequest = useCallback(
+    (request: AuxiliaryCloseRequest): void => {
+      const api = apiRef.current;
+      const desktop = window.ezterminalDesktop;
+      if (!api || !desktop) {
+        rejectAuxiliaryClose(request, false);
+        return;
+      }
+      const popout = api.getPopouts().find(
+        (candidate) => candidate.window.name === request.windowName,
+      );
+      if (!popout) {
+        // Dockview already removed an empty/redocked popout and its
+        // programmatic window.close() is the only remaining operation.
+        void desktop.resolveAuxiliaryClose(request.requestId, 'allow');
+        return;
+      }
+      const panels: IDockviewPanel[] = api.panels.filter((panel) => {
+        try {
+          return panel.api.getWindow() === popout.window;
+        } catch {
+          return false;
+        }
+      });
+      if (panels.length === 0) {
+        void desktop.resolveAuxiliaryClose(request.requestId, 'allow');
+        return;
+      }
+
+      const candidates: AuxiliaryCloseCandidate[] = [];
+      for (const panel of panels) {
+        const snapshot = getPaneHandle(panel.id)?.getSnapshot();
+        if (
+          panel.api.component !== 'terminal'
+          || !snapshot
+          || snapshot.sessionBindingPending
+          || (snapshot.destroysSessionOnClose && snapshot.sessionId === null)
+        ) {
+          rejectAuxiliaryClose(request, false);
+          return;
+        }
+        candidates.push({
+          panelId: panel.id,
+          title: panel.api.title ?? t('workspaceTab.terminal'),
+          instanceToken: panel.api,
+          snapshot,
+          risk: auxiliaryRisk(snapshot),
+        });
+      }
+
+      if (candidates.length === 1 && candidates[0]!.risk === null) {
+        void completeAuxiliaryClose(request, popout.window, candidates, new Map());
+        return;
+      }
+      setAuxiliaryCloseDialog({
+        request,
+        targetWindow: popout.window,
+        candidates,
+        busy: false,
+      });
+    },
+    [auxiliaryRisk, completeAuxiliaryClose, rejectAuxiliaryClose, t],
+  );
+
+  useEffect(() => (
+    window.ezterminalDesktop?.onAuxiliaryCloseRequested(handleAuxiliaryCloseRequest)
+  ), [handleAuxiliaryCloseRequest]);
 
   const focusActivePane = useCallback((): void => {
     workbenchCoordinator.focusActivePanel();
@@ -2490,12 +2768,20 @@ export function App(): JSX.Element {
     presetsOpen ||
     quickOpenMode !== null ||
     quickPreview !== null ||
-    closeDialog !== null;
+    closeDialog !== null ||
+    auxiliaryCloseDialog !== null;
 
   const onReady = useCallback(
     (event: DockviewReadyEvent) => {
       apiRef.current = event.api;
       const api = event.api;
+      popoutBehaviorRef.current?.dispose();
+      popoutBehaviorRef.current = installDockviewPopoutBehavior(api, {
+        onOpenFailed: () => pushToast({
+          title: t('workspace.popoutFailed'),
+          variant: 'danger',
+        }),
+      });
       const attachment = workbenchCoordinator.attach(createDockviewWorkbenchAdapter(api));
       // Test seam: e2e drives programmatic panel moves through this handle. dockview's
       // mouse drag is native HTML5 DnD (not Playwright-drivable); panel.api.moveTo(...)
@@ -2522,9 +2808,11 @@ export function App(): JSX.Element {
     },
     [
       pickCapabilitySafeStartupLayout,
+      pushToast,
       refreshPresets,
       runLayoutTransaction,
       scheduleSave,
+      t,
       workbenchCoordinator,
     ],
   );
@@ -2576,8 +2864,7 @@ export function App(): JSX.Element {
         splitActive('below');
       }
     };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    return addAppWindowEventListener('keydown', onKey as EventListener, true);
   }, [openQuickOpen, splitActive]);
 
   const quickCommandShelfValue = useMemo<QuickCommandShelfContextValue>(
@@ -2804,6 +3091,7 @@ export function App(): JSX.Element {
                             rightHeaderActionsComponent={PaneHeaderMeta}
                             onReady={onReady}
                             disableFloatingGroups
+                            popoutUrl={auxiliaryPopoutUrl()}
                           />
                         </PresetMutationContext.Provider>
                       </TerminalRuntimeContext.Provider>
@@ -2824,6 +3112,39 @@ export function App(): JSX.Element {
               onAlternate={closeDialog.onAlternate}
               onCancel={() => setCloseDialog(null)}
               onConfirm={closeDialog.onConfirm}
+            />
+          )}
+          {auxiliaryCloseDialog && (
+            <AuxiliaryCloseDialog
+              requestId={auxiliaryCloseDialog.request.requestId}
+              paneCount={auxiliaryCloseDialog.candidates.length}
+              riskyPanes={auxiliaryCloseDialog.candidates
+                .filter((candidate) => candidate.risk !== null)
+                .map((candidate) => ({
+                  panelId: candidate.panelId,
+                  title: candidate.title,
+                  risk: t(CLOSE_RISK_I18N_KEY[candidate.risk!]),
+                }))}
+              busy={auxiliaryCloseDialog.busy}
+              onCancel={() => {
+                if (auxiliaryCloseDialog.busy) return;
+                setAuxiliaryCloseDialog(null);
+                void window.ezterminalDesktop?.resolveAuxiliaryClose(
+                  auxiliaryCloseDialog.request.requestId,
+                  'cancel',
+                );
+              }}
+              onConfirm={(choices) => {
+                if (auxiliaryCloseDialog.busy) return;
+                const pending = auxiliaryCloseDialog;
+                setAuxiliaryCloseDialog({ ...pending, busy: true });
+                void completeAuxiliaryClose(
+                  pending.request,
+                  pending.targetWindow,
+                  pending.candidates,
+                  choices,
+                );
+              }}
             />
           )}
           {pendingPasteConfirmation && (

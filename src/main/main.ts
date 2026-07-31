@@ -7,7 +7,9 @@ import {
   ipcMain,
   Menu,
   MessageChannelMain,
+  net,
   Notification,
+  protocol,
   session,
   shell,
   utilityProcess,
@@ -23,6 +25,12 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { isAppUrl } from './url-guard';
+import { APP_RENDERER_ORIGIN } from '../shared/desktop-window';
+import {
+  rendererEntryUrls,
+  resolveRendererAssetPath,
+} from './app-renderer-protocol';
+import { DesktopWindowManager } from './desktop-window-manager';
 import { buildMenuTemplate } from './app-menu';
 import { FileService } from './file-service';
 import { LayoutStore } from './layout-store';
@@ -254,6 +262,7 @@ let openClawChatView: OpenClawChatViewManager | null = null;
 // createWindow() itself is defined outside 'ready', and openClawChatView's
 // attach() needs a handle to the window it should embed into.
 let mainWindowRef: BrowserWindow | null = null;
+let desktopWindowManager: DesktopWindowManager | null = null;
 
 // OpenClaw desktop visibility (openclaw-stabilization M5): in 'auto' mode,
 // `resolveOpenClawVisibility` only ever reruns on boot or an explicit
@@ -287,6 +296,64 @@ const CSP =
   "frame-ancestors 'none'; " +
   "form-action 'none'";
 
+const rendererRoot = path.join(
+  __dirname,
+  `../renderer/${MAIN_WINDOW_VITE_NAME}`,
+);
+const rendererUrls = rendererEntryUrls(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+const desktopPreloadPath = path.join(__dirname, 'preload.js');
+
+/**
+ * Dockview's popout safety check requires an HTTP(S) same-origin page. A
+ * packaged build therefore serves only Vite's renderer output from a
+ * synthetic HTTPS origin. Unrelated HTTPS requests bypass this handler and
+ * continue through Chromium's normal network stack.
+ */
+function installPackagedRendererProtocol(): void {
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) return;
+  protocol.handle('https', async (request) => {
+    if (!request.url.startsWith(`${APP_RENDERER_ORIGIN}/`)) {
+      return net.fetch(request, { bypassCustomProtocolHandlers: true });
+    }
+    const assetPath = resolveRendererAssetPath(rendererRoot, request.url, request.method);
+    if (!assetPath) return new Response('Not found', { status: 404 });
+    try {
+      const asset = await stat(assetPath);
+      if (!asset.isFile()) return new Response('Not found', { status: 404 });
+      return net.fetch(pathToFileURL(assetPath).href, { method: request.method });
+    } catch {
+      return new Response('Not found', { status: 404 });
+    }
+  });
+}
+
+/**
+ * Chromium consumes Ctrl+Tab before renderer KeyboardEvents. Capture it in
+ * every native window, but route the data-free command to the sole main
+ * renderer where the shared Dockview instance lives.
+ */
+function configureRecentPanelInput(window: BrowserWindow): void {
+  let active = false;
+  const send = (input: import('../shared/ipc').RecentPanelInputEvent): void => {
+    const mainWindow = mainWindowRef;
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send('recent-panels:input', input);
+    }
+  };
+  window.webContents.on('before-input-event', (event, input) => {
+    const decision = classifyRecentPanelInput(active, input);
+    active = decision.active;
+    if (!decision.event) return;
+    if (decision.preventDefault) event.preventDefault();
+    send(decision.event);
+  });
+  window.on('blur', () => {
+    if (!active) return;
+    active = false;
+    send({ type: 'cancel', restoreFocus: false });
+  });
+}
+
 const createWindow = (): void => {
   const rendererCrashRecovery = new RendererCrashRecovery();
   let crashFailureDialogOpen = false;
@@ -296,8 +363,11 @@ const createWindow = (): void => {
     minWidth: 800,
     minHeight: 600,
     title: 'EZTerminal',
+    frame: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0c0c0c',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: desktopPreloadPath,
       // Security defaults kept explicit: the renderer never gets Node access;
       // it talks to main only through the narrow preload bridge.
       contextIsolation: true,
@@ -307,6 +377,7 @@ const createWindow = (): void => {
     },
   });
   mainWindowRef = mainWindow;
+  desktopWindowManager?.configureMainWindow(mainWindow);
   openClawChatView?.attach(mainWindow);
 
   // Chromium reserves Ctrl+Tab before a renderer KeyboardEvent exists (the
@@ -314,25 +385,6 @@ const createWindow = (): void => {
   // that chord here, suppress its native handling, and forward a data-free
   // cycle/commit/cancel union through the isolated desktop bridge. All other
   // keyboard input, including terminal Ctrl chords, stays on the normal path.
-  let recentPanelInputActive = false;
-  const sendRecentPanelInput = (input: import('../shared/ipc').RecentPanelInputEvent): void => {
-    if (!mainWindow.webContents.isDestroyed()) {
-      mainWindow.webContents.send('recent-panels:input', input);
-    }
-  };
-  mainWindow.webContents.on('before-input-event', (event, input) => {
-    const decision = classifyRecentPanelInput(recentPanelInputActive, input);
-    recentPanelInputActive = decision.active;
-    if (!decision.event) return;
-    if (decision.preventDefault) event.preventDefault();
-    sendRecentPanelInput(decision.event);
-  });
-  mainWindow.on('blur', () => {
-    if (!recentPanelInputActive) return;
-    recentPanelInputActive = false;
-    sendRecentPanelInput({ type: 'cancel', restoreFocus: false });
-  });
-
   // ── Navigation hardening (SEC-HIGH-2) ─────────────────────────────────────
   // An OSC-8 link in external output (TextBlock <a href>) must never navigate the
   // window to a remote origin (it would inherit window.ezterminal). Block any
@@ -340,25 +392,11 @@ const createWindow = (): void => {
   // OS browser instead of opening a renderer-privileged window.
   // The ONLY file:// URL that may load is our own packaged index.html (B-M6:
   // arbitrary file:// would hand the bridge to any local html file).
-  const appRendererUrl = pathToFileURL(
-    path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-  ).href;
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!isAppUrl(url, MAIN_WINDOW_VITE_DEV_SERVER_URL, appRendererUrl)) event.preventDefault();
-  });
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    const external = normalizeExternalHttpUrl(url);
-    if (external) void shell.openExternal(external);
-    return { action: 'deny' };
-  });
-
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+    mainWindow.loadURL(rendererUrls.main);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-    );
+    mainWindow.loadURL(rendererUrls.main);
   }
 
   mainWindow.webContents.on('did-finish-load', () => {
@@ -413,7 +451,6 @@ const createWindow = (): void => {
   // running against a renderer that no longer thinks the panel is open
   // (status-overlay-panel: panelVisible lifecycle).
   mainWindow.webContents.on('did-navigate', () => {
-    recentPanelInputActive = false;
     systemStatsService?.setPanelVisible(false);
     // Same reasoning for the packet-capture sub-view (Phase 2B): a reload
     // drops the renderer's port reference, so any live host is now orphaned.
@@ -439,6 +476,23 @@ const createWindow = (): void => {
 
 app.on('ready', () => {
   console.log('[main] EZTerminal main process ready');
+
+  installPackagedRendererProtocol();
+  desktopWindowManager = new DesktopWindowManager({
+    auxiliaryRendererUrl: rendererUrls.auxiliary,
+    preloadPath: desktopPreloadPath,
+    isAllowedNavigation: (url) => (
+      isAppUrl(url, MAIN_WINDOW_VITE_DEV_SERVER_URL, rendererUrls.main)
+    ),
+    getMainWindow: () => mainWindowRef,
+    isAppQuitting: () => appIsQuitting,
+    quitApp: () => app.quit(),
+    onWindowConfigured: (window) => configureRecentPanelInput(window),
+    reportError: (context, error) => {
+      console.error(`[main] ${context}:`, error);
+      mainLog?.line(`${context}: ${String(error)}`);
+    },
+  });
 
   // Terminal-safe application menu (WT-parity M1): replaces Electron's default
   // menu, whose reload/close accelerators would otherwise steal Ctrl+R /
@@ -1269,7 +1323,13 @@ app.on('ready', () => {
           uninstallRunCommandIpc = null;
         },
       },
-      { name: 'layout store', run: () => layoutStore.flush() },
+      {
+        name: 'renderer layout and layout store',
+        run: async () => {
+          await desktopWindowManager?.requestLayoutFlush();
+          await layoutStore.flush();
+        },
+      },
       { name: 'system stats', run: () => systemStatsService?.stop() },
       { name: 'packet capture', run: () => packetCaptureRegistry?.kill() },
       {
@@ -1375,6 +1435,10 @@ app.on('ready', () => {
   // would block — production (packaged) is where this matters.
   if (!MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      if (!details.url.startsWith(`${APP_RENDERER_ORIGIN}/`)) {
+        callback({ responseHeaders: details.responseHeaders });
+        return;
+      }
       callback({
         responseHeaders: {
           ...details.responseHeaders,

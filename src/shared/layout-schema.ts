@@ -14,9 +14,9 @@
  *  - `contentComponent` must be one of the known panel types ('terminal',
  *    'openclaw-chat', or 'agent-session'): an unknown component would make
  *    dockview-react throw at mount; rejecting here routes to the corrupt path.
- *  - Unsupported serialized feature buckets (floating/popout/edge groups) are
- *    STRIPPED by the sanitizer (gate B4) — we run with floating disabled and
- *    edge/popout unused, so persisted ones can only be stale or hostile.
+ *  - Floating and edge groups remain unsupported and are stripped. Dockview
+ *    popout groups are retained, but only terminal panels may appear in them;
+ *    window URLs and internal reference ids are regenerated at runtime.
  *  - Other unknown keys are silently STRIPPED (Zod object default), not rejected:
  *    a future dockview adding a benign key must not brick saved layouts.
  *  - `grid.root` gets a minimal shape check (gate B1): dockview's fromJSON calls
@@ -36,6 +36,7 @@ export const LAYOUT_SCHEMA_VERSION = 1 as const;
 
 /** Upper bound on restorable panels (gate B5 — bounded input from disk/renderer). */
 export const MAX_PANELS = 64;
+export const MAX_POPOUT_WINDOWS = 16;
 
 const PanelBaseSchema = z.object({
   id: z.string().min(1),
@@ -81,10 +82,43 @@ const GridSchema = z.looseObject({
   orientation: z.string(),
 });
 
+const PopoutGroupDataSchema = z.looseObject({
+  id: z.string().min(1).max(256),
+  views: z.array(z.string().min(1).max(256)).min(1).max(MAX_PANELS),
+  activeView: z.string().min(1).max(256).optional(),
+});
+
+const PopoutGridSchema = z.looseObject({
+  root: z.looseObject({
+    type: z.literal('branch'),
+    data: z.array(z.unknown()),
+  }),
+  width: z.number().finite().positive().max(32_768),
+  height: z.number().finite().positive().max(32_768),
+  orientation: z.string(),
+});
+
+const PopoutPositionSchema = z.object({
+  left: z.number().finite().min(-1_000_000).max(1_000_000),
+  top: z.number().finite().min(-1_000_000).max(1_000_000),
+  width: z.number().finite().positive().max(32_768),
+  height: z.number().finite().positive().max(32_768),
+});
+
+const PopoutGroupSchema = z.object({
+  data: PopoutGroupDataSchema.optional(),
+  grid: PopoutGridSchema.optional(),
+  position: PopoutPositionSchema,
+}).refine(
+  (value) => (value.data ? 1 : 0) + (value.grid ? 1 : 0) === 1,
+  { message: 'A popout must contain exactly one single-group or nested-grid layout.' },
+);
+
 const LayoutSchema = z.object({
   grid: GridSchema,
   panels: z.record(z.string(), PanelSchema),
   activeGroup: z.string().optional(),
+  popoutGroups: z.array(PopoutGroupSchema).max(MAX_POPOUT_WINDOWS).optional(),
 });
 
 export const LayoutEnvelopeSchema = z.object({
@@ -255,8 +289,19 @@ export function sanitizeSerializedLayout(raw: unknown): unknown {
   if (typeof raw !== 'object' || raw === null) return raw;
   const layout = structuredClone(raw) as Record<string, unknown>;
   delete layout.floatingGroups;
-  delete layout.popoutGroups;
   delete layout.edgeGroups;
+  if (Array.isArray(layout.popoutGroups)) {
+    layout.popoutGroups = layout.popoutGroups.map((candidate) => {
+      if (typeof candidate !== 'object' || candidate === null) return candidate;
+      const popout = candidate as Record<string, unknown>;
+      // The URL is always rebuilt from the current trusted renderer origin.
+      // Dockview's reference-group id can point at a stale main-grid group
+      // after a restart, so restoration builds a fresh anchor instead.
+      delete popout.url;
+      delete popout.gridReferenceGroup;
+      return popout;
+    });
+  }
   if (typeof layout.panels === 'object' && layout.panels !== null) {
     for (const panel of Object.values(layout.panels as Record<string, unknown>)) {
       if (typeof panel === 'object' && panel !== null) {
@@ -284,7 +329,65 @@ export function validateLayoutEnvelope(data: unknown): LayoutEnvelope | null {
   for (const [key, panel] of entries) {
     if (key !== panel.id) return null; // record key must equal panel id (B5)
   }
+  const mainOccurrences = collectSerializedPanelIdOccurrences(parsed.data.layout.grid.root);
+  const mainPanelIds = new Set(mainOccurrences);
+  if (mainPanelIds.size !== mainOccurrences.length) return null;
+  const popoutPanelIds = new Set<string>();
+  for (const popout of parsed.data.layout.popoutGroups ?? []) {
+    const occurrences = popout.data
+      ? popout.data.views
+      : collectSerializedPanelIdOccurrences(popout.grid!.root);
+    const ids = new Set(occurrences);
+    if (ids.size !== occurrences.length) return null;
+    if (ids.size === 0) return null;
+    for (const id of ids) {
+      const panel = panels[id];
+      if (
+        !panel
+        || panel.contentComponent !== 'terminal'
+        || mainPanelIds.has(id)
+        || popoutPanelIds.has(id)
+      ) {
+        return null;
+      }
+      popoutPanelIds.add(id);
+    }
+  }
   return parsed.data;
+}
+
+/**
+ * Collect panel ids from Dockview's recursive grid without trusting any other
+ * leaf data. Runtime preflight remains the authority for full grid validity.
+ */
+export function collectSerializedPanelIds(root: unknown): Set<string> {
+  return new Set(collectSerializedPanelIdOccurrences(root));
+}
+
+export function collectSerializedPanelIdOccurrences(root: unknown): string[] {
+  const result: string[] = [];
+  const visit = (node: unknown): void => {
+    if (typeof node !== 'object' || node === null) return;
+    const candidate = node as Record<string, unknown>;
+    if (candidate.type === 'branch' && Array.isArray(candidate.data)) {
+      for (const child of candidate.data) visit(child);
+      return;
+    }
+    if (
+      candidate.type !== 'leaf'
+      || typeof candidate.data !== 'object'
+      || candidate.data === null
+    ) {
+      return;
+    }
+    const views = (candidate.data as Record<string, unknown>).views;
+    if (!Array.isArray(views)) return;
+    for (const id of views) {
+      if (typeof id === 'string') result.push(id);
+    }
+  };
+  visit(root);
+  return result;
 }
 
 /** SAVE path: wrap a raw api.toJSON() result into a validated envelope. */
