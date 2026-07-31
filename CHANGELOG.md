@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.0.23] - 2026-07-31
+
+### Fixed
+
+- Shipped the Agent Session auxiliary-window fix from the unpublished 1.0.22
+  candidate with a deterministic packaged Windows pointer gate.
+- Placed the packaged test window inside the primary work area before dragging,
+  then required the observed `dragend` coordinate to be beyond the native
+  window edge so a maximized CI window cannot turn an outside drag into an
+  inside drop.
+
+See [1.0.23 release notes](docs/release/release-notes-1.0.23.md).
+
 ## [1.0.22] - 2026-07-31
 
 ### Fixed

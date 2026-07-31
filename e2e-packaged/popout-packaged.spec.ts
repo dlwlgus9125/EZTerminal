@@ -50,6 +50,44 @@ function killTree(child: ChildProcess | undefined): void {
   }
 }
 
+function placeProcessMainWindowForPointerTest(processId: number): void {
+  const command = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class EzPackagedWindow {
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
+  [DllImport("user32.dll")] public static extern bool MoveWindow(
+    IntPtr window, int x, int y, int width, int height, bool repaint
+  );
+}
+"@
+$deadline = [DateTime]::UtcNow.AddSeconds(10)
+do {
+  $window = (Get-Process -Id ${processId} -ErrorAction Stop).MainWindowHandle
+  if ($window -ne [IntPtr]::Zero) { break }
+  Start-Sleep -Milliseconds 100
+} while ([DateTime]::UtcNow -lt $deadline)
+if ($window -eq [IntPtr]::Zero) { throw "packaged main window handle unavailable" }
+$area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+$width = [Math]::Max(800, [Math]::Floor($area.Width * 0.68))
+$height = [Math]::Max(600, [Math]::Floor($area.Height * 0.72))
+$width = [Math]::Min($width, $area.Width)
+$height = [Math]::Min($height, $area.Height)
+$left = $area.Left + [Math]::Floor(($area.Width - $width) / 2)
+$top = $area.Top + [Math]::Floor(($area.Height - $height) / 2)
+[EzPackagedWindow]::ShowWindow($window, 9) | Out-Null
+Start-Sleep -Milliseconds 100
+if (-not [EzPackagedWindow]::MoveWindow($window, $left, $top, $width, $height, $true)) {
+  throw "packaged main window could not be placed"
+}
+`;
+  execFileSync('powershell', ['-NoProfile', '-Command', command], {
+    stdio: 'inherit',
+  });
+}
+
 function dragWithWindowsMouse(
   start: { x: number; y: number },
   target: { x: number; y: number },
@@ -151,6 +189,11 @@ test('packaged EXE: Agent Session dragged outside with the real Windows pointer 
       candidate.url() === 'https://ezterminal.invalid/index.html'
     ));
     if (!page) throw new Error('packaged renderer page missing');
+    if (!child.pid) throw new Error('packaged process id unavailable');
+    placeProcessMainWindowForPointerTest(child.pid);
+    await expect.poll(() => page.evaluate(() => (
+      globalThis.screen.availWidth - globalThis.outerWidth
+    ))).toBeGreaterThan(80);
     const tab = page.locator('.dv-tab').first();
     await expect(tab).toBeVisible({ timeout: 15_000 });
     await expect(tab).toContainText('EZTerminal · Codex');
@@ -183,6 +226,8 @@ test('packaged EXE: Agent Session dragged outside with the real Windows pointer 
       outerHeight: globalThis.outerHeight,
       innerWidth: globalThis.innerWidth,
       innerHeight: globalThis.innerHeight,
+      availWidth: globalThis.screen.availWidth,
+      availHeight: globalThis.screen.availHeight,
     }));
     const start = {
       x: Math.round(
@@ -198,8 +243,12 @@ test('packaged EXE: Agent Session dragged outside with the real Windows pointer 
           + (box.height / 2),
       ),
     };
+    const rightEdge = metrics.screenX + metrics.outerWidth;
     const target = {
-      x: Math.round(metrics.screenX + metrics.outerWidth + 120),
+      x: Math.round(Math.min(
+        metrics.availWidth - 20,
+        rightEdge + Math.max(40, (metrics.availWidth - rightEdge) / 2),
+      )),
       y: start.y + 80,
     };
 
@@ -211,12 +260,14 @@ test('packaged EXE: Agent Session dragged outside with the real Windows pointer 
       }).__packagedDragSamples ?? []
     ));
     expect(dragSamples.some((sample) => sample.type === 'dragstart')).toBe(true);
-    expect(dragSamples.some((sample) => sample.type === 'dragend')).toBe(true);
+    const dragEnd = dragSamples.find((sample) => sample.type === 'dragend');
+    expect(dragEnd).toBeDefined();
+    expect(dragEnd!.screenX).toBeGreaterThan(rightEdge);
     await expect.poll(
       () => context.pages().filter((candidate) => (
         candidate.url().includes('ez-popout=1')
       )).length,
-      { timeout: 5_000 },
+      { timeout: 15_000 },
     ).toBe(1);
   } finally {
     await browser?.close().catch(() => undefined);
