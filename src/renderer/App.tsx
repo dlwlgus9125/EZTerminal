@@ -105,6 +105,7 @@ import { useUiPreferences } from './ui-preferences';
 import { rendererCapabilities } from './capability-access';
 import {
   auxiliaryPopoutUrl,
+  isDetachablePanel,
   installDockviewPopoutBehavior,
 } from './dockview-popouts';
 import { addAppWindowEventListener } from './desktop-window-registry';
@@ -251,9 +252,14 @@ interface AuxiliaryCloseCandidate {
   readonly panelId: string;
   readonly title: string;
   readonly instanceToken: object;
-  readonly snapshot: PaneSnapshot;
+  /** Null for a read-only Agent Session that has not mounted a terminal. */
+  readonly snapshot: PaneSnapshot | null;
   readonly risk: CloseRisk | null;
 }
+
+type AuxiliaryPaneCloseCandidate = AuxiliaryCloseCandidate & {
+  readonly snapshot: PaneSnapshot;
+};
 
 interface AuxiliaryCloseDialogState {
   readonly request: AuxiliaryCloseRequest;
@@ -1231,12 +1237,32 @@ export function App(): JSX.Element {
       const latest = new Map<string, PaneSnapshot>();
       for (const candidate of candidates) {
         const panel = api.getPanel(candidate.panelId);
-        const snapshot = getPaneHandle(candidate.panelId)?.getSnapshot();
         if (
           !panel
           || panel.api !== candidate.instanceToken
           || !currentPanels.includes(panel)
-          || !snapshot
+          || !isDetachablePanel(panel)
+        ) {
+          rejectAuxiliaryClose(request, true);
+          return;
+        }
+        const paneHandle = getPaneHandle(candidate.panelId);
+        if (candidate.snapshot === null) {
+          // A read-only Agent Session may become a live terminal while close
+          // confirmation is in flight. Treat that as a state change.
+          if (
+            panel.api.component !== 'agent-session'
+            || candidate.risk !== null
+            || paneHandle
+          ) {
+            rejectAuxiliaryClose(request, true);
+            return;
+          }
+          continue;
+        }
+        const snapshot = paneHandle?.getSnapshot();
+        if (
+          !snapshot
           || snapshot.panelId !== candidate.snapshot.panelId
           || snapshot.sessionId !== candidate.snapshot.sessionId
           || snapshot.sessionBindingPending !== candidate.snapshot.sessionBindingPending
@@ -1255,11 +1281,14 @@ export function App(): JSX.Element {
         latest.set(candidate.panelId, snapshot);
       }
 
-      const terminate = candidates.filter((candidate) => (
+      const paneCandidates = candidates.filter(
+        (candidate): candidate is AuxiliaryPaneCloseCandidate => candidate.snapshot !== null,
+      );
+      const terminate = paneCandidates.filter((candidate) => (
         candidate.snapshot.destroysSessionOnClose
         && choices.get(candidate.panelId) !== 'keep'
       ));
-      const keep = candidates.filter((candidate) => (
+      const keep = paneCandidates.filter((candidate) => (
         candidate.snapshot.destroysSessionOnClose
         && choices.get(candidate.panelId) === 'keep'
       ));
@@ -1297,6 +1326,7 @@ export function App(): JSX.Element {
           || candidates.some((candidate) => (
             api.getPanel(candidate.panelId)?.api !== candidate.instanceToken
             || !finalPanels.includes(api.getPanel(candidate.panelId)!)
+            || (candidate.snapshot === null && Boolean(getPaneHandle(candidate.panelId)))
           ))
         ) {
           rejectAuxiliaryClose(request, true);
@@ -1367,10 +1397,24 @@ export function App(): JSX.Element {
 
       const candidates: AuxiliaryCloseCandidate[] = [];
       for (const panel of panels) {
-        const snapshot = getPaneHandle(panel.id)?.getSnapshot();
+        if (!isDetachablePanel(panel)) {
+          rejectAuxiliaryClose(request, false);
+          return;
+        }
+        const paneHandle = getPaneHandle(panel.id);
+        const snapshot = paneHandle?.getSnapshot();
+        if (!snapshot && panel.api.component === 'agent-session' && !paneHandle) {
+          candidates.push({
+            panelId: panel.id,
+            title: panel.api.title ?? t('workspaceTab.terminal'),
+            instanceToken: panel.api,
+            snapshot: null,
+            risk: null,
+          });
+          continue;
+        }
         if (
-          panel.api.component !== 'terminal'
-          || !snapshot
+          !snapshot
           || snapshot.sessionBindingPending
           || (snapshot.destroysSessionOnClose && snapshot.sessionId === null)
         ) {

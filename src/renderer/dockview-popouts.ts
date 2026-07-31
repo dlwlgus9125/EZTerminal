@@ -1,6 +1,9 @@
 import type { DockviewApi, IDockviewPanel } from 'dockview-react';
 
-import { AUXILIARY_WINDOW_QUERY } from '../shared/desktop-window';
+import {
+  AUXILIARY_WINDOW_QUERY,
+  isDetachablePanelComponent,
+} from '../shared/desktop-window';
 import {
   pointIsInsideAppWindow,
   registerAuxiliaryWindow,
@@ -26,8 +29,8 @@ export function auxiliaryPopoutUrl(location: Location = window.location): string
   return url.href;
 }
 
-export function isDetachableTerminal(panel: IDockviewPanel | undefined): boolean {
-  return panel?.api.component === 'terminal';
+export function isDetachablePanel(panel: IDockviewPanel | undefined): boolean {
+  return isDetachablePanelComponent(panel?.api.component);
 }
 
 /**
@@ -55,19 +58,18 @@ export function installDockviewPopoutBehavior(
   }));
   disposables.push(api.onDidOpenPopoutWindowFail(() => options.onOpenFailed?.()));
 
-  // A popout is terminal-only. This also keeps a whole mixed/non-terminal
-  // group from entering through group drag while individual terminal tabs can
-  // move freely between main and auxiliary windows.
+  // A popout accepts DOM-backed terminal and Agent Session panels. Keep
+  // main-owned native surfaces such as OpenClaw chat out of auxiliary windows.
   disposables.push(api.onWillShowOverlay((event) => {
     if (event.group?.api.location.type !== 'popout') return;
     const transfer = event.getData();
-    if (!transfer?.panelId || !isDetachableTerminal(api.getPanel(transfer.panelId))) {
+    if (!transfer?.panelId || !isDetachablePanel(api.getPanel(transfer.panelId))) {
       event.preventDefault();
     }
   }));
 
   disposables.push(api.onWillDragPanel((event) => {
-    if (!isDetachableTerminal(event.panel) || event.nativeEvent.type !== 'dragstart') return;
+    if (!isDetachablePanel(event.panel) || event.nativeEvent.type !== 'dragstart') return;
     const sourceDocument = (event.nativeEvent.target as Node | null)?.ownerDocument
       ?? event.panel.group.element.ownerDocument;
     let dockviewDropCompleted = false;
@@ -85,7 +87,7 @@ export function installDockviewPopoutBehavior(
         return;
       }
       const current = api.getPanel(event.panel.id);
-      if (!current || current !== event.panel || !isDetachableTerminal(current)) return;
+      if (!current || current !== event.panel || !isDetachablePanel(current)) return;
 
       const groupRect = current.group.element.getBoundingClientRect();
       const sourceWindow = sourceDocument.defaultView ?? window;

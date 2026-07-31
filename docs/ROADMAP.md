@@ -1,6 +1,6 @@
 # EZTerminal Roadmap
 
-> Current for the **v1.0.21 release candidate** (2026-07-31).
+> Current for the **v1.0.22 release candidate** (2026-07-31).
 > This document describes present direction and remaining work. Historical
 > implementation detail belongs in `CHANGELOG.md`, `docs/design/`,
 > `docs/research/`, and versioned release documents.
@@ -25,7 +25,8 @@ The supported product is Windows-first:
 
 - Structured built-ins and pipelines, variables, environment, history, and
   virtualized result tables
-- Independent tabs, splits, draggable layouts, presets, and restart persistence
+- Independent tabs, splits, detachable terminal/Agent Session windows, presets,
+  and restart persistence
 - Adaptive plain-text/xterm rendering with ConPTY, bounded output retention,
   cancellation, backpressure, search, links, Unicode, and WebGL fallback
 - Safe OpenSSH sessions, host-key trust, local forwards, and bounded late attach
@@ -66,7 +67,7 @@ See:
 
 - `docs/design/mobile-remote-control-design.md`
 - `docs/design/remote-desktop-design.md`
-- `docs/release/validation-policy-1.0.21.md`
+- `docs/release/validation-policy-1.0.22.md`
 
 ## Maintenance contracts
 

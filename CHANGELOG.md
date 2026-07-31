@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.0.22] - 2026-07-31
+
+### Fixed
+
+- Allowed Codex and Claude Agent Session tabs to detach into auxiliary windows
+  instead of stopping at the terminal-only popout gate.
+- Persisted and restored detached Agent Session layouts while keeping the
+  main-owned OpenClaw chat panel attached to the main window.
+- Added safe auxiliary close handling for read-only and terminal-backed Agent
+  Sessions plus a packaged Windows real-pointer regression.
+
+See [1.0.22 release notes](docs/release/release-notes-1.0.22.md).
+
 ## [1.0.21] - 2026-07-31
 
 ### Added

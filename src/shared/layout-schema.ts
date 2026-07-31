@@ -15,8 +15,9 @@
  *    'openclaw-chat', or 'agent-session'): an unknown component would make
  *    dockview-react throw at mount; rejecting here routes to the corrupt path.
  *  - Floating and edge groups remain unsupported and are stripped. Dockview
- *    popout groups are retained, but only terminal panels may appear in them;
- *    window URLs and internal reference ids are regenerated at runtime.
+ *    popout groups are retained, but only DOM-backed terminal and Agent
+ *    Session panels may appear in them; window URLs and internal reference ids
+ *    are regenerated at runtime.
  *  - Other unknown keys are silently STRIPPED (Zod object default), not rejected:
  *    a future dockview adding a benign key must not brick saved layouts.
  *  - `grid.root` gets a minimal shape check (gate B1): dockview's fromJSON calls
@@ -31,6 +32,7 @@ import {
   UiDensitySchema,
   UiLocalePreferenceSchema,
 } from './ui-preferences';
+import { isDetachablePanelComponent } from './desktop-window';
 
 export const LAYOUT_SCHEMA_VERSION = 1 as const;
 
@@ -344,7 +346,7 @@ export function validateLayoutEnvelope(data: unknown): LayoutEnvelope | null {
       const panel = panels[id];
       if (
         !panel
-        || panel.contentComponent !== 'terminal'
+        || !isDetachablePanelComponent(panel.contentComponent)
         || mainPanelIds.has(id)
         || popoutPanelIds.has(id)
       ) {

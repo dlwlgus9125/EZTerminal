@@ -149,7 +149,30 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     }]);
   });
 
-  it('rejects non-terminal, duplicate, or non-finite popout panel placement', () => {
+  it('accepts an Agent Session popout with only its bounded public identity', () => {
+    const layout = makeLayout(['tab-1']);
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.id = 'agent-session-repro';
+    panel.contentComponent = 'agent-session';
+    panel.params = { historyId: 'codex_repro', provider: 'codex' };
+    layout.panels = { 'agent-session-repro': panel };
+    layout.popoutGroups = [{
+      data: {
+        id: 'popout-1',
+        views: ['agent-session-repro'],
+        activeView: 'agent-session-repro',
+      },
+      position: { left: 20, top: 20, width: 800, height: 600 },
+    }];
+
+    const env = validateLayoutEnvelope(makeEnvelope(layout));
+
+    expect(env?.layout.popoutGroups?.[0]?.data?.views).toEqual([
+      'agent-session-repro',
+    ]);
+  });
+
+  it('rejects native, duplicate, or non-finite popout panel placement', () => {
     const nonTerminal = makeLayout(['tab-1']);
     const panel = (nonTerminal.panels as Record<string, Record<string, unknown>>)['tab-1'];
     panel.id = 'openclaw-chat';

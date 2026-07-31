@@ -3,6 +3,7 @@ import {
   expect,
   test,
   type ElectronApplication,
+  type Locator,
   type Page,
 } from './test';
 
@@ -49,8 +50,33 @@ async function addPopoutGroup(page: Page, panelId = 'tab-1'): Promise<void> {
   expect(opened).toBe(true);
 }
 
-async function dragFirstTabOutside(page: Page): Promise<void> {
-  const tab = page.locator('.dv-tab').first();
+async function addAgentSessionPanel(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    type EzDockApi = {
+      addPanel(options: {
+        id: string;
+        component: string;
+        title: string;
+        renderer: 'always';
+        params: { historyId: string; provider: 'codex' };
+      }): void;
+    };
+    const api = (globalThis as unknown as { __ezDock?: EzDockApi }).__ezDock;
+    if (!api) throw new Error('__ezDock test seam missing');
+    api.addPanel({
+      id: 'agent-session-repro',
+      component: 'agent-session',
+      title: 'Agent Repro',
+      renderer: 'always',
+      params: { historyId: 'codex_repro', provider: 'codex' },
+    });
+  });
+}
+
+async function dragTabOutside(
+  page: Page,
+  tab: Locator = page.locator('.dv-tab').first(),
+): Promise<void> {
   await expect(tab).toBeVisible();
   const bounds = await tab.boundingBox();
   if (!bounds) throw new Error('tab bounds are unavailable');
@@ -97,7 +123,7 @@ test('terminal tab dragged outside becomes a frameless auxiliary window with the
   expect(await nativeMain.evaluate((window) => window.isMenuBarVisible())).toBe(false);
 
   const originalSessionId = await sessionIdOf(main);
-  await dragFirstTabOutside(main);
+  await dragTabOutside(main);
   const auxiliary = await waitForAuxiliaryWindow(app);
 
   await expect(main.getByTestId('pane')).toHaveCount(0);
@@ -123,6 +149,72 @@ test('terminal tab dragged outside becomes a frameless auxiliary window with the
   })).toBe(0);
 
   await app.close();
+});
+
+test('Agent Session tab dragged outside opens and safely closes an auxiliary window', async () => {
+  const app = await launchApp();
+  const main = await app.firstWindow();
+  await expect(main.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+  const originalSessionId = await sessionIdOf(main);
+  await addAgentSessionPanel(main);
+  const agentTab = main.locator('.dv-tab').filter({ hasText: 'Agent Repro' });
+
+  await dragTabOutside(main, agentTab);
+  const auxiliary = await waitForAuxiliaryWindow(app);
+
+  await expect(main.locator('.dv-tab').filter({ hasText: 'Agent Repro' })).toHaveCount(0);
+  await expect(auxiliary.locator('.dv-tab').filter({ hasText: 'Agent Repro' })).toBeVisible();
+  await expect(main.getByTestId('pane')).toHaveAttribute(
+    'data-session-id',
+    originalSessionId,
+  );
+
+  await Promise.all([
+    auxiliary.waitForEvent('close'),
+    auxiliary.getByTestId('window-close').click(),
+  ]);
+  await expect.poll(() => app.windows().length).toBe(1);
+  await expect(main.getByTestId('pane')).toHaveAttribute(
+    'data-session-id',
+    originalSessionId,
+  );
+
+  await app.close();
+});
+
+test('Agent Session popout layout restores into a real auxiliary window after restart', async () => {
+  const userDataDir = createRegisteredE2eTempDir('ezterm-agent-popout-e2e-');
+  const app1 = await launchApp(userDataDir);
+  const main1 = await app1.firstWindow();
+  await expect(main1.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+  const previousMainSessionId = await sessionIdOf(main1);
+  await addAgentSessionPanel(main1);
+  await addPopoutGroup(main1, 'agent-session-repro');
+  const auxiliary1 = await waitForAuxiliaryWindow(app1);
+  await expect(
+    auxiliary1.locator('.dv-tab').filter({ hasText: 'Agent Repro' }),
+  ).toBeVisible();
+  await expect(main1.getByTestId('pane')).toHaveAttribute(
+    'data-session-id',
+    previousMainSessionId,
+  );
+  await flushLayout(main1);
+  await app1.close();
+
+  const app2 = await launchApp(userDataDir);
+  const main2 = await app2.firstWindow();
+  await expect(main2.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+  const auxiliary2 = await waitForAuxiliaryWindow(app2);
+
+  await expect(
+    auxiliary2.locator('.dv-tab').filter({ hasText: 'Agent Repro' }),
+  ).toBeVisible();
+  await expect(
+    main2.locator('.dv-tab').filter({ hasText: 'Agent Repro' }),
+  ).toHaveCount(0);
+  expect(await sessionIdOf(main2)).not.toBe(previousMainSessionId);
+
+  await app2.close();
 });
 
 test('popout layout restores into a real auxiliary window with a fresh session after restart', async () => {
