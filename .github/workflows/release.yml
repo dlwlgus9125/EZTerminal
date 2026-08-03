@@ -102,8 +102,8 @@ jobs:
     timeout-minutes: 360
     environment: release
     permissions:
-      actions: read
       contents: read
+      actions: read
     outputs:
       artifact_name: ${{ steps.publish_metadata.outputs.artifact_name }}
       release_version: ${{ steps.publish_metadata.outputs.release_version }}
@@ -804,6 +804,9 @@ jobs:
 
       - name: Verify and stage exact-SHA release artifacts
         shell: pwsh
+        env:
+          PAYLOAD_SIGNING_REQUEST_ID: ${{ steps.sign_windows_payload.outputs.signing-request-id }}
+          INSTALLER_SIGNING_REQUEST_ID: ${{ steps.sign_windows_installer.outputs.signing-request-id }}
         run: |
           $stage = @{
             AndroidApkPath = 'mobile/android/app/build/outputs/apk/release/app-release.apk'
@@ -813,8 +816,8 @@ jobs:
             ExpectedWindowsSignature = 'Valid'
             ExpectedWindowsPublisher = 'SignPath Foundation'
             WindowsUninstallerPath = 'out/signpath/retained/Uninstall EZTerminal.exe'
-            WindowsPayloadSigningRequestId = '${{ steps.sign_windows_payload.outputs.signing-request-id }}'
-            WindowsInstallerSigningRequestId = '${{ steps.sign_windows_installer.outputs.signing-request-id }}'
+            WindowsPayloadSigningRequestId = $env:PAYLOAD_SIGNING_REQUEST_ID
+            WindowsInstallerSigningRequestId = $env:INSTALLER_SIGNING_REQUEST_ID
             ArtifactStage = 'release'
             ReleaseAssetsPath = $env:RELEASE_ASSETS_PATH
             RequireCleanTree = $true
