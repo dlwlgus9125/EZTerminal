@@ -166,8 +166,10 @@ Grab both official 1.0 downloads from the
 - Windows 10 22H2 / Windows 11 x64: `EZTerminal-Setup.exe`
 - Android 10 (API 29) or newer: `EZTerminal-Android-1.0.23-vc44.apk`
 
-> The Windows build is currently **unsigned**, so Windows SmartScreen may warn about an "unknown publisher" on
-> first run. Choose *More info → Run anyway* to proceed.
+> New Windows releases are Authenticode-signed with publisher **SignPath Foundation**.
+> Verify that publisher before running the installer. SmartScreen can still show a
+> reputation warning for a newly signed file; a valid signature does not guarantee
+> immediate SmartScreen reputation. Historical 1.0.23 assets remain as originally published.
 
 > The Android 1.0 app uses a new long-term release certificate. Remove any older debug-signed
 > EZTerminal APK before installing 1.0; Android cannot update across the signing-key change and the
@@ -187,9 +189,17 @@ release's validation evidence is limited to the current Windows host and API
 29/API 35 emulators. The Android lanes cover QR-scanner fullscreen rendering,
 live camera frames, background release, and explicit camera reacquisition.
 Elevated/admin service lifecycle and physical-device validation were not
-performed. Windows certificate provisioning, store publication, and silent or
-background installation are outside this release; see the
+performed. Microsoft Store publication and silent or background installation
+are outside this release; see the
 [1.0.23 validation policy](docs/release/validation-policy-1.0.23.md).
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/),
+certificate by [SignPath Foundation](https://signpath.org/). Project roles,
+the two-approval release process, signed-file scope, and failure policy are in
+the [Code signing policy](CODE_SIGNING_POLICY.md). See also the
+[Privacy policy](PRIVACY.md) and [SignPath setup guide](docs/release/signpath-setup.md).
 
 ## Build from source
 

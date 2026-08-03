@@ -19,6 +19,7 @@ const UPDATE_ERROR_KEY = {
   NO_COMPATIBLE_ASSET: 'settings.update.errors.noAsset',
   STORAGE: 'settings.update.errors.storage',
   INTEGRITY_MISMATCH: 'settings.update.errors.integrity',
+  SIGNATURE_INVALID: 'settings.update.errors.signature',
   PACKAGE_MISMATCH: 'settings.update.errors.package',
   SIGNER_MISMATCH: 'settings.update.errors.signer',
   OPEN_FAILED: 'settings.update.errors.open',

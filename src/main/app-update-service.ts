@@ -18,12 +18,17 @@ import {
   type AppUpdateOpenResult,
   type AppUpdateSnapshot,
   type ResolvedAppUpdateRelease,
+  type WindowsAuthenticodeRequirement,
 } from '../shared/app-update';
 import {
   UpdateHttpError,
   type UpdateHttpClient,
   type UpdateHttpResult,
 } from './app-update-network';
+import {
+  verifyWindowsAuthenticode,
+  type WindowsAuthenticodeVerification,
+} from './windows-authenticode';
 
 const CHECK_TIMEOUT_MS = 15_000;
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30_000;
@@ -36,13 +41,19 @@ export interface AppUpdateServiceOptions {
   readonly resolveDownloadsDirectory: () => string;
   readonly http: UpdateHttpClient;
   readonly openPath: (filePath: string) => Promise<string>;
+  readonly verifyWindowsAuthenticode?: (
+    filePath: string,
+  ) => Promise<WindowsAuthenticodeVerification>;
   readonly now?: () => number;
 }
 
 type SnapshotListener = (snapshot: AppUpdateSnapshot) => void;
 
 class AppUpdateServiceError extends Error {
-  constructor(readonly code: Extract<AppUpdateErrorCode, 'HTTP' | 'INTEGRITY_MISMATCH' | 'STORAGE'>) {
+  constructor(readonly code: Extract<
+    AppUpdateErrorCode,
+    'HTTP' | 'INTEGRITY_MISMATCH' | 'SIGNATURE_INVALID' | 'STORAGE'
+  >) {
     super(code);
     this.name = 'AppUpdateServiceError';
   }
@@ -112,6 +123,7 @@ function parseJson(buffer: Buffer): unknown {
 export class AppUpdateService {
   private snapshot: AppUpdateSnapshot;
   private resolvedRelease: ResolvedAppUpdateRelease | null = null;
+  private windowsAuthenticodeRequirement: WindowsAuthenticodeRequirement | null = null;
   private downloadedPath: string | null = null;
   private partialPath: string | null = null;
   private checkPromise: Promise<AppUpdateSnapshot> | null = null;
@@ -123,10 +135,14 @@ export class AppUpdateService {
   private disposed = false;
   private readonly listeners = new Set<SnapshotListener>();
   private readonly now: () => number;
+  private readonly verifyAuthenticode: (
+    filePath: string,
+  ) => Promise<WindowsAuthenticodeVerification>;
 
   constructor(private readonly options: AppUpdateServiceOptions) {
     this.snapshot = createInitialAppUpdateSnapshot(options.currentVersion);
     this.now = options.now ?? Date.now;
+    this.verifyAuthenticode = options.verifyWindowsAuthenticode ?? verifyWindowsAuthenticode;
   }
 
   getSnapshot(): AppUpdateSnapshot {
@@ -161,6 +177,24 @@ export class AppUpdateService {
       progress: undefined,
       error: { stage, code, retryable },
     });
+  }
+
+  private async assertExpectedAuthenticode(filePath: string): Promise<void> {
+    const expected = this.windowsAuthenticodeRequirement;
+    if (!expected || expected.status !== 'Valid') return;
+    let actual: WindowsAuthenticodeVerification;
+    try {
+      actual = await this.verifyAuthenticode(filePath);
+    } catch {
+      throw new AppUpdateServiceError('SIGNATURE_INVALID');
+    }
+    if (
+      actual.status !== 'Valid'
+      || actual.publisher !== expected.publisher
+      || (expected.timestampRequired && !actual.timestamped)
+      || actual.signerCertificateSha256 !== expected.signerCertificateSha256
+      || actual.timestampCertificateSha256 !== expected.timestampCertificateSha256
+    ) throw new AppUpdateServiceError('SIGNATURE_INVALID');
   }
 
   private async readBuffer(
@@ -227,6 +261,7 @@ export class AppUpdateService {
     this.lastCheckCompletedAt = checkedAt;
     if (comparison <= 0) {
       this.resolvedRelease = null;
+      this.windowsAuthenticodeRequirement = null;
       this.downloadedPath = null;
       return this.publish({
         phase: 'current',
@@ -252,11 +287,12 @@ export class AppUpdateService {
     }
     const authenticode = parseWindowsReleaseManifest(parseJson(manifestResponse.body), resolved);
     this.resolvedRelease = resolved;
+    this.windowsAuthenticodeRequirement = authenticode;
     return this.publish({
       phase: 'available',
       currentVersion: this.options.currentVersion,
       checkedAt,
-      release: appUpdateReleaseSummary(resolved, authenticode),
+      release: appUpdateReleaseSummary(resolved, authenticode.status),
     });
   }
 
@@ -295,9 +331,13 @@ export class AppUpdateService {
         }
         const code = errorCodeOf(error);
         return this.publishError(
-          code === 'INVALID_RELEASE' || code === 'INTEGRITY_MISMATCH' ? 'verify' : 'download',
+          code === 'INVALID_RELEASE'
+            || code === 'INTEGRITY_MISMATCH'
+            || code === 'SIGNATURE_INVALID'
+            ? 'verify'
+            : 'download',
           code === 'NETWORK' && !(error instanceof UpdateHttpError) ? 'STORAGE' : code,
-          code !== 'INTEGRITY_MISMATCH',
+          code !== 'INTEGRITY_MISMATCH' && code !== 'SIGNATURE_INVALID',
         );
       })
       .finally(() => {
@@ -321,8 +361,17 @@ export class AppUpdateService {
       if (
         existing.sizeBytes === release.asset.sizeBytes
         && existing.sha256 === release.asset.sha256
-      ) return basePath;
-    } catch {
+      ) {
+        try {
+          await this.assertExpectedAuthenticode(basePath);
+          return basePath;
+        } catch (error) {
+          await removeFileQuietly(basePath);
+          throw error;
+        }
+      }
+    } catch (error) {
+      if (error instanceof AppUpdateServiceError) throw error;
       // A missing or unreadable candidate is handled by selecting a free name.
     }
     return null;
@@ -413,6 +462,12 @@ export class AppUpdateService {
       }
       await rename(partialPath, targetPath);
       this.partialPath = null;
+      try {
+        await this.assertExpectedAuthenticode(targetPath);
+      } catch (error) {
+        await removeFileQuietly(targetPath);
+        throw error;
+      }
       return this.publishDownloaded(targetPath);
     } catch (error) {
       if (!writeStream.destroyed) writeStream.destroy();
@@ -469,6 +524,14 @@ export class AppUpdateService {
         await removeFileQuietly(downloadedPath);
         this.downloadedPath = null;
         this.publishError('verify', 'INTEGRITY_MISMATCH', false);
+        return { ok: false, reason: 'failed' };
+      }
+      try {
+        await this.assertExpectedAuthenticode(downloadedPath);
+      } catch {
+        await removeFileQuietly(downloadedPath);
+        this.downloadedPath = null;
+        this.publishError('verify', 'SIGNATURE_INVALID', false);
         return { ok: false, reason: 'failed' };
       }
       const error = await this.options.openPath(downloadedPath);

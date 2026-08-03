@@ -219,10 +219,11 @@ if ($PSCmdlet.ParameterSetName -eq 'Create') {
     $base64Length = Get-Base64Length $bundle.Length
     if ($base64Length -gt $MaxBase64Characters) {
         Remove-Item -LiteralPath $resolvedBundle -Force
+        # Keep the contract phrase shorter than PowerShell's default error
+        # formatting width so CLIXML does not split it across <S> elements.
         throw (
-            "Compressed evidence requires $base64Length base64 characters, " +
-            "exceeding the Windows protected-secret transport limit of " +
-            "$MaxBase64Characters."
+            "protected-secret transport limit of $MaxBase64Characters exceeded " +
+            "(requires $base64Length base64 characters)."
         )
     }
     $files = @(

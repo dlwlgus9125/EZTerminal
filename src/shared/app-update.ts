@@ -6,6 +6,7 @@ export const APP_UPDATE_API_URL =
 export const APP_UPDATE_WINDOWS_MAX_BYTES = 512 * 1_048_576;
 export const APP_UPDATE_ANDROID_MAX_BYTES = 100 * 1_048_576;
 export const APP_UPDATE_MANIFEST_MAX_BYTES = 1_048_576;
+export const APP_UPDATE_WINDOWS_PUBLISHER = 'SignPath Foundation' as const;
 
 export type AppUpdatePlatform = 'windows' | 'android';
 export type AppUpdatePhase =
@@ -26,6 +27,7 @@ export type AppUpdateErrorCode =
   | 'NO_COMPATIBLE_ASSET'
   | 'STORAGE'
   | 'INTEGRITY_MISMATCH'
+  | 'SIGNATURE_INVALID'
   | 'PACKAGE_MISMATCH'
   | 'SIGNER_MISMATCH'
   | 'OPEN_FAILED'
@@ -94,6 +96,14 @@ export interface ResolvedAppUpdateRelease {
 }
 
 export type WindowsAuthenticodeStatus = 'Valid' | 'NotSigned';
+
+export interface WindowsAuthenticodeRequirement {
+  readonly status: WindowsAuthenticodeStatus;
+  readonly publisher: string | null;
+  readonly timestampRequired: boolean;
+  readonly signerCertificateSha256: string | null;
+  readonly timestampCertificateSha256: string | null;
+}
 
 export class AppUpdateMetadataError extends Error {
   constructor(readonly code: Extract<AppUpdateErrorCode, 'INVALID_RELEASE' | 'NO_COMPATIBLE_ASSET'>) {
@@ -283,10 +293,43 @@ export function resolveGitHubLatestRelease(
   };
 }
 
+function validSigningRequestId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9-]{8,128}$/.test(value);
+}
+
+interface SignedWindowsComponent {
+  readonly sha256: string;
+  readonly publisher: string;
+  readonly signerCertificateSha256: string;
+  readonly timestampCertificateSha256: string;
+}
+
+function parseSignedWindowsComponent(value: unknown): SignedWindowsComponent {
+  const component = recordOf(value);
+  if (
+    !component
+    || component.status !== 'Valid'
+    || typeof component.sha256 !== 'string'
+    || !/^[0-9a-f]{64}$/i.test(component.sha256)
+    || typeof component.publisher !== 'string'
+    || typeof component.signerCertificateSha256 !== 'string'
+    || !/^[0-9a-f]{64}$/i.test(component.signerCertificateSha256)
+    || component.timestamped !== true
+    || typeof component.timestampCertificateSha256 !== 'string'
+    || !/^[0-9a-f]{64}$/i.test(component.timestampCertificateSha256)
+  ) metadataError();
+  return {
+    sha256: component.sha256.toLowerCase(),
+    publisher: component.publisher,
+    signerCertificateSha256: component.signerCertificateSha256.toLowerCase(),
+    timestampCertificateSha256: component.timestampCertificateSha256.toLowerCase(),
+  };
+}
+
 export function parseWindowsReleaseManifest(
   payload: unknown,
   release: ResolvedAppUpdateRelease,
-): WindowsAuthenticodeStatus {
+): WindowsAuthenticodeRequirement {
   const manifest = recordOf(payload);
   const authenticode = recordOf(manifest?.windowsAuthenticode);
   if (
@@ -302,7 +345,50 @@ export function parseWindowsReleaseManifest(
     || (authenticode.expected !== 'Valid' && authenticode.expected !== 'NotSigned')
     || authenticode.setup !== authenticode.expected
   ) metadataError();
-  return authenticode.setup as WindowsAuthenticodeStatus;
+
+  if (authenticode.expected === 'NotSigned') {
+    if (authenticode.app !== 'NotSigned') metadataError();
+    return {
+      status: 'NotSigned',
+      publisher: null,
+      timestampRequired: false,
+      signerCertificateSha256: null,
+      timestampCertificateSha256: null,
+    };
+  }
+
+  const signingRequestIds = recordOf(authenticode.signingRequestIds);
+  const components = recordOf(authenticode.components);
+  if (
+    authenticode.publisher !== APP_UPDATE_WINDOWS_PUBLISHER
+    || authenticode.timestampRequired !== true
+    || authenticode.app !== 'Valid'
+    || authenticode.remoteHost !== 'Valid'
+    || authenticode.uninstaller !== 'Valid'
+    || !signingRequestIds
+    || !validSigningRequestId(signingRequestIds.payload)
+    || !validSigningRequestId(signingRequestIds.installer)
+    || !components
+  ) metadataError();
+
+  const app = parseSignedWindowsComponent(components.app);
+  const remoteHost = parseSignedWindowsComponent(components.remoteHost);
+  const uninstaller = parseSignedWindowsComponent(components.uninstaller);
+  const setup = parseSignedWindowsComponent(components.setup);
+  if (
+    app.publisher !== APP_UPDATE_WINDOWS_PUBLISHER
+    || remoteHost.publisher !== APP_UPDATE_WINDOWS_PUBLISHER
+    || uninstaller.publisher !== APP_UPDATE_WINDOWS_PUBLISHER
+    || setup.publisher !== APP_UPDATE_WINDOWS_PUBLISHER
+    || setup.sha256 !== release.asset.sha256
+  ) metadataError();
+  return {
+    status: 'Valid',
+    publisher: setup.publisher,
+    timestampRequired: true,
+    signerCertificateSha256: setup.signerCertificateSha256,
+    timestampCertificateSha256: setup.timestampCertificateSha256,
+  };
 }
 
 export function appUpdateReleaseSummary(

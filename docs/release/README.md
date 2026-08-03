@@ -2,7 +2,7 @@
 
 EZTerminal은 Windows Electron 앱과 Android Capacitor 클라이언트를 동일한
 소스 SHA에서 빌드한다. Android APK는 기존 장기키로 서명하고, Windows
-설치 파일은 현재 정책상 Authenticode `NotSigned`로 배포한다.
+설치 파일은 SignPath Foundation Authenticode로 서명해 배포한다.
 
 ## 현재 계약
 
@@ -20,6 +20,8 @@ EZTerminal은 Windows Electron 앱과 Android Capacitor 클라이언트를 동�
 - [1.0.23 릴리스 노트](release-notes-1.0.23.md)
 - [1.0.23 검증 정책](validation-policy-1.0.23.md)
 - [서명 준비와 인증서 지문 확인](signing.md)
+- [SignPath Windows 설정](signpath-setup.md)
+- [Code signing policy](../../CODE_SIGNING_POLICY.md)
 - [PC Control 설계](../design/remote-desktop-design.md)
 
 ## 키와 보호된 환경
@@ -32,6 +34,12 @@ Android 장기키는 저장소에 커밋하지 않는다. GitHub Environment
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 - `ANDROID_SIGNING_CERT_SHA256`
+
+Windows SignPath 설정은 같은 Environment의 `SIGNPATH_API_TOKEN` secret과
+`SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`,
+`SIGNPATH_SIGNING_POLICY_SLUG`, 두 artifact-configuration slug 변수를
+사용한다. 정확한 이름과 설정 순서는 [SignPath Windows 설정](signpath-setup.md)에
+고정되어 있다.
 
 실제 APK 인증서, 위 secret, 그리고
 `mobile/android/signing-certificate.sha256`은 모두 같은 SHA-256 지문이어야
@@ -139,7 +147,7 @@ manifest의 exact SHA와 publication eligibility를 재검증한 뒤 draft만 �
 
    | 파일 | 계약 |
    |---|---|
-   | `EZTerminal-Setup.exe` | ProductVersion 1.0.23, Authenticode `NotSigned` |
+   | `EZTerminal-Setup.exe` | ProductVersion 1.0.23, `SignPath Foundation` Authenticode + timestamp |
    | `EZTerminal-Android-1.0.23-vc44.apk` | API 29+, 장기키 서명, exact build SHA |
    | `local-rc-report.json` | schema v2, API별 lane, 기능 soak, 성능 pending/passed |
    | `mobile-soak-report.json` | 공유 검증기가 다시 검사한 원본 기능 soak 증거 |
@@ -157,8 +165,9 @@ manifest의 exact SHA와 publication eligibility를 재검증한 뒤 draft만 �
 
 ## 설치와 잔여 제한
 
-- Windows SmartScreen은 무서명 설치 파일에 알 수 없는 게시자 경고를 표시할
-  수 있다. 설정과 레이아웃은 업그레이드 중 보존해야 한다.
+- Windows는 검증된 게시자를 `SignPath Foundation`으로 표시한다. 새 파일이나
+  인증서의 SmartScreen 평판이 형성되는 초기에는 별도 경고가 남을 수 있다.
+  설정과 레이아웃은 업그레이드 중 보존해야 한다.
 - Android는 기존 장기키로만 업데이트할 수 있다. debug 또는 다른 인증서로
   설치된 과거 앱은 삭제 후 다시 페어링해야 한다.
 - 잠금/UAC secure desktop과 Ctrl+Alt+Delete는 지원하지 않는다.

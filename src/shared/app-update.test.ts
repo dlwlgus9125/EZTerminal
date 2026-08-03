@@ -62,7 +62,79 @@ describe('app update release contract', () => {
 
     expect(resolved.asset.name).toBe('EZTerminal-Setup.exe');
     expect(resolved.asset.sha256).toBe('a'.repeat(64));
-    expect(appUpdateReleaseSummary(resolved, status).windowsAuthenticode).toBe('NotSigned');
+    expect(status.status).toBe('NotSigned');
+    expect(appUpdateReleaseSummary(resolved, status.status).windowsAuthenticode).toBe('NotSigned');
+  });
+
+  it('accepts complete SignPath evidence for every Windows executable', () => {
+    const resolved = resolveGitHubLatestRelease(release([
+      asset('EZTerminal-Setup.exe', 110_000_000),
+      asset('release-manifest.json', 20_000),
+    ]), 'windows');
+    const component = (sha256: string) => ({
+      status: 'Valid',
+      sha256,
+      publisher: 'SignPath Foundation',
+      signerCertificateSha256: 'b'.repeat(64),
+      timestamped: true,
+      timestampCertificateSha256: 'c'.repeat(64),
+    });
+    const status = parseWindowsReleaseManifest({
+      appVersion: '1.2.3',
+      artifactStage: 'release',
+      publicationEligible: true,
+      evidenceCompleteness: 'complete',
+      embeddedBuildShaVerified: true,
+      artifacts: ['EZTerminal-Setup.exe'],
+      windowsAuthenticode: {
+        expected: 'Valid',
+        publisher: 'SignPath Foundation',
+        timestampRequired: true,
+        signingRequestIds: { payload: '12345678-abcd', installer: '87654321-dcba' },
+        app: 'Valid',
+        remoteHost: 'Valid',
+        uninstaller: 'Valid',
+        setup: 'Valid',
+        components: {
+          app: component('d'.repeat(64)),
+          remoteHost: component('e'.repeat(64)),
+          uninstaller: component('f'.repeat(64)),
+          setup: component('a'.repeat(64)),
+        },
+      },
+    }, resolved);
+
+    expect(status).toEqual({
+      status: 'Valid',
+      publisher: 'SignPath Foundation',
+      timestampRequired: true,
+      signerCertificateSha256: 'b'.repeat(64),
+      timestampCertificateSha256: 'c'.repeat(64),
+    });
+  });
+
+  it('rejects incomplete or mismatched SignPath evidence', () => {
+    const resolved = resolveGitHubLatestRelease(release([
+      asset('EZTerminal-Setup.exe', 110_000_000),
+      asset('release-manifest.json', 20_000),
+    ]), 'windows');
+    expect(() => parseWindowsReleaseManifest({
+      appVersion: '1.2.3',
+      artifactStage: 'release',
+      publicationEligible: true,
+      evidenceCompleteness: 'complete',
+      embeddedBuildShaVerified: true,
+      artifacts: ['EZTerminal-Setup.exe'],
+      windowsAuthenticode: {
+        expected: 'Valid',
+        publisher: 'Unexpected Publisher',
+        timestampRequired: false,
+        app: 'Valid',
+        remoteHost: 'Valid',
+        uninstaller: 'Valid',
+        setup: 'Valid',
+      },
+    }, resolved)).toThrow(AppUpdateMetadataError);
   });
 
   it('extracts the Android version code from the exact versioned APK', () => {

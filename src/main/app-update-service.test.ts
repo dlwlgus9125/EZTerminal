@@ -49,6 +49,11 @@ function sha256(body: Buffer): string {
 function fixture(
   setupBody = Buffer.from('verified setup bytes'),
   downloadedBody = setupBody,
+  windowsAuthenticode: Record<string, unknown> = {
+    expected: 'NotSigned',
+    app: 'NotSigned',
+    setup: 'NotSigned',
+  },
 ): {
   readonly http: FakeHttpClient;
   readonly manifestBody: Buffer;
@@ -60,11 +65,7 @@ function fixture(
     evidenceCompleteness: 'complete',
     embeddedBuildShaVerified: true,
     artifacts: ['EZTerminal-Setup.exe'],
-    windowsAuthenticode: {
-      expected: 'NotSigned',
-      app: 'NotSigned',
-      setup: 'NotSigned',
-    },
+    windowsAuthenticode,
   }));
   const latestBody = Buffer.from(JSON.stringify({
     draft: false,
@@ -94,6 +95,33 @@ function fixture(
       [MANIFEST_URL, async () => ({ body: manifestBody })],
       [SETUP_URL, async () => ({ body: downloadedBody })],
     ])),
+  };
+}
+
+function signedAuthenticode(setupBody: Buffer): Record<string, unknown> {
+  const component = (digest: string) => ({
+    status: 'Valid',
+    sha256: digest,
+    publisher: 'SignPath Foundation',
+    signerCertificateSha256: 'b'.repeat(64),
+    timestamped: true,
+    timestampCertificateSha256: 'c'.repeat(64),
+  });
+  return {
+    expected: 'Valid',
+    publisher: 'SignPath Foundation',
+    timestampRequired: true,
+    signingRequestIds: { payload: '12345678-abcd', installer: '87654321-dcba' },
+    app: 'Valid',
+    remoteHost: 'Valid',
+    uninstaller: 'Valid',
+    setup: 'Valid',
+    components: {
+      app: component('d'.repeat(64)),
+      remoteHost: component('e'.repeat(64)),
+      uninstaller: component('f'.repeat(64)),
+      setup: component(sha256(setupBody)),
+    },
   };
 }
 
@@ -151,6 +179,62 @@ describe('AppUpdateService', () => {
     expect(await service.openDownloadedUpdate(true)).toEqual({ ok: true });
     expect(openPath).toHaveBeenCalledTimes(1);
     expect(await readdir(downloadsDirectory)).toEqual(['EZTerminal-Setup-1.2.3.exe']);
+  });
+
+  it('opens a signed update only after checking its publisher, timestamp, and certificates', async () => {
+    const setupBody = Buffer.from('signed setup bytes');
+    const { http } = fixture(setupBody, setupBody, signedAuthenticode(setupBody));
+    const verifyWindowsAuthenticode = vi.fn(async () => ({
+      status: 'Valid',
+      publisher: 'SignPath Foundation',
+      signerCertificateSha256: 'b'.repeat(64),
+      timestamped: true,
+      timestampCertificateSha256: 'c'.repeat(64),
+    }));
+    const openPath = vi.fn(async () => '');
+    const downloadsDirectory = await temporaryDownloadDirectory();
+    const service = new AppUpdateService({
+      currentVersion: '1.0.0',
+      resolveDownloadsDirectory: () => downloadsDirectory,
+      http,
+      openPath,
+      verifyWindowsAuthenticode,
+    });
+
+    expect((await service.check()).release?.windowsAuthenticode).toBe('Valid');
+    const downloaded = await service.download();
+    expect(downloaded.download?.requiresUnsignedConfirmation).toBe(false);
+    expect(await service.openDownloadedUpdate(false)).toEqual({ ok: true });
+    expect(verifyWindowsAuthenticode).toHaveBeenCalledTimes(2);
+    expect(openPath).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes a signed update when Authenticode evidence differs from the manifest', async () => {
+    const setupBody = Buffer.from('signed setup bytes');
+    const { http } = fixture(setupBody, setupBody, signedAuthenticode(setupBody));
+    const downloadsDirectory = await temporaryDownloadDirectory();
+    const service = new AppUpdateService({
+      currentVersion: '1.0.0',
+      resolveDownloadsDirectory: () => downloadsDirectory,
+      http,
+      openPath: vi.fn(async () => ''),
+      verifyWindowsAuthenticode: vi.fn(async () => ({
+        status: 'Valid',
+        publisher: 'Unexpected Publisher',
+        signerCertificateSha256: 'b'.repeat(64),
+        timestamped: false,
+        timestampCertificateSha256: null,
+      })),
+    });
+
+    await service.check();
+    const result = await service.download();
+    expect(result.error).toEqual({
+      stage: 'verify',
+      code: 'SIGNATURE_INVALID',
+      retryable: false,
+    });
+    expect(await readdir(downloadsDirectory)).toEqual([]);
   });
 
   it('removes a mismatched download and blocks opening it', async () => {

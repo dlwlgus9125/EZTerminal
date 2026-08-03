@@ -69,8 +69,10 @@ client is, by design, a remote terminal:
 - Disable remote control when you are not using it.
 - **Update both applications together.** Desktop and Android 1.0 use an explicit
   remote-protocol version and reject incompatible peers instead of retrying as
-  though the token were wrong. Updates are downloaded manually from GitHub
-  Releases and verified with the published `SHA256SUMS.txt`.
+  though the token were wrong. Updates come from GitHub Releases and are
+  verified with published SHA-256 values. New Windows releases additionally
+  require a timestamped `SignPath Foundation` Authenticode signature before the
+  updater opens the installer.
 - **Android 1.0 rekeys the app.** APKs published before 1.0 used a debug
   certificate. They must be uninstalled before the release-signed 1.0 APK can
   be installed, which also removes saved pairing data. Do not bypass Android's

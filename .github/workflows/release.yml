@@ -99,9 +99,10 @@ jobs:
   release:
     needs: [android-instrumentation, rust-quality]
     runs-on: windows-2022
-    timeout-minutes: 120
+    timeout-minutes: 360
     environment: release
     permissions:
+      actions: read
       contents: read
     outputs:
       artifact_name: ${{ steps.publish_metadata.outputs.artifact_name }}
@@ -595,10 +596,8 @@ jobs:
       - name: Desktop end-to-end tests
         run: pnpm e2e
 
-      # EZTerminal 1.0.x intentionally ships unsigned on Windows. The staging
-      # script below rejects anything except explicit Authenticode NotSigned.
-      - name: Build unsigned Windows release
-        run: pnpm make
+      - name: Build Windows package and exact SignPath payload
+        run: pnpm signpath:prepare
       - name: Verify packaged native modules
         run: pnpm guard:native
       - name: Verify packaged packet capture native module
@@ -628,6 +627,119 @@ jobs:
           if ($dirty.Count -ne 0) {
             $dirty | ForEach-Object { Write-Host $_ }
             throw 'Release source changed during validation; signing credentials were not materialized.'
+          }
+
+      - name: Upload exact unsigned Windows payload
+        id: upload_unsigned_windows_payload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signpath-windows-payload-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/signpath/payload-input/*
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Request SignPath approval for Windows payload
+        id: sign_windows_payload
+        uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_WINDOWS_PAYLOAD_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload_unsigned_windows_payload.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: out/signpath/payload-signed
+          parameters: |
+            version: ${{ toJSON(env.EZTERMINAL_VERSION) }}
+
+      - name: Assemble installer from verified signed payload
+        run: pnpm signpath:assemble
+
+      - name: Upload exact unsigned Windows installer
+        id: upload_unsigned_windows_installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signpath-windows-installer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/signpath/installer-input/EZTerminal-Setup.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Request SignPath approval for Windows installer
+        id: sign_windows_installer
+        uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_WINDOWS_INSTALLER_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload_unsigned_windows_installer.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: out/signpath/installer-signed
+          parameters: |
+            version: ${{ toJSON(env.EZTERMINAL_VERSION) }}
+
+      - name: Finalize and verify signed Windows release
+        shell: pwsh
+        env:
+          PAYLOAD_SIGNING_REQUEST_ID: ${{ steps.sign_windows_payload.outputs.signing-request-id }}
+          INSTALLER_SIGNING_REQUEST_ID: ${{ steps.sign_windows_installer.outputs.signing-request-id }}
+        run: |
+          pnpm signpath:finalize -- `
+            --payload-request-id $env:PAYLOAD_SIGNING_REQUEST_ID `
+            --installer-request-id $env:INSTALLER_SIGNING_REQUEST_ID
+
+      - name: Verify signatures after a silent install
+        shell: pwsh
+        run: |
+          $installRoot = Join-Path $env:RUNNER_TEMP 'ezterminal-signature-smoke'
+          $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\') + '\'
+          $resolvedInstallRoot = [IO.Path]::GetFullPath($installRoot)
+          if (-not $resolvedInstallRoot.StartsWith($runnerTemp, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unsafe signature smoke path: $resolvedInstallRoot"
+          }
+          if (Test-Path -LiteralPath $resolvedInstallRoot) {
+            Remove-Item -LiteralPath $resolvedInstallRoot -Recurse -Force
+          }
+          try {
+            $setup = (Resolve-Path -LiteralPath 'out/make/nsis/x64/EZTerminal-Setup.exe').Path
+            $install = Start-Process -FilePath $setup `
+              -ArgumentList @('/S', "/D=$resolvedInstallRoot") `
+              -WindowStyle Hidden -PassThru
+            if (-not $install.WaitForExit(120000)) {
+              Stop-Process -Id $install.Id -Force
+              throw 'Silent installer timed out.'
+            }
+            if ($install.ExitCode -ne 0) {
+              throw "Silent installer exited with $($install.ExitCode)."
+            }
+            $installedFiles = @(
+              (Join-Path $resolvedInstallRoot 'EZTerminal.exe'),
+              (Join-Path $resolvedInstallRoot 'resources/ezterminal-remote-host.exe'),
+              (Join-Path $resolvedInstallRoot 'Uninstall EZTerminal.exe')
+            )
+            ./scripts/verify-windows-signatures.ps1 `
+              -Path $installedFiles `
+              -ExpectedStatus Valid `
+              -ExpectedPublisher 'SignPath Foundation' `
+              -RequireTimestamp `
+              -ExpectedProductName EZTerminal `
+              -ExpectedProductVersion $env:EZTERMINAL_VERSION | Out-Null
+          } finally {
+            $uninstaller = Join-Path $resolvedInstallRoot 'Uninstall EZTerminal.exe'
+            if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
+              $uninstall = Start-Process -FilePath $uninstaller `
+                -ArgumentList '/S' -WindowStyle Hidden -PassThru
+              if (-not $uninstall.WaitForExit(120000)) {
+                Stop-Process -Id $uninstall.Id -Force
+              }
+            }
+            if (Test-Path -LiteralPath $resolvedInstallRoot) {
+              Remove-Item -LiteralPath $resolvedInstallRoot -Recurse -Force
+            }
           }
 
       - name: Materialize protected Android release keystore
@@ -698,7 +810,11 @@ jobs:
             AndroidMetadataPath = 'mobile/android/app/build/outputs/apk/release/output-metadata.json'
             AndroidCertSha256 = $env:ANDROID_REPOSITORY_CERT_SHA256
             ExpectedCommit = $env:EZTERMINAL_BUILD_SHA
-            ExpectedWindowsSignature = 'NotSigned'
+            ExpectedWindowsSignature = 'Valid'
+            ExpectedWindowsPublisher = 'SignPath Foundation'
+            WindowsUninstallerPath = 'out/signpath/retained/Uninstall EZTerminal.exe'
+            WindowsPayloadSigningRequestId = '${{ steps.sign_windows_payload.outputs.signing-request-id }}'
+            WindowsInstallerSigningRequestId = '${{ steps.sign_windows_installer.outputs.signing-request-id }}'
             ArtifactStage = 'release'
             ReleaseAssetsPath = $env:RELEASE_ASSETS_PATH
             RequireCleanTree = $true
@@ -913,12 +1029,39 @@ jobs:
             $manifest.embeddedBuildShaVerified -ne $true -or
             [int]$manifest.protocolVersion -lt 1 -or
             [int]$manifest.androidVersionCode -lt 1 -or
-            [string]$manifest.windowsAuthenticode.expected -cne 'NotSigned' -or
-            [string]$manifest.windowsAuthenticode.app -cne 'NotSigned' -or
-            [string]$manifest.windowsAuthenticode.setup -cne 'NotSigned' -or
+            [string]$manifest.windowsAuthenticode.expected -cne 'Valid' -or
+            [string]$manifest.windowsAuthenticode.publisher -cne 'SignPath Foundation' -or
+            $manifest.windowsAuthenticode.timestampRequired -ne $true -or
+            [string]$manifest.windowsAuthenticode.app -cne 'Valid' -or
+            [string]$manifest.windowsAuthenticode.remoteHost -cne 'Valid' -or
+            [string]$manifest.windowsAuthenticode.uninstaller -cne 'Valid' -or
+            [string]$manifest.windowsAuthenticode.setup -cne 'Valid' -or
+            [string]$manifest.windowsAuthenticode.signingRequestIds.payload -notmatch '^[A-Za-z0-9-]{8,128}$' -or
+            [string]$manifest.windowsAuthenticode.signingRequestIds.installer -notmatch '^[A-Za-z0-9-]{8,128}$' -or
+            [string]$manifest.windowsAuthenticode.components.app.sha256 -notmatch '^[0-9a-f]{64}$' -or
+            [string]$manifest.windowsAuthenticode.components.remoteHost.sha256 -notmatch '^[0-9a-f]{64}$' -or
+            [string]$manifest.windowsAuthenticode.components.uninstaller.sha256 -notmatch '^[0-9a-f]{64}$' -or
+            [string]$manifest.windowsAuthenticode.components.setup.sha256 -notmatch '^[0-9a-f]{64}$' -or
+            [string]$manifest.windowsAuthenticode.components.setup.publisher -cne 'SignPath Foundation' -or
+            [string]$manifest.windowsAuthenticode.components.setup.signerCertificateSha256 -notmatch '^[0-9a-f]{64}$' -or
+            $manifest.windowsAuthenticode.components.setup.timestamped -ne $true -or
+            [string]$manifest.windowsAuthenticode.components.setup.timestampCertificateSha256 -notmatch '^[0-9a-f]{64}$' -or
             [string]$manifest.androidSigningCertSha256 -notmatch '^[0-9A-F]{64}$'
           ) {
             throw 'Downloaded release manifest is not publication-eligible exact-SHA evidence.'
+          }
+          foreach ($componentName in @('app', 'remoteHost', 'uninstaller', 'setup')) {
+            $component = $manifest.windowsAuthenticode.components.$componentName
+            if (
+              [string]$component.status -cne 'Valid' -or
+              [string]$component.sha256 -notmatch '^[0-9a-f]{64}$' -or
+              [string]$component.publisher -cne 'SignPath Foundation' -or
+              [string]$component.signerCertificateSha256 -notmatch '^[0-9a-f]{64}$' -or
+              $component.timestamped -ne $true -or
+              [string]$component.timestampCertificateSha256 -notmatch '^[0-9a-f]{64}$'
+            ) {
+              throw "Invalid Windows Authenticode component evidence: $componentName"
+            }
           }
           $androidArtifact = (
             "EZTerminal-Android-$expectedVersion-vc" +
@@ -1008,6 +1151,28 @@ jobs:
             if ($actualHash -cne $expectedHash) {
               throw "Downloaded artifact hash mismatch for $name."
             }
+          }
+
+          $setupPath = Join-Path $assets 'EZTerminal-Setup.exe'
+          $signatureJson = @(
+            & ./release-source/scripts/verify-windows-signatures.ps1 `
+              -Path $setupPath `
+              -ExpectedStatus Valid `
+              -ExpectedPublisher 'SignPath Foundation' `
+              -RequireTimestamp `
+              -ExpectedProductName EZTerminal `
+              -ExpectedProductVersion $expectedVersion
+          ) -join [Environment]::NewLine
+          $setupSignature = @(($signatureJson | ConvertFrom-Json).files)[0]
+          if (
+            [string]$setupSignature.sha256 -cne
+              [string]$manifest.windowsAuthenticode.components.setup.sha256 -or
+            [string]$setupSignature.signerCertificateSha256 -cne
+              [string]$manifest.windowsAuthenticode.components.setup.signerCertificateSha256 -or
+            [string]$setupSignature.timestampCertificateSha256 -cne
+              [string]$manifest.windowsAuthenticode.components.setup.timestampCertificateSha256
+          ) {
+            throw 'Published Setup Authenticode evidence differs from the build manifest.'
           }
 
           $actualArtifactNames = @(
