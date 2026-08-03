@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 
@@ -40,6 +40,7 @@ import {
 } from './terminal-key-policy';
 import { pasteFromRuntimeClipboard } from './terminal-paste';
 import { selectedTextWithin } from './terminal-selection';
+import { addAppWindowEventListener } from './desktop-window-registry';
 import {
   DEFAULT_TERMINAL_RUNTIME_OPTIONS,
   XtermRuntime,
@@ -116,6 +117,7 @@ function PtyXtermView({
   const [findQuery, setFindQuery] = useState('');
   const [findCaseSensitive, setFindCaseSensitive] = useState(false);
   const [findResults, setFindResults] = useState<TerminalSearchResults>(EMPTY_SEARCH_RESULTS);
+  const restoreFindFocusRef = useRef(false);
   const linkHandlingEnabled = Boolean(runtimeOptions.openExternalHttpUrl);
   const terminalFileLinksEnabled = Boolean(runtimeOptions.openTerminalFileLocation);
   const terminalRuntimeOptionsRef = useRef(runtimeOptions);
@@ -594,6 +596,12 @@ function PtyXtermView({
     runtimeRef.current?.find(findQuery, 'next', findCaseSensitive, true);
   }, [findCaseSensitive, findOpen, findQuery]);
 
+  useLayoutEffect(() => {
+    if (findOpen || !restoreFindFocusRef.current) return;
+    restoreFindFocusRef.current = false;
+    termRef.current?.focus();
+  }, [findOpen]);
+
   // Control transition (control handoff, M8b): gaining control restores the
   // base font size and reports OUR size to the interpreter — a claim's whole
   // point, resizing the shared PTY to the claimer. Losing control switches to
@@ -620,8 +628,8 @@ function PtyXtermView({
     runtimeRef.current?.clearSearch();
     setFindQuery('');
     setFindResults(EMPTY_SEARCH_RESULTS);
+    restoreFindFocusRef.current = true;
     setFindOpen(false);
-    requestAnimationFrame(() => termRef.current?.focus());
   };
 
   const findNext = (): void => {
@@ -705,7 +713,7 @@ function PtyXtermView({
         // Touch devices get the mobile long-press menu instead
         // (MobileSessionView.tsx, WT-parity M3) — a right-click context menu
         // is a fine-pointer affordance, so skip it here to avoid a double menu.
-        if (window.matchMedia?.('(pointer: coarse)').matches) return;
+        if (e.currentTarget.ownerDocument.defaultView?.matchMedia?.('(pointer: coarse)').matches) return;
         e.preventDefault();
         setMenuPos(captureTerminalContextMenuInvocation(e.currentTarget, e.clientX, e.clientY));
       }}
@@ -734,6 +742,7 @@ function PtyXtermView({
           items={menuItems}
           ariaLabel={t('terminalContext.actionsLabel')}
           shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
+          ownerDocument={menuPos.originPane?.ownerDocument}
           onClose={(detail) => closeTerminalContextMenu(
             menuPos,
             detail,
@@ -749,15 +758,16 @@ function PtyXtermView({
 // ── plain view (Phase 3 adaptive render default) ─────────────────────────────
 
 function textOffsetAtPoint(root: HTMLElement, x: number, y: number): number | null {
-  const position = document.caretPositionFromPoint?.(x, y);
-  const legacyDocument = document as Document & {
+  const ownerDocument = root.ownerDocument;
+  const position = ownerDocument.caretPositionFromPoint?.(x, y);
+  const legacyDocument = ownerDocument as Document & {
     caretRangeFromPoint?: (pointX: number, pointY: number) => Range | null;
   };
   const legacyRange = position ? null : legacyDocument.caretRangeFromPoint?.(x, y);
   const node = position?.offsetNode ?? legacyRange?.startContainer;
   const offset = position?.offset ?? legacyRange?.startOffset;
   if (!node || offset === undefined || !root.contains(node)) return null;
-  const range = document.createRange();
+  const range = ownerDocument.createRange();
   range.selectNodeContents(root);
   try {
     range.setEnd(node, offset);
@@ -839,7 +849,7 @@ function PtyPlainView({
       if (!isTerminalContextMenuKey(event)) return;
       const host = containerRef.current;
       const originPane = host?.closest('.pane');
-      const active = document.activeElement;
+      const active = containerRef.current?.ownerDocument.activeElement;
       if (
         !host
         || !originPane
@@ -856,8 +866,7 @@ function PtyPlainView({
     };
     // Capture before TerminalPane's composer handler so Shift+F10 is never
     // translated to the PTY's ordinary F10 byte sequence.
-    window.addEventListener('keydown', onKeyDown, true);
-    return () => window.removeEventListener('keydown', onKeyDown, true);
+    return addAppWindowEventListener('keydown', onKeyDown as EventListener, true);
   }, [snapshot.status]);
 
   // Paste (WT-parity M2): routed straight through the controller this view
@@ -883,9 +892,9 @@ function PtyPlainView({
   };
   const selectAllOutput = (): void => {
     const el = outputRef.current;
-    const sel = window.getSelection();
+    const sel = el?.ownerDocument.defaultView?.getSelection();
     if (!el || !sel) return;
-    const range = document.createRange();
+    const range = el.ownerDocument.createRange();
     range.selectNodeContents(el);
     sel.removeAllRanges();
     sel.addRange(range);
@@ -928,7 +937,7 @@ function PtyPlainView({
         // Touch devices get the mobile long-press menu instead
         // (MobileSessionView.tsx, WT-parity M3) — a right-click context menu
         // is a fine-pointer affordance, so skip it here to avoid a double menu.
-        if (window.matchMedia?.('(pointer: coarse)').matches) return;
+        if (e.currentTarget.ownerDocument.defaultView?.matchMedia?.('(pointer: coarse)').matches) return;
         e.preventDefault();
         setMenuPos(captureTerminalContextMenuInvocation(e.currentTarget, e.clientX, e.clientY));
       }}
@@ -977,6 +986,7 @@ function PtyPlainView({
           items={menuItems}
           ariaLabel={t('terminalContext.actionsLabel')}
           shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
+          ownerDocument={menuPos.originPane?.ownerDocument}
           onClose={(detail) => closeTerminalContextMenu(
             menuPos,
             detail,

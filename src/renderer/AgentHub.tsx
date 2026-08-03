@@ -1,4 +1,19 @@
-import { ArrowLeft, Check, GitCompareArrows, Plus, Settings, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  FolderPlus,
+  GitCompareArrows,
+  MessageSquarePlus,
+  MoreHorizontal,
+  Pin,
+  Plus,
+  Search,
+  Settings,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
@@ -11,6 +26,13 @@ import type {
   AgentProvider,
   AgentStatus,
 } from '../shared/agent';
+import type {
+  AgentHistorySessionSummary,
+  AgentLaunchBootstrap,
+  AgentLaunchTarget,
+  AgentProjectLauncherSummary,
+  AgentProjectSummary,
+} from '../shared/agent-history';
 import {
   EMPTY_GIT_DIRECTORY_STATUS,
   type GitDiffOmission,
@@ -20,7 +42,16 @@ import {
 import { formatCwd } from './format-cwd';
 import { useGitBranches } from './use-git-branch';
 import { useAppTranslation } from './i18n';
-import { Button, Dialog, IconButton } from './ui';
+import {
+  Button,
+  Dialog,
+  Field,
+  IconButton,
+  Input,
+  Menu,
+  MenuItem,
+  Select,
+} from './ui';
 
 /** Used when no Git reader is supplied; every row then shows its directory. */
 const readNothing = (): Promise<GitDirectoryStatus> => Promise.resolve(EMPTY_GIT_DIRECTORY_STATUS);
@@ -104,8 +135,13 @@ export interface AgentHubProps {
   readonly onLoadDiff?: (directory: string) => Promise<GitDiffResult>;
   /** Resolves each activity's branch. Absent leaves the working directory. */
   readonly onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
-  /** Opens the real agent launcher; absent means no launch verb is rendered. */
-  readonly onNewAgentRun?: () => void;
+  /** Opens a singleton read-only history tab without disturbing live terminals. */
+  readonly onOpenHistorySession?: (
+    session: AgentHistorySessionSummary,
+    project: AgentProjectSummary,
+  ) => void;
+  /** Opens a fresh terminal using a main-prepared project or directory launch. */
+  readonly onLaunchAgent?: (bootstrap: AgentLaunchBootstrap) => void;
   readonly onOpenAgentSettings?: () => void;
   readonly onClose?: () => void;
   readonly mobile?: boolean;
@@ -131,7 +167,8 @@ export function AgentHub({
   onDecideApproval,
   onLoadDiff,
   onReadGitStatus,
-  onNewAgentRun,
+  onOpenHistorySession,
+  onLaunchAgent,
   onOpenAgentSettings,
   onClose,
   mobile = false,
@@ -145,6 +182,40 @@ export function AgentHub({
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [diffView, setDiffView] = useState<DiffView | null>(null);
+  const [projects, setProjects] = useState<readonly AgentProjectSummary[]>([]);
+  const [projectCursor, setProjectCursor] = useState<string | null>(null);
+  const [projectQuery, setProjectQuery] = useState('');
+  const [debouncedProjectQuery, setDebouncedProjectQuery] = useState('');
+  const [projectSessions, setProjectSessions] = useState<
+    Readonly<Record<string, readonly AgentHistorySessionSummary[]>>
+  >({});
+  const [projectSessionCursors, setProjectSessionCursors] = useState<
+    Readonly<Record<string, string | null>>
+  >({});
+  const [loadingSessionProjects, setLoadingSessionProjects] = useState<ReadonlySet<string>>(new Set());
+  const [expandedProjects, setExpandedProjects] = useState<ReadonlySet<string>>(new Set());
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  const [projectsLoadingMore, setProjectsLoadingMore] = useState(false);
+  const [projectsError, setProjectsError] = useState(false);
+  const [projectSessionErrors, setProjectSessionErrors] = useState<ReadonlySet<string>>(new Set());
+  const [projectActionError, setProjectActionError] = useState<string | null>(null);
+  const [launchers, setLaunchers] = useState<readonly AgentProjectLauncherSummary[]>([]);
+  const [launchersLoading, setLaunchersLoading] = useState(false);
+  const [launchPickerOpen, setLaunchPickerOpen] = useState(false);
+  const [launchTarget, setLaunchTarget] = useState<AgentLaunchTarget | null>(null);
+  const [launchTargetProject, setLaunchTargetProject] = useState<AgentProjectSummary | null>(null);
+  const [launchProjectOptions, setLaunchProjectOptions] = useState<readonly AgentProjectSummary[]>([]);
+  const [launchProjectQuery, setLaunchProjectQuery] = useState('');
+  const [launchProjectsLoading, setLaunchProjectsLoading] = useState(false);
+  const [selectedLauncherId, setSelectedLauncherId] = useState('');
+  const [launching, setLaunching] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const [editingProject, setEditingProject] = useState<AgentProjectSummary | null>(null);
+  const [projectEditorOpen, setProjectEditorOpen] = useState(false);
+  const [projectNameDraft, setProjectNameDraft] = useState('');
+  const [projectRootsDraft, setProjectRootsDraft] = useState<readonly string[]>([]);
+  const [projectSaving, setProjectSaving] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState<AgentProjectSummary | null>(null);
   const diffRequestGeneration = useRef(0);
   const branches = useGitBranches(
     snapshot.items.map((item) => item.cwd),
@@ -160,6 +231,299 @@ export function AgentHub({
     () => new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false }),
     [locale],
   );
+
+  const refreshProjects = useCallback(async (
+    force = false,
+    cursor?: string,
+    append = false,
+  ): Promise<void> => {
+    if (append) setProjectsLoadingMore(true);
+    else setProjectsLoading(true);
+    setProjectsError(false);
+    const read = window.ezterminal?.listAgentProjects;
+    if (!read) {
+      setProjects([]);
+      setProjectsLoading(false);
+      setProjectsLoadingMore(false);
+      return;
+    }
+    const result = await read(
+      force,
+      cursor,
+      40,
+      debouncedProjectQuery.trim() || undefined,
+    ).catch(() => null);
+    setProjectsLoading(false);
+    setProjectsLoadingMore(false);
+    if (!result) {
+      setProjectsError(true);
+      return;
+    }
+    setProjects((previous) => append ? [...previous, ...result.items] : result.items);
+    setProjectCursor(result.nextCursor);
+  }, [debouncedProjectQuery]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedProjectQuery(projectQuery), 200);
+    return () => clearTimeout(timer);
+  }, [projectQuery]);
+
+  useEffect(() => {
+    void refreshProjects(false);
+  }, [refreshProjects]);
+
+  const loadInitialProjectSessions = useCallback(async (projectId: string): Promise<void> => {
+    const read = window.ezterminal?.listAgentHistorySessions;
+    if (!read) return;
+    setLoadingSessionProjects((previous) => new Set(previous).add(projectId));
+    setProjectSessionErrors((previous) => {
+      const next = new Set(previous);
+      next.delete(projectId);
+      return next;
+    });
+    const result = await read(projectId, undefined, 20).catch(() => null);
+    setLoadingSessionProjects((previous) => {
+      const next = new Set(previous);
+      next.delete(projectId);
+      return next;
+    });
+    if (!result) {
+      setProjectSessionErrors((previous) => new Set(previous).add(projectId));
+      return;
+    }
+    setProjectSessions((previous) => ({ ...previous, [projectId]: result.items }));
+    setProjectSessionCursors((previous) => ({ ...previous, [projectId]: result.nextCursor }));
+  }, []);
+
+  const toggleProject = useCallback(async (projectId: string): Promise<void> => {
+    const willExpand = !expandedProjects.has(projectId);
+    setExpandedProjects((previous) => {
+      const next = new Set(previous);
+      if (willExpand) next.add(projectId);
+      else next.delete(projectId);
+      return next;
+    });
+    if (!willExpand || projectSessions[projectId] || loadingSessionProjects.has(projectId)) return;
+    await loadInitialProjectSessions(projectId);
+  }, [expandedProjects, loadInitialProjectSessions, loadingSessionProjects, projectSessions]);
+
+  const loadMoreSessions = useCallback(async (projectId: string): Promise<void> => {
+    const cursor = projectSessionCursors[projectId];
+    if (!cursor || loadingSessionProjects.has(projectId)) return;
+    const read = window.ezterminal?.listAgentHistorySessions;
+    if (!read) return;
+    setLoadingSessionProjects((previous) => new Set(previous).add(projectId));
+    const result = await read(projectId, cursor, 20).catch(() => null);
+    setLoadingSessionProjects((previous) => {
+      const next = new Set(previous);
+      next.delete(projectId);
+      return next;
+    });
+    if (!result) {
+      setProjectSessionErrors((previous) => new Set(previous).add(projectId));
+      return;
+    }
+    setProjectSessions((previous) => ({
+      ...previous,
+      [projectId]: [...(previous[projectId] ?? []), ...result.items],
+    }));
+    setProjectSessionCursors((previous) => ({ ...previous, [projectId]: result.nextCursor }));
+  }, [loadingSessionProjects, projectSessionCursors]);
+
+  const saveProject = useCallback(async (
+    project: AgentProjectSummary,
+    patch: Partial<Pick<AgentProjectSummary, 'name' | 'pinned' | 'primaryRoot' | 'additionalRoots'>>,
+  ): Promise<void> => {
+    const result = await window.ezterminal.saveAgentProject({
+      projectId: project.projectId,
+      name: patch.name ?? project.name,
+      primaryRoot: patch.primaryRoot ?? project.primaryRoot,
+      additionalRoots: patch.additionalRoots ?? project.additionalRoots,
+      pinned: patch.pinned ?? project.pinned,
+    });
+    if (result.ok) {
+      setProjectSessions({});
+      setExpandedProjects(new Set());
+      void refreshProjects(true);
+    } else {
+      setProjectActionError(t('agentHub.projects.saveFailed'));
+    }
+  }, [refreshProjects, t]);
+
+  const addProject = useCallback(async (): Promise<void> => {
+    const desktop = window.ezterminalDesktop;
+    if (!desktop) return;
+    const selection = await desktop.selectAgentProjectFolders(true);
+    const [primaryRoot, ...additionalRoots] = selection.paths;
+    if (selection.canceled || !primaryRoot) return;
+    const name = primaryRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? primaryRoot;
+    setEditingProject(null);
+    setProjectNameDraft(name);
+    setProjectRootsDraft([primaryRoot, ...additionalRoots]);
+    setProjectActionError(null);
+    setProjectEditorOpen(true);
+  }, []);
+
+  const openProjectEditor = useCallback((project: AgentProjectSummary): void => {
+    setEditingProject(project);
+    setProjectNameDraft(project.name);
+    setProjectRootsDraft([project.primaryRoot, ...project.additionalRoots]);
+    setProjectActionError(null);
+    setProjectEditorOpen(true);
+  }, []);
+
+  const addProjectFolders = useCallback(async (): Promise<void> => {
+    const selection = await window.ezterminalDesktop?.selectAgentProjectFolders(true);
+    if (!selection || selection.canceled) return;
+    setProjectRootsDraft((previous) => {
+      const seen = new Set(previous.map((root) => root.toLocaleLowerCase('en-US')));
+      return [
+        ...previous,
+        ...selection.paths.filter((root) => {
+          const key = root.toLocaleLowerCase('en-US');
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }),
+      ];
+    });
+  }, []);
+
+  const commitProjectEditor = useCallback(async (): Promise<void> => {
+    const [primaryRoot, ...additionalRoots] = projectRootsDraft;
+    const name = projectNameDraft.trim();
+    if (!primaryRoot || !name || projectSaving) return;
+    setProjectSaving(true);
+    setProjectActionError(null);
+    const result = await window.ezterminal.saveAgentProject({
+      ...(editingProject ? { projectId: editingProject.projectId } : {}),
+      name,
+      primaryRoot,
+      additionalRoots,
+      pinned: editingProject?.pinned ?? false,
+    }).catch(() => ({ ok: false, reason: 'invalid' } as const));
+    setProjectSaving(false);
+    if (!result.ok) {
+      setProjectActionError(t('agentHub.projects.saveFailed'));
+      return;
+    }
+    setProjectEditorOpen(false);
+    setProjectSessions({});
+    setExpandedProjects(new Set());
+    void refreshProjects(true);
+  }, [
+    editingProject,
+    projectNameDraft,
+    projectRootsDraft,
+    projectSaving,
+    refreshProjects,
+    t,
+  ]);
+
+  const removeProject = useCallback(async (): Promise<void> => {
+    if (!projectToDelete) return;
+    const removed = await window.ezterminal.removeAgentProject(projectToDelete.projectId).catch(() => false);
+    if (!removed) {
+      setProjectActionError(t('agentHub.projects.deleteFailed'));
+      return;
+    }
+    setProjectToDelete(null);
+    setProjectSessions({});
+    setExpandedProjects(new Set());
+    void refreshProjects(true);
+  }, [projectToDelete, refreshProjects, t]);
+
+  const loadLaunchers = useCallback(async (): Promise<void> => {
+    if (launchersLoading || launchers.length > 0) return;
+    setLaunchersLoading(true);
+    const result = await window.ezterminal.listAgentProjectLaunchers().catch(() => []);
+    setLaunchers(result);
+    setLaunchersLoading(false);
+  }, [launchers, launchersLoading]);
+
+  useEffect(() => {
+    if (!launchPickerOpen) return undefined;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setLaunchProjectsLoading(true);
+      void window.ezterminal
+        .listAgentProjects(false, undefined, 100, launchProjectQuery.trim() || undefined)
+        .then((result) => {
+          if (cancelled) return;
+          setLaunchProjectOptions(
+            launchTargetProject
+              && !result.items.some((project) => project.projectId === launchTargetProject.projectId)
+              ? [launchTargetProject, ...result.items]
+              : result.items,
+          );
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setLaunchProjectOptions(launchTargetProject ? [launchTargetProject] : []);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setLaunchProjectsLoading(false);
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [launchPickerOpen, launchProjectQuery, launchTargetProject]);
+
+  const openLaunchPicker = useCallback((project?: AgentProjectSummary): void => {
+    setLaunchTarget(project ? { kind: 'project', projectId: project.projectId } : null);
+    setLaunchTargetProject(project ?? null);
+    setLaunchProjectOptions(project ? [project] : projects);
+    setLaunchProjectQuery('');
+    setSelectedLauncherId('');
+    setLaunchError(null);
+    setLaunchPickerOpen(true);
+    void loadLaunchers();
+  }, [loadLaunchers, projects]);
+
+  const chooseLaunchDirectory = useCallback(async (): Promise<void> => {
+    const selection = await window.ezterminalDesktop?.selectAgentProjectFolders(false);
+    const directory = selection?.paths[0];
+    if (!selection || selection.canceled || !directory) return;
+    setLaunchTarget({ kind: 'directory', directory });
+    setLaunchTargetProject(null);
+    setLaunchError(null);
+  }, []);
+
+  const launchAgent = useCallback(async (): Promise<void> => {
+    if (!onLaunchAgent || !launchTarget || !selectedLauncherId || launching) return;
+    setLaunching(true);
+    setLaunchError(null);
+    const preparation = await window.ezterminal
+      .prepareAgentLaunch(launchTarget, selectedLauncherId)
+      .catch(() => ({ ok: false, reason: 'unavailable' } as const));
+    setLaunching(false);
+    if (!preparation.ok) {
+      setLaunchError(t('agentHub.projects.launchFailed'));
+      return;
+    }
+    onLaunchAgent({
+      kind: 'new-chat',
+      target: preparation.target,
+      launcherId: preparation.launcherId,
+      provider: preparation.provider,
+      name: preparation.name,
+      cwd: preparation.cwd,
+      revision: preparation.revision,
+    });
+    setLaunchPickerOpen(false);
+  }, [launchTarget, launching, onLaunchAgent, selectedLauncherId, t]);
+
+  const selectedLauncher = launchers.find(
+    (launcher) => launcher.launcherId === selectedLauncherId,
+  );
+  const ignoredAdditionalRoots = launchTargetProject
+    && selectedLauncher
+    && !selectedLauncher.supportsAdditionalRoots
+    ? launchTargetProject.additionalRoots.length
+    : 0;
 
   const groups = useMemo(() => {
     const attention: AgentActivity[] = [];
@@ -496,23 +860,239 @@ export function AgentHub({
             })
             : ''}
       </div>
-      {snapshot.items.length === 0 ? (
-        <div className="agent-empty">{t('agentHub.empty')}</div>
-      ) : (
-        <div className="agent-hub-body">
+      <div className="agent-hub-body">
           {renderGroup('attention', t('agentHub.groups.attention'), groups.attention)}
+          <section className="agent-group agent-projects" data-testid="agent-projects">
+            <div className="agent-projects-heading">
+              <h2 className="status-section-title agent-group-title">
+                {t('agentHub.projects.title')}
+              </h2>
+              {window.ezterminalDesktop && (
+                <IconButton
+                  icon={FolderPlus}
+                  aria-label={t('agentHub.projects.add')}
+                  onClick={() => void addProject()}
+                  data-testid="agent-add-project"
+                />
+              )}
+            </div>
+            <Field
+              className="agent-project-search"
+              label={t('agentHub.projects.searchLabel')}
+              labelHidden
+            >
+              <span className="agent-project-search__control">
+                <Search aria-hidden="true" />
+                <Input
+                  type="search"
+                  value={projectQuery}
+                  placeholder={t('agentHub.projects.searchPlaceholder')}
+                  onChange={(event) => setProjectQuery(event.currentTarget.value)}
+                  data-testid="agent-project-search"
+                />
+              </span>
+            </Field>
+            {projectActionError && (
+              <p className="agent-project-error" role="alert">{projectActionError}</p>
+            )}
+            {projectsLoading && (
+              <p className="agent-project-note">{t('agentHub.projects.loading')}</p>
+            )}
+            {projectsError && (
+              <div className="agent-project-error" role="alert">
+                <span>{t('agentHub.projects.loadFailed')}</span>
+                <Button variant="ghost" size="sm" onClick={() => void refreshProjects(true)}>
+                  {t('common.retry')}
+                </Button>
+              </div>
+            )}
+            {!projectsLoading && !projectsError && projects.length === 0 && (
+              <p className="agent-project-note">
+                {debouncedProjectQuery.trim()
+                  ? t('agentHub.projects.noMatches')
+                  : t('agentHub.projects.empty')}
+              </p>
+            )}
+            <ol className="agent-project-list">
+              {projects.map((project) => {
+                const expanded = expandedProjects.has(project.projectId);
+                const sessions = projectSessions[project.projectId];
+                const sessionsLoading = loadingSessionProjects.has(project.projectId);
+                const sessionsFailed = projectSessionErrors.has(project.projectId);
+                const nextCursor = projectSessionCursors[project.projectId];
+                return (
+                  <li className="agent-project" key={project.projectId}>
+                    <div className="agent-project-row">
+                      <button
+                        type="button"
+                        className="agent-project-toggle"
+                        onClick={() => void toggleProject(project.projectId)}
+                        aria-expanded={expanded}
+                      >
+                        {expanded
+                          ? <ChevronDown aria-hidden="true" />
+                          : <ChevronRight aria-hidden="true" />}
+                        <span>
+                          <strong>
+                            {project.pinned && <Pin aria-hidden="true" />}
+                            {project.name}
+                          </strong>
+                          <small title={[project.primaryRoot, ...project.additionalRoots].join('\n')}>
+                            {formatCwd(project.primaryRoot)}
+                            {project.additionalRoots.length > 0
+                              ? ` · +${numberFormatter.format(project.additionalRoots.length)}`
+                              : ''}
+                          </small>
+                        </span>
+                        {sessions && (
+                          <span className="agent-project-count">
+                            {sessions.length}{nextCursor ? '+' : ''}
+                          </span>
+                        )}
+                      </button>
+                      {onLaunchAgent && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          leadingIcon={<MessageSquarePlus aria-hidden="true" />}
+                          onClick={() => openLaunchPicker(project)}
+                          data-testid={`agent-project-new-chat-${project.projectId}`}
+                        >
+                          {t('agentHub.projects.newChat')}
+                        </Button>
+                      )}
+                      <Menu
+                        label={t('agentHub.projects.manage', { name: project.name })}
+                        placement="bottom-end"
+                        trigger={(
+                          <IconButton
+                            icon={MoreHorizontal}
+                            aria-label={t('agentHub.projects.manage', { name: project.name })}
+                          />
+                        )}
+                      >
+                        <MenuItem
+                          icon={Pin}
+                          onSelect={() => void saveProject(project, { pinned: !project.pinned })}
+                        >
+                          {project.pinned
+                            ? t('agentHub.projects.unpin')
+                            : t('agentHub.projects.pin')}
+                        </MenuItem>
+                        {window.ezterminalDesktop && (
+                          <MenuItem icon={Settings} onSelect={() => openProjectEditor(project)}>
+                            {t('agentHub.projects.edit')}
+                          </MenuItem>
+                        )}
+                        <MenuItem
+                          icon={Trash2}
+                          destructive
+                          onSelect={() => {
+                            setProjectActionError(null);
+                            setProjectToDelete(project);
+                          }}
+                        >
+                          {t('agentHub.projects.delete')}
+                        </MenuItem>
+                      </Menu>
+                    </div>
+                    {expanded && (
+                      <ol className="agent-history-list">
+                        {!sessions && sessionsLoading && (
+                          <li className="agent-project-note">
+                            {t('agentHub.projects.sessionsLoading')}
+                          </li>
+                        )}
+                        {sessionsFailed && (
+                          <li className="agent-project-error">
+                            <span>{t('agentHub.projects.sessionsFailed')}</span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setProjectSessions((previous) => {
+                                  const next = { ...previous };
+                                  delete next[project.projectId];
+                                  return next;
+                                });
+                                void loadInitialProjectSessions(project.projectId);
+                              }}
+                            >
+                              {t('common.retry')}
+                            </Button>
+                          </li>
+                        )}
+                        {!sessionsFailed && sessions?.length === 0 && (
+                          <li className="agent-project-note">
+                            {t('agentHub.projects.sessionsEmpty')}
+                          </li>
+                        )}
+                        {sessions?.map((session) => (
+                          <li key={session.historyId}>
+                            <button
+                              type="button"
+                              className="agent-history-row"
+                              data-provider={session.provider}
+                              title={session.title}
+                              onClick={() => onOpenHistorySession?.(session, project)}
+                            >
+                              <span className="agent-provider-badge">
+                                {PROVIDER_LABEL[session.provider]}
+                              </span>
+                              <strong>{session.title}</strong>
+                              <small>{ageLabel(session.updatedAt, now, relativeTime)}</small>
+                              {session.preview && <p>{session.preview}</p>}
+                            </button>
+                          </li>
+                        ))}
+                        {nextCursor && (
+                          <li>
+                            <button
+                              type="button"
+                              className="agent-history-more"
+                              disabled={sessionsLoading}
+                              onClick={() => void loadMoreSessions(project.projectId)}
+                            >
+                              {sessionsLoading
+                                ? t('agentHub.projects.sessionsLoading')
+                                : t('agentHub.projects.moreSessions')}
+                            </button>
+                          </li>
+                        )}
+                      </ol>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+            {projectCursor && (
+              <Button
+                className="agent-projects-more"
+                variant="ghost"
+                size="sm"
+                disabled={projectsLoadingMore}
+                onClick={() => void refreshProjects(false, projectCursor, true)}
+              >
+                {projectsLoadingMore
+                  ? t('agentHub.projects.loading')
+                  : t('agentHub.projects.loadMore')}
+              </Button>
+            )}
+          </section>
+          {snapshot.items.length === 0 && (
+            <div className="agent-empty">{t('agentHub.empty')}</div>
+          )}
           {renderGroup('active', t('agentHub.groups.active'), groups.active)}
           {renderGroup('recent', t('agentHub.groups.recent'), groups.recent)}
-        </div>
-      )}
-      {(onNewAgentRun || onOpenAgentSettings) && (
+      </div>
+      {(onLaunchAgent || onOpenAgentSettings) && (
         <footer className="agent-hub-footer">
-          {onNewAgentRun && (
+          {onLaunchAgent && (
             <Button
               variant="primary"
               size="sm"
               leadingIcon={<Plus aria-hidden="true" />}
-              onClick={onNewAgentRun}
+              onClick={() => openLaunchPicker()}
               data-testid="agent-new-run"
             >
               {t('agentHub.newAgentRun')}
@@ -531,6 +1111,264 @@ export function AgentHub({
           )}
         </footer>
       )}
+      <Dialog
+        open={launchPickerOpen}
+        onOpenChange={(open) => {
+          if (launching) return;
+          setLaunchPickerOpen(open);
+          if (!open) setLaunchError(null);
+        }}
+        title={t('agentHub.projects.launchTitle')}
+        description={t('agentHub.projects.launchDescription')}
+        closeLabel={t('common.cancel')}
+        testId="agent-launch-picker"
+        footer={(
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setLaunchPickerOpen(false)}
+              disabled={launching}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => void launchAgent()}
+              disabled={launching || !launchTarget || !selectedLauncherId}
+              data-testid="agent-launch-submit"
+            >
+              {launching
+                ? t('agentHub.projects.launching')
+                : t('agentHub.projects.launch')}
+            </Button>
+          </>
+        )}
+      >
+        <div className="agent-launch-picker">
+          <Field label={t('agentHub.projects.agent')} required>
+            <Select
+              value={selectedLauncherId}
+              onChange={(event) => {
+                setSelectedLauncherId(event.currentTarget.value);
+                setLaunchError(null);
+              }}
+              disabled={launchersLoading}
+              data-testid="agent-launch-agent"
+            >
+              <option value="">
+                {launchersLoading
+                  ? t('agentHub.projects.loadingAgents')
+                  : t('agentHub.projects.selectAgent')}
+              </option>
+              {launchers.map((launcher) => (
+                <option key={launcher.launcherId} value={launcher.launcherId}>
+                  {launcher.name} · {PROVIDER_LABEL[launcher.provider]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {!launchersLoading && launchers.length === 0 && (
+            <p className="agent-project-note">{t('agentHub.projects.noAgents')}</p>
+          )}
+          <Field label={t('agentHub.projects.location')} required>
+            <Input
+              type="search"
+              value={launchProjectQuery}
+              placeholder={t('agentHub.projects.locationSearch')}
+              onChange={(event) => setLaunchProjectQuery(event.currentTarget.value)}
+            />
+            <Select
+              value={launchTarget?.kind === 'project'
+                ? launchTarget.projectId
+                : launchTarget?.kind === 'directory'
+                  ? '__directory__'
+                  : ''}
+              onChange={(event) => {
+                if (event.currentTarget.value === '__directory__') return;
+                const project = launchProjectOptions.find(
+                  (candidate) => candidate.projectId === event.currentTarget.value,
+                );
+                setLaunchTarget(
+                  project ? { kind: 'project', projectId: project.projectId } : null,
+                );
+                setLaunchTargetProject(project ?? null);
+                setLaunchError(null);
+              }}
+              disabled={launchProjectsLoading}
+              data-testid="agent-launch-project"
+            >
+              <option value="">
+                {launchProjectsLoading
+                  ? t('agentHub.projects.loading')
+                  : t('agentHub.projects.selectProject')}
+              </option>
+              {launchTarget?.kind === 'directory' && (
+                <option value="__directory__">
+                  {t('agentHub.projects.selectedFolder')} · {formatCwd(launchTarget.directory)}
+                </option>
+              )}
+              {launchProjectOptions.map((project) => (
+                <option key={project.projectId} value={project.projectId}>
+                  {project.name} · {formatCwd(project.primaryRoot)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {window.ezterminalDesktop && (
+            <Button
+              variant="secondary"
+              size="sm"
+              leadingIcon={<FolderPlus aria-hidden="true" />}
+              onClick={() => void chooseLaunchDirectory()}
+              data-testid="agent-launch-folder"
+            >
+              {t('agentHub.projects.chooseFolder')}
+            </Button>
+          )}
+          {launchTarget?.kind === 'directory' && (
+            <p className="agent-launch-directory" title={launchTarget.directory}>
+              <strong>{t('agentHub.projects.selectedFolder')}</strong>
+              <code>{launchTarget.directory}</code>
+            </p>
+          )}
+          {ignoredAdditionalRoots > 0 && (
+            <p className="agent-launch-warning" role="status">
+              {t('agentHub.projects.genericRootsIgnored', {
+                value: numberFormatter.format(ignoredAdditionalRoots),
+              })}
+            </p>
+          )}
+          {launchError && (
+            <p className="agent-project-error" role="alert">{launchError}</p>
+          )}
+        </div>
+      </Dialog>
+      <Dialog
+        open={projectEditorOpen}
+        onOpenChange={(open) => {
+          if (projectSaving) return;
+          setProjectEditorOpen(open);
+          if (!open) setProjectActionError(null);
+        }}
+        title={editingProject
+          ? t('agentHub.projects.editorEditTitle')
+          : t('agentHub.projects.editorAddTitle')}
+        closeLabel={t('common.cancel')}
+        testId="agent-project-editor"
+        footer={(
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => setProjectEditorOpen(false)}
+              disabled={projectSaving}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => void commitProjectEditor()}
+              disabled={projectSaving || !projectNameDraft.trim() || projectRootsDraft.length === 0}
+              data-testid="agent-project-save"
+            >
+              {projectSaving ? t('agentHub.projects.saving') : t('common.save')}
+            </Button>
+          </>
+        )}
+      >
+        <div className="agent-project-editor">
+          <Field label={t('agentHub.projects.name')} required>
+            <Input
+              value={projectNameDraft}
+              onChange={(event) => setProjectNameDraft(event.currentTarget.value)}
+              autoComplete="off"
+              data-testid="agent-project-name"
+            />
+          </Field>
+          <div className="agent-project-roots">
+            <span className="agent-project-roots__label">{t('agentHub.projects.roots')}</span>
+            {projectRootsDraft.length === 0 && (
+              <p className="agent-project-error" role="alert">
+                {t('agentHub.projects.selectPrimary')}
+              </p>
+            )}
+            <ol>
+              {projectRootsDraft.map((root, index) => (
+                <li key={root}>
+                  <div>
+                    <strong>
+                      {index === 0 ? t('agentHub.projects.primary') : `+${index}`}
+                    </strong>
+                    <span title={root}>{root}</span>
+                  </div>
+                  {index > 0 && (
+                    <div className="agent-project-root-actions">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setProjectRootsDraft((previous) => [
+                            root,
+                            ...previous.filter((candidate) => candidate !== root),
+                          ]);
+                        }}
+                      >
+                        {t('agentHub.projects.setPrimary')}
+                      </Button>
+                      <IconButton
+                        icon={X}
+                        aria-label={`${t('agentHub.projects.removeFolder')}: ${root}`}
+                        onClick={() => {
+                          setProjectRootsDraft((previous) => (
+                            previous.filter((candidate) => candidate !== root)
+                          ));
+                        }}
+                      />
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ol>
+            <Button
+              variant="secondary"
+              size="sm"
+              leadingIcon={<FolderPlus aria-hidden="true" />}
+              onClick={() => void addProjectFolders()}
+            >
+              {t('agentHub.projects.addFolder')}
+            </Button>
+          </div>
+          {projectActionError && (
+            <p className="agent-project-error" role="alert">{projectActionError}</p>
+          )}
+        </div>
+      </Dialog>
+      <Dialog
+        open={projectToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setProjectToDelete(null);
+        }}
+        title={t('agentHub.projects.deleteTitle', { name: projectToDelete?.name ?? '' })}
+        description={t('agentHub.projects.deleteDescription')}
+        role="alertdialog"
+        tone="danger"
+        size="sm"
+        closeLabel={t('common.cancel')}
+        testId="agent-project-delete"
+        footer={(
+          <>
+            <Button variant="ghost" onClick={() => setProjectToDelete(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="danger" onClick={() => void removeProject()}>
+              {t('agentHub.projects.deleteConfirm')}
+            </Button>
+          </>
+        )}
+      >
+        {projectActionError && (
+          <p className="agent-project-error" role="alert">{projectActionError}</p>
+        )}
+      </Dialog>
       <Dialog
         open={diffView !== null}
         onOpenChange={(next) => {

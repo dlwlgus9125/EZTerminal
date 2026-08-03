@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 
 import { useAppTranslation } from '../i18n';
-import { Badge, IconButton, Tooltip } from '../ui';
+import { Badge, IconButton, Tooltip, VisuallyHidden } from '../ui';
 import type { SidebarDestination } from './types';
 
 interface RailItem {
@@ -34,11 +34,13 @@ export const ACTIVITY_RAIL_ID = 'workbench-activity-rail';
 export function ActivityRail({
   active,
   attentionCount,
+  updateAvailable = false,
   openclawVisible,
   onSelect,
 }: {
   readonly active: SidebarDestination | null;
   readonly attentionCount: number;
+  readonly updateAvailable?: boolean;
   readonly openclawVisible: boolean;
   readonly onSelect: (destination: SidebarDestination) => void;
 }): JSX.Element {
@@ -68,6 +70,11 @@ export function ActivityRail({
               <Badge className="activity-rail-badge" variant="danger">
                 {attentionCount > 99 ? '99+' : attentionCount}
               </Badge>
+            )}
+            {item.id === 'settings' && updateAvailable && (
+              <span className="activity-rail-update-dot" data-testid="settings-update-badge">
+                <VisuallyHidden>{t('settings.update.badge')}</VisuallyHidden>
+              </span>
             )}
           </div>
         );

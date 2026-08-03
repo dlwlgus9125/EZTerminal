@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import {
   DockviewDefaultTab,
   type IDockviewPanelHeaderProps,
 } from 'dockview-react';
+import { X } from 'lucide-react';
 
 import type { AgentStatus } from '../shared/agent';
+import type { AgentHistoryProvider } from '../shared/agent-history';
 import { useAppTranslation } from './i18n';
 import {
   isTerminalContextMenuKey,
@@ -56,6 +57,75 @@ interface MenuInvocation {
   readonly invoker: HTMLElement | null;
 }
 
+const AGENT_HISTORY_PROVIDER_LABEL: Record<AgentHistoryProvider, string> = {
+  codex: 'Codex',
+  claude: 'Claude',
+};
+
+export function agentHistoryTabTitle(
+  projectName: string,
+  provider: AgentHistoryProvider,
+): string {
+  const normalizedProjectName = projectName.trim() || 'Project';
+  return `${normalizedProjectName} · ${AGENT_HISTORY_PROVIDER_LABEL[provider]}`;
+}
+
+function AgentHistoryTab({
+  props,
+  requestClose,
+}: {
+  readonly props: IDockviewPanelHeaderProps;
+  readonly requestClose: (close: () => void) => void;
+}): JSX.Element {
+  const [title, setTitle] = useState(props.api.title ?? 'Agent session');
+  const provider = (props.params as { provider?: AgentHistoryProvider } | undefined)?.provider;
+  const providerLabel = provider ? AGENT_HISTORY_PROVIDER_LABEL[provider] : null;
+  const providerSuffix = providerLabel ? ` · ${providerLabel}` : '';
+  const identityTitle = providerSuffix && title.endsWith(providerSuffix)
+    ? title.slice(0, -providerSuffix.length)
+    : title;
+  useEffect(() => {
+    setTitle(props.api.title ?? 'Agent session');
+    const disposable = props.api.onDidTitleChange((event) => setTitle(event.title));
+    return () => disposable.dispose();
+  }, [props.api]);
+  return (
+    <div
+      className="dv-default-tab agent-history-tab"
+      data-provider={provider}
+      data-testid="dockview-dv-default-tab"
+      onPointerUp={(event) => {
+        if (event.button === 1) {
+          event.preventDefault();
+          requestClose(() => props.api.close());
+        }
+      }}
+    >
+      <span className="agent-history-tab__viewport" title={title}>
+        <span className="agent-history-tab__label">{identityTitle}</span>
+        {providerLabel && (
+          <>
+            <span className="ez-ui-visually-hidden"> · </span>
+            <span className="agent-provider-badge">{providerLabel}</span>
+          </>
+        )}
+      </span>
+      <button
+        type="button"
+        className="dv-default-tab-action agent-history-tab__close"
+        aria-label="Close"
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={(event) => {
+          event.preventDefault();
+          requestClose(() => props.api.close());
+        }}
+      >
+        <X aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
 /** Dockview tab with progressive context actions and an IME-safe inline title
  * editor. Risky close remains delegated to App's existing atomic guard. */
 export function WorkspaceTab({
@@ -104,7 +174,7 @@ export function WorkspaceTab({
 
   const openMenu = (x: number, y: number): void => {
     props.api.setActive();
-    const active = document.activeElement;
+    const active = rootRef.current?.ownerDocument.activeElement;
     setMenu({
       x,
       y,
@@ -116,7 +186,7 @@ export function WorkspaceTab({
     const invocation = menu;
     setMenu(null);
     if (!invocation || detail.reason !== 'escape') return;
-    requestAnimationFrame(() => {
+    (rootRef.current?.ownerDocument.defaultView ?? window).requestAnimationFrame(() => {
       if (invocation.invoker?.isConnected) invocation.invoker.focus();
       else rootRef.current?.closest<HTMLElement>('[role="tab"]')?.focus();
     });
@@ -144,7 +214,9 @@ export function WorkspaceTab({
   return (
     <div
       ref={rootRef}
-      className="agent-aware-tab"
+      className={props.api.component === 'agent-session'
+        ? 'agent-aware-tab agent-aware-tab--history'
+        : 'agent-aware-tab'}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -204,13 +276,17 @@ export function WorkspaceTab({
           }}
         />
       ) : (
-        <DockviewDefaultTab
-          {...props}
-          closeActionOverride={() => requestClose(() => props.api.close())}
-        />
+        props.api.component === 'agent-session' ? (
+          <AgentHistoryTab props={props} requestClose={requestClose} />
+        ) : (
+          <DockviewDefaultTab
+            {...props}
+            closeActionOverride={() => requestClose(() => props.api.close())}
+          />
+        )
       )}
 
-      {menu && createPortal(
+      {menu && (
         <TerminalContextMenu
           x={menu.x}
           y={menu.y}
@@ -220,8 +296,8 @@ export function WorkspaceTab({
           shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
           testId="workspace-tab-context-menu"
           itemTestIdPrefix="tab-ctx"
-        />,
-        document.body,
+          ownerDocument={rootRef.current?.ownerDocument}
+        />
       )}
     </div>
   );

@@ -4,6 +4,7 @@ import {
   DockviewReact,
   type DockviewApi,
   type DockviewReadyEvent,
+  type IDockviewPanel,
   type IDockviewPanelProps,
   type IDockviewPanelHeaderProps,
 } from 'dockview-react';
@@ -25,6 +26,12 @@ import {
 } from '../shared/agent';
 import type { FilePreviewResult } from '../shared/file-preview';
 import type { SessionInfo } from '../shared/ipc';
+import type { AuxiliaryCloseRequest } from '../shared/desktop-window';
+import type {
+  AgentHistorySessionSummary,
+  AgentLaunchBootstrap,
+  AgentProjectSummary,
+} from '../shared/agent-history';
 import type { ThemeMod } from '../shared/theme-schema';
 import {
   DEFAULT_TERMINAL_PASTE_PREFERENCES,
@@ -41,7 +48,14 @@ import {
   type CloseRisk,
 } from '../shared/close-risk';
 import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from '../shared/workspace-search';
+import { isAppUpdateAvailable } from '../shared/app-update';
 import { AgentHub, countAgentAttention } from './AgentHub';
+import {
+  AuxiliaryCloseDialog,
+  type AuxiliaryCloseChoice,
+} from './AuxiliaryCloseDialog';
+import { peekAgentTerminalBootstrap } from './agent-terminal-bootstrap';
+import { AgentSessionPanel } from './AgentSessionPanel';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import {
   DEFAULT_INTERFERENCE_PARAMS,
@@ -77,7 +91,7 @@ import { SettingsPanel, type SettingsCategory } from './SettingsPanel';
 import { StatusPanel } from './StatusPanel';
 import { TerminalPane, type PaneApproval } from './TerminalPane';
 import { TerminalPasteWarningDialog } from './TerminalPasteWarningDialog';
-import { WorkspaceTab } from './WorkspaceTab';
+import { agentHistoryTabTitle, WorkspaceTab } from './WorkspaceTab';
 import {
   preflightLayoutEnvelope,
   removePanelFromLayoutEnvelope,
@@ -89,6 +103,13 @@ import { applyScrollback, clampScrollback, SCROLLBACK_DEFAULT } from './scrollba
 import { applyUiScale, clampUiScale, UI_SCALE_DEFAULT } from './ui-scale';
 import { useUiPreferences } from './ui-preferences';
 import { rendererCapabilities } from './capability-access';
+import {
+  auxiliaryPopoutUrl,
+  isDetachablePanel,
+  installDockviewPopoutBehavior,
+} from './dockview-popouts';
+import { addAppWindowEventListener } from './desktop-window-registry';
+import { useAppUpdate } from './use-app-update';
 import {
   buildCommandCenterActionRows,
   type QuickOpenBuiltinAction,
@@ -227,6 +248,26 @@ interface CloseDialogState {
   readonly onAlternate?: () => void;
 }
 
+interface AuxiliaryCloseCandidate {
+  readonly panelId: string;
+  readonly title: string;
+  readonly instanceToken: object;
+  /** Null for a read-only Agent Session that has not mounted a terminal. */
+  readonly snapshot: PaneSnapshot | null;
+  readonly risk: CloseRisk | null;
+}
+
+type AuxiliaryPaneCloseCandidate = AuxiliaryCloseCandidate & {
+  readonly snapshot: PaneSnapshot;
+};
+
+interface AuxiliaryCloseDialogState {
+  readonly request: AuxiliaryCloseRequest;
+  readonly targetWindow: Window;
+  readonly candidates: readonly AuxiliaryCloseCandidate[];
+  readonly busy: boolean;
+}
+
 interface PendingPasteConfirmation {
   readonly risk: TerminalPasteRisk;
   readonly resolve: (confirmed: boolean) => void;
@@ -276,6 +317,7 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
       onDecideApproval={paneApprovals?.onDecide}
       paneInstanceToken={props.api}
       initialCwd={props.params?.cwd as string | undefined}
+      agentBootstrap={peekAgentTerminalBootstrap(props.api.id)}
       adoptSessionId={props.params?.adoptSessionId as string | undefined}
       mountSessionPane={binding?.mountPane}
       terminalRuntimeOptions={terminalRuntimeOptions}
@@ -287,9 +329,46 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
   );
 }
 
+function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
+  const historyId = typeof props.params?.historyId === 'string'
+    ? props.params.historyId
+    : '';
+  const binding = useContext(SessionBindingContext);
+  const terminalRuntimeOptions = useContext(TerminalRuntimeContext);
+  const presetMutation = useContext(PresetMutationContext);
+  const quickCommandShelf = useContext(QuickCommandShelfContext);
+  const paneApprovals = useContext(PaneApprovalContext);
+  return (
+    <AgentSessionPanel
+      historyId={historyId}
+      renderTerminal={(resumeBootstrap, onFailure) => (
+        <TerminalPane
+          panelId={props.api.id}
+          pendingApproval={paneApprovals?.byPanel.get(props.api.id)}
+          onDecideApproval={paneApprovals?.onDecide}
+          paneInstanceToken={props.api}
+          resumeBootstrap={resumeBootstrap}
+          onAgentBootstrapFailure={onFailure}
+          // Providers without a "run in this directory" flag resolve their
+          // session store from the process cwd, so the resumed shell has to
+          // start in the project root.
+          initialCwd={resumeBootstrap.cwd}
+          mountSessionPane={binding?.mountPane}
+          terminalRuntimeOptions={terminalRuntimeOptions}
+          commandSubmissionLocked={presetMutation.locked}
+          isCommandSubmissionLocked={presetMutation.isLocked}
+          quickCommands={quickCommandShelf?.commands}
+          onManageQuickCommands={quickCommandShelf?.onManage}
+        />
+      )}
+    />
+  );
+}
+
 const components = {
   terminal: TerminalPanel,
   'openclaw-chat': OpenClawChatPanel,
+  'agent-session': AgentSessionDockPanel,
 };
 
 type OpenStateUpdate = boolean | ((open: boolean) => boolean);
@@ -356,6 +435,8 @@ export function App(): JSX.Element {
   const { i18n, t } = useAppTranslation();
   const { pushToast } = useToast();
   const remoteDesktopStatus = useRemoteDesktopHostStatus();
+  const appUpdateController = useAppUpdate();
+  const appUpdateAvailable = isAppUpdateAvailable(appUpdateController.snapshot);
   const paneActionMessage = useCallback(
     (result: PaneActionResult): string | null => {
       if (result.ok) return null;
@@ -386,7 +467,10 @@ export function App(): JSX.Element {
   const { preferences: uiPreferences, updatePreferences } = useUiPreferences();
   const sidebarReflow = useSidebarReflow();
   const apiRef = useRef<DockviewApi | null>(null);
+  const popoutBehaviorRef = useRef<{ dispose(): void } | null>(null);
   const [closeDialog, setCloseDialog] = useState<CloseDialogState | null>(null);
+  const [auxiliaryCloseDialog, setAuxiliaryCloseDialog] =
+    useState<AuxiliaryCloseDialogState | null>(null);
   const pendingPanelClosesRef = useRef(new Set<string>());
   const presetApplyPendingRef = useRef(false);
   const [presetApplyPending, setPresetApplyPending] = useState(false);
@@ -429,6 +513,8 @@ export function App(): JSX.Element {
   const workbenchCoordinator = workbenchCoordinatorRef.current;
   useEffect(
     () => () => {
+      popoutBehaviorRef.current?.dispose();
+      popoutBehaviorRef.current = null;
       workbenchCoordinator.detach();
       apiRef.current = null;
     },
@@ -597,8 +683,12 @@ export function App(): JSX.Element {
   const pickCapabilitySafeStartupLayout = useCallback(async (): Promise<LayoutEnvelope | null> => {
     await waitForOpenClawVisibility();
     const envelope = await pickStartupLayout();
-    if (!envelope || openclawVisibleRef.current) return envelope;
-    return removePanelFromLayoutEnvelope(envelope, 'openclaw-chat');
+    const capabilitySafe = !envelope || openclawVisibleRef.current
+      ? envelope
+      : removePanelFromLayoutEnvelope(envelope, 'openclaw-chat');
+    if (!capabilitySafe || preflightLayoutEnvelope(capabilitySafe)) return capabilitySafe;
+    await window.ezterminal.quarantineLayout().catch(() => undefined);
+    return null;
   }, [waitForOpenClawVisibility]);
 
   // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
@@ -852,6 +942,14 @@ export function App(): JSX.Element {
     [workbenchCoordinator],
   );
 
+  useEffect(() => {
+    return window.ezterminalDesktop?.onLayoutFlushRequested((requestId) => {
+      void workbenchCoordinator.flushLayoutSave()
+        .catch(() => undefined)
+        .finally(() => window.ezterminalDesktop?.completeLayoutFlush(requestId));
+    });
+  }, [workbenchCoordinator]);
+
   // ── Interpreter-crash banner (B-M5) ───────────────────────────────────────
   // Shared fate: the one utilityProcess backs every session, so its death kills
   // them all. Panes latch dead individually (TerminalPane); this app-level
@@ -1077,13 +1175,320 @@ export function App(): JSX.Element {
     [agentSnapshot],
   );
 
+  const auxiliaryRisk = useCallback(
+    (snapshot: PaneSnapshot): CloseRisk | null => classifyCloseRisk({
+      destroysSession: snapshot.destroysSessionOnClose,
+      isBusy: snapshot.isBusy,
+      executionKind: snapshot.executionKind,
+      hasSshPrompt: snapshot.hasSshPrompt,
+      hasActiveAgent: snapshot.sessionId !== null && agentSessionIds.has(snapshot.sessionId),
+      isDead: snapshot.isDead,
+    }),
+    [agentSessionIds],
+  );
+
+  const rejectAuxiliaryClose = useCallback(
+    (request: AuxiliaryCloseRequest, stateChanged: boolean): void => {
+      setAuxiliaryCloseDialog(null);
+      void window.ezterminalDesktop?.resolveAuxiliaryClose(request.requestId, 'cancel');
+      setCloseDialog((current) => current ?? {
+        title: stateChanged
+          ? t('safetyDialog.terminalStateChangedTitle')
+          : t('safetyDialog.terminalStateUnavailableTitle'),
+        description: stateChanged
+          ? t('safetyDialog.terminalStateChangedDescription')
+          : t('safetyDialog.terminalStateUnavailableDescription'),
+        confirmLabel: t('common.ok'),
+        onConfirm: () => setCloseDialog(null),
+      });
+    },
+    [t],
+  );
+
+  const completeAuxiliaryClose = useCallback(
+    async (
+      request: AuxiliaryCloseRequest,
+      targetWindow: Window,
+      candidates: readonly AuxiliaryCloseCandidate[],
+      choices: ReadonlyMap<string, AuxiliaryCloseChoice>,
+    ): Promise<void> => {
+      const api = apiRef.current;
+      const desktop = window.ezterminalDesktop;
+      if (!api || !desktop) {
+        rejectAuxiliaryClose(request, false);
+        return;
+      }
+
+      const targetStillOpen = api.getPopouts().some(
+        (popout) => popout.window === targetWindow && popout.window.name === request.windowName,
+      );
+      const currentPanels = api.panels.filter((panel) => {
+        try {
+          return panel.api.getWindow() === targetWindow;
+        } catch {
+          return false;
+        }
+      });
+      if (!targetStillOpen || currentPanels.length !== candidates.length) {
+        rejectAuxiliaryClose(request, true);
+        return;
+      }
+
+      const latest = new Map<string, PaneSnapshot>();
+      for (const candidate of candidates) {
+        const panel = api.getPanel(candidate.panelId);
+        if (
+          !panel
+          || panel.api !== candidate.instanceToken
+          || !currentPanels.includes(panel)
+          || !isDetachablePanel(panel)
+        ) {
+          rejectAuxiliaryClose(request, true);
+          return;
+        }
+        const paneHandle = getPaneHandle(candidate.panelId);
+        if (candidate.snapshot === null) {
+          // A read-only Agent Session may become a live terminal while close
+          // confirmation is in flight. Treat that as a state change.
+          if (
+            panel.api.component !== 'agent-session'
+            || candidate.risk !== null
+            || paneHandle
+          ) {
+            rejectAuxiliaryClose(request, true);
+            return;
+          }
+          continue;
+        }
+        const snapshot = paneHandle?.getSnapshot();
+        if (
+          !snapshot
+          || snapshot.panelId !== candidate.snapshot.panelId
+          || snapshot.sessionId !== candidate.snapshot.sessionId
+          || snapshot.sessionBindingPending !== candidate.snapshot.sessionBindingPending
+          || snapshot.destroysSessionOnClose !== candidate.snapshot.destroysSessionOnClose
+          || snapshot.isBusy !== candidate.snapshot.isBusy
+          || snapshot.isDead !== candidate.snapshot.isDead
+          || snapshot.executionKind !== candidate.snapshot.executionKind
+          || snapshot.hasSshPrompt !== candidate.snapshot.hasSshPrompt
+          || !sameActiveRunSet(snapshot.activeRunIds, candidate.snapshot.activeRunIds)
+          || auxiliaryRisk(snapshot) !== candidate.risk
+          || (candidate.risk !== null && !choices.has(candidate.panelId))
+        ) {
+          rejectAuxiliaryClose(request, true);
+          return;
+        }
+        latest.set(candidate.panelId, snapshot);
+      }
+
+      const paneCandidates = candidates.filter(
+        (candidate): candidate is AuxiliaryPaneCloseCandidate => candidate.snapshot !== null,
+      );
+      const terminate = paneCandidates.filter((candidate) => (
+        candidate.snapshot.destroysSessionOnClose
+        && choices.get(candidate.panelId) !== 'keep'
+      ));
+      const keep = paneCandidates.filter((candidate) => (
+        candidate.snapshot.destroysSessionOnClose
+        && choices.get(candidate.panelId) === 'keep'
+      ));
+      const liveTerminate = terminate.filter((candidate) => !candidate.snapshot.isDead);
+      if (liveTerminate.some((candidate) => candidate.snapshot.sessionId === null)) {
+        rejectAuxiliaryClose(request, false);
+        return;
+      }
+
+      try {
+        const destroyResult = liveTerminate.length === 0
+          ? { ok: true as const }
+          : await window.ezterminal.destroySessionsGuarded(
+              liveTerminate.map((candidate) => ({
+                sessionId: candidate.snapshot.sessionId!,
+                expectedActiveRunIds: candidate.snapshot.activeRunIds,
+              })),
+            );
+        if (!destroyResult.ok) {
+          rejectAuxiliaryClose(request, destroyResult.reason === 'state-changed');
+          return;
+        }
+
+        // Dockview panels may not migrate into or out of the target while the
+        // guarded destroy round-trip is in flight.
+        const finalPanels = api.panels.filter((panel) => {
+          try {
+            return panel.api.getWindow() === targetWindow;
+          } catch {
+            return false;
+          }
+        });
+        if (
+          finalPanels.length !== candidates.length
+          || candidates.some((candidate) => (
+            api.getPanel(candidate.panelId)?.api !== candidate.instanceToken
+            || !finalPanels.includes(api.getPanel(candidate.panelId)!)
+            || (candidate.snapshot === null && Boolean(getPaneHandle(candidate.panelId)))
+          ))
+        ) {
+          rejectAuxiliaryClose(request, true);
+          return;
+        }
+
+        for (const candidate of terminate) {
+          const sessionId = candidate.snapshot.sessionId;
+          if (sessionId) getPaneHandle(candidate.panelId)?.markSessionDestroyHandled(sessionId);
+        }
+        let keptAny = false;
+        for (const candidate of keep) {
+          const expectedSessionId = latest.get(candidate.panelId)?.sessionId;
+          const keptSessionId = getPaneHandle(candidate.panelId)?.releaseSessionOwnership() ?? null;
+          if (!expectedSessionId || keptSessionId !== expectedSessionId) {
+            rejectAuxiliaryClose(request, true);
+            return;
+          }
+          keptAny = true;
+        }
+
+        // Removing the final panel asks Dockview to close the native window.
+        // Main keeps that re-entrant close held until this original request is
+        // explicitly allowed below.
+        for (const candidate of candidates) {
+          api.getPanel(candidate.panelId)?.api.close();
+        }
+        setAuxiliaryCloseDialog(null);
+        await desktop.resolveAuxiliaryClose(request.requestId, 'allow');
+        if (keptAny) {
+          pushToast({ title: t('safetyDialog.keptRunning'), variant: 'info' });
+        }
+      } catch {
+        rejectAuxiliaryClose(request, false);
+      }
+    },
+    [auxiliaryRisk, pushToast, rejectAuxiliaryClose, t],
+  );
+
+  const handleAuxiliaryCloseRequest = useCallback(
+    (request: AuxiliaryCloseRequest): void => {
+      const api = apiRef.current;
+      const desktop = window.ezterminalDesktop;
+      if (!api || !desktop) {
+        rejectAuxiliaryClose(request, false);
+        return;
+      }
+      const popout = api.getPopouts().find(
+        (candidate) => candidate.window.name === request.windowName,
+      );
+      if (!popout) {
+        // Dockview already removed an empty/redocked popout and its
+        // programmatic window.close() is the only remaining operation.
+        void desktop.resolveAuxiliaryClose(request.requestId, 'allow');
+        return;
+      }
+      const panels: IDockviewPanel[] = api.panels.filter((panel) => {
+        try {
+          return panel.api.getWindow() === popout.window;
+        } catch {
+          return false;
+        }
+      });
+      if (panels.length === 0) {
+        void desktop.resolveAuxiliaryClose(request.requestId, 'allow');
+        return;
+      }
+
+      const candidates: AuxiliaryCloseCandidate[] = [];
+      for (const panel of panels) {
+        if (!isDetachablePanel(panel)) {
+          rejectAuxiliaryClose(request, false);
+          return;
+        }
+        const paneHandle = getPaneHandle(panel.id);
+        const snapshot = paneHandle?.getSnapshot();
+        if (!snapshot && panel.api.component === 'agent-session' && !paneHandle) {
+          candidates.push({
+            panelId: panel.id,
+            title: panel.api.title ?? t('workspaceTab.terminal'),
+            instanceToken: panel.api,
+            snapshot: null,
+            risk: null,
+          });
+          continue;
+        }
+        if (
+          !snapshot
+          || snapshot.sessionBindingPending
+          || (snapshot.destroysSessionOnClose && snapshot.sessionId === null)
+        ) {
+          rejectAuxiliaryClose(request, false);
+          return;
+        }
+        candidates.push({
+          panelId: panel.id,
+          title: panel.api.title ?? t('workspaceTab.terminal'),
+          instanceToken: panel.api,
+          snapshot,
+          risk: auxiliaryRisk(snapshot),
+        });
+      }
+
+      if (candidates.length === 1 && candidates[0]!.risk === null) {
+        void completeAuxiliaryClose(request, popout.window, candidates, new Map());
+        return;
+      }
+      setAuxiliaryCloseDialog({
+        request,
+        targetWindow: popout.window,
+        candidates,
+        busy: false,
+      });
+    },
+    [auxiliaryRisk, completeAuxiliaryClose, rejectAuxiliaryClose, t],
+  );
+
+  useEffect(() => (
+    window.ezterminalDesktop?.onAuxiliaryCloseRequested(handleAuxiliaryCloseRequest)
+  ), [handleAuxiliaryCloseRequest]);
+
   const focusActivePane = useCallback((): void => {
     workbenchCoordinator.focusActivePanel();
   }, [workbenchCoordinator]);
 
+  const openAgentHistorySession = useCallback((
+    session: AgentHistorySessionSummary,
+    project: AgentProjectSummary,
+  ): void => {
+    const api = apiRef.current;
+    if (!api) return;
+    const panelId = `agent-session-${session.historyId}`;
+    const title = agentHistoryTabTitle(project.name, session.provider);
+    const existing = api.getPanel(panelId);
+    if (existing) {
+      existing.api.setTitle(title);
+      existing.api.setActive();
+      return;
+    }
+    api.addPanel({
+      id: panelId,
+      component: 'agent-session',
+      title,
+      renderer: 'always',
+      params: { historyId: session.historyId, provider: session.provider },
+    });
+  }, []);
+
+  const launchAgent = useCallback((bootstrap: AgentLaunchBootstrap): void => {
+    workbenchCoordinator.openTerminal({
+      cwd: bootstrap.cwd,
+      title: bootstrap.name,
+      agentBootstrap: bootstrap,
+    });
+  }, [workbenchCoordinator]);
+
   const requestPanelClose = useCallback(
     (panelId: string, component: string, close: () => void): void => {
-      if (component !== 'terminal') {
+      // A read-only Agent Session has no pane handle and closes immediately.
+      // After its first send it mounts TerminalPane in the same Dockview panel,
+      // so the handle (rather than the component name) becomes the close guard.
+      if (component !== 'terminal' && !getPaneHandle(panelId)) {
         close();
         return;
       }
@@ -2407,12 +2812,20 @@ export function App(): JSX.Element {
     presetsOpen ||
     quickOpenMode !== null ||
     quickPreview !== null ||
-    closeDialog !== null;
+    closeDialog !== null ||
+    auxiliaryCloseDialog !== null;
 
   const onReady = useCallback(
     (event: DockviewReadyEvent) => {
       apiRef.current = event.api;
       const api = event.api;
+      popoutBehaviorRef.current?.dispose();
+      popoutBehaviorRef.current = installDockviewPopoutBehavior(api, {
+        onOpenFailed: () => pushToast({
+          title: t('workspace.popoutFailed'),
+          variant: 'danger',
+        }),
+      });
       const attachment = workbenchCoordinator.attach(createDockviewWorkbenchAdapter(api));
       // Test seam: e2e drives programmatic panel moves through this handle. dockview's
       // mouse drag is native HTML5 DnD (not Playwright-drivable); panel.api.moveTo(...)
@@ -2439,9 +2852,11 @@ export function App(): JSX.Element {
     },
     [
       pickCapabilitySafeStartupLayout,
+      pushToast,
       refreshPresets,
       runLayoutTransaction,
       scheduleSave,
+      t,
       workbenchCoordinator,
     ],
   );
@@ -2493,8 +2908,7 @@ export function App(): JSX.Element {
         splitActive('below');
       }
     };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    return addAppWindowEventListener('keydown', onKey as EventListener, true);
   }, [openQuickOpen, splitActive]);
 
   const quickCommandShelfValue = useMemo<QuickCommandShelfContextValue>(
@@ -2546,7 +2960,8 @@ export function App(): JSX.Element {
           window.ezterminal.decideAgentApproval(activityId, approvalId, decision)}
         onLoadDiff={(directory) => window.ezterminal.getGitDiff(directory)}
         onReadGitStatus={(directory) => window.ezterminal.getGitStatus(directory)}
-        onNewAgentRun={() => openQuickOpen('all')}
+        onOpenHistorySession={openAgentHistorySession}
+        onLaunchAgent={launchAgent}
         onOpenAgentSettings={() => {
           setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
           setSidebarDestination('settings');
@@ -2590,6 +3005,7 @@ export function App(): JSX.Element {
         onChangeRollbar={onChangeRollbar}
         interference={interference}
         onChangeEffectParams={onChangeEffectParams}
+        appUpdateController={appUpdateController}
       />
     ) : null;
 
@@ -2666,6 +3082,7 @@ export function App(): JSX.Element {
         <ActivityRail
           active={sidebarDestination}
           attentionCount={attentionCount}
+          updateAvailable={appUpdateAvailable}
           openclawVisible={openclawVisible}
           onSelect={(destination) => {
             if (destination === 'settings' && sidebarDestination !== 'settings') {
@@ -2718,6 +3135,7 @@ export function App(): JSX.Element {
                             rightHeaderActionsComponent={PaneHeaderMeta}
                             onReady={onReady}
                             disableFloatingGroups
+                            popoutUrl={auxiliaryPopoutUrl()}
                           />
                         </PresetMutationContext.Provider>
                       </TerminalRuntimeContext.Provider>
@@ -2738,6 +3156,39 @@ export function App(): JSX.Element {
               onAlternate={closeDialog.onAlternate}
               onCancel={() => setCloseDialog(null)}
               onConfirm={closeDialog.onConfirm}
+            />
+          )}
+          {auxiliaryCloseDialog && (
+            <AuxiliaryCloseDialog
+              requestId={auxiliaryCloseDialog.request.requestId}
+              paneCount={auxiliaryCloseDialog.candidates.length}
+              riskyPanes={auxiliaryCloseDialog.candidates
+                .filter((candidate) => candidate.risk !== null)
+                .map((candidate) => ({
+                  panelId: candidate.panelId,
+                  title: candidate.title,
+                  risk: t(CLOSE_RISK_I18N_KEY[candidate.risk!]),
+                }))}
+              busy={auxiliaryCloseDialog.busy}
+              onCancel={() => {
+                if (auxiliaryCloseDialog.busy) return;
+                setAuxiliaryCloseDialog(null);
+                void window.ezterminalDesktop?.resolveAuxiliaryClose(
+                  auxiliaryCloseDialog.request.requestId,
+                  'cancel',
+                );
+              }}
+              onConfirm={(choices) => {
+                if (auxiliaryCloseDialog.busy) return;
+                const pending = auxiliaryCloseDialog;
+                setAuxiliaryCloseDialog({ ...pending, busy: true });
+                void completeAuxiliaryClose(
+                  pending.request,
+                  pending.targetWindow,
+                  pending.candidates,
+                  choices,
+                );
+              }}
             />
           )}
           {pendingPasteConfirmation && (

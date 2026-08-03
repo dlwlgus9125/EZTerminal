@@ -17,6 +17,8 @@
   --ui-success: #35e58f;
   --ui-warning: #ffd166;
   --ui-danger: #ff6b7a;
+  --ui-agent-codex: #48d7c8;
+  --ui-agent-claude: #e58a6b;
 
   /* Commercial-pass decorative roles. These are additive: each one falls back to
      an already contrast-corrected role, so a sparse custom theme that only
@@ -165,6 +167,8 @@
   --ui-success: #2fe0a0;
   --ui-warning: #f4c45e;
   --ui-danger: #ff6b7a;
+  --ui-agent-codex: #48d7c8;
+  --ui-agent-claude: #e58a6b;
   --ui-glow-color: var(--ui-accent);
 }
 
@@ -191,6 +195,8 @@
   --ui-success: #087847;
   --ui-warning: #8a5a00;
   --ui-danger: #b4233c;
+  --ui-agent-codex: #006b64;
+  --ui-agent-claude: #9a3f28;
   /* A phosphor bloom on a white canvas only muddies edges. */
   --ui-glow-color: transparent;
 }
@@ -221,6 +227,8 @@
   --ui-success: #00ff66;
   --ui-warning: #ffcc00;
   --ui-danger: #ff5c5c;
+  --ui-agent-codex: #00ffff;
+  --ui-agent-claude: #ff9b7a;
   /* High Contrast removes decorative blur and low-contrast overlays. */
   --ui-glow-color: transparent;
 }
@@ -238,6 +246,8 @@
   /* borderStrong carries the 3:1 non-text contrast gate in theme-contrast.ts,
      so the handoff's dimmer strong value lives on --ui-border-mid instead. */
   --ui-border-strong: #4bbd7a;
+  --ui-agent-codex: #48d7c8;
+  --ui-agent-claude: #e58a6b;
   --ui-text-dim: #3f8f63;
   --ui-border-mid: #143523;
   --ui-border-focus-soft: #2c6a47;

@@ -20,6 +20,9 @@ import type { ThemeDefinition } from './themes';
 import { Button, Field, IconButton, Input, Select, Switch, Tooltip } from './ui';
 import { UI_SCALE_DEFAULT } from './ui-scale';
 import { useUiPreferences } from './ui-preferences';
+import { AppUpdateCard } from './AppUpdateCard';
+import type { AppUpdateController } from './use-app-update';
+import { createInitialAppUpdateSnapshot, isAppUpdateAvailable } from '../shared/app-update';
 
 export type SettingsCategory = 'general' | 'appearance' | 'terminal' | 'agents' | 'integrations' | 'about';
 
@@ -105,6 +108,7 @@ interface SettingsPanelProps {
     effectId: keyof InterferenceParams,
     partial: Record<string, number | boolean>,
   ) => void;
+  readonly appUpdateController?: AppUpdateController;
   readonly capabilities?: CapabilityAccess;
 }
 
@@ -138,6 +142,7 @@ export function SettingsPanel({
   onChangeRollbar,
   interference,
   onChangeEffectParams,
+  appUpdateController: providedAppUpdateController,
   capabilities = rendererCapabilities,
 }: SettingsPanelProps): JSX.Element {
   const { t } = useAppTranslation();
@@ -232,6 +237,13 @@ export function SettingsPanel({
           : t('settings.off');
   const systemDefaultFontId = FONT_CATALOG.find((f) => f.systemDefault)?.id ?? FONT_CATALOG[0].id;
   const runtimeVersions = capabilities.runtimeVersions();
+  const appUpdateController: AppUpdateController = providedAppUpdateController ?? {
+    snapshot: createInitialAppUpdateSnapshot(runtimeVersions?.app ?? '0.0.0'),
+    check: () => Promise.resolve(),
+    download: () => Promise.resolve(),
+    cancelDownload: () => Promise.resolve(),
+    openDownloaded: () => Promise.resolve(null),
+  };
 
   // Scrollback input (WT-parity M5 fix): a local text draft so typing a
   // multi-digit value doesn't clamp+persist on every keystroke — the
@@ -264,7 +276,14 @@ export function SettingsPanel({
             onClick={() => setCategory(item.id)}
             data-testid={`settings-category-${item.id}`}
           >
-            {t(item.labelKey)}
+            <span>{t(item.labelKey)}</span>
+            {item.id === 'about' && isAppUpdateAvailable(appUpdateController.snapshot) && (
+              <span
+                className="settings-update-dot"
+                aria-label={t('settings.update.badge')}
+                data-testid="settings-about-update-badge"
+              />
+            )}
           </button>
         ))}
       </nav>
@@ -658,6 +677,7 @@ export function SettingsPanel({
       </section>
       <section className="status-section" hidden={category !== 'about'}>
         <h2 className="status-section-title">{t('settings.about')}</h2>
+        <AppUpdateCard controller={appUpdateController} />
         <div className="settings-diagnostic-grid">
           <span>{t('settings.appVersion')}</span>
           <code>{runtimeVersions?.app ?? t('common.unavailable')}</code>

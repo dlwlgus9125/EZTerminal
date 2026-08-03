@@ -14,6 +14,12 @@ import {
   type SystemStatsSnapshot,
 } from '../shared/ipc';
 import type { ThemeMod } from '../shared/theme-schema';
+import type {
+  AuxiliaryCloseRequest,
+  AuxiliaryCloseResolution,
+  DesktopWindowAction,
+  DesktopWindowState,
+} from '../shared/desktop-window';
 import { REMOTE_PROTOCOL_VERSION } from '../shared/remote-protocol';
 import packageJson from '../../package.json';
 
@@ -181,6 +187,38 @@ const api: EzTerminalApi = {
     decision: import('../shared/agent').AgentDecision,
   ): Promise<import('../shared/agent').AgentDecisionResult> =>
     ipcRenderer.invoke('agents:decide', activityId, approvalId, decision),
+  listAgentProjects: (force?: boolean, cursor?: string, limit?: number, query?: string) =>
+    ipcRenderer.invoke('agent-history:list-projects', force, cursor, limit, query),
+  saveAgentProject: (input: import('../shared/agent-history').AgentProjectInput) =>
+    ipcRenderer.invoke('agent-projects:save', input),
+  removeAgentProject: (projectId: string): Promise<boolean> =>
+    ipcRenderer.invoke('agent-projects:remove', projectId),
+  listAgentProjectLaunchers: () =>
+    ipcRenderer.invoke('agent-projects:list-launchers'),
+  prepareAgentLaunch: (
+    target: import('../shared/agent-history').AgentLaunchTarget,
+    launcherId: string,
+  ) => ipcRenderer.invoke('agent-launch:prepare', target, launcherId),
+  startAgentLaunch: (
+    request: import('../shared/agent-history').AgentLaunchStartRequest,
+  ) => ipcRenderer.invoke('agent-launch:start', request),
+  prepareAgentProjectLaunch: (projectId: string, launcherId: string) =>
+    ipcRenderer.invoke('agent-projects:prepare-launch', projectId, launcherId),
+  startAgentProjectLaunch: (
+    request: import('../shared/agent-history').AgentProjectLaunchStartRequest,
+  ) => ipcRenderer.invoke('agent-projects:start-launch', request),
+  listAgentHistorySessions: (
+    projectId: string,
+    cursor?: string,
+    limit?: number,
+    force?: boolean,
+  ) => ipcRenderer.invoke('agent-history:list-sessions', projectId, cursor, limit, force),
+  readAgentHistory: (historyId: string, cursor?: string, limit?: number) =>
+    ipcRenderer.invoke('agent-history:read', historyId, cursor, limit),
+  prepareAgentResume: (historyId: string) =>
+    ipcRenderer.invoke('agent-history:prepare-resume', historyId),
+  startAgentResume: (request: import('../shared/agent-history').AgentResumeStartRequest) =>
+    ipcRenderer.invoke('agent-history:start-resume', request),
 
   // Read-only Git working-tree queries (explorer tags, branch, approval diff).
   getGitStatus: (
@@ -276,6 +314,51 @@ contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
 // for why: mobile has no implementation of these, and folding them into the
 // shared EzTerminalApi would force mobile's transport to stub every one).
 const desktopApi: EzTerminalDesktopApi = {
+  getWindowState: (): Promise<DesktopWindowState> =>
+    ipcRenderer.invoke('desktop-window:get-state'),
+  performWindowAction: (action: DesktopWindowAction): Promise<void> =>
+    ipcRenderer.invoke('desktop-window:perform-action', action),
+  onWindowStateChanged: (listener: (state: DesktopWindowState) => void): (() => void) => {
+    const handler = (_event: unknown, state: DesktopWindowState): void => listener(state);
+    ipcRenderer.on('desktop-window:state-changed', handler);
+    return () => ipcRenderer.removeListener('desktop-window:state-changed', handler);
+  },
+  onAuxiliaryCloseRequested: (
+    listener: (request: AuxiliaryCloseRequest) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, request: AuxiliaryCloseRequest): void => listener(request);
+    ipcRenderer.on('desktop-window:aux-close-requested', handler);
+    return () => ipcRenderer.removeListener('desktop-window:aux-close-requested', handler);
+  },
+  resolveAuxiliaryClose: (
+    requestId: string,
+    resolution: AuxiliaryCloseResolution,
+  ): Promise<void> => ipcRenderer.invoke(
+    'desktop-window:resolve-aux-close',
+    requestId,
+    resolution,
+  ),
+  onLayoutFlushRequested: (listener: (requestId: string) => void): (() => void) => {
+    const handler = (_event: unknown, requestId: string): void => listener(requestId);
+    ipcRenderer.on('desktop-window:flush-layout', handler);
+    return () => ipcRenderer.removeListener('desktop-window:flush-layout', handler);
+  },
+  completeLayoutFlush: (requestId: string): void => {
+    ipcRenderer.send('desktop-window:layout-flushed', requestId);
+  },
+  getAppUpdateSnapshot: () => ipcRenderer.invoke('app-update:get-snapshot'),
+  checkForAppUpdate: () => ipcRenderer.invoke('app-update:check'),
+  downloadAppUpdate: () => ipcRenderer.invoke('app-update:download'),
+  cancelAppUpdateDownload: () => ipcRenderer.invoke('app-update:cancel-download'),
+  openDownloadedAppUpdate: (options) => ipcRenderer.invoke('app-update:open', options),
+  onAppUpdateSnapshot: (listener): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      snapshot: import('../shared/app-update').AppUpdateSnapshot,
+    ): void => listener(snapshot);
+    ipcRenderer.on('app-update:snapshot', handler);
+    return () => ipcRenderer.removeListener('app-update:snapshot', handler);
+  },
   issuePairingCode: () => ipcRenderer.invoke('pairing:issue'),
   getPairingCode: () => ipcRenderer.invoke('pairing:get'),
   revokePairingCode: () => ipcRenderer.invoke('pairing:revoke'),
@@ -428,6 +511,12 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.on('agents:reveal-session', handler);
     return () => ipcRenderer.removeListener('agents:reveal-session', handler);
   },
+  saveAgentProject: (input: import('../shared/agent-history').AgentProjectInput) =>
+    ipcRenderer.invoke('agent-projects:save', input),
+  removeAgentProject: (projectId: string): Promise<boolean> =>
+    ipcRenderer.invoke('agent-projects:remove', projectId),
+  selectAgentProjectFolders: (multiple = true) =>
+    ipcRenderer.invoke('agent-projects:select-folders', multiple),
 
   // OpenClaw management (openclaw-management M1): thin invoke/send wrappers —
   // main's OpenClawService is the sole authority, same shape as the file

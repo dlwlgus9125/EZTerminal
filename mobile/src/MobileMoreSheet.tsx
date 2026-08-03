@@ -18,6 +18,7 @@ export function MobileMoreSheet({
   currentTheme,
   openclawVisible,
   openclawState,
+  updateAvailable = false,
   returnFocusRef,
   onClose,
   onOpenSessions,
@@ -30,6 +31,7 @@ export function MobileMoreSheet({
   readonly currentTheme: ThemeName;
   readonly openclawVisible: boolean;
   readonly openclawState?: OpenClawStatus['state'];
+  readonly updateAvailable?: boolean;
   readonly returnFocusRef?: RefObject<HTMLElement>;
   readonly onClose: () => void;
   readonly onOpenSessions: () => void;
@@ -95,9 +97,18 @@ export function MobileMoreSheet({
         <span className="mobile-action-sheet-row-label">{t('mobile.moreActions.theme')}</span>
         <span className="mob-sheet__value">{currentTheme}</span>
       </button>
-      <button type="button" className="mobile-action-sheet-row" onClick={replaceWith(onOpenSettings)} data-testid="more-settings">
+      <button
+        type="button"
+        className="mobile-action-sheet-row"
+        onClick={replaceWith(onOpenSettings)}
+        aria-label={updateAvailable
+          ? `${t('common.settings')}. ${t('settings.update.badge')}`
+          : undefined}
+        data-testid="more-settings"
+      >
         <Settings aria-hidden="true" />
         <span className="mobile-action-sheet-row-label">{t('common.settings')}</span>
+        {updateAvailable && <span className="mobile-update-dot" aria-hidden="true" />}
         <ChevronRight aria-hidden="true" />
       </button>
     </MobileActionSheet>

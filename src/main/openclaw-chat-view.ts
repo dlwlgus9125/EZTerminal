@@ -223,6 +223,10 @@ export class OpenClawChatViewManager {
       // covers both without needing a manual flag flip at each call site.
       view.webContents.on('did-start-loading', () => {
         if (this.view !== view) return;
+        // The real Control UI starts a subresource-only cycle after its main
+        // document finishes. It has no matching did-finish-load, so latching
+        // that cycle would hide the already-loaded chat indefinitely.
+        if (!view.webContents.isLoadingMainFrame()) return;
         this.markLoading();
       });
     } catch {

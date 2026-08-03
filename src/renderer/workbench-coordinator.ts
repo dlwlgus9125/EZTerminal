@@ -1,4 +1,4 @@
-import type { DockviewApi, SerializedDockview } from 'dockview-react';
+import type { DockviewApi } from 'dockview-react';
 
 import { maxTabSuffix, type LayoutEnvelope } from '../shared/layout-schema';
 import {
@@ -8,6 +8,12 @@ import {
   startRecentPanelSwitch,
   type RecentPanelSwitchSession,
 } from './recent-panel-switching';
+import type { AgentLaunchBootstrap } from '../shared/agent-history';
+import {
+  clearAgentTerminalBootstrap,
+  registerAgentTerminalBootstrap,
+} from './agent-terminal-bootstrap';
+import { prepareLayoutForDockviewRestore } from './popout-layout';
 
 export type WorkbenchSplitDirection = 'right' | 'below';
 
@@ -21,6 +27,9 @@ export interface TerminalPaneOpenRequest {
   readonly cwd?: string;
   readonly adoptSessionId?: string;
   readonly allowDuringRecovery?: boolean;
+  readonly title?: string;
+  /** Runtime-only; deliberately excluded from Dockview params/serialization. */
+  readonly agentBootstrap?: AgentLaunchBootstrap;
 }
 
 export interface OpenedWorkbenchPane {
@@ -177,13 +186,20 @@ export class WorkbenchCoordinator {
     if (!adapter) return null;
     this.panelCounter += 1;
     const panelId = `tab-${this.panelCounter}`;
-    const panel = adapter.addTerminalPane({
-      id: panelId,
-      title: `Terminal ${this.panelCounter}`,
-      ...(request.position ? { position: request.position } : {}),
-      ...(request.cwd ? { cwd: request.cwd } : {}),
-      ...(request.adoptSessionId ? { adoptSessionId: request.adoptSessionId } : {}),
-    });
+    if (request.agentBootstrap) registerAgentTerminalBootstrap(panelId, request.agentBootstrap);
+    let panel;
+    try {
+      panel = adapter.addTerminalPane({
+        id: panelId,
+        title: request.title ?? `Terminal ${this.panelCounter}`,
+        ...(request.position ? { position: request.position } : {}),
+        ...(request.cwd ? { cwd: request.cwd } : {}),
+        ...(request.adoptSessionId ? { adoptSessionId: request.adoptSessionId } : {}),
+      });
+    } catch (error) {
+      clearAgentTerminalBootstrap(panelId);
+      throw error;
+    }
     return { panelId: panel.id, instanceToken: panel.instanceToken };
   }
 
@@ -463,7 +479,7 @@ export function createDockviewWorkbenchAdapter(api: DockviewApi): WorkbenchDockA
       };
     },
     serialize: () => api.toJSON(),
-    restore: (layout) => api.fromJSON(layout as SerializedDockview),
+    restore: (layout) => api.fromJSON(prepareLayoutForDockviewRestore(layout)),
     focus: () => api.focus(),
     onActivePanelChange: (listener) =>
       api.onDidActivePanelChange((event) => listener(event.panel?.id ?? null)),

@@ -6,11 +6,12 @@ const electronMocks = vi.hoisted(() => {
   const loadURL = vi.fn<(url: string) => Promise<void>>();
   const openExternal = vi.fn<(url: string) => Promise<void>>();
   const instances: MockWebContentsView[] = [];
-  const behavior = { failViewSetup: false };
+  const behavior = { failViewSetup: false, loadingMainFrame: true };
 
   class MockWebContents {
     readonly close = vi.fn();
     readonly isDestroyed = vi.fn(() => false);
+    readonly isLoadingMainFrame = vi.fn(() => behavior.loadingMainFrame);
     readonly reload = vi.fn();
     readonly setWindowOpenHandler = vi.fn(() => {
       if (behavior.failViewSetup) throw new Error('view setup failed');
@@ -77,6 +78,7 @@ async function flushMicrotasks(): Promise<void> {
 beforeEach(() => {
   electronMocks.instances.length = 0;
   electronMocks.behavior.failViewSetup = false;
+  electronMocks.behavior.loadingMainFrame = true;
   electronMocks.loadURL.mockReset();
   electronMocks.loadURL.mockResolvedValue(undefined);
   electronMocks.openExternal.mockReset();
@@ -111,6 +113,28 @@ describe('OpenClawChatViewManager fail-closed visibility', () => {
     view!.webContents.emit('did-finish-load');
     resolveLoad();
     await opening;
+  });
+
+  it('keeps the loaded native view visible during a later subresource loading cycle', async () => {
+    const states: Array<{ hasError: boolean; loading: boolean }> = [];
+    const manager = new OpenClawChatViewManager({
+      getChatUrl: async () => 'http://127.0.0.1:18789/#token=fixture',
+      onStateChange: (state) => states.push(state),
+    });
+    manager.attach(makeWindow());
+    manager.setVisible(true);
+
+    await manager.ensureView();
+    const view = electronMocks.instances[0]!;
+    view.webContents.emit('did-finish-load');
+    expect(states.at(-1)).toEqual({ hasError: false, loading: false });
+    expect(view.setVisible).toHaveBeenLastCalledWith(true);
+
+    electronMocks.behavior.loadingMainFrame = false;
+    view.webContents.emit('did-start-loading');
+
+    expect(states.at(-1)).toEqual({ hasError: false, loading: false });
+    expect(view.setVisible).toHaveBeenLastCalledWith(true);
   });
 
   it('reports URL creation failure and lets reload retry from a missing view', async () => {

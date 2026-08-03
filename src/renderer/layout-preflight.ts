@@ -6,7 +6,12 @@ import {
   type SerializedDockview,
 } from 'dockview-react';
 
-import { buildLayoutEnvelope, type LayoutEnvelope } from '../shared/layout-schema';
+import {
+  buildLayoutEnvelope,
+  collectSerializedPanelIds,
+  type LayoutEnvelope,
+  type SerializedLayout,
+} from '../shared/layout-schema';
 
 function createInertContentRenderer(): IContentRenderer {
   return {
@@ -22,19 +27,83 @@ function createInertTabRenderer(): ITabRenderer {
   };
 }
 
-/**
- * Exercise dockview's real deserializer without touching the live workspace.
- *
- * A schema-valid envelope can still contain a nested grid shape that dockview
- * itself cannot restore. Preset application is destructive, so validate that
- * shape against a detached, inert dockview before any live session teardown.
- * Every failure is closed and every successfully-created instance is disposed.
- */
-export function preflightLayoutEnvelope(envelope: LayoutEnvelope): boolean {
+function popoutPanelIds(layout: SerializedLayout): Set<string> {
+  const ids = new Set<string>();
+  for (const popout of layout.popoutGroups ?? []) {
+    const members = popout.data
+      ? popout.data.views
+      : collectSerializedPanelIds(popout.grid?.root);
+    for (const id of members) ids.add(id);
+  }
+  return ids;
+}
+
+function panelRecord(
+  layout: SerializedLayout,
+  ids: ReadonlySet<string>,
+): SerializedLayout['panels'] {
+  return Object.fromEntries(
+    Object.entries(layout.panels).filter(([id]) => ids.has(id)),
+  ) as SerializedLayout['panels'];
+}
+
+function createPreflightLayoutSegments(
+  envelope: LayoutEnvelope,
+): Array<{ readonly layout: SerializedDockview; readonly expectedPanels: number }> {
+  const detachedIds = popoutPanelIds(envelope.layout);
+  const mainIds = new Set(
+    Object.keys(envelope.layout.panels).filter((id) => !detachedIds.has(id)),
+  );
+  const segments: Array<{ layout: SerializedDockview; expectedPanels: number }> = [];
+
+  if (mainIds.size > 0) {
+    const main = structuredClone(envelope.layout) as SerializedLayout;
+    delete main.popoutGroups;
+    main.panels = panelRecord(envelope.layout, mainIds);
+    segments.push({
+      layout: main as unknown as SerializedDockview,
+      expectedPanels: mainIds.size,
+    });
+  }
+
+  for (const popout of envelope.layout.popoutGroups ?? []) {
+    const ids = popout.data
+      ? new Set(popout.data.views)
+      : collectSerializedPanelIds(popout.grid?.root);
+    const grid = popout.grid
+      ? structuredClone(popout.grid)
+      : {
+          root: {
+            type: 'branch' as const,
+            data: [{
+              type: 'leaf' as const,
+              data: structuredClone(popout.data!),
+              size: popout.position.width,
+            }],
+          },
+          width: popout.position.width,
+          height: popout.position.height,
+          orientation: 'HORIZONTAL',
+        };
+    segments.push({
+      layout: {
+        grid,
+        panels: panelRecord(envelope.layout, ids),
+        activeGroup: popout.data?.id,
+      } as unknown as SerializedDockview,
+      expectedPanels: ids.size,
+    });
+  }
+  return segments;
+}
+
+function preflightSerializedLayout(
+  layout: SerializedDockview,
+  expectedPanels: number,
+): boolean {
   const host = document.createElement('div');
   let api: DockviewApi | undefined;
   let valid = false;
-
   try {
     api = createDockview(host, {
       announcements: false,
@@ -44,8 +113,8 @@ export function preflightLayoutEnvelope(envelope: LayoutEnvelope): boolean {
       disableDnd: true,
       disableFloatingGroups: true,
     });
-    api.fromJSON(envelope.layout as unknown as SerializedDockview);
-    valid = api.panels.length > 0;
+    api.fromJSON(layout);
+    valid = expectedPanels > 0 && api.panels.length === expectedPanels;
   } catch {
     valid = false;
   } finally {
@@ -55,8 +124,25 @@ export function preflightLayoutEnvelope(envelope: LayoutEnvelope): boolean {
       valid = false;
     }
   }
-
   return valid;
+}
+
+/**
+ * Exercise dockview's real deserializer without touching the live workspace.
+ *
+ * A schema-valid envelope can still contain a nested grid shape that dockview
+ * itself cannot restore. Preset application is destructive, so validate that
+ * shape against a detached, inert dockview before any live session teardown.
+ * Every failure is closed and every successfully-created instance is disposed.
+ */
+export function preflightLayoutEnvelope(envelope: LayoutEnvelope): boolean {
+  const segments = createPreflightLayoutSegments(envelope);
+  return (
+    segments.length > 0
+    && segments.every(({ layout, expectedPanels }) => (
+      preflightSerializedLayout(layout, expectedPanels)
+    ))
+  );
 }
 
 /**
@@ -72,12 +158,23 @@ export function removePanelFromLayoutEnvelope(
   panelId: string,
 ): LayoutEnvelope | null {
   if (!envelope.layout.panels[panelId]) return envelope;
+  const detachedIds = popoutPanelIds(envelope.layout);
+  // Capability-gated native panels are not allowed in a popout. If a future
+  // caller asks to rewrite one there, fail closed rather than manually editing
+  // Dockview's nested grid.
+  if (detachedIds.has(panelId)) return null;
 
   const host = document.createElement('div');
   let api: DockviewApi | undefined;
   let result: LayoutEnvelope | null = null;
 
   try {
+    const mainIds = new Set(
+      Object.keys(envelope.layout.panels).filter((id) => !detachedIds.has(id)),
+    );
+    const mainLayout = structuredClone(envelope.layout) as SerializedLayout;
+    delete mainLayout.popoutGroups;
+    mainLayout.panels = panelRecord(envelope.layout, mainIds);
     api = createDockview(host, {
       announcements: false,
       createComponent: createInertContentRenderer,
@@ -86,12 +183,21 @@ export function removePanelFromLayoutEnvelope(
       disableDnd: true,
       disableFloatingGroups: true,
     });
-    api.fromJSON(envelope.layout as unknown as SerializedDockview);
+    api.fromJSON(mainLayout as unknown as SerializedDockview);
     api.getPanel(panelId)?.api.close();
-    if (api.panels.length > 0) {
-      const filtered = buildLayoutEnvelope(api.toJSON(), envelope.savedAt);
-      result = filtered?.layout.panels[panelId] ? null : filtered;
-    }
+    const serializedMain = api.toJSON() as unknown as Record<string, unknown>;
+    const merged = {
+      ...serializedMain,
+      panels: {
+        ...(serializedMain.panels as Record<string, unknown>),
+        ...panelRecord(envelope.layout, detachedIds),
+      },
+      ...(envelope.layout.popoutGroups
+        ? { popoutGroups: structuredClone(envelope.layout.popoutGroups) }
+        : {}),
+    };
+    const filtered = buildLayoutEnvelope(merged, envelope.savedAt);
+    result = filtered?.layout.panels[panelId] ? null : filtered;
   } catch {
     result = null;
   } finally {

@@ -9,6 +9,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ButtonHTMLAttributes,
@@ -76,15 +77,17 @@ export function Menu({
     if (restoreFocus) requestAnimationFrame(() => triggerRef.current?.focus());
   }, [setOpen]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isOpen) return;
     const initialFocus = initialFocusRef.current;
     initialFocusRef.current = 'first';
-    requestAnimationFrame(() => {
-      const items = menuRef.current?.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR);
-      const item = initialFocus === 'last' && items ? items[items.length - 1] : items?.[0];
-      item?.focus();
-    });
+    const items = menuRef.current?.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR);
+    const item = initialFocus === 'last' && items ? items[items.length - 1] : items?.[0];
+    item?.focus();
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
     const handlePointerDown = (event: PointerEvent): void => {
       const target = event.target;
       if (target instanceof Node && !rootRef.current?.contains(target)) close(false);

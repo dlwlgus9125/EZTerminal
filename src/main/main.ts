@@ -7,17 +7,30 @@ import {
   ipcMain,
   Menu,
   MessageChannelMain,
+  net,
   Notification,
+  protocol,
   session,
   shell,
   utilityProcess,
 } from 'electron';
-import type { UtilityProcess, MessagePortMain, Rectangle } from 'electron';
+import type {
+  IpcMainInvokeEvent,
+  MessagePortMain,
+  Rectangle,
+  UtilityProcess,
+} from 'electron';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { isAppUrl } from './url-guard';
+import { APP_RENDERER_ORIGIN } from '../shared/desktop-window';
+import {
+  rendererEntryUrls,
+  resolveRendererAssetPath,
+} from './app-renderer-protocol';
+import { DesktopWindowManager } from './desktop-window-manager';
 import { buildMenuTemplate } from './app-menu';
 import { FileService } from './file-service';
 import { LayoutStore } from './layout-store';
@@ -43,6 +56,11 @@ import { AgentActivityService, type AgentActivityTransition } from './agent-acti
 import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
 import { AgentHookInstaller } from './agent-hook-installer';
 import { AgentSettingsStore } from './agent-settings-store';
+import { AgentProjectStore } from './agent-project-store';
+import { AgentHistoryService } from './agent-history-service';
+import { CodexAppServerClient } from './codex-app-server-client';
+import { CodexHistoryAdapter } from './codex-history-adapter';
+import { ClaudeHistoryAdapter } from './claude-history-adapter';
 import { GitStatusService } from './git-status-service';
 import { PairingCodeService } from './pairing-code-service';
 import { QuickCommandStore } from './quick-command-store';
@@ -84,6 +102,17 @@ import type {
 import type { OpenClawAutostartAction, OpenClawLifecycleAction, OpenClawVisibility } from '../shared/openclaw';
 import type { AgentDecisionResult, AgentFollowupResult } from '../shared/agent';
 import { normalizeExternalHttpUrl } from '../shared/external-url';
+import type {
+  AgentLaunchStartRequest,
+  AgentLaunchStartResult,
+  AgentLaunchTarget,
+  AgentProjectLaunchStartRequest,
+  AgentProjectLaunchStartResult,
+  AgentProjectInput,
+  AgentResumeStartRequest,
+  AgentResumeStartResult,
+} from '../shared/agent-history';
+import { MAX_AGENT_LAUNCH_DIRECTORY_LENGTH } from '../shared/agent-history';
 import { classifyRecentPanelInput } from './recent-panel-input';
 import type { WorkspaceFileSearchRequest } from '../shared/workspace-search';
 import { isWorktreeRequest, type WorktreeInfo, type WorktreeResult } from '../shared/worktree';
@@ -92,6 +121,8 @@ import { resolveTerminalFileLocation } from './terminal-path-resolver';
 import { readTerminalClipboardSnapshot } from './terminal-clipboard';
 import { isTerminalPastePreferences } from '../shared/terminal-clipboard';
 import { TerminalFileCapabilityStore } from './terminal-file-capability';
+import { AppUpdateService } from './app-update-service';
+import { ElectronUpdateHttpClient } from './app-update-network';
 import {
   UiPreferencesPatchSchema,
   resolveUiLocale,
@@ -101,6 +132,39 @@ import {
 const osc52LastWrite = new WeakMap<object, number>();
 const OSC52_MAIN_MAX_BYTES = 64 * 1024;
 const OSC52_MAIN_MIN_INTERVAL_MS = 1_000;
+
+function isBoundedAgentString(value: unknown, maxLength: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength;
+}
+
+function isAgentLaunchTarget(value: unknown): value is AgentLaunchTarget {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const target = value as Record<string, unknown>;
+  if (target.kind === 'project') {
+    return isBoundedAgentString(target.projectId, 128);
+  }
+  if (target.kind === 'directory') {
+    return isBoundedAgentString(target.directory, MAX_AGENT_LAUNCH_DIRECTORY_LENGTH);
+  }
+  return false;
+}
+
+function isAgentLaunchStartRequest(value: unknown): value is AgentLaunchStartRequest {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const request = value as Partial<AgentLaunchStartRequest>;
+  return (
+    isAgentLaunchTarget(request.target)
+    && isBoundedAgentString(request.launcherId, 128)
+    && isBoundedAgentString(request.sessionId, 256)
+    && isBoundedAgentString(request.runId, 256)
+    && isBoundedAgentString(request.revision, 128)
+  );
+}
+
+function directoryKey(value: string): string {
+  const normalized = path.normalize(path.resolve(value));
+  return process.platform === 'win32' ? normalized.toLocaleLowerCase('en-US') : normalized;
+}
 
 // The main process owns the interpreter utilityProcess lifetime (architecture
 // §1). Per-command MessagePort brokering + session/run correlation live in the
@@ -198,6 +262,7 @@ let openClawChatView: OpenClawChatViewManager | null = null;
 // createWindow() itself is defined outside 'ready', and openClawChatView's
 // attach() needs a handle to the window it should embed into.
 let mainWindowRef: BrowserWindow | null = null;
+let desktopWindowManager: DesktopWindowManager | null = null;
 
 // OpenClaw desktop visibility (openclaw-stabilization M5): in 'auto' mode,
 // `resolveOpenClawVisibility` only ever reruns on boot or an explicit
@@ -231,6 +296,64 @@ const CSP =
   "frame-ancestors 'none'; " +
   "form-action 'none'";
 
+const rendererRoot = path.join(
+  __dirname,
+  `../renderer/${MAIN_WINDOW_VITE_NAME}`,
+);
+const rendererUrls = rendererEntryUrls(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+const desktopPreloadPath = path.join(__dirname, 'preload.js');
+
+/**
+ * Dockview's popout safety check requires an HTTP(S) same-origin page. A
+ * packaged build therefore serves only Vite's renderer output from a
+ * synthetic HTTPS origin. Unrelated HTTPS requests bypass this handler and
+ * continue through Chromium's normal network stack.
+ */
+function installPackagedRendererProtocol(): void {
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) return;
+  protocol.handle('https', async (request) => {
+    if (!request.url.startsWith(`${APP_RENDERER_ORIGIN}/`)) {
+      return net.fetch(request, { bypassCustomProtocolHandlers: true });
+    }
+    const assetPath = resolveRendererAssetPath(rendererRoot, request.url, request.method);
+    if (!assetPath) return new Response('Not found', { status: 404 });
+    try {
+      const asset = await stat(assetPath);
+      if (!asset.isFile()) return new Response('Not found', { status: 404 });
+      return net.fetch(pathToFileURL(assetPath).href, { method: request.method });
+    } catch {
+      return new Response('Not found', { status: 404 });
+    }
+  });
+}
+
+/**
+ * Chromium consumes Ctrl+Tab before renderer KeyboardEvents. Capture it in
+ * every native window, but route the data-free command to the sole main
+ * renderer where the shared Dockview instance lives.
+ */
+function configureRecentPanelInput(window: BrowserWindow): void {
+  let active = false;
+  const send = (input: import('../shared/ipc').RecentPanelInputEvent): void => {
+    const mainWindow = mainWindowRef;
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send('recent-panels:input', input);
+    }
+  };
+  window.webContents.on('before-input-event', (event, input) => {
+    const decision = classifyRecentPanelInput(active, input);
+    active = decision.active;
+    if (!decision.event) return;
+    if (decision.preventDefault) event.preventDefault();
+    send(decision.event);
+  });
+  window.on('blur', () => {
+    if (!active) return;
+    active = false;
+    send({ type: 'cancel', restoreFocus: false });
+  });
+}
+
 const createWindow = (): void => {
   const rendererCrashRecovery = new RendererCrashRecovery();
   let crashFailureDialogOpen = false;
@@ -240,8 +363,11 @@ const createWindow = (): void => {
     minWidth: 800,
     minHeight: 600,
     title: 'EZTerminal',
+    frame: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0c0c0c',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: desktopPreloadPath,
       // Security defaults kept explicit: the renderer never gets Node access;
       // it talks to main only through the narrow preload bridge.
       contextIsolation: true,
@@ -251,6 +377,7 @@ const createWindow = (): void => {
     },
   });
   mainWindowRef = mainWindow;
+  desktopWindowManager?.configureMainWindow(mainWindow);
   openClawChatView?.attach(mainWindow);
 
   // Chromium reserves Ctrl+Tab before a renderer KeyboardEvent exists (the
@@ -258,25 +385,6 @@ const createWindow = (): void => {
   // that chord here, suppress its native handling, and forward a data-free
   // cycle/commit/cancel union through the isolated desktop bridge. All other
   // keyboard input, including terminal Ctrl chords, stays on the normal path.
-  let recentPanelInputActive = false;
-  const sendRecentPanelInput = (input: import('../shared/ipc').RecentPanelInputEvent): void => {
-    if (!mainWindow.webContents.isDestroyed()) {
-      mainWindow.webContents.send('recent-panels:input', input);
-    }
-  };
-  mainWindow.webContents.on('before-input-event', (event, input) => {
-    const decision = classifyRecentPanelInput(recentPanelInputActive, input);
-    recentPanelInputActive = decision.active;
-    if (!decision.event) return;
-    if (decision.preventDefault) event.preventDefault();
-    sendRecentPanelInput(decision.event);
-  });
-  mainWindow.on('blur', () => {
-    if (!recentPanelInputActive) return;
-    recentPanelInputActive = false;
-    sendRecentPanelInput({ type: 'cancel', restoreFocus: false });
-  });
-
   // ── Navigation hardening (SEC-HIGH-2) ─────────────────────────────────────
   // An OSC-8 link in external output (TextBlock <a href>) must never navigate the
   // window to a remote origin (it would inherit window.ezterminal). Block any
@@ -284,25 +392,11 @@ const createWindow = (): void => {
   // OS browser instead of opening a renderer-privileged window.
   // The ONLY file:// URL that may load is our own packaged index.html (B-M6:
   // arbitrary file:// would hand the bridge to any local html file).
-  const appRendererUrl = pathToFileURL(
-    path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-  ).href;
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!isAppUrl(url, MAIN_WINDOW_VITE_DEV_SERVER_URL, appRendererUrl)) event.preventDefault();
-  });
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    const external = normalizeExternalHttpUrl(url);
-    if (external) void shell.openExternal(external);
-    return { action: 'deny' };
-  });
-
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+    mainWindow.loadURL(rendererUrls.main);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-    );
+    mainWindow.loadURL(rendererUrls.main);
   }
 
   mainWindow.webContents.on('did-finish-load', () => {
@@ -357,7 +451,6 @@ const createWindow = (): void => {
   // running against a renderer that no longer thinks the panel is open
   // (status-overlay-panel: panelVisible lifecycle).
   mainWindow.webContents.on('did-navigate', () => {
-    recentPanelInputActive = false;
     systemStatsService?.setPanelVisible(false);
     // Same reasoning for the packet-capture sub-view (Phase 2B): a reload
     // drops the renderer's port reference, so any live host is now orphaned.
@@ -383,6 +476,23 @@ const createWindow = (): void => {
 
 app.on('ready', () => {
   console.log('[main] EZTerminal main process ready');
+
+  installPackagedRendererProtocol();
+  desktopWindowManager = new DesktopWindowManager({
+    auxiliaryRendererUrl: rendererUrls.auxiliary,
+    preloadPath: desktopPreloadPath,
+    isAllowedNavigation: (url) => (
+      isAppUrl(url, MAIN_WINDOW_VITE_DEV_SERVER_URL, rendererUrls.main)
+    ),
+    getMainWindow: () => mainWindowRef,
+    isAppQuitting: () => appIsQuitting,
+    quitApp: () => app.quit(),
+    onWindowConfigured: (window) => configureRecentPanelInput(window),
+    reportError: (context, error) => {
+      console.error(`[main] ${context}:`, error);
+      mainLog?.line(`${context}: ${String(error)}`);
+    },
+  });
 
   // Terminal-safe application menu (WT-parity M1): replaces Electron's default
   // menu, whose reload/close accelerators would otherwise steal Ctrl+R /
@@ -421,10 +531,54 @@ app.on('ready', () => {
     }
   });
 
+  const appUpdateService = new AppUpdateService({
+    currentVersion: app.getVersion(),
+    resolveDownloadsDirectory: () => path.join(app.getPath('downloads'), 'EZTerminal'),
+    http: new ElectronUpdateHttpClient(),
+    openPath: (filePath) => shell.openPath(filePath),
+  });
+  appUpdateService.subscribe((snapshot) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('app-update:snapshot', snapshot);
+    }
+  });
+  ipcMain.handle('app-update:get-snapshot', () => appUpdateService.getSnapshot());
+  ipcMain.handle('app-update:check', () => appUpdateService.check());
+  ipcMain.handle('app-update:download', () => appUpdateService.download());
+  ipcMain.handle('app-update:cancel-download', () => appUpdateService.cancelDownload());
+  ipcMain.handle('app-update:open', (_event, options: unknown) => {
+    if (
+      typeof options !== 'object'
+      || options === null
+      || Array.isArray(options)
+      || Object.keys(options).length !== 1
+      || typeof (options as { acknowledgeUnsigned?: unknown }).acknowledgeUnsigned !== 'boolean'
+    ) {
+      return { ok: false as const, reason: 'failed' as const };
+    }
+    return appUpdateService.openDownloadedUpdate(
+      (options as { acknowledgeUnsigned: boolean }).acknowledgeUnsigned,
+    );
+  });
+
   // Agent activity persistence + loopback hook relay. The relay binds only to
   // 127.0.0.1 and its bearer descriptor is injected into interpreter shell
   // sessions below; it never crosses preload or the mobile bridge.
   const agentSettingsStore = new AgentSettingsStore(path.join(app.getPath('userData')));
+  const agentProjectStore = new AgentProjectStore(path.join(app.getPath('userData')));
+  const codexHistoryAdapter = new CodexHistoryAdapter(new CodexAppServerClient());
+  // Home resolution is left to the adapter so it matches how Claude Code itself
+  // locates `~/.claude`.
+  const claudeHistoryAdapter = new ClaudeHistoryAdapter();
+  const agentHistoryService = new AgentHistoryService(
+    agentProjectStore,
+    [codexHistoryAdapter, claudeHistoryAdapter],
+    () => agentSettingsStore.current.genericProfiles,
+  );
+  const agentHistoryReady = agentProjectStore.init().catch((err) => {
+    console.error('[main] agent project store init failed:', err);
+  });
   // Read-only, cached, argv-only. Safe to call on every directory listing.
   const gitStatusService = new GitStatusService();
   // In-memory, single-use, expiring. Never persisted — see the service header.
@@ -807,6 +961,241 @@ app.on('ready', () => {
   );
 
   ipcMain.handle('agents:get-snapshot', () => agentActivityService?.getSnapshot() ?? { revision: 0, items: [] });
+  ipcMain.handle('agent-history:list-projects', async (
+    _event,
+    force?: unknown,
+    cursor?: unknown,
+    limit?: unknown,
+    query?: unknown,
+  ) => {
+    await agentHistoryReady;
+    return agentHistoryService.listProjects(
+      force === true,
+      typeof cursor === 'string' ? cursor : undefined,
+      typeof limit === 'number' ? limit : undefined,
+      typeof query === 'string' ? query : undefined,
+    );
+  });
+  ipcMain.handle('agent-history:list-sessions', async (
+    _event,
+    projectId: unknown,
+    cursor?: unknown,
+    limit?: unknown,
+    force?: unknown,
+  ) => {
+    await agentHistoryReady;
+    if (typeof projectId !== 'string' || projectId.length === 0 || projectId.length > 128) {
+      return { items: [], nextCursor: null };
+    }
+    return agentHistoryService.listSessions(
+      projectId,
+      typeof cursor === 'string' ? cursor : undefined,
+      typeof limit === 'number' ? limit : undefined,
+      force === true,
+    );
+  });
+  ipcMain.handle('agent-history:read', async (
+    _event,
+    historyId: unknown,
+    cursor?: unknown,
+    limit?: unknown,
+  ) => {
+    await agentHistoryReady;
+    if (typeof historyId !== 'string' || historyId.length === 0 || historyId.length > 128) return null;
+    return agentHistoryService.readTranscript(
+      historyId,
+      typeof cursor === 'string' ? cursor : undefined,
+      typeof limit === 'number' ? limit : undefined,
+    );
+  });
+  ipcMain.handle('agent-history:prepare-resume', async (_event, historyId: unknown) => {
+    await agentHistoryReady;
+    if (typeof historyId !== 'string' || historyId.length === 0 || historyId.length > 128) return null;
+    return agentHistoryService.prepareResume(historyId);
+  });
+  ipcMain.handle('agent-history:start-resume', async (
+    event,
+    request: unknown,
+  ): Promise<AgentResumeStartResult> => {
+    await agentHistoryReady;
+    if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+      return { ok: false, reason: 'invalid' };
+    }
+    const candidate = request as Partial<AgentResumeStartRequest>;
+    if (
+      typeof candidate.historyId !== 'string'
+      || candidate.historyId.length === 0
+      || candidate.historyId.length > 128
+      || typeof candidate.sessionId !== 'string'
+      || candidate.sessionId.length === 0
+      || candidate.sessionId.length > 256
+      || typeof candidate.runId !== 'string'
+      || candidate.runId.length === 0
+      || candidate.runId.length > 256
+      || typeof candidate.revision !== 'string'
+      || candidate.revision.length === 0
+      || candidate.revision.length > 128
+      || (candidate.rootChoice !== 'recorded' && candidate.rootChoice !== 'current')
+    ) {
+      return { ok: false, reason: 'invalid' };
+    }
+    const resolved = await agentHistoryService.resolveResume(
+      candidate.historyId,
+      candidate.revision,
+      candidate.rootChoice,
+    );
+    if (!resolved.ok) return resolved;
+    const session = broker?.listSessions().find((item) => item.sessionId === candidate.sessionId);
+    if (!session || !resolved.roots[0]
+      || directoryKey(session.cwd) !== directoryKey(resolved.roots[0])) {
+      return { ok: false, reason: 'session-mismatch' };
+    }
+    // The launch line is built by the provider adapter; the provider's session id
+    // remains main/interpreter private and renderer frames and shell history
+    // receive only the redacted display text.
+    const port = broker?.runPrivateCommand(
+      candidate.sessionId,
+      candidate.runId,
+      resolved.commandText,
+      resolved.displayCommandText,
+    );
+    if (!port) return { ok: false, reason: 'unavailable' };
+    void agentHistoryService.recordTerminalWork(resolved.roots, Date.now()).catch((err) => {
+      console.error('[main] failed to record resumed Agent project:', err);
+    });
+    event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
+    return { ok: true };
+  });
+  ipcMain.handle('agent-projects:list-launchers', async () => {
+    await agentInfrastructureReady;
+    return agentHistoryService.listLaunchers();
+  });
+  const startAgentLaunchInSession = async (
+    event: IpcMainInvokeEvent,
+    candidate: AgentLaunchStartRequest,
+  ): Promise<AgentLaunchStartResult> => {
+    const resolved = await agentHistoryService.resolveLaunch(
+      candidate.target,
+      candidate.launcherId,
+      candidate.revision,
+    );
+    if (!resolved.ok) return resolved;
+    const session = broker?.listSessions().find((item) => item.sessionId === candidate.sessionId);
+    if (!session || !resolved.roots[0]
+      || directoryKey(session.cwd) !== directoryKey(resolved.roots[0])) {
+      return { ok: false, reason: 'session-mismatch' };
+    }
+    const port = broker?.runPrivateCommand(
+      candidate.sessionId,
+      candidate.runId,
+      resolved.commandText,
+      resolved.displayCommandText,
+    );
+    if (!port) return { ok: false, reason: 'unavailable' };
+    void agentHistoryService.recordTerminalWork(resolved.roots, Date.now()).catch((err) => {
+      console.error('[main] failed to record launched Agent project:', err);
+    });
+    event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
+    return { ok: true };
+  };
+  ipcMain.handle('agent-launch:prepare', async (
+    _event,
+    target: unknown,
+    launcherId: unknown,
+  ) => {
+    await Promise.all([agentHistoryReady, agentInfrastructureReady]);
+    if (!isAgentLaunchTarget(target) || !isBoundedAgentString(launcherId, 128)) {
+      return { ok: false, reason: 'invalid' };
+    }
+    return agentHistoryService.prepareLaunch(target, launcherId);
+  });
+  ipcMain.handle('agent-launch:start', async (
+    event,
+    request: unknown,
+  ): Promise<AgentLaunchStartResult> => {
+    await Promise.all([agentHistoryReady, agentInfrastructureReady]);
+    return isAgentLaunchStartRequest(request)
+      ? startAgentLaunchInSession(event, request)
+      : { ok: false, reason: 'invalid' };
+  });
+  ipcMain.handle('agent-projects:prepare-launch', async (
+    _event,
+    projectId: unknown,
+    launcherId: unknown,
+  ) => {
+    await Promise.all([agentHistoryReady, agentInfrastructureReady]);
+    if (
+      typeof projectId !== 'string'
+      || projectId.length === 0
+      || projectId.length > 128
+      || typeof launcherId !== 'string'
+      || launcherId.length === 0
+      || launcherId.length > 128
+    ) {
+      return { ok: false, reason: 'invalid' };
+    }
+    return agentHistoryService.prepareProjectLaunch(projectId, launcherId);
+  });
+  ipcMain.handle('agent-projects:start-launch', async (
+    event,
+    request: unknown,
+  ): Promise<AgentProjectLaunchStartResult> => {
+    await Promise.all([agentHistoryReady, agentInfrastructureReady]);
+    if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+      return { ok: false, reason: 'invalid' };
+    }
+    const candidate = request as Partial<AgentProjectLaunchStartRequest>;
+    if (
+      typeof candidate.projectId !== 'string'
+      || candidate.projectId.length === 0
+      || candidate.projectId.length > 128
+      || typeof candidate.launcherId !== 'string'
+      || candidate.launcherId.length === 0
+      || candidate.launcherId.length > 128
+      || typeof candidate.sessionId !== 'string'
+      || candidate.sessionId.length === 0
+      || candidate.sessionId.length > 256
+      || typeof candidate.runId !== 'string'
+      || candidate.runId.length === 0
+      || candidate.runId.length > 256
+      || typeof candidate.revision !== 'string'
+      || candidate.revision.length === 0
+      || candidate.revision.length > 128
+    ) {
+      return { ok: false, reason: 'invalid' };
+    }
+    return startAgentLaunchInSession(event, {
+      target: { kind: 'project', projectId: candidate.projectId },
+      launcherId: candidate.launcherId,
+      sessionId: candidate.sessionId,
+      runId: candidate.runId,
+      revision: candidate.revision,
+    });
+  });
+  ipcMain.handle('agent-projects:save', async (_event, input: unknown) => {
+    await agentHistoryReady;
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+      return { ok: false, reason: 'invalid' };
+    }
+    return agentHistoryService.saveProject(input as AgentProjectInput);
+  });
+  ipcMain.handle('agent-projects:remove', async (_event, projectId: unknown) => {
+    await agentHistoryReady;
+    return typeof projectId === 'string' && projectId.length <= 128
+      ? agentHistoryService.removeProject(projectId)
+      : false;
+  });
+  ipcMain.handle('agent-projects:select-folders', async (event, multiple?: unknown) => {
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef ?? undefined;
+    const options: Electron.OpenDialogOptions = {
+      title: 'Select project folders',
+      properties: ['openDirectory', ...(multiple === false ? [] : ['multiSelections' as const])],
+    };
+    const result = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options);
+    return { canceled: result.canceled, paths: result.canceled ? [] : result.filePaths };
+  });
   ipcMain.handle('agents:followup', (_event, activityId: string, text: string): AgentFollowupResult => {
     if (typeof activityId !== 'string' || typeof text !== 'string') return { ok: false, error: 'invalid-text' };
     return agentActivityService?.sendFollowup(activityId, text) ?? { ok: false, error: 'delivery-failed' };
@@ -934,7 +1323,13 @@ app.on('ready', () => {
           uninstallRunCommandIpc = null;
         },
       },
-      { name: 'layout store', run: () => layoutStore.flush() },
+      {
+        name: 'renderer layout and layout store',
+        run: async () => {
+          await desktopWindowManager?.requestLayoutFlush();
+          await layoutStore.flush();
+        },
+      },
       { name: 'system stats', run: () => systemStatsService?.stop() },
       { name: 'packet capture', run: () => packetCaptureRegistry?.kill() },
       {
@@ -956,8 +1351,10 @@ app.on('ready', () => {
       { name: 'OpenClaw service', run: () => openClawService?.dispose() },
       { name: 'OpenClaw chat view', run: () => openClawChatView?.destroy() },
       { name: 'agent activity', run: () => agentActivityService?.dispose() },
+      { name: 'agent history', run: () => agentHistoryService.dispose() },
       { name: 'agent settings', run: () => agentSettingsStore.flush() },
       { name: 'quick commands', run: () => quickCommandStore.flush() },
+      { name: 'app update', run: () => appUpdateService.dispose() },
       { name: 'workspace search', run: () => workspaceFileSearch.dispose() },
       {
         name: 'SSH forwards',
@@ -1038,6 +1435,10 @@ app.on('ready', () => {
   // would block — production (packaged) is where this matters.
   if (!MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      if (!details.url.startsWith(`${APP_RENDERER_ORIGIN}/`)) {
+        callback({ responseHeaders: details.responseHeaders });
+        return;
+      }
       callback({
         responseHeaders: {
           ...details.responseHeaders,
@@ -1113,6 +1514,16 @@ app.on('ready', () => {
   agentActivityService = new AgentActivityService({
     broker,
     getSettings: () => agentSettingsStore.current,
+  });
+  agentActivityService.onObserved((activity) => {
+    // Every provider EZTerminal has local history for — generic profiles have no
+    // adapter and so no sessions to come back to.
+    if (!isAgentIntegrationProvider(activity.provider) || !activity.cwd) return;
+    void agentHistoryReady
+      .then(() => agentHistoryService.recordTerminalWork([activity.cwd], activity.updatedAt))
+      .catch((err) => {
+        console.error('[main] failed to record terminal Agent project:', err);
+      });
   });
   agentActivityService.onSnapshot((snapshot) => {
     for (const win of BrowserWindow.getAllWindows()) {
@@ -1549,6 +1960,7 @@ app.on('ready', () => {
       quickCommandSource: remoteQuickCommandSource,
       openclawSource: remoteOpenClawSource,
       agentSource: agentActivityService ?? undefined,
+      agentHistorySource: agentHistoryService,
       gitSource: gitStatusService,
       pairingSource: {
         match: (code) => pairingCodeService.match(code),
@@ -1737,6 +2149,9 @@ app.on('ready', () => {
   });
 
   createWindow();
+  if (process.env.EZTERMINAL_DISABLE_UPDATE_CHECK !== '1') {
+    void appUpdateService.check();
+  }
 });
 
 // Quit when all windows are closed, except on macOS.

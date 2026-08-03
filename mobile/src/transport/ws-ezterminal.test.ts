@@ -214,7 +214,7 @@ describe('WsEzTerminalTransport — auth handshake', () => {
     expect(sockets[0].closed).toBe(true);
   });
 
-  it('downgrades one time from v3 to v2 only for a stored bearer', async () => {
+  it('downgrades one time from the latest protocol to v2 only for a stored bearer', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({
       url: 'ws://x',
@@ -222,7 +222,10 @@ describe('WsEzTerminalTransport — auth handshake', () => {
       createSocket,
     });
     sockets[0].triggerOpen();
-    expect(sockets[0].lastSent()).toMatchObject({ kind: 'auth', protocolVersion: 3 });
+    expect(sockets[0].lastSent()).toMatchObject({
+      kind: 'auth',
+      protocolVersion: REMOTE_PROTOCOL_VERSION,
+    });
 
     sockets[0].triggerRawMessage({
       kind: 'auth-fail',
@@ -2276,6 +2279,424 @@ describe('WsEzTerminalTransport — Agent Activity', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('WsEzTerminalTransport — Agent history v4', () => {
+  it('correlates project/history reads and installs the resume port only after host acceptance', async () => {
+    const requestIds = ['projects-1', 'sessions-1', 'read-1', 'prepare-1', 'resume-1'];
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      newId: () => requestIds.shift()!,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    const project = {
+      projectId: 'project-1',
+      name: 'Workspace',
+      primaryRoot: '/workspace',
+      additionalRoots: ['/shared'],
+      pinned: true,
+      saved: true,
+      sessionCount: 1,
+      providers: ['codex' as const],
+      lastActiveAt: 20,
+    };
+    const session = {
+      historyId: 'codex_0123456789abcdef01234567',
+      projectId: project.projectId,
+      provider: 'codex' as const,
+      title: 'Previous task',
+      preview: 'preview',
+      createdAt: 10,
+      updatedAt: 20,
+      roots: [project.primaryRoot, ...project.additionalRoots],
+      source: 'cli',
+    };
+
+    const projectsPromise = transport.listAgentProjects(true);
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-projects-list',
+      requestId: 'projects-1',
+      force: true,
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-projects-list-reply',
+      requestId: 'projects-1',
+      result: { items: [project], nextCursor: null },
+    });
+    await expect(projectsPromise).resolves.toEqual({ items: [project], nextCursor: null });
+
+    const sessionsPromise = transport.listAgentHistorySessions(project.projectId);
+    sockets[0].triggerMessage({
+      kind: 'agent-history-sessions-reply',
+      requestId: 'sessions-1',
+      result: { items: [session], nextCursor: null },
+    });
+    await expect(sessionsPromise).resolves.toEqual({ items: [session], nextCursor: null });
+
+    const readPromise = transport.readAgentHistory(session.historyId);
+    const transcript = {
+      historyId: session.historyId,
+      turns: [{
+        id: 'turn-1',
+        status: 'completed',
+        entries: [{ type: 'message' as const, id: 'message-1', role: 'user' as const, markdown: 'hello' }],
+      }],
+      nextCursor: null,
+    };
+    sockets[0].triggerMessage({
+      kind: 'agent-history-read-reply',
+      requestId: 'read-1',
+      result: transcript,
+    });
+    await expect(readPromise).resolves.toEqual(transcript);
+
+    const preparationPromise = transport.prepareAgentResume(session.historyId);
+    const preparation = {
+      historyId: session.historyId,
+      provider: 'codex' as const,
+      recordedRoots: session.roots,
+      currentRoots: session.roots,
+      rootsMatch: true,
+      missingRecordedRoots: [],
+      missingCurrentRoots: [],
+      canResume: true,
+      revision: 'revision-1',
+    };
+    sockets[0].triggerMessage({
+      kind: 'agent-history-prepare-resume-reply',
+      requestId: 'prepare-1',
+      result: preparation,
+    });
+    await expect(preparationPromise).resolves.toEqual(preparation);
+
+    const capture = captureEzPort('run-1');
+    const resumePromise = transport.startAgentResume({
+      historyId: session.historyId,
+      sessionId: 'terminal-1',
+      runId: 'run-1',
+      rootChoice: 'recorded',
+      revision: preparation.revision,
+    });
+    expect(capture.port).toBeUndefined();
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-history-start-resume',
+      requestId: 'resume-1',
+      request: {
+        historyId: session.historyId,
+        sessionId: 'terminal-1',
+        runId: 'run-1',
+        rootChoice: 'recorded',
+        revision: preparation.revision,
+      },
+    });
+    expect(JSON.stringify(sockets[0].lastSent())).not.toContain('prompt');
+
+    sockets[0].triggerMessage({
+      kind: 'agent-history-start-resume-reply',
+      requestId: 'resume-1',
+      result: { ok: true },
+    });
+    await expect(resumePromise).resolves.toEqual({ ok: true });
+    expect(capture.port).toBeDefined();
+
+    capture.port!.postMessage({ type: 'pty-submit-on-ready', data: 'continue privately' });
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'control',
+      runId: 'run-1',
+      control: { type: 'pty-submit-on-ready', data: 'continue privately' },
+    });
+    capture.stop();
+    transport.disconnect();
+  });
+
+  it('fails history calls locally after a v3 downgrade', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'stored-bearer-token',
+      createSocket,
+    });
+    sockets[0].triggerOpen();
+    sockets[0].triggerRawMessage({
+      kind: 'auth-fail',
+      reason: 'incompatible-protocol',
+      supportedProtocolVersions: [3],
+      supportedProtocolVersion: 3,
+      hostVersion: '1.0.12',
+    });
+    sockets[1].triggerOpen();
+    sockets[1].triggerRawMessage({
+      kind: 'auth-ok',
+      protocolVersion: 3,
+      hostVersion: '1.0.12',
+    });
+
+    await expect(transport.listAgentProjects()).resolves.toEqual({
+      items: [],
+      nextCursor: null,
+    });
+    await expect(transport.readAgentHistory('history-1')).resolves.toBeNull();
+    await expect(transport.prepareAgentResume('history-1')).resolves.toBeNull();
+    await expect(transport.startAgentResume({
+      historyId: 'history-1',
+      sessionId: 'terminal-1',
+      runId: 'run-1',
+      rootChoice: 'recorded',
+      revision: 'revision-1',
+    })).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    expect(sockets[1].sent.map((raw) => JSON.parse(raw)).filter((message) => (
+      typeof message.kind === 'string' && message.kind.startsWith('agent-history')
+    ))).toEqual([]);
+    transport.disconnect();
+  });
+});
+
+describe('WsEzTerminalTransport — Agent projects v5', () => {
+  it('correlates search, CRUD, catalog, preparation, and installs a launch port only after acceptance', async () => {
+    const requestIds = ['projects', 'save', 'remove', 'launchers', 'prepare', 'start'];
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      newId: () => requestIds.shift()!,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    expect(transport.supportsAgentProjectManagement).toBe(true);
+    const project = {
+      projectId: 'project-1',
+      name: 'Workspace',
+      primaryRoot: '/workspace',
+      additionalRoots: ['/shared'],
+      pinned: false,
+      saved: true,
+      sessionCount: 0,
+      providers: [] as const,
+      lastActiveAt: 20,
+    };
+
+    const projectsPromise = transport.listAgentProjects(false, undefined, 40, 'work');
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-projects-list',
+      requestId: 'projects',
+      force: false,
+      limit: 40,
+      query: 'work',
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-projects-list-reply',
+      requestId: 'projects',
+      result: { items: [project], nextCursor: null },
+    });
+    await expect(projectsPromise).resolves.toEqual({ items: [project], nextCursor: null });
+
+    const input = {
+      projectId: project.projectId,
+      name: project.name,
+      primaryRoot: project.primaryRoot,
+      additionalRoots: project.additionalRoots,
+      pinned: project.pinned,
+    };
+    const savePromise = transport.saveAgentProject(input);
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-project-save',
+      requestId: 'save',
+      input,
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-project-save-reply',
+      requestId: 'save',
+      result: { ok: true, project },
+    });
+    await expect(savePromise).resolves.toEqual({ ok: true, project });
+
+    const removePromise = transport.removeAgentProject(project.projectId);
+    sockets[0].triggerMessage({
+      kind: 'agent-project-remove-reply',
+      requestId: 'remove',
+      removed: true,
+    });
+    await expect(removePromise).resolves.toBe(true);
+
+    const launcher = {
+      launcherId: 'codex',
+      provider: 'codex' as const,
+      name: 'Codex',
+      supportsAdditionalRoots: true,
+    };
+    const launchersPromise = transport.listAgentProjectLaunchers();
+    sockets[0].triggerMessage({
+      kind: 'agent-project-launchers-reply',
+      requestId: 'launchers',
+      result: [launcher],
+    });
+    await expect(launchersPromise).resolves.toEqual([launcher]);
+
+    const preparation = {
+      ok: true as const,
+      projectId: project.projectId,
+      launcherId: launcher.launcherId,
+      provider: launcher.provider,
+      name: launcher.name,
+      cwd: project.primaryRoot,
+      roots: [project.primaryRoot, ...project.additionalRoots],
+      revision: 'revision-1',
+    };
+    const preparationPromise = transport.prepareAgentProjectLaunch(
+      project.projectId,
+      launcher.launcherId,
+    );
+    sockets[0].triggerMessage({
+      kind: 'agent-project-prepare-launch-reply',
+      requestId: 'prepare',
+      result: preparation,
+    });
+    await expect(preparationPromise).resolves.toEqual(preparation);
+
+    const capture = captureEzPort('project-run');
+    const request = {
+      projectId: project.projectId,
+      launcherId: launcher.launcherId,
+      sessionId: 'terminal-1',
+      runId: 'project-run',
+      revision: preparation.revision,
+    };
+    const startPromise = transport.startAgentProjectLaunch(request);
+    expect(capture.port).toBeUndefined();
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-project-start-launch',
+      requestId: 'start',
+      request,
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-project-start-launch-reply',
+      requestId: 'start',
+      result: { ok: true },
+    });
+    await expect(startPromise).resolves.toEqual({ ok: true });
+    expect(capture.port).toBeDefined();
+
+    capture.port!.postMessage({ type: 'pty-input', data: 'x' });
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'control',
+      runId: 'project-run',
+      control: { type: 'pty-input', data: 'x' },
+    });
+    capture.stop();
+    transport.disconnect();
+  });
+
+  it('correlates a v6 direct-directory preparation and start', async () => {
+    const requestIds = ['prepare-direct', 'start-direct'];
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      newId: () => requestIds.shift()!,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion: 6 });
+    expect(transport.supportsAgentDirectLaunch).toBe(true);
+
+    const target = { kind: 'directory' as const, directory: 'C:\\direct-work' };
+    const preparation = {
+      ok: true as const,
+      target,
+      launcherId: 'claude',
+      provider: 'claude' as const,
+      name: 'Claude Code',
+      cwd: target.directory,
+      roots: [target.directory],
+      ignoredAdditionalRootCount: 0,
+      revision: 'direct-revision-1',
+    };
+    const preparationPromise = transport.prepareAgentLaunch(target, 'claude');
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-launch-prepare',
+      requestId: 'prepare-direct',
+      target,
+      launcherId: 'claude',
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-launch-prepare-reply',
+      requestId: 'prepare-direct',
+      result: preparation,
+    });
+    await expect(preparationPromise).resolves.toEqual(preparation);
+
+    const capture = captureEzPort('direct-run');
+    const request = {
+      target,
+      launcherId: 'claude',
+      sessionId: 'terminal-direct',
+      runId: 'direct-run',
+      revision: preparation.revision,
+    };
+    const startPromise = transport.startAgentLaunch(request);
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-launch-start',
+      requestId: 'start-direct',
+      request,
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-launch-start-reply',
+      requestId: 'start-direct',
+      result: { ok: true },
+    });
+    await expect(startPromise).resolves.toEqual({ ok: true });
+    expect(capture.port).toBeDefined();
+    capture.stop();
+    transport.disconnect();
+  });
+
+  it('fails v5 project mutations locally after a v4 downgrade', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'stored-bearer-token',
+      createSocket,
+    });
+    sockets[0].triggerOpen();
+    sockets[0].triggerRawMessage({
+      kind: 'auth-fail',
+      reason: 'incompatible-protocol',
+      supportedProtocolVersions: [4],
+      supportedProtocolVersion: 4,
+      hostVersion: '1.0.12',
+    });
+    sockets[1].triggerOpen();
+    sockets[1].triggerRawMessage({
+      kind: 'auth-ok',
+      protocolVersion: 4,
+      hostVersion: '1.0.12',
+    });
+
+    expect(transport.supportsAgentProjectManagement).toBe(false);
+    await expect(transport.saveAgentProject({
+      name: 'Project',
+      primaryRoot: '/workspace',
+      additionalRoots: [],
+      pinned: false,
+    })).resolves.toEqual({ ok: false, reason: 'invalid' });
+    await expect(transport.removeAgentProject('project-1')).resolves.toBe(false);
+    await expect(transport.listAgentProjectLaunchers()).resolves.toEqual([]);
+    await expect(transport.prepareAgentProjectLaunch('project-1', 'codex')).resolves
+      .toEqual({ ok: false, reason: 'unavailable' });
+    await expect(transport.startAgentProjectLaunch({
+      projectId: 'project-1',
+      launcherId: 'codex',
+      sessionId: 'terminal-1',
+      runId: 'run-1',
+      revision: 'revision-1',
+    })).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    expect(sockets[1].sent.map((raw) => JSON.parse(raw)).filter((message) => (
+      typeof message.kind === 'string' && message.kind.startsWith('agent-project')
+    ))).toEqual([]);
+    transport.disconnect();
   });
 });
 

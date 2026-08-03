@@ -642,6 +642,10 @@ export class BlockController {
     this.port.postMessage({ type: 'pty-input', data });
   }
 
+  submitPtyWhenReady(data: string): void {
+    this.port.postMessage({ type: 'pty-submit-on-ready', data });
+  }
+
   /** Register the mounted xterm view's paste path (`term.paste`) — same
    * register/unregister shape as `setPtyDataSink`. */
   setPasteHandler(handler: (text: string) => void): () => void {

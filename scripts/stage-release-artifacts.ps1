@@ -27,6 +27,10 @@ param(
     [string]$ArtifactStage = 'candidate',
     [ValidateSet('NotSigned', 'Valid')]
     [string]$ExpectedWindowsSignature = 'NotSigned',
+    [string]$ExpectedWindowsPublisher = '',
+    [string]$WindowsUninstallerPath = '',
+    [string]$WindowsPayloadSigningRequestId = '',
+    [string]$WindowsInstallerSigningRequestId = '',
     [switch]$RequireCleanTree
 )
 
@@ -54,6 +58,18 @@ try {
         $actual = (Get-AuthenticodeSignature -LiteralPath $Path).Status.ToString()
         Assert-Equal $actual $Expected "Authenticode status for $Path"
         return $actual
+    }
+
+    function ConvertTo-WindowsComponentEvidence {
+        param($Evidence)
+        return [ordered]@{
+            status = [string]$Evidence.status
+            sha256 = [string]$Evidence.sha256
+            publisher = [string]$Evidence.publisher
+            signerCertificateSha256 = [string]$Evidence.signerCertificateSha256
+            timestamped = [bool]$Evidence.timestamped
+            timestampCertificateSha256 = [string]$Evidence.timestampCertificateSha256
+        }
     }
 
     function Assert-CleanReleaseTree {
@@ -604,6 +620,7 @@ try {
     }
 
     $appExe = (Resolve-Path -LiteralPath 'out/EZTerminal-win32-x64/EZTerminal.exe').Path
+    $remoteHostExe = (Resolve-Path -LiteralPath 'out/EZTerminal-win32-x64/resources/ezterminal-remote-host.exe').Path
     $appAsar = (Resolve-Path -LiteralPath 'out/EZTerminal-win32-x64/resources/app.asar').Path
     $nsisRoot = (Resolve-Path -LiteralPath 'out/make/nsis/x64').Path
     $setupExe = (Resolve-Path -LiteralPath (Join-Path $nsisRoot 'EZTerminal-Setup.exe')).Path
@@ -625,8 +642,68 @@ try {
 
     Assert-ProductVersion $appExe $Version
     Assert-ProductVersion $setupExe $Version
-    $appSignature = Assert-Authenticode $appExe $ExpectedWindowsSignature
-    $setupSignature = Assert-Authenticode $setupExe $ExpectedWindowsSignature
+    $windowsAuthenticodeEvidence = if ($ExpectedWindowsSignature -eq 'Valid') {
+        if ($ExpectedWindowsPublisher -cne 'SignPath Foundation') {
+            throw "Signed Windows releases require publisher 'SignPath Foundation'."
+        }
+        if (
+            [string]::IsNullOrWhiteSpace($WindowsUninstallerPath) -or
+            [string]::IsNullOrWhiteSpace($WindowsPayloadSigningRequestId) -or
+            [string]::IsNullOrWhiteSpace($WindowsInstallerSigningRequestId)
+        ) {
+            throw 'Signed Windows releases require the retained uninstaller and both SignPath request IDs.'
+        }
+        $uninstallerExe = (Resolve-Path -LiteralPath $WindowsUninstallerPath).Path
+        $signatureJson = @(
+            & ./scripts/verify-windows-signatures.ps1 `
+                -Path @($appExe, $remoteHostExe, $uninstallerExe, $setupExe) `
+                -ExpectedStatus Valid `
+                -ExpectedPublisher $ExpectedWindowsPublisher `
+                -RequireTimestamp `
+                -ExpectedProductName EZTerminal `
+                -ExpectedProductVersion $Version
+        ) -join [Environment]::NewLine
+        $signatureEvidence = $signatureJson | ConvertFrom-Json
+        $byName = @{}
+        foreach ($fileEvidence in @($signatureEvidence.files)) {
+            $byName[[string]$fileEvidence.name] = $fileEvidence
+        }
+        foreach ($requiredName in @(
+            'EZTerminal.exe',
+            'ezterminal-remote-host.exe',
+            'Uninstall EZTerminal.exe',
+            'EZTerminal-Setup.exe'
+        )) {
+            if (-not $byName.ContainsKey($requiredName)) {
+                throw "Windows signature evidence lacks $requiredName."
+            }
+        }
+        [ordered]@{
+            expected = 'Valid'
+            publisher = $ExpectedWindowsPublisher
+            timestampRequired = $true
+            signingRequestIds = [ordered]@{
+                payload = $WindowsPayloadSigningRequestId
+                installer = $WindowsInstallerSigningRequestId
+            }
+            app = [string]$byName['EZTerminal.exe'].status
+            remoteHost = [string]$byName['ezterminal-remote-host.exe'].status
+            uninstaller = [string]$byName['Uninstall EZTerminal.exe'].status
+            setup = [string]$byName['EZTerminal-Setup.exe'].status
+            components = [ordered]@{
+                app = ConvertTo-WindowsComponentEvidence $byName['EZTerminal.exe']
+                remoteHost = ConvertTo-WindowsComponentEvidence $byName['ezterminal-remote-host.exe']
+                uninstaller = ConvertTo-WindowsComponentEvidence $byName['Uninstall EZTerminal.exe']
+                setup = ConvertTo-WindowsComponentEvidence $byName['EZTerminal-Setup.exe']
+            }
+        }
+    } else {
+        [ordered]@{
+            expected = 'NotSigned'
+            app = Assert-Authenticode $appExe NotSigned
+            setup = Assert-Authenticode $setupExe NotSigned
+        }
+    }
 
     $sha8 = $commit.Substring(0, 8)
     $expectedAssetsName = if ($ArtifactStage -eq 'candidate') {
@@ -826,11 +903,7 @@ try {
                 'not-run-for-functional-hotfix'
             }
         }
-        windowsAuthenticode = [ordered]@{
-            expected = $ExpectedWindowsSignature
-            app = $appSignature
-            setup = $setupSignature
-        }
+        windowsAuthenticode = $windowsAuthenticodeEvidence
         androidSigningCertSha256 = ($AndroidCertSha256 -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
         artifacts = $manifestArtifacts
     }

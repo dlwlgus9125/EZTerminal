@@ -4,6 +4,7 @@ import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { useAppTranslation } from '../i18n';
 import { Badge, Button } from '../ui';
 import { BrandMark } from './BrandMark';
+import { WindowControls } from './WindowControls';
 
 const COMMAND_CENTER_KEYS = ['Ctrl', 'K'] as const;
 
@@ -173,6 +174,7 @@ export function AppHeader({
           {attentionCount > 0 && <Badge variant="danger">{attentionCount > 99 ? '99+' : attentionCount}</Badge>}
         </Button>
       </div>
+      <WindowControls />
     </header>
   );
 }

@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
 import type { FilePreviewResult } from '../shared/file-preview';
-import { normalizeExternalHttpUrl } from '../shared/external-url';
+import { SafeMarkdown } from './SafeMarkdown';
 
 export interface FilePreviewContentProps {
   readonly result: FilePreviewResult;
@@ -123,36 +121,12 @@ export function FilePreviewContent({ result, openExternalHttpUrl, line, column, 
     return <pre className="file-viewer-content" data-testid="viewer-content">{result.content}</pre>;
   }
   return (
-    <div className="file-preview-markdown" data-testid="viewer-markdown">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        skipHtml
-        components={{
-          img: ({ alt, src }) => (
-            <span className="file-preview-blocked-image">
-              {text.imageNotLoaded(alt || src || '—')}
-            </span>
-          ),
-          a: ({ href, children }) => {
-            const safe = href ? normalizeExternalHttpUrl(href) : null;
-            if (!safe || !openExternalHttpUrl) return <span>{children}</span>;
-            return (
-              <a
-                href={safe}
-                title={safe}
-                onClick={(event) => {
-                  event.preventDefault();
-                  openExternalHttpUrl(safe);
-                }}
-              >
-                {children}
-              </a>
-            );
-          },
-        }}
-      >
-        {result.content}
-      </ReactMarkdown>
-    </div>
+    <SafeMarkdown
+      className="file-preview-markdown"
+      testId="viewer-markdown"
+      markdown={result.content}
+      openExternalHttpUrl={openExternalHttpUrl}
+      blockedImageLabel={text.imageNotLoaded}
+    />
   );
 }

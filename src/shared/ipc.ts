@@ -57,6 +57,35 @@ import type {
   TerminalClipboardSnapshot,
   TerminalPastePreferences,
 } from './terminal-clipboard';
+import type {
+  AgentHistorySessionPage,
+  AgentLaunchPreparation,
+  AgentLaunchStartRequest,
+  AgentLaunchStartResult,
+  AgentLaunchTarget,
+  AgentProjectLaunchPreparation,
+  AgentProjectLauncherSummary,
+  AgentProjectLaunchStartRequest,
+  AgentProjectLaunchStartResult,
+  AgentProjectFolderSelection,
+  AgentProjectInput,
+  AgentProjectMutationResult,
+  AgentProjectPage,
+  AgentResumePreparation,
+  AgentResumeStartRequest,
+  AgentResumeStartResult,
+  AgentTranscriptPage,
+} from './agent-history';
+import type {
+  AppUpdateOpenResult,
+  AppUpdateSnapshot,
+} from './app-update';
+import type {
+  AuxiliaryCloseRequest,
+  AuxiliaryCloseResolution,
+  DesktopWindowAction,
+  DesktopWindowState,
+} from './desktop-window';
 
 /** The single key under which the preload bridge is exposed on `window`. */
 export const BRIDGE_KEY = 'ezterminal' as const;
@@ -379,6 +408,13 @@ export interface PtyInputControl {
   readonly data: string;
 }
 
+/** One-shot initial provider prompt. It is held until the PTY announces
+ * bracketed-paste readiness, keeping the prompt out of argv and shell history. */
+export interface PtySubmitOnReadyControl {
+  readonly type: 'pty-submit-on-ready';
+  readonly data: string;
+}
+
 /**
  * The `pty` block's terminal dimensions (from xterm's FitAddon), forwarded to
  * `pty.resize()` (the ConPTY equivalent of SIGWINCH). The interpreter clamps to
@@ -437,6 +473,7 @@ export type RendererControl =
   | SetViewportControl
   | CloseControl
   | PtyInputControl
+  | PtySubmitOnReadyControl
   | PtyResizeControl
   | PtyAckControl
   | PtyClaimControlControl
@@ -451,6 +488,9 @@ export type RendererControl =
 export interface RunMessage {
   readonly type: 'run';
   readonly commandText: string;
+  /** Optional public label/history entry when main must keep provider resume
+   * identifiers out of renderer-visible frames and shell history. */
+  readonly displayCommandText?: string;
   /** The session this run executes in. Must already exist (create-session first). */
   readonly sessionId: string;
   /** Caller-minted id naming this run (M2 mirroring) — lets a LATER `attach-run`
@@ -1173,6 +1213,49 @@ export interface EzTerminalApi {
     approvalId: string,
     decision: AgentDecision,
   ) => Promise<AgentDecisionResult>;
+  /** Local provider history, fetched on demand without loading/resuming it. */
+  listAgentProjects: (
+    force?: boolean,
+    cursor?: string,
+    limit?: number,
+    query?: string,
+  ) => Promise<AgentProjectPage>;
+  /** Project presentation metadata is the only Agent history data EZTerminal persists. */
+  saveAgentProject: (input: AgentProjectInput) => Promise<AgentProjectMutationResult>;
+  removeAgentProject: (projectId: string) => Promise<boolean>;
+  listAgentProjectLaunchers: () => Promise<readonly AgentProjectLauncherSummary[]>;
+  prepareAgentLaunch: (
+    target: AgentLaunchTarget,
+    launcherId: string,
+  ) => Promise<AgentLaunchPreparation>;
+  /** Starts a private Agent CLI in an already-created target-rooted session. */
+  startAgentLaunch: (
+    request: AgentLaunchStartRequest,
+  ) => Promise<AgentLaunchStartResult>;
+  /** Protocol-v5/local compatibility wrapper for older project-only callers. */
+  prepareAgentProjectLaunch: (
+    projectId: string,
+    launcherId: string,
+  ) => Promise<AgentProjectLaunchPreparation>;
+  /** Starts a private provider CLI in an already-created project-rooted session. */
+  startAgentProjectLaunch: (
+    request: AgentProjectLaunchStartRequest,
+  ) => Promise<AgentProjectLaunchStartResult>;
+  listAgentHistorySessions: (
+    projectId: string,
+    cursor?: string,
+    limit?: number,
+    force?: boolean,
+  ) => Promise<AgentHistorySessionPage>;
+  readAgentHistory: (
+    historyId: string,
+    cursor?: string,
+    limit?: number,
+  ) => Promise<AgentTranscriptPage | null>;
+  prepareAgentResume: (historyId: string) => Promise<AgentResumePreparation | null>;
+  /** Starts a private provider resume run. The run port arrives through the
+   * same `_ezPort` correlation used by runCommand. */
+  startAgentResume: (request: AgentResumeStartRequest) => Promise<AgentResumeStartResult>;
 
   /** Main-owned Git worktree operations. Mobile is restricted to list/open. */
   executeWorktree: (request: WorktreeRequest) => Promise<WorktreeResult>;
@@ -1193,6 +1276,30 @@ export interface EzTerminalApi {
 // shared/window.d.ts) so every call site guards with `?.`.
 
 export interface EzTerminalDesktopApi {
+  /** Sender-scoped native window controls; no BrowserWindow id crosses preload. */
+  getWindowState: () => Promise<DesktopWindowState>;
+  performWindowAction: (action: DesktopWindowAction) => Promise<void>;
+  onWindowStateChanged: (listener: (state: DesktopWindowState) => void) => () => void;
+  /** Auxiliary close decisions are coordinated by the sole main renderer. */
+  onAuxiliaryCloseRequested: (listener: (request: AuxiliaryCloseRequest) => void) => () => void;
+  resolveAuxiliaryClose: (
+    requestId: string,
+    resolution: AuxiliaryCloseResolution,
+  ) => Promise<void>;
+  /** Bounded main-renderer handshake used before whole-application shutdown. */
+  onLayoutFlushRequested: (listener: (requestId: string) => void) => () => void;
+  completeLayoutFlush: (requestId: string) => void;
+
+  /** Main-owned stable GitHub Release updater. Raw URLs and local paths never cross this bridge. */
+  getAppUpdateSnapshot: () => Promise<AppUpdateSnapshot>;
+  checkForAppUpdate: () => Promise<AppUpdateSnapshot>;
+  downloadAppUpdate: () => Promise<AppUpdateSnapshot>;
+  cancelAppUpdateDownload: () => Promise<void>;
+  openDownloadedAppUpdate: (options: {
+    readonly acknowledgeUnsigned: boolean;
+  }) => Promise<AppUpdateOpenResult>;
+  onAppUpdateSnapshot: (listener: (snapshot: AppUpdateSnapshot) => void) => () => void;
+
   // ── One-time pairing (desktop issues, phone redeems) ────────────────────
   /** Mint a fresh code, replacing any live one. */
   issuePairingCode: () => Promise<PairingCode>;
@@ -1296,6 +1403,10 @@ export interface EzTerminalDesktopApi {
   setAgentSettings: (settings: AgentSettings) => Promise<AgentSettings | null>;
   /** OS notification click asks the owning renderer to reveal this session. */
   onAgentSessionReveal: (listener: (sessionId: string) => void) => () => void;
+  /** Project presentation metadata is the only Agent history data EZTerminal persists. */
+  saveAgentProject: (input: AgentProjectInput) => Promise<AgentProjectMutationResult>;
+  removeAgentProject: (projectId: string) => Promise<boolean>;
+  selectAgentProjectFolders: (multiple?: boolean) => Promise<AgentProjectFolderSelection>;
 
   // ── OpenClaw management (openclaw-management M1) ────────────────────────
   // `getChatUrl`/the raw token are deliberately ABSENT from this surface —

@@ -2,24 +2,26 @@
 
 EZTerminal은 Windows Electron 앱과 Android Capacitor 클라이언트를 동일한
 소스 SHA에서 빌드한다. Android APK는 기존 장기키로 서명하고, Windows
-설치 파일은 현재 정책상 Authenticode `NotSigned`로 배포한다.
+설치 파일은 SignPath Foundation Authenticode로 서명해 배포한다.
 
 ## 현재 계약
 
-- 앱 버전: `1.0.13`
-- Android versionCode: `34`
-- 원격 프로토콜: v3
+- 앱 버전: `1.0.23`
+- Android versionCode: `44`
+- 원격 프로토콜: v6
 - Electron↔Rust native desktop protocol: v2
-- 검증 프로필: `full`
+- 검증 프로필: `functional-hotfix`
 - Windows: Windows 10 22H2/Windows 11 x64
 - Android: Android 10(API 29) 이상
 - 네트워크: 신뢰한 Tailscale/WireGuard VPN 내부의 실제 `ws://`
 
 관련 문서:
 
-- [1.0.13 릴리스 노트](release-notes-1.0.13.md)
-- [1.0.13 검증 정책](validation-policy-1.0.13.md)
+- [1.0.23 릴리스 노트](release-notes-1.0.23.md)
+- [1.0.23 검증 정책](validation-policy-1.0.23.md)
 - [서명 준비와 인증서 지문 확인](signing.md)
+- [SignPath Windows 설정](signpath-setup.md)
+- [Code signing policy](../../CODE_SIGNING_POLICY.md)
 - [PC Control 설계](../design/remote-desktop-design.md)
 
 ## 키와 보호된 환경
@@ -32,6 +34,12 @@ Android 장기키는 저장소에 커밋하지 않는다. GitHub Environment
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 - `ANDROID_SIGNING_CERT_SHA256`
+
+Windows SignPath 설정은 같은 Environment의 `SIGNPATH_API_TOKEN` secret과
+`SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`,
+`SIGNPATH_SIGNING_POLICY_SLUG`, 두 artifact-configuration slug 변수를
+사용한다. 정확한 이름과 설정 순서는 [SignPath Windows 설정](signpath-setup.md)에
+고정되어 있다.
 
 실제 APK 인증서, 위 secret, 그리고
 `mobile/android/signing-certificate.sha256`은 모두 같은 SHA-256 지문이어야
@@ -60,7 +68,7 @@ Release workflow는 ZIP 해시를 먼저 확인하고 `RUNNER_TEMP`의 새 디�
 수치의 유한성, 기능 soak 결과와 원본 성능 기준선·후보 비교를 다시 계산한다.
 보고서 하나만 신뢰하거나, 오래된 원본 증거를 다른 SHA에 재사용하지 않는다.
 
-## 로컬 1.0.13 후보
+## 로컬 1.0.23 후보
 
 변경을 깨끗한 로컬 커밋으로 동결한 뒤 다음 명령을 실행한다.
 
@@ -73,7 +81,7 @@ Release workflow는 ZIP 해시를 먼저 확인하고 `RUNNER_TEMP`의 새 디�
 이 경로는 타입·린트·단위 테스트, 일반 `pnpm e2e`, Storybook/axe/시각 검증,
 Rust 품질 게이트, 패키지 smoke, API 29/35 기기 검증, API 35 기능 soak,
 서명 APK, SBOM과 체크섬을 실행한다. 결과는
-`release-assets/1.0.13-rc-<sha8>/`에 격리한다.
+`release-assets/1.0.23-rc-<sha8>/`에 격리한다.
 
 후보 보고서는 다음 상태를 명시한다.
 
@@ -119,7 +127,7 @@ Rust 품질 게이트, 패키지 smoke, API 29/35 기기 검증, API 35 기능 s
 사용하거나 GitHub Release를 만들기 전에 거부한다. `release` 단계 스테이징은
 깨끗한 작업 트리와 시작 시 동결한 정확한 HEAD SHA를 요구하며, 검증 도중
 HEAD나 파일 상태가 바뀌면 실패한다.
-최종 산출물은 `release-assets/1.0.13-release-<sha8>/`에만 스테이징하며,
+최종 산출물은 `release-assets/1.0.23-release-<sha8>/`에만 스테이징하며,
 후보와 최종 경로 모두 정확히 일치하는 해당 디렉터리만 재생성한다.
 
 보호된 증거는 서명 전 검증 단계에서만 `RUNNER_TEMP`에 존재하고 검증·스테이징
@@ -139,8 +147,8 @@ manifest의 exact SHA와 publication eligibility를 재검증한 뒤 draft만 �
 
    | 파일 | 계약 |
    |---|---|
-   | `EZTerminal-Setup.exe` | ProductVersion 1.0.13, Authenticode `NotSigned` |
-   | `EZTerminal-Android-1.0.13-vc34.apk` | API 29+, 장기키 서명, exact build SHA |
+   | `EZTerminal-Setup.exe` | ProductVersion 1.0.23, `SignPath Foundation` Authenticode + timestamp |
+   | `EZTerminal-Android-1.0.23-vc44.apk` | API 29+, 장기키 서명, exact build SHA |
    | `local-rc-report.json` | schema v2, API별 lane, 기능 soak, 성능 pending/passed |
    | `mobile-soak-report.json` | 공유 검증기가 다시 검사한 원본 기능 soak 증거 |
    | `desktop-performance-baseline.json` | 최종 릴리스에만 포함되는 원본 성능 기준선 |
@@ -152,13 +160,14 @@ manifest의 exact SHA와 publication eligibility를 재검증한 뒤 draft만 �
 4. 성능 측정이 별도로 승인되면 같은 SHA에서 최종 증거를 수집한다.
 5. 최종 보고서와 네 파일 ZIP, 승인 SHA 및 보고서·ZIP 해시를 보호된
    Environment에 등록한 뒤 `workflow_dispatch`로 통합 산출물을 검토한다.
-6. SHA를 바꾸지 않고 `v1.0.13` 태그를 push하면 draft GitHub Release를 만든다.
+6. SHA를 바꾸지 않고 `v1.0.23` 태그를 push하면 draft GitHub Release를 만든다.
    태그 push, merge, draft 게시 자체는 별도 운영 승인 대상이다.
 
 ## 설치와 잔여 제한
 
-- Windows SmartScreen은 무서명 설치 파일에 알 수 없는 게시자 경고를 표시할
-  수 있다. 설정과 레이아웃은 업그레이드 중 보존해야 한다.
+- Windows는 검증된 게시자를 `SignPath Foundation`으로 표시한다. 새 파일이나
+  인증서의 SmartScreen 평판이 형성되는 초기에는 별도 경고가 남을 수 있다.
+  설정과 레이아웃은 업그레이드 중 보존해야 한다.
 - Android는 기존 장기키로만 업데이트할 수 있다. debug 또는 다른 인증서로
   설치된 과거 앱은 삭제 후 다시 페어링해야 한다.
 - 잠금/UAC secure desktop과 Ctrl+Alt+Delete는 지원하지 않는다.

@@ -39,6 +39,24 @@ import type {
   AgentDecisionResult,
   AgentFollowupResult,
 } from './agent';
+import type {
+  AgentHistorySessionPage,
+  AgentLaunchPreparation,
+  AgentLaunchStartRequest,
+  AgentLaunchStartResult,
+  AgentLaunchTarget,
+  AgentProjectInput,
+  AgentProjectLaunchPreparation,
+  AgentProjectLauncherSummary,
+  AgentProjectLaunchStartRequest,
+  AgentProjectLaunchStartResult,
+  AgentProjectMutationResult,
+  AgentProjectPage,
+  AgentResumePreparation,
+  AgentResumeStartRequest,
+  AgentResumeStartResult,
+  AgentTranscriptPage,
+} from './agent-history';
 import type { TerminalFileLocationRequest, TerminalFileLocationResult } from './terminal-file-location';
 import type { WorktreeRequest, WorktreeResult } from './worktree';
 import type { GitDiffResult, GitDirectoryStatus } from './git-status';
@@ -66,18 +84,21 @@ export type RemoteCapability =
  * bump would silently take a capability away from the peers that still work.
  *
  * v1 terminal only · v2 adds desktop control and client identity · v3 adds
- * agent approval decisions, Git queries and the latency probe.
- *
- * v3 deliberately has no feature-gate constant of its own: everything it added
- * is a new message kind, and a peer that does not know a kind simply never
- * sends it. A gate would be a constant nothing reads.
+ * live Agent approval decisions, Git queries and the latency probe · v4 adds
+ * on-demand Agent project/history reads and explicit history resume; v5 adds
+ * project management/search and project-rooted fresh Agent launches; v6 adds
+ * target-neutral project/direct-directory Agent launches.
  */
 export const REMOTE_PROTOCOL_VERSION_LEGACY = 1 as const;
 export const REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL = 2 as const;
-export const REMOTE_PROTOCOL_VERSION = 3 as const;
-export type RemoteProtocolVersion = 1 | 2 | 3;
+export const REMOTE_PROTOCOL_VERSION_AGENT_LIVE = 3 as const;
+export const REMOTE_PROTOCOL_VERSION_AGENT_HISTORY = 4 as const;
+export const REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS = 5 as const;
+export const REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS = 6 as const;
+export const REMOTE_PROTOCOL_VERSION = 6 as const;
+export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6;
 
-export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [1, 2, 3];
+export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [1, 2, 3, 4, 5, 6];
 
 export function isRemoteProtocolVersion(value: unknown): value is RemoteProtocolVersion {
   return SUPPORTED_REMOTE_PROTOCOL_VERSIONS.includes(value as RemoteProtocolVersion);
@@ -355,6 +376,88 @@ export interface AgentDecisionRequest {
   readonly decision: AgentDecision;
 }
 
+export interface AgentProjectsListRequest {
+  readonly kind: 'agent-projects-list';
+  readonly requestId: string;
+  readonly force?: boolean;
+  readonly cursor?: string;
+  readonly limit?: number;
+  /** Protocol v5. v4 peers omit it and retain the unfiltered history list. */
+  readonly query?: string;
+}
+
+export interface AgentProjectSaveRequest {
+  readonly kind: 'agent-project-save';
+  readonly requestId: string;
+  readonly input: AgentProjectInput;
+}
+
+export interface AgentProjectRemoveRequest {
+  readonly kind: 'agent-project-remove';
+  readonly requestId: string;
+  readonly projectId: string;
+}
+
+export interface AgentProjectLaunchersRequest {
+  readonly kind: 'agent-project-launchers';
+  readonly requestId: string;
+}
+
+export interface AgentProjectPrepareLaunchRequest {
+  readonly kind: 'agent-project-prepare-launch';
+  readonly requestId: string;
+  readonly projectId: string;
+  readonly launcherId: string;
+}
+
+export interface AgentProjectStartLaunchRequest {
+  readonly kind: 'agent-project-start-launch';
+  readonly requestId: string;
+  readonly request: AgentProjectLaunchStartRequest;
+}
+
+export interface AgentLaunchPrepareRequest {
+  readonly kind: 'agent-launch-prepare';
+  readonly requestId: string;
+  readonly target: AgentLaunchTarget;
+  readonly launcherId: string;
+}
+
+export interface AgentLaunchStartRequestMessage {
+  readonly kind: 'agent-launch-start';
+  readonly requestId: string;
+  readonly request: AgentLaunchStartRequest;
+}
+
+export interface AgentHistorySessionsRequest {
+  readonly kind: 'agent-history-sessions';
+  readonly requestId: string;
+  readonly projectId: string;
+  readonly cursor?: string;
+  readonly limit?: number;
+  readonly force?: boolean;
+}
+
+export interface AgentHistoryReadRequest {
+  readonly kind: 'agent-history-read';
+  readonly requestId: string;
+  readonly historyId: string;
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
+export interface AgentHistoryPrepareResumeRequest {
+  readonly kind: 'agent-history-prepare-resume';
+  readonly requestId: string;
+  readonly historyId: string;
+}
+
+export interface AgentHistoryStartResumeRequest {
+  readonly kind: 'agent-history-start-resume';
+  readonly requestId: string;
+  readonly request: AgentResumeStartRequest;
+}
+
 export interface WorktreeRequestMessage {
   readonly kind: 'worktree-request';
   readonly requestId: string;
@@ -587,6 +690,18 @@ export type ClientToServerMessage =
   | AgentSnapshotRequest
   | AgentFollowupRequest
   | AgentDecisionRequest
+  | AgentProjectsListRequest
+  | AgentProjectSaveRequest
+  | AgentProjectRemoveRequest
+  | AgentProjectLaunchersRequest
+  | AgentProjectPrepareLaunchRequest
+  | AgentProjectStartLaunchRequest
+  | AgentLaunchPrepareRequest
+  | AgentLaunchStartRequestMessage
+  | AgentHistorySessionsRequest
+  | AgentHistoryReadRequest
+  | AgentHistoryPrepareResumeRequest
+  | AgentHistoryStartResumeRequest
   | PingMessage
   | GitStatusRequest
   | GitDiffRequest
@@ -810,6 +925,78 @@ export interface AgentDecisionReply {
   readonly kind: 'agent-decision-reply';
   readonly requestId: string;
   readonly result: AgentDecisionResult;
+}
+
+export interface AgentProjectsListReply {
+  readonly kind: 'agent-projects-list-reply';
+  readonly requestId: string;
+  readonly result: AgentProjectPage;
+}
+
+export interface AgentProjectSaveReply {
+  readonly kind: 'agent-project-save-reply';
+  readonly requestId: string;
+  readonly result: AgentProjectMutationResult;
+}
+
+export interface AgentProjectRemoveReply {
+  readonly kind: 'agent-project-remove-reply';
+  readonly requestId: string;
+  readonly removed: boolean;
+}
+
+export interface AgentProjectLaunchersReply {
+  readonly kind: 'agent-project-launchers-reply';
+  readonly requestId: string;
+  readonly result: readonly AgentProjectLauncherSummary[];
+}
+
+export interface AgentProjectPrepareLaunchReply {
+  readonly kind: 'agent-project-prepare-launch-reply';
+  readonly requestId: string;
+  readonly result: AgentProjectLaunchPreparation;
+}
+
+export interface AgentProjectStartLaunchReply {
+  readonly kind: 'agent-project-start-launch-reply';
+  readonly requestId: string;
+  readonly result: AgentProjectLaunchStartResult;
+}
+
+export interface AgentLaunchPrepareReply {
+  readonly kind: 'agent-launch-prepare-reply';
+  readonly requestId: string;
+  readonly result: AgentLaunchPreparation;
+}
+
+export interface AgentLaunchStartReply {
+  readonly kind: 'agent-launch-start-reply';
+  readonly requestId: string;
+  readonly result: AgentLaunchStartResult;
+}
+
+export interface AgentHistorySessionsReply {
+  readonly kind: 'agent-history-sessions-reply';
+  readonly requestId: string;
+  readonly result: AgentHistorySessionPage;
+}
+
+export interface AgentHistoryReadReply {
+  readonly kind: 'agent-history-read-reply';
+  readonly requestId: string;
+  readonly result: AgentTranscriptPage | null;
+}
+
+export interface AgentHistoryPrepareResumeReply {
+  readonly kind: 'agent-history-prepare-resume-reply';
+  readonly requestId: string;
+  readonly result: AgentResumePreparation | null;
+}
+
+export interface AgentHistoryStartResumeReply {
+  readonly kind: 'agent-history-start-resume-reply';
+  readonly requestId: string;
+  readonly result: AgentResumeStartResult;
 }
 
 export interface PongMessage {
@@ -1050,6 +1237,18 @@ export type ServerToClientMessage =
   | AgentSnapshotMessage
   | AgentFollowupReply
   | AgentDecisionReply
+  | AgentProjectsListReply
+  | AgentProjectSaveReply
+  | AgentProjectRemoveReply
+  | AgentProjectLaunchersReply
+  | AgentProjectPrepareLaunchReply
+  | AgentProjectStartLaunchReply
+  | AgentLaunchPrepareReply
+  | AgentLaunchStartReply
+  | AgentHistorySessionsReply
+  | AgentHistoryReadReply
+  | AgentHistoryPrepareResumeReply
+  | AgentHistoryStartResumeReply
   | PongMessage
   | GitStatusReply
   | GitDiffReply

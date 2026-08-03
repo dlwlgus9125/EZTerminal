@@ -2,6 +2,215 @@
 
 ## [Unreleased]
 
+## [1.0.23] - 2026-07-31
+
+### Fixed
+
+- Shipped the Agent Session auxiliary-window fix from the unpublished 1.0.22
+  candidate with a deterministic packaged Windows pointer gate.
+- Placed the packaged test window inside the primary work area before dragging,
+  then required the observed `dragend` coordinate to be beyond the native
+  window edge so a maximized CI window cannot turn an outside drag into an
+  inside drop.
+
+See [1.0.23 release notes](docs/release/release-notes-1.0.23.md).
+
+## [1.0.22] - 2026-07-31
+
+### Fixed
+
+- Allowed Codex and Claude Agent Session tabs to detach into auxiliary windows
+  instead of stopping at the terminal-only popout gate.
+- Persisted and restored detached Agent Session layouts while keeping the
+  main-owned OpenClaw chat panel attached to the main window.
+- Added safe auxiliary close handling for read-only and terminal-backed Agent
+  Sessions plus a packaged Windows real-pointer regression.
+
+See [1.0.22 release notes](docs/release/release-notes-1.0.22.md).
+
+## [1.0.21] - 2026-07-31
+
+### Added
+
+- Added terminal-only popout windows: dragging a terminal tab outside the app
+  moves the same live session into a frameless auxiliary window.
+- Persisted detached layouts across restart while creating fresh sessions, and
+  added native window controls plus document-correct menus and dialogs.
+
+### Fixed
+
+- Added guarded auxiliary-window closing for busy terminals, safe bounds on
+  multiple displays, and a real pointer-drag E2E regression.
+- Shipped the popout implementation that was absent from the v1.0.20 installer.
+
+See [1.0.21 release notes](docs/release/release-notes-1.0.21.md).
+
+## [1.0.20] - 2026-07-31
+
+### Fixed
+
+- Fixed desktop update checks incorrectly reporting a GitHub network failure
+  when Electron emitted the normal request-side `close` event before the
+  successful response.
+- Added regression coverage for close-before-response ordering while
+  preserving real request errors as retryable network failures.
+
+See [1.0.20 release notes](docs/release/release-notes-1.0.20.md).
+
+## [1.0.19] - 2026-07-31
+
+### Added
+
+- Added stable GitHub Release update discovery at startup and on demand for
+  Windows and Android, with update badges in Settings navigation.
+- Added explicit download progress, cancellation, collision-safe filenames,
+  and user-controlled installer handoff under `Downloads/EZTerminal`.
+- Added native Android APK verification for the published SHA-256 digest,
+  package identity, version, and installed-app signer before the file reaches
+  public Downloads.
+
+### Security
+
+- Restricted update metadata and redirects to the official EZTerminal GitHub
+  repository and approved GitHub release-asset hosts.
+- Required the publication-eligible release manifest and GitHub asset digest
+  before offering the Windows installer, and reverified the downloaded file
+  immediately before opening it.
+- Kept installation user initiated. Unsigned Windows installers require an
+  explicit warning acknowledgement, and Android always hands the verified APK
+  to the system package installer.
+
+### Fixed
+
+- Deferred Downloads-folder resolution until an update is actually downloaded,
+  so an unavailable shell Downloads path cannot prevent EZTerminal from
+  creating its first window.
+
+See [1.0.19 release notes](docs/release/release-notes-1.0.19.md).
+
+## [1.0.18] - 2026-07-30
+
+### Changed
+
+- Promoted the unpublished 1.0.17 candidate as 1.0.18 without moving or
+  reusing the immutable v1.0.17 tag.
+- Updated the Android companion to versionCode 39 while retaining remote
+  protocol v6 and supported v1-v5 compatibility.
+
+### Fixed
+
+- Made responsive Storybook screenshots wait for all three terminal panes to
+  finish asynchronous session binding before capture.
+- Removed a release-only visual race that could alternate settled working
+  directories with empty prompts while leaving the product UI unchanged.
+
+See [1.0.18 release notes](docs/release/release-notes-1.0.18.md).
+
+## [1.0.17] - 2026-07-30
+
+### Changed
+
+- Promoted the unpublished 1.0.16 candidate as 1.0.17 without moving or
+  reusing the immutable v1.0.16 tag.
+- Updated the Android companion to versionCode 38 while retaining remote
+  protocol v6 and supported v1-v5 compatibility.
+
+### Fixed
+
+- Restored xterm focus in the same DOM commit that closes terminal search so
+  an immediate Ctrl+V cannot be lost before the next animation frame.
+- Added an exact E2E regression that holds animation frames across search
+  dismissal and verifies Codex image-paste input still reaches the PTY.
+
+See [1.0.17 release notes](docs/release/release-notes-1.0.17.md).
+
+## [1.0.16] - 2026-07-30
+
+### Changed
+
+- Promoted the unpublished 1.0.15 candidate as 1.0.16 without moving or
+  reusing the immutable v1.0.15 tag.
+- Updated the Android companion to versionCode 37 while retaining remote
+  protocol v6 and supported v1-v5 compatibility.
+
+### Fixed
+
+- Moved initial menu focus into the DOM commit so immediate keyboard input
+  reaches the first menu item instead of racing the trigger button.
+- Added a deterministic regression test for delayed animation frames and
+  restored the release Storybook interaction gate.
+
+See [1.0.16 release notes](docs/release/release-notes-1.0.16.md).
+
+## [1.0.15] - 2026-07-30
+
+### Added
+
+- Added a shared new-Agent launch picker on desktop and Android that requires
+  an enabled Agent and an explicit saved project or direct host directory.
+- Added protocol-v6 target-neutral Agent launch preparation and correlated
+  start results while retaining the protocol-v5 project launch path for older
+  clients.
+
+### Changed
+
+- Moved Projects ahead of Active and Recent Agent activity so location is
+  selected before session state, with project-card launch actions preselecting
+  only their project.
+- Gave Codex and Claude history rows, opened desktop history, and Android
+  history sheets visible provider labels and accessible teal/coral identity
+  rails across dark, light, Matrix, and high-contrast themes.
+- Updated the Android companion to versionCode 36 and the remote protocol to
+  v6 while retaining supported v1-v5 compatibility.
+
+### Fixed
+
+- Revalidated launch targets, launcher availability, roots, revisions, and
+  terminal working directories immediately before execution.
+- Kept cancelled or failed direct-directory launches from creating project
+  metadata, while successful launches promote the canonical directory as an
+  unpinned observed project.
+- Preserved the selected Agent and location across recoverable launch errors
+  and reported additional roots ignored by generic launchers.
+
+See [1.0.15 release notes](docs/release/release-notes-1.0.15.md).
+
+## [1.0.14] - 2026-07-30
+
+### Added
+
+- Added a project-first Agent workspace on desktop and Android with name/path
+  search, pinned and recent ordering, lazy session loading, metadata CRUD, and
+  a read-only remote folder picker.
+- Added project-scoped new-chat launchers for Codex, Claude, and enabled
+  generic agents. Codex receives `--cd` plus repeated `--add-dir` arguments;
+  Claude starts in the primary working directory with one variadic
+  `--add-dir`; generic launchers use the primary working directory.
+- Added protocol-v4 history access and protocol-v5 project management and
+  launcher preparation, with authenticated downgrade gating for older hosts.
+
+### Changed
+
+- Reworked agent history into a safe GFM work console with compact activity
+  entries, newest-page loading, scroll-up pagination, and single-click
+  in-place resume.
+- Updated the Android companion to versionCode 35 and the remote protocol to
+  v5 while retaining supported v1-v4 compatibility.
+
+### Fixed
+
+- Preserved history and draft input when agent startup fails, and added an
+  explicit current-root versus recorded-root decision when a session moved.
+- Revalidated project revision, roots, terminal working directory, and private
+  launch commands in the trusted host before starting an agent, preventing
+  stale or forged client launches and phantom success.
+- Canonicalized equivalent Windows directory aliases when promoting observed
+  terminal work into a saved Agent project.
+- Removed the release evidence helper's dependency on PowerShell module
+  auto-loading by hashing files through the runtime SHA-256 implementation.
+
+See [1.0.14 release notes](docs/release/release-notes-1.0.14.md).
+
 ## [1.0.13] - 2026-07-28
 
 ### Added

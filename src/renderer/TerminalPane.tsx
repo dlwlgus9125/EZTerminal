@@ -48,7 +48,9 @@ import {
 } from './xterm-runtime';
 import type { RunStartedInfo, SessionInfo } from '../shared/ipc';
 import type { QuickCommand } from '../shared/quick-command';
+import type { AgentResumeBootstrap, AgentTerminalBootstrap } from '../shared/agent-history';
 import { classifyDirectAgentCommand } from '../shared/agent-command';
+import { clearAgentTerminalBootstrap } from './agent-terminal-bootstrap';
 
 // A TerminalPane is one independent shell surface: its own shell session (cwd/env/
 // variables/history), its own stack of command Blocks, and its own pinned prompt.
@@ -90,6 +92,8 @@ function nextRunId(): string {
 let liveSessionCount = 0;
 (window as Window & { __ezSessions?: () => number }).__ezSessions = () => liveSessionCount;
 
+export type TerminalResumeBootstrap = AgentResumeBootstrap;
+
 interface TerminalPaneProps {
   /** This pane's dockview panel id — the pane-registry key the file-explorer
    * drawer (M1) uses to read this pane's live cwd when it opens. */
@@ -110,6 +114,11 @@ interface TerminalPaneProps {
    * see the mount effect. Undefined for a plain new tab/split.
    */
   readonly adoptSessionId?: string;
+  /** Converts a read-only Agent Session panel into a live resumed Codex PTY. */
+  readonly resumeBootstrap?: TerminalResumeBootstrap;
+  /** Runtime-only project-card launch; never persisted in Dockview params. */
+  readonly agentBootstrap?: AgentTerminalBootstrap;
+  readonly onAgentBootstrapFailure?: (message: string) => void;
   /** Exact lifecycle lease: pending adoption is registered at mount, actual
    * binding is recorded once known, and cleanup releases both identities. */
   readonly mountSessionPane?: (
@@ -147,6 +156,9 @@ export function TerminalPane({
   paneInstanceToken,
   initialCwd,
   adoptSessionId,
+  resumeBootstrap,
+  agentBootstrap,
+  onAgentBootstrapFailure,
   mountSessionPane,
   terminalRuntimeOptions,
   commandSubmissionLocked = false,
@@ -192,6 +204,9 @@ export function TerminalPane({
   // below) — the ~1 frame between clicking Run and that arrival, keys typed
   // still hit command-editing instead of the PTY (accepted, plan ADR).
   const [activePlainPty, setActivePlainPty] = useState(false);
+  const resumeStartedRef = useRef(false);
+  const [bootstrapRetryToken, setBootstrapRetryToken] = useState(0);
+  const [resumeError, setResumeError] = useState<string | null>(null);
   // Unsubscribe from the active controller's status (replaced on each new run).
   const activeUnsub = useRef<(() => void) | null>(null);
 
@@ -256,7 +271,7 @@ export function TerminalPane({
   // (.pty-block), which must keep focus for keystrokes to reach the child
   // (PtyBlock.tsx:269). Plain output / tables / empty space refocus the input.
   const handleScreenClick = (e: React.MouseEvent): void => {
-    const sel = window.getSelection();
+    const sel = (e.currentTarget.ownerDocument.defaultView ?? window).getSelection();
     if (sel && !sel.isCollapsed) return; // preserve drag-to-select/copy
     const target = e.target as HTMLElement;
     if (target.closest('.pty-block')) return; // xterm block keeps its own focus
@@ -620,6 +635,121 @@ export function TerminalPane({
     panelId,
   ]);
 
+  useEffect(() => {
+    const bootstrap = agentBootstrap ?? resumeBootstrap;
+    if (
+      !bootstrap
+      || resumeStartedRef.current
+      || !sessionId
+      || sessionDead
+    ) {
+      return;
+    }
+    resumeStartedRef.current = true;
+    setResumeError(null);
+    const runSessionId = sessionId;
+    const runId = nextRunId();
+    const handoffController = new AbortController();
+    const handoffSignal = handoffController.signal;
+    handoffAbortByRunRef.current.set(runId, handoffController);
+    knownRunIdsRef.current.add(runId);
+    pendingHandoffRunIdsRef.current.add(runId);
+    stickToBottom.current = true;
+    // The first resumed prompt is one-shot PTY input, not an EZTerminal shell
+    // command. Keep it out of command recall/history and only restore it as a
+    // draft if resume startup fails.
+    const resumeLabel = bootstrap.kind === 'resume' ? bootstrap.provider : bootstrap.name;
+    setBlocks([{ id: runId, command: resumeLabel, controller: null }]);
+
+    void getRunPortBroker().request({
+      kind: 'run',
+      runId,
+      signal: handoffSignal,
+      send: async () => {
+        if (bootstrap.kind === 'resume') {
+          const result = await window.ezterminal.startAgentResume({
+            historyId: bootstrap.historyId,
+            sessionId: runSessionId,
+            runId,
+            rootChoice: bootstrap.rootChoice,
+            revision: bootstrap.revision,
+          });
+          if (!result.ok) throw new Error(`Agent resume failed: ${result.reason}`);
+          return;
+        }
+        let launchTarget = bootstrap.target;
+        let launchRevision = bootstrap.revision;
+        if (bootstrapRetryToken > 0) {
+          const preparation = await window.ezterminal.prepareAgentLaunch(
+            bootstrap.target,
+            bootstrap.launcherId,
+          );
+          if (!preparation.ok) {
+            throw new Error(`Agent launch preparation failed: ${preparation.reason}`);
+          }
+          launchTarget = preparation.target;
+          launchRevision = preparation.revision;
+        }
+        const result = await window.ezterminal.startAgentLaunch({
+          target: launchTarget,
+          launcherId: bootstrap.launcherId,
+          sessionId: runSessionId,
+          runId,
+          revision: launchRevision,
+        });
+        if (!result.ok) throw new Error(`Agent launch failed: ${result.reason}`);
+      },
+    }).then((port) => {
+      handoffAbortByRunRef.current.delete(runId);
+      pendingHandoffRunIdsRef.current.delete(runId);
+      if (handoffSignal.aborted) {
+        closeRunPort(port);
+        knownRunIdsRef.current.delete(runId);
+        return;
+      }
+      try {
+        const controller = new BlockController(resumeLabel, port, {
+          controlTarget: { panelId, sessionId: runSessionId, runId },
+        });
+        if (bootstrap.kind === 'resume') controller.submitPtyWhenReady(bootstrap.initialPrompt);
+        bindActiveController(controller);
+        setBlocks((previous) => previous.map((entry) =>
+          entry.id === runId ? { ...entry, controller } : entry));
+        if (bootstrap.kind === 'new-chat') clearAgentTerminalBootstrap(panelId);
+      } catch (error) {
+        closeRunPort(port);
+        knownRunIdsRef.current.delete(runId);
+        console.error('[renderer] failed to bind Agent resume port:', error);
+      }
+    }).catch((error: unknown) => {
+      handoffAbortByRunRef.current.delete(runId);
+      pendingHandoffRunIdsRef.current.delete(runId);
+      knownRunIdsRef.current.delete(runId);
+      if (!handoffSignal.aborted) {
+        setBlocks([]);
+        resumeStartedRef.current = false;
+        if (bootstrap.kind === 'resume') {
+          setCommand(bootstrap.initialPrompt);
+          const message = 'Could not open the previous session. Your message was restored below.';
+          setResumeError(message);
+          onAgentBootstrapFailure?.(message);
+        } else {
+          setResumeError(`Could not start ${bootstrap.name} in this project.`);
+        }
+        console.error('[renderer] Agent bootstrap failed:', error);
+      }
+    });
+  }, [
+    bindActiveController,
+    agentBootstrap,
+    bootstrapRetryToken,
+    panelId,
+    onAgentBootstrapFailure,
+    resumeBootstrap,
+    sessionDead,
+    sessionId,
+  ]);
+
   const handleRun = useCallback((): void => {
     runText(command);
   }, [command, runText]);
@@ -881,9 +1011,9 @@ export function TerminalPane({
 
   const selectPaneOutput = useCallback((): void => {
     const output = blockListRef.current;
-    const selection = window.getSelection();
+    const selection = output?.ownerDocument.defaultView?.getSelection();
     if (!output || !selection) return;
-    const range = document.createRange();
+    const range = output.ownerDocument.createRange();
     range.selectNodeContents(output);
     selection.removeAllRanges();
     selection.addRange(range);
@@ -966,7 +1096,7 @@ export function TerminalPane({
       onContextMenu={(event) => {
         if (
           event.defaultPrevented
-          || window.matchMedia?.('(pointer: coarse)').matches
+          || event.currentTarget.ownerDocument.defaultView?.matchMedia?.('(pointer: coarse)').matches
           || (
             event.target instanceof Element
             && event.target.closest('.terminal-context-menu')
@@ -1008,6 +1138,23 @@ export function TerminalPane({
         onScroll={onBlockListScroll}
         onClick={handleScreenClick}
       >
+        {resumeError && (
+          <div className="agent-history-terminal__error" role="alert">
+            <span>{resumeError}</span>
+            {(agentBootstrap ?? resumeBootstrap)?.kind === 'new-chat' && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setResumeError(null);
+                  setBootstrapRetryToken((value) => value + 1);
+                }}
+              >
+                {t('common.retry')}
+              </Button>
+            )}
+          </div>
+        )}
         {blocks.map((entry) =>
           entry.controller ? (
             <Block
@@ -1270,6 +1417,7 @@ export function TerminalPane({
           items={paneContextMenuItems}
           ariaLabel={t('terminalContext.actionsLabel')}
           shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
+          ownerDocument={paneContextMenu.invocation.originPane?.ownerDocument}
           onClose={(detail) => closeTerminalContextMenu(
             paneContextMenu.invocation,
             detail,

@@ -6,15 +6,18 @@
  * `docs/research/2026-07-02-codex-track-a-presets-review.md`.
  *
  * Strictness policy (gate B5), by security weight:
- *  - `params` is a STRICT empty object: ANY key (a persisted sessionId above all)
- *    fails validation loudly — B1/B5 as a checked invariant, not a convention.
- *  - `contentComponent` must be one of the known panel types ('terminal' or,
- *    since openclaw-management M3, the singleton 'openclaw-chat'): an unknown
- *    component would make dockview-react throw at mount; rejecting here
- *    routes to the corrupt path.
- *  - Unsupported serialized feature buckets (floating/popout/edge groups) are
- *    STRIPPED by the sanitizer (gate B4) — we run with floating disabled and
- *    edge/popout unused, so persisted ones can only be stale or hostile.
+ *  - Terminal/OpenClaw `params` are STRICT empty objects: ANY key (a persisted
+ *    sessionId above all) fails validation loudly — B1/B5 as a checked
+ *    invariant, not a convention. A read-only Agent history panel may persist
+ *    only its bounded, opaque EZTerminal `historyId` and a bounded provider
+ *    styling hint.
+ *  - `contentComponent` must be one of the known panel types ('terminal',
+ *    'openclaw-chat', or 'agent-session'): an unknown component would make
+ *    dockview-react throw at mount; rejecting here routes to the corrupt path.
+ *  - Floating and edge groups remain unsupported and are stripped. Dockview
+ *    popout groups are retained, but only DOM-backed terminal and Agent
+ *    Session panels may appear in them; window URLs and internal reference ids
+ *    are regenerated at runtime.
  *  - Other unknown keys are silently STRIPPED (Zod object default), not rejected:
  *    a future dockview adding a benign key must not brick saved layouts.
  *  - `grid.root` gets a minimal shape check (gate B1): dockview's fromJSON calls
@@ -29,32 +32,47 @@ import {
   UiDensitySchema,
   UiLocalePreferenceSchema,
 } from './ui-preferences';
+import { isDetachablePanelComponent } from './desktop-window';
 
 export const LAYOUT_SCHEMA_VERSION = 1 as const;
 
 /** Upper bound on restorable panels (gate B5 — bounded input from disk/renderer). */
 export const MAX_PANELS = 64;
+export const MAX_POPOUT_WINDOWS = 16;
 
-const PanelSchema = z.object({
+const PanelBaseSchema = z.object({
   id: z.string().min(1),
   // openclaw-management M3: 'openclaw-chat' is a fixed-id singleton panel
   // (main-owned WebContentsView embed) — additive to the union, so every
   // pre-M3 layout/preset file (whose panels are all 'terminal') still parses.
-  contentComponent: z.union([z.literal('terminal'), z.literal('openclaw-chat')]),
   title: z.string().optional(),
   // Serialized panels carry renderer:'always' (F1/F2); tolerate its absence and
   // let the sanitizer force it so restored panes always survive tab switches.
   renderer: z.literal('always').optional(),
-  // STRICT empty: a sessionId-like key here is exactly the resurrection bug the
-  // Track A P1 gate (B1/B5) forbids — fail loudly, never strip-and-continue.
-  // Applies identically to 'openclaw-chat' panels — they carry no params either.
-  params: z.strictObject({}).optional(),
   tabComponent: z.string().optional(),
   minimumWidth: z.number().optional(),
   minimumHeight: z.number().optional(),
   maximumWidth: z.number().optional(),
   maximumHeight: z.number().optional(),
 });
+
+const PanelSchema = z.discriminatedUnion('contentComponent', [
+  PanelBaseSchema.extend({
+    contentComponent: z.literal('terminal'),
+    params: z.strictObject({}).optional(),
+  }),
+  PanelBaseSchema.extend({
+    contentComponent: z.literal('openclaw-chat'),
+    params: z.strictObject({}).optional(),
+  }),
+  PanelBaseSchema.extend({
+    contentComponent: z.literal('agent-session'),
+    params: z.strictObject({
+      historyId: z.string().min(1).max(128),
+      provider: z.enum(['codex', 'claude']).optional(),
+    }),
+  }),
+]);
 
 const GridSchema = z.looseObject({
   root: z.looseObject({
@@ -66,10 +84,43 @@ const GridSchema = z.looseObject({
   orientation: z.string(),
 });
 
+const PopoutGroupDataSchema = z.looseObject({
+  id: z.string().min(1).max(256),
+  views: z.array(z.string().min(1).max(256)).min(1).max(MAX_PANELS),
+  activeView: z.string().min(1).max(256).optional(),
+});
+
+const PopoutGridSchema = z.looseObject({
+  root: z.looseObject({
+    type: z.literal('branch'),
+    data: z.array(z.unknown()),
+  }),
+  width: z.number().finite().positive().max(32_768),
+  height: z.number().finite().positive().max(32_768),
+  orientation: z.string(),
+});
+
+const PopoutPositionSchema = z.object({
+  left: z.number().finite().min(-1_000_000).max(1_000_000),
+  top: z.number().finite().min(-1_000_000).max(1_000_000),
+  width: z.number().finite().positive().max(32_768),
+  height: z.number().finite().positive().max(32_768),
+});
+
+const PopoutGroupSchema = z.object({
+  data: PopoutGroupDataSchema.optional(),
+  grid: PopoutGridSchema.optional(),
+  position: PopoutPositionSchema,
+}).refine(
+  (value) => (value.data ? 1 : 0) + (value.grid ? 1 : 0) === 1,
+  { message: 'A popout must contain exactly one single-group or nested-grid layout.' },
+);
+
 const LayoutSchema = z.object({
   grid: GridSchema,
   panels: z.record(z.string(), PanelSchema),
   activeGroup: z.string().optional(),
+  popoutGroups: z.array(PopoutGroupSchema).max(MAX_POPOUT_WINDOWS).optional(),
 });
 
 export const LayoutEnvelopeSchema = z.object({
@@ -240,8 +291,19 @@ export function sanitizeSerializedLayout(raw: unknown): unknown {
   if (typeof raw !== 'object' || raw === null) return raw;
   const layout = structuredClone(raw) as Record<string, unknown>;
   delete layout.floatingGroups;
-  delete layout.popoutGroups;
   delete layout.edgeGroups;
+  if (Array.isArray(layout.popoutGroups)) {
+    layout.popoutGroups = layout.popoutGroups.map((candidate) => {
+      if (typeof candidate !== 'object' || candidate === null) return candidate;
+      const popout = candidate as Record<string, unknown>;
+      // The URL is always rebuilt from the current trusted renderer origin.
+      // Dockview's reference-group id can point at a stale main-grid group
+      // after a restart, so restoration builds a fresh anchor instead.
+      delete popout.url;
+      delete popout.gridReferenceGroup;
+      return popout;
+    });
+  }
   if (typeof layout.panels === 'object' && layout.panels !== null) {
     for (const panel of Object.values(layout.panels as Record<string, unknown>)) {
       if (typeof panel === 'object' && panel !== null) {
@@ -269,7 +331,65 @@ export function validateLayoutEnvelope(data: unknown): LayoutEnvelope | null {
   for (const [key, panel] of entries) {
     if (key !== panel.id) return null; // record key must equal panel id (B5)
   }
+  const mainOccurrences = collectSerializedPanelIdOccurrences(parsed.data.layout.grid.root);
+  const mainPanelIds = new Set(mainOccurrences);
+  if (mainPanelIds.size !== mainOccurrences.length) return null;
+  const popoutPanelIds = new Set<string>();
+  for (const popout of parsed.data.layout.popoutGroups ?? []) {
+    const occurrences = popout.data
+      ? popout.data.views
+      : collectSerializedPanelIdOccurrences(popout.grid!.root);
+    const ids = new Set(occurrences);
+    if (ids.size !== occurrences.length) return null;
+    if (ids.size === 0) return null;
+    for (const id of ids) {
+      const panel = panels[id];
+      if (
+        !panel
+        || !isDetachablePanelComponent(panel.contentComponent)
+        || mainPanelIds.has(id)
+        || popoutPanelIds.has(id)
+      ) {
+        return null;
+      }
+      popoutPanelIds.add(id);
+    }
+  }
   return parsed.data;
+}
+
+/**
+ * Collect panel ids from Dockview's recursive grid without trusting any other
+ * leaf data. Runtime preflight remains the authority for full grid validity.
+ */
+export function collectSerializedPanelIds(root: unknown): Set<string> {
+  return new Set(collectSerializedPanelIdOccurrences(root));
+}
+
+export function collectSerializedPanelIdOccurrences(root: unknown): string[] {
+  const result: string[] = [];
+  const visit = (node: unknown): void => {
+    if (typeof node !== 'object' || node === null) return;
+    const candidate = node as Record<string, unknown>;
+    if (candidate.type === 'branch' && Array.isArray(candidate.data)) {
+      for (const child of candidate.data) visit(child);
+      return;
+    }
+    if (
+      candidate.type !== 'leaf'
+      || typeof candidate.data !== 'object'
+      || candidate.data === null
+    ) {
+      return;
+    }
+    const views = (candidate.data as Record<string, unknown>).views;
+    if (!Array.isArray(views)) return;
+    for (const id of views) {
+      if (typeof id === 'string') result.push(id);
+    }
+  };
+  visit(root);
+  return result;
 }
 
 /** SAVE path: wrap a raw api.toJSON() result into a validated envelope. */

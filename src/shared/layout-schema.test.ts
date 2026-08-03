@@ -93,6 +93,34 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     expect(validateLayoutEnvelope(makeEnvelope(layout))).toBeNull();
   });
 
+  it('ACCEPTS an Agent history panel with a bounded historyId and public provider identity', () => {
+    const layout = makeLayout();
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.id = 'agent-session-codex_0123456789abcdef01234567';
+    panel.contentComponent = 'agent-session';
+    panel.params = { historyId: 'codex_0123456789abcdef01234567', provider: 'codex' };
+    layout.panels = { [panel.id as string]: panel };
+
+    const env = validateLayoutEnvelope(makeEnvelope(layout));
+
+    expect(env?.layout.panels[panel.id as string]).toMatchObject({
+      contentComponent: 'agent-session',
+      params: { historyId: 'codex_0123456789abcdef01234567', provider: 'codex' },
+    });
+  });
+
+  it('REJECTS private provider thread ids or transcript data added to Agent history params', () => {
+    const layout = makeLayout();
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.contentComponent = 'agent-session';
+    panel.params = {
+      historyId: 'codex_0123456789abcdef01234567',
+      providerThreadId: 'private-thread-id',
+    };
+
+    expect(validateLayoutEnvelope(makeEnvelope(layout))).toBeNull();
+  });
+
   it('an old terminal-only layout file (pre-M3) still parses unaffected', () => {
     const env = validateLayoutEnvelope(makeEnvelope(makeLayout(['tab-1', 'tab-2'])));
     expect(env).not.toBeNull();
@@ -100,17 +128,81 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     expect(env?.layout.panels['tab-2'].contentComponent).toBe('terminal');
   });
 
-  it('STRIPS floating/popout/edge groups instead of persisting them (Codex B4)', () => {
-    const layout = makeLayout();
+  it('strips floating/edge groups while preserving a validated terminal popout', () => {
+    const layout = makeLayout(['tab-1', 'tab-2']);
     layout.floatingGroups = [{ anything: true }];
-    layout.popoutGroups = [{ anything: true }];
+    layout.popoutGroups = [{
+      data: { id: 'popout-1', views: ['tab-2'], activeView: 'tab-2' },
+      position: { left: -800, top: 40, width: 900, height: 600 },
+      url: 'https://hostile.invalid/',
+      gridReferenceGroup: 'stale-group',
+    }];
     layout.edgeGroups = [{ anything: true }];
     const env = validateLayoutEnvelope(makeEnvelope(layout));
     expect(env).not.toBeNull();
     const persisted = env?.layout as unknown as Record<string, unknown>;
     expect(persisted.floatingGroups).toBeUndefined();
-    expect(persisted.popoutGroups).toBeUndefined();
     expect(persisted.edgeGroups).toBeUndefined();
+    expect(persisted.popoutGroups).toEqual([{
+      data: { id: 'popout-1', views: ['tab-2'], activeView: 'tab-2' },
+      position: { left: -800, top: 40, width: 900, height: 600 },
+    }]);
+  });
+
+  it('accepts an Agent Session popout with only its bounded public identity', () => {
+    const layout = makeLayout(['tab-1']);
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.id = 'agent-session-repro';
+    panel.contentComponent = 'agent-session';
+    panel.params = { historyId: 'codex_repro', provider: 'codex' };
+    layout.panels = { 'agent-session-repro': panel };
+    layout.popoutGroups = [{
+      data: {
+        id: 'popout-1',
+        views: ['agent-session-repro'],
+        activeView: 'agent-session-repro',
+      },
+      position: { left: 20, top: 20, width: 800, height: 600 },
+    }];
+
+    const env = validateLayoutEnvelope(makeEnvelope(layout));
+
+    expect(env?.layout.popoutGroups?.[0]?.data?.views).toEqual([
+      'agent-session-repro',
+    ]);
+  });
+
+  it('rejects native, duplicate, or non-finite popout panel placement', () => {
+    const nonTerminal = makeLayout(['tab-1']);
+    const panel = (nonTerminal.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.id = 'openclaw-chat';
+    panel.contentComponent = 'openclaw-chat';
+    nonTerminal.panels = { 'openclaw-chat': panel };
+    nonTerminal.popoutGroups = [{
+      data: { id: 'popout-1', views: ['openclaw-chat'] },
+      position: { left: 20, top: 20, width: 800, height: 600 },
+    }];
+    expect(validateLayoutEnvelope(makeEnvelope(nonTerminal))).toBeNull();
+
+    const duplicate = makeLayout(['tab-1']);
+    duplicate.popoutGroups = [
+      {
+        data: { id: 'popout-1', views: ['tab-1'] },
+        position: { left: 20, top: 20, width: 800, height: 600 },
+      },
+      {
+        data: { id: 'popout-2', views: ['tab-1'] },
+        position: { left: 40, top: 40, width: 800, height: 600 },
+      },
+    ];
+    expect(validateLayoutEnvelope(makeEnvelope(duplicate))).toBeNull();
+
+    const nonFinite = makeLayout(['tab-1']);
+    nonFinite.popoutGroups = [{
+      data: { id: 'popout-1', views: ['tab-1'] },
+      position: { left: Number.NaN, top: 20, width: 800, height: 600 },
+    }];
+    expect(validateLayoutEnvelope(makeEnvelope(nonFinite))).toBeNull();
   });
 
   it('forces renderer:always on every panel (PTY survives tab switches)', () => {

@@ -153,6 +153,26 @@ describe('keyboard navigation and overlays', () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it('focuses the first menu item before a newly opened menu can receive keyboard input', () => {
+    const pendingFrames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      pendingFrames.push(callback);
+      return pendingFrames.length;
+    });
+    render(
+      <Menu trigger={<button type="button">Actions</button>} label="Panel actions">
+        <MenuItem onSelect={vi.fn()}>Rename</MenuItem>
+        <MenuItem onSelect={vi.fn()}>Close</MenuItem>
+      </Menu>,
+    );
+    const trigger = container.querySelector<HTMLButtonElement>('button')!;
+    trigger.focus();
+    act(() => trigger.click());
+    const firstItem = container.querySelector<HTMLButtonElement>('[role="menuitem"]')!;
+
+    expect(document.activeElement).toBe(firstItem);
+  });
+
   it('includes mutually exclusive radio items in initial focus and arrow navigation', () => {
     const selectStatic = vi.fn();
     const selectCrt = vi.fn();

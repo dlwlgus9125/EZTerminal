@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { AppErrorBoundary } from './AppErrorBoundary';
+import { AuxiliaryShell } from './AuxiliaryShell';
 import { BootIntroOverlay } from './BootIntroOverlay';
 import { useAppTranslation } from './i18n';
 import { DesktopUiPreferencesProvider } from './ui-preferences';
@@ -28,12 +29,18 @@ function DesktopApplication(): JSX.Element {
   );
 }
 
+const auxiliaryWindow = new URLSearchParams(window.location.search).get('ez-popout') === '1';
+
 createRoot(container).render(
   <StrictMode>
     <AppErrorBoundary>
-      <DesktopUiPreferencesProvider>
-        <DesktopApplication />
-      </DesktopUiPreferencesProvider>
+      {auxiliaryWindow ? (
+        <AuxiliaryShell />
+      ) : (
+        <DesktopUiPreferencesProvider>
+          <DesktopApplication />
+        </DesktopUiPreferencesProvider>
+      )}
     </AppErrorBoundary>
   </StrictMode>,
 );

@@ -20,6 +20,77 @@
     var(--ui-surface)
   );
   user-select: none;
+  -webkit-app-region: drag;
+}
+
+.workbench-header:has(> .window-controls) {
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+}
+
+.workbench-header button,
+.workbench-header input,
+.workbench-header [role='dialog'],
+.workbench-header .window-controls {
+  -webkit-app-region: no-drag;
+}
+
+.window-controls {
+  align-self: stretch;
+  justify-self: end;
+  display: flex;
+  min-block-size: 44px;
+  margin: calc(-1 * var(--ui-space-2)) calc(-1 * var(--ui-space-3))
+    calc(-1 * var(--ui-space-2)) 0;
+  -webkit-app-region: no-drag;
+}
+
+.window-control {
+  inline-size: 46px;
+  min-inline-size: 46px;
+  block-size: 100%;
+  min-block-size: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  color: var(--ui-text-secondary);
+  background: transparent;
+  cursor: default;
+}
+
+.window-control svg {
+  inline-size: 15px;
+  block-size: 15px;
+  stroke-width: 1.6;
+}
+
+.window-control:hover,
+.window-control:focus-visible {
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-hover);
+  outline: none;
+}
+
+.window-control:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--ui-accent);
+}
+
+.window-control--close:hover,
+.window-control--close:focus-visible {
+  color: #fff;
+  background: #c42b1c;
+}
+
+.window-controls--compact {
+  align-self: stretch;
+  min-block-size: 36px;
+  margin: 0;
+}
+
+.window-controls--compact .window-control {
+  inline-size: 44px;
+  min-inline-size: 44px;
+  min-block-size: 36px;
 }
 
 .workbench-header-zone {
@@ -622,6 +693,23 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   font-size: 10px;
 }
 
+.activity-rail-update-dot,
+.settings-update-dot {
+  display: inline-block;
+  inline-size: 0.625rem;
+  block-size: 0.625rem;
+  border: 2px solid var(--ui-canvas);
+  border-radius: 999px;
+  background: var(--ui-warning);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ui-warning) 60%, transparent);
+}
+
+.activity-rail-update-dot {
+  position: absolute;
+  inset: -1px -2px auto auto;
+  pointer-events: none;
+}
+
 .workbench-sidebar-scrim {
   display: none;
 }
@@ -787,6 +875,10 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   text-align: start;
   font: inherit;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
 }
 
 .settings-category-button:hover {
@@ -867,6 +959,66 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
   color: var(--ui-text-primary);
 }
 
+.app-update-card {
+  display: grid;
+  gap: var(--ui-space-3);
+  margin-block-end: var(--ui-space-4);
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+}
+
+.app-update-card__heading,
+.app-update-card__release {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--ui-space-3);
+}
+
+.app-update-card__heading h3,
+.app-update-card__heading p,
+.app-update-card__status,
+.app-update-card__downloaded p,
+.app-update-card__error p {
+  margin: 0;
+}
+
+.app-update-card__heading h3 {
+  color: var(--ui-text-primary);
+  font: 600 var(--ui-font-size-14)/var(--ui-line-height-tight) var(--ui-font-heading);
+}
+
+.app-update-card__heading p,
+.app-update-card__checked {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-12);
+}
+
+.app-update-card__release {
+  color: var(--ui-text-primary);
+}
+
+.app-update-card__progress,
+.app-update-card__downloaded,
+.app-update-card__error {
+  display: grid;
+  gap: var(--ui-space-2);
+}
+
+.app-update-card__progress progress {
+  inline-size: 100%;
+  accent-color: var(--ui-accent);
+}
+
+.app-update-card__error {
+  padding: var(--ui-space-2);
+  border-inline-start: 3px solid var(--ui-danger);
+  color: var(--ui-danger);
+  background: color-mix(in srgb, var(--ui-danger) 8%, transparent);
+}
+
 @media (max-width: 1199px) {
   .workbench-shortcut {
     display: none;
@@ -913,6 +1065,10 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
 
   .workbench-header .ez-ui-button {
     padding-inline: var(--ui-space-2);
+  }
+
+  .window-controls {
+    margin-inline-end: calc(-1 * var(--ui-space-2));
   }
 
   .workbench-header-zone--attention .ez-ui-button__label {

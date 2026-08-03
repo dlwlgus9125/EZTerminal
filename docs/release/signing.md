@@ -65,8 +65,21 @@ keystore 파일은 APK 조립 직후 삭제한다. 후속 단계는 비밀번호
 빌드-job `SHA256SUMS.txt` 해시와 manifest/file 해시를 재검증한 뒤에만 draft
 GitHub Release를 생성한다.
 
-## Windows 1.0
+## Windows SignPath Foundation 서명
 
-Windows 1.0 공개 산출물은 의도적으로 무서명이다. Release workflow는 `EZTerminal.exe`와 `EZTerminal-Setup.exe`의 Authenticode 상태가 정확히 `NotSigned`인지 확인하고 `release-manifest.json`에 기록한다. 사용자는 첫 실행 때 SmartScreen의 알 수 없는 게시자 경고를 볼 수 있다.
+공개 Windows 릴리스는 SignPath Foundation의 오픈소스 인증서를 사용하며
+Windows에 표시되는 게시자는 정확히 `SignPath Foundation`이다. Release
+workflow는 앱, Rust remote host, NSIS 제거 프로그램을 먼저 서명하고 그
+결과로 설치 프로그램을 다시 만든 뒤 Setup을 두 번째로 서명한다. SignPath
+정책상 두 요청은 릴리스마다 각각 수동 승인을 받아야 한다.
 
-`forge.config.ts`의 선택적 PFX 지원은 향후 인증서 도입을 위해 남아 있지만 1.0 Release workflow는 PFX를 주입하지 않는다. 정식 Windows 인증서를 도입할 때는 검증 계약과 문서를 함께 변경하고 별도의 릴리스 후보에서 시험한다.
+워크플로는 네 파일 모두에서 유효한 Authenticode, 게시자, RFC 3161
+타임스탬프, 제품명·버전, 파일·인증서 해시를 검사한다. 이 증거와 두 SignPath
+request ID가 완전하지 않으면 `release-manifest.json`을 만들거나 게시할 수
+없다. 설치 후에도 내부 앱, remote host, 제거 프로그램을 다시 검사한다.
+
+로컬 `pnpm make`와 로컬 RC는 계속 무서명이다. PFX 환경 변수는 SignPath
+경로에서 거부되며 무서명 로컬 산출물은 공식 공개 대상으로 승격할 수 없다.
+초기에는 유효한 서명과 별개로 SmartScreen 평판 경고가 남을 수 있다. 자세한
+신청·설정 절차는 [SignPath Windows release setup](signpath-setup.md), 공개
+역할과 책임은 [Code signing policy](../../CODE_SIGNING_POLICY.md)를 따른다.

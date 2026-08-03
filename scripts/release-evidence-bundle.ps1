@@ -67,9 +67,7 @@ function Get-FileEvidence {
         name = $Name
         path = $item.FullName
         bytes = [int64]$item.Length
-        sha256 = (
-            Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256
-        ).Hash.ToLowerInvariant()
+        sha256 = Get-FileSha256 $item.FullName
     }
 }
 
@@ -83,6 +81,21 @@ function Get-BytesSha256 {
         ).ToLowerInvariant()
     } finally {
         $sha256.Dispose()
+    }
+}
+
+function Get-FileSha256 {
+    param([string]$Path)
+
+    $stream = [IO.File]::OpenRead($Path)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return (
+            [BitConverter]::ToString($sha256.ComputeHash($stream)) -replace '-', ''
+        ).ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
     }
 }
 
@@ -206,10 +219,11 @@ if ($PSCmdlet.ParameterSetName -eq 'Create') {
     $base64Length = Get-Base64Length $bundle.Length
     if ($base64Length -gt $MaxBase64Characters) {
         Remove-Item -LiteralPath $resolvedBundle -Force
+        # Keep the contract phrase shorter than PowerShell's default error
+        # formatting width so CLIXML does not split it across <S> elements.
         throw (
-            "Compressed evidence requires $base64Length base64 characters, " +
-            "exceeding the Windows protected-secret transport limit of " +
-            "$MaxBase64Characters."
+            "protected-secret transport limit of $MaxBase64Characters exceeded " +
+            "(requires $base64Length base64 characters)."
         )
     }
     $files = @(
@@ -226,9 +240,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Create') {
         operation = 'create'
         bundlePath = $resolvedBundle
         bundleBytes = [int64]$bundle.Length
-        bundleSha256 = (
-            Get-FileHash -LiteralPath $resolvedBundle -Algorithm SHA256
-        ).Hash.ToLowerInvariant()
+        bundleSha256 = Get-FileSha256 $resolvedBundle
         base64Length = $base64Length
         files = $files
     } | ConvertTo-Json -Depth 5 -Compress
@@ -369,9 +381,7 @@ try {
     operation = 'extract'
     bundlePath = $bundle.FullName
     bundleBytes = [int64]$bundle.Length
-    bundleSha256 = (
-        Get-FileHash -LiteralPath $bundle.FullName -Algorithm SHA256
-    ).Hash.ToLowerInvariant()
+    bundleSha256 = Get-FileSha256 $bundle.FullName
     base64Length = $bundleBase64Length
     destinationDirectory = $destination
     files = $files

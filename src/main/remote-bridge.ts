@@ -26,6 +26,7 @@
  */
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import type { FileHandle } from 'node:fs/promises';
+import path from 'node:path';
 
 import { WebSocketServer, type WebSocket } from 'ws';
 
@@ -42,6 +43,10 @@ import {
   REMOTE_CAPABILITY_DESKTOP_CONTROL,
   REMOTE_CAPABILITY_QUICK_COMMANDS_READ,
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_PROTOCOL_VERSION_AGENT_HISTORY,
+  REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS,
+  REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS,
+  REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL,
   REMOTE_PROTOCOL_VERSION_LEGACY,
   SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
@@ -77,6 +82,19 @@ import type {
   AgentDecisionResult,
   AgentFollowupResult,
 } from '../shared/agent';
+import type {
+  AgentHistorySessionPage,
+  AgentLaunchPreparation,
+  AgentLaunchTarget,
+  AgentProjectInput,
+  AgentProjectLaunchPreparation,
+  AgentProjectLauncherSummary,
+  AgentProjectMutationResult,
+  AgentProjectPage,
+  AgentResumePreparation,
+  AgentResumeRootChoice,
+  AgentTranscriptPage,
+} from '../shared/agent-history';
 import {
   UNAVAILABLE_GIT_DIRECTORY_STATUS,
   type GitDiffResult,
@@ -236,6 +254,25 @@ function isOptionalString(value: unknown): value is string | undefined {
 
 function isOptionalNumber(value: unknown): value is number | undefined {
   return value === undefined || isFiniteNumber(value);
+}
+
+function isRemoteAgentLaunchTarget(value: unknown): value is AgentLaunchTarget {
+  if (!isRecord(value)) return false;
+  if (value.kind === 'project') {
+    return (
+      typeof value.projectId === 'string'
+      && value.projectId.length > 0
+      && value.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+    );
+  }
+  if (value.kind === 'directory') {
+    return (
+      typeof value.directory === 'string'
+      && value.directory.length > 0
+      && value.directory.length <= 8_192
+    );
+  }
+  return false;
 }
 
 const MAX_GUARDED_DESTROY_ID_LENGTH = 256;
@@ -436,6 +473,154 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         && value.approvalId.length <= MAX_REMOTE_AGENT_ID_LENGTH
         && (value.decision === 'allow' || value.decision === 'deny')
       );
+    case 'agent-projects-list':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && (value.query === undefined
+          || (typeof value.query === 'string' && value.query.length <= 512))
+      );
+    case 'agent-project-save': {
+      const input = isRecord(value.input) ? value.input : null;
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && input !== null
+        && (input.projectId === undefined
+          || (typeof input.projectId === 'string' && input.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH))
+        && typeof input.name === 'string'
+        && typeof input.primaryRoot === 'string'
+        && Array.isArray(input.additionalRoots)
+        && input.additionalRoots.every((root) => typeof root === 'string')
+        && typeof input.pinned === 'boolean'
+      );
+    }
+    case 'agent-project-remove':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.projectId === 'string'
+        && value.projectId.length > 0
+        && value.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    case 'agent-project-launchers':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+      );
+    case 'agent-project-prepare-launch':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.projectId === 'string'
+        && value.projectId.length > 0
+        && value.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof value.launcherId === 'string'
+        && value.launcherId.length > 0
+        && value.launcherId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    case 'agent-project-start-launch': {
+      const request = isRecord(value.request) ? value.request : null;
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && request !== null
+        && typeof request.projectId === 'string'
+        && request.projectId.length > 0
+        && request.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.launcherId === 'string'
+        && request.launcherId.length > 0
+        && request.launcherId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.sessionId === 'string'
+        && request.sessionId.length > 0
+        && request.sessionId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.runId === 'string'
+        && request.runId.length > 0
+        && request.runId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.revision === 'string'
+        && request.revision.length > 0
+        && request.revision.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    }
+    case 'agent-launch-prepare':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && isRemoteAgentLaunchTarget(value.target)
+        && typeof value.launcherId === 'string'
+        && value.launcherId.length > 0
+        && value.launcherId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    case 'agent-launch-start': {
+      const request = isRecord(value.request) ? value.request : null;
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && request !== null
+        && isRemoteAgentLaunchTarget(request.target)
+        && typeof request.launcherId === 'string'
+        && request.launcherId.length > 0
+        && request.launcherId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.sessionId === 'string'
+        && request.sessionId.length > 0
+        && request.sessionId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.runId === 'string'
+        && request.runId.length > 0
+        && request.runId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.revision === 'string'
+        && request.revision.length > 0
+        && request.revision.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    }
+    case 'agent-history-sessions':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.projectId === 'string'
+        && value.projectId.length > 0
+        && value.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    case 'agent-history-read':
+    case 'agent-history-prepare-resume':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.historyId === 'string'
+        && value.historyId.length > 0
+        && value.historyId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+      );
+    case 'agent-history-start-resume': {
+      const request = isRecord(value.request) ? value.request : null;
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && request !== null
+        && typeof request.historyId === 'string'
+        && request.historyId.length > 0
+        && request.historyId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.sessionId === 'string'
+        && request.sessionId.length > 0
+        && request.sessionId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.runId === 'string'
+        && request.runId.length > 0
+        && request.runId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && typeof request.revision === 'string'
+        && request.revision.length > 0
+        && request.revision.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && (request.rootChoice === 'recorded' || request.rootChoice === 'current')
+      );
+    }
     case 'worktree-request':
       return typeof value.requestId === 'string';
     case 'git-status':
@@ -702,6 +887,52 @@ export interface RemoteAgentSource {
   decideApproval(activityId: string, approvalId: string, decision: AgentDecision): AgentDecisionResult;
 }
 
+export interface RemoteAgentHistorySource {
+  listProjects(force?: boolean, cursor?: string, limit?: number, query?: string): Promise<AgentProjectPage>;
+  saveProject?(input: AgentProjectInput): Promise<AgentProjectMutationResult>;
+  removeProject?(projectId: string): Promise<boolean>;
+  listLaunchers?(): readonly AgentProjectLauncherSummary[];
+  prepareLaunch?(target: AgentLaunchTarget, launcherId: string): Promise<AgentLaunchPreparation>;
+  prepareProjectLaunch?(projectId: string, launcherId: string): Promise<AgentProjectLaunchPreparation>;
+  resolveLaunch?(
+    target: AgentLaunchTarget,
+    launcherId: string,
+    revision: string,
+  ): Promise<
+    | {
+      readonly ok: true;
+      readonly roots: readonly string[];
+      readonly commandText: string;
+      readonly displayCommandText: string;
+    }
+    | { readonly ok: false; readonly reason: 'not-found' | 'stale' | 'missing-root' | 'unavailable' }
+  >;
+  listSessions(
+    projectId: string,
+    cursor?: string,
+    limit?: number,
+    force?: boolean,
+  ): Promise<AgentHistorySessionPage>;
+  readTranscript(historyId: string, cursor?: string, limit?: number): Promise<AgentTranscriptPage | null>;
+  prepareResume(historyId: string): Promise<AgentResumePreparation | null>;
+  recordTerminalWork(roots: readonly string[], lastActiveAt?: number): Promise<void>;
+  resolveResume(
+    historyId: string,
+    revision: string,
+    choice: AgentResumeRootChoice,
+  ): Promise<
+    | {
+      readonly ok: true;
+      readonly roots: readonly string[];
+      /** Built by the provider adapter; carries the provider's private id. */
+      readonly commandText: string;
+      /** All the mobile client and shell history ever see. */
+      readonly displayCommandText: string;
+    }
+    | { readonly ok: false; readonly reason: 'not-found' | 'stale' | 'missing-root' | 'unavailable' }
+  >;
+}
+
 /** Read-only Git working-tree queries. Nothing here can mutate a repository,
  * so unlike the worktree service it needs no origin and no gate. */
 export interface RemoteGitSource {
@@ -772,6 +1003,7 @@ export interface RemoteBridgeOptions {
   /** Optional so existing fixtures/tests without OpenClaw wiring keep working. */
   readonly openclawSource?: RemoteOpenClawSource;
   readonly agentSource?: RemoteAgentSource;
+  readonly agentHistorySource?: RemoteAgentHistorySource;
   /** Optional so existing fixtures without Git wiring keep working. */
   readonly gitSource?: RemoteGitSource;
   /** Redeems a one-time pairing code. Absent means pairing is unavailable and
@@ -902,6 +1134,45 @@ export function attachConnection(
       // A close can race the readyState check. The socket close path owns all
       // pending cleanup; transport exceptions must not escape into main.
     }
+  };
+  const sessionMatchesPrimaryRoot = (sessionId: string, roots: readonly string[]): boolean => {
+    const primaryRoot = roots[0];
+    const session = options.broker.listSessions().find((item) => item.sessionId === sessionId);
+    if (!primaryRoot || !session) return false;
+    const key = (value: string): string => {
+      const normalized = path.normalize(path.resolve(value));
+      return process.platform === 'win32' ? normalized.toLocaleLowerCase('en-US') : normalized;
+    };
+    return key(session.cwd) === key(primaryRoot);
+  };
+  const installPrivateRun = (
+    sessionId: string,
+    runId: string,
+    commandText: string,
+    displayCommandText: string,
+    beforeStart: () => void,
+  ): boolean => {
+    const port = options.broker.runPrivateCommand(
+      sessionId,
+      runId,
+      commandText,
+      displayCommandText,
+      'mobile',
+    );
+    if (!port) return false;
+    if (clientIdentity) runInitiators.remember(sessionId, runId, clientIdentity.clientId);
+    const record = { sessionId, port, initiatedHere: true };
+    runs.get(runId)?.port.close();
+    runs.set(runId, record);
+    port.on('message', (event) => {
+      send({ kind: 'frame', runId, frame: encodeFrame(event.data as InterpreterFrame) });
+    });
+    port.on('close', () => {
+      if (runs.get(runId) === record) runs.delete(runId);
+    });
+    beforeStart();
+    port.start();
+    return true;
   };
 
   const queueFileUploadAbort = (
@@ -1174,7 +1445,7 @@ export function attachConnection(
     }) ?? (() => undefined);
   const unsubAgentSnapshot =
     options.agentSource?.onSnapshot((snapshot) => {
-      if (authed && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION) {
+      if (authed && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_LIVE) {
         send({ kind: 'agent-snapshot', snapshot });
       }
     }) ?? (() => undefined);
@@ -1286,7 +1557,10 @@ export function attachConnection(
           // persisted bearer; it must never be a way to redeem a photographed
           // pairing code with weaker message/state contracts.
           const pairingProtocolCompatible = pairingGeneration === null
-            || requestedProtocol === REMOTE_PROTOCOL_VERSION;
+            || (
+              isRemoteProtocolVersion(requestedProtocol)
+              && requestedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_LIVE
+            );
           if (!protocolCompatible || !pairingProtocolCompatible) {
             send({
               kind: 'auth-fail',
@@ -1355,7 +1629,7 @@ export function attachConnection(
             // same channel the bearer itself uses on every later connect.
             ...(byPairingCode ? { issuedToken: token } : {}),
           });
-          if (options.agentSource && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION) {
+          if (options.agentSource && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_LIVE) {
             send({ kind: 'agent-snapshot', snapshot: options.agentSource.getSnapshot() });
           }
           // OpenClaw availability (M3): initial state, right after auth —
@@ -1625,7 +1899,7 @@ export function attachConnection(
         break;
 
       case 'agent-snapshot-get':
-        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
         send({
           kind: 'agent-snapshot',
           requestId: msg.requestId,
@@ -1634,7 +1908,7 @@ export function attachConnection(
         break;
 
       case 'agent-followup':
-        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
         send({
           kind: 'agent-followup-reply',
           requestId: msg.requestId,
@@ -1646,7 +1920,7 @@ export function attachConnection(
         break;
 
       case 'agent-decision':
-        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
         send({
           kind: 'agent-decision-reply',
           requestId: msg.requestId,
@@ -1657,15 +1931,395 @@ export function attachConnection(
         });
         break;
 
+      case 'agent-projects-list':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
+        void (options.agentHistorySource?.listProjects(
+          msg.force === true,
+          msg.cursor,
+          msg.limit,
+          negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS ? msg.query : undefined,
+        ) ?? Promise.resolve({ items: [], nextCursor: null })).then((result) => {
+          if (authed) send({ kind: 'agent-projects-list-reply', requestId: msg.requestId, result });
+        }).catch(() => {
+          if (authed) {
+            send({
+              kind: 'agent-projects-list-reply',
+              requestId: msg.requestId,
+              result: { items: [], nextCursor: null },
+            });
+          }
+        });
+        break;
+
+      case 'agent-project-save':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        void (options.agentHistorySource?.saveProject?.(msg.input)
+          ?? Promise.resolve({ ok: false, reason: 'invalid' } as const))
+          .then((result) => {
+            if (authed) send({ kind: 'agent-project-save-reply', requestId: msg.requestId, result });
+          })
+          .catch(() => {
+            if (authed) {
+              send({
+                kind: 'agent-project-save-reply',
+                requestId: msg.requestId,
+                result: { ok: false, reason: 'invalid' },
+              });
+            }
+          });
+        break;
+
+      case 'agent-project-remove':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        void (options.agentHistorySource?.removeProject?.(msg.projectId) ?? Promise.resolve(false))
+          .then((removed) => {
+            if (authed) send({ kind: 'agent-project-remove-reply', requestId: msg.requestId, removed });
+          })
+          .catch(() => {
+            if (authed) send({ kind: 'agent-project-remove-reply', requestId: msg.requestId, removed: false });
+          });
+        break;
+
+      case 'agent-project-launchers':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        send({
+          kind: 'agent-project-launchers-reply',
+          requestId: msg.requestId,
+          result: options.agentHistorySource?.listLaunchers?.() ?? [],
+        });
+        break;
+
+      case 'agent-project-prepare-launch':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        void (options.agentHistorySource?.prepareProjectLaunch?.(msg.projectId, msg.launcherId)
+          ?? options.agentHistorySource?.prepareLaunch?.(
+            { kind: 'project', projectId: msg.projectId },
+            msg.launcherId,
+          ).then((preparation): AgentProjectLaunchPreparation => preparation.ok
+            ? {
+                ok: true,
+                projectId: msg.projectId,
+                launcherId: preparation.launcherId,
+                provider: preparation.provider,
+                name: preparation.name,
+                cwd: preparation.cwd,
+                roots: preparation.roots,
+                revision: preparation.revision,
+              }
+            : preparation)
+          ?? Promise.resolve({ ok: false, reason: 'unavailable' } as const))
+          .then((result) => {
+            if (authed) {
+              send({
+                kind: 'agent-project-prepare-launch-reply',
+                requestId: msg.requestId,
+                result,
+              });
+            }
+          })
+          .catch(() => {
+            if (authed) {
+              send({
+                kind: 'agent-project-prepare-launch-reply',
+                requestId: msg.requestId,
+                result: { ok: false, reason: 'unavailable' },
+              });
+            }
+          });
+        break;
+
+      case 'agent-project-start-launch': {
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS) break;
+        const source = options.agentHistorySource;
+        if (!source?.resolveLaunch) {
+          send({
+            kind: 'agent-project-start-launch-reply',
+            requestId: msg.requestId,
+            result: { ok: false, reason: 'unavailable' },
+          });
+          break;
+        }
+        void source.resolveLaunch(
+          { kind: 'project', projectId: msg.request.projectId },
+          msg.request.launcherId,
+          msg.request.revision,
+        ).then((resolved) => {
+          if (!authed) return;
+          if (!resolved.ok) {
+            send({
+              kind: 'agent-project-start-launch-reply',
+              requestId: msg.requestId,
+              result: resolved,
+            });
+            return;
+          }
+          if (!sessionMatchesPrimaryRoot(msg.request.sessionId, resolved.roots)) {
+            send({
+              kind: 'agent-project-start-launch-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'session-mismatch' },
+            });
+            return;
+          }
+          const installed = installPrivateRun(
+            msg.request.sessionId,
+            msg.request.runId,
+            resolved.commandText,
+            resolved.displayCommandText,
+            () => send({
+              kind: 'agent-project-start-launch-reply',
+              requestId: msg.requestId,
+              result: { ok: true },
+            }),
+          );
+          if (!installed) {
+            send({
+              kind: 'agent-project-start-launch-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'unavailable' },
+            });
+            return;
+          }
+          void source.recordTerminalWork(resolved.roots, Date.now()).catch(() => undefined);
+        }).catch(() => {
+          if (authed) {
+            send({
+              kind: 'agent-project-start-launch-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'unavailable' },
+            });
+          }
+        });
+        break;
+      }
+
+      case 'agent-launch-prepare':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) break;
+        void (options.agentHistorySource?.prepareLaunch?.(msg.target, msg.launcherId)
+          ?? Promise.resolve({ ok: false, reason: 'unavailable' } as const))
+          .then((result) => {
+            if (authed) {
+              send({
+                kind: 'agent-launch-prepare-reply',
+                requestId: msg.requestId,
+                result,
+              });
+            }
+          })
+          .catch(() => {
+            if (authed) {
+              send({
+                kind: 'agent-launch-prepare-reply',
+                requestId: msg.requestId,
+                result: { ok: false, reason: 'unavailable' },
+              });
+            }
+          });
+        break;
+
+      case 'agent-launch-start': {
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS) break;
+        const source = options.agentHistorySource;
+        if (!source?.resolveLaunch) {
+          send({
+            kind: 'agent-launch-start-reply',
+            requestId: msg.requestId,
+            result: { ok: false, reason: 'unavailable' },
+          });
+          break;
+        }
+        void source.resolveLaunch(
+          msg.request.target,
+          msg.request.launcherId,
+          msg.request.revision,
+        ).then((resolved) => {
+          if (!authed) return;
+          if (!resolved.ok) {
+            send({
+              kind: 'agent-launch-start-reply',
+              requestId: msg.requestId,
+              result: resolved,
+            });
+            return;
+          }
+          if (!sessionMatchesPrimaryRoot(msg.request.sessionId, resolved.roots)) {
+            send({
+              kind: 'agent-launch-start-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'session-mismatch' },
+            });
+            return;
+          }
+          const installed = installPrivateRun(
+            msg.request.sessionId,
+            msg.request.runId,
+            resolved.commandText,
+            resolved.displayCommandText,
+            () => send({
+              kind: 'agent-launch-start-reply',
+              requestId: msg.requestId,
+              result: { ok: true },
+            }),
+          );
+          if (!installed) {
+            send({
+              kind: 'agent-launch-start-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'unavailable' },
+            });
+            return;
+          }
+          void source.recordTerminalWork(resolved.roots, Date.now()).catch(() => undefined);
+        }).catch(() => {
+          if (authed) {
+            send({
+              kind: 'agent-launch-start-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'unavailable' },
+            });
+          }
+        });
+        break;
+      }
+
+      case 'agent-history-sessions':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
+        void (options.agentHistorySource?.listSessions(
+          msg.projectId,
+          msg.cursor,
+          msg.limit,
+          msg.force === true,
+        ) ?? Promise.resolve({ items: [], nextCursor: null })).then((result) => {
+          if (authed) send({ kind: 'agent-history-sessions-reply', requestId: msg.requestId, result });
+        }).catch(() => {
+          if (authed) {
+            send({
+              kind: 'agent-history-sessions-reply',
+              requestId: msg.requestId,
+              result: { items: [], nextCursor: null },
+            });
+          }
+        });
+        break;
+
+      case 'agent-history-read':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
+        void (options.agentHistorySource?.readTranscript(
+          msg.historyId,
+          msg.cursor,
+          msg.limit,
+        ) ?? Promise.resolve(null)).then((result) => {
+          if (authed) send({ kind: 'agent-history-read-reply', requestId: msg.requestId, result });
+        }).catch(() => {
+          if (authed) send({ kind: 'agent-history-read-reply', requestId: msg.requestId, result: null });
+        });
+        break;
+
+      case 'agent-history-prepare-resume':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
+        void (options.agentHistorySource?.prepareResume(msg.historyId) ?? Promise.resolve(null))
+          .then((result) => {
+            if (authed) {
+              send({
+                kind: 'agent-history-prepare-resume-reply',
+                requestId: msg.requestId,
+                result,
+              });
+            }
+          })
+          .catch(() => {
+            if (authed) {
+              send({
+                kind: 'agent-history-prepare-resume-reply',
+                requestId: msg.requestId,
+                result: null,
+              });
+            }
+          });
+        break;
+
+      case 'agent-history-start-resume': {
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_HISTORY) break;
+        const source = options.agentHistorySource;
+        if (!source) {
+          send({
+            kind: 'agent-history-start-resume-reply',
+            requestId: msg.requestId,
+            result: { ok: false, reason: 'unavailable' },
+          });
+          break;
+        }
+        void source.resolveResume(
+          msg.request.historyId,
+          msg.request.revision,
+          msg.request.rootChoice,
+        ).then((resolved) => {
+          if (!authed) return;
+          if (!resolved.ok) {
+            send({
+              kind: 'agent-history-start-resume-reply',
+              requestId: msg.requestId,
+              result: resolved,
+            });
+            return;
+          }
+          if (resolved.roots.length === 0) {
+            send({
+              kind: 'agent-history-start-resume-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'missing-root' },
+            });
+            return;
+          }
+          if (!sessionMatchesPrimaryRoot(msg.request.sessionId, resolved.roots)) {
+            send({
+              kind: 'agent-history-start-resume-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'session-mismatch' },
+            });
+            return;
+          }
+          const installed = installPrivateRun(
+            msg.request.sessionId,
+            msg.request.runId,
+            resolved.commandText,
+            resolved.displayCommandText,
+            () => send({
+              kind: 'agent-history-start-resume-reply',
+              requestId: msg.requestId,
+              result: { ok: true },
+            }),
+          );
+          if (!installed) {
+            send({
+              kind: 'agent-history-start-resume-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'unavailable' },
+            });
+            return;
+          }
+          void source.recordTerminalWork(resolved.roots, Date.now()).catch(() => undefined);
+        }).catch(() => {
+          if (authed) {
+            send({
+              kind: 'agent-history-start-resume-reply',
+              requestId: msg.requestId,
+              result: { ok: false, reason: 'unavailable' },
+            });
+          }
+        });
+        break;
+      }
+
       // Echoed from the message loop rather than the socket layer, so what the
       // client measures is the path its real requests take.
       case 'ping':
-        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
         send({ kind: 'pong', probeId: msg.probeId, sentAt: msg.sentAt });
         break;
 
       case 'git-status': {
-        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
         const { requestId, directory } = msg;
         if (pendingGitRequests.has(requestId)) {
           send({
@@ -1707,7 +2361,7 @@ export function attachConnection(
       }
 
       case 'git-diff': {
-        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION) break;
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
         const { requestId, directory } = msg;
         const failed: GitDiffResult = { ok: false, error: 'git-failed' };
         if (pendingGitRequests.has(requestId)) {

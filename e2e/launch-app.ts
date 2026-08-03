@@ -83,6 +83,8 @@ export async function launchApp(
     // Production is single-instance. Playwright intentionally launches many
     // isolated app instances, so the harness must opt out explicitly.
     env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES = '1';
+    // Live GitHub state must not make ordinary UI/E2E runs nondeterministic.
+    env.EZTERMINAL_DISABLE_UPDATE_CHECK = '1';
     Object.assign(env, extraEnv);
     // The broad legacy E2E suite asserts English copy. Keep its browser locale
     // deterministic across developer and CI machines; locale-specific product

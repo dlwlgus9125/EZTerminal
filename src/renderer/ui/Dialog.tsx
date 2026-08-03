@@ -9,6 +9,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import { useNativeOverlayRegistration } from '../native-overlay';
+import { getActiveAppDocument } from '../desktop-window-registry';
 import { IconButton } from './Button';
 import {
   isolateModalBackground,
@@ -74,18 +75,22 @@ export function Dialog({
   initialFocusTargetRef.current = initialFocusRef;
   onOpenChangeRef.current = onOpenChange;
   useNativeOverlayRegistration(open);
+  const portalDocument = open ? getActiveAppDocument() : document;
 
   useEffect(() => {
     if (!open) return;
-    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const ownerWindow = portalDocument.defaultView ?? window;
+    previousFocusRef.current = portalDocument.activeElement instanceof ownerWindow.HTMLElement
+      ? portalDocument.activeElement
+      : null;
     const backdrop = panelRef.current?.closest<HTMLElement>('.ez-ui-dialog-backdrop');
     const releaseLayer = backdrop
-      ? registerModalLayer(backdrop)
+      ? registerModalLayer(backdrop, portalDocument)
       : () => undefined;
     const releaseBackground = backdrop
-      ? isolateModalBackground(backdrop)
+      ? isolateModalBackground(backdrop, [], portalDocument)
       : () => undefined;
-    const animationFrame = requestAnimationFrame(() => {
+    const animationFrame = ownerWindow.requestAnimationFrame(() => {
       const panel = panelRef.current;
       if (!panel) return;
       (initialFocusTargetRef.current?.current ?? getFocusableElements(panel)[0] ?? panel).focus();
@@ -108,27 +113,27 @@ export function Dialog({
       }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (!panel.contains(document.activeElement)) {
+      if (!panel.contains(portalDocument.activeElement)) {
         event.preventDefault();
         (event.shiftKey ? last : first).focus();
-      } else if (event.shiftKey && document.activeElement === first) {
+      } else if (event.shiftKey && portalDocument.activeElement === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && portalDocument.activeElement === last) {
         event.preventDefault();
         first.focus();
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
+    portalDocument.addEventListener('keydown', handleKeyDown);
     return () => {
-      cancelAnimationFrame(animationFrame);
-      document.removeEventListener('keydown', handleKeyDown);
+      ownerWindow.cancelAnimationFrame(animationFrame);
+      portalDocument.removeEventListener('keydown', handleKeyDown);
       releaseBackground();
       releaseLayer();
-      requestAnimationFrame(() => previousFocusRef.current?.focus());
+      ownerWindow.requestAnimationFrame(() => previousFocusRef.current?.focus());
     };
-  }, [open]);
+  }, [open, portalDocument]);
 
   if (!open || typeof document === 'undefined') return null;
   return createPortal(
@@ -183,7 +188,7 @@ export function Dialog({
         {footer && <footer className="ez-ui-dialog__footer">{footer}</footer>}
       </div>
     </div>,
-    document.body,
+    portalDocument.body,
   );
 }
 

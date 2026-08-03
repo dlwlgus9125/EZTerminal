@@ -10,6 +10,7 @@ import {
 } from './transport/connection-health';
 import { WsEzTerminalTransport, type RemoteConnectionState } from './transport/ws-ezterminal';
 import { useAppTranslation } from '../../src/renderer/i18n';
+import { useMobileAppUpdate } from './use-mobile-app-update';
 
 const MobileWorkspace = lazy(async () => ({
   default: (await import('./MobileWorkspace')).MobileWorkspace,
@@ -58,6 +59,7 @@ const CREDENTIAL_WARNING_KEY = {
 // nothing here is dockview-specific, so this file has no desktop analogue.
 export function App(): JSX.Element {
   const { t } = useAppTranslation();
+  const appUpdateController = useMobileAppUpdate();
   const [transport, setTransport] = useState<WsEzTerminalTransport | null>(null);
   const [authed, setAuthed] = useState(false);
   const [hasConnected, setHasConnected] = useState(false);
@@ -313,6 +315,7 @@ export function App(): JSX.Element {
             connectionUrl={currentConnection?.url ?? savedConnection?.url ?? ''}
             roundTripMs={connectionHealth?.roundTripMs ?? null}
             onDisconnect={disconnect}
+            appUpdateController={appUpdateController}
           />
         </Suspense>
       </div>

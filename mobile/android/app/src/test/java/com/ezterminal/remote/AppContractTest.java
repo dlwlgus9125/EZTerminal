@@ -50,4 +50,43 @@ public class AppContractTest {
         assertEquals(50 * 1_048_576, EZTerminalDownloadsPlugin.MAX_DOWNLOAD_BYTES);
         assertEquals(256 * 1_024, EZTerminalDownloadsPlugin.MAX_CHUNK_BYTES);
     }
+
+    @Test
+    public void updateDownloadAcceptsOnlyTheExactGitHubReleaseAsset() {
+        String valid = "https://github.com/dlwlgus9125/EZTerminal/releases/download/"
+            + "v1.2.3/EZTerminal-Android-1.2.3-vc44.apk";
+        assertTrue(EZTerminalUpdatePlugin.isValidInitialDownloadUrl(
+            valid,
+            "EZTerminal-Android-1.2.3-vc44.apk",
+            "1.2.3",
+            44
+        ));
+        assertTrue(!EZTerminalUpdatePlugin.isValidInitialDownloadUrl(
+            valid.replace("https://github.com", "https://example.com"),
+            "EZTerminal-Android-1.2.3-vc44.apk",
+            "1.2.3",
+            44
+        ));
+        assertTrue(!EZTerminalUpdatePlugin.isValidInitialDownloadUrl(
+            valid,
+            "other.apk",
+            "1.2.3",
+            44
+        ));
+    }
+
+    @Test
+    public void updateRedirectsStayOnHttpsGitHubAssetHosts() {
+        assertTrue(EZTerminalUpdatePlugin.isAllowedRedirectUrl(
+            "https://release-assets.githubusercontent.com/github-production-release-asset/file.apk?token=x"
+        ));
+        assertTrue(!EZTerminalUpdatePlugin.isAllowedRedirectUrl(
+            "http://release-assets.githubusercontent.com/file.apk"
+        ));
+        assertTrue(!EZTerminalUpdatePlugin.isAllowedRedirectUrl(
+            "https://example.com/file.apk"
+        ));
+        assertEquals(100 * 1_048_576, EZTerminalUpdatePlugin.MAX_UPDATE_BYTES);
+        assertEquals(5, EZTerminalUpdatePlugin.MAX_REDIRECTS);
+    }
 }

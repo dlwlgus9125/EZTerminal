@@ -1,7 +1,7 @@
 {
   "name": "ezterminal",
   "productName": "EZTerminal",
-  "version": "1.0.13",
+  "version": "1.0.23",
   "description": "EZTerminal — a structured-data shell terminal (Phase 1 shell core).",
   "main": ".vite/build/main.js",
   "private": true,
@@ -15,6 +15,9 @@
     "build:remote-host": "cargo build --release --locked --manifest-path native/remote-host/Cargo.toml",
     "package": "node scripts/package-app.mjs",
     "make": "node scripts/make-distributables.mjs",
+    "signpath:prepare": "node scripts/prepare-signpath-windows.mjs",
+    "signpath:assemble": "node scripts/assemble-signpath-windows.mjs",
+    "signpath:finalize": "node scripts/finalize-signpath-windows.mjs",
     "lint": "eslint --ext .ts,.tsx .",
     "typecheck": "tsc --noEmit && pnpm typecheck:mobile-e2e",
     "typecheck:mobile-e2e": "tsc -p mobile/tsconfig.e2e.json --noEmit",

@@ -280,6 +280,25 @@ function mostLegibleText(background: string): string {
   return black >= white ? '#000000' : '#ffffff';
 }
 
+/** Provider identity is a renderer-only role, so custom themes derive it from
+ * their semantic surfaces without extending the persisted theme schema. */
+export function resolveProviderIdentityColors(
+  ui: UiThemeColors,
+): Readonly<{ codex: string; claude: string }> {
+  const backgrounds = [ui.surface, ui.surfaceRaised, ui.surfaceInset];
+  const whiteContrast = calculateContrastRatio('#ffffff', ui.surface) ?? 1;
+  const blackContrast = calculateContrastRatio('#000000', ui.surface) ?? 1;
+  const useBrightCandidates = whiteContrast >= blackContrast;
+  const resolve = (bright: string, dark: string): string => (
+    ensureContrast(useBrightCandidates ? bright : dark, backgrounds, 4.5)?.value
+    ?? mostLegibleText(ui.surface)
+  );
+  return {
+    codex: resolve('#48d7c8', '#006b64'),
+    claude: resolve('#e58a6b', '#9a3f28'),
+  };
+}
+
 /** Seed a semantic UI palette for a version-1 theme from its known terminal
  * roles. Missing values inherit the supplied product palette, never mutable
  * global/CSS state. */

@@ -1,0 +1,6 @@
+extends: electron-builder.yml
+win:
+  signtoolOptions:
+    sign: ./scripts/electron-builder-signpath-hook.cjs
+    signingHashAlgorithms:
+      - sha256

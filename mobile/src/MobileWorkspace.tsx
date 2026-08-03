@@ -5,6 +5,7 @@ import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
 import type { SessionInfo } from '../../src/shared/ipc';
 import { EMPTY_AGENT_ACTIVITY_SNAPSHOT, type AgentActivitySnapshot } from '../../src/shared/agent';
+import type { AgentTerminalBootstrap } from '../../src/shared/agent-history';
 import { formatCwd } from '../../src/renderer/format-cwd';
 import { formatEndpointHost } from './mobile-endpoint';
 import { useAppTranslation } from '../../src/renderer/i18n';
@@ -30,6 +31,12 @@ import { applyTheme, loadTheme, saveTheme } from './theme';
 import { initialTabsState, mobileTerminalPanelId, tabsReducer } from './tabs';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 import { usePageVisible } from './use-page-visible';
+import {
+  createInitialAppUpdateSnapshot,
+  isAppUpdateAvailable,
+} from '../../src/shared/app-update';
+import type { MobileAppUpdateController } from './use-mobile-app-update';
+import { MOBILE_BUILD_INFO } from './build-info';
 
 const MobileAgentView = lazy(async () => ({ default: (await import('./MobileAgentView')).MobileAgentView }));
 const MobileFileView = lazy(async () => ({ default: (await import('./MobileFileView')).MobileFileView }));
@@ -42,6 +49,14 @@ const SessionSwitcher = lazy(async () => ({ default: (await import('./SessionSwi
 /** Slow enough to be invisible on a battery, fast enough that a finished run
  * stops claiming to be live before the user looks twice. */
 const ACTIVE_RUN_POLL_MS = 4_000;
+
+const UNAVAILABLE_APP_UPDATE_CONTROLLER: MobileAppUpdateController = {
+  snapshot: createInitialAppUpdateSnapshot(MOBILE_BUILD_INFO.appVersion),
+  check: () => Promise.resolve(),
+  download: () => Promise.resolve(),
+  cancelDownload: () => Promise.resolve(),
+  openDownloaded: () => Promise.resolve({ ok: false, reason: 'unavailable' }),
+};
 
 function countAgentAttention(snapshot: AgentActivitySnapshot): number {
   return snapshot.items.filter((item) => item.status === 'blocked' || item.status === 'error' || item.status === 'waiting').length;
@@ -73,12 +88,14 @@ export function MobileWorkspace({
   connectionUrl = '',
   roundTripMs = null,
   onDisconnect,
+  appUpdateController = UNAVAILABLE_APP_UPDATE_CONTROLLER,
 }: {
   transport: WsEzTerminalTransport;
   connectionUrl?: string;
   /** Smoothed link latency, or null before the first probe answers. */
   roundTripMs?: number | null;
   onDisconnect: () => void;
+  readonly appUpdateController?: MobileAppUpdateController;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
@@ -90,8 +107,12 @@ export function MobileWorkspace({
   const [agentSnapshot, setAgentSnapshot] = useState<AgentActivitySnapshot>(EMPTY_AGENT_ACTIVITY_SNAPSHOT);
   const [connected, setConnected] = useState(false);
   const [connectedSince, setConnectedSince] = useState<number | null>(null);
+  const updateAvailable = isAppUpdateAvailable(appUpdateController.snapshot);
   const [sessions, setSessions] = useState<readonly SessionInfo[]>([]);
   const [activeRuns, setActiveRuns] = useState<ReadonlyMap<string, string>>(new Map());
+  const [agentBootstraps, setAgentBootstraps] = useState<
+    ReadonlyMap<string, AgentTerminalBootstrap>
+  >(new Map());
   const themeReturnFocusRef = useRef<HTMLElement | null>(null);
   const sheetReturnFocusRef = useRef<HTMLElement | null>(null);
   const subPageReturnTargetRef = useRef('shell-tab-home');
@@ -322,12 +343,36 @@ export function MobileWorkspace({
   const closeTab = useCallback((sessionId: string) => {
     dispatch({ type: 'close', sessionId });
     cwdMapRef.current.delete(sessionId);
+    setAgentBootstraps((previous) => {
+      const next = new Map(previous);
+      next.delete(sessionId);
+      return next;
+    });
   }, []);
 
   const handleSessionDead = useCallback((sessionId: string) => {
     dispatch({ type: 'sessionDied', sessionId });
     cwdMapRef.current.delete(sessionId);
+    setAgentBootstraps((previous) => {
+      const next = new Map(previous);
+      next.delete(sessionId);
+      return next;
+    });
   }, []);
+
+  const startAgentBootstrap = useCallback(async (
+    bootstrap: AgentTerminalBootstrap,
+  ): Promise<void> => {
+    // Providers without a "run in this directory" flag resolve their session
+    // store from the process cwd, so the resumed shell starts in the root.
+    const info = await transport.createSession(bootstrap.cwd);
+    setAgentBootstraps((previous) => {
+      const next = new Map(previous);
+      next.set(info.sessionId, bootstrap);
+      return next;
+    });
+    openTab(info.sessionId, info.cwd);
+  }, [openTab, transport]);
 
   const quickNewTab = useCallback(() => {
     void transport.createSession().then((info) => openTab(info.sessionId, info.cwd));
@@ -462,6 +507,7 @@ export function MobileWorkspace({
           themeReturnFocusRef.current = trigger;
           setThemeMenuOpen(true);
         }}
+        appUpdateController={appUpdateController}
       />
     );
   } else if (subPage === 'files') {
@@ -528,6 +574,9 @@ export function MobileWorkspace({
           transport.decideAgentApproval(activityId, approvalId, decision)}
         onLoadDiff={(directory) => transport.getGitDiff(directory)}
         onReadGitStatus={(directory) => transport.getGitStatus(directory)}
+        onResumeHistory={startAgentBootstrap}
+        onLaunchAgent={startAgentBootstrap}
+        transport={transport}
         onFocusSession={(sessionId) => {
           const activity = agentSnapshot.items.find((item) => item.sessionId === sessionId);
           openTab(sessionId, activity?.cwd ?? '');
@@ -551,6 +600,7 @@ export function MobileWorkspace({
           <MobileTabBar
             tab={tab}
             agentAttention={agentAttention}
+            updateAvailable={updateAvailable}
             onSelectTab={selectTab}
             onOpenPcControl={() => openSubPage('pc-control', 'shell-tab-pc')}
             onOpenMore={() => {
@@ -644,6 +694,7 @@ export function MobileWorkspace({
                   quickCommandSource={transport}
                   quickCommandsSupported={transport.supportsRemoteQuickCommands}
                   connected={connected}
+                  agentBootstrap={agentBootstraps.get(entry.sessionId)}
                   onSessionDead={() => handleSessionDead(entry.sessionId)}
                   onCwdChange={handleCwdChange}
                   onReadGitStatus={(directory) => transport.getGitStatus(directory)}
@@ -661,6 +712,7 @@ export function MobileWorkspace({
                 currentTheme={currentTheme}
                 openclawVisible={effectiveOpenClawVisible}
                 openclawState={openclawState?.state}
+                updateAvailable={updateAvailable}
                 returnFocusRef={sheetReturnFocusRef}
                 onClose={() => setSheet(null)}
                 onOpenSessions={() => openSubPage('sessions', 'shell-tab-more')}
