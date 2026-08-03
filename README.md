@@ -166,10 +166,13 @@ Grab both official 1.0 downloads from the
 - Windows 10 22H2 / Windows 11 x64: `EZTerminal-Setup.exe`
 - Android 10 (API 29) or newer: `EZTerminal-Android-1.0.23-vc44.apk`
 
-> New Windows releases are Authenticode-signed with publisher **SignPath Foundation**.
-> Verify that publisher before running the installer. SmartScreen can still show a
-> reputation warning for a newly signed file; a valid signature does not guarantee
-> immediate SmartScreen reputation. Historical 1.0.23 assets remain as originally published.
+> While the SignPath Foundation application is pending, maintenance releases can be
+> published unsigned and will show Windows' unknown-publisher warning. Check the
+> release manifest and `SHA256SUMS.txt`; the in-app updater performs the same SHA-256
+> check and asks again before opening an unsigned installer. After SignPath activation,
+> releases require publisher **SignPath Foundation** and a timestamp. SmartScreen can
+> still show a reputation warning for a newly signed file. Historical 1.0.23 assets
+> remain as originally published.
 
 > The Android 1.0 app uses a new long-term release certificate. Remove any older debug-signed
 > EZTerminal APK before installing 1.0; Android cannot update across the signing-key change and the

@@ -533,6 +533,17 @@ jobs:
           "RELEASE_ARTIFACT_NAME=EZTerminal-$rootVersion-$sha8" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
           "RELEASE_ASSETS_PATH=release-assets/$rootVersion-release-$sha8" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: Resolve Windows release signing mode
+        id: windows_signing
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          SIGNPATH_WINDOWS_PAYLOAD_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_WINDOWS_PAYLOAD_CONFIGURATION_SLUG }}
+          SIGNPATH_WINDOWS_INSTALLER_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_WINDOWS_INSTALLER_CONFIGURATION_SLUG }}
+        run: node scripts/resolve-windows-signing-mode.mjs
+
       - name: Desktop typecheck
         run: pnpm typecheck
       - name: Desktop lint
@@ -596,7 +607,7 @@ jobs:
       - name: Desktop end-to-end tests
         run: pnpm e2e
 
-      - name: Build Windows package and exact SignPath payload
+      - name: Build unsigned Windows package and exact SignPath payload
         run: pnpm signpath:prepare
       - name: Verify packaged native modules
         run: pnpm guard:native
@@ -613,23 +624,24 @@ jobs:
       - name: Packaged app smoke tests
         run: pnpm test:e2e:packaged
 
-      - name: Reverify frozen release source before signing
+      - name: Reverify frozen release source before Windows finalization
         shell: pwsh
         run: |
           $head = (git rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0 -or $head -cne $env:EZTERMINAL_BUILD_SHA) {
-            throw "Release source moved before signing: expected $env:EZTERMINAL_BUILD_SHA, got $head."
+            throw "Release source moved before Windows finalization: expected $env:EZTERMINAL_BUILD_SHA, got $head."
           }
           $dirty = @(git status --porcelain --untracked-files=all)
           if ($LASTEXITCODE -ne 0) {
-            throw 'Could not inspect the release source immediately before signing.'
+            throw 'Could not inspect the release source immediately before Windows finalization.'
           }
           if ($dirty.Count -ne 0) {
             $dirty | ForEach-Object { Write-Host $_ }
-            throw 'Release source changed during validation; signing credentials were not materialized.'
+            throw 'Release source changed during validation; Windows artifacts were not finalized.'
           }
 
       - name: Upload exact unsigned Windows payload
+        if: steps.windows_signing.outputs.mode == 'signpath'
         id: upload_unsigned_windows_payload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -639,6 +651,7 @@ jobs:
           retention-days: 1
 
       - name: Request SignPath approval for Windows payload
+        if: steps.windows_signing.outputs.mode == 'signpath'
         id: sign_windows_payload
         uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2.2
         with:
@@ -655,9 +668,11 @@ jobs:
             version: ${{ toJSON(env.EZTERMINAL_VERSION) }}
 
       - name: Assemble installer from verified signed payload
+        if: steps.windows_signing.outputs.mode == 'signpath'
         run: pnpm signpath:assemble
 
       - name: Upload exact unsigned Windows installer
+        if: steps.windows_signing.outputs.mode == 'signpath'
         id: upload_unsigned_windows_installer
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -667,6 +682,7 @@ jobs:
           retention-days: 1
 
       - name: Request SignPath approval for Windows installer
+        if: steps.windows_signing.outputs.mode == 'signpath'
         id: sign_windows_installer
         uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2.2
         with:
@@ -683,6 +699,7 @@ jobs:
             version: ${{ toJSON(env.EZTERMINAL_VERSION) }}
 
       - name: Finalize and verify signed Windows release
+        if: steps.windows_signing.outputs.mode == 'signpath'
         shell: pwsh
         env:
           PAYLOAD_SIGNING_REQUEST_ID: ${{ steps.sign_windows_payload.outputs.signing-request-id }}
@@ -694,7 +711,12 @@ jobs:
 
       - name: Verify signatures after a silent install
         shell: pwsh
+        env:
+          WINDOWS_SIGNING_MODE: ${{ steps.windows_signing.outputs.mode }}
         run: |
+          if ($env:WINDOWS_SIGNING_MODE -notin @('unsigned', 'signpath')) {
+            throw "Unexpected Windows signing mode: $env:WINDOWS_SIGNING_MODE"
+          }
           $installRoot = Join-Path $env:RUNNER_TEMP 'ezterminal-signature-smoke'
           $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\') + '\'
           $resolvedInstallRoot = [IO.Path]::GetFullPath($installRoot)
@@ -721,13 +743,21 @@ jobs:
               (Join-Path $resolvedInstallRoot 'resources/ezterminal-remote-host.exe'),
               (Join-Path $resolvedInstallRoot 'Uninstall EZTerminal.exe')
             )
-            ./scripts/verify-windows-signatures.ps1 `
-              -Path $installedFiles `
-              -ExpectedStatus Valid `
-              -ExpectedPublisher 'SignPath Foundation' `
-              -RequireTimestamp `
-              -ExpectedProductName EZTerminal `
-              -ExpectedProductVersion $env:EZTERMINAL_VERSION | Out-Null
+            $verification = @{
+              Path = @($setup) + $installedFiles
+              ExpectedStatus = if ($env:WINDOWS_SIGNING_MODE -eq 'signpath') {
+                'Valid'
+              } else {
+                'NotSigned'
+              }
+              ExpectedProductName = 'EZTerminal'
+              ExpectedProductVersion = $env:EZTERMINAL_VERSION
+            }
+            if ($env:WINDOWS_SIGNING_MODE -eq 'signpath') {
+              $verification.ExpectedPublisher = 'SignPath Foundation'
+              $verification.RequireTimestamp = $true
+            }
+            ./scripts/verify-windows-signatures.ps1 @verification | Out-Null
           } finally {
             $uninstaller = Join-Path $resolvedInstallRoot 'Uninstall EZTerminal.exe'
             if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
@@ -805,22 +835,32 @@ jobs:
       - name: Verify and stage exact-SHA release artifacts
         shell: pwsh
         env:
+          WINDOWS_SIGNING_MODE: ${{ steps.windows_signing.outputs.mode }}
           PAYLOAD_SIGNING_REQUEST_ID: ${{ steps.sign_windows_payload.outputs.signing-request-id }}
           INSTALLER_SIGNING_REQUEST_ID: ${{ steps.sign_windows_installer.outputs.signing-request-id }}
         run: |
+          if ($env:WINDOWS_SIGNING_MODE -notin @('unsigned', 'signpath')) {
+            throw "Unexpected Windows signing mode: $env:WINDOWS_SIGNING_MODE"
+          }
           $stage = @{
             AndroidApkPath = 'mobile/android/app/build/outputs/apk/release/app-release.apk'
             AndroidMetadataPath = 'mobile/android/app/build/outputs/apk/release/output-metadata.json'
             AndroidCertSha256 = $env:ANDROID_REPOSITORY_CERT_SHA256
             ExpectedCommit = $env:EZTERMINAL_BUILD_SHA
-            ExpectedWindowsSignature = 'Valid'
-            ExpectedWindowsPublisher = 'SignPath Foundation'
+            ExpectedWindowsSignature = if ($env:WINDOWS_SIGNING_MODE -eq 'signpath') {
+              'Valid'
+            } else {
+              'NotSigned'
+            }
             WindowsUninstallerPath = 'out/signpath/retained/Uninstall EZTerminal.exe'
-            WindowsPayloadSigningRequestId = $env:PAYLOAD_SIGNING_REQUEST_ID
-            WindowsInstallerSigningRequestId = $env:INSTALLER_SIGNING_REQUEST_ID
             ArtifactStage = 'release'
             ReleaseAssetsPath = $env:RELEASE_ASSETS_PATH
             RequireCleanTree = $true
+          }
+          if ($env:WINDOWS_SIGNING_MODE -eq 'signpath') {
+            $stage.ExpectedWindowsPublisher = 'SignPath Foundation'
+            $stage.WindowsPayloadSigningRequestId = $env:PAYLOAD_SIGNING_REQUEST_ID
+            $stage.WindowsInstallerSigningRequestId = $env:INSTALLER_SIGNING_REQUEST_ID
           }
           if ($env:RELEASE_VALIDATION_PROFILE -eq 'full') {
             $stage.LocalRcReportSha256 = $env:VERIFIED_LOCAL_RC_REPORT_SHA256
@@ -983,6 +1023,22 @@ jobs:
           ) {
             throw "Release notes must not be a linked file: $notesPath"
           }
+          $contractPath = Join-Path 'release-source' 'release/version.json'
+          try {
+            $sourceContract = Get-Content -LiteralPath $contractPath -Raw |
+              ConvertFrom-Json
+          } catch {
+            throw 'Exact-SHA release/version.json is missing or invalid.'
+          }
+          $sourceWindowsSigningMode = [string]$sourceContract.windowsSigningMode
+          if ($sourceWindowsSigningMode -notin @('unsigned', 'signpath')) {
+            throw "Invalid exact-SHA Windows signing mode: $sourceWindowsSigningMode"
+          }
+          $expectedWindowsSignature = if ($sourceWindowsSigningMode -eq 'signpath') {
+            'Valid'
+          } else {
+            'NotSigned'
+          }
 
           $assets = (Resolve-Path -LiteralPath 'publish-assets').Path
           if (
@@ -1022,6 +1078,7 @@ jobs:
           } catch {
             throw 'Downloaded release-manifest.json is not valid JSON.'
           }
+          $windowsAuthenticode = $manifest.windowsAuthenticode
           if (
             [string]$manifest.appVersion -cne $expectedVersion -or
             [string]$manifest.validationProfile -cne $expectedProfile -or
@@ -1032,38 +1089,62 @@ jobs:
             $manifest.embeddedBuildShaVerified -ne $true -or
             [int]$manifest.protocolVersion -lt 1 -or
             [int]$manifest.androidVersionCode -lt 1 -or
-            [string]$manifest.windowsAuthenticode.expected -cne 'Valid' -or
-            [string]$manifest.windowsAuthenticode.publisher -cne 'SignPath Foundation' -or
-            $manifest.windowsAuthenticode.timestampRequired -ne $true -or
-            [string]$manifest.windowsAuthenticode.app -cne 'Valid' -or
-            [string]$manifest.windowsAuthenticode.remoteHost -cne 'Valid' -or
-            [string]$manifest.windowsAuthenticode.uninstaller -cne 'Valid' -or
-            [string]$manifest.windowsAuthenticode.setup -cne 'Valid' -or
-            [string]$manifest.windowsAuthenticode.signingRequestIds.payload -notmatch '^[A-Za-z0-9-]{8,128}$' -or
-            [string]$manifest.windowsAuthenticode.signingRequestIds.installer -notmatch '^[A-Za-z0-9-]{8,128}$' -or
-            [string]$manifest.windowsAuthenticode.components.app.sha256 -notmatch '^[0-9a-f]{64}$' -or
-            [string]$manifest.windowsAuthenticode.components.remoteHost.sha256 -notmatch '^[0-9a-f]{64}$' -or
-            [string]$manifest.windowsAuthenticode.components.uninstaller.sha256 -notmatch '^[0-9a-f]{64}$' -or
-            [string]$manifest.windowsAuthenticode.components.setup.sha256 -notmatch '^[0-9a-f]{64}$' -or
-            [string]$manifest.windowsAuthenticode.components.setup.publisher -cne 'SignPath Foundation' -or
-            [string]$manifest.windowsAuthenticode.components.setup.signerCertificateSha256 -notmatch '^[0-9a-f]{64}$' -or
-            $manifest.windowsAuthenticode.components.setup.timestamped -ne $true -or
-            [string]$manifest.windowsAuthenticode.components.setup.timestampCertificateSha256 -notmatch '^[0-9a-f]{64}$' -or
+            [string]$windowsAuthenticode.expected -notin @('Valid', 'NotSigned') -or
+            [string]$windowsAuthenticode.expected -cne $expectedWindowsSignature -or
             [string]$manifest.androidSigningCertSha256 -notmatch '^[0-9A-F]{64}$'
           ) {
             throw 'Downloaded release manifest is not publication-eligible exact-SHA evidence.'
           }
-          foreach ($componentName in @('app', 'remoteHost', 'uninstaller', 'setup')) {
-            $component = $manifest.windowsAuthenticode.components.$componentName
+          if ([string]$windowsAuthenticode.expected -ceq 'Valid') {
             if (
-              [string]$component.status -cne 'Valid' -or
-              [string]$component.sha256 -notmatch '^[0-9a-f]{64}$' -or
-              [string]$component.publisher -cne 'SignPath Foundation' -or
-              [string]$component.signerCertificateSha256 -notmatch '^[0-9a-f]{64}$' -or
-              $component.timestamped -ne $true -or
-              [string]$component.timestampCertificateSha256 -notmatch '^[0-9a-f]{64}$'
+              [string]$windowsAuthenticode.publisher -cne 'SignPath Foundation' -or
+              $windowsAuthenticode.timestampRequired -ne $true -or
+              [string]$windowsAuthenticode.app -cne 'Valid' -or
+              [string]$windowsAuthenticode.remoteHost -cne 'Valid' -or
+              [string]$windowsAuthenticode.uninstaller -cne 'Valid' -or
+              [string]$windowsAuthenticode.setup -cne 'Valid' -or
+              [string]$windowsAuthenticode.signingRequestIds.payload -notmatch '^[A-Za-z0-9-]{8,128}$' -or
+              [string]$windowsAuthenticode.signingRequestIds.installer -notmatch '^[A-Za-z0-9-]{8,128}$'
             ) {
-              throw "Invalid Windows Authenticode component evidence: $componentName"
+              throw 'Signed Windows manifest evidence is incomplete.'
+            }
+            foreach ($componentName in @('app', 'remoteHost', 'uninstaller', 'setup')) {
+              $component = $windowsAuthenticode.components.$componentName
+              if (
+                [string]$component.status -cne 'Valid' -or
+                [string]$component.sha256 -notmatch '^[0-9a-f]{64}$' -or
+                [string]$component.publisher -cne 'SignPath Foundation' -or
+                [string]$component.signerCertificateSha256 -notmatch '^[0-9a-f]{64}$' -or
+                $component.timestamped -ne $true -or
+                [string]$component.timestampCertificateSha256 -notmatch '^[0-9a-f]{64}$'
+              ) {
+                throw "Invalid signed Windows component evidence: $componentName"
+              }
+            }
+          } else {
+            if (
+              $null -ne $windowsAuthenticode.publisher -or
+              $windowsAuthenticode.timestampRequired -ne $false -or
+              $null -ne $windowsAuthenticode.signingRequestIds -or
+              [string]$windowsAuthenticode.app -cne 'NotSigned' -or
+              [string]$windowsAuthenticode.remoteHost -cne 'NotSigned' -or
+              [string]$windowsAuthenticode.uninstaller -cne 'NotSigned' -or
+              [string]$windowsAuthenticode.setup -cne 'NotSigned'
+            ) {
+              throw 'Unsigned Windows manifest evidence is incomplete.'
+            }
+            foreach ($componentName in @('app', 'remoteHost', 'uninstaller', 'setup')) {
+              $component = $windowsAuthenticode.components.$componentName
+              if (
+                [string]$component.status -cne 'NotSigned' -or
+                [string]$component.sha256 -notmatch '^[0-9a-f]{64}$' -or
+                [string]$component.publisher -cne '' -or
+                [string]$component.signerCertificateSha256 -cne '' -or
+                $component.timestamped -ne $false -or
+                [string]$component.timestampCertificateSha256 -cne ''
+              ) {
+                throw "Invalid unsigned Windows component evidence: $componentName"
+              }
             }
           }
           $androidArtifact = (
@@ -1157,25 +1238,33 @@ jobs:
           }
 
           $setupPath = Join-Path $assets 'EZTerminal-Setup.exe'
+          $signatureVerification = @{
+            Path = $setupPath
+            ExpectedStatus = [string]$windowsAuthenticode.expected
+            ExpectedProductName = 'EZTerminal'
+            ExpectedProductVersion = $expectedVersion
+          }
+          if ([string]$windowsAuthenticode.expected -ceq 'Valid') {
+            $signatureVerification.ExpectedPublisher = 'SignPath Foundation'
+            $signatureVerification.RequireTimestamp = $true
+          }
           $signatureJson = @(
-            & ./release-source/scripts/verify-windows-signatures.ps1 `
-              -Path $setupPath `
-              -ExpectedStatus Valid `
-              -ExpectedPublisher 'SignPath Foundation' `
-              -RequireTimestamp `
-              -ExpectedProductName EZTerminal `
-              -ExpectedProductVersion $expectedVersion
+            & ./release-source/scripts/verify-windows-signatures.ps1 @signatureVerification
           ) -join [Environment]::NewLine
           $setupSignature = @(($signatureJson | ConvertFrom-Json).files)[0]
-          if (
-            [string]$setupSignature.sha256 -cne
-              [string]$manifest.windowsAuthenticode.components.setup.sha256 -or
-            [string]$setupSignature.signerCertificateSha256 -cne
-              [string]$manifest.windowsAuthenticode.components.setup.signerCertificateSha256 -or
-            [string]$setupSignature.timestampCertificateSha256 -cne
-              [string]$manifest.windowsAuthenticode.components.setup.timestampCertificateSha256
-          ) {
+          if ([string]$setupSignature.sha256 -cne [string]$windowsAuthenticode.components.setup.sha256) {
             throw 'Published Setup Authenticode evidence differs from the build manifest.'
+          }
+          if (
+            [string]$windowsAuthenticode.expected -ceq 'Valid' -and
+            (
+              [string]$setupSignature.signerCertificateSha256 -cne
+                [string]$windowsAuthenticode.components.setup.signerCertificateSha256 -or
+              [string]$setupSignature.timestampCertificateSha256 -cne
+                [string]$windowsAuthenticode.components.setup.timestampCertificateSha256
+            )
+          ) {
+            throw 'Published Setup certificate evidence differs from the build manifest.'
           }
 
           $actualArtifactNames = @(

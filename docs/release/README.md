@@ -1,8 +1,9 @@
 # EZTerminal 1.0.x 릴리스 가이드
 
 EZTerminal은 Windows Electron 앱과 Android Capacitor 클라이언트를 동일한
-소스 SHA에서 빌드한다. Android APK는 기존 장기키로 서명하고, Windows
-설치 파일은 SignPath Foundation Authenticode로 서명해 배포한다.
+소스 SHA에서 빌드한다. Android APK는 기존 장기키로 서명한다. Windows는
+SignPath 심사 중 명시적인 무서명 유지보수 모드로 배포하고, 승인 후에는
+SignPath Foundation Authenticode 서명 필수 모드로 전환한다.
 
 ## 현재 계약
 
@@ -11,6 +12,7 @@ EZTerminal은 Windows Electron 앱과 Android Capacitor 클라이언트를 동�
 - 원격 프로토콜: v6
 - Electron↔Rust native desktop protocol: v2
 - 검증 프로필: `functional-hotfix`
+- Windows 서명 모드: `unsigned` (SignPath 심사 중)
 - Windows: Windows 10 22H2/Windows 11 x64
 - Android: Android 10(API 29) 이상
 - 네트워크: 신뢰한 Tailscale/WireGuard VPN 내부의 실제 `ws://`
@@ -40,6 +42,11 @@ Windows SignPath 설정은 같은 Environment의 `SIGNPATH_API_TOKEN` secret과
 `SIGNPATH_SIGNING_POLICY_SLUG`, 두 artifact-configuration slug 변수를
 사용한다. 정확한 이름과 설정 순서는 [SignPath Windows 설정](signpath-setup.md)에
 고정되어 있다.
+
+현재 `release/version.json`의 `windowsSigningMode`는 `unsigned`다. 이때 위
+SignPath 값은 모두 없어야 한다. 승인 후 여섯 값을 전부 등록하고 같은 필드를
+`signpath`로 변경한다. 일부만 등록된 상태나 서명 실패 상태에서는 무서명으로
+우회하지 않고 workflow가 실패한다.
 
 실제 APK 인증서, 위 secret, 그리고
 `mobile/android/signing-certificate.sha256`은 모두 같은 SHA-256 지문이어야
@@ -147,7 +154,7 @@ manifest의 exact SHA와 publication eligibility를 재검증한 뒤 draft만 �
 
    | 파일 | 계약 |
    |---|---|
-   | `EZTerminal-Setup.exe` | ProductVersion 1.0.23, `SignPath Foundation` Authenticode + timestamp |
+   | `EZTerminal-Setup.exe` | ProductVersion 1.0.23, 현재 `NotSigned`; 승인 후 `SignPath Foundation` Authenticode + timestamp |
    | `EZTerminal-Android-1.0.23-vc44.apk` | API 29+, 장기키 서명, exact build SHA |
    | `local-rc-report.json` | schema v2, API별 lane, 기능 soak, 성능 pending/passed |
    | `mobile-soak-report.json` | 공유 검증기가 다시 검사한 원본 기능 soak 증거 |
@@ -165,9 +172,12 @@ manifest의 exact SHA와 publication eligibility를 재검증한 뒤 draft만 �
 
 ## 설치와 잔여 제한
 
-- Windows는 검증된 게시자를 `SignPath Foundation`으로 표시한다. 새 파일이나
-  인증서의 SmartScreen 평판이 형성되는 초기에는 별도 경고가 남을 수 있다.
-  설정과 레이아웃은 업그레이드 중 보존해야 한다.
+- 심사 중 무서명 Windows 유지보수 릴리스는 알 수 없는 게시자 경고가 표시된다.
+  앱은 SHA-256 검증 후에도 설치 파일을 열기 전에 다시 확인하며 다운로드와
+  실행은 사용자가 직접 눌러야 한다. 승인 후에는 검증된 게시자를
+  `SignPath Foundation`으로 표시한다. 새 파일이나 인증서의 SmartScreen
+  평판이 형성되는 초기에는 별도 경고가 남을 수 있다. 설정과 레이아웃은
+  업그레이드 중 보존해야 한다.
 - Android는 기존 장기키로만 업데이트할 수 있다. debug 또는 다른 인증서로
   설치된 과거 앱은 삭제 후 다시 페어링해야 한다.
 - 잠금/UAC secure desktop과 Ctrl+Alt+Delete는 지원하지 않는다.

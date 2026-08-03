@@ -3,5 +3,6 @@
   "version": "1.0.23",
   "androidVersionCode": 44,
   "protocolVersion": 6,
-  "validationProfile": "functional-hotfix"
+  "validationProfile": "functional-hotfix",
+  "windowsSigningMode": "unsigned"
 }

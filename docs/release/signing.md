@@ -67,19 +67,28 @@ GitHub Release를 생성한다.
 
 ## Windows SignPath Foundation 서명
 
-공개 Windows 릴리스는 SignPath Foundation의 오픈소스 인증서를 사용하며
-Windows에 표시되는 게시자는 정확히 `SignPath Foundation`이다. Release
-workflow는 앱, Rust remote host, NSIS 제거 프로그램을 먼저 서명하고 그
-결과로 설치 프로그램을 다시 만든 뒤 Setup을 두 번째로 서명한다. SignPath
-정책상 두 요청은 릴리스마다 각각 수동 승인을 받아야 한다.
+SignPath 심사 중에는 `release/version.json`의 `windowsSigningMode`를
+`unsigned`로 명시한 유지보수 릴리스를 허용한다. 이 모드에서는 SignPath
+설정값 여섯 개가 모두 없어야 하며, 앱, Rust remote host, NSIS 제거 프로그램,
+Setup이 모두 `NotSigned`인지 확인한다. manifest와 `SHA256SUMS.txt` 무결성
+검증은 유지되지만 Windows의 알 수 없는 게시자 경고는 없앨 수 없다.
+
+승인 후에는 같은 값을 `signpath`로 바꾼 커밋부터 SignPath Foundation의
+오픈소스 인증서를 사용하며 Windows에 표시되는 게시자는 정확히
+`SignPath Foundation`이다. Release workflow는 앱, Rust remote host, NSIS
+제거 프로그램을 먼저 서명하고 그 결과로 설치 프로그램을 다시 만든 뒤
+Setup을 두 번째로 서명한다. SignPath 정책상 두 요청은 릴리스마다 각각
+수동 승인을 받아야 한다.
 
 워크플로는 네 파일 모두에서 유효한 Authenticode, 게시자, RFC 3161
 타임스탬프, 제품명·버전, 파일·인증서 해시를 검사한다. 이 증거와 두 SignPath
 request ID가 완전하지 않으면 `release-manifest.json`을 만들거나 게시할 수
 없다. 설치 후에도 내부 앱, remote host, 제거 프로그램을 다시 검사한다.
 
-로컬 `pnpm make`와 로컬 RC는 계속 무서명이다. PFX 환경 변수는 SignPath
-경로에서 거부되며 무서명 로컬 산출물은 공식 공개 대상으로 승격할 수 없다.
-초기에는 유효한 서명과 별개로 SmartScreen 평판 경고가 남을 수 있다. 자세한
-신청·설정 절차는 [SignPath Windows release setup](signpath-setup.md), 공개
-역할과 책임은 [Code signing policy](../../CODE_SIGNING_POLICY.md)를 따른다.
+로컬 `pnpm make`와 로컬 RC는 계속 무서명이다. PFX 환경 변수는 두 경로에서
+모두 거부된다. `unsigned` 모드에 SignPath 값이 하나라도 있거나 `signpath`
+모드에서 하나라도 빠지면 패키징 전에 실패한다. 따라서 SignPath 요청 실패를
+무서명 게시로 자동 우회할 수 없다. 초기에는 유효한 서명과 별개로 SmartScreen
+평판 경고가 남을 수 있다. 자세한 신청·설정 절차는
+[SignPath Windows release setup](signpath-setup.md), 공개 역할과 책임은
+[Code signing policy](../../CODE_SIGNING_POLICY.md)를 따른다.

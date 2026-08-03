@@ -54,6 +54,10 @@ verify(
   'NotSigned',
   path.join(EVIDENCE, 'unsigned-payload.json'),
 );
+verify(
+  [APP_EXE, REMOTE_HOST_EXE, RETAINED_UNINSTALLER, SETUP_EXE],
+  'NotSigned',
+  path.join(EVIDENCE, 'unsigned-windows.json'),
+);
 
-rmSync(path.dirname(SETUP_EXE), { recursive: true, force: true });
-console.log(`Prepared exact SignPath payload: ${PAYLOAD_INPUT}`);
+console.log(`Prepared unsigned Windows installer and exact SignPath payload: ${PAYLOAD_INPUT}`);

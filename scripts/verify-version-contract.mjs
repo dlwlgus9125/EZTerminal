@@ -60,6 +60,10 @@ const verificationMetadata = await readFile(
 );
 const releaseWorkflow = await readFile(resolve(root, '.github/workflows/release.yml'), 'utf8');
 const ciWorkflow = await readFile(resolve(root, '.github/workflows/ci.yml'), 'utf8');
+const windowsSigningModeResolver = await readFile(
+  resolve(root, 'scripts/resolve-windows-signing-mode.mjs'),
+  'utf8',
+);
 const playwrightConfig = await readFile(resolve(root, 'playwright.config.ts'), 'utf8');
 const releaseStager = await readFile(
   resolve(root, 'scripts/stage-release-artifacts.ps1'),
@@ -141,6 +145,11 @@ assert(
   contract.validationProfile === 'full'
     || contract.validationProfile === 'functional-hotfix',
   'release/version.json validationProfile must be full or functional-hotfix.',
+);
+assert(
+  contract.windowsSigningMode === 'unsigned'
+    || contract.windowsSigningMode === 'signpath',
+  'release/version.json windowsSigningMode must be unsigned or signpath.',
 );
 
 const cargoVersion = capture(
@@ -613,12 +622,33 @@ for (const secretName of [
   'ANDROID_KEYSTORE_PASSWORD',
   'ANDROID_KEY_ALIAS',
   'ANDROID_KEY_PASSWORD',
+  'SIGNPATH_API_TOKEN',
 ]) {
   assert(
     !releaseJobEnv.includes(secretName),
     `.github/workflows/release.yml must not expose ${secretName} at job scope.`,
   );
 }
+const signedStepConditions = releaseJob.match(
+  /^ {8}if: steps\.windows_signing\.outputs\.mode == 'signpath'$/gm,
+) ?? [];
+assert(
+  releaseWorkflow.includes('run: node scripts/resolve-windows-signing-mode.mjs')
+    && releaseWorkflow.includes('WINDOWS_SIGNING_MODE: ${{ steps.windows_signing.outputs.mode }}')
+    && signedStepConditions.length === 6
+    && windowsSigningModeResolver.includes("policyMode === 'unsigned'")
+    && windowsSigningModeResolver.includes('present.length > 0')
+    && windowsSigningModeResolver.includes('missing.length > 0')
+    && releaseStager.includes("$ArtifactStage -eq 'release'")
+    && releaseStager.includes('Unsigned Windows releases require the retained uninstaller')
+    && publishJob.includes("-notin @('Valid', 'NotSigned')")
+    && publishJob.includes("Join-Path 'release-source' 'release/version.json'")
+    && publishJob.includes(
+      '[string]$windowsAuthenticode.expected -cne $expectedWindowsSignature',
+    )
+    && publishJob.includes('Invalid unsigned Windows component evidence'),
+  'The release workflow must allow only an explicit, fully unconfigured unsigned mode and fail closed after SignPath activation.',
+);
 assert(
   !releaseWorkflow.includes('EZTERMINAL_LOCAL_RC_REPORT_BASE64')
     && releaseWorkflow.includes(

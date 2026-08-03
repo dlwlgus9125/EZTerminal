@@ -53,13 +53,6 @@ try {
         Assert-Equal $actual $Expected "ProductVersion for $Path"
     }
 
-    function Assert-Authenticode {
-        param([string]$Path, [string]$Expected)
-        $actual = (Get-AuthenticodeSignature -LiteralPath $Path).Status.ToString()
-        Assert-Equal $actual $Expected "Authenticode status for $Path"
-        return $actual
-    }
-
     function ConvertTo-WindowsComponentEvidence {
         param($Evidence)
         return [ordered]@{
@@ -698,11 +691,62 @@ try {
             }
         }
     } else {
-        [ordered]@{
-            expected = 'NotSigned'
-            app = Assert-Authenticode $appExe NotSigned
-            setup = Assert-Authenticode $setupExe NotSigned
+        if (
+            $ArtifactStage -eq 'release' -and
+            [string]::IsNullOrWhiteSpace($WindowsUninstallerPath)
+        ) {
+            throw 'Unsigned Windows releases require the retained uninstaller for verification.'
         }
+        $unsignedPaths = @($appExe, $remoteHostExe, $setupExe)
+        if (-not [string]::IsNullOrWhiteSpace($WindowsUninstallerPath)) {
+            $uninstallerExe = (Resolve-Path -LiteralPath $WindowsUninstallerPath).Path
+            $unsignedPaths += $uninstallerExe
+        }
+        $signatureJson = @(
+            & ./scripts/verify-windows-signatures.ps1 `
+                -Path $unsignedPaths `
+                -ExpectedStatus NotSigned `
+                -ExpectedProductName EZTerminal `
+                -ExpectedProductVersion $Version
+        ) -join [Environment]::NewLine
+        $signatureEvidence = $signatureJson | ConvertFrom-Json
+        $byName = @{}
+        foreach ($fileEvidence in @($signatureEvidence.files)) {
+            $byName[[string]$fileEvidence.name] = $fileEvidence
+        }
+        $requiredNames = @(
+            'EZTerminal.exe',
+            'ezterminal-remote-host.exe',
+            'EZTerminal-Setup.exe'
+        )
+        if (-not [string]::IsNullOrWhiteSpace($WindowsUninstallerPath)) {
+            $requiredNames += 'Uninstall EZTerminal.exe'
+        }
+        foreach ($requiredName in $requiredNames) {
+            if (-not $byName.ContainsKey($requiredName)) {
+                throw "Unsigned Windows signature evidence lacks $requiredName."
+            }
+        }
+        $components = [ordered]@{
+            app = ConvertTo-WindowsComponentEvidence $byName['EZTerminal.exe']
+            remoteHost = ConvertTo-WindowsComponentEvidence $byName['ezterminal-remote-host.exe']
+            setup = ConvertTo-WindowsComponentEvidence $byName['EZTerminal-Setup.exe']
+        }
+        $unsignedEvidence = [ordered]@{
+            expected = 'NotSigned'
+            publisher = $null
+            timestampRequired = $false
+            signingRequestIds = $null
+            app = [string]$byName['EZTerminal.exe'].status
+            remoteHost = [string]$byName['ezterminal-remote-host.exe'].status
+            setup = [string]$byName['EZTerminal-Setup.exe'].status
+            components = $components
+        }
+        if ($byName.ContainsKey('Uninstall EZTerminal.exe')) {
+            $unsignedEvidence['uninstaller'] = [string]$byName['Uninstall EZTerminal.exe'].status
+            $components['uninstaller'] = ConvertTo-WindowsComponentEvidence $byName['Uninstall EZTerminal.exe']
+        }
+        $unsignedEvidence
     }
 
     $sha8 = $commit.Substring(0, 8)
