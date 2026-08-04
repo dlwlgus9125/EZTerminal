@@ -713,6 +713,8 @@ jobs:
         shell: pwsh
         env:
           WINDOWS_SIGNING_MODE: ${{ steps.windows_signing.outputs.mode }}
+          # This smoke installs under the isolated runner temp directory, not Program Files.
+          EZTERMINAL_REMOTE_ALLOW_DEV_INSTALL: '1'
         run: |
           if ($env:WINDOWS_SIGNING_MODE -notin @('unsigned', 'signpath')) {
             throw "Unexpected Windows signing mode: $env:WINDOWS_SIGNING_MODE"
@@ -723,16 +725,44 @@ jobs:
           if (-not $resolvedInstallRoot.StartsWith($runnerTemp, [StringComparison]::OrdinalIgnoreCase)) {
             throw "Unsafe signature smoke path: $resolvedInstallRoot"
           }
-          if (Test-Path -LiteralPath $resolvedInstallRoot) {
-            Remove-Item -LiteralPath $resolvedInstallRoot -Recurse -Force
+
+          function Remove-SignatureSmokeDirectory {
+            param([Parameter(Mandatory = $true)][string]$Path)
+            $deadline = [DateTime]::UtcNow.AddSeconds(15)
+            while ($true) {
+              if (-not (Test-Path -LiteralPath $Path)) {
+                return
+              }
+              try {
+                Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+                return
+              } catch {
+                if ([DateTime]::UtcNow -ge $deadline) {
+                  throw
+                }
+                Start-Sleep -Milliseconds 250
+              }
+            }
           }
+
+          function Stop-SignatureSmokeProcess {
+            param([Parameter(Mandatory = $true)][Diagnostics.Process]$Process)
+            if ($Process.HasExited) {
+              return
+            }
+            Stop-Process -Id $Process.Id -Force
+            [void]$Process.WaitForExit(10000)
+          }
+
+          Remove-SignatureSmokeDirectory -Path $resolvedInstallRoot
+          $primaryError = $null
           try {
             $setup = (Resolve-Path -LiteralPath 'out/make/nsis/x64/EZTerminal-Setup.exe').Path
             $install = Start-Process -FilePath $setup `
               -ArgumentList @('/S', "/D=$resolvedInstallRoot") `
               -WindowStyle Hidden -PassThru
             if (-not $install.WaitForExit(120000)) {
-              Stop-Process -Id $install.Id -Force
+              Stop-SignatureSmokeProcess -Process $install
               throw 'Silent installer timed out.'
             }
             if ($install.ExitCode -ne 0) {
@@ -758,18 +788,44 @@ jobs:
               $verification.RequireTimestamp = $true
             }
             ./scripts/verify-windows-signatures.ps1 @verification | Out-Null
-          } finally {
+          } catch {
+            $primaryError = $_
+          }
+
+          $cleanupError = $null
+          try {
             $uninstaller = Join-Path $resolvedInstallRoot 'Uninstall EZTerminal.exe'
             if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
               $uninstall = Start-Process -FilePath $uninstaller `
                 -ArgumentList '/S' -WindowStyle Hidden -PassThru
               if (-not $uninstall.WaitForExit(120000)) {
-                Stop-Process -Id $uninstall.Id -Force
+                Stop-SignatureSmokeProcess -Process $uninstall
+                throw 'Silent uninstaller timed out.'
+              }
+              if ($uninstall.ExitCode -ne 0) {
+                throw "Silent uninstaller exited with $($uninstall.ExitCode)."
               }
             }
-            if (Test-Path -LiteralPath $resolvedInstallRoot) {
-              Remove-Item -LiteralPath $resolvedInstallRoot -Recurse -Force
+          } catch {
+            $cleanupError = $_
+          }
+          try {
+            Remove-SignatureSmokeDirectory -Path $resolvedInstallRoot
+          } catch {
+            if ($null -eq $cleanupError) {
+              $cleanupError = $_
+            } else {
+              Write-Warning "Signature-smoke directory cleanup also failed: $($_.Exception.Message)"
             }
+          }
+          if ($null -ne $primaryError) {
+            if ($null -ne $cleanupError) {
+              Write-Warning "Signature-smoke cleanup failed after the primary error: $($cleanupError.Exception.Message)"
+            }
+            throw $primaryError
+          }
+          if ($null -ne $cleanupError) {
+            throw $cleanupError
           }
 
       - name: Materialize protected Android release keystore

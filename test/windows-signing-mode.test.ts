@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -9,6 +11,15 @@ function completeConfiguration(): Record<string, string> {
   return Object.fromEntries(
     SIGNPATH_CONFIGURATION_NAMES.map((name) => [name, `configured-${name}`]),
   );
+}
+
+function workflowStep(name: string): string {
+  const workflow = readFileSync(path.resolve('.github', 'workflows', 'release.yml'), 'utf8');
+  const marker = `      - name: ${name}`;
+  const start = workflow.indexOf(marker);
+  if (start < 0) throw new Error(`Release workflow step is missing: ${name}`);
+  const end = workflow.indexOf('\n      - name:', start + marker.length);
+  return workflow.slice(start, end < 0 ? undefined : end);
 }
 
 describe('Windows release signing mode', () => {
@@ -33,5 +44,16 @@ describe('Windows release signing mode', () => {
       ...completeConfiguration(),
       SIGNPATH_API_TOKEN: '   ',
     })).toThrow('SIGNPATH_API_TOKEN');
+  });
+
+  it('keeps the isolated silent-install smoke unattended and preserves its primary failure', () => {
+    const step = workflowStep('Verify signatures after a silent install');
+    const workflow = readFileSync(path.resolve('.github', 'workflows', 'release.yml'), 'utf8');
+
+    expect(step).toContain("EZTERMINAL_REMOTE_ALLOW_DEV_INSTALL: '1'");
+    expect(workflow.match(/EZTERMINAL_REMOTE_ALLOW_DEV_INSTALL/g)).toHaveLength(1);
+    expect(step).toContain('function Remove-SignatureSmokeDirectory');
+    expect(step).toContain("throw 'Silent uninstaller timed out.'");
+    expect(step).toContain('$primaryError');
   });
 });
