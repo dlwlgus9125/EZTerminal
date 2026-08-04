@@ -3,17 +3,35 @@ import { describe, expect, it } from 'vitest';
 import { initialTabsState, tabsReducer, type TabsState } from './tabs';
 
 function open(state: TabsState, sessionId: string, cwd: string): TabsState {
-  return tabsReducer(state, { type: 'open', sessionId, cwd });
+  return tabsReducer(state, {
+    type: 'open',
+    binding: {
+      surfaceId: `surface-${sessionId}`,
+      bindingId: `binding-${sessionId}`,
+      session: { sessionId, cwd },
+      role: 'owner',
+    },
+  });
 }
 
 describe('tabsReducer', () => {
   it('open adds a new tab and activates it', () => {
     const s1 = open(initialTabsState, 'a', '/home/a');
-    expect(s1.tabs).toEqual([{ sessionId: 'a', cwd: '/home/a' }]);
+    expect(s1.tabs).toEqual([{
+      sessionId: 'a',
+      cwd: '/home/a',
+      surfaceId: 'surface-a',
+      binding: {
+        surfaceId: 'surface-a',
+        bindingId: 'binding-a',
+        session: { sessionId: 'a', cwd: '/home/a' },
+        role: 'owner',
+      },
+    }]);
     expect(s1.activeSessionId).toBe('a');
 
     const s2 = open(s1, 'b', '/home/b');
-    expect(s2.tabs).toEqual([
+    expect(s2.tabs.map(({ sessionId, cwd }) => ({ sessionId, cwd }))).toEqual([
       { sessionId: 'a', cwd: '/home/a' },
       { sessionId: 'b', cwd: '/home/b' },
     ]);
@@ -23,7 +41,7 @@ describe('tabsReducer', () => {
   it('open dedupes an already-open session, just re-activating it', () => {
     const s1 = open(open(initialTabsState, 'a', '/a'), 'b', '/b');
     const s2 = open(s1, 'a', '/a-changed');
-    expect(s2.tabs).toEqual([
+    expect(s2.tabs.map(({ sessionId, cwd }) => ({ sessionId, cwd }))).toEqual([
       { sessionId: 'a', cwd: '/a' }, // unchanged — no duplicate, no cwd overwrite
       { sessionId: 'b', cwd: '/b' },
     ]);
@@ -93,5 +111,28 @@ describe('tabsReducer', () => {
     const s2 = tabsReducer(s, { type: 'sessionDied', sessionId: 'c' });
     expect(s2.tabs.map((t) => t.sessionId)).toEqual(['a', 'b']);
     expect(s2.activeSessionId).toBe('b');
+  });
+
+  it('invalidates host bindings on disconnect and accepts an adopted reconnect binding', () => {
+    const opened = open(initialTabsState, 'a', '/a');
+    const invalidated = tabsReducer(opened, { type: 'invalidateBindings' });
+    expect(invalidated.tabs[0]?.binding).toBeNull();
+    expect(invalidated.tabs[0]?.surfaceId).toBe('surface-a');
+
+    const rebound = tabsReducer(invalidated, {
+      type: 'rebind',
+      sessionId: 'a',
+      binding: {
+        surfaceId: 'surface-a',
+        bindingId: 'binding-reconnected',
+        session: { sessionId: 'a', cwd: '/a-now' },
+        role: 'adopted',
+      },
+    });
+    expect(rebound.tabs[0]).toMatchObject({
+      cwd: '/a-now',
+      surfaceId: 'surface-a',
+      binding: { bindingId: 'binding-reconnected', role: 'adopted' },
+    });
   });
 });

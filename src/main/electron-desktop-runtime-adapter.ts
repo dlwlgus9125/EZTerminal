@@ -37,6 +37,7 @@ import { selectTrustedRemoteNetwork } from './trusted-remote-network';
 export type ElectronDesktopRuntimeBridgeSources = Pick<
   RemoteBridgeOptions,
   | 'broker'
+  | 'sessionSurfaceAuthority'
   | 'statsSource'
   | 'packetSource'
   | 'fileSource'

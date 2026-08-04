@@ -25,9 +25,8 @@ function makeTransport(
   activityItems: readonly AgentActivity[] = [],
 ) {
   const listSessions = vi.fn(async (): Promise<readonly SessionInfo[]> => [SESSION]);
-  const createSession = vi.fn(async (): Promise<SessionInfo> => SESSION);
   const listRuns = vi.fn(async (): Promise<readonly RunStartedInfo[]> => runs);
-  const destroySessionGuarded = vi.fn<WsEzTerminalTransport['destroySessionGuarded']>(
+  const terminateSessionGuarded = vi.fn<WsEzTerminalTransport['terminateSessionGuarded']>(
     async (): Promise<DestroySessionGuardResult> => ({ ok: true }),
   );
   let removedListener: ((sessionId: string) => void) | null = null;
@@ -45,17 +44,15 @@ function makeTransport(
         removedListener = null;
       };
     }),
-    createSession,
     listRuns,
     getAgentActivitySnapshot: vi.fn(async () => ({ revision: 0, items: activityItems })),
-    destroySessionGuarded,
+    terminateSessionGuarded,
   } as unknown as WsEzTerminalTransport;
   return {
     transport,
     listSessions,
-    createSession,
     listRuns,
-    destroySessionGuarded,
+    terminateSessionGuarded,
     emitRemoved: (sessionId: string) => removedListener?.(sessionId),
   };
 }
@@ -67,7 +64,10 @@ async function clickAndFlush(button: HTMLButtonElement): Promise<void> {
   });
 }
 
-async function renderSwitcher(transport: WsEzTerminalTransport): Promise<HTMLDivElement> {
+async function renderSwitcher(
+  transport: WsEzTerminalTransport,
+  onCreate: () => Promise<void> = vi.fn(async () => undefined),
+): Promise<HTMLDivElement> {
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -77,6 +77,7 @@ async function renderSwitcher(transport: WsEzTerminalTransport): Promise<HTMLDiv
         <SessionSwitcher
           transport={transport}
           onSelect={vi.fn()}
+          onCreate={onCreate}
           onDisconnect={vi.fn()}
         />
       </MobileNavigationHistoryProvider>,
@@ -108,9 +109,10 @@ describe('SessionSwitcher recovery states', () => {
   });
 
   it('reports create failure and allows a later retry', async () => {
-    const { transport, createSession } = makeTransport([]);
-    createSession.mockRejectedValueOnce(new Error('Connection lost.'));
-    const element = await renderSwitcher(transport);
+    const { transport } = makeTransport([]);
+    const onCreate = vi.fn(async () => undefined);
+    onCreate.mockRejectedValueOnce(new Error('Connection lost.'));
+    const element = await renderSwitcher(transport, onCreate);
     const create = element.querySelector<HTMLButtonElement>('[data-testid="session-create"]')!;
 
     await clickAndFlush(create);
@@ -121,17 +123,17 @@ describe('SessionSwitcher recovery states', () => {
 
 describe('SessionSwitcher risky destruction', () => {
   it('destroys an idle session immediately', async () => {
-    const { transport, destroySessionGuarded } = makeTransport([]);
+    const { transport, terminateSessionGuarded } = makeTransport([]);
     const element = await renderSwitcher(transport);
     await clickAndFlush(
       element.querySelector<HTMLButtonElement>('[data-testid="session-destroy"]')!,
     );
-    expect(destroySessionGuarded).toHaveBeenCalledWith(SESSION.sessionId, []);
+    expect(terminateSessionGuarded).toHaveBeenCalledWith(SESSION.sessionId, []);
     expect(element.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
   it('guards an active SSH session and makes Cancel the default action', async () => {
-    const { transport, destroySessionGuarded } = makeTransport([
+    const { transport, terminateSessionGuarded } = makeTransport([
       {
         sessionId: SESSION.sessionId,
         runId: 'run-1',
@@ -148,7 +150,7 @@ describe('SessionSwitcher risky destruction', () => {
     const cancel = element.querySelector<HTMLButtonElement>('[data-testid="session-destroy-cancel"]')!;
     expect(dialog?.textContent).toContain('active SSH connection');
     expect(document.activeElement).toBe(cancel);
-    expect(destroySessionGuarded).not.toHaveBeenCalled();
+    expect(terminateSessionGuarded).not.toHaveBeenCalled();
 
     await act(async () => {
       cancel.click();
@@ -180,7 +182,7 @@ describe('SessionSwitcher risky destruction', () => {
   });
 
   it('destroys only after explicit confirmation for an active command', async () => {
-    const { transport, destroySessionGuarded } = makeTransport([
+    const { transport, terminateSessionGuarded } = makeTransport([
       {
         sessionId: SESSION.sessionId,
         runId: 'run-1',
@@ -195,11 +197,11 @@ describe('SessionSwitcher risky destruction', () => {
     await clickAndFlush(
       element.querySelector<HTMLButtonElement>('[data-testid="session-destroy-confirm"]')!,
     );
-    expect(destroySessionGuarded).toHaveBeenCalledWith(SESSION.sessionId, ['run-1']);
+    expect(terminateSessionGuarded).toHaveBeenCalledWith(SESSION.sessionId, ['run-1']);
   });
 
   it('dismisses the guard when the backend removes the session independently', async () => {
-    const { transport, destroySessionGuarded, emitRemoved } = makeTransport([
+    const { transport, terminateSessionGuarded, emitRemoved } = makeTransport([
       {
         sessionId: SESSION.sessionId,
         runId: 'run-1',
@@ -215,11 +217,11 @@ describe('SessionSwitcher risky destruction', () => {
 
     act(() => emitRemoved(SESSION.sessionId));
     expect(element.querySelector('[role="alertdialog"]')).toBeNull();
-    expect(destroySessionGuarded).not.toHaveBeenCalled();
+    expect(terminateSessionGuarded).not.toHaveBeenCalled();
   });
 
   it('guards an agent workflow even when no command run is listed', async () => {
-    const { transport, destroySessionGuarded } = makeTransport([], [{
+    const { transport, terminateSessionGuarded } = makeTransport([], [{
       id: 'agent-1',
       sessionId: SESSION.sessionId,
       provider: 'codex',
@@ -233,11 +235,11 @@ describe('SessionSwitcher risky destruction', () => {
       element.querySelector<HTMLButtonElement>('[data-testid="session-destroy"]')!,
     );
     expect(element.querySelector('[role="alertdialog"]')?.textContent).toContain('active agent workflow');
-    expect(destroySessionGuarded).not.toHaveBeenCalled();
+    expect(terminateSessionGuarded).not.toHaveBeenCalled();
   });
 
   it('requires reconfirmation when the active run set changes during confirmation', async () => {
-    const { transport, listRuns, destroySessionGuarded } = makeTransport([
+    const { transport, listRuns, terminateSessionGuarded } = makeTransport([
       {
         sessionId: SESSION.sessionId,
         runId: 'run-1',
@@ -262,7 +264,7 @@ describe('SessionSwitcher risky destruction', () => {
       element.querySelector<HTMLButtonElement>('[data-testid="session-destroy-confirm"]')!,
     );
 
-    expect(destroySessionGuarded).not.toHaveBeenCalled();
+    expect(terminateSessionGuarded).not.toHaveBeenCalled();
     expect(element.querySelector('[role="alertdialog"]')?.textContent).toContain(
       'activity that could not be identified',
     );
@@ -270,13 +272,13 @@ describe('SessionSwitcher risky destruction', () => {
     await clickAndFlush(
       element.querySelector<HTMLButtonElement>('[data-testid="session-destroy-confirm"]')!,
     );
-    expect(destroySessionGuarded).toHaveBeenCalledTimes(1);
-    expect(destroySessionGuarded).toHaveBeenCalledWith(SESSION.sessionId, ['run-2']);
+    expect(terminateSessionGuarded).toHaveBeenCalledTimes(1);
+    expect(terminateSessionGuarded).toHaveBeenCalledWith(SESSION.sessionId, ['run-2']);
     expect(element.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
   it('keeps the dialog open when the guarded backend reports changed state', async () => {
-    const { transport, destroySessionGuarded } = makeTransport([
+    const { transport, terminateSessionGuarded } = makeTransport([
       {
         sessionId: SESSION.sessionId,
         runId: 'run-1',
@@ -284,7 +286,7 @@ describe('SessionSwitcher risky destruction', () => {
         executionKind: 'local',
       },
     ]);
-    destroySessionGuarded.mockResolvedValueOnce({ ok: false, reason: 'state-changed' });
+    terminateSessionGuarded.mockResolvedValueOnce({ ok: false, reason: 'state-changed' });
     const element = await renderSwitcher(transport);
     await clickAndFlush(
       element.querySelector<HTMLButtonElement>('[data-testid="session-destroy"]')!,
@@ -293,7 +295,7 @@ describe('SessionSwitcher risky destruction', () => {
       element.querySelector<HTMLButtonElement>('[data-testid="session-destroy-confirm"]')!,
     );
 
-    expect(destroySessionGuarded).toHaveBeenCalledWith(SESSION.sessionId, ['run-1']);
+    expect(terminateSessionGuarded).toHaveBeenCalledWith(SESSION.sessionId, ['run-1']);
     expect(element.querySelector('[role="alertdialog"]')?.textContent).toContain(
       'activity that could not be identified',
     );

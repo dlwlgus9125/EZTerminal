@@ -440,16 +440,33 @@ describe('MobileWorkspace - worktree open', () => {
       await openPromise;
     });
     const createRequest = socket.sent
-      .map((value) => JSON.parse(value) as { kind: string; requestId?: string; cwd?: string })
-      .findLast((message) => message.kind === 'create-session');
-    expect(createRequest).toMatchObject({ kind: 'create-session', cwd: '/safe/feature' });
+      .map((value) => JSON.parse(value) as {
+        kind: string;
+        requestId?: string;
+        surfaceId?: string;
+        intent?: { kind: string; cwd?: string };
+      })
+      .findLast((message) => message.kind === 'session-surface-open');
+    expect(createRequest).toMatchObject({
+      kind: 'session-surface-open',
+      intent: { kind: 'create', cwd: '/safe/feature' },
+    });
     if (!createRequest?.requestId) throw new Error('session create request not sent');
+    if (!createRequest.surfaceId) throw new Error('session surface id not sent');
 
     await act(async () => {
       socket.triggerMessage({
-        kind: 'session-created',
+        kind: 'session-surface-open-result',
         requestId: createRequest.requestId,
-        session: { sessionId: 'session-wt', cwd: '/safe/feature' },
+        result: {
+          ok: true,
+          binding: {
+            surfaceId: createRequest.surfaceId,
+            bindingId: 'binding-wt',
+            session: { sessionId: 'session-wt', cwd: '/safe/feature' },
+            role: 'owner',
+          },
+        },
       });
       await new Promise((resolve) => setTimeout(resolve, 0));
     });

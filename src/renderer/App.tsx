@@ -177,8 +177,8 @@ const CLOSE_RISK_I18N_KEY = {
   unknown: 'safetyDialog.risks.unknown',
 } as const satisfies Readonly<Record<CloseRisk, string>>;
 
-// App is the dockview host: one TerminalPane per tab or split pane. Each pane owns its
-// own shell session, so panes are fully isolated. Panes are created programmatically —
+// App is the dockview host: one TerminalPane per tab or split pane. Each pane holds an
+// authority-issued session-surface binding. Panes are created programmatically —
 // tabs via addPanel (no position), splits via addPanel with a `position` (a new grid
 // group). Mouse drag-to-split / drag-rearrange is enabled; only detached floating windows
 // are disabled (disableFloatingGroups). A drag MOVES the existing panel node, so the
@@ -196,6 +196,7 @@ interface SessionBindingContextValue {
   readonly mountPane: (
     panelId: string,
     instanceToken: PaneInstanceToken,
+    initialCwd?: string,
     requestedAdoptSessionId?: string,
   ) => SessionPaneLease;
 }
@@ -466,15 +467,17 @@ export function App(): JSX.Element {
   const { preferences: uiPreferences, updatePreferences } = useUiPreferences();
   const sidebarReflow = useSidebarReflow();
   const apiRef = useRef<DockviewApi | null>(null);
+  const activeAgentSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
   const popoutBehaviorRef = useRef<{ dispose(): void } | null>(null);
   const sessionMirroringConnectionRef = useRef<(() => void) | null>(null);
   const paneLifecycleCoordinatorRef = useRef<PaneLifecycleCoordinator | null>(null);
   if (paneLifecycleCoordinatorRef.current === null) {
     paneLifecycleCoordinatorRef.current = new PaneLifecycleCoordinator({
       getPaneHandle,
-      destroySessionGuarded: (sessionId, expectedActiveRunIds) =>
-        window.ezterminal.destroySessionGuarded(sessionId, expectedActiveRunIds),
-      destroySessionsGuarded: (sessions) => window.ezterminal.destroySessionsGuarded(sessions),
+      prepareSessionSurfaceClose: (entries) =>
+        window.ezterminal.prepareSessionSurfaceClose(entries),
+      commitSessionSurfaceClose: (closeToken, decisions) =>
+        window.ezterminal.commitSessionSurfaceClose(closeToken, decisions),
     });
   }
   const paneLifecycleCoordinator = paneLifecycleCoordinatorRef.current;
@@ -526,6 +529,7 @@ export function App(): JSX.Element {
         window.ezterminal?.onSessionAdded?.(listener) ?? (() => undefined),
       onSessionRemoved: (listener) =>
         window.ezterminal?.onSessionRemoved?.(listener) ?? (() => undefined),
+      releaseSessionSurface: (bindingId) => window.ezterminal.releaseSessionSurface(bindingId),
       onError: (message, error) => console.error(`[renderer] ${message}:`, error),
     });
   }
@@ -539,9 +543,12 @@ export function App(): JSX.Element {
     useRef<WorkspaceReplacementCoordinator | null>(null);
   if (workspaceReplacementCoordinatorRef.current === null) {
     workspaceReplacementCoordinatorRef.current = new WorkspaceReplacementCoordinator({
-      getPaneHandle,
       listPaneSnapshots,
-      destroySessionsGuarded: (sessions) => window.ezterminal.destroySessionsGuarded(sessions),
+      getActiveAgentSessionIds: () => activeAgentSessionIdsRef.current,
+      prepareSessionSurfaceClose: (entries) =>
+        window.ezterminal.prepareSessionSurfaceClose(entries),
+      commitSessionSurfaceClose: (closeToken, decisions) =>
+        window.ezterminal.commitSessionSurfaceClose(closeToken, decisions),
       loadPreset: (presetName) => window.ezterminal.getPreset(presetName),
       preflightLayout: preflightLayoutEnvelope,
       replaceLayout: (envelope, authorize) =>
@@ -736,8 +743,17 @@ export function App(): JSX.Element {
   // The coordinator owns exact pane/session identity; TerminalPane only reports
   // when its requested adoption or newly-created session actually binds.
   const mountSessionPane = useCallback(
-    (panelId: string, instanceToken: PaneInstanceToken, requestedAdoptSessionId?: string): SessionPaneLease =>
-      sessionMirroringCoordinator.mountPane(panelId, instanceToken, requestedAdoptSessionId),
+    (
+      panelId: string,
+      instanceToken: PaneInstanceToken,
+      initialCwd?: string,
+      requestedAdoptSessionId?: string,
+    ): SessionPaneLease => sessionMirroringCoordinator.mountPane(
+      panelId,
+      instanceToken,
+      initialCwd,
+      requestedAdoptSessionId,
+    ),
     [sessionMirroringCoordinator],
   );
 
@@ -1072,6 +1088,7 @@ export function App(): JSX.Element {
       ),
     [agentSnapshot],
   );
+  activeAgentSessionIdsRef.current = agentSessionIds;
 
   const resolveAuxiliaryTargets = useCallback((
     request: AuxiliaryCloseRequest,
@@ -1145,7 +1162,7 @@ export function App(): JSX.Element {
         const result = await paneLifecycleCoordinator.commit(plan, {
           dispositions,
           resolveCurrentTargets,
-          activeAgentSessionIds: agentSessionIds,
+          activeAgentSessionIds: activeAgentSessionIdsRef.current,
         });
         if (!result.ok) {
           rejectAuxiliaryClose(request, result.reason === 'state-changed');
@@ -1179,7 +1196,6 @@ export function App(): JSX.Element {
       }
     },
     [
-      agentSessionIds,
       paneLifecycleCoordinator,
       pushToast,
       rejectAuxiliaryClose,
@@ -1331,7 +1347,10 @@ export function App(): JSX.Element {
         if (plan.items.some((item) => item.panelId === panelId && item.creator)) {
           dispositions.set(panelId, disposition);
         }
-        void paneLifecycleCoordinator.commit(plan, { dispositions }).then((result) => {
+        void paneLifecycleCoordinator.commit(plan, {
+          dispositions,
+          activeAgentSessionIds: activeAgentSessionIdsRef.current,
+        }).then((result) => {
           if (!result.ok) {
             if (result.reason !== 'busy') retryAfterStateCheck();
             return;

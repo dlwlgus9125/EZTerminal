@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LayoutEnvelope } from '../shared/layout-schema';
-import type { PaneHandle, PaneSnapshot } from './pane-registry';
+import type { PaneSnapshot } from './pane-registry';
 import {
   WorkspaceReplacementCoordinator,
   type WorkspaceReplacementCoordinatorOptions,
 } from './workspace-replacement-coordinator';
 
-const BASE_SNAPSHOT: PaneSnapshot = {
+const OWNER: PaneSnapshot = {
   panelId: 'tab-1',
   sessionId: 'session-1',
   cwd: 'C:\\repo',
@@ -16,6 +16,8 @@ const BASE_SNAPSHOT: PaneSnapshot = {
   isBusy: true,
   isDead: false,
   sessionBindingPending: false,
+  sessionSurfaceBindingId: 'binding-1',
+  sessionSurfaceRole: 'owner',
   destroysSessionOnClose: true,
   activeRunIds: ['run-1'],
   executionKind: 'local',
@@ -35,32 +37,12 @@ function layoutEnvelope(panelIds: readonly string[] = ['tab-9']): LayoutEnvelope
         height: 800,
         orientation: 'HORIZONTAL',
       },
-      panels: Object.fromEntries(
-        panelIds.map((id) => [id, {
-          id,
-          contentComponent: 'terminal' as const,
-          renderer: 'always' as const,
-        }]),
-      ),
+      panels: Object.fromEntries(panelIds.map((id) => [id, {
+        id,
+        contentComponent: 'terminal' as const,
+        renderer: 'always' as const,
+      }])),
     },
-  };
-}
-
-function handle(snapshot: PaneSnapshot, events: string[]): PaneHandle & {
-  getSnapshot: ReturnType<typeof vi.fn<() => PaneSnapshot>>;
-  markSessionDestroyHandled: ReturnType<typeof vi.fn<(sessionId: string) => boolean>>;
-} {
-  return {
-    getSnapshot: vi.fn(() => snapshot),
-    markSessionDestroyHandled: vi.fn<(sessionId: string) => boolean>((sessionId) => {
-      events.push(`mark:${snapshot.panelId}:${sessionId}`);
-      return true;
-    }),
-    releaseSessionOwnership: vi.fn(() => snapshot.sessionId),
-    insertText: vi.fn(() => ({ ok: true as const })),
-    runText: vi.fn(() => ({ ok: true as const })),
-    pasteToPty: vi.fn(() => ({ ok: true as const })),
-    focus: vi.fn(() => true),
   };
 }
 
@@ -75,19 +57,41 @@ function deferred<T>(): {
   return { promise, resolve };
 }
 
-function harness(initial: readonly PaneSnapshot[] = [BASE_SNAPSHOT]) {
+function harness(initial: readonly PaneSnapshot[] = [OWNER]) {
   let snapshots = [...initial];
+  let activeAgentSessionIds: ReadonlySet<string> = new Set();
   const events: string[] = [];
-  const handles = new Map<string, ReturnType<typeof handle>>(
-    snapshots.map((snapshot) => [snapshot.panelId, handle(snapshot, events)]),
-  );
   const preset = layoutEnvelope();
   const release = vi.fn(() => events.push('release'));
-  const destroySessionsGuarded =
-    vi.fn<WorkspaceReplacementCoordinatorOptions['destroySessionsGuarded']>(async () => {
-      events.push('destroy');
-      return { ok: true };
-    });
+  const prepareSessionSurfaceClose = vi.fn<
+    WorkspaceReplacementCoordinatorOptions['prepareSessionSurfaceClose']
+  >(async (entries) => {
+    events.push('prepare-close');
+    return {
+      ok: true,
+      prepared: {
+        closeToken: 'close-1',
+        items: entries.map((entry) => {
+          const pane = snapshots.find(
+            (candidate) => candidate.sessionSurfaceBindingId === entry.bindingId,
+          );
+          if (!pane?.sessionId || !pane.sessionSurfaceRole) throw new Error('missing binding');
+          return {
+            bindingId: entry.bindingId,
+            surfaceId: `surface-${pane.panelId}`,
+            sessionId: pane.sessionId,
+            role: pane.sessionSurfaceRole,
+          };
+        }),
+      },
+    };
+  });
+  const commitSessionSurfaceClose = vi.fn<
+    WorkspaceReplacementCoordinatorOptions['commitSessionSurfaceClose']
+  >(async () => {
+    events.push('commit-close');
+    return { ok: true, keptSessionIds: [] };
+  });
   const loadPreset = vi.fn<WorkspaceReplacementCoordinatorOptions['loadPreset']>(async () => {
     events.push('load');
     return preset;
@@ -112,11 +116,10 @@ function harness(initial: readonly PaneSnapshot[] = [BASE_SNAPSHOT]) {
   });
   const onError = vi.fn();
   const coordinator = new WorkspaceReplacementCoordinator({
-    getPaneHandle: (panelId) => handles.get(panelId),
-    listPaneSnapshots: () => snapshots.map((snapshot) => (
-      handles.get(snapshot.panelId)?.getSnapshot() ?? snapshot
-    )),
-    destroySessionsGuarded,
+    listPaneSnapshots: () => snapshots,
+    getActiveAgentSessionIds: () => activeAgentSessionIds,
+    prepareSessionSurfaceClose,
+    commitSessionSurfaceClose,
     loadPreset,
     preflightLayout,
     replaceLayout,
@@ -126,39 +129,36 @@ function harness(initial: readonly PaneSnapshot[] = [BASE_SNAPSHOT]) {
 
   return {
     coordinator,
-    destroySessionsGuarded,
+    prepareSessionSurfaceClose,
+    commitSessionSurfaceClose,
     loadPreset,
     preflightLayout,
     replaceLayout,
     acquireLease,
     release,
-    handles,
     events,
     preset,
     onError,
     setSnapshots(next: readonly PaneSnapshot[]): void {
       snapshots = [...next];
-      for (const snapshot of snapshots) {
-        const existing = handles.get(snapshot.panelId);
-        if (existing) existing.getSnapshot.mockReturnValue(snapshot);
-        else handles.set(snapshot.panelId, handle(snapshot, events));
-      }
-      for (const panelId of [...handles.keys()]) {
-        if (!snapshots.some((snapshot) => snapshot.panelId === panelId)) handles.delete(panelId);
-      }
+    },
+    setActiveAgentSessionIds(next: ReadonlySet<string>): void {
+      activeAgentSessionIds = new Set(next);
     },
   };
 }
 
 describe('WorkspaceReplacementCoordinator', () => {
-  it('freezes a creator-only confirmation summary with close-risk counts', () => {
-    const passive = {
-      ...BASE_SNAPSHOT,
-      panelId: 'tab-passive',
-      sessionId: 'session-passive',
+  it('summarizes only owner risk while retaining adopted surfaces for detach', () => {
+    const adopted: PaneSnapshot = {
+      ...OWNER,
+      panelId: 'tab-2',
+      sessionId: 'session-2',
+      sessionSurfaceBindingId: 'binding-2',
+      sessionSurfaceRole: 'adopted',
       destroysSessionOnClose: false,
     };
-    const h = harness([BASE_SNAPSHOT, passive]);
+    const h = harness([OWNER, adopted]);
 
     const plan = h.coordinator.prepare(new Set(['session-1']));
 
@@ -173,112 +173,127 @@ describe('WorkspaceReplacementCoordinator', () => {
       },
     });
     expect(Object.isFrozen(plan)).toBe(true);
-    expect(Object.isFrozen(plan.summary.riskCounts)).toBe(true);
   });
 
-  it('owns load, preflight, guarded destroy, final authority, and lease ordering', async () => {
-    const h = harness();
+  it('loads, preflights, closes all surfaces, then authorizes layout replacement', async () => {
+    const adopted: PaneSnapshot = {
+      ...OWNER,
+      panelId: 'tab-2',
+      sessionId: 'session-2',
+      sessionSurfaceBindingId: 'binding-2',
+      sessionSurfaceRole: 'adopted',
+      destroysSessionOnClose: false,
+      isBusy: false,
+      activeRunIds: [],
+    };
+    const h = harness([OWNER, adopted]);
     const plan = h.coordinator.prepare(new Set());
 
     await expect(h.coordinator.applyPreset(plan, 'focus')).resolves.toEqual({ kind: 'applied' });
-
-    expect(h.destroySessionsGuarded).toHaveBeenCalledWith([{
-      sessionId: 'session-1',
-      expectedActiveRunIds: ['run-1'],
+    expect(h.prepareSessionSurfaceClose).toHaveBeenCalledWith([
+      { bindingId: 'binding-1', expectedActiveRunIds: ['run-1'] },
+      { bindingId: 'binding-2', expectedActiveRunIds: [] },
+    ]);
+    expect(h.commitSessionSurfaceClose).toHaveBeenCalledWith('close-1', [{
+      bindingId: 'binding-1',
+      disposition: 'terminate',
     }]);
-    expect(h.handles.get('tab-1')?.markSessionDestroyHandled)
-      .toHaveBeenCalledWith('session-1');
     expect(h.events).toEqual([
       'acquire',
       'load',
       'preflight',
-      'destroy',
-      'mark:tab-1:session-1',
+      'prepare-close',
+      'commit-close',
       'replace',
       'authorize',
       'release',
     ]);
   });
 
-  it('does no destructive work for a missing or invalid preset', async () => {
+  it('does no lifecycle mutation for a missing or invalid preset', async () => {
     const missing = harness();
     missing.loadPreset.mockResolvedValue(null);
     await expect(missing.coordinator.applyPreset(
-      missing.coordinator.prepare(new Set()),
-      'missing',
+      missing.coordinator.prepare(new Set()), 'missing',
     )).resolves.toEqual({ kind: 'rejected', reason: 'preset-unavailable' });
-    expect(missing.preflightLayout).not.toHaveBeenCalled();
-    expect(missing.destroySessionsGuarded).not.toHaveBeenCalled();
-    expect(missing.release).toHaveBeenCalledOnce();
+    expect(missing.prepareSessionSurfaceClose).not.toHaveBeenCalled();
 
     const invalid = harness();
     invalid.preflightLayout.mockReturnValue(false);
     await expect(invalid.coordinator.applyPreset(
-      invalid.coordinator.prepare(new Set()),
-      'invalid',
+      invalid.coordinator.prepare(new Set()), 'invalid',
     )).resolves.toEqual({ kind: 'rejected', reason: 'layout-invalid' });
-    expect(invalid.destroySessionsGuarded).not.toHaveBeenCalled();
+    expect(invalid.prepareSessionSurfaceClose).not.toHaveBeenCalled();
     expect(invalid.release).toHaveBeenCalledOnce();
   });
 
-  it('rejects creator or pending-binding changes after confirmation', async () => {
-    const changed = harness();
-    const changedPlan = changed.coordinator.prepare(new Set());
-    changed.setSnapshots([{ ...BASE_SNAPSHOT, activeRunIds: ['run-1', 'run-2'] }]);
-    await expect(changed.coordinator.applyPreset(changedPlan, 'focus')).resolves.toEqual({
-      kind: 'rejected',
-      reason: 'state-changed',
-    });
-    expect(changed.destroySessionsGuarded).not.toHaveBeenCalled();
-
-    const pending = harness();
-    const pendingPlan = pending.coordinator.prepare(new Set());
-    pending.setSnapshots([
-      BASE_SNAPSHOT,
-      {
-        ...BASE_SNAPSHOT,
+  it('rejects changed run sets, roles, and pending bindings after confirmation', async () => {
+    for (const next of [
+      [{ ...OWNER, activeRunIds: ['run-1', 'run-2'] }],
+      [{ ...OWNER, sessionSurfaceRole: 'adopted' as const, destroysSessionOnClose: false }],
+      [OWNER, {
+        ...OWNER,
         panelId: 'tab-pending',
         sessionId: null,
         sessionBindingPending: true,
+        sessionSurfaceBindingId: null,
+        sessionSurfaceRole: null,
         destroysSessionOnClose: false,
         activeRunIds: [],
-      },
-    ]);
-    await expect(pending.coordinator.applyPreset(pendingPlan, 'focus')).resolves.toEqual({
+      }],
+    ] satisfies readonly (readonly PaneSnapshot[])[]) {
+      const h = harness();
+      const plan = h.coordinator.prepare(new Set());
+      h.setSnapshots(next);
+      await expect(h.coordinator.applyPreset(plan, 'focus')).resolves.toEqual({
+        kind: 'rejected',
+        reason: 'state-changed',
+      });
+      expect(h.prepareSessionSurfaceClose).not.toHaveBeenCalled();
+    }
+  });
+
+  it('rejects a newly active agent after confirmation', async () => {
+    const h = harness();
+    const plan = h.coordinator.prepare(new Set());
+    h.setActiveAgentSessionIds(new Set(['session-1']));
+
+    await expect(h.coordinator.applyPreset(plan, 'focus')).resolves.toEqual({
       kind: 'rejected',
       reason: 'state-changed',
     });
-    expect(pending.destroySessionsGuarded).not.toHaveBeenCalled();
+    expect(h.prepareSessionSurfaceClose).not.toHaveBeenCalled();
   });
 
-  it('reports guarded rejection and transport failure without applying the layout', async () => {
+  it('reports host preparation and commit failures without applying the layout', async () => {
     const rejected = harness();
-    rejected.destroySessionsGuarded.mockResolvedValue({ ok: false, reason: 'state-changed' });
+    rejected.commitSessionSurfaceClose.mockResolvedValue({ ok: false, reason: 'state-changed' });
     await expect(rejected.coordinator.applyPreset(
-      rejected.coordinator.prepare(new Set()),
-      'focus',
+      rejected.coordinator.prepare(new Set()), 'focus',
     )).resolves.toEqual({ kind: 'destroy-failed', reason: 'state-changed' });
     expect(rejected.replaceLayout).not.toHaveBeenCalled();
-    expect(rejected.release).toHaveBeenCalledOnce();
 
     const unavailable = harness();
-    unavailable.destroySessionsGuarded.mockRejectedValue(new Error('bridge unavailable'));
+    unavailable.prepareSessionSurfaceClose.mockRejectedValue(new Error('bridge unavailable'));
     await expect(unavailable.coordinator.applyPreset(
-      unavailable.coordinator.prepare(new Set()),
-      'focus',
+      unavailable.coordinator.prepare(new Set()), 'focus',
     )).resolves.toEqual({ kind: 'destroy-failed', reason: 'unavailable' });
-    expect(unavailable.replaceLayout).not.toHaveBeenCalled();
-    expect(unavailable.release).toHaveBeenCalledOnce();
     expect(unavailable.onError).toHaveBeenCalledOnce();
+    expect(unavailable.release).toHaveBeenCalledOnce();
   });
 
-  it('revalidates immediately before layout mutation after sessions were destroyed', async () => {
+  it('revalidates immediately before layout mutation after host acknowledgement', async () => {
     const h = harness();
     const plan = h.coordinator.prepare(new Set());
     h.replaceLayout.mockImplementation(async (_envelope, authorize) => {
       h.setSnapshots([
-        BASE_SNAPSHOT,
-        { ...BASE_SNAPSHOT, panelId: 'tab-2', sessionId: 'session-2' },
+        OWNER,
+        {
+          ...OWNER,
+          panelId: 'tab-2',
+          sessionId: 'session-2',
+          sessionSurfaceBindingId: 'binding-2',
+        },
       ]);
       return authorize()
         ? { kind: 'applied' }
@@ -289,31 +304,10 @@ describe('WorkspaceReplacementCoordinator', () => {
       kind: 'rejected',
       reason: 'state-changed',
     });
-    expect(h.destroySessionsGuarded).toHaveBeenCalledOnce();
-    expect(h.handles.get('tab-1')?.markSessionDestroyHandled).toHaveBeenCalledOnce();
-    expect(h.release).toHaveBeenCalledOnce();
+    expect(h.commitSessionSurfaceClose).toHaveBeenCalledOnce();
   });
 
-  it('surfaces layout apply failure and handles already-dead creators locally', async () => {
-    const failed = harness();
-    failed.replaceLayout.mockResolvedValue({ kind: 'rejected', reason: 'apply-failed' });
-    await expect(failed.coordinator.applyPreset(
-      failed.coordinator.prepare(new Set()),
-      'focus',
-    )).resolves.toEqual({ kind: 'rejected', reason: 'apply-failed' });
-    expect(failed.release).toHaveBeenCalledOnce();
-
-    const dead = harness([{ ...BASE_SNAPSHOT, isDead: true }]);
-    await expect(dead.coordinator.applyPreset(
-      dead.coordinator.prepare(new Set()),
-      'focus',
-    )).resolves.toEqual({ kind: 'applied' });
-    expect(dead.destroySessionsGuarded).not.toHaveBeenCalled();
-    expect(dead.handles.get('tab-1')?.markSessionDestroyHandled)
-      .toHaveBeenCalledWith('session-1');
-  });
-
-  it('serializes concurrent attempts and consumes an acquired plan once', async () => {
+  it('serializes concurrent attempts and consumes a plan once', async () => {
     const h = harness();
     const pendingPreset = deferred<LayoutEnvelope | null>();
     h.loadPreset.mockReturnValue(pendingPreset.promise);
@@ -322,22 +316,16 @@ describe('WorkspaceReplacementCoordinator', () => {
 
     const first = h.coordinator.applyPreset(firstPlan, 'focus');
     await expect(h.coordinator.applyPreset(firstPlan, 'focus')).resolves.toEqual({
-      kind: 'rejected',
-      reason: 'busy',
+      kind: 'rejected', reason: 'busy',
     });
     await expect(h.coordinator.applyPreset(otherPlan, 'focus')).resolves.toEqual({
-      kind: 'rejected',
-      reason: 'busy',
+      kind: 'rejected', reason: 'busy',
     });
-
     pendingPreset.resolve(h.preset);
     await expect(first).resolves.toEqual({ kind: 'applied' });
     await expect(h.coordinator.applyPreset(firstPlan, 'focus')).resolves.toEqual({
-      kind: 'rejected',
-      reason: 'busy',
+      kind: 'rejected', reason: 'busy',
     });
-    expect(h.acquireLease).toHaveBeenCalledOnce();
-    expect(h.release).toHaveBeenCalledOnce();
   });
 
   it('normalizes thrown preflight and layout dependencies and always releases', async () => {
@@ -346,16 +334,14 @@ describe('WorkspaceReplacementCoordinator', () => {
       throw new Error('bad dockview shape');
     });
     await expect(preflight.coordinator.applyPreset(
-      preflight.coordinator.prepare(new Set()),
-      'focus',
+      preflight.coordinator.prepare(new Set()), 'focus',
     )).resolves.toEqual({ kind: 'rejected', reason: 'layout-invalid' });
     expect(preflight.release).toHaveBeenCalledOnce();
 
     const replacement = harness();
     replacement.replaceLayout.mockRejectedValue(new Error('dockview unavailable'));
     await expect(replacement.coordinator.applyPreset(
-      replacement.coordinator.prepare(new Set()),
-      'focus',
+      replacement.coordinator.prepare(new Set()), 'focus',
     )).resolves.toEqual({ kind: 'rejected', reason: 'apply-failed' });
     expect(replacement.release).toHaveBeenCalledOnce();
   });

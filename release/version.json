@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "version": "1.0.24",
-  "androidVersionCode": 45,
-  "protocolVersion": 6,
-  "validationProfile": "functional-hotfix",
+  "version": "1.0.25",
+  "androidVersionCode": 46,
+  "protocolVersion": 7,
+  "validationProfile": "full",
   "windowsSigningMode": "unsigned"
 }

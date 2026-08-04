@@ -1,93 +1,87 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { DestroySessionGuardResult } from '../shared/ipc';
+import type { SessionSurfacePrepareCloseResult } from '../shared/session-surface';
 import {
   PaneLifecycleCoordinator,
-  type PaneDisposition,
   type PaneLifecycleCoordinatorOptions,
   type PaneLifecycleTarget,
   type PreparedPaneLifecycle,
 } from './pane-lifecycle-coordinator';
 import type { PaneHandle, PaneSnapshot } from './pane-registry';
 
-const BASE_SNAPSHOT: PaneSnapshot = {
+const OWNER: PaneSnapshot = {
   panelId: 'tab-1',
   sessionId: 'session-1',
-  cwd: 'C:\\repo',
+  cwd: '/repo',
   history: [],
   draft: '',
   isBusy: true,
   isDead: false,
   sessionBindingPending: false,
+  sessionSurfaceBindingId: 'binding-1',
+  sessionSurfaceRole: 'owner',
   destroysSessionOnClose: true,
   activeRunIds: ['run-1'],
   executionKind: 'local',
   hasSshPrompt: false,
   activePty: true,
-  activeCommand: 'node task.js',
+  activeCommand: 'pnpm test',
 };
 
-function target(
-  panelId: string,
-  component = 'terminal',
-  instanceToken: object = {},
-): PaneLifecycleTarget {
+function target(panelId = 'tab-1', instanceToken: object = {}): PaneLifecycleTarget {
+  return { panelId, title: panelId, component: 'terminal', instanceToken };
+}
+
+function handle(snapshot: PaneSnapshot): PaneHandle {
   return {
-    panelId,
-    title: panelId,
-    component,
-    instanceToken,
+    getSnapshot: () => snapshot,
+    insertText: () => ({ ok: true }),
+    runText: () => ({ ok: true }),
+    pasteToPty: () => ({ ok: true }),
+    focus: () => true,
   };
 }
 
-function handle(snapshot: PaneSnapshot): PaneHandle & {
-  getSnapshot: ReturnType<typeof vi.fn<() => PaneSnapshot>>;
-  markSessionDestroyHandled: ReturnType<typeof vi.fn<(sessionId: string) => boolean>>;
-  releaseSessionOwnership: ReturnType<typeof vi.fn<() => string | null>>;
-} {
-  return {
-    getSnapshot: vi.fn(() => snapshot),
-    markSessionDestroyHandled: vi.fn<(sessionId: string) => boolean>(() => true),
-    releaseSessionOwnership: vi.fn(() => snapshot.sessionId),
-    insertText: vi.fn(() => ({ ok: true as const })),
-    runText: vi.fn(() => ({ ok: true as const })),
-    pasteToPty: vi.fn(() => ({ ok: true as const })),
-    focus: vi.fn(() => true),
-  };
-}
-
-function harness(initial: readonly PaneSnapshot[]) {
-  let snapshots = [...initial];
-  const handles = new Map<string, ReturnType<typeof handle>>(
-    snapshots.map((snapshot) => [snapshot.panelId, handle(snapshot)]),
-  );
-  const destroySessionGuarded = vi.fn<PaneLifecycleCoordinatorOptions['destroySessionGuarded']>(
-    async () => ({ ok: true }),
-  );
-  const destroySessionsGuarded = vi.fn<PaneLifecycleCoordinatorOptions['destroySessionsGuarded']>(
-    async () => ({ ok: true }),
-  );
+function harness(initial: readonly PaneSnapshot[] = [OWNER]) {
+  const snapshots = new Map(initial.map((snapshot) => [snapshot.panelId, snapshot]));
+  const handles = new Map([...snapshots].map(([panelId, snapshot]) => [panelId, handle(snapshot)]));
+  let tokenCounter = 0;
+  const prepareSessionSurfaceClose = vi.fn<
+    PaneLifecycleCoordinatorOptions['prepareSessionSurfaceClose']
+  >(async (entries): Promise<SessionSurfacePrepareCloseResult> => ({
+    ok: true,
+    prepared: {
+      closeToken: `close-${++tokenCounter}`,
+      items: entries.map((entry) => {
+        const snapshot = [...snapshots.values()].find(
+          (candidate) => candidate.sessionSurfaceBindingId === entry.bindingId,
+        );
+        if (!snapshot?.sessionId || !snapshot.sessionSurfaceRole) {
+          throw new Error('missing surface snapshot');
+        }
+        return {
+          bindingId: entry.bindingId,
+          surfaceId: `surface-${snapshot.panelId}`,
+          sessionId: snapshot.sessionId,
+          role: snapshot.sessionSurfaceRole,
+        };
+      }),
+    },
+  }));
+  const commitSessionSurfaceClose = vi.fn<
+    PaneLifecycleCoordinatorOptions['commitSessionSurfaceClose']
+  >(async () => ({ ok: true, keptSessionIds: [] }));
   const coordinator = new PaneLifecycleCoordinator({
     getPaneHandle: (panelId) => handles.get(panelId),
-    destroySessionGuarded,
-    destroySessionsGuarded,
+    prepareSessionSurfaceClose,
+    commitSessionSurfaceClose,
   });
   return {
     coordinator,
-    destroySessionGuarded,
-    destroySessionsGuarded,
+    snapshots,
     handles,
-    setSnapshots(next: readonly PaneSnapshot[]): void {
-      snapshots = [...next];
-      for (const snapshot of snapshots) {
-        const existing = handles.get(snapshot.panelId);
-        if (existing) existing.getSnapshot.mockReturnValue(snapshot);
-        else handles.set(snapshot.panelId, handle(snapshot));
-      }
-      for (const panelId of [...handles.keys()]) {
-        if (!snapshots.some((snapshot) => snapshot.panelId === panelId)) handles.delete(panelId);
-      }
-    },
+    prepareSessionSurfaceClose,
+    commitSessionSurfaceClose,
   };
 }
 
@@ -96,208 +90,212 @@ function prepared(result: ReturnType<PaneLifecycleCoordinator['prepare']>): Prep
   return result.plan;
 }
 
-function dispositions(entries: readonly (readonly [string, PaneDisposition])[]) {
-  return new Map<string, PaneDisposition>(entries);
-}
-
 describe('PaneLifecycleCoordinator single-pane lifecycle', () => {
-  it('does not finalize a destructive close until the guarded ACK is owned', async () => {
-    const h = harness([BASE_SNAPSHOT]);
-    let resolveDestroy!: (result: DestroySessionGuardResult) => void;
-    h.destroySessionGuarded.mockImplementation(() => new Promise((resolve) => {
-      resolveDestroy = resolve;
-    }));
+  it('prepares risk locally and terminates through one host surface transaction', async () => {
+    const h = harness();
     const plan = prepared(h.coordinator.prepare({
       kind: 'single-pane',
-      target: target('tab-1'),
+      target: target(),
       activeAgentSessionIds: new Set(),
       confirmRiskyClose: true,
     }));
+
     expect(plan.requiresConfirmation).toBe(true);
-
-    const result = h.coordinator.commit(plan, {
-      dispositions: dispositions([['tab-1', 'terminate']]),
-    });
-    expect(h.destroySessionGuarded).toHaveBeenCalledWith('session-1', ['run-1']);
-    expect(h.handles.get('tab-1')?.markSessionDestroyHandled).not.toHaveBeenCalled();
-
-    resolveDestroy({ ok: true });
-    await expect(result).resolves.toMatchObject({ ok: true });
-    expect(h.handles.get('tab-1')?.markSessionDestroyHandled).toHaveBeenCalledWith('session-1');
+    expect(plan.items).toEqual([
+      expect.objectContaining({ creator: true, risk: 'running-command' }),
+    ]);
+    await expect(h.coordinator.commit(plan, {
+      dispositions: new Map([['tab-1', 'terminate']]),
+      activeAgentSessionIds: new Set(),
+    })).resolves.toMatchObject({ ok: true });
+    expect(h.prepareSessionSurfaceClose).toHaveBeenCalledWith([{
+      bindingId: 'binding-1',
+      expectedActiveRunIds: ['run-1'],
+    }]);
+    expect(h.commitSessionSurfaceClose).toHaveBeenCalledWith('close-1', [{
+      bindingId: 'binding-1',
+      disposition: 'terminate',
+    }]);
   });
 
-  it('transfers ownership for keep-running without contacting the backend', async () => {
-    const h = harness([BASE_SNAPSHOT]);
+  it('keeps an owner only after the host returns the kept session id', async () => {
+    const h = harness([{ ...OWNER, isBusy: false, activeRunIds: [], activePty: false }]);
+    h.commitSessionSurfaceClose.mockResolvedValueOnce({
+      ok: true,
+      keptSessionIds: ['session-1'],
+    });
     const plan = prepared(h.coordinator.prepare({
       kind: 'single-pane',
-      target: target('tab-1'),
+      target: target(),
       activeAgentSessionIds: new Set(),
       confirmRiskyClose: true,
     }));
 
     const result = await h.coordinator.commit(plan, {
-      dispositions: dispositions([['tab-1', 'keep']]),
+      dispositions: new Map([['tab-1', 'keep']]),
+      activeAgentSessionIds: new Set(),
     });
-
-    expect(result).toMatchObject({ ok: true });
-    if (result.ok) expect(result.commit.keptSessionIds).toEqual(['session-1']);
-    expect(h.destroySessionGuarded).not.toHaveBeenCalled();
-    expect(h.handles.get('tab-1')?.releaseSessionOwnership).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      ok: true,
+      commit: { keptSessionIds: ['session-1'] },
+    });
+    expect(h.commitSessionSurfaceClose).toHaveBeenCalledWith('close-1', [{
+      bindingId: 'binding-1',
+      disposition: 'keep',
+    }]);
   });
 
-  it('handles a still-dead creator locally without contacting the backend', async () => {
-    const dead = { ...BASE_SNAPSHOT, isDead: true };
-    const h = harness([dead]);
+  it('detaches an adopted view without inventing an owner decision', async () => {
+    const adopted = {
+      ...OWNER,
+      isBusy: false,
+      activeRunIds: [],
+      sessionSurfaceRole: 'adopted' as const,
+      destroysSessionOnClose: false,
+    };
+    const h = harness([adopted]);
     const plan = prepared(h.coordinator.prepare({
       kind: 'single-pane',
-      target: target('tab-1'),
+      target: target(),
       activeAgentSessionIds: new Set(),
       confirmRiskyClose: true,
     }));
 
-    const result = await h.coordinator.commit(plan, {
-      dispositions: dispositions([['tab-1', 'terminate']]),
-    });
-
-    expect(result).toMatchObject({ ok: true });
-    expect(h.destroySessionGuarded).not.toHaveBeenCalled();
-    expect(h.handles.get('tab-1')?.markSessionDestroyHandled).toHaveBeenCalledWith('session-1');
+    expect(plan.requiresConfirmation).toBe(false);
+    await expect(h.coordinator.commit(plan, {
+      dispositions: new Map(),
+      activeAgentSessionIds: new Set(),
+    })).resolves.toMatchObject({ ok: true });
+    expect(h.commitSessionSurfaceClose).toHaveBeenCalledWith('close-1', []);
   });
 
-  it('fails closed when a confirmed pane changes before commit', async () => {
-    const h = harness([BASE_SNAPSHOT]);
+  it('fails closed if renderer risk state changes before host preparation', async () => {
+    const h = harness();
     const plan = prepared(h.coordinator.prepare({
       kind: 'single-pane',
-      target: target('tab-1'),
+      target: target(),
       activeAgentSessionIds: new Set(),
       confirmRiskyClose: true,
     }));
-    h.setSnapshots([{ ...BASE_SNAPSHOT, activeRunIds: ['run-2'] }]);
+    h.handles.set('tab-1', handle({ ...OWNER, activeRunIds: ['run-2'] }));
 
     await expect(h.coordinator.commit(plan, {
-      dispositions: dispositions([['tab-1', 'terminate']]),
+      dispositions: new Map([['tab-1', 'terminate']]),
+      activeAgentSessionIds: new Set(),
     })).resolves.toEqual({ ok: false, reason: 'state-changed', stage: 'validation' });
-    expect(h.destroySessionGuarded).not.toHaveBeenCalled();
+    expect(h.prepareSessionSurfaceClose).not.toHaveBeenCalled();
   });
 
-  it('fails closed when pane ownership changes after a guarded ACK', async () => {
-    const h = harness([BASE_SNAPSHOT]);
-    let resolveDestroy!: (result: DestroySessionGuardResult) => void;
-    h.destroySessionGuarded.mockImplementation(() => new Promise((resolve) => {
-      resolveDestroy = resolve;
-    }));
+  it('fails closed if an agent becomes active after confirmation', async () => {
+    const h = harness();
     const plan = prepared(h.coordinator.prepare({
       kind: 'single-pane',
-      target: target('tab-1'),
+      target: target(),
       activeAgentSessionIds: new Set(),
-      confirmRiskyClose: false,
+      confirmRiskyClose: true,
     }));
 
-    const result = h.coordinator.commit(plan, {
-      dispositions: dispositions([['tab-1', 'terminate']]),
-    });
-    h.setSnapshots([{ ...BASE_SNAPSHOT, sessionId: 'replacement-session' }]);
-    resolveDestroy({ ok: true });
+    await expect(h.coordinator.commit(plan, {
+      dispositions: new Map([['tab-1', 'terminate']]),
+      activeAgentSessionIds: new Set(['session-1']),
+    })).resolves.toEqual({ ok: false, reason: 'state-changed', stage: 'validation' });
+    expect(h.prepareSessionSurfaceClose).not.toHaveBeenCalled();
+  });
 
-    await expect(result).resolves.toEqual({
-      ok: false,
-      reason: 'state-changed',
-      stage: 'validation',
-    });
-    expect(h.handles.get('tab-1')?.markSessionDestroyHandled).not.toHaveBeenCalled();
+  it('propagates a host run-set conflict without committing UI close', async () => {
+    const h = harness();
+    h.commitSessionSurfaceClose.mockResolvedValueOnce({ ok: false, reason: 'state-changed' });
+    const plan = prepared(h.coordinator.prepare({
+      kind: 'single-pane',
+      target: target(),
+      activeAgentSessionIds: new Set(),
+      confirmRiskyClose: true,
+    }));
+
+    await expect(h.coordinator.commit(plan, {
+      dispositions: new Map([['tab-1', 'terminate']]),
+      activeAgentSessionIds: new Set(),
+    })).resolves.toEqual({ ok: false, reason: 'state-changed', stage: 'destroy' });
+  });
+
+  it('rejects pending or unbound terminal panes', () => {
+    for (const snapshot of [
+      { ...OWNER, sessionBindingPending: true },
+      { ...OWNER, sessionSurfaceBindingId: null, sessionSurfaceRole: null },
+    ]) {
+      const h = harness([snapshot]);
+      expect(h.coordinator.prepare({
+        kind: 'single-pane',
+        target: target(),
+        activeAgentSessionIds: new Set(),
+        confirmRiskyClose: true,
+      })).toEqual({ ok: false, reason: 'unavailable', stage: 'validation' });
+    }
   });
 });
 
 describe('PaneLifecycleCoordinator auxiliary lifecycle', () => {
-  it('atomically terminates and keeps a mixed panel set', async () => {
-    const second = {
-      ...BASE_SNAPSHOT,
+  it('atomically includes owner and adopted bindings while deciding only the owner', async () => {
+    const firstToken = {};
+    const secondToken = {};
+    const adopted: PaneSnapshot = {
+      ...OWNER,
       panelId: 'tab-2',
       sessionId: 'session-2',
-      activeRunIds: ['run-2'],
+      sessionSurfaceBindingId: 'binding-2',
+      sessionSurfaceRole: 'adopted',
+      destroysSessionOnClose: false,
+      isBusy: false,
+      activeRunIds: [],
+      activePty: false,
     };
-    const h = harness([BASE_SNAPSHOT, second]);
-    const firstTarget = target('tab-1');
-    const secondTarget = target('tab-2');
-    const currentTargets = [firstTarget, secondTarget];
+    const h = harness([OWNER, adopted]);
+    const targets = [target('tab-1', firstToken), target('tab-2', secondToken)];
     const plan = prepared(h.coordinator.prepare({
       kind: 'auxiliary-window',
-      targets: currentTargets,
+      targets,
       activeAgentSessionIds: new Set(),
     }));
+    const resolveCurrentTargets = () => targets;
 
     const result = await h.coordinator.commit(plan, {
-      dispositions: dispositions([
-        ['tab-1', 'terminate'],
-        ['tab-2', 'keep'],
-      ]),
-      resolveCurrentTargets: () => currentTargets,
+      dispositions: new Map([['tab-1', 'terminate']]),
+      resolveCurrentTargets,
       activeAgentSessionIds: new Set(),
     });
-
-    expect(h.destroySessionsGuarded).toHaveBeenCalledWith([{
-      sessionId: 'session-1',
-      expectedActiveRunIds: ['run-1'],
-    }]);
-    expect(h.handles.get('tab-1')?.markSessionDestroyHandled).toHaveBeenCalledWith('session-1');
-    expect(h.handles.get('tab-2')?.releaseSessionOwnership).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ ok: true });
-    if (result.ok) {
-      expect(result.commit.keptSessionIds).toEqual(['session-2']);
-      expect(h.coordinator.validateFinalization(result.commit, {
-        resolveCurrentTargets: () => currentTargets,
-      })).toEqual({ ok: true });
-    }
+    expect(h.prepareSessionSurfaceClose).toHaveBeenCalledWith([
+      { bindingId: 'binding-1', expectedActiveRunIds: ['run-1'] },
+      { bindingId: 'binding-2', expectedActiveRunIds: [] },
+    ]);
+    expect(h.commitSessionSurfaceClose).toHaveBeenCalledWith('close-1', [{
+      bindingId: 'binding-1',
+      disposition: 'terminate',
+    }]);
+    if (!result.ok) throw new Error('expected commit');
+    expect(h.coordinator.validateFinalization(result.commit, { resolveCurrentTargets }))
+      .toEqual({ ok: true });
   });
 
-  it('accepts a passive Agent Session but rejects changed window membership', async () => {
-    const h = harness([BASE_SNAPSHOT]);
-    const terminal = target('tab-1');
-    const agent = target('agent-session-1', 'agent-session');
+  it('allows a passive read-only agent panel but detects target identity replacement', async () => {
+    const ownerToken = {};
+    const passiveToken = {};
+    const h = harness();
+    const targets = [
+      target('tab-1', ownerToken),
+      { ...target('history', passiveToken), component: 'agent-session' },
+    ];
     const plan = prepared(h.coordinator.prepare({
       kind: 'auxiliary-window',
-      targets: [terminal, agent],
+      targets,
       activeAgentSessionIds: new Set(),
     }));
 
     await expect(h.coordinator.commit(plan, {
-      dispositions: dispositions([['tab-1', 'terminate']]),
-      resolveCurrentTargets: () => [terminal],
+      dispositions: new Map([['tab-1', 'terminate']]),
+      resolveCurrentTargets: () => [target('tab-1', {}), targets[1]!],
       activeAgentSessionIds: new Set(),
     })).resolves.toEqual({ ok: false, reason: 'state-changed', stage: 'validation' });
-    expect(h.destroySessionsGuarded).not.toHaveBeenCalled();
-  });
-
-  it('fails closed when active-agent risk changes during confirmation', async () => {
-    const h = harness([BASE_SNAPSHOT]);
-    const terminal = target('tab-1');
-    const plan = prepared(h.coordinator.prepare({
-      kind: 'auxiliary-window',
-      targets: [terminal],
-      activeAgentSessionIds: new Set(),
-    }));
-
-    await expect(h.coordinator.commit(plan, {
-      dispositions: dispositions([['tab-1', 'terminate']]),
-      resolveCurrentTargets: () => [terminal],
-      activeAgentSessionIds: new Set(['session-1']),
-    })).resolves.toEqual({ ok: false, reason: 'state-changed', stage: 'validation' });
-  });
-
-  it('requires an explicit disposition for every creator', async () => {
-    const h = harness([BASE_SNAPSHOT]);
-    const terminal = target('tab-1');
-    const plan = prepared(h.coordinator.prepare({
-      kind: 'auxiliary-window',
-      targets: [terminal],
-      activeAgentSessionIds: new Set(),
-    }));
-
-    await expect(h.coordinator.commit(plan, {
-      dispositions: new Map(),
-      resolveCurrentTargets: () => [terminal],
-      activeAgentSessionIds: new Set(),
-    })).resolves.toEqual({ ok: false, reason: 'state-changed', stage: 'validation' });
-    expect(h.destroySessionsGuarded).not.toHaveBeenCalled();
+    expect(h.prepareSessionSurfaceClose).not.toHaveBeenCalled();
   });
 });

@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronsUpDown, Plus } from 'lucide-react';
 import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
 import type { SessionInfo } from '../../src/shared/ipc';
+import type { SessionSurfaceBinding, SessionSurfaceIntent } from '../../src/shared/session-surface';
 import { EMPTY_AGENT_ACTIVITY_SNAPSHOT, type AgentActivitySnapshot } from '../../src/shared/agent';
 import type { AgentTerminalBootstrap } from '../../src/shared/agent-history';
 import { formatCwd } from '../../src/renderer/format-cwd';
@@ -49,6 +50,15 @@ const SessionSwitcher = lazy(async () => ({ default: (await import('./SessionSwi
 /** Slow enough to be invisible on a battery, fast enough that a finished run
  * stops claiming to be live before the user looks twice. */
 const ACTIVE_RUN_POLL_MS = 4_000;
+
+let mobileSurfaceSequence = 0;
+function nextMobileSurfaceId(): string {
+  mobileSurfaceSequence += 1;
+  const uuid = typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${mobileSurfaceSequence}`;
+  return `mobile-tab:${uuid}`;
+}
 
 const UNAVAILABLE_APP_UPDATE_CONTROLLER: MobileAppUpdateController = {
   snapshot: createInitialAppUpdateSnapshot(MOBILE_BUILD_INFO.appVersion),
@@ -99,6 +109,8 @@ export function MobileWorkspace({
 }): JSX.Element {
   const { t } = useAppTranslation();
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
+  const tabsStateRef = useRef(tabsState);
+  tabsStateRef.current = tabsState;
   const [tab, setTab] = useState<MobileShellTab>('home');
   const [subPage, setSubPage] = useState<MobileSubPage | null>(null);
   const [sheet, setSheet] = useState<MobileSheet | null>(null);
@@ -106,6 +118,7 @@ export function MobileWorkspace({
   const [currentTheme, setCurrentTheme] = useState<ThemeName>(() => loadTheme());
   const [agentSnapshot, setAgentSnapshot] = useState<AgentActivitySnapshot>(EMPTY_AGENT_ACTIVITY_SNAPSHOT);
   const [connected, setConnected] = useState(false);
+  const [authGeneration, setAuthGeneration] = useState(0);
   const [connectedSince, setConnectedSince] = useState<number | null>(null);
   const updateAvailable = isAppUpdateAvailable(appUpdateController.snapshot);
   const [sessions, setSessions] = useState<readonly SessionInfo[]>([]);
@@ -117,6 +130,7 @@ export function MobileWorkspace({
   const sheetReturnFocusRef = useRef<HTMLElement | null>(null);
   const subPageReturnTargetRef = useRef('shell-tab-home');
   const restoreTabFocusRef = useRef(false);
+  const cwdMapRef = useRef(new Map<string, string>());
 
   const openSubPage = useCallback((next: MobileSubPage, returnTarget: string) => {
     subPageReturnTargetRef.current = returnTarget;
@@ -154,6 +168,11 @@ export function MobileWorkspace({
 
   useEffect(() => transport.onAuthChange((authed) => {
     setConnected(authed);
+    if (authed) {
+      setAuthGeneration((generation) => generation + 1);
+    } else {
+      dispatch({ type: 'invalidateBindings' });
+    }
     // First authentication of this link wins; a reconnect that never dropped
     // `connected` keeps the original start so the uptime doesn't reset.
     setConnectedSince((current) => authed ? current ?? Date.now() : null);
@@ -196,6 +215,14 @@ export function MobileWorkspace({
       const delta = { kind: 'removed', sessionId } as const;
       if (!seeded) pendingDeltas.push(delta);
       setSessions((current) => applyDelta(current, delta));
+      dispatch({ type: 'sessionDied', sessionId });
+      cwdMapRef.current.delete(sessionId);
+      setAgentBootstraps((previous) => {
+        if (!previous.has(sessionId)) return previous;
+        const next = new Map(previous);
+        next.delete(sessionId);
+        return next;
+      });
     });
     void transport.listSessions().then((list) => {
       if (!alive) return;
@@ -309,7 +336,6 @@ export function MobileWorkspace({
   // File explorer (M4): the best-effort cwd snapshot each session's
   // MobileSessionView reports via `onCwdChange` — read ONCE when Files opens
   // (never live-followed), same locked requirement as the desktop drawer.
-  const cwdMapRef = useRef(new Map<string, string>());
   const handleCwdChange = useCallback((sessionId: string, cwd: string) => {
     cwdMapRef.current.set(sessionId, cwd);
   }, []);
@@ -320,21 +346,82 @@ export function MobileWorkspace({
     setCurrentTheme(name);
   }, []);
 
-  const openTab = useCallback((sessionId: string, cwd: string) => {
-    dispatch({ type: 'open', sessionId, cwd });
+  const revealTerminal = useCallback(() => {
     setSheet(null);
     setSubPage(null);
     setTab('terminal');
   }, []);
 
+  const acceptSurfaceBinding = useCallback((binding: SessionSurfaceBinding) => {
+    dispatch({ type: 'open', binding });
+    revealTerminal();
+  }, [revealTerminal]);
+
+  const createOwnedSurface = useCallback(async (cwd?: string): Promise<SessionSurfaceBinding> => {
+    const intent: SessionSurfaceIntent = cwd === undefined
+      ? { kind: 'create' }
+      : { kind: 'create', cwd };
+    const result = await transport.openSessionSurface(nextMobileSurfaceId(), intent);
+    if (!result.ok) throw new Error(`Session surface open failed: ${result.reason}`);
+    return result.binding;
+  }, [transport]);
+
+  const openOwnedTab = useCallback(async (cwd?: string): Promise<SessionSurfaceBinding> => {
+    const binding = await createOwnedSurface(cwd);
+    acceptSurfaceBinding(binding);
+    return binding;
+  }, [acceptSurfaceBinding, createOwnedSurface]);
+
+  const pendingAdoptionsRef = useRef(new Map<string, Promise<void>>());
+  const adoptAndOpenTab = useCallback((sessionId: string): Promise<void> => {
+    const existing = tabsStateRef.current.tabs.find((entry) => entry.sessionId === sessionId);
+    if (existing) {
+      dispatch({ type: 'activate', sessionId });
+      revealTerminal();
+      return Promise.resolve();
+    }
+    const pending = pendingAdoptionsRef.current.get(sessionId);
+    if (pending) return pending;
+
+    const adoption = transport.openSessionSurface(nextMobileSurfaceId(), { kind: 'adopt', sessionId })
+      .then((result) => {
+        if (!result.ok) throw new Error(`Session surface adoption failed: ${result.reason}`);
+        acceptSurfaceBinding(result.binding);
+      })
+      .finally(() => {
+        if (pendingAdoptionsRef.current.get(sessionId) === adoption) {
+          pendingAdoptionsRef.current.delete(sessionId);
+        }
+      });
+    pendingAdoptionsRef.current.set(sessionId, adoption);
+    return adoption;
+  }, [acceptSurfaceBinding, revealTerminal, transport]);
+
+  // A reconnect is a new host principal generation. Existing tabs keep their
+  // client surface ids, but deliberately regain only adopted bindings.
+  useEffect(() => {
+    if (!connected || authGeneration === 0) return;
+    const candidates = tabsStateRef.current.tabs.filter((entry) => entry.binding === null);
+    for (const entry of candidates) {
+      void transport.openSessionSurface(entry.surfaceId, {
+        kind: 'adopt',
+        sessionId: entry.sessionId,
+      }).then((result) => {
+        if (result.ok) {
+          dispatch({ type: 'rebind', sessionId: entry.sessionId, binding: result.binding });
+        } else if (result.reason === 'not-found') {
+          dispatch({ type: 'sessionDied', sessionId: entry.sessionId });
+        }
+      });
+    }
+  }, [authGeneration, connected, transport]);
+
   useEffect(() => {
     return transport.onWorktreeOpenRequested((worktree) => {
-      void transport
-        .createSession(worktree.path)
-        .then((info) => openTab(info.sessionId, info.cwd))
+      void openOwnedTab(worktree.path)
         .catch((err: unknown) => console.error('[mobile] worktree tab creation failed:', err));
     });
-  }, [openTab, transport]);
+  }, [openOwnedTab, transport]);
 
   const activateTab = useCallback((sessionId: string) => {
     dispatch({ type: 'activate', sessionId });
@@ -365,26 +452,30 @@ export function MobileWorkspace({
   ): Promise<void> => {
     // Providers without a "run in this directory" flag resolve their session
     // store from the process cwd, so the resumed shell starts in the root.
-    const info = await transport.createSession(bootstrap.cwd);
+    const binding = await createOwnedSurface(bootstrap.cwd);
     setAgentBootstraps((previous) => {
       const next = new Map(previous);
-      next.set(info.sessionId, bootstrap);
+      next.set(binding.session.sessionId, bootstrap);
       return next;
     });
-    openTab(info.sessionId, info.cwd);
-  }, [openTab, transport]);
+    acceptSurfaceBinding(binding);
+  }, [acceptSurfaceBinding, createOwnedSurface]);
 
   const quickNewTab = useCallback(() => {
-    void transport.createSession().then((info) => openTab(info.sessionId, info.cwd));
-  }, [transport, openTab]);
+    void openOwnedTab().catch((error: unknown) => {
+      console.error('[mobile] terminal tab creation failed:', error);
+    });
+  }, [openOwnedTab]);
 
   // File-explorer drawer's "open terminal here" (M4): a fresh tab whose
   // session starts in `dirPath` — mirrors `quickNewTab`, cwd threaded through.
   const onOpenTerminalAt = useCallback(
     (dirPath: string) => {
-      void transport.createSession(dirPath).then((info) => openTab(info.sessionId, info.cwd));
+      void openOwnedTab(dirPath).catch((error: unknown) => {
+        console.error('[mobile] terminal tab creation failed:', error);
+      });
     },
-    [transport, openTab],
+    [openOwnedTab],
   );
 
   // File-explorer drawer's "paste path into terminal" (M4): the active
@@ -438,8 +529,10 @@ export function MobileWorkspace({
   }, [sessions, tabsState.tabs]);
 
   const openSessionFromList = useCallback((session: SessionInfo) => {
-    openTab(session.sessionId, session.cwd);
-  }, [openTab]);
+    void adoptAndOpenTab(session.sessionId).catch((error: unknown) => {
+      console.error('[mobile] session adoption failed:', error);
+    });
+  }, [adoptAndOpenTab]);
 
   const agentAttention = countAgentAttention(agentSnapshot);
 
@@ -536,7 +629,12 @@ export function MobileWorkspace({
         <div className="mobile-destination__body">
           <SessionSwitcher
             transport={transport}
-            onSelect={openTab}
+            onSelect={(sessionId) => {
+              void adoptAndOpenTab(sessionId);
+            }}
+            onCreate={async () => {
+              await openOwnedTab();
+            }}
             onDisconnect={onDisconnect}
           />
         </div>
@@ -578,8 +676,7 @@ export function MobileWorkspace({
         onLaunchAgent={startAgentBootstrap}
         transport={transport}
         onFocusSession={(sessionId) => {
-          const activity = agentSnapshot.items.find((item) => item.sessionId === sessionId);
-          openTab(sessionId, activity?.cwd ?? '');
+          void adoptAndOpenTab(sessionId);
         }}
       />
     );
@@ -690,6 +787,8 @@ export function MobileWorkspace({
                 <MobileSessionView
                   sessionId={entry.sessionId}
                   cwd={entry.cwd}
+                  transport={transport}
+                  surfaceBinding={entry.binding}
                   active={entry.sessionId === tabsState.activeSessionId}
                   quickCommandSource={transport}
                   quickCommandsSupported={transport.supportsRemoteQuickCommands}

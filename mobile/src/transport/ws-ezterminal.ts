@@ -52,7 +52,6 @@ import {
   MAX_GUARDED_DESTROY_RUN_IDS,
   type DestroySessionGuardResult,
   type EzTerminalApi,
-  type GuardedSessionDestroyRequest,
   type InterpreterFrame,
   type RemoteConnectionInfo,
   type RemoteRuntimeStatus,
@@ -129,7 +128,6 @@ import {
   REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS,
-  SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
   uint8ArrayToBase64,
   type BuildInfo,
   type ClientToServerMessage,
@@ -146,6 +144,15 @@ import {
   type RemoteProtocolVersion,
   type ServerToClientMessage,
 } from '../../../src/shared/remote-protocol';
+import type {
+  SessionSurfaceCloseDecision,
+  SessionSurfaceCloseEntry,
+  SessionSurfaceCommitCloseResult,
+  SessionSurfaceIntent,
+  SessionSurfaceOpenResult,
+  SessionSurfacePrepareCloseResult,
+  SessionSurfaceReleaseResult,
+} from '../../../src/shared/session-surface';
 import {
   MAX_QUICK_COMMANDS,
   QuickCommandSchema,
@@ -747,10 +754,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private lastConnectedAt: number | null = null;
   private hostVersion = 'unknown';
   private hostBuildSha = 'unknown';
-  /** Starts at latest; a stored bearer may negotiate one common lower version on explicit host evidence. */
-  private requestedProtocolVersion: RemoteProtocolVersion = REMOTE_PROTOCOL_VERSION;
   private negotiatedProtocolVersion: RemoteProtocolVersion | null = null;
-  private protocolDowngradeAttempted = false;
   private reattachPrioritySessionId: string | null = null;
 
   /** Stable renderer-side ports. They deliberately survive transient sockets;
@@ -760,11 +764,23 @@ export class WsEzTerminalTransport implements EzTerminalApi {
    * Retry only within the current authenticated generation, with a bounded
    * exponential backoff so a permanently busy run cannot spin forever. */
   private readonly resumeRetries = new Map<string, ResumeRetryState>();
-  private readonly pendingCreates = new Map<
+  private readonly pendingSurfaceOpens = new Map<
     string,
-    { resolve: (session: SessionInfo) => void; reject: (err: Error) => void }
+    (result: SessionSurfaceOpenResult) => void
   >();
-  private readonly pendingGuardedDestroys = new Map<
+  private readonly pendingSurfaceClosePreparations = new Map<
+    string,
+    (result: SessionSurfacePrepareCloseResult) => void
+  >();
+  private readonly pendingSurfaceCloseCommits = new Map<
+    string,
+    (result: SessionSurfaceCommitCloseResult) => void
+  >();
+  private readonly pendingSurfaceReleases = new Map<
+    string,
+    (result: SessionSurfaceReleaseResult) => void
+  >();
+  private readonly pendingSessionTerminations = new Map<
     string,
     (result: DestroySessionGuardResult) => void
   >();
@@ -1010,24 +1026,63 @@ export class WsEzTerminalTransport implements EzTerminalApi {
 
   // ── EzTerminalApi ─────────────────────────────────────────────────────────
 
-  createSession(cwd?: string): Promise<SessionInfo> {
-    return new Promise((resolve, reject) => {
-      const requestId = this.newId();
-      const pending = { resolve, reject };
+  openSessionSurface(
+    surfaceId: string,
+    intent: SessionSurfaceIntent,
+  ): Promise<SessionSurfaceOpenResult> {
+    const requestId = this.newId();
+    return new Promise((resolve) => {
       if (!this.tryStartMapRequest(
-        { kind: 'create-session', requestId, cwd },
-        this.pendingCreates,
+        { kind: 'session-surface-open', requestId, surfaceId, intent },
+        this.pendingSurfaceOpens,
         requestId,
-        pending,
-      )) reject(new Error('Not connected to EZTerminal'));
+        resolve,
+      )) resolve({ ok: false, reason: 'unavailable' });
     });
   }
 
-  destroySession(sessionId: string): void {
-    this.send({ kind: 'destroy-session', sessionId });
+  prepareSessionSurfaceClose(
+    entries: readonly SessionSurfaceCloseEntry[],
+  ): Promise<SessionSurfacePrepareCloseResult> {
+    const requestId = this.newId();
+    return new Promise((resolve) => {
+      if (!this.tryStartMapRequest(
+        { kind: 'session-surface-prepare-close', requestId, entries },
+        this.pendingSurfaceClosePreparations,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, reason: 'unavailable' });
+    });
   }
 
-  destroySessionGuarded(
+  commitSessionSurfaceClose(
+    closeToken: string,
+    decisions: readonly SessionSurfaceCloseDecision[],
+  ): Promise<SessionSurfaceCommitCloseResult> {
+    const requestId = this.newId();
+    return new Promise((resolve) => {
+      if (!this.tryStartMapRequest(
+        { kind: 'session-surface-commit-close', requestId, closeToken, decisions },
+        this.pendingSurfaceCloseCommits,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, reason: 'unavailable' });
+    });
+  }
+
+  releaseSessionSurface(bindingId: string): Promise<SessionSurfaceReleaseResult> {
+    const requestId = this.newId();
+    return new Promise((resolve) => {
+      if (!this.tryStartMapRequest(
+        { kind: 'session-surface-release', requestId, bindingId },
+        this.pendingSurfaceReleases,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, reason: 'state-changed' });
+    });
+  }
+
+  terminateSessionGuarded(
     sessionId: string,
     expectedActiveRunIds: readonly string[],
   ): Promise<DestroySessionGuardResult> {
@@ -1048,32 +1103,16 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return new Promise((resolve) => {
       if (!this.tryStartMapRequest(
         {
-          kind: 'destroy-session-guarded',
+          kind: 'session-terminate-guarded',
           requestId,
           sessionId,
           expectedActiveRunIds,
         },
-        this.pendingGuardedDestroys,
+        this.pendingSessionTerminations,
         requestId,
         resolve,
       )) resolve({ ok: false, reason: 'unavailable' });
     });
-  }
-
-  destroySessionsGuarded(
-    sessions: readonly GuardedSessionDestroyRequest[],
-  ): Promise<DestroySessionGuardResult> {
-    if (sessions.length === 0) return Promise.resolve({ ok: true });
-    if (sessions.length === 1) {
-      return this.destroySessionGuarded(
-        sessions[0].sessionId,
-        sessions[0].expectedActiveRunIds,
-      );
-    }
-    // Mobile has no preset/layout replacement surface and the WS protocol
-    // intentionally exposes only a single-session guarded destroy. Never
-    // emulate an atomic batch with sequential requests.
-    return Promise.resolve({ ok: false, reason: 'unavailable' });
   }
 
   runCommand(commandText: string, runId: string, sessionId: string): Promise<void> {
@@ -2413,7 +2452,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       socket.send(JSON.stringify({
         kind: 'auth',
         token: this.token,
-        protocolVersion: this.requestedProtocolVersion,
+        protocolVersion: REMOTE_PROTOCOL_VERSION,
         clientVersion: this.buildInfo.appVersion,
         buildSha: this.buildInfo.buildSha,
         ...(this.clientIdentity ? { clientIdentity: this.clientIdentity } : {}),
@@ -2616,14 +2655,26 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       resolve({ ok: false, error: 'offline' });
     }
     this.pendingQuickCommands.clear();
-    for (const pending of this.pendingCreates.values()) {
-      pending.reject(new Error('Connection to EZTerminal lost'));
-    }
-    this.pendingCreates.clear();
-    for (const resolve of this.pendingGuardedDestroys.values()) {
+    for (const resolve of this.pendingSurfaceOpens.values()) {
       resolve({ ok: false, reason: 'unavailable' });
     }
-    this.pendingGuardedDestroys.clear();
+    this.pendingSurfaceOpens.clear();
+    for (const resolve of this.pendingSurfaceClosePreparations.values()) {
+      resolve({ ok: false, reason: 'unavailable' });
+    }
+    this.pendingSurfaceClosePreparations.clear();
+    for (const resolve of this.pendingSurfaceCloseCommits.values()) {
+      resolve({ ok: false, reason: 'unavailable' });
+    }
+    this.pendingSurfaceCloseCommits.clear();
+    for (const resolve of this.pendingSurfaceReleases.values()) {
+      resolve({ ok: false, reason: 'state-changed' });
+    }
+    this.pendingSurfaceReleases.clear();
+    for (const resolve of this.pendingSessionTerminations.values()) {
+      resolve({ ok: false, reason: 'unavailable' });
+    }
+    this.pendingSessionTerminations.clear();
     for (const resolve of this.pendingListSessions) resolve([]);
     this.pendingListSessions.length = 0;
     for (const resolve of this.pendingListRuns) resolve([]);
@@ -2973,135 +3024,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.closeTerminalSocket();
   }
 
-  /** Version-gated state must not survive a negotiated downgrade. Otherwise
-   * an older host can appear to retain capabilities it cannot authoritatively
-   * update (v3 live Agent/Git/latency or v4 Agent history). */
-  private resetV3OnlyState(): void {
-    const hadAgentState = this.agentSnapshot.revision !== 0 || this.agentSnapshot.items.length !== 0;
-    this.agentSnapshot = EMPTY_AGENT_ACTIVITY_SNAPSHOT;
-    this.awaitingAgentSeed = false;
-    for (const resolve of this.pendingAgentSnapshots.values()) {
-      resolve(EMPTY_AGENT_ACTIVITY_SNAPSHOT);
-    }
-    this.pendingAgentSnapshots.clear();
-    for (const resolve of this.pendingAgentFollowups.values()) {
-      resolve({ ok: false, error: 'delivery-failed' });
-    }
-    this.pendingAgentFollowups.clear();
-    for (const resolve of this.pendingAgentProjects.values()) {
-      resolve({ items: [], nextCursor: null });
-    }
-    this.pendingAgentProjects.clear();
-    for (const resolve of this.pendingAgentProjectSaves.values()) {
-      resolve({ ok: false, reason: 'invalid' });
-    }
-    this.pendingAgentProjectSaves.clear();
-    for (const resolve of this.pendingAgentProjectRemovals.values()) resolve(false);
-    this.pendingAgentProjectRemovals.clear();
-    for (const resolve of this.pendingAgentProjectLaunchers.values()) resolve([]);
-    this.pendingAgentProjectLaunchers.clear();
-    for (const resolve of this.pendingAgentProjectLaunchPreparation.values()) {
-      resolve({ ok: false, reason: 'unavailable' });
-    }
-    this.pendingAgentProjectLaunchPreparation.clear();
-    for (const resolve of this.pendingAgentProjectLaunchStarts.values()) {
-      resolve({ ok: false, reason: 'unavailable' });
-    }
-    this.pendingAgentProjectLaunchStarts.clear();
-    for (const resolve of this.pendingAgentLaunchPreparation.values()) {
-      resolve({ ok: false, reason: 'unavailable' });
-    }
-    this.pendingAgentLaunchPreparation.clear();
-    for (const resolve of this.pendingAgentLaunchStarts.values()) {
-      resolve({ ok: false, reason: 'unavailable' });
-    }
-    this.pendingAgentLaunchStarts.clear();
-    for (const resolve of this.pendingAgentHistorySessions.values()) {
-      resolve({ items: [], nextCursor: null });
-    }
-    this.pendingAgentHistorySessions.clear();
-    for (const resolve of this.pendingAgentHistoryReads.values()) resolve(null);
-    this.pendingAgentHistoryReads.clear();
-    for (const resolve of this.pendingAgentResumePreparation.values()) resolve(null);
-    this.pendingAgentResumePreparation.clear();
-    for (const resolve of this.pendingAgentResumeStarts.values()) {
-      resolve({ ok: false, reason: 'unavailable' });
-    }
-    this.pendingAgentResumeStarts.clear();
-    for (const [requestId, pending] of [...this.pendingAgentDecisions]) {
-      this.settlePendingAgentDecision(
-        requestId,
-        pending,
-        { ok: false, error: 'outcome-unknown' },
-      );
-    }
-    for (const resolve of this.pendingGitStatus.values()) {
-      resolve(UNAVAILABLE_GIT_DIRECTORY_STATUS);
-    }
-    this.pendingGitStatus.clear();
-    for (const resolve of this.pendingGitDiffs.values()) {
-      resolve({ ok: false, error: 'git-failed' });
-    }
-    this.pendingGitDiffs.clear();
-    this.pendingRoundTripProbes.clear();
-    this.roundTripMs = null;
-    if (hadAgentState) {
-      for (const listener of this.agentSnapshotListeners) {
-        listener(EMPTY_AGENT_ACTIVITY_SNAPSHOT);
-      }
-    }
-  }
-
-  /**
-   * One conservative compatibility retry for a persisted bearer. Pairing
-   * codes are single-use and must never be spent probing an older protocol.
-   */
-  private tryProtocolDowngrade(message: {
-    readonly supportedProtocolVersion?: unknown;
-    readonly supportedProtocolVersions?: unknown;
-    readonly hostVersion?: unknown;
-  }): boolean {
-    if (
-      this.protocolDowngradeAttempted
-      || this.requestedProtocolVersion !== REMOTE_PROTOCOL_VERSION
-      || isPairingCode(this.token)
-      || typeof message.hostVersion !== 'string'
-      || message.hostVersion.trim().length === 0
-    ) return false;
-    const advertised = Array.isArray(message.supportedProtocolVersions)
-      ? message.supportedProtocolVersions
-      : [message.supportedProtocolVersion];
-    let downgradeVersion: RemoteProtocolVersion | null = null;
-    for (const version of SUPPORTED_REMOTE_PROTOCOL_VERSIONS) {
-      if (
-        version < REMOTE_PROTOCOL_VERSION
-        && advertised.includes(version)
-        && (downgradeVersion === null || version > downgradeVersion)
-      ) {
-        downgradeVersion = version;
-      }
-    }
-    if (downgradeVersion === null) return false;
-
-    this.protocolDowngradeAttempted = true;
-    this.requestedProtocolVersion = downgradeVersion;
-    this.hostVersion = message.hostVersion;
-    this.clearWatchdog();
-    this.stopLivenessMonitor();
-    const previous = this.socket;
-    this.socket = null;
-    try {
-      previous?.close();
-    } catch {
-      // The old generation is already detached by socket identity.
-    }
-    this.setAuthed(false);
-    this.nextRetryAt = null;
-    this.setConnectionState('connecting');
-    this.connect();
-    return true;
-  }
-
   /** Close and synchronously invalidate a socket after a fail-closed decision
    * (auth/protocol rejection, or a liveness probe declaring it dead). Browser
    * close events are asynchronous, so waiting for `close` would let
@@ -3142,7 +3064,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         // correlated requests are in flight.
         if (this.authed) break;
         if (
-          msg.protocolVersion !== this.requestedProtocolVersion
+          msg.protocolVersion !== REMOTE_PROTOCOL_VERSION
           || typeof msg.hostVersion !== 'string'
           || msg.hostVersion.trim().length === 0
         ) {
@@ -3162,7 +3084,6 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         }
         this.hostVersion = msg.hostVersion;
         this.negotiatedProtocolVersion = msg.protocolVersion;
-        if (msg.protocolVersion < REMOTE_PROTOCOL_VERSION) this.resetV3OnlyState();
         // A pairing code buys exactly one connection; the bearer that comes
         // back with it is what makes the next one work without the desktop
         // being in the room. Adopt it before anything else can fail.
@@ -3251,20 +3172,28 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       case 'auth-fail':
         if (this.authed) break;
         if (msg.reason === 'incompatible-protocol') {
-          if (this.tryProtocolDowngrade(msg)) break;
           this.rejectIncompatibleProtocol(msg.hostVersion);
           break;
         }
         this.rejectAuthentication();
         break;
-      case 'session-created': {
-        const pending = this.pendingCreates.get(msg.requestId);
-        if (pending) {
-          this.pendingCreates.delete(msg.requestId);
-          pending.resolve(msg.session);
-        }
+      case 'session-surface-open-result': {
+        this.pendingSurfaceOpens.get(msg.requestId)?.(msg.result);
+        this.pendingSurfaceOpens.delete(msg.requestId);
         break;
       }
+      case 'session-surface-prepare-close-result':
+        this.pendingSurfaceClosePreparations.get(msg.requestId)?.(msg.result);
+        this.pendingSurfaceClosePreparations.delete(msg.requestId);
+        break;
+      case 'session-surface-commit-close-result':
+        this.pendingSurfaceCloseCommits.get(msg.requestId)?.(msg.result);
+        this.pendingSurfaceCloseCommits.delete(msg.requestId);
+        break;
+      case 'session-surface-release-result':
+        this.pendingSurfaceReleases.get(msg.requestId)?.(msg.result);
+        this.pendingSurfaceReleases.delete(msg.requestId);
+        break;
       case 'quick-commands-list-reply': {
         const resolve = this.pendingQuickCommands.get(msg.requestId);
         this.pendingQuickCommands.delete(msg.requestId);
@@ -3295,9 +3224,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       case 'desktop-control-ended':
         for (const listener of this.desktopEndedListeners) listener(msg);
         break;
-      case 'session-destroy-result':
-        this.pendingGuardedDestroys.get(msg.requestId)?.(msg.result);
-        this.pendingGuardedDestroys.delete(msg.requestId);
+      case 'session-terminate-result':
+        this.pendingSessionTerminations.get(msg.requestId)?.(msg.result);
+        this.pendingSessionTerminations.delete(msg.requestId);
         break;
       case 'session-list':
         this.pendingListSessions.shift()?.(msg.sessions);

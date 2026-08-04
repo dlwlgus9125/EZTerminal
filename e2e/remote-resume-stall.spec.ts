@@ -94,13 +94,8 @@ test('mobile resume stall: output keeps flowing and ESC stays visible after disc
 
   try {
     // Phone-initiated session — its run's primary port is the phone's relay.
-    const createRequestId = randomUUID();
-    phone1.send({ kind: 'create-session', requestId: createRequestId });
-    const created = await phone1.waitFor(
-      (msg) => msg.kind === 'session-created' && msg.requestId === createRequestId,
-    );
-    if (created.kind !== 'session-created') throw new Error('unreachable');
-    const { sessionId } = created.session;
+    const binding = await phone1.openSessionSurface({ kind: 'create' });
+    const { sessionId } = binding.session;
 
     // The desktop mirrors the session into a pane; that pane's ATTACH port is
     // what keeps the run alive across the phone's disconnect — the user's PC

@@ -38,18 +38,31 @@ describe('remote-protocol — base64 Uint8Array round-trip', () => {
   });
 });
 
-describe('remote-protocol - guarded session destroy', () => {
-  it('keeps the correlated request and result JSON-safe', () => {
+describe('remote-protocol - session surface lifecycle', () => {
+  it('keeps correlated surface requests and results JSON-safe', () => {
     const request = {
-      kind: 'destroy-session-guarded',
+      kind: 'session-surface-prepare-close',
       requestId: 'close-1',
-      sessionId: 'session-1',
-      expectedActiveRunIds: ['run-1', 'run-2'],
+      entries: [{
+        bindingId: 'binding-1',
+        expectedActiveRunIds: ['run-1', 'run-2'],
+      }],
     } satisfies ClientToServerMessage;
     const reply = {
-      kind: 'session-destroy-result',
+      kind: 'session-surface-prepare-close-result',
       requestId: 'close-1',
-      result: { ok: false, reason: 'state-changed' },
+      result: {
+        ok: true,
+        prepared: {
+          closeToken: 'token-1',
+          items: [{
+            bindingId: 'binding-1',
+            surfaceId: 'surface-1',
+            sessionId: 'session-1',
+            role: 'owner',
+          }],
+        },
+      },
     } satisfies ServerToClientMessage;
 
     expect(JSON.parse(JSON.stringify(request))).toEqual(request);

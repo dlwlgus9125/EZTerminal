@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionInfo } from '../shared/ipc';
+import type { SessionSurfaceBinding, SessionSurfaceRole } from '../shared/session-surface';
 import {
   SessionMirroringCoordinator,
   type PaneInstanceToken,
+  type SessionPaneLease,
 } from './session-mirroring-coordinator';
 import {
   WorkbenchCoordinator,
@@ -62,6 +64,32 @@ function sessionInfo(sessionId: string): SessionInfo {
   return { sessionId, cwd: `C:\\${sessionId}` };
 }
 
+let bindingCounter = 0;
+function bindLease(
+  lease: SessionPaneLease,
+  sessionId: string,
+  role: SessionSurfaceRole = 'owner',
+): boolean {
+  bindingCounter += 1;
+  const binding: SessionSurfaceBinding = {
+    surfaceId: lease.surfaceId,
+    bindingId: `binding-${bindingCounter}`,
+    session: sessionInfo(sessionId),
+    role,
+  };
+  return lease.bind(binding);
+}
+
+function paneIdentities(
+  coordinator: SessionMirroringCoordinator,
+  sessionId: string,
+): Array<{ readonly panelId: string; readonly instanceToken: PaneInstanceToken }> | undefined {
+  return coordinator.getSnapshot().bindingsBySession.get(sessionId)?.map((binding) => ({
+    panelId: binding.panelId,
+    instanceToken: binding.instanceToken,
+  }));
+}
+
 function harness() {
   const source = new SessionEventSource();
   const events: string[] = [];
@@ -76,10 +104,14 @@ function harness() {
     return true;
   });
   const onError = vi.fn();
+  const releaseSessionSurface = vi.fn(async () => ({ ok: true as const }));
+  let surfaceCounter = 0;
   const coordinator = new SessionMirroringCoordinator({
     workbench: { openTerminal, closePanel },
     onSessionAdded: source.onSessionAdded,
     onSessionRemoved: source.onSessionRemoved,
+    releaseSessionSurface,
+    newSurfaceId: () => `surface-${++surfaceCounter}`,
     onError,
   });
   return {
@@ -88,6 +120,7 @@ function harness() {
     openTerminal,
     closePanel,
     onError,
+    releaseSessionSurface,
     events,
   };
 }
@@ -120,12 +153,12 @@ describe('SessionMirroringCoordinator pane ownership', () => {
     const firstToken = {};
     const secondToken = {};
     const first = h.coordinator.mountPane('panel-1', firstToken);
-    const second = h.coordinator.mountPane('panel-2', secondToken, 'session-1');
+    const second = h.coordinator.mountPane('panel-2', secondToken, undefined, 'session-1');
     expect(h.coordinator.getSnapshot()).toBe(initial);
 
-    expect(first.bind('session-1')).toBe(true);
-    expect(second.bind('session-1')).toBe(true);
-    expect(h.coordinator.getSnapshot().bindingsBySession.get('session-1')).toEqual([
+    expect(bindLease(first, 'session-1')).toBe(true);
+    expect(bindLease(second, 'session-1', 'adopted')).toBe(true);
+    expect(paneIdentities(h.coordinator, 'session-1')).toEqual([
       { panelId: 'panel-1', instanceToken: firstToken },
       { panelId: 'panel-2', instanceToken: secondToken },
     ]);
@@ -134,7 +167,8 @@ describe('SessionMirroringCoordinator pane ownership', () => {
     const bound = h.coordinator.getSnapshot();
     expect(h.coordinator.getSnapshot()).toBe(bound);
     second.dispose();
-    expect(h.coordinator.getSnapshot().bindingsBySession.get('session-1')).toEqual([
+    vi.runOnlyPendingTimers();
+    expect(paneIdentities(h.coordinator, 'session-1')).toEqual([
       { panelId: 'panel-1', instanceToken: firstToken },
     ]);
   });
@@ -143,18 +177,20 @@ describe('SessionMirroringCoordinator pane ownership', () => {
     const h = harness();
     const oldToken = {};
     const replacementToken = {};
-    const oldLease = h.coordinator.mountPane('panel-reused', oldToken, 'session-1');
+    const oldLease = h.coordinator.mountPane('panel-reused', oldToken, undefined, 'session-1');
     const replacementLease = h.coordinator.mountPane(
       'panel-reused',
       replacementToken,
+      undefined,
       'session-1',
     );
 
-    expect(oldLease.bind('session-1')).toBe(true);
-    expect(replacementLease.bind('session-1')).toBe(true);
+    expect(bindLease(oldLease, 'session-1', 'adopted')).toBe(true);
+    expect(bindLease(replacementLease, 'session-1', 'adopted')).toBe(true);
     oldLease.dispose();
+    vi.runOnlyPendingTimers();
 
-    expect(h.coordinator.getSnapshot().bindingsBySession.get('session-1')).toEqual([
+    expect(paneIdentities(h.coordinator, 'session-1')).toEqual([
       { panelId: 'panel-reused', instanceToken: replacementToken },
     ]);
   });
@@ -168,17 +204,19 @@ describe('SessionMirroringCoordinator pane ownership', () => {
     const lease = h.coordinator.mountPane(
       pane.panelId,
       pane.instanceToken,
+      undefined,
       'session-1',
     );
 
     lease.dispose();
-    expect(lease.bind('session-1')).toBe(false);
+    vi.runOnlyPendingTimers();
+    expect(bindLease(lease, 'session-1', 'adopted')).toBe(false);
     h.source.emitRemoved('session-1');
     vi.runOnlyPendingTimers();
     expect(h.closePanel).not.toHaveBeenCalled();
   });
 
-  it('closes an auto-mirror fallback by its requested session provenance', () => {
+  it('rejects a replacement binding for a missing live auto-mirror adoption', () => {
     const h = harness();
     h.coordinator.connect();
     h.source.emitAdded('requested-session');
@@ -187,31 +225,43 @@ describe('SessionMirroringCoordinator pane ownership', () => {
     const lease = h.coordinator.mountPane(
       pane.panelId,
       pane.instanceToken,
+      undefined,
       'requested-session',
     );
 
-    expect(lease.bind('fallback-session')).toBe(true);
-    expect(
-      h.coordinator.getSnapshot().bindingsBySession.get('fallback-session'),
-    ).toEqual([{ panelId: pane.panelId, instanceToken: pane.instanceToken }]);
+    expect(bindLease(lease, 'fallback-session')).toBe(false);
+    expect(paneIdentities(h.coordinator, 'fallback-session')).toBeUndefined();
 
     h.source.emitRemoved('requested-session');
     vi.runOnlyPendingTimers();
     expect(h.closePanel).toHaveBeenCalledWith(pane.panelId, pane.instanceToken);
   });
 
-  it('keeps a restored or manually adopted fallback as an ordinary fresh pane', () => {
+  it('rejects a replacement binding for a missing manual adoption', () => {
     const h = harness();
     h.coordinator.connect();
     const token = {};
-    const lease = h.coordinator.mountPane('restored-panel', token, 'stale-session');
+    const lease = h.coordinator.mountPane(
+      'manual-panel', token, undefined, 'stale-session',
+    );
 
-    expect(lease.bind('fresh-session')).toBe(true);
+    expect(lease.intent).toEqual({ kind: 'adopt', sessionId: 'stale-session' });
+    expect(bindLease(lease, 'fresh-session')).toBe(false);
     h.source.emitRemoved('stale-session');
     vi.runOnlyPendingTimers();
 
-    expect(h.closePanel).not.toHaveBeenCalled();
-    expect(h.coordinator.getSnapshot().bindingsBySession.get('fresh-session')).toEqual([
+    expect(h.closePanel).toHaveBeenCalledWith('manual-panel', token);
+    expect(paneIdentities(h.coordinator, 'fresh-session')).toBeUndefined();
+  });
+
+  it('creates a fresh owner for a saved-layout pane without persisted session identity', () => {
+    const h = harness();
+    const token = {};
+    const lease = h.coordinator.mountPane('restored-panel', token, '/restored');
+
+    expect(lease.intent).toEqual({ kind: 'create', cwd: '/restored' });
+    expect(bindLease(lease, 'fresh-session', 'owner')).toBe(true);
+    expect(paneIdentities(h.coordinator, 'fresh-session')).toEqual([
       { panelId: 'restored-panel', instanceToken: token },
     ]);
   });
@@ -224,14 +274,15 @@ describe('SessionMirroringCoordinator pane ownership', () => {
     const pane = openedPane(h.openTerminal);
 
     h.coordinator
-      .mountPane(pane.panelId, pane.instanceToken, 'session-1')
+      .mountPane(pane.panelId, pane.instanceToken, undefined, 'session-1')
       .dispose();
     const liveLease = h.coordinator.mountPane(
       pane.panelId,
       pane.instanceToken,
+      undefined,
       'session-1',
     );
-    expect(liveLease.bind('session-1')).toBe(true);
+    expect(bindLease(liveLease, 'session-1', 'adopted')).toBe(true);
 
     h.source.emitAdded('session-1');
     vi.runOnlyPendingTimers();
@@ -249,7 +300,7 @@ describe('SessionMirroringCoordinator event ordering', () => {
     expect(h.openTerminal).toHaveBeenCalledTimes(1);
 
     h.source.emitAdded('local');
-    h.coordinator.mountPane('local-panel', {}).bind('local');
+    bindLease(h.coordinator.mountPane('local-panel', {}), 'local');
     vi.runOnlyPendingTimers();
     expect(h.openTerminal).toHaveBeenCalledTimes(1);
   });
@@ -271,8 +322,8 @@ describe('SessionMirroringCoordinator event ordering', () => {
     h.coordinator.connect();
     const firstToken = {};
     const secondToken = {};
-    h.coordinator.mountPane('panel-reused', firstToken).bind('session-1');
-    h.coordinator.mountPane('panel-reused', secondToken).bind('session-1');
+    bindLease(h.coordinator.mountPane('panel-reused', firstToken), 'session-1');
+    bindLease(h.coordinator.mountPane('panel-reused', secondToken), 'session-1');
 
     h.source.emitRemoved('session-1');
     vi.runOnlyPendingTimers();
@@ -318,7 +369,7 @@ describe('SessionMirroringCoordinator event ordering', () => {
       expect.any(Error),
     );
 
-    h.coordinator.mountPane('panel-1', {}).bind('failed-remove');
+    bindLease(h.coordinator.mountPane('panel-1', {}), 'failed-remove');
     h.closePanel.mockImplementationOnce(() => {
       throw new Error('close failed');
     });
@@ -335,7 +386,7 @@ describe('SessionMirroringCoordinator workspace replacement lease', () => {
   it('captures timers already pending when the replacement lock is acquired', () => {
     const h = harness();
     h.coordinator.connect();
-    h.coordinator.mountPane('panel-recreated', {}).bind('recreated');
+    bindLease(h.coordinator.mountPane('panel-recreated', {}), 'recreated');
     h.source.emitRemoved('recreated');
     h.source.emitAdded('dropped');
 
@@ -354,8 +405,8 @@ describe('SessionMirroringCoordinator workspace replacement lease', () => {
   it('unlocks once, drops removed additions, and replays removals before additions', () => {
     const h = harness();
     h.coordinator.connect();
-    h.coordinator.mountPane('panel-gone', {}).bind('gone');
-    h.coordinator.mountPane('panel-recreated', {}).bind('recreated');
+    bindLease(h.coordinator.mountPane('panel-gone', {}), 'gone');
+    bindLease(h.coordinator.mountPane('panel-recreated', {}), 'recreated');
     const lockChanges: boolean[] = [];
     h.coordinator.subscribe(() => {
       lockChanges.push(h.coordinator.getSnapshot().replacementLocked);
@@ -518,6 +569,8 @@ describe('SessionMirroringCoordinator with WorkbenchCoordinator', () => {
       workbench,
       onSessionAdded: source.onSessionAdded,
       onSessionRemoved: source.onSessionRemoved,
+      releaseSessionSurface: async () => ({ ok: true }),
+      newSurfaceId: () => 'surface-workbench',
     });
     mirroring.connect();
 
@@ -526,9 +579,11 @@ describe('SessionMirroringCoordinator with WorkbenchCoordinator', () => {
     expect(dock.added).toEqual([{ id: 'tab-1', adoptSessionId: 'session-1' }]);
     const panel = dock.getPanel('tab-1');
     expect(panel).toBeDefined();
-    mirroring
-      .mountPane('tab-1', panel!.instanceToken, 'session-1')
-      .bind('session-1');
+    bindLease(
+      mirroring.mountPane('tab-1', panel!.instanceToken, undefined, 'session-1'),
+      'session-1',
+      'adopted',
+    );
 
     source.emitRemoved('session-1');
     vi.runOnlyPendingTimers();

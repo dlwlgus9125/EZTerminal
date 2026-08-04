@@ -16,7 +16,7 @@ const CLOSE_RISK_LABEL_KEY = {
 } as const satisfies Record<CloseRisk, string>;
 
 // SessionSwitcher — the session manager listing every session currently live
-// on the desktop bridge (`list-sessions`), with create/destroy/open-as-tab.
+// on the desktop bridge (`list-sessions`), with create/terminate/open-as-tab.
 // It renders as the full-screen Sessions destination in normal document flow
 // so Android accessibility tooling can reach every session operation.
 //
@@ -26,10 +26,13 @@ const CLOSE_RISK_LABEL_KEY = {
 export function SessionSwitcher({
   transport,
   onSelect,
+  onCreate,
   onDisconnect,
 }: {
   transport: WsEzTerminalTransport;
   onSelect: (sessionId: string, cwd: string) => void;
+  /** Creates an owner surface in MobileWorkspace, then opens its tab. */
+  onCreate: () => Promise<void>;
   onDisconnect: () => void;
 }): JSX.Element {
   const { t } = useAppTranslation();
@@ -103,14 +106,13 @@ export function SessionSwitcher({
     setCreating(true);
     setCreateError(null);
     try {
-      const info = await transport.createSession();
-      onSelect(info.sessionId, info.cwd);
+      await onCreate();
     } catch (error) {
       setCreateError(error instanceof Error ? error.message : t('mobile.sessionManager.createFailed'));
     } finally {
       setCreating(false);
     }
-  }, [creating, onSelect, t, transport]);
+  }, [creating, onCreate, t]);
 
   const closeDestroyPrompt = useCallback((): void => {
     destroyGuardRef.current = false;
@@ -150,7 +152,7 @@ export function SessionSwitcher({
         hasActiveAgent,
       });
       if (risk === null) {
-        const result = await transport.destroySessionGuarded(session.sessionId, activeRunIds);
+        const result = await transport.terminateSessionGuarded(session.sessionId, activeRunIds);
         if (result.ok) {
           destroyGuardRef.current = false;
         } else {
@@ -184,7 +186,7 @@ export function SessionSwitcher({
       setDestroyPrompt({ ...destroyPrompt, risk: 'unknown', activeRunIds: latestActiveRunIds });
       return;
     }
-    const result = await transport.destroySessionGuarded(sessionId, latestActiveRunIds);
+    const result = await transport.terminateSessionGuarded(sessionId, latestActiveRunIds);
     if (!result.ok) {
       setDestroyPrompt({ ...destroyPrompt, risk: 'unknown', activeRunIds: latestActiveRunIds });
       return;

@@ -1,7 +1,7 @@
 /**
  * Remote-control WS wire protocol (mobile remote-control M0) — a single
- * WebSocket connection multiplexes every interaction: auth, session listing/
- * create/destroy, one or more concurrent command runs (each correlated by
+ * WebSocket connection multiplexes every interaction: auth, host-authorized
+ * session surfaces, session listing, and concurrent command runs (correlated by
  * `runId`, echoing the shape of the desktop's per-command MessagePort broker
  * in `main.ts`'s `run-command` handler), and the status-panel mirror added in
  * M1 (stats + packet capture, §D1). `ClientToServerMessage`/
@@ -15,8 +15,8 @@
  * isolate this so a later swap to a binary WS frame (header + raw bytes) only
  * touches this module, not the bridge or transport call sites.
  *
- * Authentication negotiates an explicit protocol version. Desktop and Android
- * may be installed independently, so a missing or unsupported version fails
+ * Authentication requires the exact protocol version. Desktop and Android may
+ * be installed independently, so a missing or unsupported version fails
  * closed with a distinct incompatibility response instead of masquerading as
  * a bad token or an endless transient reconnect.
  */
@@ -70,6 +70,15 @@ import type {
   OpenClawStatus,
 } from './openclaw';
 import type { QuickCommand } from './quick-command';
+import type {
+  SessionSurfaceCloseDecision,
+  SessionSurfaceCloseEntry,
+  SessionSurfaceCommitCloseResult,
+  SessionSurfaceIntent,
+  SessionSurfaceOpenResult,
+  SessionSurfacePrepareCloseResult,
+  SessionSurfaceReleaseResult,
+} from './session-surface';
 
 export const REMOTE_CAPABILITY_QUICK_COMMANDS_READ = 'quick-commands-read' as const;
 export const REMOTE_CAPABILITY_DESKTOP_CONTROL = 'desktop-control-v1' as const;
@@ -78,12 +87,11 @@ export type RemoteCapability =
   | typeof REMOTE_CAPABILITY_DESKTOP_CONTROL;
 
 /**
- * Every version ever shipped stays accepted, because the desktop is upgraded
- * before the phone far more often than the reverse. Features are gated by the
- * version that introduced them, never by "is this the newest" — otherwise each
- * bump would silently take a capability away from the peers that still work.
+ * Version markers document when capabilities entered the protocol. v7 is the
+ * only accepted wire version: session-surface authority is a security and
+ * lifecycle invariant, so v1-v6 fail closed instead of negotiating down.
  *
- * v1 terminal only · v2 adds desktop control and client identity · v3 adds
+ * v1 terminal only · v2 added desktop control and client identity · v3 added
  * live Agent approval decisions, Git queries and the latency probe · v4 adds
  * on-demand Agent project/history reads and explicit history resume; v5 adds
  * project management/search and project-rooted fresh Agent launches; v6 adds
@@ -95,10 +103,11 @@ export const REMOTE_PROTOCOL_VERSION_AGENT_LIVE = 3 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_HISTORY = 4 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS = 5 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS = 6 as const;
-export const REMOTE_PROTOCOL_VERSION = 6 as const;
-export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6;
+export const REMOTE_PROTOCOL_VERSION_SESSION_SURFACES = 7 as const;
+export const REMOTE_PROTOCOL_VERSION = 7 as const;
+export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
-export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [1, 2, 3, 4, 5, 6];
+export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [7];
 
 export function isRemoteProtocolVersion(value: unknown): value is RemoteProtocolVersion {
   return SUPPORTED_REMOTE_PROTOCOL_VERSIONS.includes(value as RemoteProtocolVersion);
@@ -259,23 +268,35 @@ export interface ListRunsMessage {
   readonly kind: 'list-runs';
 }
 
-export interface CreateSessionRequest {
-  readonly kind: 'create-session';
-  /** Client-minted correlation id, echoed back on `session-created`. */
+export interface OpenSessionSurfaceRequest {
+  readonly kind: 'session-surface-open';
   readonly requestId: string;
-  readonly cwd?: string;
+  readonly surfaceId: string;
+  readonly intent: SessionSurfaceIntent;
 }
 
-export interface DestroySessionRequest {
-  readonly kind: 'destroy-session';
-  readonly sessionId: string;
+export interface PrepareSessionSurfaceCloseRequest {
+  readonly kind: 'session-surface-prepare-close';
+  readonly requestId: string;
+  readonly entries: readonly SessionSurfaceCloseEntry[];
 }
 
-/** Atomically destroy a session only while its foreground run set still
- * matches the mobile client's last observation. The bridge enforces the same
- * bounded identifier contract as the desktop IPC boundary. */
-export interface DestroySessionGuardedRequest {
-  readonly kind: 'destroy-session-guarded';
+export interface CommitSessionSurfaceCloseRequest {
+  readonly kind: 'session-surface-commit-close';
+  readonly requestId: string;
+  readonly closeToken: string;
+  readonly decisions: readonly SessionSurfaceCloseDecision[];
+}
+
+export interface ReleaseSessionSurfaceRequest {
+  readonly kind: 'session-surface-release';
+  readonly requestId: string;
+  readonly bindingId: string;
+}
+
+/** Explicit SessionSwitcher administrative action, independent of view ownership. */
+export interface TerminateSessionGuardedRequest {
+  readonly kind: 'session-terminate-guarded';
   readonly requestId: string;
   readonly sessionId: string;
   readonly expectedActiveRunIds: readonly string[];
@@ -675,9 +696,11 @@ export type ClientToServerMessage =
   | AuthMessage
   | ListSessionsMessage
   | ListRunsMessage
-  | CreateSessionRequest
-  | DestroySessionRequest
-  | DestroySessionGuardedRequest
+  | OpenSessionSurfaceRequest
+  | PrepareSessionSurfaceCloseRequest
+  | CommitSessionSurfaceCloseRequest
+  | ReleaseSessionSurfaceRequest
+  | TerminateSessionGuardedRequest
   | RunCommandRequest
   | ControlMessage
   | AttachRunRequest
@@ -835,16 +858,32 @@ export interface RunListMessage {
   readonly runs: readonly RemoteRunListEntry[];
 }
 
-export interface SessionCreatedReply {
-  readonly kind: 'session-created';
+export interface SessionSurfaceOpenResultMessage {
+  readonly kind: 'session-surface-open-result';
   readonly requestId: string;
-  readonly session: SessionInfo;
+  readonly result: SessionSurfaceOpenResult;
 }
 
-/** Correlated result of a guarded session destroy. `state-changed` keeps the
- * mobile confirmation open; `unavailable` fails closed on backend loss. */
-export interface SessionDestroyResultMessage {
-  readonly kind: 'session-destroy-result';
+export interface SessionSurfacePrepareCloseResultMessage {
+  readonly kind: 'session-surface-prepare-close-result';
+  readonly requestId: string;
+  readonly result: SessionSurfacePrepareCloseResult;
+}
+
+export interface SessionSurfaceCommitCloseResultMessage {
+  readonly kind: 'session-surface-commit-close-result';
+  readonly requestId: string;
+  readonly result: SessionSurfaceCommitCloseResult;
+}
+
+export interface SessionSurfaceReleaseResultMessage {
+  readonly kind: 'session-surface-release-result';
+  readonly requestId: string;
+  readonly result: SessionSurfaceReleaseResult;
+}
+
+export interface SessionTerminateResultMessage {
+  readonly kind: 'session-terminate-result';
   readonly requestId: string;
   readonly result: DestroySessionGuardResult;
 }
@@ -858,7 +897,7 @@ export interface FrameMessage {
 
 // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ────
 // Broadcast to EVERY connection (origin-agnostic — including one this same
-// connection just created via `create-session`, same self-echo shape as
+// connection just created through a session surface, same self-echo shape as
 // `ipc.ts`'s `onSessionAdded`/`onSessionRemoved`/`onRunStarted`). A client
 // answers `RunStartedMessage` with `attach-run` to mirror that run's frames.
 
@@ -1224,8 +1263,11 @@ export type ServerToClientMessage =
   | AuthFailMessage
   | SessionListMessage
   | RunListMessage
-  | SessionCreatedReply
-  | SessionDestroyResultMessage
+  | SessionSurfaceOpenResultMessage
+  | SessionSurfacePrepareCloseResultMessage
+  | SessionSurfaceCommitCloseResultMessage
+  | SessionSurfaceReleaseResultMessage
+  | SessionTerminateResultMessage
   | FrameMessage
   | ResumeRunReadyMessage
   | ResumeRunMissingMessage

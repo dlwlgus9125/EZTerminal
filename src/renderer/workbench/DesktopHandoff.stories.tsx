@@ -102,7 +102,7 @@ function storyCapabilities(locale: Locale = 'ko'): CapabilityAccess {
     ...rendererCapabilities,
     snapshot: () => ({ core: 'available', desktop: 'available' }),
     runtimeVersions: () => ({
-      app: '1.0.24',
+      app: '1.0.25',
       protocol: 3,
       buildSha: 'handoff',
       electron: '38',
@@ -306,7 +306,7 @@ function WorkbenchFrame({
     <DesktopUiPreferencesProvider capabilities={capabilities}>
       <main className="app desktop-handoff-workbench">
         <AppHeader
-          appVersion="1.0.24"
+          appVersion="1.0.25"
           attentionCount={2}
           commandCenterOpen={false}
           effectIntensity={7}
@@ -414,13 +414,26 @@ function AgentHubFixture(): JSX.Element {
 }
 
 const STORY_TERMINAL_API = {
-  createSession: async (cwd?: string) => ({
-    sessionId: `handoff-${cwd ?? 'terminal'}`,
-    cwd: cwd ?? 'C:\\Working\\EZTerminal',
-    createdAt: NOW,
+  openSessionSurface: async (surfaceId: string, intent: { kind: string; cwd?: string; sessionId?: string }) => ({
+    ok: true as const,
+    binding: {
+      surfaceId,
+      bindingId: `binding:${surfaceId}`,
+      role: intent.kind === 'create' ? 'owner' as const : 'adopted' as const,
+      session: {
+        sessionId: intent.sessionId ?? `handoff-${intent.cwd ?? 'terminal'}`,
+        cwd: intent.cwd ?? 'C:\\Working\\EZTerminal',
+        createdAt: NOW,
+      },
+    },
   }),
-  destroySession: () => undefined,
-  destroySessionGuarded: async () => ({ ok: true as const }),
+  prepareSessionSurfaceClose: async () => ({
+    ok: true as const,
+    prepared: { closeToken: 'story-close', items: [] },
+  }),
+  commitSessionSurfaceClose: async () => ({ ok: true as const, keptSessionIds: [] }),
+  releaseSessionSurface: async () => ({ ok: true as const }),
+  terminateSessionGuarded: async () => ({ ok: true as const }),
   listSessions: async () => [],
   listRuns: async () => [],
   onRunStarted: () => () => undefined,
@@ -480,6 +493,12 @@ function TerminalDockPanel(props: IDockviewPanelProps): JSX.Element {
       panelId={props.api.id}
       paneInstanceToken={props.api}
       initialCwd={cwd}
+      mountSessionPane={(panelId, _instanceToken, initialCwd) => ({
+        surfaceId: `story:${panelId}`,
+        intent: { kind: 'create', cwd: initialCwd },
+        bind: () => true,
+        dispose: () => undefined,
+      })}
       terminalRuntimeOptions={DEFAULT_TERMINAL_RUNTIME_OPTIONS}
       quickCommands={STORY_QUICK_COMMANDS}
       onManageQuickCommands={() => undefined}

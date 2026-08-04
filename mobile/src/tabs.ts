@@ -1,13 +1,17 @@
 // tabs.ts — pure reducer for the mobile workspace's open-tab state (M5,
 // mobile-parity plan D5). No React/DOM — MobileWorkspace.tsx is the only
 // consumer, so keep-alive/resize/e2e-marker side effects live there, not
-// here. A "tab" is a UI-level pointer at an ALREADY-EXISTING desktop session
-// (SessionSwitcher/`transport.createSession()` own session lifecycle);
-// closing a tab never destroys its session.
+// here. Every tab is one host-authorized session surface. The surface id
+// survives reconnects, while its host-issued binding is invalidated and
+// re-opened as an adopted view on the next authenticated connection.
+
+import type { SessionSurfaceBinding } from '../../src/shared/session-surface';
 
 export interface Tab {
   readonly sessionId: string;
   readonly cwd: string;
+  readonly surfaceId: string;
+  readonly binding: SessionSurfaceBinding | null;
 }
 
 export interface TabsState {
@@ -16,7 +20,9 @@ export interface TabsState {
 }
 
 export type TabsAction =
-  | { readonly type: 'open'; readonly sessionId: string; readonly cwd: string }
+  | { readonly type: 'open'; readonly binding: SessionSurfaceBinding }
+  | { readonly type: 'rebind'; readonly sessionId: string; readonly binding: SessionSurfaceBinding }
+  | { readonly type: 'invalidateBindings' }
   | { readonly type: 'activate'; readonly sessionId: string }
   | { readonly type: 'close'; readonly sessionId: string }
   | { readonly type: 'sessionDied'; readonly sessionId: string };
@@ -45,11 +51,38 @@ function removeTab(state: TabsState, sessionId: string): TabsState {
 export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
   switch (action.type) {
     case 'open': {
-      const existing = state.tabs.some((t) => t.sessionId === action.sessionId);
+      const sessionId = action.binding.session.sessionId;
+      const existing = state.tabs.some((t) => t.sessionId === sessionId);
       const tabs = existing
         ? state.tabs
-        : [...state.tabs, { sessionId: action.sessionId, cwd: action.cwd }];
-      return { tabs, activeSessionId: action.sessionId };
+        : [...state.tabs, {
+            sessionId,
+            cwd: action.binding.session.cwd,
+            surfaceId: action.binding.surfaceId,
+            binding: action.binding,
+          }];
+      return { tabs, activeSessionId: sessionId };
+    }
+    case 'rebind': {
+      if (
+        action.binding.session.sessionId !== action.sessionId
+        || action.binding.surfaceId !== state.tabs.find((tab) => tab.sessionId === action.sessionId)?.surfaceId
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        tabs: state.tabs.map((tab) => tab.sessionId === action.sessionId
+          ? { ...tab, cwd: action.binding.session.cwd, binding: action.binding }
+          : tab),
+      };
+    }
+    case 'invalidateBindings': {
+      if (state.tabs.every((tab) => tab.binding === null)) return state;
+      return {
+        ...state,
+        tabs: state.tabs.map((tab) => ({ ...tab, binding: null })),
+      };
     }
     case 'activate': {
       if (!state.tabs.some((t) => t.sessionId === action.sessionId)) return state;

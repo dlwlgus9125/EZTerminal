@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [1.0.25] - 2026-08-05
+
+### Changed
+
+- Unified desktop and Android session surfaces behind a host-owned authority
+  that distinguishes creator ownership from adopted mirrors.
+- Upgraded the remote protocol to v7. Older v1-v6 clients are rejected rather
+  than silently downgrading across the new lifecycle contract.
+- Made risky owner closes atomic and fail closed when the active run state
+  changes; adopted surfaces now detach without terminating the session.
+- Preserved sessions across renderer reloads, crashes, and mobile reconnects
+  while releasing stale surface ownership.
+
+See [1.0.25 release notes](docs/release/release-notes-1.0.25.md).
+
 ## [1.0.24] - 2026-08-04
 
 ### Added

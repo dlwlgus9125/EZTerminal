@@ -8,7 +8,7 @@ import { readXtermBuffer } from './xterm-buffer';
 
 const ECHO_FIXTURE = path.resolve(__dirname, 'fixtures', 'pty-echo.js');
 
-// M2 full mirroring (plan §M2, AC4/AC5): a session/run created over the mobile
+// M2 full mirroring (plan §M2, AC4/AC5): a session surface/run opened over the mobile
 // remote-control WS bridge must reflect onto the desktop dockview the same way
 // a locally-created tab would — this drives the REAL remote-bridge.ts with a
 // Node 'ws' client (no fakes; those already live in remote-bridge.test.ts),
@@ -23,7 +23,7 @@ const ECHO_FIXTURE = path.resolve(__dirname, 'fixtures', 'pty-echo.js');
 const REMOTE_PORT = 17420;
 const OPENCLAW_PROXY_PORT = 17422;
 
-test('session mirroring: WS create-session/run-command/destroy-session reflect on the desktop dockview', async () => {
+test('session mirroring: WS surface open/run/close reflects on the desktop dockview', async () => {
   const app = await launchApp(undefined, {
     EZTERMINAL_REMOTE_PORT: String(REMOTE_PORT),
     // The production default remains VPN-only. This bridge integration test
@@ -52,14 +52,9 @@ test('session mirroring: WS create-session/run-command/destroy-session reflect o
   const client = await TestWsClient.connectAuthed(`ws://127.0.0.1:${REMOTE_PORT}`, token);
 
   try {
-    // ── AC4 (add): WS create-session -> a new desktop tab appears within 2s ──
-    const createRequestId = randomUUID();
-    client.send({ kind: 'create-session', requestId: createRequestId });
-    const createdMsg = await client.waitFor(
-      (msg) => msg.kind === 'session-created' && msg.requestId === createRequestId,
-    );
-    if (createdMsg.kind !== 'session-created') throw new Error('unreachable');
-    const { sessionId } = createdMsg.session;
+    // ── AC4 (add): WS owner surface -> a new desktop tab appears within 2s ──
+    const binding = await client.openSessionSurface({ kind: 'create' });
+    const { sessionId } = binding.session;
 
     // Scoped by the pane's own `data-session-id` (Track A ③'s existing
     // attribute — see layout-persistence.spec.ts) rather than by tab title
@@ -101,8 +96,8 @@ test('session mirroring: WS create-session/run-command/destroy-session reflect o
     }, sessionId);
     await expect(mirroredPane).toHaveCount(2, { timeout: 2_000 });
 
-    // ── AC4 (remove): WS destroy-session -> the desktop tab disappears within 2s ──
-    client.send({ kind: 'destroy-session', sessionId });
+    // ── AC4 (remove): guarded owner close -> the desktop tab disappears within 2s ──
+    await client.closeSessionSurface(binding, 'terminate');
     await expect(mirroredPane).toHaveCount(0, { timeout: 2_000 });
     await expect(win.getByTestId('pane')).toHaveCount(1);
 
@@ -113,14 +108,9 @@ test('session mirroring: WS create-session/run-command/destroy-session reflect o
     // unsolicited desktop pane.
     const transientSessionIds: string[] = [];
     for (let index = 0; index < 5; index += 1) {
-      const transientRequestId = randomUUID();
-      client.send({ kind: 'create-session', requestId: transientRequestId });
-      const transientCreated = await client.waitFor(
-        (msg) => msg.kind === 'session-created' && msg.requestId === transientRequestId,
-      );
-      if (transientCreated.kind !== 'session-created') throw new Error('unreachable');
-      transientSessionIds.push(transientCreated.session.sessionId);
-      client.send({ kind: 'destroy-session', sessionId: transientCreated.session.sessionId });
+      const transientBinding = await client.openSessionSurface({ kind: 'create' });
+      transientSessionIds.push(transientBinding.session.sessionId);
+      await client.closeSessionSurface(transientBinding, 'terminate');
     }
 
     // Let every renderer setTimeout(0), listSessions reply, and cancellation

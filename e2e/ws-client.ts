@@ -1,4 +1,5 @@
 import { WebSocket } from 'ws';
+import { randomUUID } from 'node:crypto';
 
 import {
   REMOTE_PROTOCOL_VERSION,
@@ -6,6 +7,11 @@ import {
   type RemoteClientIdentity,
   type ServerToClientMessage,
 } from '../src/shared/remote-protocol';
+import type {
+  SessionSurfaceBinding,
+  SessionSurfaceDisposition,
+  SessionSurfaceIntent,
+} from '../src/shared/session-surface';
 
 /**
  * Minimal Node-side WS client for the mirroring e2e (session-mirror.spec.ts):
@@ -63,7 +69,11 @@ export class TestWsClient {
       protocolVersion: REMOTE_PROTOCOL_VERSION,
       clientVersion: '1.0.0-e2e',
       buildSha: 'e2e',
-      ...(clientIdentity ? { clientIdentity } : {}),
+      clientIdentity: clientIdentity ?? {
+        clientId: randomUUID(),
+        clientName: 'e2e-phone',
+        platform: 'android',
+      },
     });
     await client.waitFor((msg) => msg.kind === 'auth-ok', 5_000);
     return client;
@@ -78,6 +88,68 @@ export class TestWsClient {
 
   send(msg: ClientToServerMessage): void {
     this.ws.send(JSON.stringify(msg));
+  }
+
+  async openSessionSurface(
+    intent: SessionSurfaceIntent,
+    surfaceId = randomUUID(),
+  ): Promise<SessionSurfaceBinding> {
+    const requestId = randomUUID();
+    const reply = this.waitFor(
+      (message) => (
+        message.kind === 'session-surface-open-result'
+        && message.requestId === requestId
+      ),
+    );
+    this.send({ kind: 'session-surface-open', requestId, surfaceId, intent });
+    const message = await reply;
+    if (message.kind !== 'session-surface-open-result' || !message.result.ok) {
+      throw new Error('session surface open failed');
+    }
+    return message.result.binding;
+  }
+
+  async closeSessionSurface(
+    binding: SessionSurfaceBinding,
+    disposition: SessionSurfaceDisposition,
+    expectedActiveRunIds: readonly string[] = [],
+  ): Promise<void> {
+    const prepareRequestId = randomUUID();
+    const preparedReply = this.waitFor(
+      (message) => (
+        message.kind === 'session-surface-prepare-close-result'
+        && message.requestId === prepareRequestId
+      ),
+    );
+    this.send({
+      kind: 'session-surface-prepare-close',
+      requestId: prepareRequestId,
+      entries: [{ bindingId: binding.bindingId, expectedActiveRunIds }],
+    });
+    const prepared = await preparedReply;
+    if (prepared.kind !== 'session-surface-prepare-close-result' || !prepared.result.ok) {
+      throw new Error('session surface close preparation failed');
+    }
+
+    const commitRequestId = randomUUID();
+    const committedReply = this.waitFor(
+      (message) => (
+        message.kind === 'session-surface-commit-close-result'
+        && message.requestId === commitRequestId
+      ),
+    );
+    this.send({
+      kind: 'session-surface-commit-close',
+      requestId: commitRequestId,
+      closeToken: prepared.result.prepared.closeToken,
+      decisions: binding.role === 'owner'
+        ? [{ bindingId: binding.bindingId, disposition }]
+        : [],
+    });
+    const committed = await committedReply;
+    if (committed.kind !== 'session-surface-commit-close-result' || !committed.result.ok) {
+      throw new Error('session surface close commit failed');
+    }
   }
 
   /** Resolve the next server message matching `predicate` (messages that

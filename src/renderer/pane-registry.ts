@@ -5,6 +5,7 @@
  */
 
 import type { ExecutionKind } from '../shared/ipc';
+import type { SessionSurfaceRole } from '../shared/session-surface';
 import type { BlockSnapshot, PtyControlTargetIdentity } from './block-controller';
 
 export interface PaneSnapshot {
@@ -19,7 +20,11 @@ export interface PaneSnapshot {
    * asynchronous list/create reply. Destructive workspace replacement must
    * fail closed while any such binding is unresolved. */
   readonly sessionBindingPending: boolean;
-  /** True only for the creator pane whose unmount destroys the backend session. */
+  /** Host-issued close capability for this exact mounted surface. */
+  readonly sessionSurfaceBindingId: string | null;
+  /** Host-authoritative view role; renderer code must never infer ownership. */
+  readonly sessionSurfaceRole: SessionSurfaceRole | null;
+  /** Compatibility projection used by close-risk presentation. */
   readonly destroysSessionOnClose: boolean;
   /** Renderer observation used only as a guarded-destroy precondition. The
    * interpreter remains authoritative and rejects a changed set. */
@@ -44,13 +49,6 @@ export type PaneActionResult =
 
 export interface PaneHandle {
   getSnapshot(): PaneSnapshot;
-  /** Called only after guarded destruction was acknowledged (or shared-fate
-   * death is known), so unmount does not issue a redundant second destroy. */
-  markSessionDestroyHandled(destroyedSessionId: string): boolean;
-  /** Give up ownership of the bound session so unmount detaches instead of
-   * destroying it. Returns the session left running, or null if this pane owns
-   * none. Used by "keep running", which closes the pane and leaves the work. */
-  releaseSessionOwnership(): string | null;
   insertText(text: string): PaneActionResult;
   runText(text: string): PaneActionResult;
   pasteToPty(text: string): PaneActionResult;

@@ -76,6 +76,7 @@ import type {
   AgentResumeStartResult,
   AgentTranscriptPage,
 } from './agent-history';
+import type { SessionSurfaceApi } from './session-surface';
 import type {
   AppUpdateOpenResult,
   AppUpdateSnapshot,
@@ -1024,32 +1025,8 @@ export interface RemoteDesktopHostStatus {
 
 // ── Preload bridge API ────────────────────────────────────────────────────────
 
-export interface EzTerminalApi {
+export interface EzTerminalApi extends SessionSurfaceApi {
   readonly versions: RuntimeVersions;
-  /**
-   * Create a new independent shell session (its own cwd/env/variables/history) and
-   * resolve once the interpreter has created it — returning the authoritative
-   * `sessionId` + starting `cwd` (Codex B5). A pane MUST await this before running
-   * commands; every `runCommand` is scoped to a session created this way.
-   */
-  createSession: (cwd?: string) => Promise<SessionInfo>;
-  /**
-   * Destroy a session when its pane/tab closes: the interpreter aborts the session's
-   * in-flight runs, releases their stores/ports, and drops the session (Codex B2/B6).
-   * Idempotent and fire-and-forget.
-   */
-  destroySession: (sessionId: string) => void;
-  /** Destroy only if the interpreter still has exactly the foreground runs
-   * observed by the closing surface. A state change fails closed. */
-  destroySessionGuarded: (
-    sessionId: string,
-    expectedActiveRunIds: readonly string[],
-  ) => Promise<DestroySessionGuardResult>;
-  /** Atomically validate and destroy all creator sessions before replacing a
-   * saved layout. Either every session is destroyed or none is. */
-  destroySessionsGuarded: (
-    sessions: readonly GuardedSessionDestroyRequest[],
-  ) => Promise<DestroySessionGuardResult>;
   /**
    * Start executing `commandText` in `sessionId`. `runId` is a caller-supplied unique
    * token used to correlate the brokered port back to *this* run. Main echoes `runId`

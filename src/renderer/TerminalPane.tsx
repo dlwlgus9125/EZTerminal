@@ -46,17 +46,16 @@ import {
   DEFAULT_TERMINAL_RUNTIME_OPTIONS,
   type TerminalRuntimeOptions,
 } from './xterm-runtime';
-import type { RunStartedInfo, SessionInfo } from '../shared/ipc';
+import type { RunStartedInfo } from '../shared/ipc';
+import type { SessionSurfaceBinding } from '../shared/session-surface';
 import type { QuickCommand } from '../shared/quick-command';
 import type { AgentResumeBootstrap, AgentTerminalBootstrap } from '../shared/agent-history';
 import { classifyDirectAgentCommand } from '../shared/agent-command';
 import { clearAgentTerminalBootstrap } from './agent-terminal-bootstrap';
 
-// A TerminalPane is one independent shell surface: its own shell session (cwd/env/
-// variables/history), its own stack of command Blocks, and its own pinned prompt.
-// It owns everything that used to live in App — App is now just the host that mounts
-// one (Track A M2). In M3 the dockview host mounts one TerminalPane per tab/split, so
-// panes must be fully self-contained: each creates + destroys its own session.
+// A TerminalPane is one independent shell surface: its own stack of command Blocks,
+// pinned prompt, and an authority-issued binding to a shell session. The host owns
+// session lifecycle policy; this component renders and interacts with that binding.
 
 interface BlockEntry {
   readonly id: string;
@@ -105,13 +104,9 @@ interface TerminalPaneProps {
    * here" action (M2); undefined for a plain new tab/split (interpreter default). */
   readonly initialCwd?: string;
   /**
-   * M2 adopt mode: bind to this ALREADY-EXISTING session instead of creating a
-   * new one (this pane is following a session another surface — another
-   * desktop tab, or mobile — created). `createSession` is skipped entirely;
-   * on unmount the pane DETACHES (never `destroySession`s it). If the session
-   * no longer exists (e.g. a restored layout referencing a session from a
-   * PRIOR run of the interpreter), falls back to an ordinary new session —
-   * see the mount effect. Undefined for a plain new tab/split.
+   * Bind strictly to this already-existing session instead of creating a new
+   * one. A missing live/manual adoption fails closed; it never silently creates
+   * a replacement session. Undefined for a plain new tab/split.
    */
   readonly adoptSessionId?: string;
   /** Converts a read-only Agent Session panel into a live resumed Codex PTY. */
@@ -124,6 +119,7 @@ interface TerminalPaneProps {
   readonly mountSessionPane?: (
     panelId: string,
     instanceToken: PaneInstanceToken,
+    initialCwd?: string,
     requestedAdoptSessionId?: string,
   ) => SessionPaneLease;
   readonly terminalRuntimeOptions?: TerminalRuntimeOptions;
@@ -210,21 +206,18 @@ export function TerminalPane({
   // Unsubscribe from the active controller's status (replaced on each new run).
   const activeUnsub = useRef<(() => void) | null>(null);
 
-  // This pane's shell session (Track A). Created on mount; a command can only run
-  // once it exists (Codex B1/B5). `sessionDead` latches if the interpreter dies (B8).
+  // This pane's authority-issued shell binding. A command can only run once it
+  // exists; `sessionDead` latches if the interpreter dies.
   const [sessionId, setSessionId] = useState<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const [sessionDead, setSessionDead] = useState(false);
-  // M2 adopt mode: true once bound to an EXISTING session (vs. one this pane
-  // created, including the C5 fallback below) — decides destroy-vs-detach on
-  // unmount. The latest lease factory stays in a ref so callback identity
-  // changes do not churn the session mount effect.
-  const isAdoptedRef = useRef(false);
+  // The latest lease factory stays in a ref so callback identity changes do not
+  // churn the session mount effect.
+  const sessionSurfaceBindingRef = useRef<SessionSurfaceBinding | null>(null);
   const sessionBindingPendingRef = useRef(true);
   // Completion marker set only after guarded destruction was acknowledged (or
   // shared-fate interpreter death was observed). It never grants advance
   // authorization to destroy a future run.
-  const handledSessionDestroyRef = useRef<string | null>(null);
   const mountSessionPaneRef = useRef(mountSessionPane);
   mountSessionPaneRef.current = mountSessionPane;
   const fallbackPaneInstanceTokenRef = useRef<PaneInstanceToken>({});
@@ -317,103 +310,63 @@ export function TerminalPane({
     };
   }, []);
 
-  // Bind this pane to a session on mount — either ADOPT an existing one (M2,
-  // `adoptSessionId`) or CREATE a fresh one (Codex B5), seeding the prompt
-  // from its authoritative cwd either way. A created session is destroyed on
-  // unmount so its state is released — the backend teardown is authoritative
-  // even if this cleanup is skipped (B6); an ADOPTED session only DETACHES
-  // (`isAdoptedRef`) — it belongs to whoever created it (maybe another
-  // surface entirely), so this pane merely stops representing it.
-  // The `cancelled` guard (Track A ③ A-M3, folds debt item (f)): if the effect
-  // cleans up before the bind resolves — dev StrictMode double-mount, or a
-  // pane torn down mid-restore during the fromJSON N-panel mount burst — the
-  // late resolution must destroy/ignore the orphan instead of adopting it.
+  // Bind this surface on mount. The host authority either creates a fresh
+  // owner binding or strictly adopts the requested live session. Cleanup only
+  // releases the surface binding; guarded destruction is a separate close
+  // transaction owned by the lifecycle coordinator.
   useEffect(() => {
     // React StrictMode runs setup -> cleanup -> setup on the same ref object.
     // Cleanup clears the flag, so every setup must explicitly reacquire the
     // binding-pending state before it can issue list/create requests.
     sessionBindingPendingRef.current = true;
     let cancelled = false;
-    let boundSessionId: string | null = null;
-    let boundAdopted = false;
+    let bound: SessionSurfaceBinding | null = null;
+    let countedOwner = false;
     const paneLease = mountSessionPaneRef.current?.(
       panelId,
       exactPaneInstanceToken,
+      initialCwd,
       adoptSessionId,
     );
 
-    const bindSession = (info: SessionInfo, adopted: boolean): void => {
-      if (paneLease && !paneLease.bind(info.sessionId)) {
-        if (!adopted) void window.ezterminal?.destroySession?.(info.sessionId);
-        return;
-      }
+    const open = paneLease && window.ezterminal?.openSessionSurface;
+
+    if (!paneLease || !open) {
+      // Without the preload lifecycle seam this surface cannot safely acquire
+      // or release a session binding, so it stays unavailable.
       sessionBindingPendingRef.current = false;
-      isAdoptedRef.current = adopted;
-      boundAdopted = adopted;
-      sessionIdRef.current = info.sessionId;
-      setSessionId(info.sessionId);
-      setCurrentCwd((prev) => prev ?? info.cwd);
-      if (!adopted) liveSessionCount += 1;
-      boundSessionId = info.sessionId;
-    };
-
-    const createFresh = (): void => {
-      void window.ezterminal
-        ?.createSession?.(initialCwd)
-        .then((info) => {
-          if (cancelled) {
-            window.ezterminal?.destroySession?.(info.sessionId);
-            return;
-          }
-          bindSession(info, false);
-        })
-        .catch(() => {
-          if (!cancelled) sessionBindingPendingRef.current = false;
-        });
-    };
-
-    if (adoptSessionId) {
-      // C5 persistence guard (Critic MS2): the adopt/fallback decision MUST be
-      // sequenced strictly after `listSessions()` resolves — deciding off a
-      // stale/assumed list would race a session mid-creation elsewhere
-      // (warm-restore race). A restored layout can reference a session from a
-      // PRIOR run of the interpreter (gone after a restart) — fall back to an
-      // ordinary new session in that case, same as a plain ungrouped tab.
-      void (window.ezterminal?.listSessions?.() ?? Promise.resolve([]))
-        .then((sessions) => {
-          if (cancelled) return;
-          const existing = sessions.find((s) => s.sessionId === adoptSessionId);
-          if (existing) {
-            bindSession(existing, true);
-          } else {
-            createFresh();
-          }
-        })
-        .catch(() => {
-          if (!cancelled) createFresh();
-        });
     } else {
-      createFresh();
+      void open(paneLease.surfaceId, paneLease.intent).then((result) => {
+        if (!result.ok) {
+          if (!cancelled) sessionBindingPendingRef.current = false;
+          return;
+        }
+        if (!paneLease.bind(result.binding) || cancelled) return;
+
+        bound = result.binding;
+        sessionSurfaceBindingRef.current = result.binding;
+        sessionBindingPendingRef.current = false;
+        sessionIdRef.current = result.binding.session.sessionId;
+        setSessionId(result.binding.session.sessionId);
+        setCurrentCwd((previous) => previous ?? result.binding.session.cwd);
+        if (result.binding.role === 'owner') {
+          liveSessionCount += 1;
+          countedOwner = true;
+        }
+      }).catch(() => {
+        if (!cancelled) sessionBindingPendingRef.current = false;
+      });
     }
 
     return () => {
       cancelled = true;
       sessionBindingPendingRef.current = false;
-      if (boundSessionId) {
-        if (!boundAdopted) {
-          if (handledSessionDestroyRef.current !== boundSessionId) {
-            // An ordinary unmount is allowed to tear down only while idle. The
-            // interpreter rejects `[]` if any foreground run exists. A close or
-            // preset that already received its guarded ACK marks completion and
-            // deliberately skips this redundant second request.
-            void window.ezterminal?.destroySessionGuarded?.(
-              boundSessionId,
-              [],
-            );
-          }
-          liveSessionCount -= 1;
+      if (countedOwner) liveSessionCount -= 1;
+      if (bound) {
+        if (sessionSurfaceBindingRef.current?.bindingId === bound.bindingId) {
+          sessionSurfaceBindingRef.current = null;
         }
-        if (sessionIdRef.current === boundSessionId) sessionIdRef.current = null;
+        if (sessionIdRef.current === bound.session.sessionId) sessionIdRef.current = null;
       }
       paneLease?.dispose();
     };
@@ -779,7 +732,9 @@ export function TerminalPane({
         isBusy,
         isDead: sessionDead,
         sessionBindingPending: sessionBindingPendingRef.current,
-        destroysSessionOnClose: sessionIdRef.current !== null && !isAdoptedRef.current,
+        sessionSurfaceBindingId: sessionSurfaceBindingRef.current?.bindingId ?? null,
+        sessionSurfaceRole: sessionSurfaceBindingRef.current?.role ?? null,
+        destroysSessionOnClose: sessionSurfaceBindingRef.current?.role === 'owner',
         activeRunIds: blocksRef.current
           .filter((entry) => entry.controller?.getSnapshot().status === 'running')
           .map((entry) => entry.id),
@@ -791,27 +746,6 @@ export function TerminalPane({
     };
     const dispose = registerPane(panelId, {
       getSnapshot,
-      markSessionDestroyHandled: (destroyedSessionId): boolean => {
-        const snapshot = getSnapshot();
-        if (
-          !snapshot.destroysSessionOnClose
-          || snapshot.sessionId === null
-          || snapshot.sessionId !== destroyedSessionId
-        ) {
-          return false;
-        }
-        handledSessionDestroyRef.current = destroyedSessionId;
-        return true;
-      },
-      releaseSessionOwnership: (): string | null => {
-        const snapshot = getSnapshot();
-        if (!snapshot.destroysSessionOnClose || snapshot.sessionId === null) return null;
-        // The same flag a guarded destroy sets, for the same reason: unmount
-        // must not issue a teardown for a session somebody else now owns. Here
-        // "somebody else" is the user, who asked to keep it running.
-        handledSessionDestroyRef.current = snapshot.sessionId;
-        return snapshot.sessionId;
-      },
       insertText: (text): PaneActionResult => {
         if (sessionDead) return { ok: false, reason: 'dead' };
         setCommand((previous) =>

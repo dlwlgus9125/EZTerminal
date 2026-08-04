@@ -23,6 +23,14 @@ import type {
 import { REMOTE_PROTOCOL_VERSION } from '../shared/remote-protocol';
 import packageJson from '../../package.json';
 
+// Sandboxed preloads can require only Electron's allowlisted modules. This is
+// a generation discriminator, not a security capability (main also binds it
+// to the exact WebContents), so browser-safe entropy is sufficient.
+const sessionSurfaceClientId = [
+  Date.now().toString(36),
+  Math.random().toString(36).slice(2),
+].join('-');
+
 // Preload runs with context isolation ON (architecture §1).
 // We expose a NARROW, explicit API — never the raw ipcRenderer.
 //
@@ -108,18 +116,30 @@ const api: EzTerminalApi = {
     node: process.versions.node ?? 'unknown',
   },
 
-  createSession: (cwd?: string): Promise<import('../shared/ipc').SessionInfo> =>
-    ipcRenderer.invoke('create-session', cwd),
+  openSessionSurface: (surfaceId, intent) =>
+    ipcRenderer.invoke('session-surface:open', sessionSurfaceClientId, surfaceId, intent),
 
-  destroySession: (sessionId: string): void => {
-    ipcRenderer.send('destroy-session', sessionId);
-  },
+  prepareSessionSurfaceClose: (entries) =>
+    ipcRenderer.invoke('session-surface:prepare-close', sessionSurfaceClientId, entries),
 
-  destroySessionGuarded: (sessionId, expectedActiveRunIds) =>
-    ipcRenderer.invoke('destroy-session-guarded', sessionId, expectedActiveRunIds),
+  commitSessionSurfaceClose: (closeToken, decisions) =>
+    ipcRenderer.invoke(
+      'session-surface:commit-close',
+      sessionSurfaceClientId,
+      closeToken,
+      decisions,
+    ),
 
-  destroySessionsGuarded: (sessions) =>
-    ipcRenderer.invoke('destroy-sessions-guarded', sessions),
+  releaseSessionSurface: (bindingId) =>
+    ipcRenderer.invoke('session-surface:release', sessionSurfaceClientId, bindingId),
+
+  terminateSessionGuarded: (sessionId, expectedActiveRunIds) =>
+    ipcRenderer.invoke(
+      'session-surface:terminate',
+      sessionSurfaceClientId,
+      sessionId,
+      expectedActiveRunIds,
+    ),
 
   runCommand: (commandText: string, runId: string, sessionId: string): Promise<void> => {
     // The port arrives asynchronously via the persistent 'cmd-port' listener above,

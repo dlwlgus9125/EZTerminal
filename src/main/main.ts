@@ -19,6 +19,7 @@ import type {
   MessagePortMain,
   Rectangle,
   UtilityProcess,
+  WebContents,
 } from 'electron';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -68,6 +69,7 @@ import { WorkspaceFileSearchService } from './workspace-file-search-service';
 import { WorktreeService } from './worktree-service';
 import { AsyncMutationGate } from './async-mutation-gate';
 import { SessionWorktreeGuard } from './session-worktree-guard';
+import { SessionSurfaceAuthority } from './session-surface-authority';
 import type {
   RemoteFileSource,
   RemoteOpenClawSource,
@@ -88,15 +90,11 @@ import {
 } from '../shared/layout-schema';
 import {
   MAX_GUARDED_DESTROY_RUN_IDS,
-  MAX_GUARDED_DESTROY_SESSIONS,
 } from '../shared/ipc';
 import type {
-  DestroySessionGuardResult,
-  GuardedSessionDestroyRequest,
   InterpreterToMain,
   MainToInterpreter,
   RunStartedInfo,
-  SessionInfo,
   SystemStatsSnapshot,
 } from '../shared/ipc';
 import type { OpenClawAutostartAction, OpenClawLifecycleAction, OpenClawVisibility } from '../shared/openclaw';
@@ -118,6 +116,12 @@ import type { WorkspaceFileSearchRequest } from '../shared/workspace-search';
 import { isWorktreeRequest, type WorktreeInfo, type WorktreeResult } from '../shared/worktree';
 import type { TerminalFileLocationRequest } from '../shared/terminal-file-location';
 import { resolveTerminalFileLocation } from './terminal-path-resolver';
+import {
+  isSessionSurfaceCloseDecisions,
+  isSessionSurfaceCloseEntries,
+  isSessionSurfaceId,
+  isSessionSurfaceIntent,
+} from '../shared/session-surface';
 import { readTerminalClipboardSnapshot } from './terminal-clipboard';
 import { isTerminalPastePreferences } from '../shared/terminal-clipboard';
 import { TerminalFileCapabilityStore } from './terminal-file-capability';
@@ -226,6 +230,34 @@ let appIsQuitting = false;
 // adapters over this ONE instance; it owns the create-session/list-runs
 // correlation state, the run/attach port brokering, and the session/run dispatch.
 let broker: InterpreterBroker | null = null;
+let sessionSurfaceAuthority: SessionSurfaceAuthority | null = null;
+const desktopSessionPrincipalByWebContentsId = new Map<number, string>();
+const sessionSurfaceLifecycleWired = new WeakSet<WebContents>();
+
+function releaseDesktopSessionPrincipal(webContentsId: number): void {
+  const principalId = desktopSessionPrincipalByWebContentsId.get(webContentsId);
+  if (!principalId) return;
+  desktopSessionPrincipalByWebContentsId.delete(webContentsId);
+  sessionSurfaceAuthority?.disconnectClient(principalId);
+}
+
+function resolveDesktopSessionPrincipal(
+  event: IpcMainInvokeEvent,
+  clientInstanceId: unknown,
+): string | null {
+  if (!isSessionSurfaceId(clientInstanceId) || !sessionSurfaceAuthority) return null;
+  const sender = event.sender;
+  const principalId = `desktop:${sender.id}:${clientInstanceId}`;
+  sessionSurfaceAuthority.connectClient(principalId, `desktop:${sender.id}`);
+  desktopSessionPrincipalByWebContentsId.set(sender.id, principalId);
+  if (!sessionSurfaceLifecycleWired.has(sender)) {
+    sessionSurfaceLifecycleWired.add(sender);
+    sender.on('did-navigate', () => releaseDesktopSessionPrincipal(sender.id));
+    sender.on('render-process-gone', () => releaseDesktopSessionPrincipal(sender.id));
+    sender.on('destroyed', () => releaseDesktopSessionPrincipal(sender.id));
+  }
+  return principalId;
+}
 
 // Loopback-only local forwarding over existing authenticated SSH sessions.
 // The service owns listener/socket lifetimes and is disposed with the app or
@@ -930,36 +962,6 @@ app.on('ready', () => {
       }
     },
   );
-  ipcMain.handle(
-    'destroy-sessions-guarded',
-    (_event, sessions: unknown): Promise<DestroySessionGuardResult> => {
-      if (
-        !Array.isArray(sessions)
-        || sessions.length === 0
-        || sessions.length > MAX_GUARDED_DESTROY_SESSIONS
-        || sessions.some((entry) => {
-          if (typeof entry !== 'object' || entry === null) return true;
-          const candidate = entry as Partial<GuardedSessionDestroyRequest>;
-          return (
-            typeof candidate.sessionId !== 'string'
-            || candidate.sessionId.length === 0
-            || candidate.sessionId.length > 256
-            || !Array.isArray(candidate.expectedActiveRunIds)
-            || candidate.expectedActiveRunIds.length > MAX_GUARDED_DESTROY_RUN_IDS
-            || candidate.expectedActiveRunIds.some(
-              (runId) => typeof runId !== 'string' || runId.length === 0 || runId.length > 256,
-            )
-          );
-        })
-        || new Set(sessions.map((entry) => (entry as GuardedSessionDestroyRequest).sessionId)).size !== sessions.length
-      ) {
-        return Promise.resolve({ ok: false, reason: 'unavailable' });
-      }
-      return broker?.destroySessionsGuarded(sessions as GuardedSessionDestroyRequest[])
-        ?? Promise.resolve({ ok: false, reason: 'unavailable' });
-    },
-  );
-
   ipcMain.handle('agents:get-snapshot', () => agentActivityService?.getSnapshot() ?? { revision: 0, items: [] });
   ipcMain.handle('agent-history:list-projects', async (
     _event,
@@ -1324,6 +1326,14 @@ app.on('ready', () => {
         },
       },
       {
+        name: 'session surface authority',
+        run: () => {
+          sessionSurfaceAuthority?.dispose();
+          sessionSurfaceAuthority = null;
+          desktopSessionPrincipalByWebContentsId.clear();
+        },
+      },
+      {
         name: 'renderer layout and layout store',
         run: async () => {
           await desktopWindowManager?.requestLayoutFlush();
@@ -1373,34 +1383,89 @@ app.on('ready', () => {
   });
   app.on('before-quit', (event) => gracefulShutdown.handleBeforeQuit(event));
 
-  // Session lifecycle (Codex B1/B5). create-session is the ONLY way a shell session
-  // comes into being — the interpreter mints the authoritative {sessionId, cwd} and
-  // replies via `session-created`, correlated by requestId. A pane awaits this before
-  // it can run commands. The broker owns the correlation state + the session directory.
-  ipcMain.handle('create-session', async (_event, cwd?: string): Promise<SessionInfo> => {
-    await agentInfrastructureReady;
-    return broker ? broker.createSession(cwd) : Promise.reject(new Error('interpreter not running'));
-  });
-
-  // Destroy a session when its pane/tab closes (fire-and-forget; interpreter aborts
-  // the session's in-flight runs and drops it — idempotent, Codex B2/B6).
-  ipcMain.on('destroy-session', (_event, sessionId: string) => {
-    broker?.destroySession(sessionId);
-  });
+  // Session surfaces are the only renderer-facing session lifecycle API. Main
+  // derives the principal from the exact WebContents + preload generation; a
+  // renderer can never present another client's host-issued binding capability.
   ipcMain.handle(
-    'destroy-session-guarded',
-    (_event, sessionId: unknown, expectedActiveRunIds: unknown): Promise<DestroySessionGuardResult> => {
+    'session-surface:open',
+    (
+      event,
+      clientInstanceId: unknown,
+      surfaceId: unknown,
+      intent: unknown,
+    ) => {
+      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
+      if (!principalId || !isSessionSurfaceId(surfaceId) || !isSessionSurfaceIntent(intent)) {
+        return Promise.resolve({ ok: false as const, reason: 'unavailable' as const });
+      }
+      return sessionSurfaceAuthority!.openSessionSurface(principalId, surfaceId, intent);
+    },
+  );
+  ipcMain.handle(
+    'session-surface:prepare-close',
+    (event, clientInstanceId: unknown, entries: unknown) => {
+      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
+      if (!principalId || !isSessionSurfaceCloseEntries(entries)) {
+        return { ok: false as const, reason: 'state-changed' as const };
+      }
+      return sessionSurfaceAuthority!.prepareSessionSurfaceClose(principalId, entries);
+    },
+  );
+  ipcMain.handle(
+    'session-surface:commit-close',
+    (
+      event,
+      clientInstanceId: unknown,
+      closeToken: unknown,
+      decisions: unknown,
+    ) => {
+      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
       if (
-        typeof sessionId !== 'string'
-        || sessionId.length === 0
+        !principalId
+        || !isSessionSurfaceId(closeToken)
+        || !isSessionSurfaceCloseDecisions(decisions)
+      ) {
+        return Promise.resolve({ ok: false as const, reason: 'state-changed' as const });
+      }
+      return sessionSurfaceAuthority!.commitSessionSurfaceClose(
+        principalId,
+        closeToken,
+        decisions,
+      );
+    },
+  );
+  ipcMain.handle(
+    'session-surface:release',
+    (event, clientInstanceId: unknown, bindingId: unknown) => {
+      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
+      if (!principalId || !isSessionSurfaceId(bindingId)) {
+        return { ok: false as const, reason: 'state-changed' as const };
+      }
+      return sessionSurfaceAuthority!.releaseSessionSurface(principalId, bindingId);
+    },
+  );
+  ipcMain.handle(
+    'session-surface:terminate',
+    (
+      event,
+      clientInstanceId: unknown,
+      sessionId: unknown,
+      expectedActiveRunIds: unknown,
+    ) => {
+      const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
+      if (
+        !principalId
+        || !isSessionSurfaceId(sessionId)
         || !Array.isArray(expectedActiveRunIds)
         || expectedActiveRunIds.length > MAX_GUARDED_DESTROY_RUN_IDS
-        || expectedActiveRunIds.some((runId) => typeof runId !== 'string' || runId.length === 0 || runId.length > 256)
+        || expectedActiveRunIds.some((runId) => !isSessionSurfaceId(runId))
       ) {
-        return Promise.resolve({ ok: false, reason: 'unavailable' });
+        return Promise.resolve({ ok: false as const, reason: 'unavailable' as const });
       }
-      return broker?.destroySessionGuarded(sessionId, expectedActiveRunIds as string[])
-        ?? Promise.resolve({ ok: false, reason: 'unavailable' });
+      return sessionSurfaceAuthority!.terminateSessionGuarded(
+        sessionId,
+        expectedActiveRunIds,
+      );
     },
   );
 
@@ -1487,6 +1552,7 @@ app.on('ready', () => {
       };
     },
   });
+  sessionSurfaceAuthority = new SessionSurfaceAuthority(broker);
   console.log('[main] interpreter broker ready');
   uninstallRunCommandIpc = installRunCommandIpc({
     ipc: ipcMain,
@@ -1953,6 +2019,7 @@ app.on('ready', () => {
     stopAuxiliaryRuntime: stopOpenClawProxy,
     bridgeSources: {
       broker: broker!,
+      sessionSurfaceAuthority: sessionSurfaceAuthority!,
       statsSource: remoteStatsSource,
       packetSource: remotePacketSource,
       fileSource: fileService satisfies RemoteFileSource,

@@ -1195,6 +1195,10 @@ export const appResources = {
           destroyTitle: 'Destroy active session?',
           destroyDescription: 'This destroys {{risk}} in {{cwd}}.',
           destroy: 'Destroy session',
+          closeTabTitle: 'Close terminal tab?',
+          closeTabDescription: '{{cwd}} contains {{risk}}. Stop it, keep it running, or cancel.',
+          keepInBackground: 'Keep running in background',
+          terminateAndClose: 'Stop session and close',
           risk: {
             sshPrompt: 'an SSH authentication prompt',
             activeAgent: 'an active agent workflow',
@@ -2594,6 +2598,10 @@ export const appResources = {
           destroyTitle: '활성 세션을 종료하시겠습니까?',
           destroyDescription: '{{cwd}}에서 {{risk}}을(를) 종료합니다.',
           destroy: '세션 종료',
+          closeTabTitle: '터미널 탭을 닫으시겠습니까?',
+          closeTabDescription: '{{cwd}}에 {{risk}}이(가) 있습니다. 종료하거나 백그라운드에 유지할 수 있습니다.',
+          keepInBackground: '백그라운드에서 계속 실행',
+          terminateAndClose: '세션 종료 후 닫기',
           risk: {
             sshPrompt: 'SSH 인증 프롬프트',
             activeAgent: '실행 중인 에이전트 작업',

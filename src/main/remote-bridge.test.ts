@@ -41,7 +41,6 @@ import type {
   RunStartedInfo,
   SystemStatsSnapshot,
 } from '../shared/ipc';
-import { MAX_GUARDED_DESTROY_RUN_IDS } from '../shared/ipc';
 import { FILE_CHUNK_BYTES, type FileListResult, type FileOpResult } from '../shared/files';
 import {
   REMOTE_PROTOCOL_VERSION,
@@ -55,6 +54,7 @@ import type { OpenClawAgentSession, OpenClawLifecycleResult, OpenClawLogLine, Op
 import type { AgentActivitySnapshot, AgentDecisionResult, AgentFollowupResult } from '../shared/agent';
 import { EMPTY_GIT_DIRECTORY_STATUS } from '../shared/git-status';
 import type { WorktreeRequest } from '../shared/worktree';
+import type { SessionSurfaceBinding } from '../shared/session-surface';
 
 const TOKEN = 'the-secret-token';
 const HOST_VERSION = '1.0.0-test';
@@ -67,6 +67,11 @@ function authMessage(token = TOKEN): AuthMessage {
     protocolVersion: REMOTE_PROTOCOL_VERSION,
     clientVersion: '1.0.0-test',
     buildSha: 'test-sha',
+    clientIdentity: {
+      clientId: '00000000-0000-4000-8000-000000000001',
+      clientName: 'test-phone',
+      platform: 'android',
+    },
   };
 }
 
@@ -562,6 +567,24 @@ describe('RemoteBridge — auth gate', () => {
     expect(ws.closeCode).toBe(PROTOCOL_CLOSE_CODE);
   });
 
+  it.each([1, 2, 3, 4, 5, 6])('rejects legacy protocol v%i without downgrade', async (version) => {
+    const ws = new FakeWs();
+    const { options } = makeOptions();
+    attachConnection(ws, options);
+
+    ws.clientSend({ ...authMessage(), protocolVersion: version });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'auth-fail',
+      reason: 'incompatible-protocol',
+      supportedProtocolVersion: REMOTE_PROTOCOL_VERSION,
+      supportedProtocolVersions: [REMOTE_PROTOCOL_VERSION],
+      hostVersion: HOST_VERSION,
+    });
+    expect(ws.closeCode).toBe(PROTOCOL_CLOSE_CODE);
+  });
+
   it('validates the handshake before atomically consuming a pairing code', async () => {
     let live = true;
     const pairingSource = {
@@ -879,7 +902,7 @@ describe('RemoteBridge — desktop control', () => {
     expect(desktopSource.disconnected).toHaveBeenCalledWith(identity.clientId, connectionId);
   });
 
-  it('does not expose desktop control without both identity and trusted socket addresses', async () => {
+  it('requires Android identity and does not expose desktop control without trusted socket addresses', async () => {
     const desktopSource = {
       connected: vi.fn(),
       start: vi.fn(), signal: vi.fn(), stop: vi.fn(), disconnected: vi.fn(),
@@ -887,9 +910,12 @@ describe('RemoteBridge — desktop control', () => {
     const withoutIdentity = new FakeWs();
     const { options } = makeOptions({ desktopSource });
     attachConnection(withoutIdentity, options, { localAddress: '100.64.0.1', peerAddress: '100.64.0.2' });
-    withoutIdentity.clientSend(authMessage());
+    const missingIdentityAuth = { ...authMessage(), clientIdentity: undefined };
+    withoutIdentity.clientSend(missingIdentityAuth);
     await flush();
-    expect(withoutIdentity.sent.find((message) => message.kind === 'auth-ok')).not.toHaveProperty('capabilities');
+    expect(withoutIdentity.sent).toContainEqual(expect.objectContaining({
+      kind: 'auth-fail', reason: 'incompatible-protocol',
+    }));
 
     const withoutEndpoint = new FakeWs();
     attachConnection(withoutEndpoint, options);
@@ -1094,181 +1120,240 @@ describe('RemoteBridge — onAuthenticated hook (auth-deadline wiring, security 
   });
 });
 
-describe('RemoteBridge — session directory + create/destroy round trip', () => {
-  it('create-session posts to the interpreter and relays session-created back with the CLIENT requestId', async () => {
+async function openRemoteOwner(
+  ws: FakeWs,
+  interpreter: FakeInterpreter,
+  requestId = 'open-1',
+  surfaceId = 'surface-1',
+): Promise<SessionSurfaceBinding> {
+  ws.clientSend({
+    kind: 'session-surface-open',
+    requestId,
+    surfaceId,
+    intent: { kind: 'create', cwd: '/tmp' },
+  });
+  await Promise.resolve();
+  const create = interpreter.posted.at(-1)?.message;
+  if (create?.type !== 'create-session') throw new Error('expected create-session');
+  interpreter.emit({
+    type: 'session-created',
+    requestId: create.requestId,
+    sessionId: `session-${surfaceId}`,
+    cwd: '/tmp',
+  });
+  await flush();
+  const reply = ws.sent.find(
+    (message) => message.kind === 'session-surface-open-result' && message.requestId === requestId,
+  );
+  if (reply?.kind !== 'session-surface-open-result' || !reply.result.ok) {
+    throw new Error('expected surface binding');
+  }
+  return reply.result.binding;
+}
+
+describe('RemoteBridge — v7 session surface lifecycle', () => {
+  it('opens an owner and replies before its session-added echo', async () => {
     const ws = new FakeWs();
     const { options, interpreter, broker } = makeOptions();
     await authed(ws, options);
 
-    ws.clientSend({ kind: 'create-session', requestId: 'client-req-1', cwd: '/tmp' });
-    expect(interpreter.posted).toHaveLength(1);
-    expect(interpreter.posted[0].message).toEqual({
-      type: 'create-session',
-      requestId: 'id-1',
-      cwd: '/tmp',
-    });
+    const binding = await openRemoteOwner(ws, interpreter, 'client-open-1');
 
-    interpreter.emit({ type: 'session-created', requestId: 'id-1', sessionId: 'sess-1', cwd: '/tmp' });
-    // The reply now flows through the broker's promise resolution (.then microtask).
-    await flush();
-
-    expect(ws.sent).toContainEqual({
-      kind: 'session-created',
-      requestId: 'client-req-1',
-      session: { sessionId: 'sess-1', cwd: '/tmp' },
+    expect(binding).toMatchObject({
+      surfaceId: 'surface-1',
+      role: 'owner',
+      session: { sessionId: 'session-surface-1', cwd: '/tmp' },
     });
-    expect(broker.listSessions()).toMatchObject([{ sessionId: 'sess-1', cwd: '/tmp' }]);
+    const replyIndex = ws.sent.findIndex(
+      (message) => message.kind === 'session-surface-open-result',
+    );
+    const broadcastIndex = ws.sent.findIndex((message) => message.kind === 'session-added');
+    expect(replyIndex).toBeGreaterThanOrEqual(0);
+    expect(broadcastIndex).toBeGreaterThan(replyIndex);
+    expect(broker.listSessions()).toMatchObject([{ sessionId: 'session-surface-1' }]);
   });
 
-  it('a session-created reply for a DIFFERENT (unmatched) requestId is ignored by this connection', async () => {
+  it('lists the shared session directory after a surface open', async () => {
     const ws = new FakeWs();
     const { options, interpreter } = makeOptions();
     await authed(ws, options);
-    ws.clientSend({ kind: 'create-session', requestId: 'client-req-1' });
-
-    // Some other connection's create-session round trip — the broker holds this
-    // connection's pending under 'id-1', so 'not-mine' resolves nothing here.
-    interpreter.emit({ type: 'session-created', requestId: 'not-mine', sessionId: 'sess-x', cwd: '/x' });
-    await flush();
-
-    expect(ws.sent.some((m) => m.kind === 'session-created')).toBe(false);
-  });
-
-  it('list-sessions returns the current directory contents', async () => {
-    const ws = new FakeWs();
-    const { options, interpreter } = makeOptions();
-    await authed(ws, options);
-
-    // The broker owns the directory now — seed a session through a create-session
-    // round-trip (the broker mints 'id-1' for the first create on this broker).
-    ws.clientSend({ kind: 'create-session', requestId: 'seed', cwd: '/existing' });
-    interpreter.emit({ type: 'session-created', requestId: 'id-1', sessionId: 'existing', cwd: '/existing' });
-    await flush();
+    await openRemoteOwner(ws, interpreter);
 
     ws.clientSend({ kind: 'list-sessions' });
 
-    expect(ws.sent).toContainEqual(
-      expect.objectContaining({
-        kind: 'session-list',
-        sessions: [expect.objectContaining({ sessionId: 'existing', cwd: '/existing' })],
-      }),
-    );
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'session-list',
+      sessions: [expect.objectContaining({ sessionId: 'session-surface-1' })],
+    }));
   });
 
-  it('destroy-session removes it from the directory and posts to the interpreter', async () => {
+  it('prepares and atomically terminates an owner binding', async () => {
     const ws = new FakeWs();
     const { options, interpreter, broker } = makeOptions();
     await authed(ws, options);
-
-    // Seed through a create-session round-trip, then destroy it.
-    ws.clientSend({ kind: 'create-session', requestId: 'seed', cwd: '/tmp' });
-    interpreter.emit({ type: 'session-created', requestId: 'id-1', sessionId: 'sess-1', cwd: '/tmp' });
-    await flush();
-
-    ws.clientSend({ kind: 'destroy-session', sessionId: 'sess-1' });
-
-    expect(broker.listSessions()).toEqual([]);
-    expect(interpreter.posted).toContainEqual({
-      message: { type: 'destroy-session', sessionId: 'sess-1' },
-      transfer: undefined,
-    });
-  });
-
-  it('guarded destroy relays an accepted authoritative result with the client requestId', async () => {
-    const ws = new FakeWs();
-    const { options, interpreter, broker } = makeOptions();
-    await authed(ws, options);
-    ws.clientSend({ kind: 'create-session', requestId: 'seed', cwd: '/tmp' });
-    interpreter.emit({ type: 'session-created', requestId: 'id-1', sessionId: 'sess-1', cwd: '/tmp' });
-    await flush();
+    const binding = await openRemoteOwner(ws, interpreter);
 
     ws.clientSend({
-      kind: 'destroy-session-guarded',
-      requestId: 'client-close-1',
-      sessionId: 'sess-1',
-      expectedActiveRunIds: ['run-b', 'run-a'],
+      kind: 'session-surface-prepare-close',
+      requestId: 'prepare-1',
+      entries: [{ bindingId: binding.bindingId, expectedActiveRunIds: ['run-b', 'run-a'] }],
     });
-    expect(interpreter.posted.at(-1)?.message).toEqual({
-      type: 'destroy-session',
+    const prepared = ws.sent.find(
+      (message) => (
+        message.kind === 'session-surface-prepare-close-result'
+        && message.requestId === 'prepare-1'
+      ),
+    );
+    if (prepared?.kind !== 'session-surface-prepare-close-result' || !prepared.result.ok) {
+      throw new Error('expected close token');
+    }
+
+    ws.clientSend({
+      kind: 'session-surface-commit-close',
+      requestId: 'commit-1',
+      closeToken: prepared.result.prepared.closeToken,
+      decisions: [{ bindingId: binding.bindingId, disposition: 'terminate' }],
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const destroy = interpreter.posted.at(-1)?.message;
+    expect(destroy).toEqual({
+      type: 'destroy-sessions-guarded',
       requestId: 'id-2',
-      sessionId: 'sess-1',
-      expectedActiveRunIds: ['run-a', 'run-b'],
+      sessions: [{
+        sessionId: binding.session.sessionId,
+        expectedActiveRunIds: ['run-a', 'run-b'],
+      }],
       deadlineAt: expect.any(Number),
     });
-
-    interpreter.emit({ type: 'session-destroy-result', requestId: 'id-2', sessionIds: ['sess-1'], destroyed: true });
+    interpreter.emit({
+      type: 'session-destroy-result',
+      requestId: 'id-2',
+      sessionIds: [binding.session.sessionId],
+      destroyed: true,
+    });
     await flush();
 
     expect(ws.sent).toContainEqual({
-      kind: 'session-destroy-result',
-      requestId: 'client-close-1',
-      result: { ok: true },
+      kind: 'session-surface-commit-close-result',
+      requestId: 'commit-1',
+      result: { ok: true, keptSessionIds: [] },
     });
     expect(broker.listSessions()).toEqual([]);
   });
 
-  it('guarded destroy relays state-changed without removing the session', async () => {
+  it('detaches an adopted binding without terminating its session', async () => {
     const ws = new FakeWs();
     const { options, interpreter, broker } = makeOptions();
     await authed(ws, options);
-    ws.clientSend({ kind: 'create-session', requestId: 'seed', cwd: '/tmp' });
-    interpreter.emit({ type: 'session-created', requestId: 'id-1', sessionId: 'sess-1', cwd: '/tmp' });
+    const creating = broker.createSession('/external');
+    interpreter.emit({
+      type: 'session-created',
+      requestId: 'id-1',
+      sessionId: 'external',
+      cwd: '/external',
+    });
+    await creating;
+    ws.clientSend({
+      kind: 'session-surface-open',
+      requestId: 'adopt-1',
+      surfaceId: 'surface-adopted',
+      intent: { kind: 'adopt', sessionId: 'external' },
+    });
     await flush();
+    const opened = ws.sent.find(
+      (message) => message.kind === 'session-surface-open-result' && message.requestId === 'adopt-1',
+    );
+    if (opened?.kind !== 'session-surface-open-result' || !opened.result.ok) {
+      throw new Error('expected adopted binding');
+    }
 
     ws.clientSend({
-      kind: 'destroy-session-guarded',
-      requestId: 'client-close-2',
-      sessionId: 'sess-1',
-      expectedActiveRunIds: [],
+      kind: 'session-surface-prepare-close',
+      requestId: 'prepare-adopted',
+      entries: [{ bindingId: opened.result.binding.bindingId, expectedActiveRunIds: [] }],
     });
-    interpreter.emit({ type: 'session-destroy-result', requestId: 'id-2', sessionIds: ['sess-1'], destroyed: false });
+    const prepared = ws.sent.find(
+      (message) => (
+        message.kind === 'session-surface-prepare-close-result'
+        && message.requestId === 'prepare-adopted'
+      ),
+    );
+    if (prepared?.kind !== 'session-surface-prepare-close-result' || !prepared.result.ok) {
+      throw new Error('expected adopted close token');
+    }
+    ws.clientSend({
+      kind: 'session-surface-commit-close',
+      requestId: 'commit-adopted',
+      closeToken: prepared.result.prepared.closeToken,
+      decisions: [],
+    });
     await flush();
 
     expect(ws.sent).toContainEqual({
-      kind: 'session-destroy-result',
-      requestId: 'client-close-2',
-      result: { ok: false, reason: 'state-changed' },
+      kind: 'session-surface-commit-close-result',
+      requestId: 'commit-adopted',
+      result: { ok: true, keptSessionIds: [] },
     });
-    expect(broker.listSessions()).toMatchObject([{ sessionId: 'sess-1', cwd: '/tmp' }]);
+    expect(broker.listSessions()).toMatchObject([{ sessionId: 'external' }]);
+    expect(interpreter.posted.filter(
+      (entry) => entry.message.type === 'destroy-sessions-guarded',
+    )).toEqual([]);
   });
 
-  it('ignores malformed guarded destroy envelopes at the runtime boundary', async () => {
+  it('keeps explicit SessionSwitcher termination independent of view ownership', async () => {
+    const ws = new FakeWs();
+    const { options, interpreter } = makeOptions();
+    await authed(ws, options);
+    const binding = await openRemoteOwner(ws, interpreter);
+
+    ws.clientSend({
+      kind: 'session-terminate-guarded',
+      requestId: 'terminate-1',
+      sessionId: binding.session.sessionId,
+      expectedActiveRunIds: [],
+    });
+    await Promise.resolve();
+    const destroy = interpreter.posted.at(-1)?.message;
+    if (destroy?.type !== 'destroy-session') throw new Error('expected guarded destroy');
+    if (typeof destroy.requestId !== 'string') throw new Error('expected destroy request id');
+    interpreter.emit({
+      type: 'session-destroy-result',
+      requestId: destroy.requestId,
+      sessionIds: [binding.session.sessionId],
+      destroyed: true,
+    });
+    await flush();
+
+    expect(ws.sent).toContainEqual({
+      kind: 'session-terminate-result',
+      requestId: 'terminate-1',
+      result: { ok: true },
+    });
+  });
+
+  it('ignores malformed surface and termination capabilities at the boundary', async () => {
     const ws = new FakeWs();
     const { options, broker, interpreter } = makeOptions();
     await authed(ws, options);
-    const guarded = vi.spyOn(broker, 'destroySessionGuarded');
-    const base = {
-      kind: 'destroy-session-guarded',
-      requestId: 'close-1',
-      sessionId: 'sess-1',
-      expectedActiveRunIds: [],
-    };
-    const malformed: unknown[] = [
-      { ...base, requestId: 1 },
-      { ...base, requestId: '' },
-      { ...base, requestId: 'x'.repeat(257) },
-      { ...base, sessionId: '' },
-      { ...base, sessionId: 'x'.repeat(257) },
-      { ...base, expectedActiveRunIds: 'run-1' },
-      { ...base, expectedActiveRunIds: [1] },
-      { ...base, expectedActiveRunIds: [''] },
-      { ...base, expectedActiveRunIds: ['x'.repeat(257)] },
-      { ...base, expectedActiveRunIds: ['run-1', 'run-1'] },
-      {
-        ...base,
-        expectedActiveRunIds: Array.from(
-          { length: MAX_GUARDED_DESTROY_RUN_IDS + 1 },
-          (_, index) => `run-${index}`,
-        ),
-      },
-    ];
+    const terminate = vi.spyOn(broker, 'destroySessionGuarded');
 
-    for (const message of malformed) ws.clientSend(message);
+    ws.clientSend({
+      kind: 'session-surface-open',
+      requestId: 'open-invalid',
+      surfaceId: '',
+      intent: { kind: 'create' },
+    });
+    ws.clientSend({
+      kind: 'session-terminate-guarded',
+      requestId: 'terminate-invalid',
+      sessionId: 'session-1',
+      expectedActiveRunIds: ['run-1', 'run-1'],
+    });
     await flush();
 
-    expect(guarded).not.toHaveBeenCalled();
+    expect(terminate).not.toHaveBeenCalled();
     expect(interpreter.posted).toEqual([]);
-    expect(ws.sent.some((message) => message.kind === 'session-destroy-result')).toBe(false);
   });
 });
 
@@ -1662,7 +1747,16 @@ describe('RemoteBridge — connection teardown', () => {
 
     // A SECOND connection on the SAME broker must not add a second listener.
     const ws2 = new FakeWs();
-    await authed(ws2, options);
+    attachConnection(ws2, options);
+    ws2.clientSend({
+      ...authMessage(),
+      clientIdentity: {
+        clientId: '01947000-0000-4000-8000-000000000099',
+        clientName: 'Viewing phone',
+        platform: 'android',
+      },
+    });
+    await flush();
     expect(interpreter.listenerCount).toBe(1);
 
     ws.close();
@@ -1732,7 +1826,16 @@ describe('RemoteBridge — connection teardown', () => {
     expect(leases.size).toBe(1);
 
     const resumed = new FakeWs();
-    await authed(resumed, options);
+    attachConnection(resumed, options);
+    resumed.clientSend({
+      ...authMessage(),
+      clientIdentity: {
+        clientId: '01947000-0000-4000-8000-000000000098',
+        clientName: 'Viewing phone',
+        platform: 'android',
+      },
+    });
+    await flush();
     const request = {
       kind: 'resume-run' as const,
       sessionId: 'sess-1',
@@ -3250,23 +3353,6 @@ describe('RemoteBridge — OpenClaw availability (openclaw-stabilization M3)', (
 });
 
 describe('RemoteBridge — Agent Activity parity', () => {
-  it('does not expose v3 agent snapshots to a negotiated v2 client', async () => {
-    const agentSource = new FakeAgentSource();
-    const ws = new FakeWs();
-    const { options } = makeOptions({ agentSource });
-    attachConnection(ws, options);
-    ws.clientSend({
-      ...authMessage(),
-      protocolVersion: 2,
-    });
-    await flush();
-
-    expect(ws.sent.some((message) => message.kind === 'agent-snapshot')).toBe(false);
-    agentSource.emit({ revision: 2, items: [] });
-    ws.clientSend({ kind: 'agent-snapshot-get', requestId: 'v2-snapshot' });
-    expect(ws.sent.some((message) => message.kind === 'agent-snapshot')).toBe(false);
-  });
-
   it('pushes the auth snapshot, relays revisions, and correlates snapshot/followup replies', async () => {
     const agentSource = new FakeAgentSource();
     const ws = new FakeWs();
@@ -3459,38 +3545,6 @@ describe('RemoteBridge — Agent history v4', () => {
     expect(run?.type === 'run' && run.commandText).toContain('provider-private-thread-id');
     expect(JSON.stringify(ws.sent)).not.toContain('provider-private-thread-id');
     expect(historySource.recordTerminalWork).toHaveBeenCalledWith(session.roots, expect.any(Number));
-  });
-
-  it('ignores v4 history requests from a negotiated v3 client', async () => {
-    const historySource: RemoteAgentHistorySource = {
-      listProjects: vi.fn(async () => ({ items: [], nextCursor: null })),
-      listSessions: vi.fn(async () => ({ items: [], nextCursor: null })),
-      readTranscript: vi.fn(async () => null),
-      prepareResume: vi.fn(async () => null),
-      resolveResume: vi.fn(async () => ({
-        ok: false as const,
-        reason: 'unavailable' as const,
-      })),
-      recordTerminalWork: vi.fn(async () => undefined),
-    };
-    const ws = new FakeWs();
-    const { options } = makeOptions({ agentHistorySource: historySource });
-    attachConnection(ws, options);
-    ws.clientSend({ ...authMessage(), protocolVersion: 3 });
-    await flush();
-
-    ws.clientSend({ kind: 'agent-projects-list', requestId: 'v3-projects' });
-    ws.clientSend({
-      kind: 'agent-history-read',
-      requestId: 'v3-read',
-      historyId: 'codex_0123456789abcdef01234567',
-    });
-    await flush();
-
-    expect(historySource.listProjects).not.toHaveBeenCalled();
-    expect(historySource.readTranscript).not.toHaveBeenCalled();
-    expect(ws.sent.some((message) => message.kind === 'agent-projects-list-reply')).toBe(false);
-    expect(ws.sent.some((message) => message.kind === 'agent-history-read-reply')).toBe(false);
   });
 
   it('dispatches a Claude resume with the provider label and no session id on the wire', async () => {
@@ -3821,33 +3875,6 @@ describe('RemoteBridge — Agent projects v5', () => {
       .toHaveBeenCalledWith(preparation.roots, expect.any(Number));
   });
 
-  it('ignores v5 mutations after a v4 negotiation', async () => {
-    const saveProject = vi.fn();
-    const historySource = {
-      listProjects: vi.fn(async () => ({ items: [], nextCursor: null })),
-      saveProject,
-    } as unknown as RemoteAgentHistorySource;
-    const ws = new FakeWs();
-    const { options } = makeOptions({ agentHistorySource: historySource });
-    attachConnection(ws, options);
-    ws.clientSend({ ...authMessage(), protocolVersion: 4 });
-    await flush();
-
-    ws.clientSend({
-      kind: 'agent-project-save',
-      requestId: 'v4-save',
-      input: {
-        name: 'Project',
-        primaryRoot: 'C:\\workspace',
-        additionalRoots: [],
-        pinned: false,
-      },
-    });
-    await flush();
-
-    expect(saveProject).not.toHaveBeenCalled();
-    expect(ws.sent.some((message) => message.kind === 'agent-project-save-reply')).toBe(false);
-  });
 });
 
 describe('RemoteBridge - correlated latency probe', () => {

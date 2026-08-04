@@ -214,7 +214,7 @@ describe('WsEzTerminalTransport — auth handshake', () => {
     expect(sockets[0].closed).toBe(true);
   });
 
-  it('downgrades one time from the latest protocol to v2 only for a stored bearer', async () => {
+  it('never negotiates down after an incompatible-protocol response', () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({
       url: 'ws://x',
@@ -235,88 +235,27 @@ describe('WsEzTerminalTransport — auth handshake', () => {
       hostVersion: '1.0.12',
     });
 
-    expect(sockets).toHaveLength(2);
-    sockets[1].triggerOpen();
-    expect(sockets[1].lastSent()).toMatchObject({ kind: 'auth', protocolVersion: 2 });
-    sockets[1].triggerRawMessage({
-      kind: 'auth-ok',
-      protocolVersion: 2,
-      hostVersion: '1.0.12',
-    });
-    expect(transport.isAuthed).toBe(true);
-
-    const [snapshot, followup, decision, status, diff] = await Promise.all([
-      transport.getAgentActivitySnapshot(),
-      transport.sendAgentFollowup('activity-1', 'continue'),
-      transport.decideAgentApproval('activity-1', 'approval-1', 'allow'),
-      transport.getGitStatus('/repo'),
-      transport.getGitDiff('/repo'),
-    ]);
-    expect(snapshot).toEqual({ revision: 0, items: [] });
-    expect(followup).toEqual({ ok: false, error: 'delivery-failed' });
-    expect(decision).toEqual({ ok: false, error: 'delivery-failed' });
-    expect(status).toMatchObject({ availability: 'unavailable', tracked: false });
-    expect(diff).toEqual({ ok: false, error: 'git-failed' });
-    const v3OnlyKinds = new Set([
-      'agent-snapshot-get',
-      'agent-followup',
-      'agent-decision',
-      'git-status',
-      'git-diff',
-      'ping',
-    ]);
-    expect(
-      sockets[1].sent
-        .map((raw) => (JSON.parse(raw) as { kind: string }).kind)
-        .filter((kind) => v3OnlyKinds.has(kind)),
-    ).toEqual([]);
+    expect(sockets).toHaveLength(1);
+    expect(transport.currentConnectionState).toBe('protocol-incompatible');
+    expect(transport.isAuthed).toBe(false);
   });
 
-  it('selects v1 when it is the only advertised common lower protocol', () => {
+  it.each([1, 2, 3, 4, 5, 6])('rejects an auth-ok response for legacy protocol v%i', (version) => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({
       url: 'ws://x',
       token: 'stored-bearer-token',
       createSocket,
     });
-    sockets[0].triggerOpen();
     sockets[0].triggerRawMessage({
-      kind: 'auth-fail',
-      reason: 'incompatible-protocol',
-      supportedProtocolVersion: 1,
-      supportedProtocolVersions: [1],
-      hostVersion: '1.0.11',
-    });
-
-    expect(sockets).toHaveLength(2);
-    sockets[1].triggerOpen();
-    expect(sockets[1].lastSent()).toMatchObject({ kind: 'auth', protocolVersion: 1 });
-    sockets[1].triggerRawMessage({
       kind: 'auth-ok',
-      protocolVersion: 1,
-      hostVersion: '1.0.11',
-    });
-    expect(transport.isAuthed).toBe(true);
-  });
-
-  it('never downgrades a one-time pairing credential', () => {
-    const { createSocket, sockets } = makeCreateSocket();
-    const transport = new WsEzTerminalTransport({
-      url: 'ws://x',
-      token: 'ABCD-EFGH',
-      createSocket,
-    });
-    sockets[0].triggerOpen();
-    sockets[0].triggerRawMessage({
-      kind: 'auth-fail',
-      reason: 'incompatible-protocol',
-      supportedProtocolVersion: 2,
-      supportedProtocolVersions: [1, 2],
-      hostVersion: '1.0.12',
+      protocolVersion: version,
+      hostVersion: 'legacy-host',
     });
 
     expect(sockets).toHaveLength(1);
     expect(transport.currentConnectionState).toBe('protocol-incompatible');
+    expect(transport.isAuthed).toBe(false);
   });
 
   it('adopts only a canonical bearer returned by a one-time pairing handshake', async () => {
@@ -759,139 +698,118 @@ describe('WsEzTerminalTransport — read-only Quick Commands capability', () => 
   });
 });
 
-describe('WsEzTerminalTransport — createSession / destroySession / listSessions', () => {
-  it('createSession() sends create-session and resolves on the matching session-created reply', async () => {
+describe('WsEzTerminalTransport — session surface lifecycle / listSessions', () => {
+  it('opens a surface and resolves the host-issued binding by request id', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({
-      url: 'ws://x',
-      token: 'tok',
-      createSocket,
-      newId: () => 'req-1',
+      url: 'ws://x', token: 'tok', createSocket, newId: () => 'open-1',
     });
     sockets[0].triggerMessage({ kind: 'auth-ok' });
 
-    const promise = transport.createSession('/tmp');
-    expect(sockets[0].lastSent()).toEqual({ kind: 'create-session', requestId: 'req-1', cwd: '/tmp' });
-
-    sockets[0].triggerMessage({
-      kind: 'session-created',
-      requestId: 'req-1',
+    const pending = transport.openSessionSurface('surface-1', { kind: 'create', cwd: '/tmp' });
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'session-surface-open',
+      requestId: 'open-1',
+      surfaceId: 'surface-1',
+      intent: { kind: 'create', cwd: '/tmp' },
+    });
+    const binding = {
+      surfaceId: 'surface-1',
+      bindingId: 'binding-1',
       session: { sessionId: 'sess-1', cwd: '/tmp' },
+      role: 'owner' as const,
+    };
+    sockets[0].triggerMessage({
+      kind: 'session-surface-open-result', requestId: 'open-1', result: { ok: true, binding },
     });
-
-    await expect(promise).resolves.toEqual({ sessionId: 'sess-1', cwd: '/tmp' });
+    await expect(pending).resolves.toEqual({ ok: true, binding });
   });
 
-  it('destroySession() sends a destroy-session envelope', () => {
-    const { createSocket, sockets } = makeCreateSocket();
-    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
-    transport.destroySession('sess-1');
-    expect(sockets[0].lastSent()).toEqual({ kind: 'destroy-session', sessionId: 'sess-1' });
-  });
-
-  it('destroySessionGuarded() correlates an accepted result by requestId', async () => {
+  it('correlates prepare, commit, release, and explicit termination independently', async () => {
+    let sequence = 0;
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({
-      url: 'ws://x',
-      token: 'tok',
-      createSocket,
-      newId: () => 'close-1',
+      url: 'ws://x', token: 'tok', createSocket, newId: () => `surface-op-${++sequence}`,
     });
     sockets[0].triggerMessage({ kind: 'auth-ok' });
 
-    const result = transport.destroySessionGuarded('sess-1', ['run-1', 'run-2']);
+    const prepare = transport.prepareSessionSurfaceClose([{
+      bindingId: 'binding-1', expectedActiveRunIds: ['run-1'],
+    }]);
     expect(sockets[0].lastSent()).toEqual({
-      kind: 'destroy-session-guarded',
-      requestId: 'close-1',
-      sessionId: 'sess-1',
-      expectedActiveRunIds: ['run-1', 'run-2'],
+      kind: 'session-surface-prepare-close',
+      requestId: 'surface-op-1',
+      entries: [{ bindingId: 'binding-1', expectedActiveRunIds: ['run-1'] }],
+    });
+    const prepared = {
+      closeToken: 'close-token-1',
+      items: [{
+        bindingId: 'binding-1', surfaceId: 'surface-1', sessionId: 'sess-1', role: 'owner' as const,
+      }],
+    };
+    sockets[0].triggerMessage({
+      kind: 'session-surface-prepare-close-result',
+      requestId: 'surface-op-1',
+      result: { ok: true, prepared },
+    });
+    await expect(prepare).resolves.toEqual({ ok: true, prepared });
+
+    const commit = transport.commitSessionSurfaceClose('close-token-1', [{
+      bindingId: 'binding-1', disposition: 'keep',
+    }]);
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'session-surface-commit-close',
+      requestId: 'surface-op-2',
+      closeToken: 'close-token-1',
+      decisions: [{ bindingId: 'binding-1', disposition: 'keep' }],
     });
     sockets[0].triggerMessage({
-      kind: 'session-destroy-result',
-      requestId: 'close-1',
+      kind: 'session-surface-commit-close-result',
+      requestId: 'surface-op-2',
+      result: { ok: true, keptSessionIds: ['sess-1'] },
+    });
+    await expect(commit).resolves.toEqual({ ok: true, keptSessionIds: ['sess-1'] });
+
+    const release = transport.releaseSessionSurface('binding-2');
+    sockets[0].triggerMessage({
+      kind: 'session-surface-release-result',
+      requestId: 'surface-op-3',
       result: { ok: true },
     });
+    await expect(release).resolves.toEqual({ ok: true });
 
-    await expect(result).resolves.toEqual({ ok: true });
-  });
-
-  it('destroySessionsGuarded() delegates one session and fails closed for an unsupported mobile batch', async () => {
-    const { createSocket, sockets } = makeCreateSocket();
-    const transport = new WsEzTerminalTransport({
-      url: 'ws://x',
-      token: 'tok',
-      createSocket,
-      newId: () => 'batch-close-1',
-    });
-    sockets[0].triggerMessage({ kind: 'auth-ok' });
-
-    await expect(transport.destroySessionsGuarded([])).resolves.toEqual({ ok: true });
-    await expect(transport.destroySessionsGuarded([
-      { sessionId: 'sess-1', expectedActiveRunIds: [] },
-      { sessionId: 'sess-2', expectedActiveRunIds: [] },
-    ])).resolves.toEqual({ ok: false, reason: 'unavailable' });
-
-    const single = transport.destroySessionsGuarded([
-      { sessionId: 'sess-1', expectedActiveRunIds: ['run-1'] },
-    ]);
+    const terminate = transport.terminateSessionGuarded('sess-2', []);
     expect(sockets[0].lastSent()).toEqual({
-      kind: 'destroy-session-guarded',
-      requestId: 'batch-close-1',
-      sessionId: 'sess-1',
-      expectedActiveRunIds: ['run-1'],
+      kind: 'session-terminate-guarded',
+      requestId: 'surface-op-4',
+      sessionId: 'sess-2',
+      expectedActiveRunIds: [],
     });
     sockets[0].triggerMessage({
-      kind: 'session-destroy-result',
-      requestId: 'batch-close-1',
-      result: { ok: true },
-    });
-    await expect(single).resolves.toEqual({ ok: true });
-  });
-
-  it('destroySessionGuarded() preserves an authoritative state-changed result', async () => {
-    const { createSocket, sockets } = makeCreateSocket();
-    const transport = new WsEzTerminalTransport({
-      url: 'ws://x',
-      token: 'tok',
-      createSocket,
-      newId: () => 'close-2',
-    });
-    sockets[0].triggerMessage({ kind: 'auth-ok' });
-
-    const result = transport.destroySessionGuarded('sess-1', []);
-    sockets[0].triggerMessage({
-      kind: 'session-destroy-result',
-      requestId: 'close-2',
+      kind: 'session-terminate-result',
+      requestId: 'surface-op-4',
       result: { ok: false, reason: 'state-changed' },
     });
-
-    await expect(result).resolves.toEqual({ ok: false, reason: 'state-changed' });
+    await expect(terminate).resolves.toEqual({ ok: false, reason: 'state-changed' });
   });
 
-  it('resolves pending guarded destroys as unavailable on socket loss and explicit disconnect', async () => {
-    const dropped = makeCreateSocket();
-    const droppedTransport = new WsEzTerminalTransport({
-      url: 'ws://x',
-      token: 'tok',
-      createSocket: dropped.createSocket,
-      newId: () => 'drop-1',
+  it('settles pending surface capabilities fail-closed on socket loss', async () => {
+    let sequence = 0;
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x', token: 'tok', createSocket, newId: () => `drop-${++sequence}`,
     });
-    dropped.sockets[0].triggerMessage({ kind: 'auth-ok' });
-    const droppedResult = droppedTransport.destroySessionGuarded('sess-1', []);
-    dropped.sockets[0].triggerClose();
-    await expect(droppedResult).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    const open = transport.openSessionSurface('surface-1', { kind: 'adopt', sessionId: 'sess-1' });
+    const prepare = transport.prepareSessionSurfaceClose([{
+      bindingId: 'binding-1', expectedActiveRunIds: [],
+    }]);
+    const terminate = transport.terminateSessionGuarded('sess-1', []);
+    sockets[0].triggerClose();
 
-    const explicit = makeCreateSocket();
-    const explicitTransport = new WsEzTerminalTransport({
-      url: 'ws://x',
-      token: 'tok',
-      createSocket: explicit.createSocket,
-      newId: () => 'disconnect-1',
-    });
-    explicit.sockets[0].triggerMessage({ kind: 'auth-ok' });
-    const explicitResult = explicitTransport.destroySessionGuarded('sess-1', []);
-    explicitTransport.disconnect();
-    await expect(explicitResult).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    await expect(open).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    await expect(prepare).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    await expect(terminate).resolves.toEqual({ ok: false, reason: 'unavailable' });
   });
 
   it('explicit disconnect settles every request family through the common unavailable drain', async () => {
@@ -905,10 +823,15 @@ describe('WsEzTerminalTransport — createSession / destroySession / listSession
     });
     sockets[0].triggerMessage({ kind: 'auth-ok' });
 
-    const create = transport.createSession();
+    const surfaceOpen = transport.openSessionSurface('surface-pending', { kind: 'create' });
+    const surfacePrepare = transport.prepareSessionSurfaceClose([{
+      bindingId: 'binding-pending', expectedActiveRunIds: [],
+    }]);
+    const surfaceCommit = transport.commitSessionSurfaceClose('close-pending', []);
+    const surfaceRelease = transport.releaseSessionSurface('binding-release');
     const sessions = transport.listSessions();
     const runs = transport.listRuns();
-    const guard = transport.destroySessionGuarded('sess-1', []);
+    const termination = transport.terminateSessionGuarded('sess-1', []);
     const stats = transport.getStatsHistory();
     const worktrees = transport.executeWorktree({ action: 'list', cwd: '/repo' });
     const agentSnapshot = transport.getAgentActivitySnapshot();
@@ -931,15 +854,17 @@ describe('WsEzTerminalTransport — createSession / destroySession / listSession
     const config = transport.getOpenClawConfig();
     const configSet = transport.setOpenClawConfig('agents.defaults.model', 'x');
     const ticket = transport.getOpenClawChatTicket();
-    const createAssertion = expect(create).rejects.toThrow('Connection to EZTerminal lost');
     const uploadAssertion = expect(upload).rejects.toThrow('Connection to EZTerminal lost');
 
     transport.disconnect();
 
-    await createAssertion;
+    await expect(surfaceOpen).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    await expect(surfacePrepare).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    await expect(surfaceCommit).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    await expect(surfaceRelease).resolves.toEqual({ ok: false, reason: 'state-changed' });
     await expect(sessions).resolves.toEqual([]);
     await expect(runs).resolves.toEqual([]);
-    await expect(guard).resolves.toEqual({ ok: false, reason: 'unavailable' });
+    await expect(termination).resolves.toEqual({ ok: false, reason: 'unavailable' });
     await expect(stats).resolves.toEqual([]);
     await expect(worktrees).resolves.toMatchObject({ ok: false, error: 'IO_ERROR' });
     await expect(agentSnapshot).resolves.toEqual({ revision: 0, items: [] });
@@ -978,14 +903,13 @@ describe('WsEzTerminalTransport — createSession / destroySession / listSession
     const gitStatus = transport.getGitStatus('/repo');
     const gitDiff = transport.getGitDiff('/repo');
     const files = transport.listFiles('/repo');
-    const create = transport.createSession();
-    const createAssertion = expect(create).rejects.toThrow('Not connected to EZTerminal');
+    const surfaceOpen = transport.openSessionSurface('surface-offline', { kind: 'create' });
 
     await expect(sessions).resolves.toEqual([]);
     await expect(gitStatus).resolves.toMatchObject({ availability: 'unavailable', tracked: false });
     await expect(gitDiff).resolves.toEqual({ ok: false, error: 'git-failed' });
     await expect(files).resolves.toEqual({ ok: false, error: 'Not connected to EZTerminal' });
-    await createAssertion;
+    await expect(surfaceOpen).resolves.toEqual({ ok: false, reason: 'unavailable' });
     expect(sockets[0].sent).toHaveLength(sentBefore);
   });
 
@@ -1359,7 +1283,7 @@ describe('WsEzTerminalTransport — disconnect / reconnect with backoff', () => 
     expect(sockets).toHaveLength(3);
   });
 
-  it('after a successful reconnect, createSession works again on the NEW socket', async () => {
+  it('after a successful reconnect, a surface can open on the new socket', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({
       url: 'ws://x',
@@ -1374,14 +1298,25 @@ describe('WsEzTerminalTransport — disconnect / reconnect with backoff', () => 
     sockets[1].triggerOpen();
     sockets[1].triggerMessage({ kind: 'auth-ok' });
 
-    const promise = transport.createSession();
-    expect(sockets[1].lastSent()).toEqual({ kind: 'create-session', requestId: 'req-1', cwd: undefined });
-    sockets[1].triggerMessage({
-      kind: 'session-created',
+    const promise = transport.openSessionSurface('surface-reconnected', { kind: 'create' });
+    expect(sockets[1].lastSent()).toEqual({
+      kind: 'session-surface-open',
       requestId: 'req-1',
-      session: { sessionId: 'new-sess', cwd: '/' },
+      surfaceId: 'surface-reconnected',
+      intent: { kind: 'create' },
     });
-    await expect(promise).resolves.toEqual({ sessionId: 'new-sess', cwd: '/' });
+    const binding = {
+      surfaceId: 'surface-reconnected',
+      bindingId: 'binding-reconnected',
+      session: { sessionId: 'new-sess', cwd: '/' },
+      role: 'owner' as const,
+    };
+    sockets[1].triggerMessage({
+      kind: 'session-surface-open-result',
+      requestId: 'req-1',
+      result: { ok: true, binding },
+    });
+    await expect(promise).resolves.toEqual({ ok: true, binding });
   });
 
   it('disconnect() stops further reconnect attempts', () => {
@@ -2223,63 +2158,6 @@ describe('WsEzTerminalTransport — Agent Activity', () => {
     }
   });
 
-  it('clears cached v3 state and ignores unsolicited v3 messages after a v2 downgrade', async () => {
-    vi.useFakeTimers();
-    try {
-      const { createSocket, sockets } = makeCreateSocket();
-      const transport = new WsEzTerminalTransport({
-        url: 'ws://x',
-        token: 'b'.repeat(64),
-        createSocket,
-        initialBackoffMs: 100,
-      });
-      const activity = {
-        id: 'old-activity',
-        sessionId: 'sess-1',
-        provider: 'codex' as const,
-        cwd: '/old',
-        status: 'working' as const,
-        createdAt: 1,
-        updatedAt: 2,
-      };
-      const seen: number[] = [];
-      transport.onAgentActivitySnapshot((snapshot) => seen.push(snapshot.revision));
-      sockets[0].triggerMessage({ kind: 'auth-ok' });
-      sockets[0].triggerMessage({
-        kind: 'agent-snapshot',
-        snapshot: { revision: 50, items: [activity] },
-      });
-
-      sockets[0].triggerClose();
-      vi.advanceTimersByTime(100);
-      sockets[1].triggerOpen();
-      sockets[1].triggerRawMessage({
-        kind: 'auth-fail',
-        reason: 'incompatible-protocol',
-        supportedProtocolVersions: [2],
-        hostVersion: '1.0.12',
-      });
-      sockets[2].triggerOpen();
-      sockets[2].triggerRawMessage({
-        kind: 'auth-ok',
-        protocolVersion: 2,
-        hostVersion: '1.0.12',
-      });
-      sockets[2].triggerRawMessage({
-        kind: 'agent-snapshot',
-        snapshot: { revision: 99, items: [activity] },
-      });
-
-      expect(seen).toEqual([0, 50, 0]);
-      await expect(transport.getAgentActivitySnapshot()).resolves.toEqual({
-        revision: 0,
-        items: [],
-      });
-      transport.disconnect();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 });
 
 describe('WsEzTerminalTransport — Agent history v4', () => {
@@ -2413,46 +2291,6 @@ describe('WsEzTerminalTransport — Agent history v4', () => {
     transport.disconnect();
   });
 
-  it('fails history calls locally after a v3 downgrade', async () => {
-    const { createSocket, sockets } = makeCreateSocket();
-    const transport = new WsEzTerminalTransport({
-      url: 'ws://x',
-      token: 'stored-bearer-token',
-      createSocket,
-    });
-    sockets[0].triggerOpen();
-    sockets[0].triggerRawMessage({
-      kind: 'auth-fail',
-      reason: 'incompatible-protocol',
-      supportedProtocolVersions: [3],
-      supportedProtocolVersion: 3,
-      hostVersion: '1.0.12',
-    });
-    sockets[1].triggerOpen();
-    sockets[1].triggerRawMessage({
-      kind: 'auth-ok',
-      protocolVersion: 3,
-      hostVersion: '1.0.12',
-    });
-
-    await expect(transport.listAgentProjects()).resolves.toEqual({
-      items: [],
-      nextCursor: null,
-    });
-    await expect(transport.readAgentHistory('history-1')).resolves.toBeNull();
-    await expect(transport.prepareAgentResume('history-1')).resolves.toBeNull();
-    await expect(transport.startAgentResume({
-      historyId: 'history-1',
-      sessionId: 'terminal-1',
-      runId: 'run-1',
-      rootChoice: 'recorded',
-      revision: 'revision-1',
-    })).resolves.toEqual({ ok: false, reason: 'unavailable' });
-    expect(sockets[1].sent.map((raw) => JSON.parse(raw)).filter((message) => (
-      typeof message.kind === 'string' && message.kind.startsWith('agent-history')
-    ))).toEqual([]);
-    transport.disconnect();
-  });
 });
 
 describe('WsEzTerminalTransport — Agent projects v5', () => {
@@ -2599,7 +2437,7 @@ describe('WsEzTerminalTransport — Agent projects v5', () => {
       createSocket,
       newId: () => requestIds.shift()!,
     });
-    sockets[0].triggerMessage({ kind: 'auth-ok', protocolVersion: 6 });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
     expect(transport.supportsAgentDirectLaunch).toBe(true);
 
     const target = { kind: 'directory' as const, directory: 'C:\\direct-work' };
@@ -2653,51 +2491,6 @@ describe('WsEzTerminalTransport — Agent projects v5', () => {
     transport.disconnect();
   });
 
-  it('fails v5 project mutations locally after a v4 downgrade', async () => {
-    const { createSocket, sockets } = makeCreateSocket();
-    const transport = new WsEzTerminalTransport({
-      url: 'ws://x',
-      token: 'stored-bearer-token',
-      createSocket,
-    });
-    sockets[0].triggerOpen();
-    sockets[0].triggerRawMessage({
-      kind: 'auth-fail',
-      reason: 'incompatible-protocol',
-      supportedProtocolVersions: [4],
-      supportedProtocolVersion: 4,
-      hostVersion: '1.0.12',
-    });
-    sockets[1].triggerOpen();
-    sockets[1].triggerRawMessage({
-      kind: 'auth-ok',
-      protocolVersion: 4,
-      hostVersion: '1.0.12',
-    });
-
-    expect(transport.supportsAgentProjectManagement).toBe(false);
-    await expect(transport.saveAgentProject({
-      name: 'Project',
-      primaryRoot: '/workspace',
-      additionalRoots: [],
-      pinned: false,
-    })).resolves.toEqual({ ok: false, reason: 'invalid' });
-    await expect(transport.removeAgentProject('project-1')).resolves.toBe(false);
-    await expect(transport.listAgentProjectLaunchers()).resolves.toEqual([]);
-    await expect(transport.prepareAgentProjectLaunch('project-1', 'codex')).resolves
-      .toEqual({ ok: false, reason: 'unavailable' });
-    await expect(transport.startAgentProjectLaunch({
-      projectId: 'project-1',
-      launcherId: 'codex',
-      sessionId: 'terminal-1',
-      runId: 'run-1',
-      revision: 'revision-1',
-    })).resolves.toEqual({ ok: false, reason: 'unavailable' });
-    expect(sockets[1].sent.map((raw) => JSON.parse(raw)).filter((message) => (
-      typeof message.kind === 'string' && message.kind.startsWith('agent-project')
-    ))).toEqual([]);
-    transport.disconnect();
-  });
 });
 
 describe('WsEzTerminalTransport — desktop-only EzTerminalApi stubs', () => {

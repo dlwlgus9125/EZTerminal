@@ -5,20 +5,21 @@ import {
   type CloseRisk,
 } from '../shared/close-risk';
 import type {
-  DestroySessionGuardResult,
-  GuardedSessionDestroyRequest,
-} from '../shared/ipc';
+  PreparedSessionSurfaceCloseItem,
+  SessionSurfaceCloseDecision,
+  SessionSurfaceCloseEntry,
+  SessionSurfaceCommitCloseResult,
+  SessionSurfacePrepareCloseResult,
+} from '../shared/session-surface';
 import type { PaneHandle, PaneSnapshot } from './pane-registry';
 
 /**
  * React-independent lifecycle transaction types shared by ordinary pane and
- * auxiliary-window close. The caller owns presentation and the final Dockview
- * mutation; this module owns the live-pane invariants around irreversible
- * session work. Whole-workspace replacement has its own transaction module.
+ * auxiliary-window close. Presentation and Dockview mutation stay with App;
+ * session ownership and destruction stay behind the host surface authority.
  */
 
 export type PaneLifecycleKind = 'single-pane' | 'auxiliary-window';
-
 export type PaneDisposition = 'terminate' | 'keep';
 
 export interface PaneLifecycleTarget {
@@ -73,7 +74,6 @@ interface PaneLifecycleCandidate {
 interface PreparedPaneLifecycleData {
   readonly kind: PaneLifecycleKind;
   readonly candidates: readonly PaneLifecycleCandidate[];
-  readonly singlePromptRequired: boolean;
   readonly mutationKey: string;
 }
 
@@ -109,10 +109,8 @@ export type PaneLifecycleValidationResult =
   | PaneLifecycleFailure;
 
 export interface PaneLifecycleCommitOptions {
-  /** Must contain exactly one decision for every creator in the plan. */
+  /** Must contain exactly one decision for every owner in the plan. */
   readonly dispositions: ReadonlyMap<string, PaneDisposition>;
-  /** Required for auxiliary-window commits so membership and instance
-   * identity can be checked before and after guarded destruction. */
   readonly resolveCurrentTargets?: () => readonly PaneLifecycleTarget[] | null;
   readonly activeAgentSessionIds?: ReadonlySet<string>;
 }
@@ -123,16 +121,14 @@ export interface PaneLifecycleValidationOptions {
 }
 
 export interface PaneLifecycleCoordinatorOptions {
-  /** Live-pane adapter. Dependencies are injected so policy tests cross the
-   * same interface as App without constructing React or Dockview. */
   readonly getPaneHandle: (panelId: string) => PaneHandle | undefined;
-  readonly destroySessionGuarded: (
-    sessionId: string,
-    expectedActiveRunIds: readonly string[],
-  ) => Promise<DestroySessionGuardResult>;
-  readonly destroySessionsGuarded: (
-    sessions: readonly GuardedSessionDestroyRequest[],
-  ) => Promise<DestroySessionGuardResult>;
+  readonly prepareSessionSurfaceClose: (
+    entries: readonly SessionSurfaceCloseEntry[],
+  ) => Promise<SessionSurfacePrepareCloseResult>;
+  readonly commitSessionSurfaceClose: (
+    closeToken: string,
+    decisions: readonly SessionSurfaceCloseDecision[],
+  ) => Promise<SessionSurfaceCommitCloseResult>;
 }
 
 function freezeSnapshot(snapshot: PaneSnapshot): PaneSnapshot {
@@ -152,7 +148,7 @@ function riskOf(
   activeAgentSessionIds: ReadonlySet<string>,
 ): CloseRisk | null {
   return classifyCloseRisk({
-    destroysSession: snapshot.destroysSessionOnClose,
+    destroysSession: snapshot.sessionSurfaceRole === 'owner',
     isBusy: snapshot.isBusy,
     executionKind: snapshot.executionKind,
     hasSshPrompt: snapshot.hasSshPrompt,
@@ -161,7 +157,7 @@ function riskOf(
   });
 }
 
-function sameAuxiliarySnapshot(
+function sameSurfaceSnapshot(
   current: PaneSnapshot,
   expected: PaneSnapshot,
   currentRisk: CloseRisk | null,
@@ -170,7 +166,8 @@ function sameAuxiliarySnapshot(
   return current.panelId === expected.panelId
     && current.sessionId === expected.sessionId
     && current.sessionBindingPending === expected.sessionBindingPending
-    && current.destroysSessionOnClose === expected.destroysSessionOnClose
+    && current.sessionSurfaceBindingId === expected.sessionSurfaceBindingId
+    && current.sessionSurfaceRole === expected.sessionSurfaceRole
     && current.isBusy === expected.isBusy
     && current.isDead === expected.isDead
     && current.executionKind === expected.executionKind
@@ -179,12 +176,21 @@ function sameAuxiliarySnapshot(
     && currentRisk === expectedRisk;
 }
 
-function validationFailure(): PaneLifecycleFailure {
-  return { ok: false, reason: 'state-changed', stage: 'validation' };
+function validationFailure(stage: PaneLifecycleFailureStage = 'validation'): PaneLifecycleFailure {
+  return { ok: false, reason: 'state-changed', stage };
 }
 
 function unavailableFailure(stage: PaneLifecycleFailureStage = 'validation'): PaneLifecycleFailure {
   return { ok: false, reason: 'unavailable', stage };
+}
+
+function authorityFailure(
+  result: Extract<SessionSurfacePrepareCloseResult | SessionSurfaceCommitCloseResult, { ok: false }>,
+  stage: PaneLifecycleFailureStage,
+): PaneLifecycleFailure {
+  if (result.reason === 'busy') return { ok: false, reason: 'busy', stage: 'busy' };
+  if (result.reason === 'unavailable') return unavailableFailure(stage);
+  return validationFailure(stage);
 }
 
 function planTargets(candidates: readonly PaneLifecycleCandidate[]): readonly PaneLifecycleTarget[] {
@@ -200,46 +206,65 @@ function planTargets(candidates: readonly PaneLifecycleCandidate[]): readonly Pa
   )));
 }
 
-function dispositionsCoverCreators(
+function dispositionsCoverOwners(
   candidates: readonly PaneLifecycleCandidate[],
   dispositions: ReadonlyMap<string, PaneDisposition>,
 ): boolean {
-  const creatorIds = new Set(
-    candidates
-      .filter((candidate) => candidate.snapshot?.destroysSessionOnClose)
-      .map((candidate) => candidate.panelId),
-  );
-  if (creatorIds.size !== dispositions.size) return false;
+  const ownerIds = new Set(candidates
+    .filter((candidate) => candidate.snapshot?.sessionSurfaceRole === 'owner')
+    .map((candidate) => candidate.panelId));
+  if (ownerIds.size !== dispositions.size) return false;
   for (const [panelId, disposition] of dispositions) {
-    if (!creatorIds.has(panelId)) return false;
+    if (!ownerIds.has(panelId)) return false;
     if (disposition !== 'terminate' && disposition !== 'keep') return false;
   }
   return true;
 }
 
-/**
- * Coordinates a single-use, fail-closed lifecycle plan.
- *
- * `prepare` freezes the observed identities and risks without side effects.
- * `commit` revalidates as required, waits for authoritative guarded-destroy
- * ACKs, and only then transfers or marks ownership. Conflicting mutations
- * return `busy`; validation, transport, and ownership failures are explicit.
- * Auxiliary callers must run `validateFinalization` immediately before their
- * final UI mutation.
- */
+function surfaceEntries(candidates: readonly PaneLifecycleCandidate[]): readonly SessionSurfaceCloseEntry[] {
+  return Object.freeze(candidates.flatMap((candidate) => {
+    const snapshot = candidate.snapshot;
+    return snapshot?.sessionSurfaceBindingId
+      ? [Object.freeze({
+          bindingId: snapshot.sessionSurfaceBindingId,
+          expectedActiveRunIds: Object.freeze([...snapshot.activeRunIds]),
+        })]
+      : [];
+  }));
+}
+
+function preparedItemsMatch(
+  candidates: readonly PaneLifecycleCandidate[],
+  items: readonly PreparedSessionSurfaceCloseItem[],
+): boolean {
+  const expected = new Map(candidates.flatMap((candidate) => {
+    const snapshot = candidate.snapshot;
+    return snapshot?.sessionSurfaceBindingId && snapshot.sessionId && snapshot.sessionSurfaceRole
+      ? [[snapshot.sessionSurfaceBindingId, snapshot] as const]
+      : [];
+  }));
+  if (expected.size !== items.length) return false;
+  return items.every((item) => {
+    const snapshot = expected.get(item.bindingId);
+    return snapshot !== undefined
+      && item.sessionId === snapshot.sessionId
+      && item.role === snapshot.sessionSurfaceRole;
+  });
+}
+
+/** Coordinates a single-use, fail-closed surface lifecycle transaction. */
 export class PaneLifecycleCoordinator {
   private readonly consumedPlans = new WeakSet<object>();
   private readonly activeMutationKeys = new Set<string>();
 
   public constructor(private readonly options: PaneLifecycleCoordinatorOptions) {}
 
-  /** Observe and freeze a plan; never mutates a pane or backend session. */
   public prepare(request: PaneLifecycleRequest): PaneLifecyclePreparation {
-    if (request.kind === 'single-pane') return this.prepareSinglePane(request);
-    return this.prepareAuxiliaryWindow(request);
+    return request.kind === 'single-pane'
+      ? this.prepareSinglePane(request)
+      : this.prepareAuxiliaryWindow(request);
   }
 
-  /** Recheck a prepared plan across caller-owned awaits without consuming it. */
   public validatePreparation(
     plan: PreparedPaneLifecycle,
     options: PaneLifecycleValidationOptions = {},
@@ -250,25 +275,6 @@ export class PaneLifecycleCoordinator {
     return this.validatePreparedData(plan[PREPARED_DATA], options);
   }
 
-  private validatePreparedData(
-    data: PreparedPaneLifecycleData,
-    options: PaneLifecycleValidationOptions,
-  ): PaneLifecycleValidationResult {
-    if (data.kind === 'single-pane') {
-      if (!data.singlePromptRequired) return { ok: true };
-      const expected = data.candidates[0]?.snapshot;
-      if (!expected) return validationFailure();
-      const current = this.options.getPaneHandle(expected.panelId)?.getSnapshot();
-      return current
-        && current.sessionId === expected.sessionId
-        && sameActiveRunSet(current.activeRunIds, expected.activeRunIds)
-        ? { ok: true }
-        : validationFailure();
-    }
-    return this.validateAuxiliaryBeforeCommit(data.candidates, options);
-  }
-
-  /** Execute the plan at most once and serialize overlapping mutation keys. */
   public async commit(
     plan: PreparedPaneLifecycle,
     options: PaneLifecycleCommitOptions,
@@ -277,23 +283,58 @@ export class PaneLifecycleCoordinator {
     if (this.consumedPlans.has(plan) || this.activeMutationKeys.has(data.mutationKey)) {
       return { ok: false, reason: 'busy', stage: 'busy' };
     }
-    if (!dispositionsCoverCreators(data.candidates, options.dispositions)) {
+    if (!dispositionsCoverOwners(data.candidates, options.dispositions)) {
       return validationFailure();
     }
 
     this.consumedPlans.add(plan);
     this.activeMutationKeys.add(data.mutationKey);
     try {
-      if (data.kind === 'single-pane') return await this.commitSinglePane(data, options);
-      return await this.commitAuxiliaryWindow(data, options);
-    } catch {
-      return unavailableFailure('destroy');
+      const validation = this.validatePreparedData(data, options);
+      if (!validation.ok) return validation;
+
+      const entries = surfaceEntries(data.candidates);
+      if (entries.length === 0) return this.createCommit(data, []);
+
+      let preparation: SessionSurfacePrepareCloseResult;
+      try {
+        preparation = await this.options.prepareSessionSurfaceClose(entries);
+      } catch {
+        return unavailableFailure('destroy');
+      }
+      if (!preparation.ok) return authorityFailure(preparation, 'destroy');
+      if (!preparedItemsMatch(data.candidates, preparation.prepared.items)) {
+        return validationFailure('ownership');
+      }
+
+      const finalValidation = this.validatePreparedData(data, options);
+      if (!finalValidation.ok) return finalValidation;
+
+      const decisions: SessionSurfaceCloseDecision[] = [];
+      for (const candidate of data.candidates) {
+        const snapshot = candidate.snapshot;
+        if (snapshot?.sessionSurfaceRole !== 'owner' || !snapshot.sessionSurfaceBindingId) continue;
+        const disposition = options.dispositions.get(candidate.panelId);
+        if (!disposition) return validationFailure('ownership');
+        decisions.push({ bindingId: snapshot.sessionSurfaceBindingId, disposition });
+      }
+
+      let result: SessionSurfaceCommitCloseResult;
+      try {
+        result = await this.options.commitSessionSurfaceClose(
+          preparation.prepared.closeToken,
+          Object.freeze(decisions),
+        );
+      } catch {
+        return unavailableFailure('destroy');
+      }
+      if (!result.ok) return authorityFailure(result, 'destroy');
+      return this.createCommit(data, result.keptSessionIds);
     } finally {
       this.activeMutationKeys.delete(data.mutationKey);
     }
   }
 
-  /** Recheck state after commit and immediately before the caller's final effect. */
   public validateFinalization(
     commit: CommittedPaneLifecycle,
     options: PaneLifecycleValidationOptions = {},
@@ -309,19 +350,23 @@ export class PaneLifecycleCoordinator {
     request: Extract<PaneLifecycleRequest, { kind: 'single-pane' }>,
   ): PaneLifecyclePreparation {
     const snapshot = this.options.getPaneHandle(request.target.panelId)?.getSnapshot();
-    if (!snapshot || (snapshot.destroysSessionOnClose && snapshot.sessionId === null)) {
+    if (
+      !snapshot
+      || snapshot.sessionBindingPending
+      || !snapshot.sessionId
+      || !snapshot.sessionSurfaceBindingId
+      || !snapshot.sessionSurfaceRole
+    ) {
       return unavailableFailure();
     }
     const frozenSnapshot = freezeSnapshot(snapshot);
     const risk = riskOf(frozenSnapshot, request.activeAgentSessionIds);
     const closePlan = planPaneClose({
-      destroysSession: frozenSnapshot.destroysSessionOnClose,
+      destroysSession: frozenSnapshot.sessionSurfaceRole === 'owner',
       isBusy: frozenSnapshot.isBusy,
       executionKind: frozenSnapshot.executionKind,
       hasSshPrompt: frozenSnapshot.hasSshPrompt,
-      hasActiveAgent:
-        frozenSnapshot.sessionId !== null
-        && request.activeAgentSessionIds.has(frozenSnapshot.sessionId),
+      hasActiveAgent: request.activeAgentSessionIds.has(frozenSnapshot.sessionId!),
       isDead: frozenSnapshot.isDead,
     }, request.confirmRiskyClose);
     if (closePlan.kind === 'blocked') return unavailableFailure();
@@ -354,7 +399,9 @@ export class PaneLifecycleCoordinator {
       if (
         !snapshot
         || snapshot.sessionBindingPending
-        || (snapshot.destroysSessionOnClose && snapshot.sessionId === null)
+        || !snapshot.sessionId
+        || !snapshot.sessionSurfaceBindingId
+        || !snapshot.sessionSurfaceRole
       ) {
         return unavailableFailure();
       }
@@ -366,10 +413,7 @@ export class PaneLifecycleCoordinator {
       }));
     }
     const requiresConfirmation = candidates.length !== 1 || candidates[0]?.risk !== null;
-    const targetKey = candidates
-      .map((candidate) => candidate.panelId)
-      .sort()
-      .join(',');
+    const targetKey = candidates.map((candidate) => candidate.panelId).sort().join(',');
     return this.createPreparation(
       'auxiliary-window',
       candidates,
@@ -385,17 +429,12 @@ export class PaneLifecycleCoordinator {
     mutationKey: string,
   ): PaneLifecyclePreparation {
     const frozenCandidates = Object.freeze([...candidates]);
-    const data = Object.freeze({
-      kind,
-      candidates: frozenCandidates,
-      singlePromptRequired: kind === 'single-pane' && requiresConfirmation,
-      mutationKey,
-    });
+    const data = Object.freeze({ kind, candidates: frozenCandidates, mutationKey });
     const items = Object.freeze(frozenCandidates.map((candidate) => Object.freeze({
       panelId: candidate.panelId,
       title: candidate.title,
       risk: candidate.risk,
-      creator: candidate.snapshot?.destroysSessionOnClose ?? false,
+      creator: candidate.snapshot?.sessionSurfaceRole === 'owner',
       passive: candidate.snapshot === null,
     })));
     return {
@@ -409,152 +448,18 @@ export class PaneLifecycleCoordinator {
     };
   }
 
-  private async commitSinglePane(
+  private validatePreparedData(
     data: PreparedPaneLifecycleData,
-    options: PaneLifecycleCommitOptions,
-  ): Promise<PaneLifecycleCommitResult> {
-    const candidate = data.candidates[0];
-    const expected = candidate?.snapshot;
-    if (!candidate || !expected) return validationFailure();
-    const disposition = expected.destroysSessionOnClose
-      ? options.dispositions.get(candidate.panelId)
-      : 'terminate';
-
-    if (disposition === 'keep') {
-      const kept = this.options.getPaneHandle(candidate.panelId)?.releaseSessionOwnership() ?? null;
-      return this.createCommit(data, kept ? [kept] : []);
-    }
-
-    let snapshot = expected;
-    if (data.singlePromptRequired) {
-      const validation = this.validatePreparedData(data, options);
-      if (!validation.ok) return validation;
-      const current = this.options.getPaneHandle(candidate.panelId)?.getSnapshot();
-      if (!current) return validationFailure();
-      if (!current.destroysSessionOnClose) return this.createCommit(data, []);
-      snapshot = freezeSnapshot(current);
-    }
-    if (!snapshot.destroysSessionOnClose || snapshot.sessionId === null) {
-      return this.createCommit(data, []);
-    }
-    const result = await this.destroySingleCreator(snapshot);
-    if (!result.ok) return result;
-    return this.createCommit(data, []);
-  }
-
-  private async destroySingleCreator(snapshot: PaneSnapshot): Promise<PaneLifecycleValidationResult> {
-    const currentHandle = (): PaneHandle | undefined => this.options.getPaneHandle(snapshot.panelId);
-    if (snapshot.isDead) {
-      const current = currentHandle()?.getSnapshot();
-      if (
-        !current
-        || current.panelId !== snapshot.panelId
-        || current.sessionId !== snapshot.sessionId
-        || !current.destroysSessionOnClose
-        || !current.isDead
-      ) {
-        return validationFailure();
-      }
-      return currentHandle()?.markSessionDestroyHandled(snapshot.sessionId!)
-        ? { ok: true }
-        : validationFailure();
-    }
-
-    let result: DestroySessionGuardResult;
-    try {
-      result = await this.options.destroySessionGuarded(
-        snapshot.sessionId!,
-        Object.freeze([...snapshot.activeRunIds]),
-      );
-    } catch {
-      return unavailableFailure('destroy');
-    }
-    if (!result.ok) return { ok: false, reason: result.reason, stage: 'destroy' };
-    const current = currentHandle()?.getSnapshot();
+    options: PaneLifecycleValidationOptions,
+  ): PaneLifecycleValidationResult {
     if (
-      !current
-      || current.panelId !== snapshot.panelId
-      || current.sessionId !== snapshot.sessionId
-      || !current.destroysSessionOnClose
+      data.kind === 'auxiliary-window'
+      && !this.validateAuxiliaryTargets(data.candidates, options.resolveCurrentTargets, false)
     ) {
       return validationFailure();
     }
-    return currentHandle()?.markSessionDestroyHandled(snapshot.sessionId!)
-      ? { ok: true }
-      : { ok: false, reason: 'state-changed', stage: 'ownership' };
-  }
-
-  private async commitAuxiliaryWindow(
-    data: PreparedPaneLifecycleData,
-    options: PaneLifecycleCommitOptions,
-  ): Promise<PaneLifecycleCommitResult> {
-    const validation = this.validateAuxiliaryBeforeCommit(data.candidates, options);
-    if (!validation.ok) return validation;
-
-    const latest = new Map<string, PaneSnapshot>();
-    for (const candidate of data.candidates) {
-      if (!candidate.snapshot) continue;
-      const snapshot = this.options.getPaneHandle(candidate.panelId)?.getSnapshot();
-      if (!snapshot) return validationFailure();
-      latest.set(candidate.panelId, freezeSnapshot(snapshot));
-    }
-    const terminate = data.candidates.filter((candidate) => (
-      candidate.snapshot?.destroysSessionOnClose
-      && options.dispositions.get(candidate.panelId) === 'terminate'
-    ));
-    const keep = data.candidates.filter((candidate) => (
-      candidate.snapshot?.destroysSessionOnClose
-      && options.dispositions.get(candidate.panelId) === 'keep'
-    ));
-    const liveTerminate = terminate.filter((candidate) => !candidate.snapshot!.isDead);
-    if (liveTerminate.some((candidate) => candidate.snapshot!.sessionId === null)) {
-      return unavailableFailure();
-    }
-
-    if (liveTerminate.length > 0) {
-      let result: DestroySessionGuardResult;
-      try {
-        result = await this.options.destroySessionsGuarded(liveTerminate.map((candidate) => ({
-          sessionId: candidate.snapshot!.sessionId!,
-          expectedActiveRunIds: candidate.snapshot!.activeRunIds,
-        })));
-      } catch {
-        return unavailableFailure('destroy');
-      }
-      if (!result.ok) return { ok: false, reason: result.reason, stage: 'destroy' };
-    }
-
-    if (!this.validateAuxiliaryTargets(data.candidates, options.resolveCurrentTargets, true)) {
-      return validationFailure();
-    }
-    for (const candidate of terminate) {
-      const sessionId = candidate.snapshot!.sessionId;
-      if (sessionId) {
-        this.options.getPaneHandle(candidate.panelId)?.markSessionDestroyHandled(sessionId);
-      }
-    }
-    const keptSessionIds: string[] = [];
-    for (const candidate of keep) {
-      const expectedSessionId = latest.get(candidate.panelId)?.sessionId;
-      const keptSessionId =
-        this.options.getPaneHandle(candidate.panelId)?.releaseSessionOwnership() ?? null;
-      if (!expectedSessionId || keptSessionId !== expectedSessionId) {
-        return { ok: false, reason: 'state-changed', stage: 'ownership' };
-      }
-      keptSessionIds.push(keptSessionId);
-    }
-    return this.createCommit(data, keptSessionIds);
-  }
-
-  private validateAuxiliaryBeforeCommit(
-    candidates: readonly PaneLifecycleCandidate[],
-    options: PaneLifecycleValidationOptions,
-  ): PaneLifecycleValidationResult {
-    if (!this.validateAuxiliaryTargets(candidates, options.resolveCurrentTargets, false)) {
-      return validationFailure();
-    }
     const activeAgentSessionIds = options.activeAgentSessionIds ?? new Set<string>();
-    for (const candidate of candidates) {
+    for (const candidate of data.candidates) {
       const handle = this.options.getPaneHandle(candidate.panelId);
       if (!candidate.snapshot) {
         if (candidate.component !== 'agent-session' || candidate.risk !== null || handle) {
@@ -565,7 +470,7 @@ export class PaneLifecycleCoordinator {
       const snapshot = handle?.getSnapshot();
       if (
         !snapshot
-        || !sameAuxiliarySnapshot(
+        || !sameSurfaceSnapshot(
           snapshot,
           candidate.snapshot,
           riskOf(snapshot, activeAgentSessionIds),
@@ -606,10 +511,7 @@ export class PaneLifecycleCoordinator {
     data: PreparedPaneLifecycleData,
     keptSessionIds: readonly string[],
   ): PaneLifecycleCommitResult {
-    const committedData = Object.freeze({
-      kind: data.kind,
-      candidates: data.candidates,
-    });
+    const committedData = Object.freeze({ kind: data.kind, candidates: data.candidates });
     return {
       ok: true,
       commit: Object.freeze({

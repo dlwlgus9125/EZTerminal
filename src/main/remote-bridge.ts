@@ -6,9 +6,9 @@
  * to the interpreter, the other kept here): a WS connection stands in for the
  * renderer's side of that port, relaying `InterpreterFrame`/`RendererControl`
  * over the single multiplexed socket instead of a dedicated MessagePort.
- * `create-session`/`destroy-session`/`list-sessions` are handled the same way
- * main.ts's IPC handlers do (session-created round-trip correlated by a
- * bridge-minted `requestId`, distinct from the client's own `requestId`).
+ * View lifecycle is exposed only through host-issued session-surface
+ * capabilities. The interpreter broker remains the session/run authority;
+ * clients cannot invoke its raw create/destroy operations.
  *
  * Everything Electron-specific (the real `WebSocketServer`, the interpreter
  * `UtilityProcess`, real `MessageChannelMain`s) is injected — this module
@@ -48,7 +48,6 @@ import {
   REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL,
-  REMOTE_PROTOCOL_VERSION_LEGACY,
   SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
   isRemoteProtocolVersion,
   MAX_DESKTOP_VIEWPORT_PIXELS,
@@ -69,6 +68,12 @@ import {
   type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../shared/remote-protocol';
+import {
+  isSessionSurfaceCloseDecisions,
+  isSessionSurfaceCloseEntries,
+  isSessionSurfaceId,
+  isSessionSurfaceIntent,
+} from '../shared/session-surface';
 import {
   MAX_QUICK_COMMANDS,
   QuickCommandSchema,
@@ -109,6 +114,7 @@ import {
 import type { InterpreterBroker, RemoteInterpreter, RemoteMessageChannel, RemotePort } from './interpreter-broker';
 import { RemoteRunInitiatorRegistry } from './remote-run-initiator';
 import { RemoteRunLeaseRegistry } from './remote-run-lease';
+import { SessionSurfaceAuthority } from './session-surface-authority';
 import { resolveTerminalFileLocation } from './terminal-path-resolver';
 import { TerminalFileCapabilityStore } from './terminal-file-capability';
 import {
@@ -419,11 +425,21 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
       return true;
     case 'auth':
       return typeof value.token === 'string';
-    case 'create-session':
-      return typeof value.requestId === 'string' && isOptionalString(value.cwd);
-    case 'destroy-session':
-      return typeof value.sessionId === 'string';
-    case 'destroy-session-guarded':
+    case 'session-surface-open':
+      return isGuardedDestroyId(value.requestId)
+        && isSessionSurfaceId(value.surfaceId)
+        && isSessionSurfaceIntent(value.intent);
+    case 'session-surface-prepare-close':
+      return isGuardedDestroyId(value.requestId)
+        && isSessionSurfaceCloseEntries(value.entries);
+    case 'session-surface-commit-close':
+      return isGuardedDestroyId(value.requestId)
+        && isSessionSurfaceId(value.closeToken)
+        && isSessionSurfaceCloseDecisions(value.decisions);
+    case 'session-surface-release':
+      return isGuardedDestroyId(value.requestId)
+        && isSessionSurfaceId(value.bindingId);
+    case 'session-terminate-guarded':
       return isGuardedDestroyRequest(value);
     case 'run-command':
       return (
@@ -994,6 +1010,8 @@ export interface RemoteBridgeOptions {
    * ONE instance, so there is exactly one interpreter listener + one session
    * directory across both transports. */
   readonly broker: InterpreterBroker;
+  /** Shared with desktop IPC so every transport observes one ownership graph. */
+  readonly sessionSurfaceAuthority?: SessionSurfaceAuthority;
   /** Optional so existing fixtures/tests without stats wiring keep working. */
   readonly statsSource?: RemoteStatsSource;
   /** Optional so existing fixtures/tests without packet wiring keep working. */
@@ -1037,6 +1055,7 @@ export interface RemoteBridgeOptions {
 }
 
 const defaultRunLeases = new WeakMap<InterpreterBroker, RemoteRunLeaseRegistry>();
+const defaultSessionSurfaceAuthorities = new WeakMap<InterpreterBroker, SessionSurfaceAuthority>();
 const defaultRunInitiators = new WeakMap<
   InterpreterBroker,
   RemoteRunInitiatorRegistry
@@ -1050,6 +1069,16 @@ function leasesFor(options: RemoteBridgeOptions): RemoteRunLeaseRegistry {
     defaultRunLeases.set(options.broker, leases);
   }
   return leases;
+}
+
+function sessionSurfacesFor(options: RemoteBridgeOptions): SessionSurfaceAuthority {
+  if (options.sessionSurfaceAuthority) return options.sessionSurfaceAuthority;
+  let authority = defaultSessionSurfaceAuthorities.get(options.broker);
+  if (!authority) {
+    authority = new SessionSurfaceAuthority(options.broker);
+    defaultSessionSurfaceAuthorities.set(options.broker, authority);
+  }
+  return authority;
 }
 
 function initiatorsFor(options: RemoteBridgeOptions): RemoteRunInitiatorRegistry {
@@ -1078,12 +1107,14 @@ export function attachConnection(
   },
 ): void {
   let authed = false;
-  let negotiatedProtocol: RemoteProtocolVersion = REMOTE_PROTOCOL_VERSION_LEGACY;
+  let negotiatedProtocol: RemoteProtocolVersion = REMOTE_PROTOCOL_VERSION;
   let clientIdentity: RemoteClientIdentity | null = null;
+  let sessionSurfacePrincipalId: string | null = null;
   let authPending = false;
   let releaseRunsOnClose = false;
   let connectionClosed = false;
   const connectionId = randomUUID();
+  const sessionSurfaces = sessionSurfacesFor(options);
   const runLeases = leasesFor(options);
   const runInitiators = initiatorsFor(options);
   const terminalCapabilities = new TerminalFileCapabilityStore();
@@ -1410,9 +1441,9 @@ export function attachConnection(
 
   // Session/run mirroring (M2): every connection observes every session/run
   // change via the SHARED broker, origin-agnostic (including one THIS connection
-  // just created — the broker resolves the create-session reply BEFORE its
-  // deferred onSessionAdded fan-out, so a requester always learns "this sessionId
-  // is mine" before the broadcast echo, see ADR C6). Gated on `authed` so an
+  // just created — the broker resolves creation to SessionSurfaceAuthority
+  // BEFORE its deferred onSessionAdded fan-out, so the requester receives its
+  // binding before the broadcast echo (ADR C6). Gated on `authed` so an
   // unauthenticated socket never sees session/run data. The broker holds the
   // single interpreter listener; this connection adds none.
   const unsubSessionAdded = options.broker.onSessionAdded((session) => {
@@ -1462,6 +1493,11 @@ export function attachConnection(
       }
     };
     const disconnectedIdentity = clientIdentity;
+    const disconnectedSurfacePrincipal = sessionSurfacePrincipalId;
+    sessionSurfacePrincipalId = null;
+    if (disconnectedSurfacePrincipal) {
+      contain(() => sessionSurfaces.disconnectClient(disconnectedSurfacePrincipal));
+    }
     if (disconnectedIdentity) {
       contain(() => options.desktopSource?.disconnected(disconnectedIdentity.clientId, connectionId));
       contain(() => options.onClientPresence?.(disconnectedIdentity, 'disconnected', connectionId));
@@ -1535,11 +1571,10 @@ export function attachConnection(
       const requestedProtocol = parsed.protocolVersion;
       const protocolCompatible = (
         isRemoteProtocolVersion(requestedProtocol)
+        && requestedProtocol === REMOTE_PROTOCOL_VERSION
         && typeof parsed.clientVersion === 'string'
         && parsed.clientVersion.trim().length > 0
-        && (requestedProtocol < REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL
-          || parsed.clientIdentity === undefined
-          || isRemoteClientIdentity(parsed.clientIdentity))
+        && isRemoteClientIdentity(parsed.clientIdentity)
       );
       const candidateToken = parsed.token;
       authPending = true;
@@ -1552,16 +1587,9 @@ export function attachConnection(
           ? (options.pairingSource?.match(candidateToken) ?? null)
           : null;
         if (byBearer || pairingGeneration !== null) {
-          // One-time pairing is introduced and security-reviewed as a v3
-          // handshake. Legacy v1/v2 remains available only to an already
-          // persisted bearer; it must never be a way to redeem a photographed
-          // pairing code with weaker message/state contracts.
-          const pairingProtocolCompatible = pairingGeneration === null
-            || (
-              isRemoteProtocolVersion(requestedProtocol)
-              && requestedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_LIVE
-            );
-          if (!protocolCompatible || !pairingProtocolCompatible) {
+          // Every credential kind requires the exact v7 lifecycle contract;
+          // neither a persisted bearer nor a pairing code can negotiate down.
+          if (!protocolCompatible) {
             send({
               kind: 'auth-fail',
               reason: 'incompatible-protocol',
@@ -1583,10 +1611,25 @@ export function attachConnection(
             return;
           }
           negotiatedProtocol = requestedProtocol as RemoteProtocolVersion;
-          clientIdentity = negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL
-            && isRemoteClientIdentity(parsed.clientIdentity)
+          clientIdentity = isRemoteClientIdentity(parsed.clientIdentity)
             ? parsed.clientIdentity
             : null;
+          if (!clientIdentity) {
+            send({
+              kind: 'auth-fail',
+              reason: 'incompatible-protocol',
+              supportedProtocolVersion: REMOTE_PROTOCOL_VERSION,
+              supportedProtocolVersions: SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
+              hostVersion: options.hostVersion,
+            });
+            ws.close(PROTOCOL_CLOSE_CODE);
+            return;
+          }
+          sessionSurfacePrincipalId = `mobile:${clientIdentity.clientId}:${connectionId}`;
+          sessionSurfaces.connectClient(
+            sessionSurfacePrincipalId,
+            `mobile:${clientIdentity.clientId}`,
+          );
           if (clientIdentity) {
             // This is control authority, not observational presence: register
             // it before auth-ok so an older live socket cannot later reclaim a
@@ -1745,34 +1788,98 @@ export function attachConnection(
         break;
       }
 
-      case 'create-session': {
-        // Echo the CLIENT's own requestId (captured here) on reply so mobile
-        // correlation holds; `.catch` swallows a post-death reject (silent-hang
-        // parity, M1/G2).
-        const { requestId, cwd } = msg;
-        options.broker
-          .createSession(cwd)
-          .then((session) => {
-            send({ kind: 'session-created', requestId, session });
+      case 'session-surface-open': {
+        const { requestId, surfaceId, intent } = msg;
+        const principalId = sessionSurfacePrincipalId;
+        if (!principalId) {
+          send({
+            kind: 'session-surface-open-result',
+            requestId,
+            result: { ok: false, reason: 'unavailable' },
+          });
+          break;
+        }
+        void sessionSurfaces.openSessionSurface(principalId, surfaceId, intent)
+          .then((result) => {
+            if (authed) send({ kind: 'session-surface-open-result', requestId, result });
           })
-          .catch(() => {});
+          .catch(() => {
+            if (authed) {
+              send({
+                kind: 'session-surface-open-result',
+                requestId,
+                result: { ok: false, reason: 'unavailable' },
+              });
+            }
+          });
         break;
       }
 
-      case 'destroy-session':
-        options.broker.destroySession(msg.sessionId);
+      case 'session-surface-prepare-close': {
+        const { requestId, entries } = msg;
+        const result = sessionSurfacePrincipalId
+          ? sessionSurfaces.prepareSessionSurfaceClose(sessionSurfacePrincipalId, entries)
+          : { ok: false as const, reason: 'unavailable' as const };
+        send({ kind: 'session-surface-prepare-close-result', requestId, result });
         break;
+      }
 
-      case 'destroy-session-guarded': {
+      case 'session-surface-commit-close': {
+        const { requestId, closeToken, decisions } = msg;
+        const principalId = sessionSurfacePrincipalId;
+        if (!principalId) {
+          send({
+            kind: 'session-surface-commit-close-result',
+            requestId,
+            result: { ok: false, reason: 'unavailable' },
+          });
+          break;
+        }
+        void (async (): Promise<void> => {
+          try {
+            const result = await sessionSurfaces.commitSessionSurfaceClose(
+              principalId,
+              closeToken,
+              decisions,
+            );
+            if (authed) {
+              send({ kind: 'session-surface-commit-close-result', requestId, result });
+            }
+          } catch {
+            if (authed) {
+              send({
+                kind: 'session-surface-commit-close-result',
+                requestId,
+                result: { ok: false, reason: 'unavailable' },
+              });
+            }
+          }
+        })();
+        break;
+      }
+
+      case 'session-surface-release': {
+        const { requestId, bindingId } = msg;
+        const result = sessionSurfacePrincipalId
+          ? sessionSurfaces.releaseSessionSurface(sessionSurfacePrincipalId, bindingId)
+          : { ok: false as const, reason: 'state-changed' as const };
+        send({ kind: 'session-surface-release-result', requestId, result });
+        break;
+      }
+
+      case 'session-terminate-guarded': {
         const { requestId, sessionId, expectedActiveRunIds } = msg;
         void (async (): Promise<void> => {
           let result: DestroySessionGuardResult;
           try {
-            result = await options.broker.destroySessionGuarded(sessionId, expectedActiveRunIds);
+            result = await sessionSurfaces.terminateSessionGuarded(
+              sessionId,
+              expectedActiveRunIds,
+            );
           } catch {
             result = { ok: false, reason: 'unavailable' };
           }
-          send({ kind: 'session-destroy-result', requestId, result });
+          if (authed) send({ kind: 'session-terminate-result', requestId, result });
         })();
         break;
       }

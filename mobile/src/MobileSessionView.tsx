@@ -10,7 +10,13 @@ import { registerPaneInput, unregisterPaneInput } from '../../src/renderer/pane-
 import { keyToPtyBytes } from '../../src/renderer/pty-keys';
 import { TerminalContextMenu, type TerminalContextMenuItem } from '../../src/renderer/TerminalContextMenu';
 import type { TerminalRuntimeOptions } from '../../src/renderer/xterm-runtime';
-import type { RunStartedInfo } from '../../src/shared/ipc';
+import type { ExecutionKind, RunStartedInfo } from '../../src/shared/ipc';
+import {
+  classifyCloseRisk,
+  sameActiveRunSet,
+  type CloseRisk,
+} from '../../src/shared/close-risk';
+import type { SessionSurfaceBinding } from '../../src/shared/session-surface';
 import type { AgentTerminalBootstrap } from '../../src/shared/agent-history';
 import {
   EMPTY_GIT_DIRECTORY_STATUS,
@@ -35,9 +41,39 @@ import { MobileActionSheet } from './MobileActionSheet';
 import { MobileQuickCommandSheet, type MobileQuickCommandSource } from './MobileQuickCommandSheet';
 import { useMobileToast } from './MobileToast';
 import { TouchInputBar } from './TouchInputBar';
+import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
 /** Handoff §3: a single scrollable row of recent commands, not a history page. */
 const SNIPPET_LIMIT = 5;
+
+const CLOSE_RISK_LABEL_KEY = {
+  'ssh-prompt': 'mobile.sessionManager.risk.sshPrompt',
+  'active-agent': 'mobile.sessionManager.risk.activeAgent',
+  'ssh-active': 'mobile.sessionManager.risk.sshActive',
+  'running-command': 'mobile.sessionManager.risk.runningCommand',
+  unknown: 'mobile.sessionManager.risk.unknown',
+} as const satisfies Record<CloseRisk, string>;
+
+interface MobileCloseObservation {
+  readonly activeRunIds: readonly string[];
+  readonly executionKind: ExecutionKind | null;
+  readonly hasSshPrompt: boolean;
+  readonly hasActiveAgent: boolean;
+  readonly isDead: boolean;
+  readonly risk: CloseRisk | null;
+}
+
+function sameCloseObservation(
+  current: MobileCloseObservation,
+  expected: MobileCloseObservation,
+): boolean {
+  return sameActiveRunSet(current.activeRunIds, expected.activeRunIds)
+    && current.executionKind === expected.executionKind
+    && current.hasSshPrompt === expected.hasSshPrompt
+    && current.hasActiveAgent === expected.hasActiveAgent
+    && current.isDead === expected.isDead
+    && current.risk === expected.risk;
+}
 
 /**
  * Control byte for a latched Ctrl + single letter, or null when the latch is
@@ -60,13 +96,11 @@ const MOBILE_TERMINAL_RUNTIME_OPTIONS: TerminalRuntimeOptions = Object.freeze({
 
 // MobileSessionView — the mobile analogue of the desktop's TerminalPane.tsx.
 // Reuses `BlockController`/`Block.tsx` UNMODIFIED (same `_ezPort` window-
-// message handshake, same command-input/history/cancel/dismiss wiring). The
-// ONE deliberate difference is session lifecycle: TerminalPane always mints a
-// FRESH session on mount and destroys it on unmount (one pane = one session,
-// forever, on desktop). Here the phone is switching between potentially
-// several sessions ALREADY running on the desktop (SessionSwitcher owns
-// create/destroy) — this view only ATTACHES to the `sessionId` it's given and
-// never creates or destroys a session itself. Everything below `sessionId`
+// message handshake, same command-input/history/cancel/dismiss wiring).
+// Session lifecycle uses the same host-issued surface contract as desktop.
+// MobileWorkspace opens the binding represented by this mounted view; this
+// component owns guarded close/background retention and unexpected-unmount
+// release. Everything below `sessionId`
 // (command running, block list, cancel, dismiss, history recall) is a direct
 // port of TerminalPane's logic.
 //
@@ -213,6 +247,8 @@ export function MobileSessionView({
   quickCommandSource,
   quickCommandsSupported = false,
   connected = true,
+  transport,
+  surfaceBinding,
   agentBootstrap,
   onSessionDead,
   onCwdChange,
@@ -229,12 +265,13 @@ export function MobileSessionView({
   quickCommandSource?: MobileQuickCommandSource;
   quickCommandsSupported?: boolean;
   connected?: boolean;
+  /** Host-issued capability for this exact mounted mobile tab. */
+  transport?: WsEzTerminalTransport;
+  surfaceBinding?: SessionSurfaceBinding | null;
   /** One-shot Agent resume or project-new-chat launch for this rooted session. */
   agentBootstrap?: AgentTerminalBootstrap;
   onSessionDead?: () => void;
-  /** Closes this tab locally (the session itself keeps running on the
-   * desktop). Reached from the status line now that the tab strip's per-pill
-   * close button is gone. */
+  /** Removes the local tab after its host surface transaction commits. */
   onCloseTab?: () => void;
   /** Best-effort cwd snapshot (file-explorer plan, M4) — mirrors desktop
    * TerminalPane's `setPaneCwd` call site (latest `end`, falling back to
@@ -298,6 +335,12 @@ export function MobileSessionView({
   const [terminalPathPreview, setTerminalPathPreview] = useState<TerminalPathPreview | null>(null);
   const [terminalPathError, setTerminalPathError] = useState<string | null>(null);
   const terminalPathReturnFocusRef = useRef<HTMLElement | null>(null);
+  const [closeBusy, setCloseBusy] = useState(false);
+  const [closePrompt, setClosePrompt] = useState<{
+    readonly observation: MobileCloseObservation;
+    readonly risk: CloseRisk;
+  } | null>(null);
+  const closeReturnFocusRef = useRef<HTMLElement | null>(null);
   // Latest callback in a ref (not an effect dependency) so a fresh inline
   // closure from MobileWorkspace on every render doesn't churn the
   // subscribe/unsubscribe below.
@@ -305,6 +348,10 @@ export function MobileSessionView({
   onSessionDeadRef.current = onSessionDead;
   const onCwdChangeRef = useRef(onCwdChange);
   onCwdChangeRef.current = onCwdChange;
+  const onCloseTabRef = useRef(onCloseTab);
+  onCloseTabRef.current = onCloseTab;
+  const surfaceBindingRef = useRef(surfaceBinding);
+  surfaceBindingRef.current = surfaceBinding;
 
   useLayoutEffect(() => {
     if (active) return;
@@ -374,6 +421,172 @@ export function MobileSessionView({
   const knownRunIdsRef = useRef(new Set<string>());
   const pendingHandoffRunIdsRef = useRef(new Set<string>());
   const mountedRef = useRef(true);
+
+  const collectCloseObservation = useCallback(async (
+    binding: SessionSurfaceBinding,
+  ): Promise<MobileCloseObservation> => {
+    if (!transport) throw new Error('Session surface transport unavailable');
+    const [runs, activity] = await Promise.all([
+      transport.listRuns(),
+      transport.getAgentActivitySnapshot(),
+    ]);
+    if (surfaceBindingRef.current?.bindingId !== binding.bindingId) {
+      throw new Error('Session surface binding changed');
+    }
+    const sessionRuns = runs
+      .filter((run) => run.sessionId === sessionId)
+      .sort((left, right) => left.runId.localeCompare(right.runId));
+    const activeSnapshot = activeController.current?.getSnapshot();
+    const executionKind = activeSnapshot?.status === 'running'
+      ? activeSnapshot.executionKind
+      : sessionRuns[0]?.executionKind ?? null;
+    const hasActiveAgent = activity.items.some((item) => (
+      item.sessionId === sessionId
+      && item.status !== 'done'
+      && item.status !== 'error'
+    ));
+    const input = {
+      destroysSession: binding.role === 'owner',
+      isBusy: sessionRuns.length > 0,
+      executionKind,
+      hasSshPrompt: activeSnapshot?.sshPrompt != null,
+      hasActiveAgent,
+      isDead: sessionDead,
+    } as const;
+    return Object.freeze({
+      activeRunIds: Object.freeze(sessionRuns.map((run) => run.runId)),
+      executionKind,
+      hasSshPrompt: input.hasSshPrompt,
+      hasActiveAgent,
+      isDead: sessionDead,
+      risk: classifyCloseRisk(input),
+    });
+  }, [sessionDead, sessionId, transport]);
+
+  const commitSurfaceClose = useCallback(async (
+    binding: SessionSurfaceBinding,
+    observation: MobileCloseObservation,
+    disposition: 'terminate' | 'keep' | null,
+  ): Promise<boolean> => {
+    if (!transport || surfaceBindingRef.current?.bindingId !== binding.bindingId) return false;
+    const preparation = await transport.prepareSessionSurfaceClose([{
+      bindingId: binding.bindingId,
+      expectedActiveRunIds: observation.activeRunIds,
+    }]);
+    if (!preparation.ok) {
+      showToast(t('safetyDialog.terminalStateChangedDescription'));
+      return false;
+    }
+    const item = preparation.prepared.items[0];
+    if (
+      preparation.prepared.items.length !== 1
+      || item?.bindingId !== binding.bindingId
+      || item.surfaceId !== binding.surfaceId
+      || item.sessionId !== sessionId
+      || item.role !== binding.role
+      || surfaceBindingRef.current?.bindingId !== binding.bindingId
+    ) {
+      showToast(t('safetyDialog.terminalStateChangedDescription'));
+      return false;
+    }
+
+    if (binding.role === 'owner') {
+      if (disposition === null) return false;
+      const current = await collectCloseObservation(binding);
+      if (!sameCloseObservation(current, observation)) {
+        setClosePrompt({ observation: current, risk: current.risk ?? 'unknown' });
+        showToast(t('safetyDialog.terminalStateChangedDescription'));
+        return false;
+      }
+    } else if (disposition !== null) {
+      return false;
+    }
+
+    const result = await transport.commitSessionSurfaceClose(
+      preparation.prepared.closeToken,
+      binding.role === 'owner'
+        ? [{ bindingId: binding.bindingId, disposition: disposition! }]
+        : [],
+    );
+    if (!result.ok) {
+      showToast(t('safetyDialog.terminalStateChangedDescription'));
+      return false;
+    }
+    setClosePrompt(null);
+    if (disposition === 'keep') showToast(t('safetyDialog.keptRunning'));
+    onCloseTabRef.current?.();
+    return true;
+  }, [collectCloseObservation, sessionId, showToast, t, transport]);
+
+  const requestSurfaceClose = useCallback(async (): Promise<void> => {
+    const binding = surfaceBindingRef.current;
+    if (
+      closeBusy
+      || !connected
+      || !transport
+      || !binding
+      || binding.session.sessionId !== sessionId
+    ) {
+      return;
+    }
+    closeReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setCloseBusy(true);
+    try {
+      if (binding.role === 'adopted') {
+        await commitSurfaceClose(binding, {
+          activeRunIds: [],
+          executionKind: null,
+          hasSshPrompt: false,
+          hasActiveAgent: false,
+          isDead: sessionDead,
+          risk: null,
+        }, null);
+        return;
+      }
+      const observation = await collectCloseObservation(binding);
+      if (observation.risk !== null) {
+        setClosePrompt({ observation, risk: observation.risk });
+        return;
+      }
+      await commitSurfaceClose(binding, observation, 'terminate');
+    } catch {
+      showToast(t('safetyDialog.terminalStateChangedDescription'));
+    } finally {
+      if (mountedRef.current) setCloseBusy(false);
+    }
+  }, [closeBusy, collectCloseObservation, commitSurfaceClose, connected, sessionDead, sessionId, showToast, t, transport]);
+
+  const confirmSurfaceClose = useCallback(async (
+    disposition: 'terminate' | 'keep',
+  ): Promise<void> => {
+    const binding = surfaceBindingRef.current;
+    if (closeBusy || !binding || binding.role !== 'owner' || !closePrompt) return;
+    setCloseBusy(true);
+    try {
+      await commitSurfaceClose(binding, closePrompt.observation, disposition);
+    } catch {
+      showToast(t('safetyDialog.terminalStateChangedDescription'));
+    } finally {
+      if (mountedRef.current) setCloseBusy(false);
+    }
+  }, [closeBusy, closePrompt, commitSurfaceClose, showToast, t]);
+
+  const cancelSurfaceClose = useCallback((): void => {
+    setClosePrompt(null);
+    const target = closeReturnFocusRef.current;
+    requestAnimationFrame(() => target?.focus());
+  }, []);
+
+  useEffect(() => {
+    setClosePrompt(null);
+    const bindingId = surfaceBinding?.bindingId;
+    if (!transport || !bindingId) return undefined;
+    return () => {
+      void transport.releaseSessionSurface(bindingId);
+    };
+  }, [surfaceBinding?.bindingId, transport]);
 
   useLayoutEffect(() => {
     const abortPending = (reason: string): void => {
@@ -966,6 +1179,54 @@ export function MobileSessionView({
         onClosePreview={() => setTerminalPathPreview(null)}
       />
 
+      {closePrompt && (
+        <MobileActionSheet
+          title={t('mobile.sessionManager.closeTabTitle')}
+          description={t('mobile.sessionManager.closeTabDescription', {
+            risk: t(CLOSE_RISK_LABEL_KEY[closePrompt.risk]),
+            cwd: liveCwd,
+          })}
+          onClose={cancelSurfaceClose}
+          returnFocusRef={closeReturnFocusRef}
+          role="alertdialog"
+          showCloseButton={false}
+          testId="terminal-close-dialog"
+          backdropTestId="terminal-close-backdrop"
+        >
+          <button
+            type="button"
+            className="mobile-action-sheet-row"
+            onClick={cancelSurfaceClose}
+            disabled={closeBusy}
+            data-testid="terminal-close-cancel"
+          >
+            <span className="mobile-action-sheet-row-label">{t('common.cancel')}</span>
+          </button>
+          <button
+            type="button"
+            className="mobile-action-sheet-row"
+            onClick={() => void confirmSurfaceClose('keep')}
+            disabled={closeBusy}
+            data-testid="terminal-close-keep"
+          >
+            <span className="mobile-action-sheet-row-label">
+              {t('mobile.sessionManager.keepInBackground')}
+            </span>
+          </button>
+          <button
+            type="button"
+            className="mobile-action-sheet-row mobile-action-sheet-row--danger"
+            onClick={() => void confirmSurfaceClose('terminate')}
+            disabled={closeBusy}
+            data-testid="terminal-close-terminate"
+          >
+            <span className="mobile-action-sheet-row-label">
+              {t('mobile.sessionManager.terminateAndClose')}
+            </span>
+          </button>
+        </MobileActionSheet>
+      )}
+
       <div className="mob-status-line" data-testid="terminal-status-line">
         {/* Git's branch when the directory has one; the directory itself when
             it does not. The icon follows the value rather than labelling a cwd
@@ -999,7 +1260,14 @@ export function MobileSessionView({
           <button
             type="button"
             className="mob-status-line__link"
-            onClick={onCloseTab}
+            onClick={() => void requestSurfaceClose()}
+            disabled={
+              closeBusy
+              || !connected
+              || !transport
+              || !surfaceBinding
+              || surfaceBinding.session.sessionId !== sessionId
+            }
             data-testid="terminal-close-tab"
           >
             <X aria-hidden="true" width={11} height={11} />

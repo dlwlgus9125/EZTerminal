@@ -1,4 +1,9 @@
 import type { SessionInfo } from '../shared/ipc';
+import type {
+  SessionSurfaceBinding,
+  SessionSurfaceIntent,
+  SessionSurfaceReleaseResult,
+} from '../shared/session-surface';
 import type { WorkbenchCoordinator } from './workbench-coordinator';
 
 export type PaneInstanceToken = object;
@@ -6,13 +11,17 @@ export type PaneInstanceToken = object;
 export interface SessionPaneBinding {
   readonly panelId: string;
   readonly instanceToken: PaneInstanceToken;
+  readonly surfaceId: string;
+  readonly bindingId: string;
+  readonly role: SessionSurfaceBinding['role'];
 }
 
 export interface SessionPaneLease {
-  /** Bind this exact pane instance once. False means the lease was disposed or
-   * was already bound to a different session. */
-  bind(actualSessionId: string): boolean;
-  /** Idempotently release both pending-adopt and bound ownership. */
+  readonly surfaceId: string;
+  readonly intent: SessionSurfaceIntent;
+  /** Project one host-issued binding onto this exact mounted pane. */
+  bind(binding: SessionSurfaceBinding): boolean;
+  /** Idempotently release pending/bound projection; host release always keeps work. */
   dispose(): void;
 }
 
@@ -29,6 +38,10 @@ export interface SessionMirroringCoordinatorOptions {
   readonly workbench: Pick<WorkbenchCoordinator, 'openTerminal' | 'closePanel'>;
   readonly onSessionAdded: (listener: (session: SessionInfo) => void) => () => void;
   readonly onSessionRemoved: (listener: (sessionId: string) => void) => () => void;
+  readonly releaseSessionSurface: (
+    bindingId: string,
+  ) => Promise<SessionSurfaceReleaseResult>;
+  readonly newSurfaceId?: () => string;
   readonly onError?: (message: string, error: unknown) => void;
 }
 
@@ -65,6 +78,32 @@ interface ReplacementState {
  * panel API object (unique for one mounted Dockview panel instance) is the
  * identity key. A session may intentionally be shown by more than one pane.
  */
+interface MountedSurfaceRecord {
+  readonly panelId: string;
+  readonly instanceToken: PaneInstanceToken;
+  readonly surfaceId: string;
+  readonly intent: SessionSurfaceIntent;
+  readonly requestedAdoptSessionId?: string;
+  binding: SessionSurfaceBinding | null;
+  mountGeneration: number;
+  mounted: boolean;
+  disposeTimer: ReturnType<typeof setTimeout> | null;
+}
+
+function sameIntent(first: SessionSurfaceIntent, second: SessionSurfaceIntent): boolean {
+  if (first.kind !== second.kind) return false;
+  switch (first.kind) {
+    case 'create':
+      return second.kind === 'create' && first.cwd === second.cwd;
+    case 'adopt':
+      return second.kind === 'adopt' && first.sessionId === second.sessionId;
+    case 'restore':
+      return second.kind === 'restore'
+        && first.sessionId === second.sessionId
+        && first.cwd === second.cwd;
+  }
+}
+
 class SessionPaneRegistry {
   private readonly boundBySession = new Map<
     string,
@@ -84,7 +123,14 @@ class SessionPaneRegistry {
     { readonly panelId: string; readonly requestedSessionId: string }
   >();
 
-  public constructor(private readonly onBoundChange: () => void) {}
+  private readonly mounted = new Map<PaneInstanceToken, MountedSurfaceRecord>();
+
+  public constructor(
+    private readonly onBoundChange: () => void,
+    private readonly releaseSessionSurface: (bindingId: string) => Promise<SessionSurfaceReleaseResult>,
+    private readonly newSurfaceId: () => string,
+    private readonly onError: (message: string, error: unknown) => void,
+  ) {}
 
   /** Register an auto-mirror immediately after the workbench returns its exact
    * panel identity. TerminalPane's later mount is idempotent with this call. */
@@ -98,44 +144,96 @@ class SessionPaneRegistry {
     this.bucket(this.pendingBySession, requestedSessionId).set(instanceToken, {
       panelId,
       instanceToken,
+      surfaceId: '',
+      bindingId: '',
+      role: 'adopted',
     });
   }
 
   public mountPane(
     panelId: string,
     instanceToken: PaneInstanceToken,
+    initialCwd?: string,
     requestedAdoptSessionId?: string,
   ): SessionPaneLease {
     const autoMirrorOrigin = this.autoMirrorOrigins.get(instanceToken);
-    if (
+    const isAutoMirror = Boolean(
       requestedAdoptSessionId
       && autoMirrorOrigin?.requestedSessionId === requestedAdoptSessionId
       && autoMirrorOrigin.panelId === panelId
-    ) {
+    );
+    if (isAutoMirror && requestedAdoptSessionId) {
       // StrictMode setup -> cleanup -> setup uses the same panel API object.
       // Reacquire only the provenance registered before the first setup.
       this.trackPending(requestedAdoptSessionId, panelId, instanceToken);
+    } else if (requestedAdoptSessionId) {
+      this.addPending(requestedAdoptSessionId, panelId, instanceToken);
     }
 
+    const intent: SessionSurfaceIntent = requestedAdoptSessionId
+      ? { kind: 'adopt', sessionId: requestedAdoptSessionId }
+      : { kind: 'create', ...(initialCwd ? { cwd: initialCwd } : {}) };
+    let record = this.mounted.get(instanceToken);
+    const valid = !record || (record.panelId === panelId && sameIntent(record.intent, intent));
+    if (!record) {
+      record = {
+        panelId,
+        instanceToken,
+        surfaceId: this.newSurfaceId(),
+        intent,
+        ...(requestedAdoptSessionId ? { requestedAdoptSessionId } : {}),
+        binding: null,
+        mountGeneration: 0,
+        mounted: true,
+        disposeTimer: null,
+      };
+      this.mounted.set(instanceToken, record);
+    }
+    if (record.disposeTimer) {
+      clearTimeout(record.disposeTimer);
+      record.disposeTimer = null;
+    }
+    record.mounted = true;
+    record.mountGeneration += 1;
+    const mountGeneration = record.mountGeneration;
     let disposed = false;
-    let boundSessionId: string | null = null;
 
     return {
-      bind: (actualSessionId: string): boolean => {
-        if (disposed) return false;
-        if (boundSessionId !== null) return boundSessionId === actualSessionId;
+      surfaceId: record.surfaceId,
+      intent: record.intent,
+      bind: (binding: SessionSurfaceBinding): boolean => {
+        const current = this.mounted.get(instanceToken);
+        if (
+          !valid
+          || current !== record
+          || !record.mounted
+          || binding.surfaceId !== record.surfaceId
+        ) {
+          this.release(binding.bindingId);
+          return false;
+        }
+        if (record.binding !== null) {
+          if (record.binding.bindingId === binding.bindingId) return true;
+          this.release(binding.bindingId);
+          return false;
+        }
+        if (
+          record.intent.kind === 'adopt'
+          && record.intent.sessionId !== binding.session.sessionId
+        ) {
+          this.release(binding.bindingId);
+          return false;
+        }
 
-        this.bucket(this.boundBySession, actualSessionId).set(instanceToken, {
+        record.binding = binding;
+        this.bucket(this.boundBySession, binding.session.sessionId).set(instanceToken, {
           panelId,
           instanceToken,
+          surfaceId: binding.surfaceId,
+          bindingId: binding.bindingId,
+          role: binding.role,
         });
-        boundSessionId = actualSessionId;
-
-        // A successful adoption is now represented by the bound bucket. An
-        // auto-mirror fallback deliberately retains its pre-registered pending
-        // entry; an ordinary restored/manual adoption has no such entry, so its
-        // documented fresh-session fallback remains open.
-        if (requestedAdoptSessionId === actualSessionId) {
+        if (requestedAdoptSessionId) {
           this.deleteExact(this.pendingBySession, requestedAdoptSessionId, instanceToken);
         }
         this.onBoundChange();
@@ -144,15 +242,34 @@ class SessionPaneRegistry {
       dispose: (): void => {
         if (disposed) return;
         disposed = true;
-        if (requestedAdoptSessionId) {
-          this.deleteExact(this.pendingBySession, requestedAdoptSessionId, instanceToken);
-        }
-        if (
-          boundSessionId !== null
-          && this.deleteExact(this.boundBySession, boundSessionId, instanceToken)
-        ) {
-          this.onBoundChange();
-        }
+        record.disposeTimer = setTimeout(() => {
+          if (
+            this.mounted.get(instanceToken) !== record
+            || record.mountGeneration !== mountGeneration
+          ) return;
+          record.disposeTimer = null;
+          record.mounted = false;
+          this.mounted.delete(instanceToken);
+          if (record.requestedAdoptSessionId) {
+            this.deleteExact(
+              this.pendingBySession,
+              record.requestedAdoptSessionId,
+              instanceToken,
+            );
+          }
+          const binding = record.binding;
+          if (
+            binding
+            && this.deleteExact(
+              this.boundBySession,
+              binding.session.sessionId,
+              instanceToken,
+            )
+          ) {
+            this.onBoundChange();
+          }
+          if (binding) this.release(binding.bindingId);
+        }, 0);
       },
     };
   }
@@ -169,6 +286,10 @@ class SessionPaneRegistry {
     const pending = [...(this.pendingBySession.get(sessionId)?.values() ?? [])];
     this.boundBySession.delete(sessionId);
     this.pendingBySession.delete(sessionId);
+    for (const candidate of bound) {
+      const record = this.mounted.get(candidate.instanceToken);
+      if (record?.binding?.bindingId === candidate.bindingId) record.binding = null;
+    }
     if (bound.length > 0) this.onBoundChange();
     return { bound, pending };
   }
@@ -193,6 +314,27 @@ class SessionPaneRegistry {
     return created;
   }
 
+  private addPending(
+    requestedSessionId: string,
+    panelId: string,
+    instanceToken: PaneInstanceToken,
+  ): void {
+    if (this.boundBySession.get(requestedSessionId)?.has(instanceToken)) return;
+    this.bucket(this.pendingBySession, requestedSessionId).set(instanceToken, {
+      panelId,
+      instanceToken,
+      surfaceId: '',
+      bindingId: '',
+      role: 'adopted',
+    });
+  }
+
+  private release(bindingId: string): void {
+    void this.releaseSessionSurface(bindingId).catch((error: unknown) => {
+      this.onError('could not release a session surface', error);
+    });
+  }
+
   private deleteExact(
     source: Map<string, Map<PaneInstanceToken, SessionPaneBinding>>,
     sessionId: string,
@@ -215,7 +357,7 @@ class SessionPaneRegistry {
  */
 export class SessionMirroringCoordinator {
   private readonly listeners = new Set<() => void>();
-  private readonly registry = new SessionPaneRegistry(() => this.publishBindings());
+  private readonly registry: SessionPaneRegistry;
   private connection: Connection | null = null;
   private nextGeneration = 0;
   private readonly pendingAdditions = new Map<string, PendingAdditionTimer>();
@@ -227,7 +369,14 @@ export class SessionMirroringCoordinator {
     bindingsBySession: this.bindingsBySession,
   });
 
-  public constructor(private readonly options: SessionMirroringCoordinatorOptions) {}
+  public constructor(private readonly options: SessionMirroringCoordinatorOptions) {
+    this.registry = new SessionPaneRegistry(
+      () => this.publishBindings(),
+      options.releaseSessionSurface,
+      options.newSurfaceId ?? (() => globalThis.crypto.randomUUID()),
+      (message, error) => this.reportError(message, error),
+    );
+  }
 
   public readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -283,9 +432,15 @@ export class SessionMirroringCoordinator {
   public mountPane(
     panelId: string,
     instanceToken: PaneInstanceToken,
+    initialCwd?: string,
     requestedAdoptSessionId?: string,
   ): SessionPaneLease {
-    return this.registry.mountPane(panelId, instanceToken, requestedAdoptSessionId);
+    return this.registry.mountPane(
+      panelId,
+      instanceToken,
+      initialCwd,
+      requestedAdoptSessionId,
+    );
   }
 
   /** Acquire the sole workspace replacement authority. Events received while
