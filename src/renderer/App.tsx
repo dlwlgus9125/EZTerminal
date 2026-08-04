@@ -1,4 +1,13 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useEffect, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { X } from 'lucide-react';
 import {
   DockviewReact,
@@ -89,7 +98,11 @@ import {
   preflightLayoutEnvelope,
   removePanelFromLayoutEnvelope,
 } from './layout-preflight';
-import { SessionPanelTracker, type PaneInstanceToken, type SessionPaneLease } from './session-panel-tracker';
+import {
+  SessionMirroringCoordinator,
+  type PaneInstanceToken,
+  type SessionPaneLease,
+} from './session-mirroring-coordinator';
 import { applyThemeVarsAndEffects, setUserFontId, themeModToDefinition } from './theme-runtime';
 import { THEME_ORDER, THEMES, listThemes, registerTheme, type ThemeDefinition } from './themes';
 import { applyScrollback, clampScrollback, SCROLLBACK_DEFAULT } from './scrollback';
@@ -144,10 +157,7 @@ import {
   type LayoutTransactionOptions,
   type WorkbenchPanelPosition,
 } from './workbench-coordinator';
-import {
-  WorkspaceReplacementCoordinator,
-  WorkspaceReplacementLeaseController,
-} from './workspace-replacement-coordinator';
+import { WorkspaceReplacementCoordinator } from './workspace-replacement-coordinator';
 import { applyWorkbenchLayoutPreset, type WorkbenchLayoutPreset } from './workbench-layout-presets';
 import { DEFAULT_TERMINAL_RUNTIME_OPTIONS, type TerminalRuntimeOptions } from './xterm-runtime';
 
@@ -457,6 +467,7 @@ export function App(): JSX.Element {
   const sidebarReflow = useSidebarReflow();
   const apiRef = useRef<DockviewApi | null>(null);
   const popoutBehaviorRef = useRef<{ dispose(): void } | null>(null);
+  const sessionMirroringConnectionRef = useRef<(() => void) | null>(null);
   const paneLifecycleCoordinatorRef = useRef<PaneLifecycleCoordinator | null>(null);
   if (paneLifecycleCoordinatorRef.current === null) {
     paneLifecycleCoordinatorRef.current = new PaneLifecycleCoordinator({
@@ -470,21 +481,9 @@ export function App(): JSX.Element {
   const [closeDialog, setCloseDialog] = useState<CloseDialogState | null>(null);
   const [auxiliaryCloseDialog, setAuxiliaryCloseDialog] =
     useState<AuxiliaryCloseDialogState | null>(null);
-  const [presetApplyPending, setPresetApplyPending] = useState(false);
-  const scheduleSessionMirrorRef = useRef<((session: SessionInfo) => void) | null>(null);
-  const scheduleSessionRemovalRef = useRef<((sessionId: string) => void) | null>(null);
-  const presetMutationLeaseRef =
-    useRef<WorkspaceReplacementLeaseController<SessionInfo> | null>(null);
-  if (presetMutationLeaseRef.current === null) {
-    presetMutationLeaseRef.current = new WorkspaceReplacementLeaseController({
-      onLockChange: setPresetApplyPending,
-      replayRemoval: (sessionId) => scheduleSessionRemovalRef.current?.(sessionId),
-      replayAddition: (session) => scheduleSessionMirrorRef.current?.(session),
-    });
-  }
-  const presetMutationLease = presetMutationLeaseRef.current;
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
   const [recentPanelSwitch, setRecentPanelSwitch] = useState<RecentPanelSwitchSession | null>(null);
+  const sessionMirroringCoordinatorRef = useRef<SessionMirroringCoordinator | null>(null);
   const workbenchCoordinatorRef = useRef<WorkbenchCoordinator | null>(null);
   if (workbenchCoordinatorRef.current === null) {
     workbenchCoordinatorRef.current = new WorkbenchCoordinator({
@@ -493,7 +492,11 @@ export function App(): JSX.Element {
         flushLayout: () => window.ezterminal.flushLayout(),
         quarantineLayout: () => window.ezterminal.quarantineLayout(),
       },
-      isPaneCreationLocked: () => presetMutationLease.isLocked(),
+      // Construction is cyclic only at the callback boundary: the workbench
+      // exists first, then its mirroring owner is installed in the same render.
+      // Fail closed if a call somehow arrives inside that narrow interval.
+      isPaneCreationLocked: () =>
+        sessionMirroringCoordinatorRef.current?.getSnapshot().replacementLocked ?? true,
       onActivePanelChange: (panelId, source) => {
         setActivePanelId(panelId);
         setPaneCount(apiRef.current?.panels.length ?? 0);
@@ -516,6 +519,22 @@ export function App(): JSX.Element {
     });
   }
   const workbenchCoordinator = workbenchCoordinatorRef.current;
+  if (sessionMirroringCoordinatorRef.current === null) {
+    sessionMirroringCoordinatorRef.current = new SessionMirroringCoordinator({
+      workbench: workbenchCoordinator,
+      onSessionAdded: (listener) =>
+        window.ezterminal?.onSessionAdded?.(listener) ?? (() => undefined),
+      onSessionRemoved: (listener) =>
+        window.ezterminal?.onSessionRemoved?.(listener) ?? (() => undefined),
+      onError: (message, error) => console.error(`[renderer] ${message}:`, error),
+    });
+  }
+  const sessionMirroringCoordinator = sessionMirroringCoordinatorRef.current;
+  const sessionMirroringSnapshot = useSyncExternalStore(
+    sessionMirroringCoordinator.subscribe,
+    sessionMirroringCoordinator.getSnapshot,
+  );
+  const sessionPaneBindings = sessionMirroringSnapshot.bindingsBySession;
   const workspaceReplacementCoordinatorRef =
     useRef<WorkspaceReplacementCoordinator | null>(null);
   if (workspaceReplacementCoordinatorRef.current === null) {
@@ -527,26 +546,28 @@ export function App(): JSX.Element {
       preflightLayout: preflightLayoutEnvelope,
       replaceLayout: (envelope, authorize) =>
         workbenchCoordinator.replaceWorkspaceLayout(envelope, authorize),
-      acquireLease: () => presetMutationLease.acquire(),
+      acquireLease: () => sessionMirroringCoordinator.acquireWorkspaceReplacementLease(),
       onError: (message, error) => console.error(`[renderer] ${message}:`, error),
     });
   }
   const workspaceReplacementCoordinator = workspaceReplacementCoordinatorRef.current;
   useEffect(
     () => () => {
+      sessionMirroringConnectionRef.current?.();
+      sessionMirroringConnectionRef.current = null;
       popoutBehaviorRef.current?.dispose();
       popoutBehaviorRef.current = null;
       workbenchCoordinator.detach();
       apiRef.current = null;
     },
-    [workbenchCoordinator],
+    [sessionMirroringCoordinator, workbenchCoordinator],
   );
   const presetMutationValue = useMemo<PresetMutationContextValue>(
     () => ({
-      locked: presetApplyPending,
-      isLocked: () => presetMutationLease.isLocked(),
+      locked: sessionMirroringSnapshot.replacementLocked,
+      isLocked: () => sessionMirroringCoordinator.getSnapshot().replacementLocked,
     }),
-    [presetApplyPending, presetMutationLease],
+    [sessionMirroringCoordinator, sessionMirroringSnapshot.replacementLocked],
   );
   const [quickPreview, setQuickPreview] = useState<QuickOpenFilePreview | null>(null);
   const quickPreviewSequenceRef = useRef(0);
@@ -712,152 +733,18 @@ export function App(): JSX.Element {
     return null;
   }, [waitForOpenClawVisibility]);
 
-  // ── Session mirroring (M2: full mirroring across desktop tabs + mobile) ──
-  // sessionId -> panelId for every panel this window has bound (created OR
-  // adopted) a session for. Two jobs: (1) self-filter `onSessionAdded`, an
-  // unconditional broadcast that also fires for a session THIS window itself
-  // just created/adopted (correlated response -> broadcast ordering is a
-  // main-side guarantee — see remote-protocol.ts — so the map entry is
-  // already there by the time the echo arrives); (2) find the panel to close
-  // when `onSessionRemoved` reports a session gone from elsewhere.
-  const [sessionPanelRevision, setSessionPanelRevision] = useState(0);
-  const sessionPanelTrackerRef = useRef<SessionPanelTracker | null>(null);
-  if (sessionPanelTrackerRef.current === null) {
-    sessionPanelTrackerRef.current = new SessionPanelTracker(() => {
-      setSessionPanelRevision((value) => value + 1);
-    });
-  }
-  const sessionPanelTracker = sessionPanelTrackerRef.current;
-
+  // The coordinator owns exact pane/session identity; TerminalPane only reports
+  // when its requested adoption or newly-created session actually binds.
   const mountSessionPane = useCallback(
     (panelId: string, instanceToken: PaneInstanceToken, requestedAdoptSessionId?: string): SessionPaneLease =>
-      sessionPanelTracker.mountPane(panelId, instanceToken, requestedAdoptSessionId),
-    [sessionPanelTracker],
+      sessionMirroringCoordinator.mountPane(panelId, instanceToken, requestedAdoptSessionId),
+    [sessionMirroringCoordinator],
   );
 
   const sessionBindingValue = useMemo<SessionBindingContextValue>(
     () => ({ mountPane: mountSessionPane }),
     [mountSessionPane],
   );
-
-  // A session created/destroyed on ANY surface (another desktop tab/window, or
-  // mobile) gets mirrored here: an unknown id adds a new ADOPT-mode tab
-  // (T2.3); a removed id closes whichever panel is bound to it (self-echo for
-  // a LOCAL destroy is a no-op — TerminalPane's unmount already called
-  // its exact instance lease cleanup synchronously before the broadcast comes
-  // back).
-  //
-  // The ADD side needs a defer that REMOVE doesn't (confirmed race, e2e/
-  // splits.spec.ts flake under load): TerminalPane's `createSession()` reply
-  // resolves a Promise, so its continuation (`bindSession` -> lease.bind()) is
-  // a MICROTASK.
-  // `onSessionAdded`'s broadcast, in contrast, fires a plain SYNCHRONOUS
-  // `ipcRenderer.on` listener — main already sends the reply before the
-  // broadcast (it resolves the correlated Promise first, then calls
-  // `sessionDirectory.add()`, whose own listener dispatch is deferred via
-  // `setImmediate` — see session-directory.ts's module doc, ADR C6), but that
-  // only orders WHEN main SENDS the two messages. If the renderer ever has a
-  // backlog of already-arrived IPC messages (plausible under load — an
-  // isolated run of this spec never reproduced the flake, only the full
-  // gate's contention did) and drains more than one in a single JS task
-  // before a microtask checkpoint, the synchronous broadcast handler can run
-  // BEFORE the reply's microtask gets a turn — this pane's OWN new session
-  // would then look "unknown" and get a duplicate adopt-mode panel (nothing
-  // would ever clean that duplicate up — closing either one just deletes
-  // whichever entry currently occupies the map's single slot for that
-  // sessionId, since `Map.set` last-write-wins; the other stays a stray,
-  // un-trackable extra pane indefinitely, worth restating since it's why
-  // this needs to be airtight, not just usually-fine).
-  //
-  // Deferring the CHECK by one macrotask (not just one microtask — Electron's
-  // exact number of internal microtask hops for an `invoke` reply isn't
-  // something to rely on) is airtight regardless of the precise interleaving:
-  // a macrotask callback only runs once the CURRENT task's microtask queue is
-  // fully drained, and if the two IPC messages were instead dispatched as two
-  // SEPARATE tasks, every microtask from the earlier one drains before the
-  // later one's task even begins. Either way, by the time this fires, any
-  // already-resolved local `createSession()` for this exact session has
-  // already registered in `sessionPanelTracker`. Mirroring's own AC4 budget
-  // (adopt tab appears within ~2s) absorbs a same-tick setTimeout(0) trivially.
-  useEffect(() => {
-    const pendingAddChecks = new Map<string, ReturnType<typeof setTimeout>>();
-    const pendingRemoveChecks = new Map<string, ReturnType<typeof setTimeout>>();
-    const scheduleSessionMirror = (session: SessionInfo): void => {
-      const prior = pendingAddChecks.get(session.sessionId);
-      if (prior) clearTimeout(prior);
-      const timer = setTimeout(() => {
-        pendingAddChecks.delete(session.sessionId);
-        // Preset replacement has already frozen its creator set. Queue
-        // external/local broadcasts instead of mounting an adopted pane whose
-        // async binding would make the post-ACK check fail after old sessions
-        // were irreversibly destroyed. Unlock replays this authoritative event.
-        if (presetMutationLease.deferAddition(session.sessionId, session)) return;
-        if (sessionPanelTracker.hasSession(session.sessionId)) return; // already bound or mounting
-        try {
-          const panel = workbenchCoordinator.openTerminal({ adoptSessionId: session.sessionId });
-          if (!panel) return;
-          // Register with the exact Dockview panel API object. The component's
-          // mount does the same idempotently, but this closes the addPanel ->
-          // first React effect gap for an immediately-following remove event.
-          sessionPanelTracker.trackPending(session.sessionId, panel.panelId, panel.instanceToken);
-        } catch {
-          // Dockview rejected the add (for example an unexpected id collision).
-          // No panel instance exists to track or close.
-        }
-      }, 0);
-      pendingAddChecks.set(session.sessionId, timer);
-    };
-    scheduleSessionMirrorRef.current = scheduleSessionMirror;
-    const scheduleSessionRemoval = (sessionId: string): void => {
-      const prior = pendingRemoveChecks.get(sessionId);
-      if (prior) clearTimeout(prior);
-      const timer = setTimeout(() => {
-        pendingRemoveChecks.delete(sessionId);
-        if (presetMutationLease.deferRemoval(sessionId)) return;
-        const api = apiRef.current;
-        if (!api) return;
-        const candidates = sessionPanelTracker.takeSession(sessionId);
-        const seen = new Set<PaneInstanceToken>();
-        for (const candidate of [...candidates.pending, ...candidates.bound]) {
-          if (seen.has(candidate.instanceToken)) continue;
-          seen.add(candidate.instanceToken);
-          // A preset can reuse a textual panel id. Object identity proves this
-          // is still the exact Dockview instance that registered the lease.
-          workbenchCoordinator.closePanel(candidate.panelId, candidate.instanceToken);
-        }
-      }, 0);
-      pendingRemoveChecks.set(sessionId, timer);
-    };
-    scheduleSessionRemovalRef.current = scheduleSessionRemoval;
-    const unsubAdded = window.ezterminal?.onSessionAdded?.((session) => {
-      if (presetMutationLease.deferAddition(session.sessionId, session)) return;
-      scheduleSessionMirror(session);
-    });
-    const unsubRemoved = window.ezterminal?.onSessionRemoved?.((sessionId) => {
-      presetMutationLease.dropDeferredAddition(sessionId);
-      const pendingTimer = pendingAddChecks.get(sessionId);
-      if (pendingTimer) {
-        clearTimeout(pendingTimer);
-        pendingAddChecks.delete(sessionId);
-      }
-      if (presetMutationLease.deferRemoval(sessionId)) return;
-      scheduleSessionRemoval(sessionId);
-    });
-    return () => {
-      unsubAdded?.();
-      unsubRemoved?.();
-      if (scheduleSessionMirrorRef.current === scheduleSessionMirror) {
-        scheduleSessionMirrorRef.current = null;
-      }
-      if (scheduleSessionRemovalRef.current === scheduleSessionRemoval) {
-        scheduleSessionRemovalRef.current = null;
-      }
-      for (const timer of pendingAddChecks.values()) clearTimeout(timer);
-      for (const timer of pendingRemoveChecks.values()) clearTimeout(timer);
-      pendingAddChecks.clear();
-      pendingRemoveChecks.clear();
-    };
-  }, [presetMutationLease, sessionPanelTracker, workbenchCoordinator]);
 
   // Both "new tab" and "split" open a fresh self-contained TerminalPane. Passing a
   // `position` makes dockview place it in a NEW grid group (a split) instead of the
@@ -900,7 +787,10 @@ export function App(): JSX.Element {
     // Mode 'off' (or 'auto' with the CLI not installed) — no OpenClaw UI at
     // all (openclaw-stabilization M2); the button/drawer that would call this
     // are themselves hidden, but guard directly too (e.g. a stale closure).
-    if (!openclawVisible || presetMutationLease.isLocked()) return;
+    if (
+      !openclawVisible
+      || sessionMirroringCoordinator.getSnapshot().replacementLocked
+    ) return;
     // Close the drawer first: the [채팅 열기] button lives INSIDE the OpenClaw
     // drawer, but the drawer feeds `chatOverlayOpen`, which the chat panel ANDs
     // into the WebContentsView's effective visibility (z-order rule). Leaving
@@ -923,7 +813,7 @@ export function App(): JSX.Element {
     // setOpenclawOpen is a stable state adapter declared below this callback;
     // reading it only when invoked avoids a render-order dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openclawVisible, presetMutationLease, t]);
+  }, [openclawVisible, sessionMirroringCoordinator, t]);
 
   // Split the pane the user last focused. Omitting `direction` would default to
   // 'within' (a tab, not a split), so it is always explicit.
@@ -1093,8 +983,7 @@ export function App(): JSX.Element {
   const focusAgentSession = useCallback(
     (sessionId: string): void => {
       const api = apiRef.current;
-      const candidates = sessionPanelTracker
-        .getBound(sessionId)
+      const candidates = (sessionPaneBindings.get(sessionId) ?? [])
         .filter((binding) => api?.getPanel(binding.panelId)?.api === binding.instanceToken);
       const activePanelId = api?.activePanel?.id;
       const panelId =
@@ -1107,7 +996,7 @@ export function App(): JSX.Element {
           ),
       );
     },
-    [agentSnapshot, sessionPanelTracker, workbenchCoordinator],
+    [agentSnapshot, sessionPaneBindings, workbenchCoordinator],
   );
 
   useEffect(() => {
@@ -1119,8 +1008,7 @@ export function App(): JSX.Element {
             const activity = agentSnapshot.items.find((item) => item.id === id);
             return (
               !activity ||
-              !sessionPanelTracker
-                .getBound(activity.sessionId)
+              !(sessionPaneBindings.get(activity.sessionId) ?? [])
                 .some(
                   (binding) =>
                     binding.panelId === activePanelId &&
@@ -1130,15 +1018,13 @@ export function App(): JSX.Element {
           }),
         ),
     );
-  }, [activePanelId, agentSnapshot, sessionPanelRevision, sessionPanelTracker]);
+  }, [activePanelId, agentSnapshot, sessionPaneBindings]);
 
   useEffect(() => {
     return window.ezterminalDesktop?.onAgentSessionReveal((sessionId) => focusAgentSession(sessionId));
   }, [focusAgentSession]);
 
   const agentTabStatuses = useMemo<ReadonlyMap<string, AgentStatus>>(() => {
-    // The session map is ref-owned; its revision is the explicit memo invalidator.
-    void sessionPanelRevision;
     const rank: Record<AgentStatus, number> = {
       blocked: 0,
       error: 1,
@@ -1149,7 +1035,7 @@ export function App(): JSX.Element {
     };
     const result = new Map<string, AgentStatus>();
     for (const activity of agentSnapshot.items) {
-      for (const binding of sessionPanelTracker.getBound(activity.sessionId)) {
+      for (const binding of sessionPaneBindings.get(activity.sessionId) ?? []) {
         if (apiRef.current?.getPanel(binding.panelId)?.api !== binding.instanceToken) continue;
         const existing = result.get(binding.panelId);
         if (!existing || rank[activity.status] < rank[existing]) {
@@ -1158,13 +1044,13 @@ export function App(): JSX.Element {
       }
     }
     return result;
-  }, [agentSnapshot, sessionPanelRevision, sessionPanelTracker]);
+  }, [agentSnapshot, sessionPaneBindings]);
 
   const paneApprovalValue = useMemo<PaneApprovalContextValue>(() => {
     const byPanel = new Map<string, PaneApproval>();
     for (const activity of agentSnapshot.items) {
       if (!activity.approval) continue;
-      for (const binding of sessionPanelTracker.getBound(activity.sessionId)) {
+      for (const binding of sessionPaneBindings.get(activity.sessionId) ?? []) {
         if (apiRef.current?.getPanel(binding.panelId)?.api !== binding.instanceToken) continue;
         byPanel.set(binding.panelId, { activityId: activity.id, approval: activity.approval });
       }
@@ -1174,12 +1060,7 @@ export function App(): JSX.Element {
       onDecide: (activityId, approvalId, decision) =>
         window.ezterminal.decideAgentApproval(activityId, approvalId, decision),
     };
-    // `sessionPanelRevision` looks unused because the panel identity this reads
-    // lives behind `apiRef.current`, which React cannot track. Bumping the
-    // revision is how a layout change tells this map to be rebuilt — the same
-    // signal `agentTabStatuses` above depends on for the same reason.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentSnapshot, sessionPanelRevision, sessionPanelTracker]);
+  }, [agentSnapshot, sessionPaneBindings]);
 
   const attentionCount = countAgentAttention(agentSnapshot);
   const agentSessionIds = useMemo<ReadonlySet<string>>(
@@ -1375,7 +1256,7 @@ export function App(): JSX.Element {
     session: AgentHistorySessionSummary,
     project: AgentProjectSummary,
   ): void => {
-    if (presetMutationLease.isLocked()) return;
+    if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
     const api = apiRef.current;
     if (!api) return;
     const panelId = `agent-session-${session.historyId}`;
@@ -1393,7 +1274,7 @@ export function App(): JSX.Element {
       renderer: 'always',
       params: { historyId: session.historyId, provider: session.provider },
     });
-  }, [presetMutationLease]);
+  }, [sessionMirroringCoordinator]);
 
   const launchAgent = useCallback((bootstrap: AgentLaunchBootstrap): void => {
     workbenchCoordinator.openTerminal({
@@ -1863,7 +1744,10 @@ export function App(): JSX.Element {
   const applyLayoutPreset = useCallback(
     (preset: WorkbenchLayoutPreset): void => {
       const api = apiRef.current;
-      if (!api || presetMutationLease.isLocked()) return;
+      if (
+        !api
+        || sessionMirroringCoordinator.getSnapshot().replacementLocked
+      ) return;
       try {
         if (!applyWorkbenchLayoutPreset(api, preset)) return;
         const name = preset === 'two-by-one'
@@ -1878,7 +1762,7 @@ export function App(): JSX.Element {
         console.error('[renderer] could not apply workspace layout:', error);
       }
     },
-    [focusActivePane, presetMutationLease, scheduleSave, t],
+    [focusActivePane, scheduleSave, sessionMirroringCoordinator, t],
   );
 
   const refreshPresets = useCallback(async (): Promise<void> => {
@@ -2682,6 +2566,8 @@ export function App(): JSX.Element {
         },
       });
       const attachment = workbenchCoordinator.attach(createDockviewWorkbenchAdapter(api));
+      sessionMirroringConnectionRef.current?.();
+      sessionMirroringConnectionRef.current = sessionMirroringCoordinator.connect();
       // Test seam: e2e drives programmatic panel moves through this handle. dockview's
       // mouse drag is native HTML5 DnD (not Playwright-drivable); panel.api.moveTo(...)
       // uses the identical move engine a drag invokes.
@@ -2711,6 +2597,7 @@ export function App(): JSX.Element {
       refreshPresets,
       runLayoutTransaction,
       scheduleSave,
+      sessionMirroringCoordinator,
       t,
       workbenchCoordinator,
     ],

@@ -4,7 +4,6 @@ import type { LayoutEnvelope } from '../shared/layout-schema';
 import type { PaneHandle, PaneSnapshot } from './pane-registry';
 import {
   WorkspaceReplacementCoordinator,
-  WorkspaceReplacementLeaseController,
   type WorkspaceReplacementCoordinatorOptions,
 } from './workspace-replacement-coordinator';
 
@@ -150,38 +149,6 @@ function harness(initial: readonly PaneSnapshot[] = [BASE_SNAPSHOT]) {
     },
   };
 }
-
-describe('WorkspaceReplacementLeaseController', () => {
-  it('unlocks once and replays authoritative removals before additions', () => {
-    const replay: string[] = [];
-    const controller = new WorkspaceReplacementLeaseController<{ readonly id: string }>({
-      onLockChange: (locked) => replay.push(`locked:${locked}`),
-      replayRemoval: (key) => replay.push(`remove:${key}`),
-      replayAddition: (addition) => replay.push(`add:${addition.id}`),
-    });
-
-    expect(controller.deferAddition('outside', { id: 'outside' })).toBe(false);
-    const lease = controller.acquire();
-    expect(lease).not.toBeNull();
-    expect(controller.acquire()).toBeNull();
-    expect(controller.deferAddition('old', { id: 'old' })).toBe(true);
-    expect(controller.deferRemoval('old')).toBe(true);
-    expect(controller.deferRemoval('gone')).toBe(true);
-    expect(controller.deferAddition('new', { id: 'new' })).toBe(true);
-
-    lease?.release();
-    lease?.release();
-
-    expect(controller.isLocked()).toBe(false);
-    expect(replay).toEqual([
-      'locked:true',
-      'locked:false',
-      'remove:old',
-      'remove:gone',
-      'add:new',
-    ]);
-  });
-});
 
 describe('WorkspaceReplacementCoordinator', () => {
   it('freezes a creator-only confirmation summary with close-risk counts', () => {

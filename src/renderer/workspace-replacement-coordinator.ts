@@ -10,6 +10,7 @@ import type {
 } from '../shared/ipc';
 import type { LayoutEnvelope } from '../shared/layout-schema';
 import type { PaneHandle, PaneSnapshot } from './pane-registry';
+import type { WorkspaceReplacementLease } from './session-mirroring-coordinator';
 import type { WorkbenchLayoutReplacementResult } from './workbench-coordinator';
 
 const PREPARED_DATA: unique symbol = Symbol('prepared-workspace-replacement-data');
@@ -42,98 +43,6 @@ export type WorkspaceReplacementOutcome =
       readonly kind: 'destroy-failed';
       readonly reason: 'state-changed' | 'unavailable';
     };
-
-export interface WorkspaceReplacementLease {
-  release(): void;
-}
-
-export interface WorkspaceReplacementLeaseControllerOptions<TAddition> {
-  readonly onLockChange: (locked: boolean) => void;
-  readonly replayRemoval: (key: string) => void;
-  readonly replayAddition: (addition: TAddition) => void;
-}
-
-/**
- * Synchronous authority and event buffer used by the React adapter. Releasing
- * the lease unlocks first, then replays removals before additions so replayed
- * callbacks cannot re-buffer themselves or resurrect stale panes.
- */
-export class WorkspaceReplacementLeaseController<TAddition> {
-  private activeToken: object | null = null;
-  private readonly additions = new Map<string, TAddition>();
-  private readonly removals = new Set<string>();
-
-  public constructor(
-    private readonly options: WorkspaceReplacementLeaseControllerOptions<TAddition>,
-  ) {}
-
-  public isLocked(): boolean {
-    return this.activeToken !== null;
-  }
-
-  public acquire(): WorkspaceReplacementLease | null {
-    if (this.activeToken) return null;
-    const token = {};
-    this.activeToken = token;
-    try {
-      this.options.onLockChange(true);
-    } catch (error) {
-      this.activeToken = null;
-      throw error;
-    }
-    let released = false;
-    return {
-      release: () => {
-        if (released || this.activeToken !== token) return;
-        released = true;
-        this.activeToken = null;
-        const removals = [...this.removals];
-        const additions = [...this.additions.values()];
-        this.removals.clear();
-        this.additions.clear();
-
-        let firstError: unknown;
-        try {
-          this.options.onLockChange(false);
-        } catch (error) {
-          firstError = error;
-        }
-        for (const key of removals) {
-          try {
-            this.options.replayRemoval(key);
-          } catch (error) {
-            firstError ??= error;
-          }
-        }
-        for (const addition of additions) {
-          try {
-            this.options.replayAddition(addition);
-          } catch (error) {
-            firstError ??= error;
-          }
-        }
-        if (firstError !== undefined) throw firstError;
-      },
-    };
-  }
-
-  public deferAddition(key: string, addition: TAddition): boolean {
-    if (!this.isLocked()) return false;
-    this.additions.set(key, addition);
-    return true;
-  }
-
-  public deferRemoval(key: string): boolean {
-    if (!this.isLocked()) return false;
-    this.additions.delete(key);
-    this.removals.add(key);
-    return true;
-  }
-
-  public dropDeferredAddition(key: string): void {
-    this.additions.delete(key);
-  }
-}
 
 export interface WorkspaceReplacementCoordinatorOptions {
   readonly getPaneHandle: (panelId: string) => PaneHandle | undefined;

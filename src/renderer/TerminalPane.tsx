@@ -41,7 +41,7 @@ import {
 import type {
   PaneInstanceToken,
   SessionPaneLease,
-} from './session-panel-tracker';
+} from './session-mirroring-coordinator';
 import {
   DEFAULT_TERMINAL_RUNTIME_OPTIONS,
   type TerminalRuntimeOptions,
@@ -283,11 +283,10 @@ export function TerminalPane({
   blocksRef.current = blocks;
 
   // M4 attach-on-bind: latest `attachToRun` (defined below, after
-  // `bindActiveController`) in a ref so the mount effect below — which needs
-  // to call it from inside an async `listRuns()` continuation that fires
-  // long before `attachToRun` exists in this file's top-to-bottom order —
-  // always reaches the current one. Same "latest callback in a ref" idiom as
-  // the pane lease factory above.
+  // `bindActiveController`) in a ref so the committed-session catch-up effect
+  // can call it from an async `listRuns()` continuation even though the
+  // callback is declared later in this file. Same "latest callback in a ref"
+  // idiom as the pane lease factory above.
   const attachToRunRef = useRef<((info: RunStartedInfo) => void) | null>(null);
   // Port handoffs belong to the current pane/session binding. The scope is
   // replaced before paint when that binding changes, so late transfers cannot
@@ -356,22 +355,6 @@ export function TerminalPane({
       setCurrentCwd((prev) => prev ?? info.cwd);
       if (!adopted) liveSessionCount += 1;
       boundSessionId = info.sessionId;
-
-      // M4 attach-on-bind: catch up on any run already in progress in this
-      // session — covers the adopt-a-session-with-a-running-TUI gap (Ctrl+R
-      // reload, or a restored/adopted layout panel) that the `onRunStarted`
-      // effect below can't: it's edge-triggered, broadcasting once at the
-      // moment a run BEGINS, so a pane that binds AFTER that moment never
-      // sees it any other way. A fresh session has no runs yet, so this
-      // resolves empty (no-op).
-      void window.ezterminal?.listRuns?.().then((runs) => {
-        if (cancelled) return;
-        for (const run of runs) {
-          if (run.sessionId !== info.sessionId) continue;
-          if (blocksRef.current.some((entry) => entry.id === run.runId)) continue;
-          attachToRunRef.current?.(run);
-        }
-      });
     };
 
     const createFresh = (): void => {
@@ -435,6 +418,30 @@ export function TerminalPane({
       paneLease?.dispose();
     };
   }, [panelId, exactPaneInstanceToken, initialCwd, adoptSessionId]);
+
+  // M4 attach-on-bind: catch up only after the session id has committed. If
+  // this starts inside bindSession, a fast listRuns reply can begin a handoff
+  // before React replaces the initial `sessionId=null` layout-effect scope;
+  // that old scope's cleanup then aborts the new session's handoff. Running as
+  // a committed-session effect guarantees the new abort scope is installed
+  // first. onRunStarted remains the edge-triggered path, and the known-run set
+  // makes the two discovery paths idempotent.
+  useEffect(() => {
+    if (!sessionId || sessionDead) return;
+    let cancelled = false;
+    const boundSessionId = sessionId;
+    void window.ezterminal?.listRuns?.().then((runs) => {
+      if (cancelled || sessionIdRef.current !== boundSessionId) return;
+      for (const run of runs) {
+        if (run.sessionId !== boundSessionId) continue;
+        if (blocksRef.current.some((entry) => entry.id === run.runId)) continue;
+        attachToRunRef.current?.(run);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, sessionDead]);
 
   // The interpreter is shared by all sessions in Phase 1, so its death kills this one
   // too — latch dead to stop accepting runs (Codex B8). Also release a stuck TUI
@@ -841,7 +848,7 @@ export function TerminalPane({
   // `_ezAttachPort` handoff `attachRun` triggers, and binds the resulting
   // controller as active. Shared by two callers below — the edge-triggered
   // `onRunStarted` broadcast (M2 full mirroring: another pane/window/mobile
-  // started a run in this pane's session) and the mount effect's level-
+  // started a run in this pane's session) and the committed-session level-
   // triggered `listRuns` catch-up (M4 attach-on-bind: a run already in
   // progress when this pane bound to the session) — both already know the
   // run isn't one of this pane's own before calling this.
