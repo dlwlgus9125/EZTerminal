@@ -39,10 +39,7 @@ import {
 } from '../shared/terminal-clipboard';
 import { type QuickCommand, type QuickCommandInput, type QuickCommandMutationResult } from '../shared/quick-command';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
-import {
-  countCloseRisks,
-  type CloseRisk,
-} from '../shared/close-risk';
+import type { CloseRisk } from '../shared/close-risk';
 import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from '../shared/workspace-search';
 import { isAppUpdateAvailable } from '../shared/app-update';
 import { AgentHub, countAgentAttention } from './AgentHub';
@@ -147,6 +144,10 @@ import {
   type LayoutTransactionOptions,
   type WorkbenchPanelPosition,
 } from './workbench-coordinator';
+import {
+  WorkspaceReplacementCoordinator,
+  WorkspaceReplacementLeaseController,
+} from './workspace-replacement-coordinator';
 import { applyWorkbenchLayoutPreset, type WorkbenchLayoutPreset } from './workbench-layout-presets';
 import { DEFAULT_TERMINAL_RUNTIME_OPTIONS, type TerminalRuntimeOptions } from './xterm-runtime';
 
@@ -460,7 +461,6 @@ export function App(): JSX.Element {
   if (paneLifecycleCoordinatorRef.current === null) {
     paneLifecycleCoordinatorRef.current = new PaneLifecycleCoordinator({
       getPaneHandle,
-      listPaneSnapshots,
       destroySessionGuarded: (sessionId, expectedActiveRunIds) =>
         window.ezterminal.destroySessionGuarded(sessionId, expectedActiveRunIds),
       destroySessionsGuarded: (sessions) => window.ezterminal.destroySessionsGuarded(sessions),
@@ -470,12 +470,19 @@ export function App(): JSX.Element {
   const [closeDialog, setCloseDialog] = useState<CloseDialogState | null>(null);
   const [auxiliaryCloseDialog, setAuxiliaryCloseDialog] =
     useState<AuxiliaryCloseDialogState | null>(null);
-  const presetApplyPendingRef = useRef(false);
   const [presetApplyPending, setPresetApplyPending] = useState(false);
-  const deferredSessionAddsRef = useRef(new Map<string, SessionInfo>());
   const scheduleSessionMirrorRef = useRef<((session: SessionInfo) => void) | null>(null);
-  const deferredSessionRemovalsRef = useRef(new Set<string>());
   const scheduleSessionRemovalRef = useRef<((sessionId: string) => void) | null>(null);
+  const presetMutationLeaseRef =
+    useRef<WorkspaceReplacementLeaseController<SessionInfo> | null>(null);
+  if (presetMutationLeaseRef.current === null) {
+    presetMutationLeaseRef.current = new WorkspaceReplacementLeaseController({
+      onLockChange: setPresetApplyPending,
+      replayRemoval: (sessionId) => scheduleSessionRemovalRef.current?.(sessionId),
+      replayAddition: (session) => scheduleSessionMirrorRef.current?.(session),
+    });
+  }
+  const presetMutationLease = presetMutationLeaseRef.current;
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
   const [recentPanelSwitch, setRecentPanelSwitch] = useState<RecentPanelSwitchSession | null>(null);
   const workbenchCoordinatorRef = useRef<WorkbenchCoordinator | null>(null);
@@ -486,7 +493,7 @@ export function App(): JSX.Element {
         flushLayout: () => window.ezterminal.flushLayout(),
         quarantineLayout: () => window.ezterminal.quarantineLayout(),
       },
-      isPaneCreationLocked: () => presetApplyPendingRef.current,
+      isPaneCreationLocked: () => presetMutationLease.isLocked(),
       onActivePanelChange: (panelId, source) => {
         setActivePanelId(panelId);
         setPaneCount(apiRef.current?.panels.length ?? 0);
@@ -509,6 +516,22 @@ export function App(): JSX.Element {
     });
   }
   const workbenchCoordinator = workbenchCoordinatorRef.current;
+  const workspaceReplacementCoordinatorRef =
+    useRef<WorkspaceReplacementCoordinator | null>(null);
+  if (workspaceReplacementCoordinatorRef.current === null) {
+    workspaceReplacementCoordinatorRef.current = new WorkspaceReplacementCoordinator({
+      getPaneHandle,
+      listPaneSnapshots,
+      destroySessionsGuarded: (sessions) => window.ezterminal.destroySessionsGuarded(sessions),
+      loadPreset: (presetName) => window.ezterminal.getPreset(presetName),
+      preflightLayout: preflightLayoutEnvelope,
+      replaceLayout: (envelope, authorize) =>
+        workbenchCoordinator.replaceWorkspaceLayout(envelope, authorize),
+      acquireLease: () => presetMutationLease.acquire(),
+      onError: (message, error) => console.error(`[renderer] ${message}:`, error),
+    });
+  }
+  const workspaceReplacementCoordinator = workspaceReplacementCoordinatorRef.current;
   useEffect(
     () => () => {
       popoutBehaviorRef.current?.dispose();
@@ -521,9 +544,9 @@ export function App(): JSX.Element {
   const presetMutationValue = useMemo<PresetMutationContextValue>(
     () => ({
       locked: presetApplyPending,
-      isLocked: () => presetApplyPendingRef.current,
+      isLocked: () => presetMutationLease.isLocked(),
     }),
-    [presetApplyPending],
+    [presetApplyPending, presetMutationLease],
   );
   const [quickPreview, setQuickPreview] = useState<QuickOpenFilePreview | null>(null);
   const quickPreviewSequenceRef = useRef(0);
@@ -768,10 +791,7 @@ export function App(): JSX.Element {
         // external/local broadcasts instead of mounting an adopted pane whose
         // async binding would make the post-ACK check fail after old sessions
         // were irreversibly destroyed. Unlock replays this authoritative event.
-        if (presetApplyPendingRef.current) {
-          deferredSessionAddsRef.current.set(session.sessionId, session);
-          return;
-        }
+        if (presetMutationLease.deferAddition(session.sessionId, session)) return;
         if (sessionPanelTracker.hasSession(session.sessionId)) return; // already bound or mounting
         try {
           const panel = workbenchCoordinator.openTerminal({ adoptSessionId: session.sessionId });
@@ -793,10 +813,7 @@ export function App(): JSX.Element {
       if (prior) clearTimeout(prior);
       const timer = setTimeout(() => {
         pendingRemoveChecks.delete(sessionId);
-        if (presetApplyPendingRef.current) {
-          deferredSessionRemovalsRef.current.add(sessionId);
-          return;
-        }
+        if (presetMutationLease.deferRemoval(sessionId)) return;
         const api = apiRef.current;
         if (!api) return;
         const candidates = sessionPanelTracker.takeSession(sessionId);
@@ -813,15 +830,17 @@ export function App(): JSX.Element {
     };
     scheduleSessionRemovalRef.current = scheduleSessionRemoval;
     const unsubAdded = window.ezterminal?.onSessionAdded?.((session) => {
+      if (presetMutationLease.deferAddition(session.sessionId, session)) return;
       scheduleSessionMirror(session);
     });
     const unsubRemoved = window.ezterminal?.onSessionRemoved?.((sessionId) => {
-      deferredSessionAddsRef.current.delete(sessionId);
+      presetMutationLease.dropDeferredAddition(sessionId);
       const pendingTimer = pendingAddChecks.get(sessionId);
       if (pendingTimer) {
         clearTimeout(pendingTimer);
         pendingAddChecks.delete(sessionId);
       }
+      if (presetMutationLease.deferRemoval(sessionId)) return;
       scheduleSessionRemoval(sessionId);
     });
     return () => {
@@ -838,7 +857,7 @@ export function App(): JSX.Element {
       pendingAddChecks.clear();
       pendingRemoveChecks.clear();
     };
-  }, [sessionPanelTracker, workbenchCoordinator]);
+  }, [presetMutationLease, sessionPanelTracker, workbenchCoordinator]);
 
   // Both "new tab" and "split" open a fresh self-contained TerminalPane. Passing a
   // `position` makes dockview place it in a NEW grid group (a split) instead of the
@@ -881,7 +900,7 @@ export function App(): JSX.Element {
     // Mode 'off' (or 'auto' with the CLI not installed) — no OpenClaw UI at
     // all (openclaw-stabilization M2); the button/drawer that would call this
     // are themselves hidden, but guard directly too (e.g. a stale closure).
-    if (!openclawVisible) return;
+    if (!openclawVisible || presetMutationLease.isLocked()) return;
     // Close the drawer first: the [채팅 열기] button lives INSIDE the OpenClaw
     // drawer, but the drawer feeds `chatOverlayOpen`, which the chat panel ANDs
     // into the WebContentsView's effective visibility (z-order rule). Leaving
@@ -904,7 +923,7 @@ export function App(): JSX.Element {
     // setOpenclawOpen is a stable state adapter declared below this callback;
     // reading it only when invoked avoids a render-order dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openclawVisible, t]);
+  }, [openclawVisible, presetMutationLease, t]);
 
   // Split the pane the user last focused. Omitting `direction` would default to
   // 'within' (a tab, not a split), so it is always explicit.
@@ -1356,6 +1375,7 @@ export function App(): JSX.Element {
     session: AgentHistorySessionSummary,
     project: AgentProjectSummary,
   ): void => {
+    if (presetMutationLease.isLocked()) return;
     const api = apiRef.current;
     if (!api) return;
     const panelId = `agent-session-${session.historyId}`;
@@ -1373,7 +1393,7 @@ export function App(): JSX.Element {
       renderer: 'always',
       params: { historyId: session.historyId, provider: session.provider },
     });
-  }, []);
+  }, [presetMutationLease]);
 
   const launchAgent = useCallback((bootstrap: AgentLaunchBootstrap): void => {
     workbenchCoordinator.openTerminal({
@@ -1843,7 +1863,7 @@ export function App(): JSX.Element {
   const applyLayoutPreset = useCallback(
     (preset: WorkbenchLayoutPreset): void => {
       const api = apiRef.current;
-      if (!api || presetApplyPendingRef.current) return;
+      if (!api || presetMutationLease.isLocked()) return;
       try {
         if (!applyWorkbenchLayoutPreset(api, preset)) return;
         const name = preset === 'two-by-one'
@@ -1858,7 +1878,7 @@ export function App(): JSX.Element {
         console.error('[renderer] could not apply workspace layout:', error);
       }
     },
-    [focusActivePane, scheduleSave, t],
+    [focusActivePane, presetMutationLease, scheduleSave, t],
   );
 
   const refreshPresets = useCallback(async (): Promise<void> => {
@@ -1897,25 +1917,8 @@ export function App(): JSX.Element {
           onConfirm: () => setCloseDialog(null),
         });
       };
-      const preparation = paneLifecycleCoordinator.prepare({
-        kind: 'workspace-replacement',
-        activeAgentSessionIds: agentSessionIds,
-      });
-      if (!preparation.ok) {
-        setCloseDialog({
-          title: t('safetyDialog.terminalStateUnavailableTitle'),
-          description: t('safetyDialog.terminalStateUnavailableDescription'),
-          confirmLabel: t('common.ok'),
-          onConfirm: () => setCloseDialog(null),
-        });
-        return;
-      }
-      const plan = preparation.plan;
-      const creatorCount = plan.items.filter((item) => item.creator).length;
-      const risks = plan.items
-        .map((item) => item.risk)
-        .filter((risk): risk is CloseRisk => risk !== null);
-      const counts = countCloseRisks(risks);
+      const plan = workspaceReplacementCoordinator.prepare(agentSessionIds);
+      const { creatorCount, riskCounts: counts } = plan.summary;
       const details: string[] = (Object.keys(counts) as CloseRisk[])
         .filter((risk) => counts[risk] > 0)
         .map((risk) => t('safetyDialog.riskCount', {
@@ -1937,29 +1940,45 @@ export function App(): JSX.Element {
             details,
             confirmLabel: t('safetyDialog.applyPreset'),
             onConfirm: () => {
-              if (presetApplyPendingRef.current) return;
-              if (!paneLifecycleCoordinator.validatePreparation(plan).ok) {
-                showPresetStateChanged();
-                return;
-              }
-              presetApplyPendingRef.current = true;
-              setPresetApplyPending(true);
               setCloseDialog(null);
               setPresetsOpen(false);
-              void (async () => {
-                try {
-                  // Resolve the preset before destroying anything so an unavailable
-                  // bridge or missing preset cannot strand the current workspace.
-                  const preset = await window.ezterminal.getPreset(name);
-                  if (!preset) throw new Error('preset unavailable');
-                  if (!paneLifecycleCoordinator.validatePreparation(plan).ok) {
+              void workspaceReplacementCoordinator.applyPreset(plan, name).then(
+                (outcome) => {
+                  if (outcome.kind === 'applied') {
+                    setAppliedPreset(name);
+                    setPaneCount(apiRef.current?.panels.length ?? 0);
+                    scheduleSave();
+                    focusActivePane();
+                    pushToast({ title: t('workspace.presetApplied', { name }), variant: 'success' });
+                    return;
+                  }
+                  if (outcome.kind === 'destroy-failed') {
+                    setCloseDialog({
+                      title:
+                        outcome.reason === 'state-changed'
+                          ? t('safetyDialog.terminalStateChangedTitle')
+                          : t('safetyDialog.terminalStateUnavailableTitle'),
+                      description: t('safetyDialog.workspaceNotReplacedDescription'),
+                      confirmLabel: t('common.ok'),
+                      onConfirm: () => setCloseDialog(null),
+                    });
+                    return;
+                  }
+                  if (outcome.reason === 'busy') return;
+                  if (outcome.reason === 'state-changed') {
                     showPresetStateChanged();
                     return;
                   }
-                  // Schema validation happens in main, but dockview's nested grid
-                  // deserializer has stronger runtime invariants. Exercise it on a
-                  // detached inert instance before any irreversible shell teardown.
-                  if (!preflightLayoutEnvelope(preset)) {
+                  if (outcome.reason === 'preset-unavailable') {
+                    setCloseDialog({
+                      title: t('safetyDialog.presetUnavailableTitle'),
+                      description: t('safetyDialog.presetUnavailableDescription'),
+                      confirmLabel: t('common.ok'),
+                      onConfirm: () => setCloseDialog(null),
+                    });
+                    return;
+                  }
+                  if (outcome.reason === 'layout-invalid') {
                     setCloseDialog({
                       title: t('safetyDialog.presetLayoutInvalidTitle'),
                       description: t('safetyDialog.presetLayoutInvalidDescription'),
@@ -1968,74 +1987,22 @@ export function App(): JSX.Element {
                     });
                     return;
                   }
-                  const dispositions = new Map<string, PaneDisposition>();
-                  for (const item of plan.items) {
-                    if (item.creator) dispositions.set(item.panelId, 'terminate');
-                  }
-                  const result = await paneLifecycleCoordinator.commit(plan, { dispositions });
-                  if (!result.ok) {
-                    if (result.stage === 'destroy') {
-                      setCloseDialog({
-                        title:
-                          result.reason === 'state-changed'
-                            ? t('safetyDialog.terminalStateChangedTitle')
-                            : t('safetyDialog.terminalStateUnavailableTitle'),
-                        description: t('safetyDialog.workspaceNotReplacedDescription'),
-                        confirmLabel: t('common.ok'),
-                        onConfirm: () => setCloseDialog(null),
-                      });
-                    } else if (result.reason !== 'busy') {
-                      showPresetStateChanged();
-                    }
-                    return;
-                  }
-                  let finalStateValid = true;
-                  const applied = await runLayoutTransaction(() => Promise.resolve(preset), {
-                    quarantineOnCorrupt: false,
-                    restoreBackupOnFailure: true,
-                    beforeApply: () => {
-                      finalStateValid = paneLifecycleCoordinator.validateFinalization(result.commit).ok;
-                      if (!finalStateValid) showPresetStateChanged();
-                      return finalStateValid;
-                    },
-                  });
-                  if (!finalStateValid) return;
-                  if (!applied) {
-                    setCloseDialog({
-                      title: t('safetyDialog.presetApplyFailedTitle'),
-                      description: t('safetyDialog.presetApplyFailedDescription'),
-                      confirmLabel: t('common.ok'),
-                      onConfirm: () => setCloseDialog(null),
-                    });
-                    return;
-                  }
-                  setAppliedPreset(name);
-                  setPaneCount(apiRef.current?.panels.length ?? 0);
-                  scheduleSave();
-                  focusActivePane();
-                  pushToast({ title: t('workspace.presetApplied', { name }), variant: 'success' });
-                } catch {
                   setCloseDialog({
-                    title: t('safetyDialog.presetUnavailableTitle'),
-                    description: t('safetyDialog.presetUnavailableDescription'),
+                    title: t('safetyDialog.presetApplyFailedTitle'),
+                    description: t('safetyDialog.presetApplyFailedDescription'),
                     confirmLabel: t('common.ok'),
                     onConfirm: () => setCloseDialog(null),
                   });
-                } finally {
-                  presetApplyPendingRef.current = false;
-                  setPresetApplyPending(false);
-                  const deferredRemovals = [...deferredSessionRemovalsRef.current];
-                  deferredSessionRemovalsRef.current.clear();
-                  for (const sessionId of deferredRemovals) {
-                    scheduleSessionRemovalRef.current?.(sessionId);
-                  }
-                  const deferredAdds = [...deferredSessionAddsRef.current.values()];
-                  deferredSessionAddsRef.current.clear();
-                  for (const session of deferredAdds) {
-                    scheduleSessionMirrorRef.current?.(session);
-                  }
-                }
-              })();
+                },
+                () => {
+                  setCloseDialog({
+                    title: t('safetyDialog.presetApplyFailedTitle'),
+                    description: t('safetyDialog.presetApplyFailedDescription'),
+                    confirmLabel: t('common.ok'),
+                    onConfirm: () => setCloseDialog(null),
+                  });
+                },
+              );
             },
           },
       );
@@ -2043,11 +2010,10 @@ export function App(): JSX.Element {
     [
       agentSessionIds,
       focusActivePane,
-      paneLifecycleCoordinator,
       pushToast,
-      runLayoutTransaction,
       scheduleSave,
       t,
+      workspaceReplacementCoordinator,
     ],
   );
 

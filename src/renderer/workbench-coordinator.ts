@@ -75,6 +75,13 @@ export interface LayoutTransactionOptions {
   readonly beforeApply?: () => boolean;
 }
 
+export type WorkbenchLayoutReplacementResult =
+  | { readonly kind: 'applied' }
+  | {
+      readonly kind: 'rejected';
+      readonly reason: 'state-changed' | 'apply-failed';
+    };
+
 export interface WorkbenchAttachment {
   isCurrent(): boolean;
   enableLayoutPersistence(): boolean;
@@ -334,10 +341,14 @@ export class WorkbenchCoordinator {
       if (isStale()) return false;
 
       if (envelope) {
-        if (options.beforeApply && !options.beforeApply()) return false;
         const backup = options.restoreBackupOnFailure && adapter.panelIds().length > 0
           ? adapter.serialize()
           : null;
+        // Keep the caller-owned authorization immediately adjacent to the
+        // irreversible Dockview mutation. Backup serialization is deliberately
+        // completed first so no observable work can slip between approval and
+        // `restore`.
+        if (options.beforeApply && !options.beforeApply()) return false;
         try {
           this.panelCounter = Math.max(this.panelCounter, maxTabSuffix(envelope.layout));
           adapter.restore(envelope.layout);
@@ -372,6 +383,40 @@ export class WorkbenchCoordinator {
       if (!isStale()) this.savesSuppressed = false;
     }
     return applied;
+  }
+
+  /**
+   * Semantic runtime-workspace replacement port. The caller supplies a fully
+   * loaded and preflighted envelope plus a synchronous final authority check;
+   * Dockview and transaction-generation details stay behind this interface.
+   */
+  public async replaceWorkspaceLayout(
+    envelope: LayoutEnvelope,
+    authorize: () => boolean,
+  ): Promise<WorkbenchLayoutReplacementResult> {
+    let authorizationRejected = false;
+    try {
+      const applied = await this.runLayoutTransaction(
+        () => Promise.resolve(envelope),
+        {
+          quarantineOnCorrupt: false,
+          restoreBackupOnFailure: true,
+          beforeApply: () => {
+            const authorized = authorize();
+            authorizationRejected = !authorized;
+            return authorized;
+          },
+        },
+      );
+      if (applied) return { kind: 'applied' };
+      return {
+        kind: 'rejected',
+        reason: authorizationRejected ? 'state-changed' : 'apply-failed',
+      };
+    } catch (error) {
+      this.reportError('workspace layout replacement failed', error);
+      return { kind: 'rejected', reason: 'apply-failed' };
+    }
   }
 
   private enableLayoutPersistence(adapter: WorkbenchDockAdapter, generation: number): boolean {

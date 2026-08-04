@@ -22,6 +22,7 @@ class FakeDockAdapter implements WorkbenchDockAdapter {
     readonly adoptSessionId?: string;
   }> = [];
   public readonly restores: unknown[] = [];
+  public readonly transactionEvents: string[] = [];
   public focusCount = 0;
   public failNextRestore = false;
   public serialized: unknown = { layout: 'initial' };
@@ -77,10 +78,12 @@ class FakeDockAdapter implements WorkbenchDockAdapter {
   }
 
   public serialize(): unknown {
+    this.transactionEvents.push('serialize');
     return this.serialized;
   }
 
   public restore(layout: unknown): void {
+    this.transactionEvents.push('restore');
     this.restores.push(layout);
     if (this.failNextRestore) {
       this.failNextRestore = false;
@@ -340,6 +343,52 @@ describe('WorkbenchCoordinator lifecycle', () => {
 });
 
 describe('WorkbenchCoordinator pane and recent-panel contract', () => {
+  it('authorizes semantic workspace replacement immediately before restore', async () => {
+    const coordinator = new WorkbenchCoordinator(coordinatorOptions());
+    const dock = new FakeDockAdapter(['tab-1'], 'tab-1');
+    dock.serialized = layoutEnvelope(['tab-1']).layout;
+    coordinator.attach(dock);
+
+    const rejected = await coordinator.replaceWorkspaceLayout(
+      layoutEnvelope(['tab-9']),
+      () => {
+        dock.transactionEvents.push('authorize');
+        return false;
+      },
+    );
+    expect(rejected).toEqual({ kind: 'rejected', reason: 'state-changed' });
+    expect(dock.transactionEvents).toEqual(['serialize', 'authorize']);
+    expect(dock.restores).toEqual([]);
+
+    dock.transactionEvents.length = 0;
+    const applied = await coordinator.replaceWorkspaceLayout(
+      layoutEnvelope(['tab-9']),
+      () => {
+        dock.transactionEvents.push('authorize');
+        return true;
+      },
+    );
+    expect(applied).toEqual({ kind: 'applied' });
+    expect(dock.transactionEvents).toEqual(['serialize', 'authorize', 'restore']);
+    expect(dock.panelIds()).toEqual(['tab-9']);
+  });
+
+  it('returns a typed apply failure after restoring the live backup', async () => {
+    const coordinator = new WorkbenchCoordinator(coordinatorOptions());
+    const dock = new FakeDockAdapter(['tab-5'], 'tab-5');
+    const backup = layoutEnvelope(['tab-5']).layout;
+    dock.serialized = backup;
+    dock.failNextRestore = true;
+    coordinator.attach(dock);
+
+    await expect(coordinator.replaceWorkspaceLayout(
+      layoutEnvelope(['tab-9']),
+      () => true,
+    )).resolves.toEqual({ kind: 'rejected', reason: 'apply-failed' });
+    expect(dock.restores).toEqual([layoutEnvelope(['tab-9']).layout, backup]);
+    expect(dock.panelIds()).toEqual(['tab-5']);
+  });
+
   it('owns terminal identity across restored ids and only bypasses locks for recovery', async () => {
     let locked = true;
     const coordinator = new WorkbenchCoordinator(coordinatorOptions({

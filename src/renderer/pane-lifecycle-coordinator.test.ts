@@ -69,9 +69,6 @@ function harness(initial: readonly PaneSnapshot[]) {
   );
   const coordinator = new PaneLifecycleCoordinator({
     getPaneHandle: (panelId) => handles.get(panelId),
-    listPaneSnapshots: () => snapshots.map((snapshot) => (
-      handles.get(snapshot.panelId)?.getSnapshot() ?? snapshot
-    )),
     destroySessionGuarded,
     destroySessionsGuarded,
   });
@@ -302,74 +299,5 @@ describe('PaneLifecycleCoordinator auxiliary lifecycle', () => {
       activeAgentSessionIds: new Set(),
     })).resolves.toEqual({ ok: false, reason: 'state-changed', stage: 'validation' });
     expect(h.destroySessionsGuarded).not.toHaveBeenCalled();
-  });
-});
-
-describe('PaneLifecycleCoordinator workspace replacement', () => {
-  it('revalidates the exact creator set before atomic destruction', async () => {
-    const h = harness([BASE_SNAPSHOT]);
-    const plan = prepared(h.coordinator.prepare({
-      kind: 'workspace-replacement',
-      activeAgentSessionIds: new Set(),
-    }));
-    h.setSnapshots([{ ...BASE_SNAPSHOT, activeRunIds: ['run-1', 'run-2'] }]);
-
-    await expect(h.coordinator.commit(plan, {
-      dispositions: dispositions([['tab-1', 'terminate']]),
-    })).resolves.toEqual({ ok: false, reason: 'state-changed', stage: 'validation' });
-    expect(h.destroySessionsGuarded).not.toHaveBeenCalled();
-  });
-
-  it('blocks replacement while any pane can still bind a session', async () => {
-    const pending = {
-      ...BASE_SNAPSHOT,
-      panelId: 'tab-pending',
-      sessionId: null,
-      sessionBindingPending: true,
-      destroysSessionOnClose: false,
-      activeRunIds: [],
-    };
-    const h = harness([BASE_SNAPSHOT, pending]);
-    const plan = prepared(h.coordinator.prepare({
-      kind: 'workspace-replacement',
-      activeAgentSessionIds: new Set(),
-    }));
-
-    expect(h.coordinator.validatePreparation(plan)).toEqual({
-      ok: false,
-      reason: 'state-changed',
-      stage: 'validation',
-    });
-    await expect(h.coordinator.commit(plan, {
-      dispositions: dispositions([['tab-1', 'terminate']]),
-    })).resolves.toEqual({ ok: false, reason: 'state-changed', stage: 'validation' });
-    expect(h.destroySessionsGuarded).not.toHaveBeenCalled();
-  });
-
-  it('allows completed creators but blocks new creators before layout finalization', async () => {
-    const h = harness([BASE_SNAPSHOT]);
-    const plan = prepared(h.coordinator.prepare({
-      kind: 'workspace-replacement',
-      activeAgentSessionIds: new Set(),
-    }));
-    const result = await h.coordinator.commit(plan, {
-      dispositions: dispositions([['tab-1', 'terminate']]),
-    });
-    expect(result).toMatchObject({ ok: true });
-    if (!result.ok) return;
-
-    h.setSnapshots([]);
-    expect(h.coordinator.validateFinalization(result.commit)).toEqual({ ok: true });
-
-    h.setSnapshots([{
-      ...BASE_SNAPSHOT,
-      panelId: 'tab-2',
-      sessionId: 'session-2',
-    }]);
-    expect(h.coordinator.validateFinalization(result.commit)).toEqual({
-      ok: false,
-      reason: 'state-changed',
-      stage: 'validation',
-    });
   });
 });
