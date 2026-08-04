@@ -283,6 +283,34 @@ describe('ManagedDesktopRuntime Interface', () => {
     expect(h.runningBridge.stop).toHaveBeenCalledOnce();
   });
 
+  it('keeps disposal pending until in-flight secure token storage settles', async () => {
+    const pendingToken = deferred<string>();
+    const token = tokenStore();
+    token.getToken = vi.fn(() => pendingToken.promise);
+    const h = harness({
+      tokenStore: token,
+      readDesiredEnabled: async () => false,
+    });
+    const runtime = new ManagedDesktopRuntime(h.options);
+    await runtime.initialize();
+
+    const securityStatus = h.ipc.invoke('remote:get-security-status');
+    await vi.waitFor(() => expect(token.getToken).toHaveBeenCalledOnce());
+
+    let disposalSettled = false;
+    const disposal = runtime.dispose().then(() => {
+      disposalSettled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(disposalSettled).toBe(false);
+
+    pendingToken.resolve('a'.repeat(64));
+    await expect(securityStatus).resolves.toEqual({ state: 'ready', error: null });
+    await disposal;
+    expect(disposalSettled).toBe(true);
+  });
+
   it('rolls back a partial IPC registration conflict and can initialize after the conflict is removed', async () => {
     const h = harness({ readDesiredEnabled: async () => false });
     h.ipc.reserve('remote:get-enabled');

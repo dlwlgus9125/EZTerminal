@@ -213,17 +213,31 @@ export class ManagedDesktopRuntime implements DesktopRuntime {
     if (this.disposal) return this.disposal;
 
     const runtimeWasInitialized = this.initialization !== null;
+    const tokenInitialization = this.tokenInitialization;
     this.phase = 'disposing';
     ++this.generation;
     this.unregisterIpcHandlers();
     this.unsubscribeDesktopStatus();
 
-    this.disposal = this.disposeResources(runtimeWasInitialized);
+    this.disposal = this.disposeResources(runtimeWasInitialized, tokenInitialization);
     return this.disposal;
   }
 
-  private async disposeResources(runtimeWasInitialized: boolean): Promise<void> {
+  private async disposeResources(
+    runtimeWasInitialized: boolean,
+    tokenInitialization: Promise<void> | null,
+  ): Promise<void> {
     try {
+      if (tokenInitialization) {
+        // IPC handlers are removed synchronously above, but a handler that
+        // already entered secure token storage still owns a PowerShell ACL
+        // child on Windows. Keep it inside the graceful-shutdown barrier so
+        // Electron cannot terminate the child between DACL removal and grant.
+        await this.settleCleanup(
+          'remote token security shutdown wait failed',
+          () => tokenInitialization,
+        );
+      }
       if (runtimeWasInitialized) {
         await this.settleCleanup('remote runtime shutdown failed', () => this.runtime.shutdown());
       }
