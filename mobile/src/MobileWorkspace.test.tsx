@@ -87,6 +87,23 @@ function tap(el: HTMLElement, testId: string): void {
   act(() => target.click());
 }
 
+async function waitForTestId(
+  el: HTMLElement,
+  testId: string,
+  timeoutMs = 2_000,
+): Promise<HTMLElement> {
+  const selector = `[data-testid="${testId}"]`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const match = el.querySelector<HTMLElement>(selector);
+    if (match) return match;
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    });
+  }
+  throw new Error(`timed out waiting for ${selector}`);
+}
+
 /** The More sheet renders in the overlay host, outside `container`'s page
  * shell but inside the same React tree — query the document for it. */
 function openMoreSheet(el: HTMLElement): void {
@@ -209,12 +226,7 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     const el = renderWorkspace(transport);
 
     tap(el, 'shell-tab-agents');
-    await act(async () => {
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        if (el.querySelector('[data-testid="mobile-agent-view"]')) break;
-        await new Promise<void>((resolve) => setTimeout(resolve, 10));
-      }
-    });
+    await waitForTestId(el, 'mobile-agent-view');
     expect(el.querySelector('[data-testid="mobile-agent-view"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')).toBeTruthy();
     expect(el.querySelector('[data-testid="mobile-terminal-layer"]')?.hasAttribute('inert')).toBe(true);
@@ -339,12 +351,7 @@ describe('MobileWorkspace — tab-bar shell root', () => {
     act(() => socket.triggerMessage({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } }));
     tap(el, 'home-openclaw');
     expect(el.querySelector('[data-testid="mobile-page-shell"]')).toBeTruthy();
-    await act(async () => {
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        if (el.querySelector('[data-testid="mobile-openclaw-view"]')) break;
-        await new Promise<void>((resolve) => setTimeout(resolve, 10));
-      }
-    });
+    await waitForTestId(el, 'mobile-openclaw-view');
     expect(el.querySelector('[data-testid="mobile-openclaw-view"]')).toBeTruthy();
   });
 });
