@@ -4,8 +4,7 @@
  * query a narrow handle rather than growing parallel module-level maps.
  */
 
-import type { DestroySessionGuardResult, ExecutionKind } from '../shared/ipc';
-import { sameActiveRunSet } from '../shared/close-risk';
+import type { ExecutionKind } from '../shared/ipc';
 import type { BlockSnapshot, PtyControlTargetIdentity } from './block-controller';
 
 export interface PaneSnapshot {
@@ -86,62 +85,6 @@ export interface MountedPtyControlTarget extends PtyControlTargetIdentity {
   getSnapshot(): MountedPtyControlSnapshot;
   subscribe(listener: () => void): () => void;
   claimControl(): void;
-}
-
-export type GuardedPaneCloseOutcome =
-  | 'closed'
-  | 'state-changed'
-  | 'unavailable'
-  | 'pane-changed';
-
-/** Keep Dockview ownership intact until the interpreter has authoritatively
- * destroyed the creator session. This seam is deliberately UI-framework
- * agnostic so the ACK-before-close ordering has a deterministic unit test. */
-export async function closePaneAfterGuardedSessionDestroy(
-  snapshot: PaneSnapshot,
-  destroyGuarded: (
-    sessionId: string,
-    expectedActiveRunIds: readonly string[],
-  ) => Promise<DestroySessionGuardResult>,
-  getCurrentSnapshot: () => PaneSnapshot | null,
-  markDestroyHandled: (destroyedSessionId: string) => boolean,
-  close: () => void,
-): Promise<GuardedPaneCloseOutcome> {
-  if (!snapshot.destroysSessionOnClose || snapshot.sessionId === null) return 'pane-changed';
-  if (snapshot.isDead) {
-    const current = getCurrentSnapshot();
-    if (
-      !current
-      || current.panelId !== snapshot.panelId
-      || current.sessionId !== snapshot.sessionId
-      || !current.destroysSessionOnClose
-      || !current.isDead
-    ) {
-      return 'pane-changed';
-    }
-    if (!markDestroyHandled(snapshot.sessionId)) return 'pane-changed';
-    close();
-    return 'closed';
-  }
-  let result: DestroySessionGuardResult;
-  try {
-    result = await destroyGuarded(snapshot.sessionId, Object.freeze([...snapshot.activeRunIds]));
-  } catch {
-    return 'unavailable';
-  }
-  if (!result.ok) return result.reason;
-  const current = getCurrentSnapshot();
-  if (
-    !current
-    || current.panelId !== snapshot.panelId
-    || current.sessionId !== snapshot.sessionId
-    || !current.destroysSessionOnClose
-  ) {
-    return 'pane-changed';
-  }
-  if (!markDestroyHandled(snapshot.sessionId)) return 'pane-changed';
-  close();
-  return 'closed';
 }
 
 const panes = new Map<string, PaneHandle>();
@@ -286,57 +229,6 @@ export function getPaneHandle(panelId: string): PaneHandle | undefined {
 
 export function listPaneSnapshots(): PaneSnapshot[] {
   return [...panes.values()].map((pane) => pane.getSnapshot());
-}
-
-/** Creator-only, immutable snapshot used across async preset validation. */
-export function listCreatorPaneSnapshots(
-  snapshots: readonly PaneSnapshot[] = listPaneSnapshots(),
-): readonly PaneSnapshot[] {
-  return Object.freeze(snapshots
-    .filter((pane) => pane.destroysSessionOnClose && pane.sessionId !== null)
-    .map((pane) => Object.freeze({
-      ...pane,
-      activeRunIds: Object.freeze([...pane.activeRunIds]),
-    })));
-}
-
-/** A pending bind is intentionally separate from creator snapshots: it may
- * not have a session id yet, but can become a creator after the caller's
- * current snapshot. Never begin an irreversible preset teardown in that gap. */
-export function hasPendingSessionBinding(
-  snapshots: readonly PaneSnapshot[] = listPaneSnapshots(),
-): boolean {
-  return snapshots.some((pane) => pane.sessionBindingPending);
-}
-
-/** Exact creator/session/run identity check before any destructive request. */
-export function hasExactCreatorPaneSet(
-  expected: readonly PaneSnapshot[],
-  current: readonly PaneSnapshot[],
-): boolean {
-  if (expected.length !== current.length) return false;
-  const expectedByPanel = new Map(expected.map((pane) => [pane.panelId, pane]));
-  return current.every((pane) => {
-    const prior = expectedByPanel.get(pane.panelId);
-    return prior !== undefined
-      && pane.sessionId === prior.sessionId
-      && sameActiveRunSet(pane.activeRunIds, prior.activeRunIds);
-  });
-}
-
-/** After an accepted destroy, missing creators and completed/cancelled runs
- * are safe. A new creator, replacement session, or new run is not. */
-export function hasNoUnexpectedCreatorPanes(
-  expected: readonly PaneSnapshot[],
-  current: readonly PaneSnapshot[],
-): boolean {
-  const expectedByPanel = new Map(expected.map((pane) => [pane.panelId, pane]));
-  return current.every((pane) => {
-    const prior = expectedByPanel.get(pane.panelId);
-    if (!prior || pane.sessionId !== prior.sessionId) return false;
-    const expectedRuns = new Set(prior.activeRunIds);
-    return pane.activeRunIds.every((runId) => expectedRuns.has(runId));
-  });
 }
 
 // Compatibility helpers for the existing File Explorer while it migrates to

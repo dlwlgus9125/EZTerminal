@@ -4,7 +4,6 @@ import {
   DockviewReact,
   type DockviewApi,
   type DockviewReadyEvent,
-  type IDockviewPanel,
   type IDockviewPanelProps,
   type IDockviewPanelHeaderProps,
 } from 'dockview-react';
@@ -41,10 +40,7 @@ import {
 import { type QuickCommand, type QuickCommandInput, type QuickCommandMutationResult } from '../shared/quick-command';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
 import {
-  classifyCloseRisk,
   countCloseRisks,
-  planPaneClose,
-  sameActiveRunSet,
   type CloseRisk,
 } from '../shared/close-risk';
 import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from '../shared/workspace-search';
@@ -129,18 +125,18 @@ import {
   type SidebarDestination,
 } from './workbench';
 import {
-  closePaneAfterGuardedSessionDestroy,
   getPaneHandle,
-  hasExactCreatorPaneSet,
-  hasNoUnexpectedCreatorPanes,
-  hasPendingSessionBinding,
-  listCreatorPaneSnapshots,
   listPaneSnapshots,
   subscribePaneRegistry,
   type PaneActionFailure,
   type PaneActionResult,
-  type PaneSnapshot,
 } from './pane-registry';
+import {
+  PaneLifecycleCoordinator,
+  type PaneDisposition,
+  type PaneLifecycleTarget,
+  type PreparedPaneLifecycle,
+} from './pane-lifecycle-coordinator';
 import {
   installRecentPanelKeybindings,
   type RecentPanelSwitchSession,
@@ -232,7 +228,12 @@ const WorkspaceTabActionContext = createContext<WorkspaceTabActionContextValue>(
 });
 
 interface PaneCloseContextValue {
-  requestPanelClose(panelId: string, component: string, close: () => void): void;
+  requestPanelClose(
+    panelId: string,
+    component: string,
+    instanceToken: object,
+    close: () => void,
+  ): void;
 }
 const PaneCloseContext = createContext<PaneCloseContextValue | null>(null);
 
@@ -248,23 +249,10 @@ interface CloseDialogState {
   readonly onAlternate?: () => void;
 }
 
-interface AuxiliaryCloseCandidate {
-  readonly panelId: string;
-  readonly title: string;
-  readonly instanceToken: object;
-  /** Null for a read-only Agent Session that has not mounted a terminal. */
-  readonly snapshot: PaneSnapshot | null;
-  readonly risk: CloseRisk | null;
-}
-
-type AuxiliaryPaneCloseCandidate = AuxiliaryCloseCandidate & {
-  readonly snapshot: PaneSnapshot;
-};
-
 interface AuxiliaryCloseDialogState {
   readonly request: AuxiliaryCloseRequest;
   readonly targetWindow: Window;
-  readonly candidates: readonly AuxiliaryCloseCandidate[];
+  readonly plan: PreparedPaneLifecycle;
   readonly busy: boolean;
 }
 
@@ -284,7 +272,7 @@ function AgentAwareTab(props: IDockviewPanelHeaderProps): JSX.Element {
       status={status}
       requestClose={(close) => {
         if (closeContext) {
-          closeContext.requestPanelClose(props.api.id, props.api.component, close);
+          closeContext.requestPanelClose(props.api.id, props.api.component, props.api, close);
         } else close();
       }}
       onSplit={actions.split}
@@ -468,10 +456,20 @@ export function App(): JSX.Element {
   const sidebarReflow = useSidebarReflow();
   const apiRef = useRef<DockviewApi | null>(null);
   const popoutBehaviorRef = useRef<{ dispose(): void } | null>(null);
+  const paneLifecycleCoordinatorRef = useRef<PaneLifecycleCoordinator | null>(null);
+  if (paneLifecycleCoordinatorRef.current === null) {
+    paneLifecycleCoordinatorRef.current = new PaneLifecycleCoordinator({
+      getPaneHandle,
+      listPaneSnapshots,
+      destroySessionGuarded: (sessionId, expectedActiveRunIds) =>
+        window.ezterminal.destroySessionGuarded(sessionId, expectedActiveRunIds),
+      destroySessionsGuarded: (sessions) => window.ezterminal.destroySessionsGuarded(sessions),
+    });
+  }
+  const paneLifecycleCoordinator = paneLifecycleCoordinatorRef.current;
   const [closeDialog, setCloseDialog] = useState<CloseDialogState | null>(null);
   const [auxiliaryCloseDialog, setAuxiliaryCloseDialog] =
     useState<AuxiliaryCloseDialogState | null>(null);
-  const pendingPanelClosesRef = useRef(new Set<string>());
   const presetApplyPendingRef = useRef(false);
   const [presetApplyPending, setPresetApplyPending] = useState(false);
   const deferredSessionAddsRef = useRef(new Map<string, SessionInfo>());
@@ -1175,17 +1173,33 @@ export function App(): JSX.Element {
     [agentSnapshot],
   );
 
-  const auxiliaryRisk = useCallback(
-    (snapshot: PaneSnapshot): CloseRisk | null => classifyCloseRisk({
-      destroysSession: snapshot.destroysSessionOnClose,
-      isBusy: snapshot.isBusy,
-      executionKind: snapshot.executionKind,
-      hasSshPrompt: snapshot.hasSshPrompt,
-      hasActiveAgent: snapshot.sessionId !== null && agentSessionIds.has(snapshot.sessionId),
-      isDead: snapshot.isDead,
-    }),
-    [agentSessionIds],
-  );
+  const resolveAuxiliaryTargets = useCallback((
+    request: AuxiliaryCloseRequest,
+    targetWindow: Window,
+  ): readonly PaneLifecycleTarget[] | null => {
+    const api = apiRef.current;
+    if (!api) return null;
+    const targetStillOpen = api.getPopouts().some(
+      (popout) => popout.window === targetWindow && popout.window.name === request.windowName,
+    );
+    if (!targetStillOpen) return null;
+    const panels = api.panels.filter((panel) => {
+      try {
+        return panel.api.getWindow() === targetWindow;
+      } catch {
+        return false;
+      }
+    });
+    if (panels.some((panel) => api.getPanel(panel.id) !== panel || !isDetachablePanel(panel))) {
+      return null;
+    }
+    return panels.map((panel) => ({
+      panelId: panel.id,
+      title: panel.api.title ?? t('workspaceTab.terminal'),
+      component: panel.api.component,
+      instanceToken: panel.api,
+    }));
+  }, [t]);
 
   const rejectAuxiliaryClose = useCallback(
     (request: AuxiliaryCloseRequest, stateChanged: boolean): void => {
@@ -1209,7 +1223,7 @@ export function App(): JSX.Element {
     async (
       request: AuxiliaryCloseRequest,
       targetWindow: Window,
-      candidates: readonly AuxiliaryCloseCandidate[],
+      plan: PreparedPaneLifecycle,
       choices: ReadonlyMap<string, AuxiliaryCloseChoice>,
     ): Promise<void> => {
       const api = apiRef.current;
@@ -1219,151 +1233,59 @@ export function App(): JSX.Element {
         return;
       }
 
-      const targetStillOpen = api.getPopouts().some(
-        (popout) => popout.window === targetWindow && popout.window.name === request.windowName,
-      );
-      const currentPanels = api.panels.filter((panel) => {
-        try {
-          return panel.api.getWindow() === targetWindow;
-        } catch {
-          return false;
-        }
-      });
-      if (!targetStillOpen || currentPanels.length !== candidates.length) {
-        rejectAuxiliaryClose(request, true);
-        return;
-      }
-
-      const latest = new Map<string, PaneSnapshot>();
-      for (const candidate of candidates) {
-        const panel = api.getPanel(candidate.panelId);
-        if (
-          !panel
-          || panel.api !== candidate.instanceToken
-          || !currentPanels.includes(panel)
-          || !isDetachablePanel(panel)
-        ) {
-          rejectAuxiliaryClose(request, true);
-          return;
-        }
-        const paneHandle = getPaneHandle(candidate.panelId);
-        if (candidate.snapshot === null) {
-          // A read-only Agent Session may become a live terminal while close
-          // confirmation is in flight. Treat that as a state change.
-          if (
-            panel.api.component !== 'agent-session'
-            || candidate.risk !== null
-            || paneHandle
-          ) {
-            rejectAuxiliaryClose(request, true);
-            return;
-          }
-          continue;
-        }
-        const snapshot = paneHandle?.getSnapshot();
-        if (
-          !snapshot
-          || snapshot.panelId !== candidate.snapshot.panelId
-          || snapshot.sessionId !== candidate.snapshot.sessionId
-          || snapshot.sessionBindingPending !== candidate.snapshot.sessionBindingPending
-          || snapshot.destroysSessionOnClose !== candidate.snapshot.destroysSessionOnClose
-          || snapshot.isBusy !== candidate.snapshot.isBusy
-          || snapshot.isDead !== candidate.snapshot.isDead
-          || snapshot.executionKind !== candidate.snapshot.executionKind
-          || snapshot.hasSshPrompt !== candidate.snapshot.hasSshPrompt
-          || !sameActiveRunSet(snapshot.activeRunIds, candidate.snapshot.activeRunIds)
-          || auxiliaryRisk(snapshot) !== candidate.risk
-          || (candidate.risk !== null && !choices.has(candidate.panelId))
-        ) {
-          rejectAuxiliaryClose(request, true);
-          return;
-        }
-        latest.set(candidate.panelId, snapshot);
-      }
-
-      const paneCandidates = candidates.filter(
-        (candidate): candidate is AuxiliaryPaneCloseCandidate => candidate.snapshot !== null,
-      );
-      const terminate = paneCandidates.filter((candidate) => (
-        candidate.snapshot.destroysSessionOnClose
-        && choices.get(candidate.panelId) !== 'keep'
-      ));
-      const keep = paneCandidates.filter((candidate) => (
-        candidate.snapshot.destroysSessionOnClose
-        && choices.get(candidate.panelId) === 'keep'
-      ));
-      const liveTerminate = terminate.filter((candidate) => !candidate.snapshot.isDead);
-      if (liveTerminate.some((candidate) => candidate.snapshot.sessionId === null)) {
-        rejectAuxiliaryClose(request, false);
-        return;
-      }
-
       try {
-        const destroyResult = liveTerminate.length === 0
-          ? { ok: true as const }
-          : await window.ezterminal.destroySessionsGuarded(
-              liveTerminate.map((candidate) => ({
-                sessionId: candidate.snapshot.sessionId!,
-                expectedActiveRunIds: candidate.snapshot.activeRunIds,
-              })),
-            );
-        if (!destroyResult.ok) {
-          rejectAuxiliaryClose(request, destroyResult.reason === 'state-changed');
+        const dispositions = new Map<string, PaneDisposition>();
+        for (const item of plan.items) {
+          if (!item.creator) continue;
+          const choice = choices.get(item.panelId);
+          if (choice) dispositions.set(item.panelId, choice);
+          else if (item.risk === null) dispositions.set(item.panelId, 'terminate');
+        }
+        const resolveCurrentTargets = () => resolveAuxiliaryTargets(request, targetWindow);
+        const result = await paneLifecycleCoordinator.commit(plan, {
+          dispositions,
+          resolveCurrentTargets,
+          activeAgentSessionIds: agentSessionIds,
+        });
+        if (!result.ok) {
+          rejectAuxiliaryClose(request, result.reason === 'state-changed');
           return;
         }
-
-        // Dockview panels may not migrate into or out of the target while the
-        // guarded destroy round-trip is in flight.
-        const finalPanels = api.panels.filter((panel) => {
-          try {
-            return panel.api.getWindow() === targetWindow;
-          } catch {
-            return false;
-          }
-        });
-        if (
-          finalPanels.length !== candidates.length
-          || candidates.some((candidate) => (
-            api.getPanel(candidate.panelId)?.api !== candidate.instanceToken
-            || !finalPanels.includes(api.getPanel(candidate.panelId)!)
-            || (candidate.snapshot === null && Boolean(getPaneHandle(candidate.panelId)))
-          ))
-        ) {
+        if (!paneLifecycleCoordinator.validateFinalization(result.commit, {
+          resolveCurrentTargets,
+        }).ok) {
           rejectAuxiliaryClose(request, true);
           return;
         }
-
-        for (const candidate of terminate) {
-          const sessionId = candidate.snapshot.sessionId;
-          if (sessionId) getPaneHandle(candidate.panelId)?.markSessionDestroyHandled(sessionId);
-        }
-        let keptAny = false;
-        for (const candidate of keep) {
-          const expectedSessionId = latest.get(candidate.panelId)?.sessionId;
-          const keptSessionId = getPaneHandle(candidate.panelId)?.releaseSessionOwnership() ?? null;
-          if (!expectedSessionId || keptSessionId !== expectedSessionId) {
+        for (const target of result.commit.targets) {
+          const panel = api.getPanel(target.panelId);
+          if (!panel || panel.api !== target.instanceToken) {
             rejectAuxiliaryClose(request, true);
             return;
           }
-          keptAny = true;
+          panel.api.close();
         }
 
         // Removing the final panel asks Dockview to close the native window.
         // Main keeps that re-entrant close held until this original request is
         // explicitly allowed below.
-        for (const candidate of candidates) {
-          api.getPanel(candidate.panelId)?.api.close();
-        }
         setAuxiliaryCloseDialog(null);
         await desktop.resolveAuxiliaryClose(request.requestId, 'allow');
-        if (keptAny) {
+        if (result.commit.keptSessionIds.length > 0) {
           pushToast({ title: t('safetyDialog.keptRunning'), variant: 'info' });
         }
       } catch {
         rejectAuxiliaryClose(request, false);
       }
     },
-    [auxiliaryRisk, pushToast, rejectAuxiliaryClose, t],
+    [
+      agentSessionIds,
+      paneLifecycleCoordinator,
+      pushToast,
+      rejectAuxiliaryClose,
+      resolveAuxiliaryTargets,
+      t,
+    ],
   );
 
   const handleAuxiliaryCloseRequest = useCallback(
@@ -1383,65 +1305,43 @@ export function App(): JSX.Element {
         void desktop.resolveAuxiliaryClose(request.requestId, 'allow');
         return;
       }
-      const panels: IDockviewPanel[] = api.panels.filter((panel) => {
-        try {
-          return panel.api.getWindow() === popout.window;
-        } catch {
-          return false;
-        }
-      });
-      if (panels.length === 0) {
+      const targets = resolveAuxiliaryTargets(request, popout.window);
+      if (!targets) {
+        rejectAuxiliaryClose(request, false);
+        return;
+      }
+      if (targets.length === 0) {
         void desktop.resolveAuxiliaryClose(request.requestId, 'allow');
         return;
       }
 
-      const candidates: AuxiliaryCloseCandidate[] = [];
-      for (const panel of panels) {
-        if (!isDetachablePanel(panel)) {
-          rejectAuxiliaryClose(request, false);
-          return;
-        }
-        const paneHandle = getPaneHandle(panel.id);
-        const snapshot = paneHandle?.getSnapshot();
-        if (!snapshot && panel.api.component === 'agent-session' && !paneHandle) {
-          candidates.push({
-            panelId: panel.id,
-            title: panel.api.title ?? t('workspaceTab.terminal'),
-            instanceToken: panel.api,
-            snapshot: null,
-            risk: null,
-          });
-          continue;
-        }
-        if (
-          !snapshot
-          || snapshot.sessionBindingPending
-          || (snapshot.destroysSessionOnClose && snapshot.sessionId === null)
-        ) {
-          rejectAuxiliaryClose(request, false);
-          return;
-        }
-        candidates.push({
-          panelId: panel.id,
-          title: panel.api.title ?? t('workspaceTab.terminal'),
-          instanceToken: panel.api,
-          snapshot,
-          risk: auxiliaryRisk(snapshot),
-        });
+      const preparation = paneLifecycleCoordinator.prepare({
+        kind: 'auxiliary-window',
+        targets,
+        activeAgentSessionIds: agentSessionIds,
+      });
+      if (!preparation.ok) {
+        rejectAuxiliaryClose(request, false);
+        return;
       }
-
-      if (candidates.length === 1 && candidates[0]!.risk === null) {
-        void completeAuxiliaryClose(request, popout.window, candidates, new Map());
+      if (!preparation.plan.requiresConfirmation) {
+        void completeAuxiliaryClose(request, popout.window, preparation.plan, new Map());
         return;
       }
       setAuxiliaryCloseDialog({
         request,
         targetWindow: popout.window,
-        candidates,
+        plan: preparation.plan,
         busy: false,
       });
     },
-    [auxiliaryRisk, completeAuxiliaryClose, rejectAuxiliaryClose, t],
+    [
+      agentSessionIds,
+      completeAuxiliaryClose,
+      paneLifecycleCoordinator,
+      rejectAuxiliaryClose,
+      resolveAuxiliaryTargets,
+    ],
   );
 
   useEffect(() => (
@@ -1484,7 +1384,7 @@ export function App(): JSX.Element {
   }, [workbenchCoordinator]);
 
   const requestPanelClose = useCallback(
-    (panelId: string, component: string, close: () => void): void => {
+    (panelId: string, component: string, instanceToken: object, close: () => void): void => {
       // A read-only Agent Session has no pane handle and closes immediately.
       // After its first send it mounts TerminalPane in the same Dockview panel,
       // so the handle (rather than the component name) becomes the close guard.
@@ -1501,63 +1401,61 @@ export function App(): JSX.Element {
               confirmLabel: t('common.retry'),
               onConfirm: () => {
                 setCloseDialog(null);
-                requestAnimationFrame(() => requestPanelClose(panelId, component, close));
+                requestAnimationFrame(() => (
+                  requestPanelClose(panelId, component, instanceToken, close)
+                ));
               },
             },
         );
       };
-      const closeAfterGuardedDestroy = (candidate: PaneSnapshot): void => {
-        if (pendingPanelClosesRef.current.has(panelId)) return;
-        pendingPanelClosesRef.current.add(panelId);
-        void closePaneAfterGuardedSessionDestroy(
-          candidate,
-          (sessionId, activeRunIds) => window.ezterminal.destroySessionGuarded(sessionId, activeRunIds),
-          () => getPaneHandle(panelId)?.getSnapshot() ?? null,
-          (sessionId) => getPaneHandle(panelId)?.markSessionDestroyHandled(sessionId) ?? false,
-          close,
-        )
-          .then((outcome) => {
-            if (outcome === 'closed') {
-              focusActivePane();
-              return;
-            }
-            retryAfterStateCheck();
-          })
-          .finally(() => {
-            pendingPanelClosesRef.current.delete(panelId);
-          });
-      };
-      const snapshot = getPaneHandle(panelId)?.getSnapshot();
-      if (!snapshot) {
-        retryAfterStateCheck();
-        return;
-      }
-      if (!snapshot.destroysSessionOnClose) {
-        close();
-        return;
-      }
-      const plan = planPaneClose(
-        {
-          destroysSession: true,
-          isBusy: snapshot.isBusy,
-          executionKind: snapshot.executionKind,
-          hasSshPrompt: snapshot.hasSshPrompt,
-          hasActiveAgent: snapshot.sessionId !== null && agentSessionIds.has(snapshot.sessionId),
-          isDead: snapshot.isDead,
+      const preparation = paneLifecycleCoordinator.prepare({
+        kind: 'single-pane',
+        target: {
+          panelId,
+          title: panelId,
+          component,
+          instanceToken,
         },
-        confirmRiskyPaneClose,
-      );
-      if (plan.kind === 'close') {
-        closeAfterGuardedDestroy(snapshot);
-        return;
-      }
-      if (plan.kind === 'blocked') {
+        activeAgentSessionIds: agentSessionIds,
+        confirmRiskyClose: confirmRiskyPaneClose,
+      });
+      if (!preparation.ok) {
         retryAfterStateCheck();
         return;
       }
-      const risk = plan.risk;
-      const expectedSessionId = snapshot.sessionId;
-      const expectedActiveRunIds = Object.freeze([...snapshot.activeRunIds]);
+
+      const plan = preparation.plan;
+      const commitClose = (disposition: PaneDisposition): void => {
+        const dispositions = new Map<string, PaneDisposition>();
+        if (plan.items.some((item) => item.panelId === panelId && item.creator)) {
+          dispositions.set(panelId, disposition);
+        }
+        void paneLifecycleCoordinator.commit(plan, { dispositions }).then((result) => {
+          if (!result.ok) {
+            if (result.reason !== 'busy') retryAfterStateCheck();
+            return;
+          }
+          if (!paneLifecycleCoordinator.validateFinalization(result.commit).ok) {
+            retryAfterStateCheck();
+            return;
+          }
+          close();
+          focusActivePane();
+          if (result.commit.keptSessionIds.length > 0) {
+            pushToast({ title: t('safetyDialog.keptRunning'), variant: 'info' });
+          }
+        });
+      };
+
+      if (!plan.requiresConfirmation) {
+        commitClose('terminate');
+        return;
+      }
+      const risk = plan.items[0]?.risk;
+      if (!risk) {
+        retryAfterStateCheck();
+        return;
+      }
       setCloseDialog(
         (current) =>
           current ?? {
@@ -1573,36 +1471,23 @@ export function App(): JSX.Element {
             alternateLabel: t('safetyDialog.keepInBackground'),
             onAlternate: () => {
               setCloseDialog(null);
-              // Hand the session over before the pane goes: closing alone would
-              // still let unmount tear it down, which would make this button a
-              // promise the app does not keep.
-              const kept = getPaneHandle(panelId)?.releaseSessionOwnership() ?? null;
-              close();
-              focusActivePane();
-              if (kept) pushToast({ title: t('safetyDialog.keptRunning'), variant: 'info' });
+              commitClose('keep');
             },
             onConfirm: () => {
-              const latest = getPaneHandle(panelId)?.getSnapshot();
               setCloseDialog(null);
-              if (
-                !latest ||
-                latest.sessionId !== expectedSessionId ||
-                !sameActiveRunSet(latest.activeRunIds, expectedActiveRunIds)
-              ) {
-                requestAnimationFrame(() => requestPanelClose(panelId, component, close));
-                return;
-              }
-              if (!latest.destroysSessionOnClose) {
-                close();
-                focusActivePane();
-                return;
-              }
-              closeAfterGuardedDestroy(latest);
+              commitClose('terminate');
             },
           },
       );
     },
-    [agentSessionIds, confirmRiskyPaneClose, focusActivePane, pushToast, t],
+    [
+      agentSessionIds,
+      confirmRiskyPaneClose,
+      focusActivePane,
+      paneLifecycleCoordinator,
+      pushToast,
+      t,
+    ],
   );
   const paneCloseContextValue = useMemo<PaneCloseContextValue>(() => ({ requestPanelClose }), [requestPanelClose]);
 
@@ -2004,7 +1889,6 @@ export function App(): JSX.Element {
 
   const applyPreset = useCallback(
     (name: string): void => {
-      const creatorPanes = listCreatorPaneSnapshots();
       const showPresetStateChanged = (): void => {
         setCloseDialog({
           title: t('safetyDialog.terminalStateChangedTitle'),
@@ -2013,17 +1897,23 @@ export function App(): JSX.Element {
           onConfirm: () => setCloseDialog(null),
         });
       };
-      const risks = creatorPanes
-        .map((pane) =>
-          classifyCloseRisk({
-            destroysSession: true,
-            isBusy: pane.isBusy,
-            executionKind: pane.executionKind,
-            hasSshPrompt: pane.hasSshPrompt,
-            hasActiveAgent: pane.sessionId !== null && agentSessionIds.has(pane.sessionId),
-            isDead: pane.isDead,
-          }),
-        )
+      const preparation = paneLifecycleCoordinator.prepare({
+        kind: 'workspace-replacement',
+        activeAgentSessionIds: agentSessionIds,
+      });
+      if (!preparation.ok) {
+        setCloseDialog({
+          title: t('safetyDialog.terminalStateUnavailableTitle'),
+          description: t('safetyDialog.terminalStateUnavailableDescription'),
+          confirmLabel: t('common.ok'),
+          onConfirm: () => setCloseDialog(null),
+        });
+        return;
+      }
+      const plan = preparation.plan;
+      const creatorCount = plan.items.filter((item) => item.creator).length;
+      const risks = plan.items
+        .map((item) => item.risk)
         .filter((risk): risk is CloseRisk => risk !== null);
       const counts = countCloseRisks(risks);
       const details: string[] = (Object.keys(counts) as CloseRisk[])
@@ -2032,11 +1922,11 @@ export function App(): JSX.Element {
           count: counts[risk],
           risk: t(CLOSE_RISK_I18N_KEY[risk]),
         }));
-      if (creatorPanes.length > 0) {
+      if (creatorCount > 0) {
         details.unshift(
-          creatorPanes.length === 1
-            ? t('safetyDialog.destroyedSession', { count: creatorPanes.length })
-            : t('safetyDialog.destroyedSessions', { count: creatorPanes.length }),
+          creatorCount === 1
+            ? t('safetyDialog.destroyedSession', { count: creatorCount })
+            : t('safetyDialog.destroyedSessions', { count: creatorCount }),
         );
       }
       setCloseDialog(
@@ -2048,8 +1938,7 @@ export function App(): JSX.Element {
             confirmLabel: t('safetyDialog.applyPreset'),
             onConfirm: () => {
               if (presetApplyPendingRef.current) return;
-              const latestCreators = listCreatorPaneSnapshots();
-              if (hasPendingSessionBinding() || !hasExactCreatorPaneSet(creatorPanes, latestCreators)) {
+              if (!paneLifecycleCoordinator.validatePreparation(plan).ok) {
                 showPresetStateChanged();
                 return;
               }
@@ -2063,8 +1952,7 @@ export function App(): JSX.Element {
                   // bridge or missing preset cannot strand the current workspace.
                   const preset = await window.ezterminal.getPreset(name);
                   if (!preset) throw new Error('preset unavailable');
-                  const creatorsAfterLoad = listCreatorPaneSnapshots();
-                  if (hasPendingSessionBinding() || !hasExactCreatorPaneSet(latestCreators, creatorsAfterLoad)) {
+                  if (!paneLifecycleCoordinator.validatePreparation(plan).ok) {
                     showPresetStateChanged();
                     return;
                   }
@@ -2080,46 +1968,33 @@ export function App(): JSX.Element {
                     });
                     return;
                   }
-                  const liveCreators = creatorsAfterLoad.filter((pane) => !pane.isDead);
-                  const result =
-                    liveCreators.length === 0
-                      ? { ok: true as const }
-                      : await window.ezterminal.destroySessionsGuarded(
-                          liveCreators.map((pane) => ({
-                            sessionId: pane.sessionId!,
-                            expectedActiveRunIds: pane.activeRunIds,
-                          })),
-                        );
-                  if (!result.ok) {
-                    setCloseDialog({
-                      title:
-                        result.reason === 'state-changed'
-                          ? t('safetyDialog.terminalStateChangedTitle')
-                          : t('safetyDialog.terminalStateUnavailableTitle'),
-                      description: t('safetyDialog.workspaceNotReplacedDescription'),
-                      confirmLabel: t('common.ok'),
-                      onConfirm: () => setCloseDialog(null),
-                    });
-                    return;
+                  const dispositions = new Map<string, PaneDisposition>();
+                  for (const item of plan.items) {
+                    if (item.creator) dispositions.set(item.panelId, 'terminate');
                   }
-                  // Mark completion only after the authoritative ACK (or known-dead
-                  // shared-fate case). TerminalPane cleanup then skips a redundant
-                  // second guarded destroy. A replacement identity is never marked.
-                  for (const pane of creatorsAfterLoad) {
-                    const handle = getPaneHandle(pane.panelId);
-                    if (handle && !handle.markSessionDestroyHandled(pane.sessionId!)) {
+                  const result = await paneLifecycleCoordinator.commit(plan, { dispositions });
+                  if (!result.ok) {
+                    if (result.stage === 'destroy') {
+                      setCloseDialog({
+                        title:
+                          result.reason === 'state-changed'
+                            ? t('safetyDialog.terminalStateChangedTitle')
+                            : t('safetyDialog.terminalStateUnavailableTitle'),
+                        description: t('safetyDialog.workspaceNotReplacedDescription'),
+                        confirmLabel: t('common.ok'),
+                        onConfirm: () => setCloseDialog(null),
+                      });
+                    } else if (result.reason !== 'busy') {
                       showPresetStateChanged();
-                      return;
                     }
+                    return;
                   }
                   let finalStateValid = true;
                   const applied = await runLayoutTransaction(() => Promise.resolve(preset), {
                     quarantineOnCorrupt: false,
                     restoreBackupOnFailure: true,
                     beforeApply: () => {
-                      finalStateValid =
-                        !hasPendingSessionBinding() &&
-                        hasNoUnexpectedCreatorPanes(creatorsAfterLoad, listCreatorPaneSnapshots());
+                      finalStateValid = paneLifecycleCoordinator.validateFinalization(result.commit).ok;
                       if (!finalStateValid) showPresetStateChanged();
                       return finalStateValid;
                     },
@@ -2165,7 +2040,15 @@ export function App(): JSX.Element {
           },
       );
     },
-    [agentSessionIds, focusActivePane, pushToast, runLayoutTransaction, scheduleSave, t],
+    [
+      agentSessionIds,
+      focusActivePane,
+      paneLifecycleCoordinator,
+      pushToast,
+      runLayoutTransaction,
+      scheduleSave,
+      t,
+    ],
   );
 
   const toggleStartupPreset = useCallback(
@@ -3167,8 +3050,8 @@ export function App(): JSX.Element {
           {auxiliaryCloseDialog && (
             <AuxiliaryCloseDialog
               requestId={auxiliaryCloseDialog.request.requestId}
-              paneCount={auxiliaryCloseDialog.candidates.length}
-              riskyPanes={auxiliaryCloseDialog.candidates
+              paneCount={auxiliaryCloseDialog.plan.items.length}
+              riskyPanes={auxiliaryCloseDialog.plan.items
                 .filter((candidate) => candidate.risk !== null)
                 .map((candidate) => ({
                   panelId: candidate.panelId,
@@ -3191,7 +3074,7 @@ export function App(): JSX.Element {
                 void completeAuxiliaryClose(
                   pending.request,
                   pending.targetWindow,
-                  pending.candidates,
+                  pending.plan,
                   choices,
                 );
               }}
