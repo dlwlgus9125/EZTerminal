@@ -30,6 +30,12 @@ export const PAYLOAD_NAMES = [
   'Uninstall EZTerminal.exe',
 ];
 
+const AUTHENTICODE_POWERSHELL_CANDIDATES = Object.freeze([
+  'pwsh.exe',
+  'powershell.exe',
+]);
+let authenticodePowerShell;
+
 export function packageVersion() {
   return JSON.parse(readFileSync(path.resolve('package.json'), 'utf8')).version;
 }
@@ -102,6 +108,35 @@ export function pnpm(args, env = {}) {
   return run(process.execPath, [pnpmCli, ...args], { env });
 }
 
+export function selectAuthenticodePowerShell(probe) {
+  for (const candidate of AUTHENTICODE_POWERSHELL_CANDIDATES) {
+    if (probe(candidate)) return candidate;
+  }
+  throw new Error('No PowerShell host with working Authenticode support was found.');
+}
+
+function supportsAuthenticode(command) {
+  const script = [
+    "$target = if (Test-Path -LiteralPath (Join-Path $PSHOME 'pwsh.exe')) { "
+      + "Join-Path $PSHOME 'pwsh.exe' } else { Join-Path $PSHOME 'powershell.exe' }",
+    'Get-AuthenticodeSignature -LiteralPath $target | Out-Null',
+  ].join('; ');
+  const result = spawnSync(command, [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script,
+  ], {
+    env: process.env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'ignore', 'pipe'],
+    windowsHide: true,
+  });
+  return !result.error && result.status === 0;
+}
+
+function resolveAuthenticodePowerShell() {
+  authenticodePowerShell ??= selectAuthenticodePowerShell(supportsAuthenticode);
+  return authenticodePowerShell;
+}
+
 export function verify(paths, status, outputPath) {
   const files = paths.flatMap((file) => {
     const args = [
@@ -113,7 +148,7 @@ export function verify(paths, status, outputPath) {
       '-ExpectedProductVersion', packageVersion(),
     ];
     if (status === 'Valid') args.push('-ExpectedPublisher', PUBLISHER, '-RequireTimestamp');
-    const evidence = JSON.parse(run('powershell.exe', args, { capture: true }));
+    const evidence = JSON.parse(run(resolveAuthenticodePowerShell(), args, { capture: true }));
     return evidence.files;
   });
   const evidence = {
