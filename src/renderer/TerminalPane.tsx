@@ -826,9 +826,9 @@ export function TerminalPane({
         controller.pasteText(text);
         return { ok: true };
       },
-      focus: (): void => {
+      focus: (): boolean => {
         const active = activeController.current?.getSnapshot();
-        focusPaneSurface(
+        return focusPaneSurface(
           cmdInputRef.current,
           active?.status === 'running' && active.shape === 'pty',
         );

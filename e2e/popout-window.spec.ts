@@ -50,6 +50,51 @@ async function addPopoutGroup(page: Page, panelId = 'tab-1'): Promise<void> {
   expect(opened).toBe(true);
 }
 
+async function movePanelIntoFirstPopout(
+  page: Page,
+  panelId: string,
+  mainLayoutFrameDelayMs = 0,
+): Promise<void> {
+  await page.evaluate(({ id, mainLayoutFrameDelayMs: delayMs }) => {
+    type EzDockGroup = { id: string };
+    type EzDockPanel = {
+      id: string;
+      api: {
+        moveTo(options: { group: EzDockGroup; position: 'center' }): void;
+      };
+    };
+    type EzDockApi = {
+      panels: EzDockPanel[];
+      getPopouts(): Array<{ group: EzDockGroup }>;
+    };
+    const api = (globalThis as unknown as { __ezDock?: EzDockApi }).__ezDock;
+    if (!api) throw new Error('__ezDock test seam missing');
+    const panel = api.panels.find((candidate) => candidate.id === id);
+    const popout = api.getPopouts()[0];
+    if (!panel || !popout) throw new Error('expected source panel and existing popout');
+    if (delayMs <= 0) {
+      panel.api.moveTo({ group: popout.group, position: 'center' });
+      return;
+    }
+
+    // Dockview schedules the moved `always` renderer's destination-overlay
+    // positioning from the main realm. Delaying only the frame requested by
+    // moveTo deterministically exercises the valid cross-window ordering where
+    // two auxiliary frames run before that overlay becomes focusable.
+    const originalRequestFrame = globalThis.requestAnimationFrame;
+    const requestFrame = originalRequestFrame.bind(globalThis);
+    globalThis.requestAnimationFrame = (callback) => globalThis.setTimeout(
+      () => requestFrame(callback),
+      delayMs,
+    ) as unknown as number;
+    try {
+      panel.api.moveTo({ group: popout.group, position: 'center' });
+    } finally {
+      globalThis.requestAnimationFrame = originalRequestFrame;
+    }
+  }, { id: panelId, mainLayoutFrameDelayMs });
+}
+
 async function addAgentSessionPanel(page: Page): Promise<void> {
   await page.evaluate(() => {
     type EzDockApi = {
@@ -147,6 +192,32 @@ test('terminal tab dragged outside becomes a frameless auxiliary window with the
     const seam = globalThis as unknown as { __ezSessions?: () => number };
     return seam.__ezSessions ? seam.__ezSessions() : -1;
   })).toBe(0);
+
+  await app.close();
+});
+
+test('terminal pane moved into an existing auxiliary window receives keyboard focus', async () => {
+  const app = await launchApp();
+  const main = await app.firstWindow();
+
+  await main.getByTestId('btn-workspace-menu').click();
+  await main.getByTestId('btn-split-right').click();
+  await expect(panes(main)).toHaveCount(2);
+
+  await addPopoutGroup(main, 'tab-1');
+  const auxiliary = await waitForAuxiliaryWindow(app);
+  await expect(panes(main)).toHaveCount(1);
+  await expect(panes(auxiliary)).toHaveCount(1);
+
+  const sourceInput = main.getByTestId('cmd-input');
+  await sourceInput.focus();
+  await expect(sourceInput).toBeFocused();
+
+  await movePanelIntoFirstPopout(main, 'tab-2', 250);
+
+  await expect(panes(main)).toHaveCount(0);
+  await expect(panes(auxiliary)).toHaveCount(2);
+  await expect(auxiliary.locator('[data-testid="cmd-input"]:visible')).toBeFocused();
 
   await app.close();
 });

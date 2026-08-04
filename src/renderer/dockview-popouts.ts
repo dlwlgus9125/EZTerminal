@@ -13,9 +13,11 @@ const MIN_POPOUT_WIDTH = 640;
 const MAX_POPOUT_WIDTH = 1_200;
 const MIN_POPOUT_HEIGHT = 400;
 const MAX_POPOUT_HEIGHT = 900;
+const CROSS_WINDOW_FOCUS_TIMEOUT_MS = 2_000;
 
 export interface DockviewPopoutBehaviorOptions {
   readonly onOpenFailed?: () => void;
+  readonly onPanelMovedAcrossWindows?: (panelId: string) => boolean;
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -43,7 +45,9 @@ export function installDockviewPopoutBehavior(
 ): { dispose(): void } {
   const disposables: Array<{ dispose(): void }> = [];
   const registered = new Map<Window, () => void>();
+  const focusGenerations = new WeakMap<IDockviewPanel, number>();
   const popoutUrl = auxiliaryPopoutUrl();
+  let disposed = false;
 
   const register = (target: Window): void => {
     if (registered.has(target)) return;
@@ -66,6 +70,41 @@ export function installDockviewPopoutBehavior(
     if (!transfer?.panelId || !isDetachablePanel(api.getPanel(transfer.panelId))) {
       event.preventDefault();
     }
+  }));
+
+  disposables.push(api.onDidMovePanel(({ panel, from }) => {
+    const generation = (focusGenerations.get(panel) ?? 0) + 1;
+    focusGenerations.set(panel, generation);
+    const sourceWindow = from.api.getWindow();
+    const destinationWindow = panel.api.getWindow();
+    if (
+      sourceWindow === destinationWindow
+      || destinationWindow.closed
+      || !options.onPanelMovedAcrossWindows
+    ) {
+      return;
+    }
+    const focus = options.onPanelMovedAcrossWindows;
+    const expiresAt = destinationWindow.performance.now() + CROSS_WINDOW_FOCUS_TIMEOUT_MS;
+    // Dockview schedules an `always` renderer's overlay positioning from the
+    // main realm, while this destination window has an independent frame
+    // clock. Wait until the live input actually accepts focus; a fixed number
+    // of destination frames cannot order those two clocks.
+    const focusWhenReady = (): void => {
+      if (
+        disposed
+        || destinationWindow.closed
+        || focusGenerations.get(panel) !== generation
+        || api.getPanel(panel.id) !== panel
+        || panel.api.getWindow() !== destinationWindow
+        || api.activePanel !== panel
+      ) {
+        return;
+      }
+      if (focus(panel.id) || destinationWindow.performance.now() >= expiresAt) return;
+      destinationWindow.requestAnimationFrame(focusWhenReady);
+    };
+    destinationWindow.requestAnimationFrame(focusWhenReady);
   }));
 
   disposables.push(api.onWillDragPanel((event) => {
@@ -113,6 +152,7 @@ export function installDockviewPopoutBehavior(
 
   return {
     dispose: () => {
+      disposed = true;
       for (const disposable of disposables.splice(0)) disposable.dispose();
       for (const unregister of registered.values()) unregister();
       registered.clear();

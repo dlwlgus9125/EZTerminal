@@ -55,7 +55,10 @@ export interface PaneHandle {
   insertText(text: string): PaneActionResult;
   runText(text: string): PaneActionResult;
   pasteToPty(text: string): PaneActionResult;
-  focus(): void;
+  /** Focuses the current keyboard surface and reports whether the owner
+   * document accepted focus. A false result can mean a reparented overlay is
+   * still hidden and lets the caller wait for layout instead of guessing. */
+  focus(): boolean;
 }
 
 /** Minimal controller surface admitted to the mounted-PTY registry. Keeping

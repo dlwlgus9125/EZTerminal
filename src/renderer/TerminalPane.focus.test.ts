@@ -26,17 +26,24 @@ function makePane(): { commandInput: HTMLInputElement; terminalInput: HTMLTextAr
 describe('focusPaneSurface', () => {
   it('focuses the live xterm input for an active PTY and the command input otherwise', () => {
     const { commandInput, terminalInput } = makePane();
-    focusPaneSurface(commandInput, true);
+    expect(focusPaneSurface(commandInput, true)).toBe(true);
     expect(document.activeElement).toBe(terminalInput);
 
-    focusPaneSurface(commandInput, false);
+    expect(focusPaneSurface(commandInput, false)).toBe(true);
     expect(document.activeElement).toBe(commandInput);
   });
 
   it('falls back to the command input if xterm is not mounted yet', () => {
     const { commandInput, terminalInput } = makePane();
     terminalInput.remove();
-    focusPaneSurface(commandInput, true);
+    expect(focusPaneSurface(commandInput, true)).toBe(true);
     expect(document.activeElement).toBe(commandInput);
+  });
+
+  it('reports a detached input as not ready for focus', () => {
+    const { commandInput } = makePane();
+    commandInput.remove();
+
+    expect(focusPaneSurface(commandInput, false)).toBe(false);
   });
 });

@@ -2825,6 +2825,12 @@ export function App(): JSX.Element {
           title: t('workspace.popoutFailed'),
           variant: 'danger',
         }),
+        onPanelMovedAcrossWindows: (panelId) => {
+          const pane = getPaneHandle(panelId);
+          if (pane) return pane.focus();
+          api.focus();
+          return true;
+        },
       });
       const attachment = workbenchCoordinator.attach(createDockviewWorkbenchAdapter(api));
       // Test seam: e2e drives programmatic panel moves through this handle. dockview's
