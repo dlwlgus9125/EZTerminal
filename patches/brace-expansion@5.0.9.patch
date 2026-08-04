@@ -12,7 +12,7 @@ diff --git a/dist/commonjs/index.js b/dist/commonjs/index.js
 index 51dc48c..525a27d 100644
 --- a/dist/commonjs/index.js
 +++ b/dist/commonjs/index.js
-@@ -260,4 +260,13 @@ function expand_(str, max, maxLength, dropEmpties) {
+@@ -286,4 +286,13 @@ function expand_(str, max, maxLength, isTop) {
      }
      return acc;
  }
@@ -40,7 +40,7 @@ diff --git a/dist/esm/index.js b/dist/esm/index.js
 index 66621ec..688c9fa 100644
 --- a/dist/esm/index.js
 +++ b/dist/esm/index.js
-@@ -256,4 +256,7 @@ function expand_(str, max, maxLength, dropEmpties) {
+@@ -282,4 +282,7 @@ function expand_(str, max, maxLength, isTop) {
      }
      return acc;
  }

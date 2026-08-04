@@ -1,7 +1,7 @@
 {
   "name": "ezterminal",
   "productName": "EZTerminal",
-  "version": "1.0.23",
+  "version": "1.0.24",
   "description": "EZTerminal — a structured-data shell terminal (Phase 1 shell core).",
   "main": ".vite/build/main.js",
   "private": true,
@@ -59,13 +59,16 @@
       "tar": "7.5.21",
       "tmp": ">=0.2.4",
       "@capacitor/cli>tar": "7.5.21",
-      "brace-expansion": "5.0.8",
-      "postcss": "8.5.18",
-      "fast-uri": "3.1.4"
+      "@electron/get>undici": "7.29.0",
+      "node-gyp>undici": "6.28.0",
+      "ip-address": "10.3.1",
+      "brace-expansion": "5.0.9",
+      "postcss": "8.5.23",
+      "fast-uri": "3.1.5"
     },
     "patchedDependencies": {
       "@capacitor/cli@6.2.1": "patches/@capacitor__cli@6.2.1.patch",
-      "brace-expansion@5.0.8": "patches/brace-expansion@5.0.8.patch",
+      "brace-expansion@5.0.9": "patches/brace-expansion@5.0.9.patch",
       "capacitor-secure-storage-plugin@0.10.0": "patches/capacitor-secure-storage-plugin@0.10.0.patch"
     }
   },

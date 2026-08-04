@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [1.0.24] - 2026-08-04
+
+### Added
+
+- Added SignPath-ready Windows release assembly and verification while keeping
+  the current maintenance train explicitly in verified unsigned mode until the
+  SignPath Foundation application is approved.
+
+### Fixed
+
+- Restored terminal keyboard focus after moving a pane into an already-open
+  auxiliary window by retrying until Dockview's cross-realm overlay layout
+  makes the moved pane's live input focusable.
+- Kept graceful shutdown pending while secure token initialization is still
+  applying the Windows ACL, preventing an interrupted DACL update from leaving
+  E2E profiles undeletable.
+- Updated vulnerable release-tooling transitive dependencies to their patched
+  versions while preserving the Electron Forge/minimatch compatibility layer;
+  both production and full dependency audits now report zero known issues.
+
+See [1.0.24 release notes](docs/release/release-notes-1.0.24.md).
+
 ## [1.0.23] - 2026-07-31
 
 ### Fixed
