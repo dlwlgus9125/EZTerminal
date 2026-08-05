@@ -274,6 +274,7 @@ function releaseComparisonResults() {
     candidateP95Ms: 80,
     deltaPercent: -20,
     targeted: name === targetMetric,
+    relativeRegressionBudgetApplied: name !== 'cancellationLatencyMs',
   }));
 }
 
@@ -388,6 +389,55 @@ describe('release source-evidence verifier', () => {
       performanceBaselineSha256: sha256(fixture.baselinePath),
       performanceCandidateSha256: sha256(fixture.candidatePath),
     });
+  });
+
+  it('accepts a regression-only policy with cancellation on its absolute budget', () => {
+    const fixture = fixtures('release');
+    const baseline = JSON.parse(readFileSync(fixture.baselinePath, 'utf8')) as ReturnType<
+      typeof performanceReport
+    >;
+    const candidate = JSON.parse(readFileSync(fixture.candidatePath, 'utf8')) as ReturnType<
+      typeof performanceReport
+    >;
+    for (const name of metricOrder) {
+      baseline.metrics[name] = performanceMetric(100, name === 'cancellationLatencyMs');
+      candidate.metrics[name] = performanceMetric(
+        name === 'cancellationLatencyMs' ? 110 : 104,
+        name === 'cancellationLatencyMs',
+      );
+    }
+    writeJson(fixture.baselinePath, baseline);
+    writeJson(fixture.candidatePath, candidate);
+    const performance = fixture.report.desktopPerformance as {
+      baselineReportSha256: string;
+      candidateReportSha256: string;
+      maxP95RegressionPercent: number;
+      minTargetP95ImprovementPercent: number;
+      targetMetrics: string[];
+      results: Array<Record<string, unknown>>;
+      candidate: unknown;
+    };
+    performance.baselineReportSha256 = sha256(fixture.baselinePath);
+    performance.candidateReportSha256 = sha256(fixture.candidatePath);
+    performance.minTargetP95ImprovementPercent = 0;
+    performance.targetMetrics = [];
+    performance.results = metricOrder.map((name) => ({
+      name,
+      samples: 25,
+      baselineP95Ms: 100,
+      candidateP95Ms: name === 'cancellationLatencyMs' ? 110 : 104,
+      deltaPercent: name === 'cancellationLatencyMs' ? 10 : 4,
+      targeted: false,
+      relativeRegressionBudgetApplied: name !== 'cancellationLatencyMs',
+    }));
+    performance.candidate = candidate;
+    writeJson(fixture.reportPath, fixture.report);
+
+    const result = spawnSync(process.execPath, args(fixture, 'release'), {
+      encoding: 'utf8',
+    });
+
+    expect(result.status, result.stderr).toBe(0);
   });
 
   it('rejects a raw mobile-soak hash mismatch', () => {
