@@ -91,29 +91,77 @@ if (-not [EzPackagedWindow]::MoveWindow($window, $left, $top, $width, $height, $
 function dragWithWindowsMouse(
   start: { x: number; y: number },
   target: { x: number; y: number },
+  expectedProcessId: number,
 ): void {
   const command = `
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 public static class EzPackagedMouse {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct Point { public int X; public int Y; }
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
+  [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr window, bool altTab);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(Point point);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(
+    IntPtr window, out uint processId
+  );
   [DllImport("user32.dll")] public static extern void mouse_event(
     uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo
   );
 }
 "@
-[EzPackagedMouse]::SetCursorPos(${start.x}, ${start.y}) | Out-Null
-Start-Sleep -Milliseconds 120
-[EzPackagedMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-for ($step = 1; $step -le 30; $step++) {
-  $x = [Math]::Round(${start.x} + ((${target.x} - ${start.x}) * $step / 30))
-  $y = [Math]::Round(${start.y} + ((${target.y} - ${start.y}) * $step / 30))
-  [EzPackagedMouse]::SetCursorPos($x, $y) | Out-Null
-  Start-Sleep -Milliseconds 16
+$window = (Get-Process -Id ${expectedProcessId} -ErrorAction Stop).MainWindowHandle
+if ($window -eq [IntPtr]::Zero) { throw "packaged main window handle unavailable before drag" }
+$buttonDown = $false
+try {
+  [EzPackagedMouse]::ShowWindow($window, 9) | Out-Null
+  $deadline = [DateTime]::UtcNow.AddSeconds(3)
+  do {
+    [EzPackagedMouse]::SwitchToThisWindow($window, $true)
+    Start-Sleep -Milliseconds 50
+  } while (
+    [EzPackagedMouse]::GetForegroundWindow() -ne $window -and
+    [DateTime]::UtcNow -lt $deadline
+  )
+  if ([EzPackagedMouse]::GetForegroundWindow() -ne $window) {
+    $foregroundWindow = [EzPackagedMouse]::GetForegroundWindow()
+    $foregroundProcessId = [uint32]0
+    [EzPackagedMouse]::GetWindowThreadProcessId(
+      $foregroundWindow, [ref]$foregroundProcessId
+    ) | Out-Null
+    throw "packaged main window activation failed: expected ${expectedProcessId}, foreground=$foregroundProcessId"
+  }
+  [EzPackagedMouse]::SetCursorPos(${start.x}, ${start.y}) | Out-Null
+  Start-Sleep -Milliseconds 120
+  $point = New-Object EzPackagedMouse+Point
+  $point.X = ${start.x}
+  $point.Y = ${start.y}
+  $pointWindow = [EzPackagedMouse]::WindowFromPoint($point)
+  $pointProcessId = [uint32]0
+  [EzPackagedMouse]::GetWindowThreadProcessId($pointWindow, [ref]$pointProcessId) | Out-Null
+  if ($pointProcessId -ne ${expectedProcessId}) {
+    throw "packaged pointer target ownership mismatch: expected ${expectedProcessId}, point=$pointProcessId"
+  }
+  [EzPackagedMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+  $buttonDown = $true
+  Start-Sleep -Milliseconds 50
+  for ($step = 1; $step -le 30; $step++) {
+    $x = [Math]::Round(${start.x} + ((${target.x} - ${start.x}) * $step / 30))
+    $y = [Math]::Round(${start.y} + ((${target.y} - ${start.y}) * $step / 30))
+    [EzPackagedMouse]::SetCursorPos($x, $y) | Out-Null
+    Start-Sleep -Milliseconds 16
+  }
+  Start-Sleep -Milliseconds 120
+  [EzPackagedMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+  $buttonDown = $false
+} finally {
+  if ($buttonDown) {
+    [EzPackagedMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+  }
 }
-Start-Sleep -Milliseconds 120
-[EzPackagedMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
 `;
   execFileSync('powershell', ['-NoProfile', '-Command', command], {
     stdio: 'inherit',
@@ -252,7 +300,7 @@ test('packaged EXE: Agent Session dragged outside with the real Windows pointer 
       y: start.y + 80,
     };
 
-    dragWithWindowsMouse(start, target);
+    dragWithWindowsMouse(start, target, child.pid);
 
     const dragSamples = await page.evaluate(() => (
       (globalThis as typeof globalThis & {
