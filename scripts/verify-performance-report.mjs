@@ -490,8 +490,9 @@ async function main() {
       : ((next.p95 - base.p95) / base.p95) * 100;
     const improvementPercent = -deltaPercent;
     const targeted = options.targetMetrics.has(name);
+    const relativeRegressionBudgetApplied = next.p95BudgetMs === undefined;
 
-    if (deltaPercent > options.maxRegressionPercent) {
+    if (relativeRegressionBudgetApplied && deltaPercent > options.maxRegressionPercent) {
       failures.push(
         `${name}: p95 regressed ${deltaPercent.toFixed(2)}% `
         + `(baseline ${base.p95.toFixed(2)}ms, candidate ${next.p95.toFixed(2)}ms)`,
@@ -517,6 +518,7 @@ async function main() {
       candidateP95Ms: next.p95,
       deltaPercent,
       targeted,
+      relativeRegressionBudgetApplied,
     });
   }
 

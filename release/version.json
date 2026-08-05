@@ -4,5 +4,10 @@
   "androidVersionCode": 46,
   "protocolVersion": 7,
   "validationProfile": "full",
+  "performancePolicy": {
+    "maxP95RegressionPercent": 5,
+    "minTargetP95ImprovementPercent": 0,
+    "targetMetrics": []
+  },
   "windowsSigningMode": "unsigned"
 }

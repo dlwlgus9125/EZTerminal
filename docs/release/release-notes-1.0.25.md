@@ -60,7 +60,9 @@ long-term EZTerminal release certificate.
 ## Release validation profile
 
 This release uses the `full` validation profile because it changes the remote
-protocol and cross-client session lifecycle. The local installer request did
-not authorize a performance measurement, so no performance result is claimed.
+protocol and cross-client session lifecycle. The explicitly requested final
+performance measurement applies the versioned regression-only policy: a 5%
+p95 ceiling for throughput metrics, absolute 3-second p95 and 5-second max
+budgets for cancellation, and no separate optimization target.
 
 See the [1.0.25 validation policy](validation-policy-1.0.25.md).

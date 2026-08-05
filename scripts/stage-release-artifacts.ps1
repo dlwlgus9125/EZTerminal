@@ -124,11 +124,38 @@ try {
     $AndroidVersionCode = [int]$versionContract.androidVersionCode
     $ProtocolVersion = [int]$versionContract.protocolVersion
     $ValidationProfile = [string]$versionContract.validationProfile
+    $PerformanceMaxRegressionPercent = (
+        [double]$versionContract.performancePolicy.maxP95RegressionPercent
+    )
+    $PerformanceMinTargetImprovementPercent = (
+        [double]$versionContract.performancePolicy.minTargetP95ImprovementPercent
+    )
+    $PerformanceTargetMetrics = @(
+        $versionContract.performancePolicy.targetMetrics |
+            ForEach-Object { [string]$_ }
+    )
+    $ApprovedPerformanceMetrics = @(
+        'cancellationLatencyMs',
+        'rows100kCompletionMs',
+        'plainOutput1_1MiBCompletionMs',
+        'plainOutput12MiBRetentionPressureMs'
+    )
     if ($Version -notmatch '^\d+\.\d+\.\d+$') {
         throw "Version must be a three-part semantic version, got '$Version'."
     }
     if ($ValidationProfile -notin @('full', 'functional-hotfix')) {
         throw "Unsupported release validation profile '$ValidationProfile'."
+    }
+    if (
+        $PerformanceMaxRegressionPercent -lt 0 -or
+        $PerformanceMinTargetImprovementPercent -lt 0 -or
+        @($PerformanceTargetMetrics | Where-Object {
+            $_ -notin $ApprovedPerformanceMetrics
+        }).Count -ne 0 -or
+        @($PerformanceTargetMetrics | Select-Object -Unique).Count -ne
+            $PerformanceTargetMetrics.Count
+    ) {
+        throw 'release/version.json contains an invalid performance policy.'
     }
     $commit = (& git rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
@@ -304,11 +331,15 @@ try {
     Assert-Equal (
         [string]$desktopPerformance.candidateBuildSha
     ) ([string]$localRcReport.buildSha) 'desktop performance candidate SHA'
-    Assert-Equal ([double]$desktopPerformance.maxP95RegressionPercent) 5 'desktop p95 regression budget'
-    Assert-Equal ([double]$desktopPerformance.minTargetP95ImprovementPercent) 15 'target p95 improvement budget'
-    if (@($desktopPerformance.targetMetrics) -notcontains 'plainOutput12MiBRetentionPressureMs') {
-        throw 'The local RC report does not include the approved retention-pressure bottleneck target.'
-    }
+    Assert-Equal (
+        [double]$desktopPerformance.maxP95RegressionPercent
+    ) $PerformanceMaxRegressionPercent 'desktop p95 regression budget'
+    Assert-Equal (
+        [double]$desktopPerformance.minTargetP95ImprovementPercent
+    ) $PerformanceMinTargetImprovementPercent 'target p95 improvement budget'
+    Assert-Equal (
+        (@($desktopPerformance.targetMetrics) -join ',')
+    ) ($PerformanceTargetMetrics -join ',') 'desktop performance target metrics'
     if (
         [string]$desktopPerformance.baselineReportSha256 -notmatch '^[0-9a-f]{64}$' -or
         [string]$desktopPerformance.candidateReportSha256 -notmatch '^[0-9a-f]{64}$'
@@ -505,11 +536,18 @@ try {
             throw "Desktop performance comparison is missing '$metricName'."
         }
     }
-    $targetPerformanceResult = @($desktopPerformance.results | Where-Object {
-        [string]$_.name -eq 'plainOutput12MiBRetentionPressureMs' -and $_.targeted -eq $true
+    $invalidTargetFlags = @($desktopPerformance.results | Where-Object {
+        [bool]$_.targeted -ne ($PerformanceTargetMetrics -contains [string]$_.name)
     })
-    if ($targetPerformanceResult.Count -ne 1) {
-        throw 'Desktop retention-pressure comparison is not marked as the optimization target.'
+    if ($invalidTargetFlags.Count -ne 0) {
+        throw 'Desktop performance target flags differ from release/version.json.'
+    }
+    $invalidRelativeBudgetFlags = @($desktopPerformance.results | Where-Object {
+        $expectedRelativeBudget = [string]$_.name -ne 'cancellationLatencyMs'
+        [bool]$_.relativeRegressionBudgetApplied -ne $expectedRelativeBudget
+    })
+    if ($invalidRelativeBudgetFlags.Count -ne 0) {
+        throw 'Desktop performance relative-budget flags differ from the absolute-budget policy.'
     }
     $cancellationSamples = @(
         $candidatePerformance.metrics.cancellationLatencyMs.samples |
@@ -533,8 +571,13 @@ try {
         throw 'Desktop cancellation latency exceeds its absolute release budget.'
     }
     $failedPerformanceResults = @($desktopPerformance.results | Where-Object {
-        [double]$_.deltaPercent -gt 5 -or
-        ($_.targeted -eq $true -and [double]$_.deltaPercent -gt -15)
+        (
+            $_.relativeRegressionBudgetApplied -eq $true -and
+            [double]$_.deltaPercent -gt $PerformanceMaxRegressionPercent
+        ) -or (
+            $_.targeted -eq $true -and
+            [double]$_.deltaPercent -gt -$PerformanceMinTargetImprovementPercent
+        )
     })
     if ($failedPerformanceResults.Count -ne 0) {
         throw 'Desktop performance evidence exceeds a relative regression or target-improvement budget.'

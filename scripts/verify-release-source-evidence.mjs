@@ -8,7 +8,12 @@ import { isDeepStrictEqual } from 'node:util';
 const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const STRING_NON_FINITE_PATTERN = /^[+-]?(?:nan|infinity)$/i;
-const PERFORMANCE_TARGET = 'plainOutput12MiBRetentionPressureMs';
+const PERFORMANCE_METRICS = [
+  'cancellationLatencyMs',
+  'rows100kCompletionMs',
+  'plainOutput1_1MiBCompletionMs',
+  'plainOutput12MiBRetentionPressureMs',
+];
 const SOAK_DURATION_MS = 30 * 60 * 1_000;
 const SOAK_SESSION_COUNT = 8;
 const SOAK_RECOVERY_CYCLES = 20;
@@ -18,6 +23,7 @@ const MAX_EVIDENCE_BYTES = 16 * 1_024 * 1_024;
 const PERFORMANCE_VERIFIER = fileURLToPath(
   new URL('./verify-performance-report.mjs', import.meta.url),
 );
+const RELEASE_CONTRACT = new URL('../release/version.json', import.meta.url);
 const ALLOWED_FLAGS = new Set([
   '--report',
   '--mobile-soak',
@@ -141,6 +147,33 @@ function assertNoNonFiniteValues(value, label, jsonPath = '$') {
       assertNoNonFiniteValues(entry, label, `${jsonPath}.${key}`);
     }
   }
+}
+
+function validatePerformancePolicy(contract, expectedVersion) {
+  assert(isObject(contract), 'release performance policy contract must be an object');
+  assert(
+    contract.version === expectedVersion,
+    'release performance policy contract version differs from the expected release version',
+  );
+  const policy = contract.performancePolicy;
+  assert(isObject(policy), 'release performancePolicy is missing');
+  assert(
+    Number.isFinite(policy.maxP95RegressionPercent)
+      && policy.maxP95RegressionPercent >= 0,
+    'release maxP95RegressionPercent must be a non-negative number',
+  );
+  assert(
+    Number.isFinite(policy.minTargetP95ImprovementPercent)
+      && policy.minTargetP95ImprovementPercent >= 0,
+    'release minTargetP95ImprovementPercent must be a non-negative number',
+  );
+  assert(Array.isArray(policy.targetMetrics), 'release targetMetrics must be an array');
+  assert(
+    policy.targetMetrics.every((metric) => PERFORMANCE_METRICS.includes(metric))
+      && new Set(policy.targetMetrics).size === policy.targetMetrics.length,
+    'release targetMetrics contains an unknown or duplicate metric',
+  );
+  return policy;
 }
 
 function sha256(bytes) {
@@ -499,17 +532,20 @@ function validateReportIdentity(report, options) {
   );
 }
 
-function runPerformanceVerifier(options, performance) {
-  const result = spawnSync(process.execPath, [
+function runPerformanceVerifier(options, performance, policy) {
+  const verifierArguments = [
     PERFORMANCE_VERIFIER,
     '--baseline', options.performanceBaseline,
     '--candidate', options.performanceCandidate,
     '--expected-baseline-build-sha', performance.baselineBuildSha,
     '--expected-candidate-build-sha', options.expectedBuildSha,
-    '--max-regression-percent', '5',
-    '--min-target-improvement-percent', '15',
-    '--target-metrics', PERFORMANCE_TARGET,
-  ], {
+    '--max-regression-percent', String(policy.maxP95RegressionPercent),
+    '--min-target-improvement-percent', String(policy.minTargetP95ImprovementPercent),
+  ];
+  if (policy.targetMetrics.length > 0) {
+    verifierArguments.push('--target-metrics', policy.targetMetrics.join(','));
+  }
+  const result = spawnSync(process.execPath, verifierArguments, {
     encoding: 'utf8',
     maxBuffer: 4 * 1024 * 1024,
   });
@@ -533,10 +569,15 @@ function runPerformanceVerifier(options, performance) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const [reportEvidence, soakEvidence] = await Promise.all([
+  const [reportEvidence, soakEvidence, releaseContract] = await Promise.all([
     readEvidence(options.report, 'local RC report'),
     readEvidence(options.mobileSoak, 'mobile soak report'),
+    readFile(RELEASE_CONTRACT, 'utf8').then((contents) => JSON.parse(contents)),
   ]);
+  const performancePolicy = validatePerformancePolicy(
+    releaseContract,
+    options.expectedVersion,
+  );
   const report = reportEvidence.parsed;
   validateReportIdentity(report, options);
 
@@ -592,16 +633,17 @@ async function main() {
       'release performance candidateBuildSha differs from the expected release SHA',
     );
     assert(
-      performance.maxP95RegressionPercent === 5,
-      'release performance regression budget must be 5%',
+      performance.maxP95RegressionPercent === performancePolicy.maxP95RegressionPercent,
+      'release performance regression budget differs from release/version.json',
     );
     assert(
-      performance.minTargetP95ImprovementPercent === 15,
-      'release performance target improvement must be 15%',
+      performance.minTargetP95ImprovementPercent
+        === performancePolicy.minTargetP95ImprovementPercent,
+      'release performance target improvement differs from release/version.json',
     );
     assert(
-      isDeepStrictEqual(performance.targetMetrics, [PERFORMANCE_TARGET]),
-      'release performance target metric differs from the approved target',
+      isDeepStrictEqual(performance.targetMetrics, performancePolicy.targetMetrics),
+      'release performance target metrics differ from release/version.json',
     );
     assertHash(
       performance.baselineReportSha256,
@@ -631,7 +673,7 @@ async function main() {
       'raw performance harness SHA differs from the expected release SHA',
     );
 
-    const comparison = runPerformanceVerifier(options, performance);
+    const comparison = runPerformanceVerifier(options, performance, performancePolicy);
     assert(
       isDeepStrictEqual(performance.results, comparison.results),
       'embedded performance comparison results differ from raw report verification',

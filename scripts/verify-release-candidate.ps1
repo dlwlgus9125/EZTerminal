@@ -749,6 +749,32 @@ try {
     if ($version -notmatch '^\d+\.\d+\.\d+$' -or $packageVersion -cne $version) {
         throw 'The candidate version contract is invalid or differs from package.json.'
     }
+    $performancePolicy = $versionContract.performancePolicy
+    $performanceMaxRegressionPercent = [double]$performancePolicy.maxP95RegressionPercent
+    $performanceMinTargetImprovementPercent = (
+        [double]$performancePolicy.minTargetP95ImprovementPercent
+    )
+    $performanceTargetMetrics = @(
+        $performancePolicy.targetMetrics | ForEach-Object { [string]$_ }
+    )
+    $approvedPerformanceMetrics = @(
+        'cancellationLatencyMs',
+        'rows100kCompletionMs',
+        'plainOutput1_1MiBCompletionMs',
+        'plainOutput12MiBRetentionPressureMs'
+    )
+    $invalidPerformanceTargets = @($performanceTargetMetrics | Where-Object {
+        $_ -notin $approvedPerformanceMetrics
+    })
+    if (
+        $performanceMaxRegressionPercent -lt 0 -or
+        $performanceMinTargetImprovementPercent -lt 0 -or
+        $invalidPerformanceTargets.Count -ne 0 -or
+        @($performanceTargetMetrics | Select-Object -Unique).Count -ne
+            $performanceTargetMetrics.Count
+    ) {
+        throw 'The candidate performance policy is invalid.'
+    }
     $expectedNodeVersion = (Get-Content .nvmrc -Raw).Trim().TrimStart('v')
     $actualNodeVersion = (& node -p 'process.versions.node').Trim()
     if ($LASTEXITCODE -ne 0 -or $actualNodeVersion -cne $expectedNodeVersion) {
@@ -962,14 +988,22 @@ try {
             )
         }
         Assert-CandidatePerformanceProvenance $performanceReport $sha $version
-        $performanceComparisonJson = & node scripts/verify-performance-report.mjs `
-            --baseline $performanceBaselineEvidencePath `
-            --candidate $performanceReportPath `
-            --max-regression-percent 5 `
-            --min-target-improvement-percent 15 `
-            --expected-baseline-build-sha $normalizedPerformanceBaselineBuildSha `
-            --expected-candidate-build-sha $sha `
-            --target-metrics plainOutput12MiBRetentionPressureMs | Out-String
+        $performanceVerifierArguments = @(
+            'scripts/verify-performance-report.mjs',
+            '--baseline', $performanceBaselineEvidencePath,
+            '--candidate', $performanceReportPath,
+            '--max-regression-percent', ([string]$performanceMaxRegressionPercent),
+            '--min-target-improvement-percent',
+                ([string]$performanceMinTargetImprovementPercent),
+            '--expected-baseline-build-sha', $normalizedPerformanceBaselineBuildSha,
+            '--expected-candidate-build-sha', $sha
+        )
+        if ($performanceTargetMetrics.Count -ne 0) {
+            $performanceVerifierArguments += @(
+                '--target-metrics', ($performanceTargetMetrics -join ',')
+            )
+        }
+        $performanceComparisonJson = & node @performanceVerifierArguments | Out-String
         if ($LASTEXITCODE -ne 0) {
             Write-Host $performanceComparisonJson
             throw 'The desktop performance report exceeded its relative or absolute budget.'
@@ -1052,9 +1086,9 @@ try {
             candidateBuildSha = $sha
             baselineReportSha256 = $performanceBaselineHash
             candidateReportSha256 = $performanceReportHash
-            maxP95RegressionPercent = 5
-            minTargetP95ImprovementPercent = 15
-            targetMetrics = @('plainOutput12MiBRetentionPressureMs')
+            maxP95RegressionPercent = $performanceMaxRegressionPercent
+            minTargetP95ImprovementPercent = $performanceMinTargetImprovementPercent
+            targetMetrics = @($performanceTargetMetrics)
             results = @($performanceComparison.results)
             candidate = $performanceReport
         }

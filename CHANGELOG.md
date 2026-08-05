@@ -14,6 +14,10 @@
   changes; adopted surfaces now detach without terminating the session.
 - Preserved sessions across renderer reloads, crashes, and mobile reconnects
   while releasing stale surface ownership.
+- Bound release performance evidence to the versioned policy: throughput
+  metrics retain the 5% p95 regression gate, cancellation latency uses its
+  absolute p95/max budgets, and this functional release declares no separate
+  optimization target.
 
 ### Fixed
 

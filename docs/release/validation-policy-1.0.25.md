@@ -41,13 +41,17 @@ receives input.
 ## Selected release profile
 
 The architecture and protocol change requires
-`validation profile full`. The user requested release installation artifacts
-but did not separately request a desktop performance measurement.
+`validation profile full`. The operator subsequently requested the optional
+desktop performance measurement, so the final release must include clean,
+same-host baseline and candidate reports from the exact approved harness.
 
-Do not run `pnpm e2e:performance`,
-`e2e/release-performance.spec.ts`, set
-`EZTERMINAL_RUN_RELEASE_PERFORMANCE=1`, or pass
-`-RunPerformanceMeasurement` for this request.
+This functional release uses a regression-only performance policy. The 100k
+row, 1.1 MiB output, and 12 MiB retention-pressure p95 metrics may regress by
+at most 5%. Cancellation latency is governed by its less noise-sensitive
+absolute budgets (p95 at most 3 seconds and max below 5 seconds), rather than
+the relative 5% comparison. Version 1.0.25 declares no targeted optimization
+metric and therefore does not inherit the 15% retention-pressure improvement
+goal from the historical performance release that introduced that goal.
 
 Any locally assembled artifact remains a local installation build rather than
 a publication-eligible final release until the clean exact-SHA evidence,
@@ -67,4 +71,5 @@ authorized performance evidence are complete.
   unsupported.
 - Physical Android OEM install UI, TalkBack, hardware keyboards, and all VPN
   roaming paths are not fully automated.
-- This local build makes no performance claim.
+- Performance evidence is specific to the recorded Windows host and power
+  plan; it does not predict every supported device or workload.

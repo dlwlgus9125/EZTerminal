@@ -151,6 +151,36 @@ assert(
     || contract.windowsSigningMode === 'signpath',
   'release/version.json windowsSigningMode must be unsigned or signpath.',
 );
+const performanceMetrics = [
+  'cancellationLatencyMs',
+  'rows100kCompletionMs',
+  'plainOutput1_1MiBCompletionMs',
+  'plainOutput12MiBRetentionPressureMs',
+];
+assert(
+  contract.performancePolicy !== null
+    && typeof contract.performancePolicy === 'object'
+    && !Array.isArray(contract.performancePolicy),
+  'release/version.json performancePolicy must be an object.',
+);
+assert(
+  Number.isFinite(contract.performancePolicy.maxP95RegressionPercent)
+    && contract.performancePolicy.maxP95RegressionPercent >= 0,
+  'release/version.json maxP95RegressionPercent must be a non-negative number.',
+);
+assert(
+  Number.isFinite(contract.performancePolicy.minTargetP95ImprovementPercent)
+    && contract.performancePolicy.minTargetP95ImprovementPercent >= 0,
+  'release/version.json minTargetP95ImprovementPercent must be a non-negative number.',
+);
+assert(
+  Array.isArray(contract.performancePolicy.targetMetrics)
+    && contract.performancePolicy.targetMetrics.every((metric) =>
+      performanceMetrics.includes(metric))
+    && new Set(contract.performancePolicy.targetMetrics).size
+      === contract.performancePolicy.targetMetrics.length,
+  'release/version.json targetMetrics must contain unique approved performance metrics.',
+);
 
 const cargoVersion = capture(
   cargo,

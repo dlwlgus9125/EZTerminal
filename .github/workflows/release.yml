@@ -157,8 +157,34 @@ jobs:
           $rootVersion = [string]$contract.version
           $androidCode = [int]$contract.androidVersionCode
           $validationProfile = [string]$contract.validationProfile
+          $performanceMaxRegressionPercent = (
+            [double]$contract.performancePolicy.maxP95RegressionPercent
+          )
+          $performanceMinTargetImprovementPercent = (
+            [double]$contract.performancePolicy.minTargetP95ImprovementPercent
+          )
+          $performanceTargetMetrics = @(
+            $contract.performancePolicy.targetMetrics | ForEach-Object { [string]$_ }
+          )
+          $approvedPerformanceMetrics = @(
+            'cancellationLatencyMs',
+            'rows100kCompletionMs',
+            'plainOutput1_1MiBCompletionMs',
+            'plainOutput12MiBRetentionPressureMs'
+          )
           if ($validationProfile -notin @('full', 'functional-hotfix')) {
             throw "Unsupported release validation profile: $validationProfile"
+          }
+          if (
+            $performanceMaxRegressionPercent -lt 0 -or
+            $performanceMinTargetImprovementPercent -lt 0 -or
+            @($performanceTargetMetrics | Where-Object {
+              $_ -notin $approvedPerformanceMetrics
+            }).Count -ne 0 -or
+            @($performanceTargetMetrics | Select-Object -Unique).Count -ne
+              $performanceTargetMetrics.Count
+          ) {
+            throw 'release/version.json contains an invalid performance policy.'
           }
           $repositoryCert = ((Get-Content mobile/android/signing-certificate.sha256 -Raw) -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
           if ($repositoryCert -notmatch '^[0-9A-F]{64}$') {
@@ -328,8 +354,13 @@ jobs:
           $performance = $rcReport.desktopPerformance
           $performanceResults = @($performance.results)
           $performanceFailures = @($performanceResults | Where-Object {
-            [double]$_.deltaPercent -gt 5 -or
-            ($_.targeted -eq $true -and [double]$_.deltaPercent -gt -15)
+            (
+              $_.relativeRegressionBudgetApplied -eq $true -and
+              [double]$_.deltaPercent -gt $performanceMaxRegressionPercent
+            ) -or (
+              $_.targeted -eq $true -and
+              [double]$_.deltaPercent -gt -$performanceMinTargetImprovementPercent
+            )
           })
           $candidateMetrics = $performance.candidate.metrics
           $requiredPerformanceMetrics = @(
@@ -403,8 +434,12 @@ jobs:
           $missingPerformanceComparisons = @($requiredPerformanceMetrics | Where-Object {
             $performanceResultNames -notcontains $_
           })
-          $targetPerformanceResult = @($performanceResults | Where-Object {
-            [string]$_.name -eq 'plainOutput12MiBRetentionPressureMs' -and $_.targeted -eq $true
+          $invalidPerformanceTargetFlags = @($performanceResults | Where-Object {
+            [bool]$_.targeted -ne ($performanceTargetMetrics -contains [string]$_.name)
+          })
+          $invalidRelativeBudgetFlags = @($performanceResults | Where-Object {
+            $expectedRelativeBudget = [string]$_.name -ne 'cancellationLatencyMs'
+            [bool]$_.relativeRegressionBudgetApplied -ne $expectedRelativeBudget
           })
           $cancellationSamples = @(
             $candidateMetrics.cancellationLatencyMs.samples |
@@ -423,9 +458,12 @@ jobs:
           }
           if (
             [string]$performance.status -ne 'passed' -or
-            [double]$performance.maxP95RegressionPercent -ne 5 -or
-            [double]$performance.minTargetP95ImprovementPercent -ne 15 -or
-            @($performance.targetMetrics) -notcontains 'plainOutput12MiBRetentionPressureMs' -or
+            [double]$performance.maxP95RegressionPercent -ne
+              $performanceMaxRegressionPercent -or
+            [double]$performance.minTargetP95ImprovementPercent -ne
+              $performanceMinTargetImprovementPercent -or
+            (@($performance.targetMetrics) -join ',') -ne
+              ($performanceTargetMetrics -join ',') -or
             [int]$performance.schemaVersion -ne 2 -or
             [string]$performance.baselineBuildSha -notmatch '^[0-9a-f]{40}$' -or
             [string]$performance.candidateBuildSha -ne $head -or
@@ -484,7 +522,8 @@ jobs:
               '^[0-9a-f]{64}$' -or
             $invalidPerformanceSamples.Count -ne 0 -or
             $missingPerformanceComparisons.Count -ne 0 -or
-            $targetPerformanceResult.Count -ne 1 -or
+            $invalidPerformanceTargetFlags.Count -ne 0 -or
+            $invalidRelativeBudgetFlags.Count -ne 0 -or
             [double]$cancellationP95 -gt 3000 -or
             [double]$cancellationMax -ge 5000 -or
             $performanceFailures.Count -ne 0
