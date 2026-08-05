@@ -2,11 +2,14 @@ import type { IDockviewHeaderActionsProps } from 'dockview';
 import { useEffect, useState } from 'react';
 
 import { formatCwd } from './format-cwd';
-import { getPaneCwd, getPaneOpenedAt } from './pane-registry';
+import {
+  getPaneCwd,
+  getPaneOpenedAt,
+  subscribePaneRegistry,
+} from './pane-registry';
 
-/** How often the header re-reads the active pane's directory. The registry is a
- * plain store with no change events, and a shell can `cd` at any moment, so the
- * header polls slowly rather than pretending the value is push-based. */
+/** Fallback cadence for external cwd changes that have not reached the pane
+ * registry yet. Registry-backed pane changes update the header synchronously. */
 const CWD_POLL_MS = 1500;
 
 /**
@@ -45,8 +48,12 @@ export function PaneHeaderMeta({ activePanel, isGroupActive }: IDockviewHeaderAc
       setOpenLabel(openedAt === undefined ? null : openForLabel(openedAt, Date.now()));
     };
     read();
+    const unsubscribe = subscribePaneRegistry(read);
     const timer = window.setInterval(read, CWD_POLL_MS);
-    return () => window.clearInterval(timer);
+    return () => {
+      unsubscribe();
+      window.clearInterval(timer);
+    };
   }, [panelId]);
 
   if (!cwd) return null;
