@@ -109,6 +109,18 @@ export class TestWsClient {
     return message.result.binding;
   }
 
+  async listRuns(): Promise<
+    Extract<ServerToClientMessage, { kind: 'run-list' }>['runs']
+  > {
+    const reply = this.waitFor((message) => message.kind === 'run-list');
+    this.send({ kind: 'list-runs' });
+    const message = await reply;
+    if (message.kind !== 'run-list') {
+      throw new Error(`run list received ${message.kind}`);
+    }
+    return message.runs;
+  }
+
   async closeSessionSurface(
     binding: SessionSurfaceBinding,
     disposition: SessionSurfaceDisposition,
@@ -127,8 +139,11 @@ export class TestWsClient {
       entries: [{ bindingId: binding.bindingId, expectedActiveRunIds }],
     });
     const prepared = await preparedReply;
-    if (prepared.kind !== 'session-surface-prepare-close-result' || !prepared.result.ok) {
-      throw new Error('session surface close preparation failed');
+    if (prepared.kind !== 'session-surface-prepare-close-result') {
+      throw new Error(`session surface close preparation received ${prepared.kind}`);
+    }
+    if (!prepared.result.ok) {
+      throw new Error(`session surface close preparation failed: ${prepared.result.reason}`);
     }
 
     const commitRequestId = randomUUID();
@@ -147,8 +162,11 @@ export class TestWsClient {
         : [],
     });
     const committed = await committedReply;
-    if (committed.kind !== 'session-surface-commit-close-result' || !committed.result.ok) {
-      throw new Error('session surface close commit failed');
+    if (committed.kind !== 'session-surface-commit-close-result') {
+      throw new Error(`session surface close commit received ${committed.kind}`);
+    }
+    if (!committed.result.ok) {
+      throw new Error(`session surface close commit failed: ${committed.result.reason}`);
     }
   }
 

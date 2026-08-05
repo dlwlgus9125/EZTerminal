@@ -69,6 +69,16 @@ test('session mirroring: WS surface open/run/close reflects on the desktop dockv
     client.send({ kind: 'run-command', runId, sessionId, commandText: `echo ${marker}` });
     await expect(mirroredPane).toContainText(marker, { timeout: 10_000 });
 
+    // Output can render before the interpreter removes a completed run from
+    // its authoritative active set. Closing with an expected [] snapshot in
+    // that interval must fail closed, so wait for the level-triggered run
+    // snapshot instead of relying on renderer timing.
+    await expect.poll(async () => (
+      (await client.listRuns())
+        .filter((run) => run.sessionId === sessionId)
+        .map((run) => run.runId)
+    ), { timeout: 10_000 }).toEqual([]);
+
     // A session can intentionally have more than one desktop viewer. Mount a
     // second exact pane so external removal must close the whole binding set,
     // not only whichever pane happened to bind last.
