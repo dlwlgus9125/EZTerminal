@@ -69,7 +69,8 @@
     "patchedDependencies": {
       "@capacitor/cli@6.2.1": "patches/@capacitor__cli@6.2.1.patch",
       "brace-expansion@5.0.9": "patches/brace-expansion@5.0.9.patch",
-      "capacitor-secure-storage-plugin@0.10.0": "patches/capacitor-secure-storage-plugin@0.10.0.patch"
+      "capacitor-secure-storage-plugin@0.10.0": "patches/capacitor-secure-storage-plugin@0.10.0.patch",
+      "dockview-core@7.0.2": "patches/dockview-core@7.0.2.patch"
     }
   },
   "devDependencies": {

@@ -15,6 +15,13 @@
 - Preserved sessions across renderer reloads, crashes, and mobile reconnects
   while releasing stale surface ownership.
 
+### Fixed
+
+- Kept both the original and auxiliary windows keyboard-interactive when one
+  tab is dragged out of a multi-tab Dockview group. The patched pop-out path
+  now detaches the moved panel from its source render container so a stale
+  overlay cannot intercept clicks in the original Codex or terminal session.
+
 See [1.0.25 release notes](docs/release/release-notes-1.0.25.md).
 
 ## [1.0.24] - 2026-08-04

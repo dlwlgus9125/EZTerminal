@@ -25,6 +25,9 @@ patchedDependencies:
   capacitor-secure-storage-plugin@0.10.0:
     hash: 7f0c8db85f8af360285e0e2b519099a9b144a17a8961c71e96da57592bdb255d
     path: patches/capacitor-secure-storage-plugin@0.10.0.patch
+  dockview-core@7.0.2:
+    hash: 5f9bc0a999b8ca9e9d14955731363642d14feb94a885ee66d51e067877b6e34a
+    path: patches/dockview-core@7.0.2.patch
 
 importers:
 
@@ -8130,7 +8133,7 @@ snapshots:
       - electron-builder-squirrel-windows
       - supports-color
 
-  dockview-core@7.0.2: {}
+  dockview-core@7.0.2(patch_hash=5f9bc0a999b8ca9e9d14955731363642d14feb94a885ee66d51e067877b6e34a): {}
 
   dockview-react@7.0.2(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
     dependencies:
@@ -8140,7 +8143,7 @@ snapshots:
 
   dockview@7.0.2:
     dependencies:
-      dockview-core: 7.0.2
+      dockview-core: 7.0.2(patch_hash=5f9bc0a999b8ca9e9d14955731363642d14feb94a885ee66d51e067877b6e34a)
 
   doctrine@2.1.0:
     dependencies:

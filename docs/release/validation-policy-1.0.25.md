@@ -33,6 +33,11 @@ The session-surface regressions must prove:
 - explicit session termination is ownership-independent but guarded;
 - desktop and Android peers require exact remote protocol v7.
 
+The pop-out regression must also drag one tab out of a multi-tab group and
+prove that both resulting windows remain keyboard-interactive, each owns one
+render overlay, and a live Codex-style xterm in the source window still
+receives input.
+
 ## Selected release profile
 
 The architecture and protocol change requires

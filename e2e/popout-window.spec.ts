@@ -196,6 +196,37 @@ test('terminal tab dragged outside becomes a frameless auxiliary window with the
   await app.close();
 });
 
+test('popping one terminal tab out leaves both windows keyboard-interactive', async () => {
+  const app = await launchApp();
+  const main = await app.firstWindow();
+  await expect(main.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  await main.getByTestId('btn-new-tab').click();
+  await expect(main.locator('.dv-tab')).toHaveCount(2);
+
+  await dragTabOutside(main, main.locator('.dv-tab', { hasText: 'Terminal 2' }));
+  const auxiliary = await waitForAuxiliaryWindow(app);
+  await expect(panes(main)).toHaveCount(1);
+  await expect(panes(auxiliary)).toHaveCount(1);
+
+  const mainInput = main.getByTestId('cmd-input');
+  await mainInput.click({ timeout: 5_000 });
+  await expect(mainInput).toBeFocused();
+  await main.keyboard.type('main-still-interactive');
+  await expect(mainInput).toHaveValue('main-still-interactive');
+
+  const auxiliaryInput = auxiliary.getByTestId('cmd-input');
+  await auxiliaryInput.click();
+  await expect(auxiliaryInput).toBeFocused();
+  await auxiliary.keyboard.type('auxiliary-still-interactive');
+  await expect(auxiliaryInput).toHaveValue('auxiliary-still-interactive');
+
+  await expect(main.locator('.dv-render-overlay')).toHaveCount(1);
+  await expect(auxiliary.locator('.dv-render-overlay')).toHaveCount(1);
+
+  await app.close();
+});
+
 test('terminal pane moved into an existing auxiliary window receives keyboard focus', async () => {
   const app = await launchApp();
   const main = await app.firstWindow();

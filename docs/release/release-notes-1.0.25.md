@@ -26,6 +26,20 @@ Live and manually requested adoption now fails when the requested session is
 missing. Only saved-layout restoration may create a replacement session, and
 saved layouts do not persist live session identifiers.
 
+## Pop-out focus reliability
+
+Dragging one tab out of a multi-tab group no longer leaves the original window
+covered by a stale Dockview render overlay. Dockview's panel-specific pop-out
+path removed the panel from its source group without detaching its renderer
+from the source render container, so the empty overlay continued intercepting
+clicks after the auxiliary window opened.
+
+EZTerminal carries a pinned `dockview-core` patch that detaches the renderer
+before opening it in the destination group. The regression requires both the
+original and auxiliary terminal windows to accept focus and keyboard input and
+requires exactly one render overlay in each window. A live fake Codex xterm in
+the original window also received input after a sibling tab was detached.
+
 ## Protocol compatibility
 
 Remote protocol v7 carries the shared session-surface operations. Hosts and
@@ -50,4 +64,3 @@ protocol and cross-client session lifecycle. The local installer request did
 not authorize a performance measurement, so no performance result is claimed.
 
 See the [1.0.25 validation policy](validation-policy-1.0.25.md).
-

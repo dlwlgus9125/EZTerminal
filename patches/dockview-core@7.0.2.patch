@@ -1,0 +1,72 @@
+diff --git a/dist/cjs/dockview/dockviewComponent.js b/dist/cjs/dockview/dockviewComponent.js
+index 3ecf748ac3ac98f49f974069ea9184078631c06a..5c013e66f5d66cd87cc9285d389a19d33251fcbd 100644
+--- a/dist/cjs/dockview/dockviewComponent.js
++++ b/dist/cjs/dockview/dockviewComponent.js
+@@ -933,6 +933,7 @@ var DockviewComponent = /** @class */ (function (_super) {
+                 if (itemToPopout instanceof dockviewPanel_1.DockviewPanel) {
+                     _this.movingLock(function () {
+                         var panel = referenceGroup.model.removePanel(itemToPopout);
++                        referenceGroup.model.renderContainer.detatch(panel);
+                         group.model.openPanel(panel);
+                     });
+                 }
+diff --git a/dist/dockview-core.js b/dist/dockview-core.js
+index a79352368fa4d904d358f8c8b670cafd6e24be57..17c3b8bd5892fc976c4ffdeac79e464ef5f37ea4 100644
+--- a/dist/dockview-core.js
++++ b/dist/dockview-core.js
+@@ -16149,6 +16149,7 @@
+                   if (itemToPopout instanceof DockviewPanel) {
+                       this.movingLock(() => {
+                           const panel = referenceGroup.model.removePanel(itemToPopout);
++                          referenceGroup.model.renderContainer.detatch(panel);
+                           group.model.openPanel(panel);
+                       });
+                   }
+diff --git a/dist/dockview-core.noStyle.js b/dist/dockview-core.noStyle.js
+index 5e527ceb4839f9778d65f555dc45d3548afa416e..f594cd0ae3b03ecd5117b67e2371568a8de3f3f1 100644
+--- a/dist/dockview-core.noStyle.js
++++ b/dist/dockview-core.noStyle.js
+@@ -16119,6 +16119,7 @@
+                     if (itemToPopout instanceof DockviewPanel) {
+                         this.movingLock(() => {
+                             const panel = referenceGroup.model.removePanel(itemToPopout);
++                            referenceGroup.model.renderContainer.detatch(panel);
+                             group.model.openPanel(panel);
+                         });
+                     }
+diff --git a/dist/esm/dockview/dockviewComponent.js b/dist/esm/dockview/dockviewComponent.js
+index 9b68ef431c9f22669f8b70100a37d5b61a184362..60e6b340458b684e08fc59de426597bff5817b1e 100644
+--- a/dist/esm/dockview/dockviewComponent.js
++++ b/dist/esm/dockview/dockviewComponent.js
+@@ -758,6 +758,7 @@ export class DockviewComponent extends BaseGrid {
+                 if (itemToPopout instanceof DockviewPanel) {
+                     this.movingLock(() => {
+                         const panel = referenceGroup.model.removePanel(itemToPopout);
++                        referenceGroup.model.renderContainer.detatch(panel);
+                         group.model.openPanel(panel);
+                     });
+                 }
+diff --git a/dist/package/main.cjs.js b/dist/package/main.cjs.js
+index aa2c51060a1c2f31a87f2b43e57d81488a7f87f4..ac78f4b3fe9e08ee3995a038c54f815451bff823 100644
+--- a/dist/package/main.cjs.js
++++ b/dist/package/main.cjs.js
+@@ -16117,6 +16117,7 @@ class DockviewComponent extends BaseGrid {
+                 if (itemToPopout instanceof DockviewPanel) {
+                     this.movingLock(() => {
+                         const panel = referenceGroup.model.removePanel(itemToPopout);
++                        referenceGroup.model.renderContainer.detatch(panel);
+                         group.model.openPanel(panel);
+                     });
+                 }
+diff --git a/dist/package/main.esm.mjs b/dist/package/main.esm.mjs
+index 13e69c289de428eb9129db015c36b67ae3d6018f..ed3fe06da021b50702e191cea5a85b631f8471f1 100644
+--- a/dist/package/main.esm.mjs
++++ b/dist/package/main.esm.mjs
+@@ -16113,6 +16113,7 @@ class DockviewComponent extends BaseGrid {
+                 if (itemToPopout instanceof DockviewPanel) {
+                     this.movingLock(() => {
+                         const panel = referenceGroup.model.removePanel(itemToPopout);
++                        referenceGroup.model.renderContainer.detatch(panel);
+                         group.model.openPanel(panel);
+                     });
+                 }
