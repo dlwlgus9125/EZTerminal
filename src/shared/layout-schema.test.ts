@@ -98,14 +98,24 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
     panel.id = 'agent-session-codex_0123456789abcdef01234567';
     panel.contentComponent = 'agent-session';
-    panel.params = { historyId: 'codex_0123456789abcdef01234567', provider: 'codex' };
+    panel.params = {
+      historyId: 'codex_0123456789abcdef01234567',
+      provider: 'codex',
+      projectId: 'project_0123456789abcdef',
+      rootId: 'root_0123456789abcdef',
+    };
     layout.panels = { [panel.id as string]: panel };
 
     const env = validateLayoutEnvelope(makeEnvelope(layout));
 
     expect(env?.layout.panels[panel.id as string]).toMatchObject({
       contentComponent: 'agent-session',
-      params: { historyId: 'codex_0123456789abcdef01234567', provider: 'codex' },
+      params: {
+        historyId: 'codex_0123456789abcdef01234567',
+        provider: 'codex',
+        projectId: 'project_0123456789abcdef',
+        rootId: 'root_0123456789abcdef',
+      },
     });
   });
 
@@ -221,6 +231,70 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     layout.panels = { 'openclaw-chat': panel };
     const env = validateLayoutEnvelope(makeEnvelope(layout));
     expect(env?.layout.panels['openclaw-chat'].renderer).toBe('always');
+  });
+
+  it('persists code descriptors without content and uses onlyWhenVisible', () => {
+    const layout = makeLayout();
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.id = 'code-1';
+    panel.contentComponent = 'code-file';
+    panel.params = { projectId: 'project-1', rootId: 'root-1', relativePath: 'src/app.ts' };
+    delete panel.renderer;
+    layout.panels = { 'code-1': panel };
+    const env = validateLayoutEnvelope(makeEnvelope(layout));
+    expect(env?.layout.panels['code-1']).toMatchObject({
+      renderer: 'onlyWhenVisible',
+      params: { projectId: 'project-1', rootId: 'root-1', relativePath: 'src/app.ts' },
+    });
+    expect(JSON.stringify(env)).not.toContain('file contents');
+  });
+
+  it('restores a live Last turn descriptor as an honest Working tree review', () => {
+    const layout = makeLayout();
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.id = 'diff-1';
+    panel.contentComponent = 'code-diff';
+    panel.params = {
+      projectId: 'project-1',
+      rootId: 'root-1',
+      scope: 'last-turn',
+      historyId: 'history-1',
+      reviewTurnId: 'turn-1',
+    };
+    layout.panels = { 'diff-1': panel };
+    const env = validateLayoutEnvelope(makeEnvelope(layout));
+    expect(env?.layout.panels['diff-1']).toMatchObject({
+      renderer: 'onlyWhenVisible',
+      params: { projectId: 'project-1', rootId: 'root-1', scope: 'working-tree' },
+    });
+    expect((env?.layout.panels['diff-1'].params as Record<string, unknown>).historyId).toBeUndefined();
+    expect((env?.layout.panels['diff-1'].params as Record<string, unknown>).reviewTurnId).toBeUndefined();
+  });
+
+  it('persists only the validated nested-repository Diff descriptor', () => {
+    const layout = makeLayout();
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.id = 'diff-nested';
+    panel.contentComponent = 'code-diff';
+    panel.params = {
+      projectId: 'project-1',
+      rootId: 'root-1',
+      repositoryRelativePath: 'out/manual-test-project',
+      repositoryName: 'manual-test-project',
+      scope: 'working-tree',
+    };
+    layout.panels = { 'diff-nested': panel };
+    const env = validateLayoutEnvelope(makeEnvelope(layout));
+    expect(env?.layout.panels['diff-nested']).toMatchObject({
+      renderer: 'onlyWhenVisible',
+      params: {
+        projectId: 'project-1',
+        rootId: 'root-1',
+        repositoryRelativePath: 'out/manual-test-project',
+        repositoryName: 'manual-test-project',
+        scope: 'working-tree',
+      },
+    });
   });
 
   it('REJECTS a zero-panel layout (gate e2e shape f)', () => {

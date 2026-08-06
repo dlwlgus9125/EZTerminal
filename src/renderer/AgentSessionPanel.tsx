@@ -31,6 +31,7 @@ const AGENT_PROVIDER_LABEL: Record<AgentHistoryProvider, string> = {
 
 export interface AgentSessionPanelProps {
   readonly historyId: string;
+  readonly onOpenReview?: (turnId: string, changedPath?: string) => void;
   readonly renderTerminal: (
     bootstrap: TerminalResumeBootstrap,
     onFailure: (message: string) => void,
@@ -49,6 +50,7 @@ interface RootDecision {
 
 export function AgentSessionPanel({
   historyId,
+  onOpenReview,
   renderTerminal,
 }: AgentSessionPanelProps): JSX.Element {
   const { t } = useAppTranslation();
@@ -261,6 +263,9 @@ export function AgentSessionPanel({
                 key={entry.id}
                 entry={entry}
                 label={t(`agentHub.activityKind.${entry.kind}`)}
+                onActivate={entry.kind === 'file-change' && onOpenReview
+                  ? (changedPath) => onOpenReview(turn.id, changedPath)
+                  : undefined}
               />
             ))}
           </section>

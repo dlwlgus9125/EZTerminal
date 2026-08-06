@@ -48,7 +48,7 @@ const PanelBaseSchema = z.object({
   title: z.string().optional(),
   // Serialized panels carry renderer:'always' (F1/F2); tolerate its absence and
   // let the sanitizer force it so restored panes always survive tab switches.
-  renderer: z.literal('always').optional(),
+  renderer: z.enum(['always', 'onlyWhenVisible']).optional(),
   tabComponent: z.string().optional(),
   minimumWidth: z.number().optional(),
   minimumHeight: z.number().optional(),
@@ -59,17 +59,45 @@ const PanelBaseSchema = z.object({
 const PanelSchema = z.discriminatedUnion('contentComponent', [
   PanelBaseSchema.extend({
     contentComponent: z.literal('terminal'),
+    renderer: z.literal('always').optional(),
     params: z.strictObject({}).optional(),
   }),
   PanelBaseSchema.extend({
     contentComponent: z.literal('openclaw-chat'),
+    renderer: z.literal('always').optional(),
     params: z.strictObject({}).optional(),
   }),
   PanelBaseSchema.extend({
     contentComponent: z.literal('agent-session'),
+    renderer: z.literal('always').optional(),
     params: z.strictObject({
       historyId: z.string().min(1).max(128),
       provider: z.enum(['codex', 'claude']).optional(),
+      projectId: z.string().min(1).max(128).optional(),
+      rootId: z.string().min(1).max(128).optional(),
+    }),
+  }),
+  PanelBaseSchema.extend({
+    contentComponent: z.literal('code-file'),
+    renderer: z.literal('onlyWhenVisible').optional(),
+    params: z.strictObject({
+      projectId: z.string().min(1).max(128),
+      rootId: z.string().min(1).max(128),
+      relativePath: z.string().min(1).max(4096),
+    }),
+  }),
+  PanelBaseSchema.extend({
+    contentComponent: z.literal('code-diff'),
+    renderer: z.literal('onlyWhenVisible').optional(),
+    params: z.strictObject({
+      projectId: z.string().min(1).max(128),
+      rootId: z.string().min(1).max(128),
+      repositoryRelativePath: z.string().min(1).max(4096).optional(),
+      repositoryName: z.string().min(1).max(512).optional(),
+      scope: z.enum(['last-turn', 'working-tree', 'staged', 'branch']),
+      historyId: z.string().min(1).max(128).optional(),
+      reviewTurnId: z.string().min(1).max(128).optional(),
+      baseRef: z.string().min(1).max(200).optional(),
     }),
   }),
 ]);
@@ -307,7 +335,31 @@ export function sanitizeSerializedLayout(raw: unknown): unknown {
   if (typeof layout.panels === 'object' && layout.panels !== null) {
     for (const panel of Object.values(layout.panels as Record<string, unknown>)) {
       if (typeof panel === 'object' && panel !== null) {
-        (panel as Record<string, unknown>).renderer = 'always';
+        const record = panel as Record<string, unknown>;
+        const codePanel = record.contentComponent === 'code-file'
+          || record.contentComponent === 'code-diff';
+        record.renderer = codePanel ? 'onlyWhenVisible' : 'always';
+        // A live provider activity is not durable. Restoring it as the working
+        // tree keeps the review useful without claiming stale attribution.
+        if (
+          record.contentComponent === 'code-diff'
+          && typeof record.params === 'object'
+          && record.params !== null
+          && (record.params as Record<string, unknown>).scope === 'last-turn'
+        ) {
+          const params = record.params as Record<string, unknown>;
+          params.scope = 'working-tree';
+          delete params.historyId;
+          delete params.reviewTurnId;
+        } else if (
+          record.contentComponent === 'code-diff'
+          && typeof record.params === 'object'
+          && record.params !== null
+          && (record.params as Record<string, unknown>).scope !== 'last-turn'
+        ) {
+          delete (record.params as Record<string, unknown>).historyId;
+          delete (record.params as Record<string, unknown>).reviewTurnId;
+        }
       }
     }
   }

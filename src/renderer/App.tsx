@@ -69,7 +69,19 @@ import {
   type InterferenceParams,
   type RollbarParams,
 } from './effect-params';
-import { FileExplorerPanel } from './FileExplorerPanel';
+import { ExplorerWorkbench } from './ExplorerWorkbench';
+import { CodeFilePanel } from './CodeFilePanel';
+import { CodeDiffPanel } from './CodeDiffPanel';
+import { ProjectQuestionComposer } from './ProjectQuestionComposer';
+import {
+  requestProjectCodeReveal,
+  type ProjectCodeLocation,
+} from './project-code-navigation';
+import {
+  findRegisteredProjectFileTarget,
+  projectRelativeReviewHint,
+  requestProjectDiffReveal,
+} from './project-diff-navigation';
 import { FileDropOverlay } from './FileDropOverlay';
 import { subsequenceMatch } from './fuzzy';
 import { useAppTranslation } from './i18n';
@@ -215,6 +227,16 @@ interface PaneApprovalContextValue {
 
 const PaneApprovalContext = createContext<PaneApprovalContextValue | null>(null);
 const TerminalRuntimeContext = createContext<TerminalRuntimeOptions>(DEFAULT_TERMINAL_RUNTIME_OPTIONS);
+interface ProjectReviewNavigationContextValue {
+  readonly openHistoryReview: (
+    projectId: string,
+    rootId: string,
+    historyId: string,
+    reviewTurnId: string,
+    changedPath?: string,
+  ) => void;
+}
+const ProjectReviewNavigationContext = createContext<ProjectReviewNavigationContextValue | null>(null);
 interface PresetMutationContextValue {
   readonly locked: boolean;
   readonly isLocked: () => boolean;
@@ -333,7 +355,14 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
   const historyId = typeof props.params?.historyId === 'string'
     ? props.params.historyId
     : '';
+  const projectId = typeof props.params?.projectId === 'string'
+    ? props.params.projectId
+    : '';
+  const rootId = typeof props.params?.rootId === 'string'
+    ? props.params.rootId
+    : '';
   const binding = useContext(SessionBindingContext);
+  const projectReviewNavigation = useContext(ProjectReviewNavigationContext);
   const terminalRuntimeOptions = useContext(TerminalRuntimeContext);
   const presetMutation = useContext(PresetMutationContext);
   const quickCommandShelf = useContext(QuickCommandShelfContext);
@@ -341,6 +370,15 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
   return (
     <AgentSessionPanel
       historyId={historyId}
+      onOpenReview={projectId && rootId && projectReviewNavigation
+        ? (reviewTurnId, changedPath) => projectReviewNavigation.openHistoryReview(
+          projectId,
+          rootId,
+          historyId,
+          reviewTurnId,
+          changedPath,
+        )
+        : undefined}
       renderTerminal={(resumeBootstrap, onFailure) => (
         <TerminalPane
           panelId={props.api.id}
@@ -369,6 +407,8 @@ const components = {
   terminal: TerminalPanel,
   'openclaw-chat': OpenClawChatPanel,
   'agent-session': AgentSessionDockPanel,
+  'code-file': CodeFilePanel,
+  'code-diff': CodeDiffPanel,
 };
 
 type OpenStateUpdate = boolean | ((open: boolean) => boolean);
@@ -1268,29 +1308,234 @@ export function App(): JSX.Element {
     workbenchCoordinator.focusActivePanel();
   }, [workbenchCoordinator]);
 
-  const openAgentHistorySession = useCallback((
+  const openAgentHistorySession = useCallback(async (
     session: AgentHistorySessionSummary,
     project: AgentProjectSummary,
-  ): void => {
+  ): Promise<void> => {
     if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
-    const api = apiRef.current;
+    let api = apiRef.current;
     if (!api) return;
     const panelId = `agent-session-${session.historyId}`;
     const title = agentHistoryTabTitle(project.name, session.provider);
-    const existing = api.getPanel(panelId);
+    let existing = api.getPanel(panelId);
     if (existing) {
       existing.api.setTitle(title);
       existing.api.setActive();
       return;
     }
+    const described = await window.ezterminalDesktop
+      ?.describeProjectWorkspace(project.projectId)
+      .catch(() => null);
+    if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
+    api = apiRef.current;
+    if (!api) return;
+    existing = api.getPanel(panelId);
+    if (existing) {
+      existing.api.setTitle(title);
+      existing.api.setActive();
+      return;
+    }
+    const recordedRoot = session.roots[0];
+    const root = described?.ok
+      ? described.project.roots.find((candidate) => candidate.displayPath === recordedRoot)
+        ?? described.project.roots.find((candidate) => candidate.primary)
+        ?? described.project.roots[0]
+      : undefined;
     api.addPanel({
       id: panelId,
       component: 'agent-session',
       title,
       renderer: 'always',
-      params: { historyId: session.historyId, provider: session.provider },
+      params: {
+        historyId: session.historyId,
+        provider: session.provider,
+        ...(root ? { projectId: project.projectId, rootId: root.rootId } : {}),
+      },
     });
   }, [sessionMirroringCoordinator]);
+
+  const codePanelSequence = useRef(0);
+  const nextCodePanelId = useCallback((kind: 'file' | 'diff'): string => {
+    codePanelSequence.current += 1;
+    return `code-${kind}-${Date.now().toString(36)}-${String(codePanelSequence.current)}`;
+  }, []);
+
+  const codePanelPosition = useCallback((api: DockviewApi) => {
+    const active = api.activePanel;
+    if (!active) return undefined;
+    return {
+      referencePanel: active,
+      direction: window.innerWidth >= 1200 ? 'right' as const : 'within' as const,
+    };
+  }, []);
+
+  const openProjectFile = useCallback((
+    projectId: string,
+    rootId: string,
+    relativePath: string,
+    location?: ProjectCodeLocation,
+  ): void => {
+    if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
+    const api = apiRef.current;
+    if (!api) return;
+    requestProjectCodeReveal({ projectId, rootId, relativePath }, location);
+    const existing = api.panels.find((panel) => {
+      if (panel.api.component !== 'code-file') return false;
+      const params = panel.api.getParameters<Record<string, unknown>>();
+      return params.projectId === projectId
+        && params.rootId === rootId
+        && params.relativePath === relativePath;
+    });
+    if (existing) {
+      existing.api.setActive();
+      return;
+    }
+    const position = codePanelPosition(api);
+    api.addPanel({
+      id: nextCodePanelId('file'),
+      component: 'code-file',
+      title: relativePath.split('/').pop() ?? relativePath,
+      renderer: 'onlyWhenVisible',
+      params: { projectId, rootId, relativePath },
+      ...(position ? { position } : {}),
+    });
+  }, [codePanelPosition, nextCodePanelId, sessionMirroringCoordinator]);
+
+  const openProjectReview = useCallback((
+    projectId: string,
+    rootId: string,
+    options: {
+      readonly historyId?: string;
+      readonly reviewTurnId?: string;
+      readonly scope?: 'last-turn' | 'working-tree';
+      readonly repositoryRelativePath?: string;
+      readonly repositoryName?: string;
+      readonly relativePath?: string;
+    } = {},
+  ): void => {
+    if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
+    const api = apiRef.current;
+    if (!api) return;
+    const scope = options.scope ?? (options.historyId ? 'last-turn' : 'working-tree');
+    if (options.relativePath) {
+      requestProjectDiffReveal({
+        projectId,
+        rootId,
+        ...(options.repositoryRelativePath ? { repositoryRelativePath: options.repositoryRelativePath } : {}),
+        scope,
+        ...(options.historyId ? { historyId: options.historyId } : {}),
+        ...(options.reviewTurnId ? { reviewTurnId: options.reviewTurnId } : {}),
+      }, options.relativePath);
+    }
+    const existing = api.panels.find((panel) => {
+      if (panel.api.component !== 'code-diff') return false;
+      const params = panel.api.getParameters<Record<string, unknown>>();
+      return params.projectId === projectId
+        && params.rootId === rootId
+        && (params.repositoryRelativePath ?? '') === (options.repositoryRelativePath ?? '')
+        && params.scope === scope
+        && params.historyId === options.historyId
+        && params.reviewTurnId === options.reviewTurnId;
+    });
+    if (existing) {
+      existing.api.setActive();
+      return;
+    }
+    const position = codePanelPosition(api);
+    api.addPanel({
+      id: nextCodePanelId('diff'),
+      component: 'code-diff',
+      title: options.repositoryName && scope !== 'last-turn'
+        ? `${options.repositoryName} · Working tree`
+        : scope === 'last-turn' ? 'Last turn' : 'Working tree',
+      renderer: 'onlyWhenVisible',
+      params: {
+        projectId,
+        rootId,
+        ...(options.repositoryRelativePath ? { repositoryRelativePath: options.repositoryRelativePath } : {}),
+        ...(options.repositoryName ? { repositoryName: options.repositoryName } : {}),
+        scope,
+        ...(options.historyId ? { historyId: options.historyId } : {}),
+        ...(options.reviewTurnId ? { reviewTurnId: options.reviewTurnId } : {}),
+      },
+      ...(position ? { position } : {}),
+    });
+  }, [codePanelPosition, nextCodePanelId, sessionMirroringCoordinator]);
+
+  const openHistoryReview = useCallback(async (
+    session: AgentHistorySessionSummary,
+    project: AgentProjectSummary,
+  ): Promise<void> => {
+    const described = await window.ezterminalDesktop?.describeProjectWorkspace(project.projectId);
+    if (!described?.ok) return;
+    const recordedRoot = session.roots[0];
+    const root = described.project.roots.find((candidate) => candidate.displayPath === recordedRoot)
+      ?? described.project.roots.find((candidate) => candidate.primary)
+      ?? described.project.roots[0];
+    if (root) openProjectReview(project.projectId, root.rootId, { historyId: session.historyId });
+  }, [openProjectReview]);
+
+  const openSessionHistoryReview = useCallback((
+    projectId: string,
+    rootId: string,
+    historyId: string,
+    reviewTurnId: string,
+    changedPath?: string,
+  ): void => {
+    void window.ezterminalDesktop?.describeProjectWorkspace(projectId).then(async (described) => {
+      if (!described.ok) return;
+      const root = described.project.roots.find((candidate) => candidate.rootId === rootId);
+      if (!root) return;
+      const relativePath = changedPath
+        ? projectRelativeReviewHint(changedPath, root.displayPath) ?? undefined
+        : undefined;
+      if (relativePath) {
+        const located = await window.ezterminalDesktop?.locateProjectReview({
+          projectId,
+          rootId,
+          relativePath,
+        }).catch(() => null);
+        if (located?.ok) {
+          openProjectReview(projectId, rootId, {
+            historyId,
+            reviewTurnId,
+            repositoryRelativePath: located.target.repositoryRelativePath,
+            repositoryName: located.target.repositoryName,
+            relativePath: located.target.relativePath,
+          });
+          return;
+        }
+      }
+      openProjectReview(projectId, rootId, {
+        historyId,
+        reviewTurnId,
+        ...(relativePath ? { relativePath } : {}),
+      });
+    }).catch(() => undefined);
+  }, [openProjectReview]);
+
+  const openActivityReview = useCallback(async (directory: string): Promise<boolean> => {
+    const page = await window.ezterminal.listAgentProjects(false, undefined, 100).catch(() => null);
+    const project = page?.items.find((candidate) => [candidate.primaryRoot, ...candidate.additionalRoots]
+      .some((root) => root.toLocaleLowerCase() === directory.toLocaleLowerCase()));
+    if (!project) return false;
+    const described = await window.ezterminalDesktop?.describeProjectWorkspace(project.projectId);
+    const root = described?.ok
+      ? described.project.roots.find((candidate) => candidate.displayPath.toLocaleLowerCase() === directory.toLocaleLowerCase())
+      : undefined;
+    if (!root) return false;
+    openProjectReview(project.projectId, root.rootId, { scope: 'working-tree' });
+    return true;
+  }, [openProjectReview]);
+
+  const locateRegisteredProjectFile = useCallback(async (absolutePath: string) => {
+    const desktop = window.ezterminalDesktop;
+    if (!desktop) return null;
+    return findRegisteredProjectFileTarget(absolutePath, {
+      listProjects: () => window.ezterminal.listAgentProjects(false, undefined, 100),
+      describeProject: (projectId) => desktop.describeProjectWorkspace(projectId),
+    });
+  }, []);
 
   const launchAgent = useCallback((bootstrap: AgentLaunchBootstrap): void => {
     workbenchCoordinator.openTerminal({
@@ -1460,7 +1705,7 @@ export function App(): JSX.Element {
       pastePreferences: terminalPastePreferences,
       confirmPaste: requestPasteConfirmation,
       notifyTerminal,
-      openTerminalFileLocation: (request) => {
+      openTerminalFileLocation: (request, _event, intent) => {
         quickPreviewSequenceRef.current += 1;
         const sequence = quickPreviewSequenceRef.current;
         void window.ezterminal
@@ -1480,20 +1725,67 @@ export function App(): JSX.Element {
               return;
             }
 
+            const target = await locateRegisteredProjectFile(resolved.path);
+            if (sequence !== quickPreviewSequenceRef.current) return;
+            const location = resolved.line === undefined
+              ? undefined
+              : { line: resolved.line, ...(resolved.column === undefined ? {} : { column: resolved.column }) };
+            if (intent === 'review-change' && target) {
+              const reviewTarget = await window.ezterminalDesktop?.locateProjectReview({
+                projectId: target.projectId,
+                rootId: target.rootId,
+                relativePath: target.relativePath,
+              }).catch(() => null);
+              if (sequence !== quickPreviewSequenceRef.current) return;
+              const review = reviewTarget?.ok
+                ? await window.ezterminalDesktop?.getProjectReview({
+                    projectId: reviewTarget.target.projectId,
+                    rootId: reviewTarget.target.rootId,
+                    ...(reviewTarget.target.repositoryRelativePath
+                      ? { repositoryRelativePath: reviewTarget.target.repositoryRelativePath }
+                      : {}),
+                    scope: 'working-tree',
+                  }).catch(() => null)
+                : null;
+              if (sequence !== quickPreviewSequenceRef.current) return;
+              setQuickPreview(null);
+              if (reviewTarget?.ok
+                && review?.ok
+                && review.changes.some((change) => change.relativePath === reviewTarget.target.relativePath)) {
+                openProjectReview(reviewTarget.target.projectId, reviewTarget.target.rootId, {
+                  scope: 'working-tree',
+                  repositoryRelativePath: reviewTarget.target.repositoryRelativePath,
+                  repositoryName: reviewTarget.target.repositoryName,
+                  relativePath: reviewTarget.target.relativePath,
+                });
+              } else {
+                openProjectFile(target.projectId, target.rootId, target.relativePath, location);
+                pushToast({ title: t('terminalFiles.changeOpenedAsSource'), variant: 'warning' });
+              }
+              return;
+            }
+
             const preview = await window.ezterminal
               .readFilePreview(resolved.path, resolved.capability)
               .catch((): FilePreviewResult => ({
                 ok: false,
                 error: t('terminalFiles.previewLoadFailed'),
               }));
-            if (sequence === quickPreviewSequenceRef.current) {
-              setQuickPreview({
-                path: resolved.path,
-                result: preview,
-                line: resolved.line,
-                column: resolved.column,
-              });
+            if (sequence !== quickPreviewSequenceRef.current) return;
+            if (preview.ok && preview.kind === 'text' && !preview.truncated && target) {
+              setQuickPreview(null);
+              openProjectFile(target.projectId, target.rootId, target.relativePath, location);
+              return;
             }
+            if (intent === 'review-change') {
+              pushToast({ title: t('terminalFiles.changePreviewFallback'), variant: 'warning' });
+            }
+            setQuickPreview({
+              path: resolved.path,
+              result: preview,
+              line: resolved.line,
+              column: resolved.column,
+            });
           })
           .catch(() => {
             if (sequence === quickPreviewSequenceRef.current) {
@@ -1504,7 +1796,10 @@ export function App(): JSX.Element {
     }),
     [
       allowOsc52Clipboard,
+      locateRegisteredProjectFile,
       notifyTerminal,
+      openProjectFile,
+      openProjectReview,
       pushToast,
       requestPasteConfirmation,
       t,
@@ -2688,6 +2983,11 @@ export function App(): JSX.Element {
     [openPanel, scheduleSave],
   );
 
+  const projectReviewNavigationValue = useMemo<ProjectReviewNavigationContextValue>(
+    () => ({ openHistoryReview: openSessionHistoryReview }),
+    [openSessionHistoryReview],
+  );
+
   const sidebarTitle: Record<SidebarDestination, string> = {
     explorer: t('rail.explorer'),
     agents: t('rail.agents'),
@@ -2708,9 +3008,11 @@ export function App(): JSX.Element {
   };
   const sidebarContent =
     sidebarDestination === 'explorer' ? (
-      <FileExplorerPanel
+      <ExplorerWorkbench
         activePanelId={activePanelId}
         onOpenTerminalAt={onOpenTerminalAt}
+        onOpenProjectFile={openProjectFile}
+        onOpenProjectReview={(projectId, rootId) => openProjectReview(projectId, rootId)}
       />
     ) : sidebarDestination === 'agents' ? (
       <AgentHub
@@ -2720,8 +3022,10 @@ export function App(): JSX.Element {
         onDecideApproval={(activityId, approvalId, decision) =>
           window.ezterminal.decideAgentApproval(activityId, approvalId, decision)}
         onLoadDiff={(directory) => window.ezterminal.getGitDiff(directory)}
+        onOpenProjectReview={openActivityReview}
         onReadGitStatus={(directory) => window.ezterminal.getGitStatus(directory)}
         onOpenHistorySession={openAgentHistorySession}
+        onOpenHistoryReview={(session, project) => void openHistoryReview(session, project)}
         onLaunchAgent={launchAgent}
         onOpenAgentSettings={() => {
           setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
@@ -2887,19 +3191,21 @@ export function App(): JSX.Element {
                 <PaneCloseContext.Provider value={paneCloseContextValue}>
                   <WorkspaceTabActionContext.Provider value={workspaceTabActionValue}>
                     <QuickCommandShelfContext.Provider value={quickCommandShelfValue}>
-                      <TerminalRuntimeContext.Provider value={terminalRuntimeOptions}>
-                        <PresetMutationContext.Provider value={presetMutationValue}>
-                          <DockviewReact
-                            className="dockview-theme-dark ez-dock"
-                            components={components}
-                            defaultTabComponent={AgentAwareTab}
-                            rightHeaderActionsComponent={PaneHeaderMeta}
-                            onReady={onReady}
-                            disableFloatingGroups
-                            popoutUrl={auxiliaryPopoutUrl()}
-                          />
-                        </PresetMutationContext.Provider>
-                      </TerminalRuntimeContext.Provider>
+                      <ProjectReviewNavigationContext.Provider value={projectReviewNavigationValue}>
+                        <TerminalRuntimeContext.Provider value={terminalRuntimeOptions}>
+                          <PresetMutationContext.Provider value={presetMutationValue}>
+                            <DockviewReact
+                              className="dockview-theme-dark ez-dock"
+                              components={components}
+                              defaultTabComponent={AgentAwareTab}
+                              rightHeaderActionsComponent={PaneHeaderMeta}
+                              onReady={onReady}
+                              disableFloatingGroups
+                              popoutUrl={auxiliaryPopoutUrl()}
+                            />
+                          </PresetMutationContext.Provider>
+                        </TerminalRuntimeContext.Provider>
+                      </ProjectReviewNavigationContext.Provider>
                     </QuickCommandShelfContext.Provider>
                   </WorkspaceTabActionContext.Provider>
                 </PaneCloseContext.Provider>
@@ -2907,6 +3213,7 @@ export function App(): JSX.Element {
               </AgentTabStatusContext.Provider>
             </OpenClawOverlayContext.Provider>
           </SessionBindingContext.Provider>
+          <ProjectQuestionComposer />
           {closeDialog && (
             <RiskyCloseDialog
               title={closeDialog.title}

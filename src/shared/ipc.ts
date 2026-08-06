@@ -17,6 +17,21 @@ import type { FileListResult, FileOpResult, FileReadTextResult } from './files';
 import type { FilePreviewResult } from './file-preview';
 import type { QuickCommand, QuickCommandInput, QuickCommandMutationResult } from './quick-command';
 import type { WorkspaceFileSearchRequest, WorkspaceFileSearchResult } from './workspace-search';
+import type {
+  ProjectDirectoryResult,
+  ProjectPathRequest,
+  ProjectReviewFileRequest,
+  ProjectReviewFileResult,
+  ProjectReviewIndexResult,
+  ProjectReviewRequest,
+  ProjectReviewTargetResult,
+  ProjectSearchRequest,
+  ProjectSearchResult,
+  ProjectTextResult,
+  ProjectTextValidationRequest,
+  ProjectTextValidationResult,
+  ProjectWorkspaceDescriptorResult,
+} from './project-workspace';
 import type { TerminalFileLocationRequest, TerminalFileLocationResult } from './terminal-file-location';
 import type { SSH_FORWARD_BIND_HOST, SshForwardAction, SshForwardInfo, SshForwardResult } from './ssh-forward';
 import type {
@@ -1345,6 +1360,17 @@ export interface EzTerminalDesktopApi {
     request: Omit<WorkspaceFileSearchRequest, 'signal'>,
   ) => Promise<WorkspaceFileSearchResult>;
   cancelWorkspaceFileSearch: (requestId: string) => void;
+
+  // Registered-project, root-contained, read-only code workbench.
+  describeProjectWorkspace: (projectId: string) => Promise<ProjectWorkspaceDescriptorResult>;
+  listProjectDirectory: (request: ProjectPathRequest) => Promise<ProjectDirectoryResult>;
+  readProjectText: (request: ProjectPathRequest) => Promise<ProjectTextResult>;
+  validateProjectText: (request: ProjectTextValidationRequest) => Promise<ProjectTextValidationResult>;
+  searchProjectWorkspace: (request: ProjectSearchRequest) => Promise<ProjectSearchResult>;
+  cancelProjectWorkspaceSearch: (requestId: string) => void;
+  locateProjectReview: (request: ProjectPathRequest) => Promise<ProjectReviewTargetResult>;
+  getProjectReview: (request: ProjectReviewRequest) => Promise<ProjectReviewIndexResult>;
+  getProjectReviewFile: (request: ProjectReviewFileRequest) => Promise<ProjectReviewFileResult>;
 
   /** Custom theme mods folder-scanned from `.ezterminal/themes/*.json` at
    * startup (main/theme-store.ts) — already validated (`ThemeMod`, not raw JSON). */

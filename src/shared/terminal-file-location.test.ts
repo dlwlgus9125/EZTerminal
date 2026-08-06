@@ -6,10 +6,23 @@ describe('findTerminalFileLinks', () => {
   it('extracts Windows, POSIX and relative paths with optional line/column', () => {
     const line = 'at C:\\repo\\src\\a.ts:12:4, then ./docs/readme.md:7 and /tmp/x.txt';
     expect(findTerminalFileLinks(line)).toEqual([
-      expect.objectContaining({ text: 'C:\\repo\\src\\a.ts:12:4', path: 'C:\\repo\\src\\a.ts', line: 12, column: 4 }),
-      expect.objectContaining({ text: './docs/readme.md:7', path: './docs/readme.md', line: 7 }),
-      expect.objectContaining({ text: '/tmp/x.txt', path: '/tmp/x.txt' }),
+      expect.objectContaining({ text: 'C:\\repo\\src\\a.ts:12:4', path: 'C:\\repo\\src\\a.ts', line: 12, column: 4, intent: 'preview' }),
+      expect.objectContaining({ text: './docs/readme.md:7', path: './docs/readme.md', line: 7, intent: 'preview' }),
+      expect.objectContaining({ text: '/tmp/x.txt', path: '/tmp/x.txt', intent: 'preview' }),
     ]);
+  });
+
+  it('treats an agent-style change summary as one explicit review target', () => {
+    const line = '  out\\manual-test-project\\src\\app.ts (+5 -0)';
+    expect(findTerminalFileLinks(line)).toEqual([
+      expect.objectContaining({
+        path: 'out\\manual-test-project\\src\\app.ts',
+        text: 'out\\manual-test-project\\src\\app.ts (+5 -0)',
+        intent: 'review-change',
+      }),
+    ]);
+    const match = findTerminalFileLinks(line)[0]!;
+    expect(line.slice(match.start, match.end)).toBe(match.text);
   });
 
   it('does not turn ordinary words, URLs or malformed zero locations into links', () => {
@@ -28,5 +41,12 @@ describe('findTerminalFileLinks', () => {
       expect.objectContaining({ path: 'C:\\repo\\b.ts', line: 9, column: 2 }),
     );
     expect(findTerminalFileLinkAtOffset(text, text.indexOf('second'))).toBeNull();
+  });
+
+  it('maps the change counts to the same review target in the plain renderer', () => {
+    const text = 'src/app.ts (+12 -3)';
+    expect(findTerminalFileLinkAtOffset(text, text.indexOf('-3') + 1)).toEqual(
+      expect.objectContaining({ path: 'src/app.ts', intent: 'review-change' }),
+    );
   });
 });

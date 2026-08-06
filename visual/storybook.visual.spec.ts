@@ -278,6 +278,56 @@ test.describe("desktop Storybook visual contracts", () => {
   });
 });
 
+test("project workbench content is readable and bounded", async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 800 });
+  await openStory(page, "compositions-project-workbench--content", {
+    theme: "dark",
+    locale: "en",
+    density: "adaptive",
+    motion: "reduced",
+  });
+  await expect(page.getByTestId("project-explorer-panel")).toBeVisible();
+  await expect(page.getByText("package.json", { exact: true }).first()).toBeVisible();
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true);
+  await expectNoAccessibilityViolations(page);
+  await expect(page).toHaveScreenshot("desktop-800x800-project-workbench.png", {
+    animations: "disabled",
+  });
+});
+
+for (const reviewCase of [
+  { name: "wide", viewport: { width: 1200, height: 800 } },
+  { name: "narrow", viewport: { width: 800, height: 700 } },
+] as const) {
+  test(`project review keeps the full file and record in one ${reviewCase.name} surface`, async ({ page }) => {
+    await page.setViewportSize(reviewCase.viewport);
+    await openStory(page, "compositions-project-review--current-file-with-record", {
+      theme: "dark",
+      locale: "en",
+      density: "adaptive",
+      motion: "reduced",
+    });
+    const panel = page.getByTestId("code-diff-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel.locator(".monaco-editor")).toBeVisible({ timeout: 20_000 });
+    await expect(panel.locator(".diff-panel__recorded-zone")).toContainText("status: 'ready'");
+    await expect(panel.getByTestId("open-current-project-file")).toHaveCount(0);
+    const bodyRatio = await panel.evaluate((element) => {
+      const panelHeight = element.getBoundingClientRect().height;
+      const bodyHeight = element.querySelector<HTMLElement>(".diff-panel__body")?.getBoundingClientRect().height ?? 0;
+      return panelHeight > 0 ? bodyHeight / panelHeight : 0;
+    });
+    expect(bodyRatio).toBeGreaterThan(0.75);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await expectNoAccessibilityViolations(page);
+    await expect(page).toHaveScreenshot(`desktop-project-review-${reviewCase.name}.png`, {
+      animations: "disabled",
+    });
+  });
+}
+
 test.describe("CRT signature header visual contracts", () => {
   test("keeps scaled header controls disjoint at supported widths", async ({ page }) => {
     const viewportHeights = new Map([

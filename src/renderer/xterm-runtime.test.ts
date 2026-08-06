@@ -11,6 +11,7 @@ vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
 
 import {
   XtermRuntime,
+  canActivateTerminalFileLink,
   isModifiedLinkActivation,
   normalizeExternalHttpUrl,
   type XtermRuntimeFactories,
@@ -179,6 +180,13 @@ describe('xterm runtime URL policy', () => {
     expect(isModifiedLinkActivation({ ctrlKey: true, metaKey: false })).toBe(true);
     expect(isModifiedLinkActivation({ ctrlKey: false, metaKey: true })).toBe(true);
   });
+
+  it('allows direct activation only for explicit change summaries on desktop', () => {
+    const plainClick = { ctrlKey: false, metaKey: false };
+    expect(canActivateTerminalFileLink('desktop', 'preview', plainClick)).toBe(false);
+    expect(canActivateTerminalFileLink('desktop', 'review-change', plainClick)).toBe(true);
+    expect(canActivateTerminalFileLink('mobile', 'preview', plainClick)).toBe(true);
+  });
 });
 
 describe('XtermRuntime', () => {
@@ -264,6 +272,34 @@ describe('XtermRuntime', () => {
     expect(opened).toEqual([]);
     links?.[0].activate(new MouseEvent('click', { ctrlKey: true }), links[0].text);
     expect(opened).toEqual([{ path: './src/a.ts', cwd: '/repo', executionKind: 'local', line: 12, column: 3 }]);
+  });
+
+  it('activates the full agent change summary with one click and preserves review intent', () => {
+    const h = createHarness();
+    h.terminal.lineText = 'src/app.ts (+5 -0)';
+    const opened = vi.fn();
+    const runtime = new XtermRuntime(
+      h.terminal as unknown as Terminal,
+      host,
+      {
+        platform: 'desktop',
+        rendererPreference: 'dom',
+        getTerminalFileContext: () => ({ cwd: '/repo', executionKind: 'local' }),
+        openTerminalFileLocation: opened,
+      },
+      {},
+      h.factories,
+    );
+    runtime.open();
+    let links: readonly ILink[] | undefined;
+    h.terminal.linkProvider?.provideLinks(1, (provided) => { links = provided; });
+    expect(links?.[0].text).toBe('src/app.ts (+5 -0)');
+    links?.[0].activate(new MouseEvent('click'), links[0].text);
+    expect(opened).toHaveBeenCalledWith(
+      { path: 'src/app.ts', cwd: '/repo', executionKind: 'local' },
+      expect.any(MouseEvent),
+      'review-change',
+    );
   });
 
   it('falls back after WebGL activation failure and does not retry this mount', () => {

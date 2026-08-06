@@ -27,6 +27,28 @@ export interface ProviderSessionQuery {
   readonly limit: number;
 }
 
+/** Main-private structured record used by the read-only Last turn review. */
+export interface ProviderFileChangeRecord {
+  readonly path: string;
+  readonly kind: 'added' | 'modified' | 'deleted' | 'renamed';
+  readonly previousPath?: string;
+  /** Provider operation semantics when the record came from a structured tool. */
+  readonly operation?: 'edit' | 'write' | 'notebook-edit';
+  /** Claude Edit's replace_all cannot be reversed safely without a full before snapshot. */
+  readonly replaceAll?: boolean;
+  /** Provider-authored unified diff when one is available. */
+  readonly diff?: string;
+  /** Bounded before/after snapshots when the provider records them directly. */
+  readonly original?: string;
+  readonly modified?: string;
+}
+
+export interface ProviderFileChangeSet {
+  readonly provider: 'codex' | 'claude';
+  readonly turnId: string;
+  readonly changes: readonly ProviderFileChangeRecord[];
+}
+
 /**
  * A launch line for one provider's resume, built inside the adapter so the
  * provider's CLI grammar never leaks into main's dispatch or the mobile bridge.
@@ -47,6 +69,12 @@ export interface AgentHistoryProviderAdapter {
    */
   listSessions(query: ProviderSessionQuery): Promise<ProviderHistorySessionPage>;
   readTranscript(privateId: string, cursor?: string, limit?: number): Promise<AgentTranscriptPage>;
+  /**
+   * Reads one completed turn's structured changes. When `turnId` is omitted,
+   * the provider's latest completed turn is used. The opaque turn id is the
+   * same renderer-safe id returned by `readTranscript`.
+   */
+  readFileChanges?(privateId: string, turnId?: string): Promise<ProviderFileChangeSet | null>;
   /**
    * Returns null when the provider cannot express this resume — that is the one
    * place a provider declares a support limit, rather than the caller guessing.

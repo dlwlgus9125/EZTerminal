@@ -8,7 +8,7 @@ import react from '@vitejs/plugin-react';
 // here — it is ignored (and warns) when delivered via <meta>; main enforces it as a
 // response header instead.
 const CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+  "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; " +
   "img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; " +
   "base-uri 'none'; form-action 'none'";
 

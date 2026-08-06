@@ -418,6 +418,113 @@ describe('ClaudeHistoryAdapter.readTranscript', () => {
     await expect(adapter.readTranscript(path.join(fixture.projectDirectory, 'nope.jsonl')))
       .resolves.toEqual({ historyId: '', provider: 'claude', turns: [], nextCursor: null });
   });
+
+  it('attributes only successful Edit/Write tool pairs in the latest complete turn', async () => {
+    const fixture = makeFixture('latest-changes');
+    const id = sessionId(1);
+    const filePath = writeSession(fixture, 1, [
+      ...preamble(fixture.root, id),
+      humanPrompt(fixture.root, id, 10, 'change the files'),
+      {
+        ...envelope(fixture.root, id, 11),
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'edit-ok', name: 'Edit', input: { file_path: 'src/app.ts', old_string: 'old', new_string: 'new', replace_all: true } },
+            { type: 'tool_use', id: 'write-ok', name: 'Write', input: { file_path: 'src/generated.ts', content: 'generated' } },
+            { type: 'tool_use', id: 'write-failed', name: 'Write', input: { file_path: 'failed.ts', content: 'nope' } },
+          ],
+          stop_reason: 'tool_use',
+        },
+      },
+      {
+        ...envelope(fixture.root, id, 12),
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'edit-ok', content: 'updated' },
+            { type: 'tool_result', tool_use_id: 'write-ok', content: 'written' },
+            { type: 'tool_result', tool_use_id: 'write-failed', content: 'denied', is_error: true },
+          ],
+        },
+      },
+      {
+        ...envelope(fixture.root, id, 13),
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+      },
+    ]);
+    const adapter = new ClaudeHistoryAdapter({ homeDir: fixture.home });
+
+    const transcript = await adapter.readTranscript(filePath);
+    const fileChanges = transcript.turns.flatMap((turnEntry) => turnEntry.entries)
+      .filter((entry) => entry.type === 'activity' && entry.kind === 'file-change');
+    expect(fileChanges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ changedPaths: ['src/app.ts'] }),
+      expect.objectContaining({ changedPaths: ['src/generated.ts'] }),
+    ]));
+
+    await expect(adapter.readFileChanges(filePath)).resolves.toMatchObject({
+      provider: 'claude',
+      changes: [
+        { path: 'src/app.ts', kind: 'modified', operation: 'edit', replaceAll: true, original: 'old', modified: 'new' },
+        { path: 'src/generated.ts', kind: 'modified', operation: 'write', original: '', modified: 'generated' },
+      ],
+    });
+  });
+
+  it('reads file changes from the exact opaque transcript turn', async () => {
+    const fixture = makeFixture('selected-changes');
+    const id = sessionId(1);
+    const editTurn = (index: number, toolId: string, filePath: string): Record<string, unknown>[] => [
+      humanPrompt(fixture.root, id, index, `change ${filePath}`),
+      {
+        ...envelope(fixture.root, id, index + 1),
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{
+            type: 'tool_use',
+            id: toolId,
+            name: 'Edit',
+            input: { file_path: filePath, old_string: 'old', new_string: 'new' },
+          }],
+          stop_reason: 'tool_use',
+        },
+      },
+      {
+        ...envelope(fixture.root, id, index + 2),
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: toolId, content: 'updated' }],
+        },
+      },
+      {
+        ...envelope(fixture.root, id, index + 3),
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+      },
+    ];
+    const filePath = writeSession(fixture, 1, [
+      ...preamble(fixture.root, id),
+      ...editTurn(10, 'older-edit', 'src/older.ts'),
+      ...editTurn(20, 'newer-edit', 'src/newer.ts'),
+    ]);
+    const adapter = new ClaudeHistoryAdapter({ homeDir: fixture.home });
+    const transcript = await adapter.readTranscript(filePath);
+    const selectedTurn = transcript.turns.find((turnEntry) => turnEntry.entries.some((entry) =>
+      entry.type === 'activity' && entry.changedPaths?.includes('src/older.ts')));
+    if (!selectedTurn) throw new Error('selected Claude turn missing');
+
+    await expect(adapter.readFileChanges(filePath, selectedTurn.id)).resolves.toMatchObject({
+      provider: 'claude',
+      turnId: selectedTurn.id,
+      changes: [{ path: 'src/older.ts', operation: 'edit', original: 'old', modified: 'new' }],
+    });
+  });
 });
 
 describe('ClaudeHistoryAdapter.buildResumeCommand', () => {

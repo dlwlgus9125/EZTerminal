@@ -30,7 +30,12 @@ function envelope(cwd: string, index: number): Record<string, unknown> {
  * preamble a real session has, and the typed prompt is registered in the shared
  * prompt log rather than being findable near the head.
  */
-function seedClaudeStore(home: string, projectRoot: string, extraTurns = 0): void {
+function seedClaudeStore(
+  home: string,
+  projectRoot: string,
+  extraTurns = 0,
+  appendLaterFileChange = false,
+): void {
   const projectDirectory = path.join(
     home,
     '.claude',
@@ -81,7 +86,88 @@ function seedClaudeStore(home: string, projectRoot: string, extraTurns = 0): voi
         }],
       },
     },
+    {
+      ...envelope(projectRoot, 5),
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{
+          type: 'tool_use',
+          id: 'toolu_edit_1',
+          name: 'Edit',
+          input: {
+            file_path: 'src/app.ts',
+            old_string: 'export const answer = 1;',
+            new_string: 'export const answer = 2;',
+          },
+        }],
+        stop_reason: 'tool_use',
+      },
+    },
+    {
+      ...envelope(projectRoot, 6),
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_edit_1', content: 'updated' }],
+      },
+    },
+    {
+      ...envelope(projectRoot, 7),
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'edit complete' }],
+        stop_reason: 'end_turn',
+      },
+    },
   ];
+  if (appendLaterFileChange) {
+    records.push(
+      {
+        ...envelope(projectRoot, 8),
+        type: 'user',
+        message: { role: 'user', content: 'make a later unrelated change' },
+        origin: { kind: 'human' },
+        promptSource: 'typed',
+      },
+      {
+        ...envelope(projectRoot, 9),
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{
+            type: 'tool_use',
+            id: 'toolu_edit_2',
+            name: 'Edit',
+            input: {
+              file_path: 'src/other.ts',
+              old_string: 'export const later = 1;',
+              new_string: 'export const later = 2;',
+            },
+          }],
+          stop_reason: 'tool_use',
+        },
+      },
+      {
+        ...envelope(projectRoot, 10),
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'toolu_edit_2', content: 'updated' }],
+        },
+      },
+      {
+        ...envelope(projectRoot, 11),
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'later edit complete' }],
+          stop_reason: 'end_turn',
+        },
+      },
+    );
+  }
   // Older turns go before the newest one, so only the newest page is rendered
   // first and reaching the earliest requires scrolling up.
   if (extraTurns > 0) {
@@ -150,7 +236,14 @@ test('lists a local Claude session for a terminal project and opens it read-only
   const home = createRegisteredE2eTempDir('ezterm-e2e-claude-home-');
   const projectRoot = createRegisteredE2eTempDir('ezterm-e2e-claude-root-');
   const userDataDir = createRegisteredE2eTempDir('ezterm-e2e-claude-data-');
-  seedClaudeStore(home, projectRoot);
+  mkdirSync(path.join(projectRoot, 'src'), { recursive: true });
+  writeFileSync(
+    path.join(projectRoot, 'src', 'app.ts'),
+    '// workspace-only context before\n\nexport const answer = 2;\n\n// workspace-only context after\n',
+    'utf8',
+  );
+  writeFileSync(path.join(projectRoot, 'src', 'other.ts'), 'export const later = 2;\n', 'utf8');
+  seedClaudeStore(home, projectRoot, 0, true);
   seedTerminalProject(userDataDir, projectRoot);
 
   // The adapter resolves the Claude store from the user's home directory.
@@ -192,6 +285,72 @@ test('lists a local Claude session for a terminal project and opens it read-only
   await expect(roles.nth(1)).toHaveText('claude');
 
   await expect(window.getByRole('tab', { name: /Handoff · Claude/u })).toBeVisible();
+
+  // A structured file-change activity is itself the review affordance: one
+  // click opens the Last turn panel on the right and selects that exact file.
+  const fileChange = transcript
+    .locator('button.agent-work-activity[data-kind="file-change"]')
+    .filter({ hasText: 'src/app.ts' });
+  await expect(fileChange).toContainText('src/app.ts');
+  await fileChange.click();
+  const diff = window.getByTestId('code-diff-panel');
+  await expect(diff).toBeVisible({ timeout: 20_000 });
+  await expect(diff.locator('.diff-panel__files > button[aria-selected="true"]'))
+    .toContainText('src/app.ts');
+  await expect(diff.locator('.monaco-diff-editor')).toBeVisible({ timeout: 20_000 });
+  await expect(diff).toContainText('Selected turn');
+  await expect(diff).toContainText('Current context');
+  await expect(diff).not.toContainText('Change fragment');
+  await expect(diff.locator('.monaco-diff-editor'))
+    .toContainText('workspace-only context before');
+  await expect(diff.locator('.monaco-diff-editor'))
+    .toContainText('workspace-only context after');
+  await expect(diff.locator('.line-insert, .char-insert').first()).toBeVisible();
+  await expect(diff.getByTestId('open-current-project-file')).toHaveCount(0);
+  await expect(window.getByTestId('code-file-panel')).toHaveCount(0);
+
+  await app.close();
+});
+
+test('keeps the complete current file and an unplaced provider record in one review surface', async () => {
+  const home = createRegisteredE2eTempDir('ezterm-e2e-claude-record-home-');
+  const projectRoot = createRegisteredE2eTempDir('ezterm-e2e-claude-record-root-');
+  const userDataDir = createRegisteredE2eTempDir('ezterm-e2e-claude-record-data-');
+  mkdirSync(path.join(projectRoot, 'src'), { recursive: true });
+  writeFileSync(
+    path.join(projectRoot, 'src', 'app.ts'),
+    '// complete file first line\n\nexport const answer = 3;\n\n// complete file last line\n',
+    'utf8',
+  );
+  seedClaudeStore(home, projectRoot);
+  seedTerminalProject(userDataDir, projectRoot);
+
+  const app = await launchApp(userDataDir, { USERPROFILE: home, HOME: home });
+  const window = await app.firstWindow();
+  await window.setViewportSize({ width: 1440, height: 900 });
+
+  await window.getByTestId('rail-agents').click();
+  await window.locator('.agent-project-toggle').click();
+  await window.locator('.agent-history-row').first().click();
+  const transcript = window.getByTestId('agent-history-transcript');
+  const fileChange = transcript
+    .locator('button.agent-work-activity[data-kind="file-change"]')
+    .filter({ hasText: 'src/app.ts' });
+  await expect(fileChange).toBeVisible({ timeout: 15_000 });
+  await fileChange.click();
+
+  const diff = window.getByTestId('code-diff-panel');
+  await expect(diff).toBeVisible({ timeout: 20_000 });
+  await expect(diff).toContainText('Current file + record');
+  await expect(diff.locator('.monaco-editor')).toBeVisible({ timeout: 20_000 });
+  await expect(diff.locator('.monaco-diff-editor')).toHaveCount(0);
+  await expect(diff.locator('.view-lines')).toContainText('complete file first line');
+  await expect(diff.locator('.view-lines')).toContainText('complete file last line');
+  const record = diff.locator('.diff-panel__recorded-zone');
+  await expect(record).toContainText('current location could not be verified');
+  await expect(record).toContainText('export const answer = 1;');
+  await expect(record).toContainText('export const answer = 2;');
+  await expect(diff.getByTestId('open-current-project-file')).toHaveCount(0);
 
   await app.close();
 });

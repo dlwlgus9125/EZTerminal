@@ -8,10 +8,13 @@ import {
   type AgentTranscriptPage,
   type AgentTranscriptTurn,
 } from '../shared/agent-history';
+import { hasProjectPathControlCharacters } from '../shared/project-workspace';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
 import type {
   AgentHistoryProviderAdapter,
   AgentResumeCommand,
+  ProviderFileChangeRecord,
+  ProviderFileChangeSet,
   ProviderHistorySession,
   ProviderHistorySessionPage,
   ProviderSessionQuery,
@@ -87,14 +90,17 @@ function transcriptEntry(
         summary: summarizeCommand(item) || 'Command',
         ...optionalStatus(item),
       };
-    case 'fileChange':
+    case 'fileChange': {
+      const changedPaths = codexFileChanges(item).map((change) => change.path);
       return {
         type: 'activity',
         id,
         kind: 'file-change',
         summary: boundedText(item.changes ?? item.description, 1_000) || 'File changes',
         ...optionalStatus(item),
+        ...(changedPaths.length > 0 ? { changedPaths } : {}),
       };
+    }
     case 'webSearch':
       return {
         type: 'activity',
@@ -172,6 +178,45 @@ function normalizeSource(value: unknown): string {
   return asString(source?.type) ?? asString(source?.kind) ?? 'unknown';
 }
 
+function normalizeFileChangeKind(value: unknown): ProviderFileChangeRecord['kind'] {
+  const kindObject = asObject(value);
+  const kind = (asString(value) ?? asString(kindObject?.type) ?? asString(kindObject?.kind) ?? '')
+    .toLocaleLowerCase('en-US');
+  if (kind.includes('add') || kind.includes('create')) return 'added';
+  if (kind.includes('delete') || kind.includes('remove')) return 'deleted';
+  if (kind.includes('rename') || kind.includes('move')) return 'renamed';
+  return 'modified';
+}
+
+function codexFileChanges(item: JsonObject): readonly ProviderFileChangeRecord[] {
+  const raw = item.changes;
+  const candidates: unknown[] = Array.isArray(raw)
+    ? raw
+    : asObject(raw)
+      ? Object.entries(raw as JsonObject).map(([entryPath, entry]) => ({
+        ...(asObject(entry) ?? {}),
+        path: asString(asObject(entry)?.path) ?? entryPath,
+      }))
+      : [];
+  return candidates.slice(0, 200).flatMap((candidate): ProviderFileChangeRecord[] => {
+    const change = asObject(candidate);
+    const changePath = asString(change?.path) ?? asString(change?.filePath);
+    if (!changePath || changePath.length > 4096 || hasProjectPathControlCharacters(changePath)) return [];
+    const diff = asString(change?.diff);
+    const kindObject = asObject(change?.kind);
+    const previousPath = asString(change?.previousPath)
+      ?? asString(change?.oldPath)
+      ?? asString(kindObject?.move_path)
+      ?? asString(kindObject?.movePath);
+    return [{
+      path: changePath,
+      kind: normalizeFileChangeKind(change?.kind ?? change?.type),
+      ...(previousPath && previousPath.length <= 4096 ? { previousPath } : {}),
+      ...(diff ? { diff: diff.slice(0, 1024 * 1024) } : {}),
+    }];
+  });
+}
+
 export interface CodexHistoryAdapterOptions {
   /** @deprecated Rollout files are no longer read. Retained for API compatibility. */
   readonly codexHome?: string;
@@ -235,6 +280,63 @@ export class CodexHistoryAdapter implements AgentHistoryProviderAdapter {
         : normalizeTurns(normalized, 'full'),
       nextCursor: asString(object?.nextCursor),
     };
+  }
+
+  async readFileChanges(privateId: string, turnId?: string): Promise<ProviderFileChangeSet | null> {
+    const changeSet = (turn: JsonObject, fallback: string): ProviderFileChangeSet => ({
+      provider: this.provider,
+      turnId: opaqueTranscriptId('turn', turn.id, fallback),
+      changes: (Array.isArray(turn.items) ? turn.items : [])
+        .map(asObject)
+        .filter((item): item is JsonObject => item?.type === 'fileChange')
+        .flatMap(codexFileChanges),
+    });
+    const readFullThread = async (): Promise<ProviderFileChangeSet | null> => {
+      const fallback = asObject(await this.client.request('thread/read', {
+        threadId: privateId,
+        includeTurns: true,
+      }));
+      const thread = asObject(fallback?.thread) ?? fallback;
+      const candidates = (Array.isArray(thread?.turns) ? thread.turns : []).map(asObject);
+      const ordered = [...candidates].reverse();
+      const complete = turnId === undefined
+        ? ordered.find((turn) => asString(turn?.status) === 'completed')
+        : candidates.find((turn, index) => asString(turn?.status) === 'completed'
+          && opaqueTranscriptId('turn', turn?.id, `full:${index}`) === turnId);
+      if (!complete) return null;
+      const index = candidates.indexOf(complete);
+      return changeSet(complete, `full:${index}`);
+    };
+    try {
+      let cursor: string | undefined;
+      for (let page = 0; page < (turnId ? 20 : 1); page += 1) {
+        const namespace = cursor ?? 'latest';
+        const result = asObject(await this.client.request('thread/turns/list', {
+          threadId: privateId,
+          limit: turnId ? 100 : 10,
+          sortDirection: 'desc',
+          itemsView: 'full',
+          ...(cursor ? { cursor } : {}),
+        }));
+        const candidates = (Array.isArray(result?.data) ? result.data : []).map(asObject);
+        const complete = candidates.find((turn, index) => {
+          if (asString(turn?.status) !== 'completed') return false;
+          return turnId === undefined
+            || opaqueTranscriptId('turn', turn?.id, `${namespace}:${index}`) === turnId;
+        });
+        if (complete) {
+          const index = candidates.indexOf(complete);
+          return changeSet(complete, `${namespace}:${index}`);
+        }
+        if (!turnId) return null;
+        const nextCursor = asString(result?.nextCursor);
+        if (!nextCursor) break;
+        cursor = nextCursor;
+      }
+      return readFullThread();
+    } catch {
+      return readFullThread();
+    }
   }
 
   /** `!` selects a PTY in EZTerminal. The thread id stays main/interpreter

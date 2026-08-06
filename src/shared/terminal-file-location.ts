@@ -6,6 +6,10 @@ export interface TerminalFileLocation {
   readonly column?: number;
 }
 
+/** UI intent inferred from terminal presentation only. It never establishes
+ * path containment, Git attribution, or the contents of a diff. */
+export type TerminalFileLinkIntent = 'preview' | 'review-change';
+
 export interface TerminalFileLocationRequest extends TerminalFileLocation {
   readonly cwd: string;
   readonly executionKind: ExecutionKind;
@@ -30,11 +34,13 @@ export interface TerminalFileLinkMatch extends TerminalFileLocation {
   readonly start: number;
   readonly end: number;
   readonly text: string;
+  readonly intent: TerminalFileLinkIntent;
 }
 
 const LOCATION_TOKEN = /(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|[\\/]|(?:[\p{L}\p{N}_.-]+[\\/])+)[^\s"'<>|]+/gu;
 const TRAILING_PUNCTUATION = /[),.;\]}]+$/;
 const LINE_COLUMN = /:(\d+)(?::(\d+))?$/;
+const CHANGE_SUMMARY_SUFFIX = /^[ \t]+\(\+\d{1,9}[ \t]+-\d{1,9}\)/u;
 
 /** Find path-shaped output tokens; existence/containment is intentionally main-owned. */
 export function findTerminalFileLinks(lineText: string): readonly TerminalFileLinkMatch[] {
@@ -45,6 +51,8 @@ export function findTerminalFileLinks(lineText: string): readonly TerminalFileLi
     if (start > 0 && lineText[start - 1] === ':' && rawMatch[0].startsWith('/')) continue;
     const text = rawMatch[0].replace(TRAILING_PUNCTUATION, '');
     if (!text || text === '.' || text === '..') continue;
+    const changeSummary = CHANGE_SUMMARY_SUFFIX.exec(lineText.slice(start + text.length));
+    const end = start + text.length + (changeSummary?.[0].length ?? 0);
     let path = text;
     let line: number | undefined;
     let column: number | undefined;
@@ -60,7 +68,15 @@ export function findTerminalFileLinks(lineText: string): readonly TerminalFileLi
       }
     }
     if (!path) continue;
-    matches.push({ start, end: start + text.length, text, path, line, column });
+    matches.push({
+      start,
+      end,
+      text: lineText.slice(start, end),
+      path,
+      line,
+      column,
+      intent: changeSummary ? 'review-change' : 'preview',
+    });
   }
   return matches;
 }

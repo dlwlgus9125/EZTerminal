@@ -23,6 +23,7 @@ import {
 import type { GenericAgentProfile } from '../shared/agent';
 import type {
   AgentHistoryProviderAdapter,
+  ProviderFileChangeSet,
   ProviderHistorySession,
 } from './agent-history-provider';
 import {
@@ -286,6 +287,13 @@ export class AgentHistoryService {
     if (!indexed) return null;
     const result = await indexed.adapter.readTranscript(indexed.privateSession.privateId, cursor, limit);
     return { ...result, historyId, provider: indexed.adapter.provider };
+  }
+
+  /** Resolve opaque session/turn ids to a provider-owned structured change set. */
+  async readFileChanges(historyId: string, turnId?: string): Promise<ProviderFileChangeSet | null> {
+    const indexed = await this.findSession(historyId);
+    if (!indexed?.adapter.readFileChanges) return null;
+    return indexed.adapter.readFileChanges(indexed.privateSession.privateId, turnId);
   }
 
   async prepareResume(historyId: string): Promise<AgentResumePreparation | null> {

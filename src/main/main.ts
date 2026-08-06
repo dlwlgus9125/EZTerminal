@@ -66,6 +66,8 @@ import { GitStatusService } from './git-status-service';
 import { PairingCodeService } from './pairing-code-service';
 import { QuickCommandStore } from './quick-command-store';
 import { WorkspaceFileSearchService } from './workspace-file-search-service';
+import { ProjectWorkspaceService } from './project-workspace-service';
+import { ProjectReviewService } from './project-review-service';
 import { WorktreeService } from './worktree-service';
 import { AsyncMutationGate } from './async-mutation-gate';
 import { SessionWorktreeGuard } from './session-worktree-guard';
@@ -319,6 +321,7 @@ function applyNativeMenuLocale(preference: UiLocalePreference): void {
 const CSP =
   "default-src 'self'; " +
   "script-src 'self'; " +
+  "worker-src 'self' blob:; " +
   "style-src 'self' 'unsafe-inline'; " +
   "img-src 'self' data:; " +
   "font-src 'self'; " +
@@ -611,6 +614,9 @@ app.on('ready', () => {
   const agentHistoryReady = agentProjectStore.init().catch((err) => {
     console.error('[main] agent project store init failed:', err);
   });
+  const projectWorkspaceService = new ProjectWorkspaceService(agentProjectStore);
+  const projectReviewService = new ProjectReviewService(projectWorkspaceService, agentHistoryService);
+  const projectWorkspaceSearches = new Map<string, AbortController>();
   // Read-only, cached, argv-only. Safe to call on every directory listing.
   const gitStatusService = new GitStatusService();
   // In-memory, single-use, expiring. Never persisted — see the service header.
@@ -1198,6 +1204,58 @@ app.on('ready', () => {
       : await dialog.showOpenDialog(options);
     return { canceled: result.canceled, paths: result.canceled ? [] : result.filePaths };
   });
+  ipcMain.handle('project-workspace:describe', async (_event, projectId: unknown) => {
+    await agentHistoryReady;
+    return projectWorkspaceService.describeProject(projectId);
+  });
+  ipcMain.handle('project-workspace:list-directory', async (_event, request: unknown) => {
+    await agentHistoryReady;
+    return projectWorkspaceService.listDirectory(request);
+  });
+  ipcMain.handle('project-workspace:read-text', async (_event, request: unknown) => {
+    await agentHistoryReady;
+    return projectWorkspaceService.readText(request);
+  });
+  ipcMain.handle('project-workspace:validate-text', async (_event, request: unknown) => {
+    await agentHistoryReady;
+    return projectWorkspaceService.validateText(request);
+  });
+  ipcMain.handle('project-workspace:search', async (event, request: unknown) => {
+    await agentHistoryReady;
+    const requestId = typeof request === 'object' && request !== null && !Array.isArray(request)
+      ? (request as { readonly requestId?: unknown }).requestId
+      : undefined;
+    if (typeof requestId !== 'string' || requestId.length < 1 || requestId.length > 128) {
+      return projectWorkspaceService.search(request);
+    }
+    const key = `${String(event.sender.id)}:${requestId}`;
+    projectWorkspaceSearches.get(key)?.abort();
+    const controller = new AbortController();
+    projectWorkspaceSearches.set(key, controller);
+    try {
+      return await projectWorkspaceService.search(request, controller.signal);
+    } finally {
+      if (projectWorkspaceSearches.get(key) === controller) projectWorkspaceSearches.delete(key);
+    }
+  });
+  ipcMain.on('project-workspace:cancel-search', (event, requestId: unknown) => {
+    if (typeof requestId !== 'string') return;
+    const key = `${String(event.sender.id)}:${requestId}`;
+    projectWorkspaceSearches.get(key)?.abort();
+    projectWorkspaceSearches.delete(key);
+  });
+  ipcMain.handle('project-workspace:locate-review', async (_event, request: unknown) => {
+    await agentHistoryReady;
+    return projectReviewService.locateFile(request);
+  });
+  ipcMain.handle('project-workspace:get-review', async (_event, request: unknown) => {
+    await agentHistoryReady;
+    return projectReviewService.getIndex(request);
+  });
+  ipcMain.handle('project-workspace:get-review-file', async (_event, request: unknown) => {
+    await agentHistoryReady;
+    return projectReviewService.getFile(request);
+  });
   ipcMain.handle('agents:followup', (_event, activityId: string, text: string): AgentFollowupResult => {
     if (typeof activityId !== 'string' || typeof text !== 'string') return { ok: false, error: 'invalid-text' };
     return agentActivityService?.sendFollowup(activityId, text) ?? { ok: false, error: 'delivery-failed' };
@@ -1366,6 +1424,13 @@ app.on('ready', () => {
       { name: 'quick commands', run: () => quickCommandStore.flush() },
       { name: 'app update', run: () => appUpdateService.dispose() },
       { name: 'workspace search', run: () => workspaceFileSearch.dispose() },
+      {
+        name: 'project workspace search',
+        run: () => {
+          for (const controller of projectWorkspaceSearches.values()) controller.abort();
+          projectWorkspaceSearches.clear();
+        },
+      },
       {
         name: 'SSH forwards',
         run: () => {

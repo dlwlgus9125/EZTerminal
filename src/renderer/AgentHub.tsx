@@ -133,10 +133,16 @@ export interface AgentHubProps {
   ) => Promise<AgentDecisionResult>;
   /** The agent's uncommitted work, for the reviewer who wants to look first. */
   readonly onLoadDiff?: (directory: string) => Promise<GitDiffResult>;
+  /** Opens the first-class project review panel. False falls back to the legacy bounded dialog. */
+  readonly onOpenProjectReview?: (directory: string) => Promise<boolean>;
   /** Resolves each activity's branch. Absent leaves the working directory. */
   readonly onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
   /** Opens a singleton read-only history tab without disturbing live terminals. */
   readonly onOpenHistorySession?: (
+    session: AgentHistorySessionSummary,
+    project: AgentProjectSummary,
+  ) => void;
+  readonly onOpenHistoryReview?: (
     session: AgentHistorySessionSummary,
     project: AgentProjectSummary,
   ) => void;
@@ -166,8 +172,10 @@ export function AgentHub({
   onSendFollowup,
   onDecideApproval,
   onLoadDiff,
+  onOpenProjectReview,
   onReadGitStatus,
   onOpenHistorySession,
+  onOpenHistoryReview,
   onLaunchAgent,
   onOpenAgentSettings,
   onClose,
@@ -599,6 +607,7 @@ export function AgentHub({
 
   const openDiff = useCallback(
     async (directory: string): Promise<void> => {
+      if (onOpenProjectReview && await onOpenProjectReview(directory).catch(() => false)) return;
       if (!onLoadDiff) return;
       const generation = ++diffRequestGeneration.current;
       setDiffView({ state: 'loading' });
@@ -621,7 +630,7 @@ export function AgentHub({
         omissions: result.omissions,
       });
     },
-    [onLoadDiff, t],
+    [onLoadDiff, onOpenProjectReview, t],
   );
 
   useEffect(() => () => {
@@ -746,7 +755,7 @@ export function AgentHub({
                       >
                         {t('agentHub.deny')}
                       </Button>
-                      {onLoadDiff && (
+                      {(onLoadDiff || onOpenProjectReview) && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1028,7 +1037,7 @@ export function AgentHub({
                           </li>
                         )}
                         {sessions?.map((session) => (
-                          <li key={session.historyId}>
+                          <li key={session.historyId} className="agent-history-item">
                             <button
                               type="button"
                               className="agent-history-row"
@@ -1043,6 +1052,17 @@ export function AgentHub({
                               <small>{ageLabel(session.updatedAt, now, relativeTime)}</small>
                               {session.preview && <p>{session.preview}</p>}
                             </button>
+                            {onOpenHistoryReview && (
+                              <button
+                                type="button"
+                                className="agent-history-review"
+                                aria-label={`Review changes from ${session.title}`}
+                                title={t('agentHub.viewDiff')}
+                                onClick={() => onOpenHistoryReview(session, project)}
+                              >
+                                <GitCompareArrows aria-hidden="true" size={15} />
+                              </button>
+                            )}
                           </li>
                         ))}
                         {nextCursor && (

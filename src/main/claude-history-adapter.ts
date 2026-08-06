@@ -31,10 +31,13 @@ import {
   type AgentTranscriptPage,
   type AgentTranscriptTurn,
 } from '../shared/agent-history';
+import { hasProjectPathControlCharacters } from '../shared/project-workspace';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
 import type {
   AgentHistoryProviderAdapter,
   AgentResumeCommand,
+  ProviderFileChangeRecord,
+  ProviderFileChangeSet,
   ProviderHistorySession,
   ProviderHistorySessionPage,
   ProviderSessionQuery,
@@ -205,6 +208,14 @@ function toolSummary(toolName: string, input: unknown): string {
   return summary.length > 500 ? `${summary.slice(0, 497)}…` : summary;
 }
 
+function structuredToolPath(toolName: string, input: unknown): string | null {
+  if (toolName !== 'Edit' && toolName !== 'Write' && toolName !== 'NotebookEdit') return null;
+  const fields = asObject(input);
+  const candidate = asString(toolName === 'NotebookEdit' ? fields?.notebook_path : fields?.file_path);
+  if (!candidate || candidate.length > 4096 || hasProjectPathControlCharacters(candidate)) return null;
+  return candidate;
+}
+
 function assistantEntries(record: JsonObject, turnId: string, index: number): AgentTranscriptEntry[] {
   const content = asObject(record.message)?.content;
   if (!Array.isArray(content)) return [];
@@ -231,11 +242,14 @@ function assistantEntries(record: JsonObject, turnId: string, index: number): Ag
         break;
       case 'tool_use': {
         const name = asString(block.name) ?? 'Tool';
+        const kind = activityKind(name);
+        const changedPath = structuredToolPath(name, block.input);
         entries.push({
           type: 'activity',
           id,
-          kind: activityKind(name),
+          kind,
           summary: toolSummary(name, block.input),
+          ...(changedPath ? { changedPaths: [changedPath] } : {}),
         });
         break;
       }
@@ -485,6 +499,104 @@ export class ClaudeHistoryAdapter implements AgentHistoryProviderAdapter {
       turns,
       // The oldest turn shown: the next page ends where this one starts.
       nextCursor: start > 0 ? String(rangeStart) : null,
+    };
+  }
+
+  async readFileChanges(privateId: string, turnId?: string): Promise<ProviderFileChangeSet | null> {
+    const index = await this.turnIndex(privateId);
+    if (!index || index.offsets.length === 0) return null;
+    const selectedIndex = turnId === undefined
+      ? index.offsets.length - 1
+      : index.offsets.findIndex((offset) => opaqueTranscriptId('turn', String(offset)) === turnId);
+    if (selectedIndex < 0) return null;
+    const start = index.offsets[selectedIndex]!;
+    const end = selectedIndex + 1 < index.offsets.length
+      ? index.offsets[selectedIndex + 1]!
+      : index.size;
+    const length = end - start;
+    if (length <= 0 || length > MAX_TRANSCRIPT_RANGE_BYTES) return null;
+    const text = (await readRange(privateId, start, length)).toString('utf8');
+    const toolUses = new Map<string, { readonly name: string; readonly input: JsonObject }>();
+    const successfulResults = new Set<string>();
+    let complete = false;
+
+    for (const line of text.split('\n')) {
+      const record = parseRecord(line);
+      if (!record || record.isSidechain === true) continue;
+      const message = asObject(record.message);
+      if (record.type === 'assistant') {
+        const stopReason = asString(message?.stop_reason);
+        if (stopReason === 'end_turn' || stopReason === 'stop_sequence') complete = true;
+        const content = message?.content;
+        if (!Array.isArray(content)) continue;
+        for (const value of content) {
+          const block = asObject(value);
+          if (asString(block?.type) !== 'tool_use') continue;
+          const id = asString(block?.id);
+          const name = asString(block?.name);
+          const input = asObject(block?.input);
+          if (id && name && input) toolUses.set(id, { name, input });
+        }
+      } else if (record.type === 'user') {
+        const content = message?.content;
+        if (!Array.isArray(content)) continue;
+        for (const value of content) {
+          const block = asObject(value);
+          if (asString(block?.type) !== 'tool_result' || block?.is_error === true) continue;
+          const toolUseId = asString(block?.tool_use_id);
+          if (toolUseId) successfulResults.add(toolUseId);
+        }
+      }
+    }
+    if (!complete) return null;
+
+    const changes: ProviderFileChangeRecord[] = [];
+    for (const [id, tool] of toolUses) {
+      if (!successfulResults.has(id)) continue;
+      const filePath = asString(tool.input.file_path) ?? asString(tool.input.notebook_path);
+      if (!filePath || filePath.length > 4096 || hasProjectPathControlCharacters(filePath)) continue;
+      if (tool.name === 'Edit') {
+        const original = asString(tool.input.old_string);
+        const modified = asString(tool.input.new_string);
+        if (original === null || modified === null) continue;
+        changes.push({
+          path: filePath,
+          kind: 'modified',
+          operation: 'edit',
+          ...(tool.input.replace_all === true ? { replaceAll: true } : {}),
+          original: original.slice(0, 1024 * 1024),
+          modified: modified.slice(0, 1024 * 1024),
+        });
+      } else if (tool.name === 'Write') {
+        const modified = asString(tool.input.content);
+        if (modified === null) continue;
+        changes.push({
+          path: filePath,
+          // Claude's Write tool can create or overwrite. The transcript does
+          // not prove which happened, so "modified" avoids a false creation
+          // claim while still attributing the successful write.
+          kind: 'modified',
+          operation: 'write',
+          original: '',
+          modified: modified.slice(0, 1024 * 1024),
+        });
+      } else if (tool.name === 'NotebookEdit') {
+        const modified = asString(tool.input.new_source) ?? asString(tool.input.source);
+        if (modified === null) continue;
+        changes.push({
+          path: filePath,
+          kind: 'modified',
+          operation: 'notebook-edit',
+          original: '',
+          modified: modified.slice(0, 1024 * 1024),
+        });
+      }
+      if (changes.length >= 200) break;
+    }
+    return {
+      provider: this.provider,
+      turnId: opaqueTranscriptId('turn', String(start)),
+      changes,
     };
   }
 

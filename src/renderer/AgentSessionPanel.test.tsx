@@ -36,6 +36,49 @@ afterEach(() => {
 });
 
 describe('AgentSessionPanel', () => {
+  it('opens structured file-change activity in the project review surface', async () => {
+    const onOpenReview = vi.fn();
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: {
+        readAgentHistory: vi.fn(async () => ({
+          historyId: 'codex_review',
+          provider: 'codex' as const,
+          turns: [{
+            id: 'turn_review',
+            status: 'completed',
+            entries: [{
+              type: 'activity' as const,
+              id: 'item_review',
+              kind: 'file-change' as const,
+              summary: 'src/app.ts (+5 -0)',
+              changedPaths: ['src/app.ts'],
+            }],
+          }],
+          nextCursor: null,
+        })),
+        prepareAgentResume: vi.fn(),
+      },
+    });
+    act(() => {
+      root.render(
+        <AgentSessionPanel
+          historyId="codex_review"
+          onOpenReview={onOpenReview}
+          renderTerminal={() => <div />}
+        />,
+      );
+    });
+    await flush();
+
+    const activity = container.querySelector<HTMLButtonElement>(
+      'button.agent-work-activity[data-kind="file-change"]',
+    );
+    expect(activity?.textContent).toContain('src/app.ts (+5 -0)');
+    act(() => activity?.click());
+    expect(onOpenReview).toHaveBeenCalledWith('turn_review', 'src/app.ts');
+  });
+
   it('reads history without resuming, then converts the same panel after the first send', async () => {
     const readAgentHistory = vi.fn(async () => ({
       historyId: 'codex_opaque',

@@ -10,7 +10,11 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import type { IDisposable, ILink, ITerminalAddon, Terminal } from '@xterm/xterm';
 import { normalizeExternalHttpUrl } from '../shared/external-url';
 import type { TerminalRendererPreference } from '../shared/layout-schema';
-import { findTerminalFileLinks, type TerminalFileLocationRequest } from '../shared/terminal-file-location';
+import {
+  findTerminalFileLinks,
+  type TerminalFileLinkIntent,
+  type TerminalFileLocationRequest,
+} from '../shared/terminal-file-location';
 import type { ExecutionKind } from '../shared/ipc';
 import type { TerminalPasteRuntime } from './terminal-paste';
 
@@ -28,7 +32,11 @@ export interface TerminalRuntimeOptions extends TerminalPasteRuntime {
   /** OSC 52 stays off unless the desktop user explicitly enables it. */
   readonly allowOsc52Clipboard?: boolean;
   readonly writeClipboardText?: (text: string) => Promise<void> | void;
-  readonly openTerminalFileLocation?: (request: TerminalFileLocationRequest, event: MouseEvent) => void;
+  readonly openTerminalFileLocation?: (
+    request: TerminalFileLocationRequest,
+    event: MouseEvent,
+    intent: TerminalFileLinkIntent,
+  ) => void;
   readonly getTerminalFileContext?: () => { readonly cwd: string | null; readonly executionKind: ExecutionKind | null };
 }
 
@@ -86,6 +94,16 @@ const EMPTY_RESULTS: TerminalSearchResults = Object.freeze({ resultIndex: -1, re
 
 export function isModifiedLinkActivation(event: Pick<MouseEvent, 'ctrlKey' | 'metaKey'>): boolean {
   return event.ctrlKey || event.metaKey;
+}
+
+/** An explicit agent change summary is already an action-shaped terminal row.
+ * Ordinary paths keep the modifier so selecting terminal text stays safe. */
+export function canActivateTerminalFileLink(
+  platform: TerminalRuntimeOptions['platform'],
+  intent: TerminalFileLinkIntent,
+  event: Pick<MouseEvent, 'ctrlKey' | 'metaKey'>,
+): boolean {
+  return platform !== 'desktop' || intent === 'review-change' || isModifiedLinkActivation(event);
 }
 
 function cssHex(host: HTMLElement, property: string, fallback: string): string {
@@ -170,7 +188,7 @@ export class XtermRuntime {
           text: match.text,
           decorations: { pointerCursor: true, underline: true },
           activate: (event) => {
-            if (this.options.platform === 'desktop' && !isModifiedLinkActivation(event)) return;
+            if (!canActivateTerminalFileLink(this.options.platform, match.intent, event)) return;
             const context = this.options.getTerminalFileContext?.();
             if (!context?.cwd || context.executionKind !== 'local') return;
             this.options.openTerminalFileLocation?.({
@@ -179,7 +197,7 @@ export class XtermRuntime {
               executionKind: context.executionKind,
               ...(match.line === undefined ? {} : { line: match.line }),
               ...(match.column === undefined ? {} : { column: match.column }),
-            }, event);
+            }, event, match.intent);
           },
         }));
         callback(links.length > 0 ? links : undefined);

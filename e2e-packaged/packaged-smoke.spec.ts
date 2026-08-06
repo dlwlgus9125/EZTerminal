@@ -98,6 +98,10 @@ test('packaged EXE: interpreter utilityProcess forks from app.asar under fuses',
     const entries = packagedAsarEntries();
     expect(entries, `app.asar entries:\n${entries.join('\n')}`)
       .toContain('.vite/build/script-host.js');
+    expect(
+      entries.some((entry) => /\.vite\/renderer\/main_window\/assets\/editor\.worker-[^/]+\.js$/u.test(entry)),
+      'the packaged renderer must contain Monaco\'s editor worker asset',
+    ).toBe(true);
 
     // 1) The packaged main process boots under the fuses and forks the interpreter
     //    from inside app.asar (not from disk).

@@ -128,6 +128,7 @@
     "dockview-react": "^7.0.2",
     "i18next": "^26.3.6",
     "lucide-react": "^1.24.0",
+    "monaco-editor": "0.55.1",
     "node-pty": "^1.1.0",
     "qrcode-generator": "^2.0.4",
     "react": "^18.3.1",

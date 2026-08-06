@@ -44,6 +44,7 @@ import { addAppWindowEventListener } from './desktop-window-registry';
 import {
   DEFAULT_TERMINAL_RUNTIME_OPTIONS,
   XtermRuntime,
+  canActivateTerminalFileLink,
   type TerminalRuntimeOptions,
   type TerminalSearchResults,
 } from './xterm-runtime';
@@ -200,7 +201,7 @@ function PtyXtermView({
           ? (url) => openExternalHttpUrlRef.current?.(url)
           : undefined,
         openTerminalFileLocation: terminalFileLinksEnabled
-          ? (request, event) => openTerminalFileLocationRef.current?.(request, event)
+          ? (request, event, intent) => openTerminalFileLocationRef.current?.(request, event, intent)
           : undefined,
         getTerminalFileContext: () => {
           const current = controller.getSnapshot();
@@ -956,13 +957,13 @@ function PtyPlainView({
         data-testid="text-output"
         onClick={(event) => {
           if (!runtimeOptions.openTerminalFileLocation) return;
-          if (runtimeOptions.platform === 'desktop' && !event.ctrlKey && !event.metaKey) return;
           const output = outputRef.current;
           if (!output) return;
           const offset = textOffsetAtPoint(output, event.clientX, event.clientY);
           if (offset === null) return;
           const match = findTerminalFileLinkAtOffset(output.textContent ?? '', offset);
           if (!match) return;
+          if (!canActivateTerminalFileLink(runtimeOptions.platform, match.intent, event)) return;
           const context = controller.getSnapshot();
           if (!context.startCwd || context.executionKind !== 'local') return;
           runtimeOptions.openTerminalFileLocation({
@@ -971,7 +972,7 @@ function PtyPlainView({
             executionKind: context.executionKind,
             ...(match.line === undefined ? {} : { line: match.line }),
             ...(match.column === undefined ? {} : { column: match.column }),
-          }, event.nativeEvent);
+          }, event.nativeEvent, match.intent);
         }}
       />
       {snapshot.status === 'running' && (

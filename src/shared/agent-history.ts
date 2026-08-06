@@ -65,6 +65,8 @@ export type AgentTranscriptEntry =
         | 'reasoning';
       readonly summary: string;
       readonly status?: string;
+      /** Provider-structured file paths used only as transient review hints. */
+      readonly changedPaths?: readonly string[];
     };
 
 export interface AgentTranscriptTurn {
