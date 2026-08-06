@@ -112,6 +112,7 @@ describe('legacy UI palette seeding', () => {
     expect(vars['--ui-surface-raised']).toBe(THEMES.matrix.ui!.surfaceRaised);
     expect(vars['--ui-text-primary']).toBe(THEMES.matrix.ui!.textPrimary);
     expect(vars['--ui-on-accent']).toBe(THEMES.matrix.ui!.onAccent);
+    expect(vars['--ui-danger']).toBe(THEMES.matrix.ui!.danger);
     expect(Object.keys(vars)).toHaveLength(17);
   });
 });
