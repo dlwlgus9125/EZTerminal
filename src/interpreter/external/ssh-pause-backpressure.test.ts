@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSshClient, type SshChannelLike } from './ssh-client';
 
 /**
- * The load-bearing hermetic proof the gate demanded (docs/research/
- * 2026-07-03-codex-ssh-review.md B2): "pause -> SSH window freeze must be
+ * The load-bearing hermetic proof required by
+ * `docs/design/terminal-runtime.md`: "pause -> SSH window freeze must be
  * proven with a REAL ssh2 Server+Client in-process — NEEDS-INSTALL-VERIFY
  * cannot be retired on documentation alone." A fake channel's pause()/resume()
  * are trivially correct (they're just method calls the test controls); the

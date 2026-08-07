@@ -68,6 +68,8 @@ import { QuickCommandStore } from './quick-command-store';
 import { WorkspaceFileSearchService } from './workspace-file-search-service';
 import { ProjectWorkspaceService } from './project-workspace-service';
 import { ProjectReviewService } from './project-review-service';
+import { ProjectDocumentService } from './project-document-service';
+import { ProjectWorkspaceAccessStore } from './project-workspace-access-store';
 import { WorktreeService } from './worktree-service';
 import { AsyncMutationGate } from './async-mutation-gate';
 import { SessionWorktreeGuard } from './session-worktree-guard';
@@ -172,8 +174,8 @@ function directoryKey(value: string): string {
   return process.platform === 'win32' ? normalized.toLocaleLowerCase('en-US') : normalized;
 }
 
-// The main process owns the interpreter utilityProcess lifetime (architecture
-// §1). Per-command MessagePort brokering + session/run correlation live in the
+// The main process owns the interpreter utilityProcess lifetime
+// (`docs/architecture.md`). Per-command MessagePort brokering + session/run correlation live in the
 // extracted InterpreterBroker (interpreter-broker.ts); main (local IPC) and
 // remote-bridge (WS) are thin adapters over one shared instance, so bulk frame
 // data never routes through main.
@@ -504,7 +506,7 @@ const createWindow = (): void => {
     if (mainWindowRef === mainWindow) mainWindowRef = null;
   });
 
-  // ── Per-command MessagePort brokering (architecture §3) ───────────────────
+  // ── Per-command MessagePort brokering (`docs/design/terminal-runtime.md`) ──
   // The app-lifetime run-command listener is installed once after the broker
   // is constructed. Window recreation must not register global IPC again.
 };
@@ -614,9 +616,6 @@ app.on('ready', () => {
   const agentHistoryReady = agentProjectStore.init().catch((err) => {
     console.error('[main] agent project store init failed:', err);
   });
-  const projectWorkspaceService = new ProjectWorkspaceService(agentProjectStore);
-  const projectReviewService = new ProjectReviewService(projectWorkspaceService, agentHistoryService);
-  const projectWorkspaceSearches = new Map<string, AbortController>();
   // Read-only, cached, argv-only. Safe to call on every directory listing.
   const gitStatusService = new GitStatusService();
   // In-memory, single-use, expiring. Never persisted — see the service header.
@@ -693,6 +692,18 @@ app.on('ready', () => {
     mutationGate: sessionWorktreeMutationGate,
     runGuard: sessionWorktreeRunGuard,
   });
+  const projectWorkspaceAccessStore = new ProjectWorkspaceAccessStore(app.getPath('userData'));
+  const projectWorkspaceAccessReady = projectWorkspaceAccessStore.init().catch((err) => {
+    console.error('[main] project workspace access store init failed:', err);
+  });
+  const projectWorkspaceService = new ProjectWorkspaceService(agentProjectStore, {
+    listWorktrees: (cwd) => worktreeService.execute({ action: 'list', cwd }, 'desktop'),
+    accessStore: projectWorkspaceAccessStore,
+  });
+  const projectReviewService = new ProjectReviewService(projectWorkspaceService, agentHistoryService);
+  const projectDocumentService = new ProjectDocumentService(projectWorkspaceService, projectReviewService);
+  const projectWorkspaceSearches = new Map<string, AbortController>();
+  const projectWorkspaceReady = Promise.all([agentHistoryReady, projectWorkspaceAccessReady]);
   const notifyDesktopWorktreeOpen = (worktree: WorktreeInfo): void => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
@@ -1189,9 +1200,10 @@ app.on('ready', () => {
   });
   ipcMain.handle('agent-projects:remove', async (_event, projectId: unknown) => {
     await agentHistoryReady;
-    return typeof projectId === 'string' && projectId.length <= 128
-      ? agentHistoryService.removeProject(projectId)
-      : false;
+    if (typeof projectId !== 'string' || projectId.length > 128) return false;
+    const removed = await agentHistoryService.removeProject(projectId);
+    if (removed) await projectWorkspaceService.revokeProjectAccess(projectId);
+    return removed;
   });
   ipcMain.handle('agent-projects:select-folders', async (event, multiple?: unknown) => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef ?? undefined;
@@ -1205,23 +1217,23 @@ app.on('ready', () => {
     return { canceled: result.canceled, paths: result.canceled ? [] : result.filePaths };
   });
   ipcMain.handle('project-workspace:describe', async (_event, projectId: unknown) => {
-    await agentHistoryReady;
-    return projectWorkspaceService.describeProject(projectId);
+    await projectWorkspaceReady;
+    return projectWorkspaceService.describeProjectWorkspaces(projectId);
   });
-  ipcMain.handle('project-workspace:list-directory', async (_event, request: unknown) => {
-    await agentHistoryReady;
-    return projectWorkspaceService.listDirectory(request);
+  ipcMain.handle('project-documents:resolve', async (_event, request: unknown) => {
+    await projectWorkspaceReady;
+    return projectDocumentService.resolveTarget(request);
   });
-  ipcMain.handle('project-workspace:read-text', async (_event, request: unknown) => {
-    await agentHistoryReady;
-    return projectWorkspaceService.readText(request);
+  ipcMain.handle('project-documents:list-directory', async (_event, request: unknown) => {
+    await projectWorkspaceReady;
+    return projectDocumentService.listDirectory(request);
   });
-  ipcMain.handle('project-workspace:validate-text', async (_event, request: unknown) => {
-    await agentHistoryReady;
-    return projectWorkspaceService.validateText(request);
+  ipcMain.handle('project-documents:read', async (_event, request: unknown) => {
+    await projectWorkspaceReady;
+    return projectDocumentService.readDocument(request);
   });
   ipcMain.handle('project-workspace:search', async (event, request: unknown) => {
-    await agentHistoryReady;
+    await projectWorkspaceReady;
     const requestId = typeof request === 'object' && request !== null && !Array.isArray(request)
       ? (request as { readonly requestId?: unknown }).requestId
       : undefined;
@@ -1244,17 +1256,13 @@ app.on('ready', () => {
     projectWorkspaceSearches.get(key)?.abort();
     projectWorkspaceSearches.delete(key);
   });
-  ipcMain.handle('project-workspace:locate-review', async (_event, request: unknown) => {
-    await agentHistoryReady;
-    return projectReviewService.locateFile(request);
+  ipcMain.handle('project-workspace:approve', async (_event, request: unknown) => {
+    await projectWorkspaceReady;
+    return projectWorkspaceService.approveWorkspace(request);
   });
-  ipcMain.handle('project-workspace:get-review', async (_event, request: unknown) => {
-    await agentHistoryReady;
-    return projectReviewService.getIndex(request);
-  });
-  ipcMain.handle('project-workspace:get-review-file', async (_event, request: unknown) => {
-    await agentHistoryReady;
-    return projectReviewService.getFile(request);
+  ipcMain.handle('project-workspace:revoke', async (_event, request: unknown) => {
+    await projectWorkspaceReady;
+    return projectWorkspaceService.revokeWorkspace(request);
   });
   ipcMain.handle('agents:followup', (_event, activityId: string, text: string): AgentFollowupResult => {
     if (typeof activityId !== 'string' || typeof text !== 'string') return { ok: false, error: 'invalid-text' };
@@ -1421,6 +1429,7 @@ app.on('ready', () => {
       { name: 'agent activity', run: () => agentActivityService?.dispose() },
       { name: 'agent history', run: () => agentHistoryService.dispose() },
       { name: 'agent settings', run: () => agentSettingsStore.flush() },
+      { name: 'project workspace access', run: () => projectWorkspaceAccessStore.flush() },
       { name: 'quick commands', run: () => quickCommandStore.flush() },
       { name: 'app update', run: () => appUpdateService.dispose() },
       { name: 'workspace search', run: () => workspaceFileSearch.dispose() },
@@ -1578,7 +1587,7 @@ app.on('ready', () => {
     });
   }
 
-  // Spawn the interpreter as a utilityProcess (architecture §1).
+  // Spawn the interpreter as a utilityProcess (`docs/architecture.md`).
   // utilityProcess keeps interpreter work off the main thread and enables
   // MessagePortMain-based streaming without freezing the UI.
   // Output resolves to .vite/build/interpreter-process.js (same dir as main.js).

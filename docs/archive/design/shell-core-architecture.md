@@ -1,7 +1,7 @@
 # EZTerminal — 셸 코어 아키텍처 (Phase 1)
 
 > 상태: **LOCKED (2026-06-29)** — deep-research 2회 + Codex 적대적 아키텍처 검증 반영.
-> 근거 문서: `docs/research/2026-06-29-tech-research.md`, `docs/research/2026-06-29-interpreter-research.md`.
+> 근거 문서: `docs/archive/research/2026-06-29-tech-research.md`, `docs/archive/research/2026-06-29-interpreter-research.md`.
 
 ## 핵심 통찰 (Codex 검증)
 load-bearing 리스크는 파서/타입이 아니라 **Electron 프로세스 경계를 넘는 스트리밍 실행**이다.

@@ -1,5 +1,5 @@
 /**
- * Core error types (architecture §6 — friendly parse errors).
+ * Core error types (`docs/design/terminal-runtime.md` — friendly parse errors).
  *
  * Both errors carry a source position so callers can render friendly,
  * located messages. ParseError computes line/column from the raw source at

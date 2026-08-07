@@ -36,7 +36,7 @@ export function classifyCloseRisk(input: CloseRiskInput): CloseRisk | null {
 }
 
 /**
- * Decide only from known pane state. A registry miss is never equivalent to a
+ * Decide only from verified pane state. A registry miss is never equivalent to a
  * safe pane, even when the user disabled ordinary risky-close confirmations.
  */
 export function planPaneClose(

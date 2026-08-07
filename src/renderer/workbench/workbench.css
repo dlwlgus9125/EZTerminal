@@ -1024,7 +1024,7 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
     display: none;
   }
 
-  .workbench-sidebar-scrim {
+  .workbench-sidebar-layer[data-overlay] .workbench-sidebar-scrim {
     position: absolute;
     z-index: var(--ui-z-sidebar-scrim);
     inset: 0 0 0 var(--workbench-rail-inline-size);
@@ -1036,7 +1036,7 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
     background: var(--ui-backdrop);
   }
 
-  .workbench-sidebar.ez-ui-panel {
+  .workbench-sidebar-layer[data-overlay] .workbench-sidebar.ez-ui-panel {
     position: absolute;
     z-index: var(--ui-z-sidebar);
     inset: 0 auto 0 var(--workbench-rail-inline-size);
@@ -1046,7 +1046,7 @@ html[data-effect-phosphor-glow='on'] .workbench-brand-mark__signal-bar {
     box-shadow: var(--ui-shadow-overlay);
   }
 
-  .workbench-sidebar-resizer {
+  .workbench-sidebar-layer[data-overlay] .workbench-sidebar-resizer {
     display: none;
   }
 }

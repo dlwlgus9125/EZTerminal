@@ -14,6 +14,9 @@ let fixtureDir: string;
 test.beforeEach(() => {
   fixtureDir = createRegisteredE2eTempDir('ezterm-e2e-files-');
   writeFileSync(path.join(fixtureDir, 'plain.txt'), 'hello file explorer\n');
+  writeFileSync(path.join(fixtureDir, 'app.test.ts'), 'export const tested = true;\n');
+  writeFileSync(path.join(fixtureDir, 'package.json'), '{}\n');
+  writeFileSync(path.join(fixtureDir, 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>\n');
   writeFileSync(path.join(fixtureDir, '.dotfile'), 'dotfile contents\n');
   mkdirSync(path.join(fixtureDir, 'subdir'));
   writeFileSync(path.join(fixtureDir, 'subdir', 'nested.txt'), 'nested\n');
@@ -37,6 +40,14 @@ test('file explorer browses folders-first, includes dotfiles, and previews text'
   const names = await window.locator('[data-testid="file-entry"] .file-entry-name').allInnerTexts();
   expect(names[0]).toBe('subdir');
   expect(names).toContain('.dotfile');
+  await expect(window.getByTestId('file-entry').filter({ hasText: 'subdir' })
+    .locator('[data-icon="folder"]')).toBeVisible();
+  await expect(window.getByTestId('file-entry').filter({ hasText: 'app.test.ts' })
+    .locator('[data-icon="test"]')).toBeVisible();
+  await expect(window.getByTestId('file-entry').filter({ hasText: 'package.json' })
+    .locator('[data-icon="package"]')).toBeVisible();
+  await expect(window.getByTestId('file-entry').filter({ hasText: 'logo.svg' })
+    .locator('[data-icon="image"]')).toBeVisible();
 
   await window.getByTestId('file-entry').filter({ hasText: 'plain.txt' }).click();
   await expect(window.getByTestId('file-viewer-overlay')).toBeVisible();

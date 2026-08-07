@@ -1,6 +1,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import type { Page } from '@playwright/test';
+
 import { test, expect, createRegisteredE2eTempDir } from './test';
 
 import { launchApp } from './launch-app';
@@ -232,6 +234,12 @@ function seedTerminalProject(userDataDir: string, projectRoot: string): void {
   );
 }
 
+async function openProjectHistory(window: Page): Promise<void> {
+  await window.getByRole('button', { name: 'Manage Handoff' }).click();
+  await window.getByRole('menuitem', { name: 'Session history' }).click();
+  await expect(window.getByTestId('agent-project-history')).toBeVisible();
+}
+
 test('lists a local Claude session for a terminal project and opens it read-only', async () => {
   const home = createRegisteredE2eTempDir('ezterm-e2e-claude-home-');
   const projectRoot = createRegisteredE2eTempDir('ezterm-e2e-claude-root-');
@@ -254,11 +262,12 @@ test('lists a local Claude session for a terminal project and opens it read-only
   await window.getByTestId('rail-agents').click();
   await expect(window.getByTestId('agent-hub')).toBeVisible();
 
-  const project = window.locator('.agent-project-toggle');
+  const project = window.locator('.agent-project-open');
   await expect(project).toContainText('Handoff');
 
-  // The session list is fetched no earlier than the project being expanded.
-  await project.click();
+  // The session list is fetched no earlier than Session history being chosen
+  // from the project's overflow menu.
+  await openProjectHistory(window);
   const rows = window.locator('.agent-history-row');
   await expect(rows).toHaveCount(1, { timeout: 15_000 });
   await expect(rows.first()).toContainText('Claude');
@@ -287,18 +296,17 @@ test('lists a local Claude session for a terminal project and opens it read-only
   await expect(window.getByRole('tab', { name: /Handoff · Claude/u })).toBeVisible();
 
   // A structured file-change activity is itself the review affordance: one
-  // click opens the Last turn panel on the right and selects that exact file.
+  // click opens that exact file in the unified read-only Project editor.
   const fileChange = transcript
     .locator('button.agent-work-activity[data-kind="file-change"]')
     .filter({ hasText: 'src/app.ts' });
   await expect(fileChange).toContainText('src/app.ts');
   await fileChange.click();
-  const diff = window.getByTestId('code-diff-panel');
+  const diff = window.getByTestId('project-editor-panel');
   await expect(diff).toBeVisible({ timeout: 20_000 });
-  await expect(diff.locator('.diff-panel__files > button[aria-selected="true"]'))
-    .toContainText('src/app.ts');
+  await expect(diff.locator('.project-editor__breadcrumb')).toContainText('src/app.ts');
   await expect(diff.locator('.monaco-diff-editor')).toBeVisible({ timeout: 20_000 });
-  await expect(diff).toContainText('Selected turn');
+  await expect(diff).toContainText('Agent turn');
   await expect(diff).toContainText('Current context');
   await expect(diff).not.toContainText('Change fragment');
   await expect(diff.locator('.monaco-diff-editor'))
@@ -307,7 +315,7 @@ test('lists a local Claude session for a terminal project and opens it read-only
     .toContainText('workspace-only context after');
   await expect(diff.locator('.line-insert, .char-insert').first()).toBeVisible();
   await expect(diff.getByTestId('open-current-project-file')).toHaveCount(0);
-  await expect(window.getByTestId('code-file-panel')).toHaveCount(0);
+  await expect(window.getByTestId('project-editor-panel')).toHaveCount(1);
 
   await app.close();
 });
@@ -330,7 +338,7 @@ test('keeps the complete current file and an unplaced provider record in one rev
   await window.setViewportSize({ width: 1440, height: 900 });
 
   await window.getByTestId('rail-agents').click();
-  await window.locator('.agent-project-toggle').click();
+  await openProjectHistory(window);
   await window.locator('.agent-history-row').first().click();
   const transcript = window.getByTestId('agent-history-transcript');
   const fileChange = transcript
@@ -339,14 +347,14 @@ test('keeps the complete current file and an unplaced provider record in one rev
   await expect(fileChange).toBeVisible({ timeout: 15_000 });
   await fileChange.click();
 
-  const diff = window.getByTestId('code-diff-panel');
+  const diff = window.getByTestId('project-editor-panel');
   await expect(diff).toBeVisible({ timeout: 20_000 });
   await expect(diff).toContainText('Current file + record');
   await expect(diff.locator('.monaco-editor')).toBeVisible({ timeout: 20_000 });
   await expect(diff.locator('.monaco-diff-editor')).toHaveCount(0);
   await expect(diff.locator('.view-lines')).toContainText('complete file first line');
   await expect(diff.locator('.view-lines')).toContainText('complete file last line');
-  const record = diff.locator('.diff-panel__recorded-zone');
+  const record = diff.locator('.project-editor__recorded-accessibility');
   await expect(record).toContainText('current location could not be verified');
   await expect(record).toContainText('export const answer = 1;');
   await expect(record).toContainText('export const answer = 2;');
@@ -368,7 +376,7 @@ test('opens the newest twenty turns and loads earlier ones on scroll-up', async 
   await window.setViewportSize({ width: 1440, height: 900 });
 
   await window.getByTestId('rail-agents').click();
-  await window.locator('.agent-project-toggle').click();
+  await openProjectHistory(window);
   const rows = window.locator('.agent-history-row');
   await expect(rows).toHaveCount(1, { timeout: 15_000 });
   await rows.first().click();
@@ -401,7 +409,7 @@ test('first message converts the same tab into a Claude run rooted at the projec
   await window.setViewportSize({ width: 1440, height: 900 });
 
   await window.getByTestId('rail-agents').click();
-  await window.locator('.agent-project-toggle').click();
+  await openProjectHistory(window);
   const rows = window.locator('.agent-history-row');
   await expect(rows).toHaveCount(1, { timeout: 15_000 });
   await rows.first().click();

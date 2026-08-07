@@ -1,5 +1,5 @@
 /**
- * Pratt parser behind a `Parser` interface (architecture §6).
+ * Pratt parser behind a `Parser` interface (`docs/design/terminal-runtime.md`).
  *
  * The grammar is small, so a hand-written recursive parser with a Pratt loop
  * for the comparison expressions is plenty. The `Parser` interface is the seam:

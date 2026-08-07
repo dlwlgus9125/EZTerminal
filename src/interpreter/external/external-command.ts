@@ -1,5 +1,5 @@
 /**
- * External-command dispatch (architecture §7).
+ * External-command dispatch (`docs/design/terminal-runtime.md`).
  *
  * When a command name is NOT a builtin, the interpreter routes it here. This
  * module reconstructs the argument vector from the parsed command, resolves the

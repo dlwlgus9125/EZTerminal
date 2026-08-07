@@ -1,11 +1,11 @@
 /**
  * OpenClawService — the main process's sole owner of OpenClaw gateway access
- * (openclaw-management M1). Electron-free (constructor-injected `{spawn,
+ * (see `docs/design/external-integrations.md`). Electron-free (constructor-injected `{spawn,
  * httpGet, wsFactory, readFile, env, now}`) so the whole surface is
  * unit-testable; `main.ts` wires the real seams and exposes IPC over it.
  *
- * M0 Stage-0 (docs/research/2026-07-12-openclaw-stage0.md) found the CLI
- * unusable for anything on a hot path — `gateway status --json --no-probe`
+ * The current integration contract records why the CLI is unusable for anything
+ * on a hot path — `gateway status --json --no-probe`
  * alone costs 9-10s, `status --json` 17-18s (dozens of eagerly-loaded command
  * groups at Node startup, not a one-off cold-start blip). Every polled/
  * interactive read therefore goes over WS RPC or a plain HTTP GET; the CLI is

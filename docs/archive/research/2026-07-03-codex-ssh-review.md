@@ -1,6 +1,6 @@
 # Codex Gate — Stage E5 SSH 원격 세션 (E5-M0)
 
-> Date: 2026-07-03 · Input: `docs/design/ssh-remote-design.md` (draft 515cc82)
+> Date: 2026-07-03 · Input: `docs/archive/design/ssh-remote-design.md` (draft 515cc82)
 > Runner: codex-companion (rollout 2026-07-03T00-20-39) — ssh2 미설치라 라이브러리 의미론
 > 일부는 **NEEDS-INSTALL-VERIFY**로 표시(추측 금지 지침 준수).
 > **Verdict: REVISE — 4 blockers.** 방향 타당; 실행 심·어댑터 의미론·패키징 정책·검증 상한 보강.

@@ -280,14 +280,15 @@ test.describe("desktop Storybook visual contracts", () => {
 
 test("project workbench content is readable and bounded", async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 800 });
-  await openStory(page, "compositions-project-workbench--content", {
+  await openStory(page, "compositions-project-explorer--files", {
     theme: "dark",
     locale: "en",
     density: "adaptive",
     motion: "reduced",
   });
-  await expect(page.getByTestId("project-explorer-panel")).toBeVisible();
+  await expect(page.getByTestId("project-workspace-panel")).toBeVisible();
   await expect(page.getByText("package.json", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("README.md", { exact: true }).first().locator("..").locator(".project-file-change")).toHaveText("M");
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBe(true);
@@ -297,32 +298,76 @@ test("project workbench content is readable and bounded", async ({ page }) => {
   });
 });
 
-for (const reviewCase of [
-  { name: "wide", viewport: { width: 1200, height: 800 } },
-  { name: "narrow", viewport: { width: 800, height: 700 } },
+for (const workspaceCase of [
+  {
+    name: "wide",
+    viewport: { width: 1440, height: 900 },
+    screenshot: "desktop-project-workspace-integrated-wide.png",
+  },
+  {
+    name: "narrow",
+    viewport: { width: 800, height: 600 },
+    screenshot: "desktop-project-workspace-integrated-narrow.png",
+  },
 ] as const) {
-  test(`project review keeps the full file and record in one ${reviewCase.name} surface`, async ({ page }) => {
-    await page.setViewportSize(reviewCase.viewport);
-    await openStory(page, "compositions-project-review--current-file-with-record", {
+  test(`integrated project workspace keeps tree, full-file inline diff, and PTY in its ${workspaceCase.name} layout`, async ({ page }) => {
+    await page.setViewportSize(workspaceCase.viewport);
+    await openStory(page, "compositions-project-workspace--integrated-workspace", {
       theme: "dark",
       locale: "en",
       density: "adaptive",
       motion: "reduced",
     });
-    const panel = page.getByTestId("code-diff-panel");
+    const dock = page.locator(".dock-host");
+    const tree = page.getByTestId("project-workspace-panel");
+    const panel = page.getByTestId("project-editor-panel");
+    const terminal = page.getByTestId("pane").first();
+    await expect(dock).toHaveAttribute("data-project-layout", workspaceCase.name);
+    await expect(tree).toBeVisible();
+    await expect(tree.locator(".project-path-tree")).toBeVisible();
     await expect(panel).toBeVisible();
-    await expect(panel.locator(".monaco-editor")).toBeVisible({ timeout: 20_000 });
-    await expect(panel.locator(".diff-panel__recorded-zone")).toContainText("status: 'ready'");
-    await expect(panel.getByTestId("open-current-project-file")).toHaveCount(0);
+    await expect(panel).toHaveAttribute("data-comparison", "current");
+    await expect(panel.locator(".monaco-diff-editor")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("pty-block")).toHaveCount(1);
+    await expect(page.getByTestId("block-status")).toHaveAttribute("data-status", "running");
+    await expect(panel.getByText("Ask about code", { exact: true })).toHaveCount(0);
+    await expect(panel.getByText("Add lines", { exact: true })).toHaveCount(0);
+    await expect(panel.getByText("Add with snippet", { exact: true })).toHaveCount(0);
     const bodyRatio = await panel.evaluate((element) => {
       const panelHeight = element.getBoundingClientRect().height;
-      const bodyHeight = element.querySelector<HTMLElement>(".diff-panel__body")?.getBoundingClientRect().height ?? 0;
+      const bodyHeight = element.querySelector<HTMLElement>(".project-editor__body")?.getBoundingClientRect().height ?? 0;
       return panelHeight > 0 ? bodyHeight / panelHeight : 0;
     });
     expect(bodyRatio).toBeGreaterThan(0.75);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    if (workspaceCase.name === "wide") {
+      await expect(terminal).toBeVisible();
+      const geometry = await page.evaluate(() => {
+        const groups = [...document.querySelectorAll<HTMLElement>('.dv-groupview')];
+        const editor = groups.find((group) => group.textContent?.includes('app.ts'))?.getBoundingClientRect();
+        const pty = groups.find((group) => group.textContent?.includes('PowerShell'))?.getBoundingClientRect();
+        return editor && pty ? {
+          editorTop: editor.top,
+          editorHeight: editor.height,
+          ptyTop: pty.top,
+          ptyHeight: pty.height,
+        } : null;
+      });
+      expect(geometry, "wide story should render distinct editor and PTY groups").not.toBeNull();
+      expect(geometry!.editorTop).toBeLessThan(geometry!.ptyTop);
+      const editorShare = geometry!.editorHeight / (geometry!.editorHeight + geometry!.ptyHeight);
+      expect(editorShare).toBeGreaterThan(0.58);
+      expect(editorShare).toBeLessThan(0.78);
+    } else {
+      await expect(page.getByRole("tab", { name: "app.ts", exact: true })).toBeVisible();
+      await expect.poll(() => page.locator(".dv-tab:visible").count()).toBeGreaterThanOrEqual(2);
+    }
+    expect(await page.evaluate(() => (
+      document.documentElement.scrollWidth <= window.innerWidth
+      && document.documentElement.scrollHeight <= window.innerHeight
+      && window.scrollY === 0
+    ))).toBe(true);
     await expectNoAccessibilityViolations(page);
-    await expect(page).toHaveScreenshot(`desktop-project-review-${reviewCase.name}.png`, {
+    await expect(page).toHaveScreenshot(workspaceCase.screenshot, {
       animations: "disabled",
     });
   });
@@ -560,6 +605,17 @@ const desktopHandoffAxisCases = [
     viewport: { width: 1440, height: 900 },
     theme: "matrix",
     locale: "ko",
+    scale: 100,
+    sidebarMode: "reflow",
+  },
+  {
+    name: "1200x800 high contrast EN keeps file taxonomy legible",
+    storyId: "compositions-desktop-handoff--explorer-breadcrumb",
+    screenshot: "desktop-handoff-axis-1200x800-high-contrast-explorer-en.png",
+    readySelector: "[data-testid='file-list']",
+    viewport: { width: 1200, height: 800 },
+    theme: "high-contrast",
+    locale: "en",
     scale: 100,
     sidebarMode: "reflow",
   },

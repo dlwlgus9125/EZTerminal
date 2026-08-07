@@ -1,5 +1,6 @@
 /**
- * CommandResolver — Windows-first executable resolution (architecture §7).
+ * CommandResolver — Windows-first executable resolution
+ * (`docs/design/terminal-runtime.md`).
  *
  * Resolves a bare command name (`node`, `git`, `mytool`) to a concrete launch
  * spec using PATH + PATHEXT, honoring Windows realities:

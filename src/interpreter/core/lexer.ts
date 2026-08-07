@@ -1,5 +1,5 @@
 /**
- * Hand-written lexer (architecture §6).
+ * Hand-written lexer (`docs/design/terminal-runtime.md`).
  *
  * Produces a flat token stream with source spans. No regex scanning — a simple
  * char cursor keeps positions exact for friendly parse errors.

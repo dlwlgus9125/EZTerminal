@@ -163,7 +163,7 @@ describe('AgentHub approval integrity', () => {
 });
 
 describe('AgentHub local history paging', () => {
-  it('loads sessions lazily, opens on one click, and appends the next page', async () => {
+  it('opens project history from the overflow menu and appends the next page', async () => {
     const project = {
       projectId: 'project-1',
       name: 'Project',
@@ -205,9 +205,13 @@ describe('AgentHub local history paging', () => {
     );
     expect(listAgentProjects).toHaveBeenCalledTimes(1);
     expect(listAgentProjects).toHaveBeenCalledWith(false, undefined, 40, undefined);
-    act(() => container.querySelector<HTMLButtonElement>('.agent-project-toggle')!.click());
+    expect(container.querySelector('.agent-project-toggle')).toBeNull();
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Manage Project"]')!.click());
+    act(() => container.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click());
     await flush();
 
+    expect(container.querySelector('[data-testid="agent-project-history"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="agent-projects"]')).toBeNull();
     const rows = container.querySelectorAll<HTMLButtonElement>('.agent-history-row');
     expect(rows).toHaveLength(10);
     expect(rows[0]?.dataset.provider).toBe('codex');
@@ -222,6 +226,11 @@ describe('AgentHub local history paging', () => {
     await flush();
     expect(listAgentHistorySessions).toHaveBeenLastCalledWith('project-1', 'page-2', 20);
     expect(container.querySelectorAll('.agent-history-row')).toHaveLength(12);
+
+    act(() => container.querySelector<HTMLButtonElement>(
+      '[data-testid="agent-project-history-back"]',
+    )!.click());
+    expect(container.querySelector('[data-testid="agent-projects"]')).not.toBeNull();
   });
 
   it('orders attention, projects, active, and recent in the document', async () => {

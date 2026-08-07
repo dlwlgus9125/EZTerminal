@@ -1,9 +1,9 @@
 /**
  * OpenClawProxy — mobile-only reverse proxy tunnel to the local OpenClaw
- * gateway's Control UI (openclaw-management M4/M5 — architecture decision
- * (b)). Plain `node:http` (no framework); WS upgrades are spliced as raw
- * sockets, never parsed as WS frames — the M0 Stage-0 spike (docs/research/
- * 2026-07-12-openclaw-stage0.md ③) confirmed this minimal approach is
+ * gateway's Control UI (see `docs/design/external-integrations.md`). Plain
+ * `node:http` (no framework); WS upgrades are spliced as raw
+ * sockets, never parsed as WS frames — `docs/design/external-integrations.md`
+ * retains this minimal approach because it is
  * sufficient for the PIPE itself; two Origin/cookie assumptions from that
  * spike did NOT hold up against a real cross-site embed and were amended
  * after the M5 emulator live gate (see below).

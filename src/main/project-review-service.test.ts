@@ -146,16 +146,17 @@ describe('ProjectReviewService', () => {
     git(nestedRoot, 'commit', '-m', 'nested base');
     await fs.writeFile(path.join(nestedRoot, 'src', 'app.ts'), 'const nested = 2;\n');
 
-    const located = await test.review.locateFile({
+    const located = await test.review.locateRepository({
       projectId: test.projectId,
       rootId: test.rootId,
       relativePath: 'out/manual-test-project/src/app.ts',
     });
-    expect(located).toEqual({
+    expect(located).toMatchObject({
       ok: true,
       target: {
         projectId: test.projectId,
         rootId: test.rootId,
+        workspaceId: test.rootId,
         repositoryRelativePath: 'out/manual-test-project',
         repositoryName: 'manual-test-project',
         relativePath: 'src/app.ts',

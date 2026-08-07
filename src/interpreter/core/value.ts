@@ -1,5 +1,5 @@
 /**
- * Value model + PipelineData (architecture §4 / §5).
+ * Value model + PipelineData (`docs/design/terminal-runtime.md`).
  *
  * Runtime values are a *discriminated* union (a `kind` tag), never a loose
  * union — every consumer switches on `kind`. The minimal Phase-1 vocabulary is:

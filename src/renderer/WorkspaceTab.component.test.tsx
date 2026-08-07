@@ -26,7 +26,9 @@ afterEach(() => {
 
 function fakeProps() {
   const titleListeners = new Set<(event: { title: string }) => void>();
+  const parameterListeners = new Set<(params: Record<string, unknown>) => void>();
   let title = 'Terminal 3';
+  let params: Record<string, unknown> = {};
   const api = {
     id: 'tab-3',
     component: 'terminal',
@@ -37,6 +39,15 @@ function fakeProps() {
     }),
     setActive: vi.fn(),
     close: vi.fn(),
+    getParameters: vi.fn(() => params),
+    updateParameters: vi.fn((next: Record<string, unknown>) => {
+      params = next;
+      for (const listener of parameterListeners) listener(next);
+    }),
+    onDidParametersChange: (listener: (next: Record<string, unknown>) => void) => {
+      parameterListeners.add(listener);
+      return { dispose: () => parameterListeners.delete(listener) };
+    },
     onDidTitleChange: (listener: (event: { title: string }) => void) => {
       titleListeners.add(listener);
       return { dispose: () => titleListeners.delete(listener) };
@@ -174,4 +185,5 @@ describe('WorkspaceTab interactions', () => {
     expect(requestClose).toHaveBeenCalledTimes(1);
     expect(api.close).toHaveBeenCalledTimes(1);
   });
+
 });

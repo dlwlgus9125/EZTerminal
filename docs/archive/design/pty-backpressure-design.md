@@ -1,7 +1,7 @@
 # Stage C — PTY Firehose Backpressure (Design, C-M2)
 
 > Status: **GATED — Codex REVISE(4 blockers) folded (2026-07-02). Ready for C-M2.**
-> Gate record: `docs/research/2026-07-02-codex-pty-backpressure-review.md`
+> Gate record: `docs/archive/research/2026-07-02-codex-pty-backpressure-review.md`
 > Problem: `pty-data`는 ResultStore/credit을 의도적으로 우회(xterm이 스크롤백 소유) —
 > `!<firehose>`가 렌더러 큐/버퍼를 무한 성장시킴. (렌더러 *통지* 스로틀은 기완료 — 이건 *데이터* 경로.)
 

@@ -13,7 +13,7 @@ import { TextBlock } from './TextBlock';
 import type { TerminalRuntimeOptions } from './xterm-runtime';
 
 // A Block = command input (the text that was run) + its output, collapsible and
-// stacked vertically in the BlockList (architecture §8 item 9). The output renders
+// stacked vertically in the BlockList (`docs/design/terminal-runtime.md`). The output renders
 // as a virtualized table (structured) or a text block (scalars), with a per-block
 // status indicator (running / done / error / cancelled).
 

@@ -6,7 +6,8 @@
  * *windowed* row cache. The full result is NEVER held here — only the rows around
  * the current viewport are cached; everything else is fetched on demand via the
  * credit/window controls (`requestRows`/`setViewport`) and pruned as the viewport
- * moves. This is what keeps 100k-row results out of React state (architecture §3).
+ * moves. This is what keeps 100k-row results out of React state
+ * (`docs/design/terminal-runtime.md`).
  */
 
 import type {
@@ -139,7 +140,7 @@ export const CODEX_RECOVERY_CONTINUE_DELAY_MS = 750;
  * term.write callback) — not merely received. The interpreter pauses the PTY
  * when sent-minus-acked exceeds its high-water mark, so everything in flight
  * (port queue + the pre-mount buffer below + xterm pending) stays bounded by
- * construction (gate B2/B3 — docs/design/pty-backpressure-design.md §2).
+ * construction (`docs/design/terminal-runtime.md`).
  */
 export const PTY_ACK_QUANTUM = 64 * 1024;
 

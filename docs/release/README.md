@@ -24,7 +24,8 @@ SignPath Foundation Authenticode 서명 필수 모드로 전환한다.
 - [서명 준비와 인증서 지문 확인](signing.md)
 - [SignPath Windows 설정](signpath-setup.md)
 - [Code signing policy](../../CODE_SIGNING_POLICY.md)
-- [PC Control 설계](../design/remote-desktop-design.md)
+- [현재 시스템 아키텍처](../architecture.md)
+- [PC Control 현재 계약](../design/remote-desktop.md)
 
 ## 키와 보호된 환경
 

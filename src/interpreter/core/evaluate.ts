@@ -1,5 +1,5 @@
 /**
- * Pipeline execution engine (architecture §4).
+ * Pipeline execution engine (`docs/design/terminal-runtime.md`).
  *
  *   evaluate(pipeline, ctx) -> PipelineData
  *

@@ -2,7 +2,8 @@
  * Shared IPC contract: main ↔ preload ↔ renderer ↔ interpreter (utilityProcess).
  *
  * T1 vertical slice: Renderer → main broker → utilityProcess interpreter →
- * framed streaming back via dedicated MessagePort → renderer. (architecture §3)
+ * framed streaming back via dedicated MessagePort → renderer
+ * (`docs/design/terminal-runtime.md`).
  */
 import type {
   EffectParamsSettings,
@@ -18,19 +19,17 @@ import type { FilePreviewResult } from './file-preview';
 import type { QuickCommand, QuickCommandInput, QuickCommandMutationResult } from './quick-command';
 import type { WorkspaceFileSearchRequest, WorkspaceFileSearchResult } from './workspace-search';
 import type {
-  ProjectDirectoryResult,
-  ProjectPathRequest,
-  ProjectReviewFileRequest,
-  ProjectReviewFileResult,
-  ProjectReviewIndexResult,
-  ProjectReviewRequest,
-  ProjectReviewTargetResult,
+  ProjectDocumentDirectoryRequest,
+  ProjectDocumentDirectoryResult,
+  ProjectDocumentSnapshotRequest,
+  ProjectDocumentSnapshotResult,
+  ProjectDocumentTargetRequest,
+  ProjectDocumentTargetResult,
   ProjectSearchRequest,
   ProjectSearchResult,
-  ProjectTextResult,
-  ProjectTextValidationRequest,
-  ProjectTextValidationResult,
   ProjectWorkspaceDescriptorResult,
+  ProjectWorkspaceAccessRequest,
+  ProjectWorkspaceAccessResult,
 } from './project-workspace';
 import type { TerminalFileLocationRequest, TerminalFileLocationResult } from './terminal-file-location';
 import type { SSH_FORWARD_BIND_HOST, SshForwardAction, SshForwardInfo, SshForwardResult } from './ssh-forward';
@@ -146,7 +145,8 @@ export function isRecentPanelInputEvent(value: unknown): value is RecentPanelInp
 // ── Interpreter → Renderer frames ────────────────────────────────────────────
 // Each command gets its own dedicated MessagePort. Interpreter sends these
 // frames over it. Chunks are BATCHED arrays of rows — never one-message-per-row,
-// and only the rows the renderer asked for (credit/backpressure, architecture §3).
+// and only the rows the renderer asked for (credit/backpressure; see
+// `docs/design/terminal-runtime.md`).
 
 /** A JSON-serializable value carried in result rows. */
 export type JsonValue =
@@ -447,7 +447,7 @@ export interface PtyResizeControl {
  * renderer's xterm has actually flushed (term.write callback), sent every
  * ~64KiB. The interpreter pauses the PTY when sent-minus-acked exceeds its
  * high-water mark and resumes below the low-water mark — the byte analogue of
- * the row credit window (design: docs/design/pty-backpressure-design.md §2).
+ * the row credit window (`docs/design/terminal-runtime.md`).
  * Cumulative (not delta) so a lost/duplicated message can never corrupt state.
  */
 export interface PtyAckControl {
@@ -1363,14 +1363,18 @@ export interface EzTerminalDesktopApi {
 
   // Registered-project, root-contained, read-only code workbench.
   describeProjectWorkspace: (projectId: string) => Promise<ProjectWorkspaceDescriptorResult>;
-  listProjectDirectory: (request: ProjectPathRequest) => Promise<ProjectDirectoryResult>;
-  readProjectText: (request: ProjectPathRequest) => Promise<ProjectTextResult>;
-  validateProjectText: (request: ProjectTextValidationRequest) => Promise<ProjectTextValidationResult>;
+  /** Canonicalize tree/search/PTY/Agent targets to one workspace-qualified tab identity. */
+  resolveProjectDocument: (request: ProjectDocumentTargetRequest) => Promise<ProjectDocumentTargetResult>;
+  /** Lazy project tree entries with current working-tree status merged in main. */
+  listProjectDocumentDirectory: (
+    request: ProjectDocumentDirectoryRequest,
+  ) => Promise<ProjectDocumentDirectoryResult>;
+  /** Full current text plus an optional inline current/Agent comparison in one snapshot. */
+  readProjectDocument: (request: ProjectDocumentSnapshotRequest) => Promise<ProjectDocumentSnapshotResult>;
   searchProjectWorkspace: (request: ProjectSearchRequest) => Promise<ProjectSearchResult>;
   cancelProjectWorkspaceSearch: (requestId: string) => void;
-  locateProjectReview: (request: ProjectPathRequest) => Promise<ProjectReviewTargetResult>;
-  getProjectReview: (request: ProjectReviewRequest) => Promise<ProjectReviewIndexResult>;
-  getProjectReviewFile: (request: ProjectReviewFileRequest) => Promise<ProjectReviewFileResult>;
+  approveProjectWorkspace: (request: ProjectWorkspaceAccessRequest) => Promise<ProjectWorkspaceAccessResult>;
+  revokeProjectWorkspace: (request: ProjectWorkspaceAccessRequest) => Promise<boolean>;
 
   /** Custom theme mods folder-scanned from `.ezterminal/themes/*.json` at
    * startup (main/theme-store.ts) — already validated (`ThemeMod`, not raw JSON). */

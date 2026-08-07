@@ -1,6 +1,6 @@
 /**
  * ProcessRunner — spawns an external program and exposes its merged stdout+stderr
- * as a cancellable ByteStream (architecture §7 / §2).
+ * as a cancellable ByteStream (`docs/design/terminal-runtime.md`).
  *
  * Design points:
  *   - The spawn primitive is injected (`SpawnFn`) — the Adapter seam. Phase 1 uses

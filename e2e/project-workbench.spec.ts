@@ -4,7 +4,19 @@ import path from 'node:path';
 
 import { launchApp } from './launch-app';
 import { readXtermBuffer } from './xterm-buffer';
-import { createRegisteredE2eTempDir, expect, test, type Locator } from './test';
+import { createRegisteredE2eTempDir, expect, test, type Locator, type Page } from './test';
+
+const SEARCH_TARGET_LINE = 160;
+const SEARCH_TARGET = 'SEARCH_REVEAL_TARGET';
+
+function projectSource(answer: number): string {
+  const lines = Array.from(
+    { length: 220 },
+    (_, index) => `export const contextLine${String(index + 1)} = ${String(index + 1)};`,
+  );
+  lines[SEARCH_TARGET_LINE - 1] = `export const ${SEARCH_TARGET} = ${String(answer)};`;
+  return `${lines.join('\n')}\n`;
+}
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, {
@@ -40,7 +52,7 @@ function createProjectFixture(): { projectRoot: string; userDataDir: string } {
   const projectRoot = createRegisteredE2eTempDir('ezterm-project-workbench-root-');
   const userDataDir = createRegisteredE2eTempDir('ezterm-project-workbench-data-');
   mkdirSync(path.join(projectRoot, 'src'));
-  writeFileSync(path.join(projectRoot, 'src', 'app.ts'), 'export const answer = 1;\n', 'utf8');
+  writeFileSync(path.join(projectRoot, 'src', 'app.ts'), projectSource(1), 'utf8');
   writeFileSync(
     path.join(projectRoot, 'review-link.js'),
     "process.stdout.write('\\r\\n\\r\\nsrc/app.ts (+1 -1)\\r\\n'); setInterval(() => undefined, 1_000);\n",
@@ -48,7 +60,7 @@ function createProjectFixture(): { projectRoot: string; userDataDir: string } {
   );
   writeFileSync(
     path.join(projectRoot, 'source-link.js'),
-    "process.stdout.write('\\r\\n\\r\\nsrc/app.ts:1:1\\r\\n'); setInterval(() => undefined, 1_000);\n",
+    `process.stdout.write('\\r\\n\\r\\nsrc/app.ts:${String(SEARCH_TARGET_LINE)}:1\\r\\nsrc/app.ts (+1 -1)\\r\\n'); setInterval(() => undefined, 1_000);\n`,
     'utf8',
   );
   git(projectRoot, 'init', '-b', 'main');
@@ -56,7 +68,7 @@ function createProjectFixture(): { projectRoot: string; userDataDir: string } {
   git(projectRoot, 'config', 'user.name', 'Test');
   git(projectRoot, 'add', '.');
   git(projectRoot, 'commit', '-m', 'base');
-  writeFileSync(path.join(projectRoot, 'src', 'app.ts'), 'export const answer = 2;\n', 'utf8');
+  writeFileSync(path.join(projectRoot, 'src', 'app.ts'), projectSource(2), 'utf8');
   seedProject(userDataDir, projectRoot);
   return { projectRoot, userDataDir };
 }
@@ -131,7 +143,48 @@ async function clickXtermText(
   await ptyBlock.click({ position: point!, modifiers });
 }
 
-test('registered project opens read-only Monaco file and diff panels with a working worker', async () => {
+async function paneAtCwd(panes: Locator, cwd: string): Promise<Locator> {
+  let index = -1;
+  await expect.poll(async () => {
+    index = await panes.evaluateAll((elements, expectedCwd) => elements.findIndex((element) =>
+      element.querySelector('[data-testid="prompt-cwd"]')?.getAttribute('title') === expectedCwd), cwd);
+    return index;
+  }, { timeout: 10_000, message: `A terminal pane should open at ${cwd}` }).toBeGreaterThanOrEqual(0);
+  return panes.nth(index);
+}
+
+async function openRegisteredProject(window: Page, projectId: string): Promise<void> {
+  await window.getByTestId('btn-toggle-agents').click();
+  const panel = window.getByTestId('project-workspace-panel');
+  const projectButton = window.getByTestId(`agent-project-open-${projectId}`);
+  await expect.poll(async () => await panel.isVisible() || await projectButton.isVisible(), {
+    timeout: 15_000,
+    message: 'Agent sidebar should restore the active project or show its project entry',
+  }).toBe(true);
+  if (!await panel.isVisible()) await projectButton.click();
+  await expect(window.getByTestId('project-workspace-panel')).toBeVisible();
+  await expect(window.locator('.project-path-tree')).toBeVisible({ timeout: 15_000 });
+}
+
+async function openTreeFile(window: Page, name = 'app.ts'): Promise<void> {
+  const sourceDirectory = window.locator('.project-path-tree [role="treeitem"]')
+    .filter({ hasText: 'src' });
+  await expect(sourceDirectory).toBeVisible({ timeout: 15_000 });
+  if (await sourceDirectory.getAttribute('aria-expanded') !== 'true') await sourceDirectory.click();
+  const file = window.locator('.project-path-tree [role="treeitem"]')
+    .filter({ hasText: name });
+  await expect(file).toBeVisible({ timeout: 15_000 });
+  await file.click();
+}
+
+async function selectionRange(input: Locator): Promise<readonly [number | null, number | null]> {
+  return input.evaluate((element) => {
+    const field = element as HTMLInputElement;
+    return [field.selectionStart, field.selectionEnd] as const;
+  });
+}
+
+test('Agent Project opens changed files in one VS Code-style read-only editor', async () => {
   const { userDataDir } = createProjectFixture();
 
   const app = await launchApp(userDataDir);
@@ -140,7 +193,7 @@ test('registered project opens read-only Monaco file and diff panels with a work
   window.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text());
   });
-  window.on('pageerror', (error) => errors.push(error.message));
+  window.on('pageerror', (error) => errors.push(error.stack ?? error.message));
   await window.setViewportSize({ width: 1440, height: 900 });
 
   const publicProjectId = await window.evaluate(async () =>
@@ -151,26 +204,49 @@ test('registered project opens read-only Monaco file and diff panels with a work
   expect(descriptor).toMatchObject({ ok: true });
 
   await window.getByTestId('btn-toggle-files').click();
-  await window.getByRole('tab', { name: 'Project', exact: true }).click();
-  await expect(window.getByTestId('project-explorer-panel')).toBeVisible();
-  await expect(window.getByLabel('Project', { exact: true })).toHaveValue(publicProjectId!);
-  const sourceDirectory = window.locator('.project-tree__row').filter({ hasText: 'src' });
-  await expect(sourceDirectory).toBeVisible({ timeout: 15_000 });
+  await expect(window.locator('.explorer-workbench__modes')).toHaveCount(0);
+  await expect(window.getByTestId('file-list')).toBeVisible();
+  await window.getByTestId('btn-toggle-files').click();
+
+  await openRegisteredProject(window, publicProjectId!);
+  await expect(window.locator('#project-workspace-select')).toHaveCount(0);
+  await expect(window.getByRole('tab', { name: 'Files', exact: true })).toHaveCount(0);
+  await expect(window.getByRole('tab', { name: 'Changes', exact: true })).toHaveCount(0);
+  await expect(window.getByRole('tab', { name: 'Working tree', exact: true })).toHaveCount(0);
+  await expect(window.getByRole('tab', { name: 'Sessions', exact: true })).toHaveCount(0);
+  const sourceDirectory = window.locator('.project-path-tree [role="treeitem"]')
+    .filter({ hasText: 'src' });
+  await expect(sourceDirectory.locator('[data-icon="folder"]')).toBeVisible();
   await sourceDirectory.click();
-  const file = window.locator('.project-tree__row').filter({ hasText: 'app.ts' });
+  await expect(sourceDirectory.locator('[data-icon="folder-open"]')).toBeVisible();
+  const file = window.locator('.project-path-tree [role="treeitem"]').filter({ hasText: 'app.ts' });
   await expect(file).toBeVisible({ timeout: 15_000 });
+  await expect(file.locator('[data-icon="code"][data-category="code"]')).toBeVisible();
+  await expect(file.locator('.project-file-change')).toHaveText('M', { timeout: 20_000 });
   await file.click();
-  await expect(window.getByTestId('code-file-panel').locator('.monaco-editor')).toBeVisible({
+  const editorPanel = window.getByTestId('project-editor-panel');
+  await expect(editorPanel).toHaveAttribute('data-path', 'src/app.ts');
+  await expect(editorPanel).toHaveAttribute('data-comparison', 'current');
+  await expect(editorPanel.locator('.monaco-diff-editor')).toBeVisible({
     timeout: 20_000,
   });
-  await expect(window.getByTestId('code-file-panel')).toContainText('read only');
-
-  await window.locator('[aria-label^="Review changes in "]').click();
-  await expect(window.getByTestId('code-diff-panel')).toContainText('src/app.ts', { timeout: 20_000 });
-  const reviewGeometry = await window.getByTestId('code-diff-panel').evaluate((element) => {
+  expect(errors, 'the first tree click should not raise a renderer error').toEqual([]);
+  await expect(editorPanel).toContainText('read only');
+  await expect(window.getByText('Ask about code', { exact: true })).toHaveCount(0);
+  await expect(window.getByText('Add lines', { exact: true })).toHaveCount(0);
+  await expect(window.getByText('Add with snippet', { exact: true })).toHaveCount(0);
+  await expect(editorPanel.getByText('Keep Open', { exact: true })).toHaveCount(0);
+  await expect(editorPanel.getByTestId('open-current-project-file')).toHaveCount(0);
+  await editorPanel.evaluate((element) => element.setAttribute('data-e2e-instance', 'canonical-editor'));
+  await file.click();
+  expect(errors, 'reopening the same tree file should not raise a renderer error').toEqual([]);
+  await expect(window.getByTestId('project-editor-panel')).toHaveCount(1);
+  await expect(editorPanel).toHaveAttribute('data-e2e-instance', 'canonical-editor');
+  await expect(editorPanel).toContainText('src/app.ts', { timeout: 20_000 });
+  const reviewGeometry = await editorPanel.evaluate((element) => {
     const group = element.closest<HTMLElement>('.dv-groupview')?.getBoundingClientRect();
-    const body = element.querySelector<HTMLElement>('.diff-panel__body')?.getBoundingClientRect();
-    const bodyElement = element.querySelector<HTMLElement>('.diff-panel__body');
+    const body = element.querySelector<HTMLElement>('.project-editor__body')?.getBoundingClientRect();
+    const bodyElement = element.querySelector<HTMLElement>('.project-editor__body');
     return {
       groupHeight: group?.height ?? 0,
       panelHeight: element.getBoundingClientRect().height,
@@ -186,7 +262,38 @@ test('registered project opens read-only Monaco file and diff panels with a work
   });
   expect(reviewGeometry.bodyRatio, `A normal project review should fill the available vertical space: ${JSON.stringify(reviewGeometry)}`)
     .toBeGreaterThan(0.75);
-  await expect(window.getByTestId('code-diff-panel').locator('.monaco-diff-editor')).toBeVisible({
+  await expect(window.locator('.dock-host')).toHaveAttribute('data-project-layout', 'wide');
+  const layoutGeometry = await window.evaluate(() => {
+    const groups = [...document.querySelectorAll<HTMLElement>('.dv-groupview')];
+    const editor = groups.find((group) => group.textContent?.includes('app.ts'))?.getBoundingClientRect();
+    const terminal = groups.find((group) => group.textContent?.includes('Terminal 1'))?.getBoundingClientRect();
+    return editor && terminal ? {
+      editorTop: editor.top,
+      editorHeight: editor.height,
+      terminalTop: terminal.top,
+      terminalHeight: terminal.height,
+    } : null;
+  });
+  expect(layoutGeometry, 'wide project layout should expose editor and terminal groups').not.toBeNull();
+  expect(layoutGeometry!.editorTop).toBeLessThan(layoutGeometry!.terminalTop);
+  const editorShare = layoutGeometry!.editorHeight
+    / (layoutGeometry!.editorHeight + layoutGeometry!.terminalHeight);
+  expect(editorShare).toBeGreaterThan(0.58);
+  expect(editorShare).toBeLessThan(0.78);
+
+  await window.locator('.project-view-tools select').selectOption('content');
+  await window.locator('.project-search-control input').fill(SEARCH_TARGET);
+  const result = window.locator('.project-search-results [role="option"]')
+    .filter({ hasText: `src/app.ts:${String(SEARCH_TARGET_LINE)}` });
+  await expect(result).toBeVisible({ timeout: 15_000 });
+  await expect(result.locator('[data-icon="code"]')).toBeVisible();
+  await result.click();
+  await expect(window.getByTestId('project-editor-panel')).toHaveCount(1);
+  await expect(editorPanel).toHaveAttribute('data-e2e-instance', 'canonical-editor');
+  await expect(editorPanel).toHaveAttribute('data-path', 'src/app.ts');
+  await expect(editorPanel.locator('.view-line').filter({ hasText: SEARCH_TARGET }).first())
+    .toBeVisible({ timeout: 20_000 });
+  await expect(editorPanel.locator('.monaco-diff-editor')).toBeVisible({
     timeout: 20_000,
   });
   await expect.poll(
@@ -215,10 +322,7 @@ test('PTY nested-repository change summary opens the exact VS Code-style diff wi
 
   const panes = window.getByTestId('pane');
   await expect(panes).toHaveCount(2);
-  const projectPane = panes.nth(1);
-  await expect(projectPane.getByTestId('prompt-cwd')).toHaveAttribute('title', projectRoot, {
-    timeout: 10_000,
-  });
+  const projectPane = await paneAtCwd(panes, projectRoot);
   await window.getByTestId('btn-toggle-files').click();
 
   await projectPane.getByTestId('cmd-input').fill('!node review-link.js');
@@ -229,13 +333,15 @@ test('PTY nested-repository change summary opens the exact VS Code-style diff wi
     .toContain('out/manual-test-project/src/app.ts (+1 -1)');
   await clickXtermText(ptyBlock, 'out/manual-test-project/src/app.ts (+1 -1)');
 
-  const diff = window.getByTestId('code-diff-panel');
+  const diff = window.getByTestId('project-editor-panel');
   await expect(diff).toBeVisible({ timeout: 20_000 });
+  await expect(diff).toHaveAttribute('data-path', 'out/manual-test-project/src/app.ts');
+  await expect(diff).toHaveAttribute('data-comparison', 'current');
   const verticalFill = await diff.evaluate((element) => {
     const panel = element.getBoundingClientRect();
     const group = element.closest<HTMLElement>('.dv-groupview')?.getBoundingClientRect();
-    const body = element.querySelector<HTMLElement>('.diff-panel__body')?.getBoundingClientRect();
-    const editor = element.querySelector<HTMLElement>('.diff-panel__editor')?.getBoundingClientRect();
+    const body = element.querySelector<HTMLElement>('.project-editor__body')?.getBoundingClientRect();
+    const editor = element.querySelector<HTMLElement>('.project-editor__monaco')?.getBoundingClientRect();
     return {
       panelHeight: panel.height,
       groupHeight: group?.height ?? 0,
@@ -250,55 +356,155 @@ test('PTY nested-repository change summary opens the exact VS Code-style diff wi
     .toBeGreaterThan(0.8);
   expect(verticalFill.bodyRatio, `Diff review should fill the available vertical space: ${JSON.stringify(verticalFill)}`)
     .toBeGreaterThan(0.75);
-  await expect(diff.locator('button[role="option"][aria-selected="true"]'))
-    .toContainText('src/app.ts');
-  await expect(diff).toContainText('Repository: manual-test-project');
+  await expect(diff.locator('.project-editor__breadcrumb')).toContainText('src/app.ts');
+  await expect(diff.locator('.project-editor__repository')).toHaveText('manual-test-project');
   const editor = diff.locator('.monaco-diff-editor');
   await expect(editor).toBeVisible({ timeout: 20_000 });
   await expect(editor).toContainText('first context');
   await expect(editor).toContainText('last context');
   await expect(diff.getByTestId('open-current-project-file')).toHaveCount(0);
-  await expect(window.getByTestId('code-file-panel')).toHaveCount(0);
+  await expect(window.getByTestId('project-editor-panel')).toHaveCount(1);
   await expect(window.getByTestId('file-viewer-overlay')).toHaveCount(0);
 
   await app.close();
 });
 
-test('PTY project source link joins the Code panel instead of opening duplicate preview UI', async () => {
+test('narrow project workspace reuses one editor and preserves live PTY state through layout round trips', async () => {
   const { projectRoot, userDataDir } = createProjectFixture();
   const app = await launchApp(userDataDir);
   const window = await app.firstWindow();
   await window.setViewportSize({ width: 1440, height: 900 });
 
+  const publicProjectId = await window.evaluate(async () =>
+    (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items[0]?.projectId);
+  expect(publicProjectId).toBeTruthy();
+
   await window.getByTestId('btn-toggle-files').click();
   const pathInput = window.getByTestId('file-path-input');
+  await expect(pathInput).not.toHaveValue('', { timeout: 10_000 });
   await pathInput.fill(projectRoot);
   await pathInput.press('Enter');
+  await expect(pathInput).toHaveValue(projectRoot);
   await expect(window.getByTestId('file-entry').filter({ hasText: 'src' })).toBeVisible();
   await window.getByTestId('file-list').click({ button: 'right', position: { x: 10, y: 350 } });
   await window.getByTestId('ctx-open-terminal').click();
 
   const panes = window.getByTestId('pane');
   await expect(panes).toHaveCount(2);
-  const projectPane = panes.nth(1);
-  await expect(projectPane.getByTestId('prompt-cwd')).toHaveAttribute('title', projectRoot, {
-    timeout: 10_000,
-  });
+  const projectPane = await paneAtCwd(panes, projectRoot);
+  const projectSessionId = await projectPane.getAttribute('data-session-id');
+  expect(projectSessionId).toBeTruthy();
+  const draftSessionId = await panes.evaluateAll((elements, excludedSessionId) => (
+    elements.map((element) => element.getAttribute('data-session-id'))
+      .find((sessionId) => sessionId && sessionId !== excludedSessionId) ?? null
+  ), projectSessionId);
+  expect(draftSessionId).toBeTruthy();
   await window.getByTestId('btn-toggle-files').click();
 
   await projectPane.getByTestId('cmd-input').fill('!node source-link.js');
   await projectPane.getByTestId('btn-run').click();
   const ptyBlock = projectPane.getByTestId('pty-block');
   await expect.poll(() => readXtermBuffer(ptyBlock), { timeout: 15_000 })
-    .toContain('src/app.ts:1:1');
-  await clickXtermText(ptyBlock, 'src/app.ts:1:1', ['Control']);
+    .toContain(`src/app.ts:${String(SEARCH_TARGET_LINE)}:1`);
+  await expect.poll(() => readXtermBuffer(ptyBlock), { timeout: 15_000 })
+    .toContain('src/app.ts (+1 -1)');
+  await expect(projectPane.getByTestId('block-status').last()).toHaveAttribute('data-status', 'running');
 
-  const code = window.getByTestId('code-file-panel');
+  await window.getByRole('tab', { name: 'Terminal 1', exact: true }).click();
+  const draftInput = window.locator(
+    `[data-testid="pane"][data-session-id="${draftSessionId!}"] [data-testid="cmd-input"]`,
+  );
+  await projectPane.evaluate((element) => element.setAttribute('data-e2e-instance', 'live-project-pty'));
+  await draftInput.evaluate((element) => element.closest('[data-testid="pane"]')
+    ?.setAttribute('data-e2e-instance', 'draft-terminal'));
+  await draftInput.fill('preserve this draft');
+  await draftInput.evaluate((element) => {
+    const input = element as HTMLInputElement;
+    input.focus();
+    input.setSelectionRange(3, 11);
+  });
+  await expect(draftInput).toBeFocused();
+  expect(await selectionRange(draftInput)).toEqual([3, 11]);
+
+  await window.setViewportSize({ width: 800, height: 600 });
+  await openRegisteredProject(window, publicProjectId!);
+  await expect(window.getByTestId('project-workspace-panel')).toBeVisible();
+  await openTreeFile(window);
+  await expect(window.getByTestId('project-workspace-panel')).toHaveCount(0);
+  await expect(window.locator('.dock-host')).toHaveAttribute('data-project-layout', 'narrow');
+
+  const code = window.getByTestId('project-editor-panel');
   await expect(code).toBeVisible({ timeout: 20_000 });
-  await expect(code).toContainText('src/app.ts');
-  await expect(code.locator('.monaco-editor')).toBeVisible({ timeout: 20_000 });
-  await expect(window.getByTestId('code-diff-panel')).toHaveCount(0);
+  await expect(code).toHaveAttribute('data-path', 'src/app.ts');
+  await expect(code).toHaveAttribute('data-comparison', 'current');
+  await expect(code.locator('.monaco-diff-editor')).toBeVisible({ timeout: 20_000 });
+  await expect.poll(() => code.evaluate((element) => element.contains(document.activeElement)))
+    .toBe(true);
+  await code.evaluate((element) => element.setAttribute('data-e2e-instance', 'canonical-editor'));
+  const editorTab = window.getByRole('tab', { name: 'app.ts', exact: true });
+  const terminalTab = window.getByRole('tab', { name: 'Terminal 1', exact: true });
+  await expect(editorTab).toBeVisible();
+  await expect(terminalTab).toBeVisible();
+
+  await window.getByRole('tab', { name: 'Terminal 2', exact: true }).click();
+  const liveProjectPane = window.locator(
+    `[data-testid="pane"][data-session-id="${projectSessionId!}"]`,
+  );
+  await expect(liveProjectPane).toBeVisible();
+  const livePty = liveProjectPane.getByTestId('pty-block');
+  await clickXtermText(livePty, `src/app.ts:${String(SEARCH_TARGET_LINE)}:1`, ['Control']);
+  await expect(code).toBeVisible({ timeout: 20_000 });
+  await expect(window.getByTestId('project-editor-panel')).toHaveCount(1);
+  await expect(code).toHaveAttribute('data-e2e-instance', 'canonical-editor');
+  await expect(code.locator('.view-line').filter({ hasText: SEARCH_TARGET }).first())
+    .toBeVisible({ timeout: 20_000 });
+
+  await window.getByRole('tab', { name: 'Terminal 2', exact: true }).click();
+  await clickXtermText(livePty, 'src/app.ts (+1 -1)');
+  await expect(code).toBeVisible({ timeout: 20_000 });
+  await expect(window.getByTestId('project-editor-panel')).toHaveCount(1);
+  await expect(code).toHaveAttribute('data-e2e-instance', 'canonical-editor');
   await expect(window.getByTestId('file-viewer-overlay')).toHaveCount(0);
+
+  await openRegisteredProject(window, publicProjectId!);
+  await expect(window.locator('.project-path-tree [role="treeitem"]')
+    .filter({ hasText: 'app.ts' })).toBeVisible();
+  await window.locator('.project-view-tools select').selectOption('content');
+  await window.locator('.project-search-control input').fill(SEARCH_TARGET);
+  const searchResult = window.locator('.project-search-results [role="option"]')
+    .filter({ hasText: `src/app.ts:${String(SEARCH_TARGET_LINE)}` });
+  await expect(searchResult).toBeVisible({ timeout: 15_000 });
+  await searchResult.click();
+  await expect(window.getByTestId('project-workspace-panel')).toHaveCount(0);
+  await expect(window.getByTestId('project-editor-panel')).toHaveCount(1);
+  await expect(code).toHaveAttribute('data-e2e-instance', 'canonical-editor');
+  await expect(code.locator('.view-line').filter({ hasText: SEARCH_TARGET }).first())
+    .toBeVisible({ timeout: 20_000 });
+
+  await expect(liveProjectPane).toHaveAttribute('data-session-id', projectSessionId!);
+  await expect(liveProjectPane).toHaveAttribute('data-e2e-instance', 'live-project-pty');
+  await expect(draftInput.locator('xpath=ancestor::*[@data-testid="pane"]'))
+    .toHaveAttribute('data-e2e-instance', 'draft-terminal');
+  await expect(liveProjectPane.getByTestId('block-status').last()).toHaveAttribute('data-status', 'running');
+  await expect.poll(() => readXtermBuffer(livePty)).toContain('src/app.ts (+1 -1)');
+  await expect(draftInput).toHaveValue('preserve this draft');
+  expect(await selectionRange(draftInput)).toEqual([3, 11]);
+
+  await terminalTab.click();
+  await draftInput.focus();
+  await draftInput.evaluate((element) => (element as HTMLInputElement).setSelectionRange(3, 11));
+  await expect(draftInput).toBeFocused();
+  await window.setViewportSize({ width: 1440, height: 900 });
+  await expect(window.locator('.dock-host')).toHaveAttribute('data-project-layout', 'wide');
+  await expect(draftInput).toBeFocused();
+  await expect(draftInput).toHaveValue('preserve this draft');
+  expect(await selectionRange(draftInput)).toEqual([3, 11]);
+  await window.setViewportSize({ width: 800, height: 600 });
+  await expect(window.locator('.dock-host')).toHaveAttribute('data-project-layout', 'narrow');
+  await expect(draftInput).toBeFocused();
+  await expect(liveProjectPane).toHaveAttribute('data-session-id', projectSessionId!);
+  await expect(liveProjectPane).toHaveAttribute('data-e2e-instance', 'live-project-pty');
+  await expect.poll(() => readXtermBuffer(livePty)).toContain('src/app.ts (+1 -1)');
 
   await app.close();
 });

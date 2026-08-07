@@ -1,6 +1,6 @@
 # Codex Gate — Stage E4 JS 스크립팅 (E4-M0)
 
-> Date: 2026-07-02 · Input: `docs/design/scripting-design.md` (draft, 875d4de)
+> Date: 2026-07-02 · Input: `docs/archive/design/scripting-design.md` (draft, 875d4de)
 > Runner: codex-companion (rollout 2026-07-02T21-16-07) · **Verdict: REVISE — 4 blockers.**
 > 방향(메인 브로커드 script-host utilityProcess + 인라인 evaluate)은 타당 — 수명주기/취소/
 > 직렬화/상한 강제가 미명세. 전부 설계에 폴드 완료(→ Resolution).

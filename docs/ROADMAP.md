@@ -1,108 +1,98 @@
 # EZTerminal Roadmap
 
 > Current for the **v1.0.25 release candidate** (2026-08-05).
-> This document describes present direction and remaining work. Historical
-> implementation detail belongs in `CHANGELOG.md`, `docs/design/`,
-> `docs/research/`, and versioned release documents.
+> 이 문서는 현재 제품 방향과 아직 구현되지 않은 후보만 기록한다. 현재 시스템 구조와
+> 변경 계약은 [`architecture.md`](architecture.md), 완료 과정은
+> [`archive/`](archive/README.md), 출시 이력은 버전별 release 문서가 소유한다.
 
-## Product direction
+## 제품 방향
 
-EZTerminal is a structured-data shell with a block-based terminal UI, not only
-an existing shell wrapper. Built-ins produce typed rows that can be filtered
-and sorted, while ordinary programs, interactive CLIs, and full-screen TUIs run
-through PTY/xterm sessions.
+EZTerminal은 기존 셸을 감싸는 terminal에 머물지 않고 typed row와 block UI를 제공하는
+structured-data shell이다. Built-in은 filter/sort 가능한 값을 만들고 일반 프로그램,
+interactive CLI와 full-screen TUI는 PTY/xterm으로 실행한다.
 
-The supported product is Windows-first:
+지원 제품은 다음과 같다.
 
-- Windows 10 22H2 or Windows 11 x64 desktop application
-- Android 10 (API 29) or newer companion application
-- Remote access over a user-selected trusted VPN interface such as Tailscale
-  or WireGuard
+- Windows 10 22H2 또는 Windows 11 x64 desktop
+- Android 10(API 29) 이상의 companion
+- 사용자가 선택한 Tailscale, WireGuard 등 신뢰 VPN을 통한 원격 접근
 
-## Current capabilities
+## 현재 기능
 
-### Shell and terminal
+### 셸과 terminal
 
-- Structured built-ins and pipelines, variables, environment, history, and
-  virtualized result tables
-- Independent tabs, splits, detachable terminal/Agent Session windows, presets,
-  and restart persistence
-- Adaptive plain-text/xterm rendering with ConPTY, bounded output retention,
-  cancellation, backpressure, search, links, Unicode, and WebGL fallback
-- Safe OpenSSH sessions, host-key trust, local forwards, and bounded late attach
+- Typed built-in, pipeline, variable, 환경, history와 가상화 결과 table
+- 독립 tab·split·분리 창, layout preset과 재시작 영속성
+- ConPTY/xterm, bounded output retention, cancel, byte backpressure, search, link,
+  Unicode와 WebGL fallback
+- TOFU host-key 검증 SSH, loopback local forward와 안전한 attach 제한
+- 별도 utility process의 사용자 JavaScript script host
 
-See:
+현재 계약:
 
-- `docs/design/shell-core-architecture.md`
-- `docs/design/pty-backpressure-design.md`
-- `docs/design/ssh-remote-design.md`
-- `docs/release/cli-parity-manual-checklist.md`
+- [`architecture.md`](architecture.md)
+- [`terminal-runtime.md`](design/terminal-runtime.md)
+- [`workbench-lifecycle.md`](design/workbench-lifecycle.md)
+- [`cli-parity-manual-checklist.md`](release/cli-parity-manual-checklist.md)
 
-### Workbench and tools
+### Workbench와 통합
 
-- Adaptive desktop workbench with files, Quick Open, command actions, themes,
-  Matrix CRT effects, settings, system telemetry, and optional packet capture
-- Safe file previews, Git worktree operations, agent-attention state, and
-  OpenClaw lifecycle/chat integration
-- Renderer error containment, interpreter recovery, bounded persistent state,
-  and packaged native-module guards
+- Adaptive desktop workbench, Explorer, Quick Open/Command Center, theme·Matrix CRT,
+  Settings, telemetry와 optional packet capture
+- Safe preview, Git worktree, agent attention/history/launch와 OpenClaw lifecycle/chat
+- Renderer/interpreter recovery, bounded persistent state와 packaged native-module guard
 
-See:
+현재 계약:
 
-- `docs/ux/frontend-design.md`
-- `docs/design/layout-persistence-design.md`
-- `docs/design/openclaw-management-design.md`
+- [`frontend-design.md`](ux/frontend-design.md)
+- [`external-integrations.md`](design/external-integrations.md)
 
-### Mobile and PC Control
+### Android와 PC Control
 
-- Android remote terminal sessions with reconnect, leases, secure credential
-  storage, file transfer, settings, and desktop/mobile feature parity
-- VPN-bound WebRTC streaming of the visible unlocked Windows desktop with
-  adaptive capture, touch/trackpad input, keyboard/IME, and explicit clipboard
-  actions
-- Remote host capability advertisement and control fail closed when the bridge,
-  VPN adapter, service, or active-session agent is unavailable
+- 인증·재연결·lease·보안 credential·file transfer를 갖춘 원격 terminal
+- 신뢰 VPN에 묶인 WebRTC, 선택 모니터 GDI/OpenH264 영상, trackpad/direct touch,
+  keyboard/IME와 명시적 text clipboard
+- Native service와 active-session agent가 준비되지 않으면 PC Control capability를
+  fail closed하되 terminal remote access는 유지
 
-See:
+현재 계약:
 
-- `docs/design/mobile-remote-control-design.md`
-- `docs/design/remote-desktop-design.md`
-- `docs/release/validation-policy-1.0.25.md`
+- [`remote-terminal.md`](design/remote-terminal.md)
+- [`remote-desktop.md`](design/remote-desktop.md)
+- [`validation-policy-1.0.25.md`](release/validation-policy-1.0.25.md)
 
-## Maintenance contracts
+## 유지보수 계약
 
-- `release/version.json` is the source of truth for desktop, mobile, Android,
-  native-host, and remote-protocol versions.
-- Desktop and Android release artifacts come from the same clean Git SHA and
-  pass the gates in `docs/release/README.md`.
-- Ordinary development validation uses `pnpm e2e`. The release performance
-  benchmark runs only when the user explicitly requests a performance
-  measurement; see `AGENTS.md`.
-- Android long-term signing material stays outside Git. Local material under
-  `.release-secrets/` must not be removed by workspace cleanup.
-- Generated output is ignored and reproducible. Product source, design
-  rationale, versioned release notes, and validation policies remain tracked.
+- `release/version.json`이 desktop, mobile, Android, native host와 remote protocol
+  version의 기준이다.
+- 현재 release 검증 정책의 저장소 경로는
+  `docs/release/validation-policy-1.0.25.md`이다.
+- Desktop과 Android release artifact는 같은 clean Git SHA에서 만들고
+  [`release/README.md`](release/README.md)의 gate를 통과한다.
+- 일반 개발 검증은 `pnpm e2e`를 사용한다. release performance benchmark는 사용자가
+  성능 측정을 명시적으로 요청한 경우에만 실행한다.
+- Android 장기 signing material은 Git 밖에 둔다. `.release-secrets/`는 workspace
+  정리로 삭제하지 않는다.
+- 활성 계약과 코드가 어긋나면 회귀 또는 의도된 변경을 먼저 결정하고 코드·문서·검증을
+  함께 갱신한다.
 
-## Remaining work
+## 남은 후보
 
-The following are future candidates, not commitments:
+다음 항목은 구현 약속이 아니라 별도 제품·보안 결정이 필요한 후보이다.
 
-1. **Release operations:** provision Windows code signing, decide store and
-   background-installation policy, and expand physical-device release
-   coverage.
-2. **Platform coverage:** validate and package macOS/Linux paths that currently
-   have unit-level seams but no supported release contract.
-3. **PC Control expansion:** evaluate multi-monitor/HDR and privileged
-   lock-screen, UAC secure-desktop, Software SAS, and Ctrl+Alt+Delete support.
-   These require explicit security and service-boundary design.
-4. **AI assistance:** add natural-language command help only after an explicit
-   data-egress and provider policy is approved.
+1. **Release 운영:** Windows code signing 활성화, store/background installation 정책,
+   physical-device release coverage 확대
+2. **Platform 범위:** 현재 unit seam만 있는 macOS/Linux 경로의 실기기 검증과 packaging
+3. **PC Control 확장:** HDR, lock screen, UAC secure desktop, Software SAS와
+   Ctrl+Alt+Delete. 권한·service 경계를 먼저 별도로 설계해야 한다.
+4. **AI 도움:** data-egress와 provider 정책이 승인된 뒤의 natural-language command help
 
-## Durable document map
+## 문서 지도
 
-- Product and build overview: `README.md`
-- Release history: `CHANGELOG.md`
-- Current release procedure: `docs/release/README.md`
-- Architecture decisions: `docs/design/`
-- UX decisions: `docs/ux/`
-- Historical investigations and reviews: `docs/research/`
+- 제품·build 개요: [`README.md`](../README.md)
+- 현재 시스템 구조: [`architecture.md`](architecture.md)
+- 현재 subsystem 계약: [`design/`](design/)
+- 현재 UX 계약: [`ux/frontend-design.md`](ux/frontend-design.md)
+- 현재 release 절차: [`release/README.md`](release/README.md)
+- 출시 이력: [`CHANGELOG.md`](../CHANGELOG.md)와 버전별 `release/` 문서
+- 완료 계획·조사: [`archive/`](archive/README.md)

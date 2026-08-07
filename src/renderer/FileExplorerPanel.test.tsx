@@ -145,6 +145,38 @@ afterEach(() => {
 });
 
 describe('FileExplorerPanel file row accessibility', () => {
+  it('uses the shared folder and file taxonomy without hiding the entry kind', async () => {
+    listFiles.mockResolvedValue(listing([
+      { name: 'src', kind: 'dir', isSymlink: false, size: 0, mtimeMs: 0 },
+      file('app.spec.tsx'),
+      file('package.json'),
+      file('README.md'),
+      file('logo.svg'),
+      file('mystery'),
+    ]));
+    await renderPanel();
+
+    const rows = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="file-entry"]'),
+    );
+    const row = (name: string): HTMLButtonElement => rows.find((candidate) => (
+      candidate.querySelector('.file-entry-name')?.textContent === name
+    ))!;
+    const icon = (name: string): HTMLElement => (
+      row(name).querySelector<HTMLElement>('.file-system-entry-icon')!
+    );
+
+    expect(row('src').dataset.entryKind).toBe('directory');
+    expect(icon('src').dataset.icon).toBe('folder');
+    expect(row('src').querySelector('.ez-ui-visually-hidden')?.textContent).toBe('folder');
+    expect(icon('app.spec.tsx').dataset.icon).toBe('test');
+    expect(icon('package.json').dataset.icon).toBe('package');
+    expect(icon('README.md').dataset.icon).toBe('document');
+    expect(icon('logo.svg').dataset.icon).toBe('image');
+    expect(icon('mystery').dataset.icon).toBe('file');
+    expect(row('mystery').querySelector('.ez-ui-visually-hidden')?.textContent).toBe('file');
+  });
+
   it('renders each actionable row as a native button and opens it with Enter and Space', async () => {
     await renderPanel();
     let row = container.querySelector<HTMLButtonElement>('[data-testid="file-entry"]')!;

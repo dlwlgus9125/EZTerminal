@@ -1,4 +1,4 @@
-import { ArrowUp, CornerLeftUp, File as FileIcon, Folder } from 'lucide-react';
+import { ArrowUp, CornerLeftUp } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../shared/files';
@@ -12,10 +12,11 @@ import { quoteEzArgument } from '../shared/quote-ez-argument';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { FileContextMenu, type FileContextMenuItem } from './FileContextMenu';
 import { setInternalPathDrag } from './FileDropOverlay';
+import { FileSystemEntryIcon } from './FileSystemEntryIcon';
 import { useAppTranslation } from './i18n';
 import { getPaneCwd, insertIntoPaneInput } from './pane-registry';
 import { RichFileViewerOverlay } from './RichFileViewerOverlay';
-import { Button, Dialog, useToast } from './ui';
+import { Button, Dialog, useToast, VisuallyHidden } from './ui';
 
 interface BreadcrumbSegment {
   readonly label: string;
@@ -512,7 +513,12 @@ export function FileExplorerPanel({
         }}
       >
         {creatingFolder && (
-          <div className="file-entry" data-testid="new-folder-row">
+          <div className="file-entry" data-entry-kind="directory" data-testid="new-folder-row">
+            <FileSystemEntryIcon
+              name={newFolderName || 'new-folder'}
+              kind="directory"
+              className="file-entry-icon"
+            />
             <input
               className="file-path-input"
               data-testid="new-folder-input"
@@ -546,7 +552,17 @@ export function FileExplorerPanel({
         )}
         {entries.map((entry) =>
           renamingEntry === entry.name ? (
-            <div key={entry.name} className="file-entry" data-testid="file-entry">
+            <div
+              key={entry.name}
+              className="file-entry"
+              data-entry-kind={entry.kind === 'dir' ? 'directory' : 'file'}
+              data-testid="file-entry"
+            >
+              <FileSystemEntryIcon
+                name={entry.name}
+                kind={entry.kind === 'dir' ? 'directory' : 'file'}
+                className="file-entry-icon"
+              />
               <input
                 className="file-path-input"
                 data-testid="rename-input"
@@ -566,6 +582,7 @@ export function FileExplorerPanel({
               key={entry.name}
               type="button"
               className="file-entry"
+              data-entry-kind={entry.kind === 'dir' ? 'directory' : 'file'}
               data-testid="file-entry"
               draggable
               onDragStart={(event) => setInternalPathDrag(event.dataTransfer, [fullPathFor(entry)])}
@@ -592,10 +609,17 @@ export function FileExplorerPanel({
                 setContextMenu({ x: e.clientX, y: e.clientY, entry });
               }}
             >
-              <span className="file-entry-icon" aria-hidden="true">
-                {entry.kind === 'dir' ? <Folder size={16} /> : <FileIcon size={16} />}
-              </span>
+              <FileSystemEntryIcon
+                name={entry.name}
+                kind={entry.kind === 'dir' ? 'directory' : 'file'}
+                className="file-entry-icon"
+              />
               <span className="file-entry-name">{entry.name}</span>
+              <VisuallyHidden>
+                {t(entry.kind === 'dir'
+                  ? 'fileExplorer.entryKind.directory'
+                  : 'fileExplorer.entryKind.file')}
+              </VisuallyHidden>
               {changeTagFor(entry.name) && (
                 <span
                   className="file-entry-change"

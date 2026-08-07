@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { PROJECT_TEXT_MAX_BYTES } from '../shared/project-workspace';
 import { AgentProjectStore } from './agent-project-store';
+import { ProjectWorkspaceAccessStore } from './project-workspace-access-store';
 import { ProjectWorkspaceService } from './project-workspace-service';
+import type { WorktreeInfo, WorktreeResult } from '../shared/worktree';
 
 const temporaryDirectories: string[] = [];
 
@@ -21,6 +23,8 @@ async function fixture(): Promise<{
   readonly root: string;
   readonly projectId: string;
   readonly rootId: string;
+  readonly store: AgentProjectStore;
+  readonly userData: string;
   readonly service: ProjectWorkspaceService;
 }> {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'ez-project-workspace-'));
@@ -54,6 +58,8 @@ async function fixture(): Promise<{
     root,
     projectId,
     rootId: described.project.roots[0]!.rootId,
+    store,
+    userData,
     service,
   };
 }
@@ -116,7 +122,7 @@ describe('ProjectWorkspaceService', () => {
     })).resolves.toEqual({ ok: false, error: 'too-large' });
   });
 
-  it('detects stale line references and sensitive-looking content', async () => {
+  it('detects sensitive-looking content', async () => {
     const test = await fixture();
     await fs.writeFile(path.join(test.root, '.env'), 'API_KEY=secret\nSECOND=value\n');
     const request = { projectId: test.projectId, rootId: test.rootId, relativePath: '.env' };
@@ -124,20 +130,6 @@ describe('ProjectWorkspaceService', () => {
     if (!read.ok) throw new Error('fixture read failed');
     expect(read.file.sensitive).toBe(true);
 
-    await expect(test.service.validateText({
-      ...request,
-      version: read.file.version,
-      startLine: 1,
-      endLine: 2,
-    })).resolves.toMatchObject({ ok: true, sensitive: true });
-
-    await fs.writeFile(path.join(test.root, '.env'), 'API_KEY=changed\n');
-    await expect(test.service.validateText({
-      ...request,
-      version: read.file.version,
-      startLine: 1,
-      endLine: 2,
-    })).resolves.toEqual({ ok: false, error: 'stale' });
   });
 
   it('detects sensitive content beyond the beginning of a bounded text file', async () => {
@@ -201,5 +193,75 @@ describe('ProjectWorkspaceService', () => {
       relativePath: '',
     });
     expect(listing.ok && listing.entries.some((entry) => entry.name === 'linked')).toBe(false);
+  });
+
+  it('requires durable consent for an external worktree and revalidates its Git identity on every read', async () => {
+    const test = await fixture();
+    const external = path.join(test.base, 'external-worktree');
+    await fs.mkdir(external);
+    await fs.writeFile(path.join(external, 'external.txt'), 'approved content\n');
+    let externalRepoId = 'repo-fixture';
+    const worktrees = (): readonly WorktreeInfo[] => [{
+      worktreeId: 'main-worktree',
+      repoId: 'repo-fixture',
+      path: test.root,
+      branch: 'main',
+      head: 'a'.repeat(40),
+      main: true,
+      locked: false,
+      managed: true,
+      prunable: false,
+    }, {
+      worktreeId: 'external-worktree',
+      repoId: externalRepoId,
+      path: external,
+      branch: 'review/external',
+      head: 'b'.repeat(40),
+      main: false,
+      locked: false,
+      managed: false,
+      prunable: false,
+    }];
+    const listWorktrees = async (): Promise<WorktreeResult> => ({
+      ok: true,
+      action: 'list',
+      worktrees: worktrees(),
+    });
+    const accessStore = new ProjectWorkspaceAccessStore(test.userData);
+    await accessStore.init();
+    const service = new ProjectWorkspaceService(test.store, { listWorktrees, accessStore });
+    const request = {
+      projectId: test.projectId,
+      rootId: test.rootId,
+      workspaceId: 'external-worktree',
+      relativePath: 'external.txt',
+    };
+
+    const before = await service.describeProjectWorkspaces(test.projectId);
+    expect(before.ok && before.project.workspaces?.find((item) => item.workspaceId === 'external-worktree')).toMatchObject({
+      kind: 'external',
+      access: 'authorization-required',
+    });
+    await expect(service.readText(request)).resolves.toEqual({ ok: false, error: 'authorization-required' });
+
+    await expect(service.approveWorkspace(request)).resolves.toMatchObject({
+      ok: true,
+      workspace: { workspaceId: 'external-worktree', access: 'granted' },
+    });
+    await expect(service.readText(request)).resolves.toMatchObject({
+      ok: true,
+      file: { content: 'approved content\n' },
+    });
+
+    const reloadedStore = new ProjectWorkspaceAccessStore(test.userData);
+    await reloadedStore.init();
+    const reloadedService = new ProjectWorkspaceService(test.store, { listWorktrees, accessStore: reloadedStore });
+    await expect(reloadedService.readText(request)).resolves.toMatchObject({ ok: true });
+
+    externalRepoId = 'repo-replaced';
+    await expect(reloadedService.readText(request)).resolves.toEqual({
+      ok: false,
+      error: 'authorization-required',
+    });
   });
 });

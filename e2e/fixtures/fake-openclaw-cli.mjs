@@ -7,7 +7,7 @@
  * shared JSON state file (path in env `EZTERM_E2E_OPENCLAW_STATE`) so the
  * fake gateway process (fake-openclaw-gateway.mjs) and this CLI agree on
  * running/config — mirrors the real CLI's exit-code/message framing verified
- * in M0 (docs/research/2026-07-12-openclaw-stage0.md ①).
+ * by the current integration contract (`docs/design/external-integrations.md`).
  *
  * Also honors `gateway install|uninstall` (task #9, autostart toggle) — same
  * argv-recording as start/stop/restart, no state mutation (autostart is

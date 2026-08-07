@@ -219,13 +219,16 @@ function storyCapabilities(locale: Locale = 'ko'): CapabilityAccess {
     files: {
       list: async () => ({
         ok: true,
-        path: 'C:\\Working\\EZTerminal\\src\\renderer',
-        parent: 'C:\\Working\\EZTerminal\\src',
+        path: 'C:\\Working\\EZTerminal',
+        parent: 'C:\\Working',
         entries: [
-          { name: 'workbench', kind: 'dir', isSymlink: false, size: 0, mtimeMs: NOW },
+          { name: 'src', kind: 'dir', isSymlink: false, size: 0, mtimeMs: NOW },
           { name: 'App.tsx', kind: 'file', isSymlink: false, size: 98_240, mtimeMs: NOW },
-          { name: 'index.css', kind: 'file', isSymlink: false, size: 104_210, mtimeMs: NOW },
-          { name: 'DesktopHandoff.stories.tsx', kind: 'file', isSymlink: false, size: 18_200, mtimeMs: NOW },
+          { name: 'App.spec.tsx', kind: 'file', isSymlink: false, size: 22_840, mtimeMs: NOW },
+          { name: 'package.json', kind: 'file', isSymlink: false, size: 4_820, mtimeMs: NOW },
+          { name: 'README.md', kind: 'file', isSymlink: false, size: 6_410, mtimeMs: NOW },
+          { name: 'terminal-preview.svg', kind: 'file', isSymlink: false, size: 12_400, mtimeMs: NOW },
+          { name: 'NOTICE', kind: 'file', isSymlink: false, size: 980, mtimeMs: NOW },
         ],
       }),
       listRoots: async () => ['C:\\'],
@@ -252,7 +255,7 @@ function storyCapabilities(locale: Locale = 'ko'): CapabilityAccess {
         truncated: false,
         changes: [
           { path: 'App.tsx', kind: 'modified', added: 18, removed: 6 },
-          { path: 'DesktopHandoff.stories.tsx', kind: 'untracked' },
+          { path: 'App.spec.tsx', kind: 'untracked' },
         ],
       }),
     },

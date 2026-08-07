@@ -32,7 +32,7 @@ or newer. Evidence for this hardening candidate is deliberately narrower: the
 current Windows host and API 29/API 35 emulators. Elevated/admin service
 lifecycle, physical Android hardware, secure desktop, and the target network
 performance scenario have not been physically validated. See
-[`docs/release/validation-policy-1.0.4.md`](../release/validation-policy-1.0.4.md).
+[`docs/release/validation-policy-1.0.4.md`](../../release/validation-policy-1.0.4.md).
 
 Sections 1-8 retain the intended end-state design and verification gates. They
 must not be read as an as-built claim for 1.0.4; this implementation-status

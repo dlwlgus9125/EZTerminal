@@ -21,10 +21,10 @@ interface RailItem {
 }
 
 const RAIL_ITEMS: readonly RailItem[] = [
-  { id: 'explorer', labelKey: 'rail.explorer', icon: FolderTree, testId: 'btn-toggle-files' },
   { id: 'agents', labelKey: 'rail.agents', icon: Bot, testId: 'rail-agents' },
   { id: 'monitor', labelKey: 'rail.monitor', icon: Activity, testId: 'btn-toggle-stats' },
   { id: 'remote', labelKey: 'rail.remote', icon: RadioTower, testId: 'rail-remote' },
+  { id: 'explorer', labelKey: 'rail.explorer', icon: FolderTree, testId: 'btn-toggle-files' },
   { id: 'openclaw', labelKey: 'rail.openClaw', icon: Wrench, testId: 'btn-toggle-openclaw' },
   { id: 'settings', labelKey: 'rail.settings', icon: Settings, testId: 'btn-toggle-settings', bottom: true },
 ];

@@ -31,7 +31,7 @@ const sessionSurfaceClientId = [
   Math.random().toString(36).slice(2),
 ].join('-');
 
-// Preload runs with context isolation ON (architecture §1).
+// Preload runs with context isolation ON (`docs/architecture.md`).
 // We expose a NARROW, explicit API — never the raw ipcRenderer.
 //
 // MessagePort transfer through contextBridge:
@@ -496,23 +496,21 @@ const desktopApi: EzTerminalDesktopApi = {
   },
   describeProjectWorkspace: (projectId: string) =>
     ipcRenderer.invoke('project-workspace:describe', projectId),
-  listProjectDirectory: (request) =>
-    ipcRenderer.invoke('project-workspace:list-directory', request),
-  readProjectText: (request) =>
-    ipcRenderer.invoke('project-workspace:read-text', request),
-  validateProjectText: (request) =>
-    ipcRenderer.invoke('project-workspace:validate-text', request),
+  resolveProjectDocument: (request) =>
+    ipcRenderer.invoke('project-documents:resolve', request),
+  listProjectDocumentDirectory: (request) =>
+    ipcRenderer.invoke('project-documents:list-directory', request),
+  readProjectDocument: (request) =>
+    ipcRenderer.invoke('project-documents:read', request),
   searchProjectWorkspace: (request) =>
     ipcRenderer.invoke('project-workspace:search', request),
   cancelProjectWorkspaceSearch: (requestId: string): void => {
     ipcRenderer.send('project-workspace:cancel-search', requestId);
   },
-  locateProjectReview: (request) =>
-    ipcRenderer.invoke('project-workspace:locate-review', request),
-  getProjectReview: (request) =>
-    ipcRenderer.invoke('project-workspace:get-review', request),
-  getProjectReviewFile: (request) =>
-    ipcRenderer.invoke('project-workspace:get-review-file', request),
+  approveProjectWorkspace: (request) =>
+    ipcRenderer.invoke('project-workspace:approve', request),
+  revokeProjectWorkspace: (request) =>
+    ipcRenderer.invoke('project-workspace:revoke', request),
 
   getAvailableThemes: (): Promise<ThemeMod[]> => ipcRenderer.invoke('theme:get-available'),
   importTheme: (json: string): Promise<{ ok: boolean; error?: string }> =>

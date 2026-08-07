@@ -1,5 +1,6 @@
 /**
- * ANSI SGR → sanitized HTML, for external program text output (architecture §7).
+ * ANSI SGR → sanitized HTML for external program text output
+ * (`docs/design/terminal-runtime.md`).
  *
  * Uses ansi_up with `escape_html` ON (the default): the source text is
  * HTML-escaped (so `<script>` becomes `&lt;script&gt;` — no XSS) and only

@@ -21,12 +21,15 @@ import {
   type ProjectSearchRequest,
   type ProjectSearchResult,
   type ProjectTextResult,
-  type ProjectTextValidationRequest,
-  type ProjectTextValidationResult,
   type ProjectWorkspaceDescriptorResult,
+  type ProjectWorkspaceAccessRequest,
+  type ProjectWorkspaceAccessResult,
   type ProjectWorkspaceError,
+  type ProjectWorkspaceLocationDescriptor,
 } from '../shared/project-workspace';
+import type { WorktreeResult } from '../shared/worktree';
 import type { AgentProjectRecord, AgentProjectStore } from './agent-project-store';
+import type { ProjectWorkspaceAccessStore } from './project-workspace-access-store';
 
 const MAX_RELATIVE_PATH_LENGTH = 4096;
 const SEARCH_READ_CONCURRENCY = 8;
@@ -35,6 +38,7 @@ interface ResolvedProjectRoot {
   readonly project: AgentProjectRecord;
   readonly descriptor: ProjectRootDescriptor;
   readonly rootPath: string;
+  readonly workspace: ProjectWorkspaceLocationDescriptor;
 }
 
 interface ResolvedPath extends ResolvedProjectRoot {
@@ -49,6 +53,22 @@ function pathKey(value: string): string {
 
 function rootIdForPath(rootPath: string): string {
   return createHash('sha256').update(pathKey(rootPath)).digest('hex').slice(0, 24);
+}
+
+function rootWorkspace(root: ProjectRootDescriptor): ProjectWorkspaceLocationDescriptor {
+  return {
+    workspaceId: root.rootId,
+    rootId: root.rootId,
+    name: root.name,
+    displayPath: root.displayPath,
+    kind: 'root',
+    access: 'granted',
+  };
+}
+
+export interface ProjectWorkspaceServiceOptions {
+  readonly listWorktrees?: (cwd: string) => Promise<WorktreeResult>;
+  readonly accessStore?: ProjectWorkspaceAccessStore;
 }
 
 function safeRelativePath(value: unknown): string | null {
@@ -107,7 +127,10 @@ function sameSnapshot(
 }
 
 export class ProjectWorkspaceService {
-  constructor(private readonly projects: AgentProjectStore) {}
+  constructor(
+    private readonly projects: AgentProjectStore,
+    private readonly options: ProjectWorkspaceServiceOptions = {},
+  ) {}
 
   describeProject(projectId: unknown): ProjectWorkspaceDescriptorResult {
     if (typeof projectId !== 'string' || projectId.length < 1 || projectId.length > 128) {
@@ -121,19 +144,220 @@ export class ProjectWorkspaceService {
       rootIdForPath(candidate.primaryRoot) === projectId);
     if (!project) return { ok: false, error: 'project-not-found' };
     const allRoots = [project.primaryRoot, ...project.additionalRoots];
+    const roots = allRoots.map((rootPath, index) => ({
+      rootId: rootIdForPath(rootPath),
+      name: path.basename(rootPath) || rootPath,
+      displayPath: rootPath,
+      primary: index === 0,
+    }));
     return {
       ok: true,
       project: {
         projectId,
         name: project.name,
-        roots: allRoots.map((rootPath, index) => ({
-          rootId: rootIdForPath(rootPath),
-          name: path.basename(rootPath) || rootPath,
-          displayPath: rootPath,
-          primary: index === 0,
-        })),
+        roots,
+        workspaces: roots.map(rootWorkspace),
       },
     };
+  }
+
+  /** Enrich the synchronous registered-root descriptor with local Git
+   * worktrees. Failure to inspect Git never makes ordinary project files
+   * disappear; the registered-root workspace remains available. */
+  async describeProjectWorkspaces(projectId: unknown): Promise<ProjectWorkspaceDescriptorResult> {
+    const described = this.describeProject(projectId);
+    if (!described.ok || !this.options.listWorktrees) return described;
+    const workspaces: ProjectWorkspaceLocationDescriptor[] = [];
+    for (const root of described.project.roots) {
+      const listed = await this.options.listWorktrees(root.displayPath).catch(() => null);
+      if (!listed?.ok || listed.worktrees.length === 0) {
+        workspaces.push(rootWorkspace(root));
+        continue;
+      }
+      const main = listed.worktrees.find((worktree) => worktree.main);
+      if (!main) {
+        workspaces.push(rootWorkspace(root));
+        continue;
+      }
+      let mainCanonical: string;
+      let registeredCanonical: string;
+      try {
+        [mainCanonical, registeredCanonical] = await Promise.all([
+          fs.realpath(main.path),
+          fs.realpath(root.displayPath),
+        ]);
+      } catch {
+        workspaces.push(rootWorkspace(root));
+        continue;
+      }
+      const rootWithinMain = path.relative(mainCanonical, registeredCanonical);
+      if (rootWithinMain === '..'
+        || rootWithinMain.startsWith(`..${path.sep}`)
+        || path.isAbsolute(rootWithinMain)) {
+        workspaces.push(rootWorkspace(root));
+        continue;
+      }
+      for (const worktree of listed.worktrees) {
+        if (worktree.prunable) continue;
+        let canonicalWorktree: string;
+        let contentPath: string;
+        try {
+          canonicalWorktree = await fs.realpath(worktree.path);
+          contentPath = await fs.realpath(path.join(canonicalWorktree, rootWithinMain));
+          const relative = path.relative(canonicalWorktree, contentPath);
+          if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) continue;
+          if (!(await fs.stat(contentPath)).isDirectory()) continue;
+        } catch {
+          continue;
+        }
+        const identity = {
+          projectId: described.project.projectId,
+          rootId: root.rootId,
+          workspaceId: worktree.worktreeId,
+          repositoryId: worktree.repoId,
+          canonicalPath: canonicalWorktree,
+        };
+        const kind = worktree.main ? 'main' : worktree.managed ? 'managed' : 'external';
+        const granted = kind !== 'external' || this.options.accessStore?.isApproved(identity) === true;
+        workspaces.push({
+          workspaceId: worktree.worktreeId,
+          rootId: root.rootId,
+          name: worktree.main
+            ? `${root.name} (main)`
+            : worktree.branch || path.basename(canonicalWorktree),
+          displayPath: contentPath,
+          kind,
+          access: granted ? 'granted' : 'authorization-required',
+          branch: worktree.branch,
+          head: worktree.head,
+          repositoryId: worktree.repoId,
+          locked: worktree.locked,
+        });
+      }
+      if (!workspaces.some((workspace) => workspace.rootId === root.rootId)) {
+        workspaces.push(rootWorkspace(root));
+      }
+    }
+    return { ok: true, project: { ...described.project, workspaces } };
+  }
+
+  async approveWorkspace(value: unknown): Promise<ProjectWorkspaceAccessResult> {
+    if (!this.isAccessRequest(value) || !this.options.accessStore) {
+      return { ok: false, error: 'invalid-request' };
+    }
+    const described = await this.describeProjectWorkspaces(value.projectId);
+    if (!described.ok) return described;
+    const workspace = described.project.workspaces?.find((candidate) =>
+      candidate.rootId === value.rootId && candidate.workspaceId === value.workspaceId);
+    if (!workspace) return { ok: false, error: 'workspace-not-found' };
+    if (workspace.kind !== 'external') return { ok: true, workspace };
+    if (!workspace.repositoryId) return { ok: false, error: 'workspace-not-found' };
+    const listed = await this.options.listWorktrees?.(
+      described.project.roots.find((root) => root.rootId === value.rootId)?.displayPath ?? '',
+    ).catch(() => null);
+    const worktree = listed?.ok
+      ? listed.worktrees.find((candidate) => candidate.worktreeId === value.workspaceId)
+      : undefined;
+    if (!worktree || worktree.managed || worktree.main || worktree.repoId !== workspace.repositoryId) {
+      return { ok: false, error: 'workspace-not-found' };
+    }
+    let canonicalPath: string;
+    try {
+      canonicalPath = await fs.realpath(worktree.path);
+    } catch {
+      return { ok: false, error: 'not-found' };
+    }
+    await this.options.accessStore.approve({
+      projectId: value.projectId,
+      rootId: value.rootId,
+      workspaceId: value.workspaceId,
+      repositoryId: worktree.repoId,
+      canonicalPath,
+    });
+    const refreshed = await this.describeProjectWorkspaces(value.projectId);
+    const approved = refreshed.ok
+      ? refreshed.project.workspaces?.find((candidate) =>
+        candidate.rootId === value.rootId && candidate.workspaceId === value.workspaceId)
+      : undefined;
+    return approved ? { ok: true, workspace: approved } : { ok: false, error: 'workspace-not-found' };
+  }
+
+  async revokeWorkspace(value: unknown): Promise<boolean> {
+    if (!this.isAccessRequest(value) || !this.options.accessStore) return false;
+    await this.options.accessStore.revoke(value.projectId, value.rootId, value.workspaceId);
+    return true;
+  }
+
+  revokeProjectAccess(projectId: string): Promise<void> {
+    return this.options.accessStore?.revoke(projectId) ?? Promise.resolve();
+  }
+
+  /**
+   * Resolve a PTY/provider absolute path back into the same opaque project
+   * document identity used by tree navigation. Only registered, currently
+   * granted workspaces participate; an external worktree is never approved as
+   * a side effect of following a link.
+   */
+  async resolveAbsoluteProjectPath(value: unknown): Promise<
+    | {
+        readonly ok: true;
+        readonly request: ProjectPathRequest & { readonly workspaceId: string };
+      }
+    | { readonly ok: false; readonly error: ProjectWorkspaceError }
+  > {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return { ok: false, error: 'invalid-request' };
+    }
+    const candidate = value as { readonly projectId?: unknown; readonly absolutePath?: unknown };
+    if ((candidate.projectId !== undefined
+      && (typeof candidate.projectId !== 'string'
+        || candidate.projectId.length < 1
+        || candidate.projectId.length > 128))
+      || typeof candidate.absolutePath !== 'string'
+      || candidate.absolutePath.length < 1
+      || candidate.absolutePath.length > 32_768
+      || hasProjectPathControlCharacters(candidate.absolutePath)
+      || !path.isAbsolute(candidate.absolutePath)) {
+      return { ok: false, error: 'invalid-request' };
+    }
+    const absolutePath = path.resolve(candidate.absolutePath);
+    const projectIds = typeof candidate.projectId === 'string'
+      ? [candidate.projectId]
+      : this.projects.list().map((project) => rootIdForPath(project.primaryRoot));
+    for (const projectId of projectIds) {
+      const described = await this.describeProjectWorkspaces(projectId);
+      if (!described.ok) continue;
+      const rootsById = new Map(described.project.roots.map((root) => [root.rootId, root]));
+      const workspaces = [...(described.project.workspaces ?? described.project.roots.map(rootWorkspace))]
+        .sort((left, right) => right.displayPath.length - left.displayPath.length);
+      for (const workspace of workspaces) {
+        if (!rootsById.has(workspace.rootId)) continue;
+        const relative = path.relative(path.resolve(workspace.displayPath), absolutePath);
+        if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) continue;
+        if (workspace.access === 'authorization-required') {
+          return { ok: false, error: 'authorization-required' };
+        }
+        if (workspace.access !== 'granted') return { ok: false, error: 'workspace-not-found' };
+        const relativePath = relative ? relative.split(path.sep).join('/') : '';
+        const resolved = await this.resolveProjectPath({
+          projectId,
+          rootId: workspace.rootId,
+          workspaceId: workspace.workspaceId,
+          relativePath,
+        });
+        if (!resolved.ok) return resolved;
+        return {
+          ok: true,
+          request: {
+            projectId,
+            rootId: workspace.rootId,
+            workspaceId: resolved.value.workspace.workspaceId,
+            relativePath: resolved.value.relativePath,
+          },
+        };
+      }
+    }
+    return { ok: false, error: 'path-outside-root' };
   }
 
   async listDirectory(request: unknown): Promise<ProjectDirectoryResult> {
@@ -192,32 +416,11 @@ export class ProjectWorkspaceService {
     return this.readResolvedText(resolved.value);
   }
 
-  async validateText(request: unknown): Promise<ProjectTextValidationResult> {
-    if (!this.isValidationRequest(request)) return { ok: false, error: 'invalid-request' };
-    const result = await this.readText(request);
-    if (!result.ok) return result;
-    if (result.file.version !== request.version) return { ok: false, error: 'stale' };
-    const lineCount = result.file.content.length === 0
-      ? 1
-      : result.file.content.split(/\r\n|\r|\n/).length;
-    if (
-      request.startLine < 1
-      || request.endLine < request.startLine
-      || request.endLine > lineCount
-    ) {
-      return { ok: false, error: 'stale' };
-    }
-    return {
-      ok: true,
-      currentVersion: result.file.version,
-      lineCount,
-      sensitive: result.file.sensitive,
-    };
-  }
-
   async search(request: unknown, signal?: AbortSignal): Promise<ProjectSearchResult> {
     if (!this.isSearchRequest(request)) return { ok: false, error: 'invalid-request' };
-    const described = this.describeProject(request.projectId);
+    const described = request.workspaceId
+      ? await this.describeProjectWorkspaces(request.projectId)
+      : this.describeProject(request.projectId);
     if (!described.ok) return described;
     const selectedRoots = request.rootId
       ? described.project.roots.filter((root) => root.rootId === request.rootId)
@@ -233,7 +436,11 @@ export class ProjectWorkspaceService {
     let truncated = false;
 
     for (const root of selectedRoots) {
-      const rootResolution = await this.resolveRoot(request.projectId, root.rootId);
+      const rootResolution = await this.resolveRoot(
+        request.projectId,
+        root.rootId,
+        request.workspaceId,
+      );
       if (!rootResolution.ok) return rootResolution;
       const pendingDirectories: Array<{ absolutePath: string; relativePath: string }> = [{
         absolutePath: rootResolution.value.rootPath,
@@ -336,6 +543,7 @@ export class ProjectWorkspaceService {
             const read = await this.readText({
               projectId: request.projectId,
               rootId: root.rootId,
+              ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
               relativePath: file.relativePath,
             });
             if (!read.ok) return [];
@@ -435,7 +643,7 @@ export class ProjectWorkspaceService {
     if (!this.isPathRequest(request)) return { ok: false, error: 'invalid-request' };
     const relativePath = safeRelativePath(request.relativePath);
     if (relativePath === null) return { ok: false, error: 'path-outside-root' };
-    const root = await this.resolveRoot(request.projectId, request.rootId);
+    const root = await this.resolveRoot(request.projectId, request.rootId, request.workspaceId);
     if (!root.ok) return root;
     const absolutePath = relativePath
       ? path.join(root.value.rootPath, ...relativePath.split('/'))
@@ -447,7 +655,7 @@ export class ProjectWorkspaceService {
     return { ok: true, value: { ...root.value, relativePath, absolutePath } };
   }
 
-  private async resolveRoot(projectId: string, rootId: string): Promise<
+  private async resolveRoot(projectId: string, rootId: string, workspaceId?: string): Promise<
     | { readonly ok: true; readonly value: ResolvedProjectRoot }
     | { readonly ok: false; readonly error: ProjectWorkspaceError }
   > {
@@ -457,7 +665,26 @@ export class ProjectWorkspaceService {
     const rootPaths = [project.primaryRoot, ...project.additionalRoots];
     const index = rootPaths.findIndex((candidate) => rootIdForPath(candidate) === rootId);
     if (index < 0) return { ok: false, error: 'root-not-found' };
-    const rootPath = rootPaths[index]!;
+    const registeredRootPath = rootPaths[index]!;
+    let workspace = rootWorkspace({
+      rootId,
+      name: path.basename(registeredRootPath) || registeredRootPath,
+      displayPath: registeredRootPath,
+      primary: index === 0,
+    });
+    if (workspaceId && workspaceId !== rootId) {
+      const described = await this.describeProjectWorkspaces(projectId);
+      if (!described.ok) return described;
+      const selected = described.project.workspaces?.find((candidate) =>
+        candidate.rootId === rootId && candidate.workspaceId === workspaceId);
+      if (!selected) return { ok: false, error: 'workspace-not-found' };
+      if (selected.access === 'authorization-required') {
+        return { ok: false, error: 'authorization-required' };
+      }
+      if (selected.access !== 'granted') return { ok: false, error: 'workspace-not-found' };
+      workspace = selected;
+    }
+    const rootPath = workspace.displayPath;
     try {
       const rootStat = await fs.lstat(rootPath);
       if (rootStat.isSymbolicLink()) return { ok: false, error: 'symlink-not-supported' };
@@ -475,11 +702,12 @@ export class ProjectWorkspaceService {
         project,
         descriptor: {
           rootId,
-          name: path.basename(rootPath) || rootPath,
-          displayPath: rootPath,
+          name: path.basename(registeredRootPath) || registeredRootPath,
+          displayPath: registeredRootPath,
           primary: index === 0,
         },
         rootPath,
+        workspace,
       },
     };
   }
@@ -513,16 +741,11 @@ export class ProjectWorkspaceService {
       && typeof request.rootId === 'string'
       && request.rootId.length > 0
       && request.rootId.length <= 128
+      && (request.workspaceId === undefined
+        || (typeof request.workspaceId === 'string'
+          && request.workspaceId.length > 0
+          && request.workspaceId.length <= 128))
       && typeof request.relativePath === 'string';
-  }
-
-  private isValidationRequest(value: unknown): value is ProjectTextValidationRequest {
-    if (!this.isPathRequest(value)) return false;
-    const request = value as Partial<ProjectTextValidationRequest>;
-    return typeof request.version === 'string'
-      && /^[a-f0-9]{64}$/.test(request.version)
-      && Number.isInteger(request.startLine)
-      && Number.isInteger(request.endLine);
   }
 
   private isSearchRequest(value: unknown): value is ProjectSearchRequest {
@@ -536,11 +759,29 @@ export class ProjectWorkspaceService {
       && request.projectId.length <= 128
       && (request.rootId === undefined
         || (typeof request.rootId === 'string' && request.rootId.length > 0 && request.rootId.length <= 128))
+      && (request.workspaceId === undefined
+        || (typeof request.workspaceId === 'string'
+          && request.workspaceId.length > 0
+          && request.workspaceId.length <= 128))
       && typeof request.query === 'string'
       && request.query.trim().length > 0
       && request.query.length <= PROJECT_SEARCH_MAX_QUERY
       && (request.mode === 'files' || request.mode === 'content')
       && (request.caseSensitive === undefined || typeof request.caseSensitive === 'boolean');
+  }
+
+  private isAccessRequest(value: unknown): value is ProjectWorkspaceAccessRequest {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+    const request = value as Partial<ProjectWorkspaceAccessRequest>;
+    return typeof request.projectId === 'string'
+      && request.projectId.length > 0
+      && request.projectId.length <= 128
+      && typeof request.rootId === 'string'
+      && request.rootId.length > 0
+      && request.rootId.length <= 128
+      && typeof request.workspaceId === 'string'
+      && request.workspaceId.length > 0
+      && request.workspaceId.length <= 128;
   }
 }
 

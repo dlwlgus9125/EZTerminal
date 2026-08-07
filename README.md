@@ -221,6 +221,9 @@ Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.25.
 
 The Android companion app lives in [`mobile/`](mobile/) (Capacitor + Android Studio).
 
+Current process boundaries, data flows, trust boundaries, and subsystem contracts are
+documented in [the architecture guide](docs/architecture.md).
+
 ## Tech stack
 
 Electron · React · TypeScript · xterm.js · node-pty (ConPTY) · Capacitor (Android) · Vite · Playwright

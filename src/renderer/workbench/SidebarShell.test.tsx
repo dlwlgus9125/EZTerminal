@@ -36,7 +36,13 @@ function pressTab(shiftKey = false): KeyboardEvent {
   return event;
 }
 
-function SidebarHarness({ withDialog = false }: { readonly withDialog?: boolean }): JSX.Element {
+function SidebarHarness({
+  overlayBelow,
+  withDialog = false,
+}: {
+  readonly overlayBelow?: number;
+  readonly withDialog?: boolean;
+}): JSX.Element {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(withDialog);
   return (
@@ -50,6 +56,7 @@ function SidebarHarness({ withDialog = false }: { readonly withDialog?: boolean 
           destination="explorer"
           title="Explorer"
           width={320}
+          overlayBelow={overlayBelow}
           onClose={() => setSidebarOpen(false)}
           onWidthChange={vi.fn()}
         >
@@ -171,6 +178,28 @@ describe('SidebarShell Escape ownership', () => {
 });
 
 describe('SidebarShell narrow overlay focus contract', () => {
+  it('keeps Project persistent from 1024px while ordinary sidebars still overlay below 1200px', () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(max-width: 1199px)',
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+
+    act(() => root.render(<SidebarHarness overlayBelow={1024} />));
+    let sidebar = container.querySelector<HTMLElement>('[data-testid="workbench-sidebar"]');
+    expect(sidebar?.getAttribute('aria-modal')).toBeNull();
+    expect(sidebar?.dataset.projectMode).toBe('true');
+
+    act(() => root.render(<SidebarHarness />));
+    sidebar = container.querySelector<HTMLElement>('[data-testid="workbench-sidebar"]');
+    expect(sidebar?.getAttribute('aria-modal')).toBe('true');
+  });
+
   it('does not isolate the document for an already-detached modal root', () => {
     const detachedModal = document.createElement('div');
 

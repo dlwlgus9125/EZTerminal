@@ -1,7 +1,7 @@
 /**
  * Phase-1 builtin commands + the default registry.
  *
- * Streaming-vs-buffering trait (architecture §4) is declared per command:
+ * Streaming-vs-buffering trait (`docs/design/terminal-runtime.md`) is declared per command:
  *   - `ls`        — SOURCE, streams directory entries (lazy per-entry stat).
  *   - `where`     — STREAMING filter (per-row predicate, no buffering).
  *   - `sort-by`   — BUFFERING: materializes the whole input before emitting.

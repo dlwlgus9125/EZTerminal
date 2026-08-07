@@ -1,5 +1,5 @@
 /**
- * Process listing source for the `ps` builtin (architecture §7).
+ * Process listing source for the `ps` builtin (`docs/design/terminal-runtime.md`).
  *
  * Two parsers back the same {@link ProcessInfo} row shape, dispatched on
  * `process.platform` (see {@link createProcessLister}):

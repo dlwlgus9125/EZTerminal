@@ -1,5 +1,5 @@
 /**
- * Shared interpreter contracts (architecture §5).
+ * Shared interpreter contracts (`docs/design/terminal-runtime.md`).
  *
  * Kept in one leaf module so `registry`, `evaluate`, and `builtins` can share
  * them without import cycles.
@@ -10,7 +10,8 @@ import type { PipelineData, RuntimeValue } from './value';
 import type { WorktreeInfo, WorktreeRequest, WorktreeResult } from '../../shared/worktree';
 
 /**
- * Durable shell-session state owned by the interpreter process (architecture §2).
+ * Durable shell-session state owned by the interpreter process
+ * (`docs/design/terminal-runtime.md`).
  * A single ShellSession persists across command runs; each ExecutionSession builds
  * an {@link EvalContext} over it, so variables / cwd / env set by one Block are
  * visible to the next. The core depends only on this contract (it never imports
@@ -53,11 +54,12 @@ export interface EvalContext {
   readonly cwd: string;
   readonly env: Record<string, string | undefined>;
   readonly signal: AbortSignal;
-  /** Durable shell session (variables + cwd/env mutation), architecture §2. */
+  /** Durable shell session (variables + cwd/env mutation); see
+   * `docs/design/terminal-runtime.md`. */
   readonly session: SessionState;
   /**
    * Fallback for command names not in the registry: external program execution
-   * (architecture §7). Wired by the interpreter process so the pure core never
+   * (`docs/design/terminal-runtime.md`). Wired by the interpreter process so the pure core never
    * imports child_process. When absent, an unknown command is a hard error.
    *
    * `opts.interactive` requests a full-screen PTY/TUI: the resolver returns a

@@ -1,10 +1,9 @@
 import {
   ArrowLeft,
   Check,
-  ChevronDown,
-  ChevronRight,
   FolderPlus,
   GitCompareArrows,
+  History,
   MessageSquarePlus,
   MoreHorizontal,
   Pin,
@@ -42,6 +41,9 @@ import {
 import { formatCwd } from './format-cwd';
 import { useGitBranches } from './use-git-branch';
 import { useAppTranslation } from './i18n';
+import { ProjectWorkspacePanel, type ProjectExplorerState } from './ProjectWorkspacePanel';
+import type { ProjectCodeLocation } from './project-code-navigation';
+import type { ProjectEditorDocument } from './project-editor-model';
 import {
   Button,
   Dialog,
@@ -146,6 +148,18 @@ export interface AgentHubProps {
     session: AgentHistorySessionSummary,
     project: AgentProjectSummary,
   ) => void;
+  /** Opens the Project drill-in's reusable read-only editor tab. */
+  readonly onOpenProjectDocument?: (
+    document: ProjectEditorDocument,
+    location?: ProjectCodeLocation,
+  ) => void;
+  /** Controlled project drill-in identity. Omit to retain local behavior. */
+  readonly activeProjectId?: string | null;
+  readonly onActiveProjectIdChange?: (projectId: string | null) => void;
+  /** Controlled explorer state, suitable for restoration across sidebar remounts. */
+  readonly projectWorkspaceState?: ProjectExplorerState;
+  readonly onProjectWorkspaceStateChange?: (state: ProjectExplorerState) => void;
+  readonly onProjectDrillChange?: (open: boolean) => void;
   /** Opens a fresh terminal using a main-prepared project or directory launch. */
   readonly onLaunchAgent?: (bootstrap: AgentLaunchBootstrap) => void;
   readonly onOpenAgentSettings?: () => void;
@@ -176,6 +190,12 @@ export function AgentHub({
   onReadGitStatus,
   onOpenHistorySession,
   onOpenHistoryReview,
+  onOpenProjectDocument,
+  activeProjectId,
+  onActiveProjectIdChange,
+  projectWorkspaceState,
+  onProjectWorkspaceStateChange,
+  onProjectDrillChange,
   onLaunchAgent,
   onOpenAgentSettings,
   onClose,
@@ -201,7 +221,7 @@ export function AgentHub({
     Readonly<Record<string, string | null>>
   >({});
   const [loadingSessionProjects, setLoadingSessionProjects] = useState<ReadonlySet<string>>(new Set());
-  const [expandedProjects, setExpandedProjects] = useState<ReadonlySet<string>>(new Set());
+  const [historyProject, setHistoryProject] = useState<AgentProjectSummary | null>(null);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectsLoadingMore, setProjectsLoadingMore] = useState(false);
   const [projectsError, setProjectsError] = useState(false);
@@ -224,11 +244,30 @@ export function AgentHub({
   const [projectRootsDraft, setProjectRootsDraft] = useState<readonly string[]>([]);
   const [projectSaving, setProjectSaving] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<AgentProjectSummary | null>(null);
+  const [localDrillProject, setLocalDrillProject] = useState<AgentProjectSummary | null>(null);
   const diffRequestGeneration = useRef(0);
   const branches = useGitBranches(
     snapshot.items.map((item) => item.cwd),
     onReadGitStatus ?? readNothing,
   );
+  const drillProject = activeProjectId === undefined
+    ? localDrillProject
+    : activeProjectId
+      ? projects.find((project) => project.projectId === activeProjectId) ?? null
+      : null;
+  const projectDrillOpen = activeProjectId === undefined
+    ? drillProject !== null
+    : activeProjectId !== null;
+  const selectDrillProject = useCallback((project: AgentProjectSummary | null): void => {
+    if (activeProjectId === undefined) setLocalDrillProject(project);
+    onActiveProjectIdChange?.(project?.projectId ?? null);
+  }, [activeProjectId, onActiveProjectIdChange]);
+
+  useEffect(() => {
+    onProjectDrillChange?.(projectDrillOpen);
+    if (activeProjectId !== undefined) return undefined;
+    return () => onProjectDrillChange?.(false);
+  }, [activeProjectId, onProjectDrillChange, projectDrillOpen]);
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const relativeTime = useMemo(
     () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),
@@ -303,17 +342,11 @@ export function AgentHub({
     setProjectSessionCursors((previous) => ({ ...previous, [projectId]: result.nextCursor }));
   }, []);
 
-  const toggleProject = useCallback(async (projectId: string): Promise<void> => {
-    const willExpand = !expandedProjects.has(projectId);
-    setExpandedProjects((previous) => {
-      const next = new Set(previous);
-      if (willExpand) next.add(projectId);
-      else next.delete(projectId);
-      return next;
-    });
-    if (!willExpand || projectSessions[projectId] || loadingSessionProjects.has(projectId)) return;
-    await loadInitialProjectSessions(projectId);
-  }, [expandedProjects, loadInitialProjectSessions, loadingSessionProjects, projectSessions]);
+  const openProjectHistory = useCallback((project: AgentProjectSummary): void => {
+    setHistoryProject(project);
+    if (projectSessions[project.projectId] || loadingSessionProjects.has(project.projectId)) return;
+    void loadInitialProjectSessions(project.projectId);
+  }, [loadInitialProjectSessions, loadingSessionProjects, projectSessions]);
 
   const loadMoreSessions = useCallback(async (projectId: string): Promise<void> => {
     const cursor = projectSessionCursors[projectId];
@@ -351,7 +384,6 @@ export function AgentHub({
     });
     if (result.ok) {
       setProjectSessions({});
-      setExpandedProjects(new Set());
       void refreshProjects(true);
     } else {
       setProjectActionError(t('agentHub.projects.saveFailed'));
@@ -417,7 +449,6 @@ export function AgentHub({
     }
     setProjectEditorOpen(false);
     setProjectSessions({});
-    setExpandedProjects(new Set());
     void refreshProjects(true);
   }, [
     editingProject,
@@ -436,10 +467,10 @@ export function AgentHub({
       return;
     }
     setProjectToDelete(null);
+    if (historyProject?.projectId === projectToDelete.projectId) setHistoryProject(null);
     setProjectSessions({});
-    setExpandedProjects(new Set());
     void refreshProjects(true);
-  }, [projectToDelete, refreshProjects, t]);
+  }, [historyProject, projectToDelete, refreshProjects, t]);
 
   const loadLaunchers = useCallback(async (): Promise<void> => {
     if (launchersLoading || launchers.length > 0) return;
@@ -832,9 +863,115 @@ export function AgentHub({
     );
   };
 
+  const renderProjectHistory = (project: AgentProjectSummary): JSX.Element => {
+    const sessions = projectSessions[project.projectId];
+    const sessionsLoading = loadingSessionProjects.has(project.projectId);
+    const sessionsFailed = projectSessionErrors.has(project.projectId);
+    const nextCursor = projectSessionCursors[project.projectId];
+    return (
+      <section
+        className="agent-project-history"
+        data-testid="agent-project-history"
+        aria-labelledby="agent-project-history-title"
+      >
+        <header className="agent-project-history__header">
+          <IconButton
+            icon={ArrowLeft}
+            aria-label={t('common.back')}
+            onClick={() => setHistoryProject(null)}
+            data-testid="agent-project-history-back"
+          />
+          <div>
+            <h2 id="agent-project-history-title">{t('agentHub.projects.sessionHistory')}</h2>
+            <small title={project.primaryRoot}>{project.name}</small>
+          </div>
+        </header>
+        <ol
+          className="agent-history-list agent-project-history__list"
+          aria-busy={sessionsLoading || undefined}
+        >
+          {!sessions && sessionsLoading && (
+            <li className="agent-project-note">
+              {t('agentHub.projects.sessionsLoading')}
+            </li>
+          )}
+          {sessionsFailed && (
+            <li className="agent-project-error">
+              <span>{t('agentHub.projects.sessionsFailed')}</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setProjectSessions((previous) => {
+                    const next = { ...previous };
+                    delete next[project.projectId];
+                    return next;
+                  });
+                  void loadInitialProjectSessions(project.projectId);
+                }}
+              >
+                {t('common.retry')}
+              </Button>
+            </li>
+          )}
+          {!sessionsFailed && sessions?.length === 0 && (
+            <li className="agent-project-note">
+              {t('agentHub.projects.sessionsEmpty')}
+            </li>
+          )}
+          {sessions?.map((session) => (
+            <li key={session.historyId} className="agent-history-item">
+              <button
+                type="button"
+                className="agent-history-row"
+                data-provider={session.provider}
+                title={session.title}
+                onClick={() => onOpenHistorySession?.(session, project)}
+              >
+                <span className="agent-provider-badge">
+                  {PROVIDER_LABEL[session.provider]}
+                </span>
+                <strong>{session.title}</strong>
+                <small>{ageLabel(session.updatedAt, now, relativeTime)}</small>
+                {session.preview && <p>{session.preview}</p>}
+              </button>
+              {onOpenHistoryReview && (
+                <button
+                  type="button"
+                  className="agent-history-review"
+                  aria-label={`Review changes from ${session.title}`}
+                  title={t('agentHub.viewDiff')}
+                  onClick={() => onOpenHistoryReview(session, project)}
+                >
+                  <GitCompareArrows aria-hidden="true" size={15} />
+                </button>
+              )}
+            </li>
+          ))}
+          {nextCursor && (
+            <li>
+              <button
+                type="button"
+                className="agent-history-more"
+                disabled={sessionsLoading}
+                onClick={() => void loadMoreSessions(project.projectId)}
+              >
+                {sessionsLoading
+                  ? t('agentHub.projects.sessionsLoading')
+                  : t('agentHub.projects.moreSessions')}
+              </button>
+            </li>
+          )}
+        </ol>
+      </section>
+    );
+  };
+
   return (
     <div
-      className={mobile ? 'mobile-agent-hub' : 'status-drawer agent-hub'}
+      className={mobile
+        ? 'mobile-agent-hub'
+        : `status-drawer agent-hub${drillProject ? ' agent-hub--project' : ''}`}
       data-testid="agent-hub"
       aria-label={t('agentHub.activity')}
     >
@@ -870,6 +1007,18 @@ export function AgentHub({
             : ''}
       </div>
       <div className="agent-hub-body">
+        {historyProject ? renderProjectHistory(historyProject) : drillProject && onOpenProjectDocument ? (
+          <ProjectWorkspacePanel
+            project={drillProject}
+            onBack={() => selectDrillProject(null)}
+            onOpenDocument={onOpenProjectDocument}
+            onNewChat={() => openLaunchPicker(drillProject)}
+            onManage={() => openProjectEditor(drillProject)}
+            explorerState={projectWorkspaceState}
+            onExplorerStateChange={onProjectWorkspaceStateChange}
+          />
+        ) : (
+          <>
           {renderGroup('attention', t('agentHub.groups.attention'), groups.attention)}
           <section className="agent-group agent-projects" data-testid="agent-projects">
             <div className="agent-projects-heading">
@@ -924,23 +1073,17 @@ export function AgentHub({
             )}
             <ol className="agent-project-list">
               {projects.map((project) => {
-                const expanded = expandedProjects.has(project.projectId);
-                const sessions = projectSessions[project.projectId];
-                const sessionsLoading = loadingSessionProjects.has(project.projectId);
-                const sessionsFailed = projectSessionErrors.has(project.projectId);
-                const nextCursor = projectSessionCursors[project.projectId];
                 return (
                   <li className="agent-project" key={project.projectId}>
                     <div className="agent-project-row">
                       <button
                         type="button"
-                        className="agent-project-toggle"
-                        onClick={() => void toggleProject(project.projectId)}
-                        aria-expanded={expanded}
+                        className="agent-project-open"
+                        onClick={() => {
+                          if (onOpenProjectDocument) selectDrillProject(project);
+                        }}
+                        data-testid={`agent-project-open-${project.projectId}`}
                       >
-                        {expanded
-                          ? <ChevronDown aria-hidden="true" />
-                          : <ChevronRight aria-hidden="true" />}
                         <span>
                           <strong>
                             {project.pinned && <Pin aria-hidden="true" />}
@@ -953,9 +1096,9 @@ export function AgentHub({
                               : ''}
                           </small>
                         </span>
-                        {sessions && (
+                        {project.sessionCount > 0 && (
                           <span className="agent-project-count">
-                            {sessions.length}{nextCursor ? '+' : ''}
+                            {numberFormatter.format(project.sessionCount)}
                           </span>
                         )}
                       </button>
@@ -981,6 +1124,12 @@ export function AgentHub({
                         )}
                       >
                         <MenuItem
+                          icon={History}
+                          onSelect={() => openProjectHistory(project)}
+                        >
+                          {t('agentHub.projects.sessionHistory')}
+                        </MenuItem>
+                        <MenuItem
                           icon={Pin}
                           onSelect={() => void saveProject(project, { pinned: !project.pinned })}
                         >
@@ -1005,82 +1154,6 @@ export function AgentHub({
                         </MenuItem>
                       </Menu>
                     </div>
-                    {expanded && (
-                      <ol className="agent-history-list">
-                        {!sessions && sessionsLoading && (
-                          <li className="agent-project-note">
-                            {t('agentHub.projects.sessionsLoading')}
-                          </li>
-                        )}
-                        {sessionsFailed && (
-                          <li className="agent-project-error">
-                            <span>{t('agentHub.projects.sessionsFailed')}</span>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setProjectSessions((previous) => {
-                                  const next = { ...previous };
-                                  delete next[project.projectId];
-                                  return next;
-                                });
-                                void loadInitialProjectSessions(project.projectId);
-                              }}
-                            >
-                              {t('common.retry')}
-                            </Button>
-                          </li>
-                        )}
-                        {!sessionsFailed && sessions?.length === 0 && (
-                          <li className="agent-project-note">
-                            {t('agentHub.projects.sessionsEmpty')}
-                          </li>
-                        )}
-                        {sessions?.map((session) => (
-                          <li key={session.historyId} className="agent-history-item">
-                            <button
-                              type="button"
-                              className="agent-history-row"
-                              data-provider={session.provider}
-                              title={session.title}
-                              onClick={() => onOpenHistorySession?.(session, project)}
-                            >
-                              <span className="agent-provider-badge">
-                                {PROVIDER_LABEL[session.provider]}
-                              </span>
-                              <strong>{session.title}</strong>
-                              <small>{ageLabel(session.updatedAt, now, relativeTime)}</small>
-                              {session.preview && <p>{session.preview}</p>}
-                            </button>
-                            {onOpenHistoryReview && (
-                              <button
-                                type="button"
-                                className="agent-history-review"
-                                aria-label={`Review changes from ${session.title}`}
-                                title={t('agentHub.viewDiff')}
-                                onClick={() => onOpenHistoryReview(session, project)}
-                              >
-                                <GitCompareArrows aria-hidden="true" size={15} />
-                              </button>
-                            )}
-                          </li>
-                        ))}
-                        {nextCursor && (
-                          <li>
-                            <button
-                              type="button"
-                              className="agent-history-more"
-                              disabled={sessionsLoading}
-                              onClick={() => void loadMoreSessions(project.projectId)}
-                            >
-                              {sessionsLoading
-                                ? t('agentHub.projects.sessionsLoading')
-                                : t('agentHub.projects.moreSessions')}
-                            </button>
-                          </li>
-                        )}
-                      </ol>
-                    )}
                   </li>
                 );
               })}
@@ -1104,8 +1177,10 @@ export function AgentHub({
           )}
           {renderGroup('active', t('agentHub.groups.active'), groups.active)}
           {renderGroup('recent', t('agentHub.groups.recent'), groups.recent)}
+          </>
+        )}
       </div>
-      {(onLaunchAgent || onOpenAgentSettings) && (
+      {!drillProject && !historyProject && (onLaunchAgent || onOpenAgentSettings) && (
         <footer className="agent-hub-footer">
           {onLaunchAgent && (
             <Button

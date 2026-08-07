@@ -1,5 +1,5 @@
 /**
- * Command registry + dispatch (architecture §5).
+ * Command registry + dispatch (`docs/design/terminal-runtime.md`).
  *
  * The registry resolves a command name to its declarative definition + handler.
  * Definitions are plain typed data; argument validation against them happens at

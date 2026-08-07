@@ -1,6 +1,6 @@
 /**
  * Block runner — drives one block's PipelineData under the credit/window
- * protocol (architecture §3). Extracted from the Electron seam so it is testable
+ * protocol (`docs/design/terminal-runtime.md`). Extracted from the Electron seam so it is testable
  * with a plain `emit` function (no MessagePortMain required).
  *
  * Responsibilities:

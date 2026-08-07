@@ -1,9 +1,8 @@
 /**
  * Layout persistence schema (Track A ③, A-M1) — the app's first persistence layer.
  *
- * Versioned Zod envelope around dockview's SerializedDockview. Design + Codex gate:
- * `docs/design/layout-persistence-design.md`,
- * `docs/research/2026-07-02-codex-track-a-presets-review.md`.
+ * Versioned Zod envelope around dockview's SerializedDockview. Current contract:
+ * `docs/design/workbench-lifecycle.md`.
  *
  * Strictness policy (gate B5), by security weight:
  *  - Terminal/OpenClaw `params` are STRICT empty objects: ANY key (a persisted
@@ -56,6 +55,13 @@ const PanelBaseSchema = z.object({
   maximumHeight: z.number().optional(),
 });
 
+const ProjectEditorParamsSchema = z.strictObject({
+  projectId: z.string().min(1).max(128),
+  rootId: z.string().min(1).max(128),
+  workspaceId: z.string().min(1).max(128),
+  relativePath: z.string().min(1).max(4096),
+});
+
 const PanelSchema = z.discriminatedUnion('contentComponent', [
   PanelBaseSchema.extend({
     contentComponent: z.literal('terminal'),
@@ -75,30 +81,13 @@ const PanelSchema = z.discriminatedUnion('contentComponent', [
       provider: z.enum(['codex', 'claude']).optional(),
       projectId: z.string().min(1).max(128).optional(),
       rootId: z.string().min(1).max(128).optional(),
+      workspaceId: z.string().min(1).max(128).optional(),
     }),
   }),
   PanelBaseSchema.extend({
-    contentComponent: z.literal('code-file'),
+    contentComponent: z.literal('project-editor'),
     renderer: z.literal('onlyWhenVisible').optional(),
-    params: z.strictObject({
-      projectId: z.string().min(1).max(128),
-      rootId: z.string().min(1).max(128),
-      relativePath: z.string().min(1).max(4096),
-    }),
-  }),
-  PanelBaseSchema.extend({
-    contentComponent: z.literal('code-diff'),
-    renderer: z.literal('onlyWhenVisible').optional(),
-    params: z.strictObject({
-      projectId: z.string().min(1).max(128),
-      rootId: z.string().min(1).max(128),
-      repositoryRelativePath: z.string().min(1).max(4096).optional(),
-      repositoryName: z.string().min(1).max(512).optional(),
-      scope: z.enum(['last-turn', 'working-tree', 'staged', 'branch']),
-      historyId: z.string().min(1).max(128).optional(),
-      reviewTurnId: z.string().min(1).max(128).optional(),
-      baseRef: z.string().min(1).max(200).optional(),
-    }),
+    params: ProjectEditorParamsSchema,
   }),
 ]);
 
@@ -307,6 +296,30 @@ export const PresetsFileSchema = z.object({
 });
 export type PresetsFile = z.infer<typeof PresetsFileSchema>;
 
+function pruneTransientPanels(node: unknown, removed: ReadonlySet<string>): unknown | null {
+  if (typeof node !== 'object' || node === null) return node;
+  const candidate = node as Record<string, unknown>;
+  if (candidate.type === 'branch' && Array.isArray(candidate.data)) {
+    const children = candidate.data
+      .map((child) => pruneTransientPanels(child, removed))
+      .filter((child) => child !== null);
+    candidate.data = children;
+    return children.length > 0 ? candidate : null;
+  }
+  if (candidate.type !== 'leaf' || typeof candidate.data !== 'object' || candidate.data === null) {
+    return candidate;
+  }
+  const data = candidate.data as Record<string, unknown>;
+  if (!Array.isArray(data.views)) return candidate;
+  const views = data.views.filter((id) => typeof id !== 'string' || !removed.has(id));
+  data.views = views;
+  if (views.length === 0) return null;
+  if (typeof data.activeView !== 'string' || removed.has(data.activeView)) {
+    data.activeView = views[0];
+  }
+  return candidate;
+}
+
 /**
  * Normalize a raw SerializedDockview-shaped value BEFORE validation (save & load
  * share this): drop unsupported feature buckets (B4) and force renderer:'always'.
@@ -333,33 +346,100 @@ export function sanitizeSerializedLayout(raw: unknown): unknown {
     });
   }
   if (typeof layout.panels === 'object' && layout.panels !== null) {
-    for (const panel of Object.values(layout.panels as Record<string, unknown>)) {
+    const panels = layout.panels as Record<string, unknown>;
+    const transient = new Set<string>();
+    for (const [panelId, panel] of Object.entries(panels)) {
       if (typeof panel === 'object' && panel !== null) {
         const record = panel as Record<string, unknown>;
-        const codePanel = record.contentComponent === 'code-file'
-          || record.contentComponent === 'code-diff';
-        record.renderer = codePanel ? 'onlyWhenVisible' : 'always';
-        // A live provider activity is not durable. Restoring it as the working
-        // tree keeps the review useful without claiming stale attribution.
-        if (
-          record.contentComponent === 'code-diff'
+        if (record.contentComponent === 'code-file'
           && typeof record.params === 'object'
-          && record.params !== null
-          && (record.params as Record<string, unknown>).scope === 'last-turn'
-        ) {
+          && record.params !== null) {
           const params = record.params as Record<string, unknown>;
-          params.scope = 'working-tree';
-          delete params.historyId;
-          delete params.reviewTurnId;
-        } else if (
-          record.contentComponent === 'code-diff'
+          record.contentComponent = 'project-editor';
+          record.params = {
+            projectId: params.projectId,
+            rootId: params.rootId,
+            workspaceId: params.workspaceId ?? params.rootId,
+            relativePath: params.relativePath,
+          };
+        } else if (record.contentComponent === 'code-diff'
           && typeof record.params === 'object'
-          && record.params !== null
-          && (record.params as Record<string, unknown>).scope !== 'last-turn'
-        ) {
-          delete (record.params as Record<string, unknown>).historyId;
-          delete (record.params as Record<string, unknown>).reviewTurnId;
+          && record.params !== null) {
+          const params = record.params as Record<string, unknown>;
+          record.contentComponent = 'project-editor';
+          if (typeof params.relativePath !== 'string' || params.relativePath.length === 0) {
+            // The legacy review root was a destination rather than a file. It
+            // has no honest path identity, so do not resurrect it as a second
+            // kind of editor after the file-centric migration.
+            transient.add(panelId);
+          } else {
+            const repositoryRelativePath = typeof params.repositoryRelativePath === 'string'
+              ? params.repositoryRelativePath.replace(/\\/gu, '/').replace(/^\/+|\/+$/gu, '')
+              : '';
+            const relativePath = params.relativePath.replace(/\\/gu, '/').replace(/^\/+|\/+$/gu, '');
+            record.params = {
+              projectId: params.projectId,
+              rootId: params.rootId,
+              workspaceId: params.workspaceId ?? params.rootId,
+              relativePath: repositoryRelativePath
+                ? `${repositoryRelativePath}/${relativePath}`
+                : relativePath,
+            };
+          }
         }
+        if (record.contentComponent === 'project-editor'
+          && typeof record.params === 'object'
+          && record.params !== null) {
+          const params = record.params as Record<string, unknown>;
+          if (params.preview === true) transient.add(panelId);
+          if (typeof params.relativePath === 'string' && params.relativePath.length > 0) {
+            const legacyRepositoryPath = params.mode === 'review'
+              && typeof params.repositoryRelativePath === 'string'
+              ? params.repositoryRelativePath.replace(/\\/gu, '/').replace(/^\/+|\/+$/gu, '')
+              : '';
+            const relativePath = params.relativePath.replace(/\\/gu, '/').replace(/^\/+|\/+$/gu, '');
+            // Comparison source, revision and presentation mode are transient.
+            // Persist only the real file that owns the tab.
+            record.params = {
+              projectId: params.projectId,
+              rootId: params.rootId,
+              workspaceId: params.workspaceId ?? params.rootId,
+              relativePath: legacyRepositoryPath
+                ? `${legacyRepositoryPath}/${relativePath}`
+                : relativePath,
+            };
+          } else if (params.mode === 'review') {
+            transient.add(panelId);
+          }
+        }
+        record.renderer = record.contentComponent === 'project-editor' ? 'onlyWhenVisible' : 'always';
+      }
+    }
+    for (const panelId of transient) delete panels[panelId];
+    if (transient.size > 0
+      && typeof layout.grid === 'object'
+      && layout.grid !== null) {
+      const grid = layout.grid as Record<string, unknown>;
+      grid.root = pruneTransientPanels(grid.root, transient);
+      if (Array.isArray(layout.popoutGroups)) {
+        layout.popoutGroups = layout.popoutGroups.filter((candidate) => {
+          if (typeof candidate !== 'object' || candidate === null) return true;
+          const popout = candidate as Record<string, unknown>;
+          if (typeof popout.data === 'object' && popout.data !== null) {
+            const data = popout.data as Record<string, unknown>;
+            if (Array.isArray(data.views)) {
+              const views = data.views.filter((id) => typeof id !== 'string' || !transient.has(id));
+              data.views = views;
+              return views.length > 0;
+            }
+          }
+          if (typeof popout.grid === 'object' && popout.grid !== null) {
+            const popoutGrid = popout.grid as Record<string, unknown>;
+            popoutGrid.root = pruneTransientPanels(popoutGrid.root, transient);
+            return popoutGrid.root !== null;
+          }
+          return true;
+        });
       }
     }
   }

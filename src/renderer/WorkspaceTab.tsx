@@ -214,9 +214,10 @@ export function WorkspaceTab({
   return (
     <div
       ref={rootRef}
-      className={props.api.component === 'agent-session'
-        ? 'agent-aware-tab agent-aware-tab--history'
-        : 'agent-aware-tab'}
+      className={[
+        'agent-aware-tab',
+        props.api.component === 'agent-session' ? 'agent-aware-tab--history' : '',
+      ].filter(Boolean).join(' ')}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -285,7 +286,6 @@ export function WorkspaceTab({
           />
         )
       )}
-
       {menu && (
         <TerminalContextMenu
           x={menu.x}

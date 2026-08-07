@@ -1,7 +1,7 @@
 # Stage E4 — JS 스크립팅 (Design, E4)
 
 > Status: **GATED — Codex REVISE(4 blockers) folded (2026-07-02). Ready for build.**
-> Gate record: `docs/research/2026-07-02-codex-scripting-review.md`
+> Gate record: `docs/archive/research/2026-07-02-codex-scripting-review.md`
 > Date: 2026-07-02 · Baseline: 2767afe (vitest 228 · e2e 35 · packaged 5)
 > Vision fit: 새 언어 발명 금지(ROADMAP) → **JS 임베드(zx/bun 계열)**. 구조화 셸 위에서
 > 스크립트가 파이프라인을 실행하고 rows를 JS로 가공해 다시 표로 내놓는 것이 차별점.

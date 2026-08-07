@@ -15,10 +15,8 @@ import { getFocusableElements } from '../ui/utils';
 import { ACTIVITY_RAIL_ID } from './ActivityRail';
 import type { SidebarDestination } from './types';
 
-const OVERLAY_MEDIA_QUERY = '(max-width: 1199px)';
-
-function clampWidth(width: number): number {
-  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, Math.round(width)));
+function clampWidth(width: number, maximum = MAX_SIDEBAR_WIDTH): number {
+  return Math.min(maximum, Math.max(MIN_SIDEBAR_WIDTH, Math.round(width)));
 }
 
 function hasNestedModal(sidebar: Element | null): boolean {
@@ -26,18 +24,19 @@ function hasNestedModal(sidebar: Element | null): boolean {
     .some((element) => element !== sidebar);
 }
 
-function useOverlaySidebar(): boolean {
+function useOverlaySidebar(overlayBelow: number): boolean {
+  const query = `(max-width: ${String(Math.max(1, Math.round(overlayBelow)) - 1)}px)`;
   const [matches, setMatches] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia(OVERLAY_MEDIA_QUERY).matches,
+    () => typeof window !== 'undefined' && window.matchMedia(query).matches,
   );
 
   useEffect(() => {
-    const media = window.matchMedia(OVERLAY_MEDIA_QUERY);
+    const media = window.matchMedia(query);
     const update = (event: MediaQueryListEvent): void => setMatches(event.matches);
     setMatches(media.matches);
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
-  }, []);
+  }, [query]);
 
   return matches;
 }
@@ -74,6 +73,7 @@ export function SidebarShell({
   description,
   onClose,
   onWidthChange,
+  overlayBelow = 1200,
   title,
   width,
 }: {
@@ -82,16 +82,18 @@ export function SidebarShell({
   readonly description?: ReactNode;
   readonly onClose: () => void;
   readonly onWidthChange: (width: number) => void;
+  readonly overlayBelow?: number;
   readonly title: ReactNode;
   readonly width: number;
 }): JSX.Element {
   const { t } = useAppTranslation();
-  const overlay = useOverlaySidebar();
-  const [previewWidth, setPreviewWidth] = useState(() => clampWidth(width));
+  const overlay = useOverlaySidebar(overlayBelow);
+  const maximumWidth = overlayBelow === 1024 ? 400 : MAX_SIDEBAR_WIDTH;
+  const [previewWidth, setPreviewWidth] = useState(() => clampWidth(width, maximumWidth));
   const layerRef = useRef<HTMLDivElement>(null);
   const invokerRef = useRef<HTMLElement | null>(null);
 
-  useEffect(() => setPreviewWidth(clampWidth(width)), [width]);
+  useEffect(() => setPreviewWidth(clampWidth(width, maximumWidth)), [maximumWidth, width]);
 
   // Capture after React has removed the previous overlay. In particular,
   // QuickOpenModal's layout cleanup restores its stable header trigger before
@@ -182,7 +184,7 @@ export function SidebarShell({
     const startWidth = previewWidth;
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
-    const onMove = (move: PointerEvent): void => setPreviewWidth(clampWidth(startWidth + move.clientX - startX));
+    const onMove = (move: PointerEvent): void => setPreviewWidth(clampWidth(startWidth + move.clientX - startX, maximumWidth));
     const onEnd = (): void => {
       target.removeEventListener('pointermove', onMove);
       target.removeEventListener('pointerup', onEnd);
@@ -200,7 +202,7 @@ export function SidebarShell({
   const resizeByKeyboard = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    const next = clampWidth(previewWidth + (event.key === 'ArrowRight' ? 8 : -8));
+    const next = clampWidth(previewWidth + (event.key === 'ArrowRight' ? 8 : -8), maximumWidth);
     setPreviewWidth(next);
     onWidthChange(next);
   };
@@ -210,6 +212,8 @@ export function SidebarShell({
       ref={layerRef}
       className="workbench-sidebar-layer"
       data-overlay={overlay || undefined}
+      data-overlay-below={overlayBelow}
+      data-project-mode={overlayBelow === 1024 || undefined}
     >
       <button
         className="workbench-sidebar-scrim"
@@ -225,6 +229,7 @@ export function SidebarShell({
         as="aside"
         className="workbench-sidebar"
         data-destination={destination}
+        data-project-mode={overlayBelow === 1024 || undefined}
         style={{ width: previewWidth }}
         role={overlay ? 'dialog' : undefined}
         aria-modal={overlay || undefined}
@@ -243,7 +248,7 @@ export function SidebarShell({
           aria-label={t('workbench.resizeSidebar')}
           aria-orientation="vertical"
           aria-valuemin={MIN_SIDEBAR_WIDTH}
-          aria-valuemax={MAX_SIDEBAR_WIDTH}
+          aria-valuemax={maximumWidth}
           aria-valuenow={previewWidth}
           data-testid="sidebar-resizer"
           tabIndex={0}

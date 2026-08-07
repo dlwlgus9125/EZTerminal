@@ -1,6 +1,6 @@
 # Codex Gate — Track A ③ Layout Presets & Persistence (A-M0)
 
-> Date: 2026-07-02 · Input: `docs/design/layout-persistence-design.md` (pre-gate draft, commit 8538c47)
+> Date: 2026-07-02 · Input: `docs/archive/design/layout-persistence-design.md` (pre-gate draft, commit 8538c47)
 > Runner: codex-companion task, read-only adversarial review
 > **Verdict: REVISE — 6 blockers.** Direction viable; design overclaimed dockview rollback
 > safety and left restore/save/quarantine races unresolved. All blockers folded back into

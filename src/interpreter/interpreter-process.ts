@@ -1,12 +1,12 @@
 /**
  * Interpreter utilityProcess entry (T1 seam + T2–T4 core + T5 credit/window).
  *
- * Owns the ExecutionSession lifecycle (architecture §2):
+ * Owns the ExecutionSession lifecycle (`docs/design/terminal-runtime.md`):
  *   - Receives a 'run' message + MessagePortMain from main (the broker).
  *   - parse(commandText) -> evaluate(ast, {cwd/env snapshot, signal}) -> hand the
  *     resulting PipelineData to {@link runBlock}, which emits framed `schema` +
  *     running `progress` + `chunk` windows back over the dedicated port under the
- *     credit/backpressure protocol (architecture §3). Bulk rows never flood the
+ *     credit/backpressure protocol. Bulk rows never flood the
  *     renderer — only requested windows cross the IPC boundary.
  *   - Cancellation via an AbortController (`cancel` control).
  *   - The port stays OPEN after the terminal frame so the renderer can keep paging
@@ -106,7 +106,7 @@ interface AttachPortState {
  * Owns a single command execution: output framing, the block's ResultStore (via
  * runBlock), and cancellation. One instance per `run` message. cwd/env/variables
  * live on the durable {@link ShellSession} it is constructed over, so state set by
- * one run is visible to the next (architecture §2).
+ * one run is visible to the next (`docs/design/terminal-runtime.md`).
  *
  * Implements {@link Execution}: the SessionRegistry can {@link abort} + {@link dispose}
  * it when its session is destroyed (Codex B2). `onSettled` fires on the terminal

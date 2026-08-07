@@ -4,7 +4,7 @@
  * Node process serving BOTH the HTTP liveness/Control-UI probe and the WS RPC
  * surface `OpenClawService` talks to (openclaw-service.ts) — reproducing the
  * real anti-embed headers + RPC handshake verified live in M0
- * (docs/research/2026-07-12-openclaw-stage0.md ②③④).
+ * (`docs/design/external-integrations.md`).
  *
  * Simplification: the real gateway's port simply stops listening when
  * stopped; this fixture always listens (so the fake CLI's `gateway start`

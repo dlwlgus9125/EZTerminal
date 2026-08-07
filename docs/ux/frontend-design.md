@@ -1,233 +1,137 @@
-# EZTerminal Adaptive Workbench UI/UX Specification
+# EZTerminal 적응형 Workbench UI/UX 계약
 
-## 1. Normative status
+> 문서 상태: **활성 규범 계약**
+>
+> 이 문서는 현재 Electron desktop과 Android client의 제품 UI 계약이다. 화면 구현,
+> Storybook, 접근성 검사와 시각 스냅샷은 이 계약에 동의해야 한다. 코드와 문서가
+> 어긋나면 회귀인지 의도된 변경인지 먼저 결정하며, 코드를 이유로 문서를 자동
+> 수정하지 않는다.
 
-This document is the source of truth for the commercial-readiness UI/UX
-redesign of the EZTerminal Electron desktop client and connected Android web
-client. Product UI implementation, stories, tests, and screenshots must agree
-with it. When code and this document disagree, update this document through an
-explicit product decision before changing the implementation contract.
+## 1. 범위와 우선순위
 
-The delivery is one complete release. Internal implementation may be staged,
-but partially migrated navigation, duplicate destinations, or mixed component
-systems are not a shippable state.
+이 문서는 정보 구조, navigation, layout, visual language, responsive behavior,
+접근성, localization과 UI 상태를 소유한다. 셸 실행, IPC, pairing, 원격 protocol,
+process lifecycle은 [`architecture.md`](../architecture.md)와 `docs/design/` 계약이
+소유한다.
 
-In scope:
+결정 우선순위는 다음과 같다.
 
-- Desktop and Android information architecture, navigation, panels, layout,
-  responsive behavior, visual language, accessibility, and localization.
-- A shared semantic design system and platform-specific application shells.
-- Backward-compatible desktop settings and custom-theme evolution.
-- Storybook, accessibility checks, deterministic visual regression, and CI
-  quality gates.
+1. Desktop은 terminal-first authoring surface이고 Android는 remote-control-first
+   companion이다.
+2. 같은 기능에는 하나의 상태 소유자만 두고 여러 효율적인 진입점만 허용한다.
+3. 선택, preview, insertion, drop과 navigation은 명시적 실행을 뜻하지 않는다.
+4. navigation 중 terminal controller, draft, scroll, xterm geometry, reconnect와
+   selection을 보존한다.
+5. Matrix/CRT 정체성보다 가독성, truthful state와 reduced motion을 우선한다.
+6. keyboard, pointer, touch와 assistive technology가 같은 작업을 끝낼 수 있어야 한다.
+7. 한국어와 영어를 동등한 제품 언어로 취급한다.
 
-Out of scope:
+## 2. 시각 방향과 소스 권한
 
-- Backend, terminal protocol, pairing/security, command semantics, and process
-  lifecycle changes.
-- A product tour, analytics/telemetry, Figma deliverables, raster illustrations,
-  generated imagery, remote fonts, or new vendor branding.
+선택된 방향은 **prototype-led, production-safe adaptive workbench**다. 고정 prototype의
+geometry, hierarchy, density와 visual rhythm을 따르되 실제 서비스 상태, 보안 계약과
+지원 viewport를 거짓으로 만들지 않는다.
 
-## 2. Product, audience, and experience principles
+추출된 reference와 story mapping은
+`docs/ux/reference/desktop-handoff/manifest.json`이 고정한다. Package 2 prototype은
+visual intent, handoff README는 구현·QA 수용 기준, 이 문서는 responsive·접근성·상태
+계약을 소유한다. terminal semantics, 보안, 데이터 무결성과 실제 runtime 상태가
+항상 prototype의 예시 값보다 우선한다.
 
-EZTerminal is an operational workbench for developers running long-lived
-shells, structured commands, SSH sessions, coding agents, and remote desktop
-control. The desktop remains the terminal-first authoring surface. The Android
-client is a remote-control-first companion: it opens on a lightweight control
-hub while preserving the terminal runtime behind every full-screen
-destination.
+세 줄 signal mark, 전체 `EZTerminal` wordmark와 green phosphor/scanline이 Matrix
+identity의 핵심이다. 원본 raster는 reference일 뿐 제품 asset으로 삽입하지 않는다.
+제품 icon은 Lucide를 사용하고 provider logo나 remote font를 추가하지 않는다.
 
-Every UI decision follows these principles, in order:
+## 3. Desktop application shell
 
-1. **The platform's primary job remains primary.** Desktop chrome protects the
-   terminal canvas. Android gives PC control the shortest explicit path without
-   auto-starting capture or input.
-2. **One destination, several efficient entry points.** Navigation may expose a
-   destination in the rail and Command Center, but must not create duplicate
-   implementations or conflicting state.
-3. **Explicit action over surprise.** Selection, preview, insertion, drop, and
-   navigation never imply command execution.
-4. **State survives navigation.** Terminal controllers, drafts, scroll position,
-   xterm geometry, reconnect state, and selection are durable across auxiliary
-   UI transitions.
-5. **Matrix identity with professional restraint.** CRT character belongs in
-   the visual surface; legibility and reduced-motion preferences take priority.
-6. **Keyboard, pointer, touch, and assistive technology are first-class.** A
-   flow is incomplete if one input mode cannot finish it.
-7. **Korean and English are equal product languages.** Layouts tolerate both,
-   and system language selection is deterministic.
+### 3.1 Layout anatomy
 
-## 3. Direction decision
+1200px 이상에서는 header, activity rail, 하나의 `SidebarShell`, Dockview workspace와
+status/feedback 영역을 사용한다. Sidebar는 280–440px, 기본 320px이며 resize 결과를
+저장한다. 1200px 미만에서는 terminal 위의 단일 overlay와 scrim으로 바뀐다.
 
-Three product directions were evaluated:
+지원 desktop viewport는 800×600, 1024×720, 1200×800, 1440×900과 1920 reference다.
+100%와 150% UI scale 모두에서 document-level horizontal scroll, terminal overlap과
+접근 불가능한 primary action이 없어야 한다.
 
-1. **Adaptive Workbench — selected.** A compact four-zone desktop header, a
-   stable activity rail, one responsive sidebar shell, and a persistent mobile
-   terminal layer create clear hierarchy without stealing terminal area.
-2. **Permanent multi-column dashboard — rejected.** It exposes more at once but
-   reduces terminal width and makes secondary telemetry feel primary.
-3. **Overlay-first minimal shell — rejected.** It maximizes canvas area but hides
-   destinations, weakens spatial memory, and makes repeated workflows slower.
+### 3.2 Header: exactly four zones
 
-The selected direction combines stable spatial navigation at wide widths with
-a single modal-style sidebar at narrow widths. It deliberately removes the
-current collection of unrelated header buttons and exclusive one-off drawers.
+Header는 제품 기능 기준으로 정확히 네 zone을 가진다.
 
-### 3.1 Brand and CRT restoration decision
+1. **New Terminal** — signal mark와 전체 wordmark, terminal 생성 action
+2. **Command Center** — 실제 shortcut을 표시하는 넓은 anchor field
+3. **Workspace** — Split, Layout과 Presets
+4. **Agent Attention** — attention count와 focus/open action
 
-The user-supplied `타이틀.PNG` is a visual reference for identity, not a raster
-asset shipped in the application. It establishes three required cues: the
-three-bar signal mark, the full `EZTerminal` name, and a green phosphor/scanline
-surface. The implementation remains code-native so text stays selectable,
-sharp at 100–150% scale, accessible, and responsive. The reference is
-user-owned, may be cropped to the title area, and remains current until the user
-supplies a replacement.
+`FX·NEON n`은 zone 4의 compact appearance utility이며 다섯 번째 navigation zone이
+아니다. `n`은 0–10, 기본 7이고 동일한 Appearance setting을 연다. Theme, Files,
+Stats, Pairing, Settings와 OpenClaw를 독립 header button으로 되돌리지 않는다.
 
-Three restoration directions were evaluated:
+Header는 60px, activity rail은 62px이며 rail action은 44px target을 유지한다. Pane
+card는 12px radius와 인접 pane이 합쳐 만드는 14px gutter를 사용한다.
 
-1. **Full legacy CRT restoration** — restores every animated legacy effect and
-   separate EFFECT/CRT hardware-style switches. This has the strongest nostalgia
-   but adds header clutter and makes flicker/jitter accessibility harder.
-2. **Signal Wordmark + CRT Signature — selected.** Restores the signal mark and
-   full wordmark, then exposes one compact `FX · <profile>` appearance control
-   backed by the existing effect engine and Settings controls.
-3. **Wordmark-only restoration** — restores only the title treatment. This is
-   clean but does not satisfy the requested EFFECT/CRT identity.
+### 3.3 Activity Rail
 
-The user delegated the detailed visual refinement after explicitly requesting
-that the title, EFFECT character, and CRT character be restored. Direction 2 is
-therefore the implementation decision: it preserves the approved workbench
-hierarchy while restoring a recognizable product signature.
+위에서 아래 순서는 고정한다.
 
-### 3.2 Codex terminal safety direction
+1. Agents
+2. Monitor
+3. Remote
+4. Explorer
+5. OpenClaw — integration이 사용 가능할 때만
 
-Three ways of exposing Codex-specific keyboard safety were evaluated:
+Settings는 아래에 고정한다. 각 action은 Lucide icon, tooltip, localized accessible
+name과 color 외의 selected state를 제공한다. 기능별 별도 drawer나 두 번째 rail을
+만들지 않는다.
 
-1. **Minimal safety UI — selected by the user.** Keep the terminal visually
-   unchanged, show one brief notice the first time a Codex run blocks `Ctrl+C`,
-   and show a dialog only for risky text paste.
-2. **Persistent safety badge — rejected.** A pane-level badge would improve
-   discoverability but consume terminal space throughout every Codex run.
-3. **User-defined Codex keymap — rejected for this release.** Full remapping
-   would be flexible but substantially expand settings, validation, and support
-   burden beyond the requested safe Windows-terminal behavior.
+### 3.4 Sidebar destinations
 
-The policy applies only to directly launched Codex commands. With no terminal
-selection, `Ctrl+C` and `Ctrl+D` are consumed; `Escape` continues to the Codex
-TUI; `/exit`, `/quit`, and the explicit force-stop action remain the exit paths.
-With a selection, `Ctrl+C` and `Ctrl+Insert` copy only that terminal surface.
-Generic PTYs retain their control-byte behavior.
+- Explorer는 file navigation, breadcrumb와 preview 진입점을 소유한다.
+- Agents는 Attention, Projects, Active, Recent 순서와 follow-up/launch/history를
+  소유한다.
+- Monitor는 system stats와 packet/traffic을 합친다. producer는 실제로 visible할 때만
+  poll/capture한다.
+- Remote는 pairing, remote access, device roster, PC Control 상태와 SSH forwarding을
+  합친다.
+- OpenClaw는 lifecycle/config/session/log navigation을 제공하고 chat은 Dockview panel의
+  실제 `WebContentsView` 구현을 사용한다.
+- Settings는 3.6의 category를 같은 shell에서 연다.
 
-Clipboard paste is format-aware. Text uses the terminal's paste adapter;
-image-bearing `Ctrl+V` in Codex is handed to Codex so it owns image attachment
-and temporary-file cleanup. `Ctrl+Shift+V` and `Shift+Insert` explicitly request
-text when both formats exist. Multiline and text larger than 5 KiB use one
-small `alertdialog` that reports line count and size without displaying or
-logging clipboard contents. Cancel receives initial focus, Escape cancels, and
-closing restores the invoking terminal focus. The two warnings are independent
-Terminal & Safety settings and default on.
+각 destination은 loading, empty/unavailable, error/offline과 success 상태를 정의한다.
+Overlay를 닫으면 rail item 또는 Command Center result로 focus를 돌린다.
 
-This addition uses the repository-owned `Dialog`, `Toast`, `Button`, and
-`Switch` primitives and existing semantic tokens. It adds no route, breakpoint,
-asset, font, color role, or mobile interaction. Storybook owns dialog states;
-desktop Playwright owns keyboard, focus, clipboard, and screenshot coverage.
+### 3.5 Workspace와 composer
 
-## 4. Desktop application shell
+Workspace pane, tab, draft, PTY와 hidden panel은 layout 전환 중 살아 있어야 한다.
+1+2, 2×1과 single preset은 active/MRU pane을 기준으로 한 non-destructive Dockview
+transaction이며 overflow pane을 tab으로 유지한다.
 
-### 4.1 Layout anatomy
+Active pane composer는 48px 높이, 최대 820px이고 작은 폭에서는 document overflow
+없이 줄어든다. terminal-specific keyboard, paste와 close safety를 app chrome shortcut이
+가로채지 않는다.
 
-At widths of 1200px and above:
+### 3.6 Settings information architecture
 
-```text
-┌──────────────────────────────────────────────────────────────────────────┐
-│ New Terminal │ Command Center │ Workspace ▾              │ Attention 3 │
-├────┬──────────────────┬──────────────────────────────────────────────────┤
-│Rail│ SidebarShell     │ Terminal workspace / Dockview                   │
-│    │ 280–440px        │                                                  │
-│    │ default 320px    │                                                  │
-│    │ resizable        │                                                  │
-├────┴──────────────────┴──────────────────────────────────────────────────┤
-│ Existing terminal/composer-owned status and feedback                    │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+Settings category는 다음 여섯 개다.
 
-Below 1200px, `SidebarShell` becomes one overlay over the terminal workspace
-with a scrim. Only one sidebar destination may be open. Escape and scrim click
-close it and restore focus to its invoker. The activity rail remains the stable
-entry point where space permits; at the smallest supported desktop width it may
-collapse to icon-only controls but must not become a second drawer.
+1. General
+2. Appearance
+3. Terminal & Safety
+4. Agents
+5. Integrations
+6. About & Diagnostics
 
-The supported desktop viewports are 800×600, 1024×720, 1200×800, and 1440×900.
-No viewport may develop document-level horizontal scrolling.
-
-### 4.2 Header: exactly four zones
-
-The desktop header contains exactly these four product zones:
-
-1. **New Terminal** — the primary creation action. A split-button may expose
-   safe creation variants without adding adjacent header controls.
-2. **Command Center** — opens the unified command/search surface for files,
-   panes, saved Quick Commands, layouts, presets, settings, and destinations.
-   The zone presents itself as a wide search field carrying the real keyboard
-   accelerator. The field is an anchor, not an input: it owns no query state and
-   hands every interaction to the one Command Center implementation.
-3. **Workspace menu** — owns Split, Layout, and Presets.
-4. **Agent Attention** — opens/focuses attention work and includes the unread
-   count in an accessible text label.
-
-Zone 1 includes the `BrandMark` (three-bar signal plus the visible full
-`EZTerminal` name) beside New Terminal, and may carry the build version as a
-compact non-interactive chip. One compact `FX · <profile>` appearance utility
-lives in zone 4 beside Agent Attention, so zone 2 can hold the full width of the
-search field. It is a presentation control, not a fifth navigation zone;
-individual effect switches and parameters remain in Settings.
-
-Theme, Files, Stats, Pairing, Settings, OpenClaw, runtime versions, and the
-session connection dot do not appear as separate header actions. Runtime and
-connection diagnostics belong in their relevant panel or transient status
-feedback, not in global navigation.
-
-### 4.3 Activity Rail
-
-Top-to-bottom order is fixed:
-
-1. Explorer
-2. Agents
-3. Monitor
-4. Remote
-5. OpenClaw, only when the integration is available
-
-Settings is pinned at the bottom. Each control has a Lucide icon, tooltip, and
-localized accessible name. Selection is conveyed by shape/border and text or
-accessible state, never color alone.
-
-The rail controls one `SidebarShell`; individual features must not create
-parallel left drawers, right rails, or mutually exclusive bespoke containers.
-
-### 4.4 Sidebar destinations
-
-- **Explorer** contains the existing file navigation and preview entry points.
-- **Agents** contains grouped agent attention, active work, recent activity,
-  follow-up entry, focus/open, and integration guidance.
-- **Monitor** combines the old Stats and Packet/traffic surfaces. Expensive
-  stats polling starts only while Monitor is selected and visible, and stops
-  when it is hidden.
-- **Remote** combines pairing/remote-access state and SSH tunnel management.
-- **OpenClaw** contains integration navigation. On wide layouts, its native
-  `WebContentsView` participates in reflow and must not set the application
-  `chatOverlayOpen` occlusion state. Only the narrow overlay form is occluding.
-- **Settings** uses the same shell and the category structure in section 4.6.
-
-Every destination defines loading, empty, error, offline, and success states.
-Closing the shell returns focus to the activity-rail item or Command Center
-result that opened it.
+General은 언어, Appearance는 theme·density·font·CRT, Terminal & Safety는 terminal
+behavior와 paste/clipboard/close 안전 설정을 소유한다. Pairing, OpenClaw와 provider
+설정은 Integrations에 둔다. version과 diagnostic metadata는 About & Diagnostics에
+둔다.
 
 ### 4.5 Command Center and duplicate entry policy
 
-Command Center is the keyboard-first global entry surface. It searches or
-navigates to existing functionality; it does not own duplicate feature state.
+> 이 section 번호는 고정 desktop handoff 계약이 참조하므로 유지한다.
 
-Representative destination ownership:
+Command Center는 keyboard-first global entry surface이며 기존 기능을 검색하거나
+navigation한다. 기능 상태를 복제하지 않는다.
 
 | Capability | Primary home | Additional entry |
 | --- | --- | --- |
@@ -237,1049 +141,460 @@ Representative destination ownership:
 | Quick Commands | Composer shelf | Command Center manager/search |
 | Agents/Monitor/Remote/OpenClaw/Settings | Activity Rail | Command Center navigation |
 
-The current unused `CommandPalette.tsx` is not revived. The final Command
-Center is one maintained implementation with labelled modal semantics,
-keyboard navigation, active result indication, focus trapping, stale-search
-cancellation, and focus restoration.
+하나의 maintained implementation만 사용하며 labelled modal, keyboard navigation,
+active result, focus trap, stale search cancellation과 focus restoration을 제공한다.
+`Ctrl/Cmd+K`는 non-editable app UI에서만 열리고 xterm, composer, input, textarea와
+contenteditable은 원래 key 의미를 유지한다. `Ctrl/Cmd+Shift+P`는 global alias다.
 
-### 4.6 Settings information architecture
+## 5. Android application shell
 
-Settings categories are:
+### 5.1 Navigation
 
-1. General
-2. Appearance
-3. Terminal & Safety
-4. Agents
-5. Integrations
-6. About & Diagnostics
+인증 후 persistent navigation은 Home, Terminal, PC, Agents, More의 다섯 item이다.
+PC는 capture를 자동 시작하는 tab이 아니라 명시적 Start action이다. 600dp부터 같은
+순서의 72px left rail로 바뀌며 Settings를 아래에 둔다.
 
-Appearance owns theme, UI density, terminal font, and CRT effect controls.
-General owns language. Terminal & Safety owns terminal-specific behavior and
-existing safety choices. Pairing, OpenClaw, and provider-specific configuration
-are organized under Integrations instead of receiving independent settings
-drawers. Runtime versions, renderer state, effective-theme correction details,
-and diagnostic metadata live in About & Diagnostics.
+Home은 PC Control availability/start, connection, 최근 세션, 첫 Agent attention과
+조건부 OpenClaw shortcut을 보여 준다. Home 자체는 capture/input이나 live stats를
+시작하지 않는다.
 
-## 5. Mobile application shell
+### 5.2 Persistent terminal layer
 
-### 5.1 Selected direction: bottom tab bar with full-screen destinations
+`MobileWorkbenchCoordinator`는 항상 mounted인 TerminalLayer, 현재 page, navigation과
+sheet/dialog host를 형제로 구성한다. Terminal이 선택되지 않았을 때 layer는 inert하고
+`aria-hidden`이지만 `display:none`이나 unmount를 사용하지 않는다. draft, controller,
+xterm geometry, scroll, selection, output과 reconnect 상태를 유지한다.
 
-Three information-architecture directions were considered for the accumulated
-mobile surface:
+Android Back 순서는 다음과 같다.
 
-1. **Bottom tab bar with full-screen destinations — selected.** Authentication
-   lands on a Home tab. Five persistent items — Home, Terminal, PC, Agents
-   (attention badge), More — carry lateral navigation; anything they cannot
-   hold opens from the More sheet as a focused full-screen destination.
-   Supersedes the earlier hub-only root, which cost a round-trip through Home
-   for every lateral move.
-2. **Persistent remote command dock — rejected.** It provides one-tap lateral
-   switching but permanently consumes scarce terminal and remote-video height.
-3. **Top mode switcher — rejected.** It preserves content height but becomes
-   cramped at 360px, with Korean labels, and at 150% UI scale.
+1. top sheet/dialog
+2. destination 내부 subpage 또는 preview
+3. full-screen destination에서 invoker/tab root로 복귀
+4. root에서 platform delegate
 
-The bar costs ~54dp of height in exchange for a stable hierarchy and one-tap
-lateral movement. PC is an explicit start action rather than a destination, so
-the bar never begins capture. No capability is removed: Terminal, Sessions,
-Agents, Files, Monitor, OpenClaw, Appearance, Settings, Quick Commands,
-terminal accessory keys, and PC Control remain reachable.
+명시적 close는 history layer를 한 번만 소비하고 ghost entry를 남기지 않는다.
 
-From 600dp the bar becomes a 72px left rail carrying the same five items in
-the same order, plus Settings at its foot. Content stays a single centred
-column capped at 520px; a second column is explicitly out of scope.
+### 5.3 Page와 설정
 
-### 5.2 Persistent workbench and tab structure
+일반 destination은 Back, localized title, optional status와 destination action으로 된
+하나의 page-header composition을 사용한다. PC Control만 immersive chrome을 사용한다.
+Terminal header는 Back, session sheet와 New만 유지한다.
 
-After authentication, the DOM structure is composed as siblings:
+Mobile Settings는 General, Appearance, Terminal & Input, Integrations,
+Connection & About의 index/subpage 구조다. 기존 setting key와 theme format을
+변경하지 않는다.
+
+### 5.4 Pairing과 연결 상태
+
+Connection 화면은 manual URL/token과 QR scanner를 제공한다. 자동 network discovery,
+다중 profile 또는 deep link는 제공하지 않는다.
+
+- QR code는 memory-only, single-use이며 5분 후 만료한다.
+- 성공하면 같은 Android secure credential store에 장기 token을 저장하고 code를 즉시
+  폐기한다.
+- camera permission은 scanner를 열 때만 요청하며 frame은 기기에서 decode하고 저장·전송
+  하지 않는다. 모든 exit path에서 stream을 release한다.
+- camera 거부 또는 미지원 기기는 동일한 수동 입력 경로를 사용한다.
+- credential loading, connecting, VPN warning, auth rejection, protocol incompatibility,
+  secure-storage warning과 success는 안정된 geometry와 inline recovery를 유지한다.
+
+### 5.5 Responsive와 safe area
+
+지원 viewport는 360×800, 412×915, 600×960과 915×412다. 모든 touch target은 최소
+44×44 CSS px이고 user zoom을 허용한다. document는 가로로 scroll하지 않으며 tab과
+accessory strip만 내부 scroll할 수 있다. Safe-area inset은 mobile root가 한 번만
+소유한다.
+
+## 6. Design tokens와 typography
+
+Application chrome은 semantic `--ui-*` token을 사용한다. `--term-*`은 xterm,
+terminal output과 기존 custom theme compatibility에만 사용한다. 새 component가
+theme별 hex, local z-index ladder 또는 terminal token을 직접 사용하지 않는다.
+
+필수 role은 canvas/surface/raised/inset/overlay/scrim, primary/secondary/muted/inverse
+text, subtle/strong border, accent/on-accent, focus/info/success/warning/danger다.
+
+- Type scale: 12, 13, 14, 16, 20px. 10/10.5px은 비필수 metadata, 26px은 desktop
+  wordmark 전용이다.
+- Space scale: 4, 8, 12, 16, 24, 32px과 pane gutter 14px.
+- Radius: control 2/4/8px, card 12/14px, pill round.
+- Control: compact 32px, comfortable 40px, touch minimum 44px.
+
+Matrix display label과 wordmark는 bundled display font를 사용할 수 있지만 body,
+Settings, help와 Korean은 local system UI stack을 사용한다. terminal, command, path와
+diagnostic 값은 설정된 monospace를 사용한다. product text는 terminal font 선택의
+영향을 받지 않는다.
+
+Custom theme는 기존 persisted schema를 유지하고 runtime resolver가 semantic role의
+contrast를 보정한다. provider color는 persisted schema를 늘리지 않고 theme class에서
+파생한다.
+
+## 7. Component와 overlay 계약
+
+Button, IconButton, Dialog, ActionSheet, Menu, Popover, Tabs, Toast, Tooltip, FormControls와
+Feedback primitives를 repository `ui/`에서 공유한다. 새 feature가 focus trap, Escape,
+outside click, disabled, loading과 live-region 의미를 복제하지 않는다.
+
+- 한 modal layer만 top layer로 상호작용하고 background는 inert/aria-hidden 처리한다.
+- 닫기는 안전한 경우 Escape/Android Back을 지원하고 stable invoker로 focus를 돌린다.
+- 위험 action은 명시적 label과 안전한 초기 focus를 사용한다.
+- Toast는 action의 유일한 오류 설명이 될 수 없으며, 복구 가능한 오류는 originating
+  surface에 남는다.
+- loading, empty, offline, permission denied, unsupported와 stale data를 같은 skeleton
+  또는 0 값으로 표현하지 않는다.
+
+## 8. Localization과 접근성
+
+지원 locale은 Korean과 English이며 effective locale은 desktop menu, renderer와 mobile
+UI에 하나의 결정 규칙으로 적용된다. provider·protocol·product name은 번역하지 않되
+문장과 accessible label 안에서 자연스럽게 조합한다. 하드코딩 product string과 혼합
+locale은 결함이다.
+
+- 본문 text contrast는 최소 4.5:1, component boundary와 focus indicator는 최소 3:1이다.
+- 의미를 color, glow, animation이나 icon 하나에만 의존하지 않는다.
+- keyboard focus order는 visual order를 따르고 모든 action은 visible focus를 가진다.
+- reduced motion은 boot, ticker, pulse, rollbar와 decorative transition을 중지한다.
+  terminal output, remote video와 사용자가 요청한 외부 content는 decorative motion으로
+  취급하지 않는다.
+- status 변화는 필요한 경우 하나의 polite live region을 사용하고 fps, cursor, timer
+  tick을 반복 announce하지 않는다.
+- 200% text zoom과 screen reader label에서도 primary flow를 완료할 수 있어야 한다.
+
+## 9. 주요 상태 계약
+
+- **Boot:** 실제 phase만 표시하고 reduced motion 또는 disabled preference에서 즉시
+  skip한다. skip 입력을 PTY로 누출하지 않고 timer를 정리한다.
+- **Monitor:** 마지막 실제 sample과 collection scope를 표시한다. unsupported/capture
+  failure를 건강한 0으로 만들지 않고 visible할 때만 수집한다.
+- **Remote/Pairing:** bridge off, VPN 없음, service 없음, idle, busy와 active를 구분한다.
+  QR expiry/redeem과 device roster에서 stale generation을 복원하지 않는다.
+- **OpenClaw:** missing CLI, stopped, unreachable, timeout과 running을 구분한다. Chat의
+  external body는 pixel oracle에서 제외하지만 EZTerminal chrome과 상태는 포함한다.
+- **Paste/Risky close:** 위험 이유를 유지하고 Cancel을 안전 focus로 둔다. 최종 상태
+  비교가 실패하면 아무것도 실행하지 않는다.
+- **Explorer:** root, empty folder, non-repository와 Git unavailable을 구분하며 breadcrumb,
+  full path, Up과 folders-first ordering을 유지한다.
+- **PC Control:** unavailable, starting, active, reconnecting, busy와 error를 구분한다.
+  input mode, monitor, sticky modifier와 controller 상태는 color 외의 표현을 가진다.
+
+## 10. Agent UI 계약
+
+Agent content 순서는 Attention, Projects, Active, Recent다. Global launch는 Agent와
+location이 모두 비어 있고, project의 New chat은 project만 preselect한다. Desktop은
+repository `Dialog`, Android는 `MobileActionSheet`를 사용하지만 같은 validation과
+Launch/Cancel 의미를 가진다.
+
+Location은 saved/observed project와 직접 host folder를 제공한다. 선택 또는 취소만으로
+project를 쓰지 않으며 성공한 direct-directory launch만 unpinned observed project가
+된다. Codex/Claude는 primary/additional roots를 받고 generic launcher는 primary만 사용하며
+무시되는 root 수를 실행 전에 알린다.
+
+History row, desktop history panel과 Android sheet는 provider text label과 3px start rail을
+사용한다. Codex는 dark/matrix `#48d7c8`, light `#006b64`, high contrast `#00ffff`를,
+Claude는 각각 `#e58a6b`, `#9a3f28`, `#ff9b7a`를 기준으로 contrast 보정한다. Provider
+의미를 color에만 의존하지 않고 live status surface는 provider-neutral로 유지한다.
+
+### 10.1 Desktop rail 우선순위와 프로젝트 세션 기록
+
+Desktop Activity Rail의 상단 순서는 Agents, Monitor, Remote, Files(Explorer), OpenClaw다.
+Files는 네 번째 위치를 유지하며 OpenClaw가 숨겨져도 앞선 세 destination의 순서는
+압축하지 않는다. Settings는 계속 하단에 고정한다. keyboard focus 순서는 이 시각 순서와
+같고 tooltip, localized accessible name과 selected state 계약은 3.3을 따른다.
+
+프로젝트의 이전 세션은 프로젝트 행의 disclosure/accordion으로 펼치지 않는다. 검토한
+방향은 (1) 기존 인라인 accordion 유지, (2) 프로젝트 `…` 메뉴의 **Session history**가
+Agent sidebar 내부 전용 하위 화면을 여는 방식, (3) 같은 메뉴에서 modal을 여는 방식이다.
+사용자가 선택한 방향은 2다. 프로젝트 목록의 밀도를 유지하면서도 기록 탐색에 전체
+sidebar 높이를 쓸 수 있고, modal focus layer를 추가하지 않는 대신 목록으로 돌아가는
+명시적인 Back action이 필요하다.
+
+Session history 메뉴 항목은 프로젝트별 단일 진입점이다. 하위 화면은 프로젝트 이름,
+Back, provider-labelled session row와 pagination을 제공한다. loading/long-running은 기존
+목록을 지우지 않고 busy 상태를 표시하며, empty, load error와 retry를 서로 구분한다.
+세션 선택은 기존 read-only history panel을 열고, change review action도 기존 동일한
+handler를 사용한다. Back, session row, retry와 더 보기는 keyboard와 pointer로 동일하게
+동작하고 icon-only action은 localized accessible name을 가진다. offline과 permission은
+로컬 history 읽기에 별도 의미가 없어 not applicable이며, validation과 cancellation도
+사용자 입력이나 장기 mutation이 없으므로 not applicable이다.
+
+새 asset, dependency, font 또는 token은 추가하지 않는다. repository `Menu`, `MenuItem`,
+`IconButton`, Lucide icon과 기존 `agent-history-*` component/token을 재사용한다. normative
+외부 mock은 없으며 실제 component test가 rail DOM 순서, accordion 부재, menu 진입,
+Back, loading/empty/error/pagination을 검증한다. Storybook/visual lane은 repository에 이미
+구성된 기존 Agent surface snapshot을 oracle로 사용하고, 이 계약과 불일치할 때 snapshot을
+자동으로 정답 취급하지 않는다. 미해결 제품 결정은 없다.
+
+## 11. PC Control UI 계약
+
+Mobile page는 explicit Start 뒤에만 video/input을 연다. Toolbar는 input mode, monitor,
+keyboard/IME, special keys, clipboard와 Disconnect를 gesture 없이도 제공한다. Android
+Back은 sheet, overflow, remote page 순서로 닫고 기존 mounted terminal로 돌아간다.
+
+Desktop banner와 tray는 active controller가 있을 때만 나타나며 device와 local
+Disconnect를 제공한다. 시작 시 terminal focus를 훔치지 않고 release 뒤 즉시 사라진다.
+Native 오류 remediation은 Remote panel에 남기고 stale active banner를 유지하지 않는다.
+
+## 12. 시각·접근성 검증
+
+`DesktopHandoff.stories.tsx`는 manifest의 14개 표면에 실제 product component와
+deterministic adapter를 사용한다. 각 handoff story는 axe와 1920 reference를 가지며
+Korean/English product content를 검증한다.
+
+Pairwise visual matrix는 다음을 포함한다.
+
+- 800×600/1024×720 overlay와 1200×800/1440×900 reflow
+- 100%/150% scale의 shell, sidebar와 dialog
+- Matrix, Light, Dark, High Contrast
+- reduced-motion boot, ticker, pulse, rollbar와 transition
+- mobile 360×800, 412×915, 600×960과 landscape 핵심 화면
+
+Snapshot 갱신은 reference와 side-by-side로 검토하고 adaptive layout, external content,
+보안 또는 truthful-data 차이만 manifest 예외로 기록한다. 문서 정리만을 이유로 snapshot을
+갱신하지 않는다.
+
+## 근거 소스
+
+- [`src/renderer/App.tsx`](../../src/renderer/App.tsx)
+- [`src/renderer/workbench/`](../../src/renderer/workbench/)
+- [`src/renderer/ui/`](../../src/renderer/ui/)
+- [`src/renderer/styles/ui-tokens.css`](../../src/renderer/styles/ui-tokens.css)
+- [`src/renderer/i18n/resources.ts`](../../src/renderer/i18n/resources.ts)
+- [`mobile/src/MobileWorkbenchCoordinator.tsx`](../../mobile/src/MobileWorkbenchCoordinator.tsx)
+- [`mobile/src/MobileTabBar.tsx`](../../mobile/src/MobileTabBar.tsx)
+- [`mobile/src/mobile-shell.css`](../../mobile/src/mobile-shell.css)
+- [`docs/ux/reference/desktop-handoff/manifest.json`](reference/desktop-handoff/manifest.json)
+
+## 검증
+
+- [`scripts/guard-desktop-handoff.mjs`](../../scripts/guard-desktop-handoff.mjs)
+- [`src/renderer/workbench/DesktopHandoff.stories.tsx`](../../src/renderer/workbench/DesktopHandoff.stories.tsx)
+- [`e2e/workbench-shell.spec.ts`](../../e2e/workbench-shell.spec.ts)
+- [`visual/storybook.visual.spec.ts`](../../visual/storybook.visual.spec.ts)
+- [`test/desktop-handoff-guard.test.ts`](../../test/desktop-handoff-guard.test.ts)
+- [`mobile/src/MobileWorkbenchCoordinator.test.tsx`](../../mobile/src/MobileWorkbenchCoordinator.test.tsx)
+
+이전 전체 규격과 완료 addendum은
+[`docs/archive/design/frontend-design.md`](../archive/design/frontend-design.md)에 보존한다.
+
+## 13. Agent Project 통합 작업 공간
+
+이 절은 Agent Project의 유일한 canonical UX 계약이며, 이전의 Code/Changes/Working
+tree 목적지, 별도 CodeFile/CodeDiff editor, preview tab, 코드 질문 흐름에 관한
+결정을 모두 대체한다.
+
+### 13.1 제품 표면, 사용자와 목표
+
+대상은 EZTerminal Electron desktop에서 Agent Project를 열어 프로젝트 파일과 실행
+중인 PTY를 함께 다루는 사용자다. 프로젝트 진입 직후 별도 학습이나 중간 화면 없이
+파일 트리가 보여야 하고, 한 번의 파일 선택으로 중앙 작업 영역에서 실제 파일 전체를
+읽을 수 있어야 한다. 변경은 별도 문서가 아니라 같은 파일에 적용되는 inline 비교
+렌즈다. 이번 범위는 read-only 탐색이며 편집·저장, LSP, stage, revert, commit,
+모바일 구현은 포함하지 않는다.
+
+### 13.2 검토한 방향과 선택
+
+1. **Agent sidebar를 Project Explorer로 승격 — 선택.** 기존 project 진입과 sidebar
+   shell을 재사용하면서 프로젝트 진입 즉시 tree를 보여 준다. wide에서는 tree와
+   editor/PTY를 함께 보고, narrow에서는 tree drawer를 닫아 작업 영역을 확보한다.
+2. **전용 project column.** 정보 구조는 가장 명시적이지만 application shell과 layout
+   persistence 변경 범위가 크고 기존 Agent 진입과 중복된다.
+3. **Dockview-native tree panel.** 자유로운 재배치는 가능하지만 tree가 또 하나의
+   닫을 수 있는 문서가 되어 프로젝트의 안정적인 출발점이라는 의미가 약해진다.
+
+선택 방향의 핵심 tradeoff는 narrow에서 tree와 파일을 동시에 보지 않는 대신,
+파일 선택 후 즉시 editor로 전환하고 Files control로 같은 tree 상태를 다시 여는
+것이다.
+
+### 13.3 정보 구조와 실제 클릭 흐름
+
+- Agents에서 프로젝트 이름을 선택하면 같은 sidebar가 Project Explorer로 바뀌고
+  파일 tree를 즉시 표시한다. Files/Changes/Working tree/Sessions 내부 tab은 없다.
+- header에는 Back, 프로젝트 이름과 경로, 하나보다 많은 실제 checkout이 있을 때만
+  보이는 작업 위치 selector, New Chat과 Manage만 둔다.
+- tree와 파일명·본문 search는 같은 project-relative path를 가리킨다. 파일을 한 번
+  click하거나 Enter/Space로 활성화하면 일반 read-only tab이 열린다. preview,
+  double-click pinning, Keep Open은 없다.
+- PTY path, PTY change summary, Agent Session file-change도 같은 open command를
+  사용한다. 이미 열린 path이면 새 tab을 만들지 않고 그 tab과 요청 위치를 재사용한다.
+- Agent session 목록과 PTY/Agent panel은 기존 surface에 남는다. 프로젝트 tree를
+  Sessions view로 바꾸지 않는다.
+- 등록 프로젝트 밖의 image/PDF/binary preview는 기존 generic preview 규칙을 유지한다.
+  등록 프로젝트의 text path는 generic preview로 우회하지 않는다.
+
+### 13.4 문서 정체성, 비교 렌즈와 tree 표현
+
+문서의 durable identity는
+`projectId + rootId + workspaceId + canonical project-relative path`다. Windows
+path casing은 main process가 canonical equality key로 정규화한다. repository,
+revision, comparison source, reveal location과 view mode는 tab identity가 아니며
+layout에 저장하지 않는다.
+
+기본 렌즈는 `HEAD ↔ 현재 checkout` 전체 변경이다. 직접 파일 열기와 tree 재선택은
+항상 이 렌즈로 돌아간다. Agent Session 링크만 exact `historyId + turnId` 렌즈를
+같은 tab에 일시 적용하고 닫을 수 있는 `Agent turn` provenance chip을 보여 준다.
+chip을 닫으면 현재 변경으로 복귀한다. staged/branch/commit catalog와 selector는
+제공하지 않는다.
+
+tree는 실제 entry와 Git 상태를 합쳐 같은 node에 `M/A/D/R`, `+N -M`을 표시한다.
+삭제된 path와 rename의 이전 path는 virtual node로 나타내고, nested repository,
+untracked 파일과 첫 commit 이전 repository에서도 정확한 상태를 계산한다. 색만으로
+상태를 구분하지 않는다.
+
+### 13.5 editor와 inline diff
+
+파일 surface는 하나의 `project-editor`다. text 파일은 1 MiB 이하일 때 첫 줄부터
+마지막 줄까지 자르거나 unchanged region을 접지 않고 표시한다. 변경된 파일이면 같은
+Monaco surface에서 inline diff를 자동 표시한다. 사용자는 전체 파일 보기, 현재 파일
+보기, 미리보기 같은 전환 button을 누르지 않는다.
+
+toolbar는 breadcrumb, optional Agent-turn provenance, read-only 상태, Find, Go to
+Line, 이전/다음 변경과 Refresh만 포함한다. Ask about code, Add lines, Add with
+snippet, question composer와 reference 수집·전송 control은 없다.
+
+provider의 안전한 before model을 만들 수 없으면 현재 파일 전체를 유지하고 검증된
+record를 같은 surface의 view zone에 표시한다. 현재 파일도 없으면 같은 path tab에서
+record-only 또는 deleted 상태를 정직하게 표시한다. 과거 내용을 현재 파일인 것처럼
+추정하지 않는다.
+
+### 13.6 wide와 narrow layout
+
+`1024 CSS px` 이상 wide:
 
 ```text
-MobileWorkbenchCoordinator
-├── TerminalLayer          (always mounted)
-├── MobilePageShell        (current tab root or full-screen destination)
-├── MobileTabBar           (bottom bar, or left rail from 600dp)
-└── SheetDialogHost        (sheets, menus, dialogs)
+┌──────────┬─────────────────────────────────────────┐
+│ Activity │ Project Files 280–400 px                │
+│ rail     ├───────────────────────────────┬─────────┤
+│          │ editor, available height 68%  │ tabs    │
+│          ├───────────────────────────────┴─────────┤
+│          │ existing PTY/Agent topology, 32%        │
+└──────────┴─────────────────────────────────────────┘
 ```
 
-Home is the authenticated history root. It contains:
+editor와 아래 PTY 영역의 비율은 resizable이며, 기존 여러 PTY group의 topology와
+panel instance를 유지한다. file open과 layout 변경은 terminal focus를 빼앗지 않는다.
+사용자가 editor tab을 명시적으로 활성화할 때만 editor에 focus를 준다.
 
-1. a PC Control hero with availability and one explicit `Start` action;
-2. connection state and the host endpoint;
-3. the three most recent sessions, linking out to the Terminal tab;
-4. the first agent awaiting attention, when there is one;
-5. an OpenClaw shortcut, only while the gateway state is `running`.
+`1024 CSS px` 미만 narrow:
 
-Home does not start PC capture/input and does not subscribe to live system
-stats. Detailed polling begins only while Monitor is visible. PC Control starts
-only after its explicit action and retains the existing lease, background, and
-disconnect safety contract.
+```text
+┌────────────────────────────┐
+│ Files drawer (on demand)   │
+├────────────────────────────┤
+│ Dockview: Editor | PTY     │
+│ active surface fills body  │
+└────────────────────────────┘
+```
 
-Switching tabs or opening any opaque page never unmounts the terminal layer and
-never applies `display: none` to the terminal root. While Terminal is not
-selected, the layer is inert and `aria-hidden="true"`; it retains drafts,
-controllers, xterm geometry, scroll position, selection, output, and reconnect
-state.
+Project Explorer는 focus-trapped drawer이며 파일 활성화 후 자동으로 닫힌다.
+editor와 PTY는 Dockview tab으로 전환하고 PTY renderer는 계속 mounted 상태를
+유지한다. breakpoint 왕복과 project 종료 시 panel node를 재생성하지 않고 원래
+group membership과 크기를 복원한다. sidebar를 닫았다 다시 열어도 active project,
+expanded folder, selection과 search query를 유지한다.
 
-Android Back unwinds sheet → sub-page → tab root → delegate. The tab-root stop
-is registered by the coordinator ahead of the sub-page stop, so the order holds
-however a destination was reached.
+### 13.7 작업 위치와 권한
 
-### 5.3 Full-screen destination and settings anatomy
+project에 실제 checkout이 하나면 작업 위치 selector를 숨긴다. main 또는 EZTerminal
+managed worktree는 즉시 읽을 수 있다. 외부 worktree는 exact canonical path, branch와
+Git identity를 보여 준 뒤 사용자 승인을 받아 read-only로 연다. PTY나 Agent 링크가
+작업 위치를 조용히 전환하지 않는다. 승인 취소, 경로·repository identity 변경 또는
+project 제거 시 저장된 승인을 재사용하지 않는다.
 
-Every non-terminal destination uses one page-header composition: Back,
-localized title, optional status, and only destination-specific actions. PC
-Control retains its specialized immersive chrome. Terminal uses a compact
-header with Back, a session dropdown that opens the session sheet, and New;
-global destinations do not accumulate in that header. Below the block list the
-terminal stacks a status line, the composer, a recent-command chip row, and the
-accessory keybar.
+### 13.8 상태 계약
 
-Settings is an index plus full-screen categories:
-
-1. General — language, density, and UI scale;
-2. Appearance — theme, custom-theme import, font, effects, and effect params;
-3. Terminal & Input — accessory-key visibility and ordering;
-4. Integrations — OpenClaw visibility;
-5. Connection & About — endpoint, connection state, build information, and
-   Disconnect.
-
-The existing setting keys and theme/custom-theme formats remain unchanged.
-
-### 5.4 First connection, responsive behavior, and CSS boundary
-
-The connection surface accepts manual URL/token entry and one scanned pairing
-code. A saved secure connection may be summarized and re-used explicitly, with
-editing available; there is no deep link, network discovery, multiple profiles,
-or automatic connection.
-
-QR pairing is admitted under fixed terms, and every one of them is load-bearing:
-
-- The desktop issues a **single-use code that expires** (5 minutes), held in
-  memory and never persisted. A code that survived a restart would be a
-  long-lived secret wearing a short-lived label.
-- The code authenticates exactly once. On success the host returns the
-  long-lived bearer token, which the phone stores in the same Android
-  Keystore-backed record manual entry uses; the code is dead from that moment,
-  so a photograph of the screen is worthless.
-- The camera permission is **optional at install** and requested only when the
-  scan sheet opens. Frames are decoded on-device by a bundled decoder, are
-  never stored or transmitted, and the stream is released on every exit path
-  including Android Back.
-- Typing the code remains equivalent in every respect. A device with no camera,
-  or a user who declines the permission, pairs by hand with no loss of
-  capability.
-
-Superseded: this section previously ruled out a QR scanner and camera
-permission outright, on the grounds that neither an expiring code nor a scanner
-existed. Both do now.
-
-Loading credentials, ready, connecting, trusted-network warning, authentication
-failure, incompatible protocol, secure-storage warning, and success transition
-all retain stable geometry and inline recovery.
-
-All touch targets are at least 44×44 CSS pixels. Supported viewports are
-360×800, 412×915, 600×960, and 915×412. The hub uses a single-column hero and
-two-column action grid on compact portrait screens, then reflows to a wider
-summary/grid without changing destination order. The document never scrolls
-horizontally; tab and accessory strips may scroll internally. User zoom remains
-enabled.
-
-Mobile consumes shared semantic tokens, reset/accessibility utilities, terminal
-runtime styling, and effect definitions. New application chrome uses `--ui-*`;
-`--term-*` remains only for terminal/runtime compatibility. Mobile does not
-import the complete desktop stylesheet.
-
-### 5.5 Mobile layer history and recoverable operations
-
-The authenticated shell owns browser history through one serialized controller.
-The hub has no synthetic entry. Any non-hub destination uses one stable page
-layer; changing destination context does not create duplicate Back stops.
-Nested pages, sheets, and dialogs register above it.
-
-Android Back precedence is:
-
-1. close the top sheet or dialog;
-2. leave an internal subpage such as a Settings category or file preview;
-3. leave the full-screen destination and restore its hub invoker;
-4. exit/delegate at the hub root.
-
-Explicit close consumes its layer once. Repeated transitions leave no ghost
-entries. Closing a transient layer restores its invoker unless the action
-intentionally transfers focus.
-
-Remote and OpenClaw operations keep their existing contextual recovery:
-
-| Operation | Pending | Recoverable failure | Success |
-| --- | --- | --- | --- |
-| OpenClaw availability | Bounded check with the page still dismissible | Distinguish unavailable, gateway stopped, gateway unreachable, and timeout | Show live service state and available actions |
-| Lifecycle/config mutation | Keep the initiating control and value visible; disable duplicate mutation | Show busy, invalid value, CLI failure, or timeout beside the control with Retry | Refresh the affected value/status without replacing the page |
-| Chat ticket/frame | Stable loading surface with a bounded deadline | Distinguish proxy, token, gateway, insecure-auth, and frame-load failures; Retry always mints a fresh ticket | Reveal the frame only after its current generation loads |
-| External browser | Button enters a bounded busy state | Native-browser failure remains beside the button | Open through the Capacitor Browser integration with a fresh ticket |
-
-Mobile OpenClaw `auto` shows the destination only when available, `on` keeps a
-diagnostic destination visible, and `off` hides it. Backgrounding releases the
-frame and its subscriptions; foreground recovery obtains a fresh ticket.
-
-Safe-area ownership remains singular at the mobile root. Headers do not apply
-the top inset again. Folded, unfolded, landscape, and software-keyboard layouts
-preserve the 44px target contract.
-
-## 6. Responsive and density behavior
-
-The product supports an `adaptive` default density plus explicit `compact` and
-`comfortable` user preferences. Adaptive resolves from platform and viewport;
-it is not persisted as a series of per-component exceptions.
-
-- Compact desktop control height: 32px.
-- Comfortable desktop control height: 40px.
-- Touch minimum: 44px, regardless of density.
-- Sidebar width: 280–440px, default 320px, persisted on desktop.
-- Long Korean/English labels wrap only where the component contract allows;
-  navigation labels and paths otherwise ellipsize with a full-value tooltip.
-- At 150% browser/UI scale, the supported viewports retain all primary actions
-  and do not overlap the terminal or safe areas.
-
-## 7. Design tokens and visual language
-
-### 7.1 Token ownership
-
-Application chrome uses semantic `--ui-*` tokens. Existing `--term-*` tokens
-remain the compatibility bridge for xterm, terminal output surfaces, and v1
-custom themes. New buttons, panels, menus, settings, and typography must not use
-`--term-*` directly and must not embed theme-specific hex values.
-
-Required semantic color roles include:
-
-- canvas, surface, raised surface, inset surface, overlay and scrim;
-- primary, secondary, muted and inverse text;
-- subtle and strong borders;
-- accent and on-accent;
-- focus, info, success, warning, and danger.
-
-Fixed scales:
-
-| Role | Scale |
+| 상태 | 같은 workspace 안의 표현 |
 | --- | --- |
-| Type | 12, 13, 14, 16, 20px; 10, 10.5, 26px are metadata/display only |
-| Space | 4, 8, 12, 16, 24, 32px; 14px is the workspace pane gutter |
-| Radius | 2, 4, 8px for controls; 12, 14px for cards; `round` for pills |
-| Controls | 32, 40, 44px touch minimum |
-
-The card, metadata, and display tiers were added by the desktop commercial pass
-as an explicit product decision. They are additive: the control scales above are
-unchanged, and the token contract test pins both sets.
-
-- **10px and 10.5px** are reserved for non-essential monospace metadata —
-  Command Center group headings, Explorer full paths, and telemetry read-outs.
-  Body copy, labels, settings, and any text carrying a required action never
-  use them, so the 4.5:1 gate still applies at a readable size.
-- **26px** is the desktop wordmark only.
-- **12px and 14px radii** belong to surfaces that read as cards: workspace
-  panes, panel cards, and modals. Buttons, inputs, and menu items keep 2/4/8.
-- **14px** is the gutter between workspace panes, composed from two 7px pane
-  insets so neighbouring panes contribute equally.
-
-Decorative roles — `--ui-text-dim`, `--ui-border-mid`, `--ui-border-focus-soft`,
-and the phosphor `--ui-glow-*` shadows — are additive to the seventeen required
-roles and must fall back to a contrast-corrected role. A custom theme that
-supplies only the required roles therefore stays readable, and a theme opts out
-of phosphor bloom through `--ui-glow-color` rather than by overriding the
-shadows. `--ui-border-strong` continues to carry the 3:1 non-text gate, so a
-dimmer decorative border is a separate token rather than a weakening of it.
-
-Z-index values are semantic tokens for base, sticky chrome, sidebar scrim,
-sidebar, popover, dialog, toast, and tooltip. Components do not invent local
-z-index ladders.
-
-### 7.2 Typography
-
-- Retro display typography is limited to the wordmark, short headings, and
-  compact labels where character is useful.
-- Body text, settings, help, and Korean use the local system UI stack.
-- Terminal, code, commands, paths, identifiers, and diagnostic values use the
-  configured monospace stack.
-- Korean text is not forced uppercase and does not inherit excessive display
-  letter spacing.
-- No Pretendard or other new font asset is added.
-
-### 7.3 Matrix/CRT identity
-
-The default Matrix presentation uses a near-black green-tinted canvas, readable
-light foregrounds, crisp green accent/focus states, restrained borders, and
-semantic blue/success/amber/danger colors. Status meaning is never encoded only
-as green variants.
-
-The code-native `BrandMark` uses an `aria-hidden` three-bar signal mark and a
-visible `EZTerminal` heading. Matrix uses the self-hosted Share Tech Mono
-display face with the existing monospace fallback; other themes use the
-semantic heading font.
-Phosphor glow is applied only while the corresponding effect is enabled rather
-than being permanently baked into the wordmark.
-
-The Matrix default is the **CRT Signature** profile:
-
-- static scanlines;
-- restrained phosphor glow;
-- one slow, low-opacity CRT roll band.
-
-On Android, the connection surface and Home tab intentionally use a stronger
-static cyber-CRT composition than the desktop workbench: signal framing,
-accent-lit separators, inset panels, and code-native grid/scanline texture.
-These treatments are gated to Matrix and the existing effect attributes. They
-introduce no new animation engine, raster asset, or semantic color role.
-Light, Dark, High Contrast, and custom themes keep their own readable
-presentation.
-
-The compact header control offers four named profiles without creating a second
-effect implementation:
-
-- **Clean** — all effects off;
-- **Static** — scanlines and phosphor glow;
-- **CRT Signature** — Static plus the slow CRT roll band;
-- **Full CRT** — all effects declared by the active theme, including explicitly
-  opt-in flicker, jitter, scrolling texture, and noise.
-
-For a sparse custom theme, a profile is enabled only when the theme can produce
-that profile as a distinct canonical state; duplicate choices stay disabled.
-Any individually tuned combination is labelled **Custom**. Selecting a profile
-updates the same persisted toggles used by Settings; Settings remains the only
-place for individual switches and effect parameters. Under
-`prefers-reduced-motion: reduce`, continuous or flashing effects are disabled at
-runtime even when saved on, the profile control communicates that motion is
-paused by the system, and static scanlines/non-animated glow may remain. High
-Contrast removes decorative blur, scanlines, and low-contrast roll overlays.
-Flicker, jitter, and animated noise are never default-on.
-
-The header uses its own inline-size container so UI scale participates in the
-collapse decision. Shortcut hints and secondary action labels collapse at the
-equivalent of roughly `61em` of header content, whether that limit is reached by
-window width or 100–150% UI scale. The signal mark, full `EZTerminal` wordmark,
-and current FX profile remain visible; the supported desktop shell must not
-reduce the name to `EZT`. The mobile tab strip does not carry this cluster: it
-exposes appearance through More and uses the full wordmark only in suitable
-connection or empty-state surfaces.
-
-## 8. Component system
-
-The shared primitive contract consists of:
-
-- `Button`, `IconButton`, and `SplitButton`;
-- `Field`, `Input`, `Select`, and `Switch`;
-- `Tabs`;
-- `Menu` and `Popover`;
-- `Dialog` and mobile `ActionSheet`;
-- `PanelShell`;
-- `Badge` and `Status`;
-- `Tooltip`;
-- `Toast`;
-- `EmptyState`, `LoadingState`, and `ErrorState`;
-- `VisuallyHidden`.
-
-Each interactive primitive defines default, hover, active, keyboard-focus,
-disabled, and loading states. Danger and selected states are variants of the
-same primitive rather than one-off CSS classes. Icon-only controls always have
-an accessible name and tooltip. Loading controls retain their label width and
-announce state without becoming focus traps.
-
-Composition components use these primitives:
-
-- `AppHeader`, `BrandMark`, `EffectProfileMenu`, `ActivityRail`,
-  `SidebarShell`, and `WorkspaceMenu`;
-- `CommandCenter` and `QuickCommandShelf`;
-- `ExplorerPanel`, `AgentsPanel`, `MonitorPanel`, `RemotePanel`,
-  `OpenClawPanel`, and `SettingsPanel`;
-- `MobileWorkbenchCoordinator`, `MobileHeader`, `MobilePageShell`, and
-  `SheetDialogHost`.
-
-All product icons come from `lucide-react` SVG components. Emoji, Unicode
-symbols used as icons, icon-font glyphs, and mixed text-glyph controls are
-removed. Lucide's ISC license is recorded in `THIRD_PARTY_NOTICES`.
-
-## 9. Localization
-
-Localization uses `i18next` and `react-i18next` with typed resources. English is
-the canonical key shape; Korean must satisfy the same complete resource shape.
-UI language preference is `system | ko | en`.
-
-- `system` resolves to Korean when the first applicable browser language starts
-  with `ko`; otherwise it resolves to English.
-- `<html lang>` updates whenever the effective locale changes.
-- The native Electron application menu refreshes to the effective locale.
-- Korean and English use concise, formal product language.
-- Dates, counts, and relative time use `Intl` with the effective locale.
-
-Commands, command output, file paths, provider/product names, protocol fields,
-status enums, persisted identifiers, and test IDs are not translated.
-
-Desktop persists optional `locale`, `density`, and `sidebarWidth` fields in the
-existing settings schema without incrementing schema version 1. Reads and
-writes use one atomic desktop UI-preferences API so partial changes cannot
-overwrite concurrent fields. Mobile preferences are local to the mobile device
-and are not added to the paired-session protocol.
-
-## 10. Custom-theme compatibility and contrast correction
-
-The theme contract is:
-
-```ts
-interface UiThemeColors {
-  canvas: string;
-  surface: string;
-  surfaceRaised: string;
-  surfaceInset: string;
-  textPrimary: string;
-  textSecondary: string;
-  textMuted: string;
-  textInverse: string;
-  borderSubtle: string;
-  borderStrong: string;
-  accent: string;
-  onAccent: string;
-  focus: string;
-  info: string;
-  success: string;
-  warning: string;
-  danger: string;
-}
-
-interface ThemeAdjustment {
-  role: keyof UiThemeColors | 'terminalForeground' | 'terminalCursor';
-  before: string;
-  after: string;
-  requiredRatio: number;
-  achievedRatio: number;
-}
-
-interface ResolvedTheme {
-  requestedId: string;
-  effectiveId: string;
-  theme: ThemeDefinition;
-  adjustments: readonly ThemeAdjustment[];
-  fallbackReason?: 'missing-custom-theme' | 'invalid-custom-theme';
-}
-```
-
-`ThemeMod` becomes a discriminated union of the existing schema-version-1
-shape and a schema-version-2 shape with explicit `ui` colors. Version 1 remains
-readable indefinitely and is never silently rewritten. Its `--term-*`, xterm,
-font, effect, and swatch data remain intact; known terminal values seed the UI
-palette. Version 2 is the latest authoring format.
-
-At runtime, functional color pairs are checked and minimally corrected when
-needed. The source theme file and requested theme ID are preserved. Settings
-and diagnostics show each effective before/after adjustment. A missing or
-invalid requested custom theme keeps its requested ID but uses Matrix as the
-effective fallback so restoring the file restores the user's choice.
-
-Hard thresholds:
-
-- normal text against its surface: 4.5:1;
-- focus indicators, interactive borders, and functional icons against adjacent
-  colors: 3:1;
-- terminal foreground against background: 4.5:1;
-- terminal cursor against background: 3:1.
-
-All built-in themes pass these thresholds without runtime adjustment. Automated
-tests hard-fail a built-in theme regression.
-
-## 11. Core UX state contract
-
-| Surface | Loading / progress | Empty | Error / offline | Success / focus outcome |
-| --- | --- | --- | --- | --- |
-| SidebarShell | Stable panel skeleton; no terminal resize loop | Destination-specific explanation and primary action | Inline recovery; narrow overlay remains dismissible | Selection persists; close returns invoker focus |
-| Explorer | Bounded directory progress | Empty directory guidance | Permission/read/reconnect error with Retry | Selection opens existing safe preview flow |
-| Agents | Snapshot skeleton; ages update without live announcements | No agent activity and integration shortcut | Hook/provider/offline guidance; no silent retry of input | Focus selects exact pane and restores terminal/composer focus |
-| Monitor | Poll only while visible | No packets/stats yet | Classed collection error without blocking terminal | Live values update without layout shift |
-| Remote | Pair/tunnel progress is explicit | No paired client/tunnel | Auth, lease, tunnel and offline failures are distinct | Successful state identifies the usable endpoint/session |
-| OpenClaw | Native view loading belongs inside panel | Integration unavailable guidance | Recoverable load error; narrow overlay remains closable | Wide view reflows; narrow view owns occlusion |
-| Settings | Local values render immediately | Not applicable | Save failure keeps edited value and offers Retry | Atomic preference save; focus remains on control |
-| Command Center | Stale searches are discarded | Recent/useful actions or no-match message | Disabled result explains why | Explicit action closes only when its operation completes |
-| Mobile hub | Stable summary placeholders | Zero sessions/attention remain actionable | Connection and PC-control availability give inline reasons | PC Control starts only from explicit action; destination focus moves predictably |
-| Mobile full-screen destination | Terminal remains mounted underneath | Page-specific empty state | Offline/local capabilities are distinguished | Back returns to the invoking hub action and preserves terminal identity |
-| Dialog / ActionSheet | Duplicate submission disabled | Not applicable | Error remains within labelled surface | Close restores invoker unless action intentionally moves focus |
-| Terminal paste safety | Clipboard read is a bounded user-initiated action | Empty or unavailable format gets a brief status notice | Read failure sends no PTY input; warning cancellation is silent | Confirmed text is delivered once; focus returns to the same terminal |
-
-Toasts are reserved for brief completed feedback. Recoverable errors that need
-action stay next to the failed operation. Skeletons preserve final geometry.
-
-## 12. Accessibility hard gates
-
-- Every flow is operable by keyboard alone on desktop and by touch plus Android
-  Back on mobile.
-- Visible focus meets 3:1 contrast and is never removed without an equivalent.
-- Modal dialogs and Command Center trap focus; non-modal sidebars do not.
-- The paste warning is an `alertdialog`; Cancel receives initial focus, Escape
-  cancels without reaching the PTY, and close restores the exact invoker.
-- A blocked Codex control key is announced at most once per run through the
-  existing polite status-toast pattern; repeated keypresses do not spam assistive
-  technology.
-- Menus support Arrow keys, Home/End, Enter/Space, Escape, Shift+F10, and the
-  Menu key where applicable, with deterministic focus restoration.
-- Status, selection, error, and attention never rely on color alone.
-- Live regions announce meaningful state transitions once; elapsed time,
-  animation frames, retry countdown ticks, and stats polling are not announced.
-- Labels, descriptions, errors, and disabled reasons are programmatically
-  connected. Icons are hidden from accessibility APIs when adjacent text owns
-  the meaning.
-- Touch targets are at least 44×44px; desktop targets meet the selected density
-  contract.
-- Browser zoom is permitted, text survives 200% zoom, and layouts are verified
-  at the required 150% product QA axis.
-- Reduced motion disables moving CRT effects and nonessential transitions. The
-  desktop boot sequence is skipped entirely rather than replayed at zero
-  duration, because its whole content is timing.
-- The boot sequence is decorative and additive. It never blocks first paint,
-  never traps focus, is hidden from assistive technology, is skippable by
-  pointer or keyboard, and is controlled by one Appearance switch that takes
-  effect on the next launch.
-- Product Storybook stories use `parameters.a11y.test = 'error'`; unreviewed
-  accessibility violations are release blockers.
-
-### 12.1 Explorer interaction accessibility decision
-
-The file Explorer uses the existing visual treatment and interaction outcomes,
-with a delegated accessibility hardening decision. Three approaches were
-considered:
-
-1. Keep pointer-only `div` rows and add click handlers only — rejected because
-   the rows remain absent from the keyboard and accessibility trees.
-2. Make every actionable row a semantic button-equivalent, retain the custom
-   cursor-positioned menu with the ARIA menu keyboard model, and render file
-   preview through the shared modal `Dialog` primitive — selected. This keeps
-   stable file actions and test identifiers while reusing the repository-owned
-   focus trap and restoration contract.
-3. Replace the Explorer with a tree/grid selection widget — rejected for this
-   release because Explorer currently models immediate open actions rather than
-   persistent selection, and the larger interaction rewrite would change its
-   navigation contract.
-
-Selected behavior:
-
-- A file or directory row is one focusable action. Enter and Space open it;
-  Shift+F10 and the Context Menu key open its existing item menu at the row.
-- The context menu exposes `menu`/`menuitem` semantics, focuses its first item
-  on open, wraps Arrow Up/Down, supports Home/End, activates with Enter/Space,
-  closes with Escape, and restores the invoking row when appropriate.
-- File preview is modal. It uses `Dialog` for `aria-modal`, focus containment,
-  Escape dismissal, and invoker focus restoration. Existing preview actions,
-  localized labels, and stable test IDs remain unchanged.
-- Loading, file-read error, truncated-file, and successful preview content keep
-  their current product states. This change adds no new token, asset, route,
-  breakpoint, or localization-resource requirement.
-- Verification is component-DOM keyboard/focus regression coverage plus the
-  existing File Explorer browser E2E. The current mockups are reference-only;
-  this document and repository primitives remain normative. Project-local
-  Storybook and visual tooling remain governed by the broader release QA lanes
-  in section 13.
-
-## 13. Visual QA and automated coverage
-
-Storybook 10.4 uses the React+Vite framework with addon-a11y and addon-vitest.
-Stories cover every shared primitive and major shell/panel composition in
-default, hover/focus where deterministic, disabled, loading, empty, error,
-success, long-label, and overflow states.
-
-Playwright provides deterministic `toHaveScreenshot()` baselines and
-`@axe-core/playwright` page checks. Fonts, locale, timezone, device scale,
-fixtures, animation, caret, and time-sensitive content are fixed in the visual
-environment. Product accessibility errors hard-fail CI.
-
-Baseline updates are never accepted merely because an update command completed.
-The changed screenshots are reviewed against this artifact, expected
-differences are approved, and the ordinary visual command must then pass
-without rewriting them. A baseline becomes stale whenever a mapped token,
-primitive, component state, locale axis, or responsive contract changes and is
-updated in the same change.
-
-There is no normative Figma, raster mock, or separate prototype for the mobile
-redesign. Storybook compositions and deterministic adapters are reference-only
-fixtures; the product components, semantic tokens, and this document remain
-normative. Token/component mapping and prototype freshness are therefore not
-applicable to a separate mock artifact.
-
-Required axes:
-
-- desktop: 800×600, 1024×720, 1200×800, 1440×900;
-- mobile: 360×800, 412×915, 600×960, 915×412;
-- Matrix in Korean and English for all product stories;
-- all built-in themes in a token/component gallery;
-- adaptive, compact, and comfortable density where behavior differs;
-- 100% and 150% scale;
-- default and reduced motion;
-- `BrandMark` in every built-in theme at full/compact desktop widths and at
-  100%/150% scale;
-- non-overlapping header controls at 800, 1024, 1200, and 1440px in both
-  100% and 150% scale, with narrow sidebar overlays anchored to the actual
-  workbench body rather than a fixed header-height guess;
-- Matrix CRT Signature with real effect attributes at 1440px, 800px/150%, and
-  reduced motion, using a deterministic animation phase for screenshots;
-- sidebar closed/open, wide reflow/narrow overlay, and loading/empty/error
-  panel states.
-
-The desktop commercial pass adds surfaces whose correctness is behavioural
-rather than pictorial, and those are owned by Playwright against the real
-application rather than by a screenshot:
-
-- workspace panes as cards — the gutter is produced by padding on dockview's
-  leaf views, so split, drag, tab, and layout-persistence coverage is what
-  proves the grid maths still holds;
-- the floating composer — it remains a child of its pane, so per-pane drafts,
-  paste safety, IME composition, and plain-PTY keystroke routing are the
-  contract, not its position;
-- the boot sequence — that it clears itself and leaves an interactive
-  workbench behind.
-- Codex paste warning states for multiline, large, and combined risks, including
-  Korean/English text, Cancel focus, and a deterministic Matrix-theme screenshot.
-
-CI builds Storybook and runs its component/accessibility checks, desktop visual
-tests, mobile typecheck/test/build/lint, and mobile visual tests in addition to
-the existing desktop unit, integration, packaged Electron, and E2E lanes.
-
-## 14. Migration and cleanup contract
-
-Implementation order is:
-
-1. semantic tokens, typography, effects, and shared primitives;
-2. localization, desktop/mobile preferences, and theme resolution;
-3. desktop shell, navigation, sidebar destinations, and settings;
-4. mobile hub root, persistent coordinator, full-screen destinations, pages,
-   sheets, and CSS boundary;
-5. Storybook, accessibility, screenshots, and CI;
-6. remove legacy components/selectors only after reference searches are zero;
-7. run the complete regression matrix.
-
-During migration, adapters may preserve existing feature APIs, but new screens
-must not fork business logic. `CommandPalette.tsx`, the obsolete
-`FileViewerOverlay.tsx`, independent old drawers/rails, emoji icon controls, and
-legacy CSS are deleted only when their live references are zero and equivalent
-coverage exists.
-
-The redesign is complete only when:
-
-- the desktop header has exactly four zones;
-- the full `EZTerminal` Signal Wordmark remains visible at every supported
-  desktop width and the single FX utility controls the shared effect state;
-- the activity rail and single responsive sidebar own all specified
-  destinations without duplicates;
-- desktop settings match the six approved categories;
-- authentication lands on the Home tab and PC Control starts from one
-  explicit action;
-- every existing mobile capability remains reachable from the tab bar or the
-  More sheet;
-- mobile terminal DOM identity survives every tab/destination round trip;
-- all supported mobile viewports expose the approved hub actions and zero tabs
-  remains navigable;
-- all new chrome uses semantic tokens and Lucide icons;
-- Korean/English, density, theme v1/v2 compatibility, contrast correction, and
-  reduced motion meet this contract;
-- old duplicate surfaces and unused code are removed;
-- Storybook, axe, visual regression, desktop checks, mobile checks, packaged
-  smoke, and full E2E all pass.
-
-## 15. Version 1.0 release contract
-
-Version 1.0 freezes the Adaptive Workbench direction and adds no new product
-surface. Desktop and Android provide outcome parity for commands, terminal
-sessions, files, agents, monitoring, theme, language, density, and connection
-recovery. Parity does not mean pixel mirroring: desktop keeps keyboard-first
-multi-pane controls, while Android uses touch-first pages and sheets and keeps
-the terminal layer mounted beneath them.
-
-The supported release surfaces are Windows 10 22H2/Windows 11 x64 at a minimum
-window size of 800x600, and Android 10 (API 29) or newer. Android must be
-verified at API 29 and API 35 plus a physical foldable device. The physical
-device lane covers folded/unfolded layouts, portrait/landscape rotation,
-display cutouts, the software keyboard, Android Back, and TalkBack.
-
-API 29 verification includes its stock WebView 74 runtime, not only an updated
-Play-system WebView. The compatibility bootstrap must run before React and
-xterm, and the device lane must exercise forced-xterm pointer input, file
-upload, theme-file import, and modal focus isolation.
-
-Mobile safe-area ownership remains singular at the application root. Storybook
-and browser fixtures must reproduce the same definite root-height chain rather
-than changing the product workbench back to viewport ownership. Product scale
-fixtures must call the real UI preference path and wait for a stable story-ready
-signal before screenshots.
-
-Every modal action sheet isolates all non-dialog application content from the
-accessibility tree and focus order. Isolation is reference-counted so closing a
-nested sheet cannot expose the background while another modal remains open.
-All mobile interactive targets, including integration configuration fields,
-remain at least 44x44 CSS pixels.
-
-Plain `ws://` remains available for version 1.0 only through Tailscale,
-WireGuard, or another explicitly trusted VPN interface; ordinary LAN binding is
-rejected. Pairing and connection screens must present this warning before or
-beside an endpoint; the warning is persistent guidance, not a transient toast.
-TLS and certificate pinning are a post-1.0 protocol change.
-
-Production builds contain no E2E-only observers, terminal-text extraction, or
-`[ez-e2e]` diagnostics. Dedicated E2E builds may expose those probes. Visual
-approval uses real product components and a final APK on device; mock shell
-stories remain deterministic coverage but are not the sole release oracle.
-
-Version 1.0 explicitly defers mobile split/layout presets, the global Command
-Center, a complete desktop-settings mirror, full OpenClaw administration, a
-standalone Android shell, Play Store distribution, and automatic updates.
-
-## 16. Remote desktop control addendum
-
-This addendum is normative for the first public remote-desktop-control release.
-It adds a full Windows GUI control surface to the Android companion; it does not
-implement or expose the Microsoft RDP protocol. The audience is an already
-paired EZTerminal user who needs to operate the same Windows PC while away from
-it over Tailscale, WireGuard, or another explicitly trusted VPN.
-
-### 16.1 Direction decision
-
-Three mobile information-architecture directions were evaluated:
-
-1. **Tab-bar shell with full-screen PC Control — selected by the user.** Home
-   and the bar's PC item both make remote control primary without starting
-   capture automatically. One explicit action opens the immersive page above
-   the still-mounted terminal.
-2. **Persistent remote command dock — rejected.** Faster lateral switching does
-   not justify consuming terminal and video height.
-3. **Top mode switcher — rejected.** It overloads narrow and scaled headers.
-
-The desktop does not gain a new activity-rail destination. The existing Remote
-panel owns service, VPN, pairing, and active-controller state. A non-dismissible
-application-wide banner and the Windows tray provide the local safety affordance.
-
-### 16.2 Screen and component inventory
-
-- `MobileHomeView` (the Home tab) owns the primary **Start PC Control** action,
-  and `MobileTabBar`'s PC item is the same explicit start. Both are disabled
-  with a connected reason when the authenticated server does not advertise
-  `desktop-control-v1`.
-- `MobileRemoteDesktopView` is an immersive auxiliary page: the remote video
-  fills the screen and every control floats over it, auto-hiding 3.5s after the
-  last touch and returning on the next one.
-- The floating chrome owns Back, a status pill (device, RTT, fps),
-  Trackpad/Direct mode, keyboard, clipboard send/fetch, an overflow row for
-  special keys, and Disconnect. Monitor selection joins the cluster when the
-  host reports more than one display.
-- `RemoteVideoSurface` uses a video element with a separately composited remote
-  cursor. It owns zoom/pan and maps pointer coordinates through the current
-  fit/zoom/rotation transform.
-- Trackpad is the persisted default input mode. One finger moves, tap clicks,
-  double tap double-clicks, double-tap-and-hold drags, two fingers scroll, and
-  two-finger tap right-clicks. Pinch changes client-side zoom.
-- Direct mode maps one-finger contact to the remote absolute position; tap
-  clicks, drag holds the left button, long press right-clicks, and pinch zooms.
-- A hidden labelled text input owns Android IME composition. Committed text is
-  sent as Unicode; physical keyboard events and special keys use scan codes.
-- Clipboard actions are explicitly directional: **Send mobile text to PC** and
-  **Copy PC text to mobile**. No clipboard read or write occurs on page entry,
-  focus, reconnect, or background transition.
-- `RemotePanel` adds a PC Control card for service health, trusted VPN adapter,
-  UDP endpoint, current device, duration, fps, RTT, bitrate, edition limitations,
-  and immediate Disconnect.
-- `RemoteControlBanner` appears above the desktop workbench whenever control is
-  active. It identifies the device and exposes Disconnect; it cannot be dismissed.
-  The Windows tray mirrors idle/active/error state and exposes Open, Disconnect,
-  and Quit.
-
-All additions use repository primitives, semantic tokens, and Lucide icons. No
-new raster illustration, remote font, normative Figma file, or generated image
-is required. The existing app icon is the source for tray artwork.
-
-### 16.3 State contract
-
-| Surface | Loading / progress | Empty / unavailable | Error / offline | Success / cancellation |
-| --- | --- | --- | --- | --- |
-| Mobile PC Control entry | Capability status follows authenticated bridge state | Missing service, unsupported peer, or untrusted VPN has a connected disabled reason | Auth/protocol failure uses existing connection recovery | Opens one auxiliary page without remounting Terminal |
-| Remote desktop page | `starting` and ICE connection show a stable video-size skeleton | No display/encoder and Windows-edition limits identify the exact missing capability | `reconnecting` freezes the last frame; timeout, UDP block, service failure, and controller busy are distinct | `active` announces once; Disconnect and Android background release input immediately |
-| Video surface | Initial frame and monitor switch retain final geometry | Not applicable while a display exists | Capture loss retries within the active lease and exposes Retry/Disconnect after terminal failure | Monitor change forces a keyframe without resetting client zoom preference |
-| Input | Sticky modifiers and drag state are visibly pressed | Ctrl+Alt+Del is disabled with a Home/policy reason | Rejected input does not retry or leave keys pressed | Every stop path releases remote keys/buttons and restores toolbar focus |
-| Clipboard sheet | One bounded user action may show progress | Empty/unavailable text produces polite status | Permission, secure-desktop, and size errors send/write nothing | Completed direction gets one toast; Cancel has no side effect |
-| Desktop PC Control card | Service and session startup are explicit | Bridge off, service missing, no trusted VPN, and idle are distinct | Native crash, UDP collision, and capture/encoder errors keep remediation beside status | Active state identifies device and local Disconnect wins immediately |
-| Banner / tray | Not applicable | Hidden/inactive when there is no controller | Error state remains in Remote panel, not a stale active banner | Active banner/tray survive panel navigation and disappear only after release |
-
-Only one Android controller may hold the lease. A second device sees the current
-device name and `busy`; it cannot force takeover. The current controller or the
-local desktop must disconnect first. A transport interruption suspends input at
-once and gives the same installation ID a 15-second resume window. Android
-backgrounding is an explicit stop rather than a hidden resume window.
-
-### 16.4 Responsive, input, and accessibility contract
-
-- Required mobile viewports remain 360x800, 412x915, 600x960, and 915x412.
-  The remote page has no document scroll; the video viewport clips its own
-  transformed surface and toolbar/overflow own their scrolling.
-- Every toolbar and sheet target is at least 44x44 CSS pixels and survives
-  Korean/English labels, display cutouts, safe areas, software keyboard resize,
-  200% text zoom, and portrait/landscape rotation.
-- Android Back closes, in order: IME/special-key/clipboard sheet, toolbar
-  overflow, remote page, then the platform default. Leaving the page returns to
-  the exact mounted terminal instance and usable focus.
-- Connection state, input mode, selected monitor, sticky modifiers, busy/error,
-  and Ctrl+Alt+Del availability never rely on color alone. State transitions use
-  one polite live region; fps, elapsed time, cursor movement, and retry ticks are
-  never live-announced.
-- The video surface has a localized accessible name and concise gesture
-  instructions. Toolbar alternatives expose keyboard, monitor, clipboard, and
-  disconnect operations without requiring a canvas gesture.
-- Reduced motion removes nonessential toolbar/overlay transitions. Remote video
-  itself is user-requested content and is not paused by reduced-motion settings.
-- Desktop banner controls are keyboard reachable, visibly focused, and do not
-  steal focus when a session starts. Tray labels are localized through the same
-  effective-locale source as the native menu.
-
-### 16.5 Visual oracle and freshness
-
-Storybook owns deterministic disconnected, unavailable, starting, active,
-reconnecting, busy, Home-limited, error, special-key, clipboard, portrait, and
-landscape states using fake `MediaStream`/controller adapters. Playwright owns
-the existing desktop/mobile screenshot axes, Korean/English, Matrix/reduced
-motion, banner presence, 150% scale, and mobile Back/focus behavior. Product
-Stories set `parameters.a11y.test = 'error'`.
-
-No installed readiness detector exists, but this repository already has
-Storybook and screenshot regression configuration; those project-local lanes
-remain required. Mock streams and stories are deterministic reference fixtures,
-not the release oracle. Final approval requires a packaged Windows app and APK
-on API 29/API 35 plus a physical device over a real VPN. This addendum and the
-repository primitives are normative; screenshots must be refreshed whenever
-this interaction contract or the relevant tokens/components change.
-
-There are no unresolved appearance, navigation, responsive, asset, or
-accessibility decisions for this feature.
-
-## 17. Desktop commercial handoff completion (1.0.13)
-
-This section is the latest desktop visual and interaction contract. It
-supersedes earlier desktop guidance where that guidance conflicts with the
-2026-07-28 handoff, but it does not weaken terminal semantics, security,
-accessibility, or truthful runtime state.
-
-### 17.1 Direction decision and source authority
-
-Three directions were evaluated:
-
-1. **Keep the existing adaptive shell and named FX profiles — rejected.** It
-   preserves the current implementation but does not match the supplied header,
-   settings, workbench density, or fourteen reference surfaces.
-2. **Copy the fixed prototype literally — rejected.** It would hard-code
-   version strings, invent monitor/OpenClaw values, claim `wss://` over the
-   trusted-VPN `ws://` transport, and break narrow/scaled layouts.
-3. **Prototype-led, production-safe adaptive workbench — selected.** Geometry,
-   hierarchy, density, labels, interaction targets, and visual rhythm follow
-   the package-2 prototype. Existing real services and adaptive behavior supply
-   the data and supported states.
-
-The tracked source set is
-`docs/ux/reference/desktop-handoff/manifest.json`. Package 2 is the
-authoritative superset. Its desktop prototype owns visual and interaction
-intent, the handoff README owns implementation and QA acceptance, and this
-document owns responsive, accessibility, state, and compatibility behavior.
-Security, data integrity, core terminal behavior, accessibility, and honest
-real-state rendering always take precedence.
-
-The first two captured shots depict nearly the same workbench state and are not
-a reliable boot timing oracle. Boot composition, phases, and approximately
-3.2-second duration come from the prototype source and README.
-
-### 17.2 Shell, typography, effects, and commands
-
-- The desktop keeps exactly four header zones at 60px and a 62px activity rail
-  with 44px targets. Pane cards use 12px radii and a 14px leaf-view gutter.
-- Share Tech Mono owns the Matrix wordmark, boot identity, and UI display
-  labels. The selected terminal monospace font remains independent.
-- The active pane composer is 48px high and at most 820px wide; below that
-  width it shrinks without document-level horizontal scrolling.
-- The header effect control reads `FX·NEON n`, where `n` is a persisted integer
-  from 0 through 10 and defaults to 7. It opens the Appearance settings at the
-  same slider. Existing per-effect toggles remain available, but named profile
-  names are no longer the header or status-bar presentation. Level 0 suppresses
-  decoration; moving CRT effects require level 5 or greater. Reduced motion
-  suppresses moving effects and high contrast suppresses decorative noise.
-- `Ctrl/Cmd+K` opens Command Center only from non-editable application UI.
-  xterm, the terminal composer, input, textarea, and contenteditable surfaces
-  retain their native key. `Ctrl/Cmd+Shift+P` remains a global compatibility
-  shortcut.
-- Command Center keeps pane, command, history, saved command, preset, and agent
-  search, and adds actual Explorer, Agents, Monitor, Remote, conditional
-  OpenClaw, Settings, and locale destinations. No row may claim an action that
-  the product cannot perform.
-- The 1+2, 2x1, and single presets are non-destructive Dockview transactions.
-  Active and MRU panes determine placement, overflow panes remain tabbed, and
-  every hidden pane, PTY, draft, and restorable layout remains live.
-
-### 17.3 Fourteen-surface state contract
-
-| Surface | Loading / progress | Empty / unavailable | Error / stale | Ready / action |
-| --- | --- | --- | --- | --- |
-| Boot | Five real phases, deterministic timing | Disabled preference and reduced motion skip immediately | First key is captured and consumed; timers clean up | Click/key skip or automatic completion never leaks input to PTY |
-| Workbench + Agent Hub | Elapsed time and indeterminate activity only | Localized recent/empty/disconnected states | Expired or stale approvals lose actions | Pending approvals sort by danger, write, read, expiry, then recency |
-| Command Center | Search results update without focus loss | No-results row preserves query and escape route | Unsupported destinations are omitted | Keyboard navigation runs real destinations/actions and restores focus |
-| Monitor | Last real sample and collection scope are visible | Unsupported packet capture is explicit | Collection failure never renders zero as healthy | Data is collected only while visible and never interpolated into fake facts |
-| Remote | Service and connection transitions are explicit | Bridge-off, no VPN, no controller, and empty roster differ | Stale generations cannot restore an old QR or device | Actual endpoint, controller, RTT, SSH, roster, and PC-control state |
-| Pairing QR | Single in-flight issuance and five-minute countdown | Bridge off disables issuance | Expired/redeemed QR and code are removed; retry is explicit | Successful v3 auth consumes exactly one code |
-| Pairing detected | No simulated scan progress | Not applicable until redemption | Superseded code events are ignored | Real redeemed event identifies completion without inventing a device fact |
-| OpenClaw console | Real lifecycle/config/session/log loading | `auto`, `on`, and `off` visibility remain distinct | Missing CLI and lifecycle errors are honest | Running/stopped/error controls invoke existing lifecycle APIs |
-| OpenClaw chat | EZTerminal chrome owns loading | Stopped/unavailable placeholder | External view errors stay in the pane | Dockview and WebContentsView remain the actual chat implementation |
-| Paste warning | Not applicable | Not applicable | Risk reasons remain visible | Cancel is initially safe-focused; confirm preserves existing paste semantics |
-| Risky close | Background/force work stays explicit | No active risk uses the normal close path | State comparison failure closes nothing | Cancel, background, and force retain their current transactional semantics |
-| Settings | Categories remain stable while data loads | Unsupported effects are disabled with a reason | Invalid persisted intensity is clamped | Six categories, FX level, overflow, and 150% scale remain usable |
-| English mode | Effective locale changes all product labels together | Missing resources fail tests | Mixed locale is a defect | Layout and meaning match Korean without clipping |
-| Explorer | Git/path work has bounded progress | Root, empty folder, and non-repository differ | Git unavailable/incomplete and destructive errors are explicit | Breadcrumb, full path, up, folders-first, tags, and shared dialogs work |
-
-Approval cards show only a memory-resident command while that exact
-`approvalId` is pending. New Agent opens the existing launcher group; it does
-not synthesize a provider action. Only providers with a verified decision hook
-offer approve/deny controls.
-
-Monitor and OpenClaw use the closest real metrics available rather than the
-prototype's illustrative totals. Remote displays the actual `ws://` VPN
-endpoint. The external OpenClaw WebContentsView body is excluded from pixel
-comparison; EZTerminal-owned chrome and loading/stopped/error states are not.
-
-### 17.4 Responsive and accessibility contract
-
-- Required desktop viewports are 800x600, 1024x720, 1200x800, 1440x900, and
-  the 1920 reference. 800/1024 use an overlay sidebar; 1200/1440 reflow the
-  workbench once. The 1920 prototype is not permission to fix the product
-  width.
-- Header controls, rail, composer, breadcrumbs, tabs, dialogs, and sidebars
-  remain disjoint at 100% and 150% scale with no page-level horizontal scroll.
-- Command Center is 660px at a top offset of 84px when space permits. QR,
-  paste, and risky-close dialogs shrink below their reference widths while
-  keeping 44px actions and readable code/text.
-- Korean and English, Matrix, Light, Dark, High Contrast, and system
-  reduced-motion are required axes. Text contrast is at least 4.5:1 and
-  component boundaries/focus indicators at least 3:1.
-- Every overlay traps focus, closes with Escape where safe, restores the stable
-  invoker, and exposes one concise localized name. State never relies on color,
-  glow, ticker motion, or icon shape alone.
-- Boot, ticker, pulse, rollbar, and entry transitions stop under reduced motion.
-  Terminal output and user-requested external content are not decorative
-  motion and retain their product behavior.
-
-### 17.5 Visual QA, mapping, and freshness
-
-`DesktopHandoff.stories.tsx` uses real product components with deterministic
-capability adapters and exports one story for every manifest surface. The old
-fake terminal/explorer workbench remains only a primitive responsive fixture.
-Each handoff story runs axe and a 1920 reference screenshot; Korean and English
-both run for product content.
-
-The pairwise visual matrix additionally covers:
-
-- 800x600 and 1024x720 overlay behavior;
-- 1200x800 and 1440x900 reflow;
-- 100% and 150% scale for shell, sidebar, and dialogs;
-- Matrix/Light/Dark/High Contrast on a real workbench and representative
-  sidebar/dialog; and
-- reduced-motion boot, ticker, pulse, rollbar, and transition behavior.
-
-The manifest pins every extracted source hash and story id. A contract test
-must fail when one of the fourteen references, stories, or required axes is
-missing. Snapshot refresh requires a side-by-side reference review; differences
-are accepted only when recorded as an adaptive, external-content, security, or
-truthful-data exception in the manifest.
-
-There are no unresolved desktop appearance, command, responsive, state,
-compatibility, or accessibility decisions for the 1.0.13 handoff.
-
-## 18. Agent history identity and launch-target addendum
-
-This addendum is normative for the desktop Agent sidebar and the connected
-Android Agent destination. The audience is a developer reviewing local Codex
-and Claude history or starting one enabled Agent CLI at an explicit host
-location.
-
-### 18.1 Direction decision
-
-Three provider-identification directions were evaluated:
-
-1. **Full-row provider tint** — rejected because it competes with approval and
-   runtime status colours.
-2. **Text badge plus start rail — selected by the user.** Codex uses a teal
-   identification token and Claude a coral token on history rows, opened
-   history tabs/panels, and mobile history sheets.
-3. **Provider logos** — rejected because text is clearer at sidebar density and
-   would add brand-asset and recolouring constraints.
-
-Three launch directions were evaluated:
-
-1. Keep nested per-project Agent menus — rejected because the global action
-   still has no location choice and the two entry points would diverge.
-2. **One two-field launch picker — selected by the user.** Agent and location
-   are required, with the project-card entry preselecting only its project.
-3. Extend Command Center into the launch form — rejected for this change
-   because Android has no global Command Center and the existing command rows
-   intentionally retain insertion semantics.
-
-### 18.2 Information architecture and component contract
-
-- Agent content order is Attention, Projects, Active, then Recent when present.
-  Empty activity guidance belongs with the activity groups and never displaces
-  Projects above Attention.
-- Desktop uses the repository `Dialog`; Android uses `MobileActionSheet`.
-  Both own the same launch state: launcher catalog, required Agent selection,
-  required project-or-directory target, preparation state, inline error, and
-  explicit Launch/Cancel actions.
-- The global action opens with both fields empty. Project `New chat` opens the
-  same picker with that project selected and the Agent empty.
-- Location offers searchable saved/observed host projects and one direct host
-  folder. Desktop uses the native directory dialog; Android uses the existing
-  remote folder browser. Merely selecting or cancelling a directory writes
-  nothing.
-- Every accepted launch opens a new terminal tab and session. Codex and Claude
-  receive the selected project's primary and additional roots. A generic
-  launcher uses only the primary root and shows the ignored-root count before
-  launch.
-- A successfully accepted direct-directory launch becomes an unpinned,
-  terminal-observed project. A failed or cancelled launch does not.
-- History rows, desktop history tabs/panels, and Android history sheets use a
-  visible Codex/Claude label plus a 3px provider-coloured start rail. User
-  transcript labels and all live Agent status surfaces remain neutral/provider
-  independent.
-
-No provider raster, logo, font, or generated asset is introduced. Provider
-names remain untranslated product names. Lucide remains the only icon source.
-
-### 18.3 State, responsive, and accessibility contract
-
-| Surface | Loading / progress | Empty / unavailable | Error / offline | Success / cancellation |
-| --- | --- | --- | --- | --- |
-| Launch picker | Stable form; duplicate submit disabled | No enabled launcher explains desktop Agent configuration | Invalid/missing target and unavailable launcher stay inline without clearing selections | Success transfers focus to the new terminal; Cancel writes and runs nothing |
-| Direct folder picker | Current directory skeleton/list | Empty directory remains selectable | Host read/offline failure offers Retry and Back | Select returns the canonical candidate to the parent picker |
-| Generic multi-root selection | Not applicable | No warning for a single root | Ignored additional roots are stated as text, not colour | Launch continues at the primary root only |
-| History list/tab/sheet | Existing history loading geometry | Existing empty-history guidance | Existing retry remains provider-labelled | Provider badge and rail remain visible without replacing focus/status styling |
-| Bootstrap retry | Existing new terminal remains identifiable | Not applicable | Re-prepare the same target; never run in a PTY whose cwd no longer matches | Successful retry clears the one-shot bootstrap |
-
-The picker is keyboard complete on desktop and uses at least 44x44px targets on
-mobile. It traps modal focus, labels both required groups, associates inline
-errors, closes with Escape/Android Back, and restores the invoker on Cancel.
-The nested Android folder picker closes before the launch sheet. Provider
-meaning never relies on colour alone. Supported desktop/mobile viewport,
-locale, scale, reduced-motion, focus, and no-horizontal-scroll axes remain
-those in sections 12, 13, and 17.
-
-### 18.4 Provider tokens and visual oracle
-
-Provider identification is additive to the semantic theme schema:
-
-| Theme class | Codex | Claude |
-| --- | --- | --- |
-| Dark / Matrix | `#48d7c8` | `#e58a6b` |
-| Light | `#006b64` | `#9a3f28` |
-| High Contrast | `#00ffff` | `#ff9b7a` |
-
-Provider text tokens must reach 4.5:1 against every history surface and the
-start rail 3:1 against adjacent surfaces. Custom themes choose and minimally
-correct the bright or dark candidate through the existing contrast resolver;
-the provider roles are not added to the persisted custom-theme schema.
-
-`WorkbenchAgentHub` remains the desktop composition oracle and gains projects,
-both provider histories, the selected ordering, and launch-picker states.
-Mobile Agent stories/fixtures cover the same ordering, provider sheets, and
-360x800/412x915 launch states. Storybook axe, the existing pairwise theme
-visual matrix, component tests, and product Playwright E2E are required.
-Snapshot refresh requires side-by-side review; the pinned desktop handoff
-assets remain unmodified.
-
-There are no unresolved appearance, interaction, responsive, asset,
-compatibility, or accessibility decisions for this addendum.
+| loading/long-running | tree 또는 editor region에 `aria-busy`, 기존 내용 유지, stale request 취소 |
+| empty project/folder/search | 대상과 다음 행동을 구체적으로 설명하며 가짜 file을 만들지 않음 |
+| unchanged text | 전체 read-only file, diff decoration 없음 |
+| M/A/D/R | 전체 문맥 inline diff 또는 검증된 deleted/record-only 상태 |
+| binary/1 MiB 초과 | 같은 path tab의 명시적인 unavailable 상태, 일부 내용 미리보기 없음 |
+| permission/external worktree | main이 검증한 승인 surface, 취소 가능 |
+| stale/missing | 현재 revision과 불일치를 설명하고 안전한 Refresh 제공 |
+| comparison failure | 읽을 수 있는 현재 파일은 유지하고 provenance 가까이에 retry 가능한 warning |
+| offline | 모든 source가 local-only이므로 not applicable; network fetch를 시작하지 않음 |
+| validation | 편집·저장이 범위 밖이므로 not applicable |
+| success | tree selection, tab, breadcrumb와 comparison lens가 같은 path를 표시 |
+
+### 13.9 component, token과 입력 계약
+
+기존 Monaco, lucide-react, project token, button, input, tree와 SidebarShell
+primitive를 재사용한다. 새 dependency, font, image asset, network resource나
+telemetry를 추가하지 않는다. component taxonomy는 App-owned project state,
+Project Explorer tree/search, document open coordinator, `project-editor`,
+comparison provenance, worktree approval, layout coordinator로 제한한다.
+
+tree는 roving focus, Arrow/Home/End, Enter/Space를 지원하고 search result는
+line/column까지 editor에 전달한다. breadcrumb와 긴 path는 줄임표와 전체 accessible
+name을 함께 제공한다. 모든 icon-only control에는 label과 tooltip이 있고 focus-visible
+outline을 유지한다. M/A/D/R와 증감 수치는 visible text와 screen-reader name에 모두
+포함한다. target은 WCAG 2.1 A/AA이며 keyboard-only, screen reader label, contrast,
+focus order와 reduced-motion을 관찰 가능하게 검증한다.
+
+### 13.10 lifecycle 불변 조건
+
+project 진입, 파일 열기, wide/narrow 전환, sidebar open/close와 project 종료 동안
+PTY process, session id, output, 실행 중 command, input draft, selection, scroll,
+active panel과 focus를 잃지 않는다. layout coordinator는 기존 Dockview node를
+이동하며 `fromJSON` 또는 panel recreation을 사용하지 않는다. project editor의
+저장 descriptor에는 identity만 남기고 content, revision, lens, reveal과 preview
+상태는 저장하지 않는다. legacy pinned `code-file`/`code-diff` descriptor는 같은
+path의 `project-editor`로 migration하고 legacy preview는 복원하지 않는다.
+
+### 13.11 시각 QA와 증거
+
+normative mock 또는 외부 design file은 없다. 이 문서와 실제 Storybook story가
+규범이며, story가 계약과 달라지면 문서를 자동으로 따라 바꾸지 않는다. asset
+provenance는 기존 repository-owned icon/token뿐이며 추가 license 검토 대상은 없다.
+
+- Storybook integrated story는 `tree + full-file inline editor + live PTY`를
+  1440×900 wide와 800×600 narrow에서 보여 준다.
+- loading, empty, M/A/D/R, deleted, record-only, permission과 error 상태를 component
+  test와 story에서 검증한다.
+- project-local visual snapshot은 available height 채움, 상하단·수평 clipping 부재,
+  drawer 전환과 별도 Changes/질문 UI 부재를 확인한다.
+- Electron E2E는 tree/search/PTY/Agent 진입의 same-tab reuse, exact reveal,
+  breakpoint 왕복과 PTY lifecycle 불변 조건을 실제 runtime에서 확인한다.
+- lint, typecheck, unit/component test, Storybook/visual, ordinary `pnpm e2e`가 gate다.
+  release performance benchmark는 이 설계의 검증 lane이 아니다.
+
+미해결 제품 결정은 없다. 구현 중 발견되는 filesystem/Git 한계는 기능을 추정하거나
+새 Source Control UI를 추가하는 근거가 아니며, 같은 path의 명시적인 unavailable
+상태로 처리한다.
+
+## 14. Explorer 파일·폴더 시각 계층
+
+이 절은 desktop의 일반 Files Explorer와 Agent Project Explorer가 공유하는 entry
+표현 계약이다. 대상은 큰 폴더에서 경로와 Git 변경을 함께 훑는 사용자이며, 별도
+학습이나 view 전환 없이 폴더·파일 종류·계층을 즉시 구분하는 것이 목표다. Quick
+Open, editor tab, breadcrumb와 mobile surface는 이 계약의 범위가 아니다.
+
+검토한 방향은 (1) 폴더 위계와 선별된 Lucide file icon을 함께 강화하는 방식,
+(2) VS Code file-icon package를 추가하는 방식, (3) 기존 monochrome icon을 유지하고
+간격만 조정하는 방식이다. **방향 1을 선택한다.** 방향 2는 새 dependency와 과도한
+색상 vocabulary를 만들고, 방향 3은 현재의 파일·폴더 구분 문제를 충분히 해결하지
+못한다. Lucide와 semantic `--ui-*` token만 사용하며 새 image, font, network asset,
+telemetry 또는 persisted theme role을 추가하지 않는다.
+
+- folder는 `Folder`와 `FolderOpen`, 낮은 opacity의 fill, restrained accent와 굵기
+  650의 이름을 사용한다. Project tree의 expanded folder는 옅은 surface와 16px
+  간격의 semantic border indentation guide를 가진다.
+- file은 case-insensitive basename과 extension으로 판별한다. README/CHANGELOG/LICENSE,
+  package manifest, lockfile, Docker/Make/Git/editor/env/config file을 extension보다 먼저
+  판별하고, `test`/`spec` 이름을 일반 code extension보다 먼저 판별한다.
+- icon shape은 code, web/style, terminal script, JSON, config, document, test, data,
+  image, archive와 generic fallback을 구분한다. 색 category는 folder/accent,
+  code/info, config/warning, document/subdued-info, test/success, media와 generic/muted로
+  제한한다. danger는 Git delete/conflict 전용으로 남긴다.
+- Project tree의 기존 28px row, 일반 Explorer의 compact padding, selection background,
+  focus outline, Git `M/A/D/R`와 diffstat를 유지한다. selection과 Git status가 file-type
+  color보다 강한 signal이어야 한다.
+- icon은 decorative `aria-hidden`이다. Project folder는 `aria-expanded`로, 일반 Files
+  list는 localized visually-hidden file/folder text로 종류를 전달한다. 의미는 색 하나에
+  의존하지 않는다. create/rename, loading, empty, error와 parent entry에서도 기존
+  keyboard 및 pointer 동작을 유지한다.
+
+외부 normative mock은 없다. `ProjectWorkspaceComposition`의 wide/narrow story와
+`DesktopHandoff` Explorer story가 visual oracle이며, 대표 folder/code/config/document/
+test/media/generic entry와 High Contrast를 포함한다. resolver unit test, 두 Explorer의
+component test, Storybook axe/visual, lint, typecheck와 ordinary `pnpm e2e`가 검증 gate다.
+release performance benchmark는 이 변경의 검증 lane이 아니다. 미해결 제품 결정은 없다.

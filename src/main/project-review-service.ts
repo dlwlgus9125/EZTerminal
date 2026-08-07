@@ -16,6 +16,7 @@ import {
   type ProjectReviewFileResult,
   type ProjectReviewIndexResult,
   type ProjectReviewRequest,
+  type ProjectReviewSelection,
   type ProjectReviewTargetResult,
   type ProjectWorkspaceError,
 } from '../shared/project-workspace';
@@ -47,6 +48,15 @@ interface GitReviewContext {
   readonly filterOverrides: readonly string[];
 }
 
+interface NormalizedProjectReviewRequest extends ProjectReviewRequest {
+  readonly scope: 'last-turn' | 'working-tree' | 'staged' | 'branch';
+  readonly sourceSelection: ProjectReviewSelection;
+}
+
+type NormalizedProjectReviewFileRequest = ProjectReviewFileRequest
+  & NormalizedProjectReviewRequest
+  & { readonly scope: NormalizedProjectReviewRequest['scope'] };
+
 interface InternalChange extends ProjectReviewChange {
   readonly repoPath: string;
   readonly previousRepoPath?: string;
@@ -66,12 +76,13 @@ interface CachedProviderFile {
   readonly previousRelativePath?: string;
 }
 
-function asRequest(value: unknown): ProjectReviewRequest | null {
+function asRequest(value: unknown): NormalizedProjectReviewRequest | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const request = value as Partial<ProjectReviewRequest>;
   const repositoryRelativePath = request.repositoryRelativePath === undefined || request.repositoryRelativePath === ''
     ? ''
     : normalizeRepoPath(request.repositoryRelativePath);
+  const sourceSelection = normalizeSourceSelection(request);
   if (
     typeof request.projectId !== 'string'
     || request.projectId.length < 1
@@ -79,7 +90,9 @@ function asRequest(value: unknown): ProjectReviewRequest | null {
     || typeof request.rootId !== 'string'
     || request.rootId.length < 1
     || request.rootId.length > 128
-    || !['last-turn', 'working-tree', 'staged', 'branch'].includes(request.scope ?? '')
+    || !sourceSelection
+    || (request.workspaceId !== undefined
+      && (typeof request.workspaceId !== 'string' || request.workspaceId.length < 1 || request.workspaceId.length > 128))
     || repositoryRelativePath === null
     || (request.historyId !== undefined
       && (typeof request.historyId !== 'string' || request.historyId.length < 1 || request.historyId.length > 128))
@@ -92,8 +105,49 @@ function asRequest(value: unknown): ProjectReviewRequest | null {
   }
   return {
     ...request as ProjectReviewRequest,
+    sourceSelection,
+    scope: sourceSelection.kind === 'agent-turn' ? 'last-turn' : sourceSelection.kind,
+    ...(sourceSelection.kind === 'agent-turn'
+      ? {
+          historyId: sourceSelection.historyId,
+          ...(sourceSelection.turnId === 'latest' ? {} : { reviewTurnId: sourceSelection.turnId }),
+        }
+      : {}),
+    ...(sourceSelection.kind === 'branch' ? { baseRef: sourceSelection.baseRef } : {}),
     ...(repositoryRelativePath ? { repositoryRelativePath } : { repositoryRelativePath: undefined }),
   };
+}
+
+function normalizeSourceSelection(request: Partial<ProjectReviewRequest>): ProjectReviewSelection | null {
+  const source = request.sourceSelection;
+  if (source) {
+    if (source.kind === 'working-tree' || source.kind === 'staged') return source;
+    if (source.kind === 'branch' && isSafeRef(source.baseRef)) return source;
+    if (source.kind === 'agent-turn'
+      && typeof source.historyId === 'string'
+      && source.historyId.length > 0
+      && source.historyId.length <= 128
+      && typeof source.turnId === 'string'
+      && source.turnId.length > 0
+      && source.turnId.length <= 128) return source;
+    return null;
+  }
+  if (request.scope === 'working-tree') return { kind: 'working-tree' };
+  if (request.scope === 'staged') return { kind: 'staged' };
+  if (request.scope === 'branch' && isSafeRef(request.baseRef ?? 'main')) {
+    return { kind: 'branch', baseRef: request.baseRef ?? 'main' };
+  }
+  if (request.scope === 'last-turn'
+    && typeof request.historyId === 'string'
+    && typeof request.reviewTurnId === 'string') {
+    return { kind: 'agent-turn', historyId: request.historyId, turnId: request.reviewTurnId };
+  }
+  // Old Last turn descriptors did not identify a turn. Keep their truthful
+  // fallback behavior until layout sanitization converts them to Working tree.
+  if (request.scope === 'last-turn' && typeof request.historyId === 'string') {
+    return { kind: 'agent-turn', historyId: request.historyId, turnId: request.reviewTurnId ?? 'latest' };
+  }
+  return null;
 }
 
 function isSafeRef(value: string): boolean {
@@ -265,6 +319,12 @@ function countTextChanges(original: string, modified: string): { additions: numb
   return { additions: modifiedLines, deletions: originalLines };
 }
 
+function gitLineCount(content: string): number {
+  if (!content) return 0;
+  const lineFeeds = content.match(/\n/gu)?.length ?? 0;
+  return lineFeeds + (content.endsWith('\n') ? 0 : 1);
+}
+
 function countPatch(diff: string): { additions: number; deletions: number } {
   let additions = 0;
   let deletions = 0;
@@ -335,46 +395,64 @@ export class ProjectReviewService {
     private readonly history: AgentHistoryService,
   ) {}
 
-  async locateFile(value: unknown, signal?: AbortSignal): Promise<ProjectReviewTargetResult> {
+  /**
+   * Locate the nearest repository for a file, directory, or deleted path.
+   * Deleted paths walk only as far as their nearest existing ancestor, which
+   * lets the document facade hydrate Git deletions without weakening the
+   * workspace containment boundary.
+   */
+  async locateRepository(value: unknown, signal?: AbortSignal): Promise<ProjectReviewTargetResult> {
     const resolved = await this.workspace.resolveProjectPath(value as ProjectPathRequest);
     if (!resolved.ok) return resolved;
     const request = value as ProjectPathRequest;
     try {
-      const before = await fs.lstat(resolved.value.absolutePath);
-      if (before.isSymbolicLink()) return { ok: false, error: 'symlink-not-supported' };
-      if (!before.isFile()) return { ok: false, error: 'not-a-file' };
-      const actualFile = await fs.realpath(resolved.value.absolutePath);
-      if (pathKey(actualFile) !== pathKey(resolved.value.absolutePath)) {
+      let existingPath = resolved.value.absolutePath;
+      let existingStat: Awaited<ReturnType<typeof fs.lstat>>;
+      for (;;) {
+        try {
+          existingStat = await fs.lstat(existingPath);
+          break;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') throw error;
+          if (pathKey(existingPath) === pathKey(resolved.value.rootPath)) throw error;
+          const parent = path.dirname(existingPath);
+          if (parent === existingPath
+            || relativePathInside(resolved.value.rootPath, parent) === null) {
+            return { ok: false, error: 'path-outside-root' };
+          }
+          existingPath = parent;
+        }
+      }
+      if (existingStat.isSymbolicLink()) return { ok: false, error: 'symlink-not-supported' };
+      const actualExisting = await fs.realpath(existingPath);
+      if (pathKey(actualExisting) !== pathKey(existingPath)
+        || relativePathInside(resolved.value.rootPath, actualExisting) === null) {
         return { ok: false, error: 'symlink-not-supported' };
       }
-      if (relativePathInside(resolved.value.rootPath, actualFile) === null) {
-        return { ok: false, error: 'path-outside-root' };
-      }
-
-      const discovered = (await this.runGit(
-        path.dirname(actualFile),
-        ['rev-parse', '--show-toplevel'],
-        signal,
-      )).trim();
+      const searchFrom = existingStat.isDirectory() ? actualExisting : path.dirname(actualExisting);
+      const discovered = (await this.runGit(searchFrom, ['rev-parse', '--show-toplevel'], signal)).trim();
       if (!discovered) return { ok: false, error: 'not-a-repository' };
       const repositoryPath = path.resolve(discovered);
       const repositoryStat = await fs.lstat(repositoryPath);
-      if (repositoryStat.isSymbolicLink()) return { ok: false, error: 'symlink-not-supported' };
-      if (!repositoryStat.isDirectory()) return { ok: false, error: 'not-a-directory' };
+      if (repositoryStat.isSymbolicLink() || !repositoryStat.isDirectory()) {
+        return { ok: false, error: repositoryStat.isSymbolicLink()
+          ? 'symlink-not-supported'
+          : 'not-a-directory' };
+      }
       const actualRepository = await fs.realpath(repositoryPath);
       if (pathKey(actualRepository) !== pathKey(repositoryPath)) {
         return { ok: false, error: 'symlink-not-supported' };
       }
       const repositoryRelativePath = relativePathInside(resolved.value.rootPath, actualRepository);
       if (repositoryRelativePath === null) return { ok: false, error: 'path-outside-root' };
-      const relativePath = relativePathInside(actualRepository, actualFile);
-      if (!relativePath) return { ok: false, error: 'not-a-file' };
-
+      const relativePath = relativePathInside(actualRepository, resolved.value.absolutePath);
+      if (relativePath === null) return { ok: false, error: 'path-outside-root' };
       return {
         ok: true,
         target: {
           projectId: request.projectId,
           rootId: request.rootId,
+          workspaceId: resolved.value.workspace.workspaceId,
           repositoryRelativePath,
           repositoryName: path.basename(actualRepository) || actualRepository,
           relativePath,
@@ -407,6 +485,7 @@ export class ProjectReviewService {
       repositoryName,
       revision: context.value.revision,
       changes: context.value.changes.map(publicChange),
+      sourceSelection: request.sourceSelection,
       ...(request.scope === 'branch' ? { baseRef: request.baseRef ?? 'main' } : {}),
     };
   }
@@ -440,6 +519,7 @@ export class ProjectReviewService {
           const current = await this.workspace.readText({
             projectId: request.projectId,
             rootId: request.rootId,
+            ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
             relativePath: request.repositoryRelativePath
               ? `${request.repositoryRelativePath}/${request.relativePath}`
               : request.relativePath,
@@ -528,7 +608,7 @@ export class ProjectReviewService {
     }
   }
 
-  private async getLastTurnIndex(request: ProjectReviewRequest): Promise<ProjectReviewIndexResult> {
+  private async getLastTurnIndex(request: NormalizedProjectReviewRequest): Promise<ProjectReviewIndexResult> {
     if (!request.historyId) {
       return {
         ok: false,
@@ -556,6 +636,7 @@ export class ProjectReviewService {
     const root = await this.workspace.resolveProjectPath({
       projectId: request.projectId,
       rootId: request.rootId,
+      ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
       relativePath: '',
     });
     if (!root.ok) return root;
@@ -637,13 +718,14 @@ export class ProjectReviewService {
       title: request.reviewTurnId ? 'Selected completed turn' : 'Last completed turn',
       revision,
       changes,
+      sourceSelection: request.sourceSelection,
       coverageNotice: `${changeSet.provider === 'claude'
         ? 'Claude attribution includes successful Edit, Write, and NotebookEdit tool pairs. Exact edits use verified current-file context; other records appear alongside the complete current file when it is available.'
         : `Codex attribution includes structured fileChange records from the ${request.reviewTurnId ? 'selected' : 'latest'} completed turn only. Exact patches use verified current-file context; other records appear alongside the complete current file when it is available.`}${providerTruncated ? ' The bounded review cache omitted later records.' : ''}`,
     };
   }
 
-  private async getLastTurnFile(request: ProjectReviewFileRequest): Promise<ProjectReviewFileResult> {
+  private async getLastTurnFile(request: NormalizedProjectReviewFileRequest): Promise<ProjectReviewFileResult> {
     let cache = this.providerCache.get(this.providerKey(request, request.revision));
     if (!cache || Date.now() - cache.createdAt > REVIEW_CACHE_TTL_MS) {
       const index = await this.getLastTurnIndex(request);
@@ -657,6 +739,7 @@ export class ProjectReviewService {
     const current = await this.workspace.readText({
       projectId: request.projectId,
       rootId: request.rootId,
+      ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
       relativePath: request.repositoryRelativePath
         ? `${request.repositoryRelativePath}/${request.relativePath}`
         : request.relativePath,
@@ -713,7 +796,7 @@ export class ProjectReviewService {
     };
   }
 
-  private async gitContext(request: ProjectReviewRequest, signal?: AbortSignal): Promise<
+  private async gitContext(request: NormalizedProjectReviewRequest, signal?: AbortSignal): Promise<
     | { readonly ok: true; readonly value: GitReviewContext }
     | { readonly ok: false; readonly error: ProjectWorkspaceError }
   > {
@@ -722,6 +805,7 @@ export class ProjectReviewService {
     const root = await this.workspace.resolveProjectPath({
       projectId: request.projectId,
       rootId: request.rootId,
+      ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
       relativePath: request.repositoryRelativePath ?? '',
     });
     if (!root.ok) return root;
@@ -766,7 +850,12 @@ export class ProjectReviewService {
       } else {
         if (!headCommit) return { ok: false, error: 'git-failed' };
         const baseRef = request.baseRef ?? 'main';
-        const verified = (await safeRun(['rev-parse', '--verify', `${baseRef}^{commit}`])).trim();
+        await safeRun(['check-ref-format', `refs/heads/${baseRef}`]);
+        const verified = (await safeRun([
+          'rev-parse',
+          '--verify',
+          `refs/heads/${baseRef}^{commit}`,
+        ])).trim();
         baseCommit = (await safeRun(['merge-base', verified, headCommit])).trim();
         [names, numstat] = await Promise.all([
           safeRun(['diff', '--no-ext-diff', '--no-textconv', '--name-status', '-z', baseCommit, headCommit, '--', '.']),
@@ -779,10 +868,11 @@ export class ProjectReviewService {
       const stats = parseNumstatZ(numstat, prefix);
       let changes = withStats(rawChanges, stats);
       if (scope === 'working-tree') {
+        changes = await this.hydrateUntrackedStats(request, changes, stats);
         changes = await this.captureWorkingIdentities(reviewRootPath, changes);
       }
       const workingEvidence = changes
-        .map((change) => `${change.relativePath}\0${change.workingIdentity ?? ''}`)
+        .map((change) => `${change.relativePath}\0${change.additions}\0${change.deletions}\0${change.workingIdentity ?? ''}`)
         .join('\0');
       const revision = createHash('sha256')
         .update(`${scope}\0${baseCommit ?? ''}\0${headCommit ?? 'unborn'}\0${names}\0${numstat}\0${objectEvidence}\0${workingEvidence}`)
@@ -807,6 +897,28 @@ export class ProjectReviewService {
 
   private runGit(cwd: string, args: readonly string[], signal?: AbortSignal): Promise<string> {
     return this.git.run(cwd, [...SAFE_GIT_PREFIX, ...args], signal);
+  }
+
+  private async hydrateUntrackedStats(
+    request: NormalizedProjectReviewRequest,
+    changes: readonly InternalChange[],
+    stats: ReadonlyMap<string, { additions: number; deletions: number; binary: boolean }>,
+  ): Promise<readonly InternalChange[]> {
+    return Promise.all(changes.map(async (change) => {
+      if (change.kind !== 'added' || stats.has(change.relativePath)) return change;
+      const current = await this.workspace.readText({
+        projectId: request.projectId,
+        rootId: request.rootId,
+        ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
+        relativePath: request.repositoryRelativePath
+          ? `${request.repositoryRelativePath}/${change.relativePath}`
+          : change.relativePath,
+      });
+      if (current.ok) {
+        return { ...change, additions: gitLineCount(current.file.content), deletions: 0 };
+      }
+      return current.error === 'binary' ? { ...change, binary: true } : change;
+    }));
   }
 
   private async captureWorkingIdentities(
@@ -906,8 +1018,8 @@ export class ProjectReviewService {
     return normalizeRepoPath(relative);
   }
 
-  private providerKey(request: ProjectReviewRequest, revision: string): string {
-    return `${request.projectId}\0${request.rootId}\0${request.repositoryRelativePath ?? ''}\0${request.historyId ?? ''}\0${request.reviewTurnId ?? ''}\0${revision}`;
+  private providerKey(request: NormalizedProjectReviewRequest, revision: string): string {
+    return `${request.projectId}\0${request.rootId}\0${request.workspaceId ?? request.rootId}\0${request.repositoryRelativePath ?? ''}\0${request.historyId ?? ''}\0${request.reviewTurnId ?? ''}\0${revision}`;
   }
 
   private cacheProviderReview(entry: ProviderReviewCache): void {
@@ -938,7 +1050,7 @@ export class ProjectReviewService {
     return isNotRepository(error) ? 'not-a-repository' : 'git-failed';
   }
 
-  private asFileRequest(value: unknown): ProjectReviewFileRequest | null {
+  private asFileRequest(value: unknown): NormalizedProjectReviewFileRequest | null {
     const request = asRequest(value);
     if (!request || typeof value !== 'object' || value === null) return null;
     const candidate = value as Partial<ProjectReviewFileRequest>;

@@ -1,6 +1,6 @@
 # Codex Gate — Stage C PTY Firehose Backpressure (C-M1)
 
-> Date: 2026-07-02 · Input: `docs/design/pty-backpressure-design.md` (pre-gate draft, commit 7d559ec)
+> Date: 2026-07-02 · Input: `docs/archive/design/pty-backpressure-design.md` (pre-gate draft, commit 7d559ec)
 > Runner: codex-companion task (rollout 2026-07-02T16-40-01, 6.4분, read-only)
 > **Verdict: REVISE — 4 blockers.** Direction B(pause/resume)는 타당하나, Windows 배압 경로
 > 과대주장 + 렌더러측 무한 버퍼 누락 + 무ack 프로토콜의 상한 미증명 + 패키지드 갭.

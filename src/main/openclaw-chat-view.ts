@@ -8,8 +8,8 @@
  * paints ABOVE the renderer's DOM natively, so the placeholder never renders
  * chat content itself.
  *
- * Config verified live in the M0 Stage-0 spike (docs/research/
- * 2026-07-12-openclaw-stage0.md ②): `sandbox: true`, `contextIsolation: true`,
+ * Config retained by `docs/design/external-integrations.md`:
+ * `sandbox: true`, `contextIsolation: true`,
  * NO preload, partition `persist:openclaw-chat` (isolated from the app's own
  * session/CSP — the packaged CSP is injected onto `session.defaultSession`
  * only, so this partition sits outside it by design; the anti-embed headers

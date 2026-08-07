@@ -1,5 +1,6 @@
 /**
- * ShellSession — the durable, utilityProcess-side shell state (architecture §2).
+ * ShellSession — the durable, utilityProcess-side shell state
+ * (`docs/design/terminal-runtime.md`).
  *
  * ONE ShellSession is created at interpreter-process bootstrap and lives for the
  * app lifetime. It owns the things that must PERSIST across command runs:

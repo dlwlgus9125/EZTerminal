@@ -103,6 +103,7 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
       provider: 'codex',
       projectId: 'project_0123456789abcdef',
       rootId: 'root_0123456789abcdef',
+      workspaceId: 'workspace_0123456789abcdef',
     };
     layout.panels = { [panel.id as string]: panel };
 
@@ -115,6 +116,7 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
         provider: 'codex',
         projectId: 'project_0123456789abcdef',
         rootId: 'root_0123456789abcdef',
+        workspaceId: 'workspace_0123456789abcdef',
       },
     });
   });
@@ -233,7 +235,7 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     expect(env?.layout.panels['openclaw-chat'].renderer).toBe('always');
   });
 
-  it('persists code descriptors without content and uses onlyWhenVisible', () => {
+  it('migrates a legacy code-file descriptor to one path-based editor', () => {
     const layout = makeLayout();
     const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
     panel.id = 'code-1';
@@ -243,15 +245,28 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     layout.panels = { 'code-1': panel };
     const env = validateLayoutEnvelope(makeEnvelope(layout));
     expect(env?.layout.panels['code-1']).toMatchObject({
+      contentComponent: 'project-editor',
       renderer: 'onlyWhenVisible',
-      params: { projectId: 'project-1', rootId: 'root-1', relativePath: 'src/app.ts' },
+      params: {
+        projectId: 'project-1',
+        rootId: 'root-1',
+        workspaceId: 'root-1',
+        relativePath: 'src/app.ts',
+      },
     });
     expect(JSON.stringify(env)).not.toContain('file contents');
   });
 
-  it('restores a live Last turn descriptor as an honest Working tree review', () => {
-    const layout = makeLayout();
-    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+  it('drops a legacy review destination that has no real file identity', () => {
+    const layout = makeLayout(['tab-1', 'diff-1']);
+    (layout.grid as { root: unknown }).root = {
+      type: 'branch',
+      data: [{
+        type: 'leaf',
+        data: { views: ['tab-1', 'diff-1'], activeView: 'diff-1' },
+      }],
+    };
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['diff-1'];
     panel.id = 'diff-1';
     panel.contentComponent = 'code-diff';
     panel.params = {
@@ -261,17 +276,12 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
       historyId: 'history-1',
       reviewTurnId: 'turn-1',
     };
-    layout.panels = { 'diff-1': panel };
     const env = validateLayoutEnvelope(makeEnvelope(layout));
-    expect(env?.layout.panels['diff-1']).toMatchObject({
-      renderer: 'onlyWhenVisible',
-      params: { projectId: 'project-1', rootId: 'root-1', scope: 'working-tree' },
-    });
-    expect((env?.layout.panels['diff-1'].params as Record<string, unknown>).historyId).toBeUndefined();
-    expect((env?.layout.panels['diff-1'].params as Record<string, unknown>).reviewTurnId).toBeUndefined();
+    expect(env).not.toBeNull();
+    expect(env?.layout.panels['diff-1']).toBeUndefined();
   });
 
-  it('persists only the validated nested-repository Diff descriptor', () => {
+  it('migrates a nested-repository diff to its project-relative file path', () => {
     const layout = makeLayout();
     const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
     panel.id = 'diff-nested';
@@ -282,18 +292,73 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
       repositoryRelativePath: 'out/manual-test-project',
       repositoryName: 'manual-test-project',
       scope: 'working-tree',
+      relativePath: 'src/app.ts',
     };
     layout.panels = { 'diff-nested': panel };
     const env = validateLayoutEnvelope(makeEnvelope(layout));
     expect(env?.layout.panels['diff-nested']).toMatchObject({
+      contentComponent: 'project-editor',
       renderer: 'onlyWhenVisible',
       params: {
         projectId: 'project-1',
         rootId: 'root-1',
-        repositoryRelativePath: 'out/manual-test-project',
-        repositoryName: 'manual-test-project',
-        scope: 'working-tree',
+        workspaceId: 'root-1',
+        relativePath: 'out/manual-test-project/src/app.ts',
       },
+    });
+  });
+
+  it('drops previews and persists only the path identity of a pinned editor', () => {
+    const layout = makeLayout(['tab-1', 'preview-1', 'review-1']);
+    (layout.grid as { root: unknown }).root = {
+      type: 'branch',
+      data: [{
+        type: 'leaf',
+        data: {
+          views: ['tab-1', 'preview-1', 'review-1'],
+          activeView: 'review-1',
+        },
+      }],
+    };
+    const panels = layout.panels as Record<string, Record<string, unknown>>;
+    panels['preview-1'] = {
+      id: 'preview-1',
+      contentComponent: 'project-editor',
+      renderer: 'onlyWhenVisible',
+      params: {
+        projectId: 'project-1',
+        rootId: 'root-1',
+        workspaceId: 'workspace-1',
+        relativePath: 'src/preview.ts',
+        preview: true,
+      },
+    };
+    panels['review-1'] = {
+      id: 'review-1',
+      contentComponent: 'project-editor',
+      renderer: 'onlyWhenVisible',
+      params: {
+        mode: 'review',
+        projectId: 'project-1',
+        rootId: 'root-1',
+        workspaceId: 'workspace-1',
+        sourceSelection: { kind: 'working-tree' },
+        relativePath: 'src/app.ts',
+        revision: 'a'.repeat(64),
+        comparison: { sourceSelection: { kind: 'working-tree' } },
+      },
+    };
+
+    const env = validateLayoutEnvelope(makeEnvelope(layout));
+    expect(env?.layout.panels['preview-1']).toBeUndefined();
+    expect(env?.layout.panels['review-1']).toMatchObject({
+      renderer: 'onlyWhenVisible',
+    });
+    expect(env?.layout.panels['review-1'].params).toEqual({
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'workspace-1',
+      relativePath: 'src/app.ts',
     });
   });
 

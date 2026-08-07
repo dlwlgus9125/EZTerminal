@@ -1,6 +1,6 @@
 /**
  * Argument coercion — the one place a parsed argument {@link Expression} becomes
- * a raw string argument (architecture §6/§7).
+ * a raw string argument (`docs/design/terminal-runtime.md`).
  *
  * Both edges cross this single seam: builtin bare-word args (`run-script`,
  * `ssh-connect`) and external command argv (`commandToArgv`). Bare words are

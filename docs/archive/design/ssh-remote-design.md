@@ -1,7 +1,7 @@
 # Stage E5 — SSH 원격 세션 (Design, E5)
 
 > Status: **✅ 구현 완료 (2026-07-03).** Codex REVISE(4 blockers) 전부 반영.
-> Gate record: `docs/research/2026-07-03-codex-ssh-review.md`
+> Gate record: `docs/archive/research/2026-07-03-codex-ssh-review.md`
 > Date: 2026-07-03 · Baseline: f850394 (vitest 243 · e2e 40 · packaged 6) →
 > **완료 시점: vitest 303 · e2e 44 · packaged 7 · audit 0**
 > 사용자 확정(2026-07-03): PTY 전용 원격 · 자격증명=키파일 경로+비밀번호는 세션당 프롬프트

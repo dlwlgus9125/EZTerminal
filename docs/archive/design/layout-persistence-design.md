@@ -1,7 +1,7 @@
 # Track A ③ — Layout Presets & Persistence (Design, A-M0)
 
 > Status: **GATED — Codex REVISE(6 blockers) folded (2026-07-02). Ready for A-M1.**
-> Gate record: `docs/research/2026-07-02-codex-track-a-presets-review.md`
+> Gate record: `docs/archive/research/2026-07-02-codex-track-a-presets-review.md`
 > Baseline: 5a69b1d + Stage 0/B partial · Scope: the app's FIRST persistence layer.
 > Layout geometry only — session state(cwd/env/vars/history)·블록 내용·PTY는 비영속.
 
@@ -192,5 +192,5 @@ try {
 
 ## 10. Resolved questions (was: open)
 
-전부 게이트에서 답변됨 — `docs/research/2026-07-02-codex-track-a-presets-review.md` §Answers 참조.
+전부 게이트에서 답변됨 — `docs/archive/research/2026-07-02-codex-track-a-presets-review.md` §Answers 참조.
 잔여 열린 항목 없음. A-M1 진행 가능.

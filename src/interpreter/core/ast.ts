@@ -1,5 +1,5 @@
 /**
- * AST node definitions (architecture §6).
+ * AST node definitions (`docs/design/terminal-runtime.md`).
  *
  * Grammar (Phase 1):
  *   statement := let | env-assign | '!'? pipeline
