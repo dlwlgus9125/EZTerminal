@@ -12,6 +12,9 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { formatCwd } from '../../src/renderer/format-cwd';
+import { DeferredSearchInput } from '../../src/renderer/DeferredSearchInput';
+import { AgentRelativeAge } from '../../src/renderer/AgentTime';
+import { useLatestRequestGate } from '../../src/renderer/latest-request';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import type {
   AgentHistorySessionSummary,
@@ -30,16 +33,6 @@ const HISTORY_PROVIDER_LABEL = {
   codex: 'Codex',
   claude: 'Claude',
 } as const;
-
-function ageLabel(updatedAt: number, now: number, formatter: Intl.RelativeTimeFormat): string {
-  const seconds = Math.max(0, Math.floor((now - updatedAt) / 1000));
-  if (seconds < 60) return formatter.format(-seconds, 'second');
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return formatter.format(-minutes, 'minute');
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return formatter.format(-hours, 'hour');
-  return formatter.format(-Math.floor(hours / 24), 'day');
-}
 
 export function MobileAgentProjects({
   transport,
@@ -84,7 +77,7 @@ export function MobileAgentProjects({
   const [selectedLauncherId, setSelectedLauncherId] = useState('');
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [launching, setLaunching] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  const projectRequestGate = useLatestRequestGate();
   const canManage = transport.supportsAgentProjectManagement;
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const relativeTime = useMemo(
@@ -97,22 +90,19 @@ export function MobileAgentProjects({
     return () => clearTimeout(timer);
   }, [query]);
 
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-
   const refresh = useCallback(async (
     force = false,
     cursor?: string,
     append = false,
   ): Promise<void> => {
+    const generation = projectRequestGate.begin();
     if (append) setLoadingMore(true);
     else setLoading(true);
     setError(null);
     const result = await transport
       .listAgentProjects(force, cursor, 40, debouncedQuery.trim() || undefined)
       .catch(() => null);
+    if (!projectRequestGate.isCurrent(generation)) return;
     setLoading(false);
     setLoadingMore(false);
     if (!result) {
@@ -121,7 +111,7 @@ export function MobileAgentProjects({
     }
     setProjects((current) => append ? [...current, ...result.items] : result.items);
     setProjectCursor(result.nextCursor);
-  }, [debouncedQuery, t, transport]);
+  }, [debouncedQuery, projectRequestGate, t, transport]);
 
   useEffect(() => {
     void refresh(false);
@@ -351,12 +341,11 @@ export function MobileAgentProjects({
       <label className="mob-agent-project-search">
         <span className="ez-ui-visually-hidden">{t('agentHub.projects.searchLabel')}</span>
         <Search aria-hidden="true" />
-        <input
-          type="search"
+        <DeferredSearchInput
           value={query}
           placeholder={t('agentHub.projects.searchPlaceholder')}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-          data-testid="mobile-agent-project-search"
+          onQueryChange={setQuery}
+          testId="mobile-agent-project-search"
         />
       </label>
       {!canManage && (
@@ -467,7 +456,7 @@ export function MobileAgentProjects({
                             {HISTORY_PROVIDER_LABEL[session.provider]}
                           </span>
                           {' · '}
-                          {ageLabel(session.updatedAt, now, relativeTime)}
+                          <AgentRelativeAge updatedAt={session.updatedAt} formatter={relativeTime} />
                         </small>
                       </span>
                     </button>
@@ -670,12 +659,11 @@ export function MobileAgentProjects({
             )}
             <fieldset>
               <legend>{t('agentHub.projects.location')}</legend>
-              <input
-                type="search"
+              <DeferredSearchInput
                 value={launchProjectQuery}
                 placeholder={t('agentHub.projects.locationSearch')}
-                aria-label={t('agentHub.projects.locationSearch')}
-                onChange={(event) => setLaunchProjectQuery(event.currentTarget.value)}
+                ariaLabel={t('agentHub.projects.locationSearch')}
+                onQueryChange={setLaunchProjectQuery}
               />
               <select
                 value={launchTarget?.kind === 'project'

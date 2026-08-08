@@ -1,9 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import type { Page } from '@playwright/test';
-
-import { test, expect, createRegisteredE2eTempDir } from './test';
+import { test, expect, createRegisteredE2eTempDir, type Page } from './test';
 
 import { launchApp } from './launch-app';
 import { encodeClaudeProjectDirName } from '../src/main/claude-history-adapter';

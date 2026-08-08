@@ -8,7 +8,6 @@ import {
   PTY_PLAIN_DOM_BATCH_CHARS,
   PTY_PLAIN_DOM_MAX_LATENCY_MS,
   PtyReplayBuffer,
-  prunePlainOutputDom,
 } from './pty-output-retention';
 
 const encoder = new TextEncoder();
@@ -156,13 +155,13 @@ describe('PtyReplayBuffer', () => {
   });
 });
 
-describe('prunePlainOutputDom', () => {
+describe('PlainOutputDomRetention direct pruning', () => {
   it('deletes old text while preserving ANSI markup around the retained suffix', () => {
     const output = document.createElement('pre');
-    output.innerHTML = '<span class="old">one\ntwo\n</span><b>three\nfour</b>';
+    const retention = new PlainOutputDomRetention();
     const createRange = vi.spyOn(output.ownerDocument, 'createRange');
 
-    prunePlainOutputDom(output, 2, 1_024);
+    retention.append(output, '<span class="old">one\ntwo\n</span><b>three\nfour</b>', 2, 1_024);
 
     expect(output.textContent).toBe('three\nfour');
     expect(output.querySelector('b')?.textContent).toBe('three\nfour');
@@ -173,21 +172,24 @@ describe('prunePlainOutputDom', () => {
 
   it('falls back for a mixed Text/ANSI prefix and preserves a retained selection', () => {
     const output = document.createElement('pre');
-    const oldText = document.createTextNode('old\n');
-    const styled = document.createElement('span');
-    styled.className = 'styled';
-    styled.textContent = 'styled\n';
-    const retained = document.createTextNode('keep');
-    output.append(oldText, styled, retained);
+    const retention = new PlainOutputDomRetention();
+    retention.append(
+      output,
+      'old\n<span class="styled">styled\n</span><span class="retained">keep</span>',
+      100,
+      1_024,
+    );
+    const retained = output.querySelector('.retained');
+    expect(retained).not.toBeNull();
     document.body.append(output);
     const selection = window.getSelection();
     const selected = document.createRange();
-    selected.selectNodeContents(retained);
+    selected.selectNodeContents(retained!);
     selection?.removeAllRanges();
     selection?.addRange(selected);
     const createRange = vi.spyOn(output.ownerDocument, 'createRange');
 
-    prunePlainOutputDom(output, 1, 1_024);
+    retention.limit(output, 1, 1_024);
 
     expect(output.textContent).toBe('keep');
     expect(output.querySelector('.styled')).toBeNull();
@@ -200,15 +202,14 @@ describe('prunePlainOutputDom', () => {
 
   it('removes a direct Text-node prefix without invoking the Range fallback', () => {
     const output = document.createElement('pre');
-    output.append(
-      document.createTextNode('one\n'),
-      document.createTextNode('two\n'),
-      document.createTextNode('three\n'),
-      document.createTextNode('four'),
-    );
+    const retention = new PlainOutputDomRetention();
+    retention.appendText(output, 'one\n', 100, 1_024);
+    retention.appendText(output, 'two\n', 100, 1_024);
+    retention.appendText(output, 'three\n', 100, 1_024);
+    retention.appendText(output, 'four', 100, 1_024);
     const createRange = vi.spyOn(output.ownerDocument, 'createRange');
 
-    prunePlainOutputDom(output, 2, 1_024);
+    retention.limit(output, 2, 1_024);
 
     expect(output.textContent).toBe('three\nfour');
     expect(Array.from(output.childNodes).every((node) => node.nodeType === 3)).toBe(true);
@@ -219,10 +220,10 @@ describe('prunePlainOutputDom', () => {
   it('uses direct Text.deleteData without leaving a split surrogate', () => {
     const output = document.createElement('pre');
     const face = '\ud83d\ude00';
-    output.textContent = `discard-${face.repeat(20)}`;
+    const retention = new PlainOutputDomRetention();
     const createRange = vi.spyOn(output.ownerDocument, 'createRange');
 
-    prunePlainOutputDom(output, 100, 9);
+    retention.appendText(output, `discard-${face.repeat(20)}`, 100, 9);
 
     expect(Array.from(output.textContent ?? '').every((character) => character === face)).toBe(true);
     expect((output.textContent ?? '').length).toBeLessThanOrEqual(10);
@@ -234,7 +235,10 @@ describe('prunePlainOutputDom', () => {
     const output = document.createElement('pre');
     output.textContent = `discard-${'🙂'.repeat(20)}`;
 
-    prunePlainOutputDom(output, 100, 9);
+    const input = output.textContent ?? '';
+    output.textContent = '';
+    const retention = new PlainOutputDomRetention();
+    retention.appendText(output, input, 100, 9);
 
     expect(output.textContent).toMatch(/^(?:🙂)+$/u);
     expect(Array.from(output.textContent ?? '').every((character) => character === '🙂')).toBe(true);

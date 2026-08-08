@@ -33,8 +33,6 @@ const EFFECTS_KEY = 'ezterminal-mobile-effects';
 const ROLLBAR_KEY = 'ezterminal-mobile-rollbar';
 const EFFECT_PARAMS_KEY = 'ezterminal-mobile-effect-params';
 
-export const THEME_NAMES: readonly ThemeName[] = ['dark', 'light', 'high-contrast', 'matrix'];
-
 /** Accepts any REGISTERED theme id — built-in ∪ custom, not just the 4
  * built-ins — so a persisted custom theme selection survives reload (AC-T4).
  * Requires `loadCustomThemes()` to have already registered the custom half of

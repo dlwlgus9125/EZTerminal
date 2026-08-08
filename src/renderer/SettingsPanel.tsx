@@ -315,6 +315,30 @@ export function SettingsPanel({
             <option value="comfortable">{t('settings.comfortable')}</option>
           </Select>
         </Field>
+        <Field
+          className="settings-field-row"
+          label={t('settings.resourceProfile')}
+          description={(
+            <>
+              {t('settings.resourceProfileDescription')}
+              {uiPreferences.resourceProfile === 'low-resource' && (
+                <> {t('settings.resourceProfileRestartHint')}</>
+              )}
+            </>
+          )}
+        >
+          <Select
+            value={uiPreferences.resourceProfile}
+            onChange={(event) => updateUiPreference({
+              resourceProfile: event.target.value as typeof uiPreferences.resourceProfile,
+            })}
+            data-testid="settings-resource-profile"
+          >
+            <option value="balanced">{t('settings.resourceProfileBalanced')}</option>
+            <option value="low-resource">{t('settings.resourceProfileLow')}</option>
+            <option value="high-responsiveness">{t('settings.resourceProfileHigh')}</option>
+          </Select>
+        </Field>
         {preferenceError && <div className="settings-theme-import-error" role="alert">{preferenceError}</div>}
       </section>
       <section className="status-section" hidden={category !== 'general'}>

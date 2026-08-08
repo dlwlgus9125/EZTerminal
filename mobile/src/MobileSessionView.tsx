@@ -5,7 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { formatCwd } from '../../src/renderer/format-cwd';
 
 import { BlockController, type BlockStatus } from '../../src/renderer/block-controller';
-import { Block } from '../../src/renderer/Block';
+import { TerminalBlockEntries } from '../../src/renderer/TerminalBlockEntries';
 import { registerPaneInput, unregisterPaneInput } from '../../src/renderer/pane-registry';
 import { keyToPtyBytes } from '../../src/renderer/pty-keys';
 import { TerminalContextMenu, type TerminalContextMenuItem } from '../../src/renderer/TerminalContextMenu';
@@ -1142,21 +1142,13 @@ export function MobileSessionView({
         onPointerCancel={longPress.onPointerCancel}
         onContextMenu={longPress.onContextMenu}
       >
-        {blocks.map((entry) =>
-          entry.controller ? (
-            <Block
-              key={entry.id}
-              controller={entry.controller}
-              onDismiss={() => handleDismiss(entry.id)}
-              isTakeover={activeTakeover && activeController.current === entry.controller}
-              terminalRuntimeOptions={terminalRuntimeOptions}
-            />
-          ) : (
-            <section key={entry.id} className="block" data-testid="block" data-status="running">
-              <div className="block-pending">{t('mobile.terminalView.starting')}</div>
-            </section>
-          ),
-        )}
+        <TerminalBlockEntries
+          entries={blocks}
+          activeTakeoverController={activeTakeover ? activeController.current : null}
+          terminalRuntimeOptions={terminalRuntimeOptions}
+          pendingLabel={t('mobile.terminalView.starting')}
+          onDismiss={handleDismiss}
+        />
       </div>
 
       {menu && <TerminalContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}

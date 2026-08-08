@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added device-local Balanced, Low resource, and High responsiveness profiles
+  to desktop and Android Settings without changing feature availability or
+  correctness and safety timers.
+- Added a non-release `profile:runtime` developer diagnostic for startup,
+  optional-feature readiness, process working set, and renderer chunk sizes.
+
+### Changed
+
+- Split optional desktop and mobile destinations into retryable feature chunks
+  with deduplicated intent, idle, or eager preload according to the selected
+  resource profile.
+- Replaced overlapping visible-surface polling with settle-then-schedule loops,
+  removed pane cwd polling in favor of live registry notifications, and kept
+  terminal pane registrations stable across command and output updates.
+- Removed unused compatibility aliases, test-only wrappers, and orphan exports;
+  tests now exercise the maintained production paths directly.
+
 ## [1.0.25] - 2026-08-05
 
 ### Changed

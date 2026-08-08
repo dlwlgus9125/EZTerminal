@@ -49,9 +49,9 @@ import {
 import { type QuickCommand, type QuickCommandInput, type QuickCommandMutationResult } from '../shared/quick-command';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
 import type { CloseRisk } from '../shared/close-risk';
+import { countAgentAttention } from '../shared/agent-attention';
 import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from '../shared/workspace-search';
 import { isAppUpdateAvailable } from '../shared/app-update';
-import { AgentHub, countAgentAttention } from './AgentHub';
 import {
   AuxiliaryCloseDialog,
   type AuxiliaryCloseChoice,
@@ -69,7 +69,6 @@ import {
   type InterferenceParams,
   type RollbarParams,
 } from './effect-params';
-import { ExplorerWorkbench } from './ExplorerWorkbench';
 import { ProjectEditorPanel } from './ProjectEditorPanel';
 import {
   projectEditorDocumentParametersEqual,
@@ -98,7 +97,6 @@ import { FileDropOverlay } from './FileDropOverlay';
 import { subsequenceMatch } from './fuzzy';
 import { useAppTranslation } from './i18n';
 import { OpenClawChatPanel, OpenClawOverlayContext } from './OpenClawChatPanel';
-import { OpenClawPanel } from './OpenClawPanel';
 import { OpenClawVisibilitySeedLatch } from './openclaw-visibility-seed';
 import {
   QuickOpenModal,
@@ -108,13 +106,11 @@ import {
   type QuickOpenMode,
   type QuickOpenRow,
 } from './QuickOpenModal';
-import { RichFileViewerOverlay } from './RichFileViewerOverlay';
 import { RemoteControlBanner, useRemoteDesktopHostStatus } from './RemoteDesktopStatusCard';
 import { RecentPanelSwitcher, type RecentPanelSwitcherItem } from './RecentPanelSwitcher';
 import { PaneHeaderMeta } from './PaneHeaderMeta';
 import { RiskyCloseDialog } from './RiskyCloseDialog';
-import { SettingsPanel, type SettingsCategory } from './SettingsPanel';
-import { StatusPanel } from './StatusPanel';
+import type { SettingsCategory } from './SettingsPanel';
 import { TerminalPane, type PaneApproval } from './TerminalPane';
 import { TerminalPasteWarningDialog } from './TerminalPasteWarningDialog';
 import { agentHistoryTabTitle, WorkspaceTab } from './WorkspaceTab';
@@ -146,11 +142,17 @@ import {
 } from './command-center-actions';
 import { commandCenterShortcutMode } from './command-center-shortcut';
 import { useToast } from './ui';
+import {
+  LazyFeature,
+  createFeatureModuleLoader,
+  preloadOnIntent,
+  useProfileFeaturePreload,
+  type PreloadableFeature,
+} from './feature-loader';
 import type { TerminalNoticeKind } from './terminal-paste';
 import {
   ActivityRail,
   AppHeader,
-  RemotePanel,
   SidebarShell,
   StatusBar,
   WorkspaceBar,
@@ -439,6 +441,41 @@ type QuickOpenTarget =
 
 type AppQuickOpenRow = QuickOpenRow & { readonly target: QuickOpenTarget };
 
+const DESKTOP_FEATURE_LOADERS = Object.freeze({
+  explorer: createFeatureModuleLoader(
+    () => import('./ExplorerWorkbench'),
+    (module) => module.ExplorerWorkbench,
+  ),
+  agents: createFeatureModuleLoader(
+    () => import('./AgentHub'),
+    (module) => module.AgentHub,
+  ),
+  monitor: createFeatureModuleLoader(
+    () => import('./StatusPanel'),
+    (module) => module.StatusPanel,
+  ),
+  remote: createFeatureModuleLoader(
+    () => import('./workbench/RemotePanel'),
+    (module) => module.RemotePanel,
+  ),
+  openclaw: createFeatureModuleLoader(
+    () => import('./OpenClawPanel'),
+    (module) => module.OpenClawPanel,
+  ),
+  settings: createFeatureModuleLoader(
+    () => import('./SettingsPanel'),
+    (module) => module.SettingsPanel,
+  ),
+  richPreview: createFeatureModuleLoader(
+    () => import('./RichFileViewerOverlay'),
+    (module) => module.RichFileViewerOverlay,
+  ),
+});
+
+const DESKTOP_PRELOAD_LOADERS: readonly PreloadableFeature[] = Object.freeze(
+  Object.values(DESKTOP_FEATURE_LOADERS),
+);
+
 interface QuickOpenFilePreview {
   readonly path: string;
   readonly result: FilePreviewResult;
@@ -520,7 +557,16 @@ export function App(): JSX.Element {
     },
     [t],
   );
-  const { preferences: uiPreferences, updatePreferences } = useUiPreferences();
+  const {
+    preferences: uiPreferences,
+    ready: uiPreferencesReady,
+    updatePreferences,
+  } = useUiPreferences();
+  useProfileFeaturePreload(
+    DESKTOP_PRELOAD_LOADERS,
+    uiPreferences.resourceProfile,
+    uiPreferencesReady,
+  );
   const sidebarReflow = useSidebarReflow();
   const projectWide = useSidebarReflow('(min-width: 1024px)');
   const apiRef = useRef<DockviewApi | null>(null);
@@ -969,6 +1015,16 @@ export function App(): JSX.Element {
       return wasOpen ? null : current;
     });
   }, []);
+  const closeFailedSidebarFeature = useCallback((): void => {
+    const destination = sidebarDestination;
+    setSidebarDestination(null);
+    if (!destination) return;
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(
+        `.activity-rail-button[data-destination="${destination}"]`,
+      )?.focus();
+    });
+  }, [sidebarDestination]);
   const statsOpen = sidebarDestination === 'monitor';
   const setOpenclawOpen = useCallback(
     (update: OpenStateUpdate) => setSidebarOpen('openclaw', update),
@@ -2084,7 +2140,6 @@ export function App(): JSX.Element {
   const [presetNames, setPresetNames] = useState<string[]>([]);
   const [startupPreset, setStartupPreset] = useState<string | null>(null);
   const [savingPreset, setSavingPreset] = useState(false);
-  const [presetNameDraft, setPresetNameDraft] = useState('');
 
   const applyLayoutPreset = useCallback(
     (preset: WorkbenchLayoutPreset): void => {
@@ -2120,13 +2175,12 @@ export function App(): JSX.Element {
     }
   }, []);
 
-  const saveCurrentAsPreset = useCallback(async (): Promise<void> => {
+  const saveCurrentAsPreset = useCallback(async (draft: string): Promise<void> => {
     const api = apiRef.current;
-    const name = presetNameDraft.trim();
+    const name = draft.trim();
     if (!api || !name) return;
     const ok = await window.ezterminal.savePreset(name, api.toJSON());
     if (ok) {
-      setPresetNameDraft('');
       setSavingPreset(false);
       await refreshPresets();
       setAppliedPreset(name);
@@ -2134,7 +2188,7 @@ export function App(): JSX.Element {
       return;
     }
     pushToast({ title: t('workspace.presetSaveFailed', { name }), variant: 'danger' });
-  }, [presetNameDraft, pushToast, refreshPresets, t]);
+  }, [pushToast, refreshPresets, t]);
 
   const applyPreset = useCallback(
     (name: string): void => {
@@ -2750,6 +2804,7 @@ export function App(): JSX.Element {
 
   const loadQuickPreview = useCallback(
     async (path: string): Promise<void> => {
+      preloadOnIntent(DESKTOP_FEATURE_LOADERS.richPreview);
       quickPreviewSequenceRef.current += 1;
       const sequence = quickPreviewSequenceRef.current;
       const result = await window.ezterminal.readFilePreview(path).catch((): FilePreviewResult => ({
@@ -3039,75 +3094,123 @@ export function App(): JSX.Element {
   };
   const sidebarContent =
     sidebarDestination === 'explorer' ? (
-      <ExplorerWorkbench
-        activePanelId={activePanelId}
-        onOpenTerminalAt={onOpenTerminalAt}
+      <LazyFeature
+        loader={DESKTOP_FEATURE_LOADERS.explorer}
+        componentProps={{ activePanelId, onOpenTerminalAt }}
+        loading={<div className="status-loading" role="status">{t('common.loading')}</div>}
+        errorMessage={t('common.featureLoadFailed')}
+        retryLabel={t('common.retry')}
+        closeLabel={t('common.close')}
+        onClose={closeFailedSidebarFeature}
       />
     ) : sidebarDestination === 'agents' ? (
-      <AgentHub
-        snapshot={agentSnapshot}
-        onFocusSession={focusAgentSession}
-        onSendFollowup={(activityId, text) => window.ezterminal.sendAgentFollowup(activityId, text)}
-        onDecideApproval={(activityId, approvalId, decision) =>
-          window.ezterminal.decideAgentApproval(activityId, approvalId, decision)}
-        onLoadDiff={(directory) => window.ezterminal.getGitDiff(directory)}
-        onOpenProjectReview={openActivityReview}
-        onReadGitStatus={(directory) => window.ezterminal.getGitStatus(directory)}
-        onOpenHistorySession={openAgentHistorySession}
-        onOpenHistoryReview={(session, project) => void openHistoryReview(session, project)}
-        onOpenProjectDocument={openProjectDocument}
-        activeProjectId={activeProjectId}
-        onActiveProjectIdChange={setActiveProjectId}
-        projectWorkspaceState={activeProjectId ? projectWorkspaceStates[activeProjectId] : undefined}
-        onProjectWorkspaceStateChange={(state) => {
-          if (!activeProjectId) return;
-          setProjectWorkspaceStates((current) => ({ ...current, [activeProjectId]: state }));
+      <LazyFeature
+        loader={DESKTOP_FEATURE_LOADERS.agents}
+        componentProps={{
+          snapshot: agentSnapshot,
+          onFocusSession: focusAgentSession,
+          onSendFollowup: (activityId, text) => window.ezterminal.sendAgentFollowup(activityId, text),
+          onDecideApproval: (activityId, approvalId, decision) =>
+            window.ezterminal.decideAgentApproval(activityId, approvalId, decision),
+          onLoadDiff: (directory) => window.ezterminal.getGitDiff(directory),
+          onOpenProjectReview: openActivityReview,
+          onReadGitStatus: (directory) => window.ezterminal.getGitStatus(directory),
+          onOpenHistorySession: openAgentHistorySession,
+          onOpenHistoryReview: (session, project) => void openHistoryReview(session, project),
+          onOpenProjectDocument: openProjectDocument,
+          activeProjectId,
+          onActiveProjectIdChange: setActiveProjectId,
+          projectWorkspaceState: activeProjectId ? projectWorkspaceStates[activeProjectId] : undefined,
+          onProjectWorkspaceStateChange: (state) => {
+            if (!activeProjectId) return;
+            setProjectWorkspaceStates((current) => ({ ...current, [activeProjectId]: state }));
+          },
+          onLaunchAgent: launchAgent,
+          onOpenAgentSettings: () => {
+            setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
+            setSidebarDestination('settings');
+          },
+          onClose: () => setSidebarDestination(null),
         }}
-        onLaunchAgent={launchAgent}
-        onOpenAgentSettings={() => {
-          setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
-          setSidebarDestination('settings');
-        }}
-        onClose={() => setSidebarDestination(null)}
+        loading={<div className="status-loading" role="status">{t('common.loading')}</div>}
+        errorMessage={t('common.featureLoadFailed')}
+        retryLabel={t('common.retry')}
+        closeLabel={t('common.close')}
+        onClose={closeFailedSidebarFeature}
       />
     ) : sidebarDestination === 'monitor' ? (
-      <StatusPanel />
+      <LazyFeature
+        loader={DESKTOP_FEATURE_LOADERS.monitor}
+        componentProps={{}}
+        loading={<div className="status-loading" role="status">{t('common.loading')}</div>}
+        errorMessage={t('common.featureLoadFailed')}
+        retryLabel={t('common.retry')}
+        closeLabel={t('common.close')}
+        onClose={closeFailedSidebarFeature}
+      />
     ) : sidebarDestination === 'remote' ? (
-      <RemotePanel />
+      <LazyFeature
+        loader={DESKTOP_FEATURE_LOADERS.remote}
+        componentProps={{ resourceProfile: uiPreferences.resourceProfile }}
+        loading={<div className="status-loading" role="status">{t('common.loading')}</div>}
+        errorMessage={t('common.featureLoadFailed')}
+        retryLabel={t('common.retry')}
+        closeLabel={t('common.close')}
+        onClose={closeFailedSidebarFeature}
+      />
     ) : sidebarDestination === 'openclaw' && openclawVisible ? (
-      <OpenClawPanel onOpenChat={openOpenClawChat} />
+      <LazyFeature
+        loader={DESKTOP_FEATURE_LOADERS.openclaw}
+        componentProps={{
+          onOpenChat: openOpenClawChat,
+          resourceProfile: uiPreferences.resourceProfile,
+        }}
+        loading={<div className="status-loading" role="status">{t('common.loading')}</div>}
+        errorMessage={t('common.featureLoadFailed')}
+        retryLabel={t('common.retry')}
+        closeLabel={t('common.close')}
+        onClose={closeFailedSidebarFeature}
+      />
     ) : sidebarDestination === 'settings' ? (
-      <SettingsPanel
-        requestedCategory={settingsCategoryRequest.category}
-        categoryRequestId={settingsCategoryRequest.id}
-        uiScale={uiScale}
-        onChangeUiScale={changeUiScale}
-        scrollback={scrollback}
-        onChangeScrollback={changeScrollback}
-        terminalRendererPreference={terminalRendererPreference}
-        onChangeTerminalRendererPreference={changeTerminalRendererPreference}
-        confirmRiskyPaneClose={confirmRiskyPaneClose}
-        onChangeConfirmRiskyPaneClose={changeConfirmRiskyPaneClose}
-        bootIntro={bootIntro}
-        onChangeBootIntro={changeBootIntro}
-        allowOsc52Clipboard={allowOsc52Clipboard}
-        onChangeAllowOsc52Clipboard={changeAllowOsc52Clipboard}
-        terminalPastePreferences={terminalPastePreferences}
-        onChangeTerminalPastePreferences={changeTerminalPastePreferences}
-        theme={theme}
-        onSelectTheme={selectTheme}
-        availableThemes={availableThemes}
-        onImportTheme={onImportTheme}
-        fontId={fontId}
-        onSelectFont={onSelectFont}
-        activeThemeEffects={activeThemeDef.effects ?? []}
-        effectToggles={effectToggles}
-        onToggleEffect={onToggleEffect}
-        rollbar={rollbar}
-        onChangeRollbar={onChangeRollbar}
-        interference={interference}
-        onChangeEffectParams={onChangeEffectParams}
-        appUpdateController={appUpdateController}
+      <LazyFeature
+        loader={DESKTOP_FEATURE_LOADERS.settings}
+        componentProps={{
+          requestedCategory: settingsCategoryRequest.category,
+          categoryRequestId: settingsCategoryRequest.id,
+          uiScale,
+          onChangeUiScale: changeUiScale,
+          scrollback,
+          onChangeScrollback: changeScrollback,
+          terminalRendererPreference,
+          onChangeTerminalRendererPreference: changeTerminalRendererPreference,
+          confirmRiskyPaneClose,
+          onChangeConfirmRiskyPaneClose: changeConfirmRiskyPaneClose,
+          bootIntro,
+          onChangeBootIntro: changeBootIntro,
+          allowOsc52Clipboard,
+          onChangeAllowOsc52Clipboard: changeAllowOsc52Clipboard,
+          terminalPastePreferences,
+          onChangeTerminalPastePreferences: changeTerminalPastePreferences,
+          theme,
+          onSelectTheme: selectTheme,
+          availableThemes,
+          onImportTheme,
+          fontId,
+          onSelectFont,
+          activeThemeEffects: activeThemeDef.effects ?? [],
+          effectToggles,
+          onToggleEffect,
+          rollbar,
+          onChangeRollbar,
+          interference,
+          onChangeEffectParams,
+          appUpdateController,
+        }}
+        loading={<div className="status-loading" role="status">{t('common.loading')}</div>}
+        errorMessage={t('common.featureLoadFailed')}
+        retryLabel={t('common.retry')}
+        closeLabel={t('common.close')}
+        onClose={closeFailedSidebarFeature}
       />
     ) : null;
 
@@ -3138,12 +3241,10 @@ export function App(): JSX.Element {
           presetsOpen ? (
             <WorkspaceMenu
               names={presetNames}
-              nameDraft={presetNameDraft}
               saving={savingPreset}
               startupPreset={startupPreset}
-              onNameDraftChange={setPresetNameDraft}
               onSetSaving={setSavingPreset}
-              onSave={() => void saveCurrentAsPreset()}
+              onSave={(name) => void saveCurrentAsPreset(name)}
               onApply={(name) => void applyPreset(name)}
               onToggleStartup={(name) => void toggleStartupPreset(name)}
               onDelete={(name) => void removePreset(name)}
@@ -3186,6 +3287,7 @@ export function App(): JSX.Element {
           attentionCount={attentionCount}
           updateAvailable={appUpdateAvailable}
           openclawVisible={openclawVisible}
+          onIntent={(destination) => preloadOnIntent(DESKTOP_FEATURE_LOADERS[destination])}
           onSelect={(destination) => {
             if (destination === 'settings' && sidebarDestination !== 'settings') {
               setSettingsCategoryRequest((current) => ({
@@ -3340,21 +3442,29 @@ export function App(): JSX.Element {
         />
       )}
       {quickPreview && (
-        <RichFileViewerOverlay
-          path={quickPreview.path}
-          result={quickPreview.result}
-          line={quickPreview.line}
-          column={quickPreview.column}
+        <LazyFeature
+          loader={DESKTOP_FEATURE_LOADERS.richPreview}
+          componentProps={{
+            path: quickPreview.path,
+            result: quickPreview.result,
+            line: quickPreview.line,
+            column: quickPreview.column,
+            onClose: closeQuickPreview,
+            onInsert: () => {
+              applyTextToActivePane(quoteEzArgument(quickPreview.path), false);
+            },
+            onRetry: () => void loadQuickPreview(quickPreview.path),
+            onOpen: () => void window.ezterminal.openFileInApp(quickPreview.path),
+            onReveal: () => void window.ezterminal.revealFileInExplorer(quickPreview.path),
+            openExternalHttpUrl: (url) => {
+              void window.ezterminalDesktop?.openExternalHttpUrl(url);
+            },
+          }}
+          loading={<div className="status-loading" role="status">{t('common.loading')}</div>}
+          errorMessage={t('common.featureLoadFailed')}
+          retryLabel={t('common.retry')}
+          closeLabel={t('common.close')}
           onClose={closeQuickPreview}
-          onInsert={() => {
-            applyTextToActivePane(quoteEzArgument(quickPreview.path), false);
-          }}
-          onRetry={() => void loadQuickPreview(quickPreview.path)}
-          onOpen={() => void window.ezterminal.openFileInApp(quickPreview.path)}
-          onReveal={() => void window.ezterminal.revealFileInExplorer(quickPreview.path)}
-          openExternalHttpUrl={(url) => {
-            void window.ezterminalDesktop?.openExternalHttpUrl(url);
-          }}
         />
       )}
     </main>

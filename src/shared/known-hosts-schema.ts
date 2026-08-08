@@ -19,7 +19,6 @@ export const KnownHostsFileSchema = z.object({
   hosts: z.record(z.string(), HostKeyEntrySchema),
 });
 
-export type HostKeyEntry = z.infer<typeof HostKeyEntrySchema>;
 export type KnownHostsFile = z.infer<typeof KnownHostsFileSchema>;
 
 export function emptyKnownHostsFile(): KnownHostsFile {

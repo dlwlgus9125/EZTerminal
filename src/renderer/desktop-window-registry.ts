@@ -125,14 +125,6 @@ export function pointIsInsideAppWindow(screenX: number, screenY: number): boolea
   });
 }
 
-export function ownerDocumentOf(element: Element | null | undefined): Document {
-  return element?.ownerDocument ?? document;
-}
-
-export function ownerWindowOf(element: Element | null | undefined): Window {
-  return ownerDocumentOf(element).defaultView ?? window;
-}
-
 export function getActiveAppDocument(): Document {
   for (const candidate of getAppWindows()) {
     try {

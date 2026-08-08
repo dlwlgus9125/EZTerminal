@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { MonitorSmartphone, Power } from 'lucide-react';
 
 import type { RemoteDesktopHostStatus } from '../shared/ipc';
@@ -26,13 +26,44 @@ export function useRemoteDesktopHostStatus(
   capabilities: CapabilityAccess = rendererCapabilities,
 ): RemoteDesktopHostStatus | null {
   const [status, setStatus] = useState<RemoteDesktopHostStatus | null>(null);
+  const committedRef = useRef<RemoteDesktopHostStatus | null>(null);
   useEffect(() => {
     let alive = true;
+    let frame: number | null = null;
+    let queued: RemoteDesktopHostStatus | null = null;
+    const commit = (next: RemoteDesktopHostStatus): void => {
+      if (!alive) return;
+      committedRef.current = next;
+      setStatus(next);
+    };
     const unsubscribe = capabilities.remoteDesktop.observe((next) => {
-      if (alive) setStatus(next);
+      if (!alive) return;
+      const previous = committedRef.current;
+      const authorityChanged = previous === null
+        || previous.service !== next.service
+        || previous.state !== next.state
+        || previous.controllerName !== next.controllerName
+        || previous.connectedAt !== next.connectedAt
+        || previous.errorCode !== next.errorCode;
+      if (authorityChanged || typeof requestAnimationFrame !== 'function') {
+        if (frame !== null) cancelAnimationFrame(frame);
+        frame = null;
+        queued = null;
+        commit(next);
+        return;
+      }
+      queued = next;
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const latest = queued;
+        queued = null;
+        if (latest) commit(latest);
+      });
     });
     return () => {
       alive = false;
+      if (frame !== null) cancelAnimationFrame(frame);
       unsubscribe();
     };
   }, [capabilities]);

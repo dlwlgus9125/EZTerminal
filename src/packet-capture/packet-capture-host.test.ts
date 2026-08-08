@@ -1,13 +1,11 @@
 /**
  * packet-capture-host.ts (Phase 2B failure paths + M3's multi-port fan-out).
  *
- * `cap` is a real native module in node_modules (prebuilt for Electron's Node
- * ABI), so under plain Node (this vitest run) requiring it for real always
- * throws an ABI-mismatch error — permanent and by design, not environment-
- * specific (see the module's own header comment: "MUST NEVER be imported from
- * a plain-Node vitest run — it would ABI-mismatch outside Electron"). The
- * 'throw' scenario below therefore needs no stub at all: requiring the REAL
- * module already reproduces `npcap-missing` exactly.
+ * `cap` is a real native module in node_modules. Whether it loads under plain
+ * Node depends on the installed Node/Electron ABI and the host's Npcap state,
+ * so the tests must never use the real module as a failure oracle. The
+ * 'throw' scenario below installs a cache entry whose `exports` access throws,
+ * deterministically exercising the host's catchable `require('cap')` failure.
  *
  * For the other three states, the real native module can't be exercised
  * (no Npcap device in CI), so those tests fake `cap`'s behavior. `vi.mock`/
@@ -75,7 +73,18 @@ function fakeCapModule(mode: Exclude<CapMode, 'throw'>): unknown {
 /** Installs (or removes) the `require.cache` stub for `cap`'s resolved path. */
 function stubCap(mode: CapMode): void {
   if (mode === 'throw') {
-    delete require.cache[CAP_PATH]; // no stub — the real ABI-mismatched module throws
+    const throwingModule = {
+      id: CAP_PATH,
+      filename: CAP_PATH,
+      loaded: true,
+    } as NodeModule;
+    Object.defineProperty(throwingModule, 'exports', {
+      configurable: true,
+      get: () => {
+        throw new Error('simulated cap load failure');
+      },
+    });
+    require.cache[CAP_PATH] = throwingModule;
     return;
   }
   require.cache[CAP_PATH] = {

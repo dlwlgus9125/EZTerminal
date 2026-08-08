@@ -25,6 +25,10 @@ import { powerMonitor } from 'electron';
 import { totalmem, freemem } from 'node:os';
 import * as si from 'systeminformation';
 import type { SystemStatsSnapshot } from '../shared/ipc';
+import {
+  observationalIntervalMs,
+  type UiResourceProfile,
+} from '../shared/resource-profile';
 import type { LogFile } from './diagnostics';
 
 const HISTORY_SIZE = 60;
@@ -81,6 +85,7 @@ export class SystemStatsService {
   private stopped = true;
   private panelVisible = false;
   private discardNextCpuSample = false;
+  private resourceProfile: UiResourceProfile;
 
   private graphTimer: ReturnType<typeof setTimeout> | null = null;
   private netTimer: ReturnType<typeof setTimeout> | null = null;
@@ -95,9 +100,19 @@ export class SystemStatsService {
     this.discardNextCpuSample = true;
   };
 
-  constructor(log: LogFile | null, onSnapshot: (snapshot: SystemStatsSnapshot) => void) {
+  constructor(
+    log: LogFile | null,
+    onSnapshot: (snapshot: SystemStatsSnapshot) => void,
+    resourceProfile: UiResourceProfile = 'balanced',
+  ) {
     this.log = log;
     this.onSnapshot = onSnapshot;
+    this.resourceProfile = resourceProfile;
+  }
+
+  /** Changes only allow-listed observation cadence; timeout/correctness limits stay fixed. */
+  setResourceProfile(profile: UiResourceProfile): void {
+    this.resourceProfile = profile;
   }
 
   start(): void {
@@ -164,7 +179,7 @@ export class SystemStatsService {
   private scheduleGraphTick(delayMs: number): void {
     if (this.stopped) return;
     this.graphTimer = setTimeout(() => {
-      void this.graphTick().finally(() => this.scheduleGraphTick(GRAPH_INTERVAL_MS));
+      void this.graphTick().finally(() => this.scheduleGraphTick(this.interval(GRAPH_INTERVAL_MS)));
     }, delayMs);
   }
 
@@ -210,7 +225,7 @@ export class SystemStatsService {
   private scheduleNetTick(delayMs: number): void {
     if (this.stopped || !this.panelVisible) return;
     this.netTimer = setTimeout(() => {
-      void this.netTick().finally(() => this.scheduleNetTick(NET_INTERVAL_MS));
+      void this.netTick().finally(() => this.scheduleNetTick(this.interval(NET_INTERVAL_MS)));
     }, delayMs);
   }
 
@@ -236,7 +251,7 @@ export class SystemStatsService {
   private scheduleProcTick(delayMs: number): void {
     if (this.stopped || !this.panelVisible) return;
     this.procTimer = setTimeout(() => {
-      void this.procTick().finally(() => this.scheduleProcTick(PROC_INTERVAL_MS));
+      void this.procTick().finally(() => this.scheduleProcTick(this.interval(PROC_INTERVAL_MS)));
     }, delayMs);
   }
 
@@ -256,7 +271,7 @@ export class SystemStatsService {
   private scheduleDiskTick(delayMs: number): void {
     if (this.stopped || !this.panelVisible) return;
     this.diskTimer = setTimeout(() => {
-      void this.diskTick().finally(() => this.scheduleDiskTick(DISK_INTERVAL_MS));
+      void this.diskTick().finally(() => this.scheduleDiskTick(this.interval(DISK_INTERVAL_MS)));
     }, delayMs);
   }
 
@@ -272,7 +287,7 @@ export class SystemStatsService {
   private scheduleMemDetailTick(delayMs: number): void {
     if (this.stopped || !this.panelVisible) return;
     this.memDetailTimer = setTimeout(() => {
-      void this.memDetailTick().finally(() => this.scheduleMemDetailTick(MEM_DETAIL_INTERVAL_MS));
+      void this.memDetailTick().finally(() => this.scheduleMemDetailTick(this.interval(MEM_DETAIL_INTERVAL_MS)));
     }, delayMs);
   }
 
@@ -293,7 +308,7 @@ export class SystemStatsService {
   private scheduleConnTick(delayMs: number): void {
     if (this.stopped || !this.panelVisible) return;
     this.connTimer = setTimeout(() => {
-      void this.connTick().finally(() => this.scheduleConnTick(CONN_INTERVAL_MS));
+      void this.connTick().finally(() => this.scheduleConnTick(this.interval(CONN_INTERVAL_MS)));
     }, delayMs);
   }
 
@@ -310,5 +325,9 @@ export class SystemStatsService {
     } catch (err) {
       this.log?.line(`SystemStatsService: networkConnections() failed, keeping last value: ${String(err)}`);
     }
+  }
+
+  private interval(baseMs: number): number {
+    return observationalIntervalMs(baseMs, this.resourceProfile);
   }
 }

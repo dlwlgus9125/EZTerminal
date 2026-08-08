@@ -14,11 +14,6 @@ export interface ProjectEditorDocument {
   readonly lens?: ProjectDocumentLens;
 }
 
-export function projectEditorDocumentKey(document: ProjectEditorDocument): string {
-  if (document.documentKey) return document.documentKey;
-  return projectEditorDocumentPathKey(document);
-}
-
 /** Compatibility identity for layouts persisted before main-owned keys. Keep
  * this exact and workspace-qualified: main remains the sole casing authority. */
 export function projectEditorDocumentPathKey(document: ProjectEditorDocument): string {

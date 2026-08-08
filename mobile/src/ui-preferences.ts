@@ -5,8 +5,8 @@ import {
 } from '../../src/shared/ui-preferences';
 
 const MOBILE_UI_PREFERENCES_KEY = 'ezterminal-mobile-ui-preferences';
-const MOBILE_UI_PREFERENCES_VERSION = 2;
-const LEGACY_MOBILE_UI_PREFERENCES_VERSION = 1;
+const MOBILE_UI_PREFERENCES_VERSION = 3;
+const LEGACY_MOBILE_UI_PREFERENCES_VERSIONS = new Set([1, 2]);
 
 interface StorageLike {
   getItem(key: string): string | null;
@@ -58,11 +58,13 @@ export function loadMobileUiPreferences(
       return parsed.success ? parsed.data : defaults();
     }
     if (
-      envelope.version === LEGACY_MOBILE_UI_PREFERENCES_VERSION
+      typeof envelope.version === 'number'
+      && LEGACY_MOBILE_UI_PREFERENCES_VERSIONS.has(envelope.version)
       && isRecord(envelope.preferences)
     ) {
       const parsed = UiPreferencesSchema.safeParse({
         effectIntensity: DEFAULT_UI_PREFERENCES.effectIntensity,
+        resourceProfile: DEFAULT_UI_PREFERENCES.resourceProfile,
         ...envelope.preferences,
       });
       if (parsed.success) {

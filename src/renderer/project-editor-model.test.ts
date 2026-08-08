@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  projectEditorDocumentKey,
   projectEditorDocumentParametersEqual,
   projectEditorDocumentPathKey,
   projectEditorDocumentsEqual,
@@ -25,8 +24,8 @@ describe('project editor document identity', () => {
     const current = document({ kind: 'current' });
     const turn = document({ kind: 'agent-turn', historyId: 'history-1', turnId: 'turn-1' });
 
-    expect(projectEditorDocumentKey(current)).toBe(projectEditorDocumentKey(plain));
-    expect(projectEditorDocumentKey(turn)).toBe(projectEditorDocumentKey(plain));
+    expect(projectEditorDocumentsEqual(current, plain)).toBe(true);
+    expect(projectEditorDocumentsEqual(turn, plain)).toBe(true);
   });
 
   it('prefers the main-owned canonical key over renderer path normalization', () => {
@@ -37,7 +36,10 @@ describe('project editor document identity', () => {
       documentKey: canonicalKey,
     };
 
-    expect(projectEditorDocumentKey(resolved)).toBe(canonicalKey);
+    expect(projectEditorDocumentsEqual(
+      resolved,
+      { ...resolved, relativePath: 'src/app.ts' },
+    )).toBe(true);
   });
 
   it('matches a canonical target to its legacy persisted path without duplicating the tab', () => {

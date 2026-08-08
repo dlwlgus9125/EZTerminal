@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ChevronLeft, ChevronsUpDown, Plus } from 'lucide-react';
 
 import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
@@ -6,8 +6,11 @@ import type { OpenClawStatus } from '../../src/shared/openclaw';
 import type { SessionInfo } from '../../src/shared/ipc';
 import type { SessionSurfaceBinding, SessionSurfaceIntent } from '../../src/shared/session-surface';
 import { EMPTY_AGENT_ACTIVITY_SNAPSHOT, type AgentActivitySnapshot } from '../../src/shared/agent';
+import { countAgentAttention } from '../../src/shared/agent-attention';
+import { observationalIntervalMs } from '../../src/shared/resource-profile';
 import type { AgentTerminalBootstrap } from '../../src/shared/agent-history';
 import { formatCwd } from '../../src/renderer/format-cwd';
+import { startAsyncPoll } from '../../src/renderer/async-poller';
 import { formatEndpointHost } from './mobile-endpoint';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { quoteEzArgument } from '../../src/shared/quote-ez-argument';
@@ -38,14 +41,49 @@ import {
 } from '../../src/shared/app-update';
 import type { MobileAppUpdateController } from './use-mobile-app-update';
 import { MOBILE_BUILD_INFO } from './build-info';
+import { useMobileUiPreferences } from './MobileUiPreferencesProvider';
+import {
+  LazyFeature,
+  createFeatureModuleLoader,
+  preloadOnIntent,
+  useProfileFeaturePreload,
+  type PreloadableFeature,
+} from '../../src/renderer/feature-loader';
 
-const MobileAgentView = lazy(async () => ({ default: (await import('./MobileAgentView')).MobileAgentView }));
-const MobileFileView = lazy(async () => ({ default: (await import('./MobileFileView')).MobileFileView }));
-const MobileOpenClawView = lazy(async () => ({ default: (await import('./MobileOpenClawView')).MobileOpenClawView }));
-const MobileRemoteDesktopView = lazy(async () => ({ default: (await import('./MobileRemoteDesktopView')).MobileRemoteDesktopView }));
-const MobileSettingsView = lazy(async () => ({ default: (await import('./MobileSettingsView')).MobileSettingsView }));
-const MobileStatsView = lazy(async () => ({ default: (await import('./MobileStatsView')).MobileStatsView }));
-const SessionSwitcher = lazy(async () => ({ default: (await import('./SessionSwitcher')).SessionSwitcher }));
+const MOBILE_FEATURE_LOADERS = Object.freeze({
+  agents: createFeatureModuleLoader(
+    () => import('./MobileAgentView'),
+    (module) => module.MobileAgentView,
+  ),
+  files: createFeatureModuleLoader(
+    () => import('./MobileFileView'),
+    (module) => module.MobileFileView,
+  ),
+  openclaw: createFeatureModuleLoader(
+    () => import('./MobileOpenClawView'),
+    (module) => module.MobileOpenClawView,
+  ),
+  pcControl: createFeatureModuleLoader(
+    () => import('./MobileRemoteDesktopView'),
+    (module) => module.MobileRemoteDesktopView,
+  ),
+  settings: createFeatureModuleLoader(
+    () => import('./MobileSettingsView'),
+    (module) => module.MobileSettingsView,
+  ),
+  stats: createFeatureModuleLoader(
+    () => import('./MobileStatsView'),
+    (module) => module.MobileStatsView,
+  ),
+  sessions: createFeatureModuleLoader(
+    () => import('./SessionSwitcher'),
+    (module) => module.SessionSwitcher,
+  ),
+});
+
+const MOBILE_PRELOAD_LOADERS: readonly PreloadableFeature[] = Object.freeze(
+  Object.values(MOBILE_FEATURE_LOADERS),
+);
 
 /** Slow enough to be invisible on a battery, fast enough that a finished run
  * stops claiming to be live before the user looks twice. */
@@ -67,10 +105,6 @@ const UNAVAILABLE_APP_UPDATE_CONTROLLER: MobileAppUpdateController = {
   cancelDownload: () => Promise.resolve(),
   openDownloaded: () => Promise.resolve({ ok: false, reason: 'unavailable' }),
 };
-
-function countAgentAttention(snapshot: AgentActivitySnapshot): number {
-  return snapshot.items.filter((item) => item.status === 'blocked' || item.status === 'error' || item.status === 'waiting').length;
-}
 
 /** Full-screen destinations reachable from a tab root. Each one owns the Back
  * stop above the tab layer, so Back unwinds sheet -> sub-page -> tab -> exit. */
@@ -108,6 +142,8 @@ export function MobileWorkspace({
   readonly appUpdateController?: MobileAppUpdateController;
 }): JSX.Element {
   const { t } = useAppTranslation();
+  const { preferences: uiPreferences } = useMobileUiPreferences();
+  useProfileFeaturePreload(MOBILE_PRELOAD_LOADERS, uiPreferences.resourceProfile, true);
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
   const tabsStateRef = useRef(tabsState);
   tabsStateRef.current = tabsState;
@@ -133,6 +169,18 @@ export function MobileWorkspace({
   const cwdMapRef = useRef(new Map<string, string>());
 
   const openSubPage = useCallback((next: MobileSubPage, returnTarget: string) => {
+    const loader = next === 'files'
+      ? MOBILE_FEATURE_LOADERS.files
+      : next === 'stats'
+        ? MOBILE_FEATURE_LOADERS.stats
+        : next === 'openclaw'
+          ? MOBILE_FEATURE_LOADERS.openclaw
+          : next === 'settings'
+            ? MOBILE_FEATURE_LOADERS.settings
+            : next === 'pc-control'
+              ? MOBILE_FEATURE_LOADERS.pcControl
+              : MOBILE_FEATURE_LOADERS.sessions;
+    preloadOnIntent(loader);
     subPageReturnTargetRef.current = returnTarget;
     setSheet(null);
     setSubPage(next);
@@ -144,6 +192,7 @@ export function MobileWorkspace({
   }, []);
 
   const selectTab = useCallback((next: MobileShellTab) => {
+    if (next === 'agents') preloadOnIntent(MOBILE_FEATURE_LOADERS.agents);
     setSheet(null);
     setSubPage(null);
     setTab(next);
@@ -250,19 +299,24 @@ export function MobileWorkspace({
       return undefined;
     }
     let alive = true;
-    const read = (): void => {
-      void transport.listRuns().then((runs) => {
+    const read = async (): Promise<void> => {
+      await transport.listRuns().then((runs) => {
         if (!alive) return;
         setActiveRuns(new Map(runs.map((run) => [run.sessionId, run.commandText])));
       }).catch(() => undefined);
     };
-    read();
-    const timer = setInterval(read, ACTIVE_RUN_POLL_MS);
+    const stopPoll = startAsyncPoll({
+      task: read,
+      intervalMs: () => observationalIntervalMs(
+        ACTIVE_RUN_POLL_MS,
+        uiPreferences.resourceProfile,
+      ),
+    });
     return () => {
       alive = false;
-      clearInterval(timer);
+      stopPoll();
     };
-  }, [connected, tab, transport]);
+  }, [connected, tab, transport, uiPreferences.resourceProfile]);
 
   useEffect(() => {
     let alive = true;
@@ -571,50 +625,78 @@ export function MobileWorkspace({
   let page: JSX.Element | undefined;
   if (subPage === 'pc-control') {
     page = (
-      <MobileRemoteDesktopView
-        transport={transport}
-        hostLabel={formatEndpointHost(connectionUrl)}
+      <LazyFeature
+        loader={MOBILE_FEATURE_LOADERS.pcControl}
+        componentProps={{ transport, hostLabel: formatEndpointHost(connectionUrl), onClose: closeSubPage }}
+        loading={auxiliaryPageFallback}
+        errorMessage={t('common.featureLoadFailed')}
+        retryLabel={t('common.retry')}
+        closeLabel={t('common.close')}
         onClose={closeSubPage}
       />
     );
   } else if (subPage === 'openclaw') {
     page = (
-      <MobileOpenClawView
-        transport={transport}
+      <LazyFeature
+        loader={MOBILE_FEATURE_LOADERS.openclaw}
+        componentProps={{ transport, onClose: closeSubPage, openclawAvailable }}
+        loading={auxiliaryPageFallback}
+        errorMessage={t('common.featureLoadFailed')}
+        retryLabel={t('common.retry')}
+        closeLabel={t('common.close')}
         onClose={closeSubPage}
-        openclawAvailable={openclawAvailable}
       />
     );
   } else if (subPage === 'settings') {
     page = (
-      <MobileSettingsView
-        connectionUrl={connectionUrl}
-        connectedSince={connectedSince}
-        onClose={closeSubPage}
-        onDisconnect={onDisconnect}
-        openclawMode={openclawMode}
-        onOpenClawModeChange={handleOpenClawModeChange}
-        openclawState={openclawState?.state}
-        currentTheme={currentTheme}
-        onOpenTheme={(trigger) => {
-          themeReturnFocusRef.current = trigger;
-          setThemeMenuOpen(true);
+      <LazyFeature
+        loader={MOBILE_FEATURE_LOADERS.settings}
+        componentProps={{
+          connectionUrl,
+          connectedSince,
+          onClose: closeSubPage,
+          onDisconnect,
+          openclawMode,
+          onOpenClawModeChange: handleOpenClawModeChange,
+          openclawState: openclawState?.state,
+          currentTheme,
+          onOpenTheme: (trigger) => {
+            themeReturnFocusRef.current = trigger;
+            setThemeMenuOpen(true);
+          },
+          appUpdateController,
         }}
-        appUpdateController={appUpdateController}
+        loading={auxiliaryPageFallback}
+        errorMessage={t('common.featureLoadFailed')}
+        retryLabel={t('common.retry')}
+        closeLabel={t('common.close')}
+        onClose={closeSubPage}
       />
     );
   } else if (subPage === 'files') {
     page = (
-      <MobileFileView
-        transport={transport}
-        initialPath={initialFilePath}
+      <LazyFeature
+        loader={MOBILE_FEATURE_LOADERS.files}
+        componentProps={{ transport, initialPath: initialFilePath, onClose: closeSubPage, onOpenTerminalAt, onPastePath }}
+        loading={auxiliaryPageFallback}
+        errorMessage={t('common.featureLoadFailed')}
+        retryLabel={t('common.retry')}
+        closeLabel={t('common.close')}
         onClose={closeSubPage}
-        onOpenTerminalAt={onOpenTerminalAt}
-        onPastePath={onPastePath}
       />
     );
   } else if (subPage === 'stats') {
-    page = <MobileStatsView onClose={closeSubPage} />;
+    page = (
+      <LazyFeature
+        loader={MOBILE_FEATURE_LOADERS.stats}
+        componentProps={{ onClose: closeSubPage }}
+        loading={auxiliaryPageFallback}
+        errorMessage={t('common.featureLoadFailed')}
+        retryLabel={t('common.retry')}
+        closeLabel={t('common.close')}
+        onClose={closeSubPage}
+      />
+    );
   } else if (subPage === 'sessions') {
     // The session SHEET is the fast switcher; this full manager is what still
     // owns create/destroy with the guarded close-risk flow, so the redesign
@@ -627,15 +709,23 @@ export function MobileWorkspace({
           onBack={closeSubPage}
         />
         <div className="mobile-destination__body">
-          <SessionSwitcher
-            transport={transport}
-            onSelect={(sessionId) => {
-              void adoptAndOpenTab(sessionId);
+          <LazyFeature
+            loader={MOBILE_FEATURE_LOADERS.sessions}
+            componentProps={{
+              transport,
+              onSelect: (sessionId) => {
+                void adoptAndOpenTab(sessionId);
+              },
+              onCreate: async () => {
+                await openOwnedTab();
+              },
+              onDisconnect,
             }}
-            onCreate={async () => {
-              await openOwnedTab();
-            }}
-            onDisconnect={onDisconnect}
+            loading={auxiliaryPageFallback}
+            errorMessage={t('common.featureLoadFailed')}
+            retryLabel={t('common.retry')}
+            closeLabel={t('common.close')}
+            onClose={closeSubPage}
           />
         </div>
       </div>
@@ -663,21 +753,29 @@ export function MobileWorkspace({
     );
   } else if (tab === 'agents') {
     page = (
-      <MobileAgentView
-        snapshot={agentSnapshot}
-        disconnected={!connected}
-        onBack={() => selectTab('home')}
-        onSendFollowup={(activityId, text) => transport.sendAgentFollowup(activityId, text)}
-        onDecideApproval={(activityId, approvalId, decision) =>
-          transport.decideAgentApproval(activityId, approvalId, decision)}
-        onLoadDiff={(directory) => transport.getGitDiff(directory)}
-        onReadGitStatus={(directory) => transport.getGitStatus(directory)}
-        onResumeHistory={startAgentBootstrap}
-        onLaunchAgent={startAgentBootstrap}
-        transport={transport}
-        onFocusSession={(sessionId) => {
-          void adoptAndOpenTab(sessionId);
+      <LazyFeature
+        loader={MOBILE_FEATURE_LOADERS.agents}
+        componentProps={{
+          snapshot: agentSnapshot,
+          disconnected: !connected,
+          onBack: () => selectTab('home'),
+          onSendFollowup: (activityId, text) => transport.sendAgentFollowup(activityId, text),
+          onDecideApproval: (activityId, approvalId, decision) =>
+            transport.decideAgentApproval(activityId, approvalId, decision),
+          onLoadDiff: (directory) => transport.getGitDiff(directory),
+          onReadGitStatus: (directory) => transport.getGitStatus(directory),
+          onResumeHistory: startAgentBootstrap,
+          onLaunchAgent: startAgentBootstrap,
+          transport,
+          onFocusSession: (sessionId) => {
+            void adoptAndOpenTab(sessionId);
+          },
         }}
+        loading={auxiliaryPageFallback}
+        errorMessage={t('common.featureLoadFailed')}
+        retryLabel={t('common.retry')}
+        closeLabel={t('common.close')}
+        onClose={() => selectTab('home')}
       />
     );
   }
@@ -692,7 +790,7 @@ export function MobileWorkspace({
         tabRootActive={tab !== 'home'}
         onRequestRoot={closeSubPage}
         onRequestTabRoot={() => setTab('home')}
-        page={page ? <Suspense fallback={auxiliaryPageFallback}>{page}</Suspense> : undefined}
+        page={page}
         navigation={immersive ? undefined : (
           <MobileTabBar
             tab={tab}

@@ -13,7 +13,8 @@ import type {
   AgentTranscriptPage,
 } from '../shared/agent-history';
 import { AgentActivityEntry } from './AgentActivityEntry';
-import { SafeMarkdown } from './SafeMarkdown';
+import { AgentResumeComposer } from './AgentResumeComposer';
+import { ProgressiveSafeMarkdown } from './ProgressiveSafeMarkdown';
 import type { TerminalResumeBootstrap } from './TerminalPane';
 import { useAppTranslation } from './i18n';
 import { Button } from './ui';
@@ -58,7 +59,7 @@ export function AgentSessionPanel({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
+  const [resumeDraft, setResumeDraft] = useState('');
   const [preparing, setPreparing] = useState(false);
   const [bootstrap, setBootstrap] = useState<TerminalResumeBootstrap | null>(null);
   const [rootDecision, setRootDecision] = useState<RootDecision | null>(null);
@@ -111,7 +112,7 @@ export function AgentSessionPanel({
 
   if (bootstrap) {
     return renderTerminal(bootstrap, () => {
-      setDraft(bootstrap.initialPrompt);
+      setResumeDraft(bootstrap.initialPrompt);
       setBootstrap(null);
       setError(t('agentHub.history.resumeFailed'));
     });
@@ -173,8 +174,7 @@ export function AgentSessionPanel({
     });
   };
 
-  const beginSession = async (): Promise<void> => {
-    const initialPrompt = draft.trim();
+  const beginSession = async (initialPrompt: string): Promise<void> => {
     if (!initialPrompt || preparing) return;
     setPreparing(true);
     setError(null);
@@ -238,9 +238,9 @@ export function AgentSessionPanel({
         {!loading && !error && page?.turns.length === 0 && (
           <div className="agent-history-terminal__status">{t('agentHub.history.empty')}</div>
         )}
-        {page && page.turns.map((turn) => (
+        {page && page.turns.map((turn, turnIndex) => (
           <section className="agent-history-terminal__turn" key={turn.id} data-status={turn.status}>
-            {turn.entries.map((entry) => entry.type === 'message' ? (
+            {turn.entries.map((entry, entryIndex) => entry.type === 'message' ? (
               <article
                 className={`agent-history-terminal__message agent-history-terminal__message--${entry.role}`}
                 data-provider={entry.role === 'assistant' ? page.provider : undefined}
@@ -249,9 +249,10 @@ export function AgentSessionPanel({
                 <span className="agent-history-terminal__role">
                   {entry.role === 'user' ? t('agentHub.history.user') : AGENT_ROLE_LABEL[page.provider]}
                 </span>
-                <SafeMarkdown
+                <ProgressiveSafeMarkdown
                   className="agent-history-terminal__markdown"
                   markdown={entry.markdown}
+                  priority={(turnIndex * 1_000) + entryIndex}
                   openExternalHttpUrl={(url) => {
                     void window.ezterminalDesktop?.openExternalHttpUrl(url);
                   }}
@@ -317,34 +318,12 @@ export function AgentSessionPanel({
           })}
         </section>
       )}
-      <form
-        className="cmd-row agent-history-composer"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void beginSession();
-        }}
-      >
-        <span className="prompt-sigil prompt-sigil--input" aria-hidden="true">›</span>
-        <input
-          className="cmd-input"
-          value={draft}
-          maxLength={65_536}
-          aria-label={t('agentHub.history.inputLabel')}
-          placeholder={t('agentHub.history.inputPlaceholder')}
-          data-testid="cmd-input"
-          disabled={preparing}
-          autoFocus
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        <button
-          type="submit"
-          className="btn btn-run"
-          disabled={!draft.trim() || preparing}
-          data-testid="btn-run"
-        >
-          {preparing ? t('agentHub.history.opening') : t('agentHub.history.continue')}
-        </button>
-      </form>
+      <AgentResumeComposer
+        variant="desktop"
+        preparing={preparing}
+        initialDraft={resumeDraft}
+        onSubmit={(prompt) => void beginSession(prompt)}
+      />
     </section>
   );
 }

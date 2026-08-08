@@ -179,7 +179,6 @@ import { MOBILE_BUILD_INFO } from '../build-info';
 import { e2eLog } from '../e2e-telemetry';
 
 export type { ConnectionHealthSnapshot, RemoteConnectionState } from './connection-health';
-export type MobileDesktopStartResult = DesktopControlStartResultMessage;
 
 /** WebView-74-compatible RFC 4122 v4 request id. Android 10 may start with a
  * WebView that predates `crypto.randomUUID`, but it still provides the secure

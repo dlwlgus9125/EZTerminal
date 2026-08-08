@@ -78,6 +78,12 @@ Multiline and larger-than-5-KiB text pastes ask for confirmation by default, wit
 under **Settings → Terminal & Safety**. Wrapper, pipeline, SSH, and non-Codex PTYs keep their normal
 control-key behavior.
 
+Optional workbench screens load as independent chunks and recover in place if a chunk cannot be
+loaded, leaving terminal sessions and drafts usable. **Settings → General → Resource profile** offers
+Balanced, Low resource, and High responsiveness on both desktop and Android. Low resource avoids
+background feature preload and reduces only observational refresh frequency; it never weakens command
+cancellation, reconnect/liveness, capture leases, backpressure, or pane-close safety.
+
 ### 📁 Files &amp; 🔐 SSH
 A built-in file explorer (desktop and mobile) and an SSH client with trust-on-first-use host-key
 verification. Text and Markdown, bounded PNG/JPEG/GIF/WebP images and PDF metadata have safe previews;
@@ -212,7 +218,12 @@ pnpm start        # run in development
 pnpm make         # build the Windows installer -> out/make/nsis/x64/
 pnpm test         # unit tests (Vitest)
 pnpm e2e          # end-to-end tests (Playwright + Electron)
+pnpm profile:runtime -- --samples 5  # local startup/chunk/memory diagnostic
 ```
+
+`profile:runtime` writes `test-results/runtime-profile.json` from isolated temporary app profiles.
+It is developer diagnostics only, not release evidence and not a substitute for the separately
+authorized release performance benchmark.
 
 Graphical PC Control is included by default in Windows builds. At runtime it
 still requires an enabled remote bridge, a running installed host service, and

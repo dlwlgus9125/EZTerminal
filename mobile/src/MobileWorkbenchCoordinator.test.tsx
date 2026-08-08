@@ -82,7 +82,7 @@ function SheetToSettingsHarness(): JSX.Element {
           />
         </MobileActionSheet>
       ) : undefined}
-      onRequestTerminal={() => setSettingsOpen(false)}
+      onRequestRoot={() => setSettingsOpen(false)}
     />
   );
 }
@@ -118,7 +118,7 @@ function NestedSheetsHarness(): JSX.Element {
           )}
         </>
       )}
-      onRequestTerminal={() => undefined}
+      onRequestRoot={() => undefined}
     />
   );
 }
@@ -172,7 +172,7 @@ describe('MobileWorkbenchCoordinator', () => {
         <MobileWorkbenchCoordinator
           terminal={<div data-testid="terminal-instance">terminal</div>}
           page={page}
-          onRequestTerminal={vi.fn()}
+          onRequestRoot={vi.fn()}
         />,
       ));
     };
@@ -194,13 +194,13 @@ describe('MobileWorkbenchCoordinator', () => {
     expect(layer?.hasAttribute('inert')).toBe(false);
   });
 
-  it('maps browser or Android Back history to the terminal page', () => {
-    const onRequestTerminal = vi.fn();
+  it('maps browser or Android Back history to the root page', () => {
+    const onRequestRoot = vi.fn();
     act(() => root.render(
       <MobileWorkbenchCoordinator
         terminal={<div>terminal</div>}
         page={<div>files</div>}
-        onRequestTerminal={onRequestTerminal}
+        onRequestRoot={onRequestRoot}
       />,
     ));
 
@@ -208,11 +208,11 @@ describe('MobileWorkbenchCoordinator', () => {
       window.history.replaceState({}, '');
       window.dispatchEvent(new PopStateEvent('popstate'));
     });
-    expect(onRequestTerminal).toHaveBeenCalledTimes(1);
+    expect(onRequestRoot).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the auxiliary page open when Back dismisses its top sheet', () => {
-    const onRequestTerminal = vi.fn();
+    const onRequestRoot = vi.fn();
     const onCloseSheet = vi.fn();
     const render = (overlays?: JSX.Element): void => {
       act(() => root.render(
@@ -220,7 +220,7 @@ describe('MobileWorkbenchCoordinator', () => {
           terminal={<div>terminal</div>}
           page={<div>files</div>}
           overlays={overlays}
-          onRequestTerminal={onRequestTerminal}
+          onRequestRoot={onRequestRoot}
         />,
       ));
     };
@@ -239,7 +239,7 @@ describe('MobileWorkbenchCoordinator', () => {
     });
 
     expect(onCloseSheet).toHaveBeenCalledTimes(1);
-    expect(onRequestTerminal).not.toHaveBeenCalled();
+    expect(onRequestRoot).not.toHaveBeenCalled();
   });
 
   it('isolates the background and only exposes the top action sheet', () => {
@@ -347,7 +347,7 @@ describe('MobileWorkbenchCoordinator', () => {
       <MobileWorkbenchCoordinator
         terminal={<div>terminal</div>}
         page={<div>settings</div>}
-        onRequestTerminal={vi.fn()}
+        onRequestRoot={vi.fn()}
       />,
     ));
     expect(window.history.state.ezterminalNavigation).toBeDefined();

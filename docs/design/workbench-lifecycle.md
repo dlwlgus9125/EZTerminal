@@ -30,6 +30,12 @@ adapter이고, `WorkbenchCoordinator`가 패널 ID, transaction generation, 저�
 PTY, 명령 결과, MessagePort, 비밀 프롬프트와 runtime object를 Dockview params에 넣거나
 직렬화하지 않는다.
 
+언어, density, effect intensity와 resource profile은 layout/preset이 아니라 settings
+snapshot에 저장한다. 기존 schema version 1 파일에서 resource profile이 없으면
+`balanced`를 사용한다. Android는 별도 device-local envelope를 사용하며 v1/v2를 읽어
+현재 v3 snapshot으로 다시 저장한다. 이 설정은 remote session이나 desktop으로
+동기화하지 않는다.
+
 ## 복원과 workspace 교체
 
 - 시작 복원은 schema 검증과 preflight를 끝낸 뒤 Dockview에 적용한다.
@@ -51,6 +57,24 @@ PTY, 명령 결과, MessagePort, 비밀 프롬프트와 runtime object를 Dockvi
   설정을 소유한다.
 - pane mount/unmount는 `SessionMirroringCoordinator`의 lease를 획득·반납한다. 단순
   React unmount를 세션 파괴 신호로 사용하지 않는다.
+- `PaneRegistry` 등록은 panel mount 수명과 같고 handle은 최신 pane ref로 위임한다.
+  cwd·run-state 변경은 notification을 발행하며 header가 cwd를 polling하지 않는다.
+  분 단위 open-age 표시는 시간 자체가 상태이므로 제한된 timer를 유지한다.
+
+## Optional surface 로딩과 관찰 작업
+
+- Terminal layer, Dockview와 activity navigation은 startup graph에 남는다. Sidebar
+  destination과 rich preview는 기능 module 단위로 lazy load한다. 키보드 입력을 즉시
+  소유해야 하는 Quick Open은 eager load한다.
+- pointer enter/down 또는 keyboard focus는 intent preload로 취급한다. `balanced`는 idle,
+  `high-responsiveness`는 eager preload도 허용하며 `low-resource`는 background preload를
+  하지 않는다.
+- module promise는 중복 요청이 공유한다. 실패한 promise는 cache에서 제거하고 해당
+  surface가 Retry와 Close를 제공한다. terminal pane, draft와 session은 실패 경계 밖에
+  남는다.
+- visible surface의 목록·상태 refresh는 한 요청이 끝난 뒤 다음 timeout을 예약한다.
+  hide/unmount/stop은 late completion이 새 timer를 만들지 못하게 한다. correctness와
+  security timer는 resource profile의 영향을 받지 않는다.
 
 ## 닫기와 파괴
 
@@ -82,6 +106,10 @@ close guard 또는 persistence schema를 우회해서는 안 된다.
 - [`src/renderer/session-mirroring-coordinator.ts`](../../src/renderer/session-mirroring-coordinator.ts)
 - [`src/renderer/pane-lifecycle-coordinator.ts`](../../src/renderer/pane-lifecycle-coordinator.ts)
 - [`src/renderer/workspace-replacement-coordinator.ts`](../../src/renderer/workspace-replacement-coordinator.ts)
+- [`src/renderer/pane-registry.ts`](../../src/renderer/pane-registry.ts)
+- [`src/renderer/feature-loader.tsx`](../../src/renderer/feature-loader.tsx)
+- [`src/renderer/async-poller.ts`](../../src/renderer/async-poller.ts)
+- [`src/shared/resource-profile.ts`](../../src/shared/resource-profile.ts)
 
 ## 검증
 
@@ -91,6 +119,9 @@ close guard 또는 persistence schema를 우회해서는 안 된다.
 - [`src/renderer/workbench-coordinator.test.ts`](../../src/renderer/workbench-coordinator.test.ts)
 - [`src/renderer/session-mirroring-coordinator.test.ts`](../../src/renderer/session-mirroring-coordinator.test.ts)
 - [`src/renderer/pane-lifecycle-coordinator.test.ts`](../../src/renderer/pane-lifecycle-coordinator.test.ts)
+- [`src/renderer/pane-registry.test.ts`](../../src/renderer/pane-registry.test.ts)
+- [`src/renderer/feature-loader.test.ts`](../../src/renderer/feature-loader.test.ts)
+- [`src/renderer/async-poller.test.ts`](../../src/renderer/async-poller.test.ts)
 - [`e2e/layout-persistence.spec.ts`](../../e2e/layout-persistence.spec.ts)
 
 과거 단일 창 전제와 구현 계획은

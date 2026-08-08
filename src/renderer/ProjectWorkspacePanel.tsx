@@ -21,6 +21,7 @@ import type {
   ProjectWorkspaceLocationDescriptor,
 } from '../shared/project-workspace';
 import { FileSystemEntryIcon } from './FileSystemEntryIcon';
+import { DeferredSearchInput } from './DeferredSearchInput';
 import { formatCwd } from './format-cwd';
 import { useAppTranslation } from './i18n';
 import type { ProjectCodeLocation } from './project-code-navigation';
@@ -417,9 +418,10 @@ function ProjectCodeTree({
       <div className="project-view-tools">
         <label className="project-search-control">
           <Search aria-hidden="true" size={14} />
-          <input
+          <DeferredSearchInput
+            type="text"
             value={state.query}
-            onChange={(event) => updateState({ query: event.currentTarget.value })}
+            onQueryChange={(query) => updateState({ query })}
             placeholder={state.searchMode === 'files'
               ? t('projectWorkbench.quickOpen')
               : t('projectWorkbench.contentSearch')}

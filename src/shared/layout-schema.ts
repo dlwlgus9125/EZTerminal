@@ -30,6 +30,7 @@ import {
   SidebarWidthSchema,
   UiDensitySchema,
   UiLocalePreferenceSchema,
+  UiResourceProfileSchema,
 } from './ui-preferences';
 import { isDetachablePanelComponent } from './desktop-window';
 
@@ -284,6 +285,7 @@ export const SettingsSchema = z.object({
   density: UiDensitySchema.optional(),
   sidebarWidth: SidebarWidthSchema.optional(),
   effectIntensity: PersistedEffectIntensitySchema.optional(),
+  resourceProfile: UiResourceProfileSchema.optional(),
 });
 export type StartupPref = z.infer<typeof StartupPrefSchema>;
 export type SettingsFile = z.infer<typeof SettingsSchema>;

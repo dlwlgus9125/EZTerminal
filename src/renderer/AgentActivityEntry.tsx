@@ -9,6 +9,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
+import { memo } from 'react';
 
 import type { AgentTranscriptEntry } from '../shared/agent-history';
 
@@ -25,7 +26,7 @@ const ICONS: Record<ActivityEntry['kind'], LucideIcon> = {
   reasoning: Brain,
 };
 
-export function AgentActivityEntry({
+export const AgentActivityEntry = memo(function AgentActivityEntry({
   entry,
   label,
   onActivate,
@@ -63,4 +64,4 @@ export function AgentActivityEntry({
       {contents}
     </div>
   );
-}
+});

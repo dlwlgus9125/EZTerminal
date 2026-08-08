@@ -194,6 +194,7 @@ export class LayoutStore {
       density: settings.density ?? DEFAULT_UI_PREFERENCES.density,
       sidebarWidth: settings.sidebarWidth ?? DEFAULT_UI_PREFERENCES.sidebarWidth,
       effectIntensity: settings.effectIntensity ?? DEFAULT_UI_PREFERENCES.effectIntensity,
+      resourceProfile: settings.resourceProfile ?? DEFAULT_UI_PREFERENCES.resourceProfile,
     };
   }
 
@@ -208,6 +209,7 @@ export class LayoutStore {
       density: settings.density ?? DEFAULT_UI_PREFERENCES.density,
       sidebarWidth: settings.sidebarWidth ?? DEFAULT_UI_PREFERENCES.sidebarWidth,
       effectIntensity: settings.effectIntensity ?? DEFAULT_UI_PREFERENCES.effectIntensity,
+      resourceProfile: settings.resourceProfile ?? DEFAULT_UI_PREFERENCES.resourceProfile,
     };
   }
 

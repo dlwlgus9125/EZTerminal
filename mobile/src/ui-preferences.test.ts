@@ -11,6 +11,7 @@ describe('mobile UI preferences', () => {
       density: 'adaptive',
       sidebarWidth: 320,
       effectIntensity: 7,
+      resourceProfile: 'balanced',
     });
   });
 
@@ -20,11 +21,12 @@ describe('mobile UI preferences', () => {
       density: 'compact',
       sidebarWidth: 380,
       effectIntensity: 7,
+      resourceProfile: 'low-resource',
     } as const;
     expect(saveMobileUiPreferences(preferences)).toBe(true);
     expect(loadMobileUiPreferences()).toEqual(preferences);
     expect(JSON.parse(localStorage.getItem('ezterminal-mobile-ui-preferences') ?? '{}')).toEqual({
-      version: 2,
+      version: 3,
       preferences,
     });
   });
@@ -44,15 +46,37 @@ describe('mobile UI preferences', () => {
       density: 'compact',
       sidebarWidth: 380,
       effectIntensity: 7,
+      resourceProfile: 'balanced',
     });
     expect(JSON.parse(localStorage.getItem('ezterminal-mobile-ui-preferences') ?? '{}')).toEqual({
-      version: 2,
+      version: 3,
       preferences: {
         locale: 'ko',
         density: 'compact',
         sidebarWidth: 380,
         effectIntensity: 7,
+        resourceProfile: 'balanced',
       },
+    });
+  });
+
+  it('migrates a v2 snapshot by adding only the resource profile default', () => {
+    localStorage.setItem('ezterminal-mobile-ui-preferences', JSON.stringify({
+      version: 2,
+      preferences: {
+        locale: 'en',
+        density: 'comfortable',
+        sidebarWidth: 400,
+        effectIntensity: 4,
+      },
+    }));
+
+    expect(loadMobileUiPreferences()).toEqual({
+      locale: 'en',
+      density: 'comfortable',
+      sidebarWidth: 400,
+      effectIntensity: 4,
+      resourceProfile: 'balanced',
     });
   });
 
@@ -77,6 +101,7 @@ describe('mobile UI preferences', () => {
       density: 'comfortable',
       sidebarWidth: 320,
       effectIntensity: 7,
+      resourceProfile: 'balanced',
     }, storage)).toBe(false);
   });
 });

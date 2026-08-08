@@ -1,4 +1,5 @@
 import { Columns2, Rows2, Save, Star, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 import { useAppTranslation } from '../i18n';
 import { useNativeOverlayRegistration } from '../native-overlay';
@@ -6,10 +7,8 @@ import { Button, IconButton, Input } from '../ui';
 
 export function WorkspaceMenu({
   names,
-  nameDraft,
   onApply,
   onDelete,
-  onNameDraftChange,
   onSave,
   onSetSaving,
   onSplitDown,
@@ -19,11 +18,9 @@ export function WorkspaceMenu({
   startupPreset,
 }: {
   readonly names: readonly string[];
-  readonly nameDraft: string;
   readonly onApply: (name: string) => void;
   readonly onDelete: (name: string) => void;
-  readonly onNameDraftChange: (name: string) => void;
-  readonly onSave: () => void;
+  readonly onSave: (name: string) => void;
   readonly onSetSaving: (saving: boolean) => void;
   readonly onSplitDown: () => void;
   readonly onSplitRight: () => void;
@@ -33,6 +30,14 @@ export function WorkspaceMenu({
 }): JSX.Element {
   useNativeOverlayRegistration();
   const { t } = useAppTranslation();
+  const [nameDraft, setNameDraft] = useState('');
+  useEffect(() => {
+    if (saving) setNameDraft('');
+  }, [saving]);
+  const save = (): void => {
+    const name = nameDraft.trim();
+    if (name) onSave(name);
+  };
   return (
     <div
       id="workspace-menu"
@@ -85,14 +90,14 @@ export function WorkspaceMenu({
           <div className="workspace-preset-save">
             <Input
               value={nameDraft}
-              onChange={(event) => onNameDraftChange(event.target.value)}
-              onKeyDown={(event) => { if (event.key === 'Enter') onSave(); }}
+              onChange={(event) => setNameDraft(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') save(); }}
               aria-label={t('workspace.presetName')}
               placeholder={t('workspace.presetName')}
               autoFocus
               data-testid="preset-name-input"
             />
-            <Button leadingIcon={<Save />} onClick={onSave} data-testid="preset-save-confirm">
+            <Button leadingIcon={<Save />} onClick={save} disabled={!nameDraft.trim()} data-testid="preset-save-confirm">
               {t('common.save')}
             </Button>
           </div>

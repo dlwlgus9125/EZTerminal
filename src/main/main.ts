@@ -662,6 +662,10 @@ app.on('ready', () => {
     for (const listener of remoteStatsListeners) listener(snapshot);
   });
   systemStatsService.start();
+  void storeReady
+    .then(() => layoutStore.getUiPreferences())
+    .then((preferences) => systemStatsService?.setResourceProfile(preferences.resourceProfile))
+    .catch((err) => mainLog?.line(`resource profile load failed: ${String(err)}`));
   const statsVisibility = new StatsVisibility((effective) => systemStatsService?.setPanelVisible(effective));
   ipcMain.handle('stats:history', () => systemStatsService?.getHistory() ?? []);
   ipcMain.on('stats:panel-visible', (_event, visible: boolean) => {
@@ -873,6 +877,7 @@ app.on('ready', () => {
     if (!parsed.success) return layoutStore.getUiPreferences();
     const persisted = await layoutStore.setUiPreferences(parsed.data);
     applyNativeMenuLocale(persisted.locale);
+    systemStatsService?.setResourceProfile(persisted.resourceProfile);
     return persisted;
   });
   ipcMain.handle('settings:refresh-native-menu-locale', async () => {

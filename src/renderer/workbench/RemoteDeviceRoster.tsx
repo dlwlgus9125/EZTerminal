@@ -2,6 +2,8 @@ import { Smartphone } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import type { EzTerminalDesktopApi, RemoteDeviceEntry } from '../../shared/ipc';
+import { observationalIntervalMs, type UiResourceProfile } from '../../shared/resource-profile';
+import { startAsyncPoll } from '../async-poller';
 import { useAppTranslation } from '../i18n';
 
 /** Matches the SSH forward list's cadence — the bridge pushes no device events,
@@ -24,8 +26,10 @@ type RosterState =
 
 export function RemoteDeviceRoster({
   desktopApi = window.ezterminalDesktop,
+  resourceProfile = 'balanced',
 }: {
   readonly desktopApi?: RemoteDeviceAccess;
+  readonly resourceProfile?: UiResourceProfile;
 } = {}): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const [roster, setRoster] = useState<RosterState>({ kind: 'loading', devices: [] });
@@ -33,40 +37,35 @@ export function RemoteDeviceRoster({
 
   useEffect(() => {
     let alive = true;
-    let inFlight = false;
-    let generation = 0;
     if (!desktopApi) {
       setRoster({ kind: 'unavailable', devices: [] });
       return () => {
         alive = false;
       };
     }
-    const read = (): void => {
-      if (inFlight) return;
-      inFlight = true;
-      const ownGeneration = ++generation;
-      void desktopApi.listRemoteDevices().then(
+    const read = async (): Promise<void> => {
+      await desktopApi.listRemoteDevices().then(
         (next) => {
-          if (alive && generation === ownGeneration) {
+          if (alive) {
             setRoster({ kind: 'ready', devices: next });
           }
         },
         () => {
-          if (alive && generation === ownGeneration) {
+          if (alive) {
             setRoster((current) => ({ kind: 'unavailable', devices: current.devices }));
           }
         },
-      ).finally(() => {
-        if (generation === ownGeneration) inFlight = false;
-      });
+      );
     };
-    read();
-    const timer = window.setInterval(read, POLL_MS);
+    const stopPoll = startAsyncPoll({
+      task: read,
+      intervalMs: () => observationalIntervalMs(POLL_MS, resourceProfile),
+    });
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stopPoll();
     };
-  }, [desktopApi]);
+  }, [desktopApi, resourceProfile]);
 
   const time = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false });
 

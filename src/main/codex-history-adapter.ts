@@ -217,20 +217,10 @@ function codexFileChanges(item: JsonObject): readonly ProviderFileChangeRecord[]
   });
 }
 
-export interface CodexHistoryAdapterOptions {
-  /** @deprecated Rollout files are no longer read. Retained for API compatibility. */
-  readonly codexHome?: string;
-}
-
 export class CodexHistoryAdapter implements AgentHistoryProviderAdapter {
   readonly provider = 'codex' as const;
 
-  constructor(
-    private readonly client: CodexAppServerRequester,
-    _options: CodexHistoryAdapterOptions = {},
-  ) {
-    void _options;
-  }
+  constructor(private readonly client: CodexAppServerRequester) {}
 
   async listSessions(query: ProviderSessionQuery): Promise<ProviderHistorySessionPage> {
     const limit = Math.max(1, Math.min(MAX_AGENT_HISTORY_PAGE_SIZE, Math.trunc(query.limit)));

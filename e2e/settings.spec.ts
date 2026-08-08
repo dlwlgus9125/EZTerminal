@@ -29,6 +29,8 @@ test('settings drawer: UI scale stepper applies live and persists across relaunc
   await expect(w1.getByTestId('settings-scale-value')).toHaveText('110%');
   await w1.getByTestId('settings-scale-inc').click();
   await expect(w1.getByTestId('settings-scale-value')).toHaveText('120%');
+  await w1.getByTestId('settings-resource-profile').selectOption('low-resource');
+  await expect(w1.getByTestId('settings-resource-profile')).toHaveValue('low-resource');
   await expect
     .poll(() => w1.evaluate(() => getComputedStyle(document.documentElement).fontSize))
     .toBe('19.2px');
@@ -43,5 +45,7 @@ test('settings drawer: UI scale stepper applies live and persists across relaunc
       timeout: 15_000,
     })
     .toBe('19.2px');
+  await w2.getByTestId('btn-toggle-settings').click();
+  await expect(w2.getByTestId('settings-resource-profile')).toHaveValue('low-resource');
   await app2.close();
 });

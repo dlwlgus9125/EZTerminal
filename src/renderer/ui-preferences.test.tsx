@@ -127,6 +127,7 @@ describe('DesktopUiPreferencesProvider write serialization', () => {
       density: 'compact',
       sidebarWidth: 320,
       effectIntensity: 7,
+      resourceProfile: 'balanced',
     });
   });
 

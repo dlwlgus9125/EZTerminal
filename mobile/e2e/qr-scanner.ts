@@ -14,6 +14,7 @@ import {
   APK_PATH,
   APP_ID,
   assertNoWebViewJavaScriptRuntimeErrors,
+  clearAppDataAndWaitForQuiescence,
   clearLogcat,
   closeMobileE2eResources,
   evaluateWebView,
@@ -248,7 +249,7 @@ async function main(): Promise<void> {
   if (!MINIMAL_REPRODUCTION) {
     console.log('[qr-scanner] installing APK with fresh app data...');
     runAdb(['install', '-r', APK_PATH]);
-    runAdb(['shell', 'pm', 'clear', APP_ID]);
+    await clearAppDataAndWaitForQuiescence();
     runAdb(['shell', 'pm', 'grant', APP_ID, 'android.permission.CAMERA']);
   } else {
     console.log('[qr-scanner] minimal reproduction: reusing the installed app and permission state');

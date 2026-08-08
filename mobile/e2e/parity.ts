@@ -43,6 +43,7 @@ import {
   type Point,
   center,
   closeMobileE2eResources,
+  closeWebViewDevtools,
   connectAndAuth,
   createTerminalSession,
   dismissKeyboard,
@@ -486,18 +487,77 @@ async function main(): Promise<void> {
     await pollLogcat('[ez-e2e] tab-active:', 10000);
     console.log('[parity] step OK: reconnected with a fresh tab');
 
-    // A wm size/density change can briefly drop the WS: the app then falls
-    // back to ConnectScreen with URL/token still prefilled (observed on the
-    // API 35 emulator — a real fold keeps the process alive, but the harness
-    // must tolerate the emulator's harsher behavior). If that happens, allow
-    // exactly one product connection result for this geometry transition.
+    // A wm size/density change can briefly replace the emulator's WebView or
+    // drop the product WS. A retiring DevTools target can remain OPEN while
+    // exposing an empty document, so rediscover the current target at each
+    // convergence sample instead of trusting one socket for the full wait.
+    // If the app falls back to ConnectScreen, still allow exactly one product
+    // connection submission for this geometry transition.
     const ensureWorkspace = async (): Promise<void> => {
-      const state = await waitForAnyTestId(['mobile-home-view', 'workspace-hub-btn', 'connect-submit'], 45000);
-      if (state === 'connect-submit') {
+      const states = ['mobile-home-view', 'workspace-hub-btn', 'connect-submit'] as const;
+      const deadline = Date.now() + 60_000;
+      const remaining = (): number => Math.max(250, deadline - Date.now());
+      let submitted = false;
+      let lastError: unknown;
+
+      const discoverCurrentState = async (): Promise<string> => {
+        closeWebViewDevtools();
+        return waitForAnyTestId(states, Math.min(5_000, remaining()));
+      };
+
+      const handleConnectFallback = async (state: string): Promise<boolean> => {
+        if (state !== 'connect-submit') return false;
+        if (submitted) {
+          throw new Error('Fold geometry returned to ConnectScreen after the only allowed connection submission');
+        }
+        submitted = true;
         await submitConnectionOnce();
+        return true;
+      };
+
+      while (Date.now() < deadline) {
+        let state: string;
+        try {
+          state = await discoverCurrentState();
+        } catch (error) {
+          lastError = error;
+          console.log(`[parity] WebView target not settled; rediscovering: ${String(error)}`);
+          continue;
+        }
+        if (await handleConnectFallback(state)) continue;
+
+        try {
+          await waitForTestIdHidden('mobile-reconnect-scrim', Math.min(10_000, remaining()));
+        } catch (error) {
+          lastError = error;
+          console.log(`[parity] product reconnect still settling: ${String(error)}`);
+          continue;
+        }
+
+        // Require a second observation through a newly discovered CDP target.
+        // This closes the race where the old document is visible just before
+        // Android swaps the renderer in response to the configuration change.
+        await sleep(750);
+        let confirmedState: string;
+        try {
+          confirmedState = await discoverCurrentState();
+        } catch (error) {
+          lastError = error;
+          console.log(`[parity] WebView target changed during confirmation: ${String(error)}`);
+          continue;
+        }
+        if (await handleConnectFallback(confirmedState)) continue;
+
+        try {
+          await waitForTestIdHidden('mobile-reconnect-scrim', Math.min(5_000, remaining()));
+          return;
+        } catch (error) {
+          lastError = error;
+          console.log(`[parity] confirmed workspace is still reconnecting: ${String(error)}`);
+        }
       }
-      await waitForAnyTestId(['mobile-home-view', 'workspace-hub-btn'], 45_000);
-      await waitForTestIdHidden('mobile-reconnect-scrim', 45000);
+
+      throw new Error(`Fold geometry did not converge on a live workspace: ${String(lastError)}`);
     };
 
     const profiles = [

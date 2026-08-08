@@ -6,13 +6,15 @@ import type {
   AgentDecisionResult,
 } from '../shared/agent';
 import { BlockController } from './block-controller';
-import { Block } from './Block';
+import { TerminalBlockEntries } from './TerminalBlockEntries';
 import { Button } from './ui';
 import { formatCwd } from './format-cwd';
 import { useAppTranslation } from './i18n';
 import {
+  notifyPaneChanged,
   registerPane,
   type PaneActionResult,
+  type PaneHandle,
   type PaneSnapshot,
 } from './pane-registry';
 import { focusPaneSurface } from './pane-focus';
@@ -288,6 +290,7 @@ export function TerminalPane({
   const knownRunIdsRef = useRef(new Set<string>());
   const pendingHandoffRunIdsRef = useRef(new Set<string>());
   const mountedRef = useRef(true);
+  const paneHandleRef = useRef<PaneHandle | null>(null);
 
   useLayoutEffect(() => {
     const abortPending = (reason: string): void => {
@@ -714,11 +717,10 @@ export function TerminalPane({
     runText(command);
   }, [command, runText]);
 
-  // One aggregate pane handle replaces the historical cwd/input maps. The
-  // effect refreshes the handle whenever its observable snapshot changes;
-  // registry consumers receive one revision notification and always query a
-  // coherent snapshot/actions pair.
-  useEffect(() => {
+  // The registry owns one stable registration for this mount. The current
+  // snapshot/actions live behind a ref, so typing a draft no longer tears down
+  // and re-registers the pane (which previously invalidated the whole App).
+  useLayoutEffect(() => {
     const getSnapshot = (): PaneSnapshot => {
       const active = activeController.current?.getSnapshot();
       const isBusy = active?.status === 'running';
@@ -744,7 +746,7 @@ export function TerminalPane({
         activeCommand: activePty ? (activeController.current?.command ?? null) : null,
       };
     };
-    const dispose = registerPane(panelId, {
+    paneHandleRef.current = {
       getSnapshot,
       insertText: (text): PaneActionResult => {
         if (sessionDead) return { ok: false, reason: 'dead' };
@@ -774,9 +776,26 @@ export function TerminalPane({
           active?.status === 'running' && active.shape === 'pty',
         );
       },
-    });
-    return dispose;
+    };
   }, [panelId, sessionId, currentCwd, history, command, activeRunning, sessionDead, runText]);
+
+  useEffect(() => registerPane(panelId, {
+    getSnapshot: () => paneHandleRef.current!.getSnapshot(),
+    insertText: (text) => paneHandleRef.current?.insertText(text)
+      ?? { ok: false, reason: 'unavailable' },
+    runText: (text) => paneHandleRef.current?.runText(text)
+      ?? { ok: false, reason: 'unavailable' },
+    pasteToPty: (text) => paneHandleRef.current?.pasteToPty(text)
+      ?? { ok: false, reason: 'unavailable' },
+    focus: () => paneHandleRef.current?.focus() ?? false,
+  }), [panelId]);
+
+  // Only state rendered outside the pane invalidates registry subscribers.
+  // Draft/history remain available synchronously through getSnapshot() when a
+  // close or replacement command actually needs them.
+  useLayoutEffect(() => {
+    notifyPaneChanged(panelId);
+  }, [activeRunning, currentCwd, panelId, sessionDead, sessionId]);
 
   // Mirror a run this pane did NOT start: adds a pending block, brokers the
   // `_ezAttachPort` handoff `attachRun` triggers, and binds the resulting
@@ -1096,21 +1115,13 @@ export function TerminalPane({
             )}
           </div>
         )}
-        {blocks.map((entry) =>
-          entry.controller ? (
-            <Block
-              key={entry.id}
-              controller={entry.controller}
-              onDismiss={() => handleDismiss(entry.id)}
-              isTakeover={activeTakeover && activeController.current === entry.controller}
-              terminalRuntimeOptions={terminalRuntimeOptions}
-            />
-          ) : (
-            <section key={entry.id} className="block" data-testid="block" data-status="running">
-              <div className="block-pending">{t('terminalPane.starting')}</div>
-            </section>
-          ),
-        )}
+        <TerminalBlockEntries
+          entries={blocks}
+          activeTakeoverController={activeTakeover ? activeController.current : null}
+          terminalRuntimeOptions={terminalRuntimeOptions}
+          pendingLabel={t('terminalPane.starting')}
+          onDismiss={handleDismiss}
+        />
       </div>
 
       {/* The same decision the Agent Hub offers, in the pane the agent is

@@ -97,13 +97,11 @@ export type RemoteCapability =
  * project management/search and project-rooted fresh Agent launches; v6 adds
  * target-neutral project/direct-directory Agent launches.
  */
-export const REMOTE_PROTOCOL_VERSION_LEGACY = 1 as const;
 export const REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL = 2 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_LIVE = 3 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_HISTORY = 4 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS = 5 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS = 6 as const;
-export const REMOTE_PROTOCOL_VERSION_SESSION_SURFACES = 7 as const;
 export const REMOTE_PROTOCOL_VERSION = 7 as const;
 export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 

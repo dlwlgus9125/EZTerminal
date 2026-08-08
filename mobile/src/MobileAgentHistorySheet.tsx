@@ -8,7 +8,8 @@ import {
 } from 'react';
 
 import { AgentActivityEntry } from '../../src/renderer/AgentActivityEntry';
-import { SafeMarkdown } from '../../src/renderer/SafeMarkdown';
+import { AgentResumeComposer } from '../../src/renderer/AgentResumeComposer';
+import { ProgressiveSafeMarkdown } from '../../src/renderer/ProgressiveSafeMarkdown';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import type {
   AgentHistorySessionSummary,
@@ -43,7 +44,6 @@ export function MobileAgentHistorySheet({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
   const [preparing, setPreparing] = useState(false);
   const [rootDecision, setRootDecision] = useState<RootDecision | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -140,14 +140,12 @@ export function MobileAgentHistorySheet({
     try {
       await onResume(bootstrap);
     } catch {
-      setDraft(initialPrompt);
       setError(t('agentHub.history.resumeFailed'));
       setPreparing(false);
     }
   };
 
-  const beginSession = async (): Promise<void> => {
-    const initialPrompt = draft.trim();
+  const beginSession = async (initialPrompt: string): Promise<void> => {
     if (!initialPrompt || preparing) return;
     setPreparing(true);
     setError(null);
@@ -214,9 +212,9 @@ export function MobileAgentHistorySheet({
         {!loading && !error && page?.turns.length === 0 && (
           <p className="mob-empty">{t('agentHub.history.empty')}</p>
         )}
-        {page?.turns.map((turn) => (
+        {page?.turns.map((turn, turnIndex) => (
           <section key={turn.id} className="mob-agent-history-turn" data-status={turn.status}>
-            {turn.entries.map((entry) => entry.type === 'message' ? (
+            {turn.entries.map((entry, entryIndex) => entry.type === 'message' ? (
               <article
                 key={entry.id}
                 className={`mob-agent-history-message mob-agent-history-message--${entry.role}`}
@@ -225,9 +223,10 @@ export function MobileAgentHistorySheet({
                 <strong>
                   {entry.role === 'user' ? t('agentHub.history.user') : session.provider}
                 </strong>
-                <SafeMarkdown
+                <ProgressiveSafeMarkdown
                   className="mob-agent-history-markdown"
                   markdown={entry.markdown}
+                  priority={(turnIndex * 1_000) + entryIndex}
                   openExternalHttpUrl={(url) => {
                     void Browser.open({ url });
                   }}
@@ -289,26 +288,11 @@ export function MobileAgentHistorySheet({
           })}
         </section>
       )}
-      <form
-        className="mob-agent-history-composer"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void beginSession();
-        }}
-      >
-        <textarea
-          value={draft}
-          rows={2}
-          maxLength={65_536}
-          aria-label={t('agentHub.history.inputLabel')}
-          placeholder={t('agentHub.history.inputPlaceholder')}
-          disabled={preparing}
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        <button type="submit" className="mob-cta" disabled={!draft.trim() || preparing}>
-          {preparing ? t('agentHub.history.opening') : t('agentHub.history.continue')}
-        </button>
-      </form>
+      <AgentResumeComposer
+        variant="mobile"
+        preparing={preparing}
+        onSubmit={(prompt) => void beginSession(prompt)}
+      />
     </MobileActionSheet>
   );
 }

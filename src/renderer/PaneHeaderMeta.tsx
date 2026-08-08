@@ -1,4 +1,4 @@
-import type { IDockviewHeaderActionsProps } from 'dockview';
+import type { IDockviewHeaderActionsProps } from 'dockview-react';
 import { useEffect, useState } from 'react';
 
 import { formatCwd } from './format-cwd';
@@ -8,9 +8,7 @@ import {
   subscribePaneRegistry,
 } from './pane-registry';
 
-/** Fallback cadence for external cwd changes that have not reached the pane
- * registry yet. Registry-backed pane changes update the header synchronously. */
-const CWD_POLL_MS = 1500;
+const OPEN_AGE_REFRESH_MS = 60_000;
 
 /**
  * Trailing slot of a pane group's header: where the active pane is, and how long
@@ -42,14 +40,20 @@ export function PaneHeaderMeta({ activePanel, isGroupActive }: IDockviewHeaderAc
       setOpenLabel(null);
       return;
     }
-    const read = (): void => {
+    const readPane = (): void => {
       setCwd(getPaneCwd(panelId) ?? null);
+    };
+    const readAge = (): void => {
       const openedAt = getPaneOpenedAt(panelId);
       setOpenLabel(openedAt === undefined ? null : openForLabel(openedAt, Date.now()));
     };
-    read();
-    const unsubscribe = subscribePaneRegistry(read);
-    const timer = window.setInterval(read, CWD_POLL_MS);
+    readPane();
+    readAge();
+    const unsubscribe = subscribePaneRegistry(() => {
+      readPane();
+      readAge();
+    });
+    const timer = window.setInterval(readAge, OPEN_AGE_REFRESH_MS);
     return () => {
       unsubscribe();
       window.clearInterval(timer);

@@ -1,12 +1,14 @@
 import { Browser } from '@capacitor/browser';
 import { ArrowUp, File as FileIcon, Folder, FolderPlus, RefreshCw, Upload } from 'lucide-react';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { formatSize, joinPath, type FileEntry } from '../../src/shared/files';
 import type { FilePreviewResult } from '../../src/shared/file-preview';
 import { normalizeExternalHttpUrl } from '../../src/shared/external-url';
 import { FilePreviewContent } from '../../src/renderer/FilePreviewContent';
 import { useAppTranslation } from '../../src/renderer/i18n';
+import { useLatestRequestGate } from '../../src/renderer/latest-request';
+import { VirtualizedRows } from '../../src/renderer/VirtualizedRows';
 import { saveDownloadToDevice } from './download-storage';
 import { e2eLog } from './e2e-telemetry';
 import { useLongPress } from './long-press';
@@ -63,6 +65,10 @@ interface DownloadProgress {
   readonly total: number;
 }
 
+type MobileFileRow =
+  | { readonly kind: 'new-folder' }
+  | { readonly kind: 'entry'; readonly entry: FileEntry };
+
 // The file page can be unmounted by Android Back while a network read is
 // still active. Keep transfer ownership at module lifetime so reopening the
 // page cannot allocate a second 50 MiB receive buffer before the first one
@@ -99,12 +105,21 @@ export function MobileFileView({
   const [binaryNotice, setBinaryNotice] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [viewing, setViewing] = useState<ViewingFile | null>(null);
-  const viewerActive = viewing !== null;
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
+  const [pendingPreview, setPendingPreview] = useState<{
+    readonly entry: FileEntry;
+    readonly path: string;
+  } | null>(null);
+  const navigationGate = useLatestRequestGate();
+  const previewGate = useLatestRequestGate();
+  const viewerActive = viewing !== null || pendingPreview !== null;
   const viewerReturnFocusRef = useRef<HTMLElement | null>(null);
   const viewerReturnNameRef = useRef<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
 
   const closeViewer = useCallback((): void => {
+    previewGate.invalidate();
+    setPendingPreview(null);
     setViewing(null);
     const previous = viewerReturnFocusRef.current;
     const previousName = viewerReturnNameRef.current;
@@ -118,7 +133,7 @@ export function MobileFileView({
       ).find((element) => element.dataset.fileName === previousName);
       replacement?.focus();
     });
-  }, []);
+  }, [previewGate]);
 
   useEffect(() => {
     if (!viewerActive) return;
@@ -157,10 +172,22 @@ export function MobileFileView({
   }, []);
 
   const loadPath = useCallback(async (path: string): Promise<void> => {
+    const generation = navigationGate.begin();
+    const previousPath = currentPathRef.current;
     setBinaryNotice(null);
-    const result = await transport.listFiles(path);
+    setError(null);
+    setPendingNavigation(path || previousPath || '');
+    const result = await transport.listFiles(path).catch(() => null);
+    if (!navigationGate.isCurrent(generation)) return;
+    setPendingNavigation(null);
+    if (!result) {
+      setError(t('common.unavailable'));
+      setPathInput(previousPath ?? '');
+      return;
+    }
     if (!result.ok) {
       setError(result.error);
+      setPathInput(previousPath ?? '');
       return;
     }
     setError(null);
@@ -172,11 +199,22 @@ export function MobileFileView({
     setPathInput(result.path);
     // e2e marker (M6 parity): logcat has no DOM access without Appium.
     e2eLog('files:listed', result.path, result.entries.length);
-  }, [transport]);
+  }, [navigationGate, t, transport]);
 
   const loadRoots = useCallback(async (): Promise<void> => {
+    const generation = navigationGate.begin();
+    const previousPath = currentPathRef.current;
     setBinaryNotice(null);
-    const roots = await transport.listFileRoots();
+    setError(null);
+    setPendingNavigation('roots');
+    const roots = await transport.listFileRoots().catch(() => null);
+    if (!navigationGate.isCurrent(generation)) return;
+    setPendingNavigation(null);
+    if (!roots) {
+      setError(t('common.unavailable'));
+      setPathInput(previousPath ?? '');
+      return;
+    }
     setError(null);
     setRootsMode(true);
     setCurrentPath(null);
@@ -185,7 +223,7 @@ export function MobileFileView({
     setPathInput('');
     setEntries(roots.map((name) => ({ name, kind: 'dir' as const, isSymlink: false, size: 0, mtimeMs: 0 })));
     e2eLog('files:listed', '(roots)', roots.length);
-  }, [transport]);
+  }, [navigationGate, t, transport]);
 
   // Best-effort snapshot ONLY at open — no live cwd following (locked requirement).
   useEffect(() => {
@@ -201,18 +239,28 @@ export function MobileFileView({
 
   const loadPreview = useCallback(
     async (entry: FileEntry, fullPath: string): Promise<void> => {
+      const generation = previewGate.begin();
       viewerReturnFocusRef.current = document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
       viewerReturnNameRef.current = entry.name;
       setBinaryNotice(null);
-      const result = await transport.readFilePreview(fullPath);
+      setError(null);
+      setViewing(null);
+      setPendingPreview({ entry, path: fullPath });
+      const result = await transport.readFilePreview(fullPath).catch(() => null);
+      if (!previewGate.isCurrent(generation)) return;
+      setPendingPreview(null);
+      if (!result) {
+        setError(t('common.unavailable'));
+        return;
+      }
       if (!result.ok) setError(result.error);
       else setError(null);
       setViewing({ entry, path: fullPath, result });
       e2eLog('files:viewer-open', entry.name);
     },
-    [transport],
+    [previewGate, t, transport],
   );
 
   const openEntry = useCallback(
@@ -409,45 +457,61 @@ export function MobileFileView({
     requestAnimationFrame(() => sheetReturnFocusRef.current?.focus());
   }, []);
 
-  if (viewing) {
+  const fileRows = useMemo<readonly MobileFileRow[]>(() => [
+    ...(creatingFolder ? [{ kind: 'new-folder' } as const] : []),
+    ...entries.map((entry) => ({ kind: 'entry' as const, entry })),
+  ], [creatingFolder, entries]);
+
+  if (viewing || pendingPreview) {
+    const activeEntry = viewing?.entry ?? pendingPreview!.entry;
+    const activePath = viewing?.path ?? pendingPreview!.path;
     return (
-      <div className="mobile-file-viewer" data-testid="mobile-file-viewer">
+      <div
+        className="mobile-file-viewer"
+        data-testid="mobile-file-viewer"
+        aria-busy={pendingPreview !== null}
+      >
         <MobilePageHeader
-          title={viewing.result.ok ? viewing.result.name : viewing.entry.name}
+          title={viewing?.result.ok ? viewing.result.name : activeEntry.name}
           backLabel={t('mobile.filesView.back')}
           backTestId="viewer-back"
           onBack={closeViewer}
         />
-        <div className="mobile-file-viewer-actions">
-          <button type="button" className="btn" onClick={() => onPastePath(viewing.path)} data-testid="viewer-insert">
+        {viewing && <div className="mobile-file-viewer-actions">
+          <button type="button" className="btn" onClick={() => onPastePath(activePath)} data-testid="viewer-insert">
             {t('mobile.filesView.insert')}
           </button>
           <button
             type="button"
             className="btn"
-            onClick={() => void handleDownload(viewing.entry)}
+            onClick={() => void handleDownload(activeEntry)}
             disabled={downloadProgress !== null}
             data-testid="viewer-download"
           >
             {t('mobile.filesView.download')}
           </button>
           {!viewing.result.ok && (
-            <button type="button" className="btn" onClick={() => void loadPreview(viewing.entry, viewing.path)}>
+            <button type="button" className="btn" onClick={() => void loadPreview(activeEntry, activePath)}>
               {t('common.retry')}
             </button>
           )}
-        </div>
+        </div>}
+        {pendingPreview && (
+          <p className="mob-empty" role="status" data-testid="mobile-file-preview-pending">
+            {t('common.loading')}
+          </p>
+        )}
         {downloadProgress && (
           <div className="mobile-file-progress" data-testid="mobile-file-progress">
             {downloadProgress.name}: {formatSize(downloadProgress.received)} / {formatSize(downloadProgress.total)}
           </div>
         )}
-        {viewing.result.ok && viewing.result.kind === 'text' && viewing.result.truncated && (
+        {viewing?.result.ok && viewing.result.kind === 'text' && viewing.result.truncated && (
           <div className="mobile-file-truncated" data-testid="viewer-truncated">
             {t('mobile.filesView.truncated')}
           </div>
         )}
-        <FilePreviewContent
+        {viewing && <FilePreviewContent
           result={viewing.result}
           labels={{
             imageTooLarge: t('mobile.filesView.imageTooLarge'),
@@ -462,13 +526,18 @@ export function MobileFileView({
             const url = normalizeExternalHttpUrl(value);
             if (url) void Browser.open({ url });
           }}
-        />
+        />}
       </div>
     );
   }
 
   return (
-    <div className="mobile-file-view" data-testid="mobile-file-view">
+    <div
+      className="mobile-file-view"
+      data-testid="mobile-file-view"
+      data-pending-path={pendingNavigation ?? undefined}
+      aria-busy={pendingNavigation !== null}
+    >
       <MobilePageHeader
         title={t('mobile.files')}
         backLabel={t('common.back')}
@@ -554,6 +623,11 @@ export function MobileFileView({
           {binaryNotice}
         </div>
       )}
+      {pendingNavigation !== null && (
+        <div className="mobile-file-notice" role="status" data-testid="mobile-file-navigation-pending">
+          {t('common.loading')}
+        </div>
+      )}
       {toast && (
         <div className="mobile-file-toast" data-testid="mobile-file-toast">
           {toast}
@@ -587,8 +661,14 @@ export function MobileFileView({
         </div>
       )}
 
-      <div className="mobile-file-list" data-testid="mobile-file-list" onScroll={longPress.onScroll}>
-        {creatingFolder && (
+      <VirtualizedRows
+        items={fileRows}
+        estimateSize={48}
+        className="mobile-file-list"
+        testId="mobile-file-list"
+        onScroll={longPress.onScroll}
+        getKey={(row) => row.kind === 'entry' ? row.entry.name : row.kind}
+        renderItem={(row) => row.kind === 'new-folder' ? (
           <div className="mobile-file-row">
             <input
               className="mobile-file-path-input"
@@ -602,17 +682,15 @@ export function MobileFileView({
               data-testid="mobile-new-folder-input"
             />
           </div>
-        )}
-        {entries.map((entry) =>
-          renamingEntry === entry.name ? (
-            <div key={entry.name} className="mobile-file-row" data-testid="mobile-file-entry">
+        ) : renamingEntry === row.entry.name ? (
+            <div className="mobile-file-row" data-testid="mobile-file-entry">
               <input
                 className="mobile-file-path-input"
                 value={renameValue}
                 autoFocus
                 onChange={(e) => setRenameValue(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') void submitRename(entry);
+                  if (e.key === 'Enter') void submitRename(row.entry);
                   else if (e.key === 'Escape') setRenamingEntry(null);
                 }}
                 data-testid="mobile-rename-input"
@@ -621,13 +699,12 @@ export function MobileFileView({
           ) : (
             <button
               type="button"
-              key={entry.name}
-             className="mobile-file-row mobile-file-entry-action"
-             data-testid="mobile-file-entry"
-             data-file-name={entry.name}
-              onClick={() => void openEntry(entry)}
+              className="mobile-file-row mobile-file-entry-action"
+              data-testid="mobile-file-entry"
+              data-file-name={row.entry.name}
+              onClick={() => void openEntry(row.entry)}
               onPointerDown={(e) => {
-                pressedEntryRef.current = entry;
+                pressedEntryRef.current = row.entry;
                 sheetReturnFocusRef.current = e.currentTarget;
                 longPress.onPointerDown(e);
               }}
@@ -636,27 +713,26 @@ export function MobileFileView({
               onPointerCancel={longPress.onPointerCancel}
               onContextMenu={(event) => {
                 longPress.onContextMenu(event);
-                pressedEntryRef.current = entry;
+                pressedEntryRef.current = row.entry;
                 sheetReturnFocusRef.current = event.currentTarget;
-                setSheetEntry(entry);
+                setSheetEntry(row.entry);
               }}
               onKeyDown={(event) => {
                 if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
                 event.preventDefault();
-                pressedEntryRef.current = entry;
+                pressedEntryRef.current = row.entry;
                 sheetReturnFocusRef.current = event.currentTarget;
-                setSheetEntry(entry);
+                setSheetEntry(row.entry);
               }}
             >
               <span className="mobile-file-icon" aria-hidden="true">
-                {entry.kind === 'dir' ? <Folder size={16} /> : <FileIcon size={16} />}
+                {row.entry.kind === 'dir' ? <Folder size={16} /> : <FileIcon size={16} />}
               </span>
-              <span className="mobile-file-name">{entry.name}</span>
-              {entry.kind === 'file' && <span className="mobile-file-size">{formatSize(entry.size)}</span>}
+              <span className="mobile-file-name">{row.entry.name}</span>
+              {row.entry.kind === 'file' && <span className="mobile-file-size">{formatSize(row.entry.size)}</span>}
             </button>
-          ),
-        )}
-      </div>
+          )}
+      />
 
       {(sheetEntry || deleteTarget) && (
         <MobileActionSheet

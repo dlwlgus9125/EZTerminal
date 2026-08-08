@@ -109,6 +109,21 @@ describe('SystemStatsService — graph loop (always-on, pure JS)', () => {
     service.stop();
   });
 
+  it('uses the low-resource cadence without changing the immediate first sample', async () => {
+    mocks.currentLoad.mockResolvedValue({ currentLoad: 1 });
+    const service = new SystemStatsService(null, vi.fn(), 'low-resource');
+    service.start();
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.currentLoad).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(GRAPH_INTERVAL_MS * 2 - 1);
+    expect(mocks.currentLoad).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mocks.currentLoad).toHaveBeenCalledTimes(2);
+
+    service.stop();
+  });
+
   it('discards the next CPU sample after a powerMonitor "resume" (sleep-gap delta guard)', async () => {
     mocks.currentLoad
       .mockResolvedValueOnce({ currentLoad: 5 })

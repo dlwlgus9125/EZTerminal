@@ -19,7 +19,9 @@ describe('physical mobile E2E locale contract', () => {
     expect(library).toContain("tapTestId('tab-add-btn')");
     expect(library).not.toContain("waitForText('Connect')");
     expect(smoke).toContain('createTerminalSession()');
-    expect(smoke).toContain("tapTestIdOnce('btn-run')");
+    expect(smoke).toContain("tapTestIdOnce('btn-run', {");
+    expect(smoke).toContain('viewportWidth: ready.innerViewport.width');
+    expect(smoke).toContain('viewportHeight: ready.innerViewport.height');
     expect(smoke).not.toContain('waitForText(');
     expect(parity).toContain("tapTestId('stats-tab-capture')");
     expect(parity).toContain("tapTestId('status-packet-ack-confirm')");

@@ -187,8 +187,6 @@ export const ThemeModV2Schema = z.strictObject({
 
 export const ThemeModSchema = z.discriminatedUnion('schemaVersion', [ThemeModV1Schema, ThemeModV2Schema]);
 
-export type ThemeModV1 = z.infer<typeof ThemeModV1Schema>;
-export type ThemeModV2 = z.infer<typeof ThemeModV2Schema>;
 export type ThemeMod = z.infer<typeof ThemeModSchema>;
 
 const KNOWN_EFFECT_IDS = new Set<string>(Object.keys(EFFECT_CATALOG));

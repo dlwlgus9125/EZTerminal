@@ -2,11 +2,11 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { IDockviewHeaderActionsProps } from 'dockview';
+import type { IDockviewHeaderActionsProps } from 'dockview-react';
 
 import { PaneHeaderMeta } from './PaneHeaderMeta';
 import {
-  getPaneRegistryRevision,
+  notifyPaneChanged,
   registerPane,
   type PaneHandle,
   type PaneSnapshot,
@@ -33,9 +33,9 @@ afterEach(() => {
   container.remove();
 });
 
-function paneHandle(cwd: string): PaneHandle {
+function paneHandle(readCwd: () => string): PaneHandle {
   return {
-    getSnapshot: () => ({ cwd } as PaneSnapshot),
+    getSnapshot: () => ({ cwd: readCwd() } as PaneSnapshot),
     insertText: () => ({ ok: false, reason: 'unavailable' }),
     runText: () => ({ ok: false, reason: 'unavailable' }),
     pasteToPty: () => ({ ok: false, reason: 'unavailable' }),
@@ -53,12 +53,17 @@ describe('PaneHeaderMeta', () => {
     act(() => root.render(<PaneHeaderMeta {...props} />));
     expect(container.querySelector('[data-testid="pane-header-cwd"]')).toBeNull();
 
-    const revisionBeforeRegistration = getPaneRegistryRevision();
+    let cwd = 'C:\\repo';
     act(() => {
-      unregisterPane = registerPane('pane-1', paneHandle('C:\\repo'));
+      unregisterPane = registerPane('pane-1', paneHandle(() => cwd));
     });
 
-    expect(getPaneRegistryRevision()).toBe(revisionBeforeRegistration + 1);
     expect(container.querySelector('[data-testid="pane-header-cwd"]')?.textContent).toBe('C:\\repo');
+
+    act(() => {
+      cwd = 'C:\\repo\\next';
+      notifyPaneChanged('pane-1');
+    });
+    expect(container.querySelector('[data-testid="pane-header-cwd"]')?.textContent).toBe('C:\\repo\\next');
   });
 });

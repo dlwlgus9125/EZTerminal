@@ -21,7 +21,6 @@ export function MobileWorkbenchCoordinator({
   tabRootActive,
   onRequestRoot,
   onRequestTabRoot,
-  onRequestTerminal,
 }: {
   readonly terminal: ReactNode;
   readonly page?: ReactNode;
@@ -37,8 +36,6 @@ export function MobileWorkbenchCoordinator({
   readonly tabRootActive?: boolean;
   readonly onRequestRoot?: () => void;
   readonly onRequestTabRoot?: () => void;
-  /** @deprecated Use onRequestRoot for the hub-centred shell. */
-  readonly onRequestTerminal?: () => void;
 }): JSX.Element {
   return (
     <MobileNavigationHistoryProvider>
@@ -52,7 +49,6 @@ export function MobileWorkbenchCoordinator({
         tabRootActive={tabRootActive}
         onRequestRoot={onRequestRoot}
         onRequestTabRoot={onRequestTabRoot}
-        onRequestTerminal={onRequestTerminal}
       />
     </MobileNavigationHistoryProvider>
   );
@@ -68,7 +64,6 @@ function MobileWorkbenchLayers({
   tabRootActive,
   onRequestRoot,
   onRequestTabRoot,
-  onRequestTerminal,
 }: {
   readonly terminal: ReactNode;
   readonly page?: ReactNode;
@@ -79,7 +74,6 @@ function MobileWorkbenchLayers({
   readonly tabRootActive?: boolean;
   readonly onRequestRoot?: () => void;
   readonly onRequestTabRoot?: () => void;
-  readonly onRequestTerminal?: () => void;
 }): JSX.Element {
   const terminalLayerRef = useRef<HTMLDivElement | null>(null);
   const pageIsolationOwnerRef = useRef(Symbol('mobile-page-isolation'));
@@ -90,8 +84,8 @@ function MobileWorkbenchLayers({
   const resolvedTerminalActive = terminalActive ?? !pageActive;
   const resolvedDestinationActive = destinationActive ?? pageActive;
   const navigation = useMobileNavigationHistory();
-  const requestRootRef = useRef(onRequestRoot ?? onRequestTerminal ?? (() => undefined));
-  requestRootRef.current = onRequestRoot ?? onRequestTerminal ?? (() => undefined);
+  const requestRootRef = useRef(onRequestRoot ?? (() => undefined));
+  requestRootRef.current = onRequestRoot ?? (() => undefined);
   const requestTabRootRef = useRef(onRequestTabRoot ?? (() => undefined));
   requestTabRootRef.current = onRequestTabRoot ?? (() => undefined);
 

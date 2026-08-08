@@ -232,6 +232,64 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Clears the debug app's data and waits for Android's asynchronous package
+ * cleanup to become quiet before another Activity launch. API 29 can print
+ * `Success` from `pm clear` before its queued `clearApplicationUserData`
+ * force-stop runs; launching immediately lets that late stop kill the fresh
+ * WebView. A run-as sentinel proves the data was removed, while a quiet window
+ * with a reachable empty data root and no app process closes that race. */
+export async function clearAppDataAndWaitForQuiescence(timeoutMs = 15_000): Promise<void> {
+  const sentinel = '.ez-e2e-clear-sentinel';
+  runAdb(['shell', 'run-as', APP_ID, 'touch', sentinel]);
+  runAdb(['shell', 'pm', 'clear', APP_ID]);
+
+  const deadline = Date.now() + timeoutMs;
+  let quietSince = 0;
+  let lastState: {
+    readonly dataRootReady: boolean;
+    readonly sentinelMissing: boolean;
+    readonly processAbsent: boolean;
+  } | null = null;
+  for (;;) {
+    let dataRootReady = false;
+    let sentinelMissing = false;
+    let processAbsent = false;
+    try {
+      dataRootReady = runAdb(['shell', 'run-as', APP_ID, 'pwd'], ADB_PROBE_TIMEOUT_MS)
+        .trim().length > 0;
+    } catch {
+      dataRootReady = false;
+    }
+    if (dataRootReady) {
+      try {
+        runAdb(['shell', 'run-as', APP_ID, 'ls', sentinel], ADB_PROBE_TIMEOUT_MS);
+      } catch {
+        sentinelMissing = true;
+      }
+      try {
+        processAbsent = runAdb(['shell', 'pidof', APP_ID], ADB_PROBE_TIMEOUT_MS)
+          .trim().length === 0;
+      } catch {
+        processAbsent = true;
+      }
+    }
+    lastState = { dataRootReady, sentinelMissing, processAbsent };
+
+    if (dataRootReady && sentinelMissing && processAbsent) {
+      if (quietSince === 0) quietSince = Date.now();
+      if (Date.now() - quietSince >= 2_000) return;
+    } else {
+      quietSince = 0;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Android app-data clear did not quiesce within ${timeoutMs}ms: ${JSON.stringify(lastState)}`,
+      );
+    }
+    await sleep(250);
+  }
+}
+
 export interface Point {
   readonly x: number;
   readonly y: number;
@@ -703,6 +761,11 @@ interface WebViewDeviceGeometry {
   readonly devicePixelRatio: number;
 }
 
+interface StableWebViewNativeTarget {
+  readonly geometry: WebViewElementGeometry;
+  readonly deviceGeometry: WebViewDeviceGeometry;
+}
+
 let webViewCdp: WebSocket | null = null;
 let webViewCdpRequestId = 0;
 let webViewForwardPort: number | null = null;
@@ -840,8 +903,15 @@ async function resolveWebViewCdp(): Promise<WebSocket> {
     if (protocolError) pending.reject(new Error(protocolError));
     else pending.resolve(message.result?.result?.value);
   });
-  client.on('close', () => resetWebViewCdp());
-  client.on('error', (error) => resetWebViewCdp(error));
+  // A deliberately retired socket can report `close` after its replacement
+  // is already connected. Only the currently-owned client may reset global
+  // CDP state, otherwise that late event tears down the fresh connection.
+  client.on('close', () => {
+    if (webViewCdp === client) resetWebViewCdp();
+  });
+  client.on('error', (error) => {
+    if (webViewCdp === client) resetWebViewCdp(error);
+  });
   webViewCdp = client;
   return client;
 }
@@ -934,36 +1004,51 @@ export function getTestIdCount(testId: string): Promise<number> {
  * the same bubbling `input` event React consumes. This is reserved for text
  * such as JSON that `adb shell input text` cannot transport byte-for-byte. */
 export async function setTestIdTextValue(testId: string, value: string): Promise<void> {
-  const actual = await evaluateWebView<string>(`(() => {
-    const element = [...document.querySelectorAll('[data-testid]')]
-      .filter((node) => node.getAttribute('data-testid') === ${JSON.stringify(testId)})
-      .reverse()
-      .find((node) => {
-        if (!(node instanceof HTMLElement)) return false;
-        const rect = node.getBoundingClientRect();
-        const style = getComputedStyle(node);
-        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
-      });
-    if (!(element instanceof HTMLInputElement) && !(element instanceof HTMLTextAreaElement)) {
-      throw new Error('test-id control is not an input or textarea');
+  const deadline = Date.now() + 15_000;
+  let lastActual: string | null = null;
+  let lastError: unknown;
+  for (;;) {
+    try {
+      lastActual = await evaluateWebView<string>(`(() => {
+        const element = [...document.querySelectorAll('[data-testid]')]
+          .filter((node) => node.getAttribute('data-testid') === ${JSON.stringify(testId)})
+          .reverse()
+          .find((node) => {
+            if (!(node instanceof HTMLElement)) return false;
+            const rect = node.getBoundingClientRect();
+            const style = getComputedStyle(node);
+            return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+          });
+        if (!(element instanceof HTMLInputElement) && !(element instanceof HTMLTextAreaElement)) {
+          throw new Error('test-id control is not an input or textarea');
+        }
+        const prototype = element instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+        const setter = descriptor && descriptor.set;
+        if (!setter) throw new Error('native value setter is unavailable');
+        setter.call(element, ${JSON.stringify(value)});
+        element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        return element.value;
+      })()`);
+      if (lastActual === value) {
+        await sleep(100);
+        return;
+      }
+      lastError = undefined;
+    } catch (error) {
+      lastError = error;
     }
-    const prototype = element instanceof HTMLTextAreaElement
-      ? HTMLTextAreaElement.prototype
-      : HTMLInputElement.prototype;
-    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
-    const setter = descriptor && descriptor.set;
-    if (!setter) throw new Error('native value setter is unavailable');
-    setter.call(element, ${JSON.stringify(value)});
-    element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-    return element.value;
-  })()`);
-  if (actual !== value) {
-    throw new Error(
-      `Failed to set data-testid=${JSON.stringify(testId)} exactly; `
-      + `expected ${JSON.stringify(value)}, got ${JSON.stringify(actual)}`,
-    );
+    if (Date.now() >= deadline) {
+      const detail = lastError ? `; last error: ${String(lastError)}` : '';
+      throw new Error(
+        `Failed to set data-testid=${JSON.stringify(testId)} exactly; `
+        + `expected ${JSON.stringify(value)}, got ${JSON.stringify(lastActual)}${detail}`,
+      );
+    }
+    await sleep(250);
   }
-  await sleep(100);
 }
 
 export function getTestIdTextContent(testId: string): Promise<string | null> {
@@ -1208,15 +1293,17 @@ export function inputOwnerBelongsToReadyApp(
 }
 
 async function waitForStableWebViewNativeTarget(
-  geometry: WebViewElementGeometry,
+  observeGeometry: () => Promise<WebViewElementGeometry | null>,
   timeoutMs = 20_000,
-): Promise<WebViewDeviceGeometry> {
+): Promise<StableWebViewNativeTarget> {
   const sdkLevel = getAndroidSdkLevel();
   const imeTrackerRequired = sdkLevel >= 35;
   const deadline = Date.now() + timeoutMs;
   let previousSignature: string | null = null;
+  let stableSince = 0;
   let stableSamples = 0;
   let lastProbe: {
+    readonly geometry: WebViewElementGeometry | null;
     readonly bounds: DeviceBounds | null;
     readonly devicePoint: Point | null;
     readonly owner: InputDispatcherTouchOwner | null;
@@ -1230,12 +1317,17 @@ async function waitForStableWebViewNativeTarget(
         ADB_PROBE_TIMEOUT_MS,
         Math.max(1, deadline - Date.now()),
       );
-      const activityDump = runAdb(
-        ['shell', 'dumpsys', 'activity', APP_ID],
-        remainingProbeTimeout(),
-      );
-      const bounds = parseWebViewDeviceBounds(activityDump, geometry);
-      const devicePoint = bounds
+      const geometry = await observeGeometry();
+      const bounds = geometry
+        ? parseWebViewDeviceBounds(
+            runAdb(
+              ['shell', 'dumpsys', 'activity', APP_ID],
+              remainingProbeTimeout(),
+            ),
+            geometry,
+          )
+        : null;
+      const devicePoint = geometry && bounds
         ? mapWebViewPointToDevice(geometry, bounds, geometry)
         : null;
       const owner = devicePoint
@@ -1248,33 +1340,40 @@ async function waitForStableWebViewNativeTarget(
       const imeLiveEntries = imeTrackerRequired && ownerReady
         ? readImeTrackerLiveEntryCount(remainingProbeTimeout())
         : null;
-      lastProbe = { bounds, devicePoint, owner, imeLiveEntries };
+      lastProbe = { geometry, bounds, devicePoint, owner, imeLiveEntries };
       lastError = undefined;
 
       const trackerReady = imeTrackerRequired
         ? imeLiveEntries === 0
         : true;
-      if (bounds && devicePoint && ownerReady && trackerReady) {
+      if (geometry && bounds && devicePoint && ownerReady && trackerReady) {
         const signature = JSON.stringify(lastProbe);
-        stableSamples = signature === previousSignature ? stableSamples + 1 : 1;
+        if (signature === previousSignature) {
+          stableSamples += 1;
+        } else {
+          stableSamples = 1;
+          stableSince = Date.now();
+        }
         previousSignature = signature;
-        if (stableSamples >= 3) {
-          const ready = {
+        if (stableSamples >= 3 && Date.now() - stableSince >= 1_000) {
+          const deviceGeometry = {
             bounds,
             viewportWidth: geometry.viewportWidth,
             viewportHeight: geometry.viewportHeight,
             devicePixelRatio: geometry.devicePixelRatio,
           };
-          webViewDeviceGeometry = ready;
-          return ready;
+          webViewDeviceGeometry = deviceGeometry;
+          return { geometry, deviceGeometry };
         }
       } else {
         stableSamples = 0;
+        stableSince = 0;
         previousSignature = null;
       }
     } catch (error) {
       lastError = error;
       stableSamples = 0;
+      stableSince = 0;
       previousSignature = null;
     }
 
@@ -1323,18 +1422,16 @@ function resolveWebViewDeviceGeometry(
 async function tapWebViewElementGeometry(
   geometry: WebViewElementGeometry,
   options: {
-    readonly forceRefreshDeviceGeometry?: boolean;
+    readonly deviceGeometry?: WebViewDeviceGeometry;
     readonly gesture?: 'tap' | 'short-press';
   } = {},
 ): Promise<NativeTapReceipt> {
   // Android 15 edge-to-edge insets and IME teardown can move the physical
-  // WebView frame without changing CDP's CSS viewport or DPR. The one-shot
-  // path proves stable bounds, dispatch ownership, and (on API 35+) IME
-  // quiescence before injecting exactly once. Ordinary idempotent navigation
-  // taps retain the faster metrics-keyed cache.
-  const deviceGeometry = options.forceRefreshDeviceGeometry
-    ? await waitForStableWebViewNativeTarget(geometry)
-    : resolveWebViewDeviceGeometry(geometry);
+  // WebView frame without changing CDP's CSS viewport or DPR. A one-shot path
+  // supplies geometry that was proven together with the native frame, input
+  // ownership, and IME quiescence. Ordinary idempotent navigation taps retain
+  // the faster metrics-keyed cache.
+  const deviceGeometry = options.deviceGeometry ?? resolveWebViewDeviceGeometry(geometry);
   const devicePoint = mapWebViewPointToDevice(geometry, deviceGeometry.bounds, geometry);
   const gesture = options.gesture ?? 'tap';
   if (gesture === 'short-press') {
@@ -1392,8 +1489,18 @@ export async function tapTestId(testId: string, timeoutMs = 15_000): Promise<voi
  * this only after the caller has stabilized and validated the target geometry,
  * then fail closed if the single injection or its product acknowledgement is
  * ambiguous. */
-export async function tapTestIdOnce(testId: string): Promise<NativeTapReceipt> {
-  const geometry = await evaluateWebView<{
+export async function tapTestIdOnce(
+  testId: string,
+  expectedViewport?: Pick<WebViewViewportMetrics, 'viewportWidth' | 'viewportHeight'>,
+): Promise<NativeTapReceipt> {
+  type SingleTapGeometry = WebViewElementGeometry & {
+    readonly disabled: boolean;
+    readonly centerTargetMatches: boolean;
+    readonly centerTargetTestId: string | null;
+  };
+  let lastGeometry: SingleTapGeometry | null = null;
+  const target = await waitForStableWebViewNativeTarget(async () => {
+    const geometry = await evaluateWebView<{
     readonly x: number;
     readonly y: number;
     readonly viewportWidth: number;
@@ -1403,20 +1510,27 @@ export async function tapTestIdOnce(testId: string): Promise<NativeTapReceipt> {
     readonly centerTargetMatches: boolean;
     readonly centerTargetTestId: string | null;
   } | null>(visibleTestIdExpression(testId));
-  if (!geometry) {
+    lastGeometry = geometry;
+    if (!geometry || geometry.disabled || !geometry.centerTargetMatches) return null;
+    if (
+      expectedViewport
+      && (
+        Math.abs(geometry.viewportWidth - expectedViewport.viewportWidth) > 1
+        || Math.abs(geometry.viewportHeight - expectedViewport.viewportHeight) > 1
+      )
+    ) {
+      return null;
+    }
+    return geometry;
+  }).catch((error: unknown) => {
     throw new Error(
-      `Cannot single-tap data-testid=${JSON.stringify(testId)} because it is not visible`,
+      `Cannot single-tap data-testid=${JSON.stringify(testId)} because its DOM geometry, `
+      + `Android window, and input owner did not stabilize together: `
+      + `${JSON.stringify({ expectedViewport, lastGeometry })}; ${String(error)}`,
     );
-  }
-  if (geometry.disabled || !geometry.centerTargetMatches) {
-    throw new Error(
-      `Cannot single-tap data-testid=${JSON.stringify(testId)} because its final native target `
-      + `is not actionable: disabled=${String(geometry.disabled)}, `
-      + `centerTarget=${JSON.stringify(geometry.centerTargetTestId)}`,
-    );
-  }
-  return tapWebViewElementGeometry(geometry, {
-    forceRefreshDeviceGeometry: true,
+  });
+  return tapWebViewElementGeometry(target.geometry, {
+    deviceGeometry: target.deviceGeometry,
     gesture: 'short-press',
   });
 }
@@ -1959,9 +2073,14 @@ async function assertColdConnectionUsedOneSocket(): Promise<void> {
  * than assuming one.
  */
 export async function connectAndAuth(token: string): Promise<void> {
+  // `adb install` / `pm clear` replaces the WebView renderer without always
+  // closing its DevTools websocket immediately. Retire the page-level client
+  // before replacing the app so re-entry cannot evaluate against a stale,
+  // OPEN-looking socket from the previous renderer.
+  closeWebViewDevtools();
   console.log('[e2e] installing APK (fresh app data)...');
   runAdb(['install', '-r', APK_PATH]);
-  runAdb(['shell', 'pm', 'clear', APP_ID]); // drop any stale localStorage from a previous run
+  await clearAppDataAndWaitForQuiescence();
 
   ensureRemoteBridgeTransport();
   console.log('[e2e] clearing logcat and launching app...');

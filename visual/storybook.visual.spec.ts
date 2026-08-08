@@ -328,6 +328,8 @@ for (const workspaceCase of [
     await expect(panel).toBeVisible();
     await expect(panel).toHaveAttribute("data-comparison", "current");
     await expect(panel.locator(".monaco-diff-editor")).toBeVisible({ timeout: 20_000 });
+    await expect(panel.locator(".line-delete").first()).toBeVisible({ timeout: 20_000 });
+    await expect(panel.locator(".line-insert").first()).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId("pty-block")).toHaveCount(1);
     await expect(page.getByTestId("block-status")).toHaveAttribute("data-status", "running");
     await expect(panel.getByText("Ask about code", { exact: true })).toHaveCount(0);

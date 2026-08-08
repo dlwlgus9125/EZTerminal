@@ -233,9 +233,6 @@ export interface AgentProjectLaunchStartRequest {
 
 export type AgentProjectLaunchStartResult = AgentLaunchStartResult;
 
-/** @deprecated Renderer callers use AgentLaunchBootstrap. */
-export type AgentProjectLaunchBootstrap = AgentLaunchBootstrap;
-
 export type AgentTerminalBootstrap = AgentResumeBootstrap | AgentLaunchBootstrap;
 
 export interface AgentProjectInput {

@@ -41,10 +41,10 @@
  * than crashing the host. This file therefore `require()`s `cap` LAZILY,
  * inside the message handler's try/catch (never at module top-level, where a
  * throw would kill the process before any status could be reported), and
- * MUST NEVER be imported from a plain-Node vitest run — it would ABI-mismatch
- * outside Electron (see forge.config.ts's rebuild-hook comments). B5 mocks
- * this module and unit-tests the pure ring-buffer/throttle logic in
- * packet-ring-buffer.ts instead.
+ * A plain-Node load may succeed or fail depending on whether its ABI matches
+ * the packaged native addon, so tests replace the Node `require.cache` entry
+ * rather than using the host machine as a failure oracle. B5 also unit-tests
+ * the pure ring-buffer/throttle logic in packet-ring-buffer.ts.
  */
 
 import type { MessagePortMain } from 'electron';

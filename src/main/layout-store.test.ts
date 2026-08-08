@@ -126,6 +126,7 @@ describe('LayoutStore — atomic Adaptive Workbench preferences', () => {
       density: 'adaptive',
       sidebarWidth: 320,
       effectIntensity: 7,
+      resourceProfile: 'balanced',
     });
   });
 
@@ -138,12 +139,14 @@ describe('LayoutStore — atomic Adaptive Workbench preferences', () => {
       density: 'compact',
       sidebarWidth: 404,
       effectIntensity: 9,
+      resourceProfile: 'high-responsiveness',
     });
     expect(await store.getUiPreferences()).toEqual({
       locale: 'ko',
       density: 'compact',
       sidebarWidth: 404,
       effectIntensity: 9,
+      resourceProfile: 'high-responsiveness',
     });
     expect(await store.getTheme()).toBe('light');
   });
@@ -156,6 +159,7 @@ describe('LayoutStore — atomic Adaptive Workbench preferences', () => {
       density: 'comfortable',
       sidebarWidth: 360,
       effectIntensity: 3,
+      resourceProfile: 'low-resource',
     });
     await store.setStartup({ mode: 'preset', presetName: 'focus' });
     await store.setUiScale(125);
@@ -164,6 +168,7 @@ describe('LayoutStore — atomic Adaptive Workbench preferences', () => {
       density: 'comfortable',
       sidebarWidth: 360,
       effectIntensity: 3,
+      resourceProfile: 'low-resource',
     });
   });
 
@@ -176,8 +181,12 @@ describe('LayoutStore — atomic Adaptive Workbench preferences', () => {
       store.setUiPreferences({ density: 'compact' }),
     ]);
 
-    expect(afterLocale).toEqual({ locale: 'ko', density: 'adaptive', sidebarWidth: 320, effectIntensity: 7 });
-    expect(afterDensity).toEqual({ locale: 'ko', density: 'compact', sidebarWidth: 320, effectIntensity: 7 });
+    expect(afterLocale).toEqual({
+      locale: 'ko', density: 'adaptive', sidebarWidth: 320, effectIntensity: 7, resourceProfile: 'balanced',
+    });
+    expect(afterDensity).toEqual({
+      locale: 'ko', density: 'compact', sidebarWidth: 320, effectIntensity: 7, resourceProfile: 'balanced',
+    });
     expect(await store.getUiPreferences()).toEqual(afterDensity);
   });
 

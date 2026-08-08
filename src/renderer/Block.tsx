@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, X } from 'lucide-react';
-import { useState, useSyncExternalStore } from 'react';
+import { memo, useState, useSyncExternalStore } from 'react';
 
 import { classifyDirectAgentCommand } from '../shared/agent-command';
 import type { PtyRestoreWarningFrame } from '../shared/ipc';
@@ -37,7 +37,7 @@ function restoreWarningKey(warning: PtyRestoreWarningFrame):
   return 'block.restoreRawOutput';
 }
 
-export function Block({
+export const Block = memo(function Block({
   controller,
   onDismiss,
   isTakeover = false,
@@ -193,4 +193,4 @@ export function Block({
       )}
     </section>
   );
-}
+});

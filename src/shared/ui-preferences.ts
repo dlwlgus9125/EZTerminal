@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+import { UiResourceProfileSchema, type UiResourceProfile } from './resource-profile';
+
+export { UiResourceProfileSchema, type UiResourceProfile } from './resource-profile';
+
 /** Persisted language choice. `system` is resolved independently per device. */
 export const UiLocalePreferenceSchema = z.enum(['system', 'ko', 'en']);
 export type UiLocalePreference = z.infer<typeof UiLocalePreferenceSchema>;
@@ -9,7 +13,6 @@ export type UiLocalePreference = z.infer<typeof UiLocalePreferenceSchema>;
  * comfortable are explicit user overrides shared by desktop and mobile.
  */
 export const UiDensitySchema = z.enum(['adaptive', 'compact', 'comfortable']);
-export type UiDensity = z.infer<typeof UiDensitySchema>;
 
 export const MIN_SIDEBAR_WIDTH = 280;
 export const MAX_SIDEBAR_WIDTH = 440;
@@ -31,6 +34,7 @@ export const UiPreferencesSchema = z.object({
   density: UiDensitySchema,
   sidebarWidth: SidebarWidthSchema,
   effectIntensity: EffectIntensitySchema,
+  resourceProfile: UiResourceProfileSchema,
 });
 export type UiPreferences = z.infer<typeof UiPreferencesSchema>;
 
@@ -47,6 +51,7 @@ export const DEFAULT_UI_PREFERENCES: Readonly<UiPreferences> = Object.freeze({
   density: 'adaptive',
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   effectIntensity: DEFAULT_EFFECT_INTENSITY,
+  resourceProfile: 'balanced' satisfies UiResourceProfile,
 });
 
 export type ResolvedUiLocale = 'ko' | 'en';

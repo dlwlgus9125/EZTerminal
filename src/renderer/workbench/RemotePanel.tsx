@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { EzTerminalDesktopApi } from '../../shared/ipc';
 import type { PairingCode } from '../../shared/pairing';
+import type { UiResourceProfile } from '../../shared/resource-profile';
 import { ConnectionInfoPanel } from '../ConnectionInfoPanel';
 import { PairingQrDialog } from '../PairingQrDialog';
 import { SshForwardSettings } from '../SshForwardSettings';
@@ -26,10 +27,12 @@ export function RemotePanel({
   capabilities = rendererCapabilities,
   desktopApi = window.ezterminalDesktop,
   currentTime,
+  resourceProfile = 'balanced',
 }: {
   readonly capabilities?: CapabilityAccess;
   readonly desktopApi?: RemotePanelDesktopApi;
   readonly currentTime?: number;
+  readonly resourceProfile?: UiResourceProfile;
 } = {}): JSX.Element {
   const { t } = useAppTranslation();
   const status = useRemoteDesktopHostStatus(capabilities);
@@ -260,8 +263,8 @@ export function RemotePanel({
         <RemoteDesktopStatusCard capabilities={capabilities} currentTime={currentTime} />
       </div>
       <ConnectionInfoPanel capabilities={capabilities} />
-      <RemoteDeviceRoster desktopApi={desktopApi} />
-      <SshForwardSettings capabilities={capabilities} />
+      <RemoteDeviceRoster desktopApi={desktopApi} resourceProfile={resourceProfile} />
+      <SshForwardSettings capabilities={capabilities} resourceProfile={resourceProfile} />
       <PairingQrDialog
         open={qrOpen}
         onOpenChange={setQrOpen}

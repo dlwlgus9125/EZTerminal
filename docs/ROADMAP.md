@@ -39,6 +39,8 @@ interactive CLI와 full-screen TUI는 PTY/xterm으로 실행한다.
 
 - Adaptive desktop workbench, Explorer, Quick Open/Command Center, theme·Matrix CRT,
   Settings, telemetry와 optional packet capture
+- 기능별 lazy module, intent/idle preload, 격리된 Retry/Close와 desktop·Android의
+  Balanced/Low resource/High responsiveness profile
 - Safe preview, Git worktree, agent attention/history/launch와 OpenClaw lifecycle/chat
 - Renderer/interpreter recovery, bounded persistent state와 packaged native-module guard
 
@@ -71,6 +73,8 @@ interactive CLI와 full-screen TUI는 PTY/xterm으로 실행한다.
   [`release/README.md`](release/README.md)의 gate를 통과한다.
 - 일반 개발 검증은 `pnpm e2e`를 사용한다. release performance benchmark는 사용자가
   성능 측정을 명시적으로 요청한 경우에만 실행한다.
+- `pnpm profile:runtime`은 임시 profile에서 startup·feature chunk·working set을 보는
+  개발 진단이며 `test-results/` 결과는 release evidence나 회귀 gate가 아니다.
 - Android 장기 signing material은 Git 밖에 둔다. `.release-secrets/`는 workspace
   정리로 삭제하지 않는다.
 - 활성 계약과 코드가 어긋나면 회귀 또는 의도된 변경을 먼저 결정하고 코드·문서·검증을

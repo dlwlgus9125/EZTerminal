@@ -36,12 +36,14 @@ export function ActivityRail({
   attentionCount,
   updateAvailable = false,
   openclawVisible,
+  onIntent,
   onSelect,
 }: {
   readonly active: SidebarDestination | null;
   readonly attentionCount: number;
   readonly updateAvailable?: boolean;
   readonly openclawVisible: boolean;
+  readonly onIntent?: (destination: SidebarDestination) => void;
   readonly onSelect: (destination: SidebarDestination) => void;
 }): JSX.Element {
   const { t } = useAppTranslation();
@@ -59,6 +61,9 @@ export function ActivityRail({
             data-bottom={item.bottom || undefined}
             aria-label={label}
             aria-pressed={active === item.id}
+            onFocus={() => onIntent?.(item.id)}
+            onPointerEnter={() => onIntent?.(item.id)}
+            onPointerDown={() => onIntent?.(item.id)}
             onClick={() => onSelect(item.id)}
             data-testid={item.testId}
           />

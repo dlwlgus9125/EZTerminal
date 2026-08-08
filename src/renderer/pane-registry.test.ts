@@ -1,23 +1,54 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   getPaneCwd,
   insertIntoPaneInput,
+  notifyPaneChanged,
+  registerPane,
   registerPaneInput,
-  removePaneCwd,
-  setPaneCwd,
+  subscribePaneRegistry,
   unregisterPaneInput,
+  type PaneHandle,
+  type PaneSnapshot,
 } from './pane-registry';
 
 describe('pane-registry', () => {
-  it('set/get/remove cwd semantics', () => {
+  it('reads cwd from the live pane handle and removes it with the registration', () => {
     expect(getPaneCwd('p1')).toBeUndefined();
-    setPaneCwd('p1', 'C:\\Users\\a');
+    let cwd = 'C:\\Users\\a';
+    const handle = {
+      getSnapshot: () => ({ cwd } as PaneSnapshot),
+      insertText: () => ({ ok: false, reason: 'unavailable' }),
+      runText: () => ({ ok: false, reason: 'unavailable' }),
+      pasteToPty: () => ({ ok: false, reason: 'unavailable' }),
+      focus: () => true,
+    } satisfies PaneHandle;
+    const unregister = registerPane('p1', handle);
     expect(getPaneCwd('p1')).toBe('C:\\Users\\a');
-    setPaneCwd('p1', 'C:\\Users\\b');
+    cwd = 'C:\\Users\\b';
     expect(getPaneCwd('p1')).toBe('C:\\Users\\b');
-    removePaneCwd('p1');
+    unregister();
     expect(getPaneCwd('p1')).toBeUndefined();
+  });
+
+  it('notifies subscribers without replacing the registered pane', () => {
+    const listener = vi.fn();
+    const unsubscribe = subscribePaneRegistry(listener);
+    const handle = {
+      getSnapshot: () => ({ cwd: 'C:\\repo' } as PaneSnapshot),
+      insertText: () => ({ ok: false, reason: 'unavailable' }),
+      runText: () => ({ ok: false, reason: 'unavailable' }),
+      pasteToPty: () => ({ ok: false, reason: 'unavailable' }),
+      focus: () => true,
+    } satisfies PaneHandle;
+    const unregister = registerPane('p-notify', handle);
+    listener.mockClear();
+
+    notifyPaneChanged('p-notify');
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    unregister();
+    unsubscribe();
   });
 
   it('insertIntoPaneInput returns false when no pane is registered', () => {

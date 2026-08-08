@@ -99,6 +99,11 @@ name과 color 외의 selected state를 제공한다. 기능별 별도 drawer나 
 
 각 destination은 loading, empty/unavailable, error/offline과 success 상태를 정의한다.
 Overlay를 닫으면 rail item 또는 Command Center result로 focus를 돌린다.
+Optional destination은 첫 사용 전까지 별도 module로 유지할 수 있다. rail focus,
+pointer enter/down은 사용자 intent이므로 preload할 수 있지만 click 동작과 accessible
+name은 바꾸지 않는다. 로드 중에는 동일한 SidebarShell 안에 status를 보여 주고 실패하면
+localized Retry와 Close를 함께 제공한다. terminal workspace, draft와 navigation은 이
+오류 경계 밖에서 계속 사용할 수 있어야 한다.
 
 ### 3.5 Workspace와 composer
 
@@ -121,10 +126,26 @@ Settings category는 다음 여섯 개다.
 5. Integrations
 6. About & Diagnostics
 
-General은 언어, Appearance는 theme·density·font·CRT, Terminal & Safety는 terminal
-behavior와 paste/clipboard/close 안전 설정을 소유한다. Pairing, OpenClaw와 provider
-설정은 Integrations에 둔다. version과 diagnostic metadata는 About & Diagnostics에
-둔다.
+General은 언어·density·resource profile, Appearance는 theme·font·CRT, Terminal &
+Safety는 terminal behavior와 paste/clipboard/close 안전 설정을 소유한다. Pairing,
+OpenClaw와 provider 설정은 Integrations에 둔다. version과 diagnostic metadata는
+About & Diagnostics에 둔다.
+
+### 3.7 Resource profile
+
+Resource profile은 기능을 제거하는 mode가 아니라 optional 화면의 preload와 관찰용
+refresh 비용을 선택하는 device-local 설정이다.
+
+| 선택 | Optional 화면 | 관찰 refresh | UX 계약 |
+| --- | --- | --- | --- |
+| Balanced (기본) | idle 시 preload | 표준 주기 | 일반적인 반응성과 자원 사용의 균형 |
+| Low resource | focus/pointer intent에서 preload | 허용 목록만 2배 주기 | 기능·알림·안전 검사는 유지 |
+| High responsiveness | 설정 복원 직후 preload | 표준 주기 | 첫 진입 지연을 우선 |
+
+선택은 즉시 저장되고 다음 refresh 예약부터 적용한다. 이미 불러온 module은 강제로
+unload하지 않으므로 Low resource 선택 시 완전한 메모리 회수는 다음 앱 시작부터라는
+안내를 표시한다. 어느 선택도 timeout, reconnect/liveness, command cancellation,
+backpressure, capture lease나 위험한 pane 닫기 확인을 느리게 해서는 안 된다.
 
 ### 4.5 Command Center and duplicate entry policy
 
@@ -182,7 +203,9 @@ Terminal header는 Back, session sheet와 New만 유지한다.
 
 Mobile Settings는 General, Appearance, Terminal & Input, Integrations,
 Connection & About의 index/subpage 구조다. 기존 setting key와 theme format을
-변경하지 않는다.
+변경하지 않는다. General의 resource profile은 Android 기기에만 저장하고 desktop으로
+동기화하지 않는다. desktop과 같은 세 label, 설명과 Low resource 재시작 안내를
+사용한다.
 
 ### 5.4 Pairing과 연결 상태
 
@@ -359,7 +382,10 @@ Snapshot 갱신은 reference와 side-by-side로 검토하고 adaptive layout, ex
 - [`src/renderer/ui/`](../../src/renderer/ui/)
 - [`src/renderer/styles/ui-tokens.css`](../../src/renderer/styles/ui-tokens.css)
 - [`src/renderer/i18n/resources.ts`](../../src/renderer/i18n/resources.ts)
+- [`src/renderer/feature-loader.tsx`](../../src/renderer/feature-loader.tsx)
+- [`src/shared/resource-profile.ts`](../../src/shared/resource-profile.ts)
 - [`mobile/src/MobileWorkbenchCoordinator.tsx`](../../mobile/src/MobileWorkbenchCoordinator.tsx)
+- [`mobile/src/MobileSettingsView.tsx`](../../mobile/src/MobileSettingsView.tsx)
 - [`mobile/src/MobileTabBar.tsx`](../../mobile/src/MobileTabBar.tsx)
 - [`mobile/src/mobile-shell.css`](../../mobile/src/mobile-shell.css)
 - [`docs/ux/reference/desktop-handoff/manifest.json`](reference/desktop-handoff/manifest.json)
@@ -372,6 +398,7 @@ Snapshot 갱신은 reference와 side-by-side로 검토하고 adaptive layout, ex
 - [`visual/storybook.visual.spec.ts`](../../visual/storybook.visual.spec.ts)
 - [`test/desktop-handoff-guard.test.ts`](../../test/desktop-handoff-guard.test.ts)
 - [`mobile/src/MobileWorkbenchCoordinator.test.tsx`](../../mobile/src/MobileWorkbenchCoordinator.test.tsx)
+- [`mobile/src/MobileUiPreferencesProvider.test.tsx`](../../mobile/src/MobileUiPreferencesProvider.test.tsx)
 
 이전 전체 규격과 완료 addendum은
 [`docs/archive/design/frontend-design.md`](../archive/design/frontend-design.md)에 보존한다.

@@ -15,8 +15,10 @@ import { setInternalPathDrag } from './FileDropOverlay';
 import { FileSystemEntryIcon } from './FileSystemEntryIcon';
 import { useAppTranslation } from './i18n';
 import { getPaneCwd, insertIntoPaneInput } from './pane-registry';
+import { useLatestRequestGate } from './latest-request';
 import { RichFileViewerOverlay } from './RichFileViewerOverlay';
 import { Button, Dialog, useToast, VisuallyHidden } from './ui';
+import { VirtualizedRows } from './VirtualizedRows';
 
 interface BreadcrumbSegment {
   readonly label: string;
@@ -85,6 +87,11 @@ interface ContextMenuState {
   readonly entry: FileEntry | null;
 }
 
+type DesktopFileRow =
+  | { readonly kind: 'new-folder' }
+  | { readonly kind: 'parent' }
+  | { readonly kind: 'entry'; readonly entry: FileEntry };
+
 /**
  * Left-edge file-explorer drawer (file-explorer plan, M1/M2) — mirrors
  * StatusPanel/ConnectionInfoPanel's overlay shape but anchored left, and its
@@ -116,6 +123,11 @@ export function FileExplorerPanel({
   const [error, setError] = useState<string | null>(null);
   const [binaryNotice, setBinaryNotice] = useState<string | null>(null);
   const [viewing, setViewing] = useState<ViewingFile | null>(null);
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
+  const [pendingPreviewPath, setPendingPreviewPath] = useState<string | null>(null);
+  const currentPathRef = useRef<string | null>(null);
+  const navigationGate = useLatestRequestGate();
+  const previewGate = useLatestRequestGate();
 
   // ── M2: context menu + mutations ──────────────────────────────────────────
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -134,32 +146,57 @@ export function FileExplorerPanel({
   const mutatingRef = useRef(false);
 
   const loadPath = useCallback(async (path: string): Promise<void> => {
+    const generation = navigationGate.begin();
+    const previousPath = currentPathRef.current;
     setBinaryNotice(null);
-    const result = await capabilities.files.list(path);
+    setError(null);
+    setPendingNavigation(path || previousPath || '');
+    const result = await capabilities.files.list(path).catch(() => null);
+    if (!navigationGate.isCurrent(generation)) return;
+    setPendingNavigation(null);
+    if (!result) {
+      setError(t('common.unavailable'));
+      setPathInput(previousPath ?? '');
+      return;
+    }
     if (!result.ok) {
       setError(result.error);
+      setPathInput(previousPath ?? '');
       return;
     }
     setError(null);
     setRootsMode(false);
     setCurrentPath(result.path);
+    currentPathRef.current = result.path;
     setParent(result.parent);
     setEntries(result.entries);
     setPathInput(result.path);
-  }, [capabilities]);
+  }, [capabilities, navigationGate, t]);
 
   const loadRoots = useCallback(async (): Promise<void> => {
+    const generation = navigationGate.begin();
+    const previousPath = currentPathRef.current;
     setBinaryNotice(null);
-    const roots = await capabilities.files.listRoots();
+    setError(null);
+    setPendingNavigation('roots');
+    const roots = await capabilities.files.listRoots().catch(() => null);
+    if (!navigationGate.isCurrent(generation)) return;
+    setPendingNavigation(null);
+    if (!roots) {
+      setError(t('common.unavailable'));
+      setPathInput(previousPath ?? '');
+      return;
+    }
     setError(null);
     setRootsMode(true);
     setCurrentPath(null);
+    currentPathRef.current = null;
     setParent(null);
     setPathInput('');
     setEntries(
       roots.map((name) => ({ name, kind: 'dir' as const, isSymlink: false, size: 0, mtimeMs: 0 })),
     );
-  }, [capabilities]);
+  }, [capabilities, navigationGate, t]);
 
   // Best-effort snapshot ONLY at open — no live cwd following (locked requirement).
   useEffect(() => {
@@ -174,12 +211,21 @@ export function FileExplorerPanel({
   );
 
   const loadPreview = useCallback(async (fullPath: string): Promise<void> => {
+    const generation = previewGate.begin();
     setBinaryNotice(null);
-    const result = await capabilities.files.preview(fullPath);
+    setError(null);
+    setPendingPreviewPath(fullPath);
+    const result = await capabilities.files.preview(fullPath).catch(() => null);
+    if (!previewGate.isCurrent(generation)) return;
+    setPendingPreviewPath(null);
+    if (!result) {
+      setError(t('common.unavailable'));
+      return;
+    }
     if (!result.ok) setError(result.error);
     else setError(null);
     setViewing({ path: fullPath, result });
-  }, [capabilities]);
+  }, [capabilities, previewGate, t]);
 
   const openEntry = useCallback(
     async (entry: FileEntry): Promise<void> => {
@@ -430,8 +476,19 @@ export function FileExplorerPanel({
     [gitStatus, t],
   );
 
+  const fileRows = useMemo<readonly DesktopFileRow[]>(() => [
+    ...(creatingFolder ? [{ kind: 'new-folder' } as const] : []),
+    ...(!rootsMode && currentPath ? [{ kind: 'parent' } as const] : []),
+    ...entries.map((entry) => ({ kind: 'entry' as const, entry })),
+  ], [creatingFolder, currentPath, entries, rootsMode]);
+
   return (
-    <div className="file-drawer" data-testid="file-explorer-panel">
+    <div
+      className="file-drawer"
+      data-testid="file-explorer-panel"
+      data-pending-path={pendingNavigation ?? undefined}
+      aria-busy={pendingNavigation !== null || pendingPreviewPath !== null}
+    >
       {/* One navigation block: Up, the clickable ancestors, and the literal path.
           The path line is the input — it was previously a second, always-visible
           field in its own header row saying the same thing the breadcrumb said,
@@ -502,17 +559,24 @@ export function FileExplorerPanel({
           {binaryNotice}
         </div>
       )}
+      {pendingNavigation !== null && (
+        <div className="file-loading" role="status" data-testid="file-navigation-pending">
+          {t('common.loading')}
+        </div>
+      )}
 
-      <div
+      <VirtualizedRows
+        items={fileRows}
+        estimateSize={32}
         className="file-list"
-        data-testid="file-list"
+        testId="file-list"
+        getKey={(row) => row.kind === 'entry' ? row.entry.name : row.kind}
         onContextMenu={(e) => {
           e.preventDefault();
           if (currentPath === null) return;
           setContextMenu({ x: e.clientX, y: e.clientY, entry: null });
         }}
-      >
-        {creatingFolder && (
+        renderItem={(row) => row.kind === 'new-folder' ? (
           <div className="file-entry" data-entry-kind="directory" data-testid="new-folder-row">
             <FileSystemEntryIcon
               name={newFolderName || 'new-folder'}
@@ -533,11 +597,7 @@ export function FileExplorerPanel({
               }}
             />
           </div>
-        )}
-        {/* The parent row the toolbar button duplicates on purpose: in a long
-            listing the way out should be where the eye already is, not back up
-            at the chrome. */}
-        {!rootsMode && currentPath && (
+        ) : row.kind === 'parent' ? (
           <button
             type="button"
             className="file-entry file-entry--parent"
@@ -549,18 +609,15 @@ export function FileExplorerPanel({
             </span>
             <span className="file-entry-name">..</span>
           </button>
-        )}
-        {entries.map((entry) =>
-          renamingEntry === entry.name ? (
+        ) : renamingEntry === row.entry.name ? (
             <div
-              key={entry.name}
               className="file-entry"
-              data-entry-kind={entry.kind === 'dir' ? 'directory' : 'file'}
+              data-entry-kind={row.entry.kind === 'dir' ? 'directory' : 'file'}
               data-testid="file-entry"
             >
               <FileSystemEntryIcon
-                name={entry.name}
-                kind={entry.kind === 'dir' ? 'directory' : 'file'}
+                name={row.entry.name}
+                kind={row.entry.kind === 'dir' ? 'directory' : 'file'}
                 className="file-entry-icon"
               />
               <input
@@ -568,29 +625,28 @@ export function FileExplorerPanel({
                 data-testid="rename-input"
                 value={renameValue}
                 autoFocus
-                aria-label={t('fileExplorer.renameEntry', { name: entry.name })}
+                aria-label={t('fileExplorer.renameEntry', { name: row.entry.name })}
                 onChange={(e) => setRenameValue(e.target.value)}
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') void submitRename(entry);
+                  if (e.key === 'Enter') void submitRename(row.entry);
                   else if (e.key === 'Escape') setRenamingEntry(null);
                 }}
               />
             </div>
           ) : (
             <button
-              key={entry.name}
               type="button"
               className="file-entry"
-              data-entry-kind={entry.kind === 'dir' ? 'directory' : 'file'}
+              data-entry-kind={row.entry.kind === 'dir' ? 'directory' : 'file'}
               data-testid="file-entry"
               draggable
-              onDragStart={(event) => setInternalPathDrag(event.dataTransfer, [fullPathFor(entry)])}
-              onClick={() => void openEntry(entry)}
+              onDragStart={(event) => setInternalPathDrag(event.dataTransfer, [fullPathFor(row.entry)])}
+              onClick={() => void openEntry(row.entry)}
               onKeyDown={(event) => {
                 if ((event.key === 'Enter' || event.key === ' ') && !event.repeat) {
                   event.preventDefault();
-                  void openEntry(entry);
+                  void openEntry(row.entry);
                   return;
                 }
                 if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
@@ -599,43 +655,42 @@ export function FileExplorerPanel({
                 setContextMenu({
                   x: rect.left + Math.min(16, rect.width / 2),
                   y: rect.top + Math.min(16, rect.height),
-                  entry,
+                  entry: row.entry,
                 });
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 e.currentTarget.focus();
-                setContextMenu({ x: e.clientX, y: e.clientY, entry });
+                setContextMenu({ x: e.clientX, y: e.clientY, entry: row.entry });
               }}
             >
               <FileSystemEntryIcon
-                name={entry.name}
-                kind={entry.kind === 'dir' ? 'directory' : 'file'}
+                name={row.entry.name}
+                kind={row.entry.kind === 'dir' ? 'directory' : 'file'}
                 className="file-entry-icon"
               />
-              <span className="file-entry-name">{entry.name}</span>
+              <span className="file-entry-name">{row.entry.name}</span>
               <VisuallyHidden>
-                {t(entry.kind === 'dir'
+                {t(row.entry.kind === 'dir'
                   ? 'fileExplorer.entryKind.directory'
                   : 'fileExplorer.entryKind.file')}
               </VisuallyHidden>
-              {changeTagFor(entry.name) && (
+              {changeTagFor(row.entry.name) && (
                 <span
                   className="file-entry-change"
-                  data-kind={changeTagFor(entry.name)?.kind}
+                  data-kind={changeTagFor(row.entry.name)?.kind}
                   data-testid="file-entry-change"
                 >
-                  {changeTagFor(entry.name)?.label}
+                  {changeTagFor(row.entry.name)?.label}
                 </span>
               )}
-              {entry.kind === 'file' && (
-                <span className="file-entry-size">{formatSize(entry.size)}</span>
+              {row.entry.kind === 'file' && (
+                <span className="file-entry-size">{formatSize(row.entry.size)}</span>
               )}
             </button>
-          ),
-        )}
-      </div>
+          )}
+      />
 
       {contextMenu && (
         <FileContextMenu
@@ -650,13 +705,29 @@ export function FileExplorerPanel({
         <RichFileViewerOverlay
           path={viewing.path}
           result={viewing.result}
-          onClose={() => setViewing(null)}
+          onClose={() => {
+            previewGate.invalidate();
+            setPendingPreviewPath(null);
+            setViewing(null);
+          }}
           onInsert={() => handlePastePath(viewing.path)}
           onRetry={() => void loadPreview(viewing.path)}
           onOpen={() => void capabilities.files.openInApp(viewing.path)}
           onReveal={() => void capabilities.files.reveal(viewing.path)}
           openExternalHttpUrl={(url) => void capabilities.files.openExternalHttpUrl(url)}
         />
+      )}
+      {pendingPreviewPath && !viewing && (
+        <div
+          className="file-viewer-overlay file-viewer-overlay--pending"
+          role="dialog"
+          aria-label={t('common.loading')}
+          aria-modal="true"
+        >
+          <div className="status-loading" role="status" data-testid="file-preview-pending">
+            {t('common.loading')}
+          </div>
+        </div>
       )}
 
       {deleteTarget && (

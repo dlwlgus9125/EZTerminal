@@ -11,13 +11,22 @@ import { ProjectReviewService } from './project-review-service';
 import { ProjectWorkspaceService } from './project-workspace-service';
 
 const temporaryDirectories: string[] = [];
+const GIT_INTEGRATION_TIMEOUT_MS = 15_000;
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, {
     cwd,
     encoding: 'utf8',
     windowsHide: true,
-    env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' },
+    env: {
+      ...process.env,
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_AUTHOR_NAME: 'Test',
+      GIT_AUTHOR_EMAIL: 'test@example.invalid',
+      GIT_COMMITTER_NAME: 'Test',
+      GIT_COMMITTER_EMAIL: 'test@example.invalid',
+    },
   });
 }
 
@@ -33,8 +42,6 @@ async function fixture(): Promise<{
   const root = path.join(base, 'project');
   await fs.mkdir(path.join(root, 'src'), { recursive: true });
   git(root, 'init', '-b', 'main');
-  git(root, 'config', 'user.email', 'test@example.invalid');
-  git(root, 'config', 'user.name', 'Test');
   await fs.writeFile(path.join(root, 'src', 'app.ts'), 'const value = 1;\n');
   await fs.writeFile(path.join(root, 'src', 'deleted.ts'), 'delete me\n');
   await fs.writeFile(path.join(root, 'src', 'old.ts'), 'rename me\n');
@@ -69,7 +76,12 @@ async function fixture(): Promise<{
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) =>
-    fs.rm(directory, { recursive: true, force: true })));
+    fs.rm(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 20,
+      retryDelay: 100,
+    })));
 });
 
 describe('ProjectDocumentService', () => {
@@ -97,7 +109,7 @@ describe('ProjectDocumentService', () => {
     expect(byAbsolutePath).toMatchObject({ ok: true });
     if (!byProjectPath.ok || !byAbsolutePath.ok) throw new Error('target resolution failed');
     expect(byAbsolutePath.target.document.key).toBe(byProjectPath.target.document.key);
-  });
+  }, GIT_INTEGRATION_TIMEOUT_MS);
 
   it('merges M/A/D/R status and exact counts into one lazy tree, including virtual deletions', async () => {
     const test = await fixture();
@@ -152,7 +164,7 @@ describe('ProjectDocumentService', () => {
       ok: true,
       entries: [expect.objectContaining({ relativePath: 'legacy/gone.txt', status: 'deleted', virtual: true })],
     });
-  });
+  }, GIT_INTEGRATION_TIMEOUT_MS);
 
   it('returns the whole current file and inline working-tree comparison in one revision', async () => {
     const test = await fixture();
@@ -184,7 +196,7 @@ describe('ProjectDocumentService', () => {
         },
       },
     });
-  });
+  }, GIT_INTEGRATION_TIMEOUT_MS);
 
   it('opens a deleted path as a same-document full-file deletion', async () => {
     const test = await fixture();
@@ -208,7 +220,7 @@ describe('ProjectDocumentService', () => {
         },
       },
     });
-  });
+  }, GIT_INTEGRATION_TIMEOUT_MS);
 
   it('opens the previous rename path as a virtual full-file deletion', async () => {
     const test = await fixture();
@@ -232,7 +244,7 @@ describe('ProjectDocumentService', () => {
         },
       },
     });
-  });
+  }, GIT_INTEGRATION_TIMEOUT_MS);
 
   it('uses an exact Agent turn lens without Git and without changing document identity', async () => {
     const test = await fixture();
@@ -268,7 +280,7 @@ describe('ProjectDocumentService', () => {
       },
     });
     expect(test.readFileChanges).toHaveBeenCalledWith('history-7', 'turn-7');
-  });
+  }, GIT_INTEGRATION_TIMEOUT_MS);
 
   it('keeps a currently recreated file readable when an Agent turn recorded its deletion', async () => {
     const test = await fixture();
@@ -302,5 +314,5 @@ describe('ProjectDocumentService', () => {
         comparison: { change: { kind: 'deleted' } },
       },
     });
-  });
+  }, GIT_INTEGRATION_TIMEOUT_MS);
 });

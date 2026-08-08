@@ -212,6 +212,45 @@ describe('FileExplorerPanel file row accessibility', () => {
 });
 
 describe('FileExplorerPanel navigation and previews', () => {
+  it('shows navigation feedback immediately and ignores an older folder response', async () => {
+    const slow = deferred<FileListResult>();
+    const fast = deferred<FileListResult>();
+    listFiles.mockImplementation((path: string) => {
+      if (path.endsWith('slow')) return slow.promise;
+      if (path.endsWith('fast')) return fast.promise;
+      return Promise.resolve(listing([
+        { name: 'slow', kind: 'dir', isSymlink: false, size: 0, mtimeMs: 0 },
+        { name: 'fast', kind: 'dir', isSymlink: false, size: 0, mtimeMs: 0 },
+      ]));
+    });
+    await renderPanel();
+    const rows = Array.from(container.querySelectorAll<HTMLButtonElement>('[data-testid="file-entry"]'));
+
+    act(() => rows.find((row) => row.textContent?.includes('slow'))!.click());
+    expect(container.querySelector('[data-testid="file-navigation-pending"]')).not.toBeNull();
+    act(() => rows.find((row) => row.textContent?.includes('fast'))!.click());
+
+    fast.resolve(listing([file('fast-result.txt')], 'C:\\workspace\\fast', 'C:\\workspace'));
+    await flush();
+    slow.resolve(listing([file('slow-result.txt')], 'C:\\workspace\\slow', 'C:\\workspace'));
+    await flush();
+
+    expect(container.querySelector<HTMLInputElement>('[data-testid="file-path-input"]')?.value)
+      .toBe('C:\\workspace\\fast');
+    expect(container.textContent).toContain('fast-result.txt');
+    expect(container.textContent).not.toContain('slow-result.txt');
+  });
+
+  it('windows a directory that exceeds the bounded DOM threshold', async () => {
+    listFiles.mockResolvedValue(listing(
+      Array.from({ length: 500 }, (_, index) => file(`file-${index}.txt`)),
+    ));
+    await renderPanel();
+    const list = container.querySelector<HTMLElement>('[data-testid="file-list"]')!;
+    expect(list.dataset.virtualized).toBe('true');
+    expect(list.querySelectorAll('[data-testid="file-entry"]').length).toBeLessThan(500);
+  });
+
   it('navigates to the reported parent directory', async () => {
     await renderPanel();
 

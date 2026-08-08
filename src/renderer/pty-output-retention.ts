@@ -437,39 +437,6 @@ export class BatchedPlainOutputDomRetention {
  * ANSI markup falls back to `Range.deleteContents()` so styling around the
  * retained suffix remains valid without an `innerHTML` rewrite.
  */
-export function prunePlainOutputDom(
-  element: HTMLElement,
-  maxLines: number,
-  maxChars = PTY_PLAIN_DOM_MAX_CHARS,
-): void {
-  const text = element.textContent ?? '';
-  const safeLines = Math.max(1, Math.trunc(maxLines));
-  const safeChars = Math.max(1, Math.trunc(maxChars));
-
-  let lineCut = 0;
-  let excessBreaks = countCharacter(text, '\n') - Math.max(0, safeLines - 1);
-  if (excessBreaks > 0) {
-    for (let i = 0; i < text.length && excessBreaks > 0; i += 1) {
-      if (text[i] === '\n') {
-        excessBreaks -= 1;
-        lineCut = i + 1;
-      }
-    }
-  }
-  let cut = Math.max(lineCut, text.length - safeChars);
-  if (cut <= 0) return;
-  // Avoid retaining a lone low surrogate after a character-based cut.
-  if (
-    cut < text.length
-    && isLowSurrogate(text.charCodeAt(cut))
-    && isHighSurrogate(text.charCodeAt(cut - 1))
-  ) {
-    cut += 1;
-  }
-
-  deletePlainOutputPrefix(element, 0, cut);
-}
-
 function deletePlainOutputPrefix(
   element: HTMLElement,
   minimumLineBreaks: number,

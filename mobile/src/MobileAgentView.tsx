@@ -1,5 +1,5 @@
 ﻿import { Bot, Check, ChevronLeft } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
   AgentActivity,
@@ -24,6 +24,8 @@ import {
 import { formatCwd } from '../../src/renderer/format-cwd';
 import { useGitBranches } from '../../src/renderer/use-git-branch';
 import { useAppTranslation } from '../../src/renderer/i18n';
+import { AgentFollowupComposer } from '../../src/renderer/AgentFollowupComposer';
+import { AgentRelativeAge } from '../../src/renderer/AgentTime';
 import { MobileActionSheet } from './MobileActionSheet';
 import { MobileAgentProjects } from './MobileAgentProjects';
 import { useMobileToast } from './MobileToast';
@@ -62,16 +64,6 @@ function bucketOf(status: AgentStatus): AgentFilter {
   if (ATTENTION.has(status)) return 'attention';
   if (RUNNING.has(status)) return 'running';
   return 'done';
-}
-
-function ageLabel(updatedAt: number, now: number, formatter: Intl.RelativeTimeFormat): string {
-  const seconds = Math.max(0, Math.floor((now - updatedAt) / 1000));
-  if (seconds < 60) return formatter.format(-seconds, 'second');
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return formatter.format(-minutes, 'minute');
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return formatter.format(-hours, 'hour');
-  return formatter.format(-Math.floor(hours / 24), 'day');
 }
 
 function sortRecent(a: AgentActivity, b: AgentActivity): number {
@@ -145,8 +137,6 @@ export function MobileAgentView({
   const { t, i18n } = useAppTranslation();
   const showToast = useMobileToast();
   const [filter, setFilter] = useState<AgentFilter>('all');
-  const [now, setNow] = useState(() => Date.now());
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
@@ -162,14 +152,6 @@ export function MobileAgentView({
     () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),
     [locale],
   );
-
-  // A pending approval expires on a deadline, so while one is open the clock
-  // has to move fast enough for the buttons to disappear when it closes.
-  const hasPendingApproval = snapshot.items.some((item) => item.approval?.pending === true);
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), hasPendingApproval ? 1_000 : 30_000);
-    return () => clearInterval(timer);
-  }, [hasPendingApproval]);
 
   const decide = async (item: AgentActivity, decision: AgentDecision): Promise<void> => {
     if (!onDecideApproval || decidingId !== null || !item.approval) return;
@@ -242,30 +224,29 @@ export function MobileAgentView({
       });
   }, [filter, snapshot]);
 
-  const send = async (item: AgentActivity): Promise<void> => {
-    const text = (drafts[item.id] ?? '').trim();
-    if (!text || sendingId !== null) return;
-    setSendingId(item.id);
-    setErrors((previous) => ({ ...previous, [item.id]: '' }));
-    const result = await onSendFollowup(item.id, text).catch((): AgentFollowupResult => ({
+  const send = useCallback(async (activityId: string, text: string): Promise<string | null> => {
+    if (!text || sendingId !== null) return t('agentHub.errorDeliveryFailed');
+    setSendingId(activityId);
+    const result = await onSendFollowup(activityId, text).catch((): AgentFollowupResult => ({
       ok: false,
       error: 'delivery-failed',
     }));
     setSendingId(null);
     if (result.ok) {
-      setDrafts((previous) => ({ ...previous, [item.id]: '' }));
-      showToast(t('mobile.agentView.followupSent', { provider: PROVIDER_LABEL[item.provider] }));
-      return;
+      const item = snapshot.items.find((candidate) => candidate.id === activityId);
+      showToast(t('mobile.agentView.followupSent', {
+        provider: item ? PROVIDER_LABEL[item.provider] : '',
+      }));
+      return null;
     }
-    const message = result.error === 'not-waiting'
+    return result.error === 'not-waiting'
       ? t('agentHub.errorNotWaiting')
       : result.error === 'invalid-text'
         ? t('agentHub.errorInvalidText')
         : result.error === 'session-ended'
           ? t('agentHub.errorSessionEnded')
           : t('agentHub.errorDeliveryFailed');
-    setErrors((previous) => ({ ...previous, [item.id]: message }));
-  };
+  }, [onSendFollowup, sendingId, showToast, snapshot.items, t]);
 
   const filters: readonly { readonly id: AgentFilter; readonly label: string; readonly count: number }[] = [
     { id: 'all', label: t('mobile.agentView.filterAll'), count: counts.all },
@@ -325,7 +306,7 @@ export function MobileAgentView({
               );
             }
             const bucket = bucketOf(item.status);
-            const age = ageLabel(item.updatedAt, now, relativeTime);
+            const age = <AgentRelativeAge updatedAt={item.updatedAt} formatter={relativeTime} />;
             // A decision is only offered while the desktop is still holding the
             // provider's hook open. Past that the answer belongs in the terminal.
             const live = item.approval?.pending === true;
@@ -430,35 +411,15 @@ export function MobileAgentView({
                   <span className="mob-agent-card__time">{age}</span>
                 </div>
                 {item.status === 'waiting' && (
-                  <form
-                    className="mob-agent-followup"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void send(item);
-                    }}
-                  >
-                    <input
-                      value={drafts[item.id] ?? ''}
-                      maxLength={8192}
-                      disabled={disconnected || sendingId === item.id}
-                      aria-label={t('agentHub.followupWith', { provider: PROVIDER_LABEL[item.provider] })}
-                      aria-describedby={errors[item.id] ? `mobile-agent-error-${item.id}` : undefined}
-                      placeholder={t('agentHub.followupPlaceholder')}
-                      onChange={(event) => {
-                        const value = event.target.value.replace(/[\r\n]+/g, ' ');
-                        setDrafts((previous) => ({ ...previous, [item.id]: value }));
-                      }}
-                      data-testid="agent-followup-input"
-                    />
-                    <button
-                      type="submit"
-                      className="mob-btn-ghost"
-                      disabled={disconnected || sendingId !== null || !(drafts[item.id] ?? '').trim()}
-                      aria-label={t('agentHub.sendFollowup')}
-                    >
-                      {t('agentHub.send')}
-                    </button>
-                  </form>
+                  <AgentFollowupComposer
+                    activityId={item.id}
+                    providerLabel={PROVIDER_LABEL[item.provider]}
+                    variant="mobile"
+                    disconnected={disconnected}
+                    sending={sendingId === item.id}
+                    anotherSending={sendingId !== null && sendingId !== item.id}
+                    onSend={send}
+                  />
                 )}
                 {errors[item.id] && (
                   <p className="mob-agent-error" id={`mobile-agent-error-${item.id}`} role="alert">

@@ -10,6 +10,8 @@ import {
   type OpenClawStatus,
   type OpenClawStatusState,
 } from '../shared/openclaw';
+import { observationalIntervalMs, type UiResourceProfile } from '../shared/resource-profile';
+import { startAsyncPoll } from './async-poller';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 
@@ -41,6 +43,7 @@ interface OpenClawPanelProps {
   readonly capabilities?: CapabilityAccess;
   /** Deterministic story/test clock; production uses the wall clock. */
   readonly readCurrentTime?: () => number;
+  readonly resourceProfile?: UiResourceProfile;
 }
 
 /**
@@ -58,6 +61,7 @@ export function OpenClawPanel({
   onOpenChat,
   capabilities = rendererCapabilities,
   readCurrentTime = Date.now,
+  resourceProfile = 'balanced',
 }: OpenClawPanelProps): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
@@ -150,12 +154,9 @@ export function OpenClawPanel({
       return;
     }
     let alive = true;
-    let inFlight = false;
     setSessions([]);
     setSessionsLoad({ phase: 'loading', updatedAt: null });
     const load = async (): Promise<void> => {
-      if (inFlight) return;
-      inFlight = true;
       try {
         const list = await capabilities.openClaw.listSessions();
         if (!alive || sessionsGenerationRef.current !== generation) return;
@@ -168,20 +169,20 @@ export function OpenClawPanel({
           ...current,
           phase: current.updatedAt === null ? 'error' : 'stale',
         }));
-      } finally {
-        inFlight = false;
       }
     };
-    void load();
-    const timer = setInterval(() => void load(), SESSIONS_POLL_MS);
+    const stopPoll = startAsyncPoll({
+      task: load,
+      intervalMs: () => observationalIntervalMs(SESSIONS_POLL_MS, resourceProfile),
+    });
     return () => {
       alive = false;
       if (sessionsGenerationRef.current === generation) {
         sessionsGenerationRef.current += 1;
       }
-      clearInterval(timer);
+      stopPoll();
     };
-  }, [capabilities, readCurrentTime, status?.state]);
+  }, [capabilities, readCurrentTime, resourceProfile, status?.state]);
 
   // ── Core config: fetched once, editable via local drafts ─────────────────
   const refreshConfig = useCallback(async (): Promise<void> => {

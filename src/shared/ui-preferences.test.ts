@@ -15,6 +15,7 @@ describe('UI preferences', () => {
       density: 'adaptive',
       sidebarWidth: 320,
       effectIntensity: 7,
+      resourceProfile: 'balanced',
     });
   });
 
@@ -26,12 +27,14 @@ describe('UI preferences', () => {
           density,
           sidebarWidth: 280,
           effectIntensity: 0,
+          resourceProfile: 'balanced',
         }).success).toBe(true);
         expect(UiPreferencesSchema.safeParse({
           locale,
           density,
           sidebarWidth: 440,
           effectIntensity: 10,
+          resourceProfile: 'high-responsiveness',
         }).success).toBe(true);
       }
     }
@@ -46,6 +49,8 @@ describe('UI preferences', () => {
     expect(UiPreferencesPatchSchema.safeParse({ locale: 'ko' }).success).toBe(true);
     expect(UiPreferencesPatchSchema.safeParse({ density: 'compact', sidebarWidth: 360 }).success).toBe(true);
     expect(UiPreferencesPatchSchema.safeParse({ effectIntensity: 4 }).success).toBe(true);
+    expect(UiPreferencesPatchSchema.safeParse({ resourceProfile: 'low-resource' }).success).toBe(true);
+    expect(UiPreferencesPatchSchema.safeParse({ resourceProfile: 'turbo' }).success).toBe(false);
     expect(UiPreferencesPatchSchema.safeParse({}).success).toBe(false);
     expect(UiPreferencesPatchSchema.safeParse({ locale: 'ko', extra: true }).success).toBe(false);
   });

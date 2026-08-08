@@ -40,6 +40,7 @@ import {
   APP_ID,
   EMULATOR_HOST_URL,
   assertNoWebViewJavaScriptRuntimeErrors,
+  clearAppDataAndWaitForQuiescence,
   closeMobileE2eResources,
   connectAndAuth,
   createTerminalSession,
@@ -240,7 +241,7 @@ async function main(): Promise<void> {
 
     // Single use: the desktop must refuse the same code now.
     runAdb(['shell', 'am', 'force-stop', APP_ID]);
-    runAdb(['shell', 'pm', 'clear', APP_ID]);
+    await clearAppDataAndWaitForQuiescence();
     runAdb(['shell', 'am', 'start', '-n', `${APP_ID}/.MainActivity`]);
     await waitForTestId('connect-screen', 45_000);
     await setTestIdTextValue('connect-url', EMULATOR_HOST_URL);

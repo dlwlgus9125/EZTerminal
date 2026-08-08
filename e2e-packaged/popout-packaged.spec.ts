@@ -104,14 +104,17 @@ public static class EzPackagedMouse {
   [DllImport("user32.dll")] public static extern bool SetWindowPos(
     IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags
   );
-  [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr window, bool altTab);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr window);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(Point point);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(
     IntPtr window, out uint processId
   );
-  [DllImport("user32.dll")] public static extern uint GetDoubleClickTime();
+  [DllImport("user32.dll")] public static extern void keybd_event(
+    byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo
+  );
   [DllImport("user32.dll")] public static extern void mouse_event(
     uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo
   );
@@ -119,6 +122,7 @@ public static class EzPackagedMouse {
 "@
 $window = (Get-Process -Id ${expectedProcessId} -ErrorAction Stop).MainWindowHandle
 if ($window -eq [IntPtr]::Zero) { throw "packaged main window handle unavailable before drag" }
+$previousForeground = [EzPackagedMouse]::GetForegroundWindow()
 $buttonDown = $false
 $topmost = $false
 try {
@@ -132,36 +136,43 @@ try {
   $point = New-Object EzPackagedMouse+Point
   $point.X = ${start.x}
   $point.Y = ${start.y}
-  $deadline = [DateTime]::UtcNow.AddSeconds(3)
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  $foregroundOwned = $false
+  $activationProcessId = [uint32]0
+  $foregroundProcessId = [uint32]0
   do {
-    [EzPackagedMouse]::SwitchToThisWindow($window, $true)
+    # Another running EZTerminal window can briefly reclaim the same screen
+    # point. Reassert this candidate's z-order and use an Alt-assisted
+    # SetForegroundWindow call so the test never needs to close the user's app.
+    [EzPackagedMouse]::ShowWindow($window, 9) | Out-Null
+    [EzPackagedMouse]::SetWindowPos(
+      $window, [IntPtr](-1), 0, 0, 0, 0, 0x0043
+    ) | Out-Null
+    [EzPackagedMouse]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+    [EzPackagedMouse]::SetForegroundWindow($window) | Out-Null
+    [EzPackagedMouse]::BringWindowToTop($window) | Out-Null
+    [EzPackagedMouse]::keybd_event(0x12, 0, 0x0002, [UIntPtr]::Zero)
     [EzPackagedMouse]::SetCursorPos(${start.x}, ${start.y}) | Out-Null
-    Start-Sleep -Milliseconds 40
     $activationWindow = [EzPackagedMouse]::WindowFromPoint($point)
     $activationProcessId = [uint32]0
     [EzPackagedMouse]::GetWindowThreadProcessId(
       $activationWindow, [ref]$activationProcessId
     ) | Out-Null
-    if ($activationProcessId -ne ${expectedProcessId}) {
-      throw "packaged pointer activation ownership mismatch: expected ${expectedProcessId}, point=$activationProcessId"
-    }
-    [EzPackagedMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-    $buttonDown = $true
-    Start-Sleep -Milliseconds 20
-    [EzPackagedMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-    $buttonDown = $false
-    Start-Sleep -Milliseconds ([int][EzPackagedMouse]::GetDoubleClickTime() + 50)
-  } while (
-    [EzPackagedMouse]::GetForegroundWindow() -ne $window -and
-    [DateTime]::UtcNow -lt $deadline
-  )
-  if ([EzPackagedMouse]::GetForegroundWindow() -ne $window) {
     $foregroundWindow = [EzPackagedMouse]::GetForegroundWindow()
     $foregroundProcessId = [uint32]0
     [EzPackagedMouse]::GetWindowThreadProcessId(
       $foregroundWindow, [ref]$foregroundProcessId
     ) | Out-Null
-    throw "packaged main window activation failed: expected ${expectedProcessId}, foreground=$foregroundProcessId"
+    $foregroundOwned = (
+      $foregroundProcessId -eq ${expectedProcessId} -and
+      $activationProcessId -eq ${expectedProcessId}
+    )
+    if (-not $foregroundOwned) {
+      Start-Sleep -Milliseconds 20
+    }
+  } while (-not $foregroundOwned -and [DateTime]::UtcNow -lt $deadline)
+  if (-not $foregroundOwned -or $activationProcessId -ne ${expectedProcessId}) {
+    throw "packaged main window activation failed: expected ${expectedProcessId}, foreground=$foregroundProcessId, point=$activationProcessId"
   }
   $pointWindow = [EzPackagedMouse]::WindowFromPoint($point)
   $pointProcessId = [uint32]0
@@ -189,6 +200,12 @@ try {
     [EzPackagedMouse]::SetWindowPos(
       $window, [IntPtr](-2), 0, 0, 0, 0, 0x0043
     ) | Out-Null
+  }
+  if ($previousForeground -ne [IntPtr]::Zero -and $previousForeground -ne $window) {
+    [EzPackagedMouse]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+    [EzPackagedMouse]::SetForegroundWindow($previousForeground) | Out-Null
+    [EzPackagedMouse]::BringWindowToTop($previousForeground) | Out-Null
+    [EzPackagedMouse]::keybd_event(0x12, 0, 0x0002, [UIntPtr]::Zero)
   }
 }
 `;

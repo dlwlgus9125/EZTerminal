@@ -58,7 +58,7 @@ async function renderCoordinator(page?: JSX.Element): Promise<void> {
       <MobileWorkbenchCoordinator
         terminal={<div>terminal</div>}
         page={page}
-        onRequestTerminal={vi.fn()}
+        onRequestRoot={vi.fn()}
       />,
     );
     await Promise.resolve();

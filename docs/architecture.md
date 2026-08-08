@@ -133,6 +133,17 @@ Desktop renderer는 Dockview를 UI adapter로 사용하고 `WorkbenchCoordinator
 ID, 레이아웃 transaction, 저장 순서와 최근 패널 전환을 소유한다. `App.tsx`는 제품
 조합점이지만 Dockview mutation 규칙과 세션 수명 규칙을 직접 복제하지 않는다.
 
+초기 renderer graph에는 terminal shell과 navigation처럼 첫 화면에 필요한 모듈만
+둔다. Explorer, Agents, Monitor, Remote, OpenClaw, Settings와 rich preview는
+공유 `FeatureModuleLoader`를 통해 기능 단위로 불러온다. 동일 loader의 intent·background·
+render 요청은 하나의 promise를 공유하며, chunk 실패는 해당 기능 안에서 Retry/Close로
+복구한다. 기능 하나의 로드 실패가 terminal workbench 전체를 교체해서는 안 된다.
+
+`PaneRegistry`는 mounted pane의 live handle만 보유한다. cwd와 실행 상태는 pane 변경
+notification으로 전달하고 header의 경과 시간처럼 실제 시계 표시만 저빈도 timer를
+사용한다. command draft나 output 변화가 App 전체 render를 유발하지 않으며, unmount된
+pane의 cwd를 별도 compatibility cache에 남기지 않는다.
+
 Main만 사용자 데이터 파일을 쓴다. 레이아웃과 프리셋은 Zod 스키마로 sanitize한 뒤
 원자적으로 저장하며, 손상된 입력은 quarantine/fallback한다. 레이아웃은 패널 구조와
 표시 설정을 보존하지만 live PTY나 명령 결과를 직렬화하지 않는다. 분리 창과 다시
@@ -191,8 +202,26 @@ OpenClaw token은 main과 전용 view/proxy 경계 밖으로 직접 노출하지
   준비되지 않은 capability는 광고하지 않는다.
 - 진단은 로컬 bounded 로그와 crash dump만 사용하며 token, 명령 내용, transcript,
   clipboard, 입력, SDP/ICE 비밀을 기록하지 않는다.
+- 관찰용 refresh는 완료 뒤 다음 실행을 예약해 겹치지 않는다. resource profile은
+  allow-list된 system stats, device/forward/session 목록의 주기와 optional feature preload만
+  바꾸며 timeout, liveness, reconnect, lease, backpressure와 close safety 시간은 바꾸지
+  않는다.
 
-## 10. 변경 체크리스트
+## 10. 리소스 프로필과 개발 진단
+
+`UiResourceProfile`은 desktop settings와 Android device-local preferences에 각각
+저장되고 remote wire에는 포함되지 않는다. 기본 `balanced`는 idle preload와 표준 관찰
+주기, `low-resource`는 사용자 intent에서만 preload하고 관찰 주기를 두 배로 늘리며,
+`high-responsiveness`는 optional feature를 즉시 preload한다. 이미 로드된 JavaScript
+module은 browser module cache에서 임의 unload하지 않으므로 저자원 전환 뒤 완전한
+메모리 회수는 다음 앱 시작부터 적용된다.
+
+`pnpm profile:runtime`은 fresh unpacked build를 임시 profile로 반복 실행해 interactive
+startup, optional feature intent-to-ready, process working set과 renderer chunk 크기를
+`test-results/runtime-profile.json`에 기록하는 개발 진단이다. 이 파일은 release evidence가
+아니며 release performance benchmark와 gate를 대체하지 않는다.
+
+## 11. 변경 체크리스트
 
 1. 변경이 어느 프로세스와 신뢰 경계의 소유권인지 먼저 결정한다.
 2. 공용 IPC, 저장 또는 원격 wire shape가 바뀌면 공유 스키마와 양쪽 adapter를 함께
@@ -212,6 +241,9 @@ OpenClaw token은 main과 전용 view/proxy 경계 밖으로 직접 노출하지
 - [`src/shared/ipc.ts`](../src/shared/ipc.ts)
 - [`src/shared/remote-protocol.ts`](../src/shared/remote-protocol.ts)
 - [`src/renderer/App.tsx`](../src/renderer/App.tsx)
+- [`src/renderer/feature-loader.tsx`](../src/renderer/feature-loader.tsx)
+- [`src/renderer/async-poller.ts`](../src/renderer/async-poller.ts)
+- [`src/shared/resource-profile.ts`](../src/shared/resource-profile.ts)
 - [`mobile/src/App.tsx`](../mobile/src/App.tsx)
 - [`native/remote-host/src/main.rs`](../native/remote-host/src/main.rs)
 
@@ -220,6 +252,9 @@ OpenClaw token은 main과 전용 view/proxy 경계 밖으로 직접 노출하지
 - [`src/main/interpreter-broker.test.ts`](../src/main/interpreter-broker.test.ts)
 - [`src/interpreter/interpreter-process.test.ts`](../src/interpreter/interpreter-process.test.ts)
 - [`src/renderer/workbench-coordinator.test.ts`](../src/renderer/workbench-coordinator.test.ts)
+- [`src/renderer/feature-loader.test.ts`](../src/renderer/feature-loader.test.ts)
+- [`src/renderer/async-poller.test.ts`](../src/renderer/async-poller.test.ts)
+- [`src/shared/resource-profile.test.ts`](../src/shared/resource-profile.test.ts)
 - [`src/main/remote-bridge.test.ts`](../src/main/remote-bridge.test.ts)
 - [`mobile/src/transport/ws-ezterminal.test.ts`](../mobile/src/transport/ws-ezterminal.test.ts)
 - [`e2e/`](../e2e/)

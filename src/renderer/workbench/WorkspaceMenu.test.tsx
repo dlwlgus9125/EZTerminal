@@ -28,10 +28,8 @@ function Harness(): JSX.Element {
       workspaceMenu={open ? (
         <WorkspaceMenu
           names={['Daily']}
-          nameDraft=""
           onApply={vi.fn()}
           onDelete={vi.fn()}
-          onNameDraftChange={vi.fn()}
           onSave={vi.fn()}
           onSetSaving={vi.fn()}
           onSplitDown={vi.fn()}

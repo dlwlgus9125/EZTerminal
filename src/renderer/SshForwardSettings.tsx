@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { SshForwardInfo } from '../shared/ssh-forward';
+import { observationalIntervalMs, type UiResourceProfile } from '../shared/resource-profile';
+import { startAsyncPoll } from './async-poller';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 
@@ -9,10 +11,16 @@ type SshForwardError =
   | { readonly kind: 'status-unavailable' | 'stop-failed' }
   | null;
 
+const SSH_FORWARD_POLL_MS = 2_000;
+
 /** Compact, desktop-only status/control surface for loopback SSH forwards. */
 export function SshForwardSettings({
   capabilities = rendererCapabilities,
-}: { readonly capabilities?: CapabilityAccess }): JSX.Element {
+  resourceProfile = 'balanced',
+}: {
+  readonly capabilities?: CapabilityAccess;
+  readonly resourceProfile?: UiResourceProfile;
+}): JSX.Element {
   const { t } = useAppTranslation();
   const [forwards, setForwards] = useState<readonly SshForwardInfo[] | null>(null);
   const [error, setError] = useState<SshForwardError>(null);
@@ -32,13 +40,15 @@ export function SshForwardSettings({
 
   useEffect(() => {
     mountedRef.current = true;
-    void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, 2_000);
+    const stopPoll = startAsyncPoll({
+      task: refresh,
+      intervalMs: () => observationalIntervalMs(SSH_FORWARD_POLL_MS, resourceProfile),
+    });
     return () => {
       mountedRef.current = false;
-      window.clearInterval(timer);
+      stopPoll();
     };
-  }, [refresh]);
+  }, [refresh, resourceProfile]);
 
   const stop = useCallback(async (forward: SshForwardInfo): Promise<void> => {
     if (stopping) return;

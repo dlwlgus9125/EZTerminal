@@ -65,7 +65,7 @@ describe('MobileUiPreferencesProvider + MobileSettingsView', () => {
     expect(container.querySelector('.mobile-page-header__title')?.textContent).toBe('Settings');
   });
 
-  it('applies and persists language and density changes immediately', async () => {
+  it('applies and persists language, density, and resource-profile changes immediately', async () => {
     expect(container.querySelector('.mobile-page-header__title')?.textContent).toBe('General');
 
     const language = container.querySelector<HTMLSelectElement>('[data-testid="settings-language"]')!;
@@ -83,6 +83,17 @@ describe('MobileUiPreferencesProvider + MobileSettingsView', () => {
 
     expect(document.documentElement.dataset.density).toBe('compact');
     expect(JSON.parse(localStorage.getItem('ezterminal-mobile-ui-preferences') ?? '{}').preferences.density).toBe('compact');
+
+    const resourceProfile = container.querySelector<HTMLSelectElement>(
+      '[data-testid="settings-resource-profile"]',
+    )!;
+    act(() => setSelectValue(resourceProfile, 'low-resource'));
+
+    expect(resourceProfile.value).toBe('low-resource');
+    expect(
+      JSON.parse(localStorage.getItem('ezterminal-mobile-ui-preferences') ?? '{}')
+        .preferences.resourceProfile,
+    ).toBe('low-resource');
   });
 
   it('keeps the session change but reports a device-local persistence failure', async () => {

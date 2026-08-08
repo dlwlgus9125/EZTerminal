@@ -31,6 +31,7 @@ export const appResources = {
       common: {
         appName: 'EZTerminal',
         loading: 'Loading…',
+        featureLoadFailed: 'This screen could not be loaded.',
         retry: 'Retry',
         close: 'Close',
         cancel: 'Cancel',
@@ -250,6 +251,13 @@ export const appResources = {
         adaptive: 'Adaptive',
         compact: 'Compact',
         comfortable: 'Comfortable',
+        resourceProfile: 'Resource use',
+        resourceProfileDescription:
+          'Balanced is recommended. Low resource reduces background refresh and loads optional screens only when needed; High responsiveness preloads them.',
+        resourceProfileBalanced: 'Balanced (recommended)',
+        resourceProfileLow: 'Low resource',
+        resourceProfileHigh: 'High responsiveness',
+        resourceProfileRestartHint: 'Already loaded screens are released after the next app restart.',
         sidebarWidth: 'Sidebar width',
         theme: 'Theme',
         preferenceSaveFailed: 'The interface preference could not be saved.',
@@ -1495,6 +1503,7 @@ export const appResources = {
       common: {
         appName: 'EZTerminal',
         loading: '불러오는 중…',
+        featureLoadFailed: '이 화면을 불러오지 못했습니다.',
         retry: '다시 시도',
         close: '닫기',
         cancel: '취소',
@@ -1712,6 +1721,13 @@ export const appResources = {
         adaptive: '자동 조정',
         compact: '좁게',
         comfortable: '여유 있게',
+        resourceProfile: '자원 사용',
+        resourceProfileDescription:
+          '균형 모드를 권장합니다. 자원 절약은 백그라운드 갱신을 줄이고 선택 화면을 필요할 때만 불러오며, 반응성 우선은 미리 불러옵니다.',
+        resourceProfileBalanced: '균형 (권장)',
+        resourceProfileLow: '자원 절약',
+        resourceProfileHigh: '반응성 우선',
+        resourceProfileRestartHint: '이미 불러온 화면은 다음 앱 재시작 후 메모리에서 해제됩니다.',
         sidebarWidth: '사이드바 너비',
         theme: '테마',
         preferenceSaveFailed: '인터페이스 환경설정을 저장하지 못했습니다.',

@@ -361,7 +361,10 @@ async function submitCommandThroughNativeTap(
   // This is intentionally the only native injection. Even an adb timeout is
   // ambiguous because Android may already have dispatched the tap, so the
   // harness fails red instead of ever issuing a second command.
-  const tapReceipt = await tapTestIdOnce('btn-run');
+  const tapReceipt = await tapTestIdOnce('btn-run', {
+    viewportWidth: ready.innerViewport.width,
+    viewportHeight: ready.innerViewport.height,
+  });
   console.log(`[smoke] ${label} native tap:`, JSON.stringify(tapReceipt));
   await waitForCommandSubmissionAcknowledgement(
     command,

@@ -15,7 +15,11 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import type { OpenClawMode, ThemeName } from '../../src/shared/layout-schema';
 import type { OpenClawStatus } from '../../src/shared/openclaw';
-import { UiDensitySchema, UiLocalePreferenceSchema } from '../../src/shared/ui-preferences';
+import {
+  UiDensitySchema,
+  UiLocalePreferenceSchema,
+  UiResourceProfileSchema,
+} from '../../src/shared/ui-preferences';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import type { EffectId } from '../../src/renderer/effects';
 import {
@@ -485,6 +489,29 @@ export function MobileSettingsView({
             <option value="compact">{t('settings.compact')}</option>
             <option value="comfortable">{t('settings.comfortable')}</option>
           </select>
+        </section>}
+
+        {category === 'general' && <section className="status-section">
+          <h2 className="status-section-title">{t('settings.resourceProfile')}</h2>
+          <p>{t('settings.resourceProfileDescription')}</p>
+          <select
+            className="mobile-file-path-input"
+            value={preferences.resourceProfile}
+            onChange={(event) => {
+              const parsed = UiResourceProfileSchema.safeParse(event.target.value);
+              if (parsed.success) {
+                setPreferenceSaveFailed(!setPreferences({ ...preferences, resourceProfile: parsed.data }));
+              }
+            }}
+            data-testid="settings-resource-profile"
+          >
+            <option value="balanced">{t('settings.resourceProfileBalanced')}</option>
+            <option value="low-resource">{t('settings.resourceProfileLow')}</option>
+            <option value="high-responsiveness">{t('settings.resourceProfileHigh')}</option>
+          </select>
+          {preferences.resourceProfile === 'low-resource' && (
+            <p>{t('settings.resourceProfileRestartHint')}</p>
+          )}
         </section>}
 
         {category === 'general' && preferenceSaveFailed && (

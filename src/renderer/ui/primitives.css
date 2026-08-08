@@ -1034,3 +1034,18 @@
     outline-offset: 2px;
   }
 }
+/* Feature chunks fail inside their destination so the surrounding workbench
+   and its navigation remain usable. */
+.feature-load-error {
+  display: grid;
+  align-content: center;
+  gap: var(--ui-space-3);
+  min-block-size: 8rem;
+  padding: var(--ui-space-4);
+}
+
+.feature-load-error__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-space-2);
+}

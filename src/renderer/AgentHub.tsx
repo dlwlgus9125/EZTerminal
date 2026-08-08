@@ -44,6 +44,10 @@ import { useAppTranslation } from './i18n';
 import { ProjectWorkspacePanel, type ProjectExplorerState } from './ProjectWorkspacePanel';
 import type { ProjectCodeLocation } from './project-code-navigation';
 import type { ProjectEditorDocument } from './project-editor-model';
+import { AgentFollowupComposer } from './AgentFollowupComposer';
+import { AgentApprovalCountdown, AgentElapsed, AgentRelativeAge } from './AgentTime';
+import { DeferredSearchInput } from './DeferredSearchInput';
+import { useLatestRequestGate } from './latest-request';
 import {
   Button,
   Dialog,
@@ -88,39 +92,8 @@ const RISK_RANK = {
   read: 2,
 } as const satisfies Record<AgentApprovalRisk, number>;
 
-function ageLabel(
-  updatedAt: number,
-  now: number,
-  formatter: Intl.RelativeTimeFormat,
-): string {
-  const seconds = Math.max(0, Math.floor((now - updatedAt) / 1000));
-  if (seconds < 60) return formatter.format(-seconds, 'second');
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return formatter.format(-minutes, 'minute');
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return formatter.format(-hours, 'hour');
-  return formatter.format(-Math.floor(hours / 24), 'day');
-}
-
 function sortRecent(a: AgentActivity, b: AgentActivity): number {
   return b.updatedAt - a.updatedAt || a.id.localeCompare(b.id);
-}
-
-/** Wall-clock run time for an in-flight agent, as mm:ss (hh:mm:ss past an hour).
- * Deliberately not a percentage: AgentActivity carries no progress field, and
- * inventing one would put a number on screen that nothing measures. */
-/** Time left before the gate lets go, as mm:ss. */
-function remainingLabel(expiresAt: number, now: number): string {
-  const total = Math.max(0, Math.ceil((expiresAt - now) / 1000));
-  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-}
-
-function elapsedLabel(startedAt: number, now: number): string {
-  const total = Math.max(0, Math.floor((now - startedAt) / 1000));
-  const seconds = String(total % 60).padStart(2, '0');
-  const minutes = Math.floor(total / 60);
-  if (minutes < 60) return `${String(minutes).padStart(2, '0')}:${seconds}`;
-  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${seconds}`;
 }
 
 export interface AgentHubProps {
@@ -204,8 +177,6 @@ export function AgentHub({
   currentTime,
 }: AgentHubProps): JSX.Element {
   const { t, i18n } = useAppTranslation();
-  const [now, setNow] = useState(() => currentTime ?? Date.now());
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
@@ -246,6 +217,7 @@ export function AgentHub({
   const [projectToDelete, setProjectToDelete] = useState<AgentProjectSummary | null>(null);
   const [localDrillProject, setLocalDrillProject] = useState<AgentProjectSummary | null>(null);
   const diffRequestGeneration = useRef(0);
+  const projectRequestGate = useLatestRequestGate();
   const branches = useGitBranches(
     snapshot.items.map((item) => item.cwd),
     onReadGitStatus ?? readNothing,
@@ -284,6 +256,7 @@ export function AgentHub({
     cursor?: string,
     append = false,
   ): Promise<void> => {
+    const generation = projectRequestGate.begin();
     if (append) setProjectsLoadingMore(true);
     else setProjectsLoading(true);
     setProjectsError(false);
@@ -300,6 +273,7 @@ export function AgentHub({
       40,
       debouncedProjectQuery.trim() || undefined,
     ).catch(() => null);
+    if (!projectRequestGate.isCurrent(generation)) return;
     setProjectsLoading(false);
     setProjectsLoadingMore(false);
     if (!result) {
@@ -308,7 +282,7 @@ export function AgentHub({
     }
     setProjects((previous) => append ? [...previous, ...result.items] : result.items);
     setProjectCursor(result.nextCursor);
-  }, [debouncedProjectQuery]);
+  }, [debouncedProjectQuery, projectRequestGate]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedProjectQuery(projectQuery), 200);
@@ -598,17 +572,6 @@ export function AgentHub({
   // A pending approval also needs the fast tick for its display countdown.
   // The host's `pending` bit, rather than this renderer's wall clock, is the
   // authority for whether the decision buttons remain actionable.
-  const hasPendingApproval = snapshot.items.some((item) => item.approval?.pending === true);
-  const hasActive = groups.active.length > 0;
-  useEffect(() => {
-    if (currentTime !== undefined) {
-      setNow(currentTime);
-      return undefined;
-    }
-    const timer = setInterval(() => setNow(Date.now()), hasActive || hasPendingApproval ? 1_000 : 30_000);
-    return () => clearInterval(timer);
-  }, [currentTime, hasActive, hasPendingApproval]);
-
   const decide = useCallback(
     async (item: AgentActivity, decision: AgentDecision): Promise<void> => {
       if (!onDecideApproval || !item.approval || decidingId !== null) return;
@@ -668,29 +631,23 @@ export function AgentHub({
     diffRequestGeneration.current += 1;
   }, []);
 
-  const send = async (item: AgentActivity): Promise<void> => {
-    const text = (drafts[item.id] ?? '').trim();
-    if (!text || sendingId !== null) return;
-    setSendingId(item.id);
-    setErrors((previous) => ({ ...previous, [item.id]: '' }));
-    const result = await onSendFollowup(item.id, text).catch((): AgentFollowupResult => ({
+  const send = useCallback(async (activityId: string, text: string): Promise<string | null> => {
+    if (!text || sendingId !== null) return t('agentHub.errorDeliveryFailed');
+    setSendingId(activityId);
+    const result = await onSendFollowup(activityId, text).catch((): AgentFollowupResult => ({
       ok: false,
       error: 'delivery-failed',
     }));
     setSendingId(null);
-    if (result.ok) {
-      setDrafts((previous) => ({ ...previous, [item.id]: '' }));
-      return;
-    }
-    const message = result.error === 'not-waiting'
+    if (result.ok) return null;
+    return result.error === 'not-waiting'
       ? t('agentHub.errorNotWaiting')
       : result.error === 'invalid-text'
         ? t('agentHub.errorInvalidText')
         : result.error === 'session-ended'
           ? t('agentHub.errorSessionEnded')
           : t('agentHub.errorDeliveryFailed');
-    setErrors((previous) => ({ ...previous, [item.id]: message }));
-  };
+  }, [onSendFollowup, sendingId, t]);
 
   const renderGroup = (
     group: 'attention' | 'active' | 'recent',
@@ -739,7 +696,7 @@ export function AgentHub({
                   {t(STATUS_LABEL_KEY[item.status])}
                 </span>
                 <time className="agent-age" dateTime={new Date(item.updatedAt).toISOString()}>
-                  {ageLabel(item.updatedAt, now, relativeTime)}
+                  <AgentRelativeAge updatedAt={item.updatedAt} formatter={relativeTime} currentTime={currentTime} />
                 </time>
               </div>
               <div className="agent-cwd" title={item.cwd}>
@@ -752,10 +709,8 @@ export function AgentHub({
                         never depend on colour alone (a11y hard gate). */}
                     <span className="agent-approval-risk">{t(RISK_LABEL_KEY[item.approval.risk])}</span>
                     <span className="agent-approval-tool">{item.approval.toolName}</span>
-                    {item.approval.pending && item.approval.expiresAt > now && (
-                      <span className="agent-approval-countdown">
-                        {remainingLabel(item.approval.expiresAt, now)}
-                      </span>
+                    {item.approval.pending && (
+                      <AgentApprovalCountdown expiresAt={item.approval.expiresAt} currentTime={currentTime} />
                     )}
                   </div>
                   {item.approval.command && (
@@ -816,44 +771,24 @@ export function AgentHub({
                   <span className="agent-progress-track" aria-hidden="true">
                     <span className="agent-progress-sweep" />
                   </span>
-                  <span className="agent-elapsed">{elapsedLabel(item.createdAt, now)}</span>
+                  <span className="agent-elapsed">
+                    <AgentElapsed startedAt={item.createdAt} currentTime={currentTime} />
+                  </span>
                 </div>
               )}
               {item.status === 'waiting' && (
-                <form
-                  className="agent-followup"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void send(item);
-                  }}
-                >
-                  <input
-                    className="agent-followup-input"
-                    value={drafts[item.id] ?? ''}
-                    maxLength={8192}
-                    disabled={disconnected || sendingId === item.id}
-                    aria-label={t('agentHub.followupWith', { provider: PROVIDER_LABEL[item.provider] })}
-                    aria-describedby={errors[item.id] ? `agent-error-${item.id}` : undefined}
-                    placeholder={t('agentHub.followupPlaceholder')}
-                    onChange={(event) => {
-                      const value = event.target.value.replace(/[\r\n]+/g, ' ');
-                      setDrafts((previous) => ({ ...previous, [item.id]: value }));
-                    }}
-                  />
-                  <button
-                    type="submit"
-                    className="btn btn-split"
-                    disabled={disconnected || sendingId !== null || !(drafts[item.id] ?? '').trim()}
-                    aria-label={t('agentHub.sendFollowup')}
-                  >
-                    {t('agentHub.send')}
-                  </button>
-                  {errors[item.id] && (
-                    <div className="agent-followup-error" id={`agent-error-${item.id}`} role="alert">
-                      {errors[item.id]}
-                    </div>
-                  )}
-                </form>
+                <AgentFollowupComposer
+                  activityId={item.id}
+                  providerLabel={PROVIDER_LABEL[item.provider]}
+                  variant="desktop"
+                  disconnected={disconnected}
+                  sending={sendingId === item.id}
+                  anotherSending={sendingId !== null && sendingId !== item.id}
+                  onSend={send}
+                />
+              )}
+              {errors[item.id] && (
+                <div className="agent-followup-error" role="alert">{errors[item.id]}</div>
               )}
             </article>
           ))}
@@ -932,7 +867,9 @@ export function AgentHub({
                   {PROVIDER_LABEL[session.provider]}
                 </span>
                 <strong>{session.title}</strong>
-                <small>{ageLabel(session.updatedAt, now, relativeTime)}</small>
+                <small>
+                  <AgentRelativeAge updatedAt={session.updatedAt} formatter={relativeTime} currentTime={currentTime} />
+                </small>
                 {session.preview && <p>{session.preview}</p>}
               </button>
               {onOpenHistoryReview && (
@@ -1041,12 +978,12 @@ export function AgentHub({
             >
               <span className="agent-project-search__control">
                 <Search aria-hidden="true" />
-                <Input
-                  type="search"
+                <DeferredSearchInput
+                  variant="ui"
                   value={projectQuery}
                   placeholder={t('agentHub.projects.searchPlaceholder')}
-                  onChange={(event) => setProjectQuery(event.currentTarget.value)}
-                  data-testid="agent-project-search"
+                  onQueryChange={setProjectQuery}
+                  testId="agent-project-search"
                 />
               </span>
             </Field>
@@ -1266,11 +1203,11 @@ export function AgentHub({
             <p className="agent-project-note">{t('agentHub.projects.noAgents')}</p>
           )}
           <Field label={t('agentHub.projects.location')} required>
-            <Input
-              type="search"
+            <DeferredSearchInput
+              variant="ui"
               value={launchProjectQuery}
               placeholder={t('agentHub.projects.locationSearch')}
-              onChange={(event) => setLaunchProjectQuery(event.currentTarget.value)}
+              onQueryChange={setLaunchProjectQuery}
             />
             <Select
               value={launchTarget?.kind === 'project'
@@ -1508,12 +1445,4 @@ export function AgentHub({
       </Dialog>
     </div>
   );
-}
-
-export function countAgentAttention(snapshot: AgentActivitySnapshot): number {
-  return snapshot.items.filter((item) => ATTENTION.has(item.status)).length;
-}
-
-export function agentStatusClass(status: AgentStatus | undefined): string {
-  return status ? `agent-status-dot agent-status-dot--${status}` : 'agent-status-dot';
 }

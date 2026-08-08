@@ -86,10 +86,8 @@ export interface MountedPtyControlTarget extends PtyControlTargetIdentity {
 }
 
 const panes = new Map<string, PaneHandle>();
-const legacyCwds = new Map<string, string>();
 const legacyInputs = new Map<string, (text: string) => void>();
 const listeners = new Set<() => void>();
-let revision = 0;
 
 interface MountedPtyRegistration {
   readonly token: object;
@@ -102,7 +100,6 @@ const mountedPtyListeners = new Set<() => void>();
 let mountedPtyRevision = 0;
 
 function emit(): void {
-  revision += 1;
   for (const listener of listeners) listener();
 }
 
@@ -217,10 +214,6 @@ export function subscribePaneRegistry(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-export function getPaneRegistryRevision(): number {
-  return revision;
-}
-
 export function getPaneHandle(panelId: string): PaneHandle | undefined {
   return panes.get(panelId);
 }
@@ -229,18 +222,8 @@ export function listPaneSnapshots(): PaneSnapshot[] {
   return [...panes.values()].map((pane) => pane.getSnapshot());
 }
 
-// Compatibility helpers for the existing File Explorer while it migrates to
-// the richer handle. They preserve the old return contracts.
-export function setPaneCwd(panelId: string, cwd: string): void {
-  legacyCwds.set(panelId, cwd);
-}
-
 export function getPaneCwd(panelId: string): string | undefined {
-  return panes.get(panelId)?.getSnapshot().cwd || legacyCwds.get(panelId);
-}
-
-export function removePaneCwd(panelId: string): void {
-  legacyCwds.delete(panelId);
+  return panes.get(panelId)?.getSnapshot().cwd || undefined;
 }
 
 export function registerPaneInput(panelId: string, fn: (text: string) => void): void {

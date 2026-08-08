@@ -83,18 +83,22 @@ describe('Android resumed-activity parser', () => {
       : undefined;
 
     expect(submission).toBeDefined();
-    expect(submission?.match(/tapTestIdOnce\(['"]btn-run['"]\)/g)).toHaveLength(1);
+    expect(submission?.match(/tapTestIdOnce\(\s*['"]btn-run['"]\s*,/g)).toHaveLength(1);
     expect(submission).not.toMatch(/tapTestId\(['"]btn-run['"]\)/);
     expect(submission).toContain('waitForCommandSubmissionAcknowledgement');
     expect(submission).toContain('expectedViewport');
+    expect(submission).toContain('viewportWidth: ready.innerViewport.width');
+    expect(submission).toContain('viewportHeight: ready.innerViewport.height');
     expect(smoke).toContain('viewportMatchesBaseline(state, expectedViewport)');
     expect(smoke).toContain("state.activeElement?.testId === 'cmd-input'");
     expect(smoke).toContain('terminalViewportBaseline');
 
     const singleTapImplementation = tapTestIdOnce.toString();
     expect(singleTapImplementation).not.toMatch(/\b(?:for|while)\s*\(/);
+    expect(singleTapImplementation).toContain('waitForStableWebViewNativeTarget');
+    expect(singleTapImplementation).toContain('expectedViewport');
     expect(singleTapImplementation).toContain('tapWebViewElementGeometry');
-    expect(singleTapImplementation).toContain('forceRefreshDeviceGeometry: true');
+    expect(singleTapImplementation).toContain('deviceGeometry: target.deviceGeometry');
     expect(singleTapImplementation).toMatch(/gesture:\s*["']short-press["']/);
     expect(singleTapImplementation).toContain('visibleTestIdExpression(testId)');
     expect(singleTapImplementation).not.toContain('visibleTestIdExpression(testId, true)');
@@ -120,12 +124,17 @@ describe('Android resumed-activity parser', () => {
     expect(geometryTap).not.toMatch(/\b(?:for|while)\s*\(/);
     expect(geometryTap?.match(/\bawait tap\(/g)).toHaveLength(1);
     expect(geometryTap?.match(/\bawait shortPressOnce\(/g)).toHaveLength(1);
-    const readinessCallIndex = geometryTap?.indexOf(
-      'await waitForStableWebViewNativeTarget',
-    ) ?? -1;
-    const shortPressCallIndex = geometryTap?.indexOf('await shortPressOnce') ?? -1;
+    expect(geometryTap).toContain(
+      'options.deviceGeometry ?? resolveWebViewDeviceGeometry(geometry)',
+    );
+    const readinessCallIndex = singleTapImplementation.indexOf(
+      'waitForStableWebViewNativeTarget',
+    );
+    const geometryTapCallIndex = singleTapImplementation.lastIndexOf(
+      'tapWebViewElementGeometry',
+    );
     expect(readinessCallIndex).toBeGreaterThanOrEqual(0);
-    expect(shortPressCallIndex).toBeGreaterThan(readinessCallIndex);
+    expect(geometryTapCallIndex).toBeGreaterThan(readinessCallIndex);
 
     const readinessStart = lib.indexOf('let cachedAndroidSdkLevel');
     const readinessEnd = lib.indexOf(
@@ -142,7 +151,9 @@ describe('Android resumed-activity parser', () => {
     expect(readiness).toContain("grep -m 1 'mLiveEntries:'");
     expect(readiness).not.toMatch(/['"]shell['"]\s*,\s*['"]sh['"]\s*,\s*['"]-c['"]/);
     expect(readiness).toContain('imeTrackerRequired && ownerReady');
+    expect(readiness).toContain('observeGeometry()');
     expect(readiness).toContain('stableSamples >= 3');
+    expect(readiness).toContain('Date.now() - stableSince >= 1_000');
     expect(readiness).not.toMatch(/['"]input['"]\s*,\s*['"](?:tap|swipe|keyevent)['"]/);
     expect(readiness).not.toContain('shortPressOnce(');
     expect(readiness).not.toContain('await tap(');

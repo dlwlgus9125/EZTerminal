@@ -2086,6 +2086,12 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   color: var(--term-amber);
 }
 
+.file-loading {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.75rem;
+  color: var(--term-fg-faint);
+}
+
 .file-list {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -2153,6 +2159,11 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   border: 1px solid var(--term-border);
   border-radius: 4px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+}
+
+.file-viewer-overlay--pending {
+  align-items: center;
+  justify-content: center;
 }
 
 .file-viewer-header {

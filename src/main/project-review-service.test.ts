@@ -16,7 +16,15 @@ function git(cwd: string, ...args: string[]): string {
     cwd,
     encoding: 'utf8',
     windowsHide: true,
-    env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' },
+    env: {
+      ...process.env,
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_AUTHOR_NAME: 'Test',
+      GIT_AUTHOR_EMAIL: 'test@example.invalid',
+      GIT_COMMITTER_NAME: 'Test',
+      GIT_COMMITTER_EMAIL: 'test@example.invalid',
+    },
   });
 }
 
@@ -52,8 +60,6 @@ async function fixture(): Promise<{
   const root = path.join(base, 'project');
   await fs.mkdir(root);
   git(root, 'init', '-b', 'main');
-  git(root, 'config', 'user.email', 'test@example.invalid');
-  git(root, 'config', 'user.name', 'Test');
   await fs.mkdir(path.join(root, 'src'));
   await fs.writeFile(path.join(root, 'src', 'app.ts'), 'const value = 1;\n');
   git(root, 'add', '.');
@@ -139,8 +145,6 @@ describe('ProjectReviewService', () => {
     const nestedRoot = path.join(test.root, 'out', 'manual-test-project');
     await fs.mkdir(path.join(nestedRoot, 'src'), { recursive: true });
     git(nestedRoot, 'init', '-b', 'main');
-    git(nestedRoot, 'config', 'user.email', 'test@example.invalid');
-    git(nestedRoot, 'config', 'user.name', 'Test');
     await fs.writeFile(path.join(nestedRoot, 'src', 'app.ts'), 'const nested = 1;\n');
     git(nestedRoot, 'add', '.');
     git(nestedRoot, 'commit', '-m', 'nested base');

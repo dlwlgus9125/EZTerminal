@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useTransition,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
@@ -190,6 +191,8 @@ export function QuickOpenModal({
   const { t } = useAppTranslation();
   const [view, setView] = useState<'results' | 'manage'>('results');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [inputQuery, setInputQuery] = useState(query);
+  const [queryPending, startQueryTransition] = useTransition();
   const dialogRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const queryRef = useRef<HTMLInputElement>(null);
@@ -219,6 +222,10 @@ export function QuickOpenModal({
   const rowSignature = flatRows.map((row) => `${row.kind}:${row.id}`).join('\0');
   const selectedRow = flatRows[selectedIndex];
   const activeDescendant = selectedRow ? `${instanceId}-option-${selectedIndex}` : undefined;
+
+  useEffect(() => {
+    setInputQuery(query);
+  }, [query]);
 
   useLayoutEffect(() => {
     previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -254,7 +261,7 @@ export function QuickOpenModal({
   }, [quickCommandManager, view]);
 
   const activate = (row: QuickOpenRow | undefined, variant: QuickOpenActionVariant): void => {
-    if (!row || row.disabledReason) return;
+    if (!row || row.disabledReason || queryPending) return;
     onAction(row, variant);
   };
 
@@ -317,7 +324,7 @@ export function QuickOpenModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        aria-busy={loading}
+        aria-busy={loading || queryPending}
         tabIndex={-1}
         onKeyDown={onDialogKeyDown}
         data-view={view}
@@ -361,8 +368,12 @@ export function QuickOpenModal({
             <input
               ref={queryRef}
               className="quick-open-input"
-              value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
+              value={inputQuery}
+              onChange={(event) => {
+                const value = event.target.value;
+                setInputQuery(value);
+                startQueryTransition(() => onQueryChange(value));
+              }}
               onKeyDown={onSearchKeyDown}
               placeholder={
                 mode === 'commands'
@@ -430,13 +441,13 @@ export function QuickOpenModal({
                 </section>
               ))}
 
-              {loading && (
+              {(loading || queryPending) && (
                 <div className="quick-open-loading" role="status" aria-live="polite" data-testid="quick-open-loading">
                   <span className="quick-open-loading-mark" aria-hidden="true" />
                   {loadingLabel ?? t('commandCenter.searchingSources')}
                 </div>
               )}
-              {!loading && flatRows.length === 0 && (
+              {!loading && !queryPending && flatRows.length === 0 && (
                 <div className="quick-open-empty" role="status" data-testid="quick-open-empty">
                   {query.trim() === ''
                     ? (emptyMessage ?? t('commandCenter.empty'))
