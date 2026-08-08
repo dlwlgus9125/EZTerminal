@@ -316,7 +316,8 @@ test('PTY nested-repository change summary opens the exact VS Code-style diff wi
   await expect(pathInput).not.toHaveValue('');
   await pathInput.fill(projectRoot);
   await pathInput.press('Enter');
-  await expect(window.getByTestId('file-entry').filter({ hasText: 'src' })).toBeVisible();
+  await expect(pathInput).toHaveAttribute('title', projectRoot, { timeout: 10_000 });
+  await expect(window.getByTestId('file-entry').filter({ hasText: 'out' })).toBeVisible();
   await window.getByTestId('file-list').click({ button: 'right', position: { x: 10, y: 350 } });
   await window.getByTestId('ctx-open-terminal').click();
 

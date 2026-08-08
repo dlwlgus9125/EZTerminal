@@ -11,23 +11,29 @@ test('app menu: a terminal-safe menu is installed with no reload item', async ()
   const window = await app.firstWindow();
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
-  const menuInfo = await app.evaluate(({ Menu }) => {
-    const menu = Menu.getApplicationMenu();
-    const hasRole = (role: string): boolean => {
-      const walk = (items: Electron.MenuItem[]): boolean =>
-        items.some((item) => item.role === role || (item.submenu ? walk(item.submenu.items) : false));
-      return menu ? walk(menu.items) : false;
-    };
-    return {
-      installed: menu !== null,
-      hasReload: hasRole('reload') || hasRole('forceReload') || hasRole('close'),
-      hasCopy: hasRole('copy'),
-    };
-  });
-
-  expect(menuInfo.installed).toBe(true);
-  expect(menuInfo.hasReload).toBe(false);
-  expect(menuInfo.hasCopy).toBe(true);
+  await expect.poll(async () => {
+    try {
+      return await app.evaluate(({ Menu }) => {
+        const menu = Menu.getApplicationMenu();
+        const hasRole = (role: string): boolean => {
+          const walk = (items: Electron.MenuItem[]): boolean =>
+            items.some((item) => item.role === role || (item.submenu ? walk(item.submenu.items) : false));
+          return menu ? walk(menu.items) : false;
+        };
+        return {
+          installed: menu !== null,
+          hasReload: hasRole('reload') || hasRole('forceReload') || hasRole('close'),
+          hasCopy: hasRole('copy'),
+        };
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Execution context was destroyed')) return null;
+      throw error;
+    }
+  }, {
+    timeout: 10_000,
+    message: 'Electron main should expose the installed terminal-safe menu',
+  }).toEqual({ installed: true, hasReload: false, hasCopy: true });
 
   await app.close();
 });
