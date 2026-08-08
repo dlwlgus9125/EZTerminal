@@ -27,6 +27,10 @@ review, and project-scoped agent sessions into one responsive surface. Narrow
 layouts reuse the same editor and preserve live PTY state instead of creating
 parallel review surfaces.
 
+Project roots remain usable when a host or CI runner places their parent path
+behind a junction. EZTerminal canonicalizes that regular root as its internal
+boundary while continuing to reject symlinks and junctions created inside it.
+
 ## Resource profiles and responsiveness
 
 Balanced, Low resource, and High responsiveness profiles control optional

@@ -684,15 +684,26 @@ export class ProjectWorkspaceService {
       if (selected.access !== 'granted') return { ok: false, error: 'workspace-not-found' };
       workspace = selected;
     }
-    const rootPath = workspace.displayPath;
+    const requestedRootPath = workspace.displayPath;
+    let rootPath = requestedRootPath;
     try {
-      const rootStat = await fs.lstat(rootPath);
+      const rootStat = await fs.lstat(requestedRootPath);
       if (rootStat.isSymbolicLink()) return { ok: false, error: 'symlink-not-supported' };
       if (!rootStat.isDirectory()) return { ok: false, error: 'not-a-directory' };
-      const actualRoot = await fs.realpath(rootPath);
-      if (pathKey(actualRoot) !== pathKey(rootPath)) {
+      const actualParent = await fs.realpath(path.dirname(requestedRootPath));
+      const actualRoot = await fs.realpath(requestedRootPath);
+      const expectedRoot = path.join(actualParent, path.basename(requestedRootPath));
+      if (pathKey(actualRoot) !== pathKey(expectedRoot)) {
         return { ok: false, error: 'symlink-not-supported' };
       }
+      const rootAfter = await fs.lstat(requestedRootPath);
+      if (rootAfter.isSymbolicLink()) return { ok: false, error: 'symlink-not-supported' };
+      if (!rootAfter.isDirectory()) return { ok: false, error: 'not-a-directory' };
+      if (!sameIdentity(rootStat, rootAfter)) return { ok: false, error: 'stale' };
+      // Ancestors may legitimately be junctions (for example GitHub Actions'
+      // workspace and temporary directories). Use the canonical regular root
+      // internally so only links below the registered boundary are rejected.
+      rootPath = actualRoot;
     } catch (error) {
       return { ok: false, error: classifyFsError(error) };
     }

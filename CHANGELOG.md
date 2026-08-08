@@ -35,6 +35,8 @@
   surviving session close, graceful app quit, or abrupt Electron main exit.
 - Prevented late cleanup from targeting a reused Windows PID after the original
   process had already exited naturally.
+- Allowed regular project roots below host-managed junctions while continuing
+  to reject symlinks and junctions inside the registered project boundary.
 
 See [1.0.26 release notes](docs/release/release-notes-1.0.26.md).
 

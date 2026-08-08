@@ -10,7 +10,12 @@ import { ProjectWorkspaceAccessStore } from './project-workspace-access-store';
 import { ProjectWorkspaceService } from './project-workspace-service';
 import type { WorktreeInfo, WorktreeResult } from '../shared/worktree';
 
-const temporaryDirectories: string[] = [];
+interface TemporaryPath {
+  readonly path: string;
+  readonly kind: 'directory' | 'link';
+}
+
+const temporaryPaths: TemporaryPath[] = [];
 
 function publicProjectId(root: string): string {
   const normalized = path.normalize(root);
@@ -18,7 +23,7 @@ function publicProjectId(root: string): string {
   return createHash('sha256').update(key).digest('hex').slice(0, 24);
 }
 
-async function fixture(): Promise<{
+async function fixture(parentDirectory = os.tmpdir()): Promise<{
   readonly base: string;
   readonly root: string;
   readonly projectId: string;
@@ -27,8 +32,8 @@ async function fixture(): Promise<{
   readonly userData: string;
   readonly service: ProjectWorkspaceService;
 }> {
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'ez-project-workspace-'));
-  temporaryDirectories.push(base);
+  const base = await fs.mkdtemp(path.join(parentDirectory, 'ez-project-workspace-'));
+  temporaryPaths.push({ path: base, kind: 'directory' });
   const root = path.join(base, 'project');
   const userData = path.join(base, 'user-data');
   await fs.mkdir(root, { recursive: true });
@@ -65,8 +70,15 @@ async function fixture(): Promise<{
 }
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((directory) =>
-    fs.rm(directory, { recursive: true, force: true })));
+  for (const temporary of temporaryPaths.splice(0).reverse()) {
+    if (temporary.kind === 'link') {
+      await fs.unlink(temporary.path).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+      });
+    } else {
+      await fs.rm(temporary.path, { recursive: true, force: true });
+    }
+  }
 });
 
 describe('ProjectWorkspaceService', () => {
@@ -193,6 +205,46 @@ describe('ProjectWorkspaceService', () => {
       relativePath: '',
     });
     expect(listing.ok && listing.entries.some((entry) => entry.name === 'linked')).toBe(false);
+  });
+
+  it('accepts a regular root below a linked ancestor without following links inside it', async () => {
+    const actualParent = await fs.mkdtemp(path.join(os.tmpdir(), 'ez-project-workspace-parent-'));
+    temporaryPaths.push({ path: actualParent, kind: 'directory' });
+    const linkedParent = `${actualParent}-link`;
+    await fs.symlink(actualParent, linkedParent, process.platform === 'win32' ? 'junction' : 'dir');
+    temporaryPaths.push({ path: linkedParent, kind: 'link' });
+
+    const test = await fixture(linkedParent);
+    expect((await fs.lstat(test.root)).isSymbolicLink()).toBe(false);
+    expect(await fs.realpath(test.root)).not.toBe(path.resolve(test.root));
+    await fs.writeFile(path.join(test.root, 'visible.txt'), 'visible content\n');
+
+    await expect(test.service.listDirectory({
+      projectId: test.projectId,
+      rootId: test.rootId,
+      relativePath: '',
+    })).resolves.toMatchObject({
+      ok: true,
+      entries: [expect.objectContaining({ name: 'visible.txt', kind: 'file' })],
+    });
+    await expect(test.service.readText({
+      projectId: test.projectId,
+      rootId: test.rootId,
+      relativePath: 'visible.txt',
+    })).resolves.toMatchObject({
+      ok: true,
+      file: { content: 'visible content\n' },
+    });
+
+    const outside = path.join(actualParent, 'outside');
+    await fs.mkdir(outside);
+    await fs.writeFile(path.join(outside, 'secret.txt'), 'outside');
+    await fs.symlink(outside, path.join(test.root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+    await expect(test.service.readText({
+      projectId: test.projectId,
+      rootId: test.rootId,
+      relativePath: 'linked/secret.txt',
+    })).resolves.toEqual({ ok: false, error: 'symlink-not-supported' });
   });
 
   it('requires durable consent for an external worktree and revalidates its Git identity on every read', async () => {
