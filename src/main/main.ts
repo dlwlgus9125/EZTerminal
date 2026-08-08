@@ -21,6 +21,7 @@ import type {
   UtilityProcess,
   WebContents,
 } from 'electron';
+import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -130,6 +131,8 @@ import { readTerminalClipboardSnapshot } from './terminal-clipboard';
 import { isTerminalPastePreferences } from '../shared/terminal-clipboard';
 import { TerminalFileCapabilityStore } from './terminal-file-capability';
 import { AppUpdateService } from './app-update-service';
+import { resolveNativeHostPath } from './native-host-path';
+import { ProcessGuardian } from './process-guardian';
 import { ElectronUpdateHttpClient } from './app-update-network';
 import {
   UiPreferencesPatchSchema,
@@ -227,7 +230,40 @@ process.on('unhandledRejection', (reason) => {
 
 // Interpreter utilityProcess — created once on 'ready', lives for the app lifetime.
 let interpreter: UtilityProcess | null = null;
+let processGuardian: ProcessGuardian | null = null;
+let interpreterGroupId: string | null = null;
 let appIsQuitting = false;
+
+function requireProcessGuardian(): ProcessGuardian {
+  if (!processGuardian) throw new Error('Windows process guardian is unavailable');
+  return processGuardian;
+}
+
+async function openExternalForUser(url: string): Promise<void> {
+  if (process.platform === 'win32') {
+    await requireProcessGuardian().shellHandoff('open', url);
+    return;
+  }
+  await shell.openExternal(url);
+}
+
+async function openPathForUser(filePath: string): Promise<string> {
+  if (process.platform !== 'win32') return shell.openPath(filePath);
+  try {
+    await requireProcessGuardian().shellHandoff('open', filePath);
+    return '';
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function revealPathForUser(filePath: string): Promise<void> {
+  if (process.platform === 'win32') {
+    await requireProcessGuardian().shellHandoff('reveal', filePath);
+    return;
+  }
+  shell.showItemInFolder(filePath);
+}
 
 // The single main-side broker over the interpreter — created once on 'ready'
 // right after the fork. main (local IPC) and remote-bridge (WS) are thin
@@ -511,8 +547,31 @@ const createWindow = (): void => {
   // is constructed. Window recreation must not register global IPC again.
 };
 
-app.on('ready', () => {
+app.on('ready', async () => {
   console.log('[main] EZTerminal main process ready');
+
+  if (process.platform === 'win32') {
+    try {
+      processGuardian = await ProcessGuardian.start({
+        executablePath: resolveNativeHostPath(),
+        ownerPid: process.pid,
+        reportError: (message) => {
+          console.error(message);
+          mainLog?.line(message);
+        },
+      });
+      console.log('[main] process guardian ready');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error('[main] process guardian startup failed:', error);
+      dialog.showErrorBox(
+        'EZTerminal startup failed',
+        `The Windows process guardian could not start. Local commands were not enabled.\n\n${detail}`,
+      );
+      app.exit(1);
+      return;
+    }
+  }
 
   installPackagedRendererProtocol();
   desktopWindowManager = new DesktopWindowManager({
@@ -524,6 +583,7 @@ app.on('ready', () => {
     getMainWindow: () => mainWindowRef,
     isAppQuitting: () => appIsQuitting,
     quitApp: () => app.quit(),
+    openExternal: openExternalForUser,
     onWindowConfigured: (window) => configureRecentPanelInput(window),
     reportError: (context, error) => {
       console.error(`[main] ${context}:`, error);
@@ -561,6 +621,7 @@ app.on('ready', () => {
   });
   const workspaceFileSearch = new WorkspaceFileSearchService();
   let uninstallRunCommandIpc: (() => void) | null = null;
+  let scriptHostRegistry: ScriptHostRegistry | null = null;
   quickCommandStore.subscribe((commands) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
@@ -572,7 +633,7 @@ app.on('ready', () => {
     currentVersion: app.getVersion(),
     resolveDownloadsDirectory: () => path.join(app.getPath('downloads'), 'EZTerminal'),
     http: new ElectronUpdateHttpClient(),
-    openPath: (filePath) => shell.openPath(filePath),
+    openPath: openPathForUser,
   });
   appUpdateService.subscribe((snapshot) => {
     for (const win of BrowserWindow.getAllWindows()) {
@@ -747,18 +808,18 @@ app.on('ready', () => {
   );
   ipcMain.handle('files:trash', (_event, path: string) => fileService.trashEntry(path));
   ipcMain.handle('files:open-path', async (_event, path: string) => {
-    const err = await shell.openPath(path);
+    const err = await openPathForUser(path);
     if (err) console.error('[main] shell.openPath failed:', err);
   });
-  ipcMain.handle('files:reveal', (_event, path: string) => {
-    shell.showItemInFolder(path);
+  ipcMain.handle('files:reveal', async (_event, path: string) => {
+    await revealPathForUser(path);
   });
   ipcMain.handle('external:open-http-url', async (_event, value: unknown): Promise<boolean> => {
     if (typeof value !== 'string') return false;
     const url = normalizeExternalHttpUrl(value);
     if (!url) return false;
     try {
-      await shell.openExternal(url);
+      await openExternalForUser(url);
       return true;
     } catch {
       return false;
@@ -1385,8 +1446,9 @@ app.on('ready', () => {
     tasks: [
       {
         name: 'quit state',
-        run: () => {
+        run: async () => {
           appIsQuitting = true;
+          await processGuardian?.armRootDeadline(GRACEFUL_SHUTDOWN_TIMEOUT_MS);
         },
       },
       {
@@ -1394,6 +1456,27 @@ app.on('ready', () => {
         run: () => {
           uninstallRunCommandIpc?.();
           uninstallRunCommandIpc = null;
+        },
+      },
+      {
+        name: 'terminal runtime',
+        run: async () => {
+          const terminatingGroupId = interpreterGroupId;
+          try {
+            await broker?.shutdown(2_800);
+          } catch (error) {
+            console.error('[main] interpreter graceful drain failed:', error);
+          }
+          if (terminatingGroupId && processGuardian) {
+            await processGuardian.terminateGroup(terminatingGroupId);
+          } else {
+            try {
+              interpreter?.kill();
+            } catch {
+              // The interpreter already exited.
+            }
+          }
+          await scriptHostRegistry?.killAll();
         },
       },
       {
@@ -1597,15 +1680,60 @@ app.on('ready', () => {
   // MessagePortMain-based streaming without freezing the UI.
   // Output resolves to .vite/build/interpreter-process.js (same dir as main.js).
   const interpreterPath = path.join(__dirname, 'interpreter-process.js');
-  const spawnInterpreterProcess = (): UtilityProcess => {
+  const waitForUtilityProcessSpawn = (target: UtilityProcess): Promise<number> => {
+    if (target.pid !== undefined) return Promise.resolve(target.pid);
+    return new Promise((resolve, reject) => {
+      const cleanup = (): void => {
+        target.off('spawn', onSpawn);
+        target.off('exit', onExit);
+      };
+      const onSpawn = (): void => {
+        cleanup();
+        if (target.pid === undefined) reject(new Error('interpreter spawned without a pid'));
+        else resolve(target.pid);
+      };
+      const onExit = (): void => {
+        cleanup();
+        reject(new Error('interpreter exited before guardian ownership was established'));
+      };
+      target.once('spawn', onSpawn);
+      target.once('exit', onExit);
+    });
+  };
+  const spawnInterpreterProcess = async (): Promise<UtilityProcess> => {
     console.log(`[main] spawning interpreter at: ${interpreterPath}`);
-    return utilityProcess.fork(interpreterPath, [], {
+    const target = utilityProcess.fork(interpreterPath, [], {
       serviceName: 'EZTerminal Interpreter',
       stdio: 'inherit',
     });
+    const pid = await waitForUtilityProcessSpawn(target);
+    const nextGroupId = `interpreter:${randomUUID()}`;
+    try {
+      await processGuardian?.createGroup(nextGroupId, pid);
+    } catch (error) {
+      try {
+        target.kill();
+      } catch {
+        // The worker exited while ownership registration failed.
+      }
+      throw error;
+    }
+    interpreterGroupId = processGuardian ? nextGroupId : null;
+    return target;
   };
 
-  interpreter = spawnInterpreterProcess();
+  try {
+    interpreter = await spawnInterpreterProcess();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error('[main] interpreter ownership setup failed:', error);
+    dialog.showErrorBox(
+      'EZTerminal startup failed',
+      `The terminal interpreter could not be placed under process ownership.\n\n${detail}`,
+    );
+    app.exit(1);
+    return;
+  }
 
   // The single main-side broker over the interpreter (interpreter-broker plan).
   // It attaches listener #1 (session/run dispatch) + an exit listener in its
@@ -1738,7 +1866,12 @@ app.on('ready', () => {
   // (C1/C2), so the interpreter asks main to spawn/kill a script-host per
   // `run-script` invocation, correlated by hostId. Output resolves to
   // .vite/build/script-host.js, same directory as main.js/interpreter-process.js.
-  const scriptHostRegistry = new ScriptHostRegistry(path.join(__dirname, 'script-host.js'));
+  const activeScriptHostRegistry = new ScriptHostRegistry(
+    path.join(__dirname, 'script-host.js'),
+    processGuardian ?? undefined,
+    () => interpreterGroupId,
+  );
+  scriptHostRegistry = activeScriptHostRegistry;
 
   // Interpreter → main replies: the script-host spawn/kill protocol (E4) + the
   // known_hosts TOFU verdicts. This is listener #2 — disjoint by message type
@@ -1759,35 +1892,37 @@ app.on('ready', () => {
     const delayMs = recoveryDelaysMs[attemptIndex];
     mainLog?.line(`interpreter recovery attempt ${String(consecutiveRecoveryAttempts)} scheduled in ${String(delayMs)}ms`);
     setTimeout(() => {
-      if (appIsQuitting) return;
-      let next: UtilityProcess | null = null;
-      try {
-        next = spawnInterpreterProcess();
-        interpreter = next;
-        if (!broker?.restart(next as unknown as BrokerInterpreter)) {
-          throw new Error('broker rejected interpreter replacement');
-        }
-        bindSshForwardService(next);
-        wireInterpreterProcess(next);
-        mainLog?.line(`interpreter recovered on attempt ${String(consecutiveRecoveryAttempts)}`);
-        for (const win of BrowserWindow.getAllWindows()) {
-          if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
-            win.webContents.send('session-recovered');
+      void (async () => {
+        if (appIsQuitting) return;
+        let next: UtilityProcess | null = null;
+        try {
+          next = await spawnInterpreterProcess();
+          interpreter = next;
+          if (!broker?.restart(next as unknown as BrokerInterpreter)) {
+            throw new Error('broker rejected interpreter replacement');
           }
+          bindSshForwardService(next);
+          wireInterpreterProcess(next);
+          mainLog?.line(`interpreter recovered on attempt ${String(consecutiveRecoveryAttempts)}`);
+          for (const win of BrowserWindow.getAllWindows()) {
+            if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+              win.webContents.send('session-recovered');
+            }
+          }
+          if (recoveryStabilityTimer !== null) clearTimeout(recoveryStabilityTimer);
+          recoveryStabilityTimer = setTimeout(() => {
+            consecutiveRecoveryAttempts = 0;
+            recoveryStabilityTimer = null;
+          }, 30_000);
+        } catch (error) {
+          mainLog?.line(`interpreter recovery spawn failed: ${String(error)}`);
+          if (next) {
+            try { next.kill(); } catch { /* already gone */ }
+          }
+          interpreter = null;
+          scheduleInterpreterRecovery();
         }
-        if (recoveryStabilityTimer !== null) clearTimeout(recoveryStabilityTimer);
-        recoveryStabilityTimer = setTimeout(() => {
-          consecutiveRecoveryAttempts = 0;
-          recoveryStabilityTimer = null;
-        }, 30_000);
-      } catch (error) {
-        mainLog?.line(`interpreter recovery spawn failed: ${String(error)}`);
-        if (next) {
-          try { next.kill(); } catch { /* already gone */ }
-        }
-        interpreter = null;
-        scheduleInterpreterRecovery();
-      }
+      })();
     }, delayMs);
   }
 
@@ -1808,23 +1943,24 @@ app.on('ready', () => {
     target.on('message', (msg: InterpreterToMain) => {
       if (target !== interpreter) return;
       if (msg?.type === 'spawn-script-host') {
-        const result = scriptHostRegistry.spawn(msg.hostId, msg.scriptPath, msg.args, msg.cwd, (hostId, code) => {
+        void activeScriptHostRegistry.spawn(msg.hostId, msg.scriptPath, msg.args, msg.cwd, (hostId, code) => {
           postToInterpreterGeneration(target, { type: 'script-host-exit', hostId, code });
+        }).then((result) => {
+          if ('error' in result) {
+            postToInterpreterGeneration(target, {
+              type: 'script-host-error',
+              hostId: msg.hostId,
+              message: result.error,
+            });
+          } else {
+            postToInterpreterGeneration(target, {
+              type: 'script-host-ready',
+              hostId: msg.hostId,
+            }, [result.interpreterPort]);
+          }
         });
-        if ('error' in result) {
-          postToInterpreterGeneration(target, {
-            type: 'script-host-error',
-            hostId: msg.hostId,
-            message: result.error,
-          });
-        } else {
-          postToInterpreterGeneration(target, {
-            type: 'script-host-ready',
-            hostId: msg.hostId,
-          }, [result.interpreterPort]);
-        }
       } else if (msg?.type === 'kill-script-host') {
-        scriptHostRegistry.kill(msg.hostId);
+        void activeScriptHostRegistry.kill(msg.hostId);
       } else if (msg?.type === 'known-host-check') {
         const { requestId, host, port, keyType, fingerprint } = msg;
         void knownHostsReady
@@ -1905,6 +2041,7 @@ app.on('ready', () => {
       console.log(`[main] interpreter exited with code ${String(code)}`);
       mainLog?.line(`interpreter exited with code ${String(code)} (planned=${String(appIsQuitting)})`);
       interpreter = null;
+      interpreterGroupId = null;
       if (recoveryStabilityTimer !== null) {
         clearTimeout(recoveryStabilityTimer);
         recoveryStabilityTimer = null;
@@ -1918,7 +2055,7 @@ app.on('ready', () => {
       // process. The broker's OWN exit listener flips its `alive` flag and rejects
       // in-flight create-session/list-runs pendings — this listener stays orthogonal
       // (process/window cleanup), so it must NOT also reject them here.
-      scriptHostRegistry.killAll();
+      void activeScriptHostRegistry.killAll();
       // The payload (additive, B-M5) lets the renderer's banner point the user at
       // the local evidence.
       for (const win of BrowserWindow.getAllWindows()) {
@@ -1946,6 +2083,7 @@ app.on('ready', () => {
   // (did-fail-load/did-finish-load) fan out to every window below.
   openClawChatView = new OpenClawChatViewManager({
     getChatUrl: () => openclaw.getChatUrl(),
+    openExternal: openExternalForUser,
     onStateChange: (state) => {
       for (const win of BrowserWindow.getAllWindows()) {
         if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
@@ -2287,7 +2425,7 @@ app.on('ready', () => {
     const url = await openclaw.getChatUrl();
     if (!url) return false;
     try {
-      await shell.openExternal(url);
+      await openExternalForUser(url);
       return true;
     } catch {
       return false;

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "version": "1.0.25",
-  "androidVersionCode": 46,
+  "version": "1.0.26",
+  "androidVersionCode": 47,
   "protocolVersion": 7,
-  "validationProfile": "full",
+  "validationProfile": "functional-hotfix",
   "performancePolicy": {
     "maxP95RegressionPercent": 5,
     "minTargetP95ImprovementPercent": 0,

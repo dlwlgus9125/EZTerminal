@@ -106,6 +106,13 @@ type PendingDestroy = {
   settled: boolean;
   resolve: (result: DestroySessionGuardResult) => void;
 };
+type PendingShutdown = {
+  readonly requestId: string;
+  readonly timer: ReturnType<typeof setTimeout>;
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+  readonly reject: (error: Error) => void;
+};
 
 const DEFAULT_ATTACH_ACK_TIMEOUT_MS = 5_000;
 const DEFAULT_DESTROY_ACK_TIMEOUT_MS = 5_000;
@@ -148,6 +155,8 @@ export class InterpreterBroker {
   >();
   private readonly wireInterpreter: (interpreter: BrokerInterpreter) => void;
   private alive = true;
+  private shuttingDown = false;
+  private pendingShutdown: PendingShutdown | null = null;
 
   constructor(deps: {
     interpreter: BrokerInterpreter;
@@ -272,6 +281,12 @@ export class InterpreterBroker {
                 : { ok: false, reason: 'state-changed' },
             );
           }
+        } else if (msg.type === 'interpreter-shutdown-complete') {
+          const pending = this.pendingShutdown;
+          if (!pending || pending.requestId !== msg.requestId) return;
+          this.pendingShutdown = null;
+          clearTimeout(pending.timer);
+          pending.resolve();
         }
       });
 
@@ -300,6 +315,12 @@ export class InterpreterBroker {
         this.pendingRunLists.clear();
         this.pendingAttaches.clear();
         this.pendingDestroys.clear();
+        const shutdown = this.pendingShutdown;
+        this.pendingShutdown = null;
+        if (shutdown) {
+          clearTimeout(shutdown.timer);
+          shutdown.resolve();
+        }
         this.runGuard.clearRuns();
         for (const listener of this.interpreterExitListeners) listener(code);
       });
@@ -314,6 +335,7 @@ export class InterpreterBroker {
     const sessions = this.directory.list();
     this.interpreter = interpreter;
     this.alive = true;
+    this.shuttingDown = false;
     this.wireInterpreter(interpreter);
     try {
       interpreter.postMessage({ type: 'restore-sessions', sessions });
@@ -335,7 +357,7 @@ export class InterpreterBroker {
 
   createSession(cwd?: string): Promise<SessionInfo> {
     return this.mutationGate.runExclusive(async () => {
-      if (!this.alive)
+      if (!this.alive || this.shuttingDown)
         return Promise.reject(new Error('interpreter not running'));
       if (cwd !== undefined && this.validateSessionCwd) {
         const validation = this.validateSessionCwd(cwd);
@@ -345,7 +367,7 @@ export class InterpreterBroker {
       // Validation may cross an async filesystem boundary. The interpreter can
       // exit while it is in flight, after the exit handler has already drained
       // pendingCreates. Never install a new pending entry after that drain.
-      if (!this.alive) throw new Error('interpreter not running');
+      if (!this.alive || this.shuttingDown) throw new Error('interpreter not running');
       const requestId = this.newId();
       return new Promise<SessionInfo>((resolve, reject) => {
         this.pendingCreates.set(requestId, { resolve, reject });
@@ -364,7 +386,7 @@ export class InterpreterBroker {
   }
 
   destroySession(sessionId: string): void {
-    if (!this.alive) {
+    if (!this.alive || this.shuttingDown) {
       this.directory.remove(sessionId);
       return;
     }
@@ -419,7 +441,7 @@ export class InterpreterBroker {
     requestOrigin?: WorktreeRequestOrigin,
     displayCommandText?: string,
   ): RunCommandDispatchResult {
-    if (!this.alive) {
+    if (!this.alive || this.shuttingDown) {
       return {
         posted: false,
         port: this.createRejectedRunPort('The interpreter is not running'),
@@ -500,7 +522,7 @@ export class InterpreterBroker {
   }
 
   attachRun(sessionId: string, runId: string): RemotePort | null {
-    if (!this.alive) return null;
+    if (!this.alive || this.shuttingDown) return null;
     const { port1, port2 } = this.createMessageChannel();
     this.interpreter.postMessage({ type: 'attach-run', sessionId, runId }, [
       port2,
@@ -558,7 +580,7 @@ export class InterpreterBroker {
     sessionIds: readonly string[],
     makeMessage: (requestId: string, deadlineAt: number) => MainToInterpreter,
   ): Promise<DestroySessionGuardResult> {
-    if (!this.alive) {
+    if (!this.alive || this.shuttingDown) {
       // Utility-process exit is authoritative shared-fate: no backend shell
       // can still exist. Requests that begin after that signal may reconcile
       // locally; in-flight requests are still failed unavailable by the exit
@@ -619,7 +641,7 @@ export class InterpreterBroker {
     sessionId: string,
     runId: string,
   ): Promise<CheckedAttachRunResult> {
-    if (!this.alive)
+    if (!this.alive || this.shuttingDown)
       return Promise.resolve({ accepted: false, reason: 'transport-failed' });
     const requestId = this.newId();
     const { port1, port2 } = this.createMessageChannel();
@@ -648,12 +670,45 @@ export class InterpreterBroker {
   }
 
   listRuns(): Promise<readonly RunStartedInfo[]> {
-    if (!this.alive) return Promise.resolve([]);
+    if (!this.alive || this.shuttingDown) return Promise.resolve([]);
     const requestId = this.newId();
     return new Promise<readonly RunStartedInfo[]>((resolve, reject) => {
       this.pendingRunLists.set(requestId, { resolve, reject });
       this.interpreter.postMessage({ type: 'list-runs', requestId });
     });
+  }
+
+  /** Freeze new broker work and ask the current utility-process generation to
+   * drain every execution. Interpreter exit is also a successful terminal
+   * outcome because the native process group owns any surviving descendants. */
+  shutdown(timeoutMs = 3_000): Promise<void> {
+    if (this.pendingShutdown) return this.pendingShutdown.promise;
+    if (this.shuttingDown) return Promise.resolve();
+    this.shuttingDown = true;
+    if (!this.alive) return Promise.resolve();
+
+    const requestId = this.newId();
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    const timer = setTimeout(() => {
+      if (this.pendingShutdown?.requestId !== requestId) return;
+      this.pendingShutdown = null;
+      reject(new Error(`interpreter shutdown exceeded ${String(timeoutMs)}ms`));
+    }, Math.max(1, timeoutMs));
+    timer.unref?.();
+    this.pendingShutdown = { requestId, timer, promise, resolve, reject };
+    try {
+      this.interpreter.postMessage({ type: 'interpreter-shutdown', requestId });
+    } catch (error) {
+      this.pendingShutdown = null;
+      clearTimeout(timer);
+      reject(error instanceof Error ? error : new Error('interpreter shutdown failed'));
+    }
+    return promise;
   }
 
   onSessionAdded(fn: (s: SessionInfo) => void): () => void {

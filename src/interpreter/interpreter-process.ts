@@ -139,6 +139,7 @@ class ExecutionSession implements Execution {
   private readonly attachPorts = new Map<MessagePortMain, AttachPortState>();
   private settled = false;
   private disposed = false;
+  private disposePromise: Promise<void> | null = null;
 
   // Replay state for a late `attach` (M2): enough to let a new port re-render
   // the block's current shape/state. Structured (table/text) row DATA is never
@@ -296,7 +297,7 @@ class ExecutionSession implements Execution {
       }
       if (signal.aborted) send({ type: 'cancelled' });
       else send({ type: 'error', message: describeError(err) });
-      this.dispose();
+      void this.dispose().catch(() => undefined);
     }
     return executionKind;
   }
@@ -424,8 +425,9 @@ class ExecutionSession implements Execution {
   }
 
   /** {@link Execution}: release the ResultStore/PTY child + close every port. Idempotent. */
-  dispose(): void {
-    if (this.disposed) return;
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+    if (this.disposed) return Promise.resolve();
     this.disposed = true;
     // Closing/dismissing a live structured stream must interrupt a pending
     // iterator.next() before its store queues iterator.return(). In particular,
@@ -433,14 +435,15 @@ class ExecutionSession implements Execution {
     this.ac.abort();
     const execution = this.activeExecution;
     this.activeExecution = null;
-    void (execution
+    this.disposePromise = (execution
       ? disposeExecutionAdapterWithRetry(execution)
-      : Promise.resolve()).catch(() => {
+      : Promise.resolve()).catch((error: unknown) => {
       // The execution is already detached from every transport. Observe the
       // final bounded retry rejection so cleanup cannot crash the shared
       // utility process through an unhandled promise rejection. Spill quota
       // remains charged and process-exit cleanup retains the fail-closed bound.
       console.error('[interpreter] execution cleanup failed after bounded retries');
+      throw error;
     });
     this.settle();
     try {
@@ -458,6 +461,7 @@ class ExecutionSession implements Execution {
     }
     this.attachPorts.clear();
     this.hooks.onDisposed?.();
+    return this.disposePromise;
   }
 
   private settle(): void {
@@ -485,7 +489,7 @@ class ExecutionSession implements Execution {
       }
       if (wasControl) this.revertControl();
       if (!this.primaryPort && this.attachPorts.size === 0) {
-        this.dispose();
+        void this.dispose().catch(() => undefined);
       } else if (isPrimary) {
         // Mirrors keep the run alive, but `pty-ack` pacing stays keyed to the
         // primary port (see handleControl) and nothing ever re-assigns one —
@@ -625,7 +629,9 @@ class ExecutionSession implements Execution {
     } catch {
       // Already gone.
     }
-    if (!this.primaryPort && this.attachPorts.size === 0) this.dispose();
+    if (!this.primaryPort && this.attachPorts.size === 0) {
+      void this.dispose().catch(() => undefined);
+    }
   }
 
   private handleControl(port: MessagePortMain, control: RendererControl): void {
@@ -636,7 +642,7 @@ class ExecutionSession implements Execution {
       case 'close':
         // Only the PRIMARY port's close ends the run for everyone (T2.2c) —
         // an attacher's close just detaches that one mirror viewer.
-        if (port === this.primaryPort) this.dispose();
+        if (port === this.primaryPort) void this.dispose().catch(() => undefined);
         else this.detachPort(port);
         break;
       case 'requestRows':
@@ -1023,9 +1029,8 @@ process.parentPort.on('message', (event: ElectronMsgEvent) => {
     case 'destroy-session': {
       const guarded = msg.requestId !== undefined || msg.expectedActiveRunIds !== undefined;
       if (guarded) {
-        let destroyed = false;
         const beforeDeadline = msg.deadlineAt === undefined || Date.now() <= msg.deadlineAt;
-        if (
+        const accepted = (
           msg.requestId !== undefined
           && isGuardedSessionRequest({
             sessionId: msg.sessionId,
@@ -1033,20 +1038,37 @@ process.parentPort.on('message', (event: ElectronMsgEvent) => {
           })
           && beforeDeadline
           && guardedSessionMatches(msg.sessionId, msg.expectedActiveRunIds!)
-        ) {
-          registry.destroy(msg.sessionId);
-          destroyed = true;
-        }
+        );
         if (msg.requestId !== undefined) {
-          process.parentPort.postMessage({
-            type: 'session-destroy-result',
-            requestId: msg.requestId,
-            sessionIds: [msg.sessionId],
-            destroyed,
-          } satisfies InterpreterToMain);
+          const requestId = msg.requestId;
+          if (!accepted) {
+            process.parentPort.postMessage({
+              type: 'session-destroy-result',
+              requestId,
+              sessionIds: [msg.sessionId],
+              destroyed: false,
+            } satisfies InterpreterToMain);
+          } else {
+            void registry.destroy(msg.sessionId).then(
+              () => process.parentPort.postMessage({
+                type: 'session-destroy-result',
+                requestId,
+                sessionIds: [msg.sessionId],
+                destroyed: true,
+              } satisfies InterpreterToMain),
+              () => process.parentPort.postMessage({
+                type: 'session-destroy-result',
+                requestId,
+                sessionIds: [msg.sessionId],
+                destroyed: false,
+              } satisfies InterpreterToMain),
+            );
+          }
         }
       } else {
-        registry.destroy(msg.sessionId);
+        void registry.destroy(msg.sessionId).catch((error: unknown) => {
+          console.error('[interpreter] unconditional session cleanup failed', error);
+        });
       }
       break;
     }
@@ -1072,7 +1094,21 @@ process.parentPort.on('message', (event: ElectronMsgEvent) => {
         ))
       );
       if (destroyed) {
-        for (const sessionId of sessionIds) registry.destroy(sessionId);
+        void Promise.all(sessionIds.map((sessionId) => registry.destroy(sessionId))).then(
+          () => process.parentPort.postMessage({
+            type: 'session-destroy-result',
+            requestId: msg.requestId,
+            sessionIds,
+            destroyed: true,
+          } satisfies InterpreterToMain),
+          () => process.parentPort.postMessage({
+            type: 'session-destroy-result',
+            requestId: msg.requestId,
+            sessionIds,
+            destroyed: false,
+          } satisfies InterpreterToMain),
+        );
+        break;
       }
       process.parentPort.postMessage({
         type: 'session-destroy-result',
@@ -1080,6 +1116,18 @@ process.parentPort.on('message', (event: ElectronMsgEvent) => {
         sessionIds,
         destroyed,
       } satisfies InterpreterToMain);
+      break;
+    }
+    case 'interpreter-shutdown': {
+      void registry.shutdown().then(
+        () => process.parentPort.postMessage({
+          type: 'interpreter-shutdown-complete',
+          requestId: msg.requestId,
+        } satisfies InterpreterToMain),
+        (error: unknown) => {
+          console.error('[interpreter] shutdown drain failed', error);
+        },
+      );
       break;
     }
     case 'run': {

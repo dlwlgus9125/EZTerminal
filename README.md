@@ -8,7 +8,7 @@
 
 Block-based UI · themes &amp; CRT effects · system monitor · SSH · pair your phone as a remote
 
-![release](https://img.shields.io/badge/release-v1.0.25-brightgreen)
+![release](https://img.shields.io/badge/release-v1.0.26-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 ![built with](https://img.shields.io/badge/built%20with-Electron%20·%20React%20·%20TypeScript-9cf)
@@ -150,7 +150,7 @@ advertised only while the remote bridge is enabled, a trusted
 Tailscale/WireGuard adapter is selected, and the installed LocalSystem host
 service is ready. Starting control additionally requires a successful
 active-session agent handshake. Missing or unhealthy native components fail
-closed without disabling terminal-only remote access. In 1.0.25, frame
+closed without disabling terminal-only remote access. In 1.0.26, frame
 capture/encoding and actual input injection still run in the normal-user
 transport; lock/UAC secure-desktop control and Ctrl+Alt+Delete are unavailable.
 
@@ -170,7 +170,7 @@ Grab both official 1.0 downloads from the
 [**Releases**](https://github.com/dlwlgus9125/EZTerminal/releases/latest) page:
 
 - Windows 10 22H2 / Windows 11 x64: `EZTerminal-Setup.exe`
-- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.25-vc46.apk`
+- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.26-vc47.apk`
 
 > While the SignPath Foundation application is pending, maintenance releases can be
 > published unsigned and will show Windows' unknown-publisher warning. Check the
@@ -200,7 +200,7 @@ live camera frames, background release, and explicit camera reacquisition.
 Elevated/admin service lifecycle and physical-device validation were not
 performed. Microsoft Store publication and silent or background installation
 are outside this release; see the
-[1.0.25 validation policy](docs/release/validation-policy-1.0.25.md).
+[1.0.26 validation policy](docs/release/validation-policy-1.0.26.md).
 
 ## Code signing policy
 
@@ -221,6 +221,10 @@ pnpm e2e          # end-to-end tests (Playwright + Electron)
 pnpm profile:runtime -- --samples 5  # local startup/chunk/memory diagnostic
 ```
 
+On Windows, `pnpm start` builds the native process guardian first. EZTerminal
+fails closed if that helper cannot start, so terminal commands never run without
+the Job Object ownership boundary.
+
 `profile:runtime` writes `test-results/runtime-profile.json` from isolated temporary app profiles.
 It is developer diagnostics only, not release evidence and not a substitute for the separately
 authorized release performance benchmark.
@@ -228,7 +232,7 @@ authorized release performance benchmark.
 Graphical PC Control is included by default in Windows builds. At runtime it
 still requires an enabled remote bridge, a running installed host service, and
 a trusted VPN interface; otherwise the desktop capability is not advertised.
-Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.25.
+Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.26.
 
 The Android companion app lives in [`mobile/`](mobile/) (Capacitor + Android Studio).
 

@@ -57,6 +57,27 @@
 
 ## 외부 프로그램과 PTY
 
+### Windows 프로세스 소유권과 종료
+
+Windows에서는 main이 interpreter나 창을 만들기 전에 native
+`--process-guardian`을 시작한다. Guardian은 main을
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` root Job에 넣고, interpreter와 각
+script-host에 별도 하위 Job을 부여한다. 이후 PTY·외부 명령·Codex·Claude가
+만드는 자손은 실행 파일 이름과 무관하게 이 Job 트리를 상속한다.
+
+정상 앱 종료는 새 broker 작업을 먼저 막고 interpreter에 전체 session drain을
+요청한다. 각 execution의 취소와 process-tree 종료가 완료된 뒤 ACK하며, main은
+남은 interpreter/script-host Job을 강제 종료한다. 동시에 guardian에 bounded root
+deadline을 설정하므로 main이 종료 중 멈추거나 비정상 종료되어도 Job handle 소실로
+모든 등록 자손이 정리된다. Renderer reload/crash나 창 재생성은 main 수명 종료가
+아니므로 이 소유권을 끊지 않는다.
+
+브라우저, 편집기, Explorer처럼 EZTerminal보다 오래 살아야 하는 사용자 앱은 root
+Job 밖의 guardian이 `shell-handoff`로 연다. 반대로 시작 시 프로세스 이름을 검색해
+과거 PID를 일괄 종료하지 않는다. 다른 EZTerminal 인스턴스나 사용자가 별도로 시작한
+동명 CLI를 오인 종료하지 않기 위해, 현재 인스턴스가 등록한 Job만 정리 권한의
+근거로 사용한다.
+
 일반 외부 명령은 실행 특성에 따라 text 또는 PTY 경로를 선택한다. interactive CLI와
 full-screen TUI는 `node-pty`/ConPTY와 xterm을 사용하며 입력·resize·cancel을 동일한
 run port로 받는다. terminal renderer는 WebGL을 우선하되 DOM fallback을 유지한다.

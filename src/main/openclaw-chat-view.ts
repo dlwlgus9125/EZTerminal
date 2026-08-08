@@ -38,6 +38,7 @@ export interface OpenClawChatViewManagerDeps {
    * yet (see OpenClawService.getChatUrl) — the manager never assembles this
    * itself, keeping the token read in exactly one place. */
   readonly getChatUrl: () => Promise<string | null>;
+  readonly openExternal?: (url: string) => Promise<void>;
   /** Pushed on every loading / unavailable / loaded transition. */
   readonly onStateChange: (state: OpenClawChatViewState) => void;
 }
@@ -204,7 +205,8 @@ export class OpenClawChatViewManager {
       });
       view.webContents.setWindowOpenHandler(({ url: openUrl }) => {
         if (/^https?:/i.test(openUrl)) {
-          void shell.openExternal(openUrl).catch(() => undefined);
+          const openExternal = this.deps.openExternal ?? ((target: string) => shell.openExternal(target));
+          void openExternal(openUrl).catch(() => undefined);
         }
         return { action: 'deny' };
       });

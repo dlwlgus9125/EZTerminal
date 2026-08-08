@@ -327,7 +327,7 @@ export interface PtyHandle {
   /** Resume reading PTY output after {@link pause}. */
   resume(): void;
   /** Kill the PTY child and release handles. Idempotent at the call site. */
-  kill(): void;
+  kill(): void | Promise<void>;
 }
 
 /**

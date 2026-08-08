@@ -54,19 +54,28 @@ const defaultPtySpawn: PtySpawnFn = (file, args, options) =>
 /** Terminate a process tree by PID from OUTSIDE node-pty (Adapter seam: fakeable
  * in tests, which must never shell out to a real OS kill command). See the
  * `killOnce` comment in {@link runPty} for why this exists on Windows. */
-export type KillTreeFn = (pid: number) => void;
+export type KillTreeFn = (pid: number) => void | Promise<void>;
 
-const defaultKillTree: KillTreeFn = (pid) => {
+const defaultKillTree: KillTreeFn = (pid) => new Promise<void>((resolve) => {
   // Matches process-runner.ts's existing killChild taskkill convention.
   try {
-    nodeSpawn('taskkill', ['/T', '/F', '/PID', String(pid)], {
+    const killer = nodeSpawn('taskkill', ['/T', '/F', '/PID', String(pid)], {
       windowsHide: true,
       stdio: 'ignore',
     });
+    const timer = setTimeout(resolve, 2_000);
+    timer.unref?.();
+    const finish = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    killer.once('error', finish);
+    killer.once('close', finish);
   } catch {
-    // taskkill unavailable — the 5s fallback timer in killOnce covers this.
+    // taskkill unavailable — killOnce falls back to node-pty directly.
+    resolve();
   }
-};
+});
 
 export interface RunPtyOptions {
   readonly cwd: string;
@@ -149,56 +158,64 @@ export function runPty(
   // Tracks whether the child has already exited, so killOnce's taskkill
   // fallback timer (below) knows not to fire a redundant proc.kill().
   let exited = false;
+  let resolveExited!: () => void;
+  const exitedPromise = new Promise<void>((resolve) => {
+    resolveExited = resolve;
+  });
   proc.onExit(() => {
     exited = true;
+    resolveExited();
   });
 
-  const killOnce = (): void => {
-    try {
-      // Defensive resume-then-kill (Stage C): node-pty's public onExit fires
-      // from the output socket's 'close'; destroy fires 'close' even while
-      // paused, but resuming first keeps any final buffered output flowing and
-      // costs nothing (gate record §Q1).
-      proc.resume();
-    } catch {
-      // Socket already gone.
-    }
-    // Windows + useConptyDll:true crash workaround: node-pty's own kill() path
-    // for the bundled conpty.dll synchronously destroys the input socket THEN
-    // calls into the native kill — a double-free-shaped sequence that reliably
-    // crashes the host process with STATUS_HEAP_CORRUPTION (0xC0000374),
-    // confirmed via direct reproduction 2026-07-03. Sessions that exit
-    // NATURALLY (no explicit kill()) never hit this and are unaffected — the
-    // native `_$onProcessExit` teardown path they use is safe. So on Windows,
-    // terminate the child externally (killTree, tree-kill so the fallback batch-
-    // shim's cmd.exe -> node.exe grandchild is reached too — de-sugared shims
-    // spawn the target directly and have no cmd.exe grandparent) instead of calling
-    // proc.kill() directly; the external kill drives the SAME safe
-    // natural-exit path. `proc.kill()` is kept as a last-resort fallback if
-    // onExit hasn't fired within 5s (e.g. the external kill itself failed) —
-    // that path was already the pre-existing (crashing) behavior, so nothing
-    // is lost by trying it only as a fallback.
-    if (process.platform === 'win32') {
-      killTree(proc.pid);
-      setTimeout(() => {
-        if (exited) return;
+  let killPromise: Promise<void> | null = null;
+  const waitForExit = async (timeoutMs: number): Promise<boolean> => {
+    if (exited) return true;
+    await Promise.race([
+      exitedPromise,
+      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
+    return exited;
+  };
+  const killOnce = (): Promise<void> => {
+    if (exited) return Promise.resolve();
+    if (killPromise) return killPromise;
+    killPromise = (async () => {
+      try {
+        // Resume before kill so final buffered output can reach the exit path.
+        proc.resume();
+      } catch {
+        // Socket already gone.
+      }
+      // Bundled ConPTY can corrupt the host heap in node-pty's direct kill path.
+      // External tree termination drives the safe natural-exit path instead.
+      if (process.platform === 'win32') {
         try {
-          proc.kill();
+          await killTree(proc.pid);
         } catch {
-          // Already exited / handle released — nothing to do.
+          // Fall through to the last-resort node-pty kill.
         }
-      }, 5000);
-      return;
-    }
-    try {
-      proc.kill();
-    } catch {
-      // Already exited / handle released — nothing to do.
-    }
+        if (!(await waitForExit(1_000))) {
+          try {
+            proc.kill();
+          } catch {
+            // Already exited / handle released — nothing to do.
+          }
+          await waitForExit(1_000);
+        }
+        return;
+      }
+      try {
+        proc.kill();
+      } catch {
+        // Already exited / handle released — nothing to do.
+      }
+      await waitForExit(1_000);
+    })();
+    return killPromise;
   };
 
-  if (options.signal.aborted) killOnce();
-  else options.signal.addEventListener('abort', killOnce, { once: true });
+  if (options.signal.aborted) void killOnce();
+  else options.signal.addEventListener('abort', () => { void killOnce(); }, { once: true });
 
   return {
     onData(listener) {

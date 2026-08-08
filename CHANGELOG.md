@@ -2,13 +2,19 @@
 
 ## [Unreleased]
 
+## [1.0.26] - 2026-08-08
+
 ### Added
 
+- Added an integrated project workbench for changed-file review, exact Git
+  diffs, project-scoped agent sessions, and responsive narrow layouts.
 - Added device-local Balanced, Low resource, and High responsiveness profiles
   to desktop and Android Settings without changing feature availability or
   correctness and safety timers.
 - Added a non-release `profile:runtime` developer diagnostic for startup,
   optional-feature readiness, process working set, and renderer chunk sizes.
+- Added a native Windows Job Object guardian that owns Electron, interpreter,
+  PTY, script-host, and arbitrary descendant process trees.
 
 ### Changed
 
@@ -20,6 +26,17 @@
   terminal pane registrations stable across command and output updates.
 - Removed unused compatibility aliases, test-only wrappers, and orphan exports;
   tests now exercise the maintained production paths directly.
+- Made application and session shutdown drain interpreter work, PTYs, and
+  script hosts asynchronously before a bounded force-termination deadline.
+
+### Fixed
+
+- Prevented Codex, Claude, and other external command descendants from
+  surviving session close, graceful app quit, or abrupt Electron main exit.
+- Prevented late cleanup from targeting a reused Windows PID after the original
+  process had already exited naturally.
+
+See [1.0.26 release notes](docs/release/release-notes-1.0.26.md).
 
 ## [1.0.25] - 2026-08-05
 

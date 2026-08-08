@@ -214,7 +214,7 @@ export interface PtySession {
    */
   releasePrimaryWindow(): void;
   /** Tear down: kill the PTY + release the source. Idempotent. */
-  dispose(): void;
+  dispose(): Promise<void>;
   /**
    * M2 mirroring: attach a non-initiating observer. Returns `null` once
    * `PTY_ATTACH_CAP` subscribers are already attached, or once the session
@@ -376,26 +376,31 @@ export function runPtySession(
     void data.cleanup?.();
   };
 
+  let killPromise: Promise<void> | null = null;
+
   // Every teardown path resumes first: cheap, and keeps any final buffered
   // output flowing while the kill lands (gate record §Q1 — exit detection does
   // not strictly need it, but cancel/exit must never race a paused socket).
-  const resumeThenKill = (): void => {
+  const resumeThenKill = (): Promise<void> => {
+    if (killPromise) return killPromise;
     try {
       pty.resume();
     } catch {
       // Already gone.
     }
     try {
-      pty.kill();
+      killPromise = Promise.resolve(pty.kill());
     } catch {
       // Already gone.
+      killPromise = Promise.resolve();
     }
+    return killPromise;
   };
 
   const onAbort = (): void => {
     if (settled) return;
     settled = true;
-    resumeThenKill();
+    void resumeThenKill();
     emit({ type: 'cancelled' });
     semanticRestore.dispose();
     cleanup();
@@ -495,7 +500,7 @@ export function runPtySession(
         pty.resume();
       }
     },
-    dispose(): void {
+    dispose(): Promise<void> {
       if (submissionTimer) clearTimeout(submissionTimer);
       if (submissionFallbackTimer) clearTimeout(submissionFallbackTimer);
       if (submissionEnterTimer) clearTimeout(submissionEnterTimer);
@@ -510,10 +515,11 @@ export function runPtySession(
         sub.pendingBytes = 0;
       }
       attachSubscribers.clear();
-      if (settled) return;
+      if (settled) return killPromise ?? Promise.resolve();
       settled = true;
-      resumeThenKill();
+      const killed = resumeThenKill();
       cleanup();
+      return killed;
     },
     attach(onData: (bytes: Uint8Array) => void): PtyAttachHandle | null {
       if (settled) return null;

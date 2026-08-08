@@ -33,6 +33,7 @@ import { RemoteDesktopController } from './remote-desktop-controller';
 import { RemoteRuntimeStartError } from './remote-runtime';
 import { RemoteTokenStore } from './remote-token-store';
 import { selectTrustedRemoteNetwork } from './trusted-remote-network';
+import { resolveNativeHostPath } from './native-host-path';
 
 export type ElectronDesktopRuntimeBridgeSources = Pick<
   RemoteBridgeOptions,
@@ -224,10 +225,7 @@ export function createElectronDesktopRuntime(options: ElectronDesktopRuntimeOpti
     && configuredPort <= 65_535
     ? configuredPort
     : DEFAULT_REMOTE_BRIDGE_PORT;
-  const remoteHostPath = process.env.EZTERMINAL_REMOTE_HOST_PATH
-    ?? (app.isPackaged
-      ? path.join(process.resourcesPath, 'ezterminal-remote-host.exe')
-      : path.join(app.getAppPath(), 'native', 'remote-host', 'target', 'release', 'ezterminal-remote-host.exe'));
+  const remoteHostPath = resolveNativeHostPath();
   const vpnInterface = process.env.EZTERMINAL_REMOTE_VPN_INTERFACE;
   const desktopControlEnabled = options.desktopControlEnabled
     ?? process.platform === 'win32';

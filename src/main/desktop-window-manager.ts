@@ -45,6 +45,7 @@ export interface DesktopWindowManagerOptions {
   readonly getMainWindow: () => BrowserWindow | null;
   readonly isAppQuitting: () => boolean;
   readonly quitApp: () => void;
+  readonly openExternal?: (url: string) => Promise<void>;
   readonly onWindowConfigured?: (
     window: BrowserWindow,
     kind: DesktopWindowKind,
@@ -220,7 +221,12 @@ export class DesktopWindowManager {
         };
       }
       const external = normalizeExternalHttpUrl(url);
-      if (external) void shell.openExternal(external);
+      if (external) {
+        const openExternal = this.options.openExternal ?? ((target: string) => shell.openExternal(target));
+        void openExternal(external).catch((error) => {
+          this.options.reportError?.('external URL handoff failed', error);
+        });
+      }
       return { action: 'deny' as const };
     });
     window.webContents.on(

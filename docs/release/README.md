@@ -7,11 +7,11 @@ SignPath Foundation Authenticode 서명 필수 모드로 전환한다.
 
 ## 현재 계약
 
-- 앱 버전: `1.0.25`
-- Android versionCode: `46`
+- 앱 버전: `1.0.26`
+- Android versionCode: `47`
 - 원격 프로토콜: v7
 - Electron↔Rust native desktop protocol: v2
-- 검증 프로필: `full`
+- 검증 프로필: `functional-hotfix`
 - Windows 서명 모드: `unsigned` (SignPath 심사 중)
 - Windows: Windows 10 22H2/Windows 11 x64
 - Android: Android 10(API 29) 이상
@@ -19,8 +19,8 @@ SignPath Foundation Authenticode 서명 필수 모드로 전환한다.
 
 관련 문서:
 
-- [1.0.25 릴리스 노트](release-notes-1.0.25.md)
-- [1.0.25 검증 정책](validation-policy-1.0.25.md)
+- [1.0.26 릴리스 노트](release-notes-1.0.26.md)
+- [1.0.26 검증 정책](validation-policy-1.0.26.md)
 - [서명 준비와 인증서 지문 확인](signing.md)
 - [SignPath Windows 설정](signpath-setup.md)
 - [Code signing policy](../../CODE_SIGNING_POLICY.md)
@@ -56,7 +56,9 @@ SignPath 값은 모두 없어야 한다. 승인 후 여섯 값을 전부 등록�
 출력하거나 파일로 복호화하지 않으며 child Gradle process가 끝나면 환경변수를
 지운다. 기존 credential을 사용할 수 없으면 새 키를 만들지 않고 실패한다.
 
-같은 보호 Environment에는 최종 릴리스 승인 증거를 다음 이름으로 등록한다.
+`full` 프로필에서만 같은 보호 Environment에 최종 릴리스 승인 증거를 다음
+이름으로 등록한다. 현재 `functional-hotfix` 프로필은 이 증거를 읽거나 성능·30분
+soak 통과를 주장하지 않는다.
 
 - variable `EZTERMINAL_LOCAL_RC_APPROVED_SHA`: 승인한 정확한 40자리 Git SHA
 - variable `EZTERMINAL_LOCAL_RC_REPORT_SHA256`: `local-rc-report.json`의
@@ -76,9 +78,10 @@ Release workflow는 ZIP 해시를 먼저 확인하고 `RUNNER_TEMP`의 새 디�
 수치의 유한성, 기능 soak 결과와 원본 성능 기준선·후보 비교를 다시 계산한다.
 보고서 하나만 신뢰하거나, 오래된 원본 증거를 다른 SHA에 재사용하지 않는다.
 
-## 로컬 1.0.25 후보
+## full 프로필의 로컬 후보
 
-변경을 깨끗한 로컬 커밋으로 동결한 뒤 다음 명령을 실행한다.
+이 절차는 `release/version.json`이 `full`인 경우에만 사용한다. 현재 1.0.26
+`functional-hotfix` 계약에서는 실행하지 않는다.
 
 ```powershell
 ./scripts/build-local-release-candidate.ps1 `
@@ -89,7 +92,7 @@ Release workflow는 ZIP 해시를 먼저 확인하고 `RUNNER_TEMP`의 새 디�
 이 경로는 타입·린트·단위 테스트, 일반 `pnpm e2e`, Storybook/axe/시각 검증,
 Rust 품질 게이트, 패키지 smoke, API 29/35 기기 검증, API 35 기능 soak,
 서명 APK, SBOM과 체크섬을 실행한다. 결과는
-`release-assets/1.0.25-rc-<sha8>/`에 격리한다.
+`release-assets/1.0.26-rc-<sha8>/`에 격리한다.
 
 후보 보고서는 다음 상태를 명시한다.
 
@@ -135,7 +138,7 @@ Rust 품질 게이트, 패키지 smoke, API 29/35 기기 검증, API 35 기능 s
 사용하거나 GitHub Release를 만들기 전에 거부한다. `release` 단계 스테이징은
 깨끗한 작업 트리와 시작 시 동결한 정확한 HEAD SHA를 요구하며, 검증 도중
 HEAD나 파일 상태가 바뀌면 실패한다.
-최종 산출물은 `release-assets/1.0.25-release-<sha8>/`에만 스테이징하며,
+최종 산출물은 `release-assets/1.0.26-release-<sha8>/`에만 스테이징하며,
 후보와 최종 경로 모두 정확히 일치하는 해당 디렉터리만 재생성한다.
 
 보호된 증거는 서명 전 검증 단계에서만 `RUNNER_TEMP`에 존재하고 검증·스테이징
@@ -147,7 +150,21 @@ HEAD나 파일 상태가 바뀌면 실패한다.
 보호 secret을 실행하지 않고, 전달받은 `SHA256SUMS.txt` 해시, 각 파일 해시,
 manifest의 exact SHA와 publication eligibility를 재검증한 뒤 draft만 만든다.
 
-## 필수 검증 순서
+## 현재 functional-hotfix 배포 순서
+
+1. 버전 계약과 변경을 하나의 clean `main` 커밋으로 동결하고 원격에 push한다.
+2. `gh workflow run release.yml --ref main`으로 reviewable RC workflow를 실행한다.
+3. Rust, Android instrumentation, desktop/mobile 기능 게이트, 일반 E2E, 패키징,
+   APK 서명, SBOM, manifest와 checksum이 모두 통과했는지 확인한다.
+4. 같은 SHA에 `v1.0.26` 태그를 push한다. 태그 workflow의 별도 publish job이
+   검증된 불변 artifact를 다시 검사한 뒤 draft GitHub Release를 만든다.
+5. draft의 `EZTerminal-Setup.exe`, `EZTerminal-Android-1.0.26-vc47.apk`,
+   `release-manifest.json`, `SHA256SUMS.txt`를 확인한다.
+
+이 경로는 `pnpm e2e:performance`, release performance spec, 30분 mobile soak를
+실행하거나 통과했다고 주장하지 않는다.
+
+## full 프로필 검증 순서
 
 1. 앱과 Android/Rust 버전 계약을 하나의 로컬 커밋으로 동결한다.
 2. 비성능 로컬 후보 wrapper를 실행한다.
@@ -155,8 +172,8 @@ manifest의 exact SHA와 publication eligibility를 재검증한 뒤 draft만 �
 
    | 파일 | 계약 |
    |---|---|
-   | `EZTerminal-Setup.exe` | ProductVersion 1.0.25, 현재 `NotSigned`; 승인 후 `SignPath Foundation` Authenticode + timestamp |
-   | `EZTerminal-Android-1.0.25-vc46.apk` | API 29+, 장기키 서명, exact build SHA |
+   | `EZTerminal-Setup.exe` | ProductVersion 1.0.26, 현재 `NotSigned`; 승인 후 `SignPath Foundation` Authenticode + timestamp |
+   | `EZTerminal-Android-1.0.26-vc47.apk` | API 29+, 장기키 서명, exact build SHA |
    | `local-rc-report.json` | schema v2, API별 lane, 기능 soak, 성능 pending/passed |
    | `mobile-soak-report.json` | 공유 검증기가 다시 검사한 원본 기능 soak 증거 |
    | `desktop-performance-baseline.json` | 최종 릴리스에만 포함되는 원본 성능 기준선 |
@@ -168,7 +185,7 @@ manifest의 exact SHA와 publication eligibility를 재검증한 뒤 draft만 �
 4. 성능 측정이 별도로 승인되면 같은 SHA에서 최종 증거를 수집한다.
 5. 최종 보고서와 네 파일 ZIP, 승인 SHA 및 보고서·ZIP 해시를 보호된
    Environment에 등록한 뒤 `workflow_dispatch`로 통합 산출물을 검토한다.
-6. SHA를 바꾸지 않고 `v1.0.25` 태그를 push하면 draft GitHub Release를 만든다.
+6. SHA를 바꾸지 않고 `v1.0.26` 태그를 push하면 draft GitHub Release를 만든다.
    태그 push, merge, draft 게시 자체는 별도 운영 승인 대상이다.
 
 ## 설치와 잔여 제한

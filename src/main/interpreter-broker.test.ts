@@ -253,6 +253,48 @@ describe('InterpreterBroker — createSession', () => {
   });
 });
 
+describe('InterpreterBroker — graceful shutdown', () => {
+  it('freezes new work and resolves only after the matching drain acknowledgement', async () => {
+    const { broker, interpreter } = makeBroker();
+
+    const shutdown = broker.shutdown(1_000);
+    expect(interpreter.posted[0]?.msg).toEqual({
+      type: 'interpreter-shutdown',
+      requestId: 'id-1',
+    });
+    await expect(broker.createSession()).rejects.toThrow(/interpreter not running/);
+    await expect(broker.listRuns()).resolves.toEqual([]);
+    const rejectedPort = broker.runCommand('session', 'run', 'echo');
+    await expect(startAndCollect(rejectedPort!)).resolves.toEqual([{
+      type: 'error',
+      message: 'The interpreter is not running',
+    }]);
+
+    let settled = false;
+    void shutdown.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    interpreter.emit({ type: 'interpreter-shutdown-complete', requestId: 'other' });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    interpreter.emit({ type: 'interpreter-shutdown-complete', requestId: 'id-1' });
+    await expect(shutdown).resolves.toBeUndefined();
+    await expect(broker.shutdown()).resolves.toBeUndefined();
+  });
+
+  it('treats interpreter exit during drain as a completed terminal state', async () => {
+    const { broker, interpreter } = makeBroker();
+    const shutdown = broker.shutdown(1_000);
+
+    interpreter.emitExit(0);
+
+    await expect(shutdown).resolves.toBeUndefined();
+  });
+});
+
 describe('InterpreterBroker — listRuns + onRunStarted', () => {
   it('posts list-runs and resolves with the runs from the run-list reply', async () => {
     const { broker, interpreter } = makeBroker();

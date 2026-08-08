@@ -8,10 +8,10 @@
  *     with the same shape without touching callers.
  *   - stdout + stderr are merged, in arrival order, into a single
  *     `AsyncIterable<Uint8Array>` (the `byte-stream` PipelineData edge).
- *   - Cancellation goes through the session AbortSignal: it is passed to `spawn`
- *     (Node kills the child on abort) AND wired through `addAbortSignal` on each
- *     stdio stream (so reads unblock promptly). The byte iterator's `finally`
- *     also kills the child if the consumer stops early — so no process leaks.
+ *   - Cancellation goes through the session AbortSignal. Non-Windows spawn can
+ *     use Node's signal directly; Windows waits for an explicit tree kill so a
+ *     direct-parent exit cannot orphan grandchildren. `addAbortSignal` also
+ *     unblocks stdio reads, and iterator `finally` covers early consumers.
  *   - Spawn failures (ENOENT, …) surface by REJECTING the byte stream; `exit`
  *     never rejects, so an unconsumed `exit` promise can't crash the process.
  */
@@ -28,6 +28,27 @@ export type SpawnFn = (
   args: readonly string[],
   options: SpawnOptions,
 ) => ChildProcess;
+
+export type ProcessKillTreeFn = (pid: number) => void | Promise<void>;
+
+const defaultKillTree: ProcessKillTreeFn = (pid) => new Promise<void>((resolve) => {
+  try {
+    const killer = nodeSpawn('taskkill', ['/T', '/F', '/PID', String(pid)], {
+      windowsHide: true,
+      stdio: 'ignore',
+    });
+    const timer = setTimeout(resolve, 2_000);
+    timer.unref?.();
+    const finish = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    killer.once('error', finish);
+    killer.once('close', finish);
+  } catch {
+    resolve();
+  }
+});
 
 /**
  * Default spawner: cross-spawn. It is a drop-in for child_process.spawn that fixes
@@ -77,6 +98,7 @@ export function runProcess(
   args: readonly string[],
   options: RunOptions,
   spawn: SpawnFn = defaultSpawn,
+  killTree: ProcessKillTreeFn = defaultKillTree,
 ): RunningProcess {
   // SECURITY (SEC-HIGH-1): do NOT add `shell: true` to these options. cross-spawn
   // detects a `.bat`/`.cmd` target and `^`-escapes every arg ONLY on its non-shell
@@ -86,7 +108,7 @@ export function runProcess(
   const child = spawn(file, args, {
     cwd: options.cwd,
     env: options.env as NodeJS.ProcessEnv,
-    signal: options.signal,
+    ...(process.platform === 'win32' ? {} : { signal: options.signal }),
     windowsHide: true,
     // AC-8: close stdin explicitly (array form, NOT the 'ignore' shorthand — the
     // shorthand also closes stdout/stderr, breaking the capture below). A left-open
@@ -95,36 +117,37 @@ export function runProcess(
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  // Kill the child on cancel/early-exit. Batch targets run under cmd.exe, so a plain
-  // child.kill() (or the spawn `signal` option) only ends cmd.exe and orphans its
-  // grandchildren on Windows — kill the whole TREE for them instead (SEC-LOW-6).
-  const killChild = (): void => {
-    if (options.killTree && process.platform === 'win32' && child.pid != null) {
-      try {
-        nodeSpawn('taskkill', ['/T', '/F', '/PID', String(child.pid)], {
-          windowsHide: true,
-          stdio: 'ignore',
-        });
-        return;
-      } catch {
-        // taskkill unavailable — fall through to a direct kill.
+  // A plain child.kill() can end only the direct parent and orphan an arbitrary
+  // CLI descendant on Windows, so every Windows command uses an awaited tree kill.
+  let exited = false;
+  let killPromise: Promise<void> | null = null;
+  const killChild = (): Promise<void> => {
+    if (exited) return Promise.resolve();
+    if (killPromise) return killPromise;
+    killPromise = (async () => {
+      if (process.platform === 'win32' && child.pid != null) {
+        try {
+          await killTree(child.pid);
+        } catch {
+          // taskkill unavailable — fall through to a direct kill.
+        }
       }
-    }
-    try {
-      child.kill();
-    } catch {
-      // Already gone.
-    }
+      try {
+        child.kill();
+      } catch {
+        // Already gone.
+      }
+    })();
+    return killPromise;
   };
 
-  // The spawn `signal` option already kills the direct child on abort; for batch
-  // targets we additionally tear down the tree so no grandchild process leaks.
-  if (options.killTree) {
-    if (options.signal.aborted) killChild();
-    else options.signal.addEventListener('abort', () => killChild(), { once: true });
+  // The spawn signal owns direct non-Windows children. Windows and explicit
+  // tree owners additionally need the cancellation seam above.
+  if (process.platform === 'win32' || options.killTree) {
+    if (options.signal.aborted) void killChild();
+    else options.signal.addEventListener('abort', () => { void killChild(); }, { once: true });
   }
 
-  let exited = false;
   let exitInfo: ProcessExit = { code: null, signal: null };
   let resolveExit!: (info: ProcessExit) => void;
   const exit = new Promise<ProcessExit>((resolve) => {
@@ -225,7 +248,7 @@ export function runProcess(
     } finally {
       // If the consumer stopped early (dispose/cancel) and the child is still
       // alive, kill it — no lingering process (tree-kill for batch targets).
-      if (!exited) killChild();
+      if (!exited) await killChild();
     }
   }
 

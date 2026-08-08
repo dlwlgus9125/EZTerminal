@@ -161,16 +161,18 @@ describe('runPty (node-pty adapter)', () => {
     expect(fake.calls.killed).toBe(0);
   });
 
-  it('kill: falls back to proc.kill() if onExit has not fired 5s after the external kill', () => {
+  it('kill: awaits tree kill, then falls back to proc.kill() if onExit has not fired', async () => {
     vi.useFakeTimers();
     try {
       const fake = makeFakeIPty();
       const fakeKill = makeFakeKillTree();
       const handle = runPty('node', ptyArgv([]), emptyOpts(), fake.spawn, fakeKill.killTree);
-      handle.kill();
+      const killed = handle.kill();
       expect(fake.calls.killed).toBe(0);
-      vi.advanceTimersByTime(5000);
+      await vi.advanceTimersByTimeAsync(1_000);
       expect(fake.calls.killed).toBe(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await killed;
     } finally {
       vi.useRealTimers();
     }
@@ -184,7 +186,7 @@ describe('runPty (node-pty adapter)', () => {
       const handle = runPty('node', ptyArgv([]), emptyOpts(), fake.spawn, fakeKill.killTree);
       handle.kill();
       fake.emitExit(0); // the external kill reaching the child, driving the natural-exit path
-      vi.advanceTimersByTime(5000);
+      vi.advanceTimersByTime(2_000);
       expect(fake.calls.killed).toBe(0);
     } finally {
       vi.useRealTimers();
@@ -199,6 +201,18 @@ describe('runPty (node-pty adapter)', () => {
     expect(fakeKill.pids).toEqual([]);
     ac.abort();
     expect(fakeKill.pids).toEqual([fake.ipty.pid]);
+  });
+
+  it('does not tree-kill a naturally exited PTY PID when its signal aborts later', () => {
+    const fake = makeFakeIPty();
+    const fakeKill = makeFakeKillTree();
+    const ac = new AbortController();
+    runPty('node', ptyArgv([]), { ...emptyOpts(), signal: ac.signal }, fake.spawn, fakeKill.killTree);
+
+    fake.emitExit(0);
+    ac.abort();
+
+    expect(fakeKill.pids).toEqual([]);
   });
 
   it('an already-aborted signal kills immediately via killTree', () => {

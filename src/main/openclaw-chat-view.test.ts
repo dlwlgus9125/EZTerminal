@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const electronMocks = vi.hoisted(() => {
   type Listener = (...args: unknown[]) => void;
+  type WindowOpenHandler = (details: { url: string }) => { action: 'deny' };
 
   const loadURL = vi.fn<(url: string) => Promise<void>>();
   const openExternal = vi.fn<(url: string) => Promise<void>>();
@@ -13,7 +14,7 @@ const electronMocks = vi.hoisted(() => {
     readonly isDestroyed = vi.fn(() => false);
     readonly isLoadingMainFrame = vi.fn(() => behavior.loadingMainFrame);
     readonly reload = vi.fn();
-    readonly setWindowOpenHandler = vi.fn(() => {
+    readonly setWindowOpenHandler = vi.fn<(handler: WindowOpenHandler) => void>(() => {
       if (behavior.failViewSetup) throw new Error('view setup failed');
     });
     private readonly listeners = new Map<string, Listener[]>();
@@ -86,6 +87,24 @@ beforeEach(() => {
 });
 
 describe('OpenClawChatViewManager fail-closed visibility', () => {
+  it('routes external window opens through the injected out-of-job handoff', async () => {
+    const openExternal = vi.fn<(url: string) => Promise<void>>(async () => undefined);
+    const manager = new OpenClawChatViewManager({
+      getChatUrl: async () => 'http://127.0.0.1:18789/#token=fixture',
+      openExternal,
+      onStateChange: vi.fn(),
+    });
+    manager.attach(makeWindow());
+    await manager.ensureView();
+
+    const handler = electronMocks.instances[0]!.webContents.setWindowOpenHandler.mock.calls[0]![0];
+    expect(handler({ url: 'https://example.com/docs' })).toEqual({ action: 'deny' });
+    await flushMicrotasks();
+
+    expect(openExternal).toHaveBeenCalledWith('https://example.com/docs');
+    expect(electronMocks.openExternal).not.toHaveBeenCalled();
+  });
+
   it('hides the native view while its main-frame navigation is loading', async () => {
     let resolveLoad!: () => void;
     const pendingLoad = new Promise<void>((resolve) => {

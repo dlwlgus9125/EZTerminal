@@ -25,7 +25,7 @@ export interface Execution {
   /** Signal cancellation (AbortController) — stops streams, kills external procs. */
   abort(): void;
   /** Release resources (ResultStore / PTY child) and close the port. Idempotent. */
-  dispose(): void;
+  dispose(): void | Promise<void>;
 }
 
 export interface SessionRecord {
@@ -43,6 +43,7 @@ export type RunGate =
 
 export class SessionRegistry {
   private readonly sessions = new Map<string, SessionRecord>();
+  private shuttingDown = false;
   private readonly mainOwnedEnvironmentNames = new Set([
     'EZTERMINAL_SESSION_ID',
     'EZTERMINAL_AGENT_HOOK_DESCRIPTOR',
@@ -59,6 +60,7 @@ export class SessionRegistry {
 
   /** Create a new session with its own durable state; returns the authoritative id + cwd (B5). */
   create(cwd?: string): SessionInfo {
+    if (this.shuttingDown) throw new Error('session registry is shutting down');
     return this.createWithId(this.newId(), cwd ?? this.defaultCwd());
   }
 
@@ -66,6 +68,7 @@ export class SessionRegistry {
    * durable location survives: active executions and mutable shell state died
    * with the old process and intentionally start clean. */
   restore(sessionId: string, cwd: string): SessionInfo {
+    if (this.shuttingDown) throw new Error('session registry is shutting down');
     if (this.sessions.has(sessionId)) {
       throw new Error(`session ${sessionId} already exists`);
     }
@@ -103,17 +106,29 @@ export class SessionRegistry {
   }
 
   /** Idempotent teardown: abort + dispose every in-flight run, then drop the record (B2/B6). */
-  destroy(sessionId: string): void {
+  async destroy(sessionId: string): Promise<void> {
     const record = this.sessions.get(sessionId);
     if (!record) return;
     record.state = 'destroying';
+    const disposals: Promise<void>[] = [];
     for (const execution of record.executions) {
       execution.abort();
-      execution.dispose();
+      try {
+        disposals.push(Promise.resolve(execution.dispose()));
+      } catch (error) {
+        disposals.push(Promise.reject(error));
+      }
     }
     record.executions.clear();
     record.activeRun = null;
     this.sessions.delete(sessionId);
+    await Promise.all(disposals);
+  }
+
+  /** Stop accepting work and physically drain every registered execution. */
+  async shutdown(): Promise<void> {
+    this.shuttingDown = true;
+    await Promise.all([...this.sessions.keys()].map((sessionId) => this.destroy(sessionId)));
   }
 
   /** Gate a run: reject an unknown/destroyed session (B1) or one already busy (B4). */

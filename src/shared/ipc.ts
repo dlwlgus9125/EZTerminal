@@ -618,6 +618,12 @@ export interface ListRunsMessage {
   readonly requestId: string;
 }
 
+/** Main begins a bounded whole-interpreter drain during application quit. */
+export interface InterpreterShutdownMessage {
+  readonly type: 'interpreter-shutdown';
+  readonly requestId: string;
+}
+
 // ── Script host broker (E4 §6.1) ─────────────────────────────────────────────
 // `run-script` spawns a script-host utilityProcess for the DURATION OF ONE
 // SCRIPT (main is the only process that can fork one, C1/C2). The interpreter
@@ -753,6 +759,7 @@ export type MainToInterpreter =
   | DestroySessionsGuardedMessage
   | AttachRunMessage
   | ListRunsMessage
+  | InterpreterShutdownMessage
   | ScriptHostReadyMessage
   | ScriptHostErrorMessage
   | ScriptHostExitMessage
@@ -810,6 +817,13 @@ export interface SessionDestroyResultMessage {
   readonly destroyed: boolean;
 }
 
+/** Interpreter has rejected new work and all registered executions have
+ * completed their physical disposal attempts. */
+export interface InterpreterShutdownCompleteMessage {
+  readonly type: 'interpreter-shutdown-complete';
+  readonly requestId: string;
+}
+
 /** Interpreter acknowledgement for an attach carrying `requestId`. Frames may
  * already be queued on the transferred port, but main must not start/release
  * takeover resources until this authoritative result arrives. */
@@ -852,6 +866,7 @@ export type InterpreterToMain =
   | InterpreterRunStartedMessage
   | RunListMessage
   | SessionDestroyResultMessage
+  | InterpreterShutdownCompleteMessage
   | RunAttachResultMessage
   | SpawnScriptHostMessage
   | KillScriptHostMessage

@@ -12,6 +12,8 @@ pub mod quality;
 #[cfg(all(windows, feature = "windows-host"))]
 pub mod local_broker;
 #[cfg(all(windows, feature = "windows-host"))]
+pub mod process_guardian;
+#[cfg(all(windows, feature = "windows-host"))]
 pub mod service;
 #[cfg(all(windows, feature = "windows-host"))]
 pub mod session_agent;

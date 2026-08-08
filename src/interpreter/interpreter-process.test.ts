@@ -611,6 +611,14 @@ describe('interpreter-process — guarded session destroy', () => {
       },
       ports: [],
     });
+    await waitFor(
+      () => posted.some((message) => (
+        message as { type?: string; requestId?: string }
+      ).type === 'session-destroy-result' && (
+        message as { requestId?: string }
+      ).requestId === 'destroy-current'),
+      'guarded session physical cleanup acknowledgement',
+    );
     expect(posted).toContainEqual({
       type: 'session-destroy-result',
       requestId: 'destroy-current',
@@ -618,7 +626,7 @@ describe('interpreter-process — guarded session destroy', () => {
       destroyed: true,
     });
     expect(primary.closed).toBe(true);
-  });
+  }, 15_000);
 
   it('treats an already-absent session as idempotent success', async () => {
     const { handler, posted } = await importInterpreter();
@@ -631,6 +639,14 @@ describe('interpreter-process — guarded session destroy', () => {
       },
       ports: [],
     });
+    await waitFor(
+      () => posted.some((message) => (
+        message as { type?: string; requestId?: string }
+      ).type === 'session-destroy-result' && (
+        message as { requestId?: string }
+      ).requestId === 'destroy-missing'),
+      'missing session destroy acknowledgement',
+    );
     expect(posted).toContainEqual({
       type: 'session-destroy-result',
       requestId: 'destroy-missing',

@@ -147,7 +147,7 @@ describe('SessionRegistry — canRun gating (B1 no lazy-create, B4 serialize)', 
 });
 
 describe('SessionRegistry — destroy owns in-flight executions (B2/B6)', () => {
-  it('aborts + disposes every open execution, then drops the session; idempotent', () => {
+  it('aborts + disposes every open execution, then drops the session; idempotent', async () => {
     const reg = new SessionRegistry(ids(), () => 'C:\\start');
     const { sessionId } = reg.create();
     const record = reg.get(sessionId)!;
@@ -157,7 +157,7 @@ describe('SessionRegistry — destroy owns in-flight executions (B2/B6)', () => 
     reg.settle(record, running); // running finished, still paging
     reg.begin(record, paging);
 
-    reg.destroy(sessionId);
+    await reg.destroy(sessionId);
 
     for (const exec of [running, paging]) {
       expect(exec.abort).toHaveBeenCalledOnce();
@@ -167,6 +167,35 @@ describe('SessionRegistry — destroy owns in-flight executions (B2/B6)', () => 
     expect(reg.size).toBe(0);
 
     // Idempotent: destroying again is a no-op (does not throw).
-    expect(() => reg.destroy(sessionId)).not.toThrow();
+    await expect(reg.destroy(sessionId)).resolves.toBeUndefined();
+  });
+
+  it('shutdown freezes new sessions and waits for asynchronous process cleanup', async () => {
+    const reg = new SessionRegistry(ids(), () => 'C:\\start');
+    const { sessionId } = reg.create();
+    const record = reg.get(sessionId)!;
+    let releaseDispose!: () => void;
+    const dispose = vi.fn(() => new Promise<void>((resolve) => {
+      releaseDispose = resolve;
+    }));
+    const execution: Execution = { abort: vi.fn(), dispose };
+    reg.begin(record, execution);
+
+    let settled = false;
+    const shutdown = reg.shutdown().then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+
+    expect(execution.abort).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(settled).toBe(false);
+    expect(reg.size).toBe(0);
+    expect(() => reg.create()).toThrow(/shutting down/);
+    expect(() => reg.restore('late', 'C:\\late')).toThrow(/shutting down/);
+
+    releaseDispose();
+    await shutdown;
+    expect(settled).toBe(true);
   });
 });

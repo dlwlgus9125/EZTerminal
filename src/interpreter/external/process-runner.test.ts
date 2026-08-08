@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import type { SpawnOptions } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { runProcess, type RunOptions, type SpawnFn } from './process-runner';
 
@@ -59,6 +59,25 @@ describe('runProcess', () => {
     await collectText(proc.bytes);
     const { code } = await proc.exit;
     expect(code).toBe(3);
+  });
+
+  it('does not tree-kill a naturally exited PID when the session aborts later', async () => {
+    const ac = new AbortController();
+    const killTree = vi.fn<(pid: number) => Promise<void>>(async () => undefined);
+    const proc = runProcess(
+      process.execPath,
+      ['-e', 'process.exit(0)'],
+      opts(ac.signal),
+      undefined,
+      killTree,
+    );
+    await collectText(proc.bytes);
+    await proc.exit;
+
+    ac.abort();
+    await Promise.resolve();
+
+    expect(killTree).not.toHaveBeenCalled();
   });
 
   it('KILLS the child on abort — the OS process actually terminates (no leak)', async () => {
