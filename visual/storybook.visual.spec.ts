@@ -620,6 +620,9 @@ const desktopHandoffAxisCases = [
     locale: "en",
     scale: 100,
     sidebarMode: "reflow",
+    // Otherwise-identical Windows runners can rasterize one DirectWrite
+    // glyph-edge pixel across Playwright's perceptual threshold.
+    maxDiffPixels: 1,
   },
 ] as const;
 
@@ -811,6 +814,9 @@ test.describe("desktop handoff responsive and interaction axes", () => {
         mask: "maskSelectors" in handoffCase
           ? handoffCase.maskSelectors.map((selector) => page.locator(selector))
           : [],
+        ...("maxDiffPixels" in handoffCase
+          ? { maxDiffPixels: handoffCase.maxDiffPixels }
+          : {}),
       });
     });
   }
