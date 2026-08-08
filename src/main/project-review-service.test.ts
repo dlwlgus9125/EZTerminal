@@ -10,6 +10,7 @@ import { ProjectReviewService } from './project-review-service';
 import { ProjectWorkspaceService } from './project-workspace-service';
 
 const temporaryDirectories: string[] = [];
+const temporaryLinks: string[] = [];
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, {
@@ -89,6 +90,10 @@ async function fixture(): Promise<{
 }
 
 afterEach(async () => {
+  await Promise.all(temporaryLinks.splice(0).map((link) =>
+    fs.unlink(link).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    })));
   await Promise.all(temporaryDirectories.splice(0).map((directory) =>
     fs.rm(directory, { recursive: true, force: true })));
 });
@@ -204,6 +209,16 @@ describe('ProjectReviewService', () => {
       nestedFile,
       'context before\nconst nested = 2;\ncontext after\n',
     );
+    const linkedBase = `${path.dirname(test.root)}-provider-link`;
+    await fs.symlink(path.dirname(test.root), linkedBase, process.platform === 'win32' ? 'junction' : 'dir');
+    temporaryLinks.push(linkedBase);
+    const providerNestedFile = path.join(
+      linkedBase,
+      path.basename(test.root),
+      repositoryRelativePath,
+      'src',
+      'app.ts',
+    );
     const request = {
       projectId: test.projectId,
       rootId: test.rootId,
@@ -216,7 +231,7 @@ describe('ProjectReviewService', () => {
       provider: 'codex',
       turnId: 'turn-nested-context',
       changes: [{
-        path: nestedFile,
+        path: providerNestedFile,
         kind: 'modified',
         diff: '@@ -1,3 +1,3 @@\n context before\n-const nested = 1;\n+const nested = 2;\n context after',
       }],

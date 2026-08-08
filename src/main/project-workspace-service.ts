@@ -51,6 +51,12 @@ function pathKey(value: string): string {
   return process.platform === 'win32' ? normalized.toLocaleLowerCase('en-US') : normalized;
 }
 
+function absoluteRelativePath(rootPath: string, absolutePath: string): string | null {
+  const relative = path.relative(path.resolve(rootPath), absolutePath);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return null;
+  return relative ? relative.split(path.sep).join('/') : '';
+}
+
 function rootIdForPath(rootPath: string): string {
   return createHash('sha256').update(pathKey(rootPath)).digest('hex').slice(0, 24);
 }
@@ -332,13 +338,23 @@ export class ProjectWorkspaceService {
         .sort((left, right) => right.displayPath.length - left.displayPath.length);
       for (const workspace of workspaces) {
         if (!rootsById.has(workspace.rootId)) continue;
-        const relative = path.relative(path.resolve(workspace.displayPath), absolutePath);
-        if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) continue;
+        const lexicalRelativePath = absoluteRelativePath(workspace.displayPath, absolutePath);
         if (workspace.access === 'authorization-required') {
-          return { ok: false, error: 'authorization-required' };
+          if (lexicalRelativePath !== null) return { ok: false, error: 'authorization-required' };
+          continue;
         }
-        if (workspace.access !== 'granted') return { ok: false, error: 'workspace-not-found' };
-        const relativePath = relative ? relative.split(path.sep).join('/') : '';
+        if (workspace.access !== 'granted') {
+          if (lexicalRelativePath !== null) return { ok: false, error: 'workspace-not-found' };
+          continue;
+        }
+        const root = await this.resolveRoot(projectId, workspace.rootId, workspace.workspaceId);
+        if (!root.ok) {
+          if (lexicalRelativePath !== null) return root;
+          continue;
+        }
+        const relativePath = lexicalRelativePath
+          ?? await this.relativePathFromRootAlias(root.value.rootPath, absolutePath);
+        if (relativePath === null) continue;
         const resolved = await this.resolveProjectPath({
           projectId,
           rootId: workspace.rootId,
@@ -358,6 +374,31 @@ export class ProjectWorkspaceService {
       }
     }
     return { ok: false, error: 'path-outside-root' };
+  }
+
+  private async relativePathFromRootAlias(rootPath: string, absolutePath: string): Promise<string | null> {
+    let current = absolutePath;
+    for (;;) {
+      try {
+        const before = await fs.lstat(current);
+        if (!before.isSymbolicLink() && before.isDirectory()) {
+          const actual = await fs.realpath(current);
+          const after = await fs.lstat(current);
+          if (!after.isSymbolicLink()
+            && after.isDirectory()
+            && sameIdentity(before, after)
+            && pathKey(actual) === pathKey(rootPath)) {
+            return absoluteRelativePath(current, absolutePath);
+          }
+        }
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException | undefined)?.code;
+        if (code !== 'ENOENT' && code !== 'ENOTDIR') return null;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) return null;
+      current = parent;
+    }
   }
 
   async listDirectory(request: unknown): Promise<ProjectDirectoryResult> {

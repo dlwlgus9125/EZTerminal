@@ -652,13 +652,23 @@ export class ProjectReviewService {
         providerTruncated = true;
         break;
       }
-      const projectRelativePath = this.providerRelativePath(providerChange.path, root.value.rootPath);
+      const projectRelativePath = await this.providerRelativePath(
+        providerChange.path,
+        request,
+        root.value.rootPath,
+        root.value.workspace.workspaceId,
+      );
       const relativePath = projectRelativePath
         ? relativeWithinPrefix(projectRelativePath, request.repositoryRelativePath ?? '')
         : null;
       if (!relativePath) continue;
       const previousProjectRelativePath = providerChange.previousPath
-        ? this.providerRelativePath(providerChange.previousPath, root.value.rootPath)
+        ? await this.providerRelativePath(
+            providerChange.previousPath,
+            request,
+            root.value.rootPath,
+            root.value.workspace.workspaceId,
+          )
         : null;
       const previousRelativePath = previousProjectRelativePath
         ? relativeWithinPrefix(previousProjectRelativePath, request.repositoryRelativePath ?? '') ?? undefined
@@ -1007,15 +1017,26 @@ export class ProjectReviewService {
     ]);
   }
 
-  private providerRelativePath(providerPath: string, rootPath: string): string | null {
-    const candidate = path.isAbsolute(providerPath)
-      ? path.normalize(providerPath)
-      : path.resolve(rootPath, providerPath);
-    const relative = path.relative(rootPath, candidate);
-    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+  private async providerRelativePath(
+    providerPath: string,
+    request: NormalizedProjectReviewRequest,
+    rootPath: string,
+    workspaceId: string,
+  ): Promise<string | null> {
+    if (!path.isAbsolute(providerPath)) {
+      return relativePathInside(rootPath, path.resolve(rootPath, providerPath));
+    }
+    const resolved = await this.workspace.resolveAbsoluteProjectPath({
+      projectId: request.projectId,
+      absolutePath: providerPath,
+    });
+    if (!resolved.ok
+      || resolved.request.rootId !== request.rootId
+      || resolved.request.workspaceId !== workspaceId
+      || !resolved.request.relativePath) {
       return null;
     }
-    return normalizeRepoPath(relative);
+    return resolved.request.relativePath;
   }
 
   private providerKey(request: NormalizedProjectReviewRequest, revision: string): string {

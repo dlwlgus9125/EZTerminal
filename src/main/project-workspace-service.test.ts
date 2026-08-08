@@ -236,6 +236,37 @@ describe('ProjectWorkspaceService', () => {
       file: { content: 'visible content\n' },
     });
 
+    const canonicalStore = new AgentProjectStore(path.join(actualParent, 'canonical-user-data'));
+    await canonicalStore.init();
+    const saved = await canonicalStore.upsert({
+      name: 'Canonical fixture',
+      primaryRoot: test.root,
+      additionalRoots: [],
+      pinned: false,
+    });
+    if (!saved.ok) throw new Error('canonical fixture project failed');
+    const canonicalService = new ProjectWorkspaceService(canonicalStore);
+    const canonicalDescription = canonicalService.describeProject(saved.project.projectId);
+    if (!canonicalDescription.ok) throw new Error('canonical fixture descriptor failed');
+    await expect(canonicalService.resolveAbsoluteProjectPath({
+      projectId: saved.project.projectId,
+      absolutePath: path.join(test.root, 'visible.txt'),
+    })).resolves.toMatchObject({
+      ok: true,
+      request: {
+        rootId: canonicalDescription.project.roots[0]!.rootId,
+        relativePath: 'visible.txt',
+      },
+    });
+
+    const directRootLink = path.join(actualParent, 'direct-root-link');
+    await fs.symlink(test.root, directRootLink, process.platform === 'win32' ? 'junction' : 'dir');
+    temporaryPaths.push({ path: directRootLink, kind: 'link' });
+    await expect(canonicalService.resolveAbsoluteProjectPath({
+      projectId: saved.project.projectId,
+      absolutePath: path.join(directRootLink, 'visible.txt'),
+    })).resolves.toEqual({ ok: false, error: 'path-outside-root' });
+
     const outside = path.join(actualParent, 'outside');
     await fs.mkdir(outside);
     await fs.writeFile(path.join(outside, 'secret.txt'), 'outside');
