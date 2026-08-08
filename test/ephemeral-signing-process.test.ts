@@ -16,6 +16,11 @@ const androidSigningChild = path.resolve(
   'scripts',
   'invoke-android-gradle-signing-child.ps1',
 );
+// Each invocation cold-compiles the Job Object helper in a separate PowerShell
+// process. Keep Vitest's outer budget above the helper's bounded child wait and
+// 30-second cleanup so a loaded Windows runner reports the specific helper
+// error instead of a scheduler-dependent test timeout.
+const EPHEMERAL_PROCESS_TEST_TIMEOUT_MS = 60_000;
 const temporaryRoots: string[] = [];
 
 function quotePowerShell(value: string): string {
@@ -115,7 +120,7 @@ describe.runIf(process.platform === 'win32')(
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout.trim()).toBe('SIGNING_CHILD_CLEAN');
-    }, 20_000);
+    }, EPHEMERAL_PROCESS_TEST_TIMEOUT_MS);
 
     it('kills secret-bearing descendants after a successful root exit', () => {
       const root = mkdtempSync(path.join(tmpdir(), 'ezterminal-signing-child-'));
@@ -163,7 +168,7 @@ describe.runIf(process.platform === 'win32')(
       expect(result.stdout.trim()).toBe('SIGNING_DESCENDANTS_CLEAN');
       expect(pidEvidence[1]).toBe('True');
       expect(survivors).toEqual([]);
-    }, 30_000);
+    }, EPHEMERAL_PROCESS_TEST_TIMEOUT_MS);
 
     it('removes signing values after a nonzero child exit', () => {
       const result = runPowerShell(`
@@ -186,7 +191,7 @@ describe.runIf(process.platform === 'win32')(
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout.trim()).toBe('SIGNING_FAILURE_CLEAN');
-    }, 20_000);
+    }, EPHEMERAL_PROCESS_TEST_TIMEOUT_MS);
 
     it('forwards bounded stdout and stderr diagnostics with secrets redacted', () => {
       const root = mkdtempSync(path.join(tmpdir(), 'ezterminal-signing-child-'));
@@ -240,7 +245,7 @@ describe.runIf(process.platform === 'win32')(
       expect(result.stdout).toContain('SIGNING_DIAGNOSTIC_CLEAN');
       expect(result.stdout).not.toContain('ephemeral-secret');
       expect(existsSync(diagnosticLog)).toBe(false);
-    }, 30_000);
+    }, EPHEMERAL_PROCESS_TEST_TIMEOUT_MS);
 
     it('kills a timed-out signing process and removes its signing values', () => {
       const result = runPowerShell(`
@@ -262,7 +267,7 @@ describe.runIf(process.platform === 'win32')(
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout.trim()).toBe('SIGNING_TIMEOUT_CLEAN');
-    }, 20_000);
+    }, EPHEMERAL_PROCESS_TEST_TIMEOUT_MS);
 
     it('kills a cancelled signing process tree and removes its signing values', () => {
       const root = mkdtempSync(path.join(tmpdir(), 'ezterminal-signing-child-'));
@@ -321,6 +326,6 @@ describe.runIf(process.platform === 'win32')(
       expect(result.stdout.trim()).toBe('SIGNING_CANCELLATION_CLEAN');
       expect(pidEvidence[2]).toBe('True');
       expect(survivors).toEqual([]);
-    }, 30_000);
+    }, EPHEMERAL_PROCESS_TEST_TIMEOUT_MS);
   },
 );
