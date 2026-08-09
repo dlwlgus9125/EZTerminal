@@ -278,10 +278,17 @@ describe('ProjectWorkspaceService', () => {
     })).resolves.toEqual({ ok: false, error: 'symlink-not-supported' });
   });
 
-  it('requires durable consent for an external worktree and revalidates its Git identity on every read', async () => {
-    const test = await fixture();
+  it('requires durable consent for an external worktree and returns its canonical launch path', async () => {
+    const actualParent = await fs.mkdtemp(path.join(os.tmpdir(), 'ez-project-workspace-external-parent-'));
+    temporaryPaths.push({ path: actualParent, kind: 'directory' });
+    const linkedParent = `${actualParent}-link`;
+    await fs.symlink(actualParent, linkedParent, process.platform === 'win32' ? 'junction' : 'dir');
+    temporaryPaths.push({ path: linkedParent, kind: 'link' });
+    const test = await fixture(linkedParent);
     const external = path.join(test.base, 'external-worktree');
     await fs.mkdir(external);
+    const canonicalExternal = await fs.realpath(external);
+    expect(canonicalExternal).not.toBe(path.resolve(external));
     await fs.writeFile(path.join(external, 'external.txt'), 'approved content\n');
     let externalRepoId = 'repo-fixture';
     const worktrees = (): readonly WorktreeInfo[] => [{
@@ -351,8 +358,8 @@ describe('ProjectWorkspaceService', () => {
         rootId: test.rootId,
         workspaceId: 'external-worktree',
       },
-      cwd: external,
-      roots: [external],
+      cwd: canonicalExternal,
+      roots: [canonicalExternal],
     });
 
     const reloadedStore = new ProjectWorkspaceAccessStore(test.userData);
