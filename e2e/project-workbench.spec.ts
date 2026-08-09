@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { launchApp } from './launch-app';
@@ -194,6 +194,7 @@ async function flushLayout(window: Page): Promise<void> {
 
 test('project new session preserves fixed-root terminal identity across rename and restart', async () => {
   const { projectRoot, userDataDir } = createProjectFixture();
+  const canonicalProjectRoot = realpathSync(projectRoot);
   const app = await launchApp(userDataDir);
   const window = await app.firstWindow();
   await window.setViewportSize({ width: 1440, height: 900 });
@@ -258,7 +259,7 @@ test('project new session preserves fixed-root terminal identity across rename a
   const panes = window.getByTestId('pane');
   await expect.poll(async () => panes.evaluateAll((elements, expectedCwd) => elements.filter(
     (element) => element.querySelector('[data-testid="prompt-cwd"]')?.getAttribute('title') === expectedCwd,
-  ).length, projectRoot), {
+  ).length, canonicalProjectRoot), {
     timeout: 15_000,
     message: 'Every project terminal session should resolve to the project root in main',
   }).toBe(3);
@@ -266,7 +267,7 @@ test('project new session preserves fixed-root terminal identity across rename a
   const beforeRestart = await panes.evaluateAll((elements, expectedCwd) => elements
     .filter((element) => element.querySelector('[data-testid="prompt-cwd"]')
       ?.getAttribute('title') === expectedCwd)
-    .map((element) => element.getAttribute('data-session-id')), projectRoot);
+    .map((element) => element.getAttribute('data-session-id')), canonicalProjectRoot);
   expect(beforeRestart).toHaveLength(3);
   expect(beforeRestart.every(Boolean)).toBe(true);
   await flushLayout(window);
@@ -291,14 +292,14 @@ test('project new session preserves fixed-root terminal identity across rename a
   const restoredPanes = restored.getByTestId('pane');
   await expect.poll(async () => restoredPanes.evaluateAll((elements, expectedCwd) => elements.filter(
     (element) => element.querySelector('[data-testid="prompt-cwd"]')?.getAttribute('title') === expectedCwd,
-  ).length, projectRoot), {
+  ).length, canonicalProjectRoot), {
     timeout: 15_000,
     message: 'Restored project terminals should resolve their safe metadata to the project root',
   }).toBe(3);
   const afterRestart = await restoredPanes.evaluateAll((elements, expectedCwd) => elements
     .filter((element) => element.querySelector('[data-testid="prompt-cwd"]')
       ?.getAttribute('title') === expectedCwd)
-    .map((element) => element.getAttribute('data-session-id')), projectRoot);
+    .map((element) => element.getAttribute('data-session-id')), canonicalProjectRoot);
   expect(afterRestart).toHaveLength(3);
   expect(afterRestart.every(Boolean)).toBe(true);
   for (const restoredSessionId of afterRestart) {
