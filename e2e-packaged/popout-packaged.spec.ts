@@ -1,4 +1,4 @@
-import { chromium, expect, test, type Browser } from '@playwright/test';
+import { chromium, expect, test, type Browser, type Page } from '@playwright/test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -37,6 +37,23 @@ async function connectToPackagedApp(port: number): Promise<Browser> {
     }
   }
   throw new Error(`packaged app CDP endpoint unavailable: ${String(lastError)}`);
+}
+
+async function waitForPackagedRendererPage(browser: Browser): Promise<Page> {
+  const deadline = Date.now() + 20_000;
+  let observedUrls: string[] = [];
+  while (Date.now() < deadline) {
+    const pages = browser.contexts().flatMap((context) => context.pages());
+    observedUrls = pages.map((page) => page.url());
+    const renderer = pages.find((page) => (
+      page.url() === 'https://ezterminal.invalid/index.html'
+    ));
+    if (renderer) return renderer;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `packaged renderer page unavailable; observed URLs: ${JSON.stringify(observedUrls)}`,
+  );
 }
 
 function killTree(child: ChildProcess | undefined): void {
@@ -278,11 +295,8 @@ test('packaged EXE: Agent Session dragged outside with the real Windows pointer 
   let browser: Browser | undefined;
   try {
     browser = await connectToPackagedApp(port);
-    const context = browser.contexts()[0];
-    const page = context.pages().find((candidate) => (
-      candidate.url() === 'https://ezterminal.invalid/index.html'
-    ));
-    if (!page) throw new Error('packaged renderer page missing');
+    const page = await waitForPackagedRendererPage(browser);
+    const context = page.context();
     if (!child.pid) throw new Error('packaged process id unavailable');
     placeProcessMainWindowForPointerTest(child.pid);
     await expect.poll(() => page.evaluate(() => (
