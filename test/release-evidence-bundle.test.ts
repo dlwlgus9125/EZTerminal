@@ -47,6 +47,12 @@ function runPowerShell(source: string) {
   );
 }
 
+function powerShellDiagnostics(result: ReturnType<typeof runPowerShell>): string {
+  return `${result.stdout}\n${result.stderr}`
+    .replaceAll('_x000D__x000A_', '')
+    .replace(/<\/S>\s*<S S="Error">/g, '');
+}
+
 function runPowerShellWithoutGetFileHash(source: string) {
   return runPowerShell(
     'Import-Module Microsoft.PowerShell.Utility; '
@@ -225,7 +231,7 @@ describe('release evidence bundle helper', () => {
     const destination = path.join(root, 'extra-extracted');
     const extracted = extractBundle(bundle, destination, evidenceNames);
     expect(extracted.status).not.toBe(0);
-    expect(`${extracted.stdout}\n${extracted.stderr}`).toContain(
+    expect(powerShellDiagnostics(extracted)).toContain(
       'Evidence bundle entry count mismatch',
     );
     expect(existsSync(destination)).toBe(false);
@@ -264,7 +270,7 @@ describe('release evidence bundle helper', () => {
     const destination = path.join(root, 'traversal-extracted');
     const extracted = extractBundle(bundle, destination, ['escape.json']);
     expect(extracted.status).not.toBe(0);
-    expect(`${extracted.stdout}\n${extracted.stderr}`).toContain(
+    expect(powerShellDiagnostics(extracted)).toContain(
       'unsafe or duplicate entry name',
     );
     expect(existsSync(destination)).toBe(false);
@@ -289,7 +295,7 @@ describe('release evidence bundle helper', () => {
     );
 
     expect(extracted.status).not.toBe(0);
-    expect(`${extracted.stdout}\n${extracted.stderr}`).toContain(
+    expect(powerShellDiagnostics(extracted)).toContain(
       'decompressed byte limit',
     );
     expect(existsSync(destination)).toBe(false);
@@ -302,7 +308,7 @@ describe('release evidence bundle helper', () => {
     const created = createBundle(bundle, sources, evidenceNames);
 
     expect(created.status).not.toBe(0);
-    expect(`${created.stdout}\n${created.stderr}`).toContain(
+    expect(powerShellDiagnostics(created)).toContain(
       'protected-secret transport limit of 30000',
     );
     expect(existsSync(bundle)).toBe(false);

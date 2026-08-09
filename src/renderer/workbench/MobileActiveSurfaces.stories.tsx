@@ -17,7 +17,7 @@ import { ThemeMenu } from '../../../mobile/src/ThemeMenu';
 import type { DesktopPresentationAdapter, DesktopPresentationSnapshot } from '../../../mobile/src/remote-desktop-presentation-adapter';
 import type { WsEzTerminalTransport } from '../../../mobile/src/transport/ws-ezterminal';
 import type { AgentActivitySnapshot } from '../../shared/agent';
-import type { AgentHistorySessionSummary } from '../../shared/agent-history';
+import type { AgentHistorySessionSummary, AgentProjectSummary } from '../../shared/agent-history';
 import type { EzTerminalApi, SystemStatsSnapshot } from '../../shared/ipc';
 import { AppI18nProvider } from '../i18n';
 import '../mobile-shared.css';
@@ -28,6 +28,7 @@ import './mobile-shell-story.css';
 
 type ActiveMobileSurface =
   | 'agents'
+  | 'agents-overflow'
   | 'agents-offline'
   | 'files'
   | 'stats'
@@ -101,6 +102,53 @@ const AGENTS: AgentActivitySnapshot = {
   ],
 };
 
+const AGENT_PROJECTS: readonly AgentProjectSummary[] = [
+  {
+    projectId: 'project-ezterminal',
+    name: 'EZTerminal',
+    primaryRoot: 'C:/Workspace/ezterminal',
+    additionalRoots: [],
+    pinned: true,
+    saved: true,
+    sessionCount: 4,
+    providers: ['codex', 'claude'],
+    lastActiveAt: NOW - 20_000,
+  },
+  {
+    projectId: 'project-mobile-shell',
+    name: 'Mobile shell',
+    primaryRoot: 'C:/Workspace/mobile-shell',
+    additionalRoots: ['C:/Workspace/shared-ui'],
+    pinned: false,
+    saved: true,
+    sessionCount: 2,
+    providers: ['codex'],
+    lastActiveAt: NOW - 120_000,
+  },
+  {
+    projectId: 'project-release',
+    name: 'Release validation',
+    primaryRoot: 'D:/Projects/release-validation',
+    additionalRoots: [],
+    pinned: false,
+    saved: true,
+    sessionCount: 1,
+    providers: ['claude'],
+    lastActiveAt: NOW - 240_000,
+  },
+  {
+    projectId: 'project-observed',
+    name: 'Observed workspace',
+    primaryRoot: 'D:/Projects/observed-workspace',
+    additionalRoots: [],
+    pinned: false,
+    saved: false,
+    sessionCount: 1,
+    providers: ['codex'],
+    lastActiveAt: NOW - 360_000,
+  },
+];
+
 const HISTORY_SESSION: AgentHistorySessionSummary = {
   historyId: 'history-review',
   projectId: 'project-ezterminal',
@@ -116,6 +164,8 @@ const HISTORY_SESSION: AgentHistorySessionSummary = {
 const STORY_TRANSPORT = {
   connectedHost: '100.86.12.4',
   supportsAgentProjectManagement: true,
+  listAgentProjects: async () => ({ items: AGENT_PROJECTS, nextCursor: null }),
+  listAgentHistorySessions: async () => ({ items: [], nextCursor: null }),
   listFiles: async (path: string) => ({
     ok: true as const,
     path,
@@ -233,7 +283,9 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
 
   switch (surface) {
     case 'agents':
-    case 'agents-offline':
+    case 'agents-overflow':
+    case 'agents-offline': {
+      const overflow = surface === 'agents-overflow';
       content = (
         <MobileAgentView
           snapshot={AGENTS}
@@ -243,9 +295,13 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
           onFocusSession={close}
           onSendFollowup={async () => ({ ok: true })}
           onDecideApproval={async () => ({ ok: true })}
+          transport={overflow ? STORY_TRANSPORT : undefined}
+          onResumeHistory={overflow ? async () => undefined : undefined}
+          onLaunchAgent={overflow ? async () => undefined : undefined}
         />
       );
       break;
+    }
     case 'files':
       content = (
         <MobileFileView
@@ -354,6 +410,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Agents: Story = {};
+export const AgentsOverflow: Story = { args: { surface: 'agents-overflow' } };
 export const AgentsOffline: Story = { args: { surface: 'agents-offline' } };
 export const Files: Story = { args: { surface: 'files' } };
 export const Stats: Story = { args: { surface: 'stats' } };

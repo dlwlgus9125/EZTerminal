@@ -1080,6 +1080,90 @@ const activeMobileSurfaceCases = [
   },
 ] as const;
 
+test.describe("mobile Agents touch scroll contract", () => {
+  test.use({ hasTouch: true, isMobile: true });
+
+  for (const viewport of [
+    { width: 360, height: 800 },
+    { width: 412, height: 915 },
+    { width: 915, height: 412 },
+  ]) {
+    test(`${viewport.width}x${viewport.height} drags from the first to the last Agents content`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await openStory(page, "compositions-mobile-active-surfaces--agents-overflow", {
+        theme: "matrix",
+        locale: "en",
+        density: "adaptive",
+        motion: "reduced",
+      });
+
+      const scrollRegion = page.getByTestId("mobile-agent-scroll-region");
+      const header = page.locator(".mob-page__head");
+      const filters = page.locator(".mob-agent-filters");
+      const finalAgent = page.getByTestId("agent-card").last();
+      await expect(page.locator(".mob-agent-project").last()).toBeAttached();
+      await expect(header).toBeVisible();
+      await expect(filters).toBeVisible();
+
+      const initial = await scrollRegion.evaluate((element) => ({
+        clientHeight: element.clientHeight,
+        documentScrollTop: document.scrollingElement?.scrollTop ?? 0,
+        scrollHeight: element.scrollHeight,
+        scrollTop: element.scrollTop,
+      }));
+      expect(initial.scrollHeight).toBeGreaterThan(initial.clientHeight);
+
+      const box = await scrollRegion.boundingBox();
+      expect(box, "Agents scroll region must have measurable geometry").not.toBeNull();
+      const session = await page.context().newCDPSession(page);
+      const x = Math.round(box!.x + box!.width - 20);
+      const startY = Math.round(box!.y + box!.height - 24);
+      const endY = Math.round(box!.y + 24);
+
+      for (let gesture = 0; gesture < 8; gesture += 1) {
+        await session.send("Input.dispatchTouchEvent", {
+          type: "touchStart",
+          touchPoints: [{ x, y: startY, radiusX: 2, radiusY: 2, force: 1, id: 1 }],
+        });
+        for (let step = 1; step <= 12; step += 1) {
+          await session.send("Input.dispatchTouchEvent", {
+            type: "touchMove",
+            touchPoints: [{
+              x,
+              y: Math.round(startY + ((endY - startY) * step) / 12),
+              radiusX: 2,
+              radiusY: 2,
+              force: 1,
+              id: 1,
+            }],
+          });
+          await page.waitForTimeout(30);
+        }
+        await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await page.waitForTimeout(100);
+        const remaining = await scrollRegion.evaluate(
+          (element) => element.scrollHeight - element.clientHeight - element.scrollTop,
+        );
+        if (remaining <= 1) break;
+      }
+
+      await expect.poll(() => scrollRegion.evaluate(
+        (element) => element.scrollHeight - element.clientHeight - element.scrollTop,
+      )).toBeLessThanOrEqual(1);
+      await expect(finalAgent).toBeInViewport();
+      await expect(header).toBeVisible();
+      await expect(filters).toBeVisible();
+      await expect(page.getByTestId("mobile-toast")).toHaveCount(0);
+      expect(await page.evaluate(() => document.scrollingElement?.scrollTop ?? 0)).toBe(initial.documentScrollTop);
+
+      await page.waitForTimeout(500);
+      await page.getByTestId("agent-filter-running").tap();
+      await expect(page.getByTestId("agent-filter-running")).toHaveAttribute("aria-pressed", "true");
+      await expect(page.getByTestId("agent-card")).toHaveCount(1);
+    });
+  }
+});
+
 test.describe("active mobile surface visual contracts", () => {
   for (const visualCase of activeMobileSurfaceCases) {
     test(visualCase.name, async ({ page }) => {

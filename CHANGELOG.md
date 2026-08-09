@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [1.0.29] - 2026-08-10
+
+### Added
+
+- Added a deterministic overflowing mobile Agents Storybook surface and real
+  touch-drag regression coverage at portrait and landscape mobile viewports.
+
+### Fixed
+
+- Constrained the mobile page scaffold to its viewport so the Agents content
+  body owns vertical scrolling, while the header and filters remain available
+  and existing taps continue to work after a drag.
+
+See [1.0.29 release notes](docs/release/release-notes-1.0.29.md).
+
 ## [1.0.28] - 2026-08-09
 
 ### Added

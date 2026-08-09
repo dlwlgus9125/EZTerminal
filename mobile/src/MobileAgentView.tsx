@@ -290,7 +290,7 @@ export function MobileAgentView({
         ))}
       </div>
 
-      <div className="mob-page__body">
+      <div className="mob-page__body" data-testid="mobile-agent-scroll-region">
         <div className="mob-column">
           {[
             ...visible.filter((item) => bucketOf(item.status) === 'attention'),
