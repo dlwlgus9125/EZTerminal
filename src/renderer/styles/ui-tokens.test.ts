@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { calculateContrastRatio } from '../theme-contrast';
+import { THEMES } from '../themes';
 
 const css = readFileSync(resolve(process.cwd(), 'src/renderer/styles/ui-tokens.css'), 'utf8');
 const desktopFoundation = readFileSync(resolve(process.cwd(), 'src/renderer/index.css'), 'utf8');
@@ -82,6 +83,72 @@ describe('UI token contract', () => {
       '--ui-danger',
     ]) {
       expect(declaration(token), `${token} must be declared`).toBeDefined();
+    }
+  });
+
+  const UI_ROLE_TOKENS = {
+    canvas: '--ui-canvas',
+    surface: '--ui-surface',
+    surfaceRaised: '--ui-surface-raised',
+    surfaceInset: '--ui-surface-inset',
+    textPrimary: '--ui-text-primary',
+    textSecondary: '--ui-text-secondary',
+    textMuted: '--ui-text-muted',
+    textInverse: '--ui-text-inverse',
+    borderSubtle: '--ui-border-subtle',
+    borderStrong: '--ui-border-strong',
+    accent: '--ui-accent',
+    onAccent: '--ui-on-accent',
+    focus: '--ui-focus',
+    info: '--ui-info',
+    success: '--ui-success',
+    warning: '--ui-warning',
+    danger: '--ui-danger',
+  } as const;
+
+  it('keeps every built-in semantic UI role identical in TypeScript and CSS', () => {
+    for (const theme of ['dark', 'light', 'high-contrast', 'matrix'] as const) {
+      for (const [role, token] of Object.entries(UI_ROLE_TOKENS)) {
+        expect(
+          scopedDeclaration(`[data-theme='${theme}']`, token),
+          `${theme} ${token} must match the runtime registry`,
+        ).toBe(THEMES[theme].ui![role as keyof typeof UI_ROLE_TOKENS]);
+      }
+    }
+  });
+
+  it('keeps derived RGB channels and fixed media-plane roles in the shared foundation', () => {
+    for (const theme of ['dark', 'light', 'high-contrast', 'matrix'] as const) {
+      for (const role of ['accent', 'info', 'success', 'warning', 'danger'] as const) {
+        expect(scopedDeclaration(`[data-theme='${theme}']`, `--ui-${role}-rgb`)).toMatch(
+          /^\d{1,3}, \d{1,3}, \d{1,3}$/,
+        );
+      }
+    }
+    expect(declaration('--ui-media-canvas')).toBe('#000000');
+    expect(declaration('--ui-media-overlay')).toBe('rgba(0, 0, 0, 0.82)');
+    expect(declaration('--ui-on-media')).toBe('#ffffff');
+  });
+
+  it('keeps every built-in terminal variable identical across desktop and mobile foundations', () => {
+    const darkTokens = [
+      '--term-bg', '--term-bg-raised', '--term-bg-inset', '--term-bg-hover',
+      '--term-border', '--term-border-faint', '--term-fg', '--term-fg-bright',
+      '--term-fg-dim', '--term-fg-faint', '--term-green', '--term-red',
+      '--term-amber', '--term-cyan', '--term-blue', '--term-selection',
+    ];
+    for (const token of darkTokens) {
+      expect(scopedDeclarationFrom(desktopFoundation, ':root', token), `desktop dark ${token}`)
+        .toBe(scopedDeclarationFrom(mobileFoundation, ':root', token));
+    }
+
+    for (const theme of ['light', 'high-contrast', 'matrix'] as const) {
+      for (const [token, value] of Object.entries(THEMES[theme].cssVars)) {
+        expect(scopedDeclarationFrom(desktopFoundation, `[data-theme='${theme}']`, token))
+          .toBe(value);
+        expect(scopedDeclarationFrom(mobileFoundation, `[data-theme="${theme}"]`, token))
+          .toBe(value);
+      }
     }
   });
 

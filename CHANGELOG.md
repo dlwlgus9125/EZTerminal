@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+## [1.0.27] - 2026-08-09
+
+### Added
+
+- Added a root `DESIGN.md` visual contract that defines EZTerminal's product
+  identity and decision principles without duplicating runtime token values or
+  the interaction and accessibility contracts owned by the frontend UX spec.
+- Added automated documentation ownership and style guards for raw palette
+  values, terminal-only tokens, unmanaged font stacks, and global z-indexes.
+- Added a production-backed active-surface registry, twelve deterministic
+  mobile Storybook states, visual/accessibility coverage, and reusable blind
+  A/B design-evaluation fixtures.
+
+### Changed
+
+- Moved desktop and mobile application chrome onto shared semantic theme roles,
+  including RGB channels, media overlays, QR colors, typography, elevation,
+  and provider-specific custom-theme values.
+- Clarified the ownership boundary between visual principles, navigation and
+  state behavior, exact token values, and Storybook evidence across project
+  documentation and agent guidance.
+- Reworked the narrow mobile PC-control toolbar into two touch-safe rows and
+  aligned command, error, pairing, theme, and mobile workbench surfaces with
+  the shared design contract.
+
+### Fixed
+
+- Prevented the narrow PC-control disconnect action from being clipped and
+  kept scanner-denied and agent-history recovery states deterministic for
+  visual and accessibility validation.
+
+See [1.0.27 release notes](docs/release/release-notes-1.0.27.md).
+
 ## [1.0.26] - 2026-08-08
 
 ### Added

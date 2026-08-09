@@ -1,6 +1,6 @@
 # EZTerminal Roadmap
 
-> Current for the **v1.0.26 release candidate** (2026-08-08).
+> Current for the **v1.0.27 release candidate** (2026-08-09).
 > 이 문서는 현재 제품 방향과 아직 구현되지 않은 후보만 기록한다. 현재 시스템 구조와
 > 변경 계약은 [`architecture.md`](architecture.md), 완료 과정은
 > [`archive/`](archive/README.md), 출시 이력은 버전별 release 문서가 소유한다.
@@ -46,6 +46,7 @@ interactive CLI와 full-screen TUI는 PTY/xterm으로 실행한다.
 
 현재 계약:
 
+- [`DESIGN.md`](../DESIGN.md)
 - [`frontend-design.md`](ux/frontend-design.md)
 - [`external-integrations.md`](design/external-integrations.md)
 
@@ -61,14 +62,14 @@ interactive CLI와 full-screen TUI는 PTY/xterm으로 실행한다.
 
 - [`remote-terminal.md`](design/remote-terminal.md)
 - [`remote-desktop.md`](design/remote-desktop.md)
-- [`validation-policy-1.0.26.md`](release/validation-policy-1.0.26.md)
+- [`validation-policy-1.0.27.md`](release/validation-policy-1.0.27.md)
 
 ## 유지보수 계약
 
 - `release/version.json`이 desktop, mobile, Android, native host와 remote protocol
   version의 기준이다.
 - 현재 release 검증 정책의 저장소 경로는
-  `docs/release/validation-policy-1.0.26.md`이다.
+  `docs/release/validation-policy-1.0.27.md`이다.
 - Desktop과 Android release artifact는 같은 clean Git SHA에서 만들고
   [`release/README.md`](release/README.md)의 gate를 통과한다.
 - 일반 개발 검증은 `pnpm e2e`를 사용한다. release performance benchmark는 사용자가
@@ -95,6 +96,7 @@ interactive CLI와 full-screen TUI는 PTY/xterm으로 실행한다.
 
 - 제품·build 개요: [`README.md`](../README.md)
 - 현재 시스템 구조: [`architecture.md`](architecture.md)
+- 현재 visual design 계약: [`DESIGN.md`](../DESIGN.md)
 - 현재 subsystem 계약: [`design/`](design/)
 - 현재 UX 계약: [`ux/frontend-design.md`](ux/frontend-design.md)
 - 현재 release 절차: [`release/README.md`](release/README.md)

@@ -2,6 +2,7 @@ import { isBuiltinTheme } from '../shared/layout-schema';
 import type { ThemeMod } from '../shared/theme-schema';
 import { EFFECT_CATALOG, applyEffects, resolveActiveEffects, type EffectId } from './effects';
 import {
+  cssColorToRgbChannels,
   resolveProviderIdentityColors,
   seedUiThemeColors,
   uiThemeColorsToCssVars,
@@ -88,6 +89,8 @@ export function applyThemeVarsAndEffects(
       ...(providerColors ? {
         '--ui-agent-codex': providerColors.codex,
         '--ui-agent-claude': providerColors.claude,
+        '--ui-agent-codex-rgb': cssColorToRgbChannels(providerColors.codex) ?? '0, 0, 0',
+        '--ui-agent-claude-rgb': cssColorToRgbChannels(providerColors.claude) ?? '0, 0, 0',
       } : {}),
     };
     const decls = Object.entries(effectiveVars)

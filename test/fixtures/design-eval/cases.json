@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "desktop-remote-recovery",
+      "platform": "desktop",
+      "prompt": "prompts/desktop-remote-recovery.md"
+    },
+    {
+      "id": "mobile-agent-history-recovery",
+      "platform": "mobile",
+      "prompt": "prompts/mobile-agent-history-recovery.md"
+    },
+    {
+      "id": "dangerous-session-close",
+      "platform": "cross-platform",
+      "prompt": "prompts/dangerous-session-close.md"
+    }
+  ]
+}

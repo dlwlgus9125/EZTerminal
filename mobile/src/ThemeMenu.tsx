@@ -2,7 +2,7 @@ import { Check } from 'lucide-react';
 import { useCallback, useRef, useState, type RefObject } from 'react';
 
 import type { ThemeName } from '../../src/shared/layout-schema';
-import { listThemes } from '../../src/renderer/themes';
+import { listThemes, THEMES } from '../../src/renderer/themes';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { MobileActionSheet } from './MobileActionSheet';
 import { importCustomTheme } from './theme';
@@ -66,10 +66,11 @@ export function ThemeMenu({
             // they keep their hand-tuned bg/accent pair; a custom mod without one
             // derives its swatch from the same cssVars/xterm fields the rest of
             // the app reads, with a final hardcoded fallback for a mod that sets
-            // neither.
+            // neither. The fallback still comes from the canonical theme
+            // registry rather than introducing a second palette here.
             const swatch = theme.swatch ?? {
-              bg: theme.cssVars['--term-bg'] ?? theme.xterm.background ?? '#000000',
-              accent: theme.cssVars['--term-green'] ?? theme.xterm.foreground ?? '#29d398',
+              bg: theme.cssVars['--term-bg'] ?? theme.xterm.background ?? THEMES.matrix.ui!.canvas,
+              accent: theme.cssVars['--term-green'] ?? theme.xterm.foreground ?? THEMES.matrix.ui!.accent,
             };
             return (
               <li key={theme.id}>

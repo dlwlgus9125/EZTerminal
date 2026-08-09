@@ -266,8 +266,8 @@
 
 [data-theme='matrix'] .connect-screen {
   background:
-    linear-gradient(rgba(51, 255, 136, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(51, 255, 136, 0.025) 1px, transparent 1px),
+    linear-gradient(rgba(var(--ui-accent-rgb), 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--ui-accent-rgb), 0.025) 1px, transparent 1px),
     var(--ui-canvas);
   background-size: 24px 24px;
 }
@@ -282,13 +282,13 @@
     to bottom,
     transparent 0,
     transparent 3px,
-    rgba(0, 0, 0, 0.08) 4px
+    var(--mob-accent-edge) 4px
   );
 }
 
 [data-theme='matrix'] .connect-card {
   border-color: var(--ui-accent);
-  box-shadow: inset 0 0 0 1px rgba(51, 255, 136, 0.12), 0 0 28px rgba(51, 255, 136, 0.08);
+  box-shadow: inset 0 0 0 1px var(--mob-accent-edge), 0 0 28px var(--mob-accent-tint);
 }
 
 [data-theme='high-contrast'] .connect-card {
@@ -682,8 +682,8 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   overflow: hidden;
-  color: #f6f8fb;
-  background: #050607;
+  color: var(--ui-text-primary);
+  background: var(--ui-canvas);
   touch-action: none;
 }
 
@@ -697,8 +697,8 @@
   min-height: 52px;
   padding: max(4px, env(safe-area-inset-top)) 6px 4px;
   overflow-x: auto;
-  color: #fff;
-  background: rgba(13, 17, 23, 0.94);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-raised);
 }
 
 .mobile-pc-toolbar button,
@@ -711,16 +711,16 @@
   justify-content: center;
   gap: 6px;
   flex: 0 0 auto;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid var(--ui-border-strong);
   border-radius: 8px;
   color: inherit;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--ui-surface-hover);
 }
 
 .mobile-pc-toolbar button:focus-visible,
 .mobile-pc-actions button:focus-visible,
 .mobile-pc-display-select:focus-within {
-  outline: 2px solid var(--ui-focus-ring, #7dd3fc);
+  outline: 2px solid var(--ui-focus);
   outline-offset: 2px;
 }
 
@@ -748,12 +748,12 @@
   display: inline-block;
   margin-right: 6px;
   border-radius: 50%;
-  background: #f0b429;
+  background: var(--ui-warning);
 }
 
-.mobile-pc-state--active::before { background: #37d67a; }
+.mobile-pc-state--active::before { background: var(--ui-success); }
 .mobile-pc-state--error::before,
-.mobile-pc-state--busy::before { background: #ff5d6c; }
+.mobile-pc-state--busy::before { background: var(--ui-danger); }
 
 .mobile-pc-display-select select {
   max-width: 132px;
@@ -762,18 +762,15 @@
   background: transparent;
 }
 
-.mobile-pc-display-select option { color: #111; }
-.mobile-pc-disconnect { color: #ff8b95 !important; }
+.mobile-pc-display-select option { color: var(--ui-text-primary); }
+.mobile-pc-disconnect { color: var(--ui-danger) !important; }
 
 .mobile-pc-video-viewport {
   position: relative;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background:
-    linear-gradient(45deg, #090b0e 25%, transparent 25%) 0 0 / 24px 24px,
-    linear-gradient(45deg, transparent 75%, #090b0e 75%) 0 0 / 24px 24px,
-    #030405;
+  background: var(--ui-media-canvas);
   cursor: none;
   user-select: none;
   touch-action: none;
@@ -796,10 +793,11 @@
   gap: 8px;
   padding: 24px;
   text-align: center;
-  background: rgba(3, 4, 5, 0.82);
+  color: var(--ui-on-media);
+  background: var(--ui-media-overlay);
 }
 
-.mobile-pc-overlay p { max-width: 32rem; margin: 0; color: #c7ced8; }
+.mobile-pc-overlay p { max-width: 32rem; margin: 0; color: inherit; }
 
 .mobile-pc-actions {
   min-height: 48px;
@@ -817,8 +815,8 @@
   min-height: 24px;
   padding: 3px 10px;
   overflow: hidden;
-  color: #c7ced8;
-  background: #0d1117;
+  color: var(--ui-text-secondary);
+  background: var(--ui-surface);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.72rem;
@@ -832,10 +830,10 @@
   bottom: max(8px, env(safe-area-inset-bottom));
   min-height: 44px;
   padding: 8px 12px;
-  border: 2px solid var(--ui-focus-ring, #7dd3fc);
+  border: 2px solid var(--ui-focus);
   border-radius: 8px;
-  color: #fff;
-  background: #121820;
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-raised);
 }
 
 .mobile-pc-ime--closed {

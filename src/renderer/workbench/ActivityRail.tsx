@@ -29,6 +29,11 @@ const RAIL_ITEMS: readonly RailItem[] = [
   { id: 'settings', labelKey: 'rail.settings', icon: Settings, testId: 'btn-toggle-settings', bottom: true },
 ];
 
+/** Runtime destination registry used by navigation and design-surface
+ * coverage. Keep optional visibility policy in ActivityRail; the destination
+ * itself remains active even while OpenClaw is hidden. */
+export const ACTIVITY_RAIL_DESTINATIONS: readonly SidebarDestination[] = RAIL_ITEMS.map((item) => item.id);
+
 export const ACTIVITY_RAIL_ID = 'workbench-activity-rail';
 
 export function ActivityRail({

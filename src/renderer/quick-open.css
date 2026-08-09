@@ -1,7 +1,7 @@
 .quick-open-overlay {
   position: fixed;
   inset: 0;
-  z-index: 170;
+  z-index: var(--ui-z-dialog);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -21,8 +21,8 @@
   border-radius: var(--ui-radius-xl);
   box-shadow:
     var(--ui-glow-box),
-    0 24px 60px rgb(0 0 0 / 70%);
-  font-family: var(--ui-font-heading);
+    var(--ui-shadow-overlay);
+  font-family: var(--ui-font-body);
   animation: ez-modal-in var(--ui-motion-modal) var(--ui-ease-standard);
 }
 
@@ -101,12 +101,12 @@
 }
 
 .quick-open-input:focus {
-  outline: 1px solid var(--term-green);
+  outline: 1px solid var(--ui-focus);
   outline-offset: -1px;
 }
 
 .quick-open-input::placeholder {
-  color: var(--term-fg-faint);
+  color: var(--ui-text-muted);
 }
 
 .quick-open-list {
@@ -146,7 +146,7 @@
 
 .quick-open-row--selected {
   color: var(--ui-text-primary);
-  background: color-mix(in srgb, var(--ui-accent) 14%, var(--ui-canvas));
+  background: var(--ui-surface-selected);
   border-color: transparent;
   box-shadow: inset 2px 0 0 var(--ui-accent);
 }
@@ -180,18 +180,18 @@
 }
 
 .quick-open-row-title {
-  color: var(--term-fg-bright);
+  color: var(--ui-text-primary);
   font-size: 0.78rem;
 }
 
 .quick-open-row-detail {
-  color: var(--term-fg-dim);
+  color: var(--ui-text-secondary);
   font-size: 0.68rem;
 }
 
 .quick-open-row-disabled-reason,
 .quick-open-footer-reason {
-  color: var(--term-amber);
+  color: var(--ui-warning);
   font-size: 0.68rem;
 }
 
@@ -203,7 +203,7 @@
   justify-content: center;
   gap: 8px;
   padding: 12px;
-  color: var(--term-fg-faint);
+  color: var(--ui-text-muted);
   font-size: 0.74rem;
 }
 
@@ -211,7 +211,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--term-blue);
+  background: var(--ui-info);
   animation: quick-open-pulse 1.1s ease-in-out infinite;
 }
 
@@ -264,8 +264,8 @@
 }
 
 .quick-command-editor-list {
-  background: var(--term-bg);
-  border-right: 1px solid var(--term-border);
+  background: var(--ui-canvas);
+  border-right: 1px solid var(--ui-border-strong);
 }
 
 .quick-command-editor-list-head {
@@ -274,7 +274,7 @@
 
 .quick-command-editor-empty {
   padding: 12px 2px;
-  color: var(--term-fg-faint);
+  color: var(--ui-text-muted);
   font-size: 0.72rem;
   line-height: 1.5;
 }
@@ -285,7 +285,7 @@
   align-items: center;
   gap: 5px;
   padding: 4px;
-  border: 1px solid var(--term-border-faint);
+  border: 1px solid var(--ui-border-subtle);
 }
 
 .quick-command-editor-item + .quick-command-editor-item {
@@ -293,8 +293,8 @@
 }
 
 .quick-command-editor-item--active {
-  border-color: var(--term-blue);
-  background: var(--term-bg-hover);
+  border-color: var(--ui-info);
+  background: var(--ui-surface-hover);
 }
 
 .quick-command-editor-select {
@@ -302,7 +302,7 @@
   display: grid;
   gap: 2px;
   padding: 4px;
-  color: var(--term-fg);
+  color: var(--ui-text-primary);
   background: transparent;
   border: none;
   font: inherit;
@@ -311,18 +311,18 @@
 }
 
 .quick-command-editor-select span {
-  color: var(--term-fg-bright);
+  color: var(--ui-text-primary);
   font-size: 0.74rem;
 }
 
 .quick-command-editor-select small {
-  color: var(--term-fg-faint);
+  color: var(--ui-text-muted);
   font-size: 0.64rem;
 }
 
 .quick-command-editor-delete {
   padding-inline: 0.4rem;
-  color: var(--term-red);
+  color: var(--ui-danger);
 }
 
 .quick-command-editor-form {
@@ -337,49 +337,49 @@
 
 .quick-command-editor-form label {
   margin-top: 4px;
-  color: var(--term-fg-dim);
+  color: var(--ui-text-secondary);
   font-size: 0.7rem;
 }
 
 .quick-command-editor-form label span {
-  color: var(--term-fg-faint);
+  color: var(--ui-text-muted);
 }
 
 .quick-command-editor-form input {
   min-height: 34px;
   min-width: 0;
   padding: 6px 8px;
-  color: var(--term-fg-bright);
-  background: var(--term-bg-inset);
-  border: 1px solid var(--term-border);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-inset);
+  border: 1px solid var(--ui-border-strong);
   border-radius: 3px;
-  font: 0.76rem var(--term-font);
+  font: 0.76rem var(--ui-font-terminal);
 }
 
 .quick-command-editor-form input:focus {
-  outline: 1px solid var(--term-green);
-  border-color: var(--term-green);
+  outline: 1px solid var(--ui-focus);
+  border-color: var(--ui-focus);
 }
 
 .quick-command-editor-form input[aria-invalid='true'] {
-  border-color: var(--term-red);
+  border-color: var(--ui-danger);
 }
 
 .quick-command-field-error,
 .quick-command-editor-message--error {
-  color: var(--term-red);
+  color: var(--ui-danger);
   font-size: 0.68rem;
 }
 
 .quick-command-editor-message {
   margin-top: 5px;
   padding: 6px 7px;
-  border: 1px solid var(--term-border-faint);
+  border: 1px solid var(--ui-border-subtle);
   font-size: 0.7rem;
 }
 
 .quick-command-editor-message--success {
-  color: var(--term-green);
+  color: var(--ui-success);
 }
 
 .quick-command-editor-form-actions {
@@ -435,7 +435,7 @@
     max-height: 190px;
     overflow-y: auto;
     border-right: none;
-    border-bottom: 1px solid var(--term-border);
+    border-bottom: 1px solid var(--ui-border-strong);
   }
 }
 

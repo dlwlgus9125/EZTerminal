@@ -172,6 +172,19 @@ export function parseCssColor(rawValue: string): RgbaColor | null {
   return normalized ? parseCssColor(normalized) : null;
 }
 
+/** Convert a validated CSS colour into the comma-separated channel form used
+ * by rgba(var(--*-rgb), alpha). This keeps Android WebView 74 compatible and
+ * deliberately remains derived runtime state rather than a persisted theme
+ * schema field. */
+export function cssColorToRgbChannels(value: string): string | null {
+  const parsed = parseCssColor(value);
+  if (!parsed) return null;
+  const effective = opaque(parsed);
+  return [effective.r, effective.g, effective.b]
+    .map((channel) => Math.round(clamp(channel)))
+    .join(', ');
+}
+
 function composite(foreground: RgbaColor, background: RgbaColor): RgbaColor {
   const alpha = foreground.a + background.a * (1 - foreground.a);
   if (alpha === 0) return { r: 0, g: 0, b: 0, a: 0 };
@@ -333,9 +346,15 @@ export function seedUiThemeColors(theme: ThemeDefinition, fallback: UiThemeColor
 }
 
 export function uiThemeColorsToCssVars(ui: UiThemeColors): Readonly<Record<string, string>> {
-  return Object.fromEntries(
+  const vars = Object.fromEntries(
     (Object.keys(UI_CSS_VAR_NAMES) as (keyof UiThemeColors)[]).map((role) => [UI_CSS_VAR_NAMES[role], ui[role]]),
   );
+  const channelVars: Record<string, string> = {};
+  for (const role of ['accent', 'info', 'success', 'warning', 'danger'] as const) {
+    const channels = cssColorToRgbChannels(ui[role]);
+    if (channels) channelVars[`--ui-${role}-rgb`] = channels;
+  }
+  return { ...vars, ...channelVars };
 }
 
 /** Produce an effective palette without mutating the registered/source theme.

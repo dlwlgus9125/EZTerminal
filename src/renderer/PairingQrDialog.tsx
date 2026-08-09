@@ -43,8 +43,8 @@ function QrSymbol({ text, label }: { readonly text: string; readonly label: stri
       shapeRendering="crispEdges"
       data-testid="pairing-qr-symbol"
     >
-      <rect width={size} height={size} fill="#e8fff2" />
-      <path d={path} fill="#04140a" />
+      <rect width={size} height={size} fill="var(--ui-qr-light)" />
+      <path d={path} fill="var(--ui-qr-dark)" />
     </svg>
   );
 }

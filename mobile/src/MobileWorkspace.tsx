@@ -108,9 +108,11 @@ const UNAVAILABLE_APP_UPDATE_CONTROLLER: MobileAppUpdateController = {
 
 /** Full-screen destinations reachable from a tab root. Each one owns the Back
  * stop above the tab layer, so Back unwinds sheet -> sub-page -> tab -> exit. */
-type MobileSubPage = 'files' | 'stats' | 'openclaw' | 'settings' | 'pc-control' | 'sessions';
+export const MOBILE_SUB_PAGES = ['files', 'stats', 'openclaw', 'settings', 'pc-control', 'sessions'] as const;
+type MobileSubPage = (typeof MOBILE_SUB_PAGES)[number];
 
-type MobileSheet = 'more' | 'sessions';
+export const MOBILE_SHEETS = ['more', 'sessions'] as const;
+type MobileSheet = (typeof MOBILE_SHEETS)[number];
 
 // MobileWorkspace — the authed shell. The commercial pass replaces the old
 // "hub -> full-screen destination" tree with a five-item bottom bar (a 72dp

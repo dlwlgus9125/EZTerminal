@@ -77,8 +77,8 @@
 
 .window-control--close:hover,
 .window-control--close:focus-visible {
-  color: #fff;
-  background: #c42b1c;
+  color: var(--ui-text-inverse);
+  background: var(--ui-danger);
 }
 
 .window-controls--compact {
@@ -274,7 +274,7 @@
 }
 
 [data-theme='matrix'] .workbench-brand-mark__name {
-  font-family: 'Share Tech Mono', var(--ui-font-heading), monospace;
+  font-family: var(--ui-font-heading);
   letter-spacing: 0.075em;
 }
 

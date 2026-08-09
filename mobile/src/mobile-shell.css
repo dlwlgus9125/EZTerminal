@@ -3,8 +3,8 @@
  * TOKEN CONTRACT: every colour below resolves through the shared `--ui-*`
  * semantic roles (src/renderer/styles/ui-tokens.css). The `--mob-*` layer in
  * this file exists only for the values the semantic set has no role for —
- * translucent hairlines, accent tints and glows — and is declared ONCE here
- * with per-theme overrides. Nothing downstream hardcodes a colour.
+ * translucent hairlines, accent tints and glows — and is declared once in
+ * mobile-decorative-tokens.css. Nothing downstream hardcodes a colour.
  *
  * Alpha tokens are rgba() over a channel triple rather than color-mix() on
  * purpose: the Android WebView 74 floor (mobile/package.json
@@ -18,65 +18,7 @@
  * the 24px grid the handoff calls for, as a static canvas background.
  */
 
-.mobile-workbench-coordinator,
-.connect-screen {
-  --mob-hairline: rgba(255, 255, 255, 0.08);
-
-  /* One accent, expressed as a channel triple so every tint below can be built
-     from it with plain rgba(). The literal alternative drifted: these were all
-     hardcoded to #35ff8d, which is not the accent of any shipped theme, so a
-     tint sat visibly beside the very colour it was meant to be a tint of.
-     color-mix() would say this more directly but WebView 74 does not have it,
-     and a substituted var inside rgba() works everywhere back to Chrome 49. */
-  --mob-accent-rgb: 53, 229, 143;
-  --mob-accent-tint: rgba(var(--mob-accent-rgb), 0.08);
-  --mob-accent-soft: rgba(var(--mob-accent-rgb), 0.16);
-  --mob-accent-line: rgba(var(--mob-accent-rgb), 0.28);
-  --mob-accent-edge: rgba(var(--mob-accent-rgb), 0.14);
-  --mob-accent-glow: rgba(var(--mob-accent-rgb), 0.3);
-  --mob-warn-tint: rgba(232, 180, 95, 0.08);
-  --mob-warn-line: rgba(232, 180, 95, 0.36);
-  --mob-danger-tint: rgba(255, 93, 108, 0.08);
-  --mob-danger-line: rgba(255, 93, 108, 0.42);
-  --mob-success-tint: rgba(47, 224, 139, 0.06);
-  --mob-success-line: rgba(47, 224, 139, 0.35);
-  --mob-scrim: rgba(2, 4, 3, 0.6);
-  --mob-chrome: rgba(6, 12, 8, 0.94);
-  --mob-glass: rgba(4, 8, 6, 0.78);
-  --mob-grid: rgba(var(--mob-accent-rgb), 0.02);
-
-  /* Display face — the Matrix VT323 already self-hosted in mobile-shared.css
-     (@font-face). No new font asset is introduced by this pass. */
-  --mob-font-display: 'VT323', var(--ui-font-heading);
-
-  /* Geometry — handoff "Design Tokens" section. */
-  --mob-radius-card: 11px;
-  --mob-radius-card-lg: 14px;
-  --mob-radius-control: 9px;
-  --mob-radius-pill: 99px;
-  --mob-column: 520px;
-  --mob-rail: 72px;
-  --mob-tabbar: 54px;
-}
-
-[data-theme='light'] .mobile-workbench-coordinator,
-[data-theme='light'] .connect-screen {
-  --mob-hairline: rgba(0, 0, 0, 0.12);
-  --mob-accent-rgb: 0, 122, 74;
-  --mob-scrim: rgba(20, 32, 26, 0.45);
-  --mob-chrome: rgba(255, 255, 255, 0.94);
-  --mob-glass: rgba(255, 255, 255, 0.82);
-  --mob-grid: rgba(0, 0, 0, 0);
-}
-
-[data-theme='high-contrast'] .mobile-workbench-coordinator,
-[data-theme='high-contrast'] .connect-screen {
-  --mob-hairline: rgba(255, 255, 255, 0.5);
-  --mob-accent-rgb: 0, 255, 102;
-  --mob-accent-line: rgba(var(--mob-accent-rgb), 0.8);
-  --mob-accent-edge: rgba(var(--mob-accent-rgb), 0.6);
-  --mob-grid: rgba(0, 0, 0, 0);
-}
+@import './mobile-decorative-tokens.css';
 
 /* ── Motion ──────────────────────────────────────────────────────────────
  * Every keyframe here is disabled wholesale by the reduced-motion block at
@@ -234,7 +176,7 @@
   border: 2px solid var(--ui-surface);
   border-radius: var(--mob-radius-pill);
   background: var(--ui-warning);
-  box-shadow: 0 0 8px var(--mob-warn-line, rgba(232, 180, 95, 0.36));
+  box-shadow: 0 0 8px var(--mob-warn-line);
 }
 
 .mobile-shell-tab__update-dot {
@@ -576,10 +518,10 @@
   align-items: center;
   gap: 11px;
   padding: 13px;
-  border: 1px solid rgba(var(--mob-accent-rgb), 0.32);
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.32);
   border-radius: var(--mob-radius-card-lg);
   background: linear-gradient(180deg, var(--ui-surface-raised), var(--ui-surface));
-  box-shadow: 0 0 22px rgba(var(--mob-accent-rgb), 0.06);
+  box-shadow: 0 0 22px rgba(var(--ui-accent-rgb), 0.06);
 }
 
 .mob-hero__icon {
@@ -681,7 +623,7 @@
   cursor: pointer;
 }
 
-.mob-row--active { border-color: rgba(var(--mob-accent-rgb), 0.35); }
+.mob-row--active { border-color: rgba(var(--ui-accent-rgb), 0.35); }
 
 .mob-row__icon {
   display: grid;
@@ -743,13 +685,13 @@
 
 .mob-row--attention {
   border-color: var(--mob-warn-line);
-  background: linear-gradient(180deg, rgba(232, 180, 95, 0.07), var(--ui-surface));
+  background: linear-gradient(180deg, var(--mob-warn-tint), var(--ui-surface));
 }
 
 .mob-row--openclaw {
   min-height: 48px;
   background: var(--ui-surface-inset);
-  border-color: rgba(var(--mob-accent-rgb), 0.22);
+  border-color: rgba(var(--ui-accent-rgb), 0.22);
 }
 
 .mob-row__state {
@@ -800,7 +742,7 @@
   justify-content: center;
   gap: 7px;
   padding: 0 10px;
-  border: 1px solid rgba(var(--mob-accent-rgb), 0.2);
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.2);
   border-radius: 10px;
   background: var(--ui-surface-inset);
   color: var(--ui-text-primary);
@@ -839,7 +781,7 @@
   align-items: center;
   gap: 12px;
   padding: 5px 14px;
-  border-top: 1px solid rgba(var(--mob-accent-rgb), 0.12);
+  border-top: 1px solid rgba(var(--ui-accent-rgb), 0.12);
   background: var(--ui-canvas);
   color: var(--ui-text-muted);
   font-family: var(--ui-font-terminal);
@@ -912,7 +854,7 @@
 
 .mob-composer .cmd-input:focus {
   border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px rgba(var(--mob-accent-rgb), 0.14);
+  box-shadow: 0 0 0 3px rgba(var(--ui-accent-rgb), 0.14);
 }
 
 .mob-composer__send,
@@ -1027,8 +969,8 @@
   /* The right edge has to say the row scrolls. A mask is used rather than an
      absolutely positioned overlay because an overlay inside a scroll container
      scrolls away with the content it is meant to be fading. */
-  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
-  mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
+  -webkit-mask-image: linear-gradient(90deg, var(--ui-media-canvas) calc(100% - 36px), transparent);
+  mask-image: linear-gradient(90deg, var(--ui-media-canvas) calc(100% - 36px), transparent);
 }
 
 .mob-snippets::-webkit-scrollbar { display: none; }
@@ -1058,7 +1000,7 @@
 }
 
 .mob-chip--accent {
-  border-color: rgba(var(--mob-accent-rgb), 0.22);
+  border-color: rgba(var(--ui-accent-rgb), 0.22);
   background: var(--mob-accent-tint);
   color: var(--ui-focus);
 }
@@ -1069,7 +1011,7 @@
 }
 
 .mob-chip[aria-pressed='true'] {
-  border-color: rgba(var(--mob-accent-rgb), 0.5);
+  border-color: rgba(var(--ui-accent-rgb), 0.5);
   color: var(--ui-accent);
 }
 
@@ -1086,7 +1028,7 @@
   border-top: 1px solid var(--mob-accent-line);
   border-radius: 16px 16px 0 0;
   background: var(--ui-surface-inset);
-  box-shadow: 0 -18px 44px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--ui-shadow-overlay);
   animation: mob-up 0.28s ease;
 }
 
@@ -1165,14 +1107,14 @@
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
-  border: 1px solid rgba(var(--mob-accent-rgb), 0.35);
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.35);
   border-radius: var(--mob-radius-pill);
   background: var(--ui-surface);
   color: var(--ui-text-primary);
   font-family: var(--ui-font-body);
   font-size: 0.75rem;
   font-weight: 600;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55), 0 0 18px rgba(var(--mob-accent-rgb), 0.14);
+  box-shadow: var(--ui-shadow-overlay), 0 0 18px rgba(var(--ui-accent-rgb), 0.14);
   transform: translateX(-50%);
   animation: mob-toast 0.24s ease;
   pointer-events: none;
@@ -1208,11 +1150,11 @@
 .mob-agent-card--attention {
   border-color: var(--mob-warn-line);
   border-left: 3px solid var(--ui-warning);
-  background: linear-gradient(180deg, rgba(232, 180, 95, 0.05), var(--ui-surface));
+  background: linear-gradient(180deg, var(--mob-warn-tint), var(--ui-surface));
 }
 
 .mob-agent-card--running {
-  border-color: rgba(var(--mob-accent-rgb), 0.22);
+  border-color: rgba(var(--ui-accent-rgb), 0.22);
   border-left: 3px solid var(--ui-accent);
 }
 
@@ -1688,7 +1630,7 @@
 .mob-agent-project .mob-row small,
 .mob-agent-history-list .mob-row small {
   overflow: hidden;
-  color: var(--term-fg-dim);
+  color: var(--ui-text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1701,12 +1643,14 @@
 .mob-agent-history-row[data-provider='codex'],
 .mob-agent-history-message[data-provider='codex'] {
   --agent-provider-color: var(--ui-agent-codex);
+  --agent-provider-rgb: var(--ui-agent-codex-rgb);
 }
 
 .mob-agent-provider--claude,
 .mob-agent-history-row[data-provider='claude'],
 .mob-agent-history-message[data-provider='claude'] {
   --agent-provider-color: var(--ui-agent-claude);
+  --agent-provider-rgb: var(--ui-agent-claude-rgb);
 }
 
 .mob-agent-provider-badge {
@@ -1716,7 +1660,7 @@
   color: var(--agent-provider-color, var(--ui-text-secondary));
   border: 1px solid currentColor;
   border-radius: 3px;
-  background: color-mix(in srgb, var(--agent-provider-color, var(--ui-text-secondary)) 10%, transparent);
+  background: rgba(var(--agent-provider-rgb, var(--ui-accent-rgb)), 0.1);
   font-size: 0.625rem;
   font-weight: 700;
   line-height: 1.4;
@@ -1768,9 +1712,9 @@
 
 .mob-agent-history-message {
   padding: 10px 12px;
-  border: 1px solid var(--term-border-faint);
+  border: 1px solid var(--ui-border-subtle);
   border-radius: 8px;
-  background: var(--term-bg-raised);
+  background: var(--ui-surface-raised);
 }
 
 .mob-agent-history-message > .mob-agent-history-markdown {
@@ -1792,7 +1736,7 @@
   gap: 8px;
   padding: 6px 0 6px 10px;
   color: var(--ui-text-muted);
-  border-left: 2px solid var(--term-border);
+  border-left: 2px solid var(--ui-border-strong);
   font-size: 0.688rem;
 }
 
@@ -1862,7 +1806,7 @@
   display: grid;
   gap: 8px;
   padding: 10px 12px 0;
-  border-top: 1px solid var(--term-border-faint);
+  border-top: 1px solid var(--ui-border-subtle);
 }
 
 .mob-agent-root-decision {
@@ -2095,7 +2039,7 @@
   align-items: center;
   gap: 11px;
   padding: 12px;
-  border: 1px solid rgba(47, 224, 139, 0.3);
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.3);
   border-radius: 12px;
   background: linear-gradient(180deg, var(--mob-success-tint), var(--ui-surface));
 }
@@ -2164,7 +2108,7 @@
   width: 38px;
   height: 38px;
   border-radius: var(--mob-radius-control);
-  background: rgba(var(--mob-accent-rgb), 0.09);
+  background: rgba(var(--ui-accent-rgb), 0.09);
   color: var(--ui-accent);
   place-items: center;
 }
@@ -2256,7 +2200,7 @@
   padding: var(--ui-space-2);
   border-left: 3px solid var(--ui-danger);
   color: var(--ui-danger);
-  background: var(--mob-danger-tint, rgba(255, 93, 108, 0.08));
+  background: var(--mob-danger-tint);
 }
 
 /* ── Connect ─────────────────────────────────────────────────────────────── */
@@ -2293,7 +2237,7 @@
   font-size: 2.5rem;
   letter-spacing: 0.03em;
   line-height: 1;
-  text-shadow: 0 0 18px rgba(var(--mob-accent-rgb), 0.4);
+  text-shadow: 0 0 18px rgba(var(--ui-accent-rgb), 0.4);
 }
 
 .mob-connect__eyebrow {
@@ -2351,7 +2295,7 @@
   min-height: 44px;
   flex: none;
   padding: 0 13px;
-  border: 1px solid rgba(47, 224, 139, 0.5);
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.5);
   border-radius: 8px;
   background: none;
   color: var(--ui-success);
@@ -2434,7 +2378,7 @@
 
 .mob-connect__input input:focus {
   border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px rgba(var(--mob-accent-rgb), 0.14);
+  box-shadow: 0 0 0 3px rgba(var(--ui-accent-rgb), 0.14);
 }
 
 .mob-connect__input--token input { padding-right: 44px; }
@@ -2461,7 +2405,7 @@
   gap: 9px;
   margin-top: 12px;
   padding: 9px 12px;
-  border: 1px solid rgba(232, 180, 95, 0.4);
+  border: 1px solid var(--mob-warn-line);
   border-radius: var(--mob-radius-control);
   background: var(--mob-warn-tint);
   color: var(--ui-warning);
@@ -2508,7 +2452,7 @@
   font-family: var(--ui-font-body);
   font-size: 0.938rem;
   font-weight: 700;
-  box-shadow: 0 0 22px rgba(var(--mob-accent-rgb), 0.35);
+  box-shadow: 0 0 22px rgba(var(--ui-accent-rgb), 0.35);
   cursor: pointer;
 }
 
@@ -2516,7 +2460,7 @@
 .mob-connect__cta svg { width: 18px; height: 18px; }
 
 .mob-connect__cta .mob-spinner {
-  border-color: rgba(4, 20, 11, 0.3);
+  border-color: var(--ui-on-accent);
   border-top-color: var(--ui-on-accent);
   width: 16px;
   height: 16px;
@@ -2578,7 +2522,7 @@
   display: grid;
   width: 44px;
   height: 44px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--mob-hairline);
   border-radius: 50%;
   background: var(--mob-glass);
   color: var(--ui-text-primary);
@@ -2628,8 +2572,8 @@
   padding: 7px;
   border: 1px solid var(--mob-accent-line);
   border-radius: var(--mob-radius-pill);
-  background: rgba(4, 8, 6, 0.88);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), 0 0 22px rgba(var(--mob-accent-rgb), 0.1);
+  background: var(--mob-chrome);
+  box-shadow: var(--ui-shadow-overlay), 0 0 22px rgba(var(--ui-accent-rgb), 0.1);
   transform: translateX(-50%);
 }
 
@@ -2637,7 +2581,7 @@
   display: flex;
   flex: none;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--mob-hairline);
   border-radius: var(--mob-radius-pill);
 }
 
@@ -2657,7 +2601,7 @@
 }
 
 .mob-pc-segment button[aria-pressed='true'] {
-  background: rgba(var(--mob-accent-rgb), 0.18);
+  background: rgba(var(--ui-accent-rgb), 0.18);
   color: var(--ui-focus);
   font-weight: 700;
 }
@@ -2671,7 +2615,7 @@
   flex: none;
   border: 0;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--mob-hairline);
   color: var(--ui-text-primary);
   cursor: pointer;
   place-items: center;
@@ -2680,13 +2624,13 @@
 .mob-pc-round svg { width: 17px; height: 17px; }
 
 .mob-pc-round[aria-pressed='true'] {
-  background: rgba(var(--mob-accent-rgb), 0.18);
+  background: rgba(var(--ui-accent-rgb), 0.18);
   color: var(--ui-focus);
 }
 
 .mob-pc-round--danger {
-  border: 1px solid rgba(255, 93, 108, 0.45);
-  background: rgba(255, 93, 108, 0.1);
+  border: 1px solid var(--mob-danger-line);
+  background: var(--mob-danger-tint);
   color: var(--ui-danger);
 }
 
@@ -2735,7 +2679,7 @@
   left: 50%;
   padding: 6px 13px;
   border-radius: var(--mob-radius-pill);
-  background: rgba(4, 8, 6, 0.72);
+  background: var(--mob-glass);
   color: var(--ui-text-secondary);
   font-family: var(--ui-font-body);
   font-size: 0.688rem;
@@ -2743,6 +2687,26 @@
   transform: translateX(-50%);
   animation: mob-fade 0.2s ease;
   pointer-events: none;
+}
+
+@media (max-width: 480px) {
+  .mob-pc-cluster:not(.mob-pc-cluster--extras) {
+    display: grid;
+    width: max-content;
+    max-width: calc(100% - 24px);
+    grid-template-columns: repeat(6, 44px);
+    gap: 4px;
+  }
+
+  .mob-pc-cluster:not(.mob-pc-cluster--extras) .mob-pc-segment {
+    width: 100%;
+    grid-column: 1 / -1;
+  }
+
+  .mob-pc-cluster:not(.mob-pc-cluster--extras) .mob-pc-segment button {
+    flex: 1;
+    justify-content: center;
+  }
 }
 
 .mobile-pc-control--immersive .mobile-pc-overlay { z-index: 1; }

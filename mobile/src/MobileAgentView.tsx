@@ -108,6 +108,7 @@ type MobileDiffView =
 export function MobileAgentView({
   snapshot,
   disconnected = false,
+  currentTime,
   onBack,
   onFocusSession,
   onSendFollowup,
@@ -120,6 +121,7 @@ export function MobileAgentView({
 }: {
   readonly snapshot: AgentActivitySnapshot;
   readonly disconnected?: boolean;
+  readonly currentTime?: number;
   readonly onBack: () => void;
   readonly onFocusSession: (sessionId: string) => void;
   readonly onSendFollowup: (activityId: string, text: string) => Promise<AgentFollowupResult>;
@@ -306,7 +308,13 @@ export function MobileAgentView({
               );
             }
             const bucket = bucketOf(item.status);
-            const age = <AgentRelativeAge updatedAt={item.updatedAt} formatter={relativeTime} />;
+            const age = (
+              <AgentRelativeAge
+                updatedAt={item.updatedAt}
+                formatter={relativeTime}
+                currentTime={currentTime}
+              />
+            );
             // A decision is only offered while the desktop is still holding the
             // provider's hook open. Past that the answer belongs in the terminal.
             const live = item.approval?.pending === true;

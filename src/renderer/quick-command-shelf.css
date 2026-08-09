@@ -29,16 +29,16 @@
   position: absolute;
   right: 0;
   bottom: calc(100% + 0.45rem);
-  z-index: 170;
+  z-index: var(--ui-z-popover);
   display: grid;
   width: min(30rem, calc(100vw - 1.5rem));
   max-height: min(29rem, calc(100vh - 5rem));
   padding: 0.55rem;
-  color: var(--text-primary, #e7edf5);
-  background: var(--surface-elevated, #151a22);
-  border: 1px solid var(--border, #394250);
+  color: var(--ui-text-primary);
+  background: var(--ui-surface-raised);
+  border: 1px solid var(--ui-border-strong);
   border-radius: 8px;
-  box-shadow: 0 12px 32px rgb(0 0 0 / 42%);
+  box-shadow: var(--ui-shadow-overlay);
 }
 
 .quick-command-search {
@@ -47,8 +47,8 @@
   min-height: 2.25rem;
   padding: 0.4rem 0.55rem;
   color: inherit;
-  background: var(--surface-input, #0e1218);
-  border: 1px solid var(--border, #394250);
+  background: var(--ui-surface-inset);
+  border: 1px solid var(--ui-border-strong);
   border-radius: 5px;
 }
 
@@ -69,7 +69,7 @@
 
 .quick-command-row:hover,
 .quick-command-row:focus-within {
-  background: color-mix(in srgb, var(--accent, #5da9ff) 10%, transparent);
+  background: var(--ui-surface-hover);
 }
 
 .quick-command-row-main {
@@ -87,7 +87,7 @@
 .quick-command-row-main code,
 .quick-command-row-main span {
   overflow: hidden;
-  color: var(--text-muted, #9aa6b5);
+  color: var(--ui-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -95,7 +95,7 @@
 .quick-command-empty {
   margin: 0;
   padding: 1rem 0.5rem;
-  color: var(--text-muted, #9aa6b5);
+  color: var(--ui-text-muted);
   text-align: center;
 }
 

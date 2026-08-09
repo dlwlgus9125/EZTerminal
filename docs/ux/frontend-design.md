@@ -2,17 +2,19 @@
 
 > 문서 상태: **활성 규범 계약**
 >
-> 이 문서는 현재 Electron desktop과 Android client의 제품 UI 계약이다. 화면 구현,
-> Storybook, 접근성 검사와 시각 스냅샷은 이 계약에 동의해야 한다. 코드와 문서가
-> 어긋나면 회귀인지 의도된 변경인지 먼저 결정하며, 코드를 이유로 문서를 자동
-> 수정하지 않는다.
+> 이 문서는 현재 Electron desktop과 Android client의 정보 구조, navigation, layout,
+> 상태, responsive behavior와 접근성 계약이다. Visual identity와 미학적 판단은 루트
+> [`DESIGN.md`](../../DESIGN.md)가 소유한다. 화면 구현, Storybook, 접근성 검사와 시각
+> 스냅샷은 두 계약에 동의해야 한다. 코드와 문서가 어긋나면 회귀인지 의도된 변경인지
+> 먼저 결정하며, 코드를 이유로 문서를 자동 수정하지 않는다.
 
 ## 1. 범위와 우선순위
 
-이 문서는 정보 구조, navigation, layout, visual language, responsive behavior,
-접근성, localization과 UI 상태를 소유한다. 셸 실행, IPC, pairing, 원격 protocol,
-process lifecycle은 [`architecture.md`](../architecture.md)와 `docs/design/` 계약이
-소유한다.
+이 문서는 정보 구조, navigation, layout, responsive behavior, 접근성, localization과
+UI 상태를 소유한다. Visual identity와 시각적 선택 기준은
+[`DESIGN.md`](../../DESIGN.md), 정확한 runtime 값은 theme와 token source가 소유한다.
+셸 실행, IPC, pairing, 원격 protocol, process lifecycle은
+[`architecture.md`](../architecture.md)와 `docs/design/` 계약이 소유한다.
 
 결정 우선순위는 다음과 같다.
 
@@ -28,19 +30,15 @@ process lifecycle은 [`architecture.md`](../architecture.md)와 `docs/design/` �
 
 ## 2. 시각 방향과 소스 권한
 
-선택된 방향은 **prototype-led, production-safe adaptive workbench**다. 고정 prototype의
-geometry, hierarchy, density와 visual rhythm을 따르되 실제 서비스 상태, 보안 계약과
-지원 viewport를 거짓으로 만들지 않는다.
+Visual identity, color·typography·elevation·shape 판단과 금지 패턴의 유일한 prose
+source는 루트 [`DESIGN.md`](../../DESIGN.md)다. 이 문서는 그 방향을 화면 anatomy,
+responsive behavior, 실제 상태와 접근성으로 적용하는 계약만 소유한다.
 
 추출된 reference와 story mapping은
 `docs/ux/reference/desktop-handoff/manifest.json`이 고정한다. Package 2 prototype은
-visual intent, handoff README는 구현·QA 수용 기준, 이 문서는 responsive·접근성·상태
-계약을 소유한다. terminal semantics, 보안, 데이터 무결성과 실제 runtime 상태가
-항상 prototype의 예시 값보다 우선한다.
-
-세 줄 signal mark, 전체 `EZTerminal` wordmark와 green phosphor/scanline이 Matrix
-identity의 핵심이다. 원본 raster는 reference일 뿐 제품 asset으로 삽입하지 않는다.
-제품 icon은 Lucide를 사용하고 provider logo나 remote font를 추가하지 않는다.
+비교용 visual intent, handoff README는 구현·QA 수용 기준이며 실제 runtime 상태,
+terminal semantics, 보안과 데이터 무결성이 예시 값보다 우선한다. 원본 raster와 고정
+handoff source는 production asset으로 삽입하거나 수정하지 않는다.
 
 ## 3. Desktop application shell
 
@@ -230,27 +228,15 @@ accessory strip만 내부 scroll할 수 있다. Safe-area inset은 mobile root�
 
 ## 6. Design tokens와 typography
 
-Application chrome은 semantic `--ui-*` token을 사용한다. `--term-*`은 xterm,
-terminal output과 기존 custom theme compatibility에만 사용한다. 새 component가
-theme별 hex, local z-index ladder 또는 terminal token을 직접 사용하지 않는다.
+Token과 typography의 사용 판단은 [`DESIGN.md`](../../DESIGN.md), 정확한 role·scale·
+theme 값은 [`ui-tokens.css`](../../src/renderer/styles/ui-tokens.css)와
+[`themes.ts`](../../src/renderer/themes.ts)가 소유한다. 이 문서는 값을 다시 열거하지
+않는다.
 
-필수 role은 canvas/surface/raised/inset/overlay/scrim, primary/secondary/muted/inverse
-text, subtle/strong border, accent/on-accent, focus/info/success/warning/danger다.
-
-- Type scale: 12, 13, 14, 16, 20px. 10/10.5px은 비필수 metadata, 26px은 desktop
-  wordmark 전용이다.
-- Space scale: 4, 8, 12, 16, 24, 32px과 pane gutter 14px.
-- Radius: control 2/4/8px, card 12/14px, pill round.
-- Control: compact 32px, comfortable 40px, touch minimum 44px.
-
-Matrix display label과 wordmark는 bundled display font를 사용할 수 있지만 body,
-Settings, help와 Korean은 local system UI stack을 사용한다. terminal, command, path와
-diagnostic 값은 설정된 monospace를 사용한다. product text는 terminal font 선택의
-영향을 받지 않는다.
-
-Custom theme는 기존 persisted schema를 유지하고 runtime resolver가 semantic role의
-contrast를 보정한다. provider color는 persisted schema를 늘리지 않고 theme class에서
-파생한다.
+Application chrome은 semantic `--ui-*` token을 사용하고 `--term-*`은 xterm, terminal
+output과 기존 custom theme compatibility로 제한한다. Custom theme의 persisted schema는
+유지하며 runtime resolver가 semantic role contrast와 파생 role을 계산한다. Feature는
+theme별 color, font stack 또는 local z-index ladder를 직접 정의하지 않는다.
 
 ## 7. Component와 overlay 계약
 
@@ -358,6 +344,9 @@ Disconnect를 제공한다. 시작 시 terminal focus를 훔치지 않고 releas
 Native 오류 remediation은 Remote panel에 남기고 stale active banner를 유지하지 않는다.
 
 ## 12. 시각·접근성 검증
+
+시각적 합격 기준은 [`DESIGN.md`](../../DESIGN.md), 화면·상태·responsive 합격 기준은 이
+문서가 소유한다. 두 문서의 내용을 snapshot 설명에 복사하지 않는다.
 
 `DesktopHandoff.stories.tsx`는 manifest의 14개 표면에 실제 product component와
 deterministic adapter를 사용한다. 각 handoff story는 axe와 1920 reference를 가지며

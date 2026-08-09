@@ -992,3 +992,107 @@ test.describe("mobile-width Storybook visual contracts", () => {
     });
   }
 });
+
+const activeMobileSurfaceCases = [
+  {
+    name: "agents attention state",
+    storyId: "compositions-mobile-active-surfaces--agents",
+    screenshot: "mobile-active-agents-matrix-en.png",
+    readySelector: "[data-testid='agent-card']",
+    options: { theme: "matrix", locale: "en", density: "adaptive", motion: "reduced" },
+  },
+  {
+    name: "agents offline recovery state",
+    storyId: "compositions-mobile-active-surfaces--agents-offline",
+    screenshot: "mobile-active-agents-offline-high-contrast-en.png",
+    readySelector: "[data-testid='mobile-agent-view']",
+    options: { theme: "high-contrast", locale: "en", density: "comfortable", motion: "reduced" },
+  },
+  {
+    name: "file browser",
+    storyId: "compositions-mobile-active-surfaces--files",
+    screenshot: "mobile-active-files-light-en.png",
+    readySelector: "[data-testid='mobile-file-entry']",
+    options: { theme: "light", locale: "en", density: "adaptive", motion: "reduced" },
+  },
+  {
+    name: "system stats",
+    storyId: "compositions-mobile-active-surfaces--stats",
+    screenshot: "mobile-active-stats-dark-en.png",
+    readySelector: "[data-testid='status-section-cpu'] .status-metric",
+    options: { theme: "dark", locale: "en", density: "compact", motion: "reduced" },
+  },
+  {
+    name: "OpenClaw status",
+    storyId: "compositions-mobile-active-surfaces--open-claw",
+    screenshot: "mobile-active-openclaw-matrix-en.png",
+    readySelector: "[data-testid='openclaw-status-label']",
+    options: { theme: "matrix", locale: "en", density: "adaptive", motion: "reduced" },
+  },
+  {
+    name: "PC control unavailable recovery",
+    storyId: "compositions-mobile-active-surfaces--pc-control-unavailable",
+    screenshot: "mobile-active-pc-control-dark-en.png",
+    readySelector: "[data-testid='mobile-pc-state']",
+    options: { theme: "dark", locale: "en", density: "adaptive", motion: "reduced" },
+  },
+  {
+    name: "more actions sheet",
+    storyId: "compositions-mobile-active-surfaces--more-sheet",
+    screenshot: "mobile-active-more-sheet-matrix-en.png",
+    readySelector: "[data-testid='mobile-more-sheet']",
+    options: { theme: "matrix", locale: "en", density: "comfortable", motion: "reduced" },
+  },
+  {
+    name: "sessions sheet",
+    storyId: "compositions-mobile-active-surfaces--sessions-sheet",
+    screenshot: "mobile-active-sessions-sheet-light-en.png",
+    readySelector: "[data-testid='session-sheet-row']",
+    options: { theme: "light", locale: "en", density: "adaptive", motion: "reduced" },
+  },
+  {
+    name: "theme sheet",
+    storyId: "compositions-mobile-active-surfaces--theme-sheet",
+    screenshot: "mobile-active-theme-sheet-matrix-en.png",
+    readySelector: "[data-testid='theme-option-matrix']",
+    options: { theme: "matrix", locale: "en", density: "comfortable", motion: "reduced" },
+  },
+  {
+    name: "pairing scanner unavailable recovery",
+    storyId: "compositions-mobile-active-surfaces--pairing-scanner-unavailable",
+    screenshot: "mobile-active-pairing-scanner-dark-en.png",
+    readySelector: "[data-testid='pairing-scan-error']",
+    options: { theme: "dark", locale: "en", density: "adaptive", motion: "reduced" },
+  },
+  {
+    name: "agent history error recovery",
+    storyId: "compositions-mobile-active-surfaces--agent-history-error",
+    screenshot: "mobile-active-agent-history-light-en.png",
+    readySelector: ".mob-agent-error[role='alert']",
+    options: { theme: "light", locale: "en", density: "adaptive", motion: "reduced" },
+  },
+  {
+    name: "agent folder picker",
+    storyId: "compositions-mobile-active-surfaces--agent-folder-picker",
+    screenshot: "mobile-active-agent-folder-matrix-en.png",
+    readySelector: "[data-testid='mobile-agent-folder-picker'] .mob-row",
+    options: { theme: "matrix", locale: "en", density: "adaptive", motion: "reduced" },
+  },
+] as const;
+
+test.describe("active mobile surface visual contracts", () => {
+  for (const visualCase of activeMobileSurfaceCases) {
+    test(visualCase.name, async ({ page }) => {
+      await page.setViewportSize({ width: 412, height: 915 });
+      await openStory(page, visualCase.storyId, visualCase.options);
+      await expect(page.locator(visualCase.readySelector).first()).toBeVisible();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+      await expectNoAccessibilityViolations(page);
+      await expect(page).toHaveScreenshot(visualCase.screenshot, {
+        animations: "disabled",
+      });
+    });
+  }
+});

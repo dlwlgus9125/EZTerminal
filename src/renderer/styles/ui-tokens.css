@@ -11,14 +11,32 @@
   --ui-border-subtle: #17301f;
   --ui-border-strong: #4bbd7a;
   --ui-accent: #35e58f;
+  --ui-accent-rgb: 53, 229, 143;
   --ui-on-accent: #001c0d;
   --ui-focus: #8affba;
   --ui-info: #62d8ff;
+  --ui-info-rgb: 98, 216, 255;
   --ui-success: #35e58f;
+  --ui-success-rgb: 53, 229, 143;
   --ui-warning: #ffd166;
+  --ui-warning-rgb: 255, 209, 102;
   --ui-danger: #ff6b7a;
+  --ui-danger-rgb: 255, 107, 122;
   --ui-agent-codex: #48d7c8;
   --ui-agent-claude: #e58a6b;
+  --ui-agent-codex-rgb: 72, 215, 200;
+  --ui-agent-claude-rgb: 229, 138, 107;
+
+  /* Remote video is the only deliberately fixed-colour plane. Product chrome
+     still uses the active theme; these roles keep controls legible over media
+     without leaking literal black/white into feature styles. */
+  --ui-media-canvas: #000000;
+  --ui-media-overlay: rgba(0, 0, 0, 0.82);
+  --ui-on-media: #ffffff;
+  /* Functional data rendering: QR modules must remain fixed and high contrast
+     regardless of the application theme. */
+  --ui-qr-light: #ffffff;
+  --ui-qr-dark: #000000;
 
   /* Commercial-pass decorative roles. These are additive: each one falls back to
      an already contrast-corrected role, so a sparse custom theme that only
@@ -161,14 +179,21 @@
      separates even though no automated gate covers this role. */
   --ui-border-focus-soft: #4a7264;
   --ui-accent: #2fe0a0;
+  --ui-accent-rgb: 47, 224, 160;
   --ui-on-accent: #04110c;
   --ui-focus: #65f4c0;
   --ui-info: #56c8ff;
+  --ui-info-rgb: 86, 200, 255;
   --ui-success: #2fe0a0;
+  --ui-success-rgb: 47, 224, 160;
   --ui-warning: #f4c45e;
+  --ui-warning-rgb: 244, 196, 94;
   --ui-danger: #ff6b7a;
+  --ui-danger-rgb: 255, 107, 122;
   --ui-agent-codex: #48d7c8;
   --ui-agent-claude: #e58a6b;
+  --ui-agent-codex-rgb: 72, 215, 200;
+  --ui-agent-claude-rgb: 229, 138, 107;
   --ui-glow-color: var(--ui-accent);
 }
 
@@ -189,14 +214,21 @@
   --ui-border-mid: #dde3e0;
   --ui-border-focus-soft: #7d938a;
   --ui-accent: #087847;
+  --ui-accent-rgb: 8, 120, 71;
   --ui-on-accent: #ffffff;
   --ui-focus: #075fca;
   --ui-info: #075fca;
+  --ui-info-rgb: 7, 95, 202;
   --ui-success: #087847;
+  --ui-success-rgb: 8, 120, 71;
   --ui-warning: #8a5a00;
+  --ui-warning-rgb: 138, 90, 0;
   --ui-danger: #b4233c;
+  --ui-danger-rgb: 180, 35, 60;
   --ui-agent-codex: #006b64;
   --ui-agent-claude: #9a3f28;
+  --ui-agent-codex-rgb: 0, 107, 100;
+  --ui-agent-claude-rgb: 154, 63, 40;
   /* A phosphor bloom on a white canvas only muddies edges. */
   --ui-glow-color: transparent;
 }
@@ -221,14 +253,21 @@
   --ui-border-subtle: #808080;
   --ui-border-strong: #ffffff;
   --ui-accent: #00ff66;
+  --ui-accent-rgb: 0, 255, 102;
   --ui-on-accent: #000000;
   --ui-focus: #00e5ff;
   --ui-info: #66b2ff;
+  --ui-info-rgb: 102, 178, 255;
   --ui-success: #00ff66;
+  --ui-success-rgb: 0, 255, 102;
   --ui-warning: #ffcc00;
+  --ui-warning-rgb: 255, 204, 0;
   --ui-danger: #ff5c5c;
+  --ui-danger-rgb: 255, 92, 92;
   --ui-agent-codex: #00ffff;
   --ui-agent-claude: #ff9b7a;
+  --ui-agent-codex-rgb: 0, 255, 255;
+  --ui-agent-claude-rgb: 255, 155, 122;
   /* High Contrast removes decorative blur and low-contrast overlays. */
   --ui-glow-color: transparent;
 }
@@ -252,12 +291,19 @@
   --ui-border-mid: #143523;
   --ui-border-focus-soft: #2c6a47;
   --ui-accent: #35e58f;
+  --ui-accent-rgb: 53, 229, 143;
   --ui-on-accent: #001c0d;
   --ui-focus: #8affba;
   --ui-info: #62d8ff;
+  --ui-info-rgb: 98, 216, 255;
   --ui-success: #35e58f;
+  --ui-success-rgb: 53, 229, 143;
   --ui-warning: #ffd166;
+  --ui-warning-rgb: 255, 209, 102;
   --ui-danger: #ff6b7a;
+  --ui-danger-rgb: 255, 107, 122;
+  --ui-agent-codex-rgb: 72, 215, 200;
+  --ui-agent-claude-rgb: 229, 138, 107;
   --ui-glow-color: var(--ui-accent);
 }
 

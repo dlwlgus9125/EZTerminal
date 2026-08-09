@@ -12,6 +12,7 @@ import { BrandMark } from './BrandMark';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const css = readFileSync(resolve(process.cwd(), 'src/renderer/workbench/workbench.css'), 'utf8');
+const tokenCss = readFileSync(resolve(process.cwd(), 'src/renderer/styles/ui-tokens.css'), 'utf8');
 
 let container: HTMLDivElement;
 let root: Root;
@@ -44,8 +45,9 @@ describe('BrandMark', () => {
 
   it('keeps CRT decoration theme-aware, effect-gated, and accessibility-safe', () => {
     expect(css).toMatch(
-      /\[data-theme=["']matrix["']\]\s+\.workbench-brand-mark__name\s*\{[^}]*["']Share Tech Mono["']/s,
+      /\[data-theme=["']matrix["']\]\s+\.workbench-brand-mark__name\s*\{[^}]*font-family:\s*var\(--ui-font-heading\)/s,
     );
+    expect(tokenCss).toMatch(/--ui-font-heading:\s*["']Share Tech Mono["']/);
     expect(css).toMatch(
       /html\[data-effect-phosphor-glow=["']on["']\]\s+\.workbench-brand-mark__name\s*\{[^}]*text-shadow/s,
     );

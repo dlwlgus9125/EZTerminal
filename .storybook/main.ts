@@ -12,6 +12,21 @@ const config: StorybookConfig = {
   typescript: {
     reactDocgen: 'react-docgen',
   },
+  async viteFinal(config) {
+    config.optimizeDeps = {
+      ...config.optimizeDeps,
+      include: [
+        ...(config.optimizeDeps?.include ?? []),
+        '@capacitor/app',
+        '@capacitor/browser',
+        '@capacitor/clipboard',
+        '@capacitor/core',
+        '@capacitor/device',
+      ],
+    };
+
+    return config;
+  },
 };
 
 export default config;

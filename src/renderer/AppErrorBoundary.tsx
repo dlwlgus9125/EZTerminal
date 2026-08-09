@@ -63,9 +63,9 @@ export class AppErrorBoundary extends Component<Props, State> {
           display: 'grid',
           placeItems: 'center',
           padding: '24px',
-          background: 'var(--ez-bg, #050805)',
-          color: 'var(--ez-fg, #d7ffd7)',
-          fontFamily: 'var(--ez-font-mono, monospace)',
+          background: 'var(--ui-canvas)',
+          color: 'var(--ui-text-primary)',
+          fontFamily: 'var(--ui-font-body)',
         }}
       >
         <section style={{ maxWidth: '640px' }}>

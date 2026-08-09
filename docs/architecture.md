@@ -16,7 +16,10 @@ EZTerminal은 코드만을 유일한 진실로 취급하지 않는다. 코드가
 | 프로세스·타입·실제 데이터 흐름 | 제품 소스와 공유 스키마 |
 | 기능·보안·UX 불변조건 | 이 문서, `docs/design/`, `docs/ux/`, 대응 테스트 |
 | 버전·아티팩트 이름 | [`release/version.json`](../release/version.json) |
-| 시각·접근성 기준 | [`frontend-design.md`](ux/frontend-design.md), 고정 핸드오프 manifest, Storybook·시각 테스트 |
+| Visual identity·시각 판단 | [`DESIGN.md`](../DESIGN.md) |
+| 화면 IA·flow·state·responsive·접근성 | [`frontend-design.md`](ux/frontend-design.md) |
+| 정확한 theme·token 값 | [`themes.ts`](../src/renderer/themes.ts), [`ui-tokens.css`](../src/renderer/styles/ui-tokens.css) |
+| 시각 증거 | 고정 핸드오프 manifest, production Storybook, 시각 테스트 |
 | 과거 판단과 출시 증거 | [`CHANGELOG.md`](../CHANGELOG.md), `docs/archive/`, 버전별 `docs/release/` |
 
 코드와 활성 계약이 어긋나면 문서를 코드에 자동으로 맞추지 않는다. 먼저 회귀인지

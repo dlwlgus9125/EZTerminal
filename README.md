@@ -8,7 +8,10 @@
 
 Block-based UI · themes &amp; CRT effects · system monitor · SSH · pair your phone as a remote
 
-![release](https://img.shields.io/badge/release-v1.0.26-brightgreen)
+Project contracts: [architecture](docs/architecture.md) · [visual design](DESIGN.md) ·
+[frontend UX](docs/ux/frontend-design.md)
+
+![release](https://img.shields.io/badge/release-v1.0.27-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 ![built with](https://img.shields.io/badge/built%20with-Electron%20·%20React%20·%20TypeScript-9cf)
@@ -150,7 +153,7 @@ advertised only while the remote bridge is enabled, a trusted
 Tailscale/WireGuard adapter is selected, and the installed LocalSystem host
 service is ready. Starting control additionally requires a successful
 active-session agent handshake. Missing or unhealthy native components fail
-closed without disabling terminal-only remote access. In 1.0.26, frame
+closed without disabling terminal-only remote access. In 1.0.27, frame
 capture/encoding and actual input injection still run in the normal-user
 transport; lock/UAC secure-desktop control and Ctrl+Alt+Delete are unavailable.
 
@@ -170,7 +173,7 @@ Grab both official 1.0 downloads from the
 [**Releases**](https://github.com/dlwlgus9125/EZTerminal/releases/latest) page:
 
 - Windows 10 22H2 / Windows 11 x64: `EZTerminal-Setup.exe`
-- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.26-vc47.apk`
+- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.27-vc48.apk`
 
 > While the SignPath Foundation application is pending, maintenance releases can be
 > published unsigned and will show Windows' unknown-publisher warning. Check the
@@ -200,7 +203,7 @@ live camera frames, background release, and explicit camera reacquisition.
 Elevated/admin service lifecycle and physical-device validation were not
 performed. Microsoft Store publication and silent or background installation
 are outside this release; see the
-[1.0.26 validation policy](docs/release/validation-policy-1.0.26.md).
+[1.0.27 validation policy](docs/release/validation-policy-1.0.27.md).
 
 ## Code signing policy
 
@@ -232,7 +235,7 @@ authorized release performance benchmark.
 Graphical PC Control is included by default in Windows builds. At runtime it
 still requires an enabled remote bridge, a running installed host service, and
 a trusted VPN interface; otherwise the desktop capability is not advertised.
-Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.26.
+Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.27.
 
 The Android companion app lives in [`mobile/`](mobile/) (Capacitor + Android Studio).
 

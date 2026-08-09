@@ -1,0 +1,63 @@
+/* Mobile-only decorative adapter.
+ *
+ * Exact translucent values that cannot be expressed by the shared semantic
+ * palette live here once. Product rules consume --mob-* names and never
+ * repeat palette literals. rgba(var(--ui-accent-rgb), alpha) is used instead
+ * of color-mix() because the supported Android WebView floor is Chrome 74. */
+
+.mobile-workbench-coordinator,
+.connect-screen {
+  --mob-hairline: rgba(255, 255, 255, 0.08);
+  --mob-accent-tint: rgba(var(--ui-accent-rgb), 0.08);
+  --mob-accent-soft: rgba(var(--ui-accent-rgb), 0.16);
+  --mob-accent-line: rgba(var(--ui-accent-rgb), 0.28);
+  --mob-accent-edge: rgba(var(--ui-accent-rgb), 0.14);
+  --mob-accent-glow: rgba(var(--ui-accent-rgb), 0.3);
+  --mob-warn-tint: rgba(232, 180, 95, 0.08);
+  --mob-warn-line: rgba(232, 180, 95, 0.36);
+  --mob-danger-tint: rgba(255, 93, 108, 0.08);
+  --mob-danger-line: rgba(255, 93, 108, 0.42);
+  --mob-success-tint: rgba(47, 224, 139, 0.06);
+  --mob-success-line: rgba(47, 224, 139, 0.35);
+  --mob-scrim: rgba(2, 4, 3, 0.6);
+  --mob-chrome: rgba(6, 12, 8, 0.94);
+  --mob-glass: rgba(4, 8, 6, 0.78);
+  --mob-grid: rgba(var(--ui-accent-rgb), 0.02);
+
+  /* WebView 74 fallbacks for shared derived roles. These shadow the
+     color-mix()-based desktop definitions only inside the mobile shell. */
+  --ui-surface-hover: rgba(var(--ui-accent-rgb), 0.08);
+  --ui-surface-active: rgba(var(--ui-accent-rgb), 0.14);
+  --ui-surface-selected: rgba(var(--ui-accent-rgb), 0.18);
+  --ui-accent-muted: rgba(var(--ui-accent-rgb), 0.16);
+  --ui-info-muted: rgba(var(--ui-info-rgb), 0.14);
+  --ui-success-muted: rgba(var(--ui-success-rgb), 0.14);
+  --ui-warning-muted: rgba(var(--ui-warning-rgb), 0.14);
+  --ui-danger-muted: rgba(var(--ui-danger-rgb), 0.14);
+
+  --mob-font-display: 'VT323', var(--ui-font-heading);
+  --mob-radius-card: 11px;
+  --mob-radius-card-lg: 14px;
+  --mob-radius-control: 9px;
+  --mob-radius-pill: 99px;
+  --mob-column: 520px;
+  --mob-rail: 72px;
+  --mob-tabbar: 54px;
+}
+
+[data-theme='light'] .mobile-workbench-coordinator,
+[data-theme='light'] .connect-screen {
+  --mob-hairline: rgba(0, 0, 0, 0.12);
+  --mob-scrim: rgba(20, 32, 26, 0.45);
+  --mob-chrome: rgba(255, 255, 255, 0.94);
+  --mob-glass: rgba(255, 255, 255, 0.82);
+  --mob-grid: transparent;
+}
+
+[data-theme='high-contrast'] .mobile-workbench-coordinator,
+[data-theme='high-contrast'] .connect-screen {
+  --mob-hairline: rgba(255, 255, 255, 0.5);
+  --mob-accent-line: rgba(var(--ui-accent-rgb), 0.8);
+  --mob-accent-edge: rgba(var(--ui-accent-rgb), 0.6);
+  --mob-grid: transparent;
+}

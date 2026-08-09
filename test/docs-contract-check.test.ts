@@ -23,11 +23,21 @@ function write(root: string, path: string, contents: string): void {
 }
 
 function contract(path: string): string {
-  const prefix = path.startsWith('docs/') && path.split('/').length === 3 ? '../..' : '..';
+  const prefix = path === 'DESIGN.md'
+    ? '.'
+    : path.startsWith('docs/') && path.split('/').length === 3
+      ? '../..'
+      : '..';
+  const ownership = path === 'DESIGN.md'
+    ? '\n[Frontend UX](docs/ux/frontend-design.md)\n'
+    : path === 'docs/ux/frontend-design.md'
+      ? '\n[Visual design](../../DESIGN.md)\n'
+      : '';
   return [
     '# Contract',
     '',
     '> 문서 상태: **활성 규범 계약**',
+    ownership,
     '',
     '## 근거 소스',
     '',
@@ -46,12 +56,18 @@ function makeFixture(): string {
 
   write(root, 'src/sample.ts', 'export const sample = true;\n');
   write(root, 'src/sample.test.ts', 'export const tested = true;\n');
+  write(root, 'AGENTS.md', [
+    '# Agent instructions',
+    '',
+    'Read [DESIGN.md](DESIGN.md), then [frontend UX](docs/ux/frontend-design.md), then production Storybook story/component.',
+    '',
+  ].join('\n'));
   write(root, 'README.md', '# Readme\n\n[Architecture](docs/architecture.md)\n');
   write(root, 'docs/ROADMAP.md', '# Roadmap\n\n[Architecture](architecture.md)\n');
   write(root, 'docs/release/README.md', '# Release\n\n[Remote](../design/remote-desktop.md)\n');
 
   const architectureLinks = ACTIVE_CONTRACTS.map((path) => {
-    const target = path.replace(/^docs\//u, '');
+    const target = path === 'DESIGN.md' ? '../DESIGN.md' : path.replace(/^docs\//u, '');
     return `- [${target}](${target})`;
   }).join('\n');
   write(root, 'docs/architecture.md', [
@@ -130,5 +146,26 @@ describe('documentation contract check', () => {
     const root = makeFixture();
     write(root, 'docs/archive/README.md', '# Archive\n\nresearch/\n');
     expect(() => validateDocumentationContract(root)).toThrow('archived design is not indexed');
+  });
+
+  it('requires reciprocal visual/UX ownership links', () => {
+    const root = makeFixture();
+    write(root, 'DESIGN.md', contract('DESIGN.md').replace(
+      '[Frontend UX](docs/ux/frontend-design.md)',
+      'Frontend UX',
+    ));
+    expect(() => validateDocumentationContract(root)).toThrow('missing frontend UX ownership link');
+  });
+
+  it('requires the UI reading order in AGENTS.md', () => {
+    const root = makeFixture();
+    write(root, 'AGENTS.md', '# Agent instructions\n\nRead Storybook, docs/ux/frontend-design.md, then DESIGN.md.\n');
+    expect(() => validateDocumentationContract(root)).toThrow('UI reading order');
+  });
+
+  it('keeps exact palette values out of DESIGN.md prose', () => {
+    const root = makeFixture();
+    write(root, 'DESIGN.md', `${contract('DESIGN.md')}\nAccent is #00ff66.\n`);
+    expect(() => validateDocumentationContract(root)).toThrow('exact palette values belong');
   });
 });

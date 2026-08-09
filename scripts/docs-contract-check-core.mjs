@@ -13,6 +13,7 @@ import {
 } from 'node:path';
 
 export const ACTIVE_CONTRACTS = Object.freeze([
+  'DESIGN.md',
   'docs/design/terminal-runtime.md',
   'docs/design/workbench-lifecycle.md',
   'docs/design/remote-terminal.md',
@@ -22,6 +23,9 @@ export const ACTIVE_CONTRACTS = Object.freeze([
 ]);
 
 const ARCHITECTURE_PATH = 'docs/architecture.md';
+const DESIGN_PATH = 'DESIGN.md';
+const FRONTEND_UX_PATH = 'docs/ux/frontend-design.md';
+const AGENTS_PATH = 'AGENTS.md';
 const ACTIVE_STATUS = '> 문서 상태: **활성 규범 계약**';
 const ARCHITECTURE_STATUS = '> 문서 상태: **공식 아키텍처 진입점**';
 
@@ -179,6 +183,37 @@ function validateEvidence(repoPath, source, errors) {
   }
 }
 
+function validateDesignOwnership(root, errors) {
+  const design = read(root, DESIGN_PATH);
+  const frontend = read(root, FRONTEND_UX_PATH);
+  const agents = read(root, AGENTS_PATH);
+
+  if (design.startsWith('---')) {
+    errors.push(`${DESIGN_PATH}: YAML frontmatter is not part of the project design contract`);
+  }
+  if (/#[0-9a-f]{3,8}\b/iu.test(design)) {
+    errors.push(`${DESIGN_PATH}: exact palette values belong in theme/token source, not prose`);
+  }
+
+  const designLinks = activeResolvedLinks(DESIGN_PATH, design);
+  if (!designLinks.has(FRONTEND_UX_PATH)) {
+    errors.push(`${DESIGN_PATH}: missing frontend UX ownership link: ${FRONTEND_UX_PATH}`);
+  }
+  const frontendLinks = activeResolvedLinks(FRONTEND_UX_PATH, frontend);
+  if (!frontendLinks.has(DESIGN_PATH)) {
+    errors.push(`${FRONTEND_UX_PATH}: missing visual design ownership link: ${DESIGN_PATH}`);
+  }
+
+  const designIndex = agents.indexOf('DESIGN.md');
+  const frontendIndex = agents.indexOf('docs/ux/frontend-design.md');
+  const storyIndex = agents.indexOf('Storybook');
+  if (designIndex < 0 || frontendIndex < 0 || storyIndex < 0) {
+    errors.push(`${AGENTS_PATH}: UI workflow must discover DESIGN.md, the frontend UX contract, and production Storybook evidence`);
+  } else if (!(designIndex < frontendIndex && frontendIndex < storyIndex)) {
+    errors.push(`${AGENTS_PATH}: UI reading order must be DESIGN.md -> frontend UX contract -> production story/component`);
+  }
+}
+
 function validateLegacyReferences(root, paths, errors) {
   for (const repoPath of paths) {
     const source = read(root, repoPath);
@@ -191,6 +226,7 @@ function validateLegacyReferences(root, paths, errors) {
 export function validateDocumentationContract(root) {
   const errors = [];
   const requiredFiles = [
+    AGENTS_PATH,
     'README.md',
     'docs/ROADMAP.md',
     ARCHITECTURE_PATH,
@@ -215,6 +251,8 @@ export function validateDocumentationContract(root) {
       errors.push(`${ARCHITECTURE_PATH}: active contract is not indexed: ${contract}`);
     }
   }
+
+  validateDesignOwnership(root, errors);
 
   for (const contract of ACTIVE_CONTRACTS) {
     const source = read(root, contract);
@@ -261,6 +299,7 @@ export function validateDocumentationContract(root) {
   }
 
   const linkCheckedDocs = [
+    AGENTS_PATH,
     'README.md',
     'docs/ROADMAP.md',
     ARCHITECTURE_PATH,

@@ -42,10 +42,12 @@ export function PairingScanner({
   onDetected,
   onClose,
   returnFocusRef,
+  requestCamera = requestDeviceCamera,
 }: {
   readonly onDetected: (result: ParsedPairingUri) => void;
   readonly onClose: () => void;
   readonly returnFocusRef?: RefObject<HTMLElement>;
+  readonly requestCamera?: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -166,12 +168,12 @@ export function PairingScanner({
     };
 
     void (async () => {
-      if (!context || !navigator.mediaDevices?.getUserMedia) {
+      if (!context) {
         setError('unavailable');
         return;
       }
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
+        stream = await requestCamera({
           video: { facingMode: 'environment' },
           audio: false,
         });
@@ -214,7 +216,7 @@ export function PairingScanner({
       void pauseHandle.then((handle) => handle?.remove()).catch(() => undefined);
       if (stopRef.current === stop) stopRef.current = () => undefined;
     };
-  }, []);
+  }, [requestCamera]);
 
   return (
     <MobileActionSheet
@@ -254,4 +256,11 @@ export function PairingScanner({
       )}
     </MobileActionSheet>
   );
+}
+
+function requestDeviceCamera(constraints: MediaStreamConstraints): Promise<MediaStream> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return Promise.reject(new Error('Camera API unavailable'));
+  }
+  return navigator.mediaDevices.getUserMedia(constraints);
 }

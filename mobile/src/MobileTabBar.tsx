@@ -6,7 +6,11 @@ import { MobileSignalMark } from './MobileSignalMark';
 /** Tab roots the shell can be parked on. `pc` and `more` are actions, not
  * roots — PC Control opens an immersive screen and More opens a sheet — but
  * they share the bar so the five-item IA stays literal. */
-export type MobileShellTab = 'home' | 'terminal' | 'agents';
+export const MOBILE_TAB_ROOTS = ['home', 'terminal', 'agents'] as const;
+export type MobileShellTab = (typeof MOBILE_TAB_ROOTS)[number];
+
+/** Literal five-item IA, including the two action destinations. */
+export const MOBILE_PRIMARY_DESTINATIONS = ['home', 'terminal', 'pc', 'agents', 'more'] as const;
 
 interface TabItem {
   readonly id: string;

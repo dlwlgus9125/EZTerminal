@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   calculateContrastRatio,
+  cssColorToRgbChannels,
   resolveProviderIdentityColors,
   resolveAccessibleTheme,
   seedUiThemeColors,
@@ -15,6 +16,12 @@ describe('theme contrast math', () => {
     expect(calculateContrastRatio('#000', '#fff')).toBeCloseTo(21, 5);
     expect(calculateContrastRatio('rgb(0, 0, 0)', 'hsl(0, 0%, 100%)')).toBeCloseTo(21, 5);
     expect(calculateContrastRatio('white', 'black')).toBeCloseTo(21, 5);
+  });
+
+  it('derives WebView-compatible RGB channels without extending theme data', () => {
+    expect(cssColorToRgbChannels('#35e58f')).toBe('53, 229, 143');
+    expect(cssColorToRgbChannels('rgb(8 120 71)')).toBe('8, 120, 71');
+    expect(cssColorToRgbChannels('not-a-color')).toBeNull();
   });
 
   it('derives custom-theme provider colors with text contrast on every history surface', () => {
@@ -113,6 +120,11 @@ describe('legacy UI palette seeding', () => {
     expect(vars['--ui-text-primary']).toBe(THEMES.matrix.ui!.textPrimary);
     expect(vars['--ui-on-accent']).toBe(THEMES.matrix.ui!.onAccent);
     expect(vars['--ui-danger']).toBe(THEMES.matrix.ui!.danger);
-    expect(Object.keys(vars)).toHaveLength(17);
+    expect(vars['--ui-accent-rgb']).toBe('53, 229, 143');
+    expect(vars['--ui-info-rgb']).toBe('98, 216, 255');
+    expect(vars['--ui-success-rgb']).toBe('53, 229, 143');
+    expect(vars['--ui-warning-rgb']).toBe('255, 209, 102');
+    expect(vars['--ui-danger-rgb']).toBe('255, 107, 122');
+    expect(Object.keys(vars)).toHaveLength(22);
   });
 });
