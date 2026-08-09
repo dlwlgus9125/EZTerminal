@@ -194,7 +194,7 @@ async function flushLayout(window: Page): Promise<void> {
 
 test('project new session preserves fixed-root terminal identity across rename and restart', async () => {
   const { projectRoot, userDataDir } = createProjectFixture();
-  const canonicalProjectRoot = realpathSync(projectRoot);
+  const canonicalProjectRoot = realpathSync.native(projectRoot);
   const app = await launchApp(userDataDir);
   const window = await app.firstWindow();
   await window.setViewportSize({ width: 1440, height: 900 });
