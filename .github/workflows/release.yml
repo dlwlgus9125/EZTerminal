@@ -636,7 +636,7 @@ jobs:
       - name: Install Chromium for Storybook checks
         run: pnpm exec playwright install chromium
       - name: Storybook interaction and accessibility tests
-        run: pnpm test:storybook -- --retry=2
+        run: pnpm test:storybook --retry=2
       - name: Storybook production build
         run: pnpm storybook:build
       - name: Storybook visual regression and axe checks
