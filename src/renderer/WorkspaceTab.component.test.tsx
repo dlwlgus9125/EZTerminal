@@ -24,11 +24,11 @@ afterEach(() => {
   container.remove();
 });
 
-function fakeProps() {
+function fakeProps(initialParams: Record<string, unknown> = {}) {
   const titleListeners = new Set<(event: { title: string }) => void>();
   const parameterListeners = new Set<(params: Record<string, unknown>) => void>();
   let title = 'Terminal 3';
-  let params: Record<string, unknown> = {};
+  let params: Record<string, unknown> = initialParams;
   const api = {
     id: 'tab-3',
     component: 'terminal',
@@ -57,7 +57,7 @@ function fakeProps() {
     props: {
       api,
       containerApi: {},
-      params: {},
+      params: initialParams,
       tabLocation: 'header',
     } as unknown as IDockviewPanelHeaderProps,
     api,
@@ -184,6 +184,85 @@ describe('WorkspaceTab interactions', () => {
     act(() => document.querySelector<HTMLButtonElement>('[data-testid="tab-ctx-close"]')!.click());
     expect(requestClose).toHaveBeenCalledTimes(1);
     expect(api.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows project identity with a live provider badge and persists custom/generated title mode', () => {
+    const projectSession = {
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'worktree-1',
+      projectName: 'EZTerminal',
+      titleMode: 'generated' as const,
+    };
+    const fixture = fakeProps({ projectSession });
+    fixture.api.setTitle('EZTerminal');
+    renderTab({
+      api: fixture.api as unknown as IDockviewPanelHeaderProps['api'],
+      params: { projectSession },
+      status: 'working',
+      provider: 'generic',
+      providerLabel: 'Aider',
+    });
+
+    expect(container.querySelector('.project-session-tab__label')?.textContent).toBe('EZTerminal');
+    expect(container.querySelector('.project-session-tab__badge')?.textContent).toBe('Aider');
+
+    act(() => container.querySelector<HTMLElement>('.agent-aware-tab')!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'F2', bubbles: true }),
+    ));
+    let input = container.querySelector<HTMLInputElement>('[data-testid="workspace-tab-rename"]')!;
+    act(() => setInputValue(input, 'Build shell'));
+    act(() => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    expect(fixture.api.updateParameters).toHaveBeenLastCalledWith({
+      projectSession: { ...projectSession, titleMode: 'custom' },
+    });
+
+    act(() => container.querySelector<HTMLElement>('.agent-aware-tab')!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'F2', bubbles: true }),
+    ));
+    input = container.querySelector<HTMLInputElement>('[data-testid="workspace-tab-rename"]')!;
+    act(() => setInputValue(input, '   '));
+    act(() => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    expect(fixture.api.updateParameters).toHaveBeenLastCalledWith({
+      projectSession: { ...projectSession, titleMode: 'generated' },
+    });
+  });
+
+  it('restores project identity from renderer params and synchronizes Dockview parameters', () => {
+    const projectSession = {
+      projectId: 'project-1',
+      projectName: 'EZTerminal',
+      titleMode: 'generated' as const,
+    };
+    const fixture = fakeProps();
+    fixture.api.setTitle('EZTerminal');
+    renderTab({
+      api: fixture.api as unknown as IDockviewPanelHeaderProps['api'],
+      params: { projectSession },
+    });
+
+    expect(container.querySelector('.project-session-tab__label')?.textContent).toBe('EZTerminal');
+    expect(container.querySelector('.project-session-tab__badge')?.textContent).toBe('Terminal');
+    expect(fixture.api.updateParameters).toHaveBeenCalledWith({ projectSession });
+  });
+
+  it('falls back to a Terminal badge after an agent ends', () => {
+    const projectSession = {
+      projectId: 'project-1',
+      projectName: 'EZTerminal',
+      titleMode: 'generated' as const,
+    };
+    const fixture = fakeProps({ projectSession });
+    renderTab({
+      api: fixture.api as unknown as IDockviewPanelHeaderProps['api'],
+      params: { projectSession },
+      status: 'error',
+      provider: 'claude',
+      providerLabel: 'Claude',
+    });
+
+    expect(container.querySelector('.project-session-tab__badge')?.textContent).toBe('Terminal');
+    expect(container.querySelector('.project-session-tab')?.getAttribute('data-provider')).toBeNull();
   });
 
 });

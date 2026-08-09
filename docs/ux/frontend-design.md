@@ -109,6 +109,21 @@ Workspace pane, tab, draft, PTY와 hidden panel은 layout 전환 중 살아 있�
 1+2, 2×1과 single preset은 active/MRU pane을 기준으로 한 non-destructive Dockview
 transaction이며 overflow pane을 tab으로 유지한다.
 
+Projects 목록과 Project Explorer header의 주 action은 `새 세션`이다. 이 action은 기본값이
+Agent인 단일 dialog를 열고 Agent/Terminal 중 하나를 선택하게 한다. Projects 목록에서는
+프로젝트의 main 위치, Explorer에서는 현재 선택한 checkout/worktree로 위치를 고정하며
+dialog에서 다른 위치로 바꾸지 않는다. 승인되지 않았거나 사용할 수 없는 worktree에서는
+action을 비활성화하고, main이 실행 직전에 접근 상태를 다시 검증한다. 전역 `새 에이전트
+실행`은 Agent 전용이며 프로젝트 또는 host folder를 고르는 기존 범용 흐름을 유지한다.
+
+명시적으로 프로젝트에서 연 terminal tab은 프로젝트 이름과 항상 보이는 compact Badge를
+함께 표시한다. active Agent가 있으면 `Codex`, `Claude` 또는 설정된 generic Agent 이름을,
+Agent가 없거나 완료·오류 상태이면 localized `Terminal`을 표시한다. 같은 프로젝트와 같은
+현재 Badge를 가진 자동 제목은 `Project`, `Project 2` 순서로 번호를 붙인다. 사용자가 정한
+제목은 이후 Agent 상태가 바뀌어도 덮어쓰지 않고 번호 계산에서도 제외한다. 빈 제목으로
+확정하면 자동 제목으로 돌아간다. 기존 Agent status dot과 full-title tooltip/accessibility
+name은 유지한다.
+
 Active pane composer는 48px 높이, 최대 820px이고 작은 폭에서는 document overflow
 없이 줄어든다. terminal-specific keyboard, paste와 close safety를 app chrome shortcut이
 가로채지 않는다.
@@ -289,9 +304,10 @@ locale은 결함이다.
 ## 10. Agent UI 계약
 
 Agent content 순서는 Attention, Projects, Active, Recent다. Global launch는 Agent와
-location이 모두 비어 있고, project의 New chat은 project만 preselect한다. Desktop은
-repository `Dialog`, Android는 `MobileActionSheet`를 사용하지만 같은 validation과
-Launch/Cancel 의미를 가진다.
+location이 모두 비어 있는 Agent 전용 흐름이다. Desktop project의 `새 세션`은 project
+목록의 main 또는 Explorer에서 선택한 checkout/worktree를 고정하고 기본 Agent와 optional
+Terminal을 제공한다. Android의 기존 `MobileActionSheet` launch는 mobile 범위를 유지한다.
+각 surface는 같은 main-side Agent validation과 Launch/Cancel 의미를 사용한다.
 
 Location은 saved/observed project와 직접 host folder를 제공한다. 선택 또는 취소만으로
 project를 쓰지 않으며 성공한 direct-directory launch만 unpinned observed project가

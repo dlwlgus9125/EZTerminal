@@ -119,6 +119,7 @@ import { MAX_AGENT_LAUNCH_DIRECTORY_LENGTH } from '../shared/agent-history';
 import { classifyRecentPanelInput } from './recent-panel-input';
 import type { WorkspaceFileSearchRequest } from '../shared/workspace-search';
 import { isWorktreeRequest, type WorktreeInfo, type WorktreeResult } from '../shared/worktree';
+import { isProjectSessionTarget } from '../shared/project-workspace';
 import type { TerminalFileLocationRequest } from '../shared/terminal-file-location';
 import { resolveTerminalFileLocation } from './terminal-path-resolver';
 import {
@@ -152,7 +153,13 @@ function isAgentLaunchTarget(value: unknown): value is AgentLaunchTarget {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const target = value as Record<string, unknown>;
   if (target.kind === 'project') {
-    return isBoundedAgentString(target.projectId, 128);
+    return Object.keys(target).every((key) => (
+      key === 'kind' || key === 'projectId' || key === 'rootId' || key === 'workspaceId'
+    )) && isProjectSessionTarget({
+      projectId: target.projectId,
+      ...(target.rootId !== undefined ? { rootId: target.rootId } : {}),
+      ...(target.workspaceId !== undefined ? { workspaceId: target.workspaceId } : {}),
+    });
   }
   if (target.kind === 'directory') {
     return isBoundedAgentString(target.directory, MAX_AGENT_LAUNCH_DIRECTORY_LENGTH);
@@ -769,6 +776,10 @@ app.on('ready', async () => {
   const projectDocumentService = new ProjectDocumentService(projectWorkspaceService, projectReviewService);
   const projectWorkspaceSearches = new Map<string, AbortController>();
   const projectWorkspaceReady = Promise.all([agentHistoryReady, projectWorkspaceAccessReady]);
+  agentHistoryService.setProjectSessionTargetResolver(async (target) => {
+    await projectWorkspaceReady;
+    return projectWorkspaceService.resolveSessionTarget(target);
+  });
   const notifyDesktopWorktreeOpen = (worktree: WorktreeInfo): void => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
@@ -1177,7 +1188,7 @@ app.on('ready', async () => {
       resolved.displayCommandText,
     );
     if (!port) return { ok: false, reason: 'unavailable' };
-    void agentHistoryService.recordTerminalWork(resolved.roots, Date.now()).catch((err) => {
+    void agentHistoryService.recordLaunchTargetWork(candidate.target, resolved.roots, Date.now()).catch((err) => {
       console.error('[main] failed to record launched Agent project:', err);
     });
     event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
@@ -1759,7 +1770,12 @@ app.on('ready', async () => {
       };
     },
   });
-  sessionSurfaceAuthority = new SessionSurfaceAuthority(broker);
+  sessionSurfaceAuthority = new SessionSurfaceAuthority(broker, {
+    resolveProjectTarget: async (target) => {
+      await projectWorkspaceReady;
+      return projectWorkspaceService.resolveSessionTarget(target);
+    },
+  });
   console.log('[main] interpreter broker ready');
   uninstallRunCommandIpc = installRunCommandIpc({
     ipc: ipcMain,
@@ -1792,8 +1808,20 @@ app.on('ready', async () => {
     // Every provider EZTerminal has local history for — generic profiles have no
     // adapter and so no sessions to come back to.
     if (!isAgentIntegrationProvider(activity.provider) || !activity.cwd) return;
-    void agentHistoryReady
-      .then(() => agentHistoryService.recordTerminalWork([activity.cwd], activity.updatedAt))
+    void projectWorkspaceReady
+      .then(async () => {
+        const registered = await projectWorkspaceService.resolveAbsoluteProjectPath({
+          absolutePath: activity.cwd,
+        });
+        if (registered.ok) {
+          await agentHistoryService.recordObservedProjectWork(
+            registered.request.projectId,
+            activity.updatedAt,
+          );
+          return;
+        }
+        await agentHistoryService.recordTerminalWork([activity.cwd], activity.updatedAt);
+      })
       .catch((err) => {
         console.error('[main] failed to record terminal Agent project:', err);
       });

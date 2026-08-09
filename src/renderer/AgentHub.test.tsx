@@ -332,8 +332,66 @@ describe('AgentHub local history paging', () => {
       name: 'Claude Code',
       cwd: 'C:\\Project',
       revision: 'revision-1',
+    }, {
+      projectId: 'project-1',
+      projectName: 'Project',
+      titleMode: 'generated',
     });
     expect(JSON.stringify(onLaunchAgent.mock.calls)).not.toContain('prompt');
+  });
+
+  it('opens a project session as a plain terminal with a fixed project location', async () => {
+    const project = {
+      projectId: 'project-1',
+      name: 'Project',
+      primaryRoot: 'C:\\Project',
+      additionalRoots: [],
+      pinned: false,
+      saved: true,
+      sessionCount: 0,
+      providers: [],
+      lastActiveAt: 20,
+    } as const;
+    const prepareAgentLaunch = vi.fn();
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: {
+        listAgentProjects: vi.fn(async () => ({ items: [project], nextCursor: null })),
+        listAgentProjectLaunchers: vi.fn(async () => []),
+        prepareAgentLaunch,
+      },
+    });
+    const onLaunchAgent = vi.fn();
+    const onOpenProjectTerminal = vi.fn();
+    await renderHub(
+      { revision: 1, items: [] },
+      { onLaunchAgent, onOpenProjectTerminal },
+    );
+
+    act(() => container.querySelector<HTMLButtonElement>(
+      '[data-testid="agent-project-new-chat-project-1"]',
+    )!.click());
+    await flush();
+    expect(document.body.querySelector('[data-testid="agent-launch-project"]')).toBeNull();
+    const type = document.body.querySelector<HTMLSelectElement>(
+      '[data-testid="agent-launch-session-type"]',
+    )!;
+    act(() => {
+      type.value = 'terminal';
+      type.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(document.body.querySelector('[data-testid="agent-launch-agent"]')).toBeNull();
+    act(() => document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="agent-launch-submit"]',
+    )!.click());
+
+    expect(onOpenProjectTerminal).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      projectName: 'Project',
+      titleMode: 'generated',
+    });
+    expect(onLaunchAgent).not.toHaveBeenCalled();
+    expect(prepareAgentLaunch).not.toHaveBeenCalled();
   });
 });
 

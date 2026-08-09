@@ -59,6 +59,56 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     expect(validateLayoutEnvelope(makeEnvelope(layout))).not.toBeNull();
   });
 
+  it('persists only bounded project-session identity and title mode on terminal panels', () => {
+    const layout = makeLayout();
+    (layout.panels as Record<string, Record<string, unknown>>)['tab-1'].params = {
+      projectSession: {
+        projectId: 'project-1',
+        rootId: 'root-1',
+        workspaceId: 'worktree-1',
+        projectName: 'EZTerminal',
+        titleMode: 'generated',
+      },
+    };
+
+    expect(validateLayoutEnvelope(makeEnvelope(layout))?.layout.panels['tab-1'])
+      .toMatchObject({
+        params: {
+          projectSession: {
+            projectId: 'project-1',
+            rootId: 'root-1',
+            workspaceId: 'worktree-1',
+            projectName: 'EZTerminal',
+            titleMode: 'generated',
+          },
+        },
+      });
+  });
+
+  it('rejects incomplete or executable project-terminal persistence fields', () => {
+    const incomplete = makeLayout();
+    (incomplete.panels as Record<string, Record<string, unknown>>)['tab-1'].params = {
+      projectSession: {
+        projectId: 'project-1',
+        rootId: 'root-1',
+        projectName: 'EZTerminal',
+        titleMode: 'generated',
+      },
+    };
+    expect(validateLayoutEnvelope(makeEnvelope(incomplete))).toBeNull();
+
+    const executable = makeLayout();
+    (executable.panels as Record<string, Record<string, unknown>>)['tab-1'].params = {
+      projectSession: {
+        projectId: 'project-1',
+        projectName: 'EZTerminal',
+        titleMode: 'generated',
+      },
+      cwd: 'C:\\private',
+    };
+    expect(validateLayoutEnvelope(makeEnvelope(executable))).toBeNull();
+  });
+
   it('REJECTS malformed grid.root (Codex B1 — the pre-revert fromJSON throw window)', () => {
     const layout = makeLayout();
     (layout.grid as Record<string, unknown>).root = { type: 'leaf', data: [] };

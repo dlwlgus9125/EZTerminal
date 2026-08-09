@@ -12,6 +12,7 @@ import type {
   AgentSettings,
   AgentStatus,
 } from '../shared/agent';
+import { MAX_AGENT_PROVIDER_LABEL_LENGTH } from '../shared/agent';
 import type { InterpreterFrame, RunStartedInfo, SessionInfo } from '../shared/ipc';
 import type { RemotePort } from './interpreter-broker';
 import {
@@ -42,6 +43,7 @@ interface MutableActivity {
   readonly sessionId: string;
   readonly runId: string;
   readonly provider: AgentProvider;
+  readonly providerLabel: string;
   cwd: string;
   status: AgentStatus;
   readonly createdAt: number;
@@ -76,6 +78,7 @@ function publicActivity(record: MutableActivity): AgentActivity {
     id: record.id,
     sessionId: record.sessionId,
     provider: record.provider,
+    providerLabel: record.providerLabel,
     cwd: record.cwd,
     status: record.status,
     createdAt: record.createdAt,
@@ -89,13 +92,30 @@ function providerKey(provider: AgentProvider, value: string): string {
 }
 
 export function classifyAgentCommand(commandText: string, settings: AgentSettings): AgentProvider | null {
+  return classifyAgentCommandIdentity(commandText, settings)?.provider ?? null;
+}
+
+function classifyAgentCommandIdentity(
+  commandText: string,
+  settings: AgentSettings,
+): { readonly provider: AgentProvider; readonly providerLabel: string } | null {
   const direct = classifyDirectAgentCommand(commandText);
-  if (direct) return direct;
+  if (direct) {
+    return {
+      provider: direct,
+      providerLabel: direct === 'codex' ? 'Codex' : 'Claude',
+    };
+  }
   const executable = directCommandExecutable(commandText);
   if (!executable) return null;
   for (const profile of settings.genericProfiles) {
     if (!profile.enabled) continue;
-    if (executable === executableBasename(profile.executable)) return 'generic';
+    if (executable === executableBasename(profile.executable)) {
+      return {
+        provider: 'generic',
+        providerLabel: profile.name.trim().slice(0, MAX_AGENT_PROVIDER_LABEL_LENGTH) || 'CLI',
+      };
+    }
   }
   return null;
 }
@@ -400,19 +420,23 @@ export class AgentActivityService {
 
   private handleRunStarted(info: RunStartedInfo): void {
     if (this.disposed || this.byRun.has(info.runId)) return;
-    const provider = classifyAgentCommand(info.commandText, this.getSettings());
-    if (!provider) return;
-    this.startActivity(info, provider);
+    const identity = classifyAgentCommandIdentity(info.commandText, this.getSettings());
+    if (!identity) return;
+    this.startActivity(info, identity);
   }
 
-  private startActivity(info: RunStartedInfo, provider: AgentProvider): MutableActivity {
+  private startActivity(
+    info: RunStartedInfo,
+    identity: { readonly provider: AgentProvider; readonly providerLabel: string },
+  ): MutableActivity {
     const now = this.now();
     const cwd = this.broker.listSessions().find((session) => session.sessionId === info.sessionId)?.cwd ?? '';
     const record: MutableActivity = {
       id: this.newId(),
       sessionId: info.sessionId,
       runId: info.runId,
-      provider,
+      provider: identity.provider,
+      providerLabel: identity.providerLabel,
       cwd,
       status: 'working',
       createdAt: now,
@@ -425,7 +449,7 @@ export class AgentActivityService {
     };
     this.records.set(record.id, record);
     this.byRun.set(record.runId, record);
-    this.activeBySessionProvider.set(providerKey(provider, record.sessionId), record);
+    this.activeBySessionProvider.set(providerKey(identity.provider, record.sessionId), record);
     this.attach(record);
     this.publish();
     this.publishObservation(record);

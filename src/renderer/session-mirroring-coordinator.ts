@@ -5,6 +5,7 @@ import type {
   SessionSurfaceReleaseResult,
 } from '../shared/session-surface';
 import type { WorkbenchCoordinator } from './workbench-coordinator';
+import type { ProjectSessionTarget } from '../shared/project-workspace';
 
 export type PaneInstanceToken = object;
 
@@ -95,6 +96,11 @@ function sameIntent(first: SessionSurfaceIntent, second: SessionSurfaceIntent): 
   switch (first.kind) {
     case 'create':
       return second.kind === 'create' && first.cwd === second.cwd;
+    case 'create-project':
+      return second.kind === 'create-project'
+        && first.target.projectId === second.target.projectId
+        && first.target.rootId === second.target.rootId
+        && first.target.workspaceId === second.target.workspaceId;
     case 'adopt':
       return second.kind === 'adopt' && first.sessionId === second.sessionId;
     case 'restore':
@@ -155,6 +161,7 @@ class SessionPaneRegistry {
     instanceToken: PaneInstanceToken,
     initialCwd?: string,
     requestedAdoptSessionId?: string,
+    projectTarget?: ProjectSessionTarget,
   ): SessionPaneLease {
     const autoMirrorOrigin = this.autoMirrorOrigins.get(instanceToken);
     const isAutoMirror = Boolean(
@@ -172,7 +179,9 @@ class SessionPaneRegistry {
 
     const intent: SessionSurfaceIntent = requestedAdoptSessionId
       ? { kind: 'adopt', sessionId: requestedAdoptSessionId }
-      : { kind: 'create', ...(initialCwd ? { cwd: initialCwd } : {}) };
+      : projectTarget
+        ? { kind: 'create-project', target: projectTarget }
+        : { kind: 'create', ...(initialCwd ? { cwd: initialCwd } : {}) };
     let record = this.mounted.get(instanceToken);
     const valid = !record || (record.panelId === panelId && sameIntent(record.intent, intent));
     if (!record) {
@@ -434,12 +443,14 @@ export class SessionMirroringCoordinator {
     instanceToken: PaneInstanceToken,
     initialCwd?: string,
     requestedAdoptSessionId?: string,
+    projectTarget?: ProjectSessionTarget,
   ): SessionPaneLease {
     return this.registry.mountPane(
       panelId,
       instanceToken,
       initialCwd,
       requestedAdoptSessionId,
+      projectTarget,
     );
   }
 

@@ -326,6 +326,11 @@ describe('ProjectWorkspaceService', () => {
       access: 'authorization-required',
     });
     await expect(service.readText(request)).resolves.toEqual({ ok: false, error: 'authorization-required' });
+    await expect(service.resolveSessionTarget({
+      projectId: test.projectId,
+      rootId: test.rootId,
+      workspaceId: 'external-worktree',
+    })).resolves.toEqual({ ok: false, error: 'authorization-required' });
 
     await expect(service.approveWorkspace(request)).resolves.toMatchObject({
       ok: true,
@@ -334,6 +339,20 @@ describe('ProjectWorkspaceService', () => {
     await expect(service.readText(request)).resolves.toMatchObject({
       ok: true,
       file: { content: 'approved content\n' },
+    });
+    await expect(service.resolveSessionTarget({
+      projectId: test.projectId,
+      rootId: test.rootId,
+      workspaceId: 'external-worktree',
+    })).resolves.toMatchObject({
+      ok: true,
+      target: {
+        projectId: test.projectId,
+        rootId: test.rootId,
+        workspaceId: 'external-worktree',
+      },
+      cwd: external,
+      roots: [external],
     });
 
     const reloadedStore = new ProjectWorkspaceAccessStore(test.userData);
@@ -346,5 +365,10 @@ describe('ProjectWorkspaceService', () => {
       ok: false,
       error: 'authorization-required',
     });
+    await expect(reloadedService.resolveSessionTarget({
+      projectId: test.projectId,
+      rootId: test.rootId,
+      workspaceId: 'external-worktree',
+    })).resolves.toEqual({ ok: false, error: 'authorization-required' });
   });
 });

@@ -184,6 +184,129 @@ async function selectionRange(input: Locator): Promise<readonly [number | null, 
   });
 }
 
+async function flushLayout(window: Page): Promise<void> {
+  await window.evaluate(() => {
+    const seam = globalThis as unknown as { __ezLayoutFlush?: () => Promise<void> };
+    if (!seam.__ezLayoutFlush) throw new Error('__ezLayoutFlush seam missing');
+    return seam.__ezLayoutFlush();
+  });
+}
+
+test('project new session preserves fixed-root terminal identity across rename and restart', async () => {
+  const { projectRoot, userDataDir } = createProjectFixture();
+  const app = await launchApp(userDataDir);
+  const window = await app.firstWindow();
+  await window.setViewportSize({ width: 1440, height: 900 });
+  await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  const publicProjectId = await window.evaluate(async () =>
+    (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items[0]?.projectId);
+  expect(publicProjectId).toBeTruthy();
+
+  await window.getByTestId('btn-toggle-agents').click();
+  const newSession = window.getByTestId(`agent-project-new-chat-${publicProjectId!}`);
+  await expect(newSession).toBeVisible({ timeout: 15_000 });
+
+  const openTerminal = async (): Promise<void> => {
+    await newSession.click();
+    await expect(window.getByTestId('agent-launch-picker')).toBeVisible();
+    await expect(window.getByTestId('agent-launch-project')).toHaveCount(0);
+    await window.getByTestId('agent-launch-session-type').selectOption('terminal');
+    await window.getByTestId('agent-launch-submit').click();
+    await expect(window.getByTestId('agent-launch-picker')).toHaveCount(0);
+  };
+
+  await openTerminal();
+  await openTerminal();
+
+  const projectTabs = window.locator('.project-session-tab');
+  await expect(projectTabs).toHaveCount(2);
+  await expect(projectTabs.nth(0).locator('.project-session-tab__label'))
+    .toHaveText('Workbench fixture');
+  await expect(projectTabs.nth(1).locator('.project-session-tab__label'))
+    .toHaveText('Workbench fixture 2');
+  await expect(projectTabs.locator('.project-session-tab__badge')).toHaveText([
+    'Terminal',
+    'Terminal',
+  ]);
+
+  await projectTabs.nth(0).click();
+  const activeProjectPane = window.locator('[data-testid="pane"]:visible');
+  const firstSessionId = await activeProjectPane.getAttribute('data-session-id');
+  expect(firstSessionId).toBeTruthy();
+  await projectTabs.nth(0).dblclick();
+  const rename = window.getByTestId('workspace-tab-rename');
+  await rename.fill('Pinned project');
+  await rename.press('Enter');
+  await expect(projectTabs.nth(0).locator('.project-session-tab__label'))
+    .toHaveText('Pinned project');
+  await expect(activeProjectPane).toHaveAttribute('data-session-id', firstSessionId!);
+
+  await openTerminal();
+  await expect(projectTabs).toHaveCount(3);
+  await expect(projectTabs.locator('.project-session-tab__label')).toHaveText([
+    'Pinned project',
+    'Workbench fixture',
+    'Workbench fixture 2',
+  ]);
+  await expect(projectTabs.locator('.project-session-tab__badge')).toHaveText([
+    'Terminal',
+    'Terminal',
+    'Terminal',
+  ]);
+
+  const panes = window.getByTestId('pane');
+  await expect.poll(async () => panes.evaluateAll((elements, expectedCwd) => elements.filter(
+    (element) => element.querySelector('[data-testid="prompt-cwd"]')?.getAttribute('title') === expectedCwd,
+  ).length, projectRoot), {
+    timeout: 15_000,
+    message: 'Every project terminal session should resolve to the project root in main',
+  }).toBe(3);
+
+  const beforeRestart = await panes.evaluateAll((elements, expectedCwd) => elements
+    .filter((element) => element.querySelector('[data-testid="prompt-cwd"]')
+      ?.getAttribute('title') === expectedCwd)
+    .map((element) => element.getAttribute('data-session-id')), projectRoot);
+  expect(beforeRestart).toHaveLength(3);
+  expect(beforeRestart.every(Boolean)).toBe(true);
+  await flushLayout(window);
+  await app.close();
+
+  const restoredApp = await launchApp(userDataDir);
+  const restored = await restoredApp.firstWindow();
+  await restored.setViewportSize({ width: 1440, height: 900 });
+  const restoredTabs = restored.locator('.project-session-tab');
+  await expect(restoredTabs).toHaveCount(3, { timeout: 15_000 });
+  await expect(restoredTabs.locator('.project-session-tab__label')).toHaveText([
+    'Pinned project',
+    'Workbench fixture',
+    'Workbench fixture 2',
+  ]);
+  await expect(restoredTabs.locator('.project-session-tab__badge')).toHaveText([
+    'Terminal',
+    'Terminal',
+    'Terminal',
+  ]);
+
+  const restoredPanes = restored.getByTestId('pane');
+  await expect.poll(async () => restoredPanes.evaluateAll((elements, expectedCwd) => elements.filter(
+    (element) => element.querySelector('[data-testid="prompt-cwd"]')?.getAttribute('title') === expectedCwd,
+  ).length, projectRoot), {
+    timeout: 15_000,
+    message: 'Restored project terminals should resolve their safe metadata to the project root',
+  }).toBe(3);
+  const afterRestart = await restoredPanes.evaluateAll((elements, expectedCwd) => elements
+    .filter((element) => element.querySelector('[data-testid="prompt-cwd"]')
+      ?.getAttribute('title') === expectedCwd)
+    .map((element) => element.getAttribute('data-session-id')), projectRoot);
+  expect(afterRestart).toHaveLength(3);
+  expect(afterRestart.every(Boolean)).toBe(true);
+  for (const restoredSessionId of afterRestart) {
+    expect(beforeRestart).not.toContain(restoredSessionId);
+  }
+  await restoredApp.close();
+});
+
 test('Agent Project opens changed files in one VS Code-style read-only editor', async () => {
   const { userDataDir } = createProjectFixture();
 

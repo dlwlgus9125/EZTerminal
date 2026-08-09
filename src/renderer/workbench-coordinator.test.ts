@@ -416,6 +416,31 @@ describe('WorkbenchCoordinator pane and recent-panel contract', () => {
     });
   });
 
+  it('opens project terminals with safe persisted identity instead of a renderer cwd', () => {
+    const coordinator = new WorkbenchCoordinator(coordinatorOptions());
+    const dock = new FakeDockAdapter();
+    coordinator.attach(dock);
+    const projectSession = {
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'worktree-1',
+      projectName: 'EZTerminal',
+      titleMode: 'generated' as const,
+    };
+
+    expect(coordinator.openTerminal({
+      cwd: 'C:\\must-not-persist',
+      title: 'EZTerminal',
+      projectSession,
+    })?.panelId).toBe('tab-1');
+    expect(dock.added[0]).toMatchObject({
+      id: 'tab-1',
+      title: 'EZTerminal',
+      projectSession,
+    });
+    expect(dock.added[0]).not.toHaveProperty('cwd');
+  });
+
   it('quarantines a failed restore and reapplies the exact live backup before recovery', async () => {
     const quarantineLayout = vi.fn(async () => undefined);
     const coordinator = new WorkbenchCoordinator(coordinatorOptions({

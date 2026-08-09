@@ -11,6 +11,7 @@ import {
   PROJECT_TEXT_MAX_BYTES,
   hasSensitiveProjectContent,
   hasProjectPathControlCharacters,
+  isProjectSessionTarget,
   isSensitiveProjectPath,
   languageForProjectPath,
   type ProjectDirectoryEntry,
@@ -20,6 +21,7 @@ import {
   type ProjectSearchMatch,
   type ProjectSearchRequest,
   type ProjectSearchResult,
+  type ProjectSessionTarget,
   type ProjectTextResult,
   type ProjectWorkspaceDescriptorResult,
   type ProjectWorkspaceAccessRequest,
@@ -45,6 +47,18 @@ interface ResolvedPath extends ResolvedProjectRoot {
   readonly relativePath: string;
   readonly absolutePath: string;
 }
+
+export type ProjectSessionTargetResolution =
+  | {
+      readonly ok: true;
+      readonly target: ProjectSessionTarget;
+      readonly projectName: string;
+      readonly cwd: string;
+      readonly roots: readonly string[];
+      /** Persistence-store id, kept in main only. */
+      readonly storedProjectId: string;
+    }
+  | { readonly ok: false; readonly error: ProjectWorkspaceError };
 
 function pathKey(value: string): string {
   const normalized = path.normalize(value);
@@ -164,6 +178,38 @@ export class ProjectWorkspaceService {
         roots,
         workspaces: roots.map(rootWorkspace),
       },
+    };
+  }
+
+  /** Resolve an explicit project terminal target immediately before launch. */
+  async resolveSessionTarget(target: unknown): Promise<ProjectSessionTargetResolution> {
+    if (!isProjectSessionTarget(target)) return { ok: false, error: 'invalid-request' };
+    const described = this.describeProject(target.projectId);
+    if (!described.ok) return described;
+    const rootId = target.rootId
+      ?? described.project.roots.find((root) => root.primary)?.rootId
+      ?? described.project.roots[0]?.rootId;
+    if (!rootId) return { ok: false, error: 'root-not-found' };
+    const root = await this.resolveRoot(target.projectId, rootId, target.workspaceId);
+    if (!root.ok) return root;
+    const configuredRoots = [root.value.project.primaryRoot, ...root.value.project.additionalRoots];
+    const selectedRegisteredRoot = root.value.descriptor.displayPath;
+    const roots = [
+      root.value.rootPath,
+      ...configuredRoots.filter((candidate) => pathKey(candidate) !== pathKey(selectedRegisteredRoot)),
+    ];
+    return {
+      ok: true,
+      target: {
+        projectId: target.projectId,
+        ...(target.rootId && target.workspaceId
+          ? { rootId: target.rootId, workspaceId: target.workspaceId }
+          : {}),
+      },
+      projectName: root.value.project.name,
+      cwd: root.value.rootPath,
+      roots,
+      storedProjectId: root.value.project.projectId,
     };
   }
 

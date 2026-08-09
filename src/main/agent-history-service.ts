@@ -21,6 +21,7 @@ import {
   type AgentTranscriptPage,
 } from '../shared/agent-history';
 import type { GenericAgentProfile } from '../shared/agent';
+import type { ProjectSessionTarget, ProjectWorkspaceError } from '../shared/project-workspace';
 import type {
   AgentHistoryProviderAdapter,
   ProviderFileChangeSet,
@@ -158,6 +159,16 @@ function projectSummary(project: AgentProjectRecord): AgentProjectSummary {
 export class AgentHistoryService {
   private readonly adapters: ReadonlyMap<string, AgentHistoryProviderAdapter>;
   private readonly index = new Map<string, IndexedSession>();
+  private resolveProjectSessionTarget: ((target: ProjectSessionTarget) => Promise<
+    | {
+        readonly ok: true;
+        readonly target: ProjectSessionTarget;
+        readonly cwd: string;
+        readonly roots: readonly string[];
+        readonly storedProjectId: string;
+      }
+    | { readonly ok: false; readonly error: ProjectWorkspaceError }
+  >) | null = null;
 
   constructor(
     private readonly projects: AgentProjectStore,
@@ -165,6 +176,12 @@ export class AgentHistoryService {
     private readonly getGenericProfiles: () => readonly GenericAgentProfile[] = () => [],
   ) {
     this.adapters = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
+  }
+
+  setProjectSessionTargetResolver(
+    resolver: NonNullable<AgentHistoryService['resolveProjectSessionTarget']>,
+  ): void {
+    this.resolveProjectSessionTarget = resolver;
   }
 
   async listProjects(
@@ -197,6 +214,26 @@ export class AgentHistoryService {
       additionalRoots,
       lastActiveAt,
     });
+  }
+
+  async recordLaunchTargetWork(
+    target: AgentLaunchTarget,
+    roots: readonly string[],
+    lastActiveAt = Date.now(),
+  ): Promise<void> {
+    if (target.kind === 'project') {
+      const project = this.projectForId(target.projectId);
+      if (project) {
+        await this.projects.touch(project.projectId, lastActiveAt);
+        return;
+      }
+    }
+    await this.recordTerminalWork(roots, lastActiveAt);
+  }
+
+  async recordObservedProjectWork(projectId: string, lastActiveAt = Date.now()): Promise<boolean> {
+    const project = this.projectForId(projectId);
+    return project ? this.projects.touch(project.projectId, lastActiveAt) : false;
   }
 
   /**
@@ -395,10 +432,34 @@ export class AgentHistoryService {
     let configuredRoots: readonly string[];
     if (target.kind === 'project') {
       if (!target.projectId) return { ok: false, reason: 'invalid' };
-      const project = this.projectForId(target.projectId);
-      if (!project) return { ok: false, reason: 'not-found' };
-      canonicalTarget = target;
-      configuredRoots = [project.primaryRoot, ...project.additionalRoots];
+      if (this.resolveProjectSessionTarget) {
+        const resolved = await this.resolveProjectSessionTarget({
+          projectId: target.projectId,
+          ...(target.rootId && target.workspaceId
+            ? { rootId: target.rootId, workspaceId: target.workspaceId }
+            : {}),
+        });
+        if (!resolved.ok) {
+          if (resolved.error === 'invalid-request') return { ok: false, reason: 'invalid' };
+          if (resolved.error === 'project-not-found'
+            || resolved.error === 'root-not-found'
+            || resolved.error === 'workspace-not-found') {
+            return { ok: false, reason: 'not-found' };
+          }
+          if (resolved.error === 'not-found' || resolved.error === 'not-a-directory') {
+            return { ok: false, reason: 'missing-root' };
+          }
+          return { ok: false, reason: 'unavailable' };
+        }
+        canonicalTarget = { kind: 'project', ...resolved.target };
+        configuredRoots = resolved.roots;
+      } else {
+        if (target.rootId || target.workspaceId) return { ok: false, reason: 'unavailable' };
+        const project = this.projectForId(target.projectId);
+        if (!project) return { ok: false, reason: 'not-found' };
+        canonicalTarget = target;
+        configuredRoots = [project.primaryRoot, ...project.additionalRoots];
+      }
     } else if (target.kind === 'directory') {
       if (
         !target.directory

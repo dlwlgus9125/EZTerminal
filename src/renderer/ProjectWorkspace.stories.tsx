@@ -144,7 +144,7 @@ function ProjectWorkspaceStory({ external }: { readonly external: boolean }): JS
           project={project}
           onBack={() => undefined}
           onOpenDocument={() => undefined}
-          onNewChat={() => undefined}
+          onNewSession={() => undefined}
           onManage={() => undefined}
         />
       </div>

@@ -329,7 +329,7 @@ function IntegratedProjectWorkspace(): JSX.Element {
             onExplorerStateChange={() => undefined}
             onBack={() => undefined}
             onOpenDocument={() => undefined}
-            onNewChat={() => undefined}
+            onNewSession={() => undefined}
             onManage={() => undefined}
           />
         </aside>

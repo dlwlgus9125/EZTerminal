@@ -29,6 +29,7 @@ import {
   type AgentDecision,
   type AgentDecisionResult,
   type AgentIntegrationStatus,
+  type AgentProvider,
   type AgentStatus,
   type GenericAgentProfile,
 } from '../shared/agent';
@@ -49,6 +50,11 @@ import {
 import { type QuickCommand, type QuickCommandInput, type QuickCommandMutationResult } from '../shared/quick-command';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
 import type { CloseRisk } from '../shared/close-risk';
+import {
+  isProjectSessionPanelMetadata,
+  type ProjectSessionPanelMetadata,
+  type ProjectSessionTarget,
+} from '../shared/project-workspace';
 import { countAgentAttention } from '../shared/agent-attention';
 import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from '../shared/workspace-search';
 import { isAppUpdateAvailable } from '../shared/app-update';
@@ -113,7 +119,12 @@ import { RiskyCloseDialog } from './RiskyCloseDialog';
 import type { SettingsCategory } from './SettingsPanel';
 import { TerminalPane, type PaneApproval } from './TerminalPane';
 import { TerminalPasteWarningDialog } from './TerminalPasteWarningDialog';
-import { agentHistoryTabTitle, WorkspaceTab } from './WorkspaceTab';
+import {
+  agentHistoryTabTitle,
+  generatedProjectSessionTitles,
+  projectSessionBadgeLabel,
+  WorkspaceTab,
+} from './WorkspaceTab';
 import {
   preflightLayoutEnvelope,
   removePanelFromLayoutEnvelope,
@@ -224,11 +235,17 @@ interface SessionBindingContextValue {
     instanceToken: PaneInstanceToken,
     initialCwd?: string,
     requestedAdoptSessionId?: string,
+    projectTarget?: ProjectSessionTarget,
   ) => SessionPaneLease;
 }
 const SessionBindingContext = createContext<SessionBindingContextValue | null>(null);
 
-const AgentTabStatusContext = createContext<ReadonlyMap<string, AgentStatus>>(new Map());
+interface AgentTabPresentation {
+  readonly status: AgentStatus;
+  readonly provider: AgentProvider;
+  readonly providerLabel?: string;
+}
+const AgentTabStatusContext = createContext<ReadonlyMap<string, AgentTabPresentation>>(new Map());
 
 interface PaneApprovalContextValue {
   readonly byPanel: ReadonlyMap<string, PaneApproval>;
@@ -314,11 +331,18 @@ function AgentAwareTab(props: IDockviewPanelHeaderProps): JSX.Element {
   const statuses = useContext(AgentTabStatusContext);
   const closeContext = useContext(PaneCloseContext);
   const actions = useContext(WorkspaceTabActionContext);
-  const status = statuses.get(props.api.id);
+  const activity = statuses.get(props.api.id);
+  const pendingBootstrap = peekAgentTerminalBootstrap(props.api.id);
+  const status = activity?.status ?? (pendingBootstrap ? 'starting' : undefined);
+  const provider = activity?.provider ?? pendingBootstrap?.provider;
+  const providerLabel = activity?.providerLabel
+    ?? (pendingBootstrap?.kind === 'new-chat' ? pendingBootstrap.name : undefined);
   return (
     <WorkspaceTab
       {...props}
       status={status}
+      provider={provider}
+      providerLabel={providerLabel}
       requestClose={(close) => {
         if (closeContext) {
           closeContext.requestPanelClose(props.api.id, props.api.component, props.api, close);
@@ -347,6 +371,22 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
   const presetMutation = useContext(PresetMutationContext);
   const quickCommandShelf = useContext(QuickCommandShelfContext);
   const paneApprovals = useContext(PaneApprovalContext);
+  const projectSession = isProjectSessionPanelMetadata(props.params?.projectSession)
+    ? props.params.projectSession
+    : undefined;
+  const projectId = projectSession?.projectId;
+  const projectRootId = projectSession?.rootId;
+  const projectWorkspaceId = projectSession?.workspaceId;
+  const projectTarget = useMemo<ProjectSessionTarget | undefined>(() => (
+    projectId
+      ? {
+          projectId,
+          ...(projectRootId && projectWorkspaceId
+            ? { rootId: projectRootId, workspaceId: projectWorkspaceId }
+            : {}),
+        }
+      : undefined
+  ), [projectId, projectRootId, projectWorkspaceId]);
   return (
     <TerminalPane
       panelId={props.api.id}
@@ -354,6 +394,7 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
       onDecideApproval={paneApprovals?.onDecide}
       paneInstanceToken={props.api}
       initialCwd={props.params?.cwd as string | undefined}
+      projectTarget={projectTarget}
       agentBootstrap={peekAgentTerminalBootstrap(props.api.id)}
       adoptSessionId={props.params?.adoptSessionId as string | undefined}
       mountSessionPane={binding?.mountPane}
@@ -588,6 +629,7 @@ export function App(): JSX.Element {
   const [auxiliaryCloseDialog, setAuxiliaryCloseDialog] =
     useState<AuxiliaryCloseDialogState | null>(null);
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
+  const [panelSetRevision, setPanelSetRevision] = useState(0);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [projectWorkspaceStates, setProjectWorkspaceStates] = useState<Readonly<Record<string, ProjectExplorerState>>>({});
   const projectDrillActive = activeProjectId !== null;
@@ -619,6 +661,7 @@ export function App(): JSX.Element {
         });
       },
       onRecentPanelSwitchChange: setRecentPanelSwitch,
+      onPanelSetChange: () => setPanelSetRevision((value) => value + 1),
       focusPane: (panelId) => {
         const pane = getPaneHandle(panelId);
         if (!pane) return false;
@@ -855,11 +898,13 @@ export function App(): JSX.Element {
       instanceToken: PaneInstanceToken,
       initialCwd?: string,
       requestedAdoptSessionId?: string,
+      projectTarget?: ProjectSessionTarget,
     ): SessionPaneLease => sessionMirroringCoordinator.mountPane(
       panelId,
       instanceToken,
       initialCwd,
       requestedAdoptSessionId,
+      projectTarget,
     ),
     [sessionMirroringCoordinator],
   );
@@ -1157,7 +1202,7 @@ export function App(): JSX.Element {
     return window.ezterminalDesktop?.onAgentSessionReveal((sessionId) => focusAgentSession(sessionId));
   }, [focusAgentSession]);
 
-  const agentTabStatuses = useMemo<ReadonlyMap<string, AgentStatus>>(() => {
+  const agentTabStatuses = useMemo<ReadonlyMap<string, AgentTabPresentation>>(() => {
     const rank: Record<AgentStatus, number> = {
       blocked: 0,
       error: 1,
@@ -1166,18 +1211,64 @@ export function App(): JSX.Element {
       starting: 4,
       done: 5,
     };
-    const result = new Map<string, AgentStatus>();
+    const result = new Map<string, AgentTabPresentation>();
     for (const activity of agentSnapshot.items) {
       for (const binding of sessionPaneBindings.get(activity.sessionId) ?? []) {
         if (apiRef.current?.getPanel(binding.panelId)?.api !== binding.instanceToken) continue;
         const existing = result.get(binding.panelId);
-        if (!existing || rank[activity.status] < rank[existing]) {
-          result.set(binding.panelId, activity.status);
+        if (!existing || rank[activity.status] < rank[existing.status]) {
+          result.set(binding.panelId, {
+            status: activity.status,
+            provider: activity.provider,
+            ...(activity.providerLabel ? { providerLabel: activity.providerLabel } : {}),
+          });
         }
       }
     }
     return result;
   }, [agentSnapshot, sessionPaneBindings]);
+
+  useEffect(() => {
+    const api = apiRef.current;
+    if (!api) return;
+    const candidates: Array<Parameters<typeof generatedProjectSessionTitles>[0][number]> = [];
+    const panels = new Map(api.panels.map((panel) => [panel.id, panel]));
+    for (const panel of api.panels) {
+      if (panel.api.component !== 'terminal') continue;
+      const params = panel.api.getParameters?.();
+      const metadata = isProjectSessionPanelMetadata(params?.projectSession)
+        ? params.projectSession
+        : null;
+      if (!metadata) continue;
+      const activity = agentTabStatuses.get(panel.id);
+      const pendingBootstrap = peekAgentTerminalBootstrap(panel.id);
+      const status = activity?.status ?? (pendingBootstrap ? 'starting' : undefined);
+      const provider = activity?.provider ?? pendingBootstrap?.provider;
+      const providerLabel = activity?.providerLabel
+        ?? (pendingBootstrap?.kind === 'new-chat' ? pendingBootstrap.name : undefined);
+      const badge = projectSessionBadgeLabel(
+        status,
+        provider,
+        providerLabel,
+        t('workspaceTab.terminal'),
+      );
+      candidates.push({
+        panelId: panel.id,
+        projectId: metadata.projectId,
+        projectName: metadata.projectName,
+        badgeKey: badge,
+        titleMode: metadata.titleMode,
+      });
+    }
+    let changed = false;
+    for (const [panelId, title] of generatedProjectSessionTitles(candidates)) {
+      const panel = panels.get(panelId);
+      if (!panel || panel.api.title === title) continue;
+      panel.api.setTitle(title);
+      changed = true;
+    }
+    if (changed) workbenchCoordinator.scheduleLayoutSave();
+  }, [agentTabStatuses, panelSetRevision, t, workbenchCoordinator]);
 
   const paneApprovalValue = useMemo<PaneApprovalContextValue>(() => {
     const byPanel = new Map<string, PaneApproval>();
@@ -1659,11 +1750,22 @@ export function App(): JSX.Element {
       : null;
   }, []);
 
-  const launchAgent = useCallback((bootstrap: AgentLaunchBootstrap): void => {
+  const launchAgent = useCallback((
+    bootstrap: AgentLaunchBootstrap,
+    projectSession?: ProjectSessionPanelMetadata,
+  ): void => {
     workbenchCoordinator.openTerminal({
-      cwd: bootstrap.cwd,
-      title: bootstrap.name,
+      ...(projectSession
+        ? { title: projectSession.projectName, projectSession }
+        : { cwd: bootstrap.cwd, title: bootstrap.name }),
       agentBootstrap: bootstrap,
+    });
+  }, [workbenchCoordinator]);
+
+  const openProjectTerminal = useCallback((projectSession: ProjectSessionPanelMetadata): void => {
+    workbenchCoordinator.openTerminal({
+      title: projectSession.projectName,
+      projectSession,
     });
   }, [workbenchCoordinator]);
 
@@ -2357,7 +2459,7 @@ export function App(): JSX.Element {
       if (snapshot?.draft.trim()) statuses.push(t('recentPanels.statuses.draft'));
       if (snapshot?.hasSshPrompt) statuses.push(t('recentPanels.statuses.sshPrompt'));
       if (snapshot?.isDead) statuses.push(t('recentPanels.statuses.ended'));
-      const agentStatus = agentTabStatuses.get(panelId);
+      const agentStatus = agentTabStatuses.get(panelId)?.status;
       if (agentStatus && agentStatus !== 'done') {
         statuses.push(t('recentPanels.agentStatus', { status: t(`agentHub.status.${agentStatus}`) }));
       }
@@ -3064,7 +3166,10 @@ export function App(): JSX.Element {
   const workspaceTabActionValue = useMemo<WorkspaceTabActionContextValue>(
     () => ({
       split: (panelId, direction) => openPanel({ referencePanel: panelId, direction }),
-      titleChanged: scheduleSave,
+      titleChanged: () => {
+        setPanelSetRevision((value) => value + 1);
+        scheduleSave();
+      },
     }),
     [openPanel, scheduleSave],
   );
@@ -3126,6 +3231,7 @@ export function App(): JSX.Element {
             setProjectWorkspaceStates((current) => ({ ...current, [activeProjectId]: state }));
           },
           onLaunchAgent: launchAgent,
+          onOpenProjectTerminal: openProjectTerminal,
           onOpenAgentSettings: () => {
             setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
             setSidebarDestination('settings');

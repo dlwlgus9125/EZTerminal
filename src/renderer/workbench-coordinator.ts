@@ -14,6 +14,7 @@ import {
   registerAgentTerminalBootstrap,
 } from './agent-terminal-bootstrap';
 import { prepareLayoutForDockviewRestore } from './popout-layout';
+import type { ProjectSessionPanelMetadata } from '../shared/project-workspace';
 
 export type WorkbenchSplitDirection = 'right' | 'below';
 
@@ -28,6 +29,8 @@ export interface TerminalPaneOpenRequest {
   readonly adoptSessionId?: string;
   readonly allowDuringRecovery?: boolean;
   readonly title?: string;
+  /** Safe project association persisted with the terminal panel. */
+  readonly projectSession?: ProjectSessionPanelMetadata;
   /** Runtime-only; deliberately excluded from Dockview params/serialization. */
   readonly agentBootstrap?: AgentLaunchBootstrap;
 }
@@ -54,6 +57,7 @@ export interface WorkbenchDockAdapter {
     readonly position?: WorkbenchPanelPosition;
     readonly cwd?: string;
     readonly adoptSessionId?: string;
+    readonly projectSession?: ProjectSessionPanelMetadata;
   }): WorkbenchPaneAdapter;
   serialize(): unknown;
   restore(layout: unknown): void;
@@ -92,6 +96,7 @@ export interface WorkbenchCoordinatorOptions {
   readonly isPaneCreationLocked: () => boolean;
   readonly onActivePanelChange: (panelId: string | null, source: 'attach' | 'activation') => void;
   readonly onRecentPanelSwitchChange: (session: RecentPanelSwitchSession | null) => void;
+  readonly onPanelSetChange?: () => void;
   readonly focusPane: (panelId: string) => boolean;
   readonly requestFrame?: (callback: () => void) => void;
   readonly saveDebounceMs?: number;
@@ -130,6 +135,7 @@ export class WorkbenchCoordinator {
     this.savesSuppressed = true;
     const generation = this.attachmentGeneration;
     this.seedPanelCounter(adapter.panelIds());
+    this.options.onPanelSetChange?.();
 
     const initialActivePanelId = adapter.activePanelId();
     this.options.onActivePanelChange(initialActivePanelId, 'attach');
@@ -164,6 +170,7 @@ export class WorkbenchCoordinator {
       if (this.recentPanelSwitch) {
         this.setRecentPanelSwitch(reconcileRecentPanelSwitch(this.recentPanelSwitch, availablePanelIds));
       }
+      this.options.onPanelSetChange?.();
     });
 
     return {
@@ -200,13 +207,18 @@ export class WorkbenchCoordinator {
         id: panelId,
         title: request.title ?? `Terminal ${this.panelCounter}`,
         ...(request.position ? { position: request.position } : {}),
-        ...(request.cwd ? { cwd: request.cwd } : {}),
-        ...(request.adoptSessionId ? { adoptSessionId: request.adoptSessionId } : {}),
+        ...(request.projectSession
+          ? { projectSession: request.projectSession }
+          : {
+              ...(request.cwd ? { cwd: request.cwd } : {}),
+              ...(request.adoptSessionId ? { adoptSessionId: request.adoptSessionId } : {}),
+            }),
       });
     } catch (error) {
       clearAgentTerminalBootstrap(panelId);
       throw error;
     }
+    this.options.onPanelSetChange?.();
     return { panelId: panel.id, instanceToken: panel.instanceToken };
   }
 
@@ -353,6 +365,7 @@ export class WorkbenchCoordinator {
           this.panelCounter = Math.max(this.panelCounter, maxTabSuffix(envelope.layout));
           adapter.restore(envelope.layout);
           if (adapter.panelIds().length === 0) throw new Error('layout restored zero panels');
+          this.options.onPanelSetChange?.();
           applied = true;
         } catch (error) {
           if (isStale()) return false;
@@ -505,8 +518,12 @@ export function createDockviewWorkbenchAdapter(api: DockviewApi): WorkbenchDockA
     getPanel: pane,
     addTerminalPane: (options) => {
       const params = {
-        ...(options.cwd ? { cwd: options.cwd } : {}),
-        ...(options.adoptSessionId ? { adoptSessionId: options.adoptSessionId } : {}),
+        ...(options.projectSession
+          ? { projectSession: options.projectSession }
+          : {
+              ...(options.cwd ? { cwd: options.cwd } : {}),
+              ...(options.adoptSessionId ? { adoptSessionId: options.adoptSessionId } : {}),
+            }),
       };
       const panel = api.addPanel({
         id: options.id,
@@ -516,6 +533,9 @@ export function createDockviewWorkbenchAdapter(api: DockviewApi): WorkbenchDockA
         ...(Object.keys(params).length > 0 ? { params } : {}),
         ...(options.position ? { position: options.position } : {}),
       });
+      if (options.projectSession) {
+        panel.api.updateParameters({ projectSession: options.projectSession });
+      }
       return {
         id: panel.id,
         instanceToken: panel.api,

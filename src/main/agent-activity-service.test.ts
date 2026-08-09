@@ -135,6 +135,7 @@ describe('AgentActivityService', () => {
     const port = broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'codex' });
     expect(observed).toHaveBeenLastCalledWith(expect.objectContaining({
       provider: 'codex',
+      providerLabel: 'Codex',
       cwd: 'C:\\work',
     }));
 
@@ -142,6 +143,12 @@ describe('AgentActivityService', () => {
     expect(observed).toHaveBeenLastCalledWith(expect.objectContaining({
       provider: 'codex',
       cwd: 'C:\\repo',
+    }));
+
+    broker.run({ sessionId: 'ez-1', runId: 'run-2', commandText: 'aider --model x' });
+    expect(observed).toHaveBeenLastCalledWith(expect.objectContaining({
+      provider: 'generic',
+      providerLabel: 'Aider',
     }));
   });
 

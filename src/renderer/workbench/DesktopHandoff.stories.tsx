@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, within } from 'storybook/test';
 import {
   DockviewReact,
   type DockviewReadyEvent,
@@ -517,10 +518,17 @@ function StoryWorkspaceTab(props: IDockviewPanelHeaderProps): JSX.Element {
     : props.api.id === 'handoff-codex'
       ? 'working'
       : undefined;
+  const provider = props.api.id === 'handoff-claude'
+    ? 'claude' as const
+    : props.api.id === 'handoff-codex'
+      ? 'codex' as const
+      : undefined;
   return (
     <WorkspaceTab
       {...props}
       status={status}
+      provider={provider}
+      providerLabel={provider === 'claude' ? 'Claude' : provider === 'codex' ? 'Codex' : undefined}
       requestClose={(close) => close()}
       onSplit={() => undefined}
       onTitleChanged={() => undefined}
@@ -563,6 +571,61 @@ function TerminalDockFixture(): JSX.Element {
       <div
         className="desktop-handoff-dock"
         data-testid="desktop-handoff-terminal-dock"
+        role="region"
+        aria-label={t('workspace.currentLabel')}
+      >
+        <DockviewReact
+          className="dockview-theme-dark ez-dock"
+          components={TERMINAL_DOCK_COMPONENTS}
+          defaultTabComponent={StoryWorkspaceTab}
+          rightHeaderActionsComponent={PaneHeaderMeta}
+          onReady={onReady}
+          disableFloatingGroups
+        />
+      </div>
+    </StoryTerminalRuntime>
+  );
+}
+
+function ProjectTerminalDockFixture(): JSX.Element {
+  const { t } = useAppTranslation();
+  const onReady = useCallback((event: DockviewReadyEvent): void => {
+    if (event.api.getPanel('handoff-powershell')) return;
+    const projectSession = {
+      projectId: 'handoff-project',
+      projectName: 'EZTerminal',
+      titleMode: 'generated' as const,
+    };
+    const terminal = event.api.addPanel({
+      id: 'handoff-powershell',
+      component: 'terminal',
+      title: 'EZTerminal',
+      params: { projectSession },
+    });
+    terminal.api.updateParameters({ projectSession });
+    const claude = event.api.addPanel({
+      id: 'handoff-claude',
+      component: 'terminal',
+      title: 'EZTerminal',
+      params: { projectSession },
+      position: { referencePanel: 'handoff-powershell', direction: 'right' },
+    });
+    claude.api.updateParameters({ projectSession });
+    const codex = event.api.addPanel({
+      id: 'handoff-codex',
+      component: 'terminal',
+      title: 'EZTerminal',
+      params: { projectSession },
+      position: { referencePanel: 'handoff-claude', direction: 'below' },
+    });
+    codex.api.updateParameters({ projectSession });
+  }, []);
+
+  return (
+    <StoryTerminalRuntime>
+      <div
+        className="desktop-handoff-dock"
+        data-testid="desktop-handoff-project-terminal-dock"
         role="region"
         aria-label={t('workspace.currentLabel')}
       >
@@ -888,6 +951,25 @@ export const WorkbenchAgentHub: Story = {
       />
     </LocaleFrame>
   ),
+};
+
+export const ProjectSessionTabs: Story = {
+  render: () => (
+    <LocaleFrame>
+      <WorkbenchFrame canvas={<ProjectTerminalDockFixture />} />
+    </LocaleFrame>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const dock = await canvas.findByTestId('desktop-handoff-project-terminal-dock');
+    const badges = await within(dock).findAllByText(/^(Terminal|Claude|Codex)$/u, {
+      selector: '.project-session-tab__badge',
+    });
+    await expect(badges.map((badge) => badge.textContent).sort())
+      .toEqual(['Claude', 'Codex', 'Terminal']);
+    await expect([...dock.querySelectorAll('.project-session-tab__label')]
+      .map((label) => label.textContent)).toEqual(['EZTerminal', 'EZTerminal', 'EZTerminal']);
+  },
 };
 
 export const CommandCenter: Story = {

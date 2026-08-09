@@ -21,6 +21,7 @@ export const AGENT_SETTINGS_SCHEMA_VERSION_LEGACY = 1 as const;
 export type AgentStatus = 'starting' | 'working' | 'waiting' | 'blocked' | 'done' | 'error';
 
 export type AgentProvider = 'codex' | 'claude' | 'generic';
+export const MAX_AGENT_PROVIDER_LABEL_LENGTH = 80;
 
 export type AgentApprovalRisk = 'danger' | 'write' | 'read';
 
@@ -47,6 +48,8 @@ export interface AgentActivity {
   readonly id: string;
   readonly sessionId: string;
   readonly provider: AgentProvider;
+  /** Human-readable launcher identity; generic profiles keep their configured name. */
+  readonly providerLabel?: string;
   readonly cwd: string;
   readonly status: AgentStatus;
   readonly createdAt: number;

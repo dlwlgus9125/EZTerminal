@@ -205,6 +205,7 @@ afterEach(() => {
 function renderPanel(
   onOpenDocument = vi.fn(),
   explorerState?: ProjectExplorerState,
+  onNewSession = vi.fn(),
 ): void {
   act(() => {
     root.render(
@@ -213,7 +214,7 @@ function renderPanel(
           project={project}
           onBack={vi.fn()}
           onOpenDocument={onOpenDocument}
-          onNewChat={vi.fn()}
+          onNewSession={onNewSession}
           onManage={vi.fn()}
           explorerState={explorerState}
         />
@@ -247,6 +248,42 @@ function treeRow(name: string): HTMLButtonElement {
 }
 
 describe('ProjectWorkspacePanel', () => {
+  it('opens a new session against the selected opaque workspace identity', async () => {
+    installGrantedDesktop();
+    const onNewSession = vi.fn();
+    renderPanel(vi.fn(), undefined, onNewSession);
+    await flush();
+
+    act(() => container.querySelector<HTMLButtonElement>(
+      '[data-testid="project-workspace-new-session"]',
+    )!.click());
+
+    expect(onNewSession).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'main-1',
+    }, 'C:\\Review');
+  });
+
+  it('does not offer a session for a workspace whose approval is still required', async () => {
+    Object.defineProperty(window, 'ezterminalDesktop', {
+      configurable: true,
+      value: {
+        describeProjectWorkspace: vi.fn(async () => ({
+          ok: true as const,
+          project: descriptor('authorization-required', true),
+        })),
+        listProjectDocumentDirectory: vi.fn(),
+      } as unknown as typeof window.ezterminalDesktop,
+    });
+    renderPanel();
+    await flush();
+
+    expect(container.querySelector<HTMLButtonElement>(
+      '[data-testid="project-workspace-new-session"]',
+    )?.disabled).toBe(true);
+  });
+
   it('shows one decorated project tree immediately and opens virtual paths with one click', async () => {
     const { listProjectDocumentDirectory } = installGrantedDesktop();
     const onOpenDocument = vi.fn();

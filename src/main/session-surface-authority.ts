@@ -16,6 +16,7 @@ import type {
   SessionSurfaceReleaseResult,
 } from '../shared/session-surface';
 import { AsyncMutationGate, type MutationGate } from './async-mutation-gate';
+import type { ProjectSessionTarget, ProjectWorkspaceError } from '../shared/project-workspace';
 
 export interface SessionSurfaceBroker {
   createSession(cwd?: string): Promise<SessionInfo>;
@@ -67,6 +68,8 @@ function intentKey(intent: SessionSurfaceIntent): string {
   switch (intent.kind) {
     case 'create':
       return `create:${intent.cwd ?? ''}`;
+    case 'create-project':
+      return `create-project:${intent.target.projectId}:${intent.target.rootId ?? ''}:${intent.target.workspaceId ?? ''}`;
     case 'adopt':
       return `adopt:${intent.sessionId}`;
     case 'restore':
@@ -92,6 +95,10 @@ export class SessionSurfaceAuthority {
   private readonly closeGate: MutationGate;
   private readonly newId: () => string;
   private readonly preparedCloseTtlMs: number;
+  private readonly resolveProjectTarget: ((target: ProjectSessionTarget) => Promise<
+    | { readonly ok: true; readonly cwd: string }
+    | { readonly ok: false; readonly error: ProjectWorkspaceError }
+  >) | null;
   private readonly unsubscribeSessionRemoved: () => void;
 
   public constructor(
@@ -100,11 +107,16 @@ export class SessionSurfaceAuthority {
       readonly newId?: () => string;
       readonly closeGate?: MutationGate;
       readonly preparedCloseTtlMs?: number;
+      readonly resolveProjectTarget?: (target: ProjectSessionTarget) => Promise<
+        | { readonly ok: true; readonly cwd: string }
+        | { readonly ok: false; readonly error: ProjectWorkspaceError }
+      >;
     } = {},
   ) {
     this.newId = options.newId ?? randomUUID;
     this.closeGate = options.closeGate ?? new AsyncMutationGate();
     this.preparedCloseTtlMs = options.preparedCloseTtlMs ?? DEFAULT_PREPARED_CLOSE_TTL_MS;
+    this.resolveProjectTarget = options.resolveProjectTarget ?? null;
     this.unsubscribeSessionRemoved = broker.onSessionRemoved((sessionId) => {
       this.removeSessionBindings(sessionId);
     });
@@ -288,6 +300,27 @@ export class SessionSurfaceAuthority {
       let role: 'owner' | 'adopted';
       if (intent.kind === 'create') {
         session = await this.broker.createSession(intent.cwd);
+        role = 'owner';
+      } else if (intent.kind === 'create-project') {
+        if (!this.resolveProjectTarget) {
+          this.clearReservation(client, surfaceId, reservation);
+          return { ok: false, reason: 'unavailable' };
+        }
+        const resolved = await this.resolveProjectTarget(intent.target);
+        if (!resolved.ok) {
+          this.clearReservation(client, surfaceId, reservation);
+          if (resolved.error === 'authorization-required') {
+            return { ok: false, reason: 'forbidden' };
+          }
+          if (resolved.error === 'project-not-found'
+            || resolved.error === 'root-not-found'
+            || resolved.error === 'workspace-not-found'
+            || resolved.error === 'not-found') {
+            return { ok: false, reason: 'not-found' };
+          }
+          return { ok: false, reason: 'unavailable' };
+        }
+        session = await this.broker.createSession(resolved.cwd);
         role = 'owner';
       } else {
         session = this.broker.listSessions().find((candidate) => candidate.sessionId === intent.sessionId);

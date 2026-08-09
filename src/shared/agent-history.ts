@@ -5,6 +5,8 @@
  * remains in the provider-owned local store and is fetched on demand.
  */
 
+import type { ProjectSessionTarget } from './project-workspace';
+
 export type AgentHistoryProvider = 'codex' | 'claude';
 export type AgentProjectLauncherProvider = AgentHistoryProvider | 'generic';
 
@@ -143,10 +145,7 @@ export interface AgentProjectLauncherSummary {
 }
 
 export type AgentLaunchTarget =
-  | {
-      readonly kind: 'project';
-      readonly projectId: string;
-    }
+  | ({ readonly kind: 'project' } & ProjectSessionTarget)
   | {
       readonly kind: 'directory';
       /** Host directory. The main process returns the canonical path after preparation. */

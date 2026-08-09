@@ -87,6 +87,48 @@ describe('SessionSurfaceAuthority open/bind lifecycle', () => {
     expect(h.broker.createSession).toHaveBeenCalledOnce();
   });
 
+  it('resolves project locations in the host immediately before creating the shell', async () => {
+    const broker = new FakeBroker();
+    const resolveProjectTarget = vi.fn(async () => ({ ok: true as const, cwd: '/approved/worktree' }));
+    const value = new SessionSurfaceAuthority(broker, {
+      newId: ids(),
+      resolveProjectTarget,
+    });
+    value.connectClient('client-1');
+
+    await expect(value.openSessionSurface('client-1', 'project-surface', {
+      kind: 'create-project',
+      target: { projectId: 'project-1', rootId: 'root-1', workspaceId: 'worktree-1' },
+    })).resolves.toMatchObject({
+      ok: true,
+      binding: { role: 'owner', session: { cwd: '/approved/worktree' } },
+    });
+    expect(resolveProjectTarget).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'worktree-1',
+    });
+    expect(broker.createSession).toHaveBeenCalledWith('/approved/worktree');
+  });
+
+  it('fails a revoked project location without falling back to the default cwd', async () => {
+    const broker = new FakeBroker();
+    const value = new SessionSurfaceAuthority(broker, {
+      newId: ids(),
+      resolveProjectTarget: vi.fn(async () => ({
+        ok: false as const,
+        error: 'authorization-required' as const,
+      })),
+    });
+    value.connectClient('client-1');
+
+    await expect(value.openSessionSurface('client-1', 'project-surface', {
+      kind: 'create-project',
+      target: { projectId: 'project-1', rootId: 'root-1', workspaceId: 'external-1' },
+    })).resolves.toEqual({ ok: false, reason: 'forbidden' });
+    expect(broker.createSession).not.toHaveBeenCalled();
+  });
+
   it('rejects a conflicting intent for the same exact surface', async () => {
     const h = authority();
     h.authority.connectClient('client-1');

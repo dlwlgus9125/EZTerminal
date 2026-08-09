@@ -3391,6 +3391,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 
 .agent-history-row[data-provider='codex'],
 .agent-history-tab[data-provider='codex'],
+.project-session-tab[data-provider='codex'],
 .agent-history-terminal[data-provider='codex'],
 .agent-history-terminal__message[data-provider='codex'] {
   --agent-provider-color: var(--ui-agent-codex);
@@ -3398,6 +3399,7 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 
 .agent-history-row[data-provider='claude'],
 .agent-history-tab[data-provider='claude'],
+.project-session-tab[data-provider='claude'],
 .agent-history-terminal[data-provider='claude'],
 .agent-history-terminal__message[data-provider='claude'] {
   --agent-provider-color: var(--ui-agent-claude);
@@ -4230,6 +4232,17 @@ button.agent-work-activity:focus-visible {
   white-space: nowrap;
 }
 
+.project-session-tab__viewport {
+  display: flex;
+  inline-size: auto;
+  max-inline-size: 28ch;
+  min-inline-size: 0;
+  align-items: center;
+  gap: var(--ui-space-1);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
 .agent-history-tab__label {
   display: block;
   min-inline-size: 0;
@@ -4237,6 +4250,20 @@ button.agent-work-activity:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.project-session-tab__label {
+  display: block;
+  min-inline-size: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-session-tab__badge {
+  flex: none;
+  font-size: var(--ui-font-size-3xs);
 }
 
 .agent-history-tab .agent-provider-badge {
@@ -4250,7 +4277,18 @@ button.agent-work-activity:focus-visible {
   background: transparent;
 }
 
+.project-session-tab__close {
+  border: 0;
+  color: inherit;
+  background: transparent;
+}
+
 .agent-history-tab__close svg {
+  inline-size: 14px;
+  block-size: 14px;
+}
+
+.project-session-tab__close svg {
   inline-size: 14px;
   block-size: 14px;
 }

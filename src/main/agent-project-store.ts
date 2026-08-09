@@ -315,6 +315,28 @@ export class AgentProjectStore {
     });
   }
 
+  /** Update recency for an already-registered project without re-indexing a worktree as a project. */
+  touch(projectId: string, lastActiveAt: number): Promise<boolean> {
+    if (!Number.isFinite(lastActiveAt)) return Promise.resolve(false);
+    return this.file.enqueue(async () => {
+      const projects = [...this.snapshot.projects];
+      const index = projects.findIndex((project) => project.projectId === projectId);
+      if (index < 0) return false;
+      const current = projects[index]!;
+      const nextLastActiveAt = Math.max(current.lastActiveAt ?? 0, lastActiveAt);
+      if (nextLastActiveAt === current.lastActiveAt) return true;
+      projects[index] = {
+        ...current,
+        lastActiveAt: nextLastActiveAt,
+        updatedAt: Date.now(),
+      };
+      const next: AgentProjectFile = { version: 3, projects };
+      await this.file.writeAtomic(JSON.stringify(next));
+      this.snapshot = next;
+      return true;
+    });
+  }
+
   async flush(): Promise<void> {
     await this.file.flush();
   }

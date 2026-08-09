@@ -90,6 +90,7 @@ import type {
 import { isPairingCode, isRemoteBearerToken } from '../../../src/shared/pairing';
 import {
   EMPTY_AGENT_ACTIVITY_SNAPSHOT,
+  MAX_AGENT_PROVIDER_LABEL_LENGTH,
   type AgentActivitySnapshot,
   type AgentDecision,
   type AgentDecisionResult,
@@ -433,6 +434,8 @@ function isAgentActivitySnapshot(value: unknown): value is AgentActivitySnapshot
       || !isBoundedString(item.id, MAX_REMOTE_AGENT_ID_LENGTH)
       || !isBoundedString(item.sessionId, MAX_REMOTE_AGENT_ID_LENGTH)
       || (item.provider !== 'codex' && item.provider !== 'claude' && item.provider !== 'generic')
+      || (item.providerLabel !== undefined
+        && !isBoundedString(item.providerLabel, MAX_AGENT_PROVIDER_LABEL_LENGTH))
       || !isBoundedString(item.cwd, MAX_REMOTE_AGENT_CWD_LENGTH, true)
       || (
         item.status !== 'starting'

@@ -5,9 +5,14 @@ import {
 } from 'dockview-react';
 import { X } from 'lucide-react';
 
-import type { AgentStatus } from '../shared/agent';
+import type { AgentProvider, AgentStatus } from '../shared/agent';
 import type { AgentHistoryProvider } from '../shared/agent-history';
+import {
+  isProjectSessionPanelMetadata,
+  type ProjectSessionPanelMetadata,
+} from '../shared/project-workspace';
 import { useAppTranslation } from './i18n';
+import { Badge } from './ui';
 import {
   isTerminalContextMenuKey,
   TerminalContextMenu,
@@ -46,10 +51,76 @@ export function normalizePanelTitle(value: string, fallback: string): string {
 
 export type WorkspaceTabProps = IDockviewPanelHeaderProps & {
   readonly status?: AgentStatus;
+  readonly provider?: AgentProvider;
+  readonly providerLabel?: string;
   readonly requestClose: (close: () => void) => void;
   readonly onSplit: (panelId: string, direction: 'right' | 'below') => void;
   readonly onTitleChanged: (title: string) => void;
 };
+
+const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
+  'starting',
+  'working',
+  'waiting',
+  'blocked',
+]);
+
+export function projectSessionBadgeLabel(
+  status: AgentStatus | undefined,
+  provider: AgentProvider | undefined,
+  providerLabel: string | undefined,
+  terminalLabel: string,
+): string {
+  if (!status || !ACTIVE_AGENT_STATUSES.has(status) || !provider) return terminalLabel;
+  if (provider === 'codex') return 'Codex';
+  if (provider === 'claude') return 'Claude';
+  return providerLabel?.trim() || 'CLI';
+}
+
+export interface ProjectSessionTitleCandidate {
+  readonly panelId: string;
+  readonly projectId: string;
+  readonly projectName: string;
+  readonly badgeKey: string;
+  readonly titleMode: 'generated' | 'custom';
+}
+
+/** Deterministic generated names; custom titles neither change nor consume a suffix. */
+export function generatedProjectSessionTitles(
+  candidates: readonly ProjectSessionTitleCandidate[],
+): ReadonlyMap<string, string> {
+  const groups = new Map<string, ProjectSessionTitleCandidate[]>();
+  for (const candidate of candidates) {
+    if (candidate.titleMode === 'custom') continue;
+    const key = `${candidate.projectId}\0${candidate.badgeKey}`;
+    const group = groups.get(key) ?? [];
+    group.push(candidate);
+    groups.set(key, group);
+  }
+  const result = new Map<string, string>();
+  for (const group of groups.values()) {
+    group.sort((left, right) => {
+      const leftNumber = Number.parseInt(/^tab-(\d+)$/u.exec(left.panelId)?.[1] ?? '', 10);
+      const rightNumber = Number.parseInt(/^tab-(\d+)$/u.exec(right.panelId)?.[1] ?? '', 10);
+      return (Number.isFinite(leftNumber) ? leftNumber : Number.MAX_SAFE_INTEGER)
+        - (Number.isFinite(rightNumber) ? rightNumber : Number.MAX_SAFE_INTEGER)
+        || left.panelId.localeCompare(right.panelId);
+    });
+    group.forEach((candidate, index) => {
+      result.set(
+        candidate.panelId,
+        index === 0 ? candidate.projectName : `${candidate.projectName} ${index + 1}`,
+      );
+    });
+  }
+  return result;
+}
+
+function projectSessionFromParams(value: unknown): ProjectSessionPanelMetadata | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const projectSession = (value as Record<string, unknown>).projectSession;
+  return isProjectSessionPanelMetadata(projectSession) ? projectSession : null;
+}
 
 interface MenuInvocation {
   readonly x: number;
@@ -110,10 +181,8 @@ function AgentHistoryTab({
           </>
         )}
       </span>
-      <button
-        type="button"
+      <div
         className="dv-default-tab-action agent-history-tab__close"
-        aria-label="Close"
         onPointerDown={(event) => event.preventDefault()}
         onClick={(event) => {
           event.preventDefault();
@@ -121,7 +190,64 @@ function AgentHistoryTab({
         }}
       >
         <X aria-hidden="true" />
-      </button>
+      </div>
+    </div>
+  );
+}
+
+function ProjectSessionTab({
+  props,
+  metadata,
+  badgeLabel,
+  provider,
+  activeAgent,
+  requestClose,
+}: {
+  readonly props: IDockviewPanelHeaderProps;
+  readonly metadata: ProjectSessionPanelMetadata;
+  readonly badgeLabel: string;
+  readonly provider?: AgentProvider;
+  readonly activeAgent: boolean;
+  readonly requestClose: (close: () => void) => void;
+}): JSX.Element {
+  const [title, setTitle] = useState(props.api.title ?? metadata.projectName);
+  useEffect(() => {
+    setTitle(props.api.title ?? metadata.projectName);
+    const disposable = props.api.onDidTitleChange((event) => setTitle(event.title));
+    return () => disposable.dispose();
+  }, [metadata.projectName, props.api]);
+  return (
+    <div
+      className="dv-default-tab project-session-tab"
+      data-provider={activeAgent ? provider : undefined}
+      data-testid="dockview-dv-default-tab"
+      onPointerUp={(event) => {
+        if (event.button === 1) {
+          event.preventDefault();
+          requestClose(() => props.api.close());
+        }
+      }}
+    >
+      <span className="project-session-tab__viewport" title={`${title} · ${badgeLabel}`}>
+        <span className="project-session-tab__label">{title}</span>
+        <Badge
+          className="project-session-tab__badge agent-provider-badge"
+          size="sm"
+          variant={activeAgent ? 'accent' : 'neutral'}
+        >
+          {badgeLabel}
+        </Badge>
+      </span>
+      <div
+        className="dv-default-tab-action project-session-tab__close"
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={(event) => {
+          event.preventDefault();
+          requestClose(() => props.api.close());
+        }}
+      >
+        <X aria-hidden="true" />
+      </div>
     </div>
   );
 }
@@ -130,6 +256,8 @@ function AgentHistoryTab({
  * editor. Risky close remains delegated to App's existing atomic guard. */
 export function WorkspaceTab({
   status,
+  provider,
+  providerLabel,
   requestClose,
   onSplit,
   onTitleChanged,
@@ -142,10 +270,40 @@ export function WorkspaceTab({
   const [menu, setMenu] = useState<MenuInvocation | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState('');
+  const [projectSession, setProjectSession] = useState<ProjectSessionPanelMetadata | null>(() => {
+    return projectSessionFromParams(props.api.getParameters?.())
+      ?? projectSessionFromParams(props.params);
+  });
   const generatedTitleLabels: GeneratedPanelTitleLabels = {
     terminal: t('workspaceTab.terminal'),
     openClawChat: t('workspaceTab.openClawChat'),
   };
+  const badgeLabel = projectSessionBadgeLabel(
+    status,
+    provider,
+    providerLabel,
+    generatedTitleLabels.terminal,
+  );
+
+  useEffect(() => {
+    const storedParams = props.api.getParameters?.();
+    const storedProjectSession = projectSessionFromParams(storedParams);
+    const current = storedProjectSession ?? projectSessionFromParams(props.params);
+    setProjectSession(current);
+    if (current && !storedProjectSession) {
+      // Dockview restores initial params into renderer props before its panel
+      // API store. Synchronize the safe metadata so later title reconciliation
+      // sees restored project tabs too.
+      props.api.updateParameters({
+        ...(storedParams ?? {}),
+        projectSession: current,
+      });
+    }
+    const disposable = props.api.onDidParametersChange?.((next) => {
+      setProjectSession(projectSessionFromParams(next));
+    });
+    return () => disposable?.dispose();
+  }, [props.api, props.params]);
 
   const startRename = (): void => {
     cancelRenameRef.current = false;
@@ -159,10 +317,23 @@ export function WorkspaceTab({
       setRenaming(false);
       return;
     }
+    const customTitle = draft.trim().length > 0;
     const next = normalizePanelTitle(
       draft,
-      generatedPanelTitle(props.api.id, props.api.component, generatedTitleLabels),
+      projectSession?.projectName
+        ?? generatedPanelTitle(props.api.id, props.api.component, generatedTitleLabels),
     );
+    if (projectSession) {
+      const nextMetadata: ProjectSessionPanelMetadata = {
+        ...projectSession,
+        titleMode: customTitle ? 'custom' : 'generated',
+      };
+      props.api.updateParameters({
+        ...(props.api.getParameters?.() ?? props.params ?? {}),
+        projectSession: nextMetadata,
+      });
+      setProjectSession(nextMetadata);
+    }
     props.api.setTitle(next);
     onTitleChanged(next);
     setRenaming(false);
@@ -279,6 +450,15 @@ export function WorkspaceTab({
       ) : (
         props.api.component === 'agent-session' ? (
           <AgentHistoryTab props={props} requestClose={requestClose} />
+        ) : projectSession ? (
+          <ProjectSessionTab
+            props={props}
+            metadata={projectSession}
+            badgeLabel={badgeLabel}
+            provider={provider}
+            activeAgent={Boolean(status && provider && ACTIVE_AGENT_STATUSES.has(status))}
+            requestClose={requestClose}
+          />
         ) : (
           <DockviewDefaultTab
             {...props}

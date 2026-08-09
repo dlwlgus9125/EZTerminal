@@ -230,6 +230,63 @@ describe('AgentHistoryService', () => {
     )).resolves.toEqual({ ok: false, reason: 'stale' });
   });
 
+  it('prepares a qualified project launch through the main-owned workspace resolver', async () => {
+    const base = makeTemporaryDirectory('ez-agent-qualified-launch-');
+    const primary = makeDirectory(base, 'primary');
+    const worktree = makeDirectory(base, 'worktree');
+    const store = new AgentProjectStore(path.join(base, 'user-data'));
+    await store.init();
+    await store.upsert({
+      name: 'Qualified project',
+      primaryRoot: primary,
+      additionalRoots: [],
+      pinned: false,
+    });
+    const adapter: AgentHistoryProviderAdapter = {
+      provider: 'codex',
+      listSessions: vi.fn(async () => ({ items: [], nextCursor: null })),
+      readTranscript: vi.fn(),
+      buildResumeCommand: vi.fn(() => null),
+      buildNewCommand: vi.fn((roots) => ({
+        commandText: `!codex ${roots.join('|')}`,
+        displayCommandText: 'codex',
+      })),
+      dispose: vi.fn(async () => undefined),
+    };
+    const service = new AgentHistoryService(store, [adapter]);
+    const projectId = (await service.listProjects()).items[0]!.projectId;
+    const resolver = vi.fn(async () => ({
+      ok: true as const,
+      target: { projectId, rootId: 'root-1', workspaceId: 'worktree-1' },
+      cwd: worktree,
+      roots: [worktree],
+      storedProjectId: 'private-store-id',
+    }));
+    service.setProjectSessionTargetResolver(resolver);
+
+    const target = {
+      kind: 'project' as const,
+      projectId,
+      rootId: 'root-1',
+      workspaceId: 'worktree-1',
+    };
+    await expect(service.prepareLaunch(target, 'codex')).resolves.toMatchObject({
+      ok: true,
+      target,
+      cwd: worktree,
+      roots: [worktree],
+    });
+    expect(resolver).toHaveBeenCalledWith({
+      projectId,
+      rootId: 'root-1',
+      workspaceId: 'worktree-1',
+    });
+    await service.recordLaunchTargetWork(target, [worktree], 500);
+    const projects = await service.listProjects();
+    expect(projects.items).toHaveLength(1);
+    expect(projects.items[0]).toMatchObject({ projectId, lastActiveAt: 500 });
+  });
+
   it('exposes stable opaque ids while retaining the provider id only inside resume resolution', async () => {
     const base = makeTemporaryDirectory('ez-agent-history-');
     const recordedRoot = makeDirectory(base, 'recorded');

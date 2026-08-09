@@ -17,6 +17,7 @@ import type { AgentProjectSummary } from '../shared/agent-history';
 import type {
   ProjectDocumentDirectoryEntry,
   ProjectSearchMatch,
+  ProjectSessionTarget,
   ProjectWorkspaceDescriptor,
   ProjectWorkspaceLocationDescriptor,
 } from '../shared/project-workspace';
@@ -42,7 +43,7 @@ interface ProjectWorkspacePanelProps {
     document: ProjectEditorDocument,
     location?: ProjectCodeLocation,
   ) => void;
-  readonly onNewChat: () => void;
+  readonly onNewSession: (target: ProjectSessionTarget, locationLabel: string) => void;
   readonly onManage: () => void;
   /** Optional controlled state seam for App-owned sidebar restoration. */
   readonly explorerState?: ProjectExplorerState;
@@ -600,7 +601,7 @@ export function ProjectWorkspacePanel({
   project,
   onBack,
   onOpenDocument,
-  onNewChat,
+  onNewSession,
   onManage,
   explorerState,
   onExplorerStateChange,
@@ -715,8 +716,17 @@ export function ProjectWorkspacePanel({
         </div>
         <IconButton
           icon={MessageSquarePlus}
-          aria-label={t('agentHub.projects.newChat')}
-          onClick={onNewChat}
+          aria-label={t('agentHub.projects.newSession')}
+          disabled={!workspace || workspace.access !== 'granted'}
+          onClick={() => {
+            if (!workspace || workspace.access !== 'granted') return;
+            onNewSession({
+              projectId: project.projectId,
+              rootId: workspace.rootId,
+              workspaceId: workspace.workspaceId,
+            }, workspace.displayPath);
+          }}
+          data-testid="project-workspace-new-session"
         />
         <IconButton
           icon={Settings}

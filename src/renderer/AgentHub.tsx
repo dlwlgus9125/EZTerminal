@@ -32,6 +32,10 @@ import type {
   AgentProjectLauncherSummary,
   AgentProjectSummary,
 } from '../shared/agent-history';
+import type {
+  ProjectSessionPanelMetadata,
+  ProjectSessionTarget,
+} from '../shared/project-workspace';
 import {
   EMPTY_GIT_DIRECTORY_STATUS,
   type GitDiffOmission,
@@ -134,7 +138,11 @@ export interface AgentHubProps {
   readonly onProjectWorkspaceStateChange?: (state: ProjectExplorerState) => void;
   readonly onProjectDrillChange?: (open: boolean) => void;
   /** Opens a fresh terminal using a main-prepared project or directory launch. */
-  readonly onLaunchAgent?: (bootstrap: AgentLaunchBootstrap) => void;
+  readonly onLaunchAgent?: (
+    bootstrap: AgentLaunchBootstrap,
+    projectSession?: ProjectSessionPanelMetadata,
+  ) => void;
+  readonly onOpenProjectTerminal?: (projectSession: ProjectSessionPanelMetadata) => void;
   readonly onOpenAgentSettings?: () => void;
   readonly onClose?: () => void;
   readonly mobile?: boolean;
@@ -170,6 +178,7 @@ export function AgentHub({
   onProjectWorkspaceStateChange,
   onProjectDrillChange,
   onLaunchAgent,
+  onOpenProjectTerminal,
   onOpenAgentSettings,
   onClose,
   mobile = false,
@@ -201,6 +210,9 @@ export function AgentHub({
   const [launchers, setLaunchers] = useState<readonly AgentProjectLauncherSummary[]>([]);
   const [launchersLoading, setLaunchersLoading] = useState(false);
   const [launchPickerOpen, setLaunchPickerOpen] = useState(false);
+  const [launchSessionType, setLaunchSessionType] = useState<'agent' | 'terminal'>('agent');
+  const [launchProjectSession, setLaunchProjectSession] = useState<ProjectSessionPanelMetadata | null>(null);
+  const [launchLocationLabel, setLaunchLocationLabel] = useState('');
   const [launchTarget, setLaunchTarget] = useState<AgentLaunchTarget | null>(null);
   const [launchTargetProject, setLaunchTargetProject] = useState<AgentProjectSummary | null>(null);
   const [launchProjectOptions, setLaunchProjectOptions] = useState<readonly AgentProjectSummary[]>([]);
@@ -485,9 +497,28 @@ export function AgentHub({
     };
   }, [launchPickerOpen, launchProjectQuery, launchTargetProject]);
 
-  const openLaunchPicker = useCallback((project?: AgentProjectSummary): void => {
-    setLaunchTarget(project ? { kind: 'project', projectId: project.projectId } : null);
+  const openLaunchPicker = useCallback((
+    project?: AgentProjectSummary,
+    projectTarget?: ProjectSessionTarget,
+    locationLabel?: string,
+  ): void => {
+    const target = project
+      ? { kind: 'project' as const, ...(projectTarget ?? { projectId: project.projectId }) }
+      : null;
+    setLaunchTarget(target);
     setLaunchTargetProject(project ?? null);
+    setLaunchProjectSession(project && target
+      ? {
+          projectId: target.projectId,
+          ...(target.rootId && target.workspaceId
+            ? { rootId: target.rootId, workspaceId: target.workspaceId }
+            : {}),
+          projectName: project.name,
+          titleMode: 'generated',
+        }
+      : null);
+    setLaunchLocationLabel(locationLabel ?? project?.primaryRoot ?? '');
+    setLaunchSessionType('agent');
     setLaunchProjectOptions(project ? [project] : projects);
     setLaunchProjectQuery('');
     setSelectedLauncherId('');
@@ -506,6 +537,12 @@ export function AgentHub({
   }, []);
 
   const launchAgent = useCallback(async (): Promise<void> => {
+    if (launchSessionType === 'terminal' && launchProjectSession) {
+      if (!onOpenProjectTerminal || launching) return;
+      onOpenProjectTerminal(launchProjectSession);
+      setLaunchPickerOpen(false);
+      return;
+    }
     if (!onLaunchAgent || !launchTarget || !selectedLauncherId || launching) return;
     setLaunching(true);
     setLaunchError(null);
@@ -525,9 +562,18 @@ export function AgentHub({
       name: preparation.name,
       cwd: preparation.cwd,
       revision: preparation.revision,
-    });
+    }, launchProjectSession ?? undefined);
     setLaunchPickerOpen(false);
-  }, [launchTarget, launching, onLaunchAgent, selectedLauncherId, t]);
+  }, [
+    launchProjectSession,
+    launchSessionType,
+    launchTarget,
+    launching,
+    onLaunchAgent,
+    onOpenProjectTerminal,
+    selectedLauncherId,
+    t,
+  ]);
 
   const selectedLauncher = launchers.find(
     (launcher) => launcher.launcherId === selectedLauncherId,
@@ -949,7 +995,11 @@ export function AgentHub({
             project={drillProject}
             onBack={() => selectDrillProject(null)}
             onOpenDocument={onOpenProjectDocument}
-            onNewChat={() => openLaunchPicker(drillProject)}
+            onNewSession={(target, locationLabel) => openLaunchPicker(
+              drillProject,
+              target,
+              locationLabel,
+            )}
             onManage={() => openProjectEditor(drillProject)}
             explorerState={projectWorkspaceState}
             onExplorerStateChange={onProjectWorkspaceStateChange}
@@ -1039,7 +1089,7 @@ export function AgentHub({
                           </span>
                         )}
                       </button>
-                      {onLaunchAgent && (
+                      {(onLaunchAgent || onOpenProjectTerminal) && (
                         <Button
                           variant="secondary"
                           size="sm"
@@ -1047,7 +1097,7 @@ export function AgentHub({
                           onClick={() => openLaunchPicker(project)}
                           data-testid={`agent-project-new-chat-${project.projectId}`}
                         >
-                          {t('agentHub.projects.newChat')}
+                          {t('agentHub.projects.newSession')}
                         </Button>
                       )}
                       <Menu
@@ -1150,8 +1200,12 @@ export function AgentHub({
           setLaunchPickerOpen(open);
           if (!open) setLaunchError(null);
         }}
-        title={t('agentHub.projects.launchTitle')}
-        description={t('agentHub.projects.launchDescription')}
+        title={launchProjectSession
+          ? t('agentHub.projects.sessionTitle')
+          : t('agentHub.projects.launchTitle')}
+        description={launchProjectSession
+          ? t('agentHub.projects.sessionDescription')
+          : t('agentHub.projects.launchDescription')}
         closeLabel={t('common.cancel')}
         testId="agent-launch-picker"
         footer={(
@@ -1166,18 +1220,39 @@ export function AgentHub({
             <Button
               variant="primary"
               onClick={() => void launchAgent()}
-              disabled={launching || !launchTarget || !selectedLauncherId}
+              disabled={launching
+                || !launchTarget
+                || (launchSessionType === 'agent' && (!onLaunchAgent || !selectedLauncherId))
+                || (launchSessionType === 'terminal' && !onOpenProjectTerminal)}
               data-testid="agent-launch-submit"
             >
               {launching
                 ? t('agentHub.projects.launching')
-                : t('agentHub.projects.launch')}
+                : launchSessionType === 'terminal'
+                  ? t('agentHub.projects.openTerminal')
+                  : t('agentHub.projects.launch')}
             </Button>
           </>
         )}
       >
         <div className="agent-launch-picker">
-          <Field label={t('agentHub.projects.agent')} required>
+          {launchProjectSession && (
+            <Field label={t('agentHub.projects.sessionType')} required>
+              <Select
+                value={launchSessionType}
+                onChange={(event) => {
+                  setLaunchSessionType(event.currentTarget.value as 'agent' | 'terminal');
+                  setLaunchError(null);
+                }}
+                data-testid="agent-launch-session-type"
+              >
+                <option value="agent">{t('agentHub.projects.sessionTypeAgent')}</option>
+                <option value="terminal">{t('agentHub.projects.sessionTypeTerminal')}</option>
+              </Select>
+            </Field>
+          )}
+          {launchSessionType === 'agent' && (
+            <Field label={t('agentHub.projects.agent')} required>
             <Select
               value={selectedLauncherId}
               onChange={(event) => {
@@ -1198,10 +1273,20 @@ export function AgentHub({
                 </option>
               ))}
             </Select>
-          </Field>
-          {!launchersLoading && launchers.length === 0 && (
+            </Field>
+          )}
+          {launchSessionType === 'agent' && !launchersLoading && launchers.length === 0 && (
             <p className="agent-project-note">{t('agentHub.projects.noAgents')}</p>
           )}
+          {launchProjectSession ? (
+            <Field label={t('agentHub.projects.location')} required>
+              <p className="agent-launch-directory" title={launchLocationLabel}>
+                <strong>{launchProjectSession.projectName}</strong>
+                <code>{formatCwd(launchLocationLabel)}</code>
+              </p>
+            </Field>
+          ) : (
+            <>
           <Field label={t('agentHub.projects.location')} required>
             <DeferredSearchInput
               variant="ui"
@@ -1263,7 +1348,9 @@ export function AgentHub({
               <code>{launchTarget.directory}</code>
             </p>
           )}
-          {ignoredAdditionalRoots > 0 && (
+            </>
+          )}
+          {launchSessionType === 'agent' && ignoredAdditionalRoots > 0 && (
             <p className="agent-launch-warning" role="status">
               {t('agentHub.projects.genericRootsIgnored', {
                 value: numberFormatter.format(ignoredAdditionalRoots),

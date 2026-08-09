@@ -5,11 +5,11 @@
  * `docs/design/workbench-lifecycle.md`.
  *
  * Strictness policy (gate B5), by security weight:
- *  - Terminal/OpenClaw `params` are STRICT empty objects: ANY key (a persisted
- *    sessionId above all) fails validation loudly — B1/B5 as a checked
- *    invariant, not a convention. A read-only Agent history panel may persist
- *    only its bounded, opaque EZTerminal `historyId` and a bounded provider
- *    styling hint.
+ *  - OpenClaw `params` are STRICT empty. Terminal params are also strict and
+ *    may contain only bounded project presentation/identity metadata; a cwd,
+ *    sessionId or Agent bootstrap still fails validation loudly. A read-only
+ *    Agent history panel may persist only its bounded, opaque EZTerminal
+ *    `historyId` and bounded public identity hints.
  *  - `contentComponent` must be one of the known panel types ('terminal',
  *    'openclaw-chat', or 'agent-session'): an unknown component would make
  *    dockview-react throw at mount; rejecting here routes to the corrupt path.
@@ -63,11 +63,24 @@ const ProjectEditorParamsSchema = z.strictObject({
   relativePath: z.string().min(1).max(4096),
 });
 
+const ProjectSessionParamsSchema = z.strictObject({
+  projectId: z.string().min(1).max(128),
+  rootId: z.string().min(1).max(128).optional(),
+  workspaceId: z.string().min(1).max(128).optional(),
+  projectName: z.string().trim().min(1).max(80),
+  titleMode: z.enum(['generated', 'custom']),
+}).refine(
+  (value) => (value.rootId === undefined) === (value.workspaceId === undefined),
+  { message: 'rootId and workspaceId must be provided together.' },
+);
+
 const PanelSchema = z.discriminatedUnion('contentComponent', [
   PanelBaseSchema.extend({
     contentComponent: z.literal('terminal'),
     renderer: z.literal('always').optional(),
-    params: z.strictObject({}).optional(),
+    params: z.strictObject({
+      projectSession: ProjectSessionParamsSchema.optional(),
+    }).optional(),
   }),
   PanelBaseSchema.extend({
     contentComponent: z.literal('openclaw-chat'),

@@ -6,6 +6,10 @@ import type {
   DestroySessionGuardResult,
   SessionInfo,
 } from './ipc';
+import {
+  isProjectSessionTarget,
+  type ProjectSessionTarget,
+} from './project-workspace';
 
 export const MAX_SESSION_SURFACE_ID_LENGTH = 256;
 
@@ -22,11 +26,13 @@ export function isSessionSurfaceId(value: unknown): value is string {
 /** One exact UI surface's intent when it binds to an interpreter session. */
 export type SessionSurfaceIntent =
   | { readonly kind: 'create'; readonly cwd?: string }
+  | { readonly kind: 'create-project'; readonly target: ProjectSessionTarget }
   | { readonly kind: 'adopt'; readonly sessionId: string }
   | { readonly kind: 'restore'; readonly sessionId: string; readonly cwd?: string };
 
 export function isSessionSurfaceIntent(value: unknown): value is SessionSurfaceIntent {
   if (!isRecord(value) || typeof value.kind !== 'string') return false;
+  if (value.kind === 'create-project') return isProjectSessionTarget(value.target);
   if (value.cwd !== undefined && typeof value.cwd !== 'string') return false;
   if (value.kind === 'create') return true;
   return (value.kind === 'adopt' || value.kind === 'restore')

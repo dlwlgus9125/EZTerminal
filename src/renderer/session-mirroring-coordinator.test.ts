@@ -266,6 +266,24 @@ describe('SessionMirroringCoordinator pane ownership', () => {
     ]);
   });
 
+  it('creates project panes from opaque ids without exposing the display cwd', () => {
+    const h = harness();
+    const target = {
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'worktree-1',
+    };
+    const lease = h.coordinator.mountPane(
+      'project-panel',
+      {},
+      '/presentation-only',
+      undefined,
+      target,
+    );
+
+    expect(lease.intent).toEqual({ kind: 'create-project', target });
+  });
+
   it('reacquires auto-mirror provenance across a StrictMode-style remount', () => {
     const h = harness();
     h.coordinator.connect();

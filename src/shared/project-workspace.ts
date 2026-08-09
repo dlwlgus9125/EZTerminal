@@ -6,6 +6,69 @@ export const PROJECT_SEARCH_MAX_FILES = 50_000;
 export const PROJECT_SEARCH_MAX_BYTES = 128 * 1024 * 1024;
 export const PROJECT_SEARCH_MAX_RESULTS = 200;
 export const PROJECT_SEARCH_TIMEOUT_MS = 10_000;
+export const PROJECT_SESSION_ID_MAX_LENGTH = 128;
+export const PROJECT_SESSION_NAME_MAX_LENGTH = 80;
+
+/** Opaque, main-resolved location for an explicitly project-owned terminal. */
+export interface ProjectSessionTarget {
+  readonly projectId: string;
+  /** `rootId` and `workspaceId` are either both present or both absent. */
+  readonly rootId?: string;
+  readonly workspaceId?: string;
+}
+
+/** The only project-terminal metadata allowed to survive a layout restart. */
+export interface ProjectSessionPanelMetadata extends ProjectSessionTarget {
+  readonly projectName: string;
+  readonly titleMode: 'generated' | 'custom';
+}
+
+function isProjectSessionId(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= PROJECT_SESSION_ID_MAX_LENGTH;
+}
+
+function hasProjectSessionTargetFields(target: Record<string, unknown>): boolean {
+  const hasRootId = target.rootId !== undefined;
+  const hasWorkspaceId = target.workspaceId !== undefined;
+  return isProjectSessionId(target.projectId)
+    && hasRootId === hasWorkspaceId
+    && (!hasRootId
+      || (isProjectSessionId(target.rootId) && isProjectSessionId(target.workspaceId)));
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): boolean {
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
+const PROJECT_SESSION_TARGET_KEYS = new Set(['projectId', 'rootId', 'workspaceId']);
+const PROJECT_SESSION_METADATA_KEYS = new Set([
+  ...PROJECT_SESSION_TARGET_KEYS,
+  'projectName',
+  'titleMode',
+]);
+
+export function isProjectSessionTarget(value: unknown): value is ProjectSessionTarget {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const target = value as Record<string, unknown>;
+  return hasOnlyKeys(target, PROJECT_SESSION_TARGET_KEYS)
+    && hasProjectSessionTargetFields(target);
+}
+
+export function isProjectSessionPanelMetadata(
+  value: unknown,
+): value is ProjectSessionPanelMetadata {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const metadata = value as Record<string, unknown>;
+  return hasOnlyKeys(metadata, PROJECT_SESSION_METADATA_KEYS)
+    && hasProjectSessionTargetFields(metadata)
+    && typeof metadata.projectName === 'string'
+    && metadata.projectName.trim().length > 0
+    && metadata.projectName.length <= PROJECT_SESSION_NAME_MAX_LENGTH
+    && (metadata.titleMode === 'generated' || metadata.titleMode === 'custom');
+}
+
 export type ProjectWorkspaceError =
   | 'invalid-request'
   | 'project-not-found'

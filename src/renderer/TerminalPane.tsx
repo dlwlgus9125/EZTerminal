@@ -54,6 +54,7 @@ import type { QuickCommand } from '../shared/quick-command';
 import type { AgentResumeBootstrap, AgentTerminalBootstrap } from '../shared/agent-history';
 import { classifyDirectAgentCommand } from '../shared/agent-command';
 import { clearAgentTerminalBootstrap } from './agent-terminal-bootstrap';
+import type { ProjectSessionTarget } from '../shared/project-workspace';
 
 // A TerminalPane is one independent shell surface: its own stack of command Blocks,
 // pinned prompt, and an authority-issued binding to a shell session. The host owns
@@ -105,6 +106,8 @@ interface TerminalPaneProps {
   /** Starting cwd for a pane opened via the file-explorer's "open terminal
    * here" action (M2); undefined for a plain new tab/split (interpreter default). */
   readonly initialCwd?: string;
+  /** Opaque project location resolved by main when this surface opens. */
+  readonly projectTarget?: ProjectSessionTarget;
   /**
    * Bind strictly to this already-existing session instead of creating a new
    * one. A missing live/manual adoption fails closed; it never silently creates
@@ -123,6 +126,7 @@ interface TerminalPaneProps {
     instanceToken: PaneInstanceToken,
     initialCwd?: string,
     requestedAdoptSessionId?: string,
+    projectTarget?: ProjectSessionTarget,
   ) => SessionPaneLease;
   readonly terminalRuntimeOptions?: TerminalRuntimeOptions;
   /** Preset replacement owns a short global mutation lease. The boolean is
@@ -153,6 +157,7 @@ export function TerminalPane({
   panelId,
   paneInstanceToken,
   initialCwd,
+  projectTarget,
   adoptSessionId,
   resumeBootstrap,
   agentBootstrap,
@@ -204,6 +209,8 @@ export function TerminalPane({
   const [activePlainPty, setActivePlainPty] = useState(false);
   const resumeStartedRef = useRef(false);
   const [bootstrapRetryToken, setBootstrapRetryToken] = useState(0);
+  const [sessionBindingError, setSessionBindingError] = useState<string | null>(null);
+  const [sessionBindingRetryToken, setSessionBindingRetryToken] = useState(0);
   const [resumeError, setResumeError] = useState<string | null>(null);
   // Unsubscribe from the active controller's status (replaced on each new run).
   const activeUnsub = useRef<(() => void) | null>(null);
@@ -330,6 +337,7 @@ export function TerminalPane({
       exactPaneInstanceToken,
       initialCwd,
       adoptSessionId,
+      projectTarget,
     );
 
     const open = paneLease && window.ezterminal?.openSessionSurface;
@@ -338,10 +346,14 @@ export function TerminalPane({
       // Without the preload lifecycle seam this surface cannot safely acquire
       // or release a session binding, so it stays unavailable.
       sessionBindingPendingRef.current = false;
+      setSessionBindingError('unavailable');
     } else {
       void open(paneLease.surfaceId, paneLease.intent).then((result) => {
         if (!result.ok) {
-          if (!cancelled) sessionBindingPendingRef.current = false;
+          if (!cancelled) {
+            sessionBindingPendingRef.current = false;
+            setSessionBindingError(result.reason);
+          }
           return;
         }
         if (!paneLease.bind(result.binding) || cancelled) return;
@@ -349,6 +361,7 @@ export function TerminalPane({
         bound = result.binding;
         sessionSurfaceBindingRef.current = result.binding;
         sessionBindingPendingRef.current = false;
+        setSessionBindingError(null);
         sessionIdRef.current = result.binding.session.sessionId;
         setSessionId(result.binding.session.sessionId);
         setCurrentCwd((previous) => previous ?? result.binding.session.cwd);
@@ -357,7 +370,10 @@ export function TerminalPane({
           countedOwner = true;
         }
       }).catch(() => {
-        if (!cancelled) sessionBindingPendingRef.current = false;
+        if (!cancelled) {
+          sessionBindingPendingRef.current = false;
+          setSessionBindingError('unavailable');
+        }
       });
     }
 
@@ -373,7 +389,7 @@ export function TerminalPane({
       }
       paneLease?.dispose();
     };
-  }, [panelId, exactPaneInstanceToken, initialCwd, adoptSessionId]);
+  }, [panelId, exactPaneInstanceToken, initialCwd, adoptSessionId, projectTarget, sessionBindingRetryToken]);
 
   // M4 attach-on-bind: catch up only after the session id has committed. If
   // this starts inside bindSession, a fast listRuns reply can begin a handoff
@@ -1098,6 +1114,18 @@ export function TerminalPane({
         onScroll={onBlockListScroll}
         onClick={handleScreenClick}
       >
+        {sessionBindingError && projectTarget && (
+          <div className="agent-history-terminal__error" role="alert">
+            <span>{t('terminalPane.projectSessionUnavailable')}</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setSessionBindingRetryToken((value) => value + 1)}
+            >
+              {t('common.retry')}
+            </Button>
+          </div>
+        )}
         {resumeError && (
           <div className="agent-history-terminal__error" role="alert">
             <span>{resumeError}</span>

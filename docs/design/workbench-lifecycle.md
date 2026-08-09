@@ -30,6 +30,11 @@ adapter이고, `WorkbenchCoordinator`가 패널 ID, transaction generation, 저�
 PTY, 명령 결과, MessagePort, 비밀 프롬프트와 runtime object를 Dockview params에 넣거나
 직렬화하지 않는다.
 
+명시적 project terminal은 예외적으로 안전한 표시·연결 메타데이터만 저장한다. 허용 필드는
+bounded `projectId`, 함께 존재하거나 함께 생략되는 `rootId`/`workspaceId`, bounded
+`projectName`, 그리고 `generated|custom` 제목 mode다. `cwd`, `sessionId`, Agent bootstrap,
+provider 실행 명령·revision은 저장하지 않으며 추가 필드는 strict schema에서 거부한다.
+
 언어, density, effect intensity와 resource profile은 layout/preset이 아니라 settings
 snapshot에 저장한다. 기존 schema version 1 파일에서 resource profile이 없으면
 `balanced`를 사용한다. Android는 별도 device-local envelope를 사용하며 v1/v2를 읽어
@@ -46,6 +51,12 @@ snapshot에 저장한다. 기존 schema version 1 파일에서 resource profile�
   transaction이다. 동시 pane mutation이나 remote surface 변경과 경쟁하지 않는다.
 - 패널에 저장된 session identity는 runtime 권한 증명이 아니다. 복원 시 broker와
   surface authority를 통해 유효 세션을 만들거나 채택한다.
+- project terminal surface는 renderer의 표시 경로가 아니라 opaque project target으로
+  `create-project` intent를 보낸다. Main의 `ProjectWorkspaceService`가 세션 생성 직전에
+  프로젝트 존재, root/workspace identity, external worktree 승인과 실제 directory를 다시
+  확인한 뒤에만 broker에 cwd를 전달한다. 실패하면 기본 home으로 fallback하지 않는다.
+- 복원된 project terminal은 같은 target의 새 일반 shell을 만들고 `Terminal` Badge로
+  시작한다. 저장 레이아웃만으로 Agent를 재실행하거나 provider bootstrap을 복구하지 않는다.
 
 ## 패널과 분리 창
 

@@ -266,6 +266,8 @@ function isRemoteAgentLaunchTarget(value: unknown): value is AgentLaunchTarget {
   if (!isRecord(value)) return false;
   if (value.kind === 'project') {
     return (
+      Object.keys(value).every((key) => key === 'kind' || key === 'projectId')
+      &&
       typeof value.projectId === 'string'
       && value.projectId.length > 0
       && value.projectId.length <= MAX_REMOTE_AGENT_ID_LENGTH
@@ -428,7 +430,8 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
     case 'session-surface-open':
       return isGuardedDestroyId(value.requestId)
         && isSessionSurfaceId(value.surfaceId)
-        && isSessionSurfaceIntent(value.intent);
+        && isSessionSurfaceIntent(value.intent)
+        && value.intent.kind !== 'create-project';
     case 'session-surface-prepare-close':
       return isGuardedDestroyId(value.requestId)
         && isSessionSurfaceCloseEntries(value.entries);
