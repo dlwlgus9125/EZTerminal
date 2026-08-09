@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [1.0.28] - 2026-08-09
+
+### Added
+
+- Added an Agent/Terminal chooser to each project's New chat action so a
+  project-scoped terminal can be opened directly at the project root without
+  launching an agent command.
+- Added explicit Agent and Terminal badges to project session tabs, with the
+  project display name retained as the primary tab identity.
+
+### Changed
+
+- Carried project launch mode and canonical session-surface metadata through
+  desktop launch, remote launch, mobile mirroring, history, and persisted
+  workspace restoration.
+- Kept project tab labels synchronized with renamed projects and user-defined
+  project aliases while preserving custom session titles.
+
+### Fixed
+
+- Prevented project terminal sessions from being restored or mirrored as
+  agent sessions, and rejected malformed session-surface targets at the main
+  process boundary.
+
+See [1.0.28 release notes](docs/release/release-notes-1.0.28.md).
+
 ## [1.0.27] - 2026-08-09
 
 ### Added
