@@ -78,6 +78,11 @@ describe('MobileRemoteDesktopView', () => {
       root.render(<MobileRemoteDesktopView transport={transport as unknown as WsEzTerminalTransport} onClose={onClose} />);
       await Promise.resolve();
     });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="mobile-pc-start"]')!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     expect(container.querySelector('[data-testid="mobile-pc-state"][data-phase="busy"]')).toBeTruthy();
     expect(container.textContent).toContain('Galaxy A');
     expect(transport.stopDesktopControl).not.toHaveBeenCalled();
@@ -96,6 +101,11 @@ describe('MobileRemoteDesktopView', () => {
           />
         </StrictMode>,
       );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="mobile-pc-start"]')!.click();
       await Promise.resolve();
       await Promise.resolve();
     });

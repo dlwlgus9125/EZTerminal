@@ -6,6 +6,8 @@ import {
   type DesktopControlStartResultMessage,
   type DesktopControlStatusMessage,
   type DesktopDisplay,
+  type DesktopNormalizedRegion,
+  type DesktopQualityPreference,
   type DesktopSessionSignal,
   type DesktopSignalMessage,
   type DesktopVideoViewport,
@@ -61,6 +63,14 @@ export interface DesktopPresentationSnapshot {
   readonly capabilities: DesktopControlCapabilities | null;
   readonly status: DesktopControlStatusMessage | null;
   readonly clipboardFeedback: DesktopClipboardFeedback;
+  readonly appliedView: DesktopAppliedView | null;
+}
+
+export interface DesktopAppliedView {
+  readonly revision: number;
+  readonly sourceRegion: DesktopNormalizedRegion;
+  readonly frameWidth: number;
+  readonly frameHeight: number;
 }
 
 export type DesktopPointerCommand =
@@ -94,12 +104,22 @@ export type DesktopControlCommand =
   | { readonly type: 'clipboard-write'; readonly text: string }
   | { readonly type: 'clipboard-read' }
   | { readonly type: 'set-display'; readonly displayId: string }
-  | { readonly type: 'set-viewport'; readonly pixelWidth: number; readonly pixelHeight: number }
-  | { readonly type: 'client-video-stats'; readonly droppedFramePercent: number }
+  | ({ readonly type: 'set-viewport' } & DesktopVideoViewport)
+  | {
+      readonly type: 'client-video-stats';
+      readonly droppedFramePercent: number;
+      readonly decodedFramesPerSecond?: number;
+      readonly targetFramesPerSecond?: number;
+      readonly freezeDurationMs?: number;
+    }
+  | { readonly type: 'set-quality-preference'; readonly preference: DesktopQualityPreference }
   | { readonly type: 'secure-attention' };
 
 export interface DesktopPresentationTransport {
-  startDesktopControl(viewport?: DesktopVideoViewport): Promise<DesktopControlStartResultMessage>;
+  startDesktopControl(
+    viewport?: DesktopVideoViewport,
+    qualityPreference?: DesktopQualityPreference,
+  ): Promise<DesktopControlStartResultMessage>;
   sendDesktopSignal(sessionId: string, signal: DesktopSessionSignal): boolean;
   stopDesktopControl(
     sessionId: string,
@@ -133,6 +153,8 @@ export interface DesktopPresentationAdapter {
   start(): void;
   attachVideo(video: HTMLVideoElement | null): void;
   setViewport(viewport: DesktopVideoViewport): void;
+  setQualityPreference(preference: DesktopQualityPreference): boolean;
+  resume(): void;
   sendControl(command: DesktopControlCommand): boolean;
   sendPointer(command: DesktopPointerCommand): boolean;
   selectDisplay(displayId: string): boolean;
@@ -142,10 +164,10 @@ export interface DesktopPresentationAdapter {
   dispose(): void;
 }
 
-interface InboundControlMessage {
-  readonly type: 'clipboard-text' | 'input-error';
-  readonly text?: string;
-}
+type InboundControlMessage =
+  | { readonly type: 'clipboard-text'; readonly text: string }
+  | { readonly type: 'input-error' }
+  | ({ readonly type: 'view-applied' } & DesktopAppliedView);
 
 interface PeerBinding {
   readonly generation: number;
@@ -166,6 +188,7 @@ export const INITIAL_DESKTOP_PRESENTATION_SNAPSHOT: DesktopPresentationSnapshot 
   capabilities: null,
   status: null,
   clipboardFeedback: 'none',
+  appliedView: null,
 };
 
 const textEncoder = new TextEncoder();
@@ -212,6 +235,26 @@ export function decodeDesktopControlFrame(data: unknown): InboundControlMessage 
   }
   if (!isRecord(value) || typeof value.type !== 'string') return null;
   if (value.type === 'input-error') return { type: 'input-error' };
+  if (value.type === 'view-applied') {
+    if (
+      !Number.isSafeInteger(value.revision)
+      || (value.revision as number) <= 0
+      || !validNormalizedRegion(value.sourceRegion)
+      || !Number.isSafeInteger(value.frameWidth)
+      || (value.frameWidth as number) < MIN_DESKTOP_VIEWPORT_PIXELS
+      || (value.frameWidth as number) > MAX_DESKTOP_VIEWPORT_PIXELS
+      || !Number.isSafeInteger(value.frameHeight)
+      || (value.frameHeight as number) < MIN_DESKTOP_VIEWPORT_PIXELS
+      || (value.frameHeight as number) > MAX_DESKTOP_VIEWPORT_PIXELS
+    ) return null;
+    return {
+      type: 'view-applied',
+      revision: value.revision as number,
+      sourceRegion: value.sourceRegion,
+      frameWidth: value.frameWidth as number,
+      frameHeight: value.frameHeight as number,
+    };
+  }
   if (
     value.type !== 'clipboard-text'
     || typeof value.text !== 'string'
@@ -224,6 +267,25 @@ export function decodeDesktopControlFrame(data: unknown): InboundControlMessage 
 
 function isUnit(value: number): boolean {
   return Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function validNormalizedRegion(value: unknown): value is DesktopNormalizedRegion {
+  if (!isRecord(value)) return false;
+  const { x, y, width, height } = value;
+  return [x, y, width, height].every((entry) => (
+    typeof entry === 'number' && Number.isFinite(entry)
+  )) && (x as number) >= 0
+    && (y as number) >= 0
+    && (x as number) < 1
+    && (y as number) < 1
+    && (width as number) > 0
+    && (height as number) > 0
+    && (x as number) + (width as number) <= 1 + 1e-9
+    && (y as number) + (height as number) <= 1 + 1e-9;
+}
+
+function validQualityPreference(value: unknown): value is DesktopQualityPreference {
+  return value === 'balanced' || value === 'clarity' || value === 'responsiveness';
 }
 
 function isDelta(value: number): boolean {
@@ -263,7 +325,10 @@ function validViewport(viewport: DesktopVideoViewport): boolean {
     && viewport.pixelWidth <= MAX_DESKTOP_VIEWPORT_PIXELS
     && Number.isInteger(viewport.pixelHeight)
     && viewport.pixelHeight >= MIN_DESKTOP_VIEWPORT_PIXELS
-    && viewport.pixelHeight <= MAX_DESKTOP_VIEWPORT_PIXELS;
+    && viewport.pixelHeight <= MAX_DESKTOP_VIEWPORT_PIXELS
+    && (viewport.visibleRegion === undefined || validNormalizedRegion(viewport.visibleRegion))
+    && (viewport.revision === undefined
+      || (Number.isSafeInteger(viewport.revision) && viewport.revision > 0));
 }
 
 function validControlCommand(command: DesktopControlCommand): boolean {
@@ -300,7 +365,21 @@ function validControlCommand(command: DesktopControlCommand): boolean {
     case 'client-video-stats':
       return Number.isFinite(command.droppedFramePercent)
         && command.droppedFramePercent >= 0
-        && command.droppedFramePercent <= 100;
+        && command.droppedFramePercent <= 100
+        && (command.decodedFramesPerSecond === undefined
+          || (Number.isFinite(command.decodedFramesPerSecond)
+            && command.decodedFramesPerSecond >= 0
+            && command.decodedFramesPerSecond <= 240))
+        && (command.targetFramesPerSecond === undefined
+          || (Number.isFinite(command.targetFramesPerSecond)
+            && command.targetFramesPerSecond >= 0
+            && command.targetFramesPerSecond <= 240))
+        && (command.freezeDurationMs === undefined
+          || (Number.isInteger(command.freezeDurationMs)
+            && command.freezeDurationMs >= 0
+            && command.freezeDurationMs <= 10_000));
+    case 'set-quality-preference':
+      return validQualityPreference(command.preference);
   }
 }
 
@@ -311,7 +390,24 @@ function safeCapabilities(value: DesktopControlCapabilities): DesktopControlCapa
     directTouch: value?.directTouch === true,
     multiMonitor: value?.multiMonitor === true,
     adaptiveViewport: value?.adaptiveViewport === true,
+    adaptiveRegion: value?.adaptiveRegion === true,
+    qualityPreferences: Array.isArray(value?.qualityPreferences)
+      ? value.qualityPreferences.filter(validQualityPreference).slice(0, 3)
+      : undefined,
+    clientVideoStatsV2: value?.clientVideoStatsV2 === true,
   };
+}
+
+function regionsEqual(
+  left: DesktopNormalizedRegion | undefined,
+  right: DesktopNormalizedRegion | undefined,
+): boolean {
+  if (left === right) return true;
+  return Boolean(left && right
+    && left.x === right.x
+    && left.y === right.y
+    && left.width === right.width
+    && left.height === right.height);
 }
 
 function safeDisplays(values: readonly DesktopDisplay[]): readonly DesktopDisplay[] {
@@ -416,6 +512,10 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
   private pointerFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private videoStatsTimer: ReturnType<typeof setInterval> | null = null;
   private previousVideoFrames: { total: number; dropped: number } | null = null;
+  private qualityPreference: DesktopQualityPreference = 'balanced';
+  private lastPresentedFrameAt: number | null = null;
+  private largestPresentedFrameGapMs = 0;
+  private videoFrameCallbackId: number | null = null;
 
   constructor(
     private readonly transport: DesktopPresentationTransport,
@@ -466,13 +566,42 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
     if (
       this.viewport?.pixelWidth === viewport.pixelWidth
       && this.viewport.pixelHeight === viewport.pixelHeight
+      && this.viewport.revision === viewport.revision
+      && regionsEqual(this.viewport.visibleRegion, viewport.visibleRegion)
     ) {
       return;
     }
     this.viewport = viewport;
-    if (this.sessionId && this.snapshot.capabilities?.adaptiveViewport === true) {
+    if (this.sessionId && this.snapshot.capabilities?.adaptiveRegion === true) {
       this.sendControl({ type: 'set-viewport', ...viewport });
+    } else if (this.sessionId && this.snapshot.capabilities?.adaptiveViewport === true) {
+      this.sendControl({
+        type: 'set-viewport',
+        pixelWidth: viewport.pixelWidth,
+        pixelHeight: viewport.pixelHeight,
+      });
     }
+  }
+
+  setQualityPreference(preference: DesktopQualityPreference): boolean {
+    if (!validQualityPreference(preference)) return false;
+    this.qualityPreference = preference;
+    const supported = this.snapshot.capabilities?.qualityPreferences;
+    if (!this.sessionId) return true;
+    if (!supported?.includes(preference)) return false;
+    return this.sendControl({ type: 'set-quality-preference', preference });
+  }
+
+  resume(): void {
+    if (
+      this.disposed
+      || !this.started
+      || this.sessionId
+      || this.activeNegotiation !== null
+      || this.dependencies.visibility.isHidden()
+    ) return;
+    this.update({ phase: 'starting', detail: null });
+    void this.beginDesktop();
   }
 
   sendControl(command: DesktopControlCommand): boolean {
@@ -483,6 +612,11 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
         && capabilities?.clipboardText !== true)
       || (command.type === 'secure-attention' && capabilities?.ctrlAltDelete !== true)
       || (command.type === 'set-display' && capabilities?.multiMonitor !== true)
+      || (command.type === 'set-quality-preference'
+        && !capabilities?.qualityPreferences?.includes(command.preference))
+      || (command.type === 'set-viewport'
+        && command.visibleRegion !== undefined
+        && capabilities?.adaptiveRegion !== true)
       || (
         command.type === 'pointer-button'
         && command.x !== undefined
@@ -533,7 +667,7 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
     ) {
       return false;
     }
-    this.update({ selectedDisplayId: displayId });
+    this.update({ selectedDisplayId: displayId, appliedView: null });
     return this.sendControl({ type: 'set-display', displayId });
   }
 
@@ -579,6 +713,9 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
     this.sessionId = null;
     this.closePeer();
     if (sessionId) this.transport.stopDesktopControl(sessionId, reason);
+    if (!this.disposed && reason === 'background') {
+      this.update({ phase: 'reconnecting', detail: null });
+    }
   }
 
   dispose(): void {
@@ -708,7 +845,7 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
     let startRequest: Promise<DesktopControlStartResultMessage>;
     try {
       startRequest = this.pendingStart
-        ?? this.transport.startDesktopControl(this.viewport ?? undefined);
+        ?? this.transport.startDesktopControl(this.viewport ?? undefined, this.qualityPreference);
       this.pendingStart = startRequest;
       const result = await startRequest;
       if (!this.isCurrentNegotiation(generation)) {
@@ -754,6 +891,7 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
         capabilities: safeCapabilities(result.capabilities),
         status: null,
         clipboardFeedback: 'none',
+        appliedView: null,
       });
 
       this.closePeer();
@@ -807,6 +945,29 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
       if (message.type === 'input-error') {
         this.clipboardReadPending = false;
         this.update({ clipboardFeedback: 'input-unavailable' });
+        return;
+      }
+      if (message.type === 'view-applied') {
+        const currentRevision = this.snapshot.appliedView?.revision ?? 0;
+        if (message.revision < currentRevision) return;
+        const appliedView: DesktopAppliedView = {
+          revision: message.revision,
+          sourceRegion: message.sourceRegion,
+          frameWidth: message.frameWidth,
+          frameHeight: message.frameHeight,
+        };
+        this.update({
+          appliedView,
+          status: this.snapshot.status
+            ? {
+                ...this.snapshot.status,
+                appliedViewRevision: message.revision,
+                sourceRegion: message.sourceRegion,
+                streamWidth: message.frameWidth,
+                streamHeight: message.frameHeight,
+              }
+            : this.snapshot.status,
+        });
         return;
       }
       if (!this.clipboardReadPending || message.text === undefined) return;
@@ -966,6 +1127,7 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
 
   private startClientVideoStats(): void {
     this.previousVideoFrames = null;
+    this.startVideoFrameCallbacks();
     this.videoStatsTimer = setInterval(() => {
       const video = this.video;
       if (!video || typeof video.getVideoPlaybackQuality !== 'function') return;
@@ -980,10 +1142,27 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
       const total = current.total - previous.total;
       const dropped = current.dropped - previous.dropped;
       if (total <= 0 || dropped < 0) return;
+      const decodedFramesPerSecond = Math.max(0, total - dropped)
+        / (CLIENT_VIDEO_STATS_INTERVAL_MS / 1_000);
+      const supportsV2 = this.snapshot.capabilities?.clientVideoStatsV2 === true;
+      const ongoingFrameGapMs = this.lastPresentedFrameAt === null
+        ? 0
+        : performance.now() - this.lastPresentedFrameAt;
       this.sendControl({
         type: 'client-video-stats',
         droppedFramePercent: Math.min(100, Math.max(0, (dropped / total) * 100)),
+        ...(supportsV2 ? {
+          decodedFramesPerSecond,
+          targetFramesPerSecond: this.snapshot.status?.targetFramesPerSecond
+            ?? this.snapshot.status?.framesPerSecond
+            ?? 30,
+          freezeDurationMs: Math.min(10_000, Math.max(
+            0,
+            Math.round(Math.max(this.largestPresentedFrameGapMs, ongoingFrameGapMs) - 250),
+          )),
+        } : {}),
       });
+      this.largestPresentedFrameGapMs = 0;
     }, CLIENT_VIDEO_STATS_INTERVAL_MS);
   }
 
@@ -991,6 +1170,40 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
     if (this.videoStatsTimer !== null) clearInterval(this.videoStatsTimer);
     this.videoStatsTimer = null;
     this.previousVideoFrames = null;
+    this.stopVideoFrameCallbacks();
+  }
+
+  private startVideoFrameCallbacks(): void {
+    this.stopVideoFrameCallbacks();
+    const video = this.video;
+    if (!video || typeof video.requestVideoFrameCallback !== 'function') return;
+    const onFrame: VideoFrameRequestCallback = (now) => {
+      if (this.video !== video || this.disposed) return;
+      if (this.lastPresentedFrameAt !== null) {
+        this.largestPresentedFrameGapMs = Math.max(
+          this.largestPresentedFrameGapMs,
+          now - this.lastPresentedFrameAt,
+        );
+      }
+      this.lastPresentedFrameAt = now;
+      this.videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);
+    };
+    this.lastPresentedFrameAt = null;
+    this.largestPresentedFrameGapMs = 0;
+    this.videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);
+  }
+
+  private stopVideoFrameCallbacks(): void {
+    if (
+      this.video
+      && this.videoFrameCallbackId !== null
+      && typeof this.video.cancelVideoFrameCallback === 'function'
+    ) {
+      this.video.cancelVideoFrameCallback(this.videoFrameCallbackId);
+    }
+    this.videoFrameCallbackId = null;
+    this.lastPresentedFrameAt = null;
+    this.largestPresentedFrameGapMs = 0;
   }
 
   private closePeer(): void {

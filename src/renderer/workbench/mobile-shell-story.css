@@ -12,6 +12,12 @@
   background: var(--ui-canvas);
 }
 
+.mobile-active-story .mobile-pc-video {
+  background:
+    radial-gradient(circle at 72% 24%, rgba(var(--ui-accent-rgb), 0.2), transparent 26%),
+    linear-gradient(145deg, var(--ui-surface-inset), var(--ui-media-canvas));
+}
+
 .mobile-story-tabs {
   overflow: hidden;
 }

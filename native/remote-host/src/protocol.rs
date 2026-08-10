@@ -16,11 +16,15 @@ pub const MAX_CLIENT_NAME_CHARS: usize = 80;
 pub const MIN_VIEWPORT_PIXELS: u32 = 64;
 pub const MAX_VIEWPORT_PIXELS: u32 = 4_096;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StreamViewport {
     pub pixel_width: u32,
     pub pixel_height: u32,
+    #[serde(default)]
+    pub visible_region: Option<NormalizedRegion>,
+    #[serde(default)]
+    pub revision: Option<u64>,
 }
 
 impl StreamViewport {
@@ -30,11 +34,56 @@ impl StreamViewport {
         {
             return Err(ProtocolError::InvalidViewport);
         }
+        if self.visible_region.is_some_and(|region| !region.is_valid()) || self.revision == Some(0)
+        {
+            return Err(ProtocolError::InvalidViewport);
+        }
         Ok(())
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NormalizedRegion {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl NormalizedRegion {
+    pub const FULL: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+    };
+
+    pub fn is_valid(self) -> bool {
+        [self.x, self.y, self.width, self.height]
+            .iter()
+            .all(|value| value.is_finite())
+            && self.x >= 0.0
+            && self.y >= 0.0
+            && self.x < 1.0
+            && self.y < 1.0
+            && self.width > 0.0
+            && self.height > 0.0
+            && self.x + self.width <= 1.0 + 1e-9
+            && self.y + self.height <= 1.0 + 1e-9
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum QualityPreference {
+    #[default]
+    Balanced,
+    Clarity,
+    Responsiveness,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeHello {
     pub protocol_version: u16,
@@ -46,6 +95,8 @@ pub struct NativeHello {
     pub udp_port: u16,
     #[serde(default)]
     pub viewport: Option<StreamViewport>,
+    #[serde(default)]
+    pub quality_preference: QualityPreference,
 }
 
 impl NativeHello {
@@ -155,6 +206,8 @@ pub enum TransportToMain {
     Ready {
         protocol_version: u16,
         service: ServiceAvailability,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        features: Vec<String>,
     },
     Answer {
         session_id: Uuid,
@@ -224,6 +277,29 @@ pub struct TransportMetrics {
     pub quality_tier: QualityTier,
     pub stream_width: u32,
     pub stream_height: u32,
+    pub quality_preference: QualityPreference,
+    pub target_frames_per_second: f32,
+    pub decoded_frames_per_second: f32,
+    pub client_dropped_frame_percent: f32,
+    pub client_freeze_duration_ms: u32,
+    pub capture_backend: CaptureBackend,
+    pub encoder_backend: EncoderBackend,
+    pub applied_view_revision: u64,
+    pub source_region: NormalizedRegion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaptureBackend {
+    Dxgi,
+    Gdi,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EncoderBackend {
+    MediaFoundationHardware,
+    Openh264Software,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -324,6 +400,7 @@ mod tests {
             peer_address: "100.64.0.2".into(),
             udp_port: 7422,
             viewport: None,
+            quality_preference: QualityPreference::Balanced,
         }
     }
 
@@ -346,6 +423,8 @@ mod tests {
         value.viewport = Some(StreamViewport {
             pixel_width: MIN_VIEWPORT_PIXELS - 1,
             pixel_height: 1_080,
+            visible_region: None,
+            revision: None,
         });
         assert_eq!(value.validate(), Err(ProtocolError::InvalidViewport));
     }

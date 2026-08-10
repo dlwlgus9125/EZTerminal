@@ -865,7 +865,13 @@ describe('RemoteBridge — desktop control', () => {
     ws.clientSend({
       kind: 'desktop-control-start',
       requestId: 'desktop-1',
-      viewport: { pixelWidth: 1_170, pixelHeight: 2_160 },
+      viewport: {
+        pixelWidth: 1_170,
+        pixelHeight: 2_160,
+        visibleRegion: { x: 0.2, y: 0.1, width: 0.5, height: 0.75 },
+        revision: 3,
+      },
+      qualityPreference: 'clarity',
     });
     await flush();
     expect(desktopSource.start).toHaveBeenCalledWith(
@@ -873,7 +879,13 @@ describe('RemoteBridge — desktop control', () => {
       expect.any(String),
       { localAddress: '100.64.0.1', peerAddress: '100.64.0.2' },
       expect.any(Function),
-      { pixelWidth: 1_170, pixelHeight: 2_160 },
+      {
+        pixelWidth: 1_170,
+        pixelHeight: 2_160,
+        visibleRegion: { x: 0.2, y: 0.1, width: 0.5, height: 0.75 },
+        revision: 3,
+      },
+      'clarity',
     );
     const connectionId = desktopSource.start.mock.calls[0]?.[1];
     expect(connectionId).toEqual(expect.any(String));

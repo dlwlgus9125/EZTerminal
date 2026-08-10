@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { useLayoutEffect, type ReactNode } from 'react';
 
 import { MobileAgentFolderPicker } from '../../../mobile/src/MobileAgentFolderPicker';
@@ -33,6 +34,11 @@ type ActiveMobileSurface =
   | 'files'
   | 'stats'
   | 'openclaw'
+  | 'pc-control-ready'
+  | 'pc-control-active'
+  | 'pc-control-session-sheet'
+  | 'pc-control-keyboard'
+  | 'pc-control-reconnecting'
   | 'pc-control-unavailable'
   | 'more-sheet'
   | 'sessions-sheet'
@@ -208,12 +214,81 @@ const PC_UNAVAILABLE: DesktopPresentationSnapshot = {
   capabilities: null,
   status: null,
   clipboardFeedback: 'none',
+  appliedView: null,
 };
 
-function unavailablePresentationAdapter(): DesktopPresentationAdapter {
+const PC_ACTIVE: DesktopPresentationSnapshot = {
+  phase: 'active',
+  detail: null,
+  displays: [
+    {
+      id: 'primary',
+      name: 'Studio display',
+      width: 2_560,
+      height: 1_440,
+      rotationDegrees: 0,
+      primary: true,
+    },
+    {
+      id: 'secondary',
+      name: 'Portrait display',
+      width: 1_440,
+      height: 2_560,
+      rotationDegrees: 90,
+      primary: false,
+    },
+  ],
+  selectedDisplayId: 'primary',
+  capabilities: {
+    ctrlAltDelete: false,
+    clipboardText: true,
+    directTouch: true,
+    multiMonitor: true,
+    adaptiveViewport: true,
+    adaptiveRegion: true,
+    qualityPreferences: ['balanced', 'clarity', 'responsiveness'],
+    clientVideoStatsV2: true,
+  },
+  status: {
+    kind: 'desktop-control-status',
+    sessionId: 'storybook-pc-control',
+    state: 'active',
+    qualityTier: 'high',
+    qualityPreference: 'clarity',
+    framesPerSecond: 30,
+    targetFramesPerSecond: 30,
+    decodedFramesPerSecond: 29.8,
+    roundTripTimeMs: 24,
+    packetLossPercent: 0.2,
+    bitrateKbps: 7_420,
+    streamWidth: 1_920,
+    streamHeight: 1_080,
+    clientDroppedFramePercent: 0.4,
+    clientFreezeDurationMs: 0,
+    captureBackend: 'dxgi',
+    encoderBackend: 'media-foundation-hardware',
+    appliedViewRevision: 1,
+    sourceRegion: { x: 0, y: 0, width: 1, height: 1 },
+  },
+  clipboardFeedback: 'none',
+  appliedView: {
+    revision: 1,
+    sourceRegion: { x: 0, y: 0, width: 1, height: 1 },
+    frameWidth: 1_920,
+    frameHeight: 1_080,
+  },
+};
+
+const PC_RECONNECTING: DesktopPresentationSnapshot = {
+  ...PC_ACTIVE,
+  phase: 'reconnecting',
+  status: PC_ACTIVE.status ? { ...PC_ACTIVE.status, state: 'reconnecting' } : null,
+};
+
+function staticPresentationAdapter(snapshot: DesktopPresentationSnapshot): DesktopPresentationAdapter {
   let listener: (() => void) | null = null;
   return {
-    getSnapshot: () => PC_UNAVAILABLE,
+    getSnapshot: () => snapshot,
     subscribe: (next) => {
       listener = next;
       queueMicrotask(next);
@@ -222,14 +297,28 @@ function unavailablePresentationAdapter(): DesktopPresentationAdapter {
     start: () => listener?.(),
     attachVideo: () => undefined,
     setViewport: () => undefined,
-    sendControl: () => false,
-    sendPointer: () => false,
-    selectDisplay: () => false,
+    setQualityPreference: () => true,
+    resume: () => listener?.(),
+    sendControl: () => true,
+    sendPointer: () => true,
+    selectDisplay: () => true,
     sendLocalClipboard: async () => undefined,
     copyRemoteClipboard: () => undefined,
     stop: () => undefined,
     dispose: () => undefined,
   };
+}
+
+function unavailablePresentationAdapter(): DesktopPresentationAdapter {
+  return staticPresentationAdapter(PC_UNAVAILABLE);
+}
+
+function activePresentationAdapter(): DesktopPresentationAdapter {
+  return staticPresentationAdapter(PC_ACTIVE);
+}
+
+function reconnectingPresentationAdapter(): DesktopPresentationAdapter {
+  return staticPresentationAdapter(PC_RECONNECTING);
 }
 
 const unavailableCamera = async (): Promise<MediaStream> => {
@@ -327,6 +416,29 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
     case 'openclaw':
       content = <MobileOpenClawView transport={STORY_TRANSPORT} onClose={close} openclawAvailable />;
       break;
+    case 'pc-control-ready':
+    case 'pc-control-active':
+    case 'pc-control-session-sheet':
+    case 'pc-control-keyboard':
+      content = (
+        <MobileRemoteDesktopView
+          transport={STORY_TRANSPORT}
+          hostLabel="Studio workstation"
+          onClose={close}
+          presentationAdapterFactory={activePresentationAdapter}
+        />
+      );
+      break;
+    case 'pc-control-reconnecting':
+      content = (
+        <MobileRemoteDesktopView
+          transport={STORY_TRANSPORT}
+          hostLabel="Studio workstation"
+          onClose={close}
+          presentationAdapterFactory={reconnectingPresentationAdapter}
+        />
+      );
+      break;
     case 'pc-control-unavailable':
       content = (
         <MobileRemoteDesktopView
@@ -415,7 +527,50 @@ export const AgentsOffline: Story = { args: { surface: 'agents-offline' } };
 export const Files: Story = { args: { surface: 'files' } };
 export const Stats: Story = { args: { surface: 'stats' } };
 export const OpenClaw: Story = { args: { surface: 'openclaw' } };
-export const PcControlUnavailable: Story = { args: { surface: 'pc-control-unavailable' } };
+export const PcControlReady: Story = { args: { surface: 'pc-control-ready' } };
+export const PcControlActive: Story = {
+  args: { surface: 'pc-control-active' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByTestId('mobile-pc-start'));
+    await waitFor(() => expect(canvas.getByTestId('mobile-pc-session-handle')).toBeVisible());
+  },
+};
+export const PcControlSessionSheet: Story = {
+  args: { surface: 'pc-control-session-sheet' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByTestId('mobile-pc-start'));
+    await userEvent.click(await canvas.findByTestId('mobile-pc-session-handle'));
+    await waitFor(() => expect(canvas.getByTestId('mobile-pc-session-sheet')).toBeVisible());
+  },
+};
+export const PcControlKeyboard: Story = {
+  args: { surface: 'pc-control-keyboard' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByTestId('mobile-pc-start'));
+    await userEvent.click(await canvas.findByTestId('mobile-pc-session-handle'));
+    await userEvent.click(await canvas.findByRole('button', { name: 'Show remote keyboard input' }));
+    await waitFor(() => expect(canvas.getByRole('toolbar', { name: 'Special keys' })).toBeVisible());
+  },
+};
+export const PcControlReconnecting: Story = {
+  args: { surface: 'pc-control-reconnecting' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByTestId('mobile-pc-start'));
+    await waitFor(() => expect(canvas.getByTestId('mobile-pc-state')).toHaveAttribute('data-phase', 'reconnecting'));
+  },
+};
+export const PcControlUnavailable: Story = {
+  args: { surface: 'pc-control-unavailable' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByTestId('mobile-pc-start'));
+    await waitFor(() => expect(canvas.getByTestId('mobile-pc-state')).toHaveAttribute('data-phase', 'error'));
+  },
+};
 export const MoreSheet: Story = { args: { surface: 'more-sheet' } };
 export const SessionsSheet: Story = { args: { surface: 'sessions-sheet' } };
 export const ThemeSheet: Story = { args: { surface: 'theme-sheet' } };

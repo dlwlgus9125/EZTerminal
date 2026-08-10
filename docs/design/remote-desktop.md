@@ -30,8 +30,9 @@ RemoteService -- nonce-bound channel --> --session-agent (active session)
 
 - Electron main의 `RemoteDesktopController`가 controller lease와 native transport
   lifecycle을 직렬화하고 bounded stdio protocol로 signaling을 전달한다.
-- `--transport`가 현재 GDI capture, OpenH264 encode, WebRTC와 실제 `SendInput`을
-  일반 사용자 권한에서 수행한다.
+- `--transport`가 DXGI Desktop Duplication 우선/GDI fallback capture,
+  Media Foundation hardware 우선/OpenH264 software fallback encode, WebRTC와 실제
+  `SendInput`을 일반 사용자 권한에서 수행한다.
 - LocalSystem service는 네트워크 listener를 열거나 SDP/RTP를 파싱하지 않는다. local
   pipe client의 PID, executable identity, user SID와 active session을 검증하고 bounded
   capability lease를 발급한다.
@@ -67,9 +68,23 @@ RemoteService -- nonce-bound channel --> --session-agent (active session)
 
 ## 영상, 입력과 clipboard
 
-- GDI capture는 선택된 physical-pixel display를 BGRA로 읽고 OpenH264가 adaptive H.264로
-  encode한다. viewport와 quality tier 변경은 capture size와 bitrate를 bounded하게
-  조정한다.
+- DXGI Desktop Duplication은 선택된 physical-pixel display를 우선 capture한다. 출력이
+  회전되어 있거나 duplication 생성/실행이 실패하면 동일 geometry의 GDI path로 즉시
+  내려간다. Media Foundation hardware H.264를 우선 사용하고 초기화·type 협상·frame event가
+  실패하면 같은 frame부터 OpenH264 software로 전환한다. 상태에는 실제로 frame을 만든
+  `dxgi`/`gdi`, `media-foundation-hardware`/`openh264-software` backend만 보고한다.
+- Fit에서는 선택 display 전체를 보존한다. Zoom에서는 client가 normalized visible region과
+  단조 증가 revision을 보내고 host는 경계 안의 overscan ROI만 capture한 뒤 mobile encode
+  surface까지 확대한다. 새 frame이 실제 전송된 다음 `view-applied`로 revision, 실제 source
+  region과 frame size를 회신한다. Client는 이 응답으로 decoded video layout과 absolute
+  input authority를 맞춘다.
+- Quality preference는 Balanced, Clarity, Responsiveness다. 해상도·목표 fps·pixel당
+  bitrate와 상하한을 함께 바꾸고, packet loss·RTT·send backlog뿐 아니라 client decoded
+  fps, dropped frame과 freeze를 adaptive tier 입력으로 사용한다. Encoder GOP는 약 1초로
+  유지해 view/quality 전환 뒤 recovery를 제한한다.
+- `adaptive-region-v1`, `quality-preference-v1`, `client-video-stats-v2`는 native ready의
+  optional feature로 협상한다. Feature가 없는 기존 v2 native host에는 protocol을 깨지 않고
+  기존 adaptive viewport와 legacy dropped-frame stats만 사용한다.
 - monitor 목록에는 안정된 identifier, bounds, rotation과 primary 정보가 포함된다.
   선택 모니터가 사라지면 안전한 fallback과 상태 갱신을 수행한다.
 - pointer 좌표는 선택 display와 rotation 기준으로 검증한다. input sequence와 active
@@ -99,13 +114,20 @@ RemoteService -- nonce-bound channel --> --session-agent (active session)
 - [`native/remote-host/src/local_broker.rs`](../../native/remote-host/src/local_broker.rs)
 - [`native/remote-host/src/session_agent.rs`](../../native/remote-host/src/session_agent.rs)
 - [`native/remote-host/src/transport.rs`](../../native/remote-host/src/transport.rs)
+- [`native/remote-host/src/capture.rs`](../../native/remote-host/src/capture.rs)
+- [`native/remote-host/src/encoder.rs`](../../native/remote-host/src/encoder.rs)
+- [`native/remote-host/src/quality.rs`](../../native/remote-host/src/quality.rs)
 - [`mobile/src/MobileRemoteDesktopView.tsx`](../../mobile/src/MobileRemoteDesktopView.tsx)
+- [`mobile/src/remote-desktop-presentation-adapter.ts`](../../mobile/src/remote-desktop-presentation-adapter.ts)
+- [`mobile/src/remote-desktop-view-state.ts`](../../mobile/src/remote-desktop-view-state.ts)
 
 ## 검증
 
 - [`src/main/remote-desktop-controller.test.ts`](../../src/main/remote-desktop-controller.test.ts)
 - [`src/main/native-desktop-protocol.test.ts`](../../src/main/native-desktop-protocol.test.ts)
 - [`mobile/src/MobileRemoteDesktopView.test.tsx`](../../mobile/src/MobileRemoteDesktopView.test.tsx)
+- [`mobile/src/remote-desktop-presentation-adapter.test.ts`](../../mobile/src/remote-desktop-presentation-adapter.test.ts)
+- [`mobile/src/remote-desktop-view-state.test.ts`](../../mobile/src/remote-desktop-view-state.test.ts)
 - [`native/remote-host/src/lease.rs`](../../native/remote-host/src/lease.rs)
 - [`native/remote-host/src/broker.rs`](../../native/remote-host/src/broker.rs)
 - [`native/remote-host/src/transport.rs`](../../native/remote-host/src/transport.rs)

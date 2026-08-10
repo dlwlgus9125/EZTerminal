@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [1.0.31] - 2026-08-10
+
+### Added
+
+- Added an AnyDesk-style mobile PC-control surface with a persistent edge
+  handle, session sheet, precision and direct-touch modes, fit/zoom/pan,
+  multi-touch gestures, Bluetooth mouse input, and a full remote keyboard.
+- Added balanced, clarity-first, and responsiveness-first streaming profiles,
+  visible-region capture hints, applied-region acknowledgements, and client
+  decode/drop/freeze telemetry.
+- Added hardware-first DXGI Desktop Duplication capture and Media Foundation
+  H.264 encoding with explicit GDI and OpenH264 fallbacks.
+
+### Changed
+
+- Made adaptive quality react to both host pipeline pressure and real client
+  playback pressure while reporting the capture and encoder backends actually
+  in use.
+- Kept protocol v7 compatibility by capability-gating all new view, quality,
+  and playback-stat fields for older clients and native hosts.
+
+### Fixed
+
+- Prevented direct-touch coordinates from being sent against a stale encoded
+  region and released all remote keys and buttons across backgrounding,
+  reconnect, cancellation, and disconnect paths.
+
+See [1.0.31 release notes](docs/release/release-notes-1.0.31.md).
+
 ## [1.0.30] - 2026-08-10
 
 ### Added

@@ -24,7 +24,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::capture::DisplayDescriptor;
-use crate::protocol::{MAX_CLIPBOARD_BYTES, MAX_CONTROL_BYTES, StreamViewport};
+use crate::protocol::{
+    MAX_CLIPBOARD_BYTES, MAX_CONTROL_BYTES, NormalizedRegion, QualityPreference, StreamViewport,
+};
 use crate::quality::NetworkSample;
 
 const CF_UNICODETEXT_VALUE: u32 = 13;
@@ -112,11 +114,26 @@ enum InputFrame {
         sequence: u64,
         pixel_width: u32,
         pixel_height: u32,
+        #[serde(default)]
+        visible_region: Option<NormalizedRegion>,
+        #[serde(default)]
+        revision: Option<u64>,
     },
     ClientVideoStats {
         session_id: Uuid,
         sequence: u64,
         dropped_frame_percent: f32,
+        #[serde(default)]
+        decoded_frames_per_second: f32,
+        #[serde(default)]
+        target_frames_per_second: f32,
+        #[serde(default)]
+        freeze_duration_ms: u32,
+    },
+    SetQualityPreference {
+        session_id: Uuid,
+        sequence: u64,
+        preference: QualityPreference,
     },
     SecureAttention {
         session_id: Uuid,
@@ -186,6 +203,11 @@ impl InputFrame {
                 sequence,
                 ..
             }
+            | Self::SetQualityPreference {
+                session_id,
+                sequence,
+                ..
+            }
             | Self::SecureAttention {
                 session_id,
                 sequence,
@@ -228,6 +250,7 @@ pub struct InputInjector {
     selected_display_id: Arc<Mutex<String>>,
     stream_viewport: Arc<Mutex<Option<StreamViewport>>>,
     network_sample: Arc<Mutex<NetworkSample>>,
+    quality_preference: Arc<Mutex<QualityPreference>>,
 }
 
 impl InputInjector {
@@ -271,6 +294,24 @@ impl InputInjector {
         stream_viewport: Arc<Mutex<Option<StreamViewport>>>,
         network_sample: Arc<Mutex<NetworkSample>>,
     ) -> Self {
+        Self::with_video_state(
+            session_id,
+            displays,
+            selected_display_id,
+            stream_viewport,
+            network_sample,
+            Arc::new(Mutex::new(QualityPreference::Balanced)),
+        )
+    }
+
+    pub fn with_video_state(
+        session_id: Uuid,
+        displays: Vec<DisplayDescriptor>,
+        selected_display_id: Arc<Mutex<String>>,
+        stream_viewport: Arc<Mutex<Option<StreamViewport>>>,
+        network_sample: Arc<Mutex<NetworkSample>>,
+        quality_preference: Arc<Mutex<QualityPreference>>,
+    ) -> Self {
         Self {
             session_id,
             last_reliable_sequence: 0,
@@ -281,6 +322,7 @@ impl InputInjector {
             selected_display_id,
             stream_viewport,
             network_sample,
+            quality_preference,
         }
     }
 
@@ -366,11 +408,15 @@ impl InputInjector {
             InputFrame::SetViewport {
                 pixel_width,
                 pixel_height,
+                visible_region,
+                revision,
                 ..
             } => {
                 let viewport = StreamViewport {
                     pixel_width,
                     pixel_height,
+                    visible_region,
+                    revision,
                 };
                 viewport.validate()?;
                 *self
@@ -380,17 +426,36 @@ impl InputInjector {
             }
             InputFrame::ClientVideoStats {
                 dropped_frame_percent,
+                decoded_frames_per_second,
+                target_frames_per_second,
+                freeze_duration_ms,
                 ..
             } => {
                 if !dropped_frame_percent.is_finite()
                     || !(0.0..=100.0).contains(&dropped_frame_percent)
+                    || !decoded_frames_per_second.is_finite()
+                    || !(0.0..=240.0).contains(&decoded_frames_per_second)
+                    || !target_frames_per_second.is_finite()
+                    || !(0.0..=240.0).contains(&target_frames_per_second)
+                    || freeze_duration_ms > 10_000
                 {
                     bail!("invalid client video stats");
                 }
-                self.network_sample
+                let mut sample = self
+                    .network_sample
                     .lock()
-                    .map_err(|_| anyhow::anyhow!("network sample poisoned"))?
-                    .client_dropped_frame_percent = dropped_frame_percent;
+                    .map_err(|_| anyhow::anyhow!("network sample poisoned"))?;
+                sample.client_dropped_frame_percent = dropped_frame_percent;
+                sample.client_decoded_frames_per_second = decoded_frames_per_second;
+                sample.client_target_frames_per_second = target_frames_per_second;
+                sample.client_freeze_duration_ms = freeze_duration_ms;
+                sample.client_video_stats_seen = true;
+            }
+            InputFrame::SetQualityPreference { preference, .. } => {
+                *self
+                    .quality_preference
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("quality preference poisoned"))? = preference;
             }
             InputFrame::SecureAttention { .. } => bail!("secure attention is unavailable"),
         }
@@ -844,6 +909,8 @@ mod tests {
             Some(StreamViewport {
                 pixel_width: 1_080,
                 pixel_height: 1_920,
+                visible_region: None,
+                revision: None,
             })
         );
         let stats_frame = format!(

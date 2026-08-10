@@ -4,6 +4,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { Clipboard } from '@capacitor/clipboard';
 import {
@@ -11,20 +13,27 @@ import {
   ClipboardCopy,
   ClipboardPaste,
   Keyboard,
+  Maximize2,
   Monitor,
   MoreHorizontal,
   MousePointer2,
   Power,
+  RefreshCw,
+  Settings2,
   Touchpad,
+  WifiOff,
 } from 'lucide-react';
 
 import { useAppTranslation } from '../../src/renderer/i18n';
-import { useMobileToast } from './MobileToast';
 import {
   MAX_DESKTOP_VIEWPORT_PIXELS,
   MIN_DESKTOP_VIEWPORT_PIXELS,
+  type DesktopNormalizedRegion,
+  type DesktopQualityPreference,
   type DesktopVideoViewport,
 } from '../../src/shared/remote-protocol';
+import { MobileActionSheet } from './MobileActionSheet';
+import { useMobileToast } from './MobileToast';
 import {
   INITIAL_DESKTOP_PRESENTATION_SNAPSHOT,
   RemoteDesktopPresentationAdapter,
@@ -34,9 +43,22 @@ import {
   type DesktopPresentationDetail,
   type DesktopPointerCommand,
 } from './remote-desktop-presentation-adapter';
+import {
+  FIT_REMOTE_VIEW,
+  clampRemoteView,
+  mapRemotePoint,
+  panRemoteView,
+  relativeRemoteDelta,
+  remoteVideoLayout,
+  visibleRegionForView,
+  zoomRemoteViewAt,
+  type RemoteSurfaceSize,
+  type RemoteViewState,
+} from './remote-desktop-view-state';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
 type InputMode = 'trackpad' | 'direct';
+type HandleEdge = 'left' | 'right';
 
 interface PointerRecord {
   x: number;
@@ -44,38 +66,89 @@ interface PointerRecord {
   startX: number;
   startY: number;
   startedAt: number;
+  pointerType: string;
+  button: number;
   moved: boolean;
   buttonDown: boolean;
   longPressTriggered: boolean;
   dragCandidate: boolean;
   suppressTap: boolean;
-  absoluteX: number;
-  absoluteY: number;
 }
 
-const INPUT_MODE_STORAGE_KEY = 'ezterminal.pcControl.inputMode';
-const TAP_MAX_MS = 350;
-const TAP_MOVE_PX = 8;
-const LONG_PRESS_MS = 550;
-const DOUBLE_TAP_MS = 350;
-const VIEWPORT_UPDATE_DELAY_MS = 200;
-/** Handoff §5: floating controls fade out 3.5s after the last interaction. */
-const CHROME_AUTOHIDE_MS = 3500;
-
-interface TwoFingerGesture {
-  readonly startedAt: number;
-  readonly startCenterX: number;
-  readonly startCenterY: number;
-  readonly startDistance: number;
+interface MultiGesture {
+  kind: 'two' | 'three';
+  startedAt: number;
+  startCenterX: number;
+  startCenterY: number;
   lastCenterX: number;
   lastCenterY: number;
-  lastDistance: number;
+  startDistance: number;
+  startView: RemoteViewState;
   moved: boolean;
   pinching: boolean;
 }
 
+interface StoredPreferences {
+  readonly version: 2;
+  readonly inputMode: InputMode;
+  readonly qualityPreference: DesktopQualityPreference;
+  readonly handleEdge: HandleEdge;
+  readonly handleY: number;
+}
+
+const LEGACY_INPUT_MODE_STORAGE_KEY = 'ezterminal.pcControl.inputMode';
+const PREFERENCES_STORAGE_KEY = 'ezterminal.pcControl.preferences.v2';
+const TAP_MAX_MS = 250;
+const TAP_MOVE_PX = 10;
+const LONG_PRESS_MS = 500;
+const DOUBLE_TAP_MS = 300;
+const DOUBLE_TAP_DISTANCE_PX = 24;
+const VIEWPORT_UPDATE_DELAY_MS = 500;
+const FULL_REGION: DesktopNormalizedRegion = Object.freeze({ x: 0, y: 0, width: 1, height: 1 });
+
+const MODIFIER_CODES: Readonly<Record<DesktopKeyModifier, string>> = {
+  control: 'ControlLeft',
+  alt: 'AltLeft',
+  shift: 'ShiftLeft',
+  meta: 'MetaLeft',
+};
+
 function clampUnit(value: number): number {
   return Math.min(1, Math.max(0, value));
+}
+
+function validQualityPreference(value: unknown): value is DesktopQualityPreference {
+  return value === 'balanced' || value === 'clarity' || value === 'responsiveness';
+}
+
+function loadPreferences(): StoredPreferences {
+  const legacyMode = window.localStorage.getItem(LEGACY_INPUT_MODE_STORAGE_KEY) === 'direct'
+    ? 'direct'
+    : 'trackpad';
+  try {
+    const value = JSON.parse(window.localStorage.getItem(PREFERENCES_STORAGE_KEY) ?? '') as Partial<StoredPreferences>;
+    return {
+      version: 2,
+      inputMode: value.inputMode === 'direct' ? 'direct' : value.inputMode === 'trackpad'
+        ? 'trackpad'
+        : legacyMode,
+      qualityPreference: validQualityPreference(value.qualityPreference)
+        ? value.qualityPreference
+        : 'balanced',
+      handleEdge: value.handleEdge === 'left' ? 'left' : 'right',
+      handleY: typeof value.handleY === 'number' && Number.isFinite(value.handleY)
+        ? Math.min(0.92, Math.max(0.08, value.handleY))
+        : 0.5,
+    };
+  } catch {
+    return {
+      version: 2,
+      inputMode: legacyMode,
+      qualityPreference: 'balanced',
+      handleEdge: 'right',
+      handleY: 0.5,
+    };
+  }
 }
 
 export function measureVideoViewport(
@@ -84,20 +157,15 @@ export function measureVideoViewport(
 ): DesktopVideoViewport | null {
   const rect = element.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return null;
-  const ratio = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0
-    ? devicePixelRatio
-    : 1;
+  const ratio = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
   const bounded = (value: number): number => Math.min(
     MAX_DESKTOP_VIEWPORT_PIXELS,
     Math.max(MIN_DESKTOP_VIEWPORT_PIXELS, Math.round(value * ratio)),
   );
-  return {
-    pixelWidth: bounded(rect.width),
-    pixelHeight: bounded(rect.height),
-  };
+  return { pixelWidth: bounded(rect.width), pixelHeight: bounded(rect.height) };
 }
 
-/** Maps through object-fit:contain and the centered client-side zoom. */
+/** Compatibility helper retained for consumers that use the centered contain geometry. */
 export function mapVideoPoint(
   clientX: number,
   clientY: number,
@@ -134,15 +202,11 @@ function startErrorKey(code: string | undefined):
   }
 }
 
-function createPresentationAdapter(
-  transport: WsEzTerminalTransport,
-): DesktopPresentationAdapter {
+function createPresentationAdapter(transport: WsEzTerminalTransport): DesktopPresentationAdapter {
   return new RemoteDesktopPresentationAdapter(transport, {
     clipboard: {
       readText: async () => (await Clipboard.read()).value,
-      writeText: async (text) => {
-        await Clipboard.write({ string: text });
-      },
+      writeText: async (text) => Clipboard.write({ string: text }),
     },
     visibility: {
       isHidden: () => document.visibilityState === 'hidden',
@@ -152,22 +216,23 @@ function createPresentationAdapter(
       },
     },
     createPeerConnection: () => {
-      if (typeof RTCPeerConnection !== 'function') {
-        throw new Error('WebRTC is unavailable');
-      }
+      if (typeof RTCPeerConnection !== 'function') throw new Error('WebRTC is unavailable');
       return new RTCPeerConnection({ iceServers: [] });
     },
   });
 }
 
+function mouseButton(button: number): 'left' | 'right' | 'middle' {
+  if (button === 2) return 'right';
+  if (button === 1) return 'middle';
+  return 'left';
+}
+
 export interface MobileRemoteDesktopViewProps {
   readonly transport: WsEzTerminalTransport;
-  /** Host shown in the floating status pill. Empty falls back to the phase. */
   readonly hostLabel?: string;
   readonly onClose: () => void;
-  readonly presentationAdapterFactory?: (
-    transport: WsEzTerminalTransport,
-  ) => DesktopPresentationAdapter;
+  readonly presentationAdapterFactory?: (transport: WsEzTerminalTransport) => DesktopPresentationAdapter;
 }
 
 export function MobileRemoteDesktopView({
@@ -178,71 +243,211 @@ export function MobileRemoteDesktopView({
 }: MobileRemoteDesktopViewProps): JSX.Element {
   const { t } = useAppTranslation();
   const showToast = useMobileToast();
+  const initialPreferences = useMemo(loadPreferences, []);
   const presentationAdapter = useMemo(
     () => presentationAdapterFactory(transport),
     [presentationAdapterFactory, transport],
   );
-  const [presentation, setPresentation] = useState(
-    INITIAL_DESKTOP_PRESENTATION_SNAPSHOT,
+  const [presentation, setPresentation] = useState(INITIAL_DESKTOP_PRESENTATION_SNAPSHOT);
+  const [started, setStarted] = useState(false);
+  const [needsResume, setNeedsResume] = useState(false);
+  const [mode, setMode] = useState<InputMode>(initialPreferences.inputMode);
+  const [qualityPreference, setQualityPreference] = useState<DesktopQualityPreference>(
+    initialPreferences.qualityPreference,
   );
-  const presentationAdapterRef = useRef<DesktopPresentationAdapter | null>(null);
-  const {
-    capabilities,
-    displays,
-    phase,
-    selectedDisplayId,
-    status,
-  } = presentation;
-  const [mode, setMode] = useState<InputMode>(() => (
-    window.localStorage.getItem(INPUT_MODE_STORAGE_KEY) === 'direct' ? 'direct' : 'trackpad'
-  ));
+  const [handleEdge, setHandleEdge] = useState<HandleEdge>(initialPreferences.handleEdge);
+  const [handleY, setHandleY] = useState(initialPreferences.handleY);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [extrasOpen, setExtrasOpen] = useState(false);
-  const [zoom, setZoom] = useState(1);
-  // Immersive chrome (handoff §5): visible on entry and after every touch,
-  // gone 3.5s later so the remote screen is unobstructed while you work.
-  const [chromeVisible, setChromeVisible] = useState(true);
-  const [showHint, setShowHint] = useState(true);
-  const chromeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [stickyModifiers, setStickyModifiers] = useState<ReadonlySet<DesktopKeyModifier>>(new Set());
+  const [view, setView] = useState<RemoteViewState>(FIT_REMOTE_VIEW);
+  const [surfaceSize, setSurfaceSize] = useState<RemoteSurfaceSize>({ width: 1, height: 1 });
+  const [latestRequestedRevision, setLatestRequestedRevision] = useState(0);
+
+  const presentationAdapterRef = useRef<DesktopPresentationAdapter | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const handleRef = useRef<HTMLButtonElement | null>(null);
+  const viewRef = useRef<RemoteViewState>(view);
+  const stickyModifiersRef = useRef<ReadonlySet<DesktopKeyModifier>>(stickyModifiers);
   const pointersRef = useRef(new Map<number, PointerRecord>());
-  const twoFingerRef = useRef<TwoFingerGesture | null>(null);
+  const multiGestureRef = useRef<MultiGesture | null>(null);
   const holdTimersRef = useRef(new Map<number, number>());
-  const lastTrackpadTapRef = useRef<{ at: number; x: number; y: number } | null>(null);
+  const lastTapRef = useRef<{ at: number; x: number; y: number } | null>(null);
+  const lastTwoFingerTapRef = useRef<{ at: number; x: number; y: number } | null>(null);
+  const revisionRef = useRef(0);
+  const lastPublishedViewportRef = useRef<Omit<DesktopVideoViewport, 'revision'> | null>(null);
+  const handleDragRef = useRef<{ startX: number; startY: number; moved: boolean } | null>(null);
 
-  const revealChrome = useCallback((): void => {
-    setChromeVisible(true);
-    if (chromeTimerRef.current !== null) clearTimeout(chromeTimerRef.current);
-    chromeTimerRef.current = setTimeout(() => {
-      chromeTimerRef.current = null;
-      setChromeVisible(false);
-      setShowHint(false);
-      setExtrasOpen(false);
-    }, CHROME_AUTOHIDE_MS);
+  const { capabilities, displays, phase, selectedDisplayId, status, appliedView } = presentation;
+  const selectedDisplay = displays.find((display) => display.id === selectedDisplayId)
+    ?? displays[0]
+    ?? { width: 1_920, height: 1_080 };
+  const displaySize = useMemo(() => ({
+    width: selectedDisplay.width,
+    height: selectedDisplay.height,
+  }), [selectedDisplay.height, selectedDisplay.width]);
+
+  const updateView = useCallback((next: RemoteViewState): void => {
+    viewRef.current = next;
+    setView(next);
   }, []);
 
-  useEffect(() => {
-    revealChrome();
-    // The two gestures nobody would guess, said once on arrival. It goes
-    // through the toast system rather than the inline pill so it disappears on
-    // its own instead of competing with the live status for the same corner.
-    showToast(t('mobile.pcControl.entryHint'));
-    return () => {
-      if (chromeTimerRef.current !== null) clearTimeout(chromeTimerRef.current);
+  const sendControl = useCallback((command: DesktopControlCommand): boolean => (
+    presentationAdapterRef.current?.sendControl(command) ?? false
+  ), []);
+  const sendPointer = useCallback((command: DesktopPointerCommand): boolean => (
+    presentationAdapterRef.current?.sendPointer(command) ?? false
+  ), []);
+
+  const clearHoldTimer = useCallback((pointerId: number): void => {
+    const timer = holdTimersRef.current.get(pointerId);
+    if (timer !== undefined) window.clearTimeout(timer);
+    holdTimersRef.current.delete(pointerId);
+  }, []);
+
+  const releasePointerButtons = useCallback((): void => {
+    for (const record of pointersRef.current.values()) {
+      if (record.buttonDown) {
+        sendControl({ type: 'pointer-button', button: mouseButton(record.button), down: false });
+      }
+    }
+    for (const timer of holdTimersRef.current.values()) window.clearTimeout(timer);
+    holdTimersRef.current.clear();
+    pointersRef.current.clear();
+    multiGestureRef.current = null;
+  }, [sendControl]);
+
+  const releaseAllInput = useCallback((): void => {
+    releasePointerButtons();
+    for (const modifier of stickyModifiersRef.current) {
+      sendControl({ type: 'key', code: MODIFIER_CODES[modifier], down: false, modifiers: [] });
+    }
+    if (stickyModifiersRef.current.size > 0) {
+      stickyModifiersRef.current = new Set();
+      setStickyModifiers(new Set());
+    }
+  }, [releasePointerButtons, sendControl]);
+
+  const publishView = useCallback((nextView: RemoteViewState = viewRef.current): void => {
+    const element = viewportRef.current;
+    if (!element) return;
+    const viewport = measureVideoViewport(element, window.devicePixelRatio);
+    if (!viewport) return;
+    const rect = element.getBoundingClientRect();
+    const nextSurface = { width: rect.width, height: rect.height };
+    const boundedView = clampRemoteView(nextView, nextSurface, displaySize);
+    if (
+      boundedView.zoom !== nextView.zoom
+      || boundedView.centerX !== nextView.centerX
+      || boundedView.centerY !== nextView.centerY
+    ) updateView(boundedView);
+    const nextViewportBase: Omit<DesktopVideoViewport, 'revision'> = {
+      ...viewport,
+      ...(boundedView.zoom > 1
+        ? { visibleRegion: visibleRegionForView(boundedView, nextSurface, displaySize) }
+        : {}),
     };
-    // Entry only: re-running this on every translation or toast identity
-    // change would re-announce the hint mid-session.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revealChrome]);
+    const previous = lastPublishedViewportRef.current;
+    if (
+      previous?.pixelWidth === nextViewportBase.pixelWidth
+      && previous.pixelHeight === nextViewportBase.pixelHeight
+      && (
+        previous.visibleRegion === nextViewportBase.visibleRegion
+        || Boolean(previous.visibleRegion && nextViewportBase.visibleRegion
+          && previous.visibleRegion.x === nextViewportBase.visibleRegion.x
+          && previous.visibleRegion.y === nextViewportBase.visibleRegion.y
+          && previous.visibleRegion.width === nextViewportBase.visibleRegion.width
+          && previous.visibleRegion.height === nextViewportBase.visibleRegion.height)
+      )
+    ) return;
+    lastPublishedViewportRef.current = nextViewportBase;
+    const revision = revisionRef.current + 1;
+    revisionRef.current = revision;
+    const nextViewport: DesktopVideoViewport = { ...nextViewportBase, revision };
+    presentationAdapter.setViewport(nextViewport);
+    setLatestRequestedRevision(revision);
+  }, [displaySize, presentationAdapter, updateView]);
+
+  useEffect(() => {
+    viewRef.current = view;
+    const timer = window.setTimeout(() => publishView(view), VIEWPORT_UPDATE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [publishView, surfaceSize.height, surfaceSize.width, view]);
+
+  useEffect(() => {
+    presentationAdapterRef.current = presentationAdapter;
+    const publishSnapshot = (): void => setPresentation(presentationAdapter.getSnapshot());
+    const unsubscribe = presentationAdapter.subscribe(publishSnapshot);
+    presentationAdapter.attachVideo(videoRef.current);
+    publishSnapshot();
+
+    const updateSurface = (): void => {
+      const rect = viewportRef.current?.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+      setSurfaceSize({ width: rect.width, height: rect.height });
+    };
+    updateSurface();
+    const resizeObserver = typeof ResizeObserver === 'function'
+      ? new ResizeObserver(updateSurface)
+      : null;
+    if (viewportRef.current) resizeObserver?.observe(viewportRef.current);
+    window.addEventListener('resize', updateSurface);
+    window.visualViewport?.addEventListener('resize', updateSurface);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateSurface);
+      window.visualViewport?.removeEventListener('resize', updateSurface);
+      unsubscribe();
+      releasePointerButtons();
+      if (presentationAdapterRef.current === presentationAdapter) presentationAdapterRef.current = null;
+      presentationAdapter.attachVideo(null);
+      presentationAdapter.dispose();
+    };
+  }, [presentationAdapter, releasePointerButtons]);
+
+  useEffect(() => {
+    presentationAdapter.setQualityPreference(qualityPreference);
+  }, [presentationAdapter, qualityPreference]);
+
+  useEffect(() => {
+    const preferences: StoredPreferences = {
+      version: 2,
+      inputMode: mode,
+      qualityPreference,
+      handleEdge,
+      handleY,
+    };
+    window.localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(preferences));
+    window.localStorage.removeItem(LEGACY_INPUT_MODE_STORAGE_KEY);
+  }, [handleEdge, handleY, mode, qualityPreference]);
+
+  useEffect(() => {
+    if (keyboardOpen) inputRef.current?.focus();
+  }, [keyboardOpen]);
+
+  useEffect(() => {
+    const onVisibility = (): void => {
+      if (document.visibilityState !== 'hidden') return;
+      releaseAllInput();
+      setNeedsResume(started);
+      setSheetOpen(false);
+      setKeyboardOpen(false);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [releaseAllInput, started]);
+
+  useEffect(() => {
+    if (started && phase !== 'active') releaseAllInput();
+  }, [phase, releaseAllInput, started]);
 
   let detail = '';
   const detailState: DesktopPresentationDetail = presentation.detail;
   if (detailState?.kind === 'busy') {
-    detail = t('mobile.pcControl.busy', {
-      device: detailState.controllerName ?? t('common.unavailable'),
-    });
+    detail = t('mobile.pcControl.busy', { device: detailState.controllerName ?? t('common.unavailable') });
   } else if (detailState?.kind === 'start-error') {
     detail = t(startErrorKey(detailState.errorCode));
   } else if (detailState?.kind === 'start-failed') {
@@ -265,196 +470,150 @@ export function MobileRemoteDesktopView({
             ? t('mobile.pcControl.inputUnavailable')
             : '';
 
-  useEffect(() => {
-    window.localStorage.setItem(INPUT_MODE_STORAGE_KEY, mode);
-  }, [mode]);
-
-  const sendControl = useCallback(
-    (payload: DesktopControlCommand): boolean => (
-      presentationAdapterRef.current?.sendControl(payload) ?? false
-    ),
-    [],
-  );
-
-  const sendPointer = useCallback(
-    (payload: DesktopPointerCommand): boolean => (
-      presentationAdapterRef.current?.sendPointer(payload) ?? false
-    ),
-    [],
-  );
-
-  const clearHoldTimer = useCallback((pointerId: number): void => {
-    const timer = holdTimersRef.current.get(pointerId);
-    if (timer !== undefined) window.clearTimeout(timer);
-    holdTimersRef.current.delete(pointerId);
-  }, []);
-
-  const pointFor = useCallback((
-    clientX: number,
-    clientY: number,
-    viewport: HTMLDivElement,
-  ): { x: number; y: number } => {
-    const selected = displays.find((display) => display.id === selectedDisplayId)
-      ?? displays[0];
-    const video = videoRef.current;
-    return mapVideoPoint(
-      clientX,
-      clientY,
-      viewport.getBoundingClientRect(),
-      video?.videoWidth || selected?.width || viewport.clientWidth,
-      video?.videoHeight || selected?.height || viewport.clientHeight,
-      zoom,
-    );
-  }, [displays, selectedDisplayId, zoom]);
-
-  useEffect(() => {
-    const holdTimers = holdTimersRef.current;
-    presentationAdapterRef.current = presentationAdapter;
-    const publishSnapshot = (): void => {
-      setPresentation(presentationAdapter.getSnapshot());
-    };
-    const unsubscribe = presentationAdapter.subscribe(publishSnapshot);
-    presentationAdapter.attachVideo(videoRef.current);
-    const publishViewport = (): void => {
-      const element = viewportRef.current;
-      if (!element) return;
-      const viewport = measureVideoViewport(element, window.devicePixelRatio);
-      if (viewport) presentationAdapter.setViewport(viewport);
-    };
-    let viewportTimer: number | null = null;
-    const queueViewport = (): void => {
-      if (viewportTimer !== null) window.clearTimeout(viewportTimer);
-      viewportTimer = window.setTimeout(() => {
-        viewportTimer = null;
-        publishViewport();
-      }, VIEWPORT_UPDATE_DELAY_MS);
-    };
-    publishViewport();
+  const startSession = (): void => {
+    publishView(viewRef.current);
+    presentationAdapter.setQualityPreference(qualityPreference);
+    setStarted(true);
+    setNeedsResume(false);
     presentationAdapter.start();
-    const resizeObserver = typeof ResizeObserver === 'function'
-      ? new ResizeObserver(queueViewport)
-      : null;
-    if (viewportRef.current) resizeObserver?.observe(viewportRef.current);
-    window.addEventListener('resize', queueViewport);
-    window.visualViewport?.addEventListener('resize', queueViewport);
-    publishSnapshot();
-    return () => {
-      if (viewportTimer !== null) window.clearTimeout(viewportTimer);
-      resizeObserver?.disconnect();
-      window.removeEventListener('resize', queueViewport);
-      window.visualViewport?.removeEventListener('resize', queueViewport);
-      unsubscribe();
-      if (presentationAdapterRef.current === presentationAdapter) {
-        presentationAdapterRef.current = null;
-      }
-      presentationAdapter.attachVideo(null);
-      presentationAdapter.dispose();
-      for (const timer of holdTimers.values()) window.clearTimeout(timer);
-      holdTimers.clear();
-    };
-  }, [presentationAdapter]);
+  };
 
-  useEffect(() => {
-    if (keyboardOpen) inputRef.current?.focus();
-  }, [keyboardOpen]);
+  const resumeSession = (): void => {
+    releaseAllInput();
+    publishView(viewRef.current);
+    setNeedsResume(false);
+    presentationAdapter.resume();
+  };
 
   const close = (): void => {
+    releaseAllInput();
     presentationAdapterRef.current?.stop('client-stop');
-    showToast(t('mobile.pcControl.endedToast'));
+    if (started) showToast(t('mobile.pcControl.endedToast'));
     onClose();
   };
 
   const selectMode = (next: InputMode): void => {
+    releasePointerButtons();
     setMode(next);
     showToast(next === 'trackpad'
       ? t('mobile.pcControl.trackpadToast')
       : t('mobile.pcControl.directToast'));
-    revealChrome();
   };
 
-  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+  const pointFor = (clientX: number, clientY: number): { x: number; y: number } | null => {
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return mapRemotePoint(
+      clientX - rect.left,
+      clientY - rect.top,
+      viewRef.current,
+      { width: rect.width, height: rect.height },
+      displaySize,
+    );
+  };
+
+  const directInputPending = capabilities?.adaptiveRegion === true
+    && view.zoom > 1
+    && (appliedView?.revision ?? 0) < latestRequestedRevision;
+
+  const beginLongPress = (pointerId: number): void => {
+    const timer = window.setTimeout(() => {
+      const record = pointersRef.current.get(pointerId);
+      if (!record || record.moved || record.suppressTap || pointersRef.current.size !== 1) return;
+      const point = pointFor(record.x, record.y);
+      if (mode === 'direct' && (!point || directInputPending)) return;
+      if (point && mode === 'direct') sendPointer({ type: 'pointer-absolute', ...point });
+      record.longPressTriggered = true;
+      sendControl({ type: 'pointer-click', button: 'right', count: 1 });
+    }, LONG_PRESS_MS);
+    holdTimersRef.current.set(pointerId, timer);
+  };
+
+  const startMultiGesture = (): void => {
+    const records = [...pointersRef.current.values()];
+    for (const record of records) {
+      record.suppressTap = true;
+      if (record.buttonDown) {
+        sendControl({ type: 'pointer-button', button: mouseButton(record.button), down: false });
+        record.buttonDown = false;
+      }
+    }
+    for (const pointerId of pointersRef.current.keys()) clearHoldTimer(pointerId);
+    const centerX = records.reduce((sum, record) => sum + record.x, 0) / records.length;
+    const centerY = records.reduce((sum, record) => sum + record.y, 0) / records.length;
+    const distance = records.length >= 2
+      ? Math.hypot(records[0].x - records[1].x, records[0].y - records[1].y)
+      : 0;
+    multiGestureRef.current = {
+      kind: records.length >= 3 ? 'three' : 'two',
+      startedAt: performance.now(),
+      startCenterX: centerX,
+      startCenterY: centerY,
+      lastCenterX: centerX,
+      lastCenterY: centerY,
+      startDistance: distance,
+      startView: viewRef.current,
+      moved: false,
+      pinching: false,
+    };
+  };
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (!started || phase !== 'active' || needsResume || sheetOpen) return;
     event.currentTarget.setPointerCapture(event.pointerId);
-    const absolute = pointFor(event.clientX, event.clientY, event.currentTarget);
-    const previousTap = lastTrackpadTapRef.current;
-    const dragCandidate = mode === 'trackpad'
-      && previousTap !== null
+    const previousTap = lastTapRef.current;
+    const dragCandidate = previousTap !== null
       && performance.now() - previousTap.at <= DOUBLE_TAP_MS
-      && Math.hypot(event.clientX - previousTap.x, event.clientY - previousTap.y) <= 24;
+      && Math.hypot(event.clientX - previousTap.x, event.clientY - previousTap.y)
+        <= DOUBLE_TAP_DISTANCE_PX;
     const record: PointerRecord = {
       x: event.clientX,
       y: event.clientY,
       startX: event.clientX,
       startY: event.clientY,
       startedAt: performance.now(),
+      pointerType: event.pointerType,
+      button: event.button,
       moved: false,
       buttonDown: false,
       longPressTriggered: false,
       dragCandidate,
       suppressTap: false,
-      absoluteX: absolute.x,
-      absoluteY: absolute.y,
     };
     pointersRef.current.set(event.pointerId, record);
-
-    const pointers = [...pointersRef.current.values()];
-    if (pointers.length === 2) {
-      for (const pointer of pointers) {
-        pointer.suppressTap = true;
-        if (pointer.buttonDown) {
-          sendControl({ type: 'pointer-button', button: 'left', down: false });
-          pointer.buttonDown = false;
-        }
-      }
-      for (const pointerId of pointersRef.current.keys()) clearHoldTimer(pointerId);
-      const centerX = (pointers[0].x + pointers[1].x) / 2;
-      const centerY = (pointers[0].y + pointers[1].y) / 2;
-      const distance = Math.hypot(pointers[0].x - pointers[1].x, pointers[0].y - pointers[1].y);
-      twoFingerRef.current = {
-        startedAt: performance.now(),
-        startCenterX: centerX,
-        startCenterY: centerY,
-        startDistance: distance,
-        lastCenterX: centerX,
-        lastCenterY: centerY,
-        lastDistance: distance,
-        moved: false,
-        pinching: false,
-      };
+    if (pointersRef.current.size >= 2) {
+      startMultiGesture();
       return;
     }
 
+    const point = pointFor(event.clientX, event.clientY);
     if (event.pointerType === 'mouse') {
-      sendControl({
-        type: 'pointer-button',
-        button: event.button === 2 ? 'right' : 'left',
-        down: true,
-        x: absolute.x,
-        y: absolute.y,
-      });
-      record.buttonDown = true;
+      if (mode === 'direct') {
+        if (!point || directInputPending) return;
+        sendPointer({ type: 'pointer-absolute', ...point });
+        record.buttonDown = sendControl({
+          type: 'pointer-button',
+          button: mouseButton(event.button),
+          down: true,
+          x: point.x,
+          y: point.y,
+        });
+      } else {
+        record.buttonDown = sendControl({
+          type: 'pointer-button',
+          button: mouseButton(event.button),
+          down: true,
+        });
+      }
       return;
     }
-
-    if (mode === 'direct') {
-      sendPointer({ type: 'pointer-absolute', x: absolute.x, y: absolute.y });
-      const timer = window.setTimeout(() => {
-        const current = pointersRef.current.get(event.pointerId);
-        if (!current || current.moved || current.suppressTap || pointersRef.current.size !== 1) return;
-        current.longPressTriggered = true;
-        sendControl({ type: 'pointer-click', button: 'right', count: 1 });
-      }, LONG_PRESS_MS);
-      holdTimersRef.current.set(event.pointerId, timer);
-    } else if (dragCandidate) {
-      const timer = window.setTimeout(() => {
-        const current = pointersRef.current.get(event.pointerId);
-        if (!current || current.suppressTap || pointersRef.current.size !== 1 || current.buttonDown) return;
-        current.buttonDown = sendControl({ type: 'pointer-button', button: 'left', down: true });
-      }, 180);
-      holdTimersRef.current.set(event.pointerId, timer);
+    if (mode === 'direct' && point && !directInputPending) {
+      sendPointer({ type: 'pointer-absolute', ...point });
     }
+    beginLongPress(event.pointerId);
   };
 
-  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
     const record = pointersRef.current.get(event.pointerId);
     if (!record) return;
     const dx = event.clientX - record.x;
@@ -463,134 +622,206 @@ export function MobileRemoteDesktopView({
     record.y = event.clientY;
     if (Math.hypot(event.clientX - record.startX, event.clientY - record.startY) >= TAP_MOVE_PX) {
       record.moved = true;
+      clearHoldTimer(event.pointerId);
     }
-    const points = [...pointersRef.current.values()];
-    if (points.length === 2) {
-      const gesture = twoFingerRef.current;
-      if (!gesture) return;
-      const centerX = (points[0].x + points[1].x) / 2;
-      const centerY = (points[0].y + points[1].y) / 2;
-      const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
-      const distanceDelta = distance - gesture.lastDistance;
-      if (Math.abs(distanceDelta) > 3) {
-        gesture.pinching = true;
-        if (gesture.lastDistance > 0) {
-          setZoom((value) => Math.min(3, Math.max(1, value * (distance / gesture.lastDistance))));
-        }
-      } else if (!gesture.pinching) {
-        const centerDx = centerX - gesture.lastCenterX;
-        const centerDy = centerY - gesture.lastCenterY;
+
+    const multi = multiGestureRef.current;
+    if (multi) {
+      const records = [...pointersRef.current.values()];
+      if (records.length < 2) return;
+      const centerX = records.reduce((sum, item) => sum + item.x, 0) / records.length;
+      const centerY = records.reduce((sum, item) => sum + item.y, 0) / records.length;
+      if (records.length >= 3 || multi.kind === 'three') {
+        multi.kind = 'three';
+        const centerDx = centerX - multi.lastCenterX;
+        const centerDy = centerY - multi.lastCenterY;
         if (Math.hypot(centerDx, centerDy) >= 1) {
-          sendControl({ type: 'wheel', deltaX: centerDx * 8, deltaY: centerDy * 8 });
+          sendControl({
+            type: 'wheel',
+            deltaX: (centerDx / 48) * 120,
+            deltaY: (centerDy / 48) * 120,
+          });
+          multi.moved = true;
         }
+      } else {
+        const distance = Math.hypot(records[0].x - records[1].x, records[0].y - records[1].y);
+        if (Math.abs(distance - multi.startDistance) >= 6 || multi.pinching) {
+          multi.pinching = true;
+          const rect = viewportRef.current?.getBoundingClientRect();
+          if (rect && multi.startDistance > 0) {
+            updateView(zoomRemoteViewAt(
+              multi.startView,
+              multi.startView.zoom * (distance / multi.startDistance),
+              centerX - rect.left,
+              centerY - rect.top,
+              { width: rect.width, height: rect.height },
+              displaySize,
+            ));
+          }
+        } else if (viewRef.current.zoom > 1) {
+          const rect = viewportRef.current?.getBoundingClientRect();
+          if (rect) {
+            updateView(panRemoteView(
+              viewRef.current,
+              centerX - multi.lastCenterX,
+              centerY - multi.lastCenterY,
+              { width: rect.width, height: rect.height },
+              displaySize,
+            ));
+          }
+        }
+        multi.moved = multi.moved
+          || Math.hypot(centerX - multi.startCenterX, centerY - multi.startCenterY) >= TAP_MOVE_PX
+          || Math.abs(distance - multi.startDistance) >= TAP_MOVE_PX;
       }
-      gesture.moved = gesture.moved
-        || Math.hypot(centerX - gesture.startCenterX, centerY - gesture.startCenterY) >= TAP_MOVE_PX
-        || Math.abs(distance - gesture.startDistance) >= TAP_MOVE_PX;
-      gesture.lastCenterX = centerX;
-      gesture.lastCenterY = centerY;
-      gesture.lastDistance = distance;
+      multi.lastCenterX = centerX;
+      multi.lastCenterY = centerY;
       return;
     }
-    if (mode === 'direct') {
-      const absolute = pointFor(event.clientX, event.clientY, event.currentTarget);
-      record.absoluteX = absolute.x;
-      record.absoluteY = absolute.y;
-      sendPointer({
-        type: 'pointer-absolute',
-        x: absolute.x,
-        y: absolute.y,
+
+    const point = pointFor(event.clientX, event.clientY);
+    if (record.pointerType === 'mouse') {
+      const delta = relativeRemoteDelta(dx, dy, viewRef.current, surfaceSize, displaySize);
+      sendPointer({ type: 'pointer-relative', ...delta });
+      return;
+    }
+    if (record.dragCandidate && record.moved && !record.buttonDown) {
+      if (mode === 'direct' && (!point || directInputPending)) return;
+      if (mode === 'direct' && point) sendPointer({ type: 'pointer-absolute', ...point });
+      record.buttonDown = sendControl({
+        type: 'pointer-button',
+        button: 'left',
+        down: true,
+        ...(mode === 'direct' && point ? { x: point.x, y: point.y } : {}),
       });
-      if (record.moved && !record.longPressTriggered && !record.buttonDown && event.pointerType !== 'mouse') {
-        clearHoldTimer(event.pointerId);
-        record.buttonDown = sendControl({
-          type: 'pointer-button',
-          button: 'left',
-          down: true,
-          x: absolute.x,
-          y: absolute.y,
-        });
-      }
+    }
+    if (mode === 'direct') {
+      if (point && !directInputPending) sendPointer({ type: 'pointer-absolute', ...point });
     } else {
-      if (record.dragCandidate && record.moved && !record.buttonDown) {
-        clearHoldTimer(event.pointerId);
-        record.buttonDown = sendControl({ type: 'pointer-button', button: 'left', down: true });
-      }
-      sendPointer({ type: 'pointer-relative', dx, dy });
+      const delta = relativeRemoteDelta(dx, dy, viewRef.current, surfaceSize, displaySize);
+      sendPointer({ type: 'pointer-relative', ...delta });
     }
   };
 
-  const onPointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
+  const finishMultiGesture = (): void => {
+    const gesture = multiGestureRef.current;
+    if (!gesture) return;
+    if (
+      gesture.kind === 'two'
+      && !gesture.moved
+      && performance.now() - gesture.startedAt <= TAP_MAX_MS
+    ) {
+      const previous = lastTwoFingerTapRef.current;
+      const centerX = gesture.startCenterX;
+      const centerY = gesture.startCenterY;
+      if (
+        previous
+        && performance.now() - previous.at <= DOUBLE_TAP_MS
+        && Math.hypot(centerX - previous.x, centerY - previous.y) <= DOUBLE_TAP_DISTANCE_PX
+      ) {
+        const rect = viewportRef.current?.getBoundingClientRect();
+        if (rect) {
+          const next = viewRef.current.zoom > 1
+            ? FIT_REMOTE_VIEW
+            : zoomRemoteViewAt(
+                viewRef.current,
+                2,
+                centerX - rect.left,
+                centerY - rect.top,
+                { width: rect.width, height: rect.height },
+                displaySize,
+              );
+          updateView(next);
+          publishView(next);
+        }
+        lastTwoFingerTapRef.current = null;
+      } else {
+        lastTwoFingerTapRef.current = { at: performance.now(), x: centerX, y: centerY };
+      }
+    } else if (gesture.kind === 'two') {
+      publishView(viewRef.current);
+    }
+    multiGestureRef.current = null;
+  };
+
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
     const record = pointersRef.current.get(event.pointerId);
-    const gesture = twoFingerRef.current;
-    const wasTwoFinger = pointersRef.current.size >= 2 || record?.suppressTap === true;
     clearHoldTimer(event.pointerId);
     pointersRef.current.delete(event.pointerId);
     if (!record) return;
-    if (wasTwoFinger) {
-      if (gesture
-        && !gesture.moved
-        && performance.now() - gesture.startedAt <= TAP_MAX_MS) {
-        sendControl({ type: 'pointer-click', button: 'right', count: 1 });
-      }
-      twoFingerRef.current = null;
+    if (record.suppressTap || multiGestureRef.current) {
+      if (pointersRef.current.size === 0) finishMultiGesture();
       return;
     }
-
-    const absolute = pointFor(event.clientX, event.clientY, event.currentTarget);
+    const point = pointFor(event.clientX, event.clientY);
     if (record.buttonDown) {
       sendControl({
         type: 'pointer-button',
-        button: event.button === 2 ? 'right' : 'left',
+        button: mouseButton(record.button),
         down: false,
-        ...(mode === 'direct' || event.pointerType === 'mouse'
-          ? { x: absolute.x, y: absolute.y }
-          : {}),
+        ...(mode === 'direct' && point ? { x: point.x, y: point.y } : {}),
       });
+      lastTapRef.current = null;
       return;
     }
     if (record.longPressTriggered) return;
-    const moved = Math.hypot(event.clientX - record.startX, event.clientY - record.startY);
-    if (moved < TAP_MOVE_PX && performance.now() - record.startedAt < TAP_MAX_MS) {
-      if (mode === 'direct' || event.pointerType === 'mouse') {
-        sendPointer({ type: 'pointer-absolute', x: absolute.x, y: absolute.y });
-      }
-      sendControl({ type: 'pointer-click', button: event.button === 2 ? 'right' : 'left', count: 1 });
-      if (mode === 'trackpad') {
-        lastTrackpadTapRef.current = record.dragCandidate
-          ? null
-          : { at: performance.now(), x: event.clientX, y: event.clientY };
-      }
-    }
+    const isTap = Math.hypot(event.clientX - record.startX, event.clientY - record.startY) < TAP_MOVE_PX
+      && performance.now() - record.startedAt <= TAP_MAX_MS;
+    if (!isTap || (mode === 'direct' && (!point || directInputPending))) return;
+    if (mode === 'direct' && point) sendPointer({ type: 'pointer-absolute', ...point });
+    sendControl({ type: 'pointer-click', button: mouseButton(record.button), count: 1 });
+    lastTapRef.current = record.dragCandidate
+      ? null
+      : { at: performance.now(), x: event.clientX, y: event.clientY };
   };
 
-  const onPointerCancel = (event: React.PointerEvent<HTMLDivElement>): void => {
+  const onPointerCancel = (event: ReactPointerEvent<HTMLDivElement>): void => {
     const record = pointersRef.current.get(event.pointerId);
     clearHoldTimer(event.pointerId);
     pointersRef.current.delete(event.pointerId);
-    if (pointersRef.current.size < 2) twoFingerRef.current = null;
     if (record?.buttonDown) {
-      // Cancellation is never a click; always release a held remote button.
-      sendControl({
-        type: 'pointer-button',
-        button: event.button === 2 ? 'right' : 'left',
-        down: false,
-      });
+      sendControl({ type: 'pointer-button', button: mouseButton(record.button), down: false });
+    }
+    if (pointersRef.current.size === 0) multiGestureRef.current = null;
+  };
+
+  const sendKey = (code: string): void => {
+    sendControl({ type: 'key', code, down: true, modifiers: [] });
+    sendControl({ type: 'key', code, down: false, modifiers: [] });
+  };
+
+  const toggleModifier = (modifier: DesktopKeyModifier): void => {
+    const next = new Set(stickyModifiers);
+    const down = !next.has(modifier);
+    if (down) next.add(modifier);
+    else next.delete(modifier);
+    if (sendControl({ type: 'key', code: MODIFIER_CODES[modifier], down, modifiers: [] })) {
+      stickyModifiersRef.current = next;
+      setStickyModifiers(next);
     }
   };
 
-  const sendMobileClipboard = async (): Promise<void> => {
-    await presentationAdapterRef.current?.sendLocalClipboard();
+  const fitView = (): void => {
+    updateView(FIT_REMOTE_VIEW);
+    publishView(FIT_REMOTE_VIEW);
   };
 
-  const copyPcClipboard = (): void => {
-    presentationAdapterRef.current?.copyRemoteClipboard();
+  const sourceRegion = appliedView?.sourceRegion ?? FULL_REGION;
+  const layout = remoteVideoLayout(sourceRegion, view, surfaceSize, displaySize);
+  const videoStyle: CSSProperties = {
+    left: `${layout.left}px`,
+    top: `${layout.top}px`,
+    width: `${layout.width}px`,
+    height: `${layout.height}px`,
   };
-
-  const sendKey = (code: string, modifiers?: readonly DesktopKeyModifier[]): void => {
-    sendControl({ type: 'key', code, down: true, modifiers: modifiers ?? [] });
-    sendControl({ type: 'key', code, down: false, modifiers: modifiers ?? [] });
-  };
+  const stateLabel = !started
+    ? t('mobile.pcControl.readyToStart')
+    : t(`mobile.pcControl.state.${phase}`);
+  const metrics = [
+    status?.streamWidth && status.streamHeight ? `${status.streamWidth}×${status.streamHeight}` : null,
+    status?.framesPerSecond !== undefined ? `${Math.round(status.framesPerSecond)} fps` : null,
+    status?.roundTripTimeMs !== undefined ? `${status.roundTripTimeMs} ms` : null,
+  ].filter(Boolean).join(' · ');
 
   return (
     <div className="mobile-pc-control mobile-pc-control--immersive" data-testid="mobile-pc-control">
@@ -600,31 +831,66 @@ export function MobileRemoteDesktopView({
         role="application"
         aria-label={t('mobile.pcControl.videoLabel')}
         aria-describedby="mobile-pc-gesture-help"
+        tabIndex={started && phase === 'active' ? 0 : -1}
         onContextMenu={(event) => event.preventDefault()}
-        onPointerDown={(event) => {
-          revealChrome();
-          onPointerDown(event);
-        }}
+        onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
         onWheel={(event) => {
           event.preventDefault();
-          sendControl({ type: 'wheel', deltaX: event.deltaX, deltaY: event.deltaY });
+          if (started && phase === 'active') {
+            sendControl({ type: 'wheel', deltaX: event.deltaX, deltaY: event.deltaY });
+          }
         }}
       >
         <video
           ref={videoRef}
           className="mobile-pc-video"
-          style={{ transform: `scale(${zoom})` }}
+          style={videoStyle}
           playsInline
           muted
           data-testid="mobile-pc-video"
         />
-        {phase !== 'active' && (
+        {(!started || phase !== 'active' || needsResume) && (
           <div className="mobile-pc-overlay">
-            <strong>{t(`mobile.pcControl.state.${phase}`)}</strong>
+            <span
+              className={phase === 'error' || phase === 'busy' ? 'mob-pc-status mob-pc-status--error' : 'mob-pc-status'}
+              role="status"
+              aria-live="polite"
+              data-phase={!started ? 'idle' : phase}
+              data-testid="mobile-pc-state"
+            >
+              {phase === 'reconnecting'
+                ? <RefreshCw aria-hidden="true" />
+                : !started
+                  ? <Monitor aria-hidden="true" />
+                  : <WifiOff aria-hidden="true" />}
+              {stateLabel}
+            </span>
+            {hostLabel && <strong>{hostLabel}</strong>}
             {detail && <p>{detail}</p>}
+            {!started ? (
+              <button
+                type="button"
+                className="mob-btn-primary mobile-pc-start"
+                data-testid="mobile-pc-start"
+                onClick={startSession}
+              >
+                {t('mobile.pcControl.start')}
+              </button>
+            ) : needsResume ? (
+              <button type="button" className="mob-btn-primary mobile-pc-start" onClick={resumeSession}>
+                {t('mobile.pcControl.resume')}
+              </button>
+            ) : (phase === 'error' || phase === 'busy') ? (
+              <button type="button" className="mob-btn-primary mobile-pc-start" onClick={resumeSession}>
+                {t('common.retry')}
+              </button>
+            ) : null}
+            <button type="button" className="mob-pc-back" onClick={close} aria-label={t('common.back')}>
+              <ArrowLeft aria-hidden="true" />
+            </button>
           </div>
         )}
         <span id="mobile-pc-gesture-help" className="sr-only">
@@ -632,137 +898,69 @@ export function MobileRemoteDesktopView({
         </span>
       </div>
 
-      {/* Floating chrome (handoff §5). Auto-hides 3.5s after the last touch and
-          returns on the next one. It deliberately does NOT toggle on tap the
-          way the prototype does: a tap on this screen is a remote click, so
-          swallowing it to hide a toolbar would break remote input. */}
-      {chromeVisible && (
-        <div className="mob-pc-chrome" data-testid="mobile-pc-chrome">
-          <button type="button" className="mob-pc-back" onClick={close} aria-label={t('common.back')}>
-            <ArrowLeft aria-hidden="true" />
+      {started && (phase === 'active' || phase === 'reconnecting') && (
+        <button
+          ref={handleRef}
+          type="button"
+          className={`mobile-pc-session-handle mobile-pc-session-handle--${handleEdge}`}
+          style={{ '--mobile-pc-handle-y': `${handleY * 100}%` } as CSSProperties}
+          aria-label={`${t('mobile.pcControl.sessionMenu')}: ${stateLabel}`}
+          data-phase={phase}
+          data-testid="mobile-pc-session-handle"
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            handleDragRef.current = { startX: event.clientX, startY: event.clientY, moved: false };
+          }}
+          onPointerMove={(event) => {
+            const drag = handleDragRef.current;
+            if (!drag) return;
+            if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) >= TAP_MOVE_PX) {
+              drag.moved = true;
+              setHandleY(Math.min(0.92, Math.max(0.08, event.clientY / window.innerHeight)));
+            }
+          }}
+          onPointerUp={(event) => {
+            const drag = handleDragRef.current;
+            handleDragRef.current = null;
+            if (!drag?.moved) {
+              releasePointerButtons();
+              setSheetOpen(true);
+            } else {
+              setHandleEdge(event.clientX < window.innerWidth / 2 ? 'left' : 'right');
+            }
+          }}
+        >
+          <Settings2 aria-hidden="true" />
+          <span className="mobile-pc-session-handle__state" aria-hidden="true" />
+        </button>
+      )}
+
+      {keyboardOpen && started && phase === 'active' && (
+        <div className="mobile-pc-key-accessory" role="toolbar" aria-label={t('mobile.pcControl.specialKeys')}>
+          {(['control', 'alt', 'shift', 'meta'] as const).map((modifier) => (
+            <button
+              key={modifier}
+              type="button"
+              aria-pressed={stickyModifiers.has(modifier)}
+              onClick={() => toggleModifier(modifier)}
+            >
+              {modifier === 'control' ? 'Ctrl' : modifier === 'meta' ? 'Win' : modifier[0].toUpperCase() + modifier.slice(1)}
+            </button>
+          ))}
+          {['Escape', 'Tab', 'Enter', 'Delete', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'ArrowRight'].map((code) => (
+            <button key={code} type="button" onClick={() => sendKey(code)}>
+              {code.replace('Arrow', '')}
+            </button>
+          ))}
+          <button type="button" aria-pressed={extrasOpen} onClick={() => setExtrasOpen((open) => !open)}>
+            <MoreHorizontal aria-hidden="true" /><span className="sr-only">{t('mobile.pcControl.functionKeys')}</span>
           </button>
-
-          <span
-            className={phase === 'error' || phase === 'busy' ? 'mob-pc-status mob-pc-status--error' : 'mob-pc-status'}
-            role="status"
-            aria-live="polite"
-            data-phase={phase}
-            data-testid="mobile-pc-state"
-          >
-            <span className={phase === 'active' ? 'mob-dot mob-dot--live' : 'mob-dot'} aria-hidden="true" />
-            <span>
-              {clipboardStatus || [
-                // Which machine, then how well. The handoff's pill leads with
-                // the host because on a phone it is the only place that says
-                // what you are driving.
-                hostLabel || t(`mobile.pcControl.state.${phase}`),
-                status?.roundTripTimeMs !== undefined ? `${status.roundTripTimeMs}ms` : null,
-                status?.framesPerSecond !== undefined ? `${Math.round(status.framesPerSecond)}fps` : null,
-              ].filter(Boolean).join(' · ')}
-            </span>
-          </span>
-
-          <div className="mob-pc-cluster" role="toolbar" aria-label={t('mobile.pcControl.toolbar')}>
-            <span className="mob-pc-segment">
-              <button
-                type="button"
-                aria-pressed={mode === 'trackpad'}
-                onClick={() => selectMode('trackpad')}
-              >
-                <Touchpad aria-hidden="true" />{t('mobile.pcControl.trackpadShort')}
-              </button>
-              <button
-                type="button"
-                aria-pressed={mode === 'direct'}
-                onClick={() => selectMode('direct')}
-              >
-                <MousePointer2 aria-hidden="true" />{t('mobile.pcControl.directShort')}
-              </button>
-            </span>
-            {displays.length > 1 && (
-              <label className="mobile-pc-display-select mob-pc-round">
-                <Monitor aria-hidden="true" />
-                <span className="sr-only">{t('mobile.pcControl.monitor')}</span>
-                <select
-                  value={selectedDisplayId ?? displays[0]?.id ?? ''}
-                  onChange={(event) => {
-                    presentationAdapterRef.current?.selectDisplay(event.target.value);
-                    setZoom(1);
-                    revealChrome();
-                  }}
-                >
-                  {displays.map((display) => <option key={display.id} value={display.id}>{display.name}</option>)}
-                </select>
-              </label>
-            )}
-            <button
-              type="button"
-              className="mob-pc-round"
-              aria-pressed={keyboardOpen}
-              onClick={() => { setKeyboardOpen((open) => !open); revealChrome(); }}
-              aria-label={t('mobile.pcControl.keyboard')}
-            >
-              <Keyboard aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className="mob-pc-round"
-              onClick={() => { void sendMobileClipboard(); revealChrome(); }}
-              aria-label={t('mobile.pcControl.sendClipboard')}
-            >
-              <ClipboardPaste aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className="mob-pc-round"
-              onClick={() => { copyPcClipboard(); revealChrome(); }}
-              aria-label={t('mobile.pcControl.copyClipboard')}
-            >
-              <ClipboardCopy aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className="mob-pc-round"
-              aria-pressed={extrasOpen}
-              onClick={() => { setExtrasOpen((open) => !open); revealChrome(); }}
-              aria-label={t('mobile.pcControl.specialKeys')}
-            >
-              <MoreHorizontal aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className="mob-pc-round mob-pc-round--danger"
-              onClick={close}
-              aria-label={t('mobile.pcControl.disconnect')}
-            >
-              <Power aria-hidden="true" />
-            </button>
-          </div>
-
-          {extrasOpen && (
-            <div className="mob-pc-cluster mob-pc-cluster--extras" role="group" aria-label={t('mobile.pcControl.specialKeys')}>
-              <button type="button" className="mob-pc-round" onClick={() => { sendKey('Escape'); revealChrome(); }}>Esc</button>
-              <button type="button" className="mob-pc-round" onClick={() => { sendKey('Tab'); revealChrome(); }}>Tab</button>
-              <button type="button" className="mob-pc-round" onClick={() => { sendKey('Enter'); revealChrome(); }}>⏎</button>
-              <button
-                type="button"
-                className="mob-pc-round"
-                disabled={!capabilities?.ctrlAltDelete}
-                title={!capabilities?.ctrlAltDelete ? t('mobile.pcControl.cadUnavailable') : undefined}
-                onClick={() => { sendControl({ type: 'secure-attention' }); revealChrome(); }}
-              >
-                C+A+D
-              </button>
-            </div>
-          )}
-
-          {showHint && (
-            <p className="mob-pc-hint" role="note">
-              {mode === 'trackpad' ? t('mobile.pcControl.trackpadHelp') : t('mobile.pcControl.directHelp')}
-            </p>
-          )}
+          {extrasOpen && Array.from({ length: 12 }, (_, index) => `F${index + 1}`).map((code) => (
+            <button key={code} type="button" onClick={() => sendKey(code)}>{code}</button>
+          ))}
         </div>
       )}
+
       <input
         ref={inputRef}
         className={keyboardOpen ? 'mobile-pc-ime' : 'mobile-pc-ime mobile-pc-ime--closed'}
@@ -775,16 +973,128 @@ export function MobileRemoteDesktopView({
           input.value = '';
         }}
         onKeyDown={(event) => {
-          if (event.key.length === 1 || event.nativeEvent.isComposing) return;
+          if (event.nativeEvent.isComposing) return;
+          if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) return;
           event.preventDefault();
-          const modifiers: DesktopKeyModifier[] = [];
-          if (event.ctrlKey) modifiers.push('control');
-          if (event.altKey) modifiers.push('alt');
-          if (event.shiftKey) modifiers.push('shift');
-          if (event.metaKey) modifiers.push('meta');
-          sendKey(event.code || event.key, modifiers);
+          sendControl({ type: 'key', code: event.code || event.key, down: true, modifiers: [] });
+        }}
+        onKeyUp={(event) => {
+          if (event.nativeEvent.isComposing) return;
+          if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) return;
+          event.preventDefault();
+          sendControl({ type: 'key', code: event.code || event.key, down: false, modifiers: [] });
         }}
       />
+
+      {sheetOpen && (
+        <MobileActionSheet
+          title={hostLabel || t('mobile.pcControl.title')}
+          description={clipboardStatus || metrics || stateLabel}
+          onClose={() => setSheetOpen(false)}
+          returnFocusRef={handleRef}
+          testId="mobile-pc-session-sheet"
+          backdropTestId="mobile-pc-session-sheet-backdrop"
+          className="mobile-pc-session-sheet"
+        >
+          <section className="mobile-pc-sheet-section" aria-labelledby="mobile-pc-input-heading">
+            <h3 id="mobile-pc-input-heading">{t('mobile.pcControl.inputMode')}</h3>
+            <div className="mobile-pc-sheet-segment">
+              <button type="button" aria-pressed={mode === 'trackpad'} onClick={() => selectMode('trackpad')}>
+                <Touchpad aria-hidden="true" />{t('mobile.pcControl.precisionPointer')}
+              </button>
+              <button
+                type="button"
+                aria-pressed={mode === 'direct'}
+                disabled={!capabilities?.directTouch}
+                onClick={() => selectMode('direct')}
+              >
+                <MousePointer2 aria-hidden="true" />{t('mobile.pcControl.directShort')}
+              </button>
+            </div>
+          </section>
+
+          <section className="mobile-pc-sheet-section" aria-labelledby="mobile-pc-view-heading">
+            <h3 id="mobile-pc-view-heading">{t('mobile.pcControl.view')}</h3>
+            {displays.length > 1 && (
+              <label className="mobile-pc-sheet-field">
+                <span><Monitor aria-hidden="true" />{t('mobile.pcControl.monitor')}</span>
+                <select
+                  value={selectedDisplayId ?? displays[0]?.id ?? ''}
+                  onChange={(event) => {
+                    releaseAllInput();
+                    presentationAdapter.selectDisplay(event.target.value);
+                    fitView();
+                  }}
+                >
+                  {displays.map((display) => <option key={display.id} value={display.id}>{display.name}</option>)}
+                </select>
+              </label>
+            )}
+            <button type="button" className="mobile-action-sheet-row" onClick={fitView}>
+              <span className="mobile-action-sheet-row-copy">
+                <span className="mobile-action-sheet-row-label"><Maximize2 aria-hidden="true" />{t('mobile.pcControl.fit')}</span>
+                <span className="mobile-action-sheet-row-hint">{Math.round(view.zoom * 100)}%</span>
+              </span>
+            </button>
+          </section>
+
+          <section className="mobile-pc-sheet-section" aria-labelledby="mobile-pc-quality-heading">
+            <h3 id="mobile-pc-quality-heading">{t('mobile.pcControl.quality')}</h3>
+            {capabilities?.qualityPreferences ? (
+              <div className="mobile-pc-quality-options">
+                {(['balanced', 'clarity', 'responsiveness'] as const).map((preference) => (
+                  <button
+                    key={preference}
+                    type="button"
+                    aria-pressed={qualityPreference === preference}
+                    onClick={() => setQualityPreference(preference)}
+                  >
+                    {t(`mobile.pcControl.qualityPreference.${preference}`)}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="mobile-pc-sheet-note">{t('mobile.pcControl.qualityUpdateRequired')}</p>
+            )}
+          </section>
+
+          <section className="mobile-pc-sheet-section" aria-labelledby="mobile-pc-tools-heading">
+            <h3 id="mobile-pc-tools-heading">{t('mobile.pcControl.tools')}</h3>
+            <button
+              type="button"
+              className="mobile-action-sheet-row"
+              aria-pressed={keyboardOpen}
+              onClick={() => {
+                setKeyboardOpen(true);
+                setSheetOpen(false);
+              }}
+            >
+              <span className="mobile-action-sheet-row-label"><Keyboard aria-hidden="true" />{t('mobile.pcControl.keyboard')}</span>
+            </button>
+            <button type="button" className="mobile-action-sheet-row" onClick={() => void presentationAdapter.sendLocalClipboard()}>
+              <span className="mobile-action-sheet-row-label"><ClipboardPaste aria-hidden="true" />{t('mobile.pcControl.sendClipboard')}</span>
+            </button>
+            <button type="button" className="mobile-action-sheet-row" onClick={() => presentationAdapter.copyRemoteClipboard()}>
+              <span className="mobile-action-sheet-row-label"><ClipboardCopy aria-hidden="true" />{t('mobile.pcControl.copyClipboard')}</span>
+            </button>
+          </section>
+
+          <details className="mobile-pc-connection-details">
+            <summary>{t('mobile.pcControl.connectionDetails')}</summary>
+            <dl>
+              <div><dt>{t('mobile.pcControl.stream')}</dt><dd>{metrics || t('common.unavailable')}</dd></div>
+              <div><dt>{t('mobile.pcControl.loss')}</dt><dd>{status?.packetLossPercent !== undefined ? `${status.packetLossPercent.toFixed(1)}%` : '—'}</dd></div>
+              <div><dt>{t('mobile.pcControl.bitrate')}</dt><dd>{status?.bitrateKbps !== undefined ? `${Math.round(status.bitrateKbps)} kbps` : '—'}</dd></div>
+              <div><dt>{t('mobile.pcControl.decoderDrops')}</dt><dd>{status?.clientDroppedFramePercent !== undefined ? `${status.clientDroppedFramePercent.toFixed(1)}%` : '—'}</dd></div>
+              <div><dt>{t('mobile.pcControl.backend')}</dt><dd>{[status?.captureBackend, status?.encoderBackend].filter(Boolean).join(' / ') || '—'}</dd></div>
+            </dl>
+          </details>
+
+          <button type="button" className="mobile-action-sheet-row mobile-action-sheet-row--danger mobile-pc-disconnect" onClick={close}>
+            <span className="mobile-action-sheet-row-label"><Power aria-hidden="true" />{t('mobile.pcControl.disconnect')}</span>
+          </button>
+        </MobileActionSheet>
+      )}
     </div>
   );
 }

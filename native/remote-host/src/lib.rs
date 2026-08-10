@@ -4,6 +4,8 @@ pub mod capture;
 #[cfg(all(windows, feature = "windows-host"))]
 pub mod dpi;
 #[cfg(all(windows, feature = "windows-host"))]
+pub mod encoder;
+#[cfg(all(windows, feature = "windows-host"))]
 pub mod input;
 pub mod lease;
 pub mod protocol;

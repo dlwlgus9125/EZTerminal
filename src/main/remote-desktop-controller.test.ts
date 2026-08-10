@@ -79,12 +79,28 @@ describe('RemoteDesktopController', () => {
       connectionA,
       endpoint,
       (event) => events.push(event),
-      { pixelWidth: 1_170, pixelHeight: 2_160 },
+      {
+        pixelWidth: 1_170,
+        pixelHeight: 2_160,
+        visibleRegion: { x: 0.2, y: 0.1, width: 0.5, height: 0.75 },
+        revision: 3,
+      },
+      'clarity',
     );
-    native.emit({ type: 'ready', protocolVersion: 2, service: 'ready' });
+    native.emit({
+      type: 'ready',
+      protocolVersion: 2,
+      service: 'ready',
+      features: ['adaptive-region-v1', 'quality-preference-v1', 'client-video-stats-v2'],
+    });
     const started = await starting;
     expect(started).toMatchObject({ ok: true, resumed: false });
     if (!started.ok) throw new Error('expected a successful session');
+    expect(started.capabilities).toMatchObject({
+      adaptiveRegion: true,
+      qualityPreferences: ['balanced', 'clarity', 'responsiveness'],
+      clientVideoStatsV2: true,
+    });
 
     expect(native.sent[0]).toMatchObject({
       type: 'hello',
@@ -92,7 +108,13 @@ describe('RemoteDesktopController', () => {
       localAddress: endpoint.localAddress,
       peerAddress: endpoint.peerAddress,
       udpPort: 7422,
-      viewport: { pixelWidth: 1_170, pixelHeight: 2_160 },
+      viewport: {
+        pixelWidth: 1_170,
+        pixelHeight: 2_160,
+        visibleRegion: { x: 0.2, y: 0.1, width: 0.5, height: 0.75 },
+        revision: 3,
+      },
+      qualityPreference: 'clarity',
     });
     expect(
       controller.signal(
@@ -122,12 +144,26 @@ describe('RemoteDesktopController', () => {
         qualityTier: 'high',
         streamWidth: 1_170,
         streamHeight: 658,
+        qualityPreference: 'clarity',
+        targetFramesPerSecond: 30,
+        decodedFramesPerSecond: 29,
+        clientDroppedFramePercent: 1.5,
+        clientFreezeDurationMs: 0,
+        captureBackend: 'dxgi',
+        encoderBackend: 'media-foundation-hardware',
+        appliedViewRevision: 3,
+        sourceRegion: { x: 0.15, y: 0.05, width: 0.6, height: 0.85 },
       },
     });
     expect(events).toContainEqual(expect.objectContaining({
       kind: 'desktop-control-status',
       streamWidth: 1_170,
       streamHeight: 658,
+      qualityPreference: 'clarity',
+      captureBackend: 'dxgi',
+      encoderBackend: 'media-foundation-hardware',
+      appliedViewRevision: 3,
+      sourceRegion: { x: 0.15, y: 0.05, width: 0.6, height: 0.85 },
     }));
     await expect(controller.start(phoneB, connectionB, endpoint, vi.fn())).resolves.toEqual({
       ok: false,

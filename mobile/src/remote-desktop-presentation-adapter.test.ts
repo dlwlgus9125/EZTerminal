@@ -245,18 +245,96 @@ describe('RemoteDesktopPresentationAdapter', () => {
     const { adapter, peers, transport } = harness([Promise.resolve(success())]);
     adapter.setViewport({ pixelWidth: 1_170, pixelHeight: 2_160 });
     adapter.start();
-    expect(transport.startDesktopControl).toHaveBeenCalledWith({
-      pixelWidth: 1_170,
-      pixelHeight: 2_160,
-    });
+    expect(transport.startDesktopControl).toHaveBeenCalledWith(
+      {
+        pixelWidth: 1_170,
+        pixelHeight: 2_160,
+      },
+      'balanced',
+    );
     await settle();
 
-    adapter.setViewport({ pixelWidth: 2_160, pixelHeight: 1_170 });
-    expect(JSON.parse(peers[0].control.sent[0])).toMatchObject({
+    adapter.setViewport({
+      pixelWidth: 2_160,
+      pixelHeight: 1_170,
+      visibleRegion: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 },
+      revision: 2,
+    });
+    const legacyViewport = JSON.parse(peers[0].control.sent[0]);
+    expect(legacyViewport).toMatchObject({
       type: 'set-viewport',
       pixelWidth: 2_160,
       pixelHeight: 1_170,
       sessionId: 'session-1',
+    });
+    expect(legacyViewport).not.toHaveProperty('visibleRegion');
+    expect(legacyViewport).not.toHaveProperty('revision');
+    adapter.dispose();
+  });
+
+  it('negotiates ROI, quality preferences, and applied-view acknowledgements', async () => {
+    const base = success('adaptive-region');
+    const result: Extract<DesktopControlStartResultMessage, { readonly ok: true }> = {
+      ...base,
+      displays: [
+        DISPLAY,
+        { ...DISPLAY, id: 'secondary', name: 'Secondary display', primary: false },
+      ],
+      capabilities: {
+        ...base.capabilities,
+        adaptiveRegion: true,
+        qualityPreferences: ['balanced', 'clarity', 'responsiveness'],
+        clientVideoStatsV2: true,
+      },
+    };
+    const { adapter, peers, transport } = harness([Promise.resolve(result)]);
+    const initialViewport = {
+      pixelWidth: 1_170,
+      pixelHeight: 2_160,
+      visibleRegion: { x: 0.2, y: 0.1, width: 0.5, height: 0.75 },
+      revision: 7,
+    } as const;
+
+    expect(adapter.setQualityPreference('clarity')).toBe(true);
+    adapter.setViewport(initialViewport);
+    adapter.start();
+    expect(transport.startDesktopControl).toHaveBeenCalledWith(initialViewport, 'clarity');
+    await settle();
+
+    adapter.setViewport({
+      ...initialViewport,
+      visibleRegion: { x: 0.25, y: 0.125, width: 0.5, height: 0.75 },
+      revision: 8,
+    });
+    expect(JSON.parse(peers[0].control.sent[0])).toMatchObject({
+      type: 'set-viewport',
+      revision: 8,
+      visibleRegion: { x: 0.25, y: 0.125, width: 0.5, height: 0.75 },
+    });
+    expect(adapter.setQualityPreference('responsiveness')).toBe(true);
+    expect(JSON.parse(peers[0].control.sent[1])).toMatchObject({
+      type: 'set-quality-preference',
+      preference: 'responsiveness',
+    });
+
+    peers[0].control.emit(JSON.stringify({
+      type: 'view-applied',
+      revision: 8,
+      sourceRegion: { x: 0.2, y: 0.05, width: 0.6, height: 0.85 },
+      frameWidth: 1_080,
+      frameHeight: 1_920,
+    }));
+    expect(adapter.getSnapshot().appliedView).toEqual({
+      revision: 8,
+      sourceRegion: { x: 0.2, y: 0.05, width: 0.6, height: 0.85 },
+      frameWidth: 1_080,
+      frameHeight: 1_920,
+    });
+    expect(adapter.selectDisplay('secondary')).toBe(true);
+    expect(adapter.getSnapshot().appliedView).toBeNull();
+    expect(JSON.parse(peers[0].control.sent[2])).toMatchObject({
+      type: 'set-display',
+      displayId: 'secondary',
     });
     adapter.dispose();
   });
@@ -766,5 +844,28 @@ describe('decodeDesktopControlFrame', () => {
       text: 'ignored',
     }))).toBeNull();
     expect(decodeDesktopControlFrame('{"type":"clipboard-text","text":"\\ud800"}')).toBeNull();
+  });
+
+  it('accepts only bounded applied-view acknowledgements', () => {
+    expect(decodeDesktopControlFrame(JSON.stringify({
+      type: 'view-applied',
+      revision: 2,
+      sourceRegion: { x: 0.1, y: 0.2, width: 0.8, height: 0.6 },
+      frameWidth: 1_920,
+      frameHeight: 1_080,
+    }))).toEqual({
+      type: 'view-applied',
+      revision: 2,
+      sourceRegion: { x: 0.1, y: 0.2, width: 0.8, height: 0.6 },
+      frameWidth: 1_920,
+      frameHeight: 1_080,
+    });
+    expect(decodeDesktopControlFrame(JSON.stringify({
+      type: 'view-applied',
+      revision: 0,
+      sourceRegion: { x: 0.8, y: 0.8, width: 0.5, height: 0.5 },
+      frameWidth: 1_920,
+      frameHeight: 1_080,
+    }))).toBeNull();
   });
 });

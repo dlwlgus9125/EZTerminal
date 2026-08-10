@@ -11,7 +11,7 @@ Block-based UI · themes &amp; CRT effects · system monitor · SSH · pair your
 Project contracts: [architecture](docs/architecture.md) · [visual design](DESIGN.md) ·
 [frontend UX](docs/ux/frontend-design.md)
 
-![release](https://img.shields.io/badge/release-v1.0.30-brightgreen)
+![release](https://img.shields.io/badge/release-v1.0.31-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 ![built with](https://img.shields.io/badge/built%20with-Electron%20·%20React%20·%20TypeScript-9cf)
@@ -153,9 +153,13 @@ advertised only while the remote bridge is enabled, a trusted
 Tailscale/WireGuard adapter is selected, and the installed LocalSystem host
 service is ready. Starting control additionally requires a successful
 active-session agent handshake. Missing or unhealthy native components fail
-closed without disabling terminal-only remote access. In 1.0.30, frame
-capture/encoding and actual input injection still run in the normal-user
-transport; lock/UAC secure-desktop control and Ctrl+Alt+Delete are unavailable.
+closed without disabling terminal-only remote access. In 1.0.31, capture uses
+DXGI Desktop Duplication first with a GDI fallback, while H.264 encoding uses
+Media Foundation first with an OpenH264 fallback. The phone reports decode,
+drop, and freeze pressure and can request a bounded visible region; the host
+acknowledges the applied region before direct-touch input resumes. Actual input
+injection still runs in the normal-user transport, so lock/UAC secure-desktop
+control and Ctrl+Alt+Delete are unavailable.
 
 Desktop Settings also includes risk-aware pane-close confirmation and a default-off OSC 52 clipboard
 write option. After confirmation, the interpreter atomically compares the expected active run IDs and
@@ -173,7 +177,7 @@ Grab both official 1.0 downloads from the
 [**Releases**](https://github.com/dlwlgus9125/EZTerminal/releases/latest) page:
 
 - Windows 10 22H2 / Windows 11 x64: `EZTerminal-Setup.exe`
-- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.30-vc51.apk`
+- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.31-vc52.apk`
 
 > While the SignPath Foundation application is pending, maintenance releases can be
 > published unsigned and will show Windows' unknown-publisher warning. Check the
@@ -203,7 +207,7 @@ live camera frames, background release, and explicit camera reacquisition.
 Elevated/admin service lifecycle and physical-device validation were not
 performed. Microsoft Store publication and silent or background installation
 are outside this release; see the
-[1.0.30 validation policy](docs/release/validation-policy-1.0.30.md).
+[1.0.31 validation policy](docs/release/validation-policy-1.0.31.md).
 
 ## Code signing policy
 
@@ -235,7 +239,7 @@ authorized release performance benchmark.
 Graphical PC Control is included by default in Windows builds. At runtime it
 still requires an enabled remote bridge, a running installed host service, and
 a trusted VPN interface; otherwise the desktop capability is not advertised.
-Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.30.
+Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.31.
 
 The Android companion app lives in [`mobile/`](mobile/) (Capacitor + Android Studio).
 

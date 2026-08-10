@@ -135,6 +135,7 @@ import {
   type DesktopControlEndedMessage,
   type DesktopControlStartResultMessage,
   type DesktopControlStatusMessage,
+  type DesktopQualityPreference,
   type DesktopVideoViewport,
   type DesktopSessionSignal,
   type DesktopSignalMessage,
@@ -2105,7 +2106,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return this.remoteCapabilities.has(REMOTE_CAPABILITY_DESKTOP_CONTROL);
   }
 
-  startDesktopControl(viewport?: DesktopVideoViewport): Promise<DesktopControlStartResultMessage> {
+  startDesktopControl(
+    viewport?: DesktopVideoViewport,
+    qualityPreference?: DesktopQualityPreference,
+  ): Promise<DesktopControlStartResultMessage> {
     const requestId = this.newId();
     if (!this.supportsDesktopControl || !this.authed) {
       return Promise.resolve({
@@ -2122,6 +2126,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         kind: 'desktop-control-start',
         requestId,
         ...(viewport ? { viewport } : {}),
+        ...(qualityPreference ? { qualityPreference } : {}),
       })) {
         this.pendingDesktopStarts.delete(requestId);
         resolve({

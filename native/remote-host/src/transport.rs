@@ -5,15 +5,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use bytes::Bytes;
-use openh264::OpenH264API;
-use openh264::encoder::{
-    BitRate, Complexity, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, Level, Profile,
-    RateControlMode, UsageType, VuiConfig,
-};
 use openh264::formats::{BgraSliceU8, YUVBuffer};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::{MIME_TYPE_H264, MediaEngine};
@@ -34,12 +29,14 @@ use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSampl
 
 use crate::broker::BrokerErrorCode;
 use crate::capture::{DisplayCapture, DisplayDescriptor, enumerate_displays};
+use crate::encoder::{VideoEncoder, VideoEncoderSettings};
 use crate::input::{InputChannel, InputInjector, InputOutcome};
 use crate::local_broker::{BrokerClientError, BrokerLeaseClient};
 use crate::protocol::{
     MAX_CONTROL_BYTES, MainToTransport, NativeEndReason, NativeErrorCode, NativeHello,
-    NativeIceCandidate, QualityTier, RemoteDisplay, StreamViewport, TransportMetrics,
-    TransportState, TransportToMain, encode_main_message, parse_main_message,
+    NativeIceCandidate, NormalizedRegion, QualityPreference, QualityTier, RemoteDisplay,
+    StreamViewport, TransportMetrics, TransportState, TransportToMain, encode_main_message,
+    parse_main_message,
 };
 use crate::quality::{NetworkSample, QualityController};
 
@@ -48,6 +45,11 @@ const POINTER_CHANNEL: &str = "ez-pointer-v1";
 const MAX_PENDING_REMOTE_ICE_CANDIDATES: usize = 64;
 const CAPABILITY_RELEASE_WAIT_TIMEOUT: Duration = Duration::from_millis(2_500);
 const TRANSPORT_RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(400);
+const VIDEO_FEATURES: [&str; 3] = [
+    "adaptive-region-v1",
+    "quality-preference-v1",
+    "client-video-stats-v2",
+];
 
 #[derive(Clone)]
 struct SessionAuthority {
@@ -285,6 +287,10 @@ async fn run_async() -> Result<()> {
                     .send(TransportToMain::Ready {
                         protocol_version: crate::NATIVE_PROTOCOL_VERSION,
                         service: crate::service::availability(),
+                        features: VIDEO_FEATURES
+                            .iter()
+                            .map(|value| (*value).to_owned())
+                            .collect(),
                     })
                     .await?;
             }
@@ -490,6 +496,8 @@ async fn create_peer(
     let session_id = hello.session_id;
     let connected = Arc::new(AtomicBool::new(false));
     let network_sample = Arc::new(Mutex::new(NetworkSample::default()));
+    let quality_preference = Arc::new(Mutex::new(hello.quality_preference));
+    let (view_updates, _) = watch::channel::<Option<String>>(None);
     spawn_network_stats(
         Arc::clone(&pc),
         authority.stop_flag(),
@@ -505,12 +513,13 @@ async fn create_peer(
             .clone(),
     ));
     let stream_viewport = Arc::new(Mutex::new(hello.viewport));
-    let input = Arc::new(Mutex::new(InputInjector::with_desktop_state(
+    let input = Arc::new(Mutex::new(InputInjector::with_video_state(
         session_id,
         displays.clone(),
         Arc::clone(&selected_display_id),
         Arc::clone(&stream_viewport),
         Arc::clone(&network_sample),
+        Arc::clone(&quality_preference),
     )));
     spawn_input_revocation(authority.stop_flag(), Arc::clone(&input));
     spawn_capture(CaptureTask {
@@ -522,6 +531,8 @@ async fn create_peer(
         selected_display_id,
         stream_viewport,
         network_sample,
+        quality_preference,
+        view_updates: view_updates.clone(),
         output: output.clone(),
     });
     let candidate_output = output.clone();
@@ -593,9 +604,11 @@ async fn create_peer(
 
     let channel_input = Arc::clone(&input);
     let channel_authority = authority.clone();
+    let channel_view_updates = view_updates.clone();
     pc.on_data_channel(Box::new(move |channel| {
         let channel_input = Arc::clone(&channel_input);
         let channel_authority = channel_authority.clone();
+        let channel_view_updates = channel_view_updates.clone();
         Box::pin(async move {
             let label = channel.label().to_owned();
             if label != CONTROL_CHANNEL && label != POINTER_CHANNEL {
@@ -613,6 +626,26 @@ async fn create_peer(
                         }
                     })
                 }));
+                let mut view_updates = channel_view_updates.subscribe();
+                let view_channel = Arc::clone(&channel);
+                let view_authority = channel_authority.clone();
+                tokio::spawn(async move {
+                    loop {
+                        let message = view_updates.borrow_and_update().clone();
+                        if let Some(message) = message {
+                            if view_authority.is_stopped() {
+                                break;
+                            }
+                            if view_channel.send_text(message).await.is_err() {
+                                tokio::time::sleep(Duration::from_millis(20)).await;
+                                continue;
+                            }
+                        }
+                        if view_updates.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                });
             }
             channel.on_message(Box::new(move |message| {
                 let label = label.clone();
@@ -691,6 +724,8 @@ struct CaptureTask {
     selected_display_id: Arc<Mutex<String>>,
     stream_viewport: Arc<Mutex<Option<StreamViewport>>>,
     network_sample: Arc<Mutex<NetworkSample>>,
+    quality_preference: Arc<Mutex<QualityPreference>>,
+    view_updates: watch::Sender<Option<String>>,
     output: mpsc::Sender<TransportToMain>,
 }
 
@@ -718,10 +753,14 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
     let selected_display_id = &task.selected_display_id;
     let stream_viewport = &task.stream_viewport;
     let network_sample = &task.network_sample;
+    let quality_preference = &task.quality_preference;
     let output = &task.output;
     let mut quality = QualityController::default();
     let mut tier = quality.tier();
-    let mut profile = quality_profile(tier);
+    let mut active_preference = *quality_preference
+        .lock()
+        .map_err(|_| anyhow!("quality preference poisoned"))?;
+    let mut profile = quality_profile(active_preference, tier);
     let mut active_display_id = selected_display_id
         .lock()
         .map_err(|_| anyhow!("display selection poisoned"))?
@@ -731,7 +770,12 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
         .lock()
         .map_err(|_| anyhow!("stream viewport poisoned"))?;
     let (max_width, max_height) = capture_limits(active_display, profile, active_viewport);
-    let mut capture = DisplayCapture::new(active_display.clone(), max_width, max_height)?;
+    let mut capture = DisplayCapture::new_region(
+        active_display.clone(),
+        max_width,
+        max_height,
+        capture_region(active_viewport),
+    )?;
     let (width, height) = capture.dimensions();
     output.blocking_send(TransportToMain::Displays {
         session_id,
@@ -740,7 +784,9 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
     })?;
     let mut encoder = make_encoder(
         target_bitrate(profile, width, height),
-        profile.frames_per_second,
+        profile,
+        width,
+        height,
     )?;
     let mut yuv = YUVBuffer::new(width, height);
     let mut sample_started = Instant::now();
@@ -748,6 +794,7 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
     let mut attempted_frames = 0u32;
     let mut encoded_bytes = 0u64;
     let mut pipeline_work = Duration::ZERO;
+    let mut pending_view_ack = active_viewport.and_then(|viewport| viewport.revision);
 
     while !stop.load(Ordering::Acquire) {
         let requested_display_id = selected_display_id
@@ -757,18 +804,36 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
         let requested_viewport = *stream_viewport
             .lock()
             .map_err(|_| anyhow!("stream viewport poisoned"))?;
-        if requested_display_id != active_display_id || requested_viewport != active_viewport {
+        let requested_preference = *quality_preference
+            .lock()
+            .map_err(|_| anyhow!("quality preference poisoned"))?;
+        if requested_display_id != active_display_id
+            || requested_viewport != active_viewport
+            || requested_preference != active_preference
+        {
+            if requested_preference != active_preference {
+                active_preference = requested_preference;
+                profile = quality_profile(active_preference, tier);
+            }
             let next = find_display(displays, &requested_display_id)?;
             let (max_width, max_height) = capture_limits(next, profile, requested_viewport);
-            capture = DisplayCapture::new(next.clone(), max_width, max_height)?;
+            capture = DisplayCapture::new_region(
+                next.clone(),
+                max_width,
+                max_height,
+                capture_region(requested_viewport),
+            )?;
             let (next_width, next_height) = capture.dimensions();
             yuv = YUVBuffer::new(next_width, next_height);
             encoder = make_encoder(
                 target_bitrate(profile, next_width, next_height),
-                profile.frames_per_second,
+                profile,
+                next_width,
+                next_height,
             )?;
             active_display_id = requested_display_id;
             active_viewport = requested_viewport;
+            pending_view_ack = active_viewport.and_then(|viewport| viewport.revision);
             output.blocking_send(TransportToMain::Displays {
                 session_id,
                 displays: remote_displays(displays),
@@ -788,7 +853,7 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
         let dimensions = capture.dimensions();
         let bgra = capture.capture()?;
         yuv.read_rgb(BgraSliceU8::new(bgra, dimensions));
-        let encoded = encoder.encode(&yuv)?.to_vec();
+        let encoded = encoder.encode(&yuv)?;
         if !encoded.is_empty() {
             encoded_bytes += encoded.len() as u64;
             let send_started = Instant::now();
@@ -797,6 +862,17 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
                 duration: profile.frame_duration,
                 ..Default::default()
             }))?;
+            if let Some(revision) = pending_view_ack.take() {
+                let (frame_width, frame_height) = capture.dimensions();
+                let message = serde_json::json!({
+                    "type": "view-applied",
+                    "revision": revision,
+                    "sourceRegion": capture.source_region(),
+                    "frameWidth": frame_width,
+                    "frameHeight": frame_height,
+                });
+                task.view_updates.send_replace(Some(message.to_string()));
+            }
             if let Ok(mut sample) = network_sample.lock() {
                 sample.send_backlog_ms =
                     send_started.elapsed().as_millis().min(u32::MAX as u128) as u32;
@@ -809,6 +885,7 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
         if elapsed >= Duration::from_secs(2) {
             let seconds = elapsed.as_secs_f32().max(0.001);
             if let Ok(mut sample) = network_sample.lock() {
+                sample.client_target_frames_per_second = profile.frames_per_second;
                 let frame_budget_seconds =
                     attempted_frames as f32 * profile.frame_duration.as_secs_f32();
                 sample.pipeline_utilization_percent = if frame_budget_seconds > 0.0 {
@@ -834,20 +911,39 @@ fn run_capture_loop(task: &CaptureTask, runtime: &tokio::runtime::Handle) -> Res
                     quality_tier: tier,
                     stream_width: stream_width as u32,
                     stream_height: stream_height as u32,
+                    quality_preference: active_preference,
+                    target_frames_per_second: profile.frames_per_second,
+                    decoded_frames_per_second: sample.client_decoded_frames_per_second,
+                    client_dropped_frame_percent: sample.client_dropped_frame_percent,
+                    client_freeze_duration_ms: sample.client_freeze_duration_ms,
+                    capture_backend: capture.backend(),
+                    encoder_backend: encoder.backend(),
+                    applied_view_revision: active_viewport
+                        .and_then(|viewport| viewport.revision)
+                        .unwrap_or(0),
+                    source_region: capture.source_region(),
                 }),
             });
             if next_tier != tier {
                 tier = next_tier;
-                profile = quality_profile(tier);
+                profile = quality_profile(active_preference, tier);
                 let display = find_display(displays, &active_display_id)?;
                 let (max_width, max_height) = capture_limits(display, profile, active_viewport);
-                capture = DisplayCapture::new(display.clone(), max_width, max_height)?;
+                capture = DisplayCapture::new_region(
+                    display.clone(),
+                    max_width,
+                    max_height,
+                    capture_region(active_viewport),
+                )?;
                 let (next_width, next_height) = capture.dimensions();
                 yuv = YUVBuffer::new(next_width, next_height);
                 encoder = make_encoder(
                     target_bitrate(profile, next_width, next_height),
-                    profile.frames_per_second,
+                    profile,
+                    next_width,
+                    next_height,
                 )?;
+                pending_view_ack = active_viewport.and_then(|viewport| viewport.revision);
             }
             sample_started = Instant::now();
             frames = 0;
@@ -867,12 +963,16 @@ fn capture_limits(
     profile: QualityProfile,
     viewport: Option<StreamViewport>,
 ) -> (u32, u32) {
-    let (tier_width, tier_height) = if display.height > display.width {
+    let region_viewport = viewport.filter(|viewport| viewport.visible_region.is_some());
+    let portrait_output = region_viewport
+        .map(|viewport| viewport.pixel_height > viewport.pixel_width)
+        .unwrap_or(display.height > display.width);
+    let (tier_width, tier_height) = if portrait_output {
         (profile.max_height, profile.max_width)
     } else {
         (profile.max_width, profile.max_height)
     };
-    match viewport {
+    match region_viewport {
         Some(viewport) => (
             tier_width.min(viewport.pixel_width),
             tier_height.min(viewport.pixel_height),
@@ -881,13 +981,30 @@ fn capture_limits(
     }
 }
 
+fn capture_region(viewport: Option<StreamViewport>) -> Option<NormalizedRegion> {
+    const OVERSCAN_SCALE: f64 = 1.25;
+    let visible = viewport?.visible_region?;
+    let width = (visible.width * OVERSCAN_SCALE).min(1.0);
+    let height = (visible.height * OVERSCAN_SCALE).min(1.0);
+    let center_x = visible.x + visible.width / 2.0;
+    let center_y = visible.y + visible.height / 2.0;
+    Some(NormalizedRegion {
+        x: (center_x - width / 2.0).clamp(0.0, 1.0 - width),
+        y: (center_y - height / 2.0).clamp(0.0, 1.0 - height),
+        width,
+        height,
+    })
+}
+
 fn target_bitrate(profile: QualityProfile, width: usize, height: usize) -> u32 {
-    const MIN_STREAM_BITRATE_BPS: u32 = 400_000;
-    let profile_pixels = (profile.max_width as u64 * profile.max_height as u64).max(1);
-    let stream_pixels = width as u64 * height as u64;
-    let scaled = (profile.bitrate_bps as u64 * stream_pixels / profile_pixels)
-        .min(profile.bitrate_bps as u64) as u32;
-    scaled.max(MIN_STREAM_BITRATE_BPS.min(profile.bitrate_bps))
+    let calculated = width as f64
+        * height as f64
+        * profile.frames_per_second as f64
+        * profile.bits_per_pixel as f64;
+    calculated.round().clamp(
+        profile.min_bitrate_bps as f64,
+        profile.max_bitrate_bps as f64,
+    ) as u32
 }
 
 async fn send_input_error(channel: &webrtc::data_channel::RTCDataChannel, code: &'static str) {
@@ -924,42 +1041,57 @@ struct QualityProfile {
     max_width: u32,
     max_height: u32,
     frames_per_second: f32,
-    bitrate_bps: u32,
+    bits_per_pixel: f32,
+    min_bitrate_bps: u32,
+    max_bitrate_bps: u32,
     frame_duration: Duration,
 }
 
-fn quality_profile(tier: QualityTier) -> QualityProfile {
-    let (max_width, max_height, frames_per_second, bitrate_bps) = match tier {
-        QualityTier::High => (1_920, 1_080, 30.0, 5_500_000),
-        QualityTier::Medium => (1_280, 720, 30.0, 3_000_000),
-        QualityTier::Low => (960, 540, 24.0, 1_500_000),
-        QualityTier::Survival => (640, 360, 15.0, 800_000),
+fn quality_profile(preference: QualityPreference, tier: QualityTier) -> QualityProfile {
+    let (max_width, max_height, frames_per_second) = match (preference, tier) {
+        (QualityPreference::Balanced | QualityPreference::Clarity, QualityTier::High) => {
+            (1_920, 1_080, 30.0)
+        }
+        (QualityPreference::Balanced | QualityPreference::Clarity, QualityTier::Medium) => {
+            (1_600, 900, 30.0)
+        }
+        (QualityPreference::Balanced | QualityPreference::Clarity, QualityTier::Low) => {
+            (960, 540, 24.0)
+        }
+        (QualityPreference::Responsiveness, QualityTier::High) => (1_280, 720, 60.0),
+        (QualityPreference::Responsiveness, QualityTier::Medium) => (1_280, 720, 45.0),
+        (QualityPreference::Responsiveness, QualityTier::Low) => (960, 540, 30.0),
+        (_, QualityTier::Survival) => (640, 360, 15.0),
+    };
+    let (bits_per_pixel, min_bitrate_bps, max_bitrate_bps) = match preference {
+        QualityPreference::Balanced => (0.12, 800_000, 8_000_000),
+        QualityPreference::Clarity => (0.17, 1_000_000, 12_000_000),
+        QualityPreference::Responsiveness => (0.09, 800_000, 6_000_000),
     };
     QualityProfile {
         max_width,
         max_height,
         frames_per_second,
-        bitrate_bps,
+        bits_per_pixel,
+        min_bitrate_bps,
+        max_bitrate_bps,
         frame_duration: Duration::from_secs_f64(1.0 / frames_per_second as f64),
     }
 }
 
-fn make_encoder(target_bitrate: u32, frames_per_second: f32) -> Result<Encoder> {
-    let config = EncoderConfig::new()
-        .usage_type(UsageType::ScreenContentRealTime)
-        .bitrate(BitRate::from_bps(target_bitrate))
-        .max_frame_rate(FrameRate::from_hz(frames_per_second))
-        .rate_control_mode(RateControlMode::Bitrate)
-        .profile(Profile::Baseline)
-        .level(Level::Level_4_0)
-        .complexity(Complexity::Low)
-        .intra_frame_period(IntraFramePeriod::from_num_frames(60))
-        .vui(VuiConfig::bt709_full())
-        .skip_frames(true);
-    Ok(Encoder::with_api_config(
-        OpenH264API::from_source(),
-        config,
-    )?)
+fn make_encoder(
+    target_bitrate: u32,
+    profile: QualityProfile,
+    width: usize,
+    height: usize,
+) -> Result<VideoEncoder> {
+    VideoEncoder::new(VideoEncoderSettings {
+        width,
+        height,
+        target_bitrate,
+        frames_per_second: profile.frames_per_second,
+        clarity: profile.bits_per_pixel >= 0.17,
+    })
 }
 
 fn spawn_network_stats(
@@ -1109,6 +1241,7 @@ mod tests {
             peer_address: "127.0.0.1".into(),
             udp_port: 7422,
             viewport: None,
+            quality_preference: QualityPreference::Balanced,
         }
     }
 
@@ -1196,31 +1329,49 @@ mod tests {
 
     #[test]
     fn quality_profiles_match_the_product_ladder() {
-        let high = quality_profile(QualityTier::High);
+        let high = quality_profile(QualityPreference::Balanced, QualityTier::High);
         assert_eq!(
-            (high.max_width, high.max_height, high.bitrate_bps),
-            (1920, 1080, 5_500_000)
+            (high.max_width, high.max_height, high.frames_per_second),
+            (1_920, 1_080, 30.0)
         );
-        let medium = quality_profile(QualityTier::Medium);
+        assert_eq!(target_bitrate(high, 1_920, 1_080), 7_464_960);
+
+        let medium = quality_profile(QualityPreference::Balanced, QualityTier::Medium);
         assert_eq!(
-            (medium.max_width, medium.max_height, medium.bitrate_bps),
-            (1280, 720, 3_000_000)
+            (
+                medium.max_width,
+                medium.max_height,
+                medium.frames_per_second
+            ),
+            (1_600, 900, 30.0)
         );
-        let low = quality_profile(QualityTier::Low);
+        let low = quality_profile(QualityPreference::Balanced, QualityTier::Low);
         assert_eq!(
-            (low.max_width, low.max_height, low.bitrate_bps),
-            (960, 540, 1_500_000)
+            (low.max_width, low.max_height, low.frames_per_second),
+            (960, 540, 24.0)
         );
-        let survival = quality_profile(QualityTier::Survival);
+        let survival = quality_profile(QualityPreference::Balanced, QualityTier::Survival);
         assert_eq!(
             (
                 survival.max_width,
                 survival.max_height,
-                survival.bitrate_bps
+                survival.frames_per_second
             ),
-            (640, 360, 800_000)
+            (640, 360, 15.0)
         );
-        assert_eq!(survival.frames_per_second, 15.0);
+
+        let clarity = quality_profile(QualityPreference::Clarity, QualityTier::High);
+        assert_eq!(target_bitrate(clarity, 1_920, 1_080), 10_575_360);
+        let responsive = quality_profile(QualityPreference::Responsiveness, QualityTier::High);
+        assert_eq!(
+            (
+                responsive.max_width,
+                responsive.max_height,
+                responsive.frames_per_second
+            ),
+            (1_280, 720, 60.0)
+        );
+        assert_eq!(target_bitrate(responsive, 1_280, 720), 4_976_640);
     }
 
     #[test]
@@ -1240,31 +1391,84 @@ mod tests {
             height: 2_560,
             ..landscape.clone()
         };
-        let viewport = Some(StreamViewport {
+        let viewport = StreamViewport {
             pixel_width: 1_080,
             pixel_height: 1_920,
-        });
+            visible_region: None,
+            revision: None,
+        };
         assert_eq!(
-            capture_limits(&landscape, quality_profile(QualityTier::High), viewport),
-            (1_080, 1_080)
+            capture_limits(
+                &landscape,
+                quality_profile(QualityPreference::Balanced, QualityTier::High),
+                Some(viewport),
+            ),
+            (1_920, 1_080)
         );
         assert_eq!(
-            capture_limits(&portrait, quality_profile(QualityTier::High), viewport),
+            capture_limits(
+                &portrait,
+                quality_profile(QualityPreference::Balanced, QualityTier::High),
+                Some(viewport),
+            ),
             (1_080, 1_920)
         );
         assert_eq!(
-            capture_limits(&portrait, quality_profile(QualityTier::Low), viewport),
+            capture_limits(
+                &portrait,
+                quality_profile(QualityPreference::Balanced, QualityTier::Low),
+                Some(viewport),
+            ),
             (540, 960)
+        );
+
+        let region_viewport = Some(StreamViewport {
+            visible_region: Some(NormalizedRegion {
+                x: 0.25,
+                y: 0.2,
+                width: 0.25,
+                height: 0.5,
+            }),
+            revision: Some(1),
+            ..viewport
+        });
+        assert_eq!(
+            capture_limits(
+                &landscape,
+                quality_profile(QualityPreference::Balanced, QualityTier::High),
+                region_viewport,
+            ),
+            (1_080, 1_920)
         );
     }
 
     #[test]
     fn bitrate_scales_down_with_the_encoded_pixel_count() {
-        let high = quality_profile(QualityTier::High);
-        assert_eq!(target_bitrate(high, 1_920, 1_080), high.bitrate_bps);
+        let high = quality_profile(QualityPreference::Balanced, QualityTier::High);
+        assert_eq!(target_bitrate(high, 1_920, 1_080), 7_464_960);
         let mobile = target_bitrate(high, 960, 540);
-        assert!(mobile >= 400_000);
-        assert!(mobile < high.bitrate_bps);
+        assert_eq!(mobile, 1_866_240);
+        assert!(mobile < target_bitrate(high, 1_920, 1_080));
+    }
+
+    #[test]
+    fn capture_region_adds_bounded_overscan() {
+        let viewport = StreamViewport {
+            pixel_width: 1_080,
+            pixel_height: 1_920,
+            visible_region: Some(NormalizedRegion {
+                x: 0.8,
+                y: 0.8,
+                width: 0.2,
+                height: 0.2,
+            }),
+            revision: Some(4),
+        };
+        let region = capture_region(Some(viewport)).unwrap();
+        assert_eq!(region.width, 0.25);
+        assert_eq!(region.height, 0.25);
+        assert_eq!(region.x, 0.75);
+        assert_eq!(region.y, 0.75);
     }
 
     #[test]

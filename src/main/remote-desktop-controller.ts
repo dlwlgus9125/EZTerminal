@@ -7,6 +7,8 @@ import type {
   DesktopControlStartResultMessage,
   DesktopControlStatusMessage,
   DesktopDisplay,
+  DesktopNormalizedRegion,
+  DesktopQualityPreference,
   DesktopSessionSignal,
   DesktopSignalMessage,
   DesktopVideoViewport,
@@ -76,6 +78,8 @@ interface ActiveDesktopSession {
   bitrateKbps: number | null;
   qualityTier: string | null;
   viewport: DesktopVideoViewport | null;
+  qualityPreference: DesktopQualityPreference;
+  nativeFeatures: Set<string>;
 }
 
 const DEFAULT_CAPABILITIES: DesktopControlCapabilities = {
@@ -85,6 +89,10 @@ const DEFAULT_CAPABILITIES: DesktopControlCapabilities = {
   multiMonitor: true,
   adaptiveViewport: true,
 };
+
+const NATIVE_FEATURE_ADAPTIVE_REGION = 'adaptive-region-v1';
+const NATIVE_FEATURE_QUALITY_PREFERENCE = 'quality-preference-v1';
+const NATIVE_FEATURE_CLIENT_VIDEO_STATS_V2 = 'client-video-stats-v2';
 
 /**
  * Owns the single desktop-control lease and the unprivileged WebRTC child.
@@ -138,6 +146,7 @@ export class RemoteDesktopController {
     endpoint: DesktopConnectionEndpoint,
     emit: (event: DesktopServerEvent) => void,
     viewport?: DesktopVideoViewport,
+    qualityPreference: DesktopQualityPreference = 'balanced',
   ): Promise<DesktopStartResult> {
     if (this.options.probeService && this.service !== 'ready') await this.probeService();
     if (this.options.probeService && this.service !== 'ready') {
@@ -162,6 +171,7 @@ export class RemoteDesktopController {
       current.endpoint = endpoint;
       current.emit = emit;
       if (viewport) current.viewport = viewport;
+      current.qualityPreference = qualityPreference;
       const resumed = current.disconnectedAt !== null;
       current.disconnectedAt = null;
       if (current.releaseTimer) this.clearTimer(current.releaseTimer);
@@ -208,6 +218,8 @@ export class RemoteDesktopController {
       bitrateKbps: null,
       qualityTier: null,
       viewport: viewport ?? null,
+      qualityPreference,
+      nativeFeatures: new Set(),
     };
     this.active = session;
     this.errorCode = null;
@@ -454,6 +466,7 @@ export class RemoteDesktopController {
         ) return;
         if (message.type === 'ready') {
           this.service = nativeServiceHealth(message.service);
+          session.nativeFeatures = nativeFeatures(message.features);
           this.publishStatus();
           const accepted = message.protocolVersion === NATIVE_DESKTOP_PROTOCOL_VERSION
             && this.service === 'ready';
@@ -509,6 +522,7 @@ export class RemoteDesktopController {
         peerAddress: session.endpoint.peerAddress,
         udpPort: this.udpPort,
         viewport: session.viewport,
+        qualityPreference: session.qualityPreference,
       });
     });
   }
@@ -555,6 +569,33 @@ export class RemoteDesktopController {
           ...(metrics && typeof metrics.bitrateBps === 'number' ? { bitrateKbps: metrics.bitrateBps / 1_000 } : {}),
           ...(metrics && typeof metrics.streamWidth === 'number' ? { streamWidth: metrics.streamWidth } : {}),
           ...(metrics && typeof metrics.streamHeight === 'number' ? { streamHeight: metrics.streamHeight } : {}),
+          ...(metrics && isDesktopQualityPreference(metrics.qualityPreference)
+            ? { qualityPreference: metrics.qualityPreference }
+            : {}),
+          ...(metrics && typeof metrics.targetFramesPerSecond === 'number'
+            ? { targetFramesPerSecond: metrics.targetFramesPerSecond }
+            : {}),
+          ...(metrics && typeof metrics.decodedFramesPerSecond === 'number'
+            ? { decodedFramesPerSecond: metrics.decodedFramesPerSecond }
+            : {}),
+          ...(metrics && typeof metrics.clientDroppedFramePercent === 'number'
+            ? { clientDroppedFramePercent: metrics.clientDroppedFramePercent }
+            : {}),
+          ...(metrics && typeof metrics.clientFreezeDurationMs === 'number'
+            ? { clientFreezeDurationMs: metrics.clientFreezeDurationMs }
+            : {}),
+          ...(metrics && isCaptureBackend(metrics.captureBackend)
+            ? { captureBackend: metrics.captureBackend }
+            : {}),
+          ...(metrics && isEncoderBackend(metrics.encoderBackend)
+            ? { encoderBackend: metrics.encoderBackend }
+            : {}),
+          ...(metrics && typeof metrics.appliedViewRevision === 'number'
+            ? { appliedViewRevision: metrics.appliedViewRevision }
+            : {}),
+          ...(metrics && isDesktopNormalizedRegion(metrics.sourceRegion)
+            ? { sourceRegion: metrics.sourceRegion }
+            : {}),
         });
         this.publishStatus();
         break;
@@ -605,7 +646,7 @@ export class RemoteDesktopController {
       displays: session.displays,
       selectedDisplayId: session.selectedDisplayId,
       endpoint: { address: session.endpoint.localAddress, port: this.udpPort },
-      capabilities: DEFAULT_CAPABILITIES,
+      capabilities: capabilitiesFor(session.nativeFeatures),
       resumed,
     };
   }
@@ -766,6 +807,52 @@ function isDesktopDisplay(value: unknown): value is DesktopDisplay {
     && typeof value.height === 'number'
     && typeof value.rotationDegrees === 'number'
     && typeof value.primary === 'boolean';
+}
+
+function nativeFeatures(value: unknown): Set<string> {
+  if (!Array.isArray(value)) return new Set();
+  return new Set(value.filter((entry): entry is string => (
+    typeof entry === 'string' && entry.length > 0 && entry.length <= 64
+  )).slice(0, 32));
+}
+
+function capabilitiesFor(features: ReadonlySet<string>): DesktopControlCapabilities {
+  if (features.size === 0) return DEFAULT_CAPABILITIES;
+  return {
+    ...DEFAULT_CAPABILITIES,
+    ...(features.has(NATIVE_FEATURE_ADAPTIVE_REGION) ? { adaptiveRegion: true } : {}),
+    ...(features.has(NATIVE_FEATURE_QUALITY_PREFERENCE)
+      ? { qualityPreferences: ['balanced', 'clarity', 'responsiveness'] as const }
+      : {}),
+    ...(features.has(NATIVE_FEATURE_CLIENT_VIDEO_STATS_V2) ? { clientVideoStatsV2: true } : {}),
+  };
+}
+
+function isDesktopQualityPreference(value: unknown): value is DesktopQualityPreference {
+  return value === 'balanced' || value === 'clarity' || value === 'responsiveness';
+}
+
+function isCaptureBackend(value: unknown): value is NonNullable<DesktopControlStatusMessage['captureBackend']> {
+  return value === 'dxgi' || value === 'gdi';
+}
+
+function isEncoderBackend(value: unknown): value is NonNullable<DesktopControlStatusMessage['encoderBackend']> {
+  return value === 'media-foundation-hardware' || value === 'openh264-software';
+}
+
+function isDesktopNormalizedRegion(value: unknown): value is DesktopNormalizedRegion {
+  if (!isRecord(value)) return false;
+  const { x, y, width, height } = value;
+  return [x, y, width, height].every((entry) => (
+    typeof entry === 'number' && Number.isFinite(entry)
+  )) && (x as number) >= 0
+    && (y as number) >= 0
+    && (x as number) < 1
+    && (y as number) < 1
+    && (width as number) > 0
+    && (height as number) > 0
+    && (x as number) + (width as number) <= 1 + 1e-9
+    && (y as number) + (height as number) <= 1 + 1e-9;
 }
 
 function nativeState(value: unknown): DesktopControlStatusMessage['state'] | null {

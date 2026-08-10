@@ -351,13 +351,44 @@ Back, loading/empty/error/pagination을 검증한다. Storybook/visual lane은 r
 
 ## 11. PC Control UI 계약
 
-Mobile page는 explicit Start 뒤에만 video/input을 연다. Toolbar는 input mode, monitor,
-keyboard/IME, special keys, clipboard와 Disconnect를 gesture 없이도 제공한다. Android
-Back은 sheet, overflow, remote page 순서로 닫고 기존 mounted terminal로 돌아간다.
+Mobile page는 explicit Start 뒤에만 video/input을 연다. Active 화면은 video를 가리는
+상시 toolbar를 두지 않고, 화면 가장자리에 최소 touch target을 만족하는 session handle을
+항상 남긴다. Handle은 세로로 이동하고 좌우 edge에 붙으며 위치를 기기에 저장한다.
+Handle의 상태 표시는 active와 reconnecting을 color뿐 아니라 shape와 accessible name으로
+구분한다.
+
+Handle은 하나의 session ActionSheet를 연다. Sheet의 순서는 input mode, view/monitor,
+quality, keyboard·clipboard tools, 접힌 connection details, Disconnect다. Precision pointer가
+기본이며 Direct touch는 host capability가 있을 때만 활성화한다. Fit은 zoom과 pan을 모두
+초기화한다. Quality는 Balanced, Clarity, Responsiveness를 제공하고 지원하지 않는 구형
+host에서는 update 필요 상태를 정직하게 표시한다. Connection details에는 stream 크기,
+fps/latency, loss, bitrate, decoder drop과 실제 capture/encoder backend만 표시한다.
+
+Precision pointer의 한 손가락 이동은 cursor, tap/double tap은 click/double click,
+double-tap 후 drag와 long-press drag는 button hold다. 두 손가락은 pan/pinch zoom,
+두 손가락 double tap은 2×와 Fit 전환, 세 손가락 이동은 wheel이다. Direct touch는 remote
+absolute 좌표를 사용한다. Bluetooth mouse의 left/right/middle button과 wheel도 같은 input
+contract를 사용한다. Pointer cancel, reconnect, background, mode 변경과 close에서는 눌린
+button/key/modifier를 먼저 release한다.
+
+Zoom과 pan은 local transform으로 즉시 반응하고 안정된 viewport를 host ROI로 보낸다.
+Host가 적용한 revision과 source region을 확인하기 전에는 zoom 상태의 Direct touch 입력을
+잠시 막아 영상과 absolute 좌표가 어긋나지 않게 한다. Adaptive-region capability가 없는
+host에는 기존 full-frame viewport만 보내며 local Fit/입력 계약을 유지한다.
+
+Keyboard action은 IME input과 가로 scroll 가능한 accessory를 열고 Ctrl/Alt/Shift/Win의
+sticky 상태, Escape/Tab/Enter/Delete/arrow와 F1–F12를 gesture 없이 제공한다. Clipboard는
+자동 동기화하지 않고 명시적 Send/Copy만 사용한다. Android Back은 sheet, keyboard,
+remote page 순서로 닫고 기존 mounted terminal로 돌아간다. Background 전환은 input과
+session을 정리한 뒤 자동 재개하지 않으며 사용자가 Resume을 선택한다.
 
 Desktop banner와 tray는 active controller가 있을 때만 나타나며 device와 local
 Disconnect를 제공한다. 시작 시 terminal focus를 훔치지 않고 release 뒤 즉시 사라진다.
 Native 오류 remediation은 Remote panel에 남기고 stale active banner를 유지하지 않는다.
+
+Production Storybook은 Ready, Active handle, 열린 Session sheet, Keyboard accessory,
+Reconnecting과 Unavailable을 deterministic adapter로 포함한다. 고정 desktop handoff
+snapshot은 이 mobile 계약 변경의 갱신 대상이 아니다.
 
 ## 12. 시각·접근성 검증
 

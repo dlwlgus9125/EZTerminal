@@ -60,6 +60,8 @@ import {
   type DesktopControlEndedMessage,
   type DesktopControlStartResultMessage,
   type DesktopControlStatusMessage,
+  type DesktopNormalizedRegion,
+  type DesktopQualityPreference,
   type DesktopVideoViewport,
   type DesktopSessionSignal,
   type DesktopSignalMessage,
@@ -363,7 +365,31 @@ function isDesktopVideoViewport(value: unknown): value is DesktopVideoViewport {
     && Number.isInteger(value.pixelHeight)
     && value.pixelHeight >= MIN_DESKTOP_VIEWPORT_PIXELS
     && value.pixelHeight <= MAX_DESKTOP_VIEWPORT_PIXELS
+    && (value.visibleRegion === undefined || isDesktopNormalizedRegion(value.visibleRegion))
+    && (value.revision === undefined
+      || (Number.isSafeInteger(value.revision) && (value.revision as number) > 0))
   );
+}
+
+function isDesktopNormalizedRegion(value: unknown): value is DesktopNormalizedRegion {
+  if (!isRecord(value)) return false;
+  const x = value.x;
+  const y = value.y;
+  const width = value.width;
+  const height = value.height;
+  return [x, y, width, height].every(isFiniteNumber)
+    && (x as number) >= 0
+    && (y as number) >= 0
+    && (x as number) < 1
+    && (y as number) < 1
+    && (width as number) > 0
+    && (height as number) > 0
+    && (x as number) + (width as number) <= 1 + 1e-9
+    && (y as number) + (height as number) <= 1 + 1e-9;
+}
+
+function isDesktopQualityPreference(value: unknown): value is DesktopQualityPreference {
+  return value === 'balanced' || value === 'clarity' || value === 'responsiveness';
 }
 
 /** Runtime boundary for the nested control union. The bridge itself reads
@@ -721,7 +747,9 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
       return typeof value.requestId === 'string'
         && value.requestId.length > 0
         && value.requestId.length <= 256
-        && (value.viewport === undefined || isDesktopVideoViewport(value.viewport));
+        && (value.viewport === undefined || isDesktopVideoViewport(value.viewport))
+        && (value.qualityPreference === undefined
+          || isDesktopQualityPreference(value.qualityPreference));
     case 'desktop-signal':
       return typeof value.sessionId === 'string'
         && value.sessionId.length <= 256
@@ -991,6 +1019,7 @@ export interface RemoteDesktopSource {
     endpoint: { readonly localAddress: string; readonly peerAddress: string },
     emit: (event: RemoteDesktopServerEvent) => void,
     viewport?: DesktopVideoViewport,
+    qualityPreference?: DesktopQualityPreference,
   ): Promise<DistributedOmit<DesktopControlStartResultMessage, 'kind' | 'requestId'>>;
   signal(
     clientId: string,
@@ -1722,6 +1751,7 @@ export function attachConnection(
           { localAddress: hooks.localAddress, peerAddress: hooks.peerAddress },
           send,
           msg.viewport,
+          msg.qualityPreference,
         ).then((result) => {
           if (!authed) return;
           if (result.ok) {

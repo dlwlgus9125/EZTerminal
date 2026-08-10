@@ -207,15 +207,34 @@ export interface DesktopControlCapabilities {
   readonly multiMonitor: boolean;
   /** New hosts accept viewport-sized adaptive capture hints. */
   readonly adaptiveViewport?: boolean;
+  /** New hosts can encode a server-side region for sharp zoom and pan. */
+  readonly adaptiveRegion?: boolean;
+  /** Ordered preferences accepted by the active native video pipeline. */
+  readonly qualityPreferences?: readonly DesktopQualityPreference[];
+  /** New hosts consume decoded FPS and visible freeze duration. */
+  readonly clientVideoStatsV2?: boolean;
 }
 
 export const MIN_DESKTOP_VIEWPORT_PIXELS = 64;
 export const MAX_DESKTOP_VIEWPORT_PIXELS = 4_096;
 
+export type DesktopQualityPreference = 'balanced' | 'clarity' | 'responsiveness';
+
+export interface DesktopNormalizedRegion {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 export interface DesktopVideoViewport {
   /** Physical pixels available to the decoded video, after device pixel ratio. */
   readonly pixelWidth: number;
   readonly pixelHeight: number;
+  /** Visible source region in normalized display coordinates. */
+  readonly visibleRegion?: DesktopNormalizedRegion;
+  /** Monotonic client view revision; zero is reserved for legacy viewports. */
+  readonly revision?: number;
 }
 
 export type DesktopControlState =
@@ -242,6 +261,7 @@ export interface DesktopControlStartRequest {
   readonly kind: 'desktop-control-start';
   readonly requestId: string;
   readonly viewport?: DesktopVideoViewport;
+  readonly qualityPreference?: DesktopQualityPreference;
 }
 
 export interface DesktopSignalMessage {
@@ -815,6 +835,15 @@ export interface DesktopControlStatusMessage {
   readonly bitrateKbps?: number;
   readonly streamWidth?: number;
   readonly streamHeight?: number;
+  readonly qualityPreference?: DesktopQualityPreference;
+  readonly targetFramesPerSecond?: number;
+  readonly decodedFramesPerSecond?: number;
+  readonly clientDroppedFramePercent?: number;
+  readonly clientFreezeDurationMs?: number;
+  readonly captureBackend?: 'dxgi' | 'gdi';
+  readonly encoderBackend?: 'media-foundation-hardware' | 'openh264-software';
+  readonly appliedViewRevision?: number;
+  readonly sourceRegion?: DesktopNormalizedRegion;
 }
 
 export interface DesktopControlEndedMessage {

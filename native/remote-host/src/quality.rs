@@ -10,6 +10,10 @@ pub struct NetworkSample {
     pub send_backlog_ms: u32,
     pub pipeline_utilization_percent: f32,
     pub client_dropped_frame_percent: f32,
+    pub client_decoded_frames_per_second: f32,
+    pub client_target_frames_per_second: f32,
+    pub client_freeze_duration_ms: u32,
+    pub client_video_stats_seen: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -33,16 +37,26 @@ impl QualityController {
     }
 
     pub fn observe(&mut self, sample: NetworkSample) -> QualityTier {
+        let decode_ratio =
+            if sample.client_video_stats_seen && sample.client_target_frames_per_second > 0.0 {
+                sample.client_decoded_frames_per_second / sample.client_target_frames_per_second
+            } else {
+                1.0
+            };
         let severe = sample.packet_loss_percent >= 8.0
             || sample.send_backlog_ms >= 350
             || sample.round_trip_time_ms >= 350
             || sample.pipeline_utilization_percent >= 120.0
-            || sample.client_dropped_frame_percent >= 12.0;
+            || sample.client_dropped_frame_percent >= 12.0
+            || (sample.client_video_stats_seen
+                && (decode_ratio < 0.6 || sample.client_freeze_duration_ms >= 500));
         let degraded = sample.packet_loss_percent >= 3.0
             || sample.send_backlog_ms >= 150
             || sample.round_trip_time_ms >= 220
             || sample.pipeline_utilization_percent >= 90.0
-            || sample.client_dropped_frame_percent >= 5.0;
+            || sample.client_dropped_frame_percent >= 5.0
+            || (sample.client_video_stats_seen
+                && (decode_ratio < 0.8 || sample.client_freeze_duration_ms >= 250));
 
         if severe || degraded {
             self.stable_samples = 0;
@@ -54,8 +68,10 @@ impl QualityController {
             return self.tier;
         }
 
-        let stable =
-            sample.pipeline_utilization_percent < 70.0 && sample.client_dropped_frame_percent < 2.0;
+        let stable = sample.pipeline_utilization_percent < 70.0
+            && sample.client_dropped_frame_percent < 2.0
+            && (!sample.client_video_stats_seen
+                || (decode_ratio >= 0.95 && sample.client_freeze_duration_ms < 250));
         if !stable {
             self.stable_samples = 0;
             return self.tier;
@@ -110,6 +126,7 @@ mod tests {
                 send_backlog_ms: 0,
                 pipeline_utilization_percent: 20.0,
                 client_dropped_frame_percent: 0.0,
+                ..Default::default()
             }),
             QualityTier::Low
         );
@@ -119,6 +136,7 @@ mod tests {
             send_backlog_ms: 10,
             pipeline_utilization_percent: 20.0,
             client_dropped_frame_percent: 0.0,
+            ..Default::default()
         };
         for _ in 0..4 {
             assert_eq!(controller.observe(stable), QualityTier::Low);
@@ -135,6 +153,7 @@ mod tests {
             send_backlog_ms: 0,
             pipeline_utilization_percent: 125.0,
             client_dropped_frame_percent: 0.0,
+            ..Default::default()
         };
         assert_eq!(controller.observe(overloaded), QualityTier::Low);
         let busy = NetworkSample {
@@ -144,5 +163,31 @@ mod tests {
         for _ in 0..8 {
             assert_eq!(controller.observe(busy), QualityTier::Low);
         }
+    }
+
+    #[test]
+    fn client_decode_pressure_drives_the_same_bounded_quality_ladder() {
+        let mut controller = QualityController::default();
+        let frozen = NetworkSample {
+            round_trip_time_ms: 20,
+            packet_loss_percent: 0.0,
+            pipeline_utilization_percent: 20.0,
+            client_decoded_frames_per_second: 10.0,
+            client_target_frames_per_second: 30.0,
+            client_freeze_duration_ms: 600,
+            client_video_stats_seen: true,
+            ..Default::default()
+        };
+        assert_eq!(controller.observe(frozen), QualityTier::Low);
+
+        let recovered = NetworkSample {
+            client_decoded_frames_per_second: 30.0,
+            client_freeze_duration_ms: 0,
+            ..frozen
+        };
+        for _ in 0..4 {
+            assert_eq!(controller.observe(recovered), QualityTier::Low);
+        }
+        assert_eq!(controller.observe(recovered), QualityTier::Medium);
     }
 }
