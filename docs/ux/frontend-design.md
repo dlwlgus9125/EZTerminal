@@ -367,8 +367,10 @@ fps/latency, loss, bitrate, decoder drop과 실제 capture/encoder backend만 �
 Precision pointer의 한 손가락 이동은 cursor, tap/double tap은 click/double click,
 double-tap 후 drag와 long-press drag는 button hold다. 두 손가락은 pan/pinch zoom,
 두 손가락 double tap은 2×와 Fit 전환, 세 손가락 이동은 wheel이다. Direct touch는 remote
-absolute 좌표를 사용한다. Bluetooth mouse의 left/right/middle button과 wheel도 같은 input
-contract를 사용한다. Pointer cancel, reconnect, background, mode 변경과 close에서는 눌린
+absolute 좌표를 사용한다. OS에 이미 연결된 Bluetooth mouse는 별도 설정 없이 active video
+surface의 hover, left/right/middle button, drag와 horizontal/vertical wheel을 같은 input
+contract로 보낸다. Precision pointer에서는 상대 이동, Direct touch에서는 절대 좌표를
+사용한다. Pointer cancel, focus 이탈, reconnect, background, mode 변경과 close에서는 눌린
 button/key/modifier를 먼저 release한다.
 
 Zoom과 pan은 local transform으로 즉시 반응하고 안정된 viewport를 host ROI로 보낸다.
@@ -381,6 +383,14 @@ sticky 상태, Escape/Tab/Enter/Delete/arrow와 F1–F12를 gesture 없이 제�
 자동 동기화하지 않고 명시적 Send/Copy만 사용한다. Android Back은 sheet, keyboard,
 remote page 순서로 닫고 기존 mounted terminal로 돌아간다. Background 전환은 input과
 session을 정리한 뒤 자동 재개하지 않으며 사용자가 Resume을 선택한다.
+
+OS에 이미 연결된 Bluetooth keyboard는 별도 toggle 없이 session이 active가 될 때 video
+surface focus를 받아 문자·숫자·기호, modifier 조합, navigation/edit와 F1–F12의 물리 key
+transition을 remote layout/IME로 보낸다. Android가 소비하는 system key와 host가 지원하지
+않는 key는 가로채지 않는다. Video surface 밖의 session handle, ActionSheet, keyboard
+accessory, reconnect/close UI와 background에서는 물리 key나 mouse event를 remote input으로
+보내지 않으며, sheet를 닫으면 active video surface로 focus를 복구한다. 이 동작은 기존
+touch gesture와 명시적으로 여는 IME input을 대체하지 않는다.
 
 Desktop banner와 tray는 active controller가 있을 때만 나타나며 device와 local
 Disconnect를 제공한다. 시작 시 terminal focus를 훔치지 않고 release 뒤 즉시 사라진다.

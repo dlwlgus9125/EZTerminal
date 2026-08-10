@@ -1,6 +1,6 @@
 # EZTerminal Roadmap
 
-> Current for the **v1.0.31 release candidate** (2026-08-10).
+> Current for the **v1.0.32 release candidate** (2026-08-11).
 > 이 문서는 현재 제품 방향과 아직 구현되지 않은 후보만 기록한다. 현재 시스템 구조와
 > 변경 계약은 [`architecture.md`](architecture.md), 완료 과정은
 > [`archive/`](archive/README.md), 출시 이력은 버전별 release 문서가 소유한다.
@@ -54,7 +54,7 @@ interactive CLI와 full-screen TUI는 PTY/xterm으로 실행한다.
 
 - 인증·재연결·lease·보안 credential·file transfer를 갖춘 원격 terminal
 - 신뢰 VPN에 묶인 WebRTC, 선택 모니터 GDI/OpenH264 영상, trackpad/direct touch,
-  keyboard/IME와 명시적 text clipboard
+  keyboard/IME, 별도 설정 없는 Bluetooth keyboard/mouse와 명시적 text clipboard
 - Native service와 active-session agent가 준비되지 않으면 PC Control capability를
   fail closed하되 terminal remote access는 유지
 
@@ -62,14 +62,14 @@ interactive CLI와 full-screen TUI는 PTY/xterm으로 실행한다.
 
 - [`remote-terminal.md`](design/remote-terminal.md)
 - [`remote-desktop.md`](design/remote-desktop.md)
-- [`validation-policy-1.0.31.md`](release/validation-policy-1.0.31.md)
+- [`validation-policy-1.0.32.md`](release/validation-policy-1.0.32.md)
 
 ## 유지보수 계약
 
 - `release/version.json`이 desktop, mobile, Android, native host와 remote protocol
   version의 기준이다.
 - 현재 release 검증 정책의 저장소 경로는
-  `docs/release/validation-policy-1.0.31.md`이다.
+  `docs/release/validation-policy-1.0.32.md`이다.
 - Desktop과 Android release artifact는 같은 clean Git SHA에서 만들고
   [`release/README.md`](release/README.md)의 gate를 통과한다.
 - 일반 개발 검증은 `pnpm e2e`를 사용한다. release performance benchmark는 사용자가

@@ -87,6 +87,10 @@ RemoteService -- nonce-bound channel --> --session-agent (active session)
   기존 adaptive viewport와 legacy dropped-frame stats만 사용한다.
 - monitor 목록에는 안정된 identifier, bounds, rotation과 primary 정보가 포함된다.
   선택 모니터가 사라지면 안전한 fallback과 상태 갱신을 수행한다.
+- Android의 물리 keyboard/mouse event는 active video surface에서만 기존 `key`,
+  `pointer-relative`/`pointer-absolute`, `pointer-button`, `wheel` command로 정규화한다. 별도
+  capability나 wire version을 추가하지 않으며, surface focus/visibility/session/mode 경계가
+  바뀌면 client가 추적한 key와 button release를 ordered control channel로 먼저 보낸다.
 - pointer 좌표는 선택 display와 rotation 기준으로 검증한다. input sequence와 active
   lease가 일치하지 않으면 `SendInput`을 호출하지 않는다.
 - clipboard는 active controller의 명시적 Send/Copy 동작에서 text만 처리한다. 자동

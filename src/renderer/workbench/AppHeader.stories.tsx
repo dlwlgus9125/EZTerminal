@@ -41,7 +41,7 @@ function AppHeaderStory({
         <AppHeader
           // Pinned rather than read from the runtime so the version chip cannot
           // make a screenshot depend on which build produced it.
-          appVersion="1.0.31"
+          appVersion="1.0.32"
           attentionCount={3}
           commandCenterOpen={false}
           effectIntensity={intensity}

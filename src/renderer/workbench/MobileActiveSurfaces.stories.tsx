@@ -534,6 +534,7 @@ export const PcControlActive: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(await canvas.findByTestId('mobile-pc-start'));
     await waitFor(() => expect(canvas.getByTestId('mobile-pc-session-handle')).toBeVisible());
+    await waitFor(() => expect(canvas.getByRole('application')).toHaveFocus());
   },
 };
 export const PcControlSessionSheet: Story = {

@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { Clipboard } from '@capacitor/clipboard';
@@ -39,6 +40,7 @@ import {
   RemoteDesktopPresentationAdapter,
   type DesktopControlCommand,
   type DesktopKeyModifier,
+  type DesktopMouseButton,
   type DesktopPresentationAdapter,
   type DesktopPresentationDetail,
   type DesktopPointerCommand,
@@ -67,7 +69,7 @@ interface PointerRecord {
   startY: number;
   startedAt: number;
   pointerType: string;
-  button: number;
+  button: DesktopMouseButton;
   moved: boolean;
   buttonDown: boolean;
   longPressTriggered: boolean;
@@ -112,6 +114,47 @@ const MODIFIER_CODES: Readonly<Record<DesktopKeyModifier, string>> = {
   shift: 'ShiftLeft',
   meta: 'MetaLeft',
 };
+
+const SUPPORTED_REMOTE_KEY_CODES: ReadonlySet<string> = new Set([
+  'Escape',
+  ...Array.from({ length: 10 }, (_, index) => `Digit${index}`),
+  'Minus',
+  'Equal',
+  'Backspace',
+  'Tab',
+  ...Array.from({ length: 26 }, (_, index) => `Key${String.fromCharCode(65 + index)}`),
+  'BracketLeft',
+  'BracketRight',
+  'Enter',
+  'ControlLeft',
+  'ControlRight',
+  'Semicolon',
+  'Quote',
+  'Backquote',
+  'ShiftLeft',
+  'ShiftRight',
+  'Backslash',
+  'Comma',
+  'Period',
+  'Slash',
+  'AltLeft',
+  'AltRight',
+  'Space',
+  'CapsLock',
+  ...Array.from({ length: 12 }, (_, index) => `F${index + 1}`),
+  'Home',
+  'ArrowUp',
+  'PageUp',
+  'ArrowLeft',
+  'ArrowRight',
+  'End',
+  'ArrowDown',
+  'PageDown',
+  'Insert',
+  'Delete',
+  'MetaLeft',
+  'MetaRight',
+]);
 
 function clampUnit(value: number): number {
   return Math.min(1, Math.max(0, value));
@@ -222,10 +265,11 @@ function createPresentationAdapter(transport: WsEzTerminalTransport): DesktopPre
   });
 }
 
-function mouseButton(button: number): 'left' | 'right' | 'middle' {
+function mouseButton(button: number): DesktopMouseButton | null {
+  if (button === 0) return 'left';
   if (button === 2) return 'right';
   if (button === 1) return 'middle';
-  return 'left';
+  return null;
 }
 
 export interface MobileRemoteDesktopViewProps {
@@ -273,6 +317,8 @@ export function MobileRemoteDesktopView({
   const viewRef = useRef<RemoteViewState>(view);
   const stickyModifiersRef = useRef<ReadonlySet<DesktopKeyModifier>>(stickyModifiers);
   const pointersRef = useRef(new Map<number, PointerRecord>());
+  const mousePositionRef = useRef<{ x: number; y: number } | null>(null);
+  const pressedHardwareKeysRef = useRef(new Set<string>());
   const multiGestureRef = useRef<MultiGesture | null>(null);
   const holdTimersRef = useRef(new Map<number, number>());
   const lastTapRef = useRef<{ at: number; x: number; y: number } | null>(null);
@@ -311,17 +357,27 @@ export function MobileRemoteDesktopView({
   const releasePointerButtons = useCallback((): void => {
     for (const record of pointersRef.current.values()) {
       if (record.buttonDown) {
-        sendControl({ type: 'pointer-button', button: mouseButton(record.button), down: false });
+        sendControl({ type: 'pointer-button', button: record.button, down: false });
       }
     }
     for (const timer of holdTimersRef.current.values()) window.clearTimeout(timer);
     holdTimersRef.current.clear();
     pointersRef.current.clear();
+    mousePositionRef.current = null;
     multiGestureRef.current = null;
+  }, [sendControl]);
+
+  const releaseHardwareKeys = useCallback((): void => {
+    const pressedCodes = [...pressedHardwareKeysRef.current];
+    pressedHardwareKeysRef.current.clear();
+    for (const code of pressedCodes) {
+      sendControl({ type: 'key', code, down: false, modifiers: [] });
+    }
   }, [sendControl]);
 
   const releaseAllInput = useCallback((): void => {
     releasePointerButtons();
+    releaseHardwareKeys();
     for (const modifier of stickyModifiersRef.current) {
       sendControl({ type: 'key', code: MODIFIER_CODES[modifier], down: false, modifiers: [] });
     }
@@ -329,7 +385,7 @@ export function MobileRemoteDesktopView({
       stickyModifiersRef.current = new Set();
       setStickyModifiers(new Set());
     }
-  }, [releasePointerButtons, sendControl]);
+  }, [releaseHardwareKeys, releasePointerButtons, sendControl]);
 
   const publishView = useCallback((nextView: RemoteViewState = viewRef.current): void => {
     const element = viewportRef.current;
@@ -402,11 +458,16 @@ export function MobileRemoteDesktopView({
       window.visualViewport?.removeEventListener('resize', updateSurface);
       unsubscribe();
       releasePointerButtons();
+      releaseHardwareKeys();
+      for (const modifier of stickyModifiersRef.current) {
+        sendControl({ type: 'key', code: MODIFIER_CODES[modifier], down: false, modifiers: [] });
+      }
+      stickyModifiersRef.current = new Set();
       if (presentationAdapterRef.current === presentationAdapter) presentationAdapterRef.current = null;
       presentationAdapter.attachVideo(null);
       presentationAdapter.dispose();
     };
-  }, [presentationAdapter, releasePointerButtons]);
+  }, [presentationAdapter, releaseHardwareKeys, releasePointerButtons, sendControl]);
 
   useEffect(() => {
     presentationAdapter.setQualityPreference(qualityPreference);
@@ -425,8 +486,20 @@ export function MobileRemoteDesktopView({
   }, [handleEdge, handleY, mode, qualityPreference]);
 
   useEffect(() => {
-    if (keyboardOpen) inputRef.current?.focus();
-  }, [keyboardOpen]);
+    if (keyboardOpen) {
+      inputRef.current?.focus();
+      return;
+    }
+    if (started && phase === 'active' && !needsResume && !sheetOpen) {
+      viewportRef.current?.focus({ preventScroll: true });
+    }
+  }, [keyboardOpen, needsResume, phase, sheetOpen, started]);
+
+  useEffect(() => {
+    const onWindowBlur = (): void => releaseAllInput();
+    window.addEventListener('blur', onWindowBlur);
+    return () => window.removeEventListener('blur', onWindowBlur);
+  }, [releaseAllInput]);
 
   useEffect(() => {
     const onVisibility = (): void => {
@@ -493,7 +566,7 @@ export function MobileRemoteDesktopView({
   };
 
   const selectMode = (next: InputMode): void => {
-    releasePointerButtons();
+    releaseAllInput();
     setMode(next);
     showToast(next === 'trackpad'
       ? t('mobile.pcControl.trackpadToast')
@@ -534,7 +607,7 @@ export function MobileRemoteDesktopView({
     for (const record of records) {
       record.suppressTap = true;
       if (record.buttonDown) {
-        sendControl({ type: 'pointer-button', button: mouseButton(record.button), down: false });
+        sendControl({ type: 'pointer-button', button: record.button, down: false });
         record.buttonDown = false;
       }
     }
@@ -560,6 +633,9 @@ export function MobileRemoteDesktopView({
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (!started || phase !== 'active' || needsResume || sheetOpen) return;
+    const button = mouseButton(event.button);
+    if (!button) return;
+    if (!keyboardOpen) event.currentTarget.focus({ preventScroll: true });
     event.currentTarget.setPointerCapture(event.pointerId);
     const previousTap = lastTapRef.current;
     const dragCandidate = previousTap !== null
@@ -573,7 +649,7 @@ export function MobileRemoteDesktopView({
       startY: event.clientY,
       startedAt: performance.now(),
       pointerType: event.pointerType,
-      button: event.button,
+      button,
       moved: false,
       buttonDown: false,
       longPressTriggered: false,
@@ -588,12 +664,13 @@ export function MobileRemoteDesktopView({
 
     const point = pointFor(event.clientX, event.clientY);
     if (event.pointerType === 'mouse') {
+      mousePositionRef.current = { x: event.clientX, y: event.clientY };
       if (mode === 'direct') {
         if (!point || directInputPending) return;
         sendPointer({ type: 'pointer-absolute', ...point });
         record.buttonDown = sendControl({
           type: 'pointer-button',
-          button: mouseButton(event.button),
+          button,
           down: true,
           x: point.x,
           y: point.y,
@@ -601,7 +678,7 @@ export function MobileRemoteDesktopView({
       } else {
         record.buttonDown = sendControl({
           type: 'pointer-button',
-          button: mouseButton(event.button),
+          button,
           down: true,
         });
       }
@@ -614,7 +691,26 @@ export function MobileRemoteDesktopView({
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (!started || phase !== 'active' || needsResume || sheetOpen) return;
     const record = pointersRef.current.get(event.pointerId);
+    if (!record && event.pointerType === 'mouse') {
+      const previous = mousePositionRef.current;
+      mousePositionRef.current = { x: event.clientX, y: event.clientY };
+      if (mode === 'direct') {
+        const point = pointFor(event.clientX, event.clientY);
+        if (point && !directInputPending) sendPointer({ type: 'pointer-absolute', ...point });
+      } else if (previous) {
+        const delta = relativeRemoteDelta(
+          event.clientX - previous.x,
+          event.clientY - previous.y,
+          viewRef.current,
+          surfaceSize,
+          displaySize,
+        );
+        if (delta.dx !== 0 || delta.dy !== 0) sendPointer({ type: 'pointer-relative', ...delta });
+      }
+      return;
+    }
     if (!record) return;
     const dx = event.clientX - record.x;
     const dy = event.clientY - record.y;
@@ -681,8 +777,13 @@ export function MobileRemoteDesktopView({
 
     const point = pointFor(event.clientX, event.clientY);
     if (record.pointerType === 'mouse') {
-      const delta = relativeRemoteDelta(dx, dy, viewRef.current, surfaceSize, displaySize);
-      sendPointer({ type: 'pointer-relative', ...delta });
+      mousePositionRef.current = { x: event.clientX, y: event.clientY };
+      if (mode === 'direct') {
+        if (point && !directInputPending) sendPointer({ type: 'pointer-absolute', ...point });
+      } else {
+        const delta = relativeRemoteDelta(dx, dy, viewRef.current, surfaceSize, displaySize);
+        if (delta.dx !== 0 || delta.dy !== 0) sendPointer({ type: 'pointer-relative', ...delta });
+      }
       return;
     }
     if (record.dragCandidate && record.moved && !record.buttonDown) {
@@ -749,6 +850,9 @@ export function MobileRemoteDesktopView({
     clearHoldTimer(event.pointerId);
     pointersRef.current.delete(event.pointerId);
     if (!record) return;
+    if (record.pointerType === 'mouse') {
+      mousePositionRef.current = { x: event.clientX, y: event.clientY };
+    }
     if (record.suppressTap || multiGestureRef.current) {
       if (pointersRef.current.size === 0) finishMultiGesture();
       return;
@@ -757,7 +861,7 @@ export function MobileRemoteDesktopView({
     if (record.buttonDown) {
       sendControl({
         type: 'pointer-button',
-        button: mouseButton(record.button),
+        button: record.button,
         down: false,
         ...(mode === 'direct' && point ? { x: point.x, y: point.y } : {}),
       });
@@ -769,7 +873,7 @@ export function MobileRemoteDesktopView({
       && performance.now() - record.startedAt <= TAP_MAX_MS;
     if (!isTap || (mode === 'direct' && (!point || directInputPending))) return;
     if (mode === 'direct' && point) sendPointer({ type: 'pointer-absolute', ...point });
-    sendControl({ type: 'pointer-click', button: mouseButton(record.button), count: 1 });
+    sendControl({ type: 'pointer-click', button: record.button, count: 1 });
     lastTapRef.current = record.dragCandidate
       ? null
       : { at: performance.now(), x: event.clientX, y: event.clientY };
@@ -780,9 +884,34 @@ export function MobileRemoteDesktopView({
     clearHoldTimer(event.pointerId);
     pointersRef.current.delete(event.pointerId);
     if (record?.buttonDown) {
-      sendControl({ type: 'pointer-button', button: mouseButton(record.button), down: false });
+      sendControl({ type: 'pointer-button', button: record.button, down: false });
     }
+    if (record?.pointerType === 'mouse') mousePositionRef.current = null;
     if (pointersRef.current.size === 0) multiGestureRef.current = null;
+  };
+
+  const remoteKeyCode = (event: ReactKeyboardEvent<HTMLElement>): string | null => {
+    const code = event.code && event.code !== 'Unidentified' ? event.code : event.key;
+    return SUPPORTED_REMOTE_KEY_CODES.has(code) ? code : null;
+  };
+
+  const onRemoteKeyDown = (event: ReactKeyboardEvent<HTMLElement>): void => {
+    if (!started || phase !== 'active' || needsResume || sheetOpen || event.nativeEvent.isComposing) return;
+    const code = remoteKeyCode(event);
+    if (!code) return;
+    event.preventDefault();
+    if (sendControl({ type: 'key', code, down: true, modifiers: [] })) {
+      pressedHardwareKeysRef.current.add(code);
+    }
+  };
+
+  const onRemoteKeyUp = (event: ReactKeyboardEvent<HTMLElement>): void => {
+    if (!started || phase !== 'active' || needsResume || sheetOpen || event.nativeEvent.isComposing) return;
+    const code = remoteKeyCode(event);
+    if (!code) return;
+    event.preventDefault();
+    sendControl({ type: 'key', code, down: false, modifiers: [] });
+    pressedHardwareKeysRef.current.delete(code);
   };
 
   const sendKey = (code: string): void => {
@@ -831,17 +960,26 @@ export function MobileRemoteDesktopView({
         role="application"
         aria-label={t('mobile.pcControl.videoLabel')}
         aria-describedby="mobile-pc-gesture-help"
-        tabIndex={started && phase === 'active' ? 0 : -1}
-        onContextMenu={(event) => event.preventDefault()}
+        tabIndex={started && phase === 'active' && !needsResume ? 0 : -1}
+        onBlur={() => releaseAllInput()}
+        onKeyDown={onRemoteKeyDown}
+        onKeyUp={onRemoteKeyUp}
+        onContextMenu={(event) => {
+          if (started && phase === 'active' && !needsResume && !sheetOpen) event.preventDefault();
+        }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
-        onWheel={(event) => {
-          event.preventDefault();
-          if (started && phase === 'active') {
-            sendControl({ type: 'wheel', deltaX: event.deltaX, deltaY: event.deltaY });
+        onPointerLeave={(event) => {
+          if (event.pointerType === 'mouse' && !pointersRef.current.has(event.pointerId)) {
+            mousePositionRef.current = null;
           }
+        }}
+        onWheel={(event) => {
+          if (!started || phase !== 'active' || needsResume || sheetOpen) return;
+          event.preventDefault();
+          sendControl({ type: 'wheel', deltaX: event.deltaX, deltaY: event.deltaY });
         }}
       >
         <video
@@ -923,7 +1061,7 @@ export function MobileRemoteDesktopView({
             const drag = handleDragRef.current;
             handleDragRef.current = null;
             if (!drag?.moved) {
-              releasePointerButtons();
+              releaseAllInput();
               setSheetOpen(true);
             } else {
               setHandleEdge(event.clientX < window.innerWidth / 2 ? 'left' : 'right');
@@ -969,21 +1107,33 @@ export function MobileRemoteDesktopView({
         autoCorrect="off"
         onInput={(event) => {
           const input = event.currentTarget;
-          if (input.value) sendControl({ type: 'text', text: input.value });
+          if (
+            input.value
+            && started
+            && phase === 'active'
+            && !needsResume
+            && !sheetOpen
+          ) sendControl({ type: 'text', text: input.value });
           input.value = '';
         }}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing) return;
           if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) return;
-          event.preventDefault();
-          sendControl({ type: 'key', code: event.code || event.key, down: true, modifiers: [] });
+          onRemoteKeyDown(event);
         }}
         onKeyUp={(event) => {
           if (event.nativeEvent.isComposing) return;
-          if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) return;
-          event.preventDefault();
-          sendControl({ type: 'key', code: event.code || event.key, down: false, modifiers: [] });
+          const code = remoteKeyCode(event);
+          if (
+            event.key.length === 1
+            && !event.ctrlKey
+            && !event.altKey
+            && !event.metaKey
+            && (!code || !pressedHardwareKeysRef.current.has(code))
+          ) return;
+          onRemoteKeyUp(event);
         }}
+        onBlur={releaseHardwareKeys}
       />
 
       {sheetOpen && (
@@ -991,7 +1141,7 @@ export function MobileRemoteDesktopView({
           title={hostLabel || t('mobile.pcControl.title')}
           description={clipboardStatus || metrics || stateLabel}
           onClose={() => setSheetOpen(false)}
-          returnFocusRef={handleRef}
+          returnFocusRef={viewportRef}
           testId="mobile-pc-session-sheet"
           backdropTestId="mobile-pc-session-sheet-backdrop"
           className="mobile-pc-session-sheet"

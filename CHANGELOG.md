@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [1.0.32] - 2026-08-11
+
+### Fixed
+
+- Focused the active mobile PC-control video surface automatically so an
+  already-paired Bluetooth keyboard sends supported physical key transitions,
+  including modifiers, navigation/editing keys, and F1-F12, without opening
+  the on-screen keyboard.
+- Restored button-free Bluetooth mouse hover, kept precision-pointer movement
+  relative and direct-touch movement absolute, and preserved right/middle
+  buttons plus horizontal and vertical wheel input.
+- Released tracked hardware keys and mouse buttons on focus, session, mode,
+  visibility, reconnect, and close boundaries while leaving Android-reserved
+  keys and local controls untouched.
+
+See [1.0.32 release notes](docs/release/release-notes-1.0.32.md).
+
 ## [1.0.31] - 2026-08-10
 
 ### Added
