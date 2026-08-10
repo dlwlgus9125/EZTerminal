@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useNativeOverlayRegistration } from './native-overlay';
+import { isDomNode, isFocusableHTMLElement } from './ui/utils';
 
 export interface TerminalContextMenuItem {
   /** Used verbatim in `data-testid="term-ctx-<action>"` — keep these stable, e2e depends on them. */
@@ -61,7 +62,7 @@ export function mayRestoreTerminalContextMenuFocus(
   const ownerDocument = originPane.ownerDocument;
   if (
     detail.reason === 'outside'
-    && detail.target instanceof (ownerDocument.defaultView?.Node ?? Node)
+    && isDomNode(detail.target)
     && !originPane.contains(detail.target)
   ) {
     return false;
@@ -81,7 +82,7 @@ export function captureTerminalContextMenuInvocation(
   return {
     x,
     y,
-    invoker: active instanceof HTMLElement && originPane?.contains(active) ? active : null,
+    invoker: isFocusableHTMLElement(active) && originPane?.contains(active) ? active : null,
     originPane,
   };
 }

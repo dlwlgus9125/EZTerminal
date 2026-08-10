@@ -22,7 +22,7 @@ import {
 } from 'react';
 
 import { useNativeOverlayRegistration } from '../native-overlay';
-import { classNames, mergeRefs } from './utils';
+import { classNames, isDomNode, mergeRefs } from './utils';
 
 interface MenuTriggerProps extends HTMLAttributes<HTMLElement> {
   readonly disabled?: boolean;
@@ -74,7 +74,10 @@ export function Menu({
   }, [onOpenChange, open]);
   const close = useCallback((restoreFocus = true): void => {
     setOpen(false);
-    if (restoreFocus) requestAnimationFrame(() => triggerRef.current?.focus());
+    if (restoreFocus) {
+      const ownerWindow = rootRef.current?.ownerDocument.defaultView ?? window;
+      ownerWindow.requestAnimationFrame(() => triggerRef.current?.focus());
+    }
   }, [setOpen]);
 
   useLayoutEffect(() => {
@@ -88,15 +91,19 @@ export function Menu({
 
   useEffect(() => {
     if (!isOpen) return;
+    const ownerDocument = rootRef.current?.ownerDocument ?? document;
     const handlePointerDown = (event: PointerEvent): void => {
       const target = event.target;
-      if (target instanceof Node && !rootRef.current?.contains(target)) close(false);
+      if (isDomNode(target) && !rootRef.current?.contains(target)) close(false);
     };
-    document.addEventListener('pointerdown', handlePointerDown);
-    return () => document.removeEventListener('pointerdown', handlePointerDown);
+    ownerDocument.addEventListener('pointerdown', handlePointerDown);
+    return () => ownerDocument.removeEventListener('pointerdown', handlePointerDown);
   }, [close, isOpen]);
 
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    const ownerDocument = event.currentTarget.ownerDocument;
+    const activeElement = ownerDocument.activeElement;
+    const activeButton = activeElement as (Element & { click?: () => void }) | null;
     const items = Array.from(
       event.currentTarget.querySelectorAll<HTMLButtonElement>(MENU_ITEM_SELECTOR),
     );
@@ -109,14 +116,17 @@ export function Menu({
       close(false);
       return;
     }
-    if ((event.key === 'Enter' || event.key === ' ') && document.activeElement instanceof HTMLButtonElement) {
+    if (
+      (event.key === 'Enter' || event.key === ' ')
+      && typeof activeButton?.click === 'function'
+    ) {
       event.preventDefault();
-      document.activeElement.click();
+      activeButton.click();
       return;
     }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || items.length === 0) return;
     event.preventDefault();
-    const currentIndex = Math.max(0, items.indexOf(document.activeElement as HTMLButtonElement));
+    const currentIndex = Math.max(0, items.indexOf(activeElement as HTMLButtonElement));
     const nextIndex =
       event.key === 'Home'
         ? 0

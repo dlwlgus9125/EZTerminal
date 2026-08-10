@@ -1,3 +1,5 @@
+import { isDomElement } from './utils';
+
 interface IsolationState {
   count: number;
   readonly hadInert: boolean;
@@ -66,12 +68,13 @@ function collectBackgroundBranches(foregroundRoots: readonly HTMLElement[]): HTM
   }
 
   const background: HTMLElement[] = [];
-  const HTMLElementCtor = body.ownerDocument.defaultView?.HTMLElement ?? HTMLElement;
   const visit = (parent: HTMLElement): void => {
     for (const sibling of parent.children) {
-      if (!(sibling instanceof HTMLElementCtor) || rootSet.has(sibling)) continue;
-      if (foregroundPaths.has(sibling)) visit(sibling);
-      else background.push(sibling);
+      if (!isDomElement(sibling)) continue;
+      const element = sibling as HTMLElement;
+      if (rootSet.has(element)) continue;
+      if (foregroundPaths.has(element)) visit(element);
+      else background.push(element);
     }
   };
   visit(body);

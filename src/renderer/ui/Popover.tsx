@@ -12,7 +12,7 @@ import {
 } from 'react';
 
 import { useNativeOverlayRegistration } from '../native-overlay';
-import { classNames, getFocusableElements, mergeRefs } from './utils';
+import { classNames, getFocusableElements, isDomNode, mergeRefs } from './utils';
 
 interface PopoverTriggerProps extends HTMLAttributes<HTMLElement> {
   readonly disabled?: boolean;
@@ -60,8 +60,10 @@ export function Popover({
 
   useEffect(() => {
     if (!isOpen) return;
+    const ownerDocument = rootRef.current?.ownerDocument ?? document;
+    const ownerWindow = ownerDocument.defaultView ?? window;
     if (initialFocus) {
-      requestAnimationFrame(() => {
+      ownerWindow.requestAnimationFrame(() => {
         const content = contentRef.current;
         if (!content) return;
         (getFocusableElements(content)[0] ?? content).focus();
@@ -69,19 +71,19 @@ export function Popover({
     }
     const handlePointerDown = (event: PointerEvent): void => {
       const target = event.target;
-      if (target instanceof Node && !rootRef.current?.contains(target)) setOpen(false);
+      if (isDomNode(target) && !rootRef.current?.contains(target)) setOpen(false);
     };
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
       setOpen(false);
-      requestAnimationFrame(() => triggerRef.current?.focus());
+      ownerWindow.requestAnimationFrame(() => triggerRef.current?.focus());
     };
-    document.addEventListener('pointerdown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
+    ownerDocument.addEventListener('pointerdown', handlePointerDown);
+    ownerDocument.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
+      ownerDocument.removeEventListener('pointerdown', handlePointerDown);
+      ownerDocument.removeEventListener('keydown', handleKeyDown);
     };
   }, [initialFocus, isOpen, setOpen]);
 

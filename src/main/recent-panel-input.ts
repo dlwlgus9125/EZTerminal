@@ -1,4 +1,4 @@
-import type { RecentPanelInputEvent } from '../shared/ipc';
+import type { RecentPanelInputCommand } from '../shared/ipc';
 
 /** The Electron Input fields used by the Ctrl+Tab classifier. */
 export interface RecentPanelNativeInput {
@@ -14,7 +14,7 @@ export interface RecentPanelNativeInput {
 export interface RecentPanelInputDecision {
   readonly active: boolean;
   readonly preventDefault: boolean;
-  readonly event: RecentPanelInputEvent | null;
+  readonly event: RecentPanelInputCommand | null;
 }
 
 /**

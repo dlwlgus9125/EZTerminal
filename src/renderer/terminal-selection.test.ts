@@ -27,4 +27,22 @@ describe('selectedTextWithin', () => {
     pane.remove();
     outside.remove();
   });
+
+  it('uses the root owner document selection after the terminal is reparented', () => {
+    const frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    const ownerDocument = frame.contentDocument!;
+    const pane = ownerDocument.createElement('div');
+    pane.innerHTML = '<pre>popout output</pre>';
+    ownerDocument.body.appendChild(pane);
+    const selection = ownerDocument.defaultView!.getSelection()!;
+    const range = ownerDocument.createRange();
+    range.selectNodeContents(pane.querySelector('pre')!);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(selectedTextWithin(pane)).toBe('popout output');
+
+    frame.remove();
+  });
 });

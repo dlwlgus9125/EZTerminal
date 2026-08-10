@@ -49,6 +49,7 @@ export interface DesktopWindowManagerOptions {
   readonly onWindowConfigured?: (
     window: BrowserWindow,
     kind: DesktopWindowKind,
+    name?: string,
   ) => void;
   readonly reportError?: (context: string, error: unknown) => void;
 }
@@ -164,7 +165,7 @@ export class DesktopWindowManager {
     if (name) this.auxiliaryNames.set(window, name);
     window.setMenuBarVisibility(false);
     window.setAutoHideMenuBar(true);
-    this.options.onWindowConfigured?.(window, kind);
+    this.options.onWindowConfigured?.(window, kind, name);
 
     const sendState = (): void => {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) {

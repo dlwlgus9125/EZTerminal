@@ -30,10 +30,14 @@ const second: QuickCommand = {
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
+let frame: HTMLIFrameElement | null = null;
 
-function renderShelf(overrides: Partial<React.ComponentProps<typeof QuickCommandShelf>> = {}): HTMLDivElement {
-  container = document.createElement('div');
-  document.body.appendChild(container);
+function renderShelf(
+  overrides: Partial<React.ComponentProps<typeof QuickCommandShelf>> = {},
+  ownerDocument: Document = document,
+): HTMLDivElement {
+  container = ownerDocument.createElement('div');
+  ownerDocument.body.appendChild(container);
   root = createRoot(container);
   act(() => {
     root!.render(
@@ -61,6 +65,8 @@ afterEach(() => {
   root = null;
   container?.remove();
   container = null;
+  frame?.remove();
+  frame = null;
   window.localStorage.clear();
 });
 
@@ -130,5 +136,21 @@ describe('QuickCommandShelf interaction', () => {
     const manage = [...el.querySelectorAll('button')].find((button) => button.textContent?.includes('Manage'))!;
     act(() => manage.click());
     expect(onManage).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes from Escape dispatched by the owner window after reparenting', () => {
+    frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    const ownerDocument = frame.contentDocument!;
+    const ownerWindow = ownerDocument.defaultView!;
+    const el = renderShelf({}, ownerDocument);
+    act(() => el.querySelector<HTMLButtonElement>('[data-testid="quick-command-toggle"]')!.click());
+    expect(el.querySelector('[data-testid="quick-command-popover"]')).not.toBeNull();
+
+    act(() => {
+      ownerWindow.dispatchEvent(new ownerWindow.KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+
+    expect(el.querySelector('[data-testid="quick-command-popover"]')).toBeNull();
   });
 });

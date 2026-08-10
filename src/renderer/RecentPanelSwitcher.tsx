@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom';
+
 import { useAppTranslation } from './i18n';
 import { useNativeOverlayRegistration } from './native-overlay';
 
@@ -11,6 +13,7 @@ export interface RecentPanelSwitcherItem {
 export interface RecentPanelSwitcherProps {
   readonly items: readonly RecentPanelSwitcherItem[];
   readonly selectedPanelId: string;
+  readonly ownerDocument?: Document;
 }
 
 function optionId(panelId: string): string {
@@ -20,6 +23,7 @@ function optionId(panelId: string): string {
 export function RecentPanelSwitcher({
   items,
   selectedPanelId,
+  ownerDocument,
 }: RecentPanelSwitcherProps): JSX.Element {
   useNativeOverlayRegistration();
   const { t } = useAppTranslation();
@@ -29,7 +33,7 @@ export function RecentPanelSwitcher({
     ? `${selected.title}, ${selected.detail}${selected.statuses.length > 0 ? `, ${selected.statuses.join(', ')}` : ''}`
     : t('recentPanels.noSelection');
 
-  return (
+  const content = (
     <div className="recent-panel-switcher-overlay" data-testid="recent-panel-switcher">
       <div className="recent-panel-switcher" aria-label={t('recentPanels.label')}>
         <div className="recent-panel-switcher-head">
@@ -85,4 +89,5 @@ export function RecentPanelSwitcher({
       </div>
     </div>
   );
+  return ownerDocument ? createPortal(content, ownerDocument.body) : content;
 }

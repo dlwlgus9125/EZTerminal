@@ -10,12 +10,15 @@ import { isRecentPanelInputEvent } from './ipc';
 
 describe('recent panel desktop input event', () => {
   it('accepts only the narrow cycle/commit/cancel union', () => {
-    expect(isRecentPanelInputEvent({ type: 'cycle', reverse: true })).toBe(true);
-    expect(isRecentPanelInputEvent({ type: 'commit' })).toBe(true);
-    expect(isRecentPanelInputEvent({ type: 'cancel', restoreFocus: false })).toBe(true);
-    expect(isRecentPanelInputEvent({ type: 'cycle', reverse: 'yes' })).toBe(false);
-    expect(isRecentPanelInputEvent({ type: 'cancel' })).toBe(false);
-    expect(isRecentPanelInputEvent({ type: 'commit', command: 'hidden payload' })).toBe(false);
+    const main = { kind: 'main' } as const;
+    const auxiliary = { kind: 'auxiliary', windowName: 'dockview-popout-1' } as const;
+    expect(isRecentPanelInputEvent({ type: 'cycle', reverse: true, source: auxiliary })).toBe(true);
+    expect(isRecentPanelInputEvent({ type: 'commit', source: main })).toBe(true);
+    expect(isRecentPanelInputEvent({ type: 'cancel', restoreFocus: false, source: auxiliary })).toBe(true);
+    expect(isRecentPanelInputEvent({ type: 'cycle', reverse: 'yes', source: main })).toBe(false);
+    expect(isRecentPanelInputEvent({ type: 'cancel', source: main })).toBe(false);
+    expect(isRecentPanelInputEvent({ type: 'commit', source: { kind: 'auxiliary' } })).toBe(false);
+    expect(isRecentPanelInputEvent({ type: 'commit', source: main, command: 'hidden payload' })).toBe(false);
     expect(isRecentPanelInputEvent({ type: 'run', command: 'rm -rf' })).toBe(false);
   });
 });

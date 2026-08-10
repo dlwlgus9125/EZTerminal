@@ -412,12 +412,19 @@ function installPackagedRendererProtocol(): void {
  * every native window, but route the data-free command to the sole main
  * renderer where the shared Dockview instance lives.
  */
-function configureRecentPanelInput(window: BrowserWindow): void {
+function configureRecentPanelInput(
+  window: BrowserWindow,
+  kind: import('../shared/desktop-window').DesktopWindowKind,
+  windowName?: string,
+): void {
   let active = false;
-  const send = (input: import('../shared/ipc').RecentPanelInputEvent): void => {
+  const source: import('../shared/ipc').RecentPanelWindowSource = kind === 'main'
+    ? { kind: 'main' }
+    : { kind: 'auxiliary', windowName: windowName ?? '' };
+  const send = (input: import('../shared/ipc').RecentPanelInputCommand): void => {
     const mainWindow = mainWindowRef;
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-      mainWindow.webContents.send('recent-panels:input', input);
+      mainWindow.webContents.send('recent-panels:input', { ...input, source });
     }
   };
   window.webContents.on('before-input-event', (event, input) => {
@@ -591,7 +598,7 @@ app.on('ready', async () => {
     isAppQuitting: () => appIsQuitting,
     quitApp: () => app.quit(),
     openExternal: openExternalForUser,
-    onWindowConfigured: (window) => configureRecentPanelInput(window),
+    onWindowConfigured: (window, kind, name) => configureRecentPanelInput(window, kind, name),
     reportError: (context, error) => {
       console.error(`[main] ${context}:`, error);
       mainLog?.line(`${context}: ${String(error)}`);

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { quoteEzArgument } from '../shared/quote-ez-argument';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
+import { addAppWindowEventListener } from './desktop-window-registry';
 import { useAppTranslation } from './i18n';
 import { useNativeOverlayRegistration } from './native-overlay';
 import { getPaneHandle } from './pane-registry';
@@ -44,14 +46,19 @@ export interface FileDropOverlayProps {
   readonly capabilities?: CapabilityAccess;
 }
 
+interface FileDragTarget {
+  readonly ownerDocument: Document;
+  readonly depth: number;
+}
+
 export function FileDropOverlay({
   activePanelId,
   agentSessionIds,
   capabilities = rendererCapabilities,
 }: FileDropOverlayProps): JSX.Element | null {
   const { t, i18n } = useAppTranslation();
-  const [dragDepth, setDragDepth] = useState(0);
-  useNativeOverlayRegistration(dragDepth > 0);
+  const [dragTarget, setDragTarget] = useState<FileDragTarget | null>(null);
+  useNativeOverlayRegistration(dragTarget !== null);
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const maxDroppedPaths = useMemo(
     () => new Intl.NumberFormat(locale).format(MAX_DROPPED_PATHS),
@@ -68,13 +75,19 @@ export function FileDropOverlay({
   agentSessionsRef.current = agentSessionIds;
 
   useEffect(() => {
-    const showToast = (message: string): void => {
-      pushToastRef.current({ title: message, variant: 'warning' });
+    const eventDocument = (event: Event): Document => (
+      (event.currentTarget as Window | null)?.document ?? document
+    );
+    const showToast = (message: string, ownerDocument: Document): void => {
+      pushToastRef.current({ title: message, variant: 'warning' }, ownerDocument);
     };
     const onDragEnter = (event: DragEvent): void => {
       if (!supportsPathDrop(event.dataTransfer)) return;
       event.preventDefault();
-      setDragDepth((depth) => depth + 1);
+      const ownerDocument = eventDocument(event);
+      setDragTarget((current) => current?.ownerDocument === ownerDocument
+        ? { ownerDocument, depth: current.depth + 1 }
+        : { ownerDocument, depth: 1 });
     };
     const onDragOver = (event: DragEvent): void => {
       if (!supportsPathDrop(event.dataTransfer)) return;
@@ -83,12 +96,17 @@ export function FileDropOverlay({
     };
     const onDragLeave = (event: DragEvent): void => {
       if (!supportsPathDrop(event.dataTransfer)) return;
-      setDragDepth((depth) => Math.max(0, depth - 1));
+      const ownerDocument = eventDocument(event);
+      setDragTarget((current) => {
+        if (!current || current.ownerDocument !== ownerDocument) return current;
+        return current.depth <= 1 ? null : { ownerDocument, depth: current.depth - 1 };
+      });
     };
     const onDrop = (event: DragEvent): void => {
       if (!supportsPathDrop(event.dataTransfer)) return;
       event.preventDefault();
-      setDragDepth(0);
+      const ownerDocument = eventDocument(event);
+      setDragTarget(null);
       const transfer = event.dataTransfer;
       if (!transfer) return;
       const paths: string[] = [];
@@ -100,7 +118,7 @@ export function FileDropOverlay({
             for (const value of parsed) if (typeof value === 'string') paths.push(value);
           }
         } catch {
-          showToast(t('fileDrop.invalidData'));
+          showToast(t('fileDrop.invalidData'), ownerDocument);
           return;
         }
       }
@@ -110,58 +128,58 @@ export function FileDropOverlay({
       }
       const unique = uniquePaths(paths);
       if (unique.length === 0) {
-        showToast(t('fileDrop.noPaths'));
+        showToast(t('fileDrop.noPaths'), ownerDocument);
         return;
       }
       if (unique.length > MAX_DROPPED_PATHS) {
-        showToast(t('fileDrop.tooManyPaths', { value: maxDroppedPaths }));
+        showToast(t('fileDrop.tooManyPaths', { value: maxDroppedPaths }), ownerDocument);
         return;
       }
       const panelId = activePanelIdRef.current;
       const pane = panelId ? getPaneHandle(panelId) : undefined;
       if (!pane) {
-        showToast(t('fileDrop.noActiveTerminal'));
+        showToast(t('fileDrop.noActiveTerminal'), ownerDocument);
         return;
       }
       const snapshot = pane.getSnapshot();
       if (snapshot.isDead) {
-        showToast(t('fileDrop.terminalEnded'));
+        showToast(t('fileDrop.terminalEnded'), ownerDocument);
         return;
       }
       if (snapshot.activePty) {
         if (!snapshot.sessionId || !agentSessionsRef.current.has(snapshot.sessionId)) {
-          showToast(t('fileDrop.nonAgentDisabled'));
+          showToast(t('fileDrop.nonAgentDisabled'), ownerDocument);
           return;
         }
         const result = pane.pasteToPty(unique.map(quotePtyPath).join(' '));
-        if (!result.ok) showToast(t('fileDrop.agentPasteFailed'));
+        if (!result.ok) showToast(t('fileDrop.agentPasteFailed'), ownerDocument);
         return;
       }
       if (snapshot.isBusy) {
-        showToast(t('fileDrop.waitForCommand'));
+        showToast(t('fileDrop.waitForCommand'), ownerDocument);
         return;
       }
       const result = pane.insertText(unique.map(quoteEzArgument).join(' '));
-      if (!result.ok) showToast(t('fileDrop.insertFailed'));
+      if (!result.ok) showToast(t('fileDrop.insertFailed'), ownerDocument);
     };
 
-    window.addEventListener('dragenter', onDragEnter, true);
-    window.addEventListener('dragover', onDragOver, true);
-    window.addEventListener('dragleave', onDragLeave, true);
-    window.addEventListener('drop', onDrop, true);
+    const removers = [
+      addAppWindowEventListener('dragenter', onDragEnter as EventListener, true),
+      addAppWindowEventListener('dragover', onDragOver as EventListener, true),
+      addAppWindowEventListener('dragleave', onDragLeave as EventListener, true),
+      addAppWindowEventListener('drop', onDrop as EventListener, true),
+      addAppWindowEventListener('unload', (() => setDragTarget(null)) as EventListener),
+    ];
     return () => {
-      window.removeEventListener('dragenter', onDragEnter, true);
-      window.removeEventListener('dragover', onDragOver, true);
-      window.removeEventListener('dragleave', onDragLeave, true);
-      window.removeEventListener('drop', onDrop, true);
+      for (const remove of removers) remove();
     };
   }, [capabilities, maxDroppedPaths, t]);
 
-  if (dragDepth <= 0) return null;
-  return (
+  if (!dragTarget || dragTarget.ownerDocument.defaultView?.closed) return null;
+  return createPortal((
     <div className="file-drop-overlay" aria-hidden="true" data-testid="file-drop-overlay">
       <span>{t('fileDrop.prompt')}</span>
       <small>{t('fileDrop.safety')}</small>
     </div>
-  );
+  ), dragTarget.ownerDocument.body);
 }

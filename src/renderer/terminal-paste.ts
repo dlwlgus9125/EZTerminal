@@ -17,8 +17,8 @@ export type TerminalNoticeKind =
 export interface TerminalPasteRuntime {
   readonly readClipboard?: () => Promise<TerminalClipboardSnapshot>;
   readonly pastePreferences?: TerminalPastePreferences;
-  readonly confirmPaste?: (risk: TerminalPasteRisk) => Promise<boolean>;
-  readonly notifyTerminal?: (notice: TerminalNoticeKind) => void;
+  readonly confirmPaste?: (risk: TerminalPasteRisk, ownerDocument?: Document) => Promise<boolean>;
+  readonly notifyTerminal?: (notice: TerminalNoticeKind, ownerDocument?: Document) => void;
 }
 
 interface TerminalPasteRequest {
@@ -70,16 +70,21 @@ export function pasteFromRuntimeClipboard(
   request: Omit<
     TerminalPasteRequest,
     'readClipboard' | 'pastePreferences' | 'confirmPaste' | 'notify'
-  >,
+  > & { readonly ownerDocument?: Document },
 ): Promise<void> {
+  const { ownerDocument, ...pasteRequest } = request;
   return pasteFromTerminalClipboard({
-    ...request,
+    ...pasteRequest,
     readClipboard: runtime.readClipboard ?? (async () => ({
       hasImage: false,
       text: await navigator.clipboard.readText(),
     })),
     pastePreferences: runtime.pastePreferences,
-    confirmPaste: runtime.confirmPaste,
-    notify: runtime.notifyTerminal,
+    confirmPaste: runtime.confirmPaste
+      ? (risk) => runtime.confirmPaste!(risk, ownerDocument)
+      : undefined,
+    notify: runtime.notifyTerminal
+      ? (notice) => runtime.notifyTerminal!(notice, ownerDocument)
+      : undefined,
   });
 }

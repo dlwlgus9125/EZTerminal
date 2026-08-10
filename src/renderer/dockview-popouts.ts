@@ -18,6 +18,7 @@ const CROSS_WINDOW_FOCUS_TIMEOUT_MS = 2_000;
 export interface DockviewPopoutBehaviorOptions {
   readonly onOpenFailed?: () => void;
   readonly onPanelMovedAcrossWindows?: (panelId: string) => boolean;
+  readonly onNonDetachablePanelInPopout?: (panel: IDockviewPanel) => void;
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -62,6 +63,21 @@ export function installDockviewPopoutBehavior(
   }));
   disposables.push(api.onDidOpenPopoutWindowFail(() => options.onOpenFailed?.()));
 
+  const enforcePanelLocation = (panel: IDockviewPanel): boolean => {
+    if (isDetachablePanel(panel) || panel.api.location.type !== 'popout') return false;
+    options.onNonDetachablePanelInPopout?.(panel);
+    return true;
+  };
+  const deferPanelLocationCheck = (panel: IDockviewPanel): void => {
+    queueMicrotask(() => {
+      if (!disposed && api.getPanel(panel.id) === panel) enforcePanelLocation(panel);
+    });
+  };
+  disposables.push(api.onDidAddPanel(deferPanelLocationCheck));
+  disposables.push(api.onDidLayoutFromJSON(() => {
+    for (const panel of api.panels) deferPanelLocationCheck(panel);
+  }));
+
   // A popout accepts DOM-backed terminal and Agent Session panels. Keep
   // main-owned native surfaces such as OpenClaw chat out of auxiliary windows.
   disposables.push(api.onWillShowOverlay((event) => {
@@ -73,6 +89,7 @@ export function installDockviewPopoutBehavior(
   }));
 
   disposables.push(api.onDidMovePanel(({ panel, from }) => {
+    if (enforcePanelLocation(panel)) return;
     const generation = (focusGenerations.get(panel) ?? 0) + 1;
     focusGenerations.set(panel, generation);
     const sourceWindow = from.api.getWindow();

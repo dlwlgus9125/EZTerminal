@@ -35,6 +35,7 @@ import {
 import { pasteFromRuntimeClipboard } from './terminal-paste';
 import { selectedTextWithin } from './terminal-selection';
 import { QuickCommandShelf } from './QuickCommandShelf';
+import { isDomElement, isDomNode } from './ui/utils';
 import {
   closeRunPort,
   getRunPortBroker,
@@ -135,7 +136,7 @@ interface TerminalPaneProps {
   readonly commandSubmissionLocked?: boolean;
   readonly isCommandSubmissionLocked?: () => boolean;
   readonly quickCommands?: readonly QuickCommand[];
-  readonly onManageQuickCommands?: () => void;
+  readonly onManageQuickCommands?: (ownerDocument: Document) => void;
   /** The permission call the agent in THIS pane is parked on, if any. */
   readonly pendingApproval?: PaneApproval;
   readonly onDecideApproval?: (
@@ -911,6 +912,7 @@ export function TerminalPane({
     const controller = activeController.current;
     if (!controller || controller.getSnapshot().status !== 'running') return;
     void pasteFromRuntimeClipboard(resolvedTerminalRuntimeOptions, {
+      ownerDocument: paneRef.current?.ownerDocument,
       isCodex: classifyDirectAgentCommand(controller.command) === 'codex',
       mode,
       deliverImage: () => {
@@ -925,15 +927,20 @@ export function TerminalPane({
   const capturePaneContextMenuSource = useCallback(
     (target: EventTarget | null): PaneContextMenuSource => {
       const input = cmdInputRef.current;
-      const draftSelectionStart = input?.selectionStart ?? command.length;
+      // Context menus are opened from a native event. Read the live control
+      // value with its selection in the same turn; React state can still be
+      // one commit behind after Dockview reparents the controlled input into
+      // an auxiliary document.
+      const draftValue = input?.value ?? command;
+      const draftSelectionStart = input?.selectionStart ?? draftValue.length;
       const draftSelectionEnd = input?.selectionEnd ?? draftSelectionStart;
       const inputWasClicked = input !== null
-        && target instanceof Node
+        && isDomNode(target)
         && (target === input || input.contains(target));
       return {
         kind: inputWasClicked ? 'input' : 'pane',
         selectedText: inputWasClicked
-          ? command.slice(draftSelectionStart, draftSelectionEnd)
+          ? draftValue.slice(draftSelectionStart, draftSelectionEnd)
           : selectedTextWithin(paneRef.current),
         draftSelectionStart,
         draftSelectionEnd,
@@ -971,6 +978,7 @@ export function TerminalPane({
         return;
       }
       void pasteFromRuntimeClipboard(resolvedTerminalRuntimeOptions, {
+        ownerDocument: paneRef.current?.ownerDocument,
         isCodex: false,
         mode: 'text',
         deliverImage: () => {},
@@ -1074,7 +1082,7 @@ export function TerminalPane({
           event.defaultPrevented
           || event.currentTarget.ownerDocument.defaultView?.matchMedia?.('(pointer: coarse)').matches
           || (
-            event.target instanceof Element
+            isDomElement(event.target)
             && event.target.closest('.terminal-context-menu')
           )
         ) {
@@ -1095,7 +1103,7 @@ export function TerminalPane({
           event.defaultPrevented
           || !isTerminalContextMenuKey(event.nativeEvent)
           || (
-            event.target instanceof Element
+            isDomElement(event.target)
             && event.target.closest('.terminal-context-menu')
           )
         ) {
@@ -1103,7 +1111,9 @@ export function TerminalPane({
         }
         event.preventDefault();
         event.stopPropagation();
-        const host = event.target instanceof HTMLElement ? event.target : event.currentTarget;
+        const host = isDomElement(event.target)
+          ? event.target as HTMLElement
+          : event.currentTarget;
         openPaneContextMenu(keyboardTerminalContextMenuInvocation(host), event.target);
       }}
     >
@@ -1257,7 +1267,10 @@ export function TerminalPane({
                   && controller
                   && takeCodexInterruptNotice(controller)
                 ) {
-                  resolvedTerminalRuntimeOptions.notifyTerminal?.('codex-interrupt-help');
+                  resolvedTerminalRuntimeOptions.notifyTerminal?.(
+                    'codex-interrupt-help',
+                    paneRef.current?.ownerDocument,
+                  );
                 }
                 return;
               }

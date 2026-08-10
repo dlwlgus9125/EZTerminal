@@ -18,6 +18,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
+import { getActiveAppDocument } from '../desktop-window-registry';
 import { useNativeOverlayRegistration } from '../native-overlay';
 import { IconButton } from './Button';
 import { classNames } from './utils';
@@ -35,10 +36,11 @@ export interface ToastOptions {
 
 interface ToastRecord extends ToastOptions {
   readonly id: string;
+  readonly ownerDocument: Document;
 }
 
 interface ToastContextValue {
-  readonly pushToast: (options: ToastOptions) => string;
+  readonly pushToast: (options: ToastOptions, ownerDocument?: Document) => string;
   readonly dismissToast: (id: string) => void;
 }
 
@@ -55,6 +57,7 @@ const TOAST_ICONS: Record<ToastVariant, LucideIcon> = {
 export interface ToastProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'>, ToastOptions {
   readonly onDismiss?: () => void;
   readonly dismissLabel?: string;
+  readonly ownerDocument?: Document;
 }
 
 export function Toast({
@@ -64,6 +67,7 @@ export function Toast({
   dismissLabel = 'Dismiss notification',
   duration = 4200,
   onDismiss,
+  ownerDocument = document,
   title,
   variant = 'info',
   ...props
@@ -74,9 +78,10 @@ export function Toast({
 
   useEffect(() => {
     if (duration <= 0 || paused || !onDismiss) return;
-    const timer = window.setTimeout(onDismiss, duration);
-    return () => window.clearTimeout(timer);
-  }, [duration, onDismiss, paused]);
+    const ownerWindow = ownerDocument.defaultView ?? window;
+    const timer = ownerWindow.setTimeout(onDismiss, duration);
+    return () => ownerWindow.clearTimeout(timer);
+  }, [duration, onDismiss, ownerDocument, paused]);
 
   return (
     <div
@@ -117,28 +122,49 @@ export function ToastProvider({
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
   const pushToast = useCallback(
-    (options: ToastOptions): string => {
+    (options: ToastOptions, ownerDocument?: Document): string => {
       toastSequence += 1;
       const id = `ez-ui-toast-${toastSequence}`;
-      setToasts((current) => [...current, { ...options, id }].slice(-Math.max(1, maxVisible)));
+      const targetDocument = ownerDocument ?? getActiveAppDocument();
+      setToasts((current) => {
+        const otherDocuments = current.filter((toast) => toast.ownerDocument !== targetDocument);
+        const targetToasts = current
+          .filter((toast) => toast.ownerDocument === targetDocument)
+          .concat({ ...options, id, ownerDocument: targetDocument })
+          .slice(-Math.max(1, maxVisible));
+        return [...otherDocuments, ...targetToasts];
+      });
       return id;
     },
     [maxVisible],
   );
   const context = useMemo(() => ({ dismissToast, pushToast }), [dismissToast, pushToast]);
+  const groupedToasts = useMemo(() => {
+    const groups = new Map<Document, ToastRecord[]>();
+    if (typeof document !== 'undefined') groups.set(document, []);
+    for (const toast of toasts) {
+      const group = groups.get(toast.ownerDocument);
+      if (group) group.push(toast);
+      else groups.set(toast.ownerDocument, [toast]);
+    }
+    return [...groups];
+  }, [toasts]);
 
   return (
     <ToastContext.Provider value={context}>
       {children}
-      {typeof document !== 'undefined' &&
-        createPortal(
+      {typeof document !== 'undefined' && groupedToasts.map(([ownerDocument, records], index) => {
+        if (!ownerDocument.body || ownerDocument.defaultView?.closed) return null;
+        return createPortal(
           <div className="ez-ui-toast-viewport" role="region" aria-label={viewportLabel}>
-            {toasts.map((toast) => (
+            {records.map((toast) => (
               <Toast key={toast.id} {...toast} onDismiss={() => dismissToast(toast.id)} />
             ))}
           </div>,
-          document.body,
-        )}
+          ownerDocument.body,
+          `toast-viewport-${index}`,
+        );
+      })}
     </ToastContext.Provider>
   );
 }

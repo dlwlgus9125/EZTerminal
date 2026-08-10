@@ -41,6 +41,7 @@ import {
 import { pasteFromRuntimeClipboard } from './terminal-paste';
 import { selectedTextWithin } from './terminal-selection';
 import { addAppWindowEventListener } from './desktop-window-registry';
+import { isDomElement } from './ui/utils';
 import {
   DEFAULT_TERMINAL_RUNTIME_OPTIONS,
   XtermRuntime,
@@ -224,6 +225,7 @@ function PtyXtermView({
     // framing whenever the child enabled it.
     const requestClipboardPaste = (mode: 'default' | 'text'): void => {
       void pasteFromRuntimeClipboard(terminalRuntimeOptionsRef.current, {
+        ownerDocument: el.ownerDocument,
         isCodex,
         mode,
         deliverImage: () => {
@@ -292,7 +294,7 @@ function PtyXtermView({
         action.notice === 'codex-interrupt-help'
         && takeCodexInterruptNotice(controller)
       ) {
-        terminalRuntimeOptionsRef.current.notifyTerminal?.('codex-interrupt-help');
+        terminalRuntimeOptionsRef.current.notifyTerminal?.('codex-interrupt-help', el.ownerDocument);
       }
       return false;
     });
@@ -651,6 +653,7 @@ function PtyXtermView({
       return;
     }
     void pasteFromRuntimeClipboard(runtimeOptions, {
+      ownerDocument: containerRef.current?.ownerDocument,
       isCodex: classifyDirectAgentCommand(controller.command) === 'codex',
       mode: 'default',
       deliverImage: () => controller.sendPtyInput('\x16'),
@@ -854,7 +857,7 @@ function PtyPlainView({
       if (
         !host
         || !originPane
-        || !(active instanceof Element)
+        || !isDomElement(active)
         || (!host.contains(active) && !active.matches('.cmd-input'))
         || active.closest('.pane') !== originPane
         || active.closest('.terminal-context-menu')
@@ -885,6 +888,7 @@ function PtyPlainView({
       return;
     }
     void pasteFromRuntimeClipboard(runtimeOptions, {
+      ownerDocument: containerRef.current?.ownerDocument,
       isCodex,
       mode: 'default',
       deliverImage: () => controller.sendPtyInput('\x16'),

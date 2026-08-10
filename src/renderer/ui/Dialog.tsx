@@ -42,6 +42,8 @@ export interface DialogProps {
   readonly testId?: string;
   /** Stable integration-test seam for the built-in dismiss action. */
   readonly closeButtonTestId?: string;
+  /** Document that owns this modal for its entire open lifetime. */
+  readonly ownerDocument?: Document;
 }
 
 export function Dialog({
@@ -57,6 +59,7 @@ export function Dialog({
   initialFocusRef,
   onOpenChange,
   open,
+  ownerDocument,
   role = 'dialog',
   size = 'md',
   title,
@@ -71,17 +74,22 @@ export function Dialog({
   const dismissibleRef = useRef(dismissible);
   const initialFocusTargetRef = useRef(initialFocusRef);
   const onOpenChangeRef = useRef(onOpenChange);
+  const portalDocumentRef = useRef<Document | null>(null);
   dismissibleRef.current = dismissible;
   initialFocusTargetRef.current = initialFocusRef;
   onOpenChangeRef.current = onOpenChange;
   useNativeOverlayRegistration(open);
-  const portalDocument = open ? getActiveAppDocument() : document;
+  if (!open) portalDocumentRef.current = null;
+  else portalDocumentRef.current ??= ownerDocument ?? getActiveAppDocument();
+  const portalDocument = portalDocumentRef.current ?? ownerDocument ?? document;
 
   useEffect(() => {
     if (!open) return;
     const ownerWindow = portalDocument.defaultView ?? window;
-    previousFocusRef.current = portalDocument.activeElement instanceof ownerWindow.HTMLElement
-      ? portalDocument.activeElement
+    const activeElement = portalDocument.activeElement;
+    previousFocusRef.current = activeElement
+      && typeof (activeElement as HTMLElement).focus === 'function'
+      ? activeElement as HTMLElement
       : null;
     const backdrop = panelRef.current?.closest<HTMLElement>('.ez-ui-dialog-backdrop');
     const releaseLayer = backdrop

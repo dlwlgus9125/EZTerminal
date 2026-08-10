@@ -47,7 +47,7 @@ API token, 비밀번호, 초대 토큰, 복구 코드는 채팅, 이 문서, 커
   두 단계 SignPath 경로가 모두 구현돼 있다. `release/version.json`의 명시적
   모드와 여섯 GitHub 설정의 완전성이 일치해야 한다. 일부 설정이나 SignPath
   실패를 무서명으로 우회하지 않는다.
-- 현재 버전 계약은 `1.0.29`, Android versionCode `50`, protocol `7`,
+- 현재 버전 계약은 `1.0.30`, Android versionCode `51`, protocol `7`,
   validation profile `functional-hotfix`, Windows signing mode `unsigned`다.
   이 값은 재개 시 다시 확인한다.
 - 기존 1.0.23 GitHub Release의 Windows 파일은 과거에 게시된 무서명

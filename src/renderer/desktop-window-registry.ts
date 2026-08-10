@@ -5,11 +5,15 @@ const MIRRORED_STYLE_IDS = ['ez-theme-vars', 'ez-fx-keyframes'] as const;
 let sourceObserver: MutationObserver | null = null;
 let sourceHeadObserver: MutationObserver | null = null;
 let lastFocusedWindow: Window | null = typeof window === 'undefined' ? null : window;
+const ACTIVITY_EVENTS = ['focus', 'focusin', 'pointerdown'] as const;
+
+function rememberWindow(targetWindow: Window): void {
+  if (!targetWindow.closed) lastFocusedWindow = targetWindow;
+}
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('focus', () => {
-    lastFocusedWindow = window;
-  });
+  const rememberMain = (): void => rememberWindow(window);
+  for (const type of ACTIVITY_EVENTS) window.addEventListener(type, rememberMain, true);
 }
 
 function syncStyleElement(targetDocument: Document, id: string): void {
@@ -81,14 +85,17 @@ export function registerAuxiliaryWindow(targetWindow: Window): () => void {
   ensureObserver();
   syncWindow(targetWindow);
   notify();
-  const markFocused = (): void => {
-    lastFocusedWindow = targetWindow;
-  };
-  targetWindow.addEventListener('focus', markFocused);
+  const markFocused = (): void => rememberWindow(targetWindow);
+  for (const type of ACTIVITY_EVENTS) targetWindow.addEventListener(type, markFocused, true);
+  try {
+    if (targetWindow.document.hasFocus()) rememberWindow(targetWindow);
+  } catch {
+    // A just-opened window can close before its document focus can be read.
+  }
   const remove = (): void => {
     if (!auxiliaryWindows.delete(targetWindow)) return;
     targetWindow.removeEventListener('unload', remove);
-    targetWindow.removeEventListener('focus', markFocused);
+    for (const type of ACTIVITY_EVENTS) targetWindow.removeEventListener(type, markFocused, true);
     if (lastFocusedWindow === targetWindow) lastFocusedWindow = window;
     notify();
   };
@@ -126,12 +133,19 @@ export function pointIsInsideAppWindow(screenX: number, screenY: number): boolea
 }
 
 export function getActiveAppDocument(): Document {
-  for (const candidate of getAppWindows()) {
+  const candidates = getAppWindows();
+  if (lastFocusedWindow && candidates.includes(lastFocusedWindow) && !lastFocusedWindow.closed) {
     try {
-      if (candidate.document.hasFocus()) {
-        lastFocusedWindow = candidate;
-        return candidate.document;
-      }
+      return lastFocusedWindow.document;
+    } catch {
+      // A closing popout can become inaccessible between enumeration and use.
+    }
+  }
+  for (const candidate of candidates) {
+    try {
+      if (!candidate.document.hasFocus()) continue;
+      rememberWindow(candidate);
+      return candidate.document;
     } catch {
       // A closing popout can become inaccessible between enumeration and use.
     }
@@ -142,6 +156,19 @@ export function getActiveAppDocument(): Document {
   return !lastFocusedWindow || lastFocusedWindow.closed
     ? document
     : lastFocusedWindow.document;
+}
+
+export function getAppDocumentByWindowName(windowName: string | null): Document | null {
+  if (typeof document === 'undefined') return null;
+  if (windowName === null) return document;
+  for (const candidate of getAppWindows()) {
+    try {
+      if (candidate !== window && candidate.name === windowName) return candidate.document;
+    } catch {
+      // Ignore a popout that closed while resolving its stable frame name.
+    }
+  }
+  return null;
 }
 
 export function addAppWindowEventListener(

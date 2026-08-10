@@ -13,6 +13,7 @@ import {
   DockviewReact,
   type DockviewApi,
   type DockviewReadyEvent,
+  type IDockviewPanel,
   type IDockviewPanelProps,
   type IDockviewPanelHeaderProps,
 } from 'dockview-react';
@@ -145,7 +146,12 @@ import {
   isDetachablePanel,
   installDockviewPopoutBehavior,
 } from './dockview-popouts';
-import { addAppWindowEventListener } from './desktop-window-registry';
+import {
+  addAppWindowEventListener,
+  getActiveAppDocument,
+  getAppDocumentByWindowName,
+  subscribeAuxiliaryWindows,
+} from './desktop-window-registry';
 import { useAppUpdate } from './use-app-update';
 import {
   buildCommandCenterActionRows,
@@ -196,6 +202,7 @@ import {
 } from './workbench-coordinator';
 import { WorkspaceReplacementCoordinator } from './workspace-replacement-coordinator';
 import { applyWorkbenchLayoutPreset, type WorkbenchLayoutPreset } from './workbench-layout-presets';
+import { findMainGridPanel, movePanelToMainGrid } from './main-window-panel-routing';
 import { DEFAULT_TERMINAL_RUNTIME_OPTIONS, type TerminalRuntimeOptions } from './xterm-runtime';
 
 // Desktop's per-effect default-on state (App.tsx's `applyTheme`/`onToggleEffect`
@@ -280,7 +287,7 @@ const PresetMutationContext = createContext<PresetMutationContextValue>({
 
 interface QuickCommandShelfContextValue {
   readonly commands: readonly QuickCommand[];
-  readonly onManage: () => void;
+  readonly onManage: (ownerDocument: Document) => void;
 }
 const QuickCommandShelfContext = createContext<QuickCommandShelfContextValue | null>(null);
 
@@ -324,6 +331,7 @@ interface AuxiliaryCloseDialogState {
 
 interface PendingPasteConfirmation {
   readonly risk: TerminalPasteRisk;
+  readonly ownerDocument: Document;
   readonly resolve: (confirmed: boolean) => void;
 }
 
@@ -611,6 +619,7 @@ export function App(): JSX.Element {
   const sidebarReflow = useSidebarReflow();
   const projectWide = useSidebarReflow('(min-width: 1024px)');
   const apiRef = useRef<DockviewApi | null>(null);
+  const lastMainGridPanelRef = useRef<IDockviewPanel | null>(null);
   const activeAgentSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
   const popoutBehaviorRef = useRef<{ dispose(): void } | null>(null);
   const sessionMirroringConnectionRef = useRef<(() => void) | null>(null);
@@ -635,6 +644,8 @@ export function App(): JSX.Element {
   const projectDrillActive = activeProjectId !== null;
   const projectReviewLayoutRef = useRef<ProjectReviewLayoutSnapshot | null>(null);
   const [recentPanelSwitch, setRecentPanelSwitch] = useState<RecentPanelSwitchSession | null>(null);
+  const [recentPanelOwnerDocument, setRecentPanelOwnerDocument] = useState<Document | null>(null);
+  const recentPanelOwnerDocumentRef = useRef<Document | null>(null);
   const sessionMirroringCoordinatorRef = useRef<SessionMirroringCoordinator | null>(null);
   const workbenchCoordinatorRef = useRef<WorkbenchCoordinator | null>(null);
   if (workbenchCoordinatorRef.current === null) {
@@ -652,6 +663,8 @@ export function App(): JSX.Element {
       onActivePanelChange: (panelId, source) => {
         setActivePanelId(panelId);
         setPaneCount(apiRef.current?.panels.length ?? 0);
+        const panel = panelId ? apiRef.current?.getPanel(panelId) : undefined;
+        if (panel?.api.location.type === 'grid') lastMainGridPanelRef.current = panel;
         if (source !== 'activation') return;
         requestAnimationFrame(() => {
           const activeTab =
@@ -788,10 +801,13 @@ export function App(): JSX.Element {
   }, []);
   const pendingPasteConfirmationRef = useRef<PendingPasteConfirmation | null>(null);
   const [pendingPasteConfirmation, setPendingPasteConfirmation] = useState<PendingPasteConfirmation | null>(null);
-  const requestPasteConfirmation = useCallback((risk: TerminalPasteRisk): Promise<boolean> => {
+  const requestPasteConfirmation = useCallback((
+    risk: TerminalPasteRisk,
+    ownerDocument: Document = getActiveAppDocument(),
+  ): Promise<boolean> => {
     if (pendingPasteConfirmationRef.current) return Promise.resolve(false);
     return new Promise<boolean>((resolve) => {
-      const pending = { risk, resolve };
+      const pending = { risk, ownerDocument, resolve };
       pendingPasteConfirmationRef.current = pending;
       setPendingPasteConfirmation(pending);
     });
@@ -808,13 +824,16 @@ export function App(): JSX.Element {
     pendingPasteConfirmationRef.current = null;
     pending?.resolve(false);
   }, []);
-  const notifyTerminal = useCallback((notice: TerminalNoticeKind): void => {
+  const notifyTerminal = useCallback((
+    notice: TerminalNoticeKind,
+    ownerDocument: Document = getActiveAppDocument(),
+  ): void => {
     if (notice === 'codex-interrupt-help') {
       pushToast({
         title: t('terminalSafety.codexInterruptTitle'),
         description: t('terminalSafety.codexInterruptDescription'),
         variant: 'info',
-      });
+      }, ownerDocument);
       return;
     }
     if (notice === 'clipboard-read-failed') {
@@ -822,7 +841,7 @@ export function App(): JSX.Element {
         title: t('terminalSafety.clipboardReadFailedTitle'),
         description: t('terminalSafety.clipboardReadFailedDescription'),
         variant: 'warning',
-      });
+      }, ownerDocument);
       return;
     }
     if (notice === 'clipboard-no-text') {
@@ -830,14 +849,14 @@ export function App(): JSX.Element {
         title: t('terminalSafety.clipboardNoTextTitle'),
         description: t('terminalSafety.clipboardNoTextDescription'),
         variant: 'info',
-      });
+      }, ownerDocument);
       return;
     }
     pushToast({
       title: t('terminalSafety.clipboardEmptyTitle'),
       description: t('terminalSafety.clipboardEmptyDescription'),
       variant: 'info',
-    });
+    }, ownerDocument);
   }, [pushToast, t]);
 
   // ── OpenClaw desktop visibility (openclaw-stabilization M2) ───────────────
@@ -1053,6 +1072,7 @@ export function App(): JSX.Element {
     readonly id: number;
   }>({ category: 'general', id: 0 });
   const setSidebarOpen = useCallback((destination: SidebarDestination, update: OpenStateUpdate): void => {
+    window.focus();
     setSidebarDestination((current) => {
       const wasOpen = current === destination;
       const nextOpen = typeof update === 'function' ? update(wasOpen) : update;
@@ -1103,20 +1123,46 @@ export function App(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutReady, openclawVisible, workbenchCoordinator]);
 
-  const cycleRecentPanel = useCallback(
-    (reverse: boolean): void => workbenchCoordinator.cycleRecentPanel(reverse),
-    [workbenchCoordinator],
-  );
+  const clearRecentPanelOwner = useCallback((): void => {
+    recentPanelOwnerDocumentRef.current = null;
+    setRecentPanelOwnerDocument(null);
+  }, []);
 
-  const commitRecentPanelSwitch = useCallback(
-    (): void => workbenchCoordinator.commitRecentPanelSwitch(),
-    [workbenchCoordinator],
-  );
+  const cycleRecentPanel = useCallback((
+    reverse: boolean,
+    ownerDocument: Document = getActiveAppDocument(),
+  ): void => {
+    const isOpen = workbenchCoordinator.isRecentPanelSwitchOpen();
+    const currentOwner = recentPanelOwnerDocumentRef.current;
+    if (isOpen && currentOwner && currentOwner !== ownerDocument) return;
+    if (!isOpen) {
+      recentPanelOwnerDocumentRef.current = ownerDocument;
+      setRecentPanelOwnerDocument(ownerDocument);
+    }
+    workbenchCoordinator.cycleRecentPanel(reverse);
+    if (!workbenchCoordinator.isRecentPanelSwitchOpen()) clearRecentPanelOwner();
+  }, [clearRecentPanelOwner, workbenchCoordinator]);
 
-  const cancelRecentPanelSwitch = useCallback(
-    (restoreFocus: boolean): void => workbenchCoordinator.cancelRecentPanelSwitch(restoreFocus),
-    [workbenchCoordinator],
-  );
+  const commitRecentPanelSwitch = useCallback((ownerDocument?: Document): void => {
+    const currentOwner = recentPanelOwnerDocumentRef.current;
+    if (ownerDocument && currentOwner && ownerDocument !== currentOwner) return;
+    workbenchCoordinator.commitRecentPanelSwitch();
+    clearRecentPanelOwner();
+  }, [clearRecentPanelOwner, workbenchCoordinator]);
+
+  const cancelRecentPanelSwitch = useCallback((
+    restoreFocus: boolean,
+    ownerDocument?: Document,
+  ): void => {
+    const currentOwner = recentPanelOwnerDocumentRef.current;
+    if (ownerDocument && currentOwner && ownerDocument !== currentOwner) return;
+    workbenchCoordinator.cancelRecentPanelSwitch(restoreFocus);
+    clearRecentPanelOwner();
+  }, [clearRecentPanelOwner, workbenchCoordinator]);
+
+  useEffect(() => {
+    if (!recentPanelSwitch) clearRecentPanelOwner();
+  }, [clearRecentPanelOwner, recentPanelSwitch]);
 
   // Agent Activity is a main-owned monotonic snapshot. Renderer state only
   // adds per-window unread bookkeeping and session-to-panel presentation.
@@ -1567,6 +1613,7 @@ export function App(): JSX.Element {
     if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
     const api = apiRef.current;
     if (!api) return;
+    window.focus();
     requestProjectCodeReveal(document, location);
     const shouldFocusEditor = !projectDrillActive || !projectWide;
     if (shouldFocusEditor) requestProjectCodeFocus(document);
@@ -1578,9 +1625,11 @@ export function App(): JSX.Element {
       matchingDocument = params;
       return true;
     });
-    const previousActive = api.activePanel;
+    const mainReference = findMainGridPanel(api, lastMainGridPanelRef.current);
+    const previousActive = mainReference;
     let panel = matching;
     if (panel) {
+      movePanelToMainGrid(api, panel, mainReference);
       if (!matchingDocument
         || !projectEditorDocumentParametersEqual(matchingDocument, document)) {
         panel.api.updateParameters(document);
@@ -1588,7 +1637,7 @@ export function App(): JSX.Element {
       panel.api.setTitle(projectEditorTitle(document));
     } else {
       codePanelSequence.current += 1;
-      const active = api.activePanel;
+      const active = findMainGridPanel(api, lastMainGridPanelRef.current);
       panel = api.addPanel({
         id: `project-editor-${Date.now().toString(36)}-${String(codePanelSequence.current)}`,
         component: 'project-editor',
@@ -1596,14 +1645,14 @@ export function App(): JSX.Element {
         renderer: 'onlyWhenVisible',
         params: document,
         inactive: projectDrillActive && projectWide,
-        ...(active ? {
-          position: {
+        position: active
+          ? {
             referencePanel: active,
             direction: projectDrillActive
               ? 'within' as const
               : window.innerWidth >= 1200 ? 'right' as const : 'within' as const,
-          },
-        } : {}),
+          }
+          : { direction: 'right' as const },
       });
       // Dockview passes initial params to the renderer but leaves the panel
       // API parameter store empty until the first explicit update.
@@ -1683,6 +1732,7 @@ export function App(): JSX.Element {
   }, [openProjectDocument]);
 
   const showProjectWorkspace = useCallback((projectId: string): void => {
+    window.focus();
     setActiveProjectId(projectId);
     setSidebarDestination('agents');
   }, []);
@@ -2423,12 +2473,14 @@ export function App(): JSX.Element {
   );
 
   const openSavePresetDialog = useCallback((): void => {
+    window.focus();
     setPresetsOpen(true);
     setSavingPreset(true);
   }, []);
 
   // ── Quick Open: renderer composition over narrow main/pane seams ──────────
   const [quickOpenMode, setQuickOpenMode] = useState<QuickOpenMode | null>(null);
+  const [quickOpenOwnerDocument, setQuickOpenOwnerDocument] = useState<Document>(() => document);
   const [quickOpenQuery, setQuickOpenQuery] = useState('');
   const [quickOpenActionMessage, setQuickOpenActionMessage] = useState<string | null>(null);
   const [quickCommands, setQuickCommands] = useState<readonly QuickCommand[]>([]);
@@ -2508,9 +2560,10 @@ export function App(): JSX.Element {
   }, [refreshAgentLaunchers]);
 
   const openQuickOpen = useCallback(
-    (mode: QuickOpenMode): void => {
+    (mode: QuickOpenMode, ownerDocument: Document = getActiveAppDocument()): void => {
       quickPreviewSequenceRef.current += 1;
       setQuickPreview(null);
+      setQuickOpenOwnerDocument(ownerDocument);
       setQuickOpenMode(mode);
       setQuickOpenQuery('');
       setQuickOpenActionMessage(null);
@@ -2997,23 +3050,23 @@ export function App(): JSX.Element {
           openSavePresetDialog();
           break;
         case 'open-explorer':
-          setSidebarDestination('explorer');
+          setSidebarOpen('explorer', true);
           break;
         case 'open-agents':
-          setSidebarDestination('agents');
+          setSidebarOpen('agents', true);
           break;
         case 'open-monitor':
-          setSidebarDestination('monitor');
+          setSidebarOpen('monitor', true);
           break;
         case 'open-remote':
-          setSidebarDestination('remote');
+          setSidebarOpen('remote', true);
           break;
         case 'open-openclaw':
-          if (openclawVisible) setSidebarDestination('openclaw');
+          if (openclawVisible) setSidebarOpen('openclaw', true);
           break;
         case 'open-settings':
           setSettingsCategoryRequest((current) => ({ category: 'general', id: current.id + 1 }));
-          setSidebarDestination('settings');
+          setSidebarOpen('settings', true);
           break;
         case 'toggle-locale': {
           const korean = (i18n.resolvedLanguage ?? i18n.language).toLowerCase().startsWith('ko');
@@ -3032,6 +3085,7 @@ export function App(): JSX.Element {
       loadQuickPreview,
       openclawVisible,
       openSavePresetDialog,
+      setSidebarOpen,
       splitActive,
       t,
       updatePreferences,
@@ -3065,6 +3119,10 @@ export function App(): JSX.Element {
           if (pane) return pane.focus();
           api.focus();
           return true;
+        },
+        onNonDetachablePanelInPopout: (panel) => {
+          movePanelToMainGrid(api, panel, lastMainGridPanelRef.current);
+          window.focus();
         },
       });
       const attachment = workbenchCoordinator.attach(createDockviewWorkbenchAdapter(api));
@@ -3112,19 +3170,45 @@ export function App(): JSX.Element {
     // The DOM listener is the safe fallback for renderer hosts that do deliver
     // Ctrl+Tab. Electron/Chromium reserves it, so desktop also supplies the
     // equivalent data-free event through `before-input-event` + preload.
-    const uninstallRendererBindings = installRecentPanelKeybindings(window, {
-      isOpen: () => workbenchCoordinator.isRecentPanelSwitchOpen(),
-      cycle: cycleRecentPanel,
-      commit: commitRecentPanelSwitch,
-      cancel: cancelRecentPanelSwitch,
-    });
+    const rendererBindings = new Map<Window, () => void>();
+    const syncRendererBindings = (auxiliaryWindows: readonly Window[]): void => {
+      const desired = new Set([window, ...auxiliaryWindows]);
+      for (const [candidate, dispose] of rendererBindings) {
+        if (desired.has(candidate)) continue;
+        dispose();
+        rendererBindings.delete(candidate);
+      }
+      for (const candidate of desired) {
+        if (candidate.closed || rendererBindings.has(candidate)) continue;
+        const ownerDocument = candidate.document;
+        rendererBindings.set(candidate, installRecentPanelKeybindings(candidate, {
+          isOpen: () => (
+            workbenchCoordinator.isRecentPanelSwitchOpen()
+            && recentPanelOwnerDocumentRef.current === ownerDocument
+          ),
+          cycle: (reverse) => cycleRecentPanel(reverse, ownerDocument),
+          commit: () => commitRecentPanelSwitch(ownerDocument),
+          cancel: (restoreFocus) => cancelRecentPanelSwitch(restoreFocus, ownerDocument),
+        }));
+      }
+    };
+    const unsubscribeRendererBindings = subscribeAuxiliaryWindows(syncRendererBindings);
     const unsubscribeNativeInput = window.ezterminalDesktop?.onRecentPanelInput((event) => {
-      if (event.type === 'cycle') cycleRecentPanel(event.reverse);
-      else if (event.type === 'commit') commitRecentPanelSwitch();
-      else cancelRecentPanelSwitch(event.restoreFocus);
+      const ownerDocument = getAppDocumentByWindowName(
+        event.source.kind === 'main' ? null : event.source.windowName,
+      );
+      if (!ownerDocument) {
+        cancelRecentPanelSwitch(false);
+        return;
+      }
+      if (event.type === 'cycle') cycleRecentPanel(event.reverse, ownerDocument);
+      else if (event.type === 'commit') commitRecentPanelSwitch(ownerDocument);
+      else cancelRecentPanelSwitch(event.restoreFocus, ownerDocument);
     });
     return () => {
-      uninstallRendererBindings();
+      unsubscribeRendererBindings();
+      for (const dispose of rendererBindings.values()) dispose();
+      rendererBindings.clear();
       unsubscribeNativeInput?.();
     };
   }, [cancelRecentPanelSwitch, commitRecentPanelSwitch, cycleRecentPanel, workbenchCoordinator]);
@@ -3138,7 +3222,10 @@ export function App(): JSX.Element {
       if (commandCenterMode) {
         e.preventDefault();
         e.stopPropagation();
-        openQuickOpen(commandCenterMode);
+        openQuickOpen(
+          commandCenterMode,
+          (e.currentTarget as Window | null)?.document ?? getActiveAppDocument(),
+        );
         return;
       }
       if (e.metaKey || e.ctrlKey || !e.altKey || !e.shiftKey) return;
@@ -3158,7 +3245,7 @@ export function App(): JSX.Element {
   const quickCommandShelfValue = useMemo<QuickCommandShelfContextValue>(
     () => ({
       commands: quickCommands,
-      onManage: () => openQuickOpen('commands'),
+      onManage: (ownerDocument) => openQuickOpen('commands', ownerDocument),
     }),
     [openQuickOpen, quickCommands],
   );
@@ -3510,13 +3597,18 @@ export function App(): JSX.Element {
           {pendingPasteConfirmation && (
             <TerminalPasteWarningDialog
               risk={pendingPasteConfirmation.risk}
+              ownerDocument={pendingPasteConfirmation.ownerDocument}
               onCancel={() => settlePasteConfirmation(false)}
               onConfirm={() => settlePasteConfirmation(true)}
             />
           )}
           <FileDropOverlay activePanelId={activePanelId} agentSessionIds={agentSessionIds} />
           {recentPanelSwitch && recentPanelItems.length > 0 && (
-            <RecentPanelSwitcher items={recentPanelItems} selectedPanelId={recentPanelSwitch.selectedPanelId} />
+            <RecentPanelSwitcher
+              items={recentPanelItems}
+              selectedPanelId={recentPanelSwitch.selectedPanelId}
+              ownerDocument={recentPanelOwnerDocument ?? undefined}
+            />
           )}
         </div>
       </div>
@@ -3530,6 +3622,7 @@ export function App(): JSX.Element {
 
       {quickOpenMode && (
         <QuickOpenModal
+          ownerDocument={quickOpenOwnerDocument}
           mode={quickOpenMode}
           query={quickOpenQuery}
           onQueryChange={(query) => {

@@ -14,7 +14,7 @@ export interface QuickCommandShelfProps {
   readonly runDisabledReason?: string;
   readonly onInsert: (command: string) => void;
   readonly onRun: (command: string) => void;
-  readonly onManage: () => void;
+  readonly onManage: (ownerDocument: Document) => void;
 }
 
 export function filterQuickCommands(commands: readonly QuickCommand[], query: string): readonly QuickCommand[] {
@@ -56,6 +56,15 @@ function rememberLastUsedId(id: string): void {
   }
 }
 
+function requestElementFrame(element: Element | null, callback: () => void): void {
+  const ownerWindow = element?.ownerDocument.defaultView ?? window;
+  if (typeof ownerWindow.requestAnimationFrame === 'function') {
+    ownerWindow.requestAnimationFrame(callback);
+  } else {
+    ownerWindow.setTimeout(callback, 0);
+  }
+}
+
 /** Composer-adjacent, explicit Quick Command insertion/run surface. Neither
  * opening the shelf nor selecting a row executes terminal input implicitly. */
 export function QuickCommandShelf({
@@ -80,12 +89,14 @@ export function QuickCommandShelf({
   const close = (restoreFocus = true): void => {
     setOpen(false);
     setQuery('');
-    if (restoreFocus) requestAnimationFrame(() => toggleRef.current?.focus());
+    if (restoreFocus) requestElementFrame(rootRef.current, () => toggleRef.current?.focus());
   };
 
   useEffect(() => {
     if (!open) return;
-    requestAnimationFrame(() => searchRef.current?.focus());
+    const ownerDocument = rootRef.current?.ownerDocument ?? document;
+    const ownerWindow = ownerDocument.defaultView ?? window;
+    requestElementFrame(rootRef.current, () => searchRef.current?.focus());
     const onPointerDown = (event: PointerEvent): void => {
       if (!rootRef.current?.contains(event.target as Node)) close(false);
     };
@@ -94,11 +105,11 @@ export function QuickCommandShelf({
       event.preventDefault();
       close();
     };
-    document.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('keydown', onKeyDown);
+    ownerDocument.addEventListener('pointerdown', onPointerDown);
+    ownerWindow.addEventListener('keydown', onKeyDown);
     return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('keydown', onKeyDown);
+      ownerDocument.removeEventListener('pointerdown', onPointerDown);
+      ownerWindow.removeEventListener('keydown', onKeyDown);
     };
   }, [open]);
 
@@ -200,7 +211,7 @@ export function QuickCommandShelf({
             className="btn quick-command-manage"
             onClick={() => {
               close(false);
-              onManage();
+              onManage(rootRef.current?.ownerDocument ?? document);
             }}
           >
             {t('quickCommands.manage')}

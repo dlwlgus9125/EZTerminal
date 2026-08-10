@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { pasteFromTerminalClipboard } from './terminal-paste';
+import { pasteFromRuntimeClipboard, pasteFromTerminalClipboard } from './terminal-paste';
 
 describe('pasteFromTerminalClipboard', () => {
   it('delivers a Codex image shortcut without materializing image data', async () => {
@@ -75,5 +75,38 @@ describe('pasteFromTerminalClipboard', () => {
     });
     expect(notify).toHaveBeenCalledWith('clipboard-read-failed');
     expect(deliverText).not.toHaveBeenCalled();
+  });
+
+  it('preserves the source document across asynchronous confirmation and notification', async () => {
+    const confirmPaste = vi.fn(async () => false);
+    const notifyTerminal = vi.fn();
+    const ownerDocument = {} as Document;
+    await pasteFromRuntimeClipboard({
+      readClipboard: async () => ({ hasImage: false, text: 'one\ntwo' }),
+      confirmPaste,
+      notifyTerminal,
+    }, {
+      ownerDocument,
+      isCodex: false,
+      mode: 'default',
+      deliverImage: vi.fn(),
+      deliverText: vi.fn(),
+    });
+    expect(confirmPaste).toHaveBeenCalledWith(
+      expect.objectContaining({ multiline: true }),
+      ownerDocument,
+    );
+
+    await pasteFromRuntimeClipboard({
+      readClipboard: async () => ({ hasImage: false, text: '' }),
+      notifyTerminal,
+    }, {
+      ownerDocument,
+      isCodex: false,
+      mode: 'default',
+      deliverImage: vi.fn(),
+      deliverText: vi.fn(),
+    });
+    expect(notifyTerminal).toHaveBeenCalledWith('clipboard-empty', ownerDocument);
   });
 });

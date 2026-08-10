@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [1.0.30] - 2026-08-10
+
+### Added
+
+- Added real auxiliary-window regression coverage for terminal copy and
+  control-key semantics, overlays, file drop, recent-panel switching, and
+  main-owned panel routing.
+
+### Fixed
+
+- Restored selection-aware `Ctrl+C` and right-click Copy for structured
+  output, the terminal composer, and plain PTY output after a pane is detached.
+- Made Quick Commands, Command Center, menus, dialogs, toasts, paste warnings,
+  file-drop feedback, and `Ctrl+Tab` use the invoking window's document and
+  restore focus there.
+- Kept Project Editor and other main-owned surfaces in the main grid when an
+  action originates from a detached Agent Session.
+
+See [1.0.30 release notes](docs/release/release-notes-1.0.30.md).
+
 ## [1.0.29] - 2026-08-10
 
 ### Added

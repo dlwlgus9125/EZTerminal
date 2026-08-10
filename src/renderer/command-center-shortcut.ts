@@ -9,7 +9,8 @@ const TERMINAL_EDITING_TARGETS = [
 ].join(',');
 
 export function isTerminalEditingTarget(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest(TERMINAL_EDITING_TARGETS) !== null;
+  return typeof (target as Element | null)?.closest === 'function'
+    && (target as Element).closest(TERMINAL_EDITING_TARGETS) !== null;
 }
 
 /**

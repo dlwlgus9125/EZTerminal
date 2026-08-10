@@ -40,6 +40,18 @@ describe('Command Center contextual shortcut', () => {
     expect(shortcut('KeyK', helper, { ctrlKey: false, metaKey: true })).toBeNull();
   });
 
+  it('recognizes editing targets created by an auxiliary document realm', () => {
+    const frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    const composer = frame.contentDocument!.createElement('input');
+    composer.className = 'cmd-input';
+    frame.contentDocument!.body.appendChild(composer);
+
+    expect(isTerminalEditingTarget(composer)).toBe(true);
+    expect(shortcut('KeyK', composer)).toBeNull();
+    frame.remove();
+  });
+
   it('preserves Ctrl/Cmd+K in ordinary editable controls and contenteditable descendants', () => {
     const input = document.createElement('input');
     const textarea = document.createElement('textarea');

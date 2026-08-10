@@ -1,8 +1,24 @@
 export function selectedTextWithin(
   root: Element | null,
-  selection: Selection | null = window.getSelection(),
+  selection?: Selection | null,
 ): string {
-  if (!root || !selection || selection.isCollapsed || !selection.anchorNode || !selection.focusNode) return '';
-  if (!root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) return '';
-  return selection.toString();
+  if (!root) return '';
+  const resolvedSelection = selection === undefined
+    ? root.ownerDocument.defaultView?.getSelection() ?? null
+    : selection;
+  if (
+    !resolvedSelection
+    || resolvedSelection.isCollapsed
+    || !resolvedSelection.anchorNode
+    || !resolvedSelection.focusNode
+  ) {
+    return '';
+  }
+  if (
+    !root.contains(resolvedSelection.anchorNode)
+    || !root.contains(resolvedSelection.focusNode)
+  ) {
+    return '';
+  }
+  return resolvedSelection.toString();
 }

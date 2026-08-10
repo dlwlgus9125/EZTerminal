@@ -9,6 +9,7 @@ import {
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
   MAX_QUICK_COMMAND_CHARS,
@@ -91,6 +92,7 @@ export interface QuickOpenModalProps {
   readonly onAction: (row: QuickOpenRow, variant: QuickOpenActionVariant) => void;
   readonly onClose: () => void;
   readonly quickCommandManager?: QuickCommandManagerConfig;
+  readonly ownerDocument?: Document;
 }
 
 const KIND_GROUP: Record<QuickOpenRowKind, string> = {
@@ -186,6 +188,7 @@ export function QuickOpenModal({
   onAction,
   onClose,
   quickCommandManager,
+  ownerDocument,
 }: QuickOpenModalProps): JSX.Element {
   useNativeOverlayRegistration();
   const { t } = useAppTranslation();
@@ -197,6 +200,9 @@ export function QuickOpenModal({
   const overlayRef = useRef<HTMLDivElement>(null);
   const queryRef = useRef<HTMLInputElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const portalDocumentRef = useRef<Document | null>(null);
+  portalDocumentRef.current ??= ownerDocument ?? document;
+  const portalDocument = portalDocumentRef.current;
   const rowRefs = useRef(new Map<number, HTMLDivElement>());
   const instanceId = useId().replace(/:/g, '');
   const titleId = `${instanceId}-title`;
@@ -228,9 +234,13 @@ export function QuickOpenModal({
   }, [query]);
 
   useLayoutEffect(() => {
-    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const activeElement = portalDocument.activeElement;
+    previousFocusRef.current = activeElement
+      && typeof (activeElement as HTMLElement).focus === 'function'
+      ? activeElement as HTMLElement
+      : null;
     const releaseBackground = overlayRef.current
-      ? isolateModalBackground(overlayRef.current)
+      ? isolateModalBackground(overlayRef.current, [], portalDocument)
       : () => undefined;
     queryRef.current?.focus();
     return () => {
@@ -238,7 +248,7 @@ export function QuickOpenModal({
       const previous = previousFocusRef.current;
       if (previous?.isConnected) previous.focus();
     };
-  }, []);
+  }, [portalDocument]);
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -305,7 +315,7 @@ export function QuickOpenModal({
       dialogRef.current.focus();
       return;
     }
-    const current = document.activeElement;
+    const current = portalDocument.activeElement;
     const currentIndex = focusables.indexOf(current as HTMLElement);
     if (event.shiftKey && currentIndex <= 0) {
       event.preventDefault();
@@ -316,7 +326,7 @@ export function QuickOpenModal({
     }
   };
 
-  return (
+  const content = (
     <div ref={overlayRef} className="quick-open-overlay" data-testid="quick-open-overlay">
       <div
         ref={dialogRef}
@@ -478,6 +488,7 @@ export function QuickOpenModal({
       </div>
     </div>
   );
+  return ownerDocument ? createPortal(content, portalDocument.body) : content;
 }
 
 interface DraftState {

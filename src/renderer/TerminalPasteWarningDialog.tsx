@@ -7,12 +7,14 @@ import { Button, Dialog } from './ui';
 
 export interface TerminalPasteWarningDialogProps {
   readonly risk: TerminalPasteRisk;
+  readonly ownerDocument?: Document;
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
 }
 
 export function TerminalPasteWarningDialog({
   risk,
+  ownerDocument,
   onCancel,
   onConfirm,
 }: TerminalPasteWarningDialogProps): JSX.Element {
@@ -31,6 +33,7 @@ export function TerminalPasteWarningDialog({
   return (
     <Dialog
       open
+      ownerDocument={ownerDocument}
       onOpenChange={handleOpenChange}
       title={t('terminalPasteWarning.title')}
       description={t('terminalPasteWarning.description')}

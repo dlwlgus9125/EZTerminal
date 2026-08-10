@@ -9,6 +9,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  captureTerminalContextMenuInvocation,
   isTerminalContextMenuKey,
   mayRestoreTerminalContextMenuFocus,
   TerminalContextMenu,
@@ -65,6 +66,22 @@ afterEach(() => {
 });
 
 describe('TerminalContextMenu', () => {
+  it('captures the focused invoker from an auxiliary document realm', () => {
+    const frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    // Dockview moves the existing node; it is not recreated by the target
+    // document and therefore retains its main-realm JavaScript prototype.
+    const pane = document.createElement('div');
+    pane.className = 'pane';
+    const input = document.createElement('input');
+    pane.appendChild(input);
+    frame.contentDocument!.body.appendChild(pane);
+    input.focus();
+
+    expect(captureTerminalContextMenuInvocation(input, 1, 2).invoker).toBe(input);
+    frame.remove();
+  });
+
   it('portals to the document body so transformed pane ancestors cannot offset fixed positioning', () => {
     const el = renderMenu(
       [{ action: 'copy', label: 'Copy', onClick: vi.fn() }],

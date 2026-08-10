@@ -123,21 +123,36 @@ export interface RuntimeVersions {
  * keydown is dispatched, so main captures only this chord and forwards this
  * narrow, data-free union through the isolated preload bridge.
  */
-export type RecentPanelInputEvent =
-  | { readonly type: 'cycle'; readonly reverse: boolean }
-  | { readonly type: 'commit' }
-  | { readonly type: 'cancel'; readonly restoreFocus: boolean };
+export type RecentPanelInputCommand =
+    | { readonly type: 'cycle'; readonly reverse: boolean }
+    | { readonly type: 'commit' }
+    | { readonly type: 'cancel'; readonly restoreFocus: boolean };
+
+export type RecentPanelWindowSource =
+  | { readonly kind: 'main' }
+  | { readonly kind: 'auxiliary'; readonly windowName: string };
+
+export type RecentPanelInputEvent = RecentPanelInputCommand & {
+  readonly source: RecentPanelWindowSource;
+};
 
 export function isRecentPanelInputEvent(value: unknown): value is RecentPanelInputEvent {
   if (typeof value !== 'object' || value === null) return false;
   const event = value as Partial<RecentPanelInputEvent>;
+  const source = event.source as Partial<RecentPanelWindowSource> | undefined;
+  const validSource = source?.kind === 'main'
+    ? Object.keys(source).join(',') === 'kind'
+    : source?.kind === 'auxiliary'
+      && typeof source.windowName === 'string'
+      && Object.keys(source).sort().join(',') === 'kind,windowName';
+  if (!validSource) return false;
   const keys = Object.keys(event).sort();
   if (event.type === 'cycle') {
-    return typeof event.reverse === 'boolean' && keys.join(',') === 'reverse,type';
+    return typeof event.reverse === 'boolean' && keys.join(',') === 'reverse,source,type';
   }
-  if (event.type === 'commit') return keys.join(',') === 'type';
+  if (event.type === 'commit') return keys.join(',') === 'source,type';
   if (event.type === 'cancel') {
-    return typeof event.restoreFocus === 'boolean' && keys.join(',') === 'restoreFocus,type';
+    return typeof event.restoreFocus === 'boolean' && keys.join(',') === 'restoreFocus,source,type';
   }
   return false;
 }

@@ -13,6 +13,7 @@ import {
 } from '../shared/project-workspace';
 import { useAppTranslation } from './i18n';
 import { Badge } from './ui';
+import { isFocusableHTMLElement } from './ui/utils';
 import {
   isTerminalContextMenuKey,
   TerminalContextMenu,
@@ -349,7 +350,9 @@ export function WorkspaceTab({
     setMenu({
       x,
       y,
-      invoker: active instanceof HTMLElement && rootRef.current?.contains(active) ? active : null,
+      invoker: isFocusableHTMLElement(active) && rootRef.current?.contains(active)
+        ? active
+        : null,
     });
   };
 
