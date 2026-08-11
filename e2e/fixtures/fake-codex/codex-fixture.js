@@ -2,10 +2,26 @@
 // deliberately exercise the same direct-command classification as `codex.cmd`
 // without requiring the real CLI or authentication in CI. `--xterm` emits the
 // same high-confidence bracketed-paste/focus burst used by interactive agents.
-if (process.argv.includes('--xterm')) {
-  process.stdout.write('\x1b[?2004h\x1b[?1004h');
+const scrollbackScenario = process.env.EZTERMINAL_E2E_CODEX_SCROLLBACK === '1';
+if (scrollbackScenario) {
+  // Codex normally owns the alternate screen. That buffer has no scrollback,
+  // so overflowing it reproduces the missing-middle transcript symptom. The
+  // product-owned launch must opt into Codex's inline mode to keep all markers.
+  if (!process.argv.includes('--no-alt-screen')) process.stdout.write('\x1b[?1049h');
+  process.stdout.write('\x1b[?2004h');
+  setTimeout(() => {
+    const markers = Array.from(
+      { length: 80 },
+      (_, index) => `CODEX-SEQ-${String(index + 1).padStart(3, '0')}`,
+    );
+    process.stdout.write(`${markers.join('\r\n')}\r\n`);
+  }, 100);
+} else {
+  if (process.argv.includes('--xterm')) {
+    process.stdout.write('\x1b[?2004h\x1b[?1004h');
+  }
+  process.stdout.write('FAKE-CODEX-READY COPY-ME\r\n');
 }
-process.stdout.write('FAKE-CODEX-READY COPY-ME\r\n');
 process.stdin.setRawMode(true);
 process.stdin.setEncoding('utf8');
 process.stdin.resume();

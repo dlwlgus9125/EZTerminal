@@ -82,6 +82,11 @@ Job 밖의 guardian이 `shell-handoff`로 연다. 반대로 시작 시 프로세
 full-screen TUI는 `node-pty`/ConPTY와 xterm을 사용하며 입력·resize·cancel을 동일한
 run port로 받는다. terminal renderer는 WebGL을 우선하되 DOM fallback을 유지한다.
 
+Agents가 소유하는 Codex 새 세션과 재개 명령은 `--no-alt-screen`으로 inline TUI를
+기동한다. 긴 대화 출력은 xterm normal buffer의 scrollback에 남아야 한다. 사용자가
+terminal composer나 Command Center에서 직접 실행한 Codex/TUI 명령의 인자는 바꾸지
+않으며, renderer가 DEC alternate-screen 제어 시퀀스를 전역으로 제거하지도 않는다.
+
 로컬 PTY의 recent output ring과 headless terminal snapshot은 bounded다. late attach는
 snapshot과 정확히 이어지는 tail을 먼저 적용한 후 live bytes를 연다. 연속성을 증명할
 수 없으면 화면을 조용히 꾸미지 않고 `pty-restore-warning`과 bounded recent-output

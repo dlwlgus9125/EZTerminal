@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.0.33] - 2026-08-11
+
+### Fixed
+
+- Started Agent Hub-owned Codex new and resumed sessions in inline TUI mode so
+  long conversations remain in xterm's normal scrollback instead of losing
+  output when the alternate screen overflows.
+- Kept direct terminal and Command Center Codex invocations unchanged while
+  adding an end-to-end ordered-output regression through the real Agents new
+  session flow.
+
+See [1.0.33 release notes](docs/release/release-notes-1.0.33.md).
+
 ## [1.0.32] - 2026-08-11
 
 ### Fixed

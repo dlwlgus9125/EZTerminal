@@ -336,7 +336,7 @@ export class CodexHistoryAdapter implements AgentHistoryProviderAdapter {
     if (!primaryRoot) return null;
     return {
       commandText: [
-        `!codex --cd ${quoteEzArgument(primaryRoot)}`,
+        `!codex --no-alt-screen --cd ${quoteEzArgument(primaryRoot)}`,
         ...additionalRoots.map((root) => `--add-dir ${quoteEzArgument(root)}`),
         `resume ${quoteEzArgument(privateId)}`,
       ].join(' '),
@@ -349,7 +349,7 @@ export class CodexHistoryAdapter implements AgentHistoryProviderAdapter {
     if (!primaryRoot) return null;
     return {
       commandText: [
-        `!codex --cd ${quoteEzArgument(primaryRoot)}`,
+        `!codex --no-alt-screen --cd ${quoteEzArgument(primaryRoot)}`,
         ...additionalRoots.map((root) => `--add-dir ${quoteEzArgument(root)}`),
       ].join(' '),
       displayCommandText: 'codex',

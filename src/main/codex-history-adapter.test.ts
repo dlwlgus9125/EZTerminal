@@ -144,14 +144,24 @@ describe('CodexHistoryAdapter', () => {
     expect(JSON.stringify(page)).not.toContain('item-1');
   });
 
-  it('starts a new chat with --cd and one --add-dir per extra root', () => {
+  it('starts a new chat inline with --cd and one --add-dir per extra root', () => {
     const adapter = new CodexHistoryAdapter(requester(vi.fn()));
 
     expect(adapter.buildNewCommand(['C:\\Work', 'C:\\Shared', 'C:\\Docs'])).toEqual({
-      commandText: "!codex --cd 'C:\\\\Work' --add-dir 'C:\\\\Shared' --add-dir 'C:\\\\Docs'",
+      commandText: "!codex --no-alt-screen --cd 'C:\\\\Work' --add-dir 'C:\\\\Shared' --add-dir 'C:\\\\Docs'",
       displayCommandText: 'codex',
     });
     expect(adapter.buildNewCommand([])).toBeNull();
+  });
+
+  it('resumes a chat inline without exposing its private id in display text', () => {
+    const adapter = new CodexHistoryAdapter(requester(vi.fn()));
+
+    expect(adapter.buildResumeCommand('private-thread', ['C:\\Work', 'C:\\Shared'])).toEqual({
+      commandText: "!codex --no-alt-screen --cd 'C:\\\\Work' --add-dir 'C:\\\\Shared' resume 'private-thread'",
+      displayCommandText: 'codex resume',
+    });
+    expect(adapter.buildResumeCommand('private-thread', [])).toBeNull();
   });
 
   it('attributes only structured fileChange records from the latest completed turn', async () => {
