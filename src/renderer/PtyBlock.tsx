@@ -1,10 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Terminal } from '@xterm/xterm';
-import {
-  Terminal as HeadlessTerminal,
-  type ITerminalAddon as HeadlessTerminalAddon,
-} from '@xterm/headless';
-import { SerializeAddon } from '@xterm/addon-serialize';
 import '@xterm/xterm/css/xterm.css';
 
 import type { BlockController } from './block-controller';
@@ -54,16 +49,10 @@ import {
   type TerminalRuntimeOptions,
   type TerminalSearchResults,
 } from './xterm-runtime';
-import type { RuntimeLifecycleTier } from '../shared/runtime-lifecycle';
 import {
-  PtyPresentationTail,
-  PTY_PRESENTATION_SCROLLBACK_LINES,
-  capturePtyPresentation,
-  emptyPtyPresentation,
-  restorePtyPresentationState,
-  writePtyPresentation,
-  type PtyPresentationCheckpoint,
-} from './pty-presentation-checkpoint';
+  RUNTIME_PARKED_SCROLLBACK_LINES,
+  type RuntimeLifecycleTier,
+} from '../shared/runtime-lifecycle';
 import { PtyWriteScheduler } from './pty-write-scheduler';
 
 // PtyBlock — the render surface for a `pty`-shape block. Execution is ALWAYS a
@@ -120,10 +109,6 @@ function computeBaseFontSize(): number {
 
 const EMPTY_SEARCH_RESULTS: TerminalSearchResults = Object.freeze({ resultIndex: -1, resultCount: 0 });
 
-interface PtyPresentationTransition {
-  capture(callback: (checkpoint: PtyPresentationCheckpoint | null) => void): void;
-}
-
 function PtyXtermView({
   controller,
   runtimeOptions,
@@ -139,14 +124,8 @@ function PtyXtermView({
   const termRef = useRef<Terminal | null>(null);
   const runtimeRef = useRef<XtermRuntime | null>(null);
   const writeSchedulerRef = useRef<PtyWriteScheduler | null>(null);
-  const checkpointRef = useRef<PtyPresentationCheckpoint | null>(null);
-  const transitionRef = useRef<PtyPresentationTransition | null>(null);
-  const transitionPendingRef = useRef(false);
   const runtimeLifecycleTierRef = useRef(runtimeLifecycleTier);
   runtimeLifecycleTierRef.current = runtimeLifecycleTier;
-  const [presentationMode, setPresentationMode] = useState<'live' | 'parked'>(
-    runtimeLifecycleTier === 'parked' ? 'parked' : 'live',
-  );
   const openExternalHttpUrlRef = useRef(runtimeOptions.openExternalHttpUrl);
   openExternalHttpUrlRef.current = runtimeOptions.openExternalHttpUrl;
   const rendererPreferenceRef = useRef(runtimeOptions.rendererPreference);
@@ -191,20 +170,6 @@ function PtyXtermView({
   const fitAndReportRef = useRef<() => void>(() => {});
   const applyMirrorLayoutRef = useRef<() => void>(() => {});
 
-  useEffect(() => {
-    const target = runtimeLifecycleTier === 'parked' ? 'parked' : 'live';
-    if (target === presentationMode || transitionPendingRef.current) return;
-    const transition = transitionRef.current;
-    if (!transition) return;
-    transitionPendingRef.current = true;
-    transition.capture((checkpoint) => {
-      transitionPendingRef.current = false;
-      if (!checkpoint) return;
-      checkpointRef.current = checkpoint;
-      setPresentationMode(target);
-    });
-  }, [presentationMode, runtimeLifecycleTier]);
-
   // On exit (status leaves 'running'): the pane's TUI takeover releases (T1,
   // TerminalPane.tsx), and — mirroring PtyPlainView's existing exit-focus
   // pattern below — hand focus back to this pane's cmd-input so the next
@@ -223,103 +188,17 @@ function PtyXtermView({
     const el = containerRef.current;
     if (!el) return;
 
-    if (presentationMode === 'parked') {
-      let base = checkpointRef.current;
-      const dims = controller.getSnapshot().ptyDims ?? base ?? { cols: 80, rows: 24 };
-      const model = new HeadlessTerminal({
-        allowProposedApi: true,
-        cols: dims.cols,
-        rows: dims.rows,
-        scrollback: Math.min(getActiveScrollback(), PTY_PRESENTATION_SCROLLBACK_LINES),
-      });
-      const serializer = new SerializeAddon();
-      // SerializeAddon declares the browser Terminal type, but xterm's
-      // browser/headless packages share this addon contract at runtime. The
-      // interpreter restore buffer uses the same supported compatibility seam.
-      model.loadAddon(serializer as unknown as HeadlessTerminalAddon);
-      const tail = new PtyPresentationTail();
-      let alive = true;
-      let restoring = base !== null;
-      let unsink: (() => void) | null = null;
-      const scheduler = new PtyWriteScheduler('parked', (write) => {
-        model.write(write.bytes, write.onFlushed);
-      });
-      writeSchedulerRef.current = scheduler;
-
-      const attachSink = (): void => {
-        if (!alive || unsink) return;
-        unsink = controller.setPtyDataSink((bytes, onFlushed) => {
-          tail.append(bytes);
-          scheduler.write({ bytes, onFlushed, suppressSideEffects: true });
-        });
-      };
-      const unregisterReplayReset = controller.setPtyReplayResetHandler(() => {
-        scheduler.flush();
-        model.reset();
-        tail.reset();
-        base = null;
-      });
-
-      const dataDisposable = model.onData((data) => {
-        if (restoring || !hasControlRef.current) return;
-        controller.sendPtyInput(data);
-      });
-      writePtyPresentation(model, base, () => {
-        if (!alive) return;
-        restoring = false;
-        attachSink();
-      });
-
-      const transition: PtyPresentationTransition = {
-        capture: (callback) => {
-          scheduler.flush();
-          model.write('', () => {
-            if (!alive) return;
-            unsink?.();
-            unsink = null;
-            const captured = capturePtyPresentation(model, serializer, null);
-            const checkpoint = captured
-              ? Object.freeze({
-                  ...captured,
-                  viewportY: base?.viewportY ?? captured.viewportY,
-                  selection: base?.selection ?? null,
-                  focused: base?.focused ?? false,
-                })
-              : tail.merge(base) ?? emptyPtyPresentation(model, null);
-            callback(checkpoint);
-          });
-        },
-      };
-      transitionRef.current = transition;
-
-      return () => {
-        alive = false;
-        if (transitionRef.current === transition) transitionRef.current = null;
-        unsink?.();
-        scheduler.dispose();
-        if (writeSchedulerRef.current === scheduler) writeSchedulerRef.current = null;
-        unregisterReplayReset();
-        dataDisposable.dispose();
-        serializer.dispose();
-        model.dispose();
-      };
-    }
-
     const initialTheme = getActiveTheme();
-    const openingCheckpoint = checkpointRef.current;
     const term = new Terminal({
       allowProposedApi: true,
-      ...(openingCheckpoint
-        ? { cols: openingCheckpoint.cols, rows: openingCheckpoint.rows }
-        : {}),
       fontFamily: resolveFontFamily(getUserFontId(), initialTheme),
       fontSize: computeBaseFontSize(),
       cursorBlink: runtimeLifecycleTierRef.current === 'active',
-      scrollback: getActiveScrollback(),
+      scrollback: runtimeLifecycleTierRef.current === 'parked'
+        ? Math.min(getActiveScrollback(), RUNTIME_PARKED_SCROLLBACK_LINES)
+        : getActiveScrollback(),
       theme: initialTheme.xterm,
     });
-    const serializer = new SerializeAddon();
-    term.loadAddon(serializer);
     let alive = true;
     const osc52Gate = new Osc52WriteGate();
     const sideEffectSuppression = new TerminalSideEffectSuppression();
@@ -508,10 +387,7 @@ function PtyXtermView({
     // (interpreter-process.ts's PTY_INITIAL_COLS/ROWS). Control state is read
     // fresh off the controller, not the render closure that scheduled this
     // effect, since this effect only runs once per mount.
-    if (openingCheckpoint) {
-      // SerializeAddon state is restored at the exact grid it was captured
-      // from, then fitted to the newly visible owner window after replay.
-    } else if (controller.getSnapshot().hasControl) {
+    if (controller.getSnapshot().hasControl) {
       fitAndReport();
     } else {
       applyMirrorLayout();
@@ -609,9 +485,8 @@ function PtyXtermView({
       queryCarry = '';
     });
     // Keystrokes / pasted text → PTY child (attach ports support input too).
-    let restoring = checkpointRef.current !== null;
     const dataDisposable = term.onData((data) => {
-      if (restoring || mirrorGate.blocked) return;
+      if (mirrorGate.blocked) return;
       controller.sendPtyInput(data);
     });
     // Soft-keyboard duplication fix: empty the helper textarea after every
@@ -623,37 +498,8 @@ function PtyXtermView({
     // enabled it — same term.paste path the context-menu Paste below uses.
     const unregisterPaste = controller.setPasteHandler((text) => term.paste(text));
 
-    // Restore historical state before attaching the live sink. Input and OSC
-    // effects remain suppressed until the xterm write barrier completes.
-    const restoreSuppression = restoring ? sideEffectSuppression.enter() : null;
-    const checkpoint = checkpointRef.current;
-    writePtyPresentation(term, checkpoint, () => {
-      if (!alive) return;
-      restoring = false;
-      restoreSuppression?.();
-      if (checkpoint) {
-        if (controller.getSnapshot().hasControl) fitAndReport();
-        else applyMirrorLayout();
-        restorePtyPresentationState(term, checkpoint);
-      }
-      attachSink();
-      if (runtimeLifecycleTierRef.current === 'active' && (!checkpoint || checkpoint.focused)) {
-        term.focus();
-      }
-    });
-
-    const transition: PtyPresentationTransition = {
-      capture: (callback) => {
-        scheduler.flush();
-        term.write('', () => {
-          if (!alive) return;
-          unsink?.();
-          unsink = null;
-          callback(capturePtyPresentation(term, serializer, el) ?? emptyPtyPresentation(term, el));
-        });
-      },
-    };
-    transitionRef.current = transition;
+    attachSink();
+    if (runtimeLifecycleTierRef.current === 'active') term.focus();
 
     // Touch → wheel bridge (TUI scroll parity, M3): xterm 6 has NO touch
     // handling (its vs/ scrollable element only listens for 'wheel'), so a
@@ -755,13 +601,14 @@ function PtyXtermView({
     // Scrollback setting change (WT-parity M5) while this PTY is open: applied
     // directly to the live term, no remount needed.
     const applyScrollbackSetting = (): void => {
-      term.options.scrollback = getActiveScrollback();
+      term.options.scrollback = runtimeLifecycleTierRef.current === 'parked'
+        ? Math.min(getActiveScrollback(), RUNTIME_PARKED_SCROLLBACK_LINES)
+        : getActiveScrollback();
     };
     window.addEventListener('ez:scrollback', applyScrollbackSetting);
 
     return () => {
       alive = false;
-      if (transitionRef.current === transition) transitionRef.current = null;
       el.removeEventListener('paste', onNativePaste, true);
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
@@ -780,10 +627,8 @@ function PtyXtermView({
       if (writeSchedulerRef.current === scheduler) writeSchedulerRef.current = null;
       unregisterReplayReset();
       osc52Disposable.dispose();
-      restoreSuppression?.();
       runtimeRef.current = null;
       runtime.dispose();
-      serializer.dispose();
       delete (el as HTMLDivElement & { __ezTerm?: Terminal }).__ezTerm;
       term.dispose();
       termRef.current = null;
@@ -791,7 +636,6 @@ function PtyXtermView({
   }, [
     controller,
     linkHandlingEnabled,
-    presentationMode,
     runtimeOptions.platform,
     terminalFileLinksEnabled,
   ]);
@@ -803,6 +647,9 @@ function PtyXtermView({
     writeSchedulerRef.current?.setTier(runtimeLifecycleTier);
     if (!term || !runtime) return;
     term.options.cursorBlink = runtimeLifecycleTier === 'active';
+    term.options.scrollback = runtimeLifecycleTier === 'parked'
+      ? Math.min(getActiveScrollback(), RUNTIME_PARKED_SCROLLBACK_LINES)
+      : getActiveScrollback();
     runtime.setRendererPreference(
       runtimeLifecycleTier === 'active' ? runtimeOptions.rendererPreference : 'dom',
     );
@@ -908,12 +755,12 @@ function PtyXtermView({
       ref={containerRef}
       className={[
         snapshot.hasControl ? 'pty-block' : 'pty-block pty-block--mirror',
-        presentationMode === 'parked' ? 'pty-block--parked' : '',
+        runtimeLifecycleTier === 'parked' ? 'pty-block--parked' : '',
       ].filter(Boolean).join(' ')}
       data-testid="pty-block"
       data-runtime-tier={runtimeLifecycleTier}
-      data-presentation-mode={presentationMode}
-      aria-hidden={presentationMode === 'parked' || undefined}
+      data-presentation-mode={runtimeLifecycleTier === 'parked' ? 'parked' : 'live'}
+      aria-hidden={runtimeLifecycleTier === 'parked' || undefined}
       onMouseDown={(event) => {
         if (!(event.target as Element).closest(
           '.terminal-find-bar, .terminal-context-menu, .pty-control-chip',

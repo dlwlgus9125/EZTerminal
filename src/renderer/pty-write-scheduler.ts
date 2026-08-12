@@ -7,6 +7,7 @@ export interface PtyScheduledWrite {
 }
 export interface PtyWriteSchedulerOptions {
   readonly passiveDelayMs?: number;
+  readonly parkedDelayMs?: number;
   readonly maxBatchBytes?: number;
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
@@ -16,6 +17,7 @@ export interface PtyWriteSchedulerOptions {
  * xterm flush callback (and therefore PTY ACK accounting) exact. */
 export class PtyWriteScheduler {
   private readonly passiveDelayMs: number;
+  private readonly parkedDelayMs: number;
   private readonly maxBatchBytes: number;
   private readonly setTimer: NonNullable<PtyWriteSchedulerOptions['setTimer']>;
   private readonly clearTimer: NonNullable<PtyWriteSchedulerOptions['clearTimer']>;
@@ -32,6 +34,10 @@ export class PtyWriteScheduler {
   ) {
     this.tier = tier;
     this.passiveDelayMs = Math.max(1, options.passiveDelayMs ?? 67);
+    this.parkedDelayMs = Math.max(
+      this.passiveDelayMs,
+      options.parkedDelayMs ?? 250,
+    );
     this.maxBatchBytes = Math.max(1, options.maxBatchBytes ?? 256 * 1024);
     this.setTimer = options.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
     this.clearTimer = options.clearTimer ?? ((timer) => clearTimeout(timer));
@@ -53,7 +59,7 @@ export class PtyWriteScheduler {
     this.timer = this.setTimer(() => {
       this.timer = null;
       this.flush();
-    }, this.passiveDelayMs);
+    }, this.tier === 'parked' ? this.parkedDelayMs : this.passiveDelayMs);
   }
 
   public setTier(tier: RuntimeLifecycleTier): void {

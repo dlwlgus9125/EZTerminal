@@ -9,6 +9,8 @@ import {
 } from './test';
 import { launchApp } from './launch-app';
 import { readXtermAllBuffer } from './xterm-buffer';
+import { RUNTIME_PARKED_SCROLLBACK_LINES } from '../src/shared/runtime-lifecycle';
+import { SCROLLBACK_DEFAULT } from '../src/renderer/scrollback';
 
 const ROOT = path.resolve(__dirname, '..');
 const OUTPUT_FIXTURE = path.resolve(__dirname, 'fixtures', 'lifecycle-soak-output.js');
@@ -19,6 +21,7 @@ const PARK_SETTLE_MS = 32_000;
 const MEMORY_SAMPLE_COUNT = 5;
 const MEMORY_SAMPLE_INTERVAL_MS = 1_000;
 const PRIVATE_BYTES_SLACK_KB = 64 * 1_024;
+const FIRST_PARK_RENDERER_PRIVATE_SLACK_KB = 64 * 1_024;
 const RENDERER_HEAP_SLACK_BYTES = 16 * 1_024 * 1_024;
 const enabled = process.env.EZTERMINAL_RUN_LIFECYCLE_SOAK === '1';
 
@@ -38,6 +41,7 @@ interface MemorySample {
   readonly processCount: number;
   readonly privateBytesKb: number;
   readonly workingSetKb: number;
+  readonly rendererPrivateBytesKb: number;
   readonly rendererUsedJsHeapBytes: number;
   readonly rendererDomNodes: number;
   readonly rendererWindowCount: number;
@@ -65,6 +69,16 @@ interface GrowthCheck {
   readonly passed: boolean;
 }
 
+interface FirstParkCheck {
+  readonly metric: 'rendererPrivateBytesKb';
+  readonly baselineMedian: number;
+  readonly firstPark: number;
+  readonly slack: number;
+  readonly threshold: number;
+  readonly growthKb: number;
+  readonly passed: boolean;
+}
+
 interface LifecycleSoakReport {
   readonly schemaVersion: 1;
   status: 'running' | 'passed' | 'failed';
@@ -80,13 +94,17 @@ interface LifecycleSoakReport {
     readonly sessionCount: 16;
     readonly mainWindowCount: 1;
     readonly popoutWindowCount: 8;
+    readonly baselineWarmupMs: number;
     readonly parkGraceExerciseMs: number;
     readonly memoryRule: 'final <= baseline * 1.20 + absolute measurement slack';
+    readonly memorySampling: 'renderer GC before baseline, first-park, and final samples';
     readonly privateBytesSlackKb: number;
+    readonly firstParkRendererPrivateBytesSlackKb: number;
     readonly rendererHeapSlackBytes: number;
   };
   readonly cycles: CycleEvidence[];
   readonly memorySamples: MemorySample[];
+  firstParkCheck?: FirstParkCheck;
   growthChecks?: readonly GrowthCheck[];
   error?: { readonly message: string; readonly stack?: string };
 }
@@ -136,6 +154,23 @@ function growthCheck(
       ? (growthAfterSlack === 0 ? 0 : Number.POSITIVE_INFINITY)
       : (growthAfterSlack / baselineMedian) * 100,
     passed: finalMedian <= threshold,
+  };
+}
+
+function firstParkCheck(
+  baseline: readonly number[],
+  firstPark: number,
+): FirstParkCheck {
+  const baselineMedian = median(baseline);
+  const threshold = baselineMedian + FIRST_PARK_RENDERER_PRIVATE_SLACK_KB;
+  return {
+    metric: 'rendererPrivateBytesKb',
+    baselineMedian,
+    firstPark,
+    slack: FIRST_PARK_RENDERER_PRIVATE_SLACK_KB,
+    threshold,
+    growthKb: firstPark - baselineMedian,
+    passed: firstPark <= threshold,
   };
 }
 
@@ -298,6 +333,9 @@ async function collectMemory(
     processCount: processes.length,
     privateBytesKb: processes.reduce((sum, metric) => sum + metric.privateBytesKb, 0),
     workingSetKb: processes.reduce((sum, metric) => sum + metric.workingSetKb, 0),
+    rendererPrivateBytesKb: processes
+      .filter((metric) => metric.type === 'Tab')
+      .reduce((sum, metric) => sum + metric.privateBytesKb, 0),
     rendererUsedJsHeapBytes: [...heapByRendererProcess.values()]
       .reduce((sum, bytes) => sum + bytes, 0),
     rendererDomNodes: renderer.reduce((sum, metric) => sum + metric.domNodes, 0),
@@ -307,6 +345,11 @@ async function collectMemory(
   };
 }
 
+async function requestRendererGarbageCollection(app: ElectronApplication): Promise<void> {
+  const pages = app.windows().filter((page) => !page.isClosed());
+  await Promise.all(pages.map((page) => page.requestGC()));
+}
+
 async function collectMedianWindow(
   app: ElectronApplication,
   phase: 'baseline' | 'final',
@@ -314,6 +357,11 @@ async function collectMedianWindow(
   target: MemorySample[],
 ): Promise<void> {
   for (let index = 0; index < MEMORY_SAMPLE_COUNT; index += 1) {
+    // Measure the retained live set, not an arbitrary point in V8's allocation
+    // cycle. Every BrowserWindow can own a distinct isolate even when Chromium
+    // places them in one renderer OS process.
+    // eslint-disable-next-line no-await-in-loop
+    await requestRendererGarbageCollection(app);
     // eslint-disable-next-line no-await-in-loop
     target.push(await collectMemory(app, phase, null, startedAtMs));
     if (index + 1 < MEMORY_SAMPLE_COUNT) {
@@ -338,6 +386,100 @@ async function restorePopouts(app: ElectronApplication, pages: readonly Page[]):
       window.showInactive();
     });
   }));
+}
+
+async function markPtySurfaceIdentities(pages: readonly Page[]): Promise<ReadonlyMap<Page, string>> {
+  const identities = new Map<Page, string>();
+  for (const [index, page] of pages.entries()) {
+    const token = `surface-${index + 1}-${Date.now().toString(36)}`;
+    // eslint-disable-next-line no-await-in-loop
+    await page.evaluate((identity) => {
+      const host = document.querySelector('[data-testid="pty-block"]') as (
+        HTMLDivElement & { __ezTerm?: object }
+      ) | null;
+      const terminal = host?.__ezTerm as ({ __ezLifecycleParkIdentity?: string } | undefined);
+      if (!terminal) throw new Error('live xterm diagnostic seam missing');
+      terminal.__ezLifecycleParkIdentity = identity;
+    }, token);
+    identities.set(page, token);
+  }
+  return identities;
+}
+
+async function expectPtySurfaceState(
+  page: Page,
+  expectedIdentity: string,
+  expectedMode: 'live' | 'parked',
+): Promise<void> {
+  await expect.poll(() => page.evaluate(() => {
+    const host = document.querySelector('[data-testid="pty-block"]') as (
+      HTMLDivElement & { __ezTerm?: object }
+    ) | null;
+    const terminal = host?.__ezTerm as ({
+      __ezLifecycleParkIdentity?: string;
+      options?: { scrollback?: number };
+    } | undefined);
+    return {
+      identity: terminal?.__ezLifecycleParkIdentity ?? null,
+      renderer: host?.dataset.xtermRenderer ?? null,
+      scrollback: terminal?.options?.scrollback ?? null,
+    };
+  })).toEqual({
+    identity: expectedIdentity,
+    renderer: expectedMode === 'parked' ? 'dom' : expect.stringMatching(/^(?:dom|webgl)$/u),
+    scrollback: expectedMode === 'parked'
+      ? RUNTIME_PARKED_SCROLLBACK_LINES
+      : SCROLLBACK_DEFAULT,
+  });
+}
+
+async function installWindowStateEvidence(main: Page): Promise<void> {
+  await main.evaluate(async () => {
+    const desktop = globalThis.window.ezterminalDesktop;
+    if (!desktop) throw new Error('desktop preload bridge missing');
+    const target = globalThis as typeof globalThis & {
+      __ezLifecycleSoakWindowSnapshot?: Awaited<ReturnType<typeof desktop.getWindowStates>>;
+    };
+    target.__ezLifecycleSoakWindowSnapshot = await desktop.getWindowStates();
+    desktop.onWindowStatesChanged((snapshot) => {
+      target.__ezLifecycleSoakWindowSnapshot = snapshot;
+    });
+  });
+}
+
+async function lifecycleFailureEvidence(
+  app: ElectronApplication,
+  main: Page,
+  page: Page,
+): Promise<Record<string, unknown>> {
+  const native = await app.browserWindow(page);
+  const [nativeState, documentState, cachedSnapshot, directSnapshot] = await Promise.all([
+    native.evaluate((window) => ({
+      id: window.id,
+      focused: window.isFocused(),
+      visible: window.isVisible(),
+      minimized: window.isMinimized(),
+      destroyed: window.isDestroyed(),
+    })),
+    page.evaluate(() => ({
+      windowName: globalThis.window.name,
+      documentHasFocus: document.hasFocus(),
+      visibilityState: document.visibilityState,
+      documentRuntimeWindowName: document.documentElement.dataset.runtimeWindowName ?? null,
+      documentRuntimeTier: document.documentElement.dataset.runtimeTier ?? null,
+      paneTier: document.querySelector('[data-testid="pane"]')?.getAttribute('data-runtime-tier') ?? null,
+      presentationMode: document.querySelector('[data-testid="pty-block"]')
+        ?.getAttribute('data-presentation-mode') ?? null,
+      sessionId: document.querySelector('[data-testid="pane"]')?.getAttribute('data-session-id') ?? null,
+    })),
+    main.evaluate(() => (
+      (globalThis as typeof globalThis & {
+        __ezLifecycleSoakWindowSnapshot?: unknown;
+      }).__ezLifecycleSoakWindowSnapshot ?? null
+    )),
+    main.evaluate(() => globalThis.window.ezterminalDesktop?.getWindowStates() ?? null),
+  ]);
+  return { nativeState, documentState, cachedSnapshot, directSnapshot };
 }
 
 async function sendContinuityToken(
@@ -389,9 +531,12 @@ test('main + 8 popouts keep 16 live sessions bounded through repeated park/resum
       sessionCount: SESSION_COUNT,
       mainWindowCount: 1,
       popoutWindowCount: POPOUT_COUNT,
+      baselineWarmupMs: PARK_SETTLE_MS,
       parkGraceExerciseMs: PARK_SETTLE_MS,
       memoryRule: 'final <= baseline * 1.20 + absolute measurement slack',
+      memorySampling: 'renderer GC before baseline, first-park, and final samples',
       privateBytesSlackKb: PRIVATE_BYTES_SLACK_KB,
+      firstParkRendererPrivateBytesSlackKb: FIRST_PARK_RENDERER_PRIVATE_SLACK_KB,
       rendererHeapSlackBytes: RENDERER_HEAP_SLACK_BYTES,
     },
     cycles: [],
@@ -414,9 +559,16 @@ test('main + 8 popouts keep 16 live sessions bounded through repeated park/resum
     const popouts = await createPopouts(app, main);
     await expect.poll(() => app?.windows().length ?? 0, { timeout: 30_000 }).toBe(1 + POPOUT_COUNT);
     await expect.poll(() => sessionCount(main), { timeout: 30_000 }).toBe(SESSION_COUNT);
+    await installWindowStateEvidence(main);
 
     const popoutPages = [...popouts.values()];
+    // Native-window creation and the already-hidden main tabs cross the same
+    // production grace once before the baseline. This prevents cold Chromium
+    // allocator warmup from being misclassified as park growth while keeping
+    // the measured popout transition fully load-bearing.
+    await new Promise((resolve) => setTimeout(resolve, PARK_SETTLE_MS));
     await collectMedianWindow(app, 'baseline', startedAtMs, report.memorySamples);
+    const ptySurfaceIdentities = await markPtySurfaceIdentities(popoutPages);
     const soakStartedAt = Date.now();
     let cycle = 0;
     while (Date.now() - soakStartedAt < durationMs) {
@@ -428,13 +580,54 @@ test('main + 8 popouts keep 16 live sessions bounded through repeated park/resum
       // eslint-disable-next-line no-await-in-loop
       await new Promise((resolve) => setTimeout(resolve, PARK_SETTLE_MS));
       for (const page of popoutPages) {
-        // eslint-disable-next-line no-await-in-loop
-        await expect(page.getByTestId('pane')).toHaveAttribute('data-runtime-tier', 'parked');
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await expect(page.getByTestId('pane')).toHaveAttribute('data-runtime-tier', 'parked');
+        } catch (error) {
+          // Preserve the first divergence before waiting to distinguish a
+          // delayed timer from an indefinitely cancelled lifecycle deadline.
+          // eslint-disable-next-line no-await-in-loop
+          const first = await lifecycleFailureEvidence(app, main, page);
+          let eventuallyParked = false;
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            await expect(page.getByTestId('pane')).toHaveAttribute('data-runtime-tier', 'parked', {
+              timeout: 65_000,
+            });
+            eventuallyParked = true;
+          } catch {
+            // The evidence below records the stable non-parked state.
+          }
+          // eslint-disable-next-line no-await-in-loop
+          const after = await lifecycleFailureEvidence(app, main, page);
+          throw new Error(
+            `pane failed to park in cycle ${cycle}; eventuallyParked=${eventuallyParked}; `
+            + `first=${JSON.stringify(first)}; after=${JSON.stringify(after)}`,
+            { cause: error },
+          );
+        }
         // eslint-disable-next-line no-await-in-loop
         await expect(page.getByTestId('pty-block')).toHaveAttribute('data-presentation-mode', 'parked');
+        // eslint-disable-next-line no-await-in-loop
+        await expectPtySurfaceState(page, ptySurfaceIdentities.get(page)!, 'parked');
       }
       // eslint-disable-next-line no-await-in-loop
-      report.memorySamples.push(await collectMemory(app, 'parked', cycle, startedAtMs));
+      if (cycle === 1) await requestRendererGarbageCollection(app);
+      const parkedSample = await collectMemory(app, 'parked', cycle, startedAtMs);
+      report.memorySamples.push(parkedSample);
+      if (cycle === 1) {
+        const baseline = report.memorySamples.filter((sample) => sample.phase === 'baseline');
+        report.firstParkCheck = firstParkCheck(
+          baseline.map((sample) => sample.rendererPrivateBytesKb),
+          parkedSample.rendererPrivateBytesKb,
+        );
+        if (!report.firstParkCheck.passed) {
+          throw new Error(
+            `first park added ${report.firstParkCheck.growthKb} KiB renderer private bytes; `
+            + `limit=${report.firstParkCheck.slack} KiB`,
+          );
+        }
+      }
 
       // eslint-disable-next-line no-await-in-loop
       await restorePopouts(app, popoutPages);
@@ -445,6 +638,8 @@ test('main + 8 popouts keep 16 live sessions bounded through repeated park/resum
         });
         // eslint-disable-next-line no-await-in-loop
         await expect(page.getByTestId('pane')).toHaveAttribute('data-runtime-tier', /^(?:active|passive)$/u);
+        // eslint-disable-next-line no-await-in-loop
+        await expectPtySurfaceState(page, ptySurfaceIdentities.get(page)!, 'live');
       }
 
       const targetIndex = ((cycle - 1) % SESSION_COUNT) + 1;

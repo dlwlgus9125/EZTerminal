@@ -82,16 +82,17 @@ Main과 모든 Dockview popout은 main process가 발행하는 하나의 native-
 |---|---|---|
 | pane과 소유 창이 보이고 창이 focused | `active` | 즉시 xterm write, cursor와 효과 활성 |
 | pane과 창은 보이지만 창이 unfocused | `passive` | xterm 유지, write batching과 비필수 animation 정지 |
-| pane이 숨겨졌거나 창이 최소화됨 | `passive` 후 `parked` | grace 동안 즉시 복귀 가능, 이후 xterm presentation만 해제 |
+| pane이 숨겨졌거나 창이 최소화됨 | `passive` 후 `parked` | grace 동안 즉시 복귀 가능, 이후 in-place xterm surface 정지 |
 
 - 보이는 unfocused 창은 시간이 지나도 `parked`로 내려가지 않는다. 사용자가 여러 창을
   나란히 관찰할 때 출력 surface가 사라져서는 안 된다.
 - 숨김·최소화가 [`RUNTIME_PARK_GRACE_MS`](../../src/shared/runtime-lifecycle.ts)를 넘으면
-  xterm viewport, selection, focus와 bounded scrollback checkpoint를 남기고 renderer DOM을
-  해제한다. Interpreter run, PTY port, frame ACK와 `BlockController`는 계속 살아 있다.
-- 복귀하면 checkpoint로 새 xterm surface를 만들고, park 중 소비한 output을 이어 붙인 뒤
-  입력 가능한 `live` 상태로 전환한다. layout 이동이나 presentation 재생성이 새 session이나
-  run을 만들지 않는다.
+  xterm identity와 viewport·selection을 그대로 유지하면서 WebGL, cursor, animation을 끄고
+  scrollback을 1,000줄로 줄이며 write를 4Hz로 합친다. 반복 dispose/recreate는 Chromium
+  renderer의 native-memory high-water를 키우므로 금지한다. Interpreter run, PTY port, frame
+  ACK와 `BlockController`는 계속 살아 있다.
+- 복귀하면 같은 xterm surface에서 renderer preference와 사용자 scrollback을 즉시 복원한다.
+  layout 이동이나 lifecycle 전환이 새 session, run 또는 xterm instance를 만들지 않는다.
 - main 창이 숨겨져도 보이는 popout이 하나 이상이면 그 popout DOM을 소유한 main renderer의
   background throttling만 해제한다. 모든 native surface가 숨으면 Chromium 기본 throttling을
   다시 사용한다.
@@ -158,7 +159,8 @@ close guard 또는 persistence schema를 우회해서는 안 된다.
 - [`src/main/session-surface-authority.ts`](../../src/main/session-surface-authority.ts)
 - [`src/renderer/desktop-runtime-lifecycle.tsx`](../../src/renderer/desktop-runtime-lifecycle.tsx)
 - [`src/renderer/runtime-lifecycle.ts`](../../src/renderer/runtime-lifecycle.ts)
-- [`src/renderer/pty-presentation-checkpoint.ts`](../../src/renderer/pty-presentation-checkpoint.ts)
+- [`src/renderer/PtyBlock.tsx`](../../src/renderer/PtyBlock.tsx)
+- [`src/renderer/pty-write-scheduler.ts`](../../src/renderer/pty-write-scheduler.ts)
 - [`src/renderer/workbench-coordinator.ts`](../../src/renderer/workbench-coordinator.ts)
 - [`src/renderer/session-mirroring-coordinator.ts`](../../src/renderer/session-mirroring-coordinator.ts)
 - [`src/renderer/pane-lifecycle-coordinator.ts`](../../src/renderer/pane-lifecycle-coordinator.ts)
@@ -188,8 +190,10 @@ close guard 또는 persistence schema를 우회해서는 안 된다.
 
 `pnpm e2e:lifecycle-soak`는 clean exact-SHA 후보에서 main + popout 8개와 live session
 16개를 기본 2시간 반복한다. 각 cycle은 production park grace를 실제로 넘고, 복귀 입력
-왕복과 session 수를 확인하며 process private bytes와 전체 renderer JS heap의 시작/종료
-median이 20% + 측정 slack 안인지 JSON 증거로 남긴다. 일반 `pnpm e2e`에는 포함되지 않는다.
+왕복, session 수, 동일 xterm identity를 확인한다. cold Chromium allocator를 제외하도록 한 번의
+production grace 뒤 baseline을 잡고, baseline·첫 park·final 직전에 renderer GC를 요청해 retained
+live set을 측정한다. process private bytes와 전체 renderer JS heap의 시작/종료 median이 20% +
+측정 slack 안인지 JSON 증거로 남긴다. 일반 `pnpm e2e`에는 포함되지 않는다.
 
 과거 단일 창 전제와 구현 계획은
 [`layout-persistence-design.md`](../archive/design/layout-persistence-design.md)에 보존한다.

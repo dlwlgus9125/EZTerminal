@@ -28,4 +28,31 @@ describe('PtyWriteScheduler', () => {
     scheduler.dispose();
     vi.useRealTimers();
   });
+
+  it('coalesces parked output at 4Hz while preserving every flush callback', () => {
+    vi.useFakeTimers();
+    const delivered: number[] = [];
+    const flushed: number[] = [];
+    const scheduler = new PtyWriteScheduler('parked', (write) => {
+      delivered.push(write.bytes[0]);
+      write.onFlushed();
+    });
+    scheduler.write({
+      bytes: Uint8Array.of(1),
+      onFlushed: () => flushed.push(1),
+      suppressSideEffects: true,
+    });
+    scheduler.write({
+      bytes: Uint8Array.of(2),
+      onFlushed: () => flushed.push(2),
+      suppressSideEffects: true,
+    });
+    vi.advanceTimersByTime(249);
+    expect(delivered).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(delivered).toEqual([1, 2]);
+    expect(flushed).toEqual([1, 2]);
+    scheduler.dispose();
+    vi.useRealTimers();
+  });
 });
