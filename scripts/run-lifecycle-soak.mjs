@@ -34,6 +34,7 @@ const result = spawnSync(
       ...process.env,
       EZTERMINAL_BUILD_SHA: gitHead,
       VITE_BUILD_SHA: gitHead,
+      EZTERMINAL_FORCE_E2E_PACKAGE: '1',
       EZTERMINAL_PLAYWRIGHT_RETRIES: '0',
       EZTERMINAL_RUN_LIFECYCLE_SOAK: '1',
       EZTERMINAL_LIFECYCLE_SOAK_REPORT_PATH: reportPath,

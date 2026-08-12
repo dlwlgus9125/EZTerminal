@@ -18,6 +18,7 @@ const SESSION_COUNT = 16;
 const POPOUT_COUNT = 8;
 const DEFAULT_DURATION_MS = 2 * 60 * 60 * 1_000;
 const PARK_SETTLE_MS = 32_000;
+const STEADY_STATE_PREFILL_LINES = RUNTIME_PARKED_SCROLLBACK_LINES + 100;
 const MEMORY_SAMPLE_COUNT = 5;
 const MEMORY_SAMPLE_INTERVAL_MS = 1_000;
 const PRIVATE_BYTES_SLACK_KB = 64 * 1_024;
@@ -95,6 +96,7 @@ interface LifecycleSoakReport {
     readonly mainWindowCount: 1;
     readonly popoutWindowCount: 8;
     readonly baselineWarmupMs: number;
+    readonly steadyStatePrefillLines: number;
     readonly parkGraceExerciseMs: number;
     readonly memoryRule: 'final <= baseline * 1.20 + absolute measurement slack';
     readonly memorySampling: 'renderer GC before baseline, first-park, and final samples';
@@ -206,7 +208,9 @@ async function startWorkloads(main: Page): Promise<void> {
     // eslint-disable-next-line no-await-in-loop
     await expect(pane).toHaveAttribute('data-session-id', /.+/, { timeout: 15_000 });
     // eslint-disable-next-line no-await-in-loop
-    await pane.getByTestId('cmd-input').fill(`!node ${OUTPUT_FIXTURE} ${label}`);
+    await pane.getByTestId('cmd-input').fill(
+      `!node ${OUTPUT_FIXTURE} ${label} ${STEADY_STATE_PREFILL_LINES}`,
+    );
     // eslint-disable-next-line no-await-in-loop
     await pane.getByTestId('btn-run').click();
     const pty = pane.getByTestId('pty-block');
@@ -532,6 +536,7 @@ test('main + 8 popouts keep 16 live sessions bounded through repeated park/resum
       mainWindowCount: 1,
       popoutWindowCount: POPOUT_COUNT,
       baselineWarmupMs: PARK_SETTLE_MS,
+      steadyStatePrefillLines: STEADY_STATE_PREFILL_LINES,
       parkGraceExerciseMs: PARK_SETTLE_MS,
       memoryRule: 'final <= baseline * 1.20 + absolute measurement slack',
       memorySampling: 'renderer GC before baseline, first-park, and final samples',
@@ -553,6 +558,12 @@ test('main + 8 popouts keep 16 live sessions bounded through repeated park/resum
       appVersion: globalThis.window.ezterminal.versions.app,
       buildSha: globalThis.window.ezterminal.versions.buildSha,
     }));
+    const expectedBuildSha = process.env.EZTERMINAL_BUILD_SHA?.trim().toLowerCase();
+    if (expectedBuildSha && report.releaseIdentity.buildSha.toLowerCase() !== expectedBuildSha) {
+      throw new Error(
+        `launched preload build SHA ${report.releaseIdentity.buildSha} differs from expected ${expectedBuildSha}`,
+      );
+    }
 
     await addTerminalTabs(main);
     await startWorkloads(main);

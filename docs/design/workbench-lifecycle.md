@@ -192,7 +192,9 @@ close guard 또는 persistence schema를 우회해서는 안 된다.
 16개를 기본 2시간 반복한다. 각 cycle은 production park grace를 실제로 넘고, 복귀 입력
 왕복, session 수, 동일 xterm identity를 확인한다. cold Chromium allocator를 제외하도록 한 번의
 production grace 뒤 baseline을 잡고, baseline·첫 park·final 직전에 renderer GC를 요청해 retained
-live set을 측정한다. process private bytes와 전체 renderer JS heap의 시작/종료 median이 20% +
+live set을 측정한다. 각 workload는 parked scrollback 상한을 먼저 채우므로 정상적인 bounded retention을
+누수로 세지 않는다. exact-SHA 실행은 기존 artifact가 최신이어도 package를 다시 만들고, 실행 직후
+preload SHA를 대조한다. process private bytes와 전체 renderer JS heap의 시작/종료 median이 20% +
 측정 slack 안인지 JSON 증거로 남긴다. 일반 `pnpm e2e`에는 포함되지 않는다.
 
 과거 단일 창 전제와 구현 계획은

@@ -111,3 +111,15 @@ export function areBuildArtifactsFresh(artifactPaths: readonly string[], inputPa
   const newestInput = Math.max(...inputPaths.map((input) => statSync(input).mtimeMs));
   return oldestArtifact >= newestInput;
 }
+
+/**
+ * Exact-SHA release evidence always rebuilds so an otherwise-fresh package
+ * cannot retain identity values embedded by an earlier diagnostic run.
+ */
+export function shouldRebuildArtifacts(
+  force: boolean,
+  artifactPaths: readonly string[],
+  inputPaths: readonly string[],
+): boolean {
+  return force || !areBuildArtifactsFresh(artifactPaths, inputPaths);
+}

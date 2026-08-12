@@ -4,7 +4,12 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { areBuildArtifactsFresh, buildArtifactPaths, buildInputPaths } from '../e2e/build-freshness';
+import {
+  areBuildArtifactsFresh,
+  buildArtifactPaths,
+  buildInputPaths,
+  shouldRebuildArtifacts,
+} from '../e2e/build-freshness';
 
 const tempDirs: string[] = [];
 
@@ -54,6 +59,14 @@ describe('E2E build freshness', () => {
 
     expect(areBuildArtifactsFresh([main, renderer], [source])).toBe(true);
     expect(areBuildArtifactsFresh([main, path.join(tmpdir(), 'missing-renderer.js')], [source])).toBe(false);
+  });
+
+  it('rebuilds fresh artifacts when exact-SHA evidence forces a new package', () => {
+    const artifact = tempFile('renderer.js', new Date('2026-07-14T03:00:00Z'));
+    const source = tempFile('App.tsx', new Date('2026-07-14T02:00:00Z'));
+
+    expect(shouldRebuildArtifacts(false, [artifact], [source])).toBe(false);
+    expect(shouldRebuildArtifacts(true, [artifact], [source])).toBe(true);
   });
 
   it('wires every Forge entry, Vite config, and referenced renderer asset into freshness', () => {

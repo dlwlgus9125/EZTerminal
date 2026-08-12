@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
-import { areBuildArtifactsFresh, buildArtifactPaths, buildInputPaths } from './build-freshness';
+import { buildArtifactPaths, buildInputPaths, shouldRebuildArtifacts } from './build-freshness';
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -15,7 +15,8 @@ const ROOT = path.resolve(__dirname, '..');
 // safety: the bin path is resolved from the package manifest rather than relying
 // on a platform-specific shim in node_modules/.bin.
 export default function globalSetup(): void {
-  if (areBuildArtifactsFresh(buildArtifactPaths(ROOT), buildInputPaths(ROOT))) return;
+  const forcePackage = process.env.EZTERMINAL_FORCE_E2E_PACKAGE === '1';
+  if (!shouldRebuildArtifacts(forcePackage, buildArtifactPaths(ROOT), buildInputPaths(ROOT))) return;
 
   const require = createRequire(__filename);
   const manifestPath = require.resolve('@electron-forge/cli/package.json');
