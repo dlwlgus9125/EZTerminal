@@ -25,6 +25,8 @@
 
 - Kept multiple detached windows and their live sessions responsive through
   repeated minimize, restore, background, and renderer-recovery transitions.
+- Replaced the vulnerable `extract-zip` packaging dependency with Electron's
+  hardened drop-in extractor before creating release artifacts.
 
 See [1.0.34 release notes](docs/release/release-notes-1.0.34.md).
 

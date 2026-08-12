@@ -36,6 +36,11 @@ persisted layout schema are unchanged. The parked 1,000-line limit applies
 only while presentation work is suspended; the user's configured active
 scrollback is restored on return.
 
+The Windows packaging toolchain replaces the vulnerable `extract-zip`
+dependency with Electron's hardened `@electron-internal/extract-zip` 1.0.5
+drop-in implementation. Both production and development dependency audits
+must be clean before release artifacts are assembled.
+
 - Windows 10 22H2/Windows 11 x64: `EZTerminal-Setup.exe`
 - Android 10 (API 29) or newer:
   `EZTerminal-Android-1.0.34-vc55.apk`
