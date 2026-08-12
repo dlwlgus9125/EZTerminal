@@ -32,10 +32,11 @@ export interface SessionSurfaceBroker {
 }
 
 interface ClientRecord {
-  readonly principalId: string;
+  principalId: string;
   readonly continuityKey: string | null;
   readonly surfaces: Map<string, SurfaceReservation>;
   active: boolean;
+  recoveryTimer: ReturnType<typeof setTimeout> | null;
 }
 
 interface SurfaceReservation {
@@ -62,6 +63,7 @@ interface PreparedCloseRecord {
 }
 
 const DEFAULT_PREPARED_CLOSE_TTL_MS = 60_000;
+const DEFAULT_RECOVERY_TTL_MS = 5 * 60_000;
 const MAX_PREPARED_CLOSES = 128;
 
 function intentKey(intent: SessionSurfaceIntent): string {
@@ -95,6 +97,7 @@ export class SessionSurfaceAuthority {
   private readonly closeGate: MutationGate;
   private readonly newId: () => string;
   private readonly preparedCloseTtlMs: number;
+  private readonly recoveryTtlMs: number;
   private readonly resolveProjectTarget: ((target: ProjectSessionTarget) => Promise<
     | { readonly ok: true; readonly cwd: string }
     | { readonly ok: false; readonly error: ProjectWorkspaceError }
@@ -107,6 +110,7 @@ export class SessionSurfaceAuthority {
       readonly newId?: () => string;
       readonly closeGate?: MutationGate;
       readonly preparedCloseTtlMs?: number;
+      readonly recoveryTtlMs?: number;
       readonly resolveProjectTarget?: (target: ProjectSessionTarget) => Promise<
         | { readonly ok: true; readonly cwd: string }
         | { readonly ok: false; readonly error: ProjectWorkspaceError }
@@ -116,6 +120,7 @@ export class SessionSurfaceAuthority {
     this.newId = options.newId ?? randomUUID;
     this.closeGate = options.closeGate ?? new AsyncMutationGate();
     this.preparedCloseTtlMs = options.preparedCloseTtlMs ?? DEFAULT_PREPARED_CLOSE_TTL_MS;
+    this.recoveryTtlMs = options.recoveryTtlMs ?? DEFAULT_RECOVERY_TTL_MS;
     this.resolveProjectTarget = options.resolveProjectTarget ?? null;
     this.unsubscribeSessionRemoved = broker.onSessionRemoved((sessionId) => {
       this.removeSessionBindings(sessionId);
@@ -123,8 +128,9 @@ export class SessionSurfaceAuthority {
   }
 
   /**
-   * Register one transport generation. A newer generation with the same
-   * continuity key releases the older generation without transferring owners.
+   * Register one transport generation. A normal newer generation releases an
+   * older live generation. A generation explicitly suspended for renderer
+   * recovery transfers its exact bindings, including creator ownership.
    */
   public connectClient(principalId: string, continuityKey?: string): void {
     const current = this.clients.get(principalId);
@@ -132,20 +138,50 @@ export class SessionSurfaceAuthority {
     const normalizedContinuityKey = continuityKey ?? null;
     if (normalizedContinuityKey) {
       const previous = this.principalsByContinuityKey.get(normalizedContinuityKey);
-      if (previous && previous !== principalId) this.disconnectClient(previous);
+      if (previous && previous !== principalId) {
+        const previousClient = this.clients.get(previous);
+        if (previousClient && !previousClient.active) {
+          this.transferSuspendedClient(previousClient, principalId);
+          return;
+        }
+        this.disconnectClient(previous);
+      }
       this.principalsByContinuityKey.set(normalizedContinuityKey, principalId);
+    }
+    if (current && !current.active) {
+      if (current.recoveryTimer) clearTimeout(current.recoveryTimer);
+      current.recoveryTimer = null;
+      current.active = true;
+      if (normalizedContinuityKey) {
+        this.principalsByContinuityKey.set(normalizedContinuityKey, principalId);
+      }
+      return;
     }
     this.clients.set(principalId, {
       principalId,
       continuityKey: normalizedContinuityKey,
       surfaces: new Map(),
       active: true,
+      recoveryTimer: null,
     });
+  }
+
+  /** Keep exact surface capabilities alive across one renderer reload. */
+  public suspendClient(principalId: string): void {
+    const client = this.clients.get(principalId);
+    if (!client || !client.active) return;
+    client.active = false;
+    this.clearPreparedCloses(client);
+    if (client.recoveryTimer) clearTimeout(client.recoveryTimer);
+    client.recoveryTimer = setTimeout(() => this.disconnectClient(principalId), this.recoveryTtlMs);
+    client.recoveryTimer.unref?.();
   }
 
   public disconnectClient(principalId: string): void {
     const client = this.clients.get(principalId);
-    if (!client || !client.active) return;
+    if (!client) return;
+    if (client.recoveryTimer) clearTimeout(client.recoveryTimer);
+    client.recoveryTimer = null;
     client.active = false;
     this.clients.delete(principalId);
     if (
@@ -158,11 +194,7 @@ export class SessionSurfaceAuthority {
       if (reservation.bindingId) this.removeBinding(reservation.bindingId);
     }
     client.surfaces.clear();
-    for (const [token, prepared] of this.preparedCloses) {
-      if (prepared.principal !== client) continue;
-      clearTimeout(prepared.timer);
-      this.preparedCloses.delete(token);
-    }
+    this.clearPreparedCloses(client);
   }
 
   public openSessionSurface(
@@ -177,9 +209,18 @@ export class SessionSurfaceAuthority {
     const key = intentKey(intent);
     const existing = client.surfaces.get(surfaceId);
     if (existing) {
-      return existing.intentKey === key
-        ? existing.promise
-        : Promise.resolve({ ok: false, reason: 'state-changed' });
+      if (existing.intentKey === key) return existing.promise;
+      // A recovered renderer re-opens the transferred surface by its stable id
+      // and live session. The original create/project intent stays main-owned,
+      // so the host-issued owner/adopted role is preserved exactly.
+      if (intent.kind === 'adopt') {
+        return existing.promise.then((result) => (
+          result.ok && result.binding.session.sessionId === intent.sessionId
+            ? result
+            : { ok: false as const, reason: 'state-changed' as const }
+        ));
+      }
+      return Promise.resolve({ ok: false, reason: 'state-changed' });
     }
 
     const reservation: SurfaceReservation = {
@@ -426,6 +467,26 @@ export class SessionSurfaceAuthority {
     reservation: SurfaceReservation,
   ): void {
     if (client.surfaces.get(surfaceId) === reservation) client.surfaces.delete(surfaceId);
+  }
+
+  private transferSuspendedClient(previous: ClientRecord, principalId: string): void {
+    if (previous.recoveryTimer) clearTimeout(previous.recoveryTimer);
+    previous.recoveryTimer = null;
+    this.clients.delete(previous.principalId);
+    previous.principalId = principalId;
+    previous.active = true;
+    this.clients.set(principalId, previous);
+    if (previous.continuityKey) {
+      this.principalsByContinuityKey.set(previous.continuityKey, principalId);
+    }
+  }
+
+  private clearPreparedCloses(client: ClientRecord): void {
+    for (const [token, prepared] of this.preparedCloses) {
+      if (prepared.principal !== client) continue;
+      clearTimeout(prepared.timer);
+      this.preparedCloses.delete(token);
+    }
   }
 
   private removeBinding(bindingId: string): void {

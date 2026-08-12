@@ -808,7 +808,7 @@ export class RemoteDesktopPresentationAdapter implements DesktopPresentationAdap
     ) {
       return;
     }
-    if (state === 'reconnecting' || state === 'connecting') {
+    if (state === 'reconnecting' || state === 'connecting' || state === 'suspended') {
       this.resumePending = true;
       this.invalidateNegotiation();
       this.closePeer();

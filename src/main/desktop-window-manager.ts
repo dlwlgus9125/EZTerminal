@@ -17,6 +17,7 @@ import {
   type AuxiliaryCloseRequest,
   type DesktopWindowKind,
   type DesktopWindowState,
+  type DesktopWindowStatesSnapshot,
 } from '../shared/desktop-window';
 import { normalizeExternalHttpUrl } from '../shared/external-url';
 import { isAuxiliaryRendererUrl } from './app-renderer-protocol';
@@ -66,6 +67,9 @@ export class DesktopWindowManager {
   private readonly pendingAuxiliaryByWindow = new Map<BrowserWindow, PendingAuxiliaryClose>();
   private readonly pendingAuxiliaryById = new Map<string, PendingAuxiliaryClose>();
   private readonly pendingLayoutFlushes = new Map<string, PendingLayoutFlush>();
+  private readonly windows = new Set<BrowserWindow>();
+  private readonly windowStateSignatures = new WeakMap<BrowserWindow, string>();
+  private stateSequence = 0;
 
   public constructor(private readonly options: DesktopWindowManagerOptions) {
     this.installIpc();
@@ -109,6 +113,10 @@ export class DesktopWindowManager {
     ipcMain.handle('desktop-window:get-state', (event) => {
       const window = this.resolveConfiguredSender(event);
       return window ? this.windowState(window) : null;
+    });
+    ipcMain.handle('desktop-window:get-states', (event) => {
+      if (!this.resolveConfiguredSender(event)) return null;
+      return this.windowStatesSnapshot();
     });
     ipcMain.handle('desktop-window:perform-action', (event, action: unknown) => {
       const window = this.resolveConfiguredSender(event);
@@ -161,6 +169,7 @@ export class DesktopWindowManager {
   private configureWindow(window: BrowserWindow, kind: DesktopWindowKind, name?: string): void {
     if (this.configuredWindows.has(window)) return;
     this.configuredWindows.add(window);
+    this.windows.add(window);
     this.windowKinds.set(window, kind);
     if (name) this.auxiliaryNames.set(window, name);
     window.setMenuBarVisibility(false);
@@ -168,14 +177,29 @@ export class DesktopWindowManager {
     this.options.onWindowConfigured?.(window, kind, name);
 
     const sendState = (): void => {
-      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      if (window.isDestroyed()) return;
+      const signature = this.windowStateSignature(window);
+      if (this.windowStateSignatures.get(window) === signature) return;
+      this.windowStateSignatures.set(window, signature);
+      this.stateSequence += 1;
+      if (!window.webContents.isDestroyed()) {
         window.webContents.send('desktop-window:state-changed', this.windowState(window));
       }
+      this.broadcastWindowStates();
+      this.updateMainRendererThrottling();
     };
+    window.on('focus', sendState);
+    window.on('blur', sendState);
+    window.on('show', sendState);
+    window.on('hide', sendState);
+    window.on('minimize', sendState);
+    window.on('restore', sendState);
     window.on('maximize', sendState);
     window.on('unmaximize', sendState);
     window.on('enter-full-screen', sendState);
     window.on('leave-full-screen', sendState);
+    window.on('move', sendState);
+    window.on('resize', sendState);
 
     window.webContents.on('will-navigate', (event, url) => {
       if (!this.options.isAllowedNavigation(url)) event.preventDefault();
@@ -192,9 +216,14 @@ export class DesktopWindowManager {
     }
 
     window.on('closed', () => {
+      this.windows.delete(window);
       const pending = this.pendingAuxiliaryByWindow.get(window);
       if (pending) this.clearPendingAuxiliaryClose(pending);
+      this.stateSequence += 1;
+      this.broadcastWindowStates();
+      this.updateMainRendererThrottling();
     });
+    sendState();
   }
 
   private configureWindowOpen(window: BrowserWindow): void {
@@ -269,10 +298,70 @@ export class DesktopWindowManager {
   }
 
   private windowState(window: BrowserWindow): DesktopWindowState {
+    const bounds = window.getBounds();
+    const display = screen.getDisplayMatching(bounds);
     return {
+      windowName: this.windowKinds.get(window) === 'main'
+        ? 'main'
+        : (this.auxiliaryNames.get(window) ?? ''),
       kind: this.windowKinds.get(window) ?? 'auxiliary',
+      focused: window.isFocused(),
+      visible: window.isVisible(),
+      minimized: window.isMinimized(),
       maximized: window.isMaximized(),
       fullscreen: window.isFullScreen(),
+      displayId: String(display.id),
+      scaleFactor: display.scaleFactor,
+      sequence: this.stateSequence,
     };
+  }
+
+  /** Native move/resize events can arrive at pointer frequency. Only display,
+   * visibility, focus and window-mode changes affect renderer lifecycle. */
+  private windowStateSignature(window: BrowserWindow): string {
+    const state = this.windowState(window);
+    return [
+      state.windowName,
+      state.kind,
+      state.focused,
+      state.visible,
+      state.minimized,
+      state.maximized,
+      state.fullscreen,
+      state.displayId,
+      state.scaleFactor,
+    ].join('|');
+  }
+
+  private windowStatesSnapshot(): DesktopWindowStatesSnapshot {
+    const windows = [...this.windows]
+      .filter((candidate) => !candidate.isDestroyed())
+      .map((candidate) => this.windowState(candidate))
+      .sort((a, b) => a.windowName.localeCompare(b.windowName));
+    return { sequence: this.stateSequence, windows: Object.freeze(windows) };
+  }
+
+  private broadcastWindowStates(): void {
+    const snapshot = this.windowStatesSnapshot();
+    for (const candidate of this.windows) {
+      if (candidate.isDestroyed() || candidate.webContents.isDestroyed()) continue;
+      candidate.webContents.send('desktop-window:states-changed', snapshot);
+    }
+  }
+
+  /** A Dockview popout is rendered by the main workbench realm. Keep that
+   * realm schedulable only while the native main window is hidden and at
+   * least one auxiliary surface remains visible. */
+  private updateMainRendererThrottling(): void {
+    const mainWindow = this.options.getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+    const mainHidden = !mainWindow.isVisible() || mainWindow.isMinimized();
+    const auxiliaryVisible = [...this.windows].some((candidate) => (
+      candidate !== mainWindow
+      && !candidate.isDestroyed()
+      && candidate.isVisible()
+      && !candidate.isMinimized()
+    ));
+    mainWindow.webContents.setBackgroundThrottling(!(mainHidden && auxiliaryVisible));
   }
 }

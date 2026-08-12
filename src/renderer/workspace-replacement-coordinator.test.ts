@@ -17,6 +17,7 @@ const OWNER: PaneSnapshot = {
   isDead: false,
   sessionBindingPending: false,
   sessionSurfaceBindingId: 'binding-1',
+  sessionSurfaceId: 'surface-1',
   sessionSurfaceRole: 'owner',
   destroysSessionOnClose: true,
   activeRunIds: ['run-1'],
@@ -24,6 +25,7 @@ const OWNER: PaneSnapshot = {
   hasSshPrompt: false,
   activePty: true,
   activeCommand: 'node task.js',
+  scrollTop: 0,
 };
 
 function layoutEnvelope(panelIds: readonly string[] = ['tab-9']): LayoutEnvelope {

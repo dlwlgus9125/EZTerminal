@@ -14,11 +14,13 @@ import {
   type SystemStatsSnapshot,
 } from '../shared/ipc';
 import type { ThemeMod } from '../shared/theme-schema';
+import type { RendererRecoveryCheckpoint } from '../shared/renderer-recovery';
 import type {
   AuxiliaryCloseRequest,
   AuxiliaryCloseResolution,
   DesktopWindowAction,
   DesktopWindowState,
+  DesktopWindowStatesSnapshot,
 } from '../shared/desktop-window';
 import { REMOTE_PROTOCOL_VERSION } from '../shared/remote-protocol';
 import packageJson from '../../package.json';
@@ -336,6 +338,8 @@ contextBridge.exposeInMainWorld(BRIDGE_KEY, api);
 const desktopApi: EzTerminalDesktopApi = {
   getWindowState: (): Promise<DesktopWindowState> =>
     ipcRenderer.invoke('desktop-window:get-state'),
+  getWindowStates: (): Promise<DesktopWindowStatesSnapshot> =>
+    ipcRenderer.invoke('desktop-window:get-states'),
   performWindowAction: (action: DesktopWindowAction): Promise<void> =>
     ipcRenderer.invoke('desktop-window:perform-action', action),
   onWindowStateChanged: (listener: (state: DesktopWindowState) => void): (() => void) => {
@@ -366,6 +370,12 @@ const desktopApi: EzTerminalDesktopApi = {
   completeLayoutFlush: (requestId: string): void => {
     ipcRenderer.send('desktop-window:layout-flushed', requestId);
   },
+  saveRendererRecoveryCheckpoint: (checkpoint: RendererRecoveryCheckpoint): Promise<boolean> =>
+    ipcRenderer.invoke('renderer-recovery:save-checkpoint', checkpoint),
+  consumeRendererRecoveryCheckpoint: (): Promise<RendererRecoveryCheckpoint | null> =>
+    ipcRenderer.invoke('renderer-recovery:consume-checkpoint'),
+  prepareRendererRecovery: (): Promise<void> =>
+    ipcRenderer.invoke('renderer-recovery:prepare'),
   getAppUpdateSnapshot: () => ipcRenderer.invoke('app-update:get-snapshot'),
   checkForAppUpdate: () => ipcRenderer.invoke('app-update:check'),
   downloadAppUpdate: () => ipcRenderer.invoke('app-update:download'),
@@ -493,6 +503,13 @@ const desktopApi: EzTerminalDesktopApi = {
   searchWorkspaceFiles: (request) => ipcRenderer.invoke('workspace-files:search', request),
   cancelWorkspaceFileSearch: (requestId: string): void => {
     ipcRenderer.send('workspace-files:cancel', requestId);
+  },
+  onWindowStatesChanged: (
+    listener: (snapshot: DesktopWindowStatesSnapshot) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, snapshot: DesktopWindowStatesSnapshot): void => listener(snapshot);
+    ipcRenderer.on('desktop-window:states-changed', handler);
+    return () => ipcRenderer.removeListener('desktop-window:states-changed', handler);
   },
   describeProjectWorkspace: (projectId: string) =>
     ipcRenderer.invoke('project-workspace:describe', projectId),

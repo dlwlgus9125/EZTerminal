@@ -56,6 +56,14 @@ version 7이며 지원 목록도 version 7 하나다. 버전은
   opaque reconnect UI 아래에서 새 입력과 부수효과는 막는다.
 - 성공한 재인증 뒤 구독, 세션 목록, 표면과 attach 가능한 실행을 재구성한 다음 live
   frame을 연다.
+- Capacitor `appStateChange`가 background를 알리면 짧은 grace 동안 현재 연결을 유지하고,
+  grace를 넘으면 transport를 `suspended`로 전환한다. 이 전환은 reconnect timer와 socket만
+  정리하고 session surface, run lease, 안정적인 virtual port와 UI state는 보존한다.
+- Foreground 복귀는 동시에 들어온 native/page visibility 신호를 하나로 합쳐 한 번만
+  재연결한다. 인증 뒤 기존 surface와 run을 resume하고, 중복 socket이나 중복 attach를
+  만들지 않는다.
+- Background suspend는 사용자의 명시적 Disconnect가 아니다. Disconnect만 surface와
+  run 권한을 의도적으로 반납하고 화면을 파괴하는 destructive 경로를 사용한다.
 
 ## 실행 소유권과 복구
 
@@ -100,6 +108,7 @@ Agent 상태·이력·프로젝트, OpenClaw와 PC Control 진입점을 사용�
 - [`src/main/remote-run-lease.ts`](../../src/main/remote-run-lease.ts)
 - [`src/shared/remote-protocol.ts`](../../src/shared/remote-protocol.ts)
 - [`mobile/src/transport/ws-ezterminal.ts`](../../mobile/src/transport/ws-ezterminal.ts)
+- [`mobile/src/mobile-app-lifecycle.ts`](../../mobile/src/mobile-app-lifecycle.ts)
 - [`mobile/src/connection-credential-store.ts`](../../mobile/src/connection-credential-store.ts)
 
 ## 검증
@@ -108,6 +117,7 @@ Agent 상태·이력·프로젝트, OpenClaw와 PC Control 진입점을 사용�
 - [`src/main/remote-runtime.test.ts`](../../src/main/remote-runtime.test.ts)
 - [`src/main/trusted-remote-network.test.ts`](../../src/main/trusted-remote-network.test.ts)
 - [`mobile/src/transport/ws-ezterminal.test.ts`](../../mobile/src/transport/ws-ezterminal.test.ts)
+- [`mobile/src/mobile-app-lifecycle.test.ts`](../../mobile/src/mobile-app-lifecycle.test.ts)
 - [`mobile/src/connection-credential-store.test.ts`](../../mobile/src/connection-credential-store.test.ts)
 - [`e2e/remote-resume-stall.spec.ts`](../../e2e/remote-resume-stall.spec.ts)
 - [`mobile/e2e/smoke.ts`](../../mobile/e2e/smoke.ts)

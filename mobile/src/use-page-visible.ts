@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
 
+import {
+  isMobileAppActive,
+  onMobileAppActivityChange,
+} from './mobile-app-lifecycle';
+
 // usePageVisible — tracks the Page Visibility API (openclaw-stabilization
 // M6), used to pause OpenClaw status/log WS subscriptions while the app is
 // backgrounded so they stop burning battery on a screen nobody sees. Plain
@@ -8,12 +13,19 @@ import { useEffect, useState } from 'react';
 // mobile/package.json) and `visibilitychange` already fires reliably in a
 // Capacitor WebView when the app is backgrounded/foregrounded.
 export function usePageVisible(): boolean {
-  const [visible, setVisible] = useState(() => document.visibilityState === 'visible');
+  const readVisible = (): boolean => (
+    document.visibilityState === 'visible' && isMobileAppActive()
+  );
+  const [visible, setVisible] = useState(readVisible);
 
   useEffect(() => {
-    const handler = (): void => setVisible(document.visibilityState === 'visible');
+    const handler = (): void => setVisible(readVisible());
     document.addEventListener('visibilitychange', handler);
-    return () => document.removeEventListener('visibilitychange', handler);
+    const unsubscribeApp = onMobileAppActivityChange(handler);
+    return () => {
+      document.removeEventListener('visibilitychange', handler);
+      unsubscribeApp();
+    };
   }, []);
 
   return visible;

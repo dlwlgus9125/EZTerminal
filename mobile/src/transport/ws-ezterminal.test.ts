@@ -1350,6 +1350,53 @@ describe('WsEzTerminalTransport — disconnect / reconnect with backoff', () => 
     expect(received).toEqual([]);
   });
 
+  it('suspends without releasing runs, stops retries, and resumes stable ports once', async () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      initialBackoffMs: 100,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    const capture = captureEzPort('run-suspended');
+    await transport.runCommand('!bash', 'run-suspended', 'sess-suspended');
+    capture.stop();
+    const received: unknown[] = [];
+    capture.port!.addEventListener('message', (event) => received.push((event as MessageEvent).data));
+
+    expect(transport.suspend()).toBe(true);
+    expect(transport.suspend()).toBe(false);
+    expect(transport.currentConnectionState).toBe('suspended');
+    expect(sockets[0].closed).toBe(true);
+    expect(sockets[0].sent.map((value) => JSON.parse(value)))
+      .not.toContainEqual({ kind: 'release-runs' });
+    expect(received).toEqual([]);
+    expect(transport.retryNow()).toBe(false);
+    vi.advanceTimersByTime(10_000);
+    expect(sockets).toHaveLength(1);
+
+    expect(transport.resume()).toBe(true);
+    expect(transport.resume()).toBe(false);
+    expect(sockets).toHaveLength(2);
+    sockets[1].triggerOpen();
+    sockets[1].triggerMessage({ kind: 'auth-ok' });
+    expect(sockets[1].sent.map((value) => JSON.parse(value))).toContainEqual({
+      kind: 'resume-run',
+      sessionId: 'sess-suspended',
+      runId: 'run-suspended',
+      generation: 2,
+    });
+
+    transport.disconnect();
+    expect(sockets[1].sent.map((value) => JSON.parse(value)))
+      .toContainEqual({ kind: 'release-runs' });
+    expect(received).toContainEqual({
+      type: 'error',
+      message: 'Disconnected from EZTerminal',
+    });
+  });
+
   it('resumes stable ports active-session-first and resets only on the current ready generation', async () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({

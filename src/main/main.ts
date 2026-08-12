@@ -45,6 +45,7 @@ import { LogFile, pruneCrashDumps } from './diagnostics';
 import { SystemStatsService } from './system-stats-service';
 import { StatsVisibility } from './stats-visibility';
 import { RendererCrashRecovery } from './renderer-crash-recovery';
+import { RendererRecoveryCheckpointStore } from './renderer-recovery-checkpoint-store';
 import { installRunCommandIpc } from './run-command-ipc';
 import { GracefulShutdownCoordinator } from './graceful-shutdown';
 import { OpenClawService } from './openclaw-service';
@@ -280,12 +281,21 @@ let broker: InterpreterBroker | null = null;
 let sessionSurfaceAuthority: SessionSurfaceAuthority | null = null;
 const desktopSessionPrincipalByWebContentsId = new Map<number, string>();
 const sessionSurfaceLifecycleWired = new WeakSet<WebContents>();
+const rendererRecoveryCheckpoints = new RendererRecoveryCheckpointStore();
+const recoveringDesktopWebContents = new Set<number>();
 
 function releaseDesktopSessionPrincipal(webContentsId: number): void {
   const principalId = desktopSessionPrincipalByWebContentsId.get(webContentsId);
   if (!principalId) return;
   desktopSessionPrincipalByWebContentsId.delete(webContentsId);
   sessionSurfaceAuthority?.disconnectClient(principalId);
+}
+
+function prepareDesktopRendererRecovery(webContentsId: number): void {
+  rendererRecoveryCheckpoints.markRecoverable(webContentsId);
+  recoveringDesktopWebContents.add(webContentsId);
+  const principalId = desktopSessionPrincipalByWebContentsId.get(webContentsId);
+  if (principalId) sessionSurfaceAuthority?.suspendClient(principalId);
 }
 
 function resolveDesktopSessionPrincipal(
@@ -297,11 +307,26 @@ function resolveDesktopSessionPrincipal(
   const principalId = `desktop:${sender.id}:${clientInstanceId}`;
   sessionSurfaceAuthority.connectClient(principalId, `desktop:${sender.id}`);
   desktopSessionPrincipalByWebContentsId.set(sender.id, principalId);
+  recoveringDesktopWebContents.delete(sender.id);
   if (!sessionSurfaceLifecycleWired.has(sender)) {
     sessionSurfaceLifecycleWired.add(sender);
-    sender.on('did-navigate', () => releaseDesktopSessionPrincipal(sender.id));
-    sender.on('render-process-gone', () => releaseDesktopSessionPrincipal(sender.id));
-    sender.on('destroyed', () => releaseDesktopSessionPrincipal(sender.id));
+    sender.on('did-navigate', () => {
+      if (!recoveringDesktopWebContents.has(sender.id)) {
+        releaseDesktopSessionPrincipal(sender.id);
+      }
+    });
+    sender.on('render-process-gone', (_event, details) => {
+      if (details.reason === 'clean-exit' || appIsQuitting) {
+        releaseDesktopSessionPrincipal(sender.id);
+      } else {
+        prepareDesktopRendererRecovery(sender.id);
+      }
+    });
+    sender.on('destroyed', () => {
+      recoveringDesktopWebContents.delete(sender.id);
+      rendererRecoveryCheckpoints.clear(sender.id);
+      releaseDesktopSessionPrincipal(sender.id);
+    });
   }
   return principalId;
 }
@@ -495,6 +520,9 @@ const createWindow = (): void => {
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     mainLog?.line(`render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`);
     if (appIsQuitting || mainWindow.isDestroyed()) return;
+    if (details.reason !== 'clean-exit') {
+      prepareDesktopRendererRecovery(mainWindow.webContents.id);
+    }
     const decision = rendererCrashRecovery.decide(details.reason);
     mainLog?.line(`renderer crash recovery decision=${decision}`);
     if (decision === 'reload') {
@@ -1299,6 +1327,15 @@ app.on('ready', async () => {
       ? await dialog.showOpenDialog(owner, options)
       : await dialog.showOpenDialog(options);
     return { canceled: result.canceled, paths: result.canceled ? [] : result.filePaths };
+  });
+  ipcMain.handle('renderer-recovery:save-checkpoint', (event, checkpoint: unknown) => (
+    rendererRecoveryCheckpoints.save(event.sender.id, checkpoint)
+  ));
+  ipcMain.handle('renderer-recovery:consume-checkpoint', (event) => (
+    rendererRecoveryCheckpoints.consume(event.sender.id)
+  ));
+  ipcMain.handle('renderer-recovery:prepare', (event) => {
+    prepareDesktopRendererRecovery(event.sender.id);
   });
   ipcMain.handle('project-workspace:describe', async (_event, projectId: unknown) => {
     await projectWorkspaceReady;

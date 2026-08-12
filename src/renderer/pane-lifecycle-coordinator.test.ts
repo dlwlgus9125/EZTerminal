@@ -19,6 +19,7 @@ const OWNER: PaneSnapshot = {
   isDead: false,
   sessionBindingPending: false,
   sessionSurfaceBindingId: 'binding-1',
+  sessionSurfaceId: 'surface-1',
   sessionSurfaceRole: 'owner',
   destroysSessionOnClose: true,
   activeRunIds: ['run-1'],
@@ -26,6 +27,7 @@ const OWNER: PaneSnapshot = {
   hasSshPrompt: false,
   activePty: true,
   activeCommand: 'pnpm test',
+  scrollTop: 0,
 };
 
 function target(panelId = 'tab-1', instanceToken: object = {}): PaneLifecycleTarget {

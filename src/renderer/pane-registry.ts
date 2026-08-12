@@ -22,6 +22,8 @@ export interface PaneSnapshot {
   readonly sessionBindingPending: boolean;
   /** Host-issued close capability for this exact mounted surface. */
   readonly sessionSurfaceBindingId: string | null;
+  /** Stable host surface id used only by volatile renderer recovery. */
+  readonly sessionSurfaceId: string | null;
   /** Host-authoritative view role; renderer code must never infer ownership. */
   readonly sessionSurfaceRole: SessionSurfaceRole | null;
   /** Compatibility projection used by close-risk presentation. */
@@ -33,6 +35,7 @@ export interface PaneSnapshot {
   readonly hasSshPrompt: boolean;
   readonly activePty: boolean;
   readonly activeCommand: string | null;
+  readonly scrollTop: number;
 }
 
 export type PaneActionFailure =
@@ -88,6 +91,7 @@ export interface MountedPtyControlTarget extends PtyControlTargetIdentity {
 const panes = new Map<string, PaneHandle>();
 const legacyInputs = new Map<string, (text: string) => void>();
 const listeners = new Set<() => void>();
+const recoveryListeners = new Set<() => void>();
 
 interface MountedPtyRegistration {
   readonly token: object;
@@ -207,6 +211,17 @@ export function getPaneOpenedAt(panelId: string): number | undefined {
 
 export function notifyPaneChanged(panelId: string): void {
   if (panes.has(panelId)) emit();
+}
+
+/** High-frequency draft/history signal isolated from ordinary App renders. */
+export function notifyPaneRecoveryChanged(panelId: string): void {
+  if (!panes.has(panelId)) return;
+  for (const listener of recoveryListeners) listener();
+}
+
+export function subscribePaneRecoveryRegistry(listener: () => void): () => void {
+  recoveryListeners.add(listener);
+  return () => recoveryListeners.delete(listener);
 }
 
 export function subscribePaneRegistry(listener: () => void): () => void {

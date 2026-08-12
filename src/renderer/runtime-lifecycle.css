@@ -1,0 +1,35 @@
+/* Runtime lifecycle power saving is document- and pane-local. */
+html[data-runtime-tier='passive']::before,
+html[data-runtime-tier='passive']::after,
+html[data-runtime-tier='passive'] body::before,
+html[data-runtime-tier='passive'] body::after,
+html[data-runtime-tier='passive'] #root,
+html[data-runtime-tier='parked']::before,
+html[data-runtime-tier='parked']::after,
+html[data-runtime-tier='parked'] body::before,
+html[data-runtime-tier='parked'] body::after,
+html[data-runtime-tier='parked'] #root {
+  animation-play-state: paused !important;
+}
+
+.pane[data-runtime-tier='passive'] *,
+.pane[data-runtime-tier='passive'] *::before,
+.pane[data-runtime-tier='passive'] *::after,
+.pane[data-runtime-tier='parked'] *,
+.pane[data-runtime-tier='parked'] *::before,
+.pane[data-runtime-tier='parked'] *::after {
+  animation-play-state: paused !important;
+}
+
+.pty-presentation-parked,
+.block-presentation-parked {
+  display: none;
+}
+
+.pty-block--parked {
+  block-size: 0 !important;
+  min-block-size: 0 !important;
+  overflow: hidden;
+  pointer-events: none;
+  visibility: hidden;
+}

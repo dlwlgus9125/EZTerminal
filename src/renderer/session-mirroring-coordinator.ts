@@ -162,6 +162,7 @@ class SessionPaneRegistry {
     initialCwd?: string,
     requestedAdoptSessionId?: string,
     projectTarget?: ProjectSessionTarget,
+    recoveredSurfaceId?: string,
   ): SessionPaneLease {
     const autoMirrorOrigin = this.autoMirrorOrigins.get(instanceToken);
     const isAutoMirror = Boolean(
@@ -188,7 +189,7 @@ class SessionPaneRegistry {
       record = {
         panelId,
         instanceToken,
-        surfaceId: this.newSurfaceId(),
+        surfaceId: recoveredSurfaceId ?? this.newSurfaceId(),
         intent,
         ...(requestedAdoptSessionId ? { requestedAdoptSessionId } : {}),
         binding: null,
@@ -444,6 +445,7 @@ export class SessionMirroringCoordinator {
     initialCwd?: string,
     requestedAdoptSessionId?: string,
     projectTarget?: ProjectSessionTarget,
+    recoveredSurfaceId?: string,
   ): SessionPaneLease {
     return this.registry.mountPane(
       panelId,
@@ -451,6 +453,7 @@ export class SessionMirroringCoordinator {
       initialCwd,
       requestedAdoptSessionId,
       projectTarget,
+      recoveredSurfaceId,
     );
   }
 

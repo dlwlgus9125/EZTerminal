@@ -749,6 +749,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   /** Per-attempt auth watchdog — self-heals a stuck/half-open connection. */
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  /** Android background suspension is reversible and deliberately preserves
+   * renderer-side run ports. It is distinct from explicit disconnect(). */
+  private lifecycleSuspended = false;
   private everAuthed = false;
   private generation = 0;
   private connectionState: RemoteConnectionState = 'connecting';
@@ -993,8 +996,9 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.connect();
   }
 
-  /** Stop reconnecting and close the live socket (app backgrounding/teardown). */
+  /** Stop reconnecting, release live runs, and close all stable local ports. */
   disconnect(): void {
+    this.lifecycleSuspended = false;
     this.stopped = true;
     // This is a user-authorized disconnect, not a transient radio handoff.
     // Tell main to close live run ports instead of placing them in the lease.
@@ -1014,6 +1018,54 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.recordConnectionDiagnostic('disconnected');
     this.resolvePendingRequestsUnavailable();
     this.failAndClearPorts('Disconnected from EZTerminal');
+  }
+
+  /**
+   * Pause network work after a sustained Android background interval while
+   * retaining stable FakeMessagePorts and their BlockControllers. Closing the
+   * socket parks the corresponding host ports in the remote run lease; the
+   * next authenticated generation resumes those exact runs.
+   */
+  suspend(): boolean {
+    if (this.lifecycleSuspended || this.connectionState === 'disconnected') return false;
+    this.lifecycleSuspended = true;
+    this.stopped = true;
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.clearAllResumeRetries();
+    this.clearWatchdog();
+    this.stopLivenessMonitor();
+    this.stopRoundTripProbe();
+    const previous = this.socket;
+    this.socket = null;
+    try {
+      previous?.close();
+    } catch {
+      // Socket identity was invalidated first, so a close failure cannot
+      // restart work or mutate this suspended generation.
+    }
+    this.nextRetryAt = null;
+    this.setAuthed(false);
+    this.resolvePendingRequestsUnavailable(true);
+    if (this.openclawAvailable !== false) {
+      this.openclawAvailable = false;
+      for (const listener of this.openclawAvailabilityListeners) listener(false);
+    }
+    this.setConnectionState('suspended');
+    return true;
+  }
+
+  /** Resume one fresh socket generation after lifecycle suspension. */
+  resume(): boolean {
+    if (!this.lifecycleSuspended) return false;
+    this.lifecycleSuspended = false;
+    this.stopped = false;
+    this.nextRetryAt = null;
+    this.setConnectionState(this.everAuthed ? 'reconnecting' : 'connecting');
+    this.connect();
+    return true;
   }
 
   /** Mobile-only (not part of `EzTerminalApi`): drives the SessionSwitcher drawer (M2). */
@@ -2185,6 +2237,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   /** Cancel the current wait/attempt and start exactly one fresh socket. */
   retryNow(): boolean {
     if (
+      this.lifecycleSuspended
+      ||
       this.connectionState === 'connected'
       || this.connectionState === 'disconnected'
       || this.connectionState === 'protocol-incompatible'
@@ -2441,6 +2495,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   // ── connection lifecycle ─────────────────────────────────────────────────
 
   private connect(): void {
+    if (this.stopped || this.lifecycleSuspended) return;
     this.nextRetryAt = null;
     this.recordConnectionDiagnostic('connect');
     this.emitConnectionHealth();

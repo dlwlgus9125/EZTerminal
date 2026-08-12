@@ -1,6 +1,11 @@
 const auxiliaryWindows = new Set<Window>();
 const listeners = new Set<(windows: readonly Window[]) => void>();
 const MIRRORED_STYLE_IDS = ['ez-theme-vars', 'ez-fx-keyframes'] as const;
+const LOCAL_ROOT_ATTRIBUTES = new Set([
+  'data-ez-window',
+  'data-runtime-tier',
+  'data-runtime-window-name',
+]);
 
 let sourceObserver: MutationObserver | null = null;
 let sourceHeadObserver: MutationObserver | null = null;
@@ -37,16 +42,21 @@ function syncWindow(targetWindow: Window): void {
   if (targetWindow.closed) return;
   const sourceRoot = document.documentElement;
   const targetRoot = targetWindow.document.documentElement;
-  const auxiliaryMarker = targetRoot.dataset.ezWindow;
+  const localAttributes = new Map(
+    [...targetRoot.attributes]
+      .filter((attribute) => LOCAL_ROOT_ATTRIBUTES.has(attribute.name))
+      .map((attribute) => [attribute.name, attribute.value]),
+  );
 
   for (const attribute of [...targetRoot.attributes]) {
-    if (attribute.name === 'data-ez-window') continue;
+    if (LOCAL_ROOT_ATTRIBUTES.has(attribute.name)) continue;
     if (!sourceRoot.hasAttribute(attribute.name)) targetRoot.removeAttribute(attribute.name);
   }
   for (const attribute of [...sourceRoot.attributes]) {
+    if (LOCAL_ROOT_ATTRIBUTES.has(attribute.name)) continue;
     targetRoot.setAttribute(attribute.name, attribute.value);
   }
-  if (auxiliaryMarker) targetRoot.dataset.ezWindow = auxiliaryMarker;
+  for (const [name, value] of localAttributes) targetRoot.setAttribute(name, value);
   for (const id of MIRRORED_STYLE_IDS) syncStyleElement(targetWindow.document, id);
 }
 

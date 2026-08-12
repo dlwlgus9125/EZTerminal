@@ -131,12 +131,15 @@ type MobileSheet = (typeof MOBILE_SHEETS)[number];
 // dispatches a `resize` event on the next animation frame.
 export function MobileWorkspace({
   transport,
+  appActive = true,
   connectionUrl = '',
   roundTripMs = null,
   onDisconnect,
   appUpdateController = UNAVAILABLE_APP_UPDATE_CONTROLLER,
 }: {
   transport: WsEzTerminalTransport;
+  /** Capacitor activity, independent of WebView visibility quirks. */
+  appActive?: boolean;
   connectionUrl?: string;
   /** Smoothed link latency, or null before the first probe answers. */
   roundTripMs?: number | null;
@@ -145,6 +148,7 @@ export function MobileWorkspace({
 }): JSX.Element {
   const { t } = useAppTranslation();
   const { preferences: uiPreferences } = useMobileUiPreferences();
+  const pageVisible = usePageVisible();
   useProfileFeaturePreload(MOBILE_PRELOAD_LOADERS, uiPreferences.resourceProfile, true);
   const [tabsState, dispatch] = useReducer(tabsReducer, initialTabsState);
   const tabsStateRef = useRef(tabsState);
@@ -296,7 +300,7 @@ export function MobileWorkspace({
   // which nothing announces — so this looks again while the Home tab is up and
   // stops entirely when it is not.
   useEffect(() => {
-    if (!connected || tab !== 'home') {
+    if (!connected || !pageVisible || tab !== 'home') {
       setActiveRuns(new Map());
       return undefined;
     }
@@ -318,7 +322,7 @@ export function MobileWorkspace({
       alive = false;
       stopPoll();
     };
-  }, [connected, tab, transport, uiPreferences.resourceProfile]);
+  }, [connected, pageVisible, tab, transport, uiPreferences.resourceProfile]);
 
   useEffect(() => {
     let alive = true;
@@ -362,8 +366,6 @@ export function MobileWorkspace({
   // battery for nobody. Combined into the acquire/release effect below —
   // the M3/M4 refcount (see ws-ezterminal.ts's `openclawStatusRefcount` doc)
   // makes releasing on hide and re-acquiring on show safe.
-  const pageVisible = usePageVisible();
-
   // Status subscription (for the entry-button/header dot) is owned HERE, at
   // workspace level, for as long as OpenClaw is effectively visible —
   // independent of whether the full MobileOpenClawView is open. The
@@ -890,6 +892,12 @@ export function MobileWorkspace({
                   transport={transport}
                   surfaceBinding={entry.binding}
                   active={entry.sessionId === tabsState.activeSessionId}
+                  presentationVisible={
+                    appActive
+                    && tab === 'terminal'
+                    && subPage === null
+                    && entry.sessionId === tabsState.activeSessionId
+                  }
                   quickCommandSource={transport}
                   quickCommandsSupported={transport.supportsRemoteQuickCommands}
                   connected={connected}

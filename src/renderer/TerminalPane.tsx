@@ -12,11 +12,13 @@ import { formatCwd } from './format-cwd';
 import { useAppTranslation } from './i18n';
 import {
   notifyPaneChanged,
+  notifyPaneRecoveryChanged,
   registerPane,
   type PaneActionResult,
   type PaneHandle,
   type PaneSnapshot,
 } from './pane-registry';
+import type { RendererRecoveryPane } from '../shared/renderer-recovery';
 import { focusPaneSurface } from './pane-focus';
 import { keyToPtyBytes } from './pty-keys';
 import {
@@ -56,6 +58,7 @@ import type { AgentResumeBootstrap, AgentTerminalBootstrap } from '../shared/age
 import { classifyDirectAgentCommand } from '../shared/agent-command';
 import { clearAgentTerminalBootstrap } from './agent-terminal-bootstrap';
 import type { ProjectSessionTarget } from '../shared/project-workspace';
+import type { RuntimeLifecycleTier } from '../shared/runtime-lifecycle';
 
 // A TerminalPane is one independent shell surface: its own stack of command Blocks,
 // pinned prompt, and an authority-issued binding to a shell session. The host owns
@@ -115,6 +118,8 @@ interface TerminalPaneProps {
    * a replacement session. Undefined for a plain new tab/split.
    */
   readonly adoptSessionId?: string;
+  /** Main-memory-only state captured before a renderer generation failed. */
+  readonly recoveryState?: RendererRecoveryPane;
   /** Converts a read-only Agent Session panel into a live resumed Codex PTY. */
   readonly resumeBootstrap?: TerminalResumeBootstrap;
   /** Runtime-only project-card launch; never persisted in Dockview params. */
@@ -128,8 +133,10 @@ interface TerminalPaneProps {
     initialCwd?: string,
     requestedAdoptSessionId?: string,
     projectTarget?: ProjectSessionTarget,
+    recoveredSurfaceId?: string,
   ) => SessionPaneLease;
   readonly terminalRuntimeOptions?: TerminalRuntimeOptions;
+  readonly runtimeLifecycleTier?: RuntimeLifecycleTier;
   /** Preset replacement owns a short global mutation lease. The boolean is
    * for rendering; the callback is the synchronous submission authority so a
    * React commit delay cannot open a run race. */
@@ -160,11 +167,13 @@ export function TerminalPane({
   initialCwd,
   projectTarget,
   adoptSessionId,
+  recoveryState,
   resumeBootstrap,
   agentBootstrap,
   onAgentBootstrapFailure,
   mountSessionPane,
   terminalRuntimeOptions,
+  runtimeLifecycleTier = 'active',
   commandSubmissionLocked = false,
   isCommandSubmissionLocked,
   quickCommands = [],
@@ -174,11 +183,11 @@ export function TerminalPane({
 }: TerminalPaneProps): JSX.Element {
   const { t } = useAppTranslation();
   const resolvedTerminalRuntimeOptions = terminalRuntimeOptions ?? DEFAULT_TERMINAL_RUNTIME_OPTIONS;
-  const [command, setCommand] = useState('');
+  const [command, setCommand] = useState(() => recoveryState?.draft ?? '');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   // Submitted commands (oldest first) for ↑/↓ recall. The renderer submits these,
   // so this list stays consistent with the interpreter's session history.
-  const [history, setHistory] = useState<string[]>([]);
+  const [history, setHistory] = useState<string[]>(() => [...(recoveryState?.history ?? [])]);
   // Recall cursor into `history`; null means "editing the live draft" (not recalling).
   const historyIndex = useRef<number | null>(null);
   // The in-progress draft saved when recall begins, restored when ↓ goes past newest.
@@ -236,7 +245,7 @@ export function TerminalPane({
   // The session's current working directory, shown in the live prompt. Seeded from
   // the session's startup cwd, then tracked from the active block's frames (latest
   // `end`, falling back to its `start`) so a `cd` updates it.
-  const [currentCwd, setCurrentCwd] = useState<string | null>(null);
+  const [currentCwd, setCurrentCwd] = useState<string | null>(() => recoveryState?.cwd || null);
 
   // The scrollable block-list container — auto-scrolled to follow new output like a
   // terminal. `stickToBottom` stays true while the view is pinned to the bottom and
@@ -244,6 +253,7 @@ export function TerminalPane({
   const paneRef = useRef<HTMLDivElement>(null);
   const blockListRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  const pendingRecoveryScrollTopRef = useRef<number | null>(recoveryState?.scrollTop ?? null);
   const cmdInputRef = useRef<HTMLInputElement>(null);
   const pendingDraftCaretRef = useRef<number | null>(null);
   const [paneContextMenu, setPaneContextMenu] = useState<PaneContextMenuState | null>(null);
@@ -266,7 +276,8 @@ export function TerminalPane({
     const el = blockListRef.current;
     if (!el) return;
     stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-  }, []);
+    notifyPaneRecoveryChanged(panelId);
+  }, [panelId]);
 
   // Click-to-refocus: returns focus to the composer so the next command is
   // immediately typeable — EXCEPT (a) while selecting text to copy (non-collapsed
@@ -339,6 +350,7 @@ export function TerminalPane({
       initialCwd,
       adoptSessionId,
       projectTarget,
+      recoveryState?.sessionSurfaceId ?? undefined,
     );
 
     const open = paneLease && window.ezterminal?.openSessionSurface;
@@ -390,7 +402,15 @@ export function TerminalPane({
       }
       paneLease?.dispose();
     };
-  }, [panelId, exactPaneInstanceToken, initialCwd, adoptSessionId, projectTarget, sessionBindingRetryToken]);
+  }, [
+    panelId,
+    exactPaneInstanceToken,
+    initialCwd,
+    adoptSessionId,
+    projectTarget,
+    recoveryState?.sessionSurfaceId,
+    sessionBindingRetryToken,
+  ]);
 
   // M4 attach-on-bind: catch up only after the session id has committed. If
   // this starts inside bindSession, a fast listRuns reply can begin a handoff
@@ -752,6 +772,7 @@ export function TerminalPane({
         isDead: sessionDead,
         sessionBindingPending: sessionBindingPendingRef.current,
         sessionSurfaceBindingId: sessionSurfaceBindingRef.current?.bindingId ?? null,
+        sessionSurfaceId: sessionSurfaceBindingRef.current?.surfaceId ?? null,
         sessionSurfaceRole: sessionSurfaceBindingRef.current?.role ?? null,
         destroysSessionOnClose: sessionSurfaceBindingRef.current?.role === 'owner',
         activeRunIds: blocksRef.current
@@ -761,6 +782,7 @@ export function TerminalPane({
         hasSshPrompt: active?.sshPrompt !== null && active?.sshPrompt !== undefined,
         activePty,
         activeCommand: activePty ? (activeController.current?.command ?? null) : null,
+        scrollTop: blockListRef.current?.scrollTop ?? 0,
       };
     };
     paneHandleRef.current = {
@@ -813,6 +835,23 @@ export function TerminalPane({
   useLayoutEffect(() => {
     notifyPaneChanged(panelId);
   }, [activeRunning, currentCwd, panelId, sessionDead, sessionId]);
+
+  useEffect(() => {
+    notifyPaneRecoveryChanged(panelId);
+  }, [activeRunning, blocks.length, command, currentCwd, history, panelId, sessionId]);
+
+  useLayoutEffect(() => {
+    const scrollTop = pendingRecoveryScrollTopRef.current;
+    if (scrollTop === null || blocks.length === 0) return;
+    const frame = requestAnimationFrame(() => {
+      const list = blockListRef.current;
+      if (!list) return;
+      list.scrollTop = Math.min(scrollTop, Math.max(0, list.scrollHeight - list.clientHeight));
+      stickToBottom.current = false;
+      pendingRecoveryScrollTopRef.current = null;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [blocks.length]);
 
   // Mirror a run this pane did NOT start: adds a pending block, brokers the
   // `_ezAttachPort` handoff `attachRun` triggers, and binds the resulting
@@ -1077,6 +1116,7 @@ export function TerminalPane({
       className={activeTakeover ? 'pane pane--tui-takeover' : 'pane'}
       data-testid="pane"
       data-session-id={sessionId ?? undefined}
+      data-runtime-tier={runtimeLifecycleTier}
       onContextMenu={(event) => {
         if (
           event.defaultPrevented
@@ -1157,6 +1197,7 @@ export function TerminalPane({
           entries={blocks}
           activeTakeoverController={activeTakeover ? activeController.current : null}
           terminalRuntimeOptions={terminalRuntimeOptions}
+          runtimeLifecycleTier={runtimeLifecycleTier}
           pendingLabel={t('terminalPane.starting')}
           onDismiss={handleDismiss}
         />

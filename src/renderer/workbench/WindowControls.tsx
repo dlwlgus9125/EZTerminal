@@ -4,9 +4,16 @@ import { useEffect, useState } from 'react';
 import type { DesktopWindowState } from '../../shared/desktop-window';
 
 const DEFAULT_STATE: DesktopWindowState = {
+  windowName: 'main',
   kind: 'main',
+  focused: true,
+  visible: true,
+  minimized: false,
   maximized: false,
   fullscreen: false,
+  displayId: 'unknown',
+  scaleFactor: 1,
+  sequence: 0,
 };
 
 export function WindowControls({

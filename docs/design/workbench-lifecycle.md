@@ -72,6 +72,46 @@ snapshot에 저장한다. 기존 schema version 1 파일에서 resource profile�
   cwd·run-state 변경은 notification을 발행하며 header가 cwd를 polling하지 않는다.
   분 단위 open-age 표시는 시간 자체가 상태이므로 제한된 timer를 유지한다.
 
+## 여러 창의 실행 표면 수명
+
+Main과 모든 Dockview popout은 main process가 발행하는 하나의 native-window snapshot을
+공유한다. 각 pane은 현재 소유 창과 Dockview visibility를 결합해 다음 tier를 계산하며,
+이 값은 runtime 전용이라 layout이나 설정에 저장하지 않는다.
+
+| 조건 | tier | 표시 계약 |
+|---|---|---|
+| pane과 소유 창이 보이고 창이 focused | `active` | 즉시 xterm write, cursor와 효과 활성 |
+| pane과 창은 보이지만 창이 unfocused | `passive` | xterm 유지, write batching과 비필수 animation 정지 |
+| pane이 숨겨졌거나 창이 최소화됨 | `passive` 후 `parked` | grace 동안 즉시 복귀 가능, 이후 xterm presentation만 해제 |
+
+- 보이는 unfocused 창은 시간이 지나도 `parked`로 내려가지 않는다. 사용자가 여러 창을
+  나란히 관찰할 때 출력 surface가 사라져서는 안 된다.
+- 숨김·최소화가 [`RUNTIME_PARK_GRACE_MS`](../../src/shared/runtime-lifecycle.ts)를 넘으면
+  xterm viewport, selection, focus와 bounded scrollback checkpoint를 남기고 renderer DOM을
+  해제한다. Interpreter run, PTY port, frame ACK와 `BlockController`는 계속 살아 있다.
+- 복귀하면 checkpoint로 새 xterm surface를 만들고, park 중 소비한 output을 이어 붙인 뒤
+  입력 가능한 `live` 상태로 전환한다. layout 이동이나 presentation 재생성이 새 session이나
+  run을 만들지 않는다.
+- main 창이 숨겨져도 보이는 popout이 하나 이상이면 그 popout DOM을 소유한 main renderer의
+  background throttling만 해제한다. 모든 native surface가 숨으면 Chromium 기본 throttling을
+  다시 사용한다.
+
+## Renderer crash 복구
+
+정상 layout persistence와 renderer crash recovery는 서로 다른 저장소다. Crash checkpoint는
+main process 메모리에만 두며 layout, pane별 session/surface identity, bounded history·draft,
+active run id와 scroll 위치를 담는다. 디스크 layout에는 runtime identity를 추가하지 않는다.
+
+- Main은 renderer process 종료를 확인한 뒤에만 checkpoint를 한 번 소비할 수 있게 하고,
+  오래됐거나 검증되지 않은 입력은 버린다.
+- 복구 가능한 surface와 zero-port run은 bounded grace 동안 lease를 유지한다. 새 renderer는
+  기존 surface capability를 연속성 이전받고 attach 가능한 run에 다시 연결한다.
+- 정상 reload, 창 닫기, workspace 교체와 명시적 session 종료는 crash로 가장하지 않는다.
+  기존 destructive/guarded close 의미론을 그대로 따른다.
+- 복구 checkpoint가 없거나 만료됐으면 안전한 새 session/layout 경로로 진행하며 stale
+  capability를 추측하지 않는다. SSH late attach처럼 snapshot 연속성을 보장하지 못하는
+  transport는 fail closed한다.
+
 ## Optional surface 로딩과 관찰 작업
 
 - Terminal layer, Dockview와 activity navigation은 startup graph에 남는다. Sidebar
@@ -110,9 +150,15 @@ close guard 또는 persistence schema를 우회해서는 안 된다.
 ## 근거 소스
 
 - [`src/shared/layout-schema.ts`](../../src/shared/layout-schema.ts)
+- [`src/shared/runtime-lifecycle.ts`](../../src/shared/runtime-lifecycle.ts)
+- [`src/shared/renderer-recovery.ts`](../../src/shared/renderer-recovery.ts)
 - [`src/main/layout-store.ts`](../../src/main/layout-store.ts)
 - [`src/main/desktop-window-manager.ts`](../../src/main/desktop-window-manager.ts)
+- [`src/main/renderer-recovery-checkpoint-store.ts`](../../src/main/renderer-recovery-checkpoint-store.ts)
 - [`src/main/session-surface-authority.ts`](../../src/main/session-surface-authority.ts)
+- [`src/renderer/desktop-runtime-lifecycle.tsx`](../../src/renderer/desktop-runtime-lifecycle.tsx)
+- [`src/renderer/runtime-lifecycle.ts`](../../src/renderer/runtime-lifecycle.ts)
+- [`src/renderer/pty-presentation-checkpoint.ts`](../../src/renderer/pty-presentation-checkpoint.ts)
 - [`src/renderer/workbench-coordinator.ts`](../../src/renderer/workbench-coordinator.ts)
 - [`src/renderer/session-mirroring-coordinator.ts`](../../src/renderer/session-mirroring-coordinator.ts)
 - [`src/renderer/pane-lifecycle-coordinator.ts`](../../src/renderer/pane-lifecycle-coordinator.ts)
@@ -125,7 +171,9 @@ close guard 또는 persistence schema를 우회해서는 안 된다.
 ## 검증
 
 - [`src/shared/layout-schema.test.ts`](../../src/shared/layout-schema.test.ts)
+- [`src/shared/renderer-recovery.test.ts`](../../src/shared/renderer-recovery.test.ts)
 - [`src/main/layout-store.test.ts`](../../src/main/layout-store.test.ts)
+- [`src/main/renderer-recovery-checkpoint-store.test.ts`](../../src/main/renderer-recovery-checkpoint-store.test.ts)
 - [`src/main/session-surface-authority.test.ts`](../../src/main/session-surface-authority.test.ts)
 - [`src/renderer/workbench-coordinator.test.ts`](../../src/renderer/workbench-coordinator.test.ts)
 - [`src/renderer/session-mirroring-coordinator.test.ts`](../../src/renderer/session-mirroring-coordinator.test.ts)
@@ -133,7 +181,15 @@ close guard 또는 persistence schema를 우회해서는 안 된다.
 - [`src/renderer/pane-registry.test.ts`](../../src/renderer/pane-registry.test.ts)
 - [`src/renderer/feature-loader.test.ts`](../../src/renderer/feature-loader.test.ts)
 - [`src/renderer/async-poller.test.ts`](../../src/renderer/async-poller.test.ts)
+- [`src/renderer/runtime-lifecycle.test.ts`](../../src/renderer/runtime-lifecycle.test.ts)
+- [`src/renderer/pty-write-scheduler.test.ts`](../../src/renderer/pty-write-scheduler.test.ts)
 - [`e2e/layout-persistence.spec.ts`](../../e2e/layout-persistence.spec.ts)
+- [`e2e/lifecycle-soak.spec.ts`](../../e2e/lifecycle-soak.spec.ts)
+
+`pnpm e2e:lifecycle-soak`는 clean exact-SHA 후보에서 main + popout 8개와 live session
+16개를 기본 2시간 반복한다. 각 cycle은 production park grace를 실제로 넘고, 복귀 입력
+왕복과 session 수를 확인하며 process private bytes와 전체 renderer JS heap의 시작/종료
+median이 20% + 측정 slack 안인지 JSON 증거로 남긴다. 일반 `pnpm e2e`에는 포함되지 않는다.
 
 과거 단일 창 전제와 구현 계획은
 [`layout-persistence-design.md`](../archive/design/layout-persistence-design.md)에 보존한다.

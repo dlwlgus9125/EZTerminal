@@ -27,4 +27,13 @@ function injectCspMeta(): Plugin {
 // https://vitejs.dev/config
 export default defineConfig({
   plugins: [react(), injectCspMeta()],
+  // @xterm/headless 6.0.0 publishes its real ESM build here while its
+  // package.json `module` field points at a missing lib/xterm.mjs. Keep this
+  // aligned with vite.interpreter.config.ts so parked renderer models use the
+  // same xterm implementation as semantic PTY recovery.
+  resolve: {
+    alias: {
+      '@xterm/headless': '@xterm/headless/lib-headless/xterm-headless.mjs',
+    },
+  },
 });

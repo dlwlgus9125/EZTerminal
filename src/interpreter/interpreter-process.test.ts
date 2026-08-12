@@ -109,6 +109,7 @@ function beginRun(
 
 describe('interpreter-process — ExecutionSession port fanout (M2 T2.2b, Critic C3)', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.resetModules();
   });
 
@@ -308,18 +309,58 @@ describe('interpreter-process — ExecutionSession port fanout (M2 T2.2b, Critic
     expect(attach.closed).toBe(false);
   });
 
-  it('the LAST remaining port closing tears the run down — a later attach-run is then rejected', async () => {
+  it('keeps a zero-port run through renderer recovery grace, then expires it', async () => {
+    vi.useFakeTimers();
     const { handler, posted } = await importInterpreter();
     const { primary } = beginRun(handler, posted, 'run-1');
     const attach = new FakePort();
     handler({ data: { type: 'attach-run', sessionId: sessionForRun('run-1'), runId: 'run-1' }, ports: [attach] });
 
     attach.close(); // one port left (primary) — not yet disposed
-    primary.close(); // now zero — last-port-close disposes
+    primary.close(); // now zero — renderer crash grace begins
+
+    const recovered = new FakePort();
+    handler({ data: { type: 'attach-run', sessionId: sessionForRun('run-1'), runId: 'run-1' }, ports: [recovered] });
+    expect(recovered.posted.some((frame) => (frame as { type?: string }).type === 'error')).toBe(false);
+    expect(recovered.posted).toContainEqual({ type: 'pty-control', hasControl: true });
+
+    recovered.close();
+    vi.advanceTimersByTime(5 * 60_000);
+    const expired = new FakePort();
+    handler({ data: { type: 'attach-run', sessionId: sessionForRun('run-1'), runId: 'run-1' }, ports: [expired] });
+    expect(expired.posted).toEqual([{ type: 'error', message: 'run run-1 does not exist' }]);
+  });
+
+  it('treats an explicit close from the recovered owner as immediate teardown', async () => {
+    const { handler, posted } = await importInterpreter();
+    const { primary } = beginRun(handler, posted, 'run-recovered-close');
+    primary.close();
+
+    const recovered = new FakePort();
+    handler({
+      data: {
+        type: 'attach-run',
+        sessionId: sessionForRun('run-recovered-close'),
+        runId: 'run-recovered-close',
+      },
+      ports: [recovered],
+    });
+    expect(recovered.posted).toContainEqual({ type: 'pty-control', hasControl: true });
+    recovered.send({ type: 'close' });
 
     const late = new FakePort();
-    handler({ data: { type: 'attach-run', sessionId: sessionForRun('run-1'), runId: 'run-1' }, ports: [late] });
-    expect(late.posted).toEqual([{ type: 'error', message: 'run run-1 does not exist' }]);
+    handler({
+      data: {
+        type: 'attach-run',
+        sessionId: sessionForRun('run-recovered-close'),
+        runId: 'run-recovered-close',
+      },
+      ports: [late],
+    });
+    expect(late.posted).toEqual([{
+      type: 'error',
+      message: 'run run-recovered-close does not exist',
+    }]);
   });
 
   it('a {type:"close"} CONTROL on the PRIMARY port disposes unconditionally, closing every attach port too, even though they never disconnected', async () => {

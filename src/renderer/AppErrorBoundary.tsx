@@ -38,7 +38,9 @@ export class AppErrorBoundary extends Component<Props, State> {
       return;
     }
     this.setState({ error, reloading: true }, () => {
-      setTimeout(() => window.location.reload(), 0);
+      void Promise.resolve(window.ezterminalDesktop?.prepareRendererRecovery())
+        .catch(() => undefined)
+        .finally(() => setTimeout(() => window.location.reload(), 0));
     });
   }
 
@@ -48,7 +50,9 @@ export class AppErrorBoundary extends Component<Props, State> {
     } catch {
       // Reload remains useful even when storage is unavailable.
     }
-    window.location.reload();
+    void Promise.resolve(window.ezterminalDesktop?.prepareRendererRecovery())
+      .catch(() => undefined)
+      .finally(() => window.location.reload());
   };
 
   render(): ReactNode {

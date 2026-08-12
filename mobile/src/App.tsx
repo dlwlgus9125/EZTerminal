@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { App as CapacitorApp } from '@capacitor/app';
 import { Device } from '@capacitor/device';
 
 import { ConnectScreen, type SavedConnection } from './ConnectScreen';
@@ -11,6 +12,10 @@ import {
 import { WsEzTerminalTransport, type RemoteConnectionState } from './transport/ws-ezterminal';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { useMobileAppUpdate } from './use-mobile-app-update';
+import {
+  MobileAppLifecycleController,
+  setMobileAppActive,
+} from './mobile-app-lifecycle';
 
 const MobileWorkspace = lazy(async () => ({
   default: (await import('./MobileWorkspace')).MobileWorkspace,
@@ -73,7 +78,9 @@ export function App(): JSX.Element {
   const [credentialsLoaded, setCredentialsLoaded] = useState(false);
   const [credentialWarning, setCredentialWarning] = useState<string | null>(null);
   const [currentConnection, setCurrentConnection] = useState<SavedConnection | null>(null);
+  const [appActive, setAppActive] = useState(() => document.visibilityState !== 'hidden');
   const transportRef = useRef<WsEzTerminalTransport | null>(null);
+  const mobileLifecycleRef = useRef<MobileAppLifecycleController | null>(null);
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingCredentialRef = useRef<StoredConnection | null>(null);
   const clientIdentityRef = useRef<Pick<StoredConnection, 'clientId' | 'clientName'> | null>(null);
@@ -83,6 +90,46 @@ export function App(): JSX.Element {
   // otherwise close over the first render's value forever.
   const savedConnectionRef = useRef<SavedConnection | null>(null);
   savedConnectionRef.current = savedConnection;
+
+  useEffect(() => {
+    let nativeStateObserved = false;
+    const lifecycle = new MobileAppLifecycleController({
+      initiallyActive: document.visibilityState !== 'hidden',
+      onActivityChange: (active) => {
+        setMobileAppActive(active);
+        setAppActive(active);
+      },
+      onSuspend: () => {
+        transportRef.current?.suspend();
+      },
+      onResume: () => {
+        transportRef.current?.resume();
+      },
+    });
+    mobileLifecycleRef.current = lifecycle;
+    const handleVisibility = (): void => {
+      // Native app state is authoritative once observed. Page Visibility is
+      // the browser/test fallback and covers startup before the first event.
+      if (!nativeStateObserved) {
+        lifecycle.setActive(document.visibilityState !== 'hidden');
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    const appStateHandle = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      nativeStateObserved = true;
+      lifecycle.setActive(isActive);
+    }).catch((error: unknown) => {
+      console.error('[mobile-lifecycle] App state listener failed:', error);
+      return null;
+    });
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      lifecycle.dispose();
+      if (mobileLifecycleRef.current === lifecycle) mobileLifecycleRef.current = null;
+      void appStateHandle.then((handle) => handle?.remove());
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -135,6 +182,7 @@ export function App(): JSX.Element {
         clientIdentity: { ...identity, platform: 'android' },
       });
       transportRef.current = t;
+      if (mobileLifecycleRef.current?.isSuspended) t.suspend();
       // `window.ezterminal` is declared `readonly` in the shared type (see
       // src/shared/window.d.ts) because on desktop it's injected once by
       // Electron's contextBridge, invisible to the type checker — a plain JS
@@ -305,13 +353,14 @@ export function App(): JSX.Element {
     ? null
     : Math.max(0, Math.ceil((connectionHealth.nextRetryAt - connectionClock) / 1000));
   return (
-    <div className="mobile-app-frame">
+    <div className="mobile-app-frame" data-app-active={appActive ? 'true' : 'false'}>
       <div className={authed ? 'mobile-workspace-shell' : 'mobile-workspace-shell mobile-workspace-shell--reconnecting'}>
         <Suspense
           fallback={<div className="status-loading mobile-workspace-loading" role="status">{t('common.loading')}</div>}
         >
           <MobileWorkspace
             transport={transport}
+            appActive={appActive}
             connectionUrl={currentConnection?.url ?? savedConnection?.url ?? ''}
             roundTripMs={connectionHealth?.roundTripMs ?? null}
             onDisconnect={disconnect}

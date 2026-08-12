@@ -20,10 +20,17 @@ import {
 import 'dockview-react/dist/styles/dockview.css';
 
 import {
+  buildLayoutEnvelope,
   type LayoutEnvelope,
   type TerminalRendererPreference,
   type ThemeName,
 } from '../shared/layout-schema';
+import {
+  RENDERER_RECOVERY_MAX_ACTIVE_RUNS,
+  RENDERER_RECOVERY_MAX_HISTORY,
+  RENDERER_RECOVERY_VERSION,
+  type RendererRecoveryCheckpoint,
+} from '../shared/renderer-recovery';
 import {
   EMPTY_AGENT_ACTIVITY_SNAPSHOT,
   type AgentActivitySnapshot,
@@ -180,10 +187,18 @@ import {
 import {
   getPaneHandle,
   listPaneSnapshots,
+  subscribePaneRecoveryRegistry,
   subscribePaneRegistry,
   type PaneActionFailure,
   type PaneActionResult,
 } from './pane-registry';
+import {
+  peekRendererRecoveryActivePanelId,
+  peekRendererRecoveryCheckpoint,
+  peekRendererRecoveryPane,
+  scheduleRendererRecoveryStateClear,
+  seedRendererRecoveryState,
+} from './renderer-recovery-state';
 import {
   PaneLifecycleCoordinator,
   type PaneDisposition,
@@ -204,6 +219,10 @@ import { WorkspaceReplacementCoordinator } from './workspace-replacement-coordin
 import { applyWorkbenchLayoutPreset, type WorkbenchLayoutPreset } from './workbench-layout-presets';
 import { findMainGridPanel, movePanelToMainGrid } from './main-window-panel-routing';
 import { DEFAULT_TERMINAL_RUNTIME_OPTIONS, type TerminalRuntimeOptions } from './xterm-runtime';
+import {
+  DesktopRuntimeLifecycleProvider,
+  usePanelRuntimeLifecycle,
+} from './desktop-runtime-lifecycle';
 
 // Desktop's per-effect default-on state (App.tsx's `applyTheme`/`onToggleEffect`
 // platformDefaults): mirrors the effect catalog's own guidance exactly, so a
@@ -243,6 +262,7 @@ interface SessionBindingContextValue {
     initialCwd?: string,
     requestedAdoptSessionId?: string,
     projectTarget?: ProjectSessionTarget,
+    recoveredSurfaceId?: string,
   ) => SessionPaneLease;
 }
 const SessionBindingContext = createContext<SessionBindingContextValue | null>(null);
@@ -374,6 +394,9 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
     });
     return () => disposable.dispose();
   }, [props.api]);
+  const runtimeLifecycleTier = usePanelRuntimeLifecycle(props.api);
+  const recoveryStateRef = useRef(peekRendererRecoveryPane(props.api.id));
+  const recoveryState = recoveryStateRef.current;
   const binding = useContext(SessionBindingContext);
   const terminalRuntimeOptions = useContext(TerminalRuntimeContext);
   const presetMutation = useContext(PresetMutationContext);
@@ -401,12 +424,14 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
       pendingApproval={paneApprovals?.byPanel.get(props.api.id)}
       onDecideApproval={paneApprovals?.onDecide}
       paneInstanceToken={props.api}
-      initialCwd={props.params?.cwd as string | undefined}
+      initialCwd={recoveryState?.cwd || props.params?.cwd as string | undefined}
       projectTarget={projectTarget}
       agentBootstrap={peekAgentTerminalBootstrap(props.api.id)}
-      adoptSessionId={props.params?.adoptSessionId as string | undefined}
+      adoptSessionId={recoveryState?.sessionId ?? props.params?.adoptSessionId as string | undefined}
+      recoveryState={recoveryState}
       mountSessionPane={binding?.mountPane}
       terminalRuntimeOptions={terminalRuntimeOptions}
+      runtimeLifecycleTier={runtimeLifecycleTier}
       commandSubmissionLocked={presetMutation.locked}
       isCommandSubmissionLocked={presetMutation.isLocked}
       quickCommands={quickCommandShelf?.commands}
@@ -565,12 +590,76 @@ function workspaceFilePath(root: string, relativePath: string): string {
  * hard — a null return means "open the default single pane"). */
 async function pickStartupLayout(): Promise<LayoutEnvelope | null> {
   const ez = window.ezterminal;
+  const cachedCheckpoint = peekRendererRecoveryCheckpoint();
+  if (cachedCheckpoint) {
+    seedRendererRecoveryState(cachedCheckpoint);
+    return cachedCheckpoint.layout;
+  }
+  try {
+    const checkpoint = await window.ezterminalDesktop?.consumeRendererRecoveryCheckpoint();
+    if (checkpoint) {
+      seedRendererRecoveryState(checkpoint);
+      return checkpoint.layout;
+    }
+  } catch {
+    // A missing/invalid volatile checkpoint is just an ordinary startup.
+  }
   const startup = await ez.getStartup();
   if (startup.mode === 'preset' && startup.presetName) {
     const preset = await ez.getPreset(startup.presetName);
     if (preset) return preset;
   }
   return ez.loadLayout();
+}
+
+function buildRendererRecoveryCheckpoint(
+  api: DockviewApi,
+): RendererRecoveryCheckpoint | null {
+  const rawLayout = structuredClone(api.toJSON()) as unknown as Record<string, unknown>;
+  // Cwd/adoption are forbidden in durable layouts. The volatile checkpoint
+  // stores them in its bounded pane section, so keep its layout equally clean.
+  if (typeof rawLayout.panels === 'object' && rawLayout.panels !== null) {
+    for (const panel of Object.values(rawLayout.panels as Record<string, unknown>)) {
+      if (typeof panel !== 'object' || panel === null) continue;
+      const record = panel as Record<string, unknown>;
+      if (record.contentComponent !== 'terminal') continue;
+      const params = typeof record.params === 'object' && record.params !== null
+        ? record.params as Record<string, unknown>
+        : null;
+      if (params?.projectSession) record.params = { projectSession: params.projectSession };
+      else delete record.params;
+    }
+  }
+  const savedAt = Date.now();
+  const layout = buildLayoutEnvelope(rawLayout, new Date(savedAt).toISOString());
+  if (!layout) return null;
+  const panelIds = new Set(Object.keys(layout.layout.panels));
+  const panes = listPaneSnapshots()
+    .filter((pane) => panelIds.has(pane.panelId))
+    .map((pane) => {
+      const hasRecoverableSurface = Boolean(pane.sessionId && pane.sessionSurfaceId);
+      return Object.freeze({
+        panelId: pane.panelId,
+        sessionId: hasRecoverableSurface ? pane.sessionId : null,
+        sessionSurfaceId: hasRecoverableSurface ? pane.sessionSurfaceId : null,
+        cwd: pane.cwd.slice(0, 4096),
+        history: Object.freeze(
+          pane.history.slice(-RENDERER_RECOVERY_MAX_HISTORY).map((entry) => entry.slice(0, 8192)),
+        ),
+        draft: pane.draft.slice(0, 64 * 1024),
+        activeRunIds: Object.freeze(
+          pane.activeRunIds.slice(0, RENDERER_RECOVERY_MAX_ACTIVE_RUNS),
+        ),
+        scrollTop: Math.max(0, Number.isFinite(pane.scrollTop) ? pane.scrollTop : 0),
+      });
+    });
+  return Object.freeze({
+    version: RENDERER_RECOVERY_VERSION,
+    savedAt,
+    layout,
+    panes: Object.freeze(panes),
+    activePanelId: api.activePanel?.id ?? null,
+  });
 }
 
 export function App(): JSX.Element {
@@ -622,6 +711,8 @@ export function App(): JSX.Element {
   const lastMainGridPanelRef = useRef<IDockviewPanel | null>(null);
   const activeAgentSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
   const popoutBehaviorRef = useRef<{ dispose(): void } | null>(null);
+  const recoveryLayoutSubscriptionRef = useRef<{ dispose(): void } | null>(null);
+  const recoverySaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionMirroringConnectionRef = useRef<(() => void) | null>(null);
   const paneLifecycleCoordinatorRef = useRef<PaneLifecycleCoordinator | null>(null);
   if (paneLifecycleCoordinatorRef.current === null) {
@@ -918,12 +1009,14 @@ export function App(): JSX.Element {
       initialCwd?: string,
       requestedAdoptSessionId?: string,
       projectTarget?: ProjectSessionTarget,
+      recoveredSurfaceId?: string,
     ): SessionPaneLease => sessionMirroringCoordinator.mountPane(
       panelId,
       instanceToken,
       initialCwd,
       requestedAdoptSessionId,
       projectTarget,
+      recoveredSurfaceId,
     ),
     [sessionMirroringCoordinator],
   );
@@ -1024,6 +1117,24 @@ export function App(): JSX.Element {
   // still mid-restore when the visibility seed resolves (openclaw-
   // stabilization M2).
   const [layoutReady, setLayoutReady] = useState(false);
+
+  const writeRendererRecoveryCheckpoint = useCallback(async (): Promise<RendererRecoveryCheckpoint | null> => {
+    recoverySaveTimerRef.current = null;
+    const api = apiRef.current;
+    const desktop = window.ezterminalDesktop;
+    if (!api || !desktop) return null;
+    const checkpoint = buildRendererRecoveryCheckpoint(api);
+    if (!checkpoint) return null;
+    const saved = await desktop.saveRendererRecoveryCheckpoint(checkpoint).catch(() => false);
+    return saved ? checkpoint : null;
+  }, []);
+
+  const scheduleRendererRecoveryCheckpoint = useCallback((): void => {
+    if (recoverySaveTimerRef.current !== null) clearTimeout(recoverySaveTimerRef.current);
+    recoverySaveTimerRef.current = setTimeout(() => {
+      void writeRendererRecoveryCheckpoint();
+    }, 300);
+  }, [writeRendererRecoveryCheckpoint]);
 
   const scheduleSave = useCallback(
     (): void => workbenchCoordinator.scheduleLayoutSave(),
@@ -1342,6 +1453,23 @@ export function App(): JSX.Element {
       ),
     [agentSnapshot],
   );
+
+  useEffect(() => {
+    if (!layoutReady) return undefined;
+    const unsubscribe = subscribePaneRecoveryRegistry(scheduleRendererRecoveryCheckpoint);
+    scheduleRendererRecoveryCheckpoint();
+    return () => unsubscribe();
+  }, [layoutReady, scheduleRendererRecoveryCheckpoint]);
+
+  useEffect(() => () => {
+    recoveryLayoutSubscriptionRef.current?.dispose();
+    recoveryLayoutSubscriptionRef.current = null;
+    if (recoverySaveTimerRef.current !== null) clearTimeout(recoverySaveTimerRef.current);
+    recoverySaveTimerRef.current = null;
+    delete (window as Window & {
+      __ezRendererRecoveryFlush?: () => Promise<RendererRecoveryCheckpoint | null>;
+    }).__ezRendererRecoveryFlush;
+  }, []);
   activeAgentSessionIdsRef.current = agentSessionIds;
 
   const resolveAuxiliaryTargets = useCallback((
@@ -3125,6 +3253,15 @@ export function App(): JSX.Element {
           window.focus();
         },
       });
+      recoveryLayoutSubscriptionRef.current?.dispose();
+      const recoveryLayoutChanged = api.onDidLayoutChange(scheduleRendererRecoveryCheckpoint);
+      const recoveryActiveChanged = api.onDidActivePanelChange(scheduleRendererRecoveryCheckpoint);
+      recoveryLayoutSubscriptionRef.current = {
+        dispose: () => {
+          recoveryLayoutChanged.dispose();
+          recoveryActiveChanged.dispose();
+        },
+      };
       const attachment = workbenchCoordinator.attach(createDockviewWorkbenchAdapter(api));
       sessionMirroringConnectionRef.current?.();
       sessionMirroringConnectionRef.current = sessionMirroringCoordinator.connect();
@@ -3137,6 +3274,15 @@ export function App(): JSX.Element {
       // await main's write chain) instead of polling the file from the test.
       (window as Window & { __ezLayoutFlush?: () => Promise<void> }).__ezLayoutFlush = () =>
         workbenchCoordinator.flushLayoutSave();
+      (window as Window & {
+        __ezRendererRecoveryFlush?: () => Promise<RendererRecoveryCheckpoint | null>;
+      }).__ezRendererRecoveryFlush = () => {
+        if (recoverySaveTimerRef.current !== null) {
+          clearTimeout(recoverySaveTimerRef.current);
+          recoverySaveTimerRef.current = null;
+        }
+        return writeRendererRecoveryCheckpoint();
+      };
 
       void runLayoutTransaction(pickCapabilitySafeStartupLayout, {
         quarantineOnCorrupt: true,
@@ -3148,6 +3294,10 @@ export function App(): JSX.Element {
         attachment.enableLayoutPersistence();
         scheduleSave(); // persist the restored/initial state
         setLayoutReady(true);
+        const recoveredActivePanelId = peekRendererRecoveryActivePanelId();
+        if (recoveredActivePanelId) api.getPanel(recoveredActivePanelId)?.api.setActive();
+        scheduleRendererRecoveryCheckpoint();
+        scheduleRendererRecoveryStateClear();
       });
       void refreshPresets();
     },
@@ -3157,9 +3307,11 @@ export function App(): JSX.Element {
       refreshPresets,
       runLayoutTransaction,
       scheduleSave,
+      scheduleRendererRecoveryCheckpoint,
       sessionMirroringCoordinator,
       t,
       workbenchCoordinator,
+      writeRendererRecoveryCheckpoint,
     ],
   );
 
@@ -3530,15 +3682,17 @@ export function App(): JSX.Element {
                       <ProjectReviewNavigationContext.Provider value={projectReviewNavigationValue}>
                         <TerminalRuntimeContext.Provider value={terminalRuntimeOptions}>
                           <PresetMutationContext.Provider value={presetMutationValue}>
-                            <DockviewReact
-                              className="dockview-theme-dark ez-dock"
-                              components={components}
-                              defaultTabComponent={AgentAwareTab}
-                              rightHeaderActionsComponent={PaneHeaderMeta}
-                              onReady={onReady}
-                              disableFloatingGroups
-                              popoutUrl={auxiliaryPopoutUrl()}
-                            />
+                            <DesktopRuntimeLifecycleProvider>
+                              <DockviewReact
+                                className="dockview-theme-dark ez-dock"
+                                components={components}
+                                defaultTabComponent={AgentAwareTab}
+                                rightHeaderActionsComponent={PaneHeaderMeta}
+                                onReady={onReady}
+                                disableFloatingGroups
+                                popoutUrl={auxiliaryPopoutUrl()}
+                              />
+                            </DesktopRuntimeLifecycleProvider>
                           </PresetMutationContext.Provider>
                         </TerminalRuntimeContext.Provider>
                       </ProjectReviewNavigationContext.Provider>

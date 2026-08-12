@@ -143,6 +143,21 @@ afterEach(() => {
 });
 
 describe('SessionMirroringCoordinator pane ownership', () => {
+  it('reuses a volatile recovered surface id instead of minting a new capability', () => {
+    const h = harness();
+    const lease = h.coordinator.mountPane(
+      'panel-recovered',
+      {},
+      '/repo',
+      'session-recovered',
+      undefined,
+      'surface-recovered',
+    );
+
+    expect(lease.surfaceId).toBe('surface-recovered');
+    expect(lease.intent).toEqual({ kind: 'adopt', sessionId: 'session-recovered' });
+  });
+
   it('publishes stable snapshots and keeps multiple exact panes per session', () => {
     const h = harness();
     const listener = vi.fn();

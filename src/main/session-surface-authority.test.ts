@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   DestroySessionGuardResult,
@@ -6,6 +6,8 @@ import type {
   SessionInfo,
 } from '../shared/ipc';
 import { SessionSurfaceAuthority, type SessionSurfaceBroker } from './session-surface-authority';
+
+afterEach(() => vi.useRealTimers());
 
 class FakeBroker implements SessionSurfaceBroker {
   readonly sessions = new Map<string, SessionInfo>();
@@ -195,6 +197,82 @@ describe('SessionSurfaceAuthority open/bind lifecycle', () => {
     expect(h.broker.destroySessionsGuarded).not.toHaveBeenCalled();
     expect(h.authority.releaseSessionSurface('old', opened.binding.bindingId)).toEqual({
       ok: false, reason: 'state-changed',
+    });
+  });
+
+  it('transfers a suspended renderer surface with its exact owner capability', async () => {
+    const h = authority();
+    h.authority.connectClient('old', 'desktop:1');
+    const opened = await h.authority.openSessionSurface('old', 'surface-1', { kind: 'create' });
+    if (!opened.ok) throw new Error('expected owner');
+
+    h.authority.suspendClient('old');
+    h.authority.connectClient('new', 'desktop:1');
+    const recovered = await h.authority.openSessionSurface('new', 'surface-1', {
+      kind: 'adopt',
+      sessionId: opened.binding.session.sessionId,
+    });
+
+    expect(recovered).toEqual(opened);
+    expect(recovered).toMatchObject({ ok: true, binding: { role: 'owner' } });
+    expect(h.broker.createSession).toHaveBeenCalledOnce();
+    expect(h.authority.releaseSessionSurface('old', opened.binding.bindingId)).toEqual({
+      ok: false,
+      reason: 'forbidden',
+    });
+    expect(h.authority.releaseSessionSurface('new', opened.binding.bindingId)).toEqual({ ok: true });
+  });
+
+  it('transfers an in-flight surface reservation without orphaning its new session', async () => {
+    const h = authority();
+    let resolveCreate!: (session: SessionInfo) => void;
+    h.broker.createSession.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveCreate = (session) => {
+        h.broker.add(session);
+        resolve(session);
+      };
+    }));
+    h.authority.connectClient('old', 'desktop:1');
+    const opening = h.authority.openSessionSurface('old', 'surface-1', { kind: 'create' });
+    await Promise.resolve();
+
+    h.authority.suspendClient('old');
+    h.authority.connectClient('new', 'desktop:1');
+    resolveCreate({ sessionId: 'created-during-recovery', cwd: '/repo' });
+    const opened = await opening;
+    if (!opened.ok) throw new Error('expected transferred owner');
+
+    await expect(h.authority.openSessionSurface('new', 'surface-1', {
+      kind: 'adopt',
+      sessionId: 'created-during-recovery',
+    })).resolves.toEqual(opened);
+    expect(h.authority.releaseSessionSurface('old', opened.binding.bindingId)).toEqual({
+      ok: false,
+      reason: 'forbidden',
+    });
+    expect(h.authority.releaseSessionSurface('new', opened.binding.bindingId)).toEqual({ ok: true });
+  });
+
+  it('expires a suspended renderer surface when no continuity generation returns', async () => {
+    vi.useFakeTimers();
+    const broker = new FakeBroker();
+    const value = new SessionSurfaceAuthority(broker, {
+      newId: ids(),
+      recoveryTtlMs: 100,
+    });
+    value.connectClient('old', 'desktop:1');
+    const opened = await value.openSessionSurface('old', 'surface-1', { kind: 'create' });
+    if (!opened.ok) throw new Error('expected owner');
+
+    value.suspendClient('old');
+    vi.advanceTimersByTime(100);
+    value.connectClient('new', 'desktop:1');
+    await expect(value.openSessionSurface('new', 'surface-1', {
+      kind: 'adopt',
+      sessionId: opened.binding.session.sessionId,
+    })).resolves.toMatchObject({
+      ok: true,
+      binding: { role: 'adopted' },
     });
   });
 });

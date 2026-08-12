@@ -10,7 +10,9 @@ import { registerPaneInput, unregisterPaneInput } from '../../src/renderer/pane-
 import { keyToPtyBytes } from '../../src/renderer/pty-keys';
 import { TerminalContextMenu, type TerminalContextMenuItem } from '../../src/renderer/TerminalContextMenu';
 import type { TerminalRuntimeOptions } from '../../src/renderer/xterm-runtime';
+import { RuntimeSurfaceLifecycle } from '../../src/renderer/runtime-lifecycle';
 import type { ExecutionKind, RunStartedInfo } from '../../src/shared/ipc';
+import type { RuntimeLifecycleTier } from '../../src/shared/runtime-lifecycle';
 import {
   classifyCloseRisk,
   sameActiveRunSet,
@@ -244,6 +246,7 @@ export function MobileSessionView({
   sessionId,
   cwd: initialCwd = '',
   active = true,
+  presentationVisible = active,
   quickCommandSource,
   quickCommandsSupported = false,
   connected = true,
@@ -262,6 +265,8 @@ export function MobileSessionView({
   cwd?: string;
   /** Active workspace tab; inactive views remain mounted for PTY continuity. */
   active?: boolean;
+  /** Actually exposed terminal layer; shell pages may cover the active tab. */
+  presentationVisible?: boolean;
   quickCommandSource?: MobileQuickCommandSource;
   quickCommandsSupported?: boolean;
   connected?: boolean;
@@ -287,6 +292,8 @@ export function MobileSessionView({
 }): JSX.Element {
   const { t } = useAppTranslation();
   const showToast = useMobileToast();
+  const [runtimeLifecycleTier, setRuntimeLifecycleTier] = useState<RuntimeLifecycleTier>('passive');
+  const runtimeLifecycleRef = useRef<RuntimeSurfaceLifecycle | null>(null);
   const [command, setCommand] = useState('');
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   const [history, setHistory] = useState<string[]>([]);
@@ -352,6 +359,24 @@ export function MobileSessionView({
   onCloseTabRef.current = onCloseTab;
   const surfaceBindingRef = useRef(surfaceBinding);
   surfaceBindingRef.current = surfaceBinding;
+
+  useLayoutEffect(() => {
+    const lifecycle = new RuntimeSurfaceLifecycle(setRuntimeLifecycleTier);
+    runtimeLifecycleRef.current = lifecycle;
+    return () => {
+      lifecycle.dispose();
+      if (runtimeLifecycleRef.current === lifecycle) runtimeLifecycleRef.current = null;
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    runtimeLifecycleRef.current?.update({
+      panelVisible: presentationVisible,
+      windowFocused: presentationVisible,
+      windowVisible: true,
+      windowMinimized: false,
+    });
+  }, [presentationVisible]);
 
   useLayoutEffect(() => {
     if (active) return;
@@ -1098,6 +1123,7 @@ export function MobileSessionView({
   return (
     <div
       data-session-id={sessionId}
+      data-runtime-tier={runtimeLifecycleTier}
       className={
         [
           'pane mobile-session-view',
@@ -1144,6 +1170,7 @@ export function MobileSessionView({
       >
         <TerminalBlockEntries
           entries={blocks}
+          runtimeLifecycleTier={runtimeLifecycleTier}
           activeTakeoverController={activeTakeover ? activeController.current : null}
           terminalRuntimeOptions={terminalRuntimeOptions}
           pendingLabel={t('mobile.terminalView.starting')}

@@ -4,6 +4,7 @@ export type RemoteConnectionState =
   | 'connecting'
   | 'connected'
   | 'reconnecting'
+  | 'suspended'
   | 'auth-rejected'
   | 'protocol-incompatible'
   | 'disconnected';
@@ -93,6 +94,14 @@ export function classifyConnectionHealth(
       kind: 'connecting',
       label: t('mobile.connect.connecting'),
       detail: t('mobile.connect.connectingDetail'),
+    };
+  }
+
+  if (snapshot.state === 'suspended') {
+    return {
+      kind: 'reconnecting',
+      label: t('mobile.connect.reconnecting'),
+      detail: t('mobile.connect.retained'),
     };
   }
 

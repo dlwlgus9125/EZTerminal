@@ -13,6 +13,11 @@ function configuredRetries(defaultValue: number): number {
 const performanceBenchmarkEnabled =
   process.env.EZTERMINAL_RUN_RELEASE_PERFORMANCE === '1'
   || process.env.EZTERMINAL_RUN_PERFORMANCE_DIAGNOSTIC === '1';
+const lifecycleSoakEnabled = process.env.EZTERMINAL_RUN_LIFECYCLE_SOAK === '1';
+
+const ignoredReleaseEvidence: string[] = [];
+if (!performanceBenchmarkEnabled) ignoredReleaseEvidence.push('**/release-performance.spec.ts');
+if (!lifecycleSoakEnabled) ignoredReleaseEvidence.push('**/lifecycle-soak.spec.ts');
 
 // End-to-end runner. Drives the real Electron app via Playwright's Electron API.
 // `globalSetup` produces the Vite build artifacts the app launches from.
@@ -21,9 +26,7 @@ export default defineConfig({
   // The 5-warmup/25-sample benchmark is release evidence, not an ordinary
   // functional test. Keeping it opt-in prevents every CI/e2e invocation from
   // silently spending up to thirty minutes without a same-host baseline.
-  testIgnore: performanceBenchmarkEnabled
-    ? []
-    : ['**/release-performance.spec.ts'],
+  testIgnore: ignoredReleaseEvidence,
   fullyParallel: false,
   workers: 1,
   timeout: 60_000,

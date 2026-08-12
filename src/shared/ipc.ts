@@ -41,6 +41,7 @@ import type {
 } from './worktree';
 import type { GitDiffResult, GitDirectoryStatus } from './git-status';
 import type { PairingCode } from './pairing';
+import type { RendererRecoveryCheckpoint } from './renderer-recovery';
 import type { ThemeMod } from './theme-schema';
 import type {
   AgentActivitySnapshot,
@@ -100,6 +101,7 @@ import type {
   AuxiliaryCloseResolution,
   DesktopWindowAction,
   DesktopWindowState,
+  DesktopWindowStatesSnapshot,
 } from './desktop-window';
 
 /** The single key under which the preload bridge is exposed on `window`. */
@@ -1300,8 +1302,13 @@ export interface EzTerminalApi extends SessionSurfaceApi {
 export interface EzTerminalDesktopApi {
   /** Sender-scoped native window controls; no BrowserWindow id crosses preload. */
   getWindowState: () => Promise<DesktopWindowState>;
+  /** App-wide native lifecycle state, including every Dockview popout. */
+  getWindowStates: () => Promise<DesktopWindowStatesSnapshot>;
   performWindowAction: (action: DesktopWindowAction) => Promise<void>;
   onWindowStateChanged: (listener: (state: DesktopWindowState) => void) => () => void;
+  onWindowStatesChanged: (
+    listener: (snapshot: DesktopWindowStatesSnapshot) => void,
+  ) => () => void;
   /** Auxiliary close decisions are coordinated by the sole main renderer. */
   onAuxiliaryCloseRequested: (listener: (request: AuxiliaryCloseRequest) => void) => () => void;
   resolveAuxiliaryClose: (
@@ -1311,6 +1318,11 @@ export interface EzTerminalDesktopApi {
   /** Bounded main-renderer handshake used before whole-application shutdown. */
   onLayoutFlushRequested: (listener: (requestId: string) => void) => () => void;
   completeLayoutFlush: (requestId: string) => void;
+  /** Volatile UI/session checkpoint used only after this renderer generation fails. */
+  saveRendererRecoveryCheckpoint: (checkpoint: RendererRecoveryCheckpoint) => Promise<boolean>;
+  consumeRendererRecoveryCheckpoint: () => Promise<RendererRecoveryCheckpoint | null>;
+  /** Marks the latest checkpoint eligible before an intentional error-boundary reload. */
+  prepareRendererRecovery: () => Promise<void>;
 
   /** Main-owned stable GitHub Release updater. Raw URLs and local paths never cross this bridge. */
   getAppUpdateSnapshot: () => Promise<AppUpdateSnapshot>;

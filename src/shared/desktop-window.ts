@@ -15,9 +15,24 @@ export function isDetachablePanelComponent(
 export type DesktopWindowKind = 'main' | 'auxiliary';
 
 export interface DesktopWindowState {
+  /** Stable logical name. `main` is reserved for the primary workbench. */
+  readonly windowName: string;
   readonly kind: DesktopWindowKind;
+  readonly focused: boolean;
+  readonly visible: boolean;
+  readonly minimized: boolean;
   readonly maximized: boolean;
   readonly fullscreen: boolean;
+  /** Electron display id stringified so it stays JSON-safe across preload. */
+  readonly displayId: string;
+  readonly scaleFactor: number;
+  /** Monotonic within one DesktopWindowManager lifetime. */
+  readonly sequence: number;
+}
+
+export interface DesktopWindowStatesSnapshot {
+  readonly sequence: number;
+  readonly windows: readonly DesktopWindowState[];
 }
 
 export type DesktopWindowAction = 'minimize' | 'toggle-maximize' | 'close';

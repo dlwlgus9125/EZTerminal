@@ -72,6 +72,8 @@ import { SessionRegistry, type Execution } from './session-registry';
 /** Initial PTY grid before the renderer's xterm reports its real size (resizes immediately). */
 const PTY_INITIAL_COLS = 80;
 const PTY_INITIAL_ROWS = 24;
+/** Renderer crash/reload grace. Explicit block close remains immediate. */
+export const EXECUTION_ORPHAN_GRACE_MS = 5 * 60_000;
 
 // Electron defines its own stripped-down MessageEvent (data + ports only) in
 // its namespace, distinct from the DOM MessageEvent. Using the DOM type for
@@ -140,6 +142,10 @@ class ExecutionSession implements Execution {
   private settled = false;
   private disposed = false;
   private disposePromise: Promise<void> | null = null;
+  private orphanTimer: ReturnType<typeof setTimeout> | null = null;
+  /** First post-crash attach owns explicit-close semantics even though PTY
+   * replay still uses an attach handle instead of the dead primary stream. */
+  private recoveryOwnerPort: MessagePortMain | null = null;
 
   // Replay state for a late `attach` (M2): enough to let a new port re-render
   // the block's current shape/state. Structured (table/text) row DATA is never
@@ -353,9 +359,13 @@ class ExecutionSession implements Execution {
         return { accepted: false, reason: ended ? 'run-ended' : 'mirror-capacity' };
       }
     }
+    this.clearOrphanTimer();
     const state: AttachPortState = { port, ptyHandle };
     this.attachPorts.set(port, state);
     this.wirePort(port, /* isPrimary */ false);
+    const restoresControl = this.controlPort === null;
+    if (restoresControl) this.controlPort = port;
+    if (restoresControl && this.primaryPort === null) this.recoveryOwnerPort = port;
     try {
       if (this.lastStart) port.postMessage(this.lastStart);
       if (this.lastSchema) port.postMessage(this.lastSchema);
@@ -371,7 +381,7 @@ class ExecutionSession implements Execution {
       if (this.lastDims) {
         port.postMessage({ type: 'pty-dims', ...this.lastDims } satisfies InterpreterFrame);
       }
-      port.postMessage({ type: 'pty-control', hasControl: false } satisfies InterpreterFrame);
+      port.postMessage({ type: 'pty-control', hasControl: restoresControl } satisfies InterpreterFrame);
       if (ptyHandle?.warning) port.postMessage(ptyHandle.warning);
       if (ptyHandle && ptyHandle.replay.byteLength > 0) {
         port.postMessage({
@@ -429,6 +439,7 @@ class ExecutionSession implements Execution {
     if (this.disposePromise) return this.disposePromise;
     if (this.disposed) return Promise.resolve();
     this.disposed = true;
+    this.clearOrphanTimer();
     // Closing/dismissing a live structured stream must interrupt a pending
     // iterator.next() before its store queues iterator.return(). In particular,
     // a quiet external child otherwise has no event that can unblock teardown.
@@ -481,6 +492,7 @@ class ExecutionSession implements Execution {
     // dropping off must never kill the initiator's run.
     port.on('close', () => {
       const wasControl = port === this.controlPort;
+      if (port === this.recoveryOwnerPort) this.recoveryOwnerPort = null;
       if (isPrimary) {
         this.primaryPort = null;
       } else {
@@ -488,15 +500,16 @@ class ExecutionSession implements Execution {
         this.attachPorts.delete(port);
       }
       if (wasControl) this.revertControl();
-      if (!this.primaryPort && this.attachPorts.size === 0) {
-        void this.dispose().catch(() => undefined);
-      } else if (isPrimary) {
+      if (isPrimary) {
         // Mirrors keep the run alive, but `pty-ack` pacing stays keyed to the
         // primary port (see handleControl) and nothing ever re-assigns one —
         // without releasing the primary byte-ack window here, the PTY pauses
         // permanently for EVERY surface once the child outruns PTY_HIGH_WATER
         // (mobile resume freeze, 2026-07-26).
         this.activeExecution?.primaryDetached?.();
+      }
+      if (!this.primaryPort && this.attachPorts.size === 0) {
+        this.scheduleOrphanDisposal();
       }
     });
     port.start();
@@ -622,6 +635,7 @@ class ExecutionSession implements Execution {
   private detachPort(port: MessagePortMain): void {
     this.attachPorts.get(port)?.ptyHandle?.detach();
     const wasControl = port === this.controlPort;
+    if (port === this.recoveryOwnerPort) this.recoveryOwnerPort = null;
     this.attachPorts.delete(port);
     if (wasControl) this.revertControl();
     try {
@@ -630,8 +644,25 @@ class ExecutionSession implements Execution {
       // Already gone.
     }
     if (!this.primaryPort && this.attachPorts.size === 0) {
-      void this.dispose().catch(() => undefined);
+      this.scheduleOrphanDisposal();
     }
+  }
+
+  private scheduleOrphanDisposal(): void {
+    if (this.disposed || this.orphanTimer !== null) return;
+    this.orphanTimer = setTimeout(() => {
+      this.orphanTimer = null;
+      if (!this.primaryPort && this.attachPorts.size === 0) {
+        void this.dispose().catch(() => undefined);
+      }
+    }, EXECUTION_ORPHAN_GRACE_MS);
+    this.orphanTimer.unref?.();
+  }
+
+  private clearOrphanTimer(): void {
+    if (this.orphanTimer === null) return;
+    clearTimeout(this.orphanTimer);
+    this.orphanTimer = null;
   }
 
   private handleControl(port: MessagePortMain, control: RendererControl): void {
@@ -641,9 +672,14 @@ class ExecutionSession implements Execution {
         break;
       case 'close':
         // Only the PRIMARY port's close ends the run for everyone (T2.2c) —
-        // an attacher's close just detaches that one mirror viewer.
-        if (port === this.primaryPort) void this.dispose().catch(() => undefined);
-        else this.detachPort(port);
+        // an ordinary attacher's close just detaches that one mirror viewer.
+        // After a renderer crash, the first recovering attach succeeds the
+        // dead primary for this explicit-close decision.
+        if (port === this.primaryPort || port === this.recoveryOwnerPort) {
+          void this.dispose().catch(() => undefined);
+        } else {
+          this.detachPort(port);
+        }
         break;
       case 'requestRows':
       case 'setViewport':

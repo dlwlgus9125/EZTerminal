@@ -11,6 +11,8 @@ import { ResultTable } from './ResultTable';
 import { SshPromptCard } from './SshPromptCard';
 import { TextBlock } from './TextBlock';
 import type { TerminalRuntimeOptions } from './xterm-runtime';
+import type { RuntimeLifecycleTier } from '../shared/runtime-lifecycle';
+import './runtime-lifecycle.css';
 
 // A Block = command input (the text that was run) + its output, collapsible and
 // stacked vertically in the BlockList (`docs/design/terminal-runtime.md`). The output renders
@@ -42,6 +44,7 @@ export const Block = memo(function Block({
   onDismiss,
   isTakeover = false,
   terminalRuntimeOptions,
+  runtimeLifecycleTier = 'active',
 }: {
   controller: BlockController;
   onDismiss?: () => void;
@@ -50,6 +53,7 @@ export const Block = memo(function Block({
   isTakeover?: boolean;
   /** Platform integration for renderer policy and safe external links. */
   terminalRuntimeOptions?: TerminalRuntimeOptions;
+  runtimeLifecycleTier?: RuntimeLifecycleTier;
 }): JSX.Element {
   const { t } = useAppTranslation();
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
@@ -74,6 +78,7 @@ export const Block = memo(function Block({
       className={isTakeover ? 'block block--takeover' : 'block'}
       data-testid="block"
       data-status={status}
+      data-runtime-tier={runtimeLifecycleTier}
     >
       <header className="block-head">
         <button
@@ -180,12 +185,18 @@ export const Block = memo(function Block({
             <pre className="text-block text-block--error" data-testid="block-error">
               {errorMessage ?? t('block.status.error')}
             </pre>
+          ) : runtimeLifecycleTier === 'parked' && shape !== 'pty' ? (
+            <div className="block-presentation-parked" data-testid="block-presentation-parked" />
           ) : shape === 'text' ? (
             <TextBlock controller={controller} />
           ) : shape === 'table' ? (
             <ResultTable controller={controller} />
           ) : shape === 'pty' ? (
-            <PtyBlock controller={controller} runtimeOptions={terminalRuntimeOptions} />
+            <PtyBlock
+              controller={controller}
+              runtimeOptions={terminalRuntimeOptions}
+              runtimeLifecycleTier={runtimeLifecycleTier}
+            />
           ) : (
             <div className="block-pending">{t('block.running')}</div>
           )}
