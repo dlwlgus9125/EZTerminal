@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [1.0.34] - 2026-08-13
+
+### Added
+
+- Added per-native-window desktop lifecycle coordination for the main window
+  and detached Dockview windows, including a 30-second park grace.
+- Added renderer crash checkpoints that restore the workbench layout, active
+  pane, drafts, session surfaces, and surviving interactive runs.
+- Added Android background lifecycle coordination that suspends remote
+  presentation work after 30 seconds and resumes it deterministically.
+
+### Changed
+
+- Parked terminal presentations now keep the same xterm instance while
+  disabling expensive rendering, limiting presentation scrollback to 1,000
+  lines, and coalescing writes to 4 Hz until the window returns.
+- Release evidence runners now rebuild exact-SHA Electron packages instead of
+  accepting a timestamp-fresh package carrying an older embedded identity.
+
+### Fixed
+
+- Kept multiple detached windows and their live sessions responsive through
+  repeated minimize, restore, background, and renderer-recovery transitions.
+
+See [1.0.34 release notes](docs/release/release-notes-1.0.34.md).
+
 ## [1.0.33] - 2026-08-11
 
 ### Fixed

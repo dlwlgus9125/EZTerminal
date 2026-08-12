@@ -11,7 +11,7 @@ Block-based UI · themes &amp; CRT effects · system monitor · SSH · pair your
 Project contracts: [architecture](docs/architecture.md) · [visual design](DESIGN.md) ·
 [frontend UX](docs/ux/frontend-design.md)
 
-![release](https://img.shields.io/badge/release-v1.0.33-brightgreen)
+![release](https://img.shields.io/badge/release-v1.0.34-brightgreen)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 ![built with](https://img.shields.io/badge/built%20with-Electron%20·%20React%20·%20TypeScript-9cf)
@@ -185,7 +185,7 @@ Grab both official 1.0 downloads from the
 [**Releases**](https://github.com/dlwlgus9125/EZTerminal/releases/latest) page:
 
 - Windows 10 22H2 / Windows 11 x64: `EZTerminal-Setup.exe`
-- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.33-vc54.apk`
+- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.34-vc55.apk`
 
 > While the SignPath Foundation application is pending, maintenance releases can be
 > published unsigned and will show Windows' unknown-publisher warning. Check the
@@ -215,7 +215,7 @@ live camera frames, background release, and explicit camera reacquisition.
 Elevated/admin service lifecycle and physical-device validation were not
 performed. Microsoft Store publication and silent or background installation
 are outside this release; see the
-[1.0.33 validation policy](docs/release/validation-policy-1.0.33.md).
+[1.0.34 validation policy](docs/release/validation-policy-1.0.34.md).
 
 ## Code signing policy
 
@@ -247,7 +247,7 @@ authorized release performance benchmark.
 Graphical PC Control is included by default in Windows builds. At runtime it
 still requires an enabled remote bridge, a running installed host service, and
 a trusted VPN interface; otherwise the desktop capability is not advertised.
-Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.33.
+Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.34.
 
 The Android companion app lives in [`mobile/`](mobile/) (Capacitor + Android Studio).
 
