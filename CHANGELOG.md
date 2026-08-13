@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [1.0.36] - 2026-08-14
+
+### Changed
+
+- Published the transparent-alpha canonical app icon across the GitHub README,
+  Windows executable, installer and tray assets, and every Android launcher
+  density.
+
+### Security
+
+- Pinned the transitive build dependency `nanoid` to `3.3.18` after
+  GHSA-2v37-7h3g-55p8 appeared between release-candidate validation and the
+  tagged build.
+
+This release supersedes the unpublished v1.0.35 tag candidate, whose release
+workflow stopped at the dependency vulnerability gate before publication.
+
+See [1.0.36 release notes](docs/release/release-notes-1.0.36.md).
+
 ## [1.0.35] - 2026-08-14
 
 ### Changed
