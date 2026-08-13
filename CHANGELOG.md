@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.0.35] - 2026-08-14
+
+### Changed
+
+- Replaced the opaque white exterior corners of the canonical EZTerminal app
+  icon with transparent alpha while preserving the rounded navy tile and its
+  interior artwork.
+- Regenerated the Windows executable, installer and tray ICO plus every
+  Android legacy, round and adaptive launcher density from the same source.
+- Updated the GitHub README to render the transparent canonical icon.
+
+See [1.0.35 release notes](docs/release/release-notes-1.0.35.md).
+
 ## [1.0.34] - 2026-08-13
 
 ### Added

@@ -544,7 +544,7 @@ dependencies = [
 
 [[package]]
 name = "ezterminal-remote-host"
-version = "1.0.34"
+version = "1.0.35"
 dependencies = [
  "anyhow",
  "bytes",

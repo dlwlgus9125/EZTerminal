@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "version": "1.0.34",
-  "androidVersionCode": 55,
+  "version": "1.0.35",
+  "androidVersionCode": 56,
   "protocolVersion": 7,
   "validationProfile": "functional-hotfix",
   "performancePolicy": {
