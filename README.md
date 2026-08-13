@@ -8,7 +8,7 @@
 
 Structured pipelines · block history · full PTY/TUI support · Agent workbench · Android remote control
 
-[![Release](https://img.shields.io/github/v/release/dlwlgus9125/EZTerminal?display_name=tag&sort=semver)](https://github.com/dlwlgus9125/EZTerminal/releases/latest)
+[![Release](https://img.shields.io/badge/release-v1.0.34-brightgreen)](https://github.com/dlwlgus9125/EZTerminal/releases/latest)
 [![CI](https://github.com/dlwlgus9125/EZTerminal/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dlwlgus9125/EZTerminal/actions/workflows/ci.yml)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -161,7 +161,7 @@ boundaries, data flows, and native components are documented in the
 | Architecture and subsystem ownership | [docs/architecture.md](docs/architecture.md) |
 | Product direction and unimplemented candidates | [docs/ROADMAP.md](docs/ROADMAP.md) |
 | Visual identity and UX contracts | [DESIGN.md](DESIGN.md) · [frontend design](docs/ux/frontend-design.md) |
-| Current release | [v1.0.34 notes](docs/release/release-notes-1.0.34.md) · [validation policy](docs/release/validation-policy-1.0.34.md) |
+| Current release | [v1.0.34 notes](docs/release/release-notes-1.0.34.md) · [1.0.34 validation policy](docs/release/validation-policy-1.0.34.md) |
 | Terminal, remote, lifecycle, and integration contracts | [docs/design/](docs/design/) |
 | Release history | [CHANGELOG.md](CHANGELOG.md) |
 
