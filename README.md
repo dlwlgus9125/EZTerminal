@@ -1,267 +1,173 @@
 <div align="center">
 
-<img src="appicon.png" width="140" alt="EZTerminal" />
+<img src="appicon.png" width="128" alt="EZTerminal app icon" />
 
 # EZTerminal
 
-**A structured-data shell terminal for Windows — pipe typed tables, not text.**
+**A Windows terminal that treats command output as typed data.**
 
-Block-based UI · themes &amp; CRT effects · system monitor · SSH · pair your phone as a remote
+Structured pipelines · block history · full PTY/TUI support · Agent workbench · Android remote control
 
-Project contracts: [architecture](docs/architecture.md) · [visual design](DESIGN.md) ·
-[frontend UX](docs/ux/frontend-design.md)
+[![Release](https://img.shields.io/github/v/release/dlwlgus9125/EZTerminal?display_name=tag&sort=semver)](https://github.com/dlwlgus9125/EZTerminal/releases/latest)
+[![CI](https://github.com/dlwlgus9125/EZTerminal/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dlwlgus9125/EZTerminal/actions/workflows/ci.yml)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-![release](https://img.shields.io/badge/release-v1.0.34-brightgreen)
-![license](https://img.shields.io/badge/license-MIT-blue)
-![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
-![built with](https://img.shields.io/badge/built%20with-Electron%20·%20React%20·%20TypeScript-9cf)
+[Download the latest release](https://github.com/dlwlgus9125/EZTerminal/releases/latest) ·
+[Read the release notes](docs/release/release-notes-1.0.34.md) ·
+[Review the security model](SECURITY.md)
 
-<img src="visual/__snapshots__/storybook.visual.spec.ts/desktop-matrix-workbench.png" width="840" alt="EZTerminal adaptive workbench in the Matrix theme" />
+<br />
+
+<img src="docs/assets/readme/desktop-structured-workbench.png" width="100%" alt="EZTerminal desktop workbench showing the Explorer and a typed pipeline rendered as a table" />
 
 </div>
 
----
+## Why EZTerminal?
 
-## What is EZTerminal?
+Most terminals flatten every result into text. EZTerminal keeps built-in command output as typed rows,
+so filters and sorts operate on real columns and results render as virtualized tables. Commands that
+need normal terminal behavior—including PowerShell, Git, Node.js, Codex, Claude, and full-screen
+TUIs—run through ConPTY and xterm.js instead.
 
-EZTerminal is a desktop terminal that treats command output as **structured data** instead of flat
-text. Built-ins like `ls`, `gen-rows`, `ps` and `history` emit **typed rows** you can filter and sort
-with real pipelines:
+Each command lives in its own collapsible block with its status, working directory, output, and
+cancellation controls. Tabs, splits, detached windows, saved layouts, files, projects, agents, and
+remote sessions all live in the same keyboard-first workbench.
 
-```
-gen-rows 5 | where n > 2 | sort-by n
+```text
+gen-rows 24 | where n > 8 | sort-by n
 ls | where size > 1000 | sort-by size
+ps | where memory > 100mb | sort-by memory
 ```
 
-Results render as a live, **virtualized table** (100,000+ rows stay smooth). Every command is a
-collapsible **block** with its own status, working directory and output — and external / TUI programs
-(`node`, `git`, `claude`, `codex`, …) are auto-detected and run in a full PTY.
+## Highlights
 
-It also ships a companion **Android app** that pairs with the desktop through Tailscale, WireGuard,
-or another explicitly trusted VPN to run terminal sessions and control the visible Windows desktop.
+- **Typed pipelines at interactive scale.** `ls`, `ps`, `history`, `gen-rows`, variables, `where`,
+  and `sort-by` produce structured values. The table renderer stays windowed even with 100,000 rows.
+- **A real terminal when text is the right interface.** External commands, interactive CLIs, and
+  full-screen TUIs use ConPTY/xterm with search, Unicode 11, safe links, WebGL fallback, scrollback,
+  selection-aware copy, paste protection, and byte backpressure.
+- **A persistent multi-window workbench.** Independent sessions can be arranged as tabs and splits,
+  moved into detached windows, saved as presets, and restored. v1.0.34 adds coordinated window
+  parking and renderer recovery without discarding eligible live runs.
+- **Projects and coding agents in context.** Browse a project tree, inspect full-file inline diffs
+  beside a live terminal, manage worktrees, and follow Codex, Claude, or configured Agent sessions
+  through attention, approval, history, resume, and change-review states.
+- **Files, SSH, and local operations tooling.** Use the built-in Explorer, bounded file previews,
+  drag-to-terminal paths, TOFU-verified SSH, loopback-only SSH forwards, a system monitor, and
+  optional Npcap packet capture.
+- **Four visual modes without sacrificing terminal semantics.** Matrix CRT, Dark, Light, and High
+  Contrast themes share responsive, localized, keyboard- and screen-reader-aware UI contracts.
 
-## Features
+## Project workbench
 
-### 🧩 Structured-data shell
-- Typed pipelines — `where`, `sort-by`, `gen-rows` over real columns, not text
-- Virtualized tables (100k+ rows) and variables (`let threshold = 2`)
-- Block UI: per-command status, cwd, collapse / dismiss
-- Adaptive rendering: plain text vs full PTY / xterm, auto-detected
+The desktop Project Workspace keeps the file tree, a read-only full-file inline diff, and the live
+PTY topology together. Opening files or switching between wide and narrow layouts does not recreate
+the terminal session.
 
-### 🎨 Themes &amp; CRT effects
-Light, Dark and a **Matrix CRT** theme, plus importable custom theme mods. Toggle scanlines, phosphor
-glow, a moving CRT roll bar, flicker, jitter and noise — each with live sliders — and pick any bundled
-monospace font.
+<img src="docs/assets/readme/desktop-project-workspace.png" width="100%" alt="EZTerminal Project Workspace with a file tree, inline diff, and live PowerShell terminal" />
 
-<img src="visual/__snapshots__/storybook.visual.spec.ts/desktop-matrix-effect-profile-menu.png" width="840" alt="Matrix theme CRT effect profiles" />
+## Android companion
 
-### 📊 System monitor
-A btop-style panel: per-core CPU, memory breakdown, network, disk, live connections and a process
-list — plus optional live **packet capture** (Npcap).
+The Android app connects to the desktop over a user-selected trusted VPN. It can resume terminal
+sessions, browse and transfer files, surface Agent attention, inspect system status, and explicitly
+start PC Control for the visible, unlocked Windows desktop.
 
-### 🪟 Tabs, splits &amp; layouts
-An independent shell session per tab, drag-to-rearrange splits, and drag a terminal or Agent Session
-tab outside the app to move it into a separate window. Savable presets and layouts, including detached
-terminal and Agent Session windows, persist across restarts. Windows Terminal-parity keys include selection-aware copy, text paste aliases,
-context menus and configurable scrollback. In ordinary PTYs, `Ctrl+C` still interrupts the foreground
-program without killing the whole tree.
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/assets/readme/mobile-home.png" width="100%" alt="EZTerminal Android home screen with PC Control, recent sessions, and Agent attention" />
+      <br />
+      <sub>Sessions and attention at a glance</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/assets/readme/mobile-pc-control.png" width="100%" alt="EZTerminal Android PC Control session sheet with input, display, quality, keyboard, and clipboard controls" />
+      <br />
+      <sub>Explicit PC Control input and streaming controls</sub>
+    </td>
+  </tr>
+</table>
 
-Use the Command Center button for Quick Open across panes, command history, saved Quick Commands,
-workspace files, presets and agent launchers. `Ctrl/Cmd+K` opens it from non-editable app UI, while
-terminal and composer focus keep readline/PTY `Ctrl+K`; `Ctrl/Cmd+Shift+P` remains a global alias.
-`Ctrl+P` is left to terminal programs. Full xterm blocks use `Ctrl/Cmd+Shift+F` for search and also support safe
-modifier-click web links, Unicode 11 and WebGL with DOM fallback.
+PC Control supports monitor selection, precision pointer and direct touch, physical or on-screen
+keyboard input, Korean IME, Bluetooth keyboard and mouse input, adaptive streaming profiles, and
+explicit text clipboard actions. Local display and input remain active, only one phone controls the
+GUI at a time, and the desktop can disconnect the controller at any moment. Lock screen, UAC secure
+desktop, audio, privacy mode, and Ctrl+Alt+Delete are not supported.
 
-Directly launched Codex sessions add a narrow safety layer: with no selection, `Ctrl+C` and `Ctrl+D`
-are blocked so Codex exits only through `/exit`, `/quit`, or the explicit **Force stop** button; `Esc`
-still cancels the current Codex task. With a selection, `Ctrl+C` copies as usual. `Ctrl+V` gives an
-image-bearing clipboard to Codex itself, so Codex owns the image attachment; EZTerminal does
-not create or expose a temporary path. `Ctrl+Shift+V` and `Shift+Insert` always paste clipboard text.
-Multiline and larger-than-5-KiB text pastes ask for confirmation by default, with independent toggles
-under **Settings → Terminal & Safety**. Wrapper, pipeline, SSH, and non-Codex PTYs keep their normal
-control-key behavior.
+## Install
 
-Optional workbench screens load as independent chunks and recover in place if a chunk cannot be
-loaded, leaving terminal sessions and drafts usable. **Settings → General → Resource profile** offers
-Balanced, Low resource, and High responsiveness on both desktop and Android. Low resource avoids
-background feature preload and reduces only observational refresh frequency; it never weakens command
-cancellation, reconnect/liveness, capture leases, backpressure, or pane-close safety.
+The current stable release is **v1.0.34**.
 
-### 📁 Files &amp; 🔐 SSH
-A built-in file explorer (desktop and mobile) and an SSH client with trust-on-first-use host-key
-verification. Text and Markdown, bounded PNG/JPEG/GIF/WebP images and PDF metadata have safe previews;
-desktop files can be dragged into the active terminal as quoted paths without executing them.
+| Platform | Supported system | Release asset |
+| --- | --- | --- |
+| Windows desktop | Windows 10 22H2 or Windows 11, x64 | `EZTerminal-Setup.exe` |
+| Android companion | Android 10 / API 29 or newer | `EZTerminal-Android-1.0.34-vc55.apk` |
 
-`ssh-connect` accepts either `user@host` or a safe OpenSSH config alias. An authenticated SSH block
-shows a copyable connection id that can be used for loopback-only local forwards:
+Download both artifacts, `release-manifest.json`, and `SHA256SUMS.txt` from the
+[latest GitHub Release](https://github.com/dlwlgus9125/EZTerminal/releases/latest).
 
-```bash
-ssh-connect production
-ssh-forward-start <connection-id> db.internal 5432 --local-port 0
-ssh-forward-list <connection-id>
-ssh-forward-stop <connection-id> <forward-id>
-```
+> [!IMPORTANT]
+> The v1.0.34 Windows installer is published unsigned while the SignPath Foundation application is
+> pending, so Windows displays an unknown-publisher warning. Verify the release manifest and SHA-256
+> checksums before opening it. The in-app updater performs the same digest verification and never
+> installs an update silently.
 
-Terminal output paths become previews only after an explicit gesture: Ctrl/Cmd-click on desktop, or
-tap followed by Preview/Copy on Android. Resolution is restricted to the command's local workspace;
-remote SSH and out-of-workspace paths are not opened. Preview consumes a main-owned, short-lived,
-one-shot file-identity capability so the target cannot be swapped between resolution and open.
+Android 1.0 uses the project's long-term release certificate. If an older debug-signed APK is
+installed, uninstall it before installing 1.0; Android cannot update across that signing-key change,
+and uninstalling removes the app's saved pairing data.
 
-### Git worktrees
+## Security and privacy
 
-Worktree operations stay in the terminal and render as structured rows. `open` creates a normal
-terminal tab rooted at the validated worktree. Removal is intentionally conservative: only clean,
-idle, unlocked worktrees created by EZTerminal can be removed, without `--force`.
+Remote access is **off by default**. Enabling it binds the bridge only to the explicitly selected
+Tailscale, WireGuard, or other trusted VPN interface. The current `ws://` transport must stay inside
+that encrypted tunnel—never expose it with router port forwarding.
 
-```bash
-worktree list
-worktree create feature/name --base "HEAD"
-worktree open <worktree-id>
-worktree remove <worktree-id>
-```
+Pairing grants remote command execution and filesystem access; opening PC Control additionally grants
+visible-desktop, keyboard, pointer, and explicit text-clipboard access. Treat the pairing token like
+a password to the Windows account. Tokens use OS-backed protection on Windows, Android credentials
+use Keystore-backed storage, and token rotation revokes existing access.
 
-The Android client exposes only `list` and `open`; creation and removal remain desktop-only.
-
-### Agent attention
-Codex, Claude and configured CLI sessions surface working/waiting/approval/error state in terminal tabs
-and the Agent Hub. Optional provider hooks improve lifecycle accuracy, waiting agents accept an explicit
-one-line follow-up, and desktop notifications can focus the owning terminal without exposing prompts or
-transcripts. Agent Hub-owned Codex new and resumed sessions use inline TUI mode so long conversations
-remain in terminal scrollback; directly entered Codex commands keep their own flags. The paired Android
-client mirrors the same activity view.
-
-### 📱 Mobile remote control
-Pair the Android app to run and mirror desktop sessions from your phone.
-**Off by default, token-gated and origin-checked** — see [SECURITY.md](SECURITY.md).
-The desktop bearer token uses OS-backed encryption on Windows, while saved Android credentials use
-Keystore-backed storage with no plaintext fallback. A transient network
-loss keeps an orphaned run port alive for up to five minutes. If the run
-remains active through another surface, the Android installation that started
-it can still restore input ownership after a longer process restart; an
-explicit Disconnect relinquishes that restoration. An invalid token stops
-retrying and asks the user to pair again.
-
-<img src="visual/__snapshots__/storybook.visual.spec.ts/mobile-360x800-shell-en.png" height="640" alt="EZTerminal Android remote shell" />
-
-On Windows 10 22H2/11 x64, **More → PC Control** can also stream the unlocked,
-visible PC screen over VPN-bound WebRTC and provide trackpad/direct-touch,
-physical or Korean IME keyboard input, special keys, and explicit text
-clipboard actions. Only one phone controls the GUI at a time; the local display
-and input remain active, and the desktop banner, tray, or Remote panel can
-disconnect it at any time.
-
-An Android-paired Bluetooth keyboard and mouse need no additional PC Control
-setting. While the remote video surface is active, hardware key transitions,
-mouse hover, left/right/middle buttons, drag, and both wheel axes use the same
-bounded remote-input path; local controls and background states do not capture
-them.
-
-PC Control is enabled in supported Windows builds, but the capability is
-advertised only while the remote bridge is enabled, a trusted
-Tailscale/WireGuard adapter is selected, and the installed LocalSystem host
-service is ready. Starting control additionally requires a successful
-active-session agent handshake. Missing or unhealthy native components fail
-closed without disabling terminal-only remote access. Capture uses
-DXGI Desktop Duplication first with a GDI fallback, while H.264 encoding uses
-Media Foundation first with an OpenH264 fallback. The phone reports decode,
-drop, and freeze pressure and can request a bounded visible region; the host
-acknowledges the applied region before direct-touch input resumes. Actual input
-injection still runs in the normal-user transport, so lock/UAC secure-desktop
-control and Ctrl+Alt+Delete are unavailable.
-
-Desktop Settings also includes risk-aware pane-close confirmation and a default-off OSC 52 clipboard
-write option. After confirmation, the interpreter atomically compares the expected active run IDs and
-fails closed if state changed. Terminal-originated clipboard queries are never answered, writes are
-size/rate limited, and semantic attach replay renders OSC 52 without repeating clipboard side effects.
-
-Local PTY runs keep a bounded headless terminal snapshot for late mobile attach. Reconnect applies the
-serialized screen state and its exact output tail before live bytes are released; if that continuity
-cannot be proved, EZTerminal visibly falls back to the bounded recent-output ring. SSH runs currently
-fail closed for late attach instead of presenting an incomplete terminal.
-
-## Download
-
-Grab both official 1.0 downloads from the
-[**Releases**](https://github.com/dlwlgus9125/EZTerminal/releases/latest) page:
-
-- Windows 10 22H2 / Windows 11 x64: `EZTerminal-Setup.exe`
-- Android 10 (API 29) or newer: `EZTerminal-Android-1.0.34-vc55.apk`
-
-> While the SignPath Foundation application is pending, maintenance releases can be
-> published unsigned and will show Windows' unknown-publisher warning. Check the
-> release manifest and `SHA256SUMS.txt`; the in-app updater performs the same SHA-256
-> check and asks again before opening an unsigned installer. After SignPath activation,
-> releases require publisher **SignPath Foundation** and a timestamp. SmartScreen can
-> still show a reputation warning for a newly signed file. Historical 1.0.23 assets
-> remain as originally published.
-
-> The Android 1.0 app uses a new long-term release certificate. Remove any older debug-signed
-> EZTerminal APK before installing 1.0; Android cannot update across the signing-key change and the
-> uninstall removes that app's locally saved pairing data. Future releases signed with this key can
-> update normally.
-
-Settings checks the latest stable GitHub Release and can download a verified
-Windows installer or Android APK to `Downloads/EZTerminal`. Installation
-remains explicit and user controlled. Verify downloads independently against
-`SHA256SUMS.txt` in the release when needed.
-The mobile bridge binds only to a selected trusted VPN interface and uses plain `ws://` inside that
-encrypted tunnel. Pairing grants the phone command/filesystem access and explicit visible desktop,
-input, and text-clipboard control.
-
-The supported targets remain Windows 10 22H2/Windows 11 x64 and Android 10+, while this
-release's validation evidence is limited to the current Windows host and API
-29/API 35 emulators. The Android lanes cover QR-scanner fullscreen rendering,
-live camera frames, background release, and explicit camera reacquisition.
-Elevated/admin service lifecycle and physical-device validation were not
-performed. Microsoft Store publication and silent or background installation
-are outside this release; see the
-[1.0.34 validation policy](docs/release/validation-policy-1.0.34.md).
-
-## Code signing policy
-
-Free code signing provided by [SignPath.io](https://about.signpath.io/),
-certificate by [SignPath Foundation](https://signpath.org/). Project roles,
-the two-approval release process, signed-file scope, and failure policy are in
-the [Code signing policy](CODE_SIGNING_POLICY.md). See also the
-[Privacy policy](PRIVACY.md) and [SignPath setup guide](docs/release/signpath-setup.md).
+EZTerminal does not operate an analytics, advertising, crash-reporting, or telemetry service. See the
+full [security policy](SECURITY.md), [privacy policy](PRIVACY.md), and
+[code-signing policy](CODE_SIGNING_POLICY.md) before enabling remote access or redistributing builds.
 
 ## Build from source
 
-```bash
+You need Windows 10 22H2 or Windows 11 x64, Node.js `>=22.12 <25`, pnpm `10.33.4`, and a Rust
+toolchain. The Windows native host is built automatically by `pnpm start` and `pnpm make`.
+
+```powershell
+corepack enable
 pnpm install
-pnpm start        # run in development
-pnpm make         # build the Windows installer -> out/make/nsis/x64/
-pnpm test         # unit tests (Vitest)
-pnpm e2e          # end-to-end tests (Playwright + Electron)
-pnpm profile:runtime -- --samples 5  # local startup/chunk/memory diagnostic
+pnpm start
 ```
 
-On Windows, `pnpm start` builds the native process guardian first. EZTerminal
-fails closed if that helper cannot start, so terminal commands never run without
-the Job Object ownership boundary.
+Useful development commands:
 
-`profile:runtime` writes `test-results/runtime-profile.json` from isolated temporary app profiles.
-It is developer diagnostics only, not release evidence and not a substitute for the separately
-authorized release performance benchmark.
+```powershell
+pnpm test       # documentation checks, unit tests, OS tests, and policy guards
+pnpm e2e        # ordinary Playwright + Electron end-to-end suite
+pnpm make       # Windows installer -> out/make/nsis/x64/EZTerminal-Setup.exe
+```
 
-Graphical PC Control is included by default in Windows builds. At runtime it
-still requires an enabled remote bridge, a running installed host service, and
-a trusted VPN interface; otherwise the desktop capability is not advertised.
-Secure-desktop and Ctrl+Alt+Delete support are not included in 1.0.34.
+The Android Capacitor project lives in [`mobile/`](mobile/). Current process boundaries, trust
+boundaries, data flows, and native components are documented in the
+[architecture guide](docs/architecture.md).
 
-The Android companion app lives in [`mobile/`](mobile/) (Capacitor + Android Studio).
+## Documentation
 
-Current process boundaries, data flows, trust boundaries, and subsystem contracts are
-documented in [the architecture guide](docs/architecture.md).
+| Topic | Entry point |
+| --- | --- |
+| Architecture and subsystem ownership | [docs/architecture.md](docs/architecture.md) |
+| Product direction and unimplemented candidates | [docs/ROADMAP.md](docs/ROADMAP.md) |
+| Visual identity and UX contracts | [DESIGN.md](DESIGN.md) · [frontend design](docs/ux/frontend-design.md) |
+| Current release | [v1.0.34 notes](docs/release/release-notes-1.0.34.md) · [validation policy](docs/release/validation-policy-1.0.34.md) |
+| Terminal, remote, lifecycle, and integration contracts | [docs/design/](docs/design/) |
+| Release history | [CHANGELOG.md](CHANGELOG.md) |
 
 ## Tech stack
 
-Electron · React · TypeScript · xterm.js · node-pty (ConPTY) · Capacitor (Android) · Vite · Playwright
-
-## Security
-
-Remote control is opt-in and token-gated. See **[SECURITY.md](SECURITY.md)** for the remote-bridge
-threat model and how to report a vulnerability.
+Electron · React · TypeScript · Dockview · xterm.js · node-pty / ConPTY · Capacitor · Rust · Vite · Playwright
 
 ## License
 
