@@ -31,7 +31,13 @@ OpenClaw와 Agent CLI는 EZTerminal이 소유하는 내부 service가 아니다.
 - 설정 변경은 명시된 allowlist만 허용하며 gateway 설정 파일을 EZTerminal이 직접
   편집하지 않는다. port 변경은 restart 뒤 origin을 다시 계산한다.
 - desktop chat은 main-owned `WebContentsView`를 sandbox/context-isolation 상태로
-  사용한다. gateway token은 main이 URL fragment에 넣고 renderer IPC로 전달하지 않는다.
+  사용한다. `main-owned`은 main process가 수명을 소유한다는 뜻이며 표시 host는 chat
+  panel이 있는 main 또는 auxiliary `BrowserWindow`다. Panel이 창 사이를 이동하면 같은
+  view를 새 host에 재부착한다. gateway token은 main이 URL fragment에 넣고 renderer
+  IPC로 전달하지 않는다.
+- Renderer는 monotonic revision을 가진 하나의 surface snapshot으로 host window name,
+  bounds, visibility와 mount/unmount를 원자적으로 알린다. Main은 등록된 창 이름과 sender를
+  검증하고 stale revision 및 구형 개별 geometry/visibility update를 받아들이지 않는다.
 - navigation은 gateway origin으로 제한하고 새 창은 안전한 external URL 정책을 거쳐
   시스템 browser로 보낸다. drawer, modal 또는 숨은 panel 뒤에서는 view를 숨겨 click
   interception을 막는다.
@@ -88,6 +94,8 @@ client에 일부 payload를 보내지 않는다.
 
 - [`src/main/openclaw-service.test.ts`](../../src/main/openclaw-service.test.ts)
 - [`src/main/openclaw-chat-view.test.ts`](../../src/main/openclaw-chat-view.test.ts)
+- [`src/main/desktop-window-manager.test.ts`](../../src/main/desktop-window-manager.test.ts)
+- [`src/shared/openclaw.test.ts`](../../src/shared/openclaw.test.ts)
 - [`src/main/openclaw-proxy.test.ts`](../../src/main/openclaw-proxy.test.ts)
 - [`src/main/agent-activity-service.test.ts`](../../src/main/agent-activity-service.test.ts)
 - [`src/main/agent-history-service.test.ts`](../../src/main/agent-history-service.test.ts)

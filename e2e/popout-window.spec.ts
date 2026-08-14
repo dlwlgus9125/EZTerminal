@@ -146,6 +146,22 @@ async function dragTabOutside(
   await page.mouse.up();
 }
 
+async function redockFirstPopoutGroup(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    type EzDockGroup = {
+      api: { moveTo(options: { position: 'right' }): void };
+    };
+    type EzDockApi = {
+      getPopouts(): Array<{ group: EzDockGroup }>;
+    };
+    const api = (globalThis as unknown as { __ezDock?: EzDockApi }).__ezDock;
+    if (!api) throw new Error('__ezDock test seam missing');
+    const popout = api.getPopouts()[0];
+    if (!popout) throw new Error('expected an existing popout group');
+    popout.group.api.moveTo({ position: 'right' });
+  });
+}
+
 async function waitForAuxiliaryWindow(app: ElectronApplication): Promise<Page> {
   await expect.poll(
     () => app.windows().filter((candidate) => candidate.url().includes('ez-popout=1')).length,
@@ -196,6 +212,19 @@ test('terminal tab dragged outside becomes a frameless auxiliary window with the
   await app.close();
 });
 
+test('empty tab-bar drag detaches its whole group', async () => {
+  const app = await launchApp();
+  const main = await app.firstWindow();
+  await expect(main.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  await dragTabOutside(main, main.locator('.dv-void-container').first());
+  const auxiliary = await waitForAuxiliaryWindow(app);
+  await expect(main.locator('.dv-tab')).toHaveCount(0);
+  await expect(auxiliary.locator('.dv-tab')).toHaveCount(1);
+
+  await app.close();
+});
+
 test('popping one terminal tab out leaves both windows keyboard-interactive', async () => {
   const app = await launchApp();
   const main = await app.firstWindow();
@@ -223,6 +252,62 @@ test('popping one terminal tab out leaves both windows keyboard-interactive', as
 
   await expect(main.locator('.dv-render-overlay')).toHaveCount(1);
   await expect(auxiliary.locator('.dv-render-overlay')).toHaveCount(1);
+
+  await app.close();
+});
+
+test('splitting a tab from an auxiliary window stays inside that window', async () => {
+  const app = await launchApp();
+  const main = await app.firstWindow();
+  await expect(main.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  await main.getByTestId('btn-new-tab').click();
+  await expect(main.locator('.dv-tab')).toHaveCount(2);
+  await dragTabOutside(main, main.locator('.dv-tab', { hasText: 'Terminal 2' }));
+  const auxiliary = await waitForAuxiliaryWindow(app);
+
+  await auxiliary.locator('.dv-tab').click({ button: 'right' });
+  await expect(auxiliary.getByTestId('workspace-tab-context-menu')).toBeVisible();
+  await auxiliary.getByTestId('tab-ctx-split-right').click();
+
+  await expect(panes(main)).toHaveCount(1);
+  await expect(panes(auxiliary)).toHaveCount(2);
+  await expect.poll(
+    () => app.windows().filter((candidate) => candidate.url().includes('ez-popout=1')).length,
+  ).toBe(1);
+
+  await app.close();
+});
+
+test('a three-tab group redocks before a later single-tab detach without duplicating windows', async () => {
+  const app = await launchApp();
+  const main = await app.firstWindow();
+  await expect(main.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
+
+  await main.getByTestId('btn-new-tab').click();
+  await main.getByTestId('btn-new-tab').click();
+  await expect(main.locator('.dv-tab')).toHaveCount(3);
+
+  // Empty tab-bar space is the group handle: all three tabs must move as one
+  // native-window transaction.
+  await dragTabOutside(main, main.locator('.dv-void-container').first());
+  const groupWindow = await waitForAuxiliaryWindow(app);
+  await expect(main.locator('.dv-tab')).toHaveCount(0);
+  await expect(groupWindow.locator('.dv-tab')).toHaveCount(3);
+
+  await redockFirstPopoutGroup(main);
+  await expect.poll(
+    () => app.windows().filter((candidate) => candidate.url().includes('ez-popout=1')).length,
+    { timeout: 15_000 },
+  ).toBe(0);
+  await expect(main.locator('.dv-tab')).toHaveCount(3);
+
+  await dragTabOutside(main, main.locator('.dv-tab', { hasText: 'Terminal 2' }));
+  const singleTabWindow = await waitForAuxiliaryWindow(app);
+  await expect(singleTabWindow.locator('.dv-tab')).toHaveCount(1);
+  await expect(singleTabWindow.locator('.dv-tab', { hasText: 'Terminal 2' })).toBeVisible();
+  await expect(main.locator('.dv-tab')).toHaveCount(2);
+  await expect(main.locator('.dv-tab', { hasText: 'Terminal 2' })).toHaveCount(0);
 
   await app.close();
 });

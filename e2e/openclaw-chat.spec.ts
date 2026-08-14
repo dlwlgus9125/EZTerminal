@@ -46,6 +46,17 @@ async function chatViewInfo(
   });
 }
 
+async function chatViewHosts(
+  app: import('@playwright/test').ElectronApplication,
+): Promise<Array<{ url: string; viewIds: number[] }>> {
+  return app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((win) => ({
+    url: win.webContents.getURL(),
+    viewIds: win.contentView.children.map((child) => (
+      (child as Electron.WebContentsView).webContents.id
+    )),
+  })));
+}
+
 test('running: opening chat from the drawer auto-closes the drawer and shows exactly one correctly-addressed WebContentsView (AC2)', async () => {
   const state = buildFixtureState({ running: true });
   const { dir, statePath, configPath } = writeFixtureFiles(state);
@@ -95,6 +106,77 @@ test('running: opening chat from the drawer auto-closes the drawer and shows exa
     // close button. The active rail destination is the canonical close control.
     await window.getByTestId('btn-toggle-openclaw').click();
     await expect.poll(async () => (await chatViewInfo(app))[0]?.visible, { timeout: 10_000 }).toBe(true);
+  } finally {
+    await app.close();
+    await gateway.stop();
+  }
+});
+
+test('detaching and redocking chat rehosts the same native WebContentsView', async () => {
+  const state = buildFixtureState({ running: true });
+  const { dir, statePath, configPath } = writeFixtureFiles(state);
+  const cliShim = writeFakeCliShim(dir);
+  const gateway = await startFakeGateway(statePath);
+  const app = await launchApp(undefined, {
+    EZTERMINAL_OPENCLAW_CLI: cliShim,
+    EZTERMINAL_OPENCLAW_URL: `http://127.0.0.1:${gateway.port}`,
+    EZTERMINAL_OPENCLAW_CONFIG_PATH: configPath,
+    EZTERM_E2E_OPENCLAW_STATE: statePath,
+  });
+
+  try {
+    const main = await app.firstWindow();
+    await main.getByTestId('btn-toggle-openclaw').click();
+    await expect(main.getByTestId('openclaw-state')).toHaveAttribute('data-state', 'running', {
+      timeout: 10_000,
+    });
+    await main.getByTestId('btn-openclaw-open-chat').click();
+    await expect(main.getByTestId('openclaw-chat-panel')).toBeVisible({ timeout: 10_000 });
+    await expect.poll(async () => (await chatViewHosts(app))
+      .find((host) => !host.url.includes('ez-popout=1'))?.viewIds.length ?? 0).toBe(1);
+    const originalViewId = (await chatViewHosts(app))
+      .find((host) => !host.url.includes('ez-popout=1'))!.viewIds[0]!;
+
+    const opened = await main.evaluate(async () => {
+      type Panel = { id: string };
+      type DockApi = {
+        panels: Panel[];
+        addPopoutGroup(panel: Panel): Promise<boolean>;
+      };
+      const api = (globalThis as unknown as { __ezDock?: DockApi }).__ezDock;
+      const panel = api?.panels.find((candidate) => candidate.id === 'openclaw-chat');
+      if (!api || !panel) throw new Error('OpenClaw panel test seam missing');
+      return api.addPopoutGroup(panel);
+    });
+    expect(opened).toBe(true);
+
+    await expect.poll(async () => {
+      const hosts = await chatViewHosts(app);
+      const mainHost = hosts.find((host) => !host.url.includes('ez-popout=1'));
+      const auxiliaryHost = hosts.find((host) => host.url.includes('ez-popout=1'));
+      return {
+        mainViews: mainHost?.viewIds.length ?? -1,
+        auxiliaryViews: auxiliaryHost?.viewIds ?? [],
+      };
+    }, { timeout: 15_000 }).toEqual({ mainViews: 0, auxiliaryViews: [originalViewId] });
+
+    await main.evaluate(() => {
+      type DockApi = {
+        getPopouts(): Array<{ group: { api: { moveTo(options: { position: 'right' }): void } } }>;
+      };
+      const api = (globalThis as unknown as { __ezDock?: DockApi }).__ezDock;
+      const popout = api?.getPopouts()[0];
+      if (!popout) throw new Error('OpenClaw popout test seam missing');
+      popout.group.api.moveTo({ position: 'right' });
+    });
+
+    await expect.poll(async () => {
+      const hosts = await chatViewHosts(app);
+      return {
+        auxiliaryCount: hosts.filter((host) => host.url.includes('ez-popout=1')).length,
+        mainViews: hosts.find((host) => !host.url.includes('ez-popout=1'))?.viewIds ?? [],
+      };
+    }, { timeout: 15_000 }).toEqual({ auxiliaryCount: 0, mainViews: [originalViewId] });
   } finally {
     await app.close();
     await gateway.stop();

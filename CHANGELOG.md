@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [1.0.37] - 2026-08-14
+
+### Fixed
+
+- Correlated tab and group drag transactions so detaching, redocking, and
+  detaching again creates exactly one auxiliary window without duplicating or
+  losing live terminal sessions.
+- Kept explicit pane splits inside the window that owns the reference panel,
+  including nested Dockview grids in auxiliary windows.
+- Rehosted the existing OpenClaw native chat view across main and auxiliary
+  windows instead of recreating it or leaving it attached to the prior host.
+- Preserved Project Editor ownership, focus, cursor, selection, and scroll
+  state while its Dockview panel moves between windows.
+
+### Added
+
+- Added window-aware panel placement, per-window active-panel tracking, and
+  tab-menu actions for moving a panel to a new window or back to the main one.
+- Added a shared capability registry for terminal, Agent Session, Project
+  Editor, and OpenClaw Chat detach and lifecycle behavior.
+- Added packaged Electron regressions for empty-tab-bar group drag, the exact
+  three-tab redock/re-detach sequence, auxiliary-window splits, and native chat
+  view rehosting.
+
+See [1.0.37 release notes](docs/release/release-notes-1.0.37.md).
+
 ## [1.0.36] - 2026-08-14
 
 ### Changed

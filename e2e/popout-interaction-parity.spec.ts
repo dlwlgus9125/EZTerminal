@@ -283,7 +283,7 @@ test('Ctrl+Tab previews and commits the recent panel from a popout', async () =>
   await app.close();
 });
 
-test('a main-owned Project Editor opened from the active popout stays in the main grid', async () => {
+test('a globally-created Project Editor stays in the main grid while a popout is active', async () => {
   const app = await launchApp();
   const main = await app.firstWindow();
   await expect(main.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
@@ -291,17 +291,19 @@ test('a main-owned Project Editor opened from the active popout stays in the mai
   await auxiliary.locator('[data-testid="cmd-input"]:visible').click();
 
   await main.evaluate(() => {
-    type DockApi = {
-      addPanel(options: {
+    type AddDockPanel = (
+      options: {
         id: string;
         component: string;
         title: string;
         params: Record<string, unknown>;
-      }): void;
-    };
-    const api = (globalThis as unknown as { __ezDock?: DockApi }).__ezDock;
-    if (!api) throw new Error('__ezDock test seam missing');
-    api.addPanel({
+      },
+      placement: { kind: 'main-tab' },
+    ) => void;
+    const addPanel = (globalThis as unknown as { __ezAddDockPanel?: AddDockPanel })
+      .__ezAddDockPanel;
+    if (!addPanel) throw new Error('__ezAddDockPanel test seam missing');
+    addPanel({
       id: 'project-editor-popout-invariant',
       component: 'project-editor',
       title: 'app.ts',
@@ -312,7 +314,7 @@ test('a main-owned Project Editor opened from the active popout stays in the mai
         relativePath: 'src/app.ts',
         lens: { kind: 'current' },
       },
-    });
+    }, { kind: 'main-tab' });
   });
 
   await expect(main.getByTestId('project-editor-panel')).toBeVisible({ timeout: 15_000 });

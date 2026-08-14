@@ -109,6 +109,14 @@ Workspace pane, tab, draft, PTY와 hidden panel은 layout 전환 중 살아 있�
 1+2, 2×1과 single preset은 active/MRU pane을 기준으로 한 non-destructive Dockview
 transaction이며 overflow pane을 tab으로 유지한다.
 
+Tab drag는 panel 하나를 이동하고 tab bar의 빈 header drag는 group 전체를 이동한다.
+앱의 다른 group에 drop하면 tab 합치기 또는 edge pane 분할이 되고, 모든 EZTerminal 창
+밖에 drop하면 별도 auxiliary window가 된다. Auxiliary window 안에서 시작한 split은 같은
+창의 nested grid에 남으며, 전역 New Tab과 background/session entry는 auxiliary focus와
+무관하게 main workspace의 tab으로 열린다. Drag를 쓰기 어려운 keyboard/touch 사용자는
+tab context menu의 `새 창으로 이동`과 `메인 창으로 이동`을 사용한다. 분리·합침은 같은
+panel instance를 이동하며 session, draft, selection과 실행 중 command를 재생성하지 않는다.
+
 Projects 목록과 Project Explorer header의 주 action은 `새 세션`이다. 이 action은 기본값이
 Agent인 단일 dialog를 열고 Agent/Terminal 중 하나를 선택하게 한다. Projects 목록에서는
 프로젝트의 main 위치, Explorer에서는 현재 선택한 checkout/worktree로 위치를 고정하며
@@ -424,6 +432,9 @@ Snapshot 갱신은 reference와 side-by-side로 검토하고 adaptive layout, ex
 ## 근거 소스
 
 - [`src/renderer/App.tsx`](../../src/renderer/App.tsx)
+- [`src/renderer/dock-window-coordinator.ts`](../../src/renderer/dock-window-coordinator.ts)
+- [`src/renderer/dockview-popouts.ts`](../../src/renderer/dockview-popouts.ts)
+- [`src/renderer/WorkspaceTab.tsx`](../../src/renderer/WorkspaceTab.tsx)
 - [`src/renderer/workbench/`](../../src/renderer/workbench/)
 - [`src/renderer/ui/`](../../src/renderer/ui/)
 - [`src/renderer/styles/ui-tokens.css`](../../src/renderer/styles/ui-tokens.css)
@@ -441,6 +452,7 @@ Snapshot 갱신은 reference와 side-by-side로 검토하고 adaptive layout, ex
 - [`scripts/guard-desktop-handoff.mjs`](../../scripts/guard-desktop-handoff.mjs)
 - [`src/renderer/workbench/DesktopHandoff.stories.tsx`](../../src/renderer/workbench/DesktopHandoff.stories.tsx)
 - [`e2e/workbench-shell.spec.ts`](../../e2e/workbench-shell.spec.ts)
+- [`e2e/popout-window.spec.ts`](../../e2e/popout-window.spec.ts)
 - [`visual/storybook.visual.spec.ts`](../../visual/storybook.visual.spec.ts)
 - [`test/desktop-handoff-guard.test.ts`](../../test/desktop-handoff-guard.test.ts)
 - [`mobile/src/MobileWorkbenchCoordinator.test.tsx`](../../mobile/src/MobileWorkbenchCoordinator.test.tsx)

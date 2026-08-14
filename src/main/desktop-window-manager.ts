@@ -84,6 +84,19 @@ export class DesktopWindowManager {
     });
   }
 
+  /** Resolve only a window already configured by this manager. */
+  public resolveWindowName(windowName: string): BrowserWindow | null {
+    for (const candidate of this.windows) {
+      if (candidate.isDestroyed()) continue;
+      const kind = this.windowKinds.get(candidate);
+      const candidateName = kind === 'main'
+        ? 'main'
+        : this.auxiliaryNames.get(candidate);
+      if (candidateName === windowName) return candidate;
+    }
+    return null;
+  }
+
   public async requestLayoutFlush(
     timeoutMs = DEFAULT_LAYOUT_FLUSH_TIMEOUT_MS,
   ): Promise<void> {

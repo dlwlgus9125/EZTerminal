@@ -213,11 +213,12 @@ import {
   WorkbenchCoordinator,
   createDockviewWorkbenchAdapter,
   type LayoutTransactionOptions,
-  type WorkbenchPanelPosition,
+  type WorkbenchPanelPlacement,
 } from './workbench-coordinator';
+import { DockWindowCoordinator } from './dock-window-coordinator';
 import { WorkspaceReplacementCoordinator } from './workspace-replacement-coordinator';
 import { applyWorkbenchLayoutPreset, type WorkbenchLayoutPreset } from './workbench-layout-presets';
-import { findMainGridPanel, movePanelToMainGrid } from './main-window-panel-routing';
+import { findMainGridPanel } from './main-window-panel-routing';
 import { DEFAULT_TERMINAL_RUNTIME_OPTIONS, type TerminalRuntimeOptions } from './xterm-runtime';
 import {
   DesktopRuntimeLifecycleProvider,
@@ -313,10 +314,14 @@ const QuickCommandShelfContext = createContext<QuickCommandShelfContextValue | n
 
 interface WorkspaceTabActionContextValue {
   readonly split: (panelId: string, direction: 'right' | 'below') => void;
+  readonly moveToNewWindow: (panelId: string) => void;
+  readonly moveToMainWindow: (panelId: string) => void;
   readonly titleChanged: () => void;
 }
 const WorkspaceTabActionContext = createContext<WorkspaceTabActionContextValue>({
   split: () => undefined,
+  moveToNewWindow: () => undefined,
+  moveToMainWindow: () => undefined,
   titleChanged: () => undefined,
 });
 
@@ -377,6 +382,8 @@ function AgentAwareTab(props: IDockviewPanelHeaderProps): JSX.Element {
         } else close();
       }}
       onSplit={actions.split}
+      onMoveToNewWindow={actions.moveToNewWindow}
+      onMoveToMainWindow={actions.moveToMainWindow}
       onTitleChanged={actions.titleChanged}
     />
   );
@@ -708,6 +715,7 @@ export function App(): JSX.Element {
   const sidebarReflow = useSidebarReflow();
   const projectWide = useSidebarReflow('(min-width: 1024px)');
   const apiRef = useRef<DockviewApi | null>(null);
+  const dockWindowCoordinatorRef = useRef<DockWindowCoordinator | null>(null);
   const lastMainGridPanelRef = useRef<IDockviewPanel | null>(null);
   const activeAgentSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
   const popoutBehaviorRef = useRef<{ dispose(): void } | null>(null);
@@ -818,6 +826,8 @@ export function App(): JSX.Element {
       sessionMirroringConnectionRef.current = null;
       popoutBehaviorRef.current?.dispose();
       popoutBehaviorRef.current = null;
+      dockWindowCoordinatorRef.current?.dispose();
+      dockWindowCoordinatorRef.current = null;
       workbenchCoordinator.detach();
       apiRef.current = null;
     },
@@ -1033,11 +1043,11 @@ export function App(): JSX.Element {
   // pane that later becomes hidden stays mounted and its live PTY survives.
   const openPanel = useCallback(
     (
-      position?: WorkbenchPanelPosition,
+      placement?: WorkbenchPanelPlacement,
       cwd?: string,
     ) => {
       workbenchCoordinator.openTerminal({
-        ...(position ? { position } : {}),
+        ...(placement ? { placement } : {}),
         ...(cwd ? { cwd } : {}),
       });
     },
@@ -1082,14 +1092,15 @@ export function App(): JSX.Element {
     const existing = api.getPanel('openclaw-chat');
     if (existing) {
       existing.api.setActive();
+      dockWindowCoordinatorRef.current?.focusPanelWindow(existing);
       return;
     }
-    api.addPanel({
+    dockWindowCoordinatorRef.current?.addPanel({
       id: 'openclaw-chat',
       component: 'openclaw-chat',
       title: t('workspaceTab.openClawChat'),
       renderer: 'always',
-    });
+    }, { kind: 'main-tab' });
     // setOpenclawOpen is a stable state adapter declared below this callback;
     // reading it only when invoked avoids a render-order dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1098,8 +1109,10 @@ export function App(): JSX.Element {
   // Split the pane the user last focused. Omitting `direction` would default to
   // 'within' (a tab, not a split), so it is always explicit.
   const splitActive = useCallback(
-    (direction: 'right' | 'below') => {
-      workbenchCoordinator.splitActive(direction);
+    (direction: 'right' | 'below', ownerDocument = getActiveAppDocument()) => {
+      const panelId = dockWindowCoordinatorRef.current
+        ?.activePanelIdForDocument(ownerDocument);
+      if (panelId) workbenchCoordinator.splitPanel(panelId, direction);
     },
     [workbenchCoordinator],
   );
@@ -1646,8 +1659,10 @@ export function App(): JSX.Element {
     window.ezterminalDesktop?.onAuxiliaryCloseRequested(handleAuxiliaryCloseRequest)
   ), [handleAuxiliaryCloseRequest]);
 
-  const focusActivePane = useCallback((): void => {
-    workbenchCoordinator.focusActivePanel();
+  const focusActivePane = useCallback((ownerDocument = getActiveAppDocument()): void => {
+    const panelId = dockWindowCoordinatorRef.current
+      ?.activePanelIdForDocument(ownerDocument);
+    if (panelId) workbenchCoordinator.activatePanel(panelId);
   }, [workbenchCoordinator]);
 
   const openAgentHistorySession = useCallback(async (
@@ -1663,6 +1678,7 @@ export function App(): JSX.Element {
     if (existing) {
       existing.api.setTitle(title);
       existing.api.setActive();
+      dockWindowCoordinatorRef.current?.focusPanelWindow(existing);
       return;
     }
     const described = await window.ezterminalDesktop
@@ -1675,6 +1691,7 @@ export function App(): JSX.Element {
     if (existing) {
       existing.api.setTitle(title);
       existing.api.setActive();
+      dockWindowCoordinatorRef.current?.focusPanelWindow(existing);
       return;
     }
     const recordedRoot = session.roots[0];
@@ -1697,7 +1714,7 @@ export function App(): JSX.Element {
           .toLocaleLowerCase('en-US') === comparableRecordedRoot)
       : undefined;
     const workspaceId = workspace?.workspaceId ?? root?.rootId;
-    api.addPanel({
+    dockWindowCoordinatorRef.current?.addPanel({
       id: panelId,
       component: 'agent-session',
       title,
@@ -1711,7 +1728,7 @@ export function App(): JSX.Element {
           workspaceId,
         } : {}),
       },
-    });
+    }, { kind: 'main-tab' });
   }, [sessionMirroringCoordinator]);
 
   const codePanelSequence = useRef(0);
@@ -1741,7 +1758,6 @@ export function App(): JSX.Element {
     if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
     const api = apiRef.current;
     if (!api) return;
-    window.focus();
     requestProjectCodeReveal(document, location);
     const shouldFocusEditor = !projectDrillActive || !projectWide;
     if (shouldFocusEditor) requestProjectCodeFocus(document);
@@ -1757,7 +1773,6 @@ export function App(): JSX.Element {
     const previousActive = mainReference;
     let panel = matching;
     if (panel) {
-      movePanelToMainGrid(api, panel, mainReference);
       if (!matchingDocument
         || !projectEditorDocumentParametersEqual(matchingDocument, document)) {
         panel.api.updateParameters(document);
@@ -1766,22 +1781,20 @@ export function App(): JSX.Element {
     } else {
       codePanelSequence.current += 1;
       const active = findMainGridPanel(api, lastMainGridPanelRef.current);
-      panel = api.addPanel({
+      const placement: WorkbenchPanelPlacement = active
+        && !projectDrillActive
+        && window.innerWidth >= 1200
+        ? { kind: 'split', referencePanelId: active.id, direction: 'right' }
+        : { kind: 'main-tab' };
+      panel = dockWindowCoordinatorRef.current?.addPanel({
         id: `project-editor-${Date.now().toString(36)}-${String(codePanelSequence.current)}`,
         component: 'project-editor',
         title: projectEditorTitle(document),
         renderer: 'onlyWhenVisible',
         params: document,
         inactive: projectDrillActive && projectWide,
-        position: active
-          ? {
-            referencePanel: active,
-            direction: projectDrillActive
-              ? 'within' as const
-              : window.innerWidth >= 1200 ? 'right' as const : 'within' as const,
-          }
-          : { direction: 'right' as const },
-      });
+      }, placement);
+      if (!panel) return;
       // Dockview passes initial params to the renderer but leaves the panel
       // API parameter store empty until the first explicit update.
       panel.api.updateParameters(document);
@@ -1790,6 +1803,7 @@ export function App(): JSX.Element {
       projectReviewLayoutRef.current ??= captureProjectReviewLayout(api);
       applyProjectReviewLayout(api, panel, projectWide ? 'wide' : 'narrow');
       panel.api.setActive();
+      dockWindowCoordinatorRef.current?.focusPanelWindow(panel);
       if (projectWide && previousActive?.api.component !== 'project-editor') {
         previousActive?.api.setActive();
       }
@@ -1801,6 +1815,7 @@ export function App(): JSX.Element {
       }
     } else {
       panel.api.setActive();
+      dockWindowCoordinatorRef.current?.focusPanelWindow(panel);
       requestAnimationFrame(() => {
         if (api.activePanel?.id === panel.id) flushProjectCodeFocus(document);
       });
@@ -2437,7 +2452,7 @@ export function App(): JSX.Element {
             : t('workspace.layoutSingle');
         setAppliedPreset(name);
         scheduleSave();
-        requestAnimationFrame(focusActivePane);
+        requestAnimationFrame(() => focusActivePane());
       } catch (error) {
         console.error('[renderer] could not apply workspace layout:', error);
       }
@@ -3236,6 +3251,9 @@ export function App(): JSX.Element {
     (event: DockviewReadyEvent) => {
       apiRef.current = event.api;
       const api = event.api;
+      dockWindowCoordinatorRef.current?.dispose();
+      const dockWindows = new DockWindowCoordinator(api);
+      dockWindowCoordinatorRef.current = dockWindows;
       popoutBehaviorRef.current?.dispose();
       popoutBehaviorRef.current = installDockviewPopoutBehavior(api, {
         onOpenFailed: () => pushToast({
@@ -3248,10 +3266,6 @@ export function App(): JSX.Element {
           api.focus();
           return true;
         },
-        onNonDetachablePanelInPopout: (panel) => {
-          movePanelToMainGrid(api, panel, lastMainGridPanelRef.current);
-          window.focus();
-        },
       });
       recoveryLayoutSubscriptionRef.current?.dispose();
       const recoveryLayoutChanged = api.onDidLayoutChange(scheduleRendererRecoveryCheckpoint);
@@ -3262,13 +3276,18 @@ export function App(): JSX.Element {
           recoveryActiveChanged.dispose();
         },
       };
-      const attachment = workbenchCoordinator.attach(createDockviewWorkbenchAdapter(api));
+      const attachment = workbenchCoordinator.attach(
+        createDockviewWorkbenchAdapter(api, dockWindows),
+      );
       sessionMirroringConnectionRef.current?.();
       sessionMirroringConnectionRef.current = sessionMirroringCoordinator.connect();
-      // Test seam: e2e drives programmatic panel moves through this handle. dockview's
-      // mouse drag is native HTML5 DnD (not Playwright-drivable); panel.api.moveTo(...)
-      // uses the identical move engine a drag invokes.
+      // Test seam: deterministic persistence/recovery cases drive the same
+      // Dockview move engine programmatically; drag-specific regressions use
+      // real HTML5 pointer gestures in popout-window.spec.ts.
       (window as Window & { __ezDock?: DockviewApi }).__ezDock = api;
+      (window as Window & {
+        __ezAddDockPanel?: DockWindowCoordinator['addPanel'];
+      }).__ezAddDockPanel = (options, placement) => dockWindows.addPanel(options, placement);
 
       // e2e seam: deterministically persist NOW (cancel the debounce, save,
       // await main's write chain) instead of polling the file from the test.
@@ -3384,11 +3403,11 @@ export function App(): JSX.Element {
       if (e.code === 'Equal') {
         e.preventDefault();
         e.stopPropagation();
-        splitActive('right');
+        splitActive('right', (e.currentTarget as Window | null)?.document);
       } else if (e.code === 'Minus') {
         e.preventDefault();
         e.stopPropagation();
-        splitActive('below');
+        splitActive('below', (e.currentTarget as Window | null)?.document);
       }
     };
     return addAppWindowEventListener('keydown', onKey as EventListener, true);
@@ -3404,13 +3423,21 @@ export function App(): JSX.Element {
 
   const workspaceTabActionValue = useMemo<WorkspaceTabActionContextValue>(
     () => ({
-      split: (panelId, direction) => openPanel({ referencePanel: panelId, direction }),
+      split: (panelId, direction) => workbenchCoordinator.splitPanel(panelId, direction),
+      moveToNewWindow: (panelId) => {
+        void dockWindowCoordinatorRef.current?.movePanelToNewWindow(panelId).catch(() => {
+          pushToast({ title: t('workspace.popoutFailed'), variant: 'danger' });
+        });
+      },
+      moveToMainWindow: (panelId) => {
+        dockWindowCoordinatorRef.current?.movePanelToMainWindow(panelId);
+      },
       titleChanged: () => {
         setPanelSetRevision((value) => value + 1);
         scheduleSave();
       },
     }),
-    [openPanel, scheduleSave],
+    [pushToast, scheduleSave, t, workbenchCoordinator],
   );
 
   const projectReviewNavigationValue = useMemo<ProjectReviewNavigationContextValue>(
@@ -3690,6 +3717,7 @@ export function App(): JSX.Element {
                                 rightHeaderActionsComponent={PaneHeaderMeta}
                                 onReady={onReady}
                                 disableFloatingGroups
+                                dndStrategy="html5"
                                 popoutUrl={auxiliaryPopoutUrl()}
                               />
                             </DesktopRuntimeLifecycleProvider>

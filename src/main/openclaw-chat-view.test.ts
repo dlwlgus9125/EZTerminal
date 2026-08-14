@@ -87,6 +87,33 @@ beforeEach(() => {
 });
 
 describe('OpenClawChatViewManager fail-closed visibility', () => {
+  it('rehosts the same native view when the dock panel moves to another window', async () => {
+    const main = makeWindow();
+    const auxiliary = makeWindow();
+    const manager = new OpenClawChatViewManager({
+      getChatUrl: async () => 'http://127.0.0.1:18789/#token=fixture',
+      onStateChange: vi.fn(),
+    });
+    manager.attach(main);
+    await manager.ensureView();
+    const view = electronMocks.instances[0]!;
+
+    manager.updateSurface(auxiliary, {
+      surfaceId: 'openclaw-chat',
+      instanceId: '00000000-0000-4000-8000-000000000001',
+      revision: 2,
+      mounted: true,
+      windowName: 'dockview-2',
+      bounds: { x: 12, y: 34, width: 640, height: 480 },
+      visible: true,
+    });
+
+    expect(main.contentView.removeChildView).toHaveBeenCalledWith(view);
+    expect(auxiliary.contentView.addChildView).toHaveBeenCalledWith(view);
+    expect(view.setBounds).toHaveBeenLastCalledWith({ x: 12, y: 34, width: 640, height: 480 });
+    expect(electronMocks.instances).toHaveLength(1);
+  });
+
   it('routes external window opens through the injected out-of-job handoff', async () => {
     const openExternal = vi.fn<(url: string) => Promise<void>>(async () => undefined);
     const manager = new OpenClawChatViewManager({

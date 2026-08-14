@@ -234,17 +234,30 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     ]);
   });
 
-  it('rejects native, duplicate, or non-finite popout panel placement', () => {
-    const nonTerminal = makeLayout(['tab-1']);
-    const panel = (nonTerminal.panels as Record<string, Record<string, unknown>>)['tab-1'];
+  it('accepts a registered OpenClaw native-surface popout', () => {
+    const openClaw = makeLayout(['tab-1']);
+    const panel = (openClaw.panels as Record<string, Record<string, unknown>>)['tab-1'];
     panel.id = 'openclaw-chat';
     panel.contentComponent = 'openclaw-chat';
-    nonTerminal.panels = { 'openclaw-chat': panel };
-    nonTerminal.popoutGroups = [{
+    openClaw.panels = { 'openclaw-chat': panel };
+    openClaw.popoutGroups = [{
       data: { id: 'popout-1', views: ['openclaw-chat'] },
       position: { left: 20, top: 20, width: 800, height: 600 },
     }];
-    expect(validateLayoutEnvelope(makeEnvelope(nonTerminal))).toBeNull();
+
+    expect(validateLayoutEnvelope(makeEnvelope(openClaw))?.layout.popoutGroups?.[0]
+      ?.data?.views).toEqual(['openclaw-chat']);
+  });
+
+  it('rejects unknown, duplicate, or non-finite popout panel placement', () => {
+    const unknown = makeLayout(['tab-1']);
+    (unknown.panels as Record<string, Record<string, unknown>>)['tab-1'].contentComponent =
+      'unregistered-native-panel';
+    unknown.popoutGroups = [{
+      data: { id: 'popout-1', views: ['tab-1'] },
+      position: { left: 20, top: 20, width: 800, height: 600 },
+    }];
+    expect(validateLayoutEnvelope(makeEnvelope(unknown))).toBeNull();
 
     const duplicate = makeLayout(['tab-1']);
     duplicate.popoutGroups = [

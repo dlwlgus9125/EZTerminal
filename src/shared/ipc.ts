@@ -57,7 +57,7 @@ import type {
   OpenClawAgentSession,
   OpenClawAutostartAction,
   OpenClawAutostartResult,
-  OpenClawChatBounds,
+  OpenClawChatSurfaceSnapshot,
   OpenClawChatViewState,
   OpenClawCoreConfig,
   OpenClawLifecycleAction,
@@ -1494,16 +1494,10 @@ export interface EzTerminalDesktopApi {
   /** The singleton dockview tab's mount/unmount — gates status push
    * independently of the drawer (openclaw:chat-panel-mounted). */
   setOpenClawChatPanelMounted: (mounted: boolean) => void;
+  /** Atomic native-surface ownership, geometry, and visibility update. */
+  setOpenClawChatSurface: (surface: OpenClawChatSurfaceSnapshot) => void;
   /** Requests the view be created (only called once status === 'running'). */
   openOpenClawChatView: () => void;
-  /** Tears the view down entirely — sent on the panel's unmount. */
-  closeOpenClawChatView: () => void;
-  /** Rate-limited by the caller (rAF-throttled ResizeObserver) — window-
-   * content-relative pixels. */
-  setOpenClawChatBounds: (bounds: OpenClawChatBounds) => void;
-  /** The single effective-visibility derivation (panel visible ∧ no drawer/
-   * palette overlay) — see App.tsx. */
-  setOpenClawChatVisible: (visible: boolean) => void;
   /** The placeholder's "재연결" button, shown while `hasError` is true. */
   reloadOpenClawChatView: () => void;
   onOpenClawChatViewState: (listener: (state: OpenClawChatViewState) => void) => () => void;

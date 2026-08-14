@@ -162,11 +162,9 @@ function storyCapabilities(locale: Locale = 'ko'): CapabilityAccess {
       setConfig: async () => ({ ok: true, restartRequired: true }),
       getMode: async () => 'auto',
       setMode: async () => true,
-      setChatVisible: () => true,
+      setChatSurface: () => true,
       openChat: () => true,
-      closeChat: () => true,
       reloadChat: () => true,
-      setChatBounds: () => true,
       openChatExternal: async () => true,
     },
     remoteDesktop: {
@@ -531,6 +529,8 @@ function StoryWorkspaceTab(props: IDockviewPanelHeaderProps): JSX.Element {
       providerLabel={provider === 'claude' ? 'Claude' : provider === 'codex' ? 'Codex' : undefined}
       requestClose={(close) => close()}
       onSplit={() => undefined}
+      onMoveToNewWindow={() => undefined}
+      onMoveToMainWindow={() => undefined}
       onTitleChanged={() => undefined}
     />
   );

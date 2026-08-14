@@ -8,9 +8,11 @@ function panel(component: string): IDockviewPanel {
 }
 
 describe('detachable Dockview panels', () => {
-  it('allows terminal and Agent Session panels while keeping native OpenClaw chat attached', () => {
+  it('allows every registered workbench panel to move between native windows', () => {
     expect(isDetachablePanel(panel('terminal'))).toBe(true);
     expect(isDetachablePanel(panel('agent-session'))).toBe(true);
-    expect(isDetachablePanel(panel('openclaw-chat'))).toBe(false);
+    expect(isDetachablePanel(panel('project-editor'))).toBe(true);
+    expect(isDetachablePanel(panel('openclaw-chat'))).toBe(true);
+    expect(isDetachablePanel(panel('unknown'))).toBe(false);
   });
 });

@@ -11,7 +11,7 @@ import {
   WorkbenchCoordinator,
   type WorkbenchCoordinatorOptions,
   type WorkbenchDockAdapter,
-  type WorkbenchPanelPosition,
+  type WorkbenchPanelPlacement,
 } from './workbench-coordinator';
 
 interface ListenerEntry<TListener> {
@@ -532,7 +532,7 @@ class MirroringDockAdapter implements WorkbenchDockAdapter {
   public addTerminalPane(options: {
     readonly id: string;
     readonly title: string;
-    readonly position?: WorkbenchPanelPosition;
+    readonly placement: WorkbenchPanelPlacement;
     readonly cwd?: string;
     readonly adoptSessionId?: string;
   }) {

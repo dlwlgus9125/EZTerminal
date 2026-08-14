@@ -11,6 +11,7 @@ import type {
   SessionSurfaceCommitCloseResult,
   SessionSurfacePrepareCloseResult,
 } from '../shared/session-surface';
+import { isPassiveDockPanelComponent } from '../shared/dock-panel-capabilities';
 import type { PaneHandle, PaneSnapshot } from './pane-registry';
 
 /**
@@ -392,7 +393,7 @@ export class PaneLifecycleCoordinator {
       const target = freezeTarget(rawTarget);
       const handle = this.options.getPaneHandle(target.panelId);
       const snapshot = handle?.getSnapshot();
-      if (!snapshot && target.component === 'agent-session' && !handle) {
+      if (!snapshot && isPassiveDockPanelComponent(target.component) && !handle) {
         candidates.push(Object.freeze({ ...target, snapshot: null, risk: null }));
         continue;
       }
@@ -462,7 +463,7 @@ export class PaneLifecycleCoordinator {
     for (const candidate of data.candidates) {
       const handle = this.options.getPaneHandle(candidate.panelId);
       if (!candidate.snapshot) {
-        if (candidate.component !== 'agent-session' || candidate.risk !== null || handle) {
+        if (!isPassiveDockPanelComponent(candidate.component) || candidate.risk !== null || handle) {
           return validationFailure();
         }
         continue;

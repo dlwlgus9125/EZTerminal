@@ -44,11 +44,9 @@ function makeCapabilities(
     setConfig: vi.fn(async () => null),
     getMode: vi.fn(async () => 'auto' as const),
     setMode: vi.fn(async () => true),
-    setChatVisible: vi.fn(() => true),
+    setChatSurface: vi.fn(() => true),
     openChat: vi.fn(() => true),
-    closeChat: vi.fn(() => true),
     reloadChat: vi.fn(() => true),
-    setChatBounds: vi.fn(() => true),
     openChatExternal: vi.fn(async () => true),
   } as OpenClawAccess;
   return {
@@ -143,18 +141,28 @@ describe('OpenClawChatPanel unavailable state', () => {
     };
 
     await renderOverlays([]);
-    expect(openClaw.setChatVisible).toHaveBeenLastCalledWith(true);
+    expect(openClaw.setChatSurface).toHaveBeenLastCalledWith(
+      expect.objectContaining({ mounted: true, windowName: 'main', visible: true }),
+    );
 
     await renderOverlays(['dialog']);
-    expect(openClaw.setChatVisible).toHaveBeenLastCalledWith(false);
+    expect(openClaw.setChatSurface).toHaveBeenLastCalledWith(
+      expect.objectContaining({ visible: false }),
+    );
 
     await renderOverlays(['dialog', 'toast']);
-    expect(openClaw.setChatVisible).toHaveBeenLastCalledWith(false);
+    expect(openClaw.setChatSurface).toHaveBeenLastCalledWith(
+      expect.objectContaining({ visible: false }),
+    );
 
     await renderOverlays(['toast']);
-    expect(openClaw.setChatVisible).toHaveBeenLastCalledWith(false);
+    expect(openClaw.setChatSurface).toHaveBeenLastCalledWith(
+      expect.objectContaining({ visible: false }),
+    );
 
     await renderOverlays([]);
-    expect(openClaw.setChatVisible).toHaveBeenLastCalledWith(true);
+    expect(openClaw.setChatSurface).toHaveBeenLastCalledWith(
+      expect.objectContaining({ visible: true }),
+    );
   });
 });

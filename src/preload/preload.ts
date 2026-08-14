@@ -626,17 +626,13 @@ const desktopApi: EzTerminalDesktopApi = {
   setOpenClawChatPanelMounted: (mounted: boolean): void => {
     ipcRenderer.send('openclaw:chat-panel-mounted', mounted);
   },
+  setOpenClawChatSurface: (
+    surface: import('../shared/openclaw').OpenClawChatSurfaceSnapshot,
+  ): void => {
+    ipcRenderer.send('openclaw:chat-surface', surface);
+  },
   openOpenClawChatView: (): void => {
     ipcRenderer.send('openclaw:chat-open');
-  },
-  closeOpenClawChatView: (): void => {
-    ipcRenderer.send('openclaw:chat-close');
-  },
-  setOpenClawChatBounds: (bounds: import('../shared/openclaw').OpenClawChatBounds): void => {
-    ipcRenderer.send('openclaw:chat-bounds', bounds);
-  },
-  setOpenClawChatVisible: (visible: boolean): void => {
-    ipcRenderer.send('openclaw:chat-visible', visible);
   },
   reloadOpenClawChatView: (): void => {
     ipcRenderer.send('openclaw:chat-reload');

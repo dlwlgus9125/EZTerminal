@@ -1,4 +1,4 @@
-import type { DockviewApi, IDockviewPanel } from 'dockview-react';
+import type { DockviewApi, DockviewGroupPanel, IDockviewPanel } from 'dockview-react';
 
 import {
   AUXILIARY_WINDOW_QUERY,
@@ -21,6 +21,30 @@ export interface DockviewPopoutBehaviorOptions {
   readonly onNonDetachablePanelInPopout?: (panel: IDockviewPanel) => void;
 }
 
+type DockviewDragSubject =
+  | {
+      readonly kind: 'panel';
+      readonly groupId: string;
+      readonly panelId: string;
+      readonly panel: IDockviewPanel;
+    }
+  | {
+      readonly kind: 'group';
+      readonly groupId: string;
+      readonly panelId: null;
+      readonly group: DockviewGroupPanel;
+    };
+
+interface DockviewDragTransaction {
+  readonly subject: DockviewDragSubject;
+  readonly sourceElement: HTMLElement;
+  readonly sourceWindow: Window;
+  readonly onDragEnd: (event: Event) => void;
+  readonly onEscape: (event: KeyboardEvent) => void;
+  dockviewDropCompleted: boolean;
+  cancelled: boolean;
+}
+
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, Math.round(value)));
 }
@@ -36,6 +60,21 @@ export function isDetachablePanel(panel: IDockviewPanel | undefined): boolean {
   return isDetachablePanelComponent(panel?.api.component);
 }
 
+function isDetachableGroup(group: DockviewGroupPanel | undefined): boolean {
+  return Boolean(group && group.panels.length > 0 && group.panels.every(isDetachablePanel));
+}
+
+function transferMatches(
+  transaction: DockviewDragTransaction,
+  transfer: { readonly groupId: string; readonly panelId: string | null } | undefined,
+): boolean {
+  return Boolean(
+    transfer
+    && transfer.groupId === transaction.subject.groupId
+    && transfer.panelId === transaction.subject.panelId,
+  );
+}
+
 /**
  * Adds native-window behavior around Dockview's live DOM reparenting. Nothing
  * here serializes a session or remounts a React tree.
@@ -49,6 +88,7 @@ export function installDockviewPopoutBehavior(
   const focusGenerations = new WeakMap<IDockviewPanel, number>();
   const popoutUrl = auxiliaryPopoutUrl();
   let disposed = false;
+  let activeDrag: DockviewDragTransaction | null = null;
 
   const register = (target: Window): void => {
     if (registered.has(target)) return;
@@ -78,12 +118,14 @@ export function installDockviewPopoutBehavior(
     for (const panel of api.panels) deferPanelLocationCheck(panel);
   }));
 
-  // A popout accepts DOM-backed terminal and Agent Session panels. Keep
-  // main-owned native surfaces such as OpenClaw chat out of auxiliary windows.
+  // Reject unknown/unsupported transfers before Dockview mutates a popout.
   disposables.push(api.onWillShowOverlay((event) => {
     if (event.group?.api.location.type !== 'popout') return;
     const transfer = event.getData();
-    if (!transfer?.panelId || !isDetachablePanel(api.getPanel(transfer.panelId))) {
+    const allowed = transfer?.panelId
+      ? isDetachablePanel(api.getPanel(transfer.panelId))
+      : isDetachableGroup(api.groups.find((group) => group.id === transfer?.groupId));
+    if (!allowed) {
       event.preventDefault();
     }
   }));
@@ -124,35 +166,70 @@ export function installDockviewPopoutBehavior(
     destinationWindow.requestAnimationFrame(focusWhenReady);
   }));
 
-  disposables.push(api.onWillDragPanel((event) => {
-    if (!isDetachablePanel(event.panel) || event.nativeEvent.type !== 'dragstart') return;
-    const sourceDocument = (event.nativeEvent.target as Node | null)?.ownerDocument
-      ?? event.panel.group.element.ownerDocument;
-    let dockviewDropCompleted = false;
-    const dropDisposable = api.onDidDrop(() => {
-      dockviewDropCompleted = true;
-    });
+  const clearActiveDrag = (transaction = activeDrag): void => {
+    if (!transaction) return;
+    transaction.sourceElement.removeEventListener('dragend', transaction.onDragEnd, true);
+    transaction.sourceWindow.removeEventListener('keydown', transaction.onEscape, true);
+    if (activeDrag === transaction) activeDrag = null;
+  };
 
-    const onDragEnd = (nativeEvent: Event): void => {
-      dropDisposable.dispose();
-      const dragEvent = nativeEvent as DragEvent;
+  const startDrag = (subject: DockviewDragSubject, nativeEvent: DragEvent): void => {
+    clearActiveDrag();
+    const eventTarget = nativeEvent.currentTarget as HTMLElement | null;
+    const sourceElement = eventTarget?.ownerDocument
+      ? eventTarget
+      : subject.kind === 'panel'
+        ? subject.panel.group.element
+        : subject.group.element;
+    const sourceWindow = sourceElement.ownerDocument.defaultView ?? window;
+
+    const transaction = {} as DockviewDragTransaction;
+    const onEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && activeDrag === transaction) transaction.cancelled = true;
+    };
+    const onDragEnd = (event: Event): void => {
+      if (activeDrag !== transaction) return;
+      clearActiveDrag(transaction);
+      const dragEvent = event as DragEvent;
       if (
-        dockviewDropCompleted
+        transaction.cancelled
+        || transaction.dockviewDropCompleted
         || pointIsInsideAppWindow(dragEvent.screenX, dragEvent.screenY)
       ) {
         return;
       }
-      const current = api.getPanel(event.panel.id);
-      if (!current || current !== event.panel || !isDetachablePanel(current)) return;
 
-      const groupRect = current.group.element.getBoundingClientRect();
-      const sourceWindow = sourceDocument.defaultView ?? window;
+      const item = transaction.subject.kind === 'panel'
+        ? api.getPanel(transaction.subject.panelId)
+        : api.groups.find((group) => group.id === transaction.subject.groupId);
+      if (!item) return;
+      if (transaction.subject.kind === 'panel') {
+        if (
+          item !== transaction.subject.panel
+          || !isDetachablePanel(item as IDockviewPanel)
+          || (
+            (item as IDockviewPanel).api.location.type === 'popout'
+            && (item as IDockviewPanel).group.panels.length === 1
+          )
+        ) return;
+      } else if (
+        item !== transaction.subject.group
+        || !isDetachableGroup(item as DockviewGroupPanel)
+        || (item as DockviewGroupPanel).api.location.type === 'popout'
+      ) {
+        return;
+      }
+
+      const group = transaction.subject.kind === 'panel'
+        ? (item as IDockviewPanel).group
+        : item as DockviewGroupPanel;
+      const groupRect = group.element.getBoundingClientRect();
       const screenX = Number.isFinite(dragEvent.screenX)
         ? dragEvent.screenX
-        : sourceWindow.screenX + groupRect.left;
+        : transaction.sourceWindow.screenX + groupRect.left;
       const screenY = Number.isFinite(dragEvent.screenY)
         ? dragEvent.screenY
-        : sourceWindow.screenY + groupRect.top;
+        : transaction.sourceWindow.screenY + groupRect.top;
       const position = {
         // Dockview adds the main realm's screen origin when opening.
         left: screenX - window.screenX - 120,
@@ -160,16 +237,66 @@ export function installDockviewPopoutBehavior(
         width: clamp(groupRect.width, MIN_POPOUT_WIDTH, MAX_POPOUT_WIDTH),
         height: clamp(groupRect.height, MIN_POPOUT_HEIGHT, MAX_POPOUT_HEIGHT),
       };
-      void api.addPopoutGroup(current, { position, popoutUrl }).then((opened) => {
+      void api.addPopoutGroup(item, { position, popoutUrl }).then((opened) => {
         if (!opened) options.onOpenFailed?.();
       }).catch(() => options.onOpenFailed?.());
     };
-    sourceDocument.addEventListener('dragend', onDragEnd, { capture: true, once: true });
+    Object.assign(transaction, {
+      subject,
+      sourceElement,
+      sourceWindow,
+      onDragEnd,
+      onEscape,
+      dockviewDropCompleted: false,
+      cancelled: false,
+    });
+    activeDrag = transaction;
+    sourceElement.addEventListener('dragend', onDragEnd, { capture: true, once: true });
+    sourceWindow.addEventListener('keydown', onEscape, true);
+  };
+
+  // Correlate a Dockview-handled drop with the one active native drag. A
+  // permanent subscription avoids one global listener per gesture and keeps
+  // unrelated drops from completing a stale transaction.
+  disposables.push(api.onWillDrop((event) => {
+    const transaction = activeDrag;
+    if (!transaction || !transferMatches(transaction, event.getData())) return;
+    queueMicrotask(() => {
+      if (activeDrag === transaction && !event.defaultPrevented) {
+        transaction.dockviewDropCompleted = true;
+      }
+    });
+  }));
+  disposables.push(api.onDidDrop((event) => {
+    const transaction = activeDrag;
+    if (transaction && transferMatches(transaction, event.getData())) {
+      transaction.dockviewDropCompleted = true;
+    }
+  }));
+
+  disposables.push(api.onWillDragPanel((event) => {
+    if (!isDetachablePanel(event.panel) || event.nativeEvent.type !== 'dragstart') return;
+    startDrag({
+      kind: 'panel',
+      groupId: event.panel.group.id,
+      panelId: event.panel.id,
+      panel: event.panel,
+    }, event.nativeEvent as DragEvent);
+  }));
+  disposables.push(api.onWillDragGroup((event) => {
+    if (!isDetachableGroup(event.group) || event.nativeEvent.type !== 'dragstart') return;
+    startDrag({
+      kind: 'group',
+      groupId: event.group.id,
+      panelId: null,
+      group: event.group,
+    }, event.nativeEvent as DragEvent);
   }));
 
   return {
     dispose: () => {
       disposed = true;
+      clearActiveDrag();
       for (const disposable of disposables.splice(0)) disposable.dispose();
       for (const unregister of registered.values()) unregister();
       registered.clear();

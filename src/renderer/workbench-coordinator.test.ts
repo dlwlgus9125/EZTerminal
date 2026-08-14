@@ -6,6 +6,7 @@ import {
   type TerminalPaneOpenRequest,
   type WorkbenchCoordinatorOptions,
   type WorkbenchDockAdapter,
+  type WorkbenchPanelPlacement,
 } from './workbench-coordinator';
 
 interface ListenerEntry<T> {
@@ -17,7 +18,7 @@ class FakeDockAdapter implements WorkbenchDockAdapter {
   public readonly added: Array<{
     readonly id: string;
     readonly title: string;
-    readonly position?: { readonly referencePanel: string; readonly direction: 'right' | 'below' };
+    readonly placement: WorkbenchPanelPlacement;
     readonly cwd?: string;
     readonly adoptSessionId?: string;
   }> = [];
@@ -68,7 +69,11 @@ class FakeDockAdapter implements WorkbenchDockAdapter {
     };
   }
 
-  public addTerminalPane(options: TerminalPaneOpenRequest & { readonly id: string; readonly title: string }) {
+  public addTerminalPane(options: TerminalPaneOpenRequest & {
+    readonly id: string;
+    readonly title: string;
+    readonly placement: WorkbenchPanelPlacement;
+  }) {
     this.added.push(options);
     const panel = { token: {}, active: true, closed: false };
     this.panels.set(options.id, panel);
@@ -413,7 +418,24 @@ describe('WorkbenchCoordinator pane and recent-panel contract', () => {
       id: 'tab-42',
       title: 'Terminal 42',
       cwd: 'C:\\repo',
+      placement: { kind: 'main-tab' },
     });
+  });
+
+  it('uses explicit main-tab and reference-panel split placement intents', () => {
+    const coordinator = new WorkbenchCoordinator(coordinatorOptions());
+    const dock = new FakeDockAdapter(['tab-1'], 'tab-1');
+    coordinator.attach(dock);
+
+    expect(coordinator.openTerminal()?.panelId).toBe('tab-2');
+    expect(dock.added[0]?.placement).toEqual({ kind: 'main-tab' });
+    expect(coordinator.splitPanel('tab-1', 'below')?.panelId).toBe('tab-3');
+    expect(dock.added[1]?.placement).toEqual({
+      kind: 'split',
+      referencePanelId: 'tab-1',
+      direction: 'below',
+    });
+    expect(coordinator.splitPanel('missing', 'right')).toBeNull();
   });
 
   it('opens project terminals with safe persisted identity instead of a renderer cwd', () => {

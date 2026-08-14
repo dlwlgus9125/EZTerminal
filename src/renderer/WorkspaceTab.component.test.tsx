@@ -29,9 +29,12 @@ function fakeProps(initialParams: Record<string, unknown> = {}) {
   const parameterListeners = new Set<(params: Record<string, unknown>) => void>();
   let title = 'Terminal 3';
   let params: Record<string, unknown> = initialParams;
+  const group = { panels: [] as unknown[] };
   const api = {
     id: 'tab-3',
     component: 'terminal',
+    location: { type: 'grid' },
+    group,
     get title() { return title; },
     setTitle: vi.fn((next: string) => {
       title = next;
@@ -53,6 +56,7 @@ function fakeProps(initialParams: Record<string, unknown> = {}) {
       return { dispose: () => titleListeners.delete(listener) };
     },
   };
+  group.panels.push({ api });
   return {
     props: {
       api,
@@ -71,6 +75,8 @@ function renderTab(
   const { props, api } = fakeProps();
   const requestClose = vi.fn((close: () => void) => close());
   const onSplit = vi.fn();
+  const onMoveToNewWindow = vi.fn();
+  const onMoveToMainWindow = vi.fn();
   const onTitleChanged = vi.fn();
   act(() => root.render(
     <AppI18nProvider locale={locale} languages={[locale]}>
@@ -78,12 +84,21 @@ function renderTab(
         {...props}
         requestClose={requestClose}
         onSplit={onSplit}
+        onMoveToNewWindow={onMoveToNewWindow}
+        onMoveToMainWindow={onMoveToMainWindow}
         onTitleChanged={onTitleChanged}
         {...overrides}
       />
     </AppI18nProvider>,
   ));
-  return { api, requestClose, onSplit, onTitleChanged };
+  return {
+    api,
+    requestClose,
+    onSplit,
+    onMoveToNewWindow,
+    onMoveToMainWindow,
+    onTitleChanged,
+  };
 }
 
 function openContextMenu(): HTMLElement {
@@ -136,6 +151,17 @@ describe('WorkspaceTab interactions', () => {
 
     act(() => document.querySelector<HTMLButtonElement>('[data-testid="tab-ctx-split-right"]')!.click());
     expect(onSplit).toHaveBeenCalledWith('tab-3', 'right');
+  });
+
+  it('offers an explicit new-window action from the tab menu', () => {
+    const { onMoveToNewWindow } = renderTab();
+    openContextMenu();
+
+    act(() => document.querySelector<HTMLButtonElement>(
+      '[data-testid="tab-ctx-move-to-new-window"]',
+    )!.click());
+
+    expect(onMoveToNewWindow).toHaveBeenCalledWith('tab-3');
   });
 
   it('announces the rename shortcut in Korean', () => {

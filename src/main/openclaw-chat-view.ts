@@ -29,7 +29,10 @@
  */
 import { shell, WebContentsView, type BrowserWindow, type Rectangle } from 'electron';
 
-import type { OpenClawChatViewState } from '../shared/openclaw';
+import type {
+  OpenClawChatSurfaceSnapshot,
+  OpenClawChatViewState,
+} from '../shared/openclaw';
 
 export type { OpenClawChatViewState } from '../shared/openclaw';
 
@@ -80,7 +83,23 @@ export class OpenClawChatViewManager {
    * window after the previous one closed) is safe — `destroy()` clears the
    * stale reference first in main.ts's window 'closed' hook. */
   attach(win: BrowserWindow): void {
-    this.win = win;
+    this.rehost(win);
+  }
+
+  /** Apply one renderer revision atomically, including native-window owner. */
+  updateSurface(win: BrowserWindow, surface: OpenClawChatSurfaceSnapshot): void {
+    if (!surface.mounted) {
+      this.desiredVisible = false;
+      this.desiredBounds = EMPTY_BOUNDS;
+      this.destroy();
+      return;
+    }
+    if (win.isDestroyed() || !this.rehost(win)) return;
+    this.desiredBounds = surface.bounds;
+    this.desiredVisible = surface.visible;
+    this.view?.setBounds(surface.bounds);
+    this.applyVisibility();
+    if (surface.visible) void this.ensureView();
   }
 
   /**
@@ -136,8 +155,7 @@ export class OpenClawChatViewManager {
   }
 
   private async doCreate(): Promise<void> {
-    const win = this.win;
-    if (!win || win.isDestroyed()) return;
+    if (!this.win || this.win.isDestroyed()) return;
     const generation = this.lifecycleGeneration;
     this.markLoading();
     let url: string | null;
@@ -146,8 +164,8 @@ export class OpenClawChatViewManager {
     } catch {
       if (
         generation === this.lifecycleGeneration
-        && this.win === win
-        && !win.isDestroyed()
+        && this.win
+        && !this.win.isDestroyed()
         && !this.view
       ) {
         this.markError();
@@ -156,12 +174,12 @@ export class OpenClawChatViewManager {
     }
     if (
       generation !== this.lifecycleGeneration
-      || this.win !== win
-      || win.isDestroyed()
       || this.view
     ) {
       return;
     }
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
     if (!url) {
       this.markError();
       return;
@@ -256,6 +274,36 @@ export class OpenClawChatViewManager {
   setVisible(visible: boolean): void {
     this.desiredVisible = visible;
     this.applyVisibility();
+  }
+
+  private rehost(win: BrowserWindow): boolean {
+    if (win.isDestroyed()) return false;
+    if (this.win === win) return true;
+    const previous = this.win;
+    const view = this.view;
+    if (view && previous && !previous.isDestroyed()) {
+      try {
+        previous.contentView.removeChildView(view);
+      } catch {
+        // A closing previous host may already have detached the view.
+      }
+    }
+    if (view) {
+      try {
+        win.contentView.addChildView(view);
+        view.setBounds(this.desiredBounds);
+      } catch {
+        try {
+          if (previous && !previous.isDestroyed()) previous.contentView.addChildView(view);
+        } catch {
+          this.teardownView(true);
+        }
+        return false;
+      }
+    }
+    this.win = win;
+    this.applyVisibility();
+    return true;
   }
 
   private applyVisibility(): void {

@@ -15,16 +15,17 @@ import {
 } from './agent-terminal-bootstrap';
 import { prepareLayoutForDockviewRestore } from './popout-layout';
 import type { ProjectSessionPanelMetadata } from '../shared/project-workspace';
+import {
+  type DockPanelPlacementIntent,
+  type DockSplitDirection,
+  DockWindowCoordinator,
+} from './dock-window-coordinator';
 
-export type WorkbenchSplitDirection = 'right' | 'below';
-
-export interface WorkbenchPanelPosition {
-  readonly referencePanel: string;
-  readonly direction: WorkbenchSplitDirection;
-}
+export type WorkbenchSplitDirection = DockSplitDirection;
+export type WorkbenchPanelPlacement = DockPanelPlacementIntent;
 
 export interface TerminalPaneOpenRequest {
-  readonly position?: WorkbenchPanelPosition;
+  readonly placement?: WorkbenchPanelPlacement;
   readonly cwd?: string;
   readonly adoptSessionId?: string;
   readonly allowDuringRecovery?: boolean;
@@ -54,7 +55,7 @@ export interface WorkbenchDockAdapter {
   addTerminalPane(options: {
     readonly id: string;
     readonly title: string;
-    readonly position?: WorkbenchPanelPosition;
+    readonly placement: WorkbenchPanelPlacement;
     readonly cwd?: string;
     readonly adoptSessionId?: string;
     readonly projectSession?: ProjectSessionPanelMetadata;
@@ -206,7 +207,7 @@ export class WorkbenchCoordinator {
       panel = adapter.addTerminalPane({
         id: panelId,
         title: request.title ?? `Terminal ${this.panelCounter}`,
-        ...(request.position ? { position: request.position } : {}),
+        placement: request.placement ?? { kind: 'main-tab' },
         ...(request.projectSession
           ? { projectSession: request.projectSession }
           : {
@@ -222,10 +223,14 @@ export class WorkbenchCoordinator {
     return { panelId: panel.id, instanceToken: panel.instanceToken };
   }
 
-  public splitActive(direction: WorkbenchSplitDirection): OpenedWorkbenchPane | null {
-    const activePanelId = this.adapter?.activePanelId();
-    if (!activePanelId) return null;
-    return this.openTerminal({ position: { referencePanel: activePanelId, direction } });
+  public splitPanel(
+    referencePanelId: string,
+    direction: WorkbenchSplitDirection,
+  ): OpenedWorkbenchPane | null {
+    if (!this.adapter?.getPanel(referencePanelId)) return null;
+    return this.openTerminal({
+      placement: { kind: 'split', referencePanelId, direction },
+    });
   }
 
   public activatePanel(panelId: string): boolean {
@@ -500,7 +505,10 @@ export class WorkbenchCoordinator {
   }
 }
 
-export function createDockviewWorkbenchAdapter(api: DockviewApi): WorkbenchDockAdapter {
+export function createDockviewWorkbenchAdapter(
+  api: DockviewApi,
+  windows: DockWindowCoordinator,
+): WorkbenchDockAdapter {
   const pane = (panelId: string): WorkbenchPaneAdapter | undefined => {
     const panel = api.getPanel(panelId);
     if (!panel) return undefined;
@@ -525,14 +533,13 @@ export function createDockviewWorkbenchAdapter(api: DockviewApi): WorkbenchDockA
               ...(options.adoptSessionId ? { adoptSessionId: options.adoptSessionId } : {}),
             }),
       };
-      const panel = api.addPanel({
+      const panel = windows.addPanel({
         id: options.id,
         component: 'terminal',
         title: options.title,
         renderer: 'always',
         ...(Object.keys(params).length > 0 ? { params } : {}),
-        ...(options.position ? { position: options.position } : {}),
-      });
+      }, options.placement);
       if (options.projectSession) {
         panel.api.updateParameters({ projectSession: options.projectSession });
       }

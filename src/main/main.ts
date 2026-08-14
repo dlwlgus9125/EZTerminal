@@ -17,7 +17,6 @@ import {
 import type {
   IpcMainInvokeEvent,
   MessagePortMain,
-  Rectangle,
   UtilityProcess,
   WebContents,
 } from 'electron';
@@ -50,6 +49,7 @@ import { installRunCommandIpc } from './run-command-ipc';
 import { GracefulShutdownCoordinator } from './graceful-shutdown';
 import { OpenClawService } from './openclaw-service';
 import { OpenClawChatViewManager } from './openclaw-chat-view';
+import { OpenClawChatSurfaceRevisionGate } from './openclaw-chat-surface-revisions';
 import { startOpenClawProxy, DEFAULT_OPENCLAW_PROXY_PORT, type OpenClawProxyHandle } from './openclaw-proxy';
 import { resolveOpenClawVisibility } from './openclaw-visibility';
 import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
@@ -103,7 +103,12 @@ import type {
   RunStartedInfo,
   SystemStatsSnapshot,
 } from '../shared/ipc';
-import type { OpenClawAutostartAction, OpenClawLifecycleAction, OpenClawVisibility } from '../shared/openclaw';
+import {
+  isOpenClawChatSurfaceSnapshot,
+  type OpenClawAutostartAction,
+  type OpenClawLifecycleAction,
+  type OpenClawVisibility,
+} from '../shared/openclaw';
 import type { AgentDecisionResult, AgentFollowupResult } from '../shared/agent';
 import { normalizeExternalHttpUrl } from '../shared/external-url';
 import type {
@@ -2469,23 +2474,32 @@ app.on('ready', async () => {
   // The placeholder panel (OpenClawChatPanel.tsx) reports its bounding rect
   // and App.tsx's single effective-visibility derivation continuously; the
   // manager itself decides lazy creation (see openclaw-chat-view.ts's module
-  // doc). `chat-open` is sent only once the panel observes status==='running'
-  // (requesting the view); `chat-close` is the panel's unmount, fully
-  // destroying the view (a closed singleton panel has no use for a live,
-  // hidden WebContentsView still holding a renderer process).
+  // doc). `chat-open` is sent only once the panel observes status==='running';
+  // the revisioned surface message is the sole ownership/geometry/visibility
+  // contract and `mounted:false` tears the native view down.
   ipcMain.on('openclaw:chat-open', () => {
     void openClawChatView?.ensureView();
   });
-  ipcMain.on('openclaw:chat-close', () => {
-    openClawChatView?.destroy();
-  });
-  ipcMain.on('openclaw:chat-bounds', (_event, bounds: Rectangle) => {
-    if (bounds && typeof bounds === 'object') openClawChatView?.setBounds(bounds);
-  });
-  ipcMain.on('openclaw:chat-visible', (_event, visible: boolean) => {
-    const isVisible = Boolean(visible);
-    if (isVisible) void openClawChatView?.ensureView();
-    openClawChatView?.setVisible(isVisible);
+  const openClawChatSurfaceRevisions = new OpenClawChatSurfaceRevisionGate();
+  ipcMain.on('openclaw:chat-surface', (event, surface: unknown) => {
+    const mainWindow = mainWindowRef;
+    if (
+      !mainWindow
+      || mainWindow.isDestroyed()
+      || event.sender !== mainWindow.webContents
+      || !isOpenClawChatSurfaceSnapshot(surface)
+    ) return;
+    const host = surface.mounted
+      ? desktopWindowManager?.resolveWindowName(surface.windowName)
+      : null;
+    if (surface.mounted && !host) return;
+    if (!openClawChatSurfaceRevisions.accept(surface)) return;
+    if (!surface.mounted) {
+      openClawChatView?.destroy();
+      return;
+    }
+    if (!host) return;
+    openClawChatView?.updateSurface(host, surface);
   });
   ipcMain.on('openclaw:chat-reload', () => {
     void openClawChatView?.reload();

@@ -335,6 +335,52 @@ function pruneTransientPanels(node: unknown, removed: ReadonlySet<string>): unkn
   return candidate;
 }
 
+function prunePanelIdsFromLayout(
+  layout: Record<string, unknown>,
+  removed: ReadonlySet<string>,
+): void {
+  if (removed.size === 0 || typeof layout.grid !== 'object' || layout.grid === null) return;
+  const grid = layout.grid as Record<string, unknown>;
+  grid.root = pruneTransientPanels(grid.root, removed) ?? { type: 'branch', data: [] };
+  if (!Array.isArray(layout.popoutGroups)) return;
+  layout.popoutGroups = layout.popoutGroups.filter((candidate) => {
+    if (typeof candidate !== 'object' || candidate === null) return true;
+    const popout = candidate as Record<string, unknown>;
+    if (typeof popout.data === 'object' && popout.data !== null) {
+      const data = popout.data as Record<string, unknown>;
+      if (Array.isArray(data.views)) {
+        const views = data.views.filter((id) => typeof id !== 'string' || !removed.has(id));
+        data.views = views;
+        if (typeof data.activeView !== 'string' || removed.has(data.activeView)) {
+          data.activeView = views[0];
+        }
+        return views.length > 0;
+      }
+    }
+    if (typeof popout.grid === 'object' && popout.grid !== null) {
+      const popoutGrid = popout.grid as Record<string, unknown>;
+      popoutGrid.root = pruneTransientPanels(popoutGrid.root, removed);
+      return popoutGrid.root !== null;
+    }
+    return true;
+  });
+}
+
+/** Removes panels from main or popout grids without mutating the input. */
+export function removePanelsFromSerializedLayout(
+  raw: unknown,
+  removed: ReadonlySet<string>,
+): unknown {
+  if (typeof raw !== 'object' || raw === null) return raw;
+  const layout = structuredClone(raw) as Record<string, unknown>;
+  if (typeof layout.panels === 'object' && layout.panels !== null) {
+    const panels = layout.panels as Record<string, unknown>;
+    for (const panelId of removed) delete panels[panelId];
+  }
+  prunePanelIdsFromLayout(layout, removed);
+  return layout;
+}
+
 /**
  * Normalize a raw SerializedDockview-shaped value BEFORE validation (save & load
  * share this): drop unsupported feature buckets (B4) and force renderer:'always'.
@@ -431,32 +477,7 @@ export function sanitizeSerializedLayout(raw: unknown): unknown {
       }
     }
     for (const panelId of transient) delete panels[panelId];
-    if (transient.size > 0
-      && typeof layout.grid === 'object'
-      && layout.grid !== null) {
-      const grid = layout.grid as Record<string, unknown>;
-      grid.root = pruneTransientPanels(grid.root, transient);
-      if (Array.isArray(layout.popoutGroups)) {
-        layout.popoutGroups = layout.popoutGroups.filter((candidate) => {
-          if (typeof candidate !== 'object' || candidate === null) return true;
-          const popout = candidate as Record<string, unknown>;
-          if (typeof popout.data === 'object' && popout.data !== null) {
-            const data = popout.data as Record<string, unknown>;
-            if (Array.isArray(data.views)) {
-              const views = data.views.filter((id) => typeof id !== 'string' || !transient.has(id));
-              data.views = views;
-              return views.length > 0;
-            }
-          }
-          if (typeof popout.grid === 'object' && popout.grid !== null) {
-            const popoutGrid = popout.grid as Record<string, unknown>;
-            popoutGrid.root = pruneTransientPanels(popoutGrid.root, transient);
-            return popoutGrid.root !== null;
-          }
-          return true;
-        });
-      }
-    }
+    prunePanelIdsFromLayout(layout, transient);
   }
   return layout;
 }

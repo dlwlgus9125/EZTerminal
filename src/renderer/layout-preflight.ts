@@ -9,6 +9,7 @@ import {
 import {
   buildLayoutEnvelope,
   collectSerializedPanelIds,
+  removePanelsFromSerializedLayout,
   type LayoutEnvelope,
   type SerializedLayout,
 } from '../shared/layout-schema';
@@ -146,9 +147,10 @@ export function preflightLayoutEnvelope(envelope: LayoutEnvelope): boolean {
 }
 
 /**
- * Removes one panel through dockview's own deserializer/serializer instead of
- * manually rewriting its nested grid. This is used by capability-gated startup
- * restore: a hidden native panel must never mount just so it can be closed.
+ * Removes one panel from either the main or a popout grid, then exercises the
+ * result through schema validation and Dockview's real deserializer. This is
+ * used by capability-gated startup restore: a hidden native panel must never
+ * mount just so it can be closed.
  *
  * `null` is fail-closed and tells the caller to open its normal default pane.
  * The input envelope is never mutated.
@@ -158,55 +160,8 @@ export function removePanelFromLayoutEnvelope(
   panelId: string,
 ): LayoutEnvelope | null {
   if (!envelope.layout.panels[panelId]) return envelope;
-  const detachedIds = popoutPanelIds(envelope.layout);
-  // Capability-gated native panels are not allowed in a popout. If a future
-  // caller asks to rewrite one there, fail closed rather than manually editing
-  // Dockview's nested grid.
-  if (detachedIds.has(panelId)) return null;
-
-  const host = document.createElement('div');
-  let api: DockviewApi | undefined;
-  let result: LayoutEnvelope | null = null;
-
-  try {
-    const mainIds = new Set(
-      Object.keys(envelope.layout.panels).filter((id) => !detachedIds.has(id)),
-    );
-    const mainLayout = structuredClone(envelope.layout) as SerializedLayout;
-    delete mainLayout.popoutGroups;
-    mainLayout.panels = panelRecord(envelope.layout, mainIds);
-    api = createDockview(host, {
-      announcements: false,
-      createComponent: createInertContentRenderer,
-      createTabComponent: createInertTabRenderer,
-      disableAutoResizing: true,
-      disableDnd: true,
-      disableFloatingGroups: true,
-    });
-    api.fromJSON(mainLayout as unknown as SerializedDockview);
-    api.getPanel(panelId)?.api.close();
-    const serializedMain = api.toJSON() as unknown as Record<string, unknown>;
-    const merged = {
-      ...serializedMain,
-      panels: {
-        ...(serializedMain.panels as Record<string, unknown>),
-        ...panelRecord(envelope.layout, detachedIds),
-      },
-      ...(envelope.layout.popoutGroups
-        ? { popoutGroups: structuredClone(envelope.layout.popoutGroups) }
-        : {}),
-    };
-    const filtered = buildLayoutEnvelope(merged, envelope.savedAt);
-    result = filtered?.layout.panels[panelId] ? null : filtered;
-  } catch {
-    result = null;
-  } finally {
-    try {
-      api?.dispose();
-    } catch {
-      result = null;
-    }
-  }
-
-  return result;
+  const pruned = removePanelsFromSerializedLayout(envelope.layout, new Set([panelId]));
+  const filtered = buildLayoutEnvelope(pruned, envelope.savedAt);
+  if (!filtered || filtered.layout.panels[panelId]) return null;
+  return preflightLayoutEnvelope(filtered) ? filtered : null;
 }

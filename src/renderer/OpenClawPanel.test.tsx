@@ -75,11 +75,9 @@ function makeCapabilities(
     setConfig: vi.fn(async () => ({ ok: true, restartRequired: false })),
     getMode: vi.fn(async () => 'auto' as const),
     setMode: vi.fn(async () => true),
-    setChatVisible: vi.fn(() => true),
+    setChatSurface: vi.fn(() => true),
     openChat: vi.fn(() => true),
-    closeChat: vi.fn(() => true),
     reloadChat: vi.fn(() => true),
-    setChatBounds: vi.fn(() => true),
     openChatExternal: vi.fn(async () => true),
     ...overrides,
   } as OpenClawAccess;

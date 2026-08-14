@@ -56,6 +56,8 @@ export type WorkspaceTabProps = IDockviewPanelHeaderProps & {
   readonly providerLabel?: string;
   readonly requestClose: (close: () => void) => void;
   readonly onSplit: (panelId: string, direction: 'right' | 'below') => void;
+  readonly onMoveToNewWindow: (panelId: string) => void;
+  readonly onMoveToMainWindow: (panelId: string) => void;
   readonly onTitleChanged: (title: string) => void;
 };
 
@@ -261,6 +263,8 @@ export function WorkspaceTab({
   providerLabel,
   requestClose,
   onSplit,
+  onMoveToNewWindow,
+  onMoveToMainWindow,
   onTitleChanged,
   ...props
 }: WorkspaceTabProps): JSX.Element {
@@ -377,6 +381,18 @@ export function WorkspaceTab({
       action: 'split-below',
       label: t('workspace.splitBelow'),
       onClick: () => onSplit(props.api.id, 'below'),
+    },
+    {
+      action: 'move-to-new-window',
+      label: t('workspaceTab.moveToNewWindow'),
+      disabled: props.api.location.type === 'popout' && props.api.group.panels.length === 1,
+      onClick: () => onMoveToNewWindow(props.api.id),
+    },
+    {
+      action: 'move-to-main-window',
+      label: t('workspaceTab.moveToMainWindow'),
+      disabled: props.api.location.type === 'grid',
+      onClick: () => onMoveToMainWindow(props.api.id),
     },
     {
       action: 'close',

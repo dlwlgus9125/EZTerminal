@@ -31,6 +31,8 @@ const monacoMocks = vi.hoisted(() => {
     layout: vi.fn(),
     onDidChangeCursorSelection: vi.fn(() => ({ dispose: vi.fn() })),
     revealPositionInCenter: vi.fn(),
+    restoreViewState: vi.fn(),
+    saveViewState: vi.fn(() => ({ cursorState: [], viewState: {} })),
     setPosition: vi.fn(),
     updateOptions: vi.fn(),
   });
@@ -44,6 +46,8 @@ const monacoMocks = vi.hoisted(() => {
       getOriginalEditor: vi.fn(() => original),
       goToDiff: vi.fn(),
       layout: vi.fn(),
+      restoreViewState: vi.fn(),
+      saveViewState: vi.fn(() => ({ original: {}, modified: {} })),
       setModel: vi.fn(),
     };
   });

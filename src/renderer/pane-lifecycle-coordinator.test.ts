@@ -279,7 +279,7 @@ describe('PaneLifecycleCoordinator auxiliary lifecycle', () => {
       .toEqual({ ok: true });
   });
 
-  it('allows a passive read-only agent panel but detects target identity replacement', async () => {
+  it('allows passive dock panels but detects target identity replacement', async () => {
     const ownerToken = {};
     const passiveToken = {};
     const h = harness();
@@ -299,5 +299,14 @@ describe('PaneLifecycleCoordinator auxiliary lifecycle', () => {
       activeAgentSessionIds: new Set(),
     })).resolves.toEqual({ ok: false, reason: 'state-changed', stage: 'validation' });
     expect(h.prepareSessionSurfaceClose).not.toHaveBeenCalled();
+
+    for (const component of ['project-editor', 'openclaw-chat'] as const) {
+      const passive = { ...target(component, {}), component };
+      expect(h.coordinator.prepare({
+        kind: 'auxiliary-window',
+        targets: [passive],
+        activeAgentSessionIds: new Set(),
+      })).toMatchObject({ ok: true });
+    }
   });
 });

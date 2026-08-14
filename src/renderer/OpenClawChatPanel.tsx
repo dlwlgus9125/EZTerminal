@@ -5,6 +5,7 @@ import type { OpenClawChatViewState, OpenClawStatus, OpenClawStatusState } from 
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 import { useNativeOverlayOpen } from './native-overlay';
+import { useDockPanelHost } from './use-dock-panel-host';
 
 /**
  * Whether any overlay that visually sits above the dockview area (drawer/
@@ -22,18 +23,33 @@ export const OpenClawOverlayContext = createContext<boolean>(false);
 /** Throttles the ResizeObserver/scroll/layout-change bounds reports to one
  * per animation frame — dockview drag-resize and window resize can otherwise
  * fire many times per frame. */
-function useThrottledRaf(callback: () => void): () => void {
+function useThrottledRaf(callback: () => void, ownerWindow: Window): () => void {
   const callbackRef = useRef(callback);
   callbackRef.current = callback;
-  const pendingRef = useRef(false);
+  const pendingRef = useRef<{
+    readonly ownerWindow: Window;
+    frameId: number;
+  } | null>(null);
+  useEffect(() => () => {
+    const pending = pendingRef.current;
+    if (!pending || pending.ownerWindow !== ownerWindow) return;
+    pendingRef.current = null;
+    try {
+      ownerWindow.cancelAnimationFrame(pending.frameId);
+    } catch {
+      // A closing auxiliary window may already have torn down its frame clock.
+    }
+  }, [ownerWindow]);
   return useCallback(() => {
     if (pendingRef.current) return;
-    pendingRef.current = true;
-    requestAnimationFrame(() => {
-      pendingRef.current = false;
+    const pending = { ownerWindow, frameId: 0 };
+    pendingRef.current = pending;
+    pending.frameId = ownerWindow.requestAnimationFrame(() => {
+      if (pendingRef.current !== pending) return;
+      pendingRef.current = null;
       callbackRef.current();
     });
-  }, []);
+  }, [ownerWindow]);
 }
 
 const STATE_LABEL_KEY = {
@@ -43,6 +59,9 @@ const STATE_LABEL_KEY = {
   running: 'openClaw.state.running',
   unknown: 'openClaw.state.unknown',
 } as const satisfies Record<OpenClawStatusState, string>;
+
+const openClawChatSurfaceInstanceId = globalThis.crypto.randomUUID();
+let openClawChatSurfaceRevision = 0;
 
 /**
  * Desktop chat dockview panel (openclaw-management M3) — a plain DOM
@@ -68,6 +87,7 @@ export function OpenClawChatPanel(
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const openedRef = useRef(false); // edge-trigger: chat-open sent once per stopped->running transition
+  const host = useDockPanelHost(containerRef, props.api);
 
   // ── Effective visibility: this tab's own dockview visibility (hidden when
   // another tab in its group is active) ANDed with "no overlay above it".
@@ -80,15 +100,38 @@ export function OpenClawChatPanel(
     const disposable = props.api.onDidVisibilityChange((event) => setPanelVisible(event.isVisible));
     return () => disposable.dispose();
   }, [props.api]);
-  useEffect(() => {
-    // Effective visibility must also require the gateway to be RUNNING: main
-    // lazily CREATES the WebContentsView on the first visible=true report, so
-    // signalling visible while stopped/not-installed would spawn a view behind
-    // the guidance placeholder (it stays alive even after status settles). Only
-    // when running should the native view exist and show.
-    const running = status?.state === 'running';
-    capabilities.openClaw.setChatVisible(panelVisible && !overlayOpen && running);
-  }, [capabilities, panelVisible, overlayOpen, status?.state]);
+  const surfaceStateRef = useRef({ visible: false, ownerWindow: host.ownerWindow });
+  surfaceStateRef.current = {
+    visible: panelVisible && !overlayOpen && status?.state === 'running',
+    ownerWindow: host.ownerWindow,
+  };
+
+  const publishSurface = useCallback((mounted: boolean): void => {
+    const element = containerRef.current;
+    const ownerWindow = element?.ownerDocument.defaultView ?? surfaceStateRef.current.ownerWindow;
+    const windowName = ownerWindow === window ? 'main' : ownerWindow.name;
+    if (!windowName) return;
+    const rect = mounted && element
+      ? element.getBoundingClientRect()
+      : { x: 0, y: 0, width: 0, height: 0 };
+    openClawChatSurfaceRevision += 1;
+    capabilities.openClaw.setChatSurface({
+      surfaceId: 'openclaw-chat',
+      instanceId: openClawChatSurfaceInstanceId,
+      revision: openClawChatSurfaceRevision,
+      mounted,
+      windowName,
+      bounds: {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        width: Math.max(0, Math.round(rect.width)),
+        height: Math.max(0, Math.round(rect.height)),
+      },
+      visible: mounted && surfaceStateRef.current.visible,
+    });
+  }, [capabilities]);
+
+  useEffect(() => () => publishSurface(false), [publishSurface]);
 
   // ── Status: seed + subscribe. Independent of the drawer's own gate (main.ts
   // refcounts both — see openclaw:chat-panel-mounted). Sent for the panel's
@@ -134,34 +177,29 @@ export function OpenClawChatPanel(
   }, [capabilities, observationFailed, status?.state, viewState.hasError]);
 
   // ── Bounds reporting: rAF-throttled ResizeObserver + scroll/layout nudges.
-  const reportBounds = useThrottledRaf(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    capabilities.openClaw.setChatBounds({
-      x: Math.round(rect.x),
-      y: Math.round(rect.y),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-    });
-  });
+  const reportSurface = useThrottledRaf(() => publishSurface(true), host.ownerWindow);
+
+  useEffect(() => {
+    reportSurface();
+  }, [host.revision, overlayOpen, panelVisible, reportSurface, status?.state]);
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    reportBounds();
-    const observer = new ResizeObserver(reportBounds);
+    const ownerWindow = (el.ownerDocument.defaultView ?? host.ownerWindow) as Window & typeof globalThis;
+    reportSurface();
+    const observer = new ownerWindow.ResizeObserver(reportSurface);
     observer.observe(el);
-    window.addEventListener('resize', reportBounds);
-    window.addEventListener('scroll', reportBounds, true);
-    window.addEventListener('ez:refit', reportBounds);
+    ownerWindow.addEventListener('resize', reportSurface);
+    ownerWindow.addEventListener('scroll', reportSurface, true);
+    ownerWindow.addEventListener('ez:refit', reportSurface);
     return () => {
       observer.disconnect();
-      window.removeEventListener('resize', reportBounds);
-      window.removeEventListener('scroll', reportBounds, true);
-      window.removeEventListener('ez:refit', reportBounds);
+      ownerWindow.removeEventListener('resize', reportSurface);
+      ownerWindow.removeEventListener('scroll', reportSurface, true);
+      ownerWindow.removeEventListener('ez:refit', reportSurface);
     };
-  }, [reportBounds]);
+  }, [host.ownerWindow, reportSurface]);
 
   const startGateway = useCallback(async (): Promise<void> => {
     setBusyLifecycle(true);

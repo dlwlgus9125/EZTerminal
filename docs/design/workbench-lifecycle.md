@@ -60,12 +60,27 @@ snapshot에 저장한다. 기존 schema version 1 파일에서 resource profile�
 
 ## 패널과 분리 창
 
-- terminal, Agent Session과 허용된 도구 panel만 layout schema에 등록한다.
+- `dock-panel-capabilities.ts`가 등록 panel의 분리 가능성과 수명 tier를 소유한다. 현재
+  `terminal`, `agent-session`, `project-editor`, `openclaw-chat`은 모두 분리 가능하고,
+  terminal만 session surface이며 나머지는 passive panel이다.
 - panel ID와 생성 제목은 workbench 전체에서 충돌하지 않는다.
+- `DockWindowCoordinator`는 호출자의 배치 추측 대신 `main-tab` 또는 exact reference
+  panel에 대한 `split` intent를 받는다. 전역 생성은 main grid를 사용하고 auxiliary
+  panel의 split은 그 auxiliary window의 nested grid에 남는다.
+- 하나의 HTML5 drag에는 하나의 correlated transaction만 존재한다. Tab drag는 panel,
+  빈 tab-bar drag는 group 전체를 대상으로 하며 Dockview가 처리한 drop과 window 밖
+  drag-end를 같은 group/panel identity로 구분한다. Escape와 내부 drop은 새 창을 만들지
+  않는다.
+- Pointer drag의 대체 경로로 tab context menu가 새 auxiliary window 이동과 main grid
+  복귀를 제공한다. Redock과 재분리는 기존 panel을 이동하며 새 panel/session을 만들지 않는다.
 - Dockview popout은 별도 renderer 표면이지만 session owner가 아니다. redock, 창 닫기,
   renderer crash가 셸 세션을 암묵적으로 중복 생성하지 않는다.
 - `DesktopWindowManager`가 main window와 auxiliary window의 생성·bounds·preload·보안
-  설정을 소유한다.
+  설정 및 opaque Dockview window name 해석을 소유한다.
+- Native child surface는 panel DOM의 실제 owner document를 따른다. OpenClaw chat은
+  monotonic revision의 단일 surface snapshot으로 window name, bounds, visibility와
+  mount 상태를 보내 같은 `WebContentsView`를 main/auxiliary host 사이에 재부착한다.
+  Project editor의 Monaco와 observer도 현재 owner window/document에서 생성·재생성한다.
 - pane mount/unmount는 `SessionMirroringCoordinator`의 lease를 획득·반납한다. 단순
   React unmount를 세션 파괴 신호로 사용하지 않는다.
 - `PaneRegistry` 등록은 panel mount 수명과 같고 handle은 최신 pane ref로 위임한다.
@@ -155,6 +170,7 @@ close guard 또는 persistence schema를 우회해서는 안 된다.
 - [`src/shared/renderer-recovery.ts`](../../src/shared/renderer-recovery.ts)
 - [`src/main/layout-store.ts`](../../src/main/layout-store.ts)
 - [`src/main/desktop-window-manager.ts`](../../src/main/desktop-window-manager.ts)
+- [`src/main/openclaw-chat-view.ts`](../../src/main/openclaw-chat-view.ts)
 - [`src/main/renderer-recovery-checkpoint-store.ts`](../../src/main/renderer-recovery-checkpoint-store.ts)
 - [`src/main/session-surface-authority.ts`](../../src/main/session-surface-authority.ts)
 - [`src/renderer/desktop-runtime-lifecycle.tsx`](../../src/renderer/desktop-runtime-lifecycle.tsx)
@@ -162,6 +178,9 @@ close guard 또는 persistence schema를 우회해서는 안 된다.
 - [`src/renderer/PtyBlock.tsx`](../../src/renderer/PtyBlock.tsx)
 - [`src/renderer/pty-write-scheduler.ts`](../../src/renderer/pty-write-scheduler.ts)
 - [`src/renderer/workbench-coordinator.ts`](../../src/renderer/workbench-coordinator.ts)
+- [`src/renderer/dock-window-coordinator.ts`](../../src/renderer/dock-window-coordinator.ts)
+- [`src/renderer/dockview-popouts.ts`](../../src/renderer/dockview-popouts.ts)
+- [`src/renderer/use-dock-panel-host.ts`](../../src/renderer/use-dock-panel-host.ts)
 - [`src/renderer/session-mirroring-coordinator.ts`](../../src/renderer/session-mirroring-coordinator.ts)
 - [`src/renderer/pane-lifecycle-coordinator.ts`](../../src/renderer/pane-lifecycle-coordinator.ts)
 - [`src/renderer/workspace-replacement-coordinator.ts`](../../src/renderer/workspace-replacement-coordinator.ts)
@@ -169,6 +188,7 @@ close guard 또는 persistence schema를 우회해서는 안 된다.
 - [`src/renderer/feature-loader.tsx`](../../src/renderer/feature-loader.tsx)
 - [`src/renderer/async-poller.ts`](../../src/renderer/async-poller.ts)
 - [`src/shared/resource-profile.ts`](../../src/shared/resource-profile.ts)
+- [`src/shared/dock-panel-capabilities.ts`](../../src/shared/dock-panel-capabilities.ts)
 
 ## 검증
 
@@ -178,6 +198,8 @@ close guard 또는 persistence schema를 우회해서는 안 된다.
 - [`src/main/renderer-recovery-checkpoint-store.test.ts`](../../src/main/renderer-recovery-checkpoint-store.test.ts)
 - [`src/main/session-surface-authority.test.ts`](../../src/main/session-surface-authority.test.ts)
 - [`src/renderer/workbench-coordinator.test.ts`](../../src/renderer/workbench-coordinator.test.ts)
+- [`src/renderer/dock-window-coordinator.test.ts`](../../src/renderer/dock-window-coordinator.test.ts)
+- [`src/renderer/dockview-popouts.test.ts`](../../src/renderer/dockview-popouts.test.ts)
 - [`src/renderer/session-mirroring-coordinator.test.ts`](../../src/renderer/session-mirroring-coordinator.test.ts)
 - [`src/renderer/pane-lifecycle-coordinator.test.ts`](../../src/renderer/pane-lifecycle-coordinator.test.ts)
 - [`src/renderer/pane-registry.test.ts`](../../src/renderer/pane-registry.test.ts)
@@ -186,6 +208,7 @@ close guard 또는 persistence schema를 우회해서는 안 된다.
 - [`src/renderer/runtime-lifecycle.test.ts`](../../src/renderer/runtime-lifecycle.test.ts)
 - [`src/renderer/pty-write-scheduler.test.ts`](../../src/renderer/pty-write-scheduler.test.ts)
 - [`e2e/layout-persistence.spec.ts`](../../e2e/layout-persistence.spec.ts)
+- [`e2e/popout-window.spec.ts`](../../e2e/popout-window.spec.ts)
 - [`e2e/lifecycle-soak.spec.ts`](../../e2e/lifecycle-soak.spec.ts)
 
 `pnpm e2e:lifecycle-soak`는 clean exact-SHA 후보에서 main + popout 8개와 live session

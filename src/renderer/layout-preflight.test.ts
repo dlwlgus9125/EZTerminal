@@ -183,4 +183,35 @@ describe('removePanelFromLayoutEnvelope', () => {
     expect(filtered?.layout.panels['tab-2']).toBeDefined();
     expect(filtered?.layout.popoutGroups).toEqual(envelope.layout.popoutGroups);
   });
+
+  it('removes a gated panel from a mixed popout while preserving its terminal sibling', () => {
+    const envelope = makeEnvelope(['tab-1', 'openclaw-chat']);
+    envelope.layout.panels['openclaw-chat'] = {
+      id: 'openclaw-chat',
+      contentComponent: 'openclaw-chat',
+      renderer: 'always',
+      title: 'OpenClaw Chat',
+    };
+    const mainLeaf = envelope.layout.grid.root.data[0] as {
+      data: { activeView: string; views: string[] };
+    };
+    mainLeaf.data.views = [];
+    envelope.layout.grid.root.data = [];
+    envelope.layout.activeGroup = undefined;
+    envelope.layout.popoutGroups = [{
+      data: {
+        id: 'popout-group',
+        views: ['tab-1', 'openclaw-chat'],
+        activeView: 'openclaw-chat',
+      },
+      position: { left: 900, top: 40, width: 800, height: 600 },
+    }];
+
+    const filtered = removePanelFromLayoutEnvelope(envelope, 'openclaw-chat');
+
+    expect(filtered?.layout.panels['openclaw-chat']).toBeUndefined();
+    expect(filtered?.layout.popoutGroups?.[0]?.data?.views).toEqual(['tab-1']);
+    expect(filtered?.layout.popoutGroups?.[0]?.data?.activeView).toBe('tab-1');
+    expect(filtered && preflightLayoutEnvelope(filtered)).toBe(true);
+  });
 });

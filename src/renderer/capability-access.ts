@@ -24,7 +24,7 @@ import type {
   OpenClawAgentSession,
   OpenClawAutostartAction,
   OpenClawAutostartResult,
-  OpenClawChatBounds,
+  OpenClawChatSurfaceSnapshot,
   OpenClawChatViewState,
   OpenClawConfigKey,
   OpenClawCoreConfig,
@@ -116,11 +116,9 @@ export interface OpenClawAccess {
   setConfig: (key: OpenClawConfigKey, value: string) => Promise<OpenClawSetConfigResult | null>;
   getMode: () => Promise<OpenClawMode | null>;
   setMode: (mode: OpenClawMode) => Promise<boolean>;
-  setChatVisible: (visible: boolean) => boolean;
+  setChatSurface: (surface: OpenClawChatSurfaceSnapshot) => boolean;
   openChat: () => boolean;
-  closeChat: () => boolean;
   reloadChat: () => boolean;
-  setChatBounds: (bounds: OpenClawChatBounds) => boolean;
   openChatExternal: () => Promise<boolean>;
 }
 
@@ -442,7 +440,6 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
       );
       const cleanups: CapabilityCleanup[] = [];
       api.setOpenClawChatPanelMounted(true);
-      cleanups.push(() => api.closeOpenClawChatView());
       cleanups.push(() => api.setOpenClawChatPanelMounted(false));
       try {
         cleanups.push(api.onOpenClawStatus((status) => gate.push(status)));
@@ -512,10 +509,10 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
       await api.setOpenClawMode(mode);
       return true;
     },
-    setChatVisible(visible) {
-      const api = desktopFor('setOpenClawChatVisible');
+    setChatSurface(surface) {
+      const api = desktopFor('setOpenClawChatSurface');
       if (!api) return false;
-      api.setOpenClawChatVisible(visible);
+      api.setOpenClawChatSurface(surface);
       return true;
     },
     openChat() {
@@ -524,22 +521,10 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
       api.openOpenClawChatView();
       return true;
     },
-    closeChat() {
-      const api = desktopFor('closeOpenClawChatView');
-      if (!api) return false;
-      api.closeOpenClawChatView();
-      return true;
-    },
     reloadChat() {
       const api = desktopFor('reloadOpenClawChatView');
       if (!api) return false;
       api.reloadOpenClawChatView();
-      return true;
-    },
-    setChatBounds(bounds) {
-      const api = desktopFor('setOpenClawChatBounds');
-      if (!api) return false;
-      api.setOpenClawChatBounds(bounds);
       return true;
     },
     async openChatExternal() {

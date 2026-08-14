@@ -25,6 +25,7 @@ import {
   subscribeProjectCodeReveal,
   type ProjectCodeLocation,
 } from './project-code-navigation';
+import { useDockPanelHost } from './use-dock-panel-host';
 
 interface SelectedLines {
   readonly start: number;
@@ -57,8 +58,8 @@ function isDocument(value: unknown): value is ProjectEditorDocument {
     && (candidate.lens === undefined || isLens(candidate.lens));
 }
 
-function editorTheme(): 'vs' | 'vs-dark' | 'hc-black' {
-  const theme = document.documentElement.dataset.theme;
+function editorTheme(ownerDocument: Document): 'vs' | 'vs-dark' | 'hc-black' {
+  const theme = ownerDocument.documentElement.dataset.theme;
   if (theme === 'light') return 'vs';
   if (theme === 'high-contrast') return 'hc-black';
   return 'vs-dark';
@@ -73,23 +74,24 @@ function recordedLinePrefix(kind: 'meta' | 'context' | 'added' | 'removed'): str
 function recordedSectionNode(
   section: ProjectRecordedChangeSection,
   labels: { readonly anchored: string; readonly unplaced: string },
+  ownerDocument: Document,
 ): HTMLElement {
-  const container = document.createElement('section');
+  const container = ownerDocument.createElement('section');
   container.className = 'project-editor__recorded-zone';
   container.dataset.placement = section.anchorLine === undefined ? 'unplaced' : 'anchored';
   container.setAttribute('aria-hidden', 'true');
-  const header = document.createElement('div');
+  const header = ownerDocument.createElement('div');
   header.className = 'project-editor__recorded-zone-header';
   header.textContent = section.anchorLine === undefined ? labels.unplaced : labels.anchored;
   container.append(header);
-  const lines = document.createElement('pre');
+  const lines = ownerDocument.createElement('pre');
   lines.className = 'project-editor__recorded-lines';
   for (const line of section.lines) {
-    const row = document.createElement('span');
+    const row = ownerDocument.createElement('span');
     row.dataset.kind = line.kind;
-    const prefix = document.createElement('b');
+    const prefix = ownerDocument.createElement('b');
     prefix.textContent = recordedLinePrefix(line.kind);
-    const text = document.createElement('span');
+    const text = ownerDocument.createElement('span');
     text.textContent = line.text || ' ';
     row.append(prefix, text);
     lines.append(row);
@@ -155,7 +157,16 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const diffRef = useRef<Monaco.editor.IStandaloneDiffEditor | null>(null);
   const modelsRef = useRef<readonly Monaco.editor.ITextModel[]>([]);
+  const codeViewStateRef = useRef<{
+    readonly identity: string;
+    readonly state: Monaco.editor.ICodeEditorViewState;
+  } | null>(null);
+  const diffViewStateRef = useRef<{
+    readonly identity: string;
+    readonly state: Monaco.editor.IDiffEditorViewState;
+  } | null>(null);
   const generation = useRef(0);
+  const panelHost = useDockPanelHost(panelRef, props.api);
 
   useEffect(() => {
     const disposable = props.api.onDidParametersChange((params) => {
@@ -243,7 +254,7 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
       const editor = editorRef.current ?? diffRef.current?.getModifiedEditor();
       if (editor) {
         editor.focus();
-        return Boolean(panelRef.current?.contains(globalThis.document.activeElement));
+        return Boolean(panelRef.current?.contains(panelRef.current.ownerDocument.activeElement));
       }
       panelRef.current?.focus({ preventScroll: true });
       return false;
@@ -254,13 +265,25 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
   useEffect(() => {
     const host = hostRef.current;
     const current = snapshot?.current ?? null;
-    if (!host || (!current && !review) || review?.kind === 'record-only') return undefined;
+    if (!host || !document || (!current && !review) || review?.kind === 'record-only') return undefined;
+    const lens = snapshot?.lens ?? document.lens ?? { kind: 'current' as const };
+    const lensIdentity = lens.kind === 'agent-turn'
+      ? `${lens.kind}:${lens.historyId}:${lens.turnId}`
+      : lens.kind;
+    const viewIdentity = [
+      snapshot?.document.key ?? document.documentKey
+        ?? `${document.projectId}:${document.rootId}:${document.workspaceId}:${document.relativePath}`,
+      lensIdentity,
+      review?.kind ?? 'current',
+    ].join('\0');
     let disposed = false;
     let resizeObserver: ResizeObserver | undefined;
     let themeObserver: MutationObserver | undefined;
     let cursorDisposable: { dispose(): void } | undefined;
     void import('./monaco-runtime').then(({ monaco }) => {
       if (disposed || !hostRef.current || !document) return;
+      const ownerDocument = hostRef.current.ownerDocument;
+      const ownerWindow = (ownerDocument.defaultView ?? panelHost.ownerWindow) as Window & typeof globalThis;
       const unique = `panel=${encodeURIComponent(props.api.id)}&generation=${String(generation.current)}`;
       let layout: () => void;
       const trackSelection = (editor: Monaco.editor.ICodeEditor): void => {
@@ -296,7 +319,7 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
         const editor = monaco.editor.createDiffEditor(hostRef.current, {
           readOnly: true,
           originalEditable: false,
-          theme: editorTheme(),
+          theme: editorTheme(ownerDocument),
           automaticLayout: false,
           renderSideBySide: false,
           hideUnchangedRegions: { enabled: false },
@@ -309,6 +332,9 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
           modifiedAriaLabel: t('projectWorkbench.readOnlyCurrentAria', { path: document.relativePath }),
         });
         editor.setModel({ original, modified });
+        if (diffViewStateRef.current?.identity === viewIdentity) {
+          editor.restoreViewState(diffViewStateRef.current.state);
+        }
         editor.getOriginalEditor().updateOptions({
           ariaLabel: t('projectWorkbench.readOnlyOriginalAria', { path: document.relativePath }),
         });
@@ -337,7 +363,7 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
           model,
           readOnly: true,
           domReadOnly: true,
-          theme: editorTheme(),
+          theme: editorTheme(ownerDocument),
           automaticLayout: false,
           minimap: { enabled: false },
           scrollBeyondLastLine: false,
@@ -351,6 +377,9 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
             : t('projectWorkbench.readOnlyCodeAria', { path: document.relativePath }),
         });
         editorRef.current = editor;
+        if (codeViewStateRef.current?.identity === viewIdentity) {
+          editor.restoreViewState(codeViewStateRef.current.state);
+        }
         trackSelection(editor);
         if (review?.kind === 'current-with-record') {
           const labels = {
@@ -362,7 +391,7 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
               accessor.addZone({
                 afterLineNumber: section.anchorLine === undefined ? 0 : Math.max(0, section.anchorLine - 1),
                 heightInPx: Math.min(260, 34 + Math.max(1, section.lines.length) * 19),
-                domNode: recordedSectionNode(section, labels),
+                domNode: recordedSectionNode(section, labels, ownerDocument),
                 suppressMouseDown: false,
               });
             }
@@ -370,10 +399,12 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
         }
         layout = () => editor.layout();
       }
-      resizeObserver = new ResizeObserver(layout);
+      resizeObserver = new ownerWindow.ResizeObserver(layout);
       resizeObserver.observe(hostRef.current);
-      themeObserver = new MutationObserver(() => monaco.editor.setTheme(editorTheme()));
-      themeObserver.observe(globalThis.document.documentElement, {
+      themeObserver = new ownerWindow.MutationObserver(() => (
+        monaco.editor.setTheme(editorTheme(ownerDocument))
+      ));
+      themeObserver.observe(ownerDocument.documentElement, {
         attributes: true,
         attributeFilter: ['data-theme'],
       });
@@ -388,6 +419,10 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
       cursorDisposable?.dispose();
       resizeObserver?.disconnect();
       themeObserver?.disconnect();
+      const codeViewState = editorRef.current?.saveViewState();
+      if (codeViewState) codeViewStateRef.current = { identity: viewIdentity, state: codeViewState };
+      const diffViewState = diffRef.current?.saveViewState();
+      if (diffViewState) diffViewStateRef.current = { identity: viewIdentity, state: diffViewState };
       editorRef.current?.dispose();
       diffRef.current?.dispose();
       for (const model of modelsRef.current) model.dispose();
@@ -396,7 +431,7 @@ export function ProjectEditorPanel(props: IDockviewPanelProps): JSX.Element {
       modelsRef.current = [];
       host.replaceChildren();
     };
-  }, [document, props.api, review, snapshot, t]);
+  }, [document, panelHost.ownerWindow, panelHost.revision, props.api, review, snapshot, t]);
 
   const relativePath = document?.relativePath ?? '';
   const breadcrumbs = relativePath ? relativePath.split('/') : [];
