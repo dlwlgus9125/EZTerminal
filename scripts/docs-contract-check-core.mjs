@@ -19,6 +19,7 @@ export const ACTIVE_CONTRACTS = Object.freeze([
   'docs/design/remote-terminal.md',
   'docs/design/remote-desktop.md',
   'docs/design/external-integrations.md',
+  'docs/design/agent-collaboration.md',
   'docs/ux/frontend-design.md',
 ]);
 

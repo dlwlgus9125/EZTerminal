@@ -226,7 +226,12 @@ describe('SessionSwitcher risky destruction', () => {
       sessionId: SESSION.sessionId,
       provider: 'codex',
       cwd: SESSION.cwd,
-      status: 'waiting',
+      state: 'working',
+      status: 'working',
+      stateSeq: 1,
+      live: true,
+      interactiveReady: true,
+      stateSource: 'provider-hook',
       createdAt: 1,
       updatedAt: 2,
     }]);

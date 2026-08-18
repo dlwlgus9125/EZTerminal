@@ -1,5 +1,5 @@
 import type { MenuItemConstructorOptions } from 'electron';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { buildMenuTemplate } from './app-menu';
 
@@ -83,5 +83,15 @@ describe('buildMenuTemplate — terminal-safe application menu (WT-parity M1)', 
     expect(collect('ko').map((item) => item.role)).toEqual(
       collect('en').map((item) => item.role),
     );
+  });
+
+  it('routes explicit Quit through the injected confirmation callback', () => {
+    const onQuit = vi.fn();
+    const fileMenu = buildMenuTemplate('en', onQuit)[0];
+    const quit = Array.isArray(fileMenu?.submenu) ? fileMenu.submenu[0] : undefined;
+    expect(quit?.role).toBeUndefined();
+    expect(quit?.click).toBe(onQuit);
+    (quit?.click as (() => void) | undefined)?.();
+    expect(onQuit).toHaveBeenCalledOnce();
   });
 });

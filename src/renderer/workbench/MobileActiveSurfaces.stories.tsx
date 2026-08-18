@@ -18,6 +18,7 @@ import { ThemeMenu } from '../../../mobile/src/ThemeMenu';
 import type { DesktopPresentationAdapter, DesktopPresentationSnapshot } from '../../../mobile/src/remote-desktop-presentation-adapter';
 import type { WsEzTerminalTransport } from '../../../mobile/src/transport/ws-ezterminal';
 import type { AgentActivitySnapshot } from '../../shared/agent';
+import type { AgentCoordinationSnapshot } from '../../shared/agent-coordination';
 import type { AgentHistorySessionSummary, AgentProjectSummary } from '../../shared/agent-history';
 import type { EzTerminalApi, SystemStatsSnapshot } from '../../shared/ipc';
 import { AppI18nProvider } from '../i18n';
@@ -29,6 +30,7 @@ import './mobile-shell-story.css';
 
 type ActiveMobileSurface =
   | 'agents'
+  | 'agents-merge'
   | 'agents-overflow'
   | 'agents-offline'
   | 'files'
@@ -83,7 +85,12 @@ const AGENTS: AgentActivitySnapshot = {
       sessionId: 'session-review',
       provider: 'claude',
       cwd: 'C:/Workspace/ezterminal',
+      state: 'blocked',
       status: 'blocked',
+      stateSeq: 3,
+      live: true,
+      interactiveReady: true,
+      stateSource: 'provider-hook',
       createdAt: NOW - 60_000,
       updatedAt: NOW - 20_000,
       approval: {
@@ -101,11 +108,48 @@ const AGENTS: AgentActivitySnapshot = {
       sessionId: 'session-working',
       provider: 'codex',
       cwd: 'C:/Workspace/docs',
+      state: 'working',
       status: 'working',
+      stateSeq: 2,
+      live: true,
+      interactiveReady: true,
+      stateSource: 'provider-hook',
       createdAt: NOW - 90_000,
       updatedAt: NOW - 20_000,
     },
   ],
+};
+
+const AGENT_COORDINATION: AgentCoordinationSnapshot = {
+  revision: 4,
+  activityRevision: AGENTS.revision,
+  activities: AGENTS.items,
+  projects: [],
+  mergeRequests: [{
+    requestId: 'merge-mobile-1',
+    revision: 5,
+    projectId: 'project-ezterminal',
+    participantId: 'participant-working',
+    activityId: 'agent-working',
+    sourceWorkspaceId: 'workspace-working',
+    sourceBranch: 'agent/mobile-review',
+    sourceHead: '1'.repeat(40),
+    targetBranch: 'main',
+    targetHead: '2'.repeat(40),
+    candidateHead: '3'.repeat(40),
+    state: 'approval-required',
+    validationConfigRevision: 2,
+    validations: [{
+      id: 'unit',
+      name: 'Unit tests',
+      status: 'passed',
+      durationMs: 9_400,
+      exitCode: 0,
+    }],
+    createdAt: NOW - 30_000,
+    updatedAt: NOW - 10_000,
+    expiresAt: NOW + 86_400_000,
+  }],
 };
 
 const AGENT_PROJECTS: readonly AgentProjectSummary[] = [
@@ -204,6 +248,7 @@ const STORY_TRANSPORT = {
   }),
   setOpenClawConfig: async () => ({ ok: true, restartRequired: false }),
   getOpenClawChatTicket: async () => ({ ticket: null, proxyPort: 0, token: null, reason: 'unavailable' }),
+  decideManagedMerge: async () => ({ ok: true, value: AGENT_COORDINATION.mergeRequests[0]! }),
 } as unknown as WsEzTerminalTransport;
 
 const PC_UNAVAILABLE: DesktopPresentationSnapshot = {
@@ -372,19 +417,21 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
 
   switch (surface) {
     case 'agents':
+    case 'agents-merge':
     case 'agents-overflow':
     case 'agents-offline': {
       const overflow = surface === 'agents-overflow';
       content = (
         <MobileAgentView
           snapshot={AGENTS}
+          coordinationSnapshot={surface === 'agents-merge' ? AGENT_COORDINATION : undefined}
           disconnected={surface === 'agents-offline'}
           currentTime={NOW}
           onBack={close}
           onFocusSession={close}
           onSendFollowup={async () => ({ ok: true })}
           onDecideApproval={async () => ({ ok: true })}
-          transport={overflow ? STORY_TRANSPORT : undefined}
+          transport={overflow || surface === 'agents-merge' ? STORY_TRANSPORT : undefined}
           onResumeHistory={overflow ? async () => undefined : undefined}
           onLaunchAgent={overflow ? async () => undefined : undefined}
         />
@@ -522,6 +569,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Agents: Story = {};
+export const AgentsManagedMerge: Story = { args: { surface: 'agents-merge' } };
 export const AgentsOverflow: Story = { args: { surface: 'agents-overflow' } };
 export const AgentsOffline: Story = { args: { surface: 'agents-offline' } };
 export const Files: Story = { args: { surface: 'files' } };

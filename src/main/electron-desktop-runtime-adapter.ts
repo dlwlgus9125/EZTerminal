@@ -46,6 +46,7 @@ export type ElectronDesktopRuntimeBridgeSources = Pick<
   | 'quickCommandSource'
   | 'openclawSource'
   | 'agentSource'
+  | 'agentCoordinationSource'
   | 'agentHistorySource'
   | 'gitSource'
   | 'pairingSource'
@@ -60,6 +61,7 @@ export interface ElectronDesktopRuntimeOptions {
   readonly stopAuxiliaryRuntime: () => Promise<void>;
   readonly bridgeSources: ElectronDesktopRuntimeBridgeSources;
   readonly getMainWindow?: () => BrowserWindowType | null;
+  readonly requestQuit?: () => void;
   /** Defaults to enabled on Windows; tests and unsupported hosts may disable it. */
   readonly desktopControlEnabled?: boolean;
   /** Injected so main can read the roster the bridge feeds. */
@@ -103,6 +105,7 @@ class ElectronDesktopStatusPresentation implements DesktopStatusPresentation {
     private readonly tray: Tray,
     private readonly desktopHost: RemoteDesktopController,
     private readonly getMainWindow: () => BrowserWindowType | null,
+    private readonly requestQuit: () => void,
   ) {
     this.tray.on('click', () => this.openMainWindow());
   }
@@ -132,7 +135,7 @@ class ElectronDesktopStatusPresentation implements DesktopStatusPresentation {
         },
       },
       { type: 'separator' },
-      { label: korean ? '종료' : 'Quit', click: () => app.quit() },
+      { label: korean ? '종료…' : 'Quit…', click: () => this.requestQuit() },
     ]));
   }
 
@@ -155,13 +158,14 @@ class ElectronDesktopStatusPresentation implements DesktopStatusPresentation {
 function createDesktopPresentation(
   desktopHost: RemoteDesktopController,
   getMainWindow: () => BrowserWindowType | null,
+  requestQuit: () => void,
 ): DesktopStatusPresentation | undefined {
   if (process.platform !== 'win32') return undefined;
   try {
     const trayIcon = app.isPackaged
       ? path.join(process.resourcesPath, 'icon.ico')
       : path.join(app.getAppPath(), 'assets', 'icon.ico');
-    return new ElectronDesktopStatusPresentation(new Tray(trayIcon), desktopHost, getMainWindow);
+    return new ElectronDesktopStatusPresentation(new Tray(trayIcon), desktopHost, getMainWindow, requestQuit);
   } catch (error) {
     reportDesktopRuntimeError('remote desktop tray unavailable', error);
     return undefined;
@@ -236,7 +240,11 @@ export function createElectronDesktopRuntime(options: ElectronDesktopRuntimeOpti
   });
   const getMainWindow = options.getMainWindow
     ?? (() => BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed()) ?? null);
-  const desktopPresentation = createDesktopPresentation(desktopHost, getMainWindow);
+  const desktopPresentation = createDesktopPresentation(
+    desktopHost,
+    getMainWindow,
+    options.requestQuit ?? (() => app.quit()),
+  );
   const ipc: DesktopRuntimeIpcAdapter = {
     handle: (channel, handler: DesktopRuntimeIpcHandler) => {
       ipcMain.handle(channel, (event: IpcMainInvokeEvent, ...args: unknown[]) => handler(event, ...args));

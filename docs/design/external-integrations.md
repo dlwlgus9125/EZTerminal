@@ -54,10 +54,13 @@ OpenClaw와 Agent CLI는 EZTerminal이 소유하는 내부 service가 아니다.
 - project store는 관찰된 root와 사용자 pin을 구분한다. 실패하거나 취소된 direct-folder
   launch를 성공한 project처럼 저장하지 않는다.
 - `AgentActivityService`가 terminal 실행과 provider hook event를 하나의 상태로 합친다.
-  waiting, approval, working, error와 completed의 의미를 UI별로 재구현하지 않는다.
+  starting, working, blocked, done, seen-idle, error와 unknown의 의미를 UI별로
+  재구현하지 않는다.
 - provider permission hook은 사용자의 명시적 승인/거부까지 bounded하게 대기한다.
   integration이 꺼지거나 요청이 대체·만료되면 hook을 남겨 두지 않는다.
-- follow-up은 waiting 상태의 해당 run에만 전달하고 길이를 제한한다.
+- prompt는 done/idle이고 structured PTY input이 준비된 해당 run에만 전달하고 길이를
+  제한한다. Project 참여와 Agent 간 제어는
+  [`agent-collaboration.md`](agent-collaboration.md)가 소유한다.
 
 ## Agent 이력과 개인정보
 

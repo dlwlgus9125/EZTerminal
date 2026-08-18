@@ -231,6 +231,27 @@ describe('runPtySession', () => {
     }
   });
 
+  it('rejects bracketed-paste terminators in later structured submissions', () => {
+    vi.useFakeTimers();
+    try {
+      const fake = makeFakePty();
+      const session = runPtySession(fake.data, collect().emit, new AbortController().signal, 80, 24);
+      fake.emitData(new TextEncoder().encode('\x1b[?2004h'));
+
+      expect(session.submitText(`review\x1b[201~\runtrusted`)).toBe(false);
+      expect(fake.calls.writes).toEqual([]);
+      expect(session.submitText('safe\nmultiline prompt')).toBe(true);
+      expect(fake.calls.writes).toEqual(['\x1b[200~safe\nmultiline prompt\x1b[201~']);
+      vi.advanceTimersByTime(100);
+      expect(fake.calls.writes).toEqual([
+        '\x1b[200~safe\nmultiline prompt\x1b[201~',
+        '\r',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('dispose kills without emitting a terminal frame', () => {
     const fake = makeFakePty();
     const { frames, emit } = collect();

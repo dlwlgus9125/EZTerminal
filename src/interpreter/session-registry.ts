@@ -47,6 +47,7 @@ export class SessionRegistry {
   private readonly mainOwnedEnvironmentNames = new Set([
     'EZTERMINAL_SESSION_ID',
     'EZTERMINAL_AGENT_HOOK_DESCRIPTOR',
+    'EZTERMINAL_AGENT_CONTROL_DESCRIPTOR',
   ]);
 
   /**
@@ -97,9 +98,11 @@ export class SessionRegistry {
     const record = this.sessions.get(sessionId);
     if (!record || record.state !== 'live') return;
     for (const [name, value] of Object.entries(environment)) {
-      this.mainOwnedEnvironmentNames.add(name);
-      for (const [candidateId, candidate] of this.sessions) {
-        if (candidateId !== sessionId) candidate.shell.maskEnv(name);
+      if (name !== 'PATH') {
+        this.mainOwnedEnvironmentNames.add(name);
+        for (const [candidateId, candidate] of this.sessions) {
+          if (candidateId !== sessionId) candidate.shell.maskEnv(name);
+        }
       }
       record.shell.setEnv(name, value);
     }

@@ -41,6 +41,10 @@ import {
   type AgentStatus,
   type GenericAgentProfile,
 } from '../shared/agent';
+import {
+  EMPTY_AGENT_COORDINATION_SNAPSHOT,
+  type AgentCoordinationSnapshot,
+} from '../shared/agent-coordination';
 import type { FilePreviewResult } from '../shared/file-preview';
 import type { SessionInfo } from '../shared/ipc';
 import type { AuxiliaryCloseRequest } from '../shared/desktop-window';
@@ -1291,6 +1295,9 @@ export function App(): JSX.Element {
   // Agent Activity is a main-owned monotonic snapshot. Renderer state only
   // adds per-window unread bookkeeping and session-to-panel presentation.
   const [agentSnapshot, setAgentSnapshot] = useState<AgentActivitySnapshot>(EMPTY_AGENT_ACTIVITY_SNAPSHOT);
+  const [agentCoordinationSnapshot, setAgentCoordinationSnapshot] = useState<AgentCoordinationSnapshot>(
+    EMPTY_AGENT_COORDINATION_SNAPSHOT,
+  );
   const [unreadAgentIds, setUnreadAgentIds] = useState<ReadonlySet<string>>(() => new Set());
   const latestAgentRevisionRef = useRef(-1);
   const previousAgentStatusesRef = useRef<Map<string, AgentStatus>>(new Map());
@@ -1306,11 +1313,11 @@ export function App(): JSX.Element {
         const updated = new Set(
           [...current].filter((id) => {
             const status = nextStatuses.get(id);
-            return status === 'waiting' || status === 'blocked' || status === 'error';
+            return status === 'done' || status === 'blocked' || status === 'error';
           }),
         );
         for (const item of next.items) {
-          if (item.status !== 'waiting' && item.status !== 'blocked' && item.status !== 'error') continue;
+          if (item.status !== 'done' && item.status !== 'blocked' && item.status !== 'error') continue;
           if (previous.get(item.id) !== item.status) updated.add(item.id);
         }
         return updated;
@@ -1328,6 +1335,22 @@ export function App(): JSX.Element {
     };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    let latestRevision = -1;
+    const applySnapshot = (next: AgentCoordinationSnapshot): void => {
+      if (!alive || next.revision <= latestRevision) return;
+      latestRevision = next.revision;
+      setAgentCoordinationSnapshot(next);
+    };
+    const unsubscribe = window.ezterminal.onAgentCoordinationSnapshot(applySnapshot);
+    void window.ezterminal.getAgentCoordinationSnapshot().then(applySnapshot).catch(() => undefined);
+    return () => {
+      alive = false;
+      unsubscribe?.();
+    };
+  }, []);
+
   const focusAgentSession = useCallback(
     (sessionId: string): void => {
       const api = apiRef.current;
@@ -1337,6 +1360,11 @@ export function App(): JSX.Element {
       const panelId =
         candidates.find((binding) => binding.panelId === activePanelId)?.panelId ?? candidates[0]?.panelId;
       if (panelId) workbenchCoordinator.activatePanel(panelId);
+      for (const activity of agentSnapshot.items) {
+        if (activity.sessionId === sessionId && activity.state === 'done') {
+          void window.ezterminal.markAgentSeen(activity.id, activity.stateSeq);
+        }
+      }
       setUnreadAgentIds(
         (current) =>
           new Set(
@@ -1349,6 +1377,14 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     if (!activePanelId) return;
+    for (const activity of agentSnapshot.items) {
+      if (activity.state !== 'done') continue;
+      const isActive = (sessionPaneBindings.get(activity.sessionId) ?? []).some(
+        (binding) => binding.panelId === activePanelId
+          && apiRef.current?.getPanel(binding.panelId)?.api === binding.instanceToken,
+      );
+      if (isActive) void window.ezterminal.markAgentSeen(activity.id, activity.stateSeq);
+    }
     setUnreadAgentIds(
       (current) =>
         new Set(
@@ -1376,10 +1412,11 @@ export function App(): JSX.Element {
     const rank: Record<AgentStatus, number> = {
       blocked: 0,
       error: 1,
-      waiting: 2,
+      done: 2,
       working: 3,
       starting: 4,
-      done: 5,
+      unknown: 5,
+      idle: 6,
     };
     const result = new Map<string, AgentTabPresentation>();
     for (const activity of agentSnapshot.items) {
@@ -3479,12 +3516,16 @@ export function App(): JSX.Element {
         loader={DESKTOP_FEATURE_LOADERS.agents}
         componentProps={{
           snapshot: agentSnapshot,
+          coordinationSnapshot: agentCoordinationSnapshot,
           onFocusSession: focusAgentSession,
-          onSendFollowup: (activityId, text) => window.ezterminal.sendAgentFollowup(activityId, text),
+          onSendFollowup: (activityId, text) => window.ezterminal.sendAgentPrompt(activityId, text),
           onDecideApproval: (activityId, approvalId, decision) =>
             window.ezterminal.decideAgentApproval(activityId, approvalId, decision),
           onLoadDiff: (directory) => window.ezterminal.getGitDiff(directory),
           onOpenProjectReview: openActivityReview,
+          onLoadManagedMergeDiff: (requestId, revision) => (
+            window.ezterminal.getManagedMergeDiff(requestId, revision)
+          ),
           onReadGitStatus: (directory) => window.ezterminal.getGitStatus(directory),
           onOpenHistorySession: openAgentHistorySession,
           onOpenHistoryReview: (session, project) => void openHistoryReview(session, project),
@@ -3502,6 +3543,15 @@ export function App(): JSX.Element {
             setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
             setSidebarDestination('settings');
           },
+          onJoinCollaboration: (input) => window.ezterminal.joinAgentCollaboration(input),
+          onLeaveCollaboration: (activityId) => window.ezterminal.leaveAgentCollaboration(activityId),
+          onSaveCoordinationProject: (input) => window.ezterminal.saveAgentCoordinationProject(input),
+          onSendPrompt: (activityId, text) => window.ezterminal.sendAgentPrompt(activityId, text),
+          onRequestManagedMerge: (activityId, targetBranch) => (
+            window.ezterminal.requestManagedMerge(activityId, targetBranch)
+          ),
+          onDecideManagedMerge: (input) => window.ezterminal.decideManagedMerge(input),
+          onGrantNextManagedMerge: (input) => window.ezterminal.grantNextManagedMerge(input),
           onClose: () => setSidebarDestination(null),
         }}
         loading={<div className="status-loading" role="status">{t('common.loading')}</div>}

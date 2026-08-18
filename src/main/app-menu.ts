@@ -62,12 +62,15 @@ const labels = {
 //
 // Pure function, no runtime `electron` import — only the TYPE is used above —
 // so this is unit-testable without an Electron runtime.
-export function buildMenuTemplate(locale: ResolvedUiLocale = 'en'): MenuItemConstructorOptions[] {
+export function buildMenuTemplate(
+  locale: ResolvedUiLocale = 'en',
+  onQuit?: () => void,
+): MenuItemConstructorOptions[] {
   const text = labels[locale];
   return [
     {
       label: text.file,
-      submenu: [{ label: text.quit, role: 'quit' }],
+      submenu: [{ label: text.quit, ...(onQuit ? { click: onQuit } : { role: 'quit' as const }) }],
     },
     {
       label: text.edit,

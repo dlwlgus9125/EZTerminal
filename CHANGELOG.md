@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [1.0.38] - 2026-08-18
+
+### Added
+
+- Added Project-scoped Codex/Claude collaboration with participant aliases,
+  roles, tasks, editable briefs, revisioned goal/target/validation settings,
+  and the session-local `ezterminal-agent` control CLI.
+- Added managed merge candidates in detached worktrees, guardian-owned
+  validation, immutable user approval, desktop-only failed-validation override,
+  and exact one-shot auto-merge grants.
+- Added Android Agent coordination status and normal managed-merge Approve/Deny
+  over lockstep remote protocol v8.
+
+### Changed
+
+- Replaced the ambiguous Agent waiting state with explicit starting, working,
+  blocked, done, seen-idle, error, and unknown lifecycle states.
+- Made the Windows close button hide the workbench while sessions continue in
+  the tray; File and tray Quit now share an explicit session-loss confirmation.
+
+### Security
+
+- Scoped loopback Agent capabilities to one live joined Project, bounded all
+  reads/prompts/waits, kept validation output off disk and the remote wire, and
+  revalidated source, target, participant, Project revision, worktree cleanliness,
+  and active runs immediately before merge promotion.
+
+See [1.0.38 release notes](docs/release/release-notes-1.0.38.md).
+
 ## [1.0.37] - 2026-08-14
 
 ### Fixed

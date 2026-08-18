@@ -16,6 +16,7 @@ import {
   tokensMatch,
   type OpenClawChatTicketResult,
   type RemoteBridgeOptions,
+  type RemoteAgentCoordinationSource,
   type RemoteAgentSource,
   type RemoteAgentHistorySource,
   type RemoteFileSource,
@@ -52,6 +53,7 @@ import {
 } from '../shared/remote-protocol';
 import type { OpenClawAgentSession, OpenClawLifecycleResult, OpenClawLogLine, OpenClawStatus } from '../shared/openclaw';
 import type { AgentActivitySnapshot, AgentDecisionResult, AgentFollowupResult } from '../shared/agent';
+import type { AgentCoordinationSnapshot, ManagedMergeRequest } from '../shared/agent-coordination';
 import { EMPTY_GIT_DIRECTORY_STATUS } from '../shared/git-status';
 import type { WorktreeRequest } from '../shared/worktree';
 import type { SessionSurfaceBinding } from '../shared/session-surface';
@@ -251,7 +253,7 @@ class FakePacketSource implements RemotePacketSource {
 
 class FakeAgentSource implements RemoteAgentSource {
   snapshot: AgentActivitySnapshot = { revision: 1, items: [] };
-  readonly sendFollowup = vi.fn((): AgentFollowupResult => ({ ok: true }));
+  readonly sendFollowup = vi.fn(async (): Promise<AgentFollowupResult> => ({ ok: true }));
   readonly decideApproval = vi.fn((): AgentDecisionResult => ({ ok: true }));
   private readonly listeners = new Set<(snapshot: AgentActivitySnapshot) => void>();
 
@@ -1161,6 +1163,44 @@ async function openRemoteOwner(
     throw new Error('expected surface binding');
   }
   return reply.result.binding;
+}
+
+class FakeAgentCoordinationSource implements RemoteAgentCoordinationSource {
+  snapshot: AgentCoordinationSnapshot;
+  readonly markSeen = vi.fn(() => true);
+  readonly decideManagedMerge = vi.fn(async () => ({
+    ok: true as const,
+    value: this.snapshot.mergeRequests[0]!,
+  }));
+  private readonly listeners = new Set<(snapshot: AgentCoordinationSnapshot) => void>();
+
+  constructor(request: ManagedMergeRequest) {
+    this.snapshot = {
+      revision: 1,
+      activityRevision: 1,
+      activities: [],
+      projects: [],
+      mergeRequests: [request],
+    };
+  }
+
+  getSnapshot(): AgentCoordinationSnapshot {
+    return this.snapshot;
+  }
+
+  onSnapshot(listener: (snapshot: AgentCoordinationSnapshot) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  emit(snapshot: AgentCoordinationSnapshot): void {
+    this.snapshot = snapshot;
+    for (const listener of this.listeners) listener(snapshot);
+  }
+
+  get listenerCount(): number {
+    return this.listeners.size;
+  }
 }
 
 describe('RemoteBridge — v7 session surface lifecycle', () => {
@@ -3378,7 +3418,12 @@ describe('RemoteBridge — Agent Activity parity', () => {
       sessionId: 'session-1',
       provider: 'codex' as const,
       cwd: '/repo',
-      status: 'waiting' as const,
+      state: 'done' as const,
+      status: 'done' as const,
+      stateSeq: 1,
+      live: true,
+      interactiveReady: true,
+      stateSource: 'provider-hook' as const,
       createdAt: 1,
       updatedAt: 2,
     };
@@ -3392,6 +3437,7 @@ describe('RemoteBridge — Agent Activity parity', () => {
       snapshot: { revision: 2, items: [activity] },
     });
     ws.clientSend({ kind: 'agent-followup', requestId: 'follow-1', activityId: 'activity-1', text: 'continue' });
+    await flush();
     expect(agentSource.sendFollowup).toHaveBeenCalledWith('activity-1', 'continue');
     expect(ws.sent).toContainEqual({ kind: 'agent-followup-reply', requestId: 'follow-1', result: { ok: true } });
 
@@ -3411,6 +3457,85 @@ describe('RemoteBridge — Agent Activity parity', () => {
 
     ws.close();
     expect(agentSource.listenerCount).toBe(0);
+  });
+});
+
+describe('RemoteBridge — Agent coordination v8', () => {
+  it('pushes bounded coordination state, marks seen, and keeps validation output off the wire', async () => {
+    const mergeRequest: ManagedMergeRequest = {
+      requestId: 'merge-1',
+      revision: 4,
+      projectId: 'project-1',
+      participantId: 'participant-1',
+      activityId: 'activity-1',
+      sourceWorkspaceId: 'workspace-1',
+      sourceBranch: 'agent/feature',
+      sourceHead: '1'.repeat(40),
+      targetBranch: 'main',
+      targetHead: '2'.repeat(40),
+      candidateHead: '3'.repeat(40),
+      state: 'approval-required',
+      validationConfigRevision: 2,
+      validations: [{
+        id: 'unit',
+        name: 'Unit tests',
+        status: 'passed',
+        exitCode: 0,
+        outputTail: 'SECRET VALIDATION OUTPUT',
+      }],
+      createdAt: 10,
+      updatedAt: 20,
+      expiresAt: 30,
+    };
+    const source = new FakeAgentCoordinationSource(mergeRequest);
+    const ws = new FakeWs();
+    const { options } = makeOptions({ agentCoordinationSource: source });
+    await authed(ws, options);
+
+    const initial = ws.sent.find((message) => message.kind === 'agent-coordination-snapshot');
+    expect(initial).toBeDefined();
+    expect(JSON.stringify(initial)).not.toContain('SECRET VALIDATION OUTPUT');
+    expect(source.listenerCount).toBe(1);
+
+    ws.clientSend({ kind: 'agent-coordination-snapshot-get', requestId: 'coord-1' });
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'agent-coordination-snapshot',
+      requestId: 'coord-1',
+    }));
+    ws.clientSend({ kind: 'agent-seen', requestId: 'seen-1', activityId: 'activity-1', stateSeq: 4 });
+    expect(source.markSeen).toHaveBeenCalledWith('activity-1', 4);
+    expect(ws.sent).toContainEqual({ kind: 'agent-seen-reply', requestId: 'seen-1', marked: true });
+
+    ws.clientSend({
+      kind: 'managed-merge-decision',
+      requestId: 'decision-1',
+      mergeRequestId: 'merge-1',
+      revision: 4,
+      decision: 'approve',
+    });
+    await flush();
+    expect(source.decideManagedMerge).toHaveBeenCalledWith({
+      requestId: 'merge-1',
+      revision: 4,
+      decision: 'approve',
+      actor: 'mobile',
+    });
+    const reply = ws.sent.find((message) => (
+      message.kind === 'managed-merge-decision-reply' && message.requestId === 'decision-1'
+    ));
+    expect(reply).toMatchObject({ kind: 'managed-merge-decision-reply', result: { ok: true } });
+    expect(JSON.stringify(reply)).not.toContain('SECRET VALIDATION OUTPUT');
+
+    ws.clientSend({
+      kind: 'managed-merge-decision',
+      requestId: 'invalid-decision',
+      mergeRequestId: 'merge-1',
+      revision: 0,
+      decision: 'approve',
+    });
+    expect(source.decideManagedMerge).toHaveBeenCalledTimes(1);
+    ws.close();
+    expect(source.listenerCount).toBe(0);
   });
 });
 

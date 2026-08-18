@@ -30,7 +30,9 @@ Android 앱은 별도 셸을 실행하지 않는다. 인증된 WebSocket transpo
 ## 프로토콜과 capability
 
 현재 wire version은 [`remote-protocol.ts`](../../src/shared/remote-protocol.ts)의
-version 7이며 지원 목록도 version 7 하나다. 버전은
+version 8이며 지원 목록도 version 8 하나다. v8은 Agent coordination snapshot,
+mark-seen과 정상 managed-merge decision을 추가한다. validation output은 이 wire에
+포함하지 않는다. 버전은
 [`release/version.json`](../../release/version.json)과 함께 갱신한다.
 
 - 모든 message는 공유 discriminated union과 bounded validator를 통과한다.

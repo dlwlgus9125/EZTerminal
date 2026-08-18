@@ -1,19 +1,20 @@
 import { randomUUID } from 'node:crypto';
 
-import type {
-  AgentActivity,
-  AgentActivitySnapshot,
-  AgentApproval,
-  AgentDecision,
-  AgentDecisionResult,
-  AgentFollowupResult,
-  AgentHookEvent,
-  AgentProvider,
-  AgentSettings,
-  AgentStatus,
+import {
+  MAX_AGENT_PROVIDER_LABEL_LENGTH,
+  type AgentActivity,
+  type AgentActivitySnapshot,
+  type AgentApproval,
+  type AgentDecision,
+  type AgentDecisionResult,
+  type AgentFollowupResult,
+  type AgentHookEvent,
+  type AgentProvider,
+  type AgentSettings,
+  type AgentState,
+  type AgentStateSource,
 } from '../shared/agent';
-import { MAX_AGENT_PROVIDER_LABEL_LENGTH } from '../shared/agent';
-import type { InterpreterFrame, RunStartedInfo, SessionInfo } from '../shared/ipc';
+import type { InterpreterFrame, PtyTextReadResult, RunStartedInfo, SessionInfo } from '../shared/ipc';
 import type { RemotePort } from './interpreter-broker';
 import {
   classifyDirectAgentCommand,
@@ -21,6 +22,7 @@ import {
   executableBasename,
 } from '../shared/agent-command';
 import { classifyApprovalRisk } from '../shared/agent-risk';
+import { isSafeAgentPromptText } from '../shared/agent-coordination';
 import { APPROVAL_GATE_WINDOW_MS, canGateProvider } from './agent-hook-relay';
 
 const COMPLETED_ACTIVITY_CAP = 100;
@@ -36,6 +38,21 @@ export interface AgentActivityBroker {
   listSessions(): readonly SessionInfo[];
   onRunStarted(listener: (info: RunStartedInfo) => void): () => void;
   onInterpreterExited(listener: (code?: number) => void): () => void;
+  readPtyText?(
+    sessionId: string,
+    runId: string,
+    lines?: number,
+    maxBytes?: number,
+  ): Promise<PtyTextReadResult>;
+  submitPtyText?(
+    sessionId: string,
+    runId: string,
+    text: string,
+    whenReady?: boolean,
+  ): Promise<
+    | { readonly ok: true; readonly queued: boolean }
+    | { readonly ok: false; readonly reason: string }
+  >;
 }
 
 interface MutableActivity {
@@ -45,7 +62,11 @@ interface MutableActivity {
   readonly provider: AgentProvider;
   readonly providerLabel: string;
   cwd: string;
-  status: AgentStatus;
+  state: AgentState;
+  stateSeq: number;
+  live: boolean;
+  interactiveReady: boolean;
+  stateSource: AgentStateSource;
   readonly createdAt: number;
   updatedAt: number;
   port: RemotePort | null;
@@ -70,7 +91,7 @@ interface DecisionReceipt {
 
 export interface AgentActivityTransition {
   readonly activity: AgentActivity;
-  readonly previous: AgentStatus;
+  readonly previous: AgentState;
 }
 
 function publicActivity(record: MutableActivity): AgentActivity {
@@ -80,7 +101,12 @@ function publicActivity(record: MutableActivity): AgentActivity {
     provider: record.provider,
     providerLabel: record.providerLabel,
     cwd: record.cwd,
-    status: record.status,
+    state: record.state,
+    status: record.state,
+    stateSeq: record.stateSeq,
+    live: record.live,
+    interactiveReady: record.interactiveReady,
+    stateSource: record.stateSource,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     ...(record.approval ? { approval: record.approval } : {}),
@@ -120,12 +146,13 @@ function classifyAgentCommandIdentity(
   return null;
 }
 
-function priority(status: AgentStatus): number {
-  if (status === 'blocked') return 0;
-  if (status === 'error') return 1;
-  if (status === 'waiting') return 2;
-  if (status === 'working') return 3;
-  if (status === 'starting') return 4;
+function priority(state: AgentState): number {
+  if (state === 'blocked') return 0;
+  if (state === 'error') return 1;
+  if (state === 'done') return 2;
+  if (state === 'working') return 3;
+  if (state === 'starting') return 4;
+  if (state === 'unknown') return 5;
   return 5;
 }
 
@@ -185,7 +212,7 @@ export class AgentActivityService {
   getSnapshot(): AgentActivitySnapshot {
     const items = [...this.records.values()]
       .map(publicActivity)
-      .sort((a, b) => priority(a.status) - priority(b.status) || b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
+      .sort((a, b) => priority(a.state) - priority(b.state) || b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
     return { revision: this.revision, items };
   }
 
@@ -341,7 +368,7 @@ export class AgentActivityService {
     pending.settle(decision);
     if (decision) {
       record.approval = null;
-      this.setStatus(record, 'working');
+      this.setState(record, 'working', 'provider-hook');
       return;
     }
     if (!retainExpired) {
@@ -364,8 +391,10 @@ export class AgentActivityService {
     const record = this.records.get(activityId);
     if (!record) return { ok: false, error: 'not-found' };
     if (record.ended) return { ok: false, error: 'session-ended' };
-    if (record.status !== 'waiting') return { ok: false, error: 'not-waiting' };
-    if (typeof text !== 'string' || /[\r\n]/u.test(text)) return { ok: false, error: 'invalid-text' };
+    if (record.state !== 'done' && record.state !== 'idle') return { ok: false, error: 'not-ready' };
+    if (!isSafeAgentPromptText(text) || text.includes('\r') || text.includes('\n')) {
+      return { ok: false, error: 'invalid-text' };
+    }
     const trimmed = text.trim();
     if (trimmed.length < 1 || trimmed.length > MAX_FOLLOWUP_CHARS) return { ok: false, error: 'invalid-text' };
     if (!record.port) return { ok: false, error: 'delivery-failed' };
@@ -374,8 +403,59 @@ export class AgentActivityService {
     } catch {
       return { ok: false, error: 'delivery-failed' };
     }
-    this.setStatus(record, 'working');
+    this.setState(record, 'working', 'terminal');
     return { ok: true };
+  }
+
+  /** Bounded semantic terminal read. This deliberately does not mark completion seen. */
+  readActivity(activityId: string, lines = 80): Promise<PtyTextReadResult> {
+    const record = this.records.get(activityId);
+    if (!record || record.ended || !this.broker.readPtyText) {
+      return Promise.resolve({ ok: false, reason: record ? 'unavailable' : 'run-not-found' });
+    }
+    return this.broker.readPtyText(record.sessionId, record.runId, lines, 64 * 1024);
+  }
+
+  /** Provider-neutral structured submission used by desktop, mobile, and the CLI. */
+  async sendPrompt(
+    activityId: string,
+    text: string,
+    options: { readonly whenReady?: boolean } = {},
+  ): Promise<AgentFollowupResult> {
+    const record = this.records.get(activityId);
+    if (!record) return { ok: false, error: 'not-found' };
+    if (record.ended || !record.live) return { ok: false, error: 'session-ended' };
+    if (!isSafeAgentPromptText(text)) {
+      return { ok: false, error: 'invalid-text' };
+    }
+    const readyState = record.state === 'done' || record.state === 'idle';
+    if (!readyState || !record.interactiveReady) {
+      return { ok: false, error: 'not-ready' };
+    }
+    if (!this.broker.submitPtyText) return { ok: false, error: 'delivery-failed' };
+    const result = await this.broker.submitPtyText(
+      record.sessionId,
+      record.runId,
+      text,
+      options.whenReady === true,
+    );
+    if (!result.ok) {
+      return {
+        ok: false,
+        error: result.reason === 'not-ready' ? 'not-ready' : 'delivery-failed',
+      };
+    }
+    this.setState(record, 'working', 'terminal');
+    return { ok: true };
+  }
+
+  /** Exact sequence acknowledgement: stale focus events cannot hide new work. */
+  markSeen(activityId: string, stateSeq: number): boolean {
+    const record = this.records.get(activityId);
+    if (!record || record.stateSeq !== stateSeq) return false;
+    if (record.state !== 'done') return true;
+    this.setState(record, 'idle', record.stateSource);
+    return true;
   }
 
   dispose(): void {
@@ -438,7 +518,11 @@ export class AgentActivityService {
       provider: identity.provider,
       providerLabel: identity.providerLabel,
       cwd,
-      status: 'working',
+      state: 'starting',
+      stateSeq: 1,
+      live: true,
+      interactiveReady: false,
+      stateSource: 'process',
       createdAt: now,
       updatedAt: now,
       port: null,
@@ -494,6 +578,17 @@ export class AgentActivityService {
       this.finish(record, 'error', true);
     } else if (frame.type === 'cancelled') {
       this.finish(record, 'done', true);
+    } else if (frame.type === 'pty-interactive-ready') {
+      if (!record.interactiveReady) {
+        record.interactiveReady = true;
+        record.updatedAt = this.now();
+        if (!record.hookSeen && record.state === 'starting') {
+          this.setState(record, 'working', 'terminal');
+        } else {
+          this.publish();
+          this.publishObservation(record);
+        }
+      }
     }
   }
 
@@ -512,25 +607,25 @@ export class AgentActivityService {
 
     switch (event.event) {
       case 'SessionStart':
-        if (firstHook) this.setStatus(record, 'starting');
+        if (firstHook && record.state === 'starting') this.setState(record, 'starting', 'provider-hook');
         break;
       case 'UserPromptSubmit':
-        this.setStatus(record, 'working');
+        this.setState(record, 'working', 'provider-hook');
         break;
       case 'PermissionRequest':
-        this.setStatus(record, 'blocked');
+        this.setState(record, 'blocked', 'provider-hook');
         break;
       case 'Notification':
-        if (event.notificationType === 'permission_prompt') this.setStatus(record, 'blocked');
-        else if (event.notificationType === 'idle_prompt') this.setStatus(record, 'waiting');
+        if (event.notificationType === 'permission_prompt') this.setState(record, 'blocked', 'provider-hook');
+        else if (event.notificationType === 'idle_prompt') this.setState(record, 'done', 'provider-hook');
         // agent_needs_input/agent_completed refer to Claude background
         // sessions. They cannot safely drive the foreground terminal state.
         break;
       case 'Stop':
-        this.setStatus(record, 'waiting');
+        this.setState(record, 'done', 'provider-hook');
         break;
       case 'StopFailure':
-        this.setStatus(record, 'error');
+        this.setState(record, 'error', 'provider-hook');
         break;
       case 'SessionEnd':
         this.finish(record, 'done', true);
@@ -540,10 +635,12 @@ export class AgentActivityService {
     }
   }
 
-  private setStatus(record: MutableActivity, status: AgentStatus): void {
-    if (record.status === status) return;
-    const previous = record.status;
-    record.status = status;
+  private setState(record: MutableActivity, state: AgentState, source: AgentStateSource): void {
+    if (record.state === state && record.stateSource === source) return;
+    const previous = record.state;
+    record.state = state;
+    record.stateSource = source;
+    record.stateSeq += 1;
     record.updatedAt = this.now();
     this.publish();
     this.publishTransition({ activity: publicActivity(record), previous });
@@ -586,7 +683,9 @@ export class AgentActivityService {
     } else if (!closePort) {
       record.port = null;
     }
-    this.setStatus(record, status);
+    record.live = false;
+    record.interactiveReady = false;
+    this.setState(record, status, 'process');
     this.completedIds.push(record.id);
     while (this.completedIds.length > COMPLETED_ACTIVITY_CAP) {
       const oldest = this.completedIds.shift();

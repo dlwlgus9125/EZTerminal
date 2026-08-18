@@ -195,6 +195,10 @@ OpenClaw token은 main과 전용 view/proxy 경계 밖으로 직접 노출하지
 외부 프로세스 수명, 비밀값, 프록시와 기록 제한은
 [`external-integrations.md`](design/external-integrations.md)에 있다.
 
+Codex/Claude의 Project 참여, 주소 가능한 session control과 검증된 변경의 승인·자동
+머지는 [`agent-collaboration.md`](design/agent-collaboration.md)가 소유한다. 참여하지 않은
+일반 terminal과 generic Agent는 이 협업 capability를 받지 않는다.
+
 ## 9. 장애와 종료
 
 - interpreter 종료는 broker의 모든 pending 요청을 정리하고 renderer에 복구 가능한

@@ -60,6 +60,12 @@ import { AgentHookRelay, isAgentIntegrationProvider } from './agent-hook-relay';
 import { AgentHookInstaller } from './agent-hook-installer';
 import { AgentSettingsStore } from './agent-settings-store';
 import { AgentProjectStore } from './agent-project-store';
+import { AgentCoordinationStore } from './agent-coordination-store';
+import { AgentCoordinationService } from './agent-coordination-service';
+import { AgentValidationRunner } from './agent-validation-runner';
+import { ManagedMergeService } from './managed-merge-service';
+import { AgentControlServer } from './agent-control-server';
+import { AgentCliShim } from './agent-cli-shim';
 import { AgentHistoryService } from './agent-history-service';
 import { CodexAppServerClient } from './codex-app-server-client';
 import { CodexHistoryAdapter } from './codex-history-adapter';
@@ -97,6 +103,13 @@ import {
 import {
   MAX_GUARDED_DESTROY_RUN_IDS,
 } from '../shared/ipc';
+import {
+  EMPTY_AGENT_COORDINATION_SNAPSHOT,
+  type AgentParticipantInput,
+  type AgentProjectCoordinationInput,
+  type ManagedMergeDecisionInput,
+  type ManagedMergeGrantInput,
+} from '../shared/agent-coordination';
 import type {
   InterpreterToMain,
   MainToInterpreter,
@@ -109,7 +122,7 @@ import {
   type OpenClawLifecycleAction,
   type OpenClawVisibility,
 } from '../shared/openclaw';
-import type { AgentDecisionResult, AgentFollowupResult } from '../shared/agent';
+import type { AgentDecisionResult } from '../shared/agent';
 import { normalizeExternalHttpUrl } from '../shared/external-url';
 import type {
   AgentLaunchStartRequest,
@@ -372,6 +385,36 @@ let openClawChatView: OpenClawChatViewManager | null = null;
 // attach() needs a handle to the window it should embed into.
 let mainWindowRef: BrowserWindow | null = null;
 let desktopWindowManager: DesktopWindowManager | null = null;
+let quitConfirmationOpen = false;
+
+function requestExplicitQuit(): void {
+  if (appIsQuitting || quitConfirmationOpen) return;
+  quitConfirmationOpen = true;
+  const korean = app.getLocale().toLowerCase().startsWith('ko');
+  const options = {
+    type: 'warning' as const,
+    title: 'EZTerminal',
+    message: korean ? 'EZTerminal을 종료할까요?' : 'Quit EZTerminal?',
+    detail: korean
+      ? '실행 중인 터미널과 에이전트 세션이 모두 종료됩니다. 창만 닫으려면 취소한 뒤 닫기 버튼을 사용하세요.'
+      : 'All running terminal and agent sessions will stop. To close only the window, cancel and use the window close button.',
+    buttons: korean ? ['취소', '종료'] : ['Cancel', 'Quit'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+  const owner = mainWindowRef && !mainWindowRef.isDestroyed() && mainWindowRef.isVisible()
+    ? mainWindowRef
+    : null;
+  const prompt = owner ? dialog.showMessageBox(owner, options) : dialog.showMessageBox(options);
+  void prompt.then(({ response }) => {
+    quitConfirmationOpen = false;
+    if (response === 1 && !appIsQuitting) app.quit();
+  }).catch((error) => {
+    quitConfirmationOpen = false;
+    mainLog?.line(`quit confirmation failed: ${String(error)}`);
+  });
+}
 
 // OpenClaw desktop visibility (openclaw-stabilization M5): in 'auto' mode,
 // `resolveOpenClawVisibility` only ever reruns on boot or an explicit
@@ -385,7 +428,7 @@ const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 /** Rebuild the terminal-safe native menu when the UI language changes. */
 function applyNativeMenuLocale(preference: UiLocalePreference): void {
   const locale = resolveUiLocale(preference, app.getPreferredSystemLanguages());
-  Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate(locale)));
+  Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate(locale, requestExplicitQuit)));
 }
 
 // Defense-in-depth CSP for the raw-HTML injection sink in TextBlock (the ANSI →
@@ -712,6 +755,10 @@ app.on('ready', async () => {
   // sessions below; it never crosses preload or the mobile bridge.
   const agentSettingsStore = new AgentSettingsStore(path.join(app.getPath('userData')));
   const agentProjectStore = new AgentProjectStore(path.join(app.getPath('userData')));
+  const agentCoordinationStore = new AgentCoordinationStore(app.getPath('userData'));
+  const agentCoordinationReady = agentCoordinationStore.init().catch((err) => {
+    console.error('[main] agent coordination store init failed:', err);
+  });
   const codexHistoryAdapter = new CodexHistoryAdapter(new CodexAppServerClient());
   // Home resolution is left to the adapter so it matches how Claude Code itself
   // locates `~/.claude`.
@@ -729,6 +776,13 @@ app.on('ready', async () => {
   // In-memory, single-use, expiring. Never persisted — see the service header.
   const pairingCodeService = new PairingCodeService();
   let agentActivityService: AgentActivityService | null = null;
+  let agentCoordinationService: AgentCoordinationService | null = null;
+  let managedMergeService: ManagedMergeService | null = null;
+  let agentControlServer: AgentControlServer | null = null;
+  const agentCliShim = new AgentCliShim(app.getPath('userData'), resolveNativeHostPath());
+  const agentCliReady = agentCliShim.init().catch((err) => {
+    console.error('[main] Agent CLI shim init failed:', err);
+  });
   let agentRelayReady = false;
   const agentHookRelay = new AgentHookRelay(
     app.getPath('userData'),
@@ -1097,6 +1151,75 @@ app.on('ready', async () => {
     },
   );
   ipcMain.handle('agents:get-snapshot', () => agentActivityService?.getSnapshot() ?? { revision: 0, items: [] });
+  ipcMain.handle('agents:get-coordination-snapshot', () => (
+    agentCoordinationService?.getSnapshot() ?? EMPTY_AGENT_COORDINATION_SNAPSHOT
+  ));
+  ipcMain.handle('agents:join-collaboration', async (_event, input: unknown) => {
+    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentCoordinationService) {
+      return { ok: false, error: 'invalid', message: 'Invalid collaboration request.' } as const;
+    }
+    const result = await agentCoordinationService.join(input as AgentParticipantInput);
+    if (result.ok && agentControlServer && broker) {
+      const descriptor = agentControlServer.descriptorForSession(result.value.participant.sessionId);
+      broker.setPrivateSessionEnvironment(result.value.participant.sessionId, {
+        EZTERMINAL_AGENT_CONTROL_DESCRIPTOR: descriptor,
+        PATH: agentCliShim.prependToPath(process.env.PATH),
+      });
+    }
+    return result;
+  });
+  ipcMain.handle('agents:leave-collaboration', (_event, activityId: unknown) => {
+    if (typeof activityId !== 'string' || !agentCoordinationService) return false;
+    return agentCoordinationService.leave(activityId);
+  });
+  ipcMain.handle('agents:save-coordination-project', async (_event, input: unknown) => {
+    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentCoordinationService) {
+      return { ok: false, error: 'invalid', message: 'Invalid Project coordination settings.' } as const;
+    }
+    return agentCoordinationService.saveProject(input as AgentProjectCoordinationInput);
+  });
+  ipcMain.handle('agents:mark-seen', (_event, activityId: unknown, stateSeq: unknown) => (
+    typeof activityId === 'string'
+    && typeof stateSeq === 'number'
+    && Number.isSafeInteger(stateSeq)
+    && agentCoordinationService?.markSeen(activityId, stateSeq) === true
+  ));
+  ipcMain.handle('agents:prompt', (_event, activityId: unknown, text: unknown) => {
+    if (typeof activityId !== 'string' || typeof text !== 'string' || !agentActivityService) {
+      return { ok: false, error: 'invalid-text' } as const;
+    }
+    return agentActivityService.sendPrompt(activityId, text);
+  });
+  ipcMain.handle('agents:request-managed-merge', (_event, activityId: unknown, targetBranch: unknown) => {
+    if (typeof activityId !== 'string' || typeof targetBranch !== 'string' || !managedMergeService) {
+      return { ok: false, error: 'invalid', message: 'Invalid managed merge request.' } as const;
+    }
+    return managedMergeService.requestForActivity(activityId, targetBranch);
+  });
+  ipcMain.handle('agents:decide-managed-merge', (_event, input: unknown) => {
+    if (typeof input !== 'object' || input === null || Array.isArray(input) || !managedMergeService) {
+      return { ok: false, error: 'invalid', message: 'Invalid managed merge decision.' } as const;
+    }
+    return managedMergeService.decide({
+      ...(input as ManagedMergeDecisionInput),
+      actor: 'desktop',
+    });
+  });
+  ipcMain.handle('agents:grant-next-managed-merge', (_event, input: unknown) => {
+    if (typeof input !== 'object' || input === null || Array.isArray(input) || !managedMergeService) {
+      return { ok: false, error: 'invalid', message: 'Invalid one-shot merge grant.' } as const;
+    }
+    return managedMergeService.grantNext(input as ManagedMergeGrantInput);
+  });
+  ipcMain.handle('agents:get-managed-merge-diff', (_event, requestId: unknown, revision: unknown) => {
+    if (
+      typeof requestId !== 'string'
+      || typeof revision !== 'number'
+      || !Number.isSafeInteger(revision)
+      || !managedMergeService
+    ) return { ok: false, error: 'git-failed' } as const;
+    return managedMergeService.readCandidateDiff(requestId, revision);
+  });
   ipcMain.handle('agent-history:list-projects', async (
     _event,
     force?: unknown,
@@ -1390,9 +1513,9 @@ app.on('ready', async () => {
     await projectWorkspaceReady;
     return projectWorkspaceService.revokeWorkspace(request);
   });
-  ipcMain.handle('agents:followup', (_event, activityId: string, text: string): AgentFollowupResult => {
+  ipcMain.handle('agents:followup', (_event, activityId: string, text: string) => {
     if (typeof activityId !== 'string' || typeof text !== 'string') return { ok: false, error: 'invalid-text' };
-    return agentActivityService?.sendFollowup(activityId, text) ?? { ok: false, error: 'delivery-failed' };
+    return agentActivityService?.sendPrompt(activityId, text) ?? { ok: false, error: 'delivery-failed' };
   });
   ipcMain.handle('pairing:issue', () => {
     if (!desktopRuntime?.isRunning()) {
@@ -1574,8 +1697,12 @@ app.on('ready', async () => {
       { name: 'OpenClaw endpoint subscription', run: () => unsubscribeOpenClawEndpoint() },
       { name: 'OpenClaw service', run: () => openClawService?.dispose() },
       { name: 'OpenClaw chat view', run: () => openClawChatView?.destroy() },
+      { name: 'agent control server', run: () => agentControlServer?.stop() },
+      { name: 'managed merge', run: () => managedMergeService?.dispose() },
+      { name: 'agent coordination', run: () => agentCoordinationService?.dispose() },
       { name: 'agent activity', run: () => agentActivityService?.dispose() },
       { name: 'agent history', run: () => agentHistoryService.dispose() },
+      { name: 'agent coordination store', run: () => agentCoordinationStore.flush() },
       { name: 'agent settings', run: () => agentSettingsStore.flush() },
       { name: 'project workspace access', run: () => projectWorkspaceAccessStore.flush() },
       { name: 'quick commands', run: () => quickCommandStore.flush() },
@@ -1812,11 +1939,20 @@ app.on('ready', async () => {
       }
     },
     sessionEnvironment: (sessionId) => {
-      if (!agentRelayReady) return {} as Readonly<Record<string, string>>;
-      return {
+      const environment: Record<string, string> = {
         EZTERMINAL_SESSION_ID: sessionId,
-        EZTERMINAL_AGENT_HOOK_DESCRIPTOR: agentHookRelay.environmentDescriptor,
       };
+      if (agentRelayReady) {
+        environment.EZTERMINAL_AGENT_HOOK_DESCRIPTOR = agentHookRelay.environmentDescriptor;
+      }
+      if (agentControlServer) {
+        const descriptor = agentControlServer.descriptorForSession(sessionId);
+        if (descriptor) {
+          environment.EZTERMINAL_AGENT_CONTROL_DESCRIPTOR = descriptor;
+          environment.PATH = agentCliShim.prependToPath(process.env.PATH);
+        }
+      }
+      return environment;
     },
   });
   sessionSurfaceAuthority = new SessionSurfaceAuthority(broker, {
@@ -1853,6 +1989,84 @@ app.on('ready', async () => {
     broker,
     getSettings: () => agentSettingsStore.current,
   });
+  await Promise.all([agentCoordinationReady, agentCliReady, projectWorkspaceReady]);
+  agentCoordinationService = new AgentCoordinationService({
+    activities: agentActivityService,
+    store: agentCoordinationStore,
+    listProjects: () => agentProjectStore.list(),
+    resolveWorkspace: async (activity) => {
+      const resolved = await projectWorkspaceService.resolveAbsoluteProjectPath({
+        absolutePath: activity.cwd,
+      });
+      if (!resolved.ok) return null;
+      const described = await projectWorkspaceService.describeProjectWorkspaces(
+        resolved.request.projectId,
+      );
+      if (!described.ok) return null;
+      const workspace = described.project.workspaces?.find(
+        (candidate) => candidate.workspaceId === resolved.request.workspaceId,
+      );
+      if (!workspace) return null;
+      return {
+        projectId: resolved.request.projectId,
+        workspaceId: workspace.workspaceId,
+        ...(workspace.kind === 'managed' ? { worktreeId: workspace.workspaceId } : {}),
+      };
+    },
+  });
+  const validationRunner = new AgentValidationRunner(broker);
+  managedMergeService = new ManagedMergeService({
+    userDataDir: app.getPath('userData'),
+    coordination: agentCoordinationService,
+    coordinationStore: agentCoordinationStore,
+    worktrees: worktreeService,
+    validationRunner,
+    runGuard: sessionWorktreeRunGuard,
+    projectRoot: (projectId) => (
+      agentProjectStore.list().find((project) => project.projectId === projectId)?.primaryRoot ?? null
+    ),
+    hasActiveRunInPath: async (targetPath) => {
+      const [runs, sessions] = await Promise.all([broker!.listRuns(), Promise.resolve(broker!.listSessions())]);
+      const activeSessions = new Set(runs.map((run) => run.sessionId));
+      const targetKey = process.platform === 'win32'
+        ? path.resolve(targetPath).toLocaleLowerCase('en-US')
+        : path.resolve(targetPath);
+      return sessions.some((session) => {
+        if (!activeSessions.has(session.sessionId)) return false;
+        const cwdKey = process.platform === 'win32'
+          ? path.resolve(session.cwd).toLocaleLowerCase('en-US')
+          : path.resolve(session.cwd);
+        const relative = path.relative(targetKey, cwdKey);
+        return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+      });
+    },
+  });
+  try {
+    await managedMergeService.init();
+    agentCoordinationService.bindMergeSource(managedMergeService);
+    agentControlServer = new AgentControlServer({
+      coordination: agentCoordinationService,
+      merges: managedMergeService,
+    });
+    await agentControlServer.start();
+    for (const session of broker.listSessions()) {
+      broker.setPrivateSessionEnvironment(session.sessionId, {
+        EZTERMINAL_AGENT_CONTROL_DESCRIPTOR: agentControlServer.descriptorForSession(session.sessionId),
+        PATH: agentCliShim.prependToPath(process.env.PATH),
+      });
+    }
+  } catch (err) {
+    console.error('[main] Agent collaboration infrastructure init failed:', err);
+    await agentControlServer?.stop().catch(() => undefined);
+    agentControlServer = null;
+  }
+  broker.onSessionRemoved((sessionId) => agentControlServer?.revokeSession(sessionId));
+  agentCoordinationService.onSnapshot((snapshot) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('agents:coordination-snapshot', snapshot);
+    }
+  });
   agentActivityService.onObserved((activity) => {
     // Every provider EZTerminal has local history for — generic profiles have no
     // adapter and so no sessions to come back to.
@@ -1884,12 +2098,13 @@ app.on('ready', async () => {
   const liveAgentNotifications = new Set<Notification>();
   agentActivityService.onTransition((transition: AgentActivityTransition) => {
     const { activity } = transition;
-    if (activity.status !== 'waiting' && activity.status !== 'blocked' && activity.status !== 'error') return;
-    if (!agentSettingsStore.current.notifications[activity.status]) return;
+    if (activity.state !== 'done' && activity.state !== 'blocked' && activity.state !== 'error') return;
+    const notificationSetting = activity.state === 'done' ? 'waiting' : activity.state;
+    if (!agentSettingsStore.current.notifications[notificationSetting]) return;
     const windows = BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed());
     if (windows.some((win) => win.isFocused()) || !Notification.isSupported()) return;
     const notification = new Notification({
-      title: `${activity.provider} agent ${activity.status}`,
+      title: `${activity.provider} agent ${activity.state === 'done' ? 'ready' : activity.state}`,
       body: activity.cwd || 'EZTerminal session',
       silent: false,
     });
@@ -2290,6 +2505,7 @@ app.on('ready', async () => {
 
   const runtime = createElectronDesktopRuntime({
     deviceRoster,
+    requestQuit: requestExplicitQuit,
     revokePairingCodes: () => pairingCodeService.revoke(),
     readDesiredEnabled: async () => {
       await storeReady;
@@ -2320,7 +2536,20 @@ app.on('ready', async () => {
       worktreeSource: worktreeService,
       quickCommandSource: remoteQuickCommandSource,
       openclawSource: remoteOpenClawSource,
-      agentSource: agentActivityService ?? undefined,
+      agentSource: agentActivityService ? {
+        getSnapshot: () => agentActivityService!.getSnapshot(),
+        onSnapshot: (listener) => agentActivityService!.onSnapshot(listener),
+        sendFollowup: (activityId, text) => agentActivityService!.sendPrompt(activityId, text),
+        decideApproval: (activityId, approvalId, decision) => (
+          agentActivityService!.decideApproval(activityId, approvalId, decision)
+        ),
+      } : undefined,
+      agentCoordinationSource: agentCoordinationService && managedMergeService ? {
+        getSnapshot: () => agentCoordinationService!.getSnapshot(),
+        onSnapshot: (listener) => agentCoordinationService!.onSnapshot(listener),
+        markSeen: (activityId, stateSeq) => agentCoordinationService!.markSeen(activityId, stateSeq),
+        decideManagedMerge: (input) => managedMergeService!.decide(input),
+      } : undefined,
       agentHistorySource: agentHistoryService,
       gitSource: gitStatusService,
       pairingSource: {
@@ -2526,7 +2755,7 @@ app.on('ready', async () => {
 
 // Quit when all windows are closed, except on macOS.
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && process.platform !== 'win32') {
     app.quit();
   }
 });
@@ -2534,5 +2763,11 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
+    return;
   }
+  const mainWindow = mainWindowRef;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
 });

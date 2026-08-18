@@ -1189,13 +1189,13 @@ body {
 .agent-status--error {
   color: var(--term-red);
 }
-.agent-status--waiting {
+.agent-status--done {
   color: var(--term-amber);
 }
 .agent-status--working {
   color: var(--term-blue);
 }
-.agent-status--done {
+.agent-status--idle {
   color: var(--term-green);
 }
 

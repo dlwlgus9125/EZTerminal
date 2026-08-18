@@ -69,6 +69,12 @@ export interface ActiveExecutionAdapter {
   readonly kind: ActiveExecutionKind;
   readonly lateAttach: LateAttachCapability;
   handleControl(control: RendererControl): ExecutionControlResult;
+  /** Main-only Agent collaboration seams; available only for a live PTY. */
+  readText?(maxLines: number, maxBytes: number): Promise<{
+    readonly text: string;
+    readonly truncated: boolean;
+  } | null>;
+  submitText?(text: string): boolean;
   /**
    * The primary port disconnected while attach ports keep the run alive.
    * Only the PTY runner needs this (releases its primary byte-ack window —
@@ -125,6 +131,11 @@ interface AdapterDefinition {
   readonly kind: ActiveExecutionKind;
   readonly lateAttach: LateAttachCapability;
   readonly handleControl: (control: RendererControl) => ExecutionControlResult;
+  readonly readText?: (maxLines: number, maxBytes: number) => Promise<{
+    readonly text: string;
+    readonly truncated: boolean;
+  } | null>;
+  readonly submitText?: (text: string) => boolean;
   readonly primaryDetached?: () => void;
   readonly dispose: () => void | Promise<void>;
 }
@@ -133,6 +144,8 @@ function activeAdapter(definition: AdapterDefinition): ActiveExecutionAdapter {
   let disposed = false;
   let disposePromise: Promise<void> | null = null;
   const primaryDetached = definition.primaryDetached;
+  const readText = definition.readText;
+  const submitText = definition.submitText;
   return {
     kind: definition.kind,
     lateAttach: definition.lateAttach,
@@ -140,6 +153,21 @@ function activeAdapter(definition: AdapterDefinition): ActiveExecutionAdapter {
       if (disposed) return 'unsupported';
       return definition.handleControl(control);
     },
+    ...(readText
+      ? {
+          readText(maxLines: number, maxBytes: number) {
+            if (disposed) return Promise.resolve(null);
+            return readText(maxLines, maxBytes);
+          },
+        }
+      : {}),
+    ...(submitText
+      ? {
+          submitText(text: string): boolean {
+            return !disposed && submitText(text);
+          },
+        }
+      : {}),
     ...(primaryDetached
       ? {
           primaryDetached(): void {
@@ -210,6 +238,8 @@ function ptyAdapter(session: PtySession): ActiveExecutionAdapter {
           return 'unsupported';
       }
     },
+    readText: (maxLines, maxBytes) => session.readText(maxLines, maxBytes),
+    submitText: (text) => session.submitText(text),
     primaryDetached: () => session.releasePrimaryWindow(),
     dispose: () => session.dispose(),
   });

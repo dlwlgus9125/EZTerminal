@@ -12,7 +12,7 @@ import { MobileSignalMark } from './MobileSignalMark';
  * out to the terminal tab for the rest. */
 const RECENT_SESSION_LIMIT = 3;
 
-const AGENT_BUSY = new Set(['starting', 'working', 'waiting', 'blocked', 'error']);
+const AGENT_BUSY = new Set(['starting', 'working', 'done', 'blocked', 'error']);
 
 export interface HomeSessionRow {
   readonly session: SessionInfo;
@@ -72,7 +72,7 @@ export function MobileHomeView({
       : undefined;
   const recent = sessions.slice(0, RECENT_SESSION_LIMIT);
   const firstAttention = agentSnapshot.items.find(
-    (item) => item.status === 'blocked' || item.status === 'error' || item.status === 'waiting',
+    (item) => item.status === 'blocked' || item.status === 'error' || item.status === 'done',
   );
   // Handoff §2: the OpenClaw shortcut appears on Home ONLY while the gateway
   // is actually running. Every other state keeps it in the More sheet, so the

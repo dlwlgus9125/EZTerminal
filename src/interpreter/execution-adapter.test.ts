@@ -47,6 +47,8 @@ function fakes(): Fakes {
   const pty = {
     write: vi.fn(),
     submitOnReady: vi.fn(),
+    submitText: vi.fn(() => true),
+    readText: vi.fn(async () => ({ text: '', truncated: false })),
     resize: vi.fn(),
     ack: vi.fn(),
     releasePrimaryWindow: vi.fn(),

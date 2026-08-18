@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "version": "1.0.37",
-  "androidVersionCode": 58,
-  "protocolVersion": 7,
+  "version": "1.0.38",
+  "androidVersionCode": 59,
+  "protocolVersion": 8,
   "validationProfile": "functional-hotfix",
   "performancePolicy": {
     "maxP95RegressionPercent": 5,

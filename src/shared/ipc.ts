@@ -54,6 +54,17 @@ import type {
   AgentSettings,
 } from './agent';
 import type {
+  AgentCoordinationMutationResult,
+  AgentCoordinationSnapshot,
+  AgentParticipant,
+  AgentParticipantInput,
+  AgentProjectCoordination,
+  AgentProjectCoordinationInput,
+  ManagedMergeDecisionInput,
+  ManagedMergeGrantInput,
+  ManagedMergeRequest,
+} from './agent-coordination';
+import type {
   OpenClawAgentSession,
   OpenClawAutostartAction,
   OpenClawAutostartResult,
@@ -351,6 +362,15 @@ export interface PtyRenderUpgradeFrame {
 }
 
 /**
+ * The PTY has advertised bracketed-paste input and is ready for a structured
+ * Agent prompt. This is a readiness signal only; provider hooks remain the
+ * lifecycle authority after their first event.
+ */
+export interface PtyInteractiveReadyFrame {
+  readonly type: 'pty-interactive-ready';
+}
+
+/**
  * The PTY grid's current dimensions (mobile mirroring fix, D3). A mirror
  * (`attach-run`) port has its `pty-resize` controls gated out (interpreter-
  * process.ts's `pty-resize` handler only honors the port currently holding
@@ -401,6 +421,7 @@ export type InterpreterFrame =
   | SshConnectionFrame
   | WorktreeOpenFrame
   | PtyRenderUpgradeFrame
+  | PtyInteractiveReadyFrame
   | PtyDimsFrame
   | PtyControlFrame;
 
@@ -635,6 +656,26 @@ export interface ListRunsMessage {
   readonly requestId: string;
 }
 
+/** Main-only bounded read of a live PTY's semantic active buffer. */
+export interface PtyTextReadRequestMessage {
+  readonly type: 'pty-text-read';
+  readonly requestId: string;
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly lines: number;
+  readonly maxBytes: number;
+}
+
+/** Main-only structured prompt submission. It never traverses an attach port. */
+export interface PtyTextSubmitRequestMessage {
+  readonly type: 'pty-text-submit';
+  readonly requestId: string;
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly text: string;
+  readonly whenReady: boolean;
+}
+
 /** Main begins a bounded whole-interpreter drain during application quit. */
 export interface InterpreterShutdownMessage {
   readonly type: 'interpreter-shutdown';
@@ -776,6 +817,8 @@ export type MainToInterpreter =
   | DestroySessionsGuardedMessage
   | AttachRunMessage
   | ListRunsMessage
+  | PtyTextReadRequestMessage
+  | PtyTextSubmitRequestMessage
   | InterpreterShutdownMessage
   | ScriptHostReadyMessage
   | ScriptHostErrorMessage
@@ -810,6 +853,26 @@ export interface RunListMessage {
   readonly type: 'run-list';
   readonly requestId: string;
   readonly runs: readonly RunStartedInfo[];
+}
+
+export type PtyTextReadResult =
+  | { readonly ok: true; readonly text: string; readonly truncated: boolean }
+  | { readonly ok: false; readonly reason: 'run-not-found' | 'session-mismatch' | 'not-pty' | 'unavailable' };
+
+export interface PtyTextReadResponseMessage {
+  readonly type: 'pty-text-read-result';
+  readonly requestId: string;
+  readonly result: PtyTextReadResult;
+}
+
+export type PtyTextSubmitResult =
+  | { readonly ok: true; readonly queued: boolean }
+  | { readonly ok: false; readonly reason: 'run-not-found' | 'session-mismatch' | 'not-pty' | 'not-ready' | 'invalid-text' | 'unavailable' };
+
+export interface PtyTextSubmitResponseMessage {
+  readonly type: 'pty-text-submit-result';
+  readonly requestId: string;
+  readonly result: PtyTextSubmitResult;
 }
 
 /** A foreground run reached its terminal boundary. The cwd is the
@@ -882,6 +945,8 @@ export type InterpreterToMain =
   | SessionRunSettledMessage
   | InterpreterRunStartedMessage
   | RunListMessage
+  | PtyTextReadResponseMessage
+  | PtyTextSubmitResponseMessage
   | SessionDestroyResultMessage
   | InterpreterShutdownCompleteMessage
   | RunAttachResultMessage
@@ -1228,7 +1293,29 @@ export interface EzTerminalApi extends SessionSurfaceApi {
   getAgentActivitySnapshot: () => Promise<AgentActivitySnapshot>;
   /** Revisioned activity push. Returns an unsubscribe. */
   onAgentActivitySnapshot: (listener: (snapshot: AgentActivitySnapshot) => void) => () => void;
-  /** Deliver one trimmed line to a waiting agent PTY. Never auto-submits approvals. */
+  getAgentCoordinationSnapshot: () => Promise<AgentCoordinationSnapshot>;
+  onAgentCoordinationSnapshot: (listener: (snapshot: AgentCoordinationSnapshot) => void) => () => void;
+  joinAgentCollaboration: (
+    input: AgentParticipantInput,
+  ) => Promise<AgentCoordinationMutationResult<{ readonly participant: AgentParticipant; readonly brief: string }>>;
+  leaveAgentCollaboration: (activityId: string) => Promise<boolean>;
+  saveAgentCoordinationProject: (
+    input: AgentProjectCoordinationInput,
+  ) => Promise<AgentCoordinationMutationResult<AgentProjectCoordination>>;
+  markAgentSeen: (activityId: string, stateSeq: number) => Promise<boolean>;
+  sendAgentPrompt: (activityId: string, text: string) => Promise<AgentFollowupResult>;
+  requestManagedMerge: (
+    activityId: string,
+    targetBranch: string,
+  ) => Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
+  decideManagedMerge: (
+    input: ManagedMergeDecisionInput,
+  ) => Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
+  grantNextManagedMerge: (
+    input: ManagedMergeGrantInput,
+  ) => Promise<AgentCoordinationMutationResult<{ readonly expiresAt: number }>>;
+  getManagedMergeDiff: (requestId: string, revision: number) => Promise<GitDiffResult>;
+  /** Deliver a structured prompt to a ready Agent PTY. Never auto-submits approvals. */
   sendAgentFollowup: (activityId: string, text: string) => Promise<AgentFollowupResult>;
   /** Answer one exact parked permission hook. Both ids must still match the
    * live `approval`; superseded or expired approval ids are rejected. */

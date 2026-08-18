@@ -18,6 +18,7 @@
 import type { PtyStreamData } from './core';
 import type { Emit } from './block-runner';
 import type { PtyRestoreWarningFrame } from '../shared/ipc';
+import { isSafeAgentPromptText } from '../shared/agent-coordination';
 import { PtySemanticRestoreBuffer } from './pty-restore-buffer';
 
 /** Clamp terminal dimensions to a sane range before applying to the PTY. Also
@@ -194,6 +195,13 @@ export interface PtySession {
   write(data: string): void;
   /** Queue exactly one initial submission until bracketed-paste mode is ready. */
   submitOnReady(data: string): void;
+  /** Submit a later Agent prompt using bracketed paste plus a separate Enter. */
+  submitText(data: string): boolean;
+  /** Read the bounded current active semantic buffer without attaching a viewer. */
+  readText(maxLines: number, maxBytes: number): Promise<{
+    readonly text: string;
+    readonly truncated: boolean;
+  } | null>;
   /** Resize the PTY grid (clamped). */
   resize(cols: number, rows: number): void;
   /**
@@ -327,6 +335,7 @@ export function runPtySession(
   // Otherwise the detector watches the live byte stream and the upgrade frame
   // fires once, on the first high-confidence TUI signal.
   let upgraded = false;
+  let interactiveReady = false;
   const detector = new TuiSignalDetector();
   const modeTracker = new DecPrivateModeTracker();
   let pendingSubmission: string | null = null;
@@ -334,6 +343,16 @@ export function runPtySession(
   let submissionFallbackTimer: ReturnType<typeof setTimeout> | null = null;
   let submissionEnterTimer: ReturnType<typeof setTimeout> | null = null;
   let submissionAccepted = false;
+  const laterSubmissionTimers = new Set<ReturnType<typeof setTimeout>>();
+  const writeBracketedSubmission = (submission: string): void => {
+    pty.write(`\x1b[200~${submission}\x1b[201~`);
+    const timer = setTimeout(() => {
+      laterSubmissionTimers.delete(timer);
+      if (!settled) pty.write('\r');
+    }, 100);
+    timer.unref();
+    laterSubmissionTimers.add(timer);
+  };
   const flushSubmission = (bracketed: boolean): void => {
     const submission = pendingSubmission;
     if (submission === null || settled) return;
@@ -414,6 +433,10 @@ export function runPtySession(
       emit({ type: 'pty-render-upgrade' });
     }
     modeTracker.feed(bytes);
+    if (!interactiveReady && modeTracker.isSet(2004)) {
+      interactiveReady = true;
+      emit({ type: 'pty-interactive-ready' });
+    }
     if (modeTracker.isSet(2004)) scheduleBracketedSubmission();
     semanticRestore.feed(bytes);
     appendToRing(bytes);
@@ -476,6 +499,21 @@ export function runPtySession(
       submissionFallbackTimer = setTimeout(() => flushSubmission(false), 30_000);
       submissionFallbackTimer.unref();
     },
+    submitText(input: string): boolean {
+      if (
+        settled
+        || !interactiveReady
+        || !isSafeAgentPromptText(input)
+      ) {
+        return false;
+      }
+      writeBracketedSubmission(input);
+      return true;
+    },
+    readText(maxLines: number, maxBytes: number) {
+      if (settled) return Promise.resolve(null);
+      return semanticRestore.readText(maxLines, maxBytes);
+    },
     resize(c: number, r: number): void {
       if (!settled) {
         const nextCols = clampDim(c);
@@ -504,6 +542,8 @@ export function runPtySession(
       if (submissionTimer) clearTimeout(submissionTimer);
       if (submissionFallbackTimer) clearTimeout(submissionFallbackTimer);
       if (submissionEnterTimer) clearTimeout(submissionEnterTimer);
+      for (const timer of laterSubmissionTimers) clearTimeout(timer);
+      laterSubmissionTimers.clear();
       submissionTimer = null;
       submissionFallbackTimer = null;
       submissionEnterTimer = null;

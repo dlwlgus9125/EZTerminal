@@ -2,7 +2,9 @@ use std::process::ExitCode;
 
 #[cfg(all(windows, feature = "windows-host"))]
 fn main() -> ExitCode {
-    use ezterminal_remote_host::{dpi, process_guardian, service, session_agent, transport};
+    use ezterminal_remote_host::{
+        agent_control, dpi, process_guardian, service, session_agent, transport,
+    };
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     if matches!(
@@ -19,11 +21,12 @@ fn main() -> ExitCode {
         Some("--uninstall-service") => service::uninstall(),
         Some("--session-agent") => session_agent::run(&args[1..]),
         Some("--transport") => transport::run(),
+        Some("--agent-control") => agent_control::run(&args[1..]),
         Some("--process-guardian") => process_guardian::run(&args[1..]),
         Some("--probe") => service::probe(),
         _ => {
             eprintln!(
-                "usage: ezterminal-remote-host.exe --service|--install-service|--uninstall-service|--session-agent|--transport|--process-guardian|--probe"
+                "usage: ezterminal-remote-host.exe --service|--install-service|--uninstall-service|--session-agent|--transport|--agent-control|--process-guardian|--probe"
             );
             return ExitCode::from(2);
         }

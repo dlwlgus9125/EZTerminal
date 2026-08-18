@@ -1,3 +1,5 @@
+#[cfg(all(windows, feature = "windows-host"))]
+pub mod agent_control;
 pub mod broker;
 #[cfg(all(windows, feature = "windows-host"))]
 pub mod capture;

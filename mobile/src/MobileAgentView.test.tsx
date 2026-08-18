@@ -4,7 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentActivity, AgentActivitySnapshot, AgentStatus } from '../../src/shared/agent';
+import type { AgentActivity, AgentActivitySnapshot, AgentState } from '../../src/shared/agent';
 import type { GitDiffResult } from '../../src/shared/git-status';
 import { MobileAgentView } from './MobileAgentView';
 import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
@@ -14,13 +14,18 @@ import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 
 const NOW = 1_800_000_000_000;
 
-function activity(id: string, status: AgentStatus, overrides: Partial<AgentActivity> = {}): AgentActivity {
+function activity(id: string, state: AgentState, overrides: Partial<AgentActivity> = {}): AgentActivity {
   return {
     id,
     sessionId: `session-${id}`,
     provider: 'claude',
     cwd: `C:/Workspace/${id}`,
-    status,
+    state,
+    status: state,
+    stateSeq: 1,
+    live: true,
+    interactiveReady: false,
+    stateSource: 'provider-hook',
     createdAt: NOW - 60_000,
     updatedAt: NOW - 60_000,
     ...overrides,
@@ -71,11 +76,11 @@ describe('MobileAgentView', () => {
       <MobileAgentView
         snapshot={snapshotOf(
           activity('a', 'blocked'),
-          activity('b', 'waiting'),
+          activity('b', 'done'),
           activity('c', 'error'),
           activity('d', 'working'),
           activity('e', 'starting'),
-          activity('f', 'done'),
+          activity('f', 'idle'),
         )}
         {...noop}
       />,
@@ -107,12 +112,12 @@ describe('MobileAgentView', () => {
     expect(testIds('agent-card')).toHaveLength(3);
   });
 
-  it('orders attention ahead of running and done, blocked first within attention', () => {
+  it('orders attention ahead of running and history, blocked first within attention', () => {
     render(
       <MobileAgentView
         snapshot={snapshotOf(
+          activity('idle', 'idle'),
           activity('done', 'done'),
-          activity('waiting', 'waiting'),
           activity('working', 'working'),
           activity('blocked', 'blocked'),
         )}
@@ -120,7 +125,7 @@ describe('MobileAgentView', () => {
       />,
     );
     expect(testIds('agent-card').map((card) => card.getAttribute('data-status')))
-      .toEqual(['blocked', 'waiting', 'working', 'done']);
+      .toEqual(['blocked', 'done', 'working', 'idle']);
   });
 
   it('places projects between attention and active history in document order', async () => {
@@ -132,6 +137,7 @@ describe('MobileAgentView', () => {
     render(
       <MobileAgentView
         snapshot={snapshotOf(
+          activity('idle', 'idle'),
           activity('done', 'done'),
           activity('working', 'working'),
           activity('blocked', 'blocked'),
@@ -152,7 +158,7 @@ describe('MobileAgentView', () => {
         ? 'projects'
         : element.getAttribute('data-status')
     ));
-    expect(order).toEqual(['blocked', 'projects', 'working', 'done']);
+    expect(order).toEqual(['blocked', 'done', 'projects', 'working', 'idle']);
   });
 
   it('orders parked approvals first by risk, expiry, then recency', () => {
@@ -194,11 +200,16 @@ describe('MobileAgentView', () => {
       .toEqual(['danger', 'write', 'read-soon', 'read-late', 'none']);
   });
 
-  it('offers the follow-up composer only for a waiting agent', () => {
+  it('offers the follow-up composer only for a live, interactive done agent', () => {
     render(<MobileAgentView snapshot={snapshotOf(activity('a', 'blocked'))} {...noop} />);
     expect(testIds('agent-followup-input')).toHaveLength(0);
 
-    render(<MobileAgentView snapshot={snapshotOf(activity('a', 'waiting'))} {...noop} />);
+    render(<MobileAgentView snapshot={snapshotOf(activity('a', 'done'))} {...noop} />);
+    expect(testIds('agent-followup-input')).toHaveLength(0);
+
+    render(<MobileAgentView snapshot={snapshotOf(activity('a', 'done', {
+      interactiveReady: true,
+    }))} {...noop} />);
     expect(testIds('agent-followup-input')).toHaveLength(1);
   });
 
@@ -244,7 +255,7 @@ describe('MobileAgentView', () => {
     const onSendFollowup = vi.fn(async () => ({ ok: true }) as const);
     render(
       <MobileAgentView
-        snapshot={snapshotOf(activity('a', 'waiting'))}
+        snapshot={snapshotOf(activity('a', 'done', { interactiveReady: true }))}
         {...noop}
         onSendFollowup={onSendFollowup}
       />,
@@ -269,7 +280,7 @@ describe('MobileAgentView', () => {
   it('surfaces a delivery failure without clearing the draft', async () => {
     render(
       <MobileAgentView
-        snapshot={snapshotOf(activity('a', 'waiting'))}
+        snapshot={snapshotOf(activity('a', 'done', { interactiveReady: true }))}
         {...noop}
         onSendFollowup={async () => ({ ok: false, error: 'not-waiting' }) as const}
       />,
@@ -421,13 +432,15 @@ describe('MobileAgentView', () => {
     render(<MobileAgentView snapshot={snapshotOf()} {...noop} />);
     expect(testIds('agent-empty')[0]?.textContent).toContain('No agent activity yet');
 
-    render(<MobileAgentView snapshot={snapshotOf(activity('a', 'done'))} {...noop} />);
+    render(<MobileAgentView snapshot={snapshotOf(activity('a', 'idle'))} {...noop} />);
     act(() => testIds('agent-filter-attention')[0]!.click());
     expect(testIds('agent-empty')[0]?.textContent).toBe('No agents match this filter.');
   });
 
   it('blocks follow-up while disconnected and says so', () => {
-    render(<MobileAgentView snapshot={snapshotOf(activity('a', 'waiting'))} {...noop} disconnected />);
+    render(<MobileAgentView snapshot={snapshotOf(activity('a', 'done', {
+      interactiveReady: true,
+    }))} {...noop} disconnected />);
     expect((testIds('agent-followup-input')[0] as HTMLInputElement).disabled).toBe(true);
     expect(container.textContent).toContain('Reconnecting to desktop…');
   });

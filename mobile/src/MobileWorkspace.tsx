@@ -6,6 +6,10 @@ import type { OpenClawStatus } from '../../src/shared/openclaw';
 import type { SessionInfo } from '../../src/shared/ipc';
 import type { SessionSurfaceBinding, SessionSurfaceIntent } from '../../src/shared/session-surface';
 import { EMPTY_AGENT_ACTIVITY_SNAPSHOT, type AgentActivitySnapshot } from '../../src/shared/agent';
+import {
+  EMPTY_AGENT_COORDINATION_SNAPSHOT,
+  type AgentCoordinationSnapshot,
+} from '../../src/shared/agent-coordination';
 import { countAgentAttention } from '../../src/shared/agent-attention';
 import { observationalIntervalMs } from '../../src/shared/resource-profile';
 import type { AgentTerminalBootstrap } from '../../src/shared/agent-history';
@@ -159,6 +163,9 @@ export function MobileWorkspace({
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<ThemeName>(() => loadTheme());
   const [agentSnapshot, setAgentSnapshot] = useState<AgentActivitySnapshot>(EMPTY_AGENT_ACTIVITY_SNAPSHOT);
+  const [agentCoordinationSnapshot, setAgentCoordinationSnapshot] = useState<AgentCoordinationSnapshot>(
+    EMPTY_AGENT_COORDINATION_SNAPSHOT,
+  );
   const [connected, setConnected] = useState(false);
   const [authGeneration, setAuthGeneration] = useState(0);
   const [connectedSince, setConnectedSince] = useState<number | null>(null);
@@ -334,6 +341,19 @@ export function MobileWorkspace({
     };
     const unsubscribe = transport.onAgentActivitySnapshot(apply);
     void transport.getAgentActivitySnapshot().then(apply).catch(() => undefined);
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
+  }, [transport]);
+
+  useEffect(() => {
+    let alive = true;
+    const apply = (snapshot: AgentCoordinationSnapshot): void => {
+      if (alive) setAgentCoordinationSnapshot(snapshot);
+    };
+    const unsubscribe = transport.onAgentCoordinationSnapshot(apply);
+    void transport.getAgentCoordinationSnapshot().then(apply).catch(() => undefined);
     return () => {
       alive = false;
       unsubscribe();
@@ -761,6 +781,7 @@ export function MobileWorkspace({
         loader={MOBILE_FEATURE_LOADERS.agents}
         componentProps={{
           snapshot: agentSnapshot,
+          coordinationSnapshot: agentCoordinationSnapshot,
           disconnected: !connected,
           onBack: () => selectTab('home'),
           onSendFollowup: (activityId, text) => transport.sendAgentFollowup(activityId, text),
@@ -772,6 +793,8 @@ export function MobileWorkspace({
           onLaunchAgent: startAgentBootstrap,
           transport,
           onFocusSession: (sessionId) => {
+            const activity = agentSnapshot.items.find((item) => item.sessionId === sessionId);
+            if (activity) void transport.markAgentSeen(activity.id, activity.stateSeq);
             void adoptAndOpenTab(sessionId);
           },
         }}

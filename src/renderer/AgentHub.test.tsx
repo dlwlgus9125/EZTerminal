@@ -31,7 +31,12 @@ function activity(input: {
     sessionId: `session-${input.id}`,
     provider: 'claude',
     cwd: `C:\\${input.id}`,
+    state: status,
     status,
+    stateSeq: 1,
+    live: true,
+    interactiveReady: true,
+    stateSource: 'provider-hook',
     createdAt: 10,
     updatedAt: 20,
     ...(input.risk
@@ -243,7 +248,7 @@ describe('AgentHub local history paging', () => {
     await renderHub({
       revision: 1,
       items: [
-        activity({ id: 'recent', status: 'done' }),
+        activity({ id: 'recent', status: 'idle' }),
         activity({ id: 'active', status: 'working' }),
         activity({ id: 'attention', status: 'blocked' }),
       ],

@@ -31,6 +31,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { MAX_GUARDED_DESTROY_SESSIONS } from '../shared/ipc';
+import { isSafeAgentPromptText } from '../shared/agent-coordination';
 
 import type {
   DestroySessionGuardResult,
@@ -40,6 +41,8 @@ import type {
   RunAttachRejectReason,
   RunStartedInfo,
   SessionInfo,
+  PtyTextReadResult,
+  PtyTextSubmitResult,
 } from '../shared/ipc';
 import type { WorktreeRequestOrigin } from '../shared/worktree';
 import { AsyncMutationGate, type MutationGate } from './async-mutation-gate';
@@ -113,11 +116,20 @@ type PendingShutdown = {
   readonly resolve: () => void;
   readonly reject: (error: Error) => void;
 };
+type PendingPtyRead = {
+  readonly timer: ReturnType<typeof setTimeout>;
+  readonly resolve: (result: PtyTextReadResult) => void;
+};
+type PendingPtySubmit = {
+  readonly timer: ReturnType<typeof setTimeout>;
+  readonly resolve: (result: PtyTextSubmitResult) => void;
+};
 
 const DEFAULT_ATTACH_ACK_TIMEOUT_MS = 5_000;
 const DEFAULT_DESTROY_ACK_TIMEOUT_MS = 5_000;
 const DEFAULT_DESTROY_TOMBSTONE_TTL_MS = 60_000;
 const MAX_PENDING_DESTROYS = 128;
+const PTY_CONTROL_TIMEOUT_MS = 5_000;
 
 function hasExactSessionIds(expected: readonly string[], actual: readonly string[]): boolean {
   if (expected.length !== actual.length) return false;
@@ -144,6 +156,8 @@ export class InterpreterBroker {
   private readonly pendingRunLists = new Map<string, PendingRunList>();
   private readonly pendingAttaches = new Map<string, PendingAttach>();
   private readonly pendingDestroys = new Map<string, PendingDestroy>();
+  private readonly pendingPtyReads = new Map<string, PendingPtyRead>();
+  private readonly pendingPtySubmits = new Map<string, PendingPtySubmit>();
   private readonly runStartedListeners = new Set<
     (info: RunStartedInfo) => void
   >();
@@ -233,6 +247,18 @@ export class InterpreterBroker {
           if (pending === undefined) return; // unmatched requestId — ignore
           this.pendingRunLists.delete(msg.requestId);
           pending.resolve(msg.runs);
+        } else if (msg.type === 'pty-text-read-result') {
+          const pending = this.pendingPtyReads.get(msg.requestId);
+          if (!pending) return;
+          this.pendingPtyReads.delete(msg.requestId);
+          clearTimeout(pending.timer);
+          pending.resolve(msg.result);
+        } else if (msg.type === 'pty-text-submit-result') {
+          const pending = this.pendingPtySubmits.get(msg.requestId);
+          if (!pending) return;
+          this.pendingPtySubmits.delete(msg.requestId);
+          clearTimeout(pending.timer);
+          pending.resolve(msg.result);
         } else if (msg.type === 'run-attach-result') {
           const pending = this.pendingAttaches.get(msg.requestId);
           if (pending === undefined) return;
@@ -311,10 +337,20 @@ export class InterpreterBroker {
           if (!pending.settled)
             pending.resolve({ ok: false, reason: 'unavailable' });
         }
+        for (const pending of this.pendingPtyReads.values()) {
+          clearTimeout(pending.timer);
+          pending.resolve({ ok: false, reason: 'unavailable' });
+        }
+        for (const pending of this.pendingPtySubmits.values()) {
+          clearTimeout(pending.timer);
+          pending.resolve({ ok: false, reason: 'unavailable' });
+        }
         this.pendingCreates.clear();
         this.pendingRunLists.clear();
         this.pendingAttaches.clear();
         this.pendingDestroys.clear();
+        this.pendingPtyReads.clear();
+        this.pendingPtySubmits.clear();
         const shutdown = this.pendingShutdown;
         this.pendingShutdown = null;
         if (shutdown) {
@@ -401,6 +437,24 @@ export class InterpreterBroker {
 
   listSessions(): SessionInfo[] {
     return this.directory.list();
+  }
+
+  /** Main-owned environment override used by isolated internal sessions. */
+  setPrivateSessionEnvironment(
+    sessionId: string,
+    environment: Readonly<Record<string, string>>,
+  ): boolean {
+    if (
+      !this.alive
+      || this.shuttingDown
+      || !this.directory.list().some((session) => session.sessionId === sessionId)
+    ) return false;
+    try {
+      this.interpreter.postMessage({ type: 'set-session-environment', sessionId, environment });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   runCommand(
@@ -675,6 +729,85 @@ export class InterpreterBroker {
     return new Promise<readonly RunStartedInfo[]>((resolve, reject) => {
       this.pendingRunLists.set(requestId, { resolve, reject });
       this.interpreter.postMessage({ type: 'list-runs', requestId });
+    });
+  }
+
+  readPtyText(
+    sessionId: string,
+    runId: string,
+    lines = 80,
+    maxBytes = 64 * 1024,
+  ): Promise<PtyTextReadResult> {
+    if (!this.alive || this.shuttingDown) {
+      return Promise.resolve({ ok: false, reason: 'unavailable' });
+    }
+    const requestId = this.newId();
+    const boundedLines = Number.isFinite(lines) ? Math.max(1, Math.min(200, Math.floor(lines))) : 80;
+    const boundedBytes = Number.isFinite(maxBytes)
+      ? Math.max(1, Math.min(64 * 1024, Math.floor(maxBytes)))
+      : 64 * 1024;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        const pending = this.pendingPtyReads.get(requestId);
+        if (!pending) return;
+        this.pendingPtyReads.delete(requestId);
+        pending.resolve({ ok: false, reason: 'unavailable' });
+      }, PTY_CONTROL_TIMEOUT_MS);
+      timer.unref?.();
+      this.pendingPtyReads.set(requestId, { timer, resolve });
+      try {
+        this.interpreter.postMessage({
+          type: 'pty-text-read',
+          requestId,
+          sessionId,
+          runId,
+          lines: boundedLines,
+          maxBytes: boundedBytes,
+        });
+      } catch {
+        this.pendingPtyReads.delete(requestId);
+        clearTimeout(timer);
+        resolve({ ok: false, reason: 'unavailable' });
+      }
+    });
+  }
+
+  submitPtyText(
+    sessionId: string,
+    runId: string,
+    text: string,
+    whenReady = false,
+  ): Promise<PtyTextSubmitResult> {
+    if (!this.alive || this.shuttingDown) {
+      return Promise.resolve({ ok: false, reason: 'unavailable' });
+    }
+    if (!isSafeAgentPromptText(text)) {
+      return Promise.resolve({ ok: false, reason: 'invalid-text' });
+    }
+    const requestId = this.newId();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        const pending = this.pendingPtySubmits.get(requestId);
+        if (!pending) return;
+        this.pendingPtySubmits.delete(requestId);
+        pending.resolve({ ok: false, reason: 'unavailable' });
+      }, PTY_CONTROL_TIMEOUT_MS);
+      timer.unref?.();
+      this.pendingPtySubmits.set(requestId, { timer, resolve });
+      try {
+        this.interpreter.postMessage({
+          type: 'pty-text-submit',
+          requestId,
+          sessionId,
+          runId,
+          text,
+          whenReady,
+        });
+      } catch {
+        this.pendingPtySubmits.delete(requestId);
+        clearTimeout(timer);
+        resolve({ ok: false, reason: 'unavailable' });
+      }
     });
   }
 

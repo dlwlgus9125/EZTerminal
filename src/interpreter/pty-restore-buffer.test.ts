@@ -159,6 +159,22 @@ describe('PtySemanticRestoreBuffer', () => {
     });
   });
 
+  it('reads recent non-empty screen lines and keeps the UTF-8 tail within its byte cap', async () => {
+    const restore = new PtySemanticRestoreBuffer(20, 6, {
+      snapshotIntervalBytes: 1024,
+    });
+    restore.feed(encoder.encode('one\r\ntwo\r\n가나다'));
+
+    await expect(restore.readText(2, 64)).resolves.toEqual({
+      text: 'two\n가나다',
+      truncated: true,
+    });
+    const bounded = await restore.readText(3, 4);
+    expect(bounded).toEqual({ text: '다', truncated: true });
+    expect(encoder.encode(bounded?.text ?? '').byteLength).toBeLessThanOrEqual(4);
+    restore.dispose();
+  });
+
   it('restores Unicode text and terminal modes with the official headless serializer', async () => {
     const restore = new PtySemanticRestoreBuffer(40, 10, { snapshotIntervalBytes: 1 });
     restore.feed(encoder.encode('\x1b[31m한글🙂\x1b[0m\x1b[?2004h'));

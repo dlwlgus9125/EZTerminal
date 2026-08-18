@@ -47,6 +47,7 @@ import {
   REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS,
   REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
+  REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION,
   REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL,
   SUPPORTED_REMOTE_PROTOCOL_VERSIONS,
   isRemoteProtocolVersion,
@@ -89,6 +90,12 @@ import type {
   AgentDecisionResult,
   AgentFollowupResult,
 } from '../shared/agent';
+import {
+  withoutManagedMergeOutput,
+  type AgentCoordinationMutationResult,
+  type AgentCoordinationSnapshot,
+  type ManagedMergeRequest,
+} from '../shared/agent-coordination';
 import type {
   AgentHistorySessionPage,
   AgentLaunchPreparation,
@@ -493,6 +500,35 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         typeof value.requestId === 'string'
         && value.requestId.length > 0
         && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+      );
+    case 'agent-coordination-snapshot-get':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+      );
+    case 'agent-seen':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.activityId === 'string'
+        && value.activityId.length > 0
+        && value.activityId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && Number.isSafeInteger(value.stateSeq)
+        && (value.stateSeq as number) >= 0
+      );
+    case 'managed-merge-decision':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+        && typeof value.mergeRequestId === 'string'
+        && value.mergeRequestId.length > 0
+        && value.mergeRequestId.length <= MAX_REMOTE_AGENT_ID_LENGTH
+        && Number.isSafeInteger(value.revision)
+        && (value.revision as number) > 0
+        && (value.decision === 'approve' || value.decision === 'deny')
       );
     case 'agent-followup':
       return (
@@ -930,8 +966,35 @@ function describeResumeBusy(reason: RunAttachRejectReason): {
 export interface RemoteAgentSource {
   getSnapshot(): AgentActivitySnapshot;
   onSnapshot(listener: (snapshot: AgentActivitySnapshot) => void): () => void;
-  sendFollowup(activityId: string, text: string): AgentFollowupResult;
+  sendFollowup(activityId: string, text: string): Promise<AgentFollowupResult>;
   decideApproval(activityId: string, approvalId: string, decision: AgentDecision): AgentDecisionResult;
+}
+
+export interface RemoteAgentCoordinationSource {
+  getSnapshot(): AgentCoordinationSnapshot;
+  onSnapshot(
+    listener: (snapshot: AgentCoordinationSnapshot) => void,
+  ): () => void;
+  markSeen(activityId: string, stateSeq: number): boolean;
+  decideManagedMerge(input: {
+    readonly requestId: string;
+    readonly revision: number;
+    readonly decision: 'approve' | 'deny';
+    readonly actor: 'mobile';
+  }): Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
+}
+
+function remoteCoordinationSnapshot(snapshot: AgentCoordinationSnapshot): AgentCoordinationSnapshot {
+  return {
+    ...snapshot,
+    mergeRequests: snapshot.mergeRequests.map(withoutManagedMergeOutput),
+  };
+}
+
+function remoteMergeDecisionResult(
+  result: AgentCoordinationMutationResult<ManagedMergeRequest>,
+): AgentCoordinationMutationResult<ManagedMergeRequest> {
+  return result.ok ? { ok: true, value: withoutManagedMergeOutput(result.value) } : result;
 }
 
 export interface RemoteAgentHistorySource {
@@ -1053,6 +1116,7 @@ export interface RemoteBridgeOptions {
   /** Optional so existing fixtures/tests without OpenClaw wiring keep working. */
   readonly openclawSource?: RemoteOpenClawSource;
   readonly agentSource?: RemoteAgentSource;
+  readonly agentCoordinationSource?: RemoteAgentCoordinationSource;
   readonly agentHistorySource?: RemoteAgentHistorySource;
   /** Optional so existing fixtures without Git wiring keep working. */
   readonly gitSource?: RemoteGitSource;
@@ -1512,6 +1576,12 @@ export function attachConnection(
         send({ kind: 'agent-snapshot', snapshot });
       }
     }) ?? (() => undefined);
+  const unsubAgentCoordination =
+    options.agentCoordinationSource?.onSnapshot((snapshot) => {
+      if (authed && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION) {
+        send({ kind: 'agent-coordination-snapshot', snapshot: remoteCoordinationSnapshot(snapshot) });
+      }
+    }) ?? (() => undefined);
 
   ws.on('close', () => {
     if (connectionClosed) return;
@@ -1541,6 +1611,7 @@ export function attachConnection(
     contain(unsubRunStarted);
     contain(unsubOpenClawVisibility);
     contain(unsubAgentSnapshot);
+    contain(unsubAgentCoordination);
     for (const [runId, record] of runs) {
       if (releaseRunsOnClose) contain(() => record.port.close());
       else {
@@ -1706,6 +1777,15 @@ export function attachConnection(
           });
           if (options.agentSource && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_LIVE) {
             send({ kind: 'agent-snapshot', snapshot: options.agentSource.getSnapshot() });
+          }
+          if (
+            options.agentCoordinationSource
+            && negotiatedProtocol >= REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION
+          ) {
+            send({
+              kind: 'agent-coordination-snapshot',
+              snapshot: remoteCoordinationSnapshot(options.agentCoordinationSource.getSnapshot()),
+            });
           }
           // OpenClaw availability (M3): initial state, right after auth —
           // `subscribeVisibility` above only covers CHANGES from here on.
@@ -2047,16 +2127,60 @@ export function attachConnection(
         });
         break;
 
+      case 'agent-coordination-snapshot-get':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION) break;
+        send({
+          kind: 'agent-coordination-snapshot',
+          requestId: msg.requestId,
+          snapshot: options.agentCoordinationSource
+            ? remoteCoordinationSnapshot(options.agentCoordinationSource.getSnapshot())
+            : {
+            revision: 0,
+            activityRevision: 0,
+            activities: [],
+            projects: [],
+            mergeRequests: [],
+            },
+        });
+        break;
+
+      case 'agent-seen':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION) break;
+        send({
+          kind: 'agent-seen-reply',
+          requestId: msg.requestId,
+          marked: options.agentCoordinationSource?.markSeen(msg.activityId, msg.stateSeq) === true,
+        });
+        break;
+
+      case 'managed-merge-decision':
+        if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION) break;
+        void (options.agentCoordinationSource?.decideManagedMerge({
+          requestId: msg.mergeRequestId,
+          revision: msg.revision,
+          decision: msg.decision,
+          actor: 'mobile',
+        }) ?? Promise.resolve({
+          ok: false as const,
+          error: 'unavailable' as const,
+          message: 'Managed merge is unavailable.',
+        })).then((result) => send({
+          kind: 'managed-merge-decision-reply',
+          requestId: msg.requestId,
+          result: remoteMergeDecisionResult(result),
+        }));
+        break;
+
       case 'agent-followup':
         if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
-        send({
-          kind: 'agent-followup-reply',
-          requestId: msg.requestId,
-          result: options.agentSource?.sendFollowup(msg.activityId, msg.text) ?? {
+        void (options.agentSource?.sendFollowup(msg.activityId, msg.text) ?? Promise.resolve({
             ok: false,
             error: 'delivery-failed',
-          },
-        });
+          } as const)).then((result) => send({
+            kind: 'agent-followup-reply',
+            requestId: msg.requestId,
+            result,
+          }));
         break;
 
       case 'agent-decision':

@@ -1,0 +1,213 @@
+import { mkdtempSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+
+import type { AgentActivity, AgentActivitySnapshot, AgentState } from '../shared/agent';
+import type { ManagedMergeRequest } from '../shared/agent-coordination';
+import type { AgentProjectRecord } from './agent-project-store';
+import {
+  AgentCoordinationService,
+  type CoordinationActivitySource,
+  type CoordinationMergeSource,
+} from './agent-coordination-service';
+import { AgentCoordinationStore } from './agent-coordination-store';
+
+const makeDir = (): string => mkdtempSync(path.join(os.tmpdir(), 'ez-agent-service-'));
+
+function activity(overrides: Partial<AgentActivity> = {}): AgentActivity {
+  return {
+    id: 'activity-1',
+    sessionId: 'session-1',
+    provider: 'codex',
+    cwd: 'C:\\repo\\agent-one',
+    state: 'done',
+    status: 'done',
+    stateSeq: 3,
+    live: true,
+    interactiveReady: true,
+    stateSource: 'provider-hook',
+    createdAt: 10,
+    updatedAt: 20,
+    ...overrides,
+  };
+}
+
+class FakeActivities implements CoordinationActivitySource {
+  snapshot: AgentActivitySnapshot;
+  private readonly listeners = new Set<(snapshot: AgentActivitySnapshot) => void>();
+  readonly sendPrompt = vi.fn(async () => ({ ok: true } as const));
+  readonly readActivity = vi.fn(async () => ({ ok: true, text: 'tail', truncated: false } as const));
+  readonly markSeen = vi.fn(() => true);
+
+  constructor(items: readonly AgentActivity[]) {
+    this.snapshot = { revision: 1, items };
+  }
+
+  getSnapshot(): AgentActivitySnapshot {
+    return this.snapshot;
+  }
+
+  onSnapshot(listener: (snapshot: AgentActivitySnapshot) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  emit(items: readonly AgentActivity[]): void {
+    this.snapshot = { revision: this.snapshot.revision + 1, items };
+    for (const listener of this.listeners) listener(this.snapshot);
+  }
+}
+
+async function configuredStore(directory = makeDir()): Promise<AgentCoordinationStore> {
+  const store = new AgentCoordinationStore(directory);
+  await store.init();
+  const saved = await store.saveProject({
+    projectId: 'project-1',
+    goal: 'Coordinate two coding agents safely',
+    defaultTargetBranch: 'main',
+    validationCommands: [{
+      id: 'unit',
+      name: 'Unit tests',
+      command: 'pnpm test:unit',
+      timeoutMs: 60_000,
+    }],
+  });
+  if (!saved.ok) throw new Error('fixture configuration failed');
+  return store;
+}
+
+const projects = [{ projectId: 'project-1' }] as unknown as readonly AgentProjectRecord[];
+
+describe('AgentCoordinationService', () => {
+  it('joins only a live provider activity, projects transient metadata, and generates an explicit brief', async () => {
+    const directory = makeDir();
+    const store = await configuredStore(directory);
+    const activities = new FakeActivities([activity()]);
+    const service = new AgentCoordinationService({
+      activities,
+      store,
+      listProjects: () => projects,
+      resolveWorkspace: async () => ({
+        projectId: 'project-1',
+        workspaceId: 'workspace-1',
+        worktreeId: 'worktree-1',
+      }),
+      newId: () => 'participant-1',
+      now: () => 100,
+    });
+
+    const joined = await service.join({
+      activityId: 'activity-1',
+      alias: '  Builder  ',
+      role: 'implementation',
+      task: 'Add managed merge',
+      expectedProjectRevision: 1,
+    });
+
+    expect(joined).toMatchObject({
+      ok: true,
+      value: {
+        participant: {
+          participantId: 'participant-1',
+          alias: 'Builder',
+          projectId: 'project-1',
+          worktreeId: 'worktree-1',
+        },
+      },
+    });
+    if (!joined.ok) throw new Error('join failed');
+    expect(joined.value.brief).toContain('Project goal: Coordinate two coding agents safely');
+    expect(joined.value.brief).toContain('ezterminal-agent merge request --target main --wait');
+    expect(service.resolveActivity('builder')?.id).toBe('activity-1');
+    expect(service.getSnapshot().activities[0]?.participant).toMatchObject({ alias: 'Builder' });
+
+    const reloaded = new AgentCoordinationStore(directory);
+    await reloaded.init();
+    expect(reloaded.getProject('project-1')?.participants).toEqual([]);
+
+    activities.emit([activity({ live: false, state: 'idle', status: 'idle', stateSeq: 4 })]);
+    expect(service.getParticipantByActivity('activity-1')).toBeNull();
+    expect(service.getSnapshot().projects[0]?.participants).toEqual([]);
+    service.dispose();
+  });
+
+  it('rejects generic, stale, and duplicate-alias joins', async () => {
+    const store = await configuredStore();
+    const activities = new FakeActivities([
+      activity(),
+      activity({ id: 'activity-2', sessionId: 'session-2', provider: 'claude' }),
+      activity({ id: 'activity-3', sessionId: 'session-3', provider: 'generic' }),
+    ]);
+    let nextId = 0;
+    const service = new AgentCoordinationService({
+      activities,
+      store,
+      listProjects: () => projects,
+      resolveWorkspace: async (item) => ({
+        projectId: 'project-1',
+        workspaceId: `workspace-${item.id}`,
+      }),
+      newId: () => `participant-${String(++nextId)}`,
+    });
+
+    await expect(service.join({
+      activityId: 'activity-1', alias: 'Builder', role: 'code', task: 'one', expectedProjectRevision: 0,
+    })).resolves.toMatchObject({ ok: false, error: 'stale' });
+    await expect(service.join({
+      activityId: 'activity-3', alias: 'Other', role: 'code', task: 'generic',
+    })).resolves.toMatchObject({ ok: false, error: 'not-found' });
+    await expect(service.join({
+      activityId: 'activity-1', alias: 'Builder', role: 'code', task: 'one',
+    })).resolves.toMatchObject({ ok: true });
+    await expect(service.join({
+      activityId: 'activity-2', alias: 'builder', role: 'review', task: 'two',
+    })).resolves.toMatchObject({ ok: false, error: 'conflict' });
+    service.dispose();
+  });
+
+  it('strips validation output from snapshots and aborts long polling promptly', async () => {
+    const store = await configuredStore();
+    const activities = new FakeActivities([activity({ state: 'working', status: 'working' })]);
+    const service = new AgentCoordinationService({
+      activities,
+      store,
+      listProjects: () => projects,
+      resolveWorkspace: async () => ({ projectId: 'project-1', workspaceId: 'workspace-1' }),
+    });
+    const mergeRequest = {
+      requestId: 'request-1',
+      revision: 2,
+      projectId: 'project-1',
+      participantId: 'participant-1',
+      activityId: 'activity-1',
+      sourceWorkspaceId: 'workspace-1',
+      sourceBranch: 'agent/feature',
+      sourceHead: '1'.repeat(40),
+      targetBranch: 'main',
+      targetHead: '2'.repeat(40),
+      state: 'validating',
+      validationConfigRevision: 1,
+      validations: [{ id: 'unit', name: 'Unit', status: 'running', outputTail: 'SECRET OUTPUT' }],
+      createdAt: 1,
+      updatedAt: 2,
+      expiresAt: 3,
+    } satisfies ManagedMergeRequest;
+    const mergeListeners = new Set<() => void>();
+    const merges: CoordinationMergeSource = {
+      listRequests: () => [mergeRequest],
+      onRequests: (listener) => {
+        mergeListeners.add(listener);
+        return () => mergeListeners.delete(listener);
+      },
+    };
+    service.bindMergeSource(merges);
+    expect(JSON.stringify(service.getSnapshot())).not.toContain('SECRET OUTPUT');
+
+    const controller = new AbortController();
+    const waiting = service.waitFor('activity-1', new Set<AgentState>(['done']), 3, 60_000, controller.signal);
+    controller.abort();
+    await expect(waiting).resolves.toBeNull();
+    service.dispose();
+  });
+});

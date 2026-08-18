@@ -40,6 +40,11 @@ import type {
   AgentFollowupResult,
 } from './agent';
 import type {
+  AgentCoordinationMutationResult,
+  AgentCoordinationSnapshot,
+  ManagedMergeRequest,
+} from './agent-coordination';
+import type {
   AgentHistorySessionPage,
   AgentLaunchPreparation,
   AgentLaunchStartRequest,
@@ -102,10 +107,11 @@ export const REMOTE_PROTOCOL_VERSION_AGENT_LIVE = 3 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_HISTORY = 4 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS = 5 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS = 6 as const;
-export const REMOTE_PROTOCOL_VERSION = 7 as const;
-export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export const REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION = 8 as const;
+export const REMOTE_PROTOCOL_VERSION = 8 as const;
+export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
-export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [7];
+export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [8];
 
 export function isRemoteProtocolVersion(value: unknown): value is RemoteProtocolVersion {
   return SUPPORTED_REMOTE_PROTOCOL_VERSIONS.includes(value as RemoteProtocolVersion);
@@ -396,6 +402,26 @@ export interface PacketsUnsubscribeMessage {
 export interface AgentSnapshotRequest {
   readonly kind: 'agent-snapshot-get';
   readonly requestId: string;
+}
+
+export interface AgentCoordinationSnapshotRequest {
+  readonly kind: 'agent-coordination-snapshot-get';
+  readonly requestId: string;
+}
+
+export interface AgentSeenRequest {
+  readonly kind: 'agent-seen';
+  readonly requestId: string;
+  readonly activityId: string;
+  readonly stateSeq: number;
+}
+
+export interface ManagedMergeDecisionRequest {
+  readonly kind: 'managed-merge-decision';
+  readonly requestId: string;
+  readonly mergeRequestId: string;
+  readonly revision: number;
+  readonly decision: 'approve' | 'deny';
 }
 
 export interface AgentFollowupRequest {
@@ -729,6 +755,9 @@ export type ClientToServerMessage =
   | PacketsSubscribeMessage
   | PacketsUnsubscribeMessage
   | AgentSnapshotRequest
+  | AgentCoordinationSnapshotRequest
+  | AgentSeenRequest
+  | ManagedMergeDecisionRequest
   | AgentFollowupRequest
   | AgentDecisionRequest
   | AgentProjectsListRequest
@@ -979,6 +1008,24 @@ export interface AgentSnapshotMessage {
   readonly kind: 'agent-snapshot';
   readonly snapshot: AgentActivitySnapshot;
   readonly requestId?: string;
+}
+
+export interface AgentCoordinationSnapshotMessage {
+  readonly kind: 'agent-coordination-snapshot';
+  readonly snapshot: AgentCoordinationSnapshot;
+  readonly requestId?: string;
+}
+
+export interface AgentSeenReply {
+  readonly kind: 'agent-seen-reply';
+  readonly requestId: string;
+  readonly marked: boolean;
+}
+
+export interface ManagedMergeDecisionReply {
+  readonly kind: 'managed-merge-decision-reply';
+  readonly requestId: string;
+  readonly result: AgentCoordinationMutationResult<ManagedMergeRequest>;
 }
 
 export interface AgentFollowupReply {
@@ -1304,6 +1351,9 @@ export type ServerToClientMessage =
   | RunStartedMessage
   | SessionDeadMessage
   | AgentSnapshotMessage
+  | AgentCoordinationSnapshotMessage
+  | AgentSeenReply
+  | ManagedMergeDecisionReply
   | AgentFollowupReply
   | AgentDecisionReply
   | AgentProjectsListReply

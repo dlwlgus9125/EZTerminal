@@ -198,6 +198,30 @@ const api: EzTerminalApi = {
     ipcRenderer.on('agents:snapshot', handler);
     return () => ipcRenderer.removeListener('agents:snapshot', handler);
   },
+  getAgentCoordinationSnapshot: () => ipcRenderer.invoke('agents:get-coordination-snapshot'),
+  onAgentCoordinationSnapshot: (
+    listener: (snapshot: import('../shared/agent-coordination').AgentCoordinationSnapshot) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: unknown,
+      snapshot: import('../shared/agent-coordination').AgentCoordinationSnapshot,
+    ): void => listener(snapshot);
+    ipcRenderer.on('agents:coordination-snapshot', handler);
+    return () => ipcRenderer.removeListener('agents:coordination-snapshot', handler);
+  },
+  joinAgentCollaboration: (input) => ipcRenderer.invoke('agents:join-collaboration', input),
+  leaveAgentCollaboration: (activityId) => ipcRenderer.invoke('agents:leave-collaboration', activityId),
+  saveAgentCoordinationProject: (input) => ipcRenderer.invoke('agents:save-coordination-project', input),
+  markAgentSeen: (activityId, stateSeq) => ipcRenderer.invoke('agents:mark-seen', activityId, stateSeq),
+  sendAgentPrompt: (activityId, text) => ipcRenderer.invoke('agents:prompt', activityId, text),
+  requestManagedMerge: (activityId, targetBranch) => (
+    ipcRenderer.invoke('agents:request-managed-merge', activityId, targetBranch)
+  ),
+  decideManagedMerge: (input) => ipcRenderer.invoke('agents:decide-managed-merge', input),
+  grantNextManagedMerge: (input) => ipcRenderer.invoke('agents:grant-next-managed-merge', input),
+  getManagedMergeDiff: (requestId, revision) => (
+    ipcRenderer.invoke('agents:get-managed-merge-diff', requestId, revision)
+  ),
   sendAgentFollowup: (
     activityId: string,
     text: string,

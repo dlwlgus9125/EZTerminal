@@ -18,7 +18,17 @@ export const AGENT_SETTINGS_SCHEMA_VERSION = 2 as const;
 /** v1 files predate `approvalGate` and are migrated forward on read. */
 export const AGENT_SETTINGS_SCHEMA_VERSION_LEGACY = 1 as const;
 
-export type AgentStatus = 'starting' | 'working' | 'waiting' | 'blocked' | 'done' | 'error';
+export type AgentState =
+  | 'starting'
+  | 'working'
+  | 'blocked'
+  | 'done'
+  | 'idle'
+  | 'error'
+  | 'unknown';
+/** @deprecated Use AgentState. Kept as a source-compatible type alias. */
+export type AgentStatus = AgentState;
+export type AgentStateSource = 'process' | 'provider-hook' | 'terminal' | 'unknown';
 
 export type AgentProvider = 'codex' | 'claude' | 'generic';
 export const MAX_AGENT_PROVIDER_LABEL_LENGTH = 80;
@@ -51,7 +61,27 @@ export interface AgentActivity {
   /** Human-readable launcher identity; generic profiles keep their configured name. */
   readonly providerLabel?: string;
   readonly cwd: string;
-  readonly status: AgentStatus;
+  readonly state: AgentState;
+  /** @deprecated Transitional renderer alias; always identical to `state`. */
+  readonly status: AgentState;
+  /** Monotonic per-activity lifecycle sequence used by wait/focus semantics. */
+  readonly stateSeq: number;
+  /** Whether the provider process is still running. */
+  readonly live: boolean;
+  /** Whether the PTY has advertised safe structured prompt input. */
+  readonly interactiveReady: boolean;
+  readonly stateSource: AgentStateSource;
+  readonly projectId?: string;
+  readonly workspaceId?: string;
+  readonly participant?: {
+    readonly participantId: string;
+    readonly projectId: string;
+    readonly workspaceId: string;
+    readonly worktreeId?: string;
+    readonly alias: string;
+    readonly role: string;
+    readonly task: string;
+  };
   readonly createdAt: number;
   readonly updatedAt: number;
   /** Set iff `status === 'blocked'` and the approval gate captured the call. */
@@ -79,6 +109,7 @@ export interface AgentActivitySnapshot {
 export type AgentFollowupError =
   | 'not-found'
   | 'not-waiting'
+  | 'not-ready'
   | 'invalid-text'
   | 'session-ended'
   | 'delivery-failed';

@@ -51,6 +51,12 @@ class FakePort implements RemotePort {
 
 class FakeBroker implements AgentActivityBroker {
   readonly ports: FakePort[] = [];
+  readonly submissions: Array<{
+    readonly sessionId: string;
+    readonly runId: string;
+    readonly text: string;
+    readonly whenReady: boolean;
+  }> = [];
   sessions: SessionInfo[] = [{ sessionId: 'ez-1', cwd: 'C:\\work' }];
   runs: RunStartedInfo[] = [];
   private readonly runListeners = new Set<(info: RunStartedInfo) => void>();
@@ -74,6 +80,15 @@ class FakeBroker implements AgentActivityBroker {
   onInterpreterExited(listener: (code?: number) => void): () => void {
     this.exitListeners.add(listener);
     return () => this.exitListeners.delete(listener);
+  }
+  submitPtyText(
+    sessionId: string,
+    runId: string,
+    text: string,
+    whenReady = false,
+  ): Promise<{ readonly ok: true; readonly queued: boolean }> {
+    this.submissions.push({ sessionId, runId, text, whenReady });
+    return Promise.resolve({ ok: true, queued: false });
   }
   run(info: RunStartedInfo): FakePort {
     for (const listener of this.runListeners) listener(info);
@@ -156,25 +171,27 @@ describe('AgentActivityService', () => {
     const { service, broker } = makeService();
     const port = broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: '!codex' });
     expect(port.started).toBe(true);
-    expect(service.getSnapshot().items[0]).toMatchObject({ provider: 'codex', status: 'working', cwd: 'C:\\work' });
+    expect(service.getSnapshot().items[0]).toMatchObject({ provider: 'codex', status: 'starting', cwd: 'C:\\work' });
+    port.frame({ type: 'pty-interactive-ready' });
+    expect(service.getSnapshot().items[0].status).toBe('working');
 
     port.frame({ type: 'start', commandText: '!codex', cwd: 'C:\\repo' });
     service.handleHookEvent(hook({ event: 'SessionStart', cwd: 'C:\\repo' }));
-    expect(service.getSnapshot().items[0].status).toBe('starting');
+    expect(service.getSnapshot().items[0].status).toBe('working');
     service.handleHookEvent(hook({ event: 'UserPromptSubmit', cwd: 'C:\\repo' }));
     expect(service.getSnapshot().items[0].status).toBe('working');
     service.handleHookEvent(hook({ event: 'PermissionRequest', toolName: 'Bash', cwd: 'C:\\repo' }));
     expect(service.getSnapshot().items[0].status).toBe('blocked');
     service.handleHookEvent(hook({ event: 'Stop', cwd: 'C:\\repo' }));
     const activity = service.getSnapshot().items[0];
-    expect(activity.status).toBe('waiting');
+    expect(activity.status).toBe('done');
     expect(activity).not.toHaveProperty('runId');
     expect(activity).not.toHaveProperty('providerSessionId');
 
     expect(service.sendFollowup(activity.id, '  continue  ')).toEqual({ ok: true });
     expect(port.posted).toContainEqual({ type: 'pty-input', data: 'continue\r' });
     expect(service.getSnapshot().items[0].status).toBe('working');
-    expect(service.sendFollowup(activity.id, 'bad\nline')).toEqual({ ok: false, error: 'not-waiting' });
+    expect(service.sendFollowup(activity.id, 'bad\nline')).toEqual({ ok: false, error: 'not-ready' });
 
     port.frame({ type: 'end', cwd: 'C:\\repo' });
     expect(service.getSnapshot().items[0].status).toBe('done');
@@ -186,7 +203,8 @@ describe('AgentActivityService', () => {
     service.handleHookEvent(
       hook({ provider: 'claude', providerSessionId: 'claude-session', event: 'Notification', notificationType: 'permission_prompt' }),
     );
-    broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'claude' });
+    const port = broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'claude' });
+    port.frame({ type: 'pty-interactive-ready' });
     expect(service.getSnapshot().items[0]).toMatchObject({ provider: 'claude', status: 'working' });
     service.handleHookEvent(
       hook({ provider: 'claude', providerSessionId: 'claude-session', event: 'Notification', notificationType: 'permission_prompt' }),
@@ -195,12 +213,13 @@ describe('AgentActivityService', () => {
     service.handleHookEvent(
       hook({ provider: 'claude', providerSessionId: 'claude-session', event: 'Notification', notificationType: 'idle_prompt' }),
     );
-    expect(service.getSnapshot().items[0].status).toBe('waiting');
+    expect(service.getSnapshot().items[0].status).toBe('done');
   });
 
   it('ignores Claude background-agent notifications for the foreground terminal activity', () => {
     const { service, broker } = makeService();
-    broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'claude' });
+    const port = broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'claude' });
+    port.frame({ type: 'pty-interactive-ready' });
     for (const notificationType of ['agent_needs_input', 'agent_completed']) {
       service.handleHookEvent(
         hook({
@@ -213,7 +232,7 @@ describe('AgentActivityService', () => {
     }
     const activity = service.getSnapshot().items[0];
     expect(activity.status).toBe('working');
-    expect(service.sendFollowup(activity.id, 'wrong target')).toEqual({ ok: false, error: 'not-waiting' });
+    expect(service.sendFollowup(activity.id, 'wrong target')).toEqual({ ok: false, error: 'not-ready' });
   });
 
   it('never promotes an unrecognized wrapper from a session-only provider hook', () => {
@@ -262,8 +281,23 @@ describe('AgentActivityService', () => {
     const id = service.getSnapshot().items[0].id;
     expect(service.sendFollowup(id, 'one\ntwo')).toEqual({ ok: false, error: 'invalid-text' });
     service.handleHookEvent(hook({ event: 'PermissionRequest' }));
-    expect(service.sendFollowup(id, 'approve')).toEqual({ ok: false, error: 'not-waiting' });
+    expect(service.sendFollowup(id, 'approve')).toEqual({ ok: false, error: 'not-ready' });
     expect(port.posted).toEqual([]);
+  });
+
+  it('rejects terminal control sequences in structured prompts before broker delivery', async () => {
+    const { service, broker } = makeService();
+    const port = broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'codex' });
+    port.frame({ type: 'pty-interactive-ready' });
+    service.handleHookEvent(hook({ event: 'Stop' }));
+    const activity = service.getSnapshot().items[0];
+    expect(activity).toMatchObject({ state: 'done', interactiveReady: true });
+
+    await expect(service.sendPrompt(activity.id, `review this\u001b[201~\runsafe`)).resolves.toEqual({
+      ok: false,
+      error: 'invalid-text',
+    });
+    expect(broker.submissions).toEqual([]);
   });
 
   it('degrades to hook-only tracking when the interpreter mirror cap is full', () => {
@@ -273,7 +307,7 @@ describe('AgentActivityService', () => {
     port.close();
     service.handleHookEvent(hook({ event: 'Stop' }));
     const activity = service.getSnapshot().items[0];
-    expect(activity.status).toBe('waiting');
+    expect(activity.status).toBe('done');
     expect(service.sendFollowup(activity.id, 'continue')).toEqual({ ok: false, error: 'delivery-failed' });
   });
 });

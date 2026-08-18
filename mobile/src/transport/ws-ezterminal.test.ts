@@ -2066,7 +2066,12 @@ describe('WsEzTerminalTransport — Agent Activity', () => {
       sessionId: 'sess-1',
       provider: 'codex',
       cwd: '/repo',
-      status: 'waiting',
+      state: 'done',
+      status: 'done',
+      stateSeq: 1,
+      live: true,
+      interactiveReady: true,
+      stateSource: 'provider-hook',
       createdAt: 1,
       updatedAt: 2,
     };
@@ -2079,7 +2084,10 @@ describe('WsEzTerminalTransport — Agent Activity', () => {
     sockets[0].triggerMessage({
       kind: 'agent-snapshot',
       requestId: 'req-1',
-      snapshot: { revision: 3, items: [{ ...activity, status: 'working', updatedAt: 3 }] },
+      snapshot: {
+        revision: 3,
+        items: [{ ...activity, state: 'working', status: 'working', stateSeq: 2, updatedAt: 3 }],
+      },
     });
     await expect(snapshotPromise).resolves.toMatchObject({ revision: 3 });
 
@@ -2175,7 +2183,12 @@ describe('WsEzTerminalTransport — Agent Activity', () => {
         sessionId: 'sess-1',
         provider: 'codex' as const,
         cwd: '/old',
+        state: 'working' as const,
         status: 'working' as const,
+        stateSeq: 1,
+        live: true,
+        interactiveReady: true,
+        stateSource: 'provider-hook' as const,
         createdAt: 1,
         updatedAt: 2,
       };
@@ -2205,6 +2218,161 @@ describe('WsEzTerminalTransport — Agent Activity', () => {
     }
   });
 
+});
+
+describe('WsEzTerminalTransport — Agent coordination v8', () => {
+  const activity = {
+    id: 'activity-1',
+    sessionId: 'session-1',
+    provider: 'codex' as const,
+    cwd: '/repo',
+    state: 'done' as const,
+    status: 'done' as const,
+    stateSeq: 3,
+    live: true,
+    interactiveReady: true,
+    stateSource: 'provider-hook' as const,
+    createdAt: 1,
+    updatedAt: 2,
+  };
+  const mergeRequest = {
+    requestId: 'merge-1',
+    revision: 4,
+    projectId: 'project-1',
+    participantId: 'participant-1',
+    activityId: 'activity-1',
+    sourceWorkspaceId: 'workspace-1',
+    sourceBranch: 'agent/feature',
+    sourceHead: '1'.repeat(40),
+    targetBranch: 'main',
+    targetHead: '2'.repeat(40),
+    candidateHead: '3'.repeat(40),
+    state: 'approval-required' as const,
+    validationConfigRevision: 1,
+    validations: [{
+      id: 'unit',
+      name: 'Unit tests',
+      status: 'passed' as const,
+      startedAt: 5,
+      finishedAt: 6,
+      durationMs: 1,
+      exitCode: 0,
+      outputTruncated: false,
+    }],
+    createdAt: 3,
+    updatedAt: 4,
+    expiresAt: 10,
+  };
+  const snapshot = {
+    revision: 2,
+    activityRevision: 2,
+    activities: [activity],
+    projects: [],
+    mergeRequests: [mergeRequest],
+  };
+
+  it('correlates snapshot, seen, and normal merge decisions', async () => {
+    const requestIds = ['coord-1', 'seen-1', 'decision-1'];
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      newId: () => requestIds.shift()!,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const revisions: number[] = [];
+    transport.onAgentCoordinationSnapshot((value) => revisions.push(value.revision));
+    sockets[0].triggerMessage({ kind: 'agent-coordination-snapshot', snapshot });
+    expect(revisions).toEqual([0, 2]);
+
+    const requested = transport.getAgentCoordinationSnapshot();
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-coordination-snapshot-get',
+      requestId: 'coord-1',
+    });
+    sockets[0].triggerMessage({
+      kind: 'agent-coordination-snapshot',
+      requestId: 'coord-1',
+      snapshot: { ...snapshot, revision: 3 },
+    });
+    await expect(requested).resolves.toMatchObject({ revision: 3 });
+
+    const seen = transport.markAgentSeen('activity-1', 3);
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'agent-seen',
+      requestId: 'seen-1',
+      activityId: 'activity-1',
+      stateSeq: 3,
+    });
+    sockets[0].triggerMessage({ kind: 'agent-seen-reply', requestId: 'seen-1', marked: true });
+    await expect(seen).resolves.toBe(true);
+
+    const decision = transport.decideManagedMerge({
+      requestId: 'merge-1',
+      revision: 4,
+      decision: 'approve',
+      actor: 'mobile',
+    });
+    expect(sockets[0].lastSent()).toEqual({
+      kind: 'managed-merge-decision',
+      requestId: 'decision-1',
+      mergeRequestId: 'merge-1',
+      revision: 4,
+      decision: 'approve',
+    });
+    sockets[0].triggerMessage({
+      kind: 'managed-merge-decision-reply',
+      requestId: 'decision-1',
+      result: { ok: true, value: mergeRequest },
+    });
+    await expect(decision).resolves.toMatchObject({ ok: true, value: { requestId: 'merge-1' } });
+  });
+
+  it('rejects terminal output and malformed decision results at the mobile wire boundary', async () => {
+    const requestIds = ['coord-bad', 'decision-bad'];
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({
+      url: 'ws://x',
+      token: 'tok',
+      createSocket,
+      newId: () => requestIds.shift()!,
+    });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+
+    const requested = transport.getAgentCoordinationSnapshot();
+    sockets[0].triggerMessage({
+      kind: 'agent-coordination-snapshot',
+      requestId: 'coord-bad',
+      snapshot: {
+        ...snapshot,
+        revision: 99,
+        mergeRequests: [{
+          ...mergeRequest,
+          validations: [{ ...mergeRequest.validations[0], outputTail: 'must not cross the wire' }],
+        }],
+      },
+    });
+    await expect(requested).resolves.toMatchObject({ revision: 0, mergeRequests: [] });
+
+    const decision = transport.decideManagedMerge({
+      requestId: 'merge-1',
+      revision: 4,
+      decision: 'deny',
+      actor: 'mobile',
+    });
+    sockets[0].triggerMessage({
+      kind: 'managed-merge-decision-reply',
+      requestId: 'decision-bad',
+      result: { ok: true, value: { ...mergeRequest, revision: 'not-a-number' } },
+    });
+    await expect(decision).resolves.toEqual({
+      ok: false,
+      error: 'unavailable',
+      message: 'Desktop returned an invalid merge decision.',
+    });
+  });
 });
 
 describe('WsEzTerminalTransport — Agent history v4', () => {

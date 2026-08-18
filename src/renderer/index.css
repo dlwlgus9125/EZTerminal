@@ -2820,7 +2820,9 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   background: var(--ui-danger-muted);
 }
 
-.agent-row[data-status='waiting'] {
+.agent-row[data-status='done'],
+.agent-managed-merge[data-status='approval-required'],
+.agent-managed-merge[data-status='override-required'] {
   border-color: color-mix(in srgb, var(--ui-warning) 55%, var(--ui-border-mid));
   background: var(--ui-warning-muted);
 }
@@ -3255,6 +3257,33 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   padding-inline-end: var(--ui-space-1);
 }
 
+.agent-project-coordination {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  padding: 0 var(--ui-space-2) var(--ui-space-2);
+  border-top: 1px solid var(--ui-border-subtle);
+}
+
+.agent-project-coordination p {
+  grid-column: 1 / -1;
+  margin: var(--ui-space-2) 0 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-12);
+  line-height: 1.45;
+}
+
+.agent-project-coordination span {
+  min-inline-size: 0;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-2xs);
+  overflow-wrap: anywhere;
+}
+
+.agent-project-coordination-start {
+  margin: 0 var(--ui-space-2) var(--ui-space-2);
+}
+
 .agent-history-row strong,
 .agent-history-row p {
   overflow: hidden;
@@ -3360,6 +3389,39 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
   gap: var(--ui-space-2);
 }
 
+.agent-launch-workspace {
+  display: grid;
+  gap: var(--ui-space-2);
+  margin: 0;
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+}
+
+.agent-launch-workspace legend {
+  padding-inline: var(--ui-space-1);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-12);
+  font-weight: 700;
+}
+
+.agent-launch-workspace > label {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ui-space-2);
+  cursor: pointer;
+}
+
+.agent-launch-workspace > label span {
+  display: grid;
+  gap: 2px;
+}
+
+.agent-launch-workspace > label small {
+  color: var(--ui-text-muted);
+  line-height: 1.4;
+}
+
 .agent-launch-directory {
   display: grid;
   gap: var(--ui-space-1);
@@ -3408,6 +3470,65 @@ html[data-ez-window='auxiliary'] .dv-popout-window.dv-dockview {
 .agent-project-editor {
   display: grid;
   gap: var(--ui-space-4);
+}
+
+.agent-coordination-form,
+.agent-validation-editor {
+  display: grid;
+  gap: var(--ui-space-3);
+}
+
+.ui-textarea {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-block-size: 5rem;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-border-mid);
+  border-radius: var(--ui-radius-md);
+  outline: none;
+  background: var(--ui-surface-inset);
+  color: var(--ui-text-primary);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.ui-textarea:focus-visible {
+  border-color: var(--ui-border-focus);
+  box-shadow: 0 0 0 2px var(--ui-focus-ring);
+}
+
+.agent-coordination-brief {
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-12);
+}
+
+.agent-validation-editor__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+}
+
+.agent-validation-editor__head h3 {
+  margin: 0;
+  font-size: var(--ui-font-size-sm);
+}
+
+.agent-validation-row {
+  display: grid;
+  gap: var(--ui-space-2);
+  margin: 0;
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+}
+
+.agent-validation-row legend {
+  padding-inline: var(--ui-space-1);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-12);
+  font-weight: 700;
 }
 
 .agent-project-roots {
@@ -3909,15 +4030,18 @@ button.agent-work-activity:focus-visible {
 .agent-status-dot--working {
   color: var(--term-blue);
 }
-.agent-status-dot--waiting {
+.agent-status-dot--done {
   color: var(--term-amber);
 }
 .agent-status-dot--blocked,
 .agent-status-dot--error {
   color: var(--term-red);
 }
-.agent-status-dot--done {
+.agent-status-dot--idle {
   color: var(--term-green);
+}
+.agent-status-dot--unknown {
+  color: var(--term-fg-faint);
 }
 
 .agent-provider {
@@ -3954,14 +4078,66 @@ button.agent-work-activity:focus-visible {
 .agent-status--error {
   color: var(--term-red);
 }
-.agent-status--waiting {
+.agent-status--done {
   color: var(--term-amber);
 }
 .agent-status--working {
   color: var(--term-blue);
 }
-.agent-status--done {
+.agent-status--idle {
   color: var(--term-green);
+}
+
+.agent-participant {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 7px 9px;
+  border-inline-start: 2px solid var(--ui-accent);
+  background: var(--ui-accent-muted);
+  font-size: var(--ui-font-size-12);
+}
+
+.agent-participant > div {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: 8px;
+}
+
+.agent-participant dt {
+  color: var(--ui-text-muted);
+}
+
+.agent-participant dd {
+  min-inline-size: 0;
+  margin: 0;
+  color: var(--ui-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.agent-managed-merge-validations {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--ui-font-size-12);
+}
+
+.agent-managed-merge-validations li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ui-text-secondary);
+}
+
+.agent-managed-merge-validations li[data-status='failed'],
+.agent-managed-merge-validations li[data-status='timed-out'] {
+  color: var(--ui-danger);
+}
+
+.agent-managed-merge-validations li[data-status='passed'] {
+  color: var(--ui-success);
 }
 
 .agent-followup {

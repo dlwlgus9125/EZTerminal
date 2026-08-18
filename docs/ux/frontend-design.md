@@ -168,6 +168,14 @@ unload하지 않으므로 Low resource 선택 시 완전한 메모리 회수는 
 안내를 표시한다. 어느 선택도 timeout, reconnect/liveness, command cancellation,
 backpressure, capture lease나 위험한 pane 닫기 확인을 느리게 해서는 안 된다.
 
+### 3.8 Windows close와 tray
+
+Windows main 창의 native close와 frameless close action은 창을 숨기며 terminal·Agent
+session을 종료하지 않는다. tray click과 Open action은 같은 main 창을 restore하고
+focus한다. File 메뉴와 tray의 `Quit…`은 같은 명시적 종료 확인을 사용하며 Cancel이
+기본 action이다. 확인은 실행 중인 terminal과 Agent session이 중단된다는 결과를
+설명한다. 숨김과 종료를 같은 label이나 icon으로 표현하지 않는다.
+
 ### 4.5 Command Center and duplicate entry policy
 
 > 이 section 번호는 고정 desktop handoff 계약이 참조하므로 유지한다.
@@ -356,6 +364,38 @@ handler를 사용한다. Back, session row, retry와 더 보기는 keyboard와 p
 Back, loading/empty/error/pagination을 검증한다. Storybook/visual lane은 repository에 이미
 구성된 기존 Agent surface snapshot을 oracle로 사용하고, 이 계약과 불일치할 때 snapshot을
 자동으로 정답 취급하지 않는다. 미해결 제품 결정은 없다.
+
+### 10.2 Project 협업과 관리 머지
+
+Project coordination은 기존 Agents 정보 구조 안에 놓고 별도 최상위 destination을
+만들지 않는다. Project row/card는 goal, 기본 target branch, validation 목록, 참여자
+rollup과 pending merge 수를 보여 준다. 편집 form은 현재 `configRevision`을 기준으로
+저장하며 stale 결과를 사용자의 최신 입력 위에 자동 적용하지 않는다.
+
+Live Codex/Claude card에는 협업 참여 또는 참여자 편집 action을 둔다. alias, role과 task를
+확정하면 생성된 brief를 편집 가능한 preview로 먼저 보여 주고 사용자의 `Send` 전에는
+terminal에 아무것도 전달하지 않는다. 참여한 card는 Project·alias·role·task와 현재
+`starting/working/blocked/done/idle/error/unknown` 상태를 함께 표시한다. `done`을 focus한
+경우 해당 sequence만 확인 처리하고 새 turn의 attention을 지우지 않는다.
+
+관리 merge queue는 source→target, Agent alias, immutable request revision, validation
+상태와 warning/error를 한 card에서 읽을 수 있어야 한다. Candidate review는 정확한
+target/candidate pair를 열고, stale revision이면 diff나 승인 action을 계속 사용하지
+않는다. 정상 validation은 Approve/Deny를 제공한다. 실패 validation의 Override는 desktop
+전용이며 이유 입력과 두 단계 확인을 요구한다. `다음 1회 자동 머지`는 participant,
+workspace, target과 만료 시간을 먼저 보여 주고 영구 설정처럼 표현하지 않는다.
+
+Android Agents는 status/focus/conversation과 정상 `approval-required` merge의 Approve/
+Deny만 제공한다. Project 설정, Join/Leave, validation override와 1회 grant는 desktop에서
+완료하라는 설명을 보여 주며 disabled control로 가짜 affordance를 만들지 않는다. Mobile
+merge card도 source→target, validation 결과와 request가 바뀌면 action이 실패할 수 있다는
+revision 의미를 유지한다.
+
+Button은 raw terminal Git 명령을 전송하지 않고 main의 관리 merge operation만 호출한다.
+preparing/validating/merging 중에는 중복 action을 막고 현재 단계 label을 유지한다. 성공,
+deny, conflict, stale, failed와 interrupted는 서로 다른 text 상태이며 color만으로 구분하지
+않는다. 상세 process·보안 계약은
+[`agent-collaboration.md`](../design/agent-collaboration.md)가 소유한다.
 
 ## 11. PC Control UI 계약
 

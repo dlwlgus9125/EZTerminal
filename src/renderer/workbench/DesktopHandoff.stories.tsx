@@ -19,6 +19,7 @@ import {
 } from 'react';
 
 import type { AgentActivitySnapshot } from '../../shared/agent';
+import type { AgentCoordinationSnapshot } from '../../shared/agent-coordination';
 import { EMPTY_GIT_DIRECTORY_STATUS } from '../../shared/git-status';
 import type { RemoteDesktopHostStatus, SystemStatsSnapshot } from '../../shared/ipc';
 import { PAIRING_CODE_TTL_MS } from '../../shared/pairing';
@@ -369,7 +370,12 @@ const AGENTS: AgentActivitySnapshot = {
       sessionId: 'session-2',
       provider: 'claude',
       cwd: 'C:\\Working\\EZTerminal',
+      state: 'blocked',
       status: 'blocked',
+      stateSeq: 3,
+      live: true,
+      interactiveReady: true,
+      stateSource: 'provider-hook',
       createdAt: NOW - 184_000,
       updatedAt: NOW,
       approval: {
@@ -387,11 +393,116 @@ const AGENTS: AgentActivitySnapshot = {
       sessionId: 'session-3',
       provider: 'codex',
       cwd: 'C:\\Working\\EZTerminal\\src',
+      state: 'working',
       status: 'working',
+      stateSeq: 2,
+      live: true,
+      interactiveReady: true,
+      stateSource: 'provider-hook',
       createdAt: NOW - 412_000,
       updatedAt: NOW - 8_000,
     },
   ],
+};
+
+const AGENT_COORDINATION: AgentCoordinationSnapshot = {
+  revision: 7,
+  activityRevision: AGENTS.revision,
+  activities: AGENTS.items.map((item) => ({
+    ...item,
+    projectId: 'project-ezterminal',
+    workspaceId: item.id === 'claude-release' ? 'workspace-review' : 'workspace-build',
+    participant: {
+      participantId: item.id === 'claude-release' ? 'participant-review' : 'participant-build',
+      projectId: 'project-ezterminal',
+      workspaceId: item.id === 'claude-release' ? 'workspace-review' : 'workspace-build',
+      worktreeId: item.id === 'claude-release' ? 'worktree-review' : 'worktree-build',
+      alias: item.id === 'claude-release' ? 'Reviewer' : 'Builder',
+      role: item.id === 'claude-release' ? 'release review' : 'implementation',
+      task: item.id === 'claude-release' ? 'Review validation evidence' : 'Finish Agent coordination',
+    },
+  })),
+  projects: [{
+    projectId: 'project-ezterminal',
+    goal: 'Ship safe human-led collaboration between Codex and Claude',
+    defaultTargetBranch: 'main',
+    validationCommands: [{
+      id: 'unit',
+      name: 'Unit tests',
+      command: 'pnpm test:unit',
+      timeoutMs: 600_000,
+    }],
+    configRevision: 3,
+    counts: {
+      starting: 0,
+      working: 1,
+      blocked: 1,
+      done: 0,
+      idle: 0,
+      error: 0,
+      unknown: 0,
+    },
+    participants: [
+      {
+        participantId: 'participant-review',
+        projectId: 'project-ezterminal',
+        activityId: 'claude-release',
+        sessionId: 'session-2',
+        workspaceId: 'workspace-review',
+        worktreeId: 'worktree-review',
+        alias: 'Reviewer',
+        role: 'release review',
+        task: 'Review validation evidence',
+        provider: 'claude',
+        joined: true,
+        joinedAt: NOW - 184_000,
+        updatedAt: NOW,
+      },
+      {
+        participantId: 'participant-build',
+        projectId: 'project-ezterminal',
+        activityId: 'codex-audit',
+        sessionId: 'session-3',
+        workspaceId: 'workspace-build',
+        worktreeId: 'worktree-build',
+        alias: 'Builder',
+        role: 'implementation',
+        task: 'Finish Agent coordination',
+        provider: 'codex',
+        joined: true,
+        joinedAt: NOW - 412_000,
+        updatedAt: NOW - 8_000,
+      },
+    ],
+    pendingMergeCount: 1,
+  }],
+  mergeRequests: [{
+    requestId: 'merge-review-1',
+    revision: 6,
+    projectId: 'project-ezterminal',
+    participantId: 'participant-build',
+    activityId: 'codex-audit',
+    sourceWorkspaceId: 'workspace-build',
+    sourceBranch: 'agent/coordination',
+    sourceHead: '1'.repeat(40),
+    targetBranch: 'main',
+    targetHead: '2'.repeat(40),
+    candidateHead: '3'.repeat(40),
+    state: 'approval-required',
+    validationConfigRevision: 3,
+    validations: [{
+      id: 'unit',
+      name: 'Unit tests',
+      status: 'passed',
+      startedAt: NOW - 18_000,
+      finishedAt: NOW - 8_000,
+      durationMs: 10_000,
+      exitCode: 0,
+    }],
+    createdAt: NOW - 30_000,
+    updatedAt: NOW - 8_000,
+    expiresAt: NOW + 86_400_000,
+  }],
 };
 
 function AgentHubFixture(): JSX.Element {
@@ -584,6 +695,34 @@ function TerminalDockFixture(): JSX.Element {
         />
       </div>
     </StoryTerminalRuntime>
+  );
+}
+
+function AgentCoordinationFixture(): JSX.Element {
+  return (
+    <AgentHub
+      snapshot={AGENTS}
+      coordinationSnapshot={AGENT_COORDINATION}
+      currentTime={NOW}
+      onFocusSession={() => undefined}
+      onSendFollowup={async () => ({ ok: true })}
+      onDecideApproval={async () => ({ ok: true })}
+      onLoadDiff={async () => ({ ok: true, text: '+ working tree diff', truncated: false, omissions: [] })}
+      onLoadManagedMergeDiff={async () => ({
+        ok: true,
+        text: '+ immutable candidate diff',
+        truncated: false,
+        omissions: [],
+      })}
+      onReadGitStatus={async () => EMPTY_GIT_DIRECTORY_STATUS}
+      onSendPrompt={async () => ({ ok: true })}
+      onLeaveCollaboration={async () => true}
+      onRequestManagedMerge={async () => ({ ok: true, value: AGENT_COORDINATION.mergeRequests[0]! })}
+      onDecideManagedMerge={async () => ({ ok: true, value: AGENT_COORDINATION.mergeRequests[0]! })}
+      onGrantNextManagedMerge={async () => ({ ok: true, value: { expiresAt: NOW + 3_600_000 } })}
+      onLaunchAgent={() => undefined}
+      onOpenAgentSettings={() => undefined}
+    />
   );
 }
 
@@ -949,6 +1088,14 @@ export const WorkbenchAgentHub: Story = {
         destination="agents"
         sidebar={<AgentHubFixture />}
       />
+    </LocaleFrame>
+  ),
+};
+
+export const AgentCoordination: Story = {
+  render: () => (
+    <LocaleFrame>
+      <WorkbenchFrame destination="agents" sidebar={<AgentCoordinationFixture />} />
     </LocaleFrame>
   ),
 };

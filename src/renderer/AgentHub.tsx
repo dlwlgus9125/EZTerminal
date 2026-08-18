@@ -3,6 +3,7 @@ import {
   Check,
   FolderPlus,
   GitCompareArrows,
+  GitMerge,
   History,
   MessageSquarePlus,
   MoreHorizontal,
@@ -10,7 +11,9 @@ import {
   Plus,
   Search,
   Settings,
+  ShieldCheck,
   Trash2,
+  Users,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -25,6 +28,20 @@ import type {
   AgentProvider,
   AgentStatus,
 } from '../shared/agent';
+import {
+  EMPTY_AGENT_COORDINATION_SNAPSHOT,
+  type AgentCoordinationMutationResult,
+  type AgentCoordinationSnapshot,
+  type AgentParticipant,
+  type AgentParticipantInput,
+  type AgentProjectCoordination,
+  type AgentProjectCoordinationInput,
+  type AgentValidationCommand,
+  type ManagedMergeDecisionInput,
+  type ManagedMergeGrantInput,
+  type ManagedMergeRequest,
+  isSafeLocalBranch,
+} from '../shared/agent-coordination';
 import type {
   AgentHistorySessionSummary,
   AgentLaunchBootstrap,
@@ -66,15 +83,16 @@ import {
 /** Used when no Git reader is supplied; every row then shows its directory. */
 const readNothing = (): Promise<GitDirectoryStatus> => Promise.resolve(EMPTY_GIT_DIRECTORY_STATUS);
 
-const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'waiting']);
+const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'done']);
 const ACTIVE = new Set<AgentStatus>(['starting', 'working']);
 
 const STATUS_LABEL_KEY = {
   starting: 'agentHub.status.starting',
   working: 'agentHub.status.working',
-  waiting: 'agentHub.status.waiting',
   blocked: 'agentHub.status.blocked',
   done: 'agentHub.status.done',
+  idle: 'agentHub.status.idle',
+  unknown: 'agentHub.status.unknown',
   error: 'agentHub.status.error',
 } as const satisfies Record<AgentStatus, string>;
 
@@ -102,6 +120,7 @@ function sortRecent(a: AgentActivity, b: AgentActivity): number {
 
 export interface AgentHubProps {
   readonly snapshot: AgentActivitySnapshot;
+  readonly coordinationSnapshot?: AgentCoordinationSnapshot;
   readonly onFocusSession: (sessionId: string) => void;
   readonly onSendFollowup: (activityId: string, text: string) => Promise<AgentFollowupResult>;
   /** Answers a parked permission hook. Absent leaves the queue read-only. */
@@ -114,6 +133,8 @@ export interface AgentHubProps {
   readonly onLoadDiff?: (directory: string) => Promise<GitDiffResult>;
   /** Opens the first-class project review panel. False falls back to the legacy bounded dialog. */
   readonly onOpenProjectReview?: (directory: string) => Promise<boolean>;
+  /** Reads the immutable candidate-vs-target patch for one managed merge revision. */
+  readonly onLoadManagedMergeDiff?: (requestId: string, revision: number) => Promise<GitDiffResult>;
   /** Resolves each activity's branch. Absent leaves the working directory. */
   readonly onReadGitStatus?: (directory: string) => Promise<GitDirectoryStatus>;
   /** Opens a singleton read-only history tab without disturbing live terminals. */
@@ -144,6 +165,24 @@ export interface AgentHubProps {
   ) => void;
   readonly onOpenProjectTerminal?: (projectSession: ProjectSessionPanelMetadata) => void;
   readonly onOpenAgentSettings?: () => void;
+  readonly onJoinCollaboration?: (
+    input: AgentParticipantInput,
+  ) => Promise<AgentCoordinationMutationResult<{ readonly participant: AgentParticipant; readonly brief: string }>>;
+  readonly onLeaveCollaboration?: (activityId: string) => Promise<boolean>;
+  readonly onSaveCoordinationProject?: (
+    input: AgentProjectCoordinationInput,
+  ) => Promise<AgentCoordinationMutationResult<AgentProjectCoordination>>;
+  readonly onSendPrompt?: (activityId: string, text: string) => Promise<AgentFollowupResult>;
+  readonly onRequestManagedMerge?: (
+    activityId: string,
+    targetBranch: string,
+  ) => Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
+  readonly onDecideManagedMerge?: (
+    input: ManagedMergeDecisionInput,
+  ) => Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
+  readonly onGrantNextManagedMerge?: (
+    input: ManagedMergeGrantInput,
+  ) => Promise<AgentCoordinationMutationResult<{ readonly expiresAt: number }>>;
   readonly onClose?: () => void;
   readonly mobile?: boolean;
   readonly disconnected?: boolean;
@@ -163,11 +202,13 @@ type DiffView =
 
 export function AgentHub({
   snapshot,
+  coordinationSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT,
   onFocusSession,
   onSendFollowup,
   onDecideApproval,
   onLoadDiff,
   onOpenProjectReview,
+  onLoadManagedMergeDiff,
   onReadGitStatus,
   onOpenHistorySession,
   onOpenHistoryReview,
@@ -180,6 +221,13 @@ export function AgentHub({
   onLaunchAgent,
   onOpenProjectTerminal,
   onOpenAgentSettings,
+  onJoinCollaboration,
+  onLeaveCollaboration,
+  onSaveCoordinationProject,
+  onSendPrompt,
+  onRequestManagedMerge,
+  onDecideManagedMerge,
+  onGrantNextManagedMerge,
   onClose,
   mobile = false,
   disconnected = false,
@@ -221,6 +269,8 @@ export function AgentHub({
   const [selectedLauncherId, setSelectedLauncherId] = useState('');
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [launchWorkspaceMode, setLaunchWorkspaceMode] = useState<'current' | 'managed'>('current');
+  const [launchWorktreeBranch, setLaunchWorktreeBranch] = useState('');
   const [editingProject, setEditingProject] = useState<AgentProjectSummary | null>(null);
   const [projectEditorOpen, setProjectEditorOpen] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState('');
@@ -228,10 +278,42 @@ export function AgentHub({
   const [projectSaving, setProjectSaving] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<AgentProjectSummary | null>(null);
   const [localDrillProject, setLocalDrillProject] = useState<AgentProjectSummary | null>(null);
+  const [collaborationActivity, setCollaborationActivity] = useState<AgentActivity | null>(null);
+  const [collaborationAlias, setCollaborationAlias] = useState('');
+  const [collaborationRole, setCollaborationRole] = useState('');
+  const [collaborationTask, setCollaborationTask] = useState('');
+  const [collaborationBusy, setCollaborationBusy] = useState(false);
+  const [collaborationError, setCollaborationError] = useState<string | null>(null);
+  const [briefDraft, setBriefDraft] = useState<{ readonly activityId: string; readonly text: string } | null>(null);
+  const [coordinationProject, setCoordinationProject] = useState<AgentProjectSummary | null>(null);
+  const [coordinationGoal, setCoordinationGoal] = useState('');
+  const [coordinationTarget, setCoordinationTarget] = useState('main');
+  const [coordinationValidations, setCoordinationValidations] = useState<readonly AgentValidationCommand[]>([]);
+  const [coordinationSaving, setCoordinationSaving] = useState(false);
+  const [coordinationError, setCoordinationError] = useState<string | null>(null);
+  const [mergeActivity, setMergeActivity] = useState<AgentActivity | null>(null);
+  const [mergeTargetBranch, setMergeTargetBranch] = useState('main');
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeError, setMergeError] = useState<string | null>(null);
+  const [overrideRequest, setOverrideRequest] = useState<ManagedMergeRequest | null>(null);
+  const [overrideReason, setOverrideReason] = useState('');
+  const [grantActivity, setGrantActivity] = useState<AgentActivity | null>(null);
+  const [grantDuration, setGrantDuration] = useState<ManagedMergeGrantInput['durationMs']>(900000);
   const diffRequestGeneration = useRef(0);
   const projectRequestGate = useLatestRequestGate();
+  const coordinatedActivities = useMemo(() => {
+    const enriched = new Map(coordinationSnapshot.activities.map((item) => [item.id, item]));
+    return snapshot.items.map((item) => enriched.get(item.id) ?? item);
+  }, [coordinationSnapshot.activities, snapshot.items]);
+  const coordinationProjects = useMemo(
+    () => new Map(coordinationSnapshot.projects.map((project) => [project.projectId, project])),
+    [coordinationSnapshot.projects],
+  );
+  const pendingMergeRequests = useMemo(() => coordinationSnapshot.mergeRequests.filter((request) => (
+    ['preparing', 'validating', 'approval-required', 'override-required', 'merging'].includes(request.state)
+  )), [coordinationSnapshot.mergeRequests]);
   const branches = useGitBranches(
-    snapshot.items.map((item) => item.cwd),
+    coordinatedActivities.map((item) => item.cwd),
     onReadGitStatus ?? readNothing,
   );
   const drillProject = activeProjectId === undefined
@@ -522,6 +604,8 @@ export function AgentHub({
     setLaunchProjectOptions(project ? [project] : projects);
     setLaunchProjectQuery('');
     setSelectedLauncherId('');
+    setLaunchWorkspaceMode('current');
+    setLaunchWorktreeBranch(`ez/agent-${Date.now().toString(36)}`);
     setLaunchError(null);
     setLaunchPickerOpen(true);
     void loadLaunchers();
@@ -546,12 +630,68 @@ export function AgentHub({
     if (!onLaunchAgent || !launchTarget || !selectedLauncherId || launching) return;
     setLaunching(true);
     setLaunchError(null);
+    let effectiveTarget = launchTarget;
+    let effectiveProjectSession = launchProjectSession;
+    let createdWorktreePath: string | null = null;
+    if (
+      launchWorkspaceMode === 'managed'
+      && launchTarget.kind === 'project'
+      && !launchTarget.rootId
+      && launchTargetProject
+    ) {
+      if (!isSafeLocalBranch(launchWorktreeBranch.trim())) {
+        setLaunching(false);
+        setLaunchError(t('agentHub.projects.worktreeInvalidBranch'));
+        return;
+      }
+      const base = coordinationProjects.get(launchTargetProject.projectId)?.defaultTargetBranch;
+      const created = await window.ezterminal.executeWorktree({
+        action: 'create',
+        cwd: launchTargetProject.primaryRoot,
+        branch: launchWorktreeBranch.trim(),
+        ...(base ? { base } : {}),
+      }).catch(() => null);
+      if (!created?.ok || !created.opened) {
+        setLaunching(false);
+        setLaunchError(created && !created.ok
+          ? `${t('agentHub.projects.worktreeCreateFailed')} ${created.message}`
+          : t('agentHub.projects.worktreeCreateFailed'));
+        return;
+      }
+      createdWorktreePath = created.opened.path;
+      const descriptor = await window.ezterminalDesktop
+        ?.describeProjectWorkspace(launchTargetProject.projectId)
+        .catch(() => null);
+      const workspace = descriptor?.ok
+        ? descriptor.project.workspaces?.find((item) => item.workspaceId === created.opened?.worktreeId)
+        : undefined;
+      if (!workspace) {
+        setLaunching(false);
+        setLaunchError(t('agentHub.projects.worktreePreserved', { path: created.opened.path }));
+        return;
+      }
+      effectiveTarget = {
+        kind: 'project',
+        projectId: launchTargetProject.projectId,
+        rootId: workspace.rootId,
+        workspaceId: workspace.workspaceId,
+      };
+      effectiveProjectSession = {
+        projectId: launchTargetProject.projectId,
+        rootId: workspace.rootId,
+        workspaceId: workspace.workspaceId,
+        projectName: launchTargetProject.name,
+        titleMode: 'generated',
+      };
+    }
     const preparation = await window.ezterminal
-      .prepareAgentLaunch(launchTarget, selectedLauncherId)
+      .prepareAgentLaunch(effectiveTarget, selectedLauncherId)
       .catch(() => ({ ok: false, reason: 'unavailable' } as const));
     setLaunching(false);
     if (!preparation.ok) {
-      setLaunchError(t('agentHub.projects.launchFailed'));
+      setLaunchError(createdWorktreePath
+        ? t('agentHub.projects.worktreePreserved', { path: createdWorktreePath })
+        : t('agentHub.projects.launchFailed'));
       return;
     }
     onLaunchAgent({
@@ -562,13 +702,17 @@ export function AgentHub({
       name: preparation.name,
       cwd: preparation.cwd,
       revision: preparation.revision,
-    }, launchProjectSession ?? undefined);
+    }, effectiveProjectSession ?? undefined);
     setLaunchPickerOpen(false);
   }, [
     launchProjectSession,
     launchSessionType,
     launchTarget,
+    launchTargetProject,
+    launchWorkspaceMode,
+    launchWorktreeBranch,
     launching,
+    coordinationProjects,
     onLaunchAgent,
     onOpenProjectTerminal,
     selectedLauncherId,
@@ -588,7 +732,7 @@ export function AgentHub({
     const attention: AgentActivity[] = [];
     const active: AgentActivity[] = [];
     const recent: AgentActivity[] = [];
-    for (const item of snapshot.items) {
+    for (const item of coordinatedActivities) {
       if (ATTENTION.has(item.status)) attention.push(item);
       else if (ACTIVE.has(item.status)) active.push(item);
       else recent.push(item);
@@ -609,7 +753,7 @@ export function AgentHub({
     active.sort(sortRecent);
     recent.sort(sortRecent);
     return { attention, active, recent };
-  }, [snapshot]);
+  }, [coordinatedActivities]);
 
   // A running agent shows a ticking mm:ss, so the clock has to move every
   // second while one exists. With nothing running the coarse relative ages only
@@ -673,6 +817,27 @@ export function AgentHub({
     [onLoadDiff, onOpenProjectReview, t],
   );
 
+  const openManagedMergeDiff = useCallback(async (request: ManagedMergeRequest): Promise<void> => {
+    if (!onLoadManagedMergeDiff) return;
+    const generation = ++diffRequestGeneration.current;
+    setDiffView({ state: 'loading' });
+    const result = await onLoadManagedMergeDiff(request.requestId, request.revision).catch((): GitDiffResult => ({
+      ok: false,
+      error: 'git-failed',
+    }));
+    if (generation !== diffRequestGeneration.current) return;
+    if (!result.ok) {
+      setDiffView({ state: 'error', message: t('agentHub.managedMerge.reviewUnavailable') });
+      return;
+    }
+    setDiffView({
+      state: 'ready',
+      text: result.text,
+      truncated: result.truncated,
+      omissions: result.omissions,
+    });
+  }, [onLoadManagedMergeDiff, t]);
+
   useEffect(() => () => {
     diffRequestGeneration.current += 1;
   }, []);
@@ -686,7 +851,7 @@ export function AgentHub({
     }));
     setSendingId(null);
     if (result.ok) return null;
-    return result.error === 'not-waiting'
+    return result.error === 'not-waiting' || result.error === 'not-ready'
       ? t('agentHub.errorNotWaiting')
       : result.error === 'invalid-text'
         ? t('agentHub.errorInvalidText')
@@ -694,6 +859,215 @@ export function AgentHub({
           ? t('agentHub.errorSessionEnded')
           : t('agentHub.errorDeliveryFailed');
   }, [onSendFollowup, sendingId, t]);
+
+  const projectForActivity = useCallback((activity: AgentActivity): AgentProjectSummary | null => {
+    if (activity.projectId) {
+      const exact = projects.find((project) => project.projectId === activity.projectId);
+      if (exact) return exact;
+    }
+    const cwd = activity.cwd.replace(/\\/gu, '/').replace(/\/+$/u, '').toLocaleLowerCase('en-US');
+    return projects.find((project) => [project.primaryRoot, ...project.additionalRoots].some((root) => {
+      const normalized = root.replace(/\\/gu, '/').replace(/\/+$/u, '').toLocaleLowerCase('en-US');
+      return cwd === normalized || cwd.startsWith(`${normalized}/`);
+    })) ?? null;
+  }, [projects]);
+
+  const openCollaboration = useCallback((activity: AgentActivity): void => {
+    const provider = PROVIDER_LABEL[activity.provider];
+    setCollaborationActivity(activity);
+    setCollaborationAlias(activity.participant?.alias ?? `${provider}-${activity.id.slice(-4)}`);
+    setCollaborationRole(activity.participant?.role ?? 'Implementer');
+    setCollaborationTask(activity.participant?.task ?? 'Work toward the Project goal and report blockers.');
+    setCollaborationError(null);
+  }, []);
+
+  const joinCollaboration = useCallback(async (): Promise<void> => {
+    if (!collaborationActivity || !onJoinCollaboration || collaborationBusy) return;
+    const project = projectForActivity(collaborationActivity);
+    const coordination = project ? coordinationProjects.get(project.projectId) : undefined;
+    setCollaborationBusy(true);
+    setCollaborationError(null);
+    const result = await onJoinCollaboration({
+      activityId: collaborationActivity.id,
+      alias: collaborationAlias.trim(),
+      role: collaborationRole.trim(),
+      task: collaborationTask.trim(),
+      ...(coordination ? { expectedProjectRevision: coordination.configRevision } : {}),
+    }).catch(() => ({
+      ok: false as const,
+      error: 'unavailable' as const,
+      message: 'Collaboration is unavailable.',
+    }));
+    setCollaborationBusy(false);
+    if (!result.ok) {
+      setCollaborationError(result.message);
+      return;
+    }
+    setCollaborationActivity(null);
+    setBriefDraft({ activityId: result.value.participant.activityId, text: result.value.brief });
+  }, [
+    collaborationActivity,
+    collaborationAlias,
+    collaborationBusy,
+    collaborationRole,
+    collaborationTask,
+    coordinationProjects,
+    onJoinCollaboration,
+    projectForActivity,
+  ]);
+
+  const leaveCollaboration = useCallback(async (activity: AgentActivity): Promise<void> => {
+    if (!onLeaveCollaboration) return;
+    const left = await onLeaveCollaboration(activity.id).catch(() => false);
+    if (!left) setErrors((previous) => ({ ...previous, [activity.id]: t('agentHub.collaboration.leaveFailed') }));
+  }, [onLeaveCollaboration, t]);
+
+  const sendBrief = useCallback(async (): Promise<void> => {
+    if (!briefDraft || !onSendPrompt || collaborationBusy) return;
+    const activity = coordinatedActivities.find((item) => item.id === briefDraft.activityId);
+    if (!activity || !activity.live || !activity.interactiveReady || (activity.state !== 'done' && activity.state !== 'idle')) {
+      setCollaborationError(t('agentHub.collaboration.waitUntilReady'));
+      return;
+    }
+    setCollaborationBusy(true);
+    setCollaborationError(null);
+    const result = await onSendPrompt(briefDraft.activityId, briefDraft.text).catch((): AgentFollowupResult => ({
+      ok: false,
+      error: 'delivery-failed',
+    }));
+    setCollaborationBusy(false);
+    if (result.ok) {
+      setBriefDraft(null);
+      return;
+    }
+    setCollaborationError(t('agentHub.errorDeliveryFailed'));
+  }, [briefDraft, collaborationBusy, coordinatedActivities, onSendPrompt, t]);
+
+  const openCoordinationProject = useCallback((project: AgentProjectSummary): void => {
+    const current = coordinationProjects.get(project.projectId);
+    setCoordinationProject(project);
+    setCoordinationGoal(current?.goal ?? '');
+    setCoordinationTarget(current?.defaultTargetBranch ?? 'main');
+    setCoordinationValidations(current?.validationCommands ?? []);
+    setCoordinationError(null);
+  }, [coordinationProjects]);
+
+  const saveCoordinationProject = useCallback(async (): Promise<void> => {
+    if (!coordinationProject || !onSaveCoordinationProject || coordinationSaving) return;
+    const current = coordinationProjects.get(coordinationProject.projectId);
+    setCoordinationSaving(true);
+    setCoordinationError(null);
+    const result = await onSaveCoordinationProject({
+      projectId: coordinationProject.projectId,
+      goal: coordinationGoal.trim(),
+      defaultTargetBranch: coordinationTarget.trim(),
+      validationCommands: coordinationValidations.map((validation) => ({
+        ...validation,
+        name: validation.name.trim(),
+        command: validation.command.trim(),
+        timeoutMs: Number.isFinite(validation.timeoutMs)
+          ? Math.max(1_000, Math.min(30 * 60_000, Math.round(validation.timeoutMs)))
+          : 300_000,
+      })),
+      ...(current ? { expectedRevision: current.configRevision } : {}),
+    }).catch(() => ({
+      ok: false as const,
+      error: 'unavailable' as const,
+      message: 'Project coordination is unavailable.',
+    }));
+    setCoordinationSaving(false);
+    if (!result.ok) {
+      setCoordinationError(result.message);
+      return;
+    }
+    setCoordinationProject(null);
+  }, [
+    coordinationGoal,
+    coordinationProject,
+    coordinationProjects,
+    coordinationSaving,
+    coordinationTarget,
+    coordinationValidations,
+    onSaveCoordinationProject,
+  ]);
+
+  const openMergeRequest = useCallback((activity: AgentActivity): void => {
+    const project = activity.participant
+      ? coordinationProjects.get(activity.participant.projectId)
+      : undefined;
+    setMergeActivity(activity);
+    setMergeTargetBranch(project?.defaultTargetBranch ?? 'main');
+    setMergeError(null);
+  }, [coordinationProjects]);
+
+  const requestMerge = useCallback(async (): Promise<void> => {
+    if (!mergeActivity || !onRequestManagedMerge || mergeBusy) return;
+    setMergeBusy(true);
+    setMergeError(null);
+    const result = await onRequestManagedMerge(mergeActivity.id, mergeTargetBranch.trim()).catch(() => ({
+      ok: false as const,
+      error: 'unavailable' as const,
+      message: 'Managed merge is unavailable.',
+    }));
+    setMergeBusy(false);
+    if (!result.ok) {
+      setMergeError(result.message);
+      return;
+    }
+    setMergeActivity(null);
+  }, [mergeActivity, mergeBusy, mergeTargetBranch, onRequestManagedMerge]);
+
+  const decideMerge = useCallback(async (
+    request: ManagedMergeRequest,
+    decision: 'approve' | 'deny',
+    overrideReasonValue?: string,
+  ): Promise<void> => {
+    if (!onDecideManagedMerge || mergeBusy) return;
+    setMergeBusy(true);
+    setMergeError(null);
+    const result = await onDecideManagedMerge({
+      requestId: request.requestId,
+      revision: request.revision,
+      decision,
+      actor: 'desktop',
+      ...(overrideReasonValue ? { overrideReason: overrideReasonValue } : {}),
+    }).catch(() => ({
+      ok: false as const,
+      error: 'unavailable' as const,
+      message: 'Managed merge is unavailable.',
+    }));
+    setMergeBusy(false);
+    if (!result.ok) {
+      setMergeError(result.message);
+      return;
+    }
+    setOverrideRequest(null);
+    setOverrideReason('');
+  }, [mergeBusy, onDecideManagedMerge]);
+
+  const grantNextMerge = useCallback(async (): Promise<void> => {
+    const participant = grantActivity?.participant;
+    if (!participant || !onGrantNextManagedMerge || mergeBusy) return;
+    const project = coordinationProjects.get(participant.projectId);
+    setMergeBusy(true);
+    setMergeError(null);
+    const result = await onGrantNextManagedMerge({
+      participantId: participant.participantId,
+      sourceWorkspaceId: participant.workspaceId,
+      targetBranch: project?.defaultTargetBranch ?? 'main',
+      durationMs: grantDuration,
+    }).catch(() => ({
+      ok: false as const,
+      error: 'unavailable' as const,
+      message: 'Managed merge is unavailable.',
+    }));
+    setMergeBusy(false);
+    if (!result.ok) {
+      setMergeError(result.message);
+      return;
+    }
+    setGrantActivity(null);
+  }, [coordinationProjects, grantActivity, grantDuration, mergeBusy, onGrantNextManagedMerge]);
 
   const renderGroup = (
     group: 'attention' | 'active' | 'recent',
@@ -708,9 +1082,9 @@ export function AgentHub({
         <h2 className={`status-section-title agent-group-title agent-group-title--${group}`}>
           {`${title} · ${numberFormatter.format(items.length)}`}
         </h2>
-        {group === 'recent' ? (
-          // Finished work is a log, not a queue: one dense monospace line each,
-          // newest first, with nothing to act on.
+        {group === 'recent' && items.every((item) => !item.live) ? (
+          // Ended work is a log. A live idle/unknown Agent remains a full card
+          // so it can still be focused and, when ready, prompted.
           <ol className="agent-timeline">
             {items.map((item) => (
               <li className="agent-timeline-row" key={item.id}>
@@ -748,6 +1122,13 @@ export function AgentHub({
               <div className="agent-cwd" title={item.cwd}>
                 {branches.get(item.cwd) ?? formatCwd(item.cwd)}
               </div>
+              {item.participant && (
+                <dl className="agent-participant" data-testid="agent-participant">
+                  <div><dt>{t('agentHub.collaboration.alias')}</dt><dd>{item.participant.alias}</dd></div>
+                  <div><dt>{t('agentHub.collaboration.role')}</dt><dd>{item.participant.role}</dd></div>
+                  <div><dt>{t('agentHub.collaboration.task')}</dt><dd>{item.participant.task}</dd></div>
+                </dl>
+              )}
               {item.approval && (
                 <div className="agent-approval" data-risk={item.approval.risk} data-testid="agent-approval">
                   <div className="agent-approval-head">
@@ -811,6 +1192,44 @@ export function AgentHub({
                 >
                   {item.status === 'blocked' ? t('agentHub.review') : t('agentHub.focus')}
                 </button>
+                {item.live && item.provider !== 'generic' && onJoinCollaboration && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    leadingIcon={<Users aria-hidden="true" />}
+                    onClick={() => openCollaboration(item)}
+                    data-testid="agent-collaboration"
+                  >
+                    {item.participant
+                      ? t('agentHub.collaboration.edit')
+                      : t('agentHub.collaboration.join')}
+                  </Button>
+                )}
+                {item.participant?.worktreeId && onRequestManagedMerge && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    leadingIcon={<GitMerge aria-hidden="true" />}
+                    onClick={() => openMergeRequest(item)}
+                    data-testid="agent-request-merge"
+                  >
+                    {t('agentHub.managedMerge.request')}
+                  </Button>
+                )}
+                {item.participant?.worktreeId && onGrantNextManagedMerge && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    leadingIcon={<ShieldCheck aria-hidden="true" />}
+                    onClick={() => {
+                      setGrantActivity(item);
+                      setMergeError(null);
+                    }}
+                    data-testid="agent-grant-next-merge"
+                  >
+                    {t('agentHub.managedMerge.grantNext')}
+                  </Button>
+                )}
               </div>
               {group === 'active' && (
                 <div className="agent-progress">
@@ -822,7 +1241,7 @@ export function AgentHub({
                   </span>
                 </div>
               )}
-              {item.status === 'waiting' && (
+              {(item.status === 'done' || item.status === 'idle') && item.live && (
                 <AgentFollowupComposer
                   activityId={item.id}
                   providerLabel={PROVIDER_LABEL[item.provider]}
@@ -1006,6 +1425,120 @@ export function AgentHub({
           />
         ) : (
           <>
+          {pendingMergeRequests.length > 0 && (
+            <section className="agent-group agent-managed-merges" data-testid="managed-merge-requests">
+              <h2 className="status-section-title agent-group-title agent-group-title--attention">
+                {t('agentHub.managedMerge.queue', {
+                  value: numberFormatter.format(pendingMergeRequests.length),
+                })}
+              </h2>
+              <div className="agent-list">
+                {pendingMergeRequests.map((request) => {
+                  const activity = coordinatedActivities.find((item) => item.id === request.activityId);
+                  return (
+                    <article
+                      className="agent-row agent-managed-merge"
+                      key={request.requestId}
+                      data-status={request.state}
+                      data-testid="managed-merge-card"
+                    >
+                      <div className="agent-row-main">
+                        <GitMerge aria-hidden="true" size={15} />
+                        <span className="agent-provider">{activity?.participant?.alias ?? activity?.providerLabel ?? PROVIDER_LABEL[activity?.provider ?? 'generic']}</span>
+                        <span className="agent-status">
+                          {t(`agentHub.managedMerge.state.${request.state}`)}
+                        </span>
+                      </div>
+                      <div className="agent-cwd">
+                        <code>{request.sourceBranch}</code> → <code>{request.targetBranch}</code>
+                      </div>
+                      {request.validations.length > 0 && (
+                        <ol className="agent-managed-merge-validations">
+                          {request.validations.map((validation) => (
+                            <li key={validation.id} data-status={validation.status}>
+                              <span>{validation.name}</span>
+                              <strong>{t(`agentHub.managedMerge.validation.${validation.status}`)}</strong>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                      {request.warning && <p className="agent-project-note">{request.warning}</p>}
+                      <div className="agent-row-actions">
+                        {request.candidateHead && onLoadManagedMergeDiff && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            leadingIcon={<GitCompareArrows aria-hidden="true" />}
+                            onClick={() => void openManagedMergeDiff(request)}
+                            data-testid="managed-merge-review"
+                          >
+                            {t('agentHub.review')}
+                          </Button>
+                        )}
+                        {activity && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onFocusSession(activity.sessionId)}
+                          >
+                            {t('agentHub.managedMerge.openAgent')}
+                          </Button>
+                        )}
+                        {request.state === 'approval-required' && (
+                          <>
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              disabled={mergeBusy || disconnected}
+                              onClick={() => void decideMerge(request, 'approve')}
+                              data-testid="managed-merge-approve"
+                            >
+                              {t('agentHub.approve')}
+                            </Button>
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              disabled={mergeBusy || disconnected}
+                              onClick={() => void decideMerge(request, 'deny')}
+                              data-testid="managed-merge-deny"
+                            >
+                              {t('agentHub.deny')}
+                            </Button>
+                          </>
+                        )}
+                        {request.state === 'override-required' && (
+                          <>
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              disabled={mergeBusy || disconnected}
+                              onClick={() => void decideMerge(request, 'deny')}
+                            >
+                              {t('agentHub.deny')}
+                            </Button>
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              disabled={mergeBusy || disconnected}
+                              onClick={() => {
+                                setOverrideRequest(request);
+                                setOverrideReason('');
+                                setMergeError(null);
+                              }}
+                              data-testid="managed-merge-override"
+                            >
+                              {t('agentHub.managedMerge.override')}
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+              {mergeError && <p className="agent-project-error" role="alert">{mergeError}</p>}
+            </section>
+          )}
           {renderGroup('attention', t('agentHub.groups.attention'), groups.attention)}
           <section className="agent-group agent-projects" data-testid="agent-projects">
             <div className="agent-projects-heading">
@@ -1060,6 +1593,8 @@ export function AgentHub({
             )}
             <ol className="agent-project-list">
               {projects.map((project) => {
+                const coordination = coordinationProjects.get(project.projectId);
+                const activeParticipants = coordination?.participants.length ?? 0;
                 return (
                   <li className="agent-project" key={project.projectId}>
                     <div className="agent-project-row">
@@ -1141,6 +1676,37 @@ export function AgentHub({
                         </MenuItem>
                       </Menu>
                     </div>
+                    {coordination ? (
+                      <div className="agent-project-coordination" data-testid="agent-project-coordination">
+                        <p>{coordination.goal}</p>
+                        <span>
+                          {t('agentHub.collaboration.projectRollup', {
+                            participants: numberFormatter.format(activeParticipants),
+                            merges: numberFormatter.format(coordination.pendingMergeCount),
+                            branch: coordination.defaultTargetBranch,
+                          })}
+                        </span>
+                        {onSaveCoordinationProject && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openCoordinationProject(project)}
+                          >
+                            {t('agentHub.collaboration.configure')}
+                          </Button>
+                        )}
+                      </div>
+                    ) : onSaveCoordinationProject ? (
+                      <Button
+                        className="agent-project-coordination-start"
+                        variant="ghost"
+                        size="sm"
+                        leadingIcon={<Users aria-hidden="true" />}
+                        onClick={() => openCoordinationProject(project)}
+                      >
+                        {t('agentHub.collaboration.configure')}
+                      </Button>
+                    ) : null}
                   </li>
                 );
               })}
@@ -1194,6 +1760,319 @@ export function AgentHub({
         </footer>
       )}
       <Dialog
+        open={collaborationActivity !== null}
+        onOpenChange={(open) => {
+          if (!open && !collaborationBusy) {
+            setCollaborationActivity(null);
+            setCollaborationError(null);
+          }
+        }}
+        title={collaborationActivity?.participant
+          ? t('agentHub.collaboration.editTitle')
+          : t('agentHub.collaboration.joinTitle')}
+        description={t('agentHub.collaboration.joinDescription')}
+        closeLabel={t('common.cancel')}
+        testId="agent-collaboration-dialog"
+        footer={(
+          <>
+            {collaborationActivity?.participant && onLeaveCollaboration && (
+              <Button
+                variant="danger"
+                disabled={collaborationBusy}
+                onClick={() => {
+                  const activity = collaborationActivity;
+                  setCollaborationActivity(null);
+                  void leaveCollaboration(activity);
+                }}
+              >
+                {t('agentHub.collaboration.leave')}
+              </Button>
+            )}
+            <Button variant="ghost" disabled={collaborationBusy} onClick={() => setCollaborationActivity(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              loading={collaborationBusy}
+              disabled={!collaborationAlias.trim() || !collaborationRole.trim() || !collaborationTask.trim()}
+              onClick={() => void joinCollaboration()}
+              data-testid="agent-collaboration-submit"
+            >
+              {t('common.save')}
+            </Button>
+          </>
+        )}
+      >
+        <div className="agent-coordination-form">
+          <Field label={t('agentHub.collaboration.alias')} required>
+            <Input value={collaborationAlias} maxLength={48} onChange={(event) => setCollaborationAlias(event.currentTarget.value)} />
+          </Field>
+          <Field label={t('agentHub.collaboration.role')} required>
+            <Input value={collaborationRole} maxLength={120} onChange={(event) => setCollaborationRole(event.currentTarget.value)} />
+          </Field>
+          <Field label={t('agentHub.collaboration.task')} required>
+            <textarea
+              className="ui-textarea"
+              value={collaborationTask}
+              maxLength={1000}
+              rows={5}
+              onChange={(event) => setCollaborationTask(event.currentTarget.value)}
+            />
+          </Field>
+          {collaborationError && <p className="agent-project-error" role="alert">{collaborationError}</p>}
+        </div>
+      </Dialog>
+      <Dialog
+        open={briefDraft !== null}
+        onOpenChange={(open) => {
+          if (!open && !collaborationBusy) {
+            setBriefDraft(null);
+            setCollaborationError(null);
+          }
+        }}
+        title={t('agentHub.collaboration.briefTitle')}
+        description={t('agentHub.collaboration.briefDescription')}
+        closeLabel={t('common.close')}
+        testId="agent-collaboration-brief"
+        footer={(
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                const activity = coordinatedActivities.find((item) => item.id === briefDraft?.activityId);
+                if (activity) onFocusSession(activity.sessionId);
+              }}
+            >
+              {t('agentHub.focus')}
+            </Button>
+            <Button variant="ghost" disabled={collaborationBusy} onClick={() => setBriefDraft(null)}>
+              {t('agentHub.collaboration.sendLater')}
+            </Button>
+            <Button
+              variant="primary"
+              loading={collaborationBusy}
+              disabled={!briefDraft?.text.trim()}
+              onClick={() => void sendBrief()}
+              data-testid="agent-collaboration-send-brief"
+            >
+              {t('agentHub.send')}
+            </Button>
+          </>
+        )}
+      >
+        <textarea
+          className="ui-textarea agent-coordination-brief"
+          value={briefDraft?.text ?? ''}
+          rows={12}
+          onChange={(event) => setBriefDraft((current) => current
+            ? { ...current, text: event.currentTarget.value }
+            : current)}
+        />
+        {collaborationError && <p className="agent-project-error" role="alert">{collaborationError}</p>}
+      </Dialog>
+      <Dialog
+        open={coordinationProject !== null}
+        onOpenChange={(open) => {
+          if (!open && !coordinationSaving) setCoordinationProject(null);
+        }}
+        title={t('agentHub.collaboration.projectTitle', { name: coordinationProject?.name ?? '' })}
+        description={t('agentHub.collaboration.projectDescription')}
+        closeLabel={t('common.cancel')}
+        size="lg"
+        testId="agent-coordination-project-dialog"
+        footer={(
+          <>
+            <Button variant="ghost" disabled={coordinationSaving} onClick={() => setCoordinationProject(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              loading={coordinationSaving}
+              disabled={!coordinationGoal.trim() || !coordinationTarget.trim()
+                || coordinationValidations.some((item) => !item.name.trim() || !item.command.trim())}
+              onClick={() => void saveCoordinationProject()}
+              data-testid="agent-coordination-project-save"
+            >
+              {t('common.save')}
+            </Button>
+          </>
+        )}
+      >
+        <div className="agent-coordination-form">
+          <Field label={t('agentHub.collaboration.goal')} required>
+            <textarea
+              className="ui-textarea"
+              value={coordinationGoal}
+              rows={4}
+              maxLength={2000}
+              onChange={(event) => setCoordinationGoal(event.currentTarget.value)}
+            />
+          </Field>
+          <Field label={t('agentHub.collaboration.targetBranch')} required>
+            <Input value={coordinationTarget} maxLength={200} onChange={(event) => setCoordinationTarget(event.currentTarget.value)} />
+          </Field>
+          <section className="agent-validation-editor">
+            <div className="agent-validation-editor__head">
+              <h3>{t('agentHub.collaboration.validations')}</h3>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={coordinationValidations.length >= 8}
+                onClick={() => setCoordinationValidations((current) => [...current, {
+                  id: globalThis.crypto?.randomUUID?.() ?? `validation-${Date.now()}-${current.length}`,
+                  name: '',
+                  command: '',
+                  timeoutMs: 300000,
+                }])}
+              >
+                {t('agentHub.collaboration.addValidation')}
+              </Button>
+            </div>
+            {coordinationValidations.map((validation, index) => (
+              <fieldset className="agent-validation-row" key={validation.id}>
+                <legend>{t('agentHub.collaboration.validationNumber', { value: index + 1 })}</legend>
+                <Field label={t('agentHub.collaboration.validationName')} required>
+                  <Input
+                    value={validation.name}
+                    maxLength={120}
+                    onChange={(event) => setCoordinationValidations((current) => current.map((item) => (
+                      item.id === validation.id ? { ...item, name: event.currentTarget.value } : item
+                    )))}
+                  />
+                </Field>
+                <Field label={t('agentHub.collaboration.validationCommand')} required>
+                  <textarea
+                    className="ui-textarea"
+                    value={validation.command}
+                    rows={3}
+                    maxLength={8192}
+                    onChange={(event) => setCoordinationValidations((current) => current.map((item) => (
+                      item.id === validation.id ? { ...item, command: event.currentTarget.value } : item
+                    )))}
+                  />
+                </Field>
+                <Field label={t('agentHub.collaboration.validationTimeout')}>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={1800}
+                    value={Math.round(validation.timeoutMs / 1000)}
+                    onChange={(event) => setCoordinationValidations((current) => current.map((item) => (
+                      item.id === validation.id
+                        ? { ...item, timeoutMs: Number(event.currentTarget.value) * 1000 }
+                        : item
+                    )))}
+                  />
+                </Field>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => setCoordinationValidations((current) => current.filter((item) => item.id !== validation.id))}
+                >
+                  {t('common.remove')}
+                </Button>
+              </fieldset>
+            ))}
+          </section>
+          {coordinationError && <p className="agent-project-error" role="alert">{coordinationError}</p>}
+        </div>
+      </Dialog>
+      <Dialog
+        open={mergeActivity !== null}
+        onOpenChange={(open) => {
+          if (!open && !mergeBusy) setMergeActivity(null);
+        }}
+        title={t('agentHub.managedMerge.requestTitle')}
+        description={t('agentHub.managedMerge.requestDescription')}
+        closeLabel={t('common.cancel')}
+        testId="managed-merge-request-dialog"
+        footer={(
+          <>
+            <Button variant="ghost" disabled={mergeBusy} onClick={() => setMergeActivity(null)}>{t('common.cancel')}</Button>
+            <Button
+              variant="primary"
+              loading={mergeBusy}
+              disabled={!mergeTargetBranch.trim()}
+              onClick={() => void requestMerge()}
+            >
+              {t('agentHub.managedMerge.request')}
+            </Button>
+          </>
+        )}
+      >
+        <Field label={t('agentHub.collaboration.targetBranch')} required>
+          <Input value={mergeTargetBranch} maxLength={200} onChange={(event) => setMergeTargetBranch(event.currentTarget.value)} />
+        </Field>
+        {mergeError && <p className="agent-project-error" role="alert">{mergeError}</p>}
+      </Dialog>
+      <Dialog
+        open={grantActivity !== null}
+        onOpenChange={(open) => {
+          if (!open && !mergeBusy) setGrantActivity(null);
+        }}
+        title={t('agentHub.managedMerge.grantTitle')}
+        description={t('agentHub.managedMerge.grantDescription')}
+        closeLabel={t('common.cancel')}
+        testId="managed-merge-grant-dialog"
+        footer={(
+          <>
+            <Button variant="ghost" disabled={mergeBusy} onClick={() => setGrantActivity(null)}>{t('common.cancel')}</Button>
+            <Button variant="primary" loading={mergeBusy} onClick={() => void grantNextMerge()}>
+              {t('agentHub.managedMerge.grantNext')}
+            </Button>
+          </>
+        )}
+      >
+        <Field label={t('agentHub.managedMerge.grantDuration')}>
+          <Select value={String(grantDuration)} onChange={(event) => setGrantDuration(Number(event.currentTarget.value) as ManagedMergeGrantInput['durationMs'])}>
+            <option value="900000">15 min</option>
+            <option value="3600000">1 h</option>
+            <option value="14400000">4 h</option>
+          </Select>
+        </Field>
+        <p className="agent-project-note">{t('agentHub.managedMerge.grantScope')}</p>
+        {mergeError && <p className="agent-project-error" role="alert">{mergeError}</p>}
+      </Dialog>
+      <Dialog
+        open={overrideRequest !== null}
+        onOpenChange={(open) => {
+          if (!open && !mergeBusy) setOverrideRequest(null);
+        }}
+        title={t('agentHub.managedMerge.overrideTitle')}
+        description={t('agentHub.managedMerge.overrideDescription')}
+        role="alertdialog"
+        tone="danger"
+        closeLabel={t('common.cancel')}
+        testId="managed-merge-override-dialog"
+        footer={(
+          <>
+            <Button variant="ghost" disabled={mergeBusy} onClick={() => setOverrideRequest(null)}>{t('common.cancel')}</Button>
+            <Button
+              variant="danger"
+              loading={mergeBusy}
+              disabled={overrideReason.trim().length < 8}
+              onClick={() => {
+                if (overrideRequest) void decideMerge(overrideRequest, 'approve', overrideReason.trim());
+              }}
+              data-testid="managed-merge-override-confirm"
+            >
+              {t('agentHub.managedMerge.overrideConfirm')}
+            </Button>
+          </>
+        )}
+      >
+        <Field label={t('agentHub.managedMerge.overrideReason')} required>
+          <textarea
+            className="ui-textarea"
+            value={overrideReason}
+            rows={5}
+            maxLength={500}
+            onChange={(event) => setOverrideReason(event.currentTarget.value)}
+          />
+        </Field>
+        {mergeError && <p className="agent-project-error" role="alert">{mergeError}</p>}
+      </Dialog>
+      <Dialog
         open={launchPickerOpen}
         onOpenChange={(open) => {
           if (launching) return;
@@ -1223,6 +2102,11 @@ export function AgentHub({
               disabled={launching
                 || !launchTarget
                 || (launchSessionType === 'agent' && (!onLaunchAgent || !selectedLauncherId))
+                || (launchSessionType === 'agent'
+                  && launchWorkspaceMode === 'managed'
+                  && launchTarget?.kind === 'project'
+                  && !launchTarget.rootId
+                  && !isSafeLocalBranch(launchWorktreeBranch.trim()))
                 || (launchSessionType === 'terminal' && !onOpenProjectTerminal)}
               data-testid="agent-launch-submit"
             >
@@ -1349,6 +2233,51 @@ export function AgentHub({
             </p>
           )}
             </>
+          )}
+          {launchSessionType === 'agent'
+            && launchTarget?.kind === 'project'
+            && !launchTarget.rootId
+            && launchTargetProject && (
+            <fieldset className="agent-launch-workspace">
+              <legend>{t('agentHub.projects.workspaceMode')}</legend>
+              <label>
+                <input
+                  type="radio"
+                  name="agent-launch-workspace"
+                  value="current"
+                  checked={launchWorkspaceMode === 'current'}
+                  onChange={() => setLaunchWorkspaceMode('current')}
+                />
+                <span>
+                  <strong>{t('agentHub.projects.workspaceCurrent')}</strong>
+                  <small>{t('agentHub.projects.workspaceCurrentHint')}</small>
+                </span>
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="agent-launch-workspace"
+                  value="managed"
+                  checked={launchWorkspaceMode === 'managed'}
+                  onChange={() => setLaunchWorkspaceMode('managed')}
+                />
+                <span>
+                  <strong>{t('agentHub.projects.workspaceManaged')}</strong>
+                  <small>{t('agentHub.projects.workspaceManagedHint')}</small>
+                </span>
+              </label>
+              {launchWorkspaceMode === 'managed' && (
+                <Field label={t('agentHub.projects.worktreeBranch')} required>
+                  <Input
+                    value={launchWorktreeBranch}
+                    maxLength={200}
+                    aria-invalid={!isSafeLocalBranch(launchWorktreeBranch.trim()) || undefined}
+                    onChange={(event) => setLaunchWorktreeBranch(event.currentTarget.value)}
+                    data-testid="agent-launch-worktree-branch"
+                  />
+                </Field>
+              )}
+            </fieldset>
           )}
           {launchSessionType === 'agent' && ignoredAdditionalRoots > 0 && (
             <p className="agent-launch-warning" role="status">

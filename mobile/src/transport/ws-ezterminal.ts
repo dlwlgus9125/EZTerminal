@@ -96,6 +96,18 @@ import {
   type AgentDecisionResult,
   type AgentFollowupResult,
 } from '../../../src/shared/agent';
+import {
+  EMPTY_AGENT_COORDINATION_SNAPSHOT,
+  type AgentCoordinationMutationResult,
+  type AgentCoordinationSnapshot,
+  type AgentParticipant,
+  type AgentParticipantInput,
+  type AgentProjectCoordination,
+  type AgentProjectCoordinationInput,
+  type ManagedMergeDecisionInput,
+  type ManagedMergeGrantInput,
+  type ManagedMergeRequest,
+} from '../../../src/shared/agent-coordination';
 import type {
   AgentHistorySessionPage,
   AgentLaunchPreparation,
@@ -129,6 +141,7 @@ import {
   REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS,
   REMOTE_PROTOCOL_VERSION_AGENT_LIVE,
   REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS,
+  REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION,
   uint8ArrayToBase64,
   type BuildInfo,
   type ClientToServerMessage,
@@ -439,16 +452,45 @@ function isAgentActivitySnapshot(value: unknown): value is AgentActivitySnapshot
         && !isBoundedString(item.providerLabel, MAX_AGENT_PROVIDER_LABEL_LENGTH))
       || !isBoundedString(item.cwd, MAX_REMOTE_AGENT_CWD_LENGTH, true)
       || (
-        item.status !== 'starting'
-        && item.status !== 'working'
-        && item.status !== 'waiting'
-        && item.status !== 'blocked'
-        && item.status !== 'done'
-        && item.status !== 'error'
+        item.state !== 'starting'
+        && item.state !== 'working'
+        && item.state !== 'blocked'
+        && item.state !== 'done'
+        && item.state !== 'idle'
+        && item.state !== 'error'
+        && item.state !== 'unknown'
+      )
+      || item.status !== item.state
+      || !Number.isSafeInteger(item.stateSeq)
+      || (item.stateSeq as number) < 1
+      || typeof item.live !== 'boolean'
+      || typeof item.interactiveReady !== 'boolean'
+      || (
+        item.stateSource !== 'process'
+        && item.stateSource !== 'provider-hook'
+        && item.stateSource !== 'terminal'
+        && item.stateSource !== 'unknown'
       )
       || !isFiniteTimestamp(item.createdAt)
       || !isFiniteTimestamp(item.updatedAt)
     ) return false;
+    if (
+      (item.projectId !== undefined && !isBoundedString(item.projectId, MAX_REMOTE_AGENT_ID_LENGTH))
+      || (item.workspaceId !== undefined && !isBoundedString(item.workspaceId, MAX_REMOTE_AGENT_ID_LENGTH))
+    ) return false;
+    if (item.participant !== undefined) {
+      if (
+        !isRecord(item.participant)
+        || !isBoundedString(item.participant.participantId, MAX_REMOTE_AGENT_ID_LENGTH)
+        || !isBoundedString(item.participant.projectId, MAX_REMOTE_AGENT_ID_LENGTH)
+        || !isBoundedString(item.participant.workspaceId, MAX_REMOTE_AGENT_ID_LENGTH)
+        || (item.participant.worktreeId !== undefined
+          && !isBoundedString(item.participant.worktreeId, MAX_REMOTE_AGENT_ID_LENGTH))
+        || !isBoundedString(item.participant.alias, 48)
+        || !isBoundedString(item.participant.role, 120)
+        || !isBoundedString(item.participant.task, 1_000)
+      ) return false;
+    }
     if (item.approval === undefined) return true;
     if (
       !isRecord(item.approval)
@@ -472,6 +514,131 @@ function isAgentActivitySnapshot(value: unknown): value is AgentActivitySnapshot
   });
 }
 
+function isManagedMergeRequest(value: unknown): value is ManagedMergeRequest {
+  if (!isRecord(value)) return false;
+  const states = new Set([
+    'preparing', 'validating', 'approval-required', 'override-required', 'merging',
+    'merged', 'denied', 'conflict', 'stale', 'failed', 'interrupted', 'already-integrated',
+  ]);
+  if (
+    !isBoundedString(value.requestId, MAX_REMOTE_AGENT_ID_LENGTH)
+    || !Number.isSafeInteger(value.revision)
+    || (value.revision as number) < 1
+    || !isBoundedString(value.projectId, MAX_REMOTE_AGENT_ID_LENGTH)
+    || !isBoundedString(value.participantId, MAX_REMOTE_AGENT_ID_LENGTH)
+    || !isBoundedString(value.activityId, MAX_REMOTE_AGENT_ID_LENGTH)
+    || !isBoundedString(value.sourceWorkspaceId, MAX_REMOTE_AGENT_ID_LENGTH)
+    || !isBoundedString(value.sourceBranch, 200)
+    || !isBoundedString(value.sourceHead, 128)
+    || !isBoundedString(value.targetBranch, 200)
+    || !isBoundedString(value.targetHead, 128, true)
+    || (value.candidateHead !== undefined && !isBoundedString(value.candidateHead, 128))
+    || typeof value.state !== 'string'
+    || !states.has(value.state)
+    || !Number.isSafeInteger(value.validationConfigRevision)
+    || !Array.isArray(value.validations)
+    || value.validations.length > 8
+    || (value.warning !== undefined && !isBoundedString(value.warning, 1_000, true))
+    || (value.error !== undefined && !isBoundedString(value.error, 1_000, true))
+    || !isFiniteTimestamp(value.createdAt)
+    || !isFiniteTimestamp(value.updatedAt)
+    || !isFiniteTimestamp(value.expiresAt)
+  ) return false;
+  return value.validations.every((validation) => (
+    isRecord(validation)
+    && isBoundedString(validation.id, MAX_REMOTE_AGENT_ID_LENGTH)
+    && isBoundedString(validation.name, 120)
+    && typeof validation.status === 'string'
+    && ['pending', 'running', 'passed', 'failed', 'timed-out', 'cancelled'].includes(validation.status)
+    // Coordination wire messages carry status metadata, never validation
+    // output. The desktop keeps that bounded tail local to its review UI.
+    && validation.outputTail === undefined
+    && (validation.outputTruncated === undefined || typeof validation.outputTruncated === 'boolean')
+    && (validation.startedAt === undefined || isFiniteTimestamp(validation.startedAt))
+    && (validation.finishedAt === undefined || isFiniteTimestamp(validation.finishedAt))
+    && (validation.durationMs === undefined
+      || (typeof validation.durationMs === 'number' && Number.isFinite(validation.durationMs) && validation.durationMs >= 0))
+    && (validation.exitCode === undefined
+      || (typeof validation.exitCode === 'number' && Number.isSafeInteger(validation.exitCode)))
+  ));
+}
+
+function isAgentCoordinationSnapshot(value: unknown): value is AgentCoordinationSnapshot {
+  if (
+    !isRecord(value)
+    || !Number.isSafeInteger(value.revision)
+    || (value.revision as number) < 0
+    || !Number.isSafeInteger(value.activityRevision)
+    || !Array.isArray(value.activities)
+    || !Array.isArray(value.projects)
+    || value.projects.length > 256
+    || !Array.isArray(value.mergeRequests)
+    || value.mergeRequests.length > 256
+    || !isAgentActivitySnapshot({ revision: value.activityRevision, items: value.activities })
+  ) return false;
+  const projectsValid = value.projects.every((project) => (
+    isRecord(project)
+    && isBoundedString(project.projectId, MAX_REMOTE_AGENT_ID_LENGTH)
+    && isBoundedString(project.goal, 2_000)
+    && isBoundedString(project.defaultTargetBranch, 200)
+    && Array.isArray(project.validationCommands)
+    && project.validationCommands.length <= 8
+    && project.validationCommands.every((command) => (
+      isRecord(command)
+      && isBoundedString(command.id, MAX_REMOTE_AGENT_ID_LENGTH)
+      && isBoundedString(command.name, 120)
+      && isBoundedString(command.command, 8_192)
+      && Number.isFinite(command.timeoutMs)
+      && (command.timeoutMs as number) >= 1_000
+      && (command.timeoutMs as number) <= 30 * 60_000
+    ))
+    && Number.isSafeInteger(project.configRevision)
+    && isAgentStateCounts(project.counts)
+    && Array.isArray(project.participants)
+    && project.participants.length <= 32
+    && project.participants.every(isAgentParticipantWire)
+    && Number.isSafeInteger(project.pendingMergeCount)
+  ));
+  return projectsValid && value.mergeRequests.every(isManagedMergeRequest);
+}
+
+function isManagedMergeMutationResult(
+  value: unknown,
+): value is AgentCoordinationMutationResult<ManagedMergeRequest> {
+  return isRecord(value) && (
+    (value.ok === true && isManagedMergeRequest(value.value))
+    || (
+      value.ok === false
+      && ['invalid', 'not-found', 'stale', 'conflict', 'unavailable'].includes(String(value.error))
+      && isBoundedString(value.message, 1_000, true)
+    )
+  );
+}
+
+function isAgentParticipantWire(value: unknown): boolean {
+  return isRecord(value)
+    && isBoundedString(value.participantId, MAX_REMOTE_AGENT_ID_LENGTH)
+    && isBoundedString(value.projectId, MAX_REMOTE_AGENT_ID_LENGTH)
+    && isBoundedString(value.activityId, MAX_REMOTE_AGENT_ID_LENGTH)
+    && isBoundedString(value.sessionId, MAX_REMOTE_AGENT_ID_LENGTH)
+    && isBoundedString(value.workspaceId, MAX_REMOTE_AGENT_ID_LENGTH)
+    && (value.worktreeId === undefined || isBoundedString(value.worktreeId, MAX_REMOTE_AGENT_ID_LENGTH))
+    && isBoundedString(value.alias, 48)
+    && isBoundedString(value.role, 120)
+    && isBoundedString(value.task, 1_000)
+    && (value.provider === 'codex' || value.provider === 'claude')
+    && value.joined === true
+    && isFiniteTimestamp(value.joinedAt)
+    && isFiniteTimestamp(value.updatedAt);
+}
+
+function isAgentStateCounts(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return ['starting', 'working', 'blocked', 'done', 'idle', 'error', 'unknown'].every((state) => (
+    Number.isSafeInteger(value[state]) && (value[state] as number) >= 0
+  ));
+}
+
 function isAgentFollowupResult(value: unknown): value is AgentFollowupResult {
   return isRecord(value) && (
     value.ok === true
@@ -480,6 +647,7 @@ function isAgentFollowupResult(value: unknown): value is AgentFollowupResult {
       && (
         value.error === 'not-found'
         || value.error === 'not-waiting'
+        || value.error === 'not-ready'
         || value.error === 'invalid-text'
         || value.error === 'session-ended'
         || value.error === 'delivery-failed'
@@ -838,12 +1006,26 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly runStartedListeners = new Set<(info: RunStartedInfo) => void>();
 
   private agentSnapshot: AgentActivitySnapshot = EMPTY_AGENT_ACTIVITY_SNAPSHOT;
+  private agentCoordinationSnapshot: AgentCoordinationSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT;
   /** Revisions are process-local to the desktop. The first snapshot from each
    * newly-created socket is therefore an authoritative epoch seed even when
    * its revision is below the cache retained across reconnects. */
   private awaitingAgentSeed = true;
+  private awaitingAgentCoordinationSeed = true;
   private readonly agentSnapshotListeners = new Set<(snapshot: AgentActivitySnapshot) => void>();
+  private readonly agentCoordinationSnapshotListeners = new Set<
+    (snapshot: AgentCoordinationSnapshot) => void
+  >();
   private readonly pendingAgentSnapshots = new Map<string, (snapshot: AgentActivitySnapshot) => void>();
+  private readonly pendingAgentCoordinationSnapshots = new Map<
+    string,
+    (snapshot: AgentCoordinationSnapshot) => void
+  >();
+  private readonly pendingAgentSeen = new Map<string, (marked: boolean) => void>();
+  private readonly pendingManagedMergeDecisions = new Map<
+    string,
+    (result: AgentCoordinationMutationResult<ManagedMergeRequest>) => void
+  >();
   private readonly pendingAgentFollowups = new Map<string, (result: AgentFollowupResult) => void>();
   private readonly pendingAgentDecisions = new Map<string, PendingAgentDecision>();
   private readonly pendingAgentProjects = new Map<string, (result: AgentProjectPage) => void>();
@@ -1357,6 +1539,115 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.agentSnapshotListeners.add(listener);
     listener(this.agentSnapshot);
     return () => this.agentSnapshotListeners.delete(listener);
+  }
+
+  getAgentCoordinationSnapshot(): Promise<AgentCoordinationSnapshot> {
+    if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION) {
+      return Promise.resolve(this.agentCoordinationSnapshot);
+    }
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-coordination-snapshot-get', requestId },
+        this.pendingAgentCoordinationSnapshots,
+        requestId,
+        resolve,
+      )) resolve(this.agentCoordinationSnapshot);
+    });
+  }
+
+  onAgentCoordinationSnapshot(listener: (snapshot: AgentCoordinationSnapshot) => void): () => void {
+    this.agentCoordinationSnapshotListeners.add(listener);
+    listener(this.agentCoordinationSnapshot);
+    return () => this.agentCoordinationSnapshotListeners.delete(listener);
+  }
+
+  joinAgentCollaboration(
+    _input: AgentParticipantInput,
+  ): Promise<AgentCoordinationMutationResult<{ readonly participant: AgentParticipant; readonly brief: string }>> {
+    void _input;
+    return Promise.resolve({ ok: false, error: 'unavailable', message: 'Join configuration is desktop-only.' });
+  }
+
+  leaveAgentCollaboration(_activityId: string): Promise<boolean> {
+    void _activityId;
+    return Promise.resolve(false);
+  }
+
+  saveAgentCoordinationProject(
+    _input: AgentProjectCoordinationInput,
+  ): Promise<AgentCoordinationMutationResult<AgentProjectCoordination>> {
+    void _input;
+    return Promise.resolve({ ok: false, error: 'unavailable', message: 'Project configuration is desktop-only.' });
+  }
+
+  markAgentSeen(activityId: string, stateSeq: number): Promise<boolean> {
+    if (
+      (this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION
+      || !isBoundedString(activityId, MAX_REMOTE_AGENT_ID_LENGTH)
+      || !Number.isSafeInteger(stateSeq)
+    ) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        { kind: 'agent-seen', requestId, activityId, stateSeq },
+        this.pendingAgentSeen,
+        requestId,
+        resolve,
+      )) resolve(false);
+    });
+  }
+
+  sendAgentPrompt(activityId: string, text: string): Promise<AgentFollowupResult> {
+    return this.sendAgentFollowup(activityId, text);
+  }
+
+  requestManagedMerge(
+    _activityId: string,
+    _targetBranch: string,
+  ): Promise<AgentCoordinationMutationResult<ManagedMergeRequest>> {
+    void _activityId;
+    void _targetBranch;
+    return Promise.resolve({ ok: false, error: 'unavailable', message: 'Merge requests originate from an Agent session.' });
+  }
+
+  decideManagedMerge(
+    input: ManagedMergeDecisionInput,
+  ): Promise<AgentCoordinationMutationResult<ManagedMergeRequest>> {
+    if (
+      (this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION
+      || !isBoundedString(input.requestId, MAX_REMOTE_AGENT_ID_LENGTH)
+      || !Number.isSafeInteger(input.revision)
+      || (input.decision !== 'approve' && input.decision !== 'deny')
+    ) return Promise.resolve({ ok: false, error: 'invalid', message: 'Invalid merge decision.' });
+    return new Promise((resolve) => {
+      const requestId = this.newId();
+      if (!this.tryStartMapRequest(
+        {
+          kind: 'managed-merge-decision',
+          requestId,
+          mergeRequestId: input.requestId,
+          revision: input.revision,
+          decision: input.decision,
+        },
+        this.pendingManagedMergeDecisions,
+        requestId,
+        resolve,
+      )) resolve({ ok: false, error: 'unavailable', message: 'Desktop is unavailable.' });
+    });
+  }
+
+  grantNextManagedMerge(
+    _input: ManagedMergeGrantInput,
+  ): Promise<AgentCoordinationMutationResult<{ readonly expiresAt: number }>> {
+    void _input;
+    return Promise.resolve({ ok: false, error: 'unavailable', message: 'One-shot grants are desktop-only.' });
+  }
+
+  getManagedMergeDiff(_requestId: string, _revision: number): Promise<GitDiffResult> {
+    void _requestId;
+    void _revision;
+    return Promise.resolve({ ok: false, error: 'git-failed' });
   }
 
   sendAgentFollowup(activityId: string, text: string): Promise<AgentFollowupResult> {
@@ -2502,6 +2793,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     const socket = this.createSocket(this.url);
     this.socket = socket;
     this.awaitingAgentSeed = true;
+    this.awaitingAgentCoordinationSeed = true;
     // Bound this attempt: if it doesn't reach `auth-ok` in time (never opened,
     // or opened but the auth round-trip stalled — a half-open link never fires
     // 'close'), abandon it and let the backoff loop try a fresh socket.
@@ -2754,6 +3046,16 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.pendingWorktrees.clear();
     for (const resolve of this.pendingAgentSnapshots.values()) resolve(this.agentSnapshot);
     this.pendingAgentSnapshots.clear();
+    for (const resolve of this.pendingAgentCoordinationSnapshots.values()) {
+      resolve(this.agentCoordinationSnapshot);
+    }
+    this.pendingAgentCoordinationSnapshots.clear();
+    for (const resolve of this.pendingAgentSeen.values()) resolve(false);
+    this.pendingAgentSeen.clear();
+    for (const resolve of this.pendingManagedMergeDecisions.values()) {
+      resolve({ ok: false, error: 'unavailable', message: 'Desktop disconnected.' });
+    }
+    this.pendingManagedMergeDecisions.clear();
     for (const resolve of this.pendingAgentFollowups.values()) {
       resolve({ ok: false, error: 'delivery-failed' });
     }
@@ -3395,6 +3697,43 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         }
         break;
       }
+
+      case 'agent-coordination-snapshot': {
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION) break;
+        if (isAgentCoordinationSnapshot(msg.snapshot)) {
+          const changed = this.awaitingAgentCoordinationSeed
+            || msg.snapshot.revision > this.agentCoordinationSnapshot.revision;
+          this.awaitingAgentCoordinationSeed = false;
+          if (changed) {
+            this.agentCoordinationSnapshot = msg.snapshot;
+            for (const listener of this.agentCoordinationSnapshotListeners) listener(msg.snapshot);
+          }
+          if (msg.requestId) {
+            this.pendingAgentCoordinationSnapshots.get(msg.requestId)?.(this.agentCoordinationSnapshot);
+            this.pendingAgentCoordinationSnapshots.delete(msg.requestId);
+          }
+        } else if (msg.requestId) {
+          this.pendingAgentCoordinationSnapshots.get(msg.requestId)?.(this.agentCoordinationSnapshot);
+          this.pendingAgentCoordinationSnapshots.delete(msg.requestId);
+        }
+        break;
+      }
+
+      case 'agent-seen-reply':
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION) break;
+        this.pendingAgentSeen.get(msg.requestId)?.(msg.marked === true);
+        this.pendingAgentSeen.delete(msg.requestId);
+        break;
+
+      case 'managed-merge-decision-reply':
+        if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION) break;
+        this.pendingManagedMergeDecisions.get(msg.requestId)?.(
+          isManagedMergeMutationResult(msg.result)
+            ? msg.result
+            : { ok: false, error: 'unavailable', message: 'Desktop returned an invalid merge decision.' },
+        );
+        this.pendingManagedMergeDecisions.delete(msg.requestId);
+        break;
       case 'agent-followup-reply':
         if ((this.negotiatedProtocolVersion ?? 0) < REMOTE_PROTOCOL_VERSION_AGENT_LIVE) break;
         this.pendingAgentFollowups.get(msg.requestId)?.(

@@ -64,8 +64,8 @@ export type WorkspaceTabProps = IDockviewPanelHeaderProps & {
 const ACTIVE_AGENT_STATUSES = new Set<AgentStatus>([
   'starting',
   'working',
-  'waiting',
   'blocked',
+  'done',
 ]);
 
 export function projectSessionBadgeLabel(

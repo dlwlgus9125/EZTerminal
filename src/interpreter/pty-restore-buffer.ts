@@ -66,6 +66,12 @@ interface RestoreTerminal {
   resize(cols: number, rows: number): void;
   loadAddon(addon: ITerminalAddon): void;
   dispose(): void;
+  readonly buffer?: {
+    readonly active: {
+      readonly length: number;
+      getLine(index: number): { translateToString(trimRight?: boolean): string } | undefined;
+    };
+  };
 }
 
 interface RestoreSerializer {
@@ -86,6 +92,7 @@ export interface PtySemanticRestoreOptions {
 }
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 function positiveInteger(value: number | undefined, fallback: number): number {
   if (value === undefined || !Number.isFinite(value) || value < 1) return fallback;
@@ -140,6 +147,7 @@ export class PtySemanticRestoreBuffer {
   private failure?: Exclude<PtySemanticRestoreFailure, 'resize-pending'>;
   private gapAfterEpoch?: number;
   private disposed = false;
+  private readonly drainWaiters = new Set<() => void>();
 
   constructor(cols: number, rows: number, options: PtySemanticRestoreOptions = {}) {
     this.targetCols = positiveInteger(cols, 80);
@@ -244,12 +252,56 @@ export class PtySemanticRestoreBuffer {
     };
   }
 
+  /**
+   * Read the current active xterm buffer without taking a mirror slot.
+   *
+   * The semantic model consumes writes asynchronously, so callers wait until
+   * every operation accepted before this call has reached the model. Output is
+   * bounded from the tail: agent-control callers get the most recent screen
+   * context and can never make main copy an unbounded transcript.
+   */
+  async readText(maxLines: number, maxBytes: number): Promise<{
+    readonly text: string;
+    readonly truncated: boolean;
+  } | null> {
+    if (this.disposed || this.failure || !this.terminal?.buffer) return null;
+    await this.waitForDrain();
+    if (this.disposed || this.failure || !this.terminal?.buffer) return null;
+
+    const lineCap = Math.max(1, Math.floor(maxLines));
+    const byteCap = Math.max(1, Math.floor(maxBytes));
+    const active = this.terminal.buffer.active;
+    // xterm's buffer length always includes the viewport rows below the
+    // cursor. Trim those rows before applying the line cap, otherwise a short
+    // command in a tall terminal can incorrectly read as an empty string.
+    let end = active.length;
+    while (end > 0 && (active.getLine(end - 1)?.translateToString(true) ?? '') === '') end -= 1;
+    const first = Math.max(0, end - lineCap);
+    const lines: string[] = [];
+    for (let index = first; index < end; index += 1) {
+      lines.push(active.getLine(index)?.translateToString(true) ?? '');
+    }
+    const text = lines.join('\n');
+    const encoded = encoder.encode(text);
+    const lineTruncated = first > 0;
+    if (encoded.byteLength <= byteCap) return { text, truncated: lineTruncated };
+    // Drop a leading partial UTF-8 sequence after taking the tail. Replacement
+    // characters could otherwise make the encoded result exceed the byte cap.
+    let start = encoded.byteLength - byteCap;
+    while (start < encoded.byteLength && (encoded[start]! & 0xc0) === 0x80) start += 1;
+    return {
+      text: decoder.decode(encoded.slice(start)),
+      truncated: true,
+    };
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     this.operations.length = 0;
     this.tail.length = 0;
     this.tailBytes = 0;
+    this.resolveDrainWaiters();
     try {
       this.terminal?.dispose();
     } catch {
@@ -270,7 +322,10 @@ export class PtySemanticRestoreBuffer {
   private pump(): void {
     if (this.disposed || this.failure || this.writing) return;
     const operation = this.operations.shift();
-    if (!operation) return;
+    if (!operation) {
+      this.resolveDrainWaiters();
+      return;
+    }
     const terminal = this.terminal;
     if (!terminal) {
       this.fail('serializer-failed', this.committedEpoch);
@@ -305,6 +360,17 @@ export class PtySemanticRestoreBuffer {
       this.writing = false;
       this.fail('serializer-failed', this.committedEpoch);
     }
+  }
+
+  private waitForDrain(): Promise<void> {
+    if (!this.writing && this.operations.length === 0) return Promise.resolve();
+    return new Promise((resolve) => this.drainWaiters.add(resolve));
+  }
+
+  private resolveDrainWaiters(): void {
+    if (!this.disposed && (this.writing || this.operations.length > 0)) return;
+    for (const resolve of this.drainWaiters) resolve();
+    this.drainWaiters.clear();
   }
 
   private captureSnapshot(): void {
@@ -359,6 +425,7 @@ export class PtySemanticRestoreBuffer {
     this.tail.length = 0;
     this.tailBytes = 0;
     this.pendingResizes = 0;
+    this.resolveDrainWaiters();
   }
 
   private fallback(

@@ -8,13 +8,13 @@
 
 Structured pipelines · block history · full PTY/TUI support · Agent workbench · Android remote control
 
-[![Release](https://img.shields.io/badge/release-v1.0.37-brightgreen)](https://github.com/dlwlgus9125/EZTerminal/releases/latest)
+[![Release](https://img.shields.io/badge/release-v1.0.38-brightgreen)](https://github.com/dlwlgus9125/EZTerminal/releases/latest)
 [![CI](https://github.com/dlwlgus9125/EZTerminal/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dlwlgus9125/EZTerminal/actions/workflows/ci.yml)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [Download the latest release](https://github.com/dlwlgus9125/EZTerminal/releases/latest) ·
-[Read the release notes](docs/release/release-notes-1.0.37.md) ·
+[Read the release notes](docs/release/release-notes-1.0.38.md) ·
 [Review the security model](SECURITY.md)
 
 <br />
@@ -52,7 +52,8 @@ ps | where memory > 100mb | sort-by memory
   parking and renderer recovery without discarding eligible live runs.
 - **Projects and coding agents in context.** Browse a project tree, inspect full-file inline diffs
   beside a live terminal, manage worktrees, and follow Codex, Claude, or configured Agent sessions
-  through attention, approval, history, resume, and change-review states.
+  through attention, approval, history, resume, change-review, Project coordination, and managed
+  merge states.
 - **Files, SSH, and local operations tooling.** Use the built-in Explorer, bounded file previews,
   drag-to-terminal paths, TOFU-verified SSH, loopback-only SSH forwards, a system monitor, and
   optional Npcap packet capture.
@@ -66,6 +67,28 @@ PTY topology together. Opening files or switching between wide and narrow layout
 the terminal session.
 
 <img src="docs/assets/readme/desktop-project-workspace.png" width="100%" alt="EZTerminal Project Workspace with a file tree, inline diff, and live PowerShell terminal" />
+
+## Agent collaboration
+
+A live Codex or Claude session can join its Project with an alias, role, and
+task. EZTerminal previews the generated brief before you send it, then exposes
+the Project's joined sessions through a capability available only inside that
+terminal:
+
+```powershell
+ezterminal-agent list
+ezterminal-agent read Reviewer --lines 80
+'Please review the candidate.' | ezterminal-agent prompt Reviewer --stdin --wait
+ezterminal-agent wait Reviewer --until done
+ezterminal-agent merge request --target main --wait
+```
+
+Managed merge never turns an arbitrary terminal command into an approval
+button. It accepts only committed changes from an EZTerminal-managed worktree,
+creates a detached candidate, runs the Project validations, and rechecks both
+Git heads before an approved fast-forward. Desktop supports explicit approval,
+a reasoned failed-validation override, or an exact one-shot grant. Android can
+approve or deny a normally validated candidate.
 
 ## Android companion
 
@@ -96,18 +119,18 @@ desktop, audio, privacy mode, and Ctrl+Alt+Delete are not supported.
 
 ## Install
 
-The current stable release is **v1.0.37**.
+The current stable release is **v1.0.38**.
 
 | Platform | Supported system | Release asset |
 | --- | --- | --- |
 | Windows desktop | Windows 10 22H2 or Windows 11, x64 | `EZTerminal-Setup.exe` |
-| Android companion | Android 10 / API 29 or newer | `EZTerminal-Android-1.0.37-vc58.apk` |
+| Android companion | Android 10 / API 29 or newer | `EZTerminal-Android-1.0.38-vc59.apk` |
 
 Download both artifacts, `release-manifest.json`, and `SHA256SUMS.txt` from the
 [latest GitHub Release](https://github.com/dlwlgus9125/EZTerminal/releases/latest).
 
 > [!IMPORTANT]
-> The v1.0.37 Windows installer is published unsigned while the SignPath Foundation application is
+> The v1.0.38 Windows installer is published unsigned while the SignPath Foundation application is
 > pending, so Windows displays an unknown-publisher warning. Verify the release manifest and SHA-256
 > checksums before opening it. The in-app updater performs the same digest verification and never
 > installs an update silently.
@@ -161,7 +184,8 @@ boundaries, data flows, and native components are documented in the
 | Architecture and subsystem ownership | [docs/architecture.md](docs/architecture.md) |
 | Product direction and unimplemented candidates | [docs/ROADMAP.md](docs/ROADMAP.md) |
 | Visual identity and UX contracts | [DESIGN.md](DESIGN.md) · [frontend design](docs/ux/frontend-design.md) |
-| Current release | [v1.0.37 notes](docs/release/release-notes-1.0.37.md) · [1.0.37 validation policy](docs/release/validation-policy-1.0.37.md) |
+| Agent collaboration and managed merge | [docs/design/agent-collaboration.md](docs/design/agent-collaboration.md) |
+| Current release | [v1.0.38 notes](docs/release/release-notes-1.0.38.md) · [1.0.38 validation policy](docs/release/validation-policy-1.0.38.md) |
 | Terminal, remote, lifecycle, and integration contracts | [docs/design/](docs/design/) |
 | Release history | [CHANGELOG.md](CHANGELOG.md) |
 

@@ -11,6 +11,11 @@ import type {
   AgentProvider,
   AgentStatus,
 } from '../../src/shared/agent';
+import {
+  EMPTY_AGENT_COORDINATION_SNAPSHOT,
+  type AgentCoordinationSnapshot,
+  type ManagedMergeRequest,
+} from '../../src/shared/agent-coordination';
 import type {
   AgentLaunchBootstrap,
   AgentResumeBootstrap,
@@ -34,7 +39,7 @@ import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
 /** Used when the host predates the Git arms; every card then shows its cwd. */
 const readNothing = (): Promise<GitDirectoryStatus> => Promise.resolve(EMPTY_GIT_DIRECTORY_STATUS);
 
-const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'waiting']);
+const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'done']);
 const RUNNING = new Set<AgentStatus>(['starting', 'working']);
 
 const RISK_RANK = {
@@ -52,9 +57,10 @@ const PROVIDER_LABEL: Record<AgentProvider, string> = {
 const STATUS_LABEL_KEY = {
   starting: 'agentHub.status.starting',
   working: 'agentHub.status.working',
-  waiting: 'agentHub.status.waiting',
   blocked: 'agentHub.status.blocked',
   done: 'agentHub.status.done',
+  idle: 'agentHub.status.idle',
+  unknown: 'agentHub.status.unknown',
   error: 'agentHub.status.error',
 } as const satisfies Record<AgentStatus, string>;
 
@@ -103,10 +109,11 @@ type MobileDiffView =
  * that agent; "view diff" shows its uncommitted work. When no hook is parked —
  * an older desktop, an ungated provider, or a window that has already closed —
  * the card falls back to the two affordances that always exist: focus the
- * blocked session, and follow up on a waiting one.
+ * blocked session, and follow up once a live done/idle terminal is ready.
  */
 export function MobileAgentView({
   snapshot,
+  coordinationSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT,
   disconnected = false,
   currentTime,
   onBack,
@@ -120,6 +127,7 @@ export function MobileAgentView({
   transport,
 }: {
   readonly snapshot: AgentActivitySnapshot;
+  readonly coordinationSnapshot?: AgentCoordinationSnapshot;
   readonly disconnected?: boolean;
   readonly currentTime?: number;
   readonly onBack: () => void;
@@ -142,6 +150,7 @@ export function MobileAgentView({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [decidingMergeId, setDecidingMergeId] = useState<string | null>(null);
   const [diff, setDiff] = useState<MobileDiffView | null>(null);
   const diffRequestGeneration = useRef(0);
   const locale = i18n.resolvedLanguage ?? i18n.language;
@@ -154,6 +163,36 @@ export function MobileAgentView({
     () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),
     [locale],
   );
+
+  const managedMerges = useMemo(() => coordinationSnapshot.mergeRequests.filter((request) => (
+    ['preparing', 'validating', 'approval-required', 'override-required', 'merging'].includes(request.state)
+  )), [coordinationSnapshot.mergeRequests]);
+
+  const decideMerge = async (
+    request: ManagedMergeRequest,
+    decision: 'approve' | 'deny',
+  ): Promise<void> => {
+    if (!transport || decidingMergeId !== null || request.state !== 'approval-required') return;
+    setDecidingMergeId(request.requestId);
+    const result = await transport.decideManagedMerge({
+      requestId: request.requestId,
+      revision: request.revision,
+      decision,
+      actor: 'mobile',
+    }).catch(() => ({
+      ok: false as const,
+      error: 'unavailable' as const,
+      message: 'transport unavailable',
+    }));
+    setDecidingMergeId(null);
+    if (result.ok) {
+      showToast(decision === 'approve'
+        ? t('agentHub.managedMerge.approved')
+        : t('agentHub.managedMerge.denied'));
+      return;
+    }
+    showToast(t('agentHub.managedMerge.decisionFailed'));
+  };
 
   const decide = async (item: AgentActivity, decision: AgentDecision): Promise<void> => {
     if (!onDecideApproval || decidingId !== null || !item.approval) return;
@@ -241,7 +280,7 @@ export function MobileAgentView({
       }));
       return null;
     }
-    return result.error === 'not-waiting'
+    return result.error === 'not-waiting' || result.error === 'not-ready'
       ? t('agentHub.errorNotWaiting')
       : result.error === 'invalid-text'
         ? t('agentHub.errorInvalidText')
@@ -292,6 +331,61 @@ export function MobileAgentView({
 
       <div className="mob-page__body" data-testid="mobile-agent-scroll-region">
         <div className="mob-column">
+          {managedMerges.map((request) => (
+            <article
+              key={request.requestId}
+              className="mob-agent-card mob-agent-card--attention"
+              data-testid="managed-merge-card"
+              data-status={request.state}
+            >
+              <div className="mob-agent-card__head">
+                <span className="mob-agent-card__chip" aria-hidden="true"><Bot /></span>
+                <span className="mob-agent-card__name">{t('agentHub.managedMerge.title')}</span>
+                <span className="mob-badge mob-badge--warning">
+                  {t(`agentHub.managedMerge.state.${request.state}`)}
+                </span>
+              </div>
+              <p className="mob-agent-card__branch">
+                {request.sourceBranch} → {request.targetBranch}
+              </p>
+              {request.validations.length > 0 && (
+                <ul className="mob-agent-diff-omissions" data-testid="managed-merge-validations">
+                  {request.validations.map((validation) => (
+                    <li key={validation.id}>
+                      {validation.name}: {t(`agentHub.managedMerge.validation.${validation.status}`)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {request.state === 'override-required' && (
+                <p className="mob-agent-card__body" role="status">
+                  {t('agentHub.managedMerge.desktopOverrideRequired')}
+                </p>
+              )}
+              {request.state === 'approval-required' && (
+                <div className="mob-agent-card__actions">
+                  <button
+                    type="button"
+                    className="mob-btn-warning"
+                    disabled={disconnected || decidingMergeId !== null}
+                    onClick={() => void decideMerge(request, 'approve')}
+                    data-testid="managed-merge-approve"
+                  >
+                    {t('agentHub.approve')}
+                  </button>
+                  <button
+                    type="button"
+                    className="mob-btn-ghost"
+                    disabled={disconnected || decidingMergeId !== null}
+                    onClick={() => void decideMerge(request, 'deny')}
+                    data-testid="managed-merge-deny"
+                  >
+                    {t('agentHub.deny')}
+                  </button>
+                </div>
+              )}
+            </article>
+          ))}
           {[
             ...visible.filter((item) => bucketOf(item.status) === 'attention'),
             ...(transport && onResumeHistory && onLaunchAgent ? [null] : []),
@@ -320,6 +414,41 @@ export function MobileAgentView({
             const live = item.approval?.pending === true;
 
             if (bucket === 'done') {
+              if (item.live && (item.status === 'idle' || item.status === 'unknown')) {
+                return (
+                  <article key={item.id} className="mob-agent-card mob-agent-card--done" data-testid="agent-card" data-status={item.status}>
+                    <div className="mob-agent-card__head">
+                      <Check aria-hidden="true" className="mob-row__chevron" />
+                      <span className="mob-agent-card__name">{PROVIDER_LABEL[item.provider]}</span>
+                      <span className="mob-agent-card__time">{age}</span>
+                    </div>
+                    <p className="mob-agent-card__branch" title={item.cwd}>
+                      {formatCwd(item.cwd, 30)} · {t(STATUS_LABEL_KEY[item.status])}
+                    </p>
+                    <div className="mob-agent-card__actions">
+                      <button
+                        type="button"
+                        className="mob-btn-ghost"
+                        onClick={() => onFocusSession(item.sessionId)}
+                        data-testid="agent-focus"
+                      >
+                        {t('agentHub.focus')}
+                      </button>
+                    </div>
+                    {item.status === 'idle' && item.interactiveReady && (
+                      <AgentFollowupComposer
+                        activityId={item.id}
+                        providerLabel={PROVIDER_LABEL[item.provider]}
+                        variant="mobile"
+                        disconnected={disconnected}
+                        sending={sendingId === item.id}
+                        anotherSending={sendingId !== null && sendingId !== item.id}
+                        onSend={send}
+                      />
+                    )}
+                  </article>
+                );
+              }
               return (
                 <article key={item.id} className="mob-agent-card mob-agent-card--done" data-testid="agent-card" data-status={item.status}>
                   <Check aria-hidden="true" className="mob-row__chevron" />
@@ -362,7 +491,7 @@ export function MobileAgentView({
                   {branches.get(item.cwd) ?? formatCwd(item.cwd, 30)}
                 </p>
                 <p className="mob-agent-card__body">
-                  {item.status === 'waiting'
+                  {item.status === 'done'
                     ? t('mobile.agentView.waitingBody')
                     : item.status === 'blocked'
                       ? t('mobile.agentView.blockedBody')
@@ -418,7 +547,7 @@ export function MobileAgentView({
                   )}
                   <span className="mob-agent-card__time">{age}</span>
                 </div>
-                {item.status === 'waiting' && (
+                {(item.status === 'done' || item.status === 'idle') && item.live && item.interactiveReady && (
                   <AgentFollowupComposer
                     activityId={item.id}
                     providerLabel={PROVIDER_LABEL[item.provider]}
@@ -437,7 +566,7 @@ export function MobileAgentView({
               </article>
             );
           })}
-          {visible.length === 0 && (
+          {visible.length === 0 && managedMerges.length === 0 && (
             <p className="mob-empty" data-testid="agent-empty">
               {snapshot.items.length === 0 ? t('agentHub.empty') : t('mobile.agentView.noMatches')}
             </p>

@@ -80,7 +80,7 @@ export class DesktopWindowManager {
     window.on('close', (event) => {
       if (this.options.isAppQuitting()) return;
       event.preventDefault();
-      this.options.quitApp();
+      window.hide();
     });
   }
 
@@ -140,7 +140,7 @@ export class DesktopWindowManager {
         if (window.isMaximized()) window.unmaximize();
         else window.maximize();
       } else if (this.windowKinds.get(window) === 'main') {
-        this.options.quitApp();
+        window.hide();
       } else {
         window.close();
       }

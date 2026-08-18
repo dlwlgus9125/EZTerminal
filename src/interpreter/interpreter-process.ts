@@ -23,6 +23,7 @@ import {
   MAX_GUARDED_DESTROY_RUN_IDS,
   MAX_GUARDED_DESTROY_SESSIONS,
 } from '../shared/ipc';
+import { isSafeAgentPromptText } from '../shared/agent-coordination';
 
 import type {
   InterpreterFrame,
@@ -41,6 +42,8 @@ import type {
   SshConnectionFrame,
   StartFrame,
   WorktreeOpenFrame,
+  PtyTextReadResult,
+  PtyTextSubmitResult,
 } from '../shared/ipc';
 import type { SshForwardAction, SshForwardResult } from '../shared/ssh-forward';
 import { SshForwardError } from '../shared/ssh-forward';
@@ -155,6 +158,7 @@ class ExecutionSession implements Execution {
   private lastSchema: SchemaFrame | null = null;
   private lastProgress: ProgressFrame | null = null;
   private ptyRenderUpgraded = false;
+  private ptyInteractiveReady = false;
   // A late attach to an ALREADY-FINISHED run (settled but still open for
   // paging, e.g. a completed pty's scrollback) still needs to learn that —
   // the terminal frame itself only ever fires once, in the past.
@@ -376,6 +380,9 @@ class ExecutionSession implements Execution {
       if (this.ptyRenderUpgraded) {
         port.postMessage({ type: 'pty-render-upgrade' } satisfies InterpreterFrame);
       }
+      if (this.ptyInteractiveReady) {
+        port.postMessage({ type: 'pty-interactive-ready' } satisfies InterpreterFrame);
+      }
       // Dims BEFORE the restore: serialized cursor addressing is only valid at
       // the authoritative PTY grid used by the headless model.
       if (this.lastDims) {
@@ -432,6 +439,26 @@ class ExecutionSession implements Execution {
    * filters on (M1 mirror-active-runs, D1). */
   get running(): boolean {
     return !this.disposed && this.lastTerminal === null;
+  }
+
+  async readPtyText(maxLines: number, maxBytes: number): Promise<PtyTextReadResult> {
+    if (!this.running) return { ok: false, reason: 'unavailable' };
+    const readText = this.activeExecution?.readText;
+    if (!readText) return { ok: false, reason: 'not-pty' };
+    const result = await readText(maxLines, maxBytes);
+    return result ? { ok: true, ...result } : { ok: false, reason: 'unavailable' };
+  }
+
+  submitPtyText(text: string): PtyTextSubmitResult {
+    if (!this.running) return { ok: false, reason: 'unavailable' };
+    if (!isSafeAgentPromptText(text)) {
+      return { ok: false, reason: 'invalid-text' };
+    }
+    const submitText = this.activeExecution?.submitText;
+    if (!submitText) return { ok: false, reason: 'not-pty' };
+    return submitText(text)
+      ? { ok: true, queued: false }
+      : { ok: false, reason: 'not-ready' };
   }
 
   /** {@link Execution}: release the ResultStore/PTY child + close every port. Idempotent. */
@@ -612,6 +639,9 @@ class ExecutionSession implements Execution {
         break;
       case 'pty-render-upgrade':
         this.ptyRenderUpgraded = true;
+        break;
+      case 'pty-interactive-ready':
+        this.ptyInteractiveReady = true;
         break;
       case 'ssh-connection':
         this.lastSshConnection = frame;
@@ -1259,6 +1289,49 @@ process.parentPort.on('message', (event: ElectronMsgEvent) => {
         type: 'run-list',
         requestId: msg.requestId,
         runs,
+      } satisfies InterpreterToMain);
+      break;
+    }
+    case 'pty-text-read': {
+      const entry = executionsByRunId.get(msg.runId);
+      if (!entry) {
+        process.parentPort.postMessage({
+          type: 'pty-text-read-result',
+          requestId: msg.requestId,
+          result: { ok: false, reason: 'run-not-found' },
+        } satisfies InterpreterToMain);
+        break;
+      }
+      if (entry.info.sessionId !== msg.sessionId) {
+        process.parentPort.postMessage({
+          type: 'pty-text-read-result',
+          requestId: msg.requestId,
+          result: { ok: false, reason: 'session-mismatch' },
+        } satisfies InterpreterToMain);
+        break;
+      }
+      const lines = Math.max(1, Math.min(200, Math.floor(msg.lines)));
+      const maxBytes = Math.max(1, Math.min(64 * 1024, Math.floor(msg.maxBytes)));
+      void entry.execution.readPtyText(lines, maxBytes).then((result) => {
+        process.parentPort.postMessage({
+          type: 'pty-text-read-result',
+          requestId: msg.requestId,
+          result,
+        } satisfies InterpreterToMain);
+      });
+      break;
+    }
+    case 'pty-text-submit': {
+      const entry = executionsByRunId.get(msg.runId);
+      const result = !entry
+        ? { ok: false, reason: 'run-not-found' } as const
+        : entry.info.sessionId !== msg.sessionId
+          ? { ok: false, reason: 'session-mismatch' } as const
+          : entry.execution.submitPtyText(msg.text);
+      process.parentPort.postMessage({
+        type: 'pty-text-submit-result',
+        requestId: msg.requestId,
+        result,
       } satisfies InterpreterToMain);
       break;
     }
