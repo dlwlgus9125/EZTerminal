@@ -1,6 +1,6 @@
 [package]
 name = "ezterminal-remote-host"
-version = "1.0.38"
+version = "1.0.39"
 edition = "2024"
 license = "MIT"
 publish = false

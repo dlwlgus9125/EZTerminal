@@ -37,6 +37,7 @@ export interface AgentActivityBroker {
   listRuns(): Promise<readonly RunStartedInfo[]>;
   listSessions(): readonly SessionInfo[];
   onRunStarted(listener: (info: RunStartedInfo) => void): () => void;
+  onSessionRemoved(listener: (sessionId: string) => void): () => void;
   onInterpreterExited(listener: (code?: number) => void): () => void;
   readPtyText?(
     sessionId: string,
@@ -197,6 +198,7 @@ export class AgentActivityService {
     this.approvalGateEnabled = this.getSettings().approvalGate;
     this.unsubscribers.push(
       this.broker.onRunStarted((info) => this.handleRunStarted(info)),
+      this.broker.onSessionRemoved((sessionId) => this.handleSessionRemoved(sessionId)),
       this.broker.onInterpreterExited(() => this.handleInterpreterExit()),
     );
     // Level-triggered catch-up closes the tiny construction race between
@@ -500,17 +502,19 @@ export class AgentActivityService {
 
   private handleRunStarted(info: RunStartedInfo): void {
     if (this.disposed || this.byRun.has(info.runId)) return;
+    const session = this.broker.listSessions().find((candidate) => candidate.sessionId === info.sessionId);
+    if (!session) return;
     const identity = classifyAgentCommandIdentity(info.commandText, this.getSettings());
     if (!identity) return;
-    this.startActivity(info, identity);
+    this.startActivity(info, identity, session.cwd);
   }
 
   private startActivity(
     info: RunStartedInfo,
     identity: { readonly provider: AgentProvider; readonly providerLabel: string },
+    cwd: string,
   ): MutableActivity {
     const now = this.now();
-    const cwd = this.broker.listSessions().find((session) => session.sessionId === info.sessionId)?.cwd ?? '';
     const record: MutableActivity = {
       id: this.newId(),
       sessionId: info.sessionId,
@@ -662,15 +666,7 @@ export class AgentActivityService {
       this.byProviderSession.delete(key);
       this.endedProviderSessions.set(key, this.now() + ENDED_PROVIDER_SESSION_TTL_MS);
     }
-    const now = this.now();
-    for (const [key, expiresAt] of this.endedProviderSessions) {
-      if (expiresAt <= now) this.endedProviderSessions.delete(key);
-    }
-    while (this.endedProviderSessions.size > ENDED_PROVIDER_SESSION_CAP) {
-      const oldest = this.endedProviderSessions.keys().next().value as string | undefined;
-      if (!oldest) break;
-      this.endedProviderSessions.delete(oldest);
-    }
+    this.pruneEndedProviderSessions(this.now());
     if (closePort && record.port) {
       const port = record.port;
       record.port = null;
@@ -692,6 +688,73 @@ export class AgentActivityService {
       if (oldest) this.records.delete(oldest);
     }
     this.publish();
+  }
+
+  private handleSessionRemoved(sessionId: string): void {
+    if (this.disposed) return;
+    const removedIds = new Set<string>();
+    const expiresAt = this.now() + ENDED_PROVIDER_SESSION_TTL_MS;
+
+    for (const record of [...this.records.values()]) {
+      if (record.sessionId !== sessionId) continue;
+      removedIds.add(record.id);
+      record.ended = true;
+      record.live = false;
+      record.interactiveReady = false;
+      record.approval = null;
+      this.records.delete(record.id);
+      if (this.byRun.get(record.runId) === record) this.byRun.delete(record.runId);
+
+      const sessionProviderKey = providerKey(record.provider, record.sessionId);
+      if (this.activeBySessionProvider.get(sessionProviderKey) === record) {
+        this.activeBySessionProvider.delete(sessionProviderKey);
+      }
+      for (const providerSessionId of record.providerSessionIds) {
+        const key = providerKey(record.provider, providerSessionId);
+        if (this.byProviderSession.get(key) === record) this.byProviderSession.delete(key);
+        this.endedProviderSessions.set(key, expiresAt);
+      }
+
+      const pending = this.pendingApprovals.get(record.id);
+      if (pending) {
+        this.pendingApprovals.delete(record.id);
+        clearTimeout(pending.timer);
+        pending.settle(null);
+      }
+
+      const port = record.port;
+      record.port = null;
+      if (port) {
+        try {
+          port.postMessage({ type: 'close' });
+        } catch {
+          // Run teardown already closed it.
+        }
+        try {
+          port.close();
+        } catch {
+          // Run teardown already closed it.
+        }
+      }
+    }
+
+    if (removedIds.size === 0) return;
+    for (let index = this.completedIds.length - 1; index >= 0; index -= 1) {
+      if (removedIds.has(this.completedIds[index])) this.completedIds.splice(index, 1);
+    }
+    this.pruneEndedProviderSessions(this.now());
+    this.publish();
+  }
+
+  private pruneEndedProviderSessions(now: number): void {
+    for (const [key, expiresAt] of this.endedProviderSessions) {
+      if (expiresAt <= now) this.endedProviderSessions.delete(key);
+    }
+    while (this.endedProviderSessions.size > ENDED_PROVIDER_SESSION_CAP) {
+      const oldest = this.endedProviderSessions.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.endedProviderSessions.delete(oldest);
+    }
   }
 
   private handleInterpreterExit(): void {

@@ -61,6 +61,7 @@ class FakeBroker implements AgentActivityBroker {
   runs: RunStartedInfo[] = [];
   private readonly runListeners = new Set<(info: RunStartedInfo) => void>();
   private readonly exitListeners = new Set<(code?: number) => void>();
+  private readonly sessionRemovalListeners = new Set<(sessionId: string) => void>();
 
   attachRun(): RemotePort {
     const port = new FakePort();
@@ -81,6 +82,10 @@ class FakeBroker implements AgentActivityBroker {
     this.exitListeners.add(listener);
     return () => this.exitListeners.delete(listener);
   }
+  onSessionRemoved(listener: (sessionId: string) => void): () => void {
+    this.sessionRemovalListeners.add(listener);
+    return () => this.sessionRemovalListeners.delete(listener);
+  }
   submitPtyText(
     sessionId: string,
     runId: string,
@@ -96,6 +101,10 @@ class FakeBroker implements AgentActivityBroker {
   }
   exit(code = 1): void {
     for (const listener of this.exitListeners) listener(code);
+  }
+  removeSession(sessionId: string): void {
+    this.sessions = this.sessions.filter((session) => session.sessionId !== sessionId);
+    for (const listener of this.sessionRemovalListeners) listener(sessionId);
   }
 }
 
@@ -139,6 +148,71 @@ describe('classifyAgentCommand', () => {
 });
 
 describe('AgentActivityService', () => {
+  it('removes Agent activity exactly once when its terminal session is removed', () => {
+    const { service, broker } = makeService();
+
+    const port = broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'codex' });
+    expect(service.getSnapshot().items).toHaveLength(1);
+    const revision = service.getSnapshot().revision;
+    const snapshots = vi.fn();
+    const transitions = vi.fn();
+    service.onSnapshot(snapshots);
+    service.onTransition(transitions);
+
+    broker.removeSession('ez-1');
+
+    expect(service.getSnapshot().items).toEqual([]);
+    expect(service.getSnapshot().revision).toBe(revision + 1);
+    expect(snapshots).toHaveBeenCalledTimes(1);
+    expect(snapshots).toHaveBeenLastCalledWith(expect.objectContaining({ items: [] }));
+    expect(transitions).not.toHaveBeenCalled();
+    expect(port.closed).toBe(true);
+
+    broker.removeSession('ez-1');
+    expect(snapshots).toHaveBeenCalledTimes(1);
+  });
+
+  it('purges both live and completed activities only for the removed session', () => {
+    const { service, broker } = makeService();
+    broker.sessions.push({ sessionId: 'ez-2', cwd: 'C:\\other' });
+
+    const completed = broker.run({ sessionId: 'ez-1', runId: 'completed', commandText: 'codex' });
+    service.handleHookEvent(hook({ event: 'SessionStart', providerSessionId: 'removed-provider-session' }));
+    completed.frame({ type: 'end', exitCode: 0 });
+    broker.run({ sessionId: 'ez-1', runId: 'live', commandText: 'codex' });
+    broker.run({ sessionId: 'ez-2', runId: 'other', commandText: 'claude' });
+    expect(service.getSnapshot().items).toHaveLength(3);
+
+    broker.removeSession('ez-1');
+
+    expect(service.getSnapshot().items).toEqual([
+      expect.objectContaining({ sessionId: 'ez-2', status: 'starting' }),
+    ]);
+    service.handleHookEvent(hook({
+      event: 'StopFailure',
+      providerSessionId: 'removed-provider-session',
+    }));
+    expect(service.getSnapshot().items).toEqual([
+      expect.objectContaining({ sessionId: 'ez-2', status: 'starting' }),
+    ]);
+  });
+
+  it('does not recreate an activity from run catch-up after its session is removed', async () => {
+    const broker = new FakeBroker();
+    broker.runs = [{ sessionId: 'ez-1', runId: 'stale-run', commandText: 'codex' }];
+    const service = new AgentActivityService({
+      broker,
+      getSettings: () => settings,
+      newId: () => 'activity-1',
+    });
+
+    broker.removeSession('ez-1');
+    await Promise.resolve();
+
+    expect(service.getSnapshot().items).toEqual([]);
+    expect(broker.ports).toEqual([]);
+  });
+
   it('observes only direct terminal Agent runs and reports cwd changes', () => {
     const { service, broker } = makeService();
     const observed = vi.fn();
@@ -550,6 +624,25 @@ describe('AgentActivityService — approval gate', () => {
     port.frame({ type: 'end', exitCode: 0 });
     await expect(pending).resolves.toBeNull();
     expect(service.getSnapshot().items[0].approval).toBeUndefined();
+  });
+
+  it('fails open and removes the activity when its terminal session disappears', async () => {
+    const { service, broker } = makeService();
+    broker.run({ sessionId: 'ez-1', runId: 'run-1', commandText: 'claude' });
+    const event = claudeHook({ event: 'PermissionRequest', toolName: 'Bash', command: 'pnpm test' });
+    service.handleHookEvent(event);
+    const pending = service.requestApproval(event);
+    const activityId = service.getSnapshot().items[0].id;
+    const approvalId = liveApprovalId(service);
+
+    broker.removeSession('ez-1');
+
+    await expect(pending).resolves.toBeNull();
+    expect(service.getSnapshot().items).toEqual([]);
+    expect(service.decideApproval(activityId, approvalId, 'allow')).toEqual({
+      ok: false,
+      error: 'not-found',
+    });
   });
 
   it('rejects a decision for an activity that never asked', () => {

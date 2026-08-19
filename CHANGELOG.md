@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.0.39] - 2026-08-19
+
+### Fixed
+
+- Removed Agent Hub activity and Focus targets as soon as their owning terminal
+  session is destroyed, including live and completed activities.
+- Prevented delayed run catch-up and provider hooks from recreating activity for
+  a terminal session that has already been removed.
+- Settled pending approval gates and closed Agent observation ports when session
+  teardown removes their activity.
+
+See [1.0.39 release notes](docs/release/release-notes-1.0.39.md).
+
 ## [1.0.38] - 2026-08-18
 
 ### Added
