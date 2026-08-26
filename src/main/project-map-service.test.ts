@@ -265,6 +265,20 @@ describe('ProjectMapService', () => {
     expect(cache.put).toHaveBeenCalledWith(expect.any(String), result.map);
   });
 
+  it('treats LF and CRLF authoritative inputs as the same reviewed source', async () => {
+    workspace.files.set('src/input.ts', 'export const input = 1;\r\n');
+    const maps = service();
+    const result = await maps.read({ ...request, mapId: 'runtime' });
+    maps.close();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.map.state).toBe('valid');
+    expect(result.map.verification.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: 'inputs.review-required' }),
+    );
+  });
+
   it('marks a semantically valid map stale when an authoritative input changes', async () => {
     workspace.files.set('src/input.ts', 'export const input = 2;\n');
     const maps = service();

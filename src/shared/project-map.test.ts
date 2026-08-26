@@ -8,6 +8,8 @@ import {
   isProjectMapBindingRequest,
   isProjectMapCollectionRequest,
   isProjectMapStartJobRequest,
+  normalizeProjectMapInputText,
+  serializeProjectMapInputVersions,
   validateProjectMapManifest,
   validateProjectMapSpec,
   validateProjectMapSpecText,
@@ -45,6 +47,21 @@ const relation = {
   kind: 'primary' as const,
   evidence,
 };
+
+describe('Project Map input review contract', () => {
+  it('normalizes only line endings and serializes records in portable lexical order', () => {
+    expect(normalizeProjectMapInputText('one\r\ntwo\rthree\n')).toBe('one\ntwo\nthree\n');
+    expect(serializeProjectMapInputVersions([
+      { rootAlias: 'z', relativePath: 'src/z.ts', version: 'z-version' },
+      { rootAlias: 'app', relativePath: 'src/b.ts', version: 'b-version' },
+      { rootAlias: 'app', relativePath: 'src/a.ts', version: 'a-version' },
+    ])).toBe([
+      'app\u0000src/a.ts\u0000a-version',
+      'app\u0000src/b.ts\u0000b-version',
+      'z\u0000src/z.ts\u0000z-version',
+    ].join('\n'));
+  });
+});
 
 const specs: ProjectMapSpec[] = [
   {

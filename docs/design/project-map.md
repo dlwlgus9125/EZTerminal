@@ -85,7 +85,8 @@ Evidence anchor는 `rootAlias`, `relativePath`, inclusive `startLine/endLine`, `
 정규화한 뒤 지정된 줄만 LF로 연결한다. 끝에 newline을 덧붙이지 않은 UTF-8 bytes의 SHA-256을
 `sha256:<hex>`로 비교한다. 범위가 파일 밖이거나 digest가 다르면 current source는 invalid다.
 
-Authoritative input digest는 각 파일의 exact byte SHA-256인 `fileVersion`을 사용한다. record를
+Authoritative input은 workspace API가 검증한 UTF-8 text이며, `fileVersion`은 CRLF/CR을 LF로
+정규화한 source의 SHA-256이다. trailing newline과 그 밖의 code point는 그대로 보존한다. record를
 `rootAlias`, `relativePath` 순으로 정렬하고 각각
 `rootAlias + NUL + relativePath + NUL + fileVersion`으로 만든 뒤 LF로 연결한 UTF-8 bytes를
 SHA-256한다. 이 값이 `review.inputDigest`와 다르면 map은 `stale`이며 Production cache와 승인을

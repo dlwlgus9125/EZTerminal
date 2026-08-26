@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const PROJECT_MAP_SCHEMA_VERSION = 2 as const;
-export const PROJECT_MAP_QUALITY_GATE_VERSION = 2 as const;
+export const PROJECT_MAP_QUALITY_GATE_VERSION = 3 as const;
 export const MAX_PROJECT_MAP_SOURCE_BYTES = 256 * 1024;
 export const MAX_PROJECT_MAPS = 16;
 export const MAX_PROJECT_MAP_ROOTS = 32;
@@ -19,6 +19,30 @@ export const PROJECT_MAP_TYPES = [
 export type ProjectMapType = (typeof PROJECT_MAP_TYPES)[number];
 export type ProjectMapQualityProfile = 'draft' | 'production';
 export type ProjectMapContentLocale = 'ko' | 'en';
+
+export interface ProjectMapInputVersionRecord {
+  readonly rootAlias: string;
+  readonly relativePath: string;
+  readonly version: string;
+}
+
+export function normalizeProjectMapInputText(content: string): string {
+  return content.replace(/\r\n?/gu, '\n');
+}
+
+function compareProjectMapInputText(left: string, right: string): number {
+  return left === right ? 0 : left < right ? -1 : 1;
+}
+
+export function serializeProjectMapInputVersions(
+  records: readonly ProjectMapInputVersionRecord[],
+): string {
+  return [...records]
+    .sort((left, right) => compareProjectMapInputText(left.rootAlias, right.rootAlias)
+      || compareProjectMapInputText(left.relativePath, right.relativePath))
+    .map((record) => `${record.rootAlias}\u0000${record.relativePath}\u0000${record.version}`)
+    .join('\n');
+}
 
 export interface ProjectMapAuthoringGuide {
   readonly type: ProjectMapType;
@@ -71,7 +95,7 @@ export function projectMapAuthoringGuide(type: ProjectMapType): ProjectMapAuthor
       'Every semantic item and relation/message/transition needs 1..3 evidence anchors.',
     ],
     evidenceDigest: 'sha256 of the exact inclusive line range after CRLF/CR is normalized to LF, with selected lines joined by LF and no added trailing newline.',
-    inputDigest: 'sha256 of sorted rootAlias\\0relativePath\\0fileVersion records joined by LF; fileVersion is sha256 of the exact file bytes.',
+    inputDigest: 'sha256 of sorted rootAlias\\0relativePath\\0fileVersion records joined by LF; fileVersion is sha256 of UTF-8 source after CRLF/CR is normalized to LF.',
     modeContract: modeContract[type],
     checklist: [
       'Read the current manifest, the target map, every authoritative input, and every evidence range.',

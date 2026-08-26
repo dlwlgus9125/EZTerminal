@@ -35,6 +35,9 @@ native engine owns deterministic coordinates, routes, label placement, and the
 canonical scene. Draft validation supports authoring iteration. Production
 validation requires current authoritative inputs, exact evidence, deterministic
 layout, resolved provenance, zero diagnostics, and all ten named checks.
+Authoritative-input review versions normalize CRLF and CR to LF before hashing,
+and the app, CI checker, and profile gate share the same canonical record
+serialization, so an unchanged source review remains valid across checkouts.
 
 An approved map remains the default while a changed candidate is reviewed with
 semantic and evidence diffs. Approval revalidates and records the exact
@@ -79,7 +82,7 @@ EZTerminal release certificate.
 ## Release validation profile
 
 This release uses the `functional-hotfix` validation profile. Local development
-validation passed lint, typecheck, documentation, 2,431 desktop unit checks,
+validation passed lint, typecheck, documentation, 2,433 desktop unit checks,
 37 OS boundary checks and policy guards, 465 mobile unit checks plus Android
 release lint/unit, 54 Rust unit checks, 122 Storybook interaction checks, 71
 visual/accessibility contracts, all 127 ordinary Electron E2E scenarios, and

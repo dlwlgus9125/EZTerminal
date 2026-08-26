@@ -26,6 +26,8 @@ Project Map coverage must prove:
 - schema v1 fails explicitly while schema v2 validates exact keys, semantics,
   evidence, authoritative inputs, native layout, routes, labels, containment,
   accessibility, and provenance;
+- authoritative-input review digests are identical for semantically identical
+  UTF-8 sources checked out with LF, CRLF, or mixed line endings;
 - approved/cache display stays separate from background Production validation,
   and concurrent first-open work is single-flight;
 - a candidate cannot replace the default map or export until a human approves

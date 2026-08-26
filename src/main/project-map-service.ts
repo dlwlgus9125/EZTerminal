@@ -5,7 +5,9 @@ import path from 'node:path';
 
 import {
   PROJECT_MAP_QUALITY_GATE_VERSION,
+  normalizeProjectMapInputText,
   projectMapEvidence,
+  serializeProjectMapInputVersions,
   type ProjectMapApprovalRequest,
   type ProjectMapBindingRequest,
   type ProjectMapCollectionDescriptor,
@@ -68,6 +70,10 @@ function sha256(value: string | Buffer): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
 
+function projectMapInputVersion(content: string): string {
+  return createHash('sha256').update(normalizeProjectMapInputText(content), 'utf8').digest('hex');
+}
+
 function compareText(left: string, right: string): number {
   return left === right ? 0 : left < right ? -1 : 1;
 }
@@ -77,7 +83,7 @@ export function digestProjectMapEvidenceLines(
   startLine: number,
   endLine: number,
 ): string | undefined {
-  const lines = content.replace(/\r\n?/g, '\n').split('\n');
+  const lines = normalizeProjectMapInputText(content).split('\n');
   if (startLine < 1 || endLine < startLine || endLine > lines.length) return undefined;
   return sha256(lines.slice(startLine - 1, endLine).join('\n'));
 }
@@ -85,12 +91,7 @@ export function digestProjectMapEvidenceLines(
 export function digestProjectMapInputs(
   records: readonly { readonly rootAlias: string; readonly relativePath: string; readonly version: string }[],
 ): string {
-  const normalized = [...records]
-    .sort((left, right) => compareText(left.rootAlias, right.rootAlias)
-      || compareText(left.relativePath, right.relativePath))
-    .map((record) => `${record.rootAlias}\u0000${record.relativePath}\u0000${record.version}`)
-    .join('\n');
-  return sha256(normalized);
+  return sha256(serializeProjectMapInputVersions(records));
 }
 
 function diagnostic(
@@ -578,7 +579,11 @@ export class ProjectMapService {
     }
 
     const inputHash = digestProjectMapInputs(inputReads.records.flatMap((record) => record.file
-      ? [{ rootAlias: record.rootAlias, relativePath: record.relativePath, version: record.file.version }]
+      ? [{
+          rootAlias: record.rootAlias,
+          relativePath: record.relativePath,
+          version: projectMapInputVersion(record.file.content),
+        }]
       : []));
     const stale = inputHash !== entry.review.inputDigest;
     if (stale) {

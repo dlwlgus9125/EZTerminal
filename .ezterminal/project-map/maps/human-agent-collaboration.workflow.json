@@ -307,9 +307,9 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/project-map-service.ts",
-        "startLine": 477,
-        "endLine": 681,
-        "lineDigest": "sha256:ffdde9ee79d1512ce959d9e13f9219fa30db950d23a1f23e092bacade94644cd",
+        "startLine": 478,
+        "endLine": 686,
+        "lineDigest": "sha256:a92a77cba171bd0841b9300e5c955428e3a8c3aa97ad4528e51cb559c65c8d9b",
         "claim": "ProjectMapService validates source, evidence, authoritative inputs, deterministic scene, named checks, provenance, and caches only a clean Production document."
       }]
     },
@@ -324,8 +324,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/project-map-service.ts",
-        "startLine": 338,
-        "endLine": 424,
+        "startLine": 339,
+        "endLine": 425,
         "lineDigest": "sha256:5086397a8ec21d277e9ff4fae679c7dedb2a646ff79d0418b89800034135230a",
         "claim": "Background verification is single-flight and builds a candidate, last-approved display source, approval state, and stable-ID semantic/evidence diff."
       }]
@@ -385,8 +385,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/main/project-map-service.ts",
-          "startLine": 250,
-          "endLine": 285,
+          "startLine": 251,
+          "endLine": 286,
           "lineDigest": "sha256:77628e9d8620c6cb11f2315deedeeca65085597f2d0710b5ef8242ddb296118d",
           "claim": "Main revalidates the exact fingerprint and Production gate, saves approval, and completes an awaiting-review job only after approval."
         }
@@ -505,8 +505,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/shared/project-map.ts",
-        "startLine": 898,
-        "endLine": 906,
+        "startLine": 922,
+        "endLine": 930,
         "lineDigest": "sha256:be968a8e1a8ff8d7e945f472976b26f99907f72d21b1c23b6c84372c337afaae",
         "claim": "The delivered prompt carries the job ID and the ordered analyzing through awaiting-review reporting contract."
       }]
@@ -535,8 +535,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/project-map-service.ts",
-        "startLine": 298,
-        "endLine": 336,
+        "startLine": 299,
+        "endLine": 337,
         "lineDigest": "sha256:3c0c3b6fc9430f71d8ff3b21061caebbb2bbd173f0a1051858dd854e4efe6ce4",
         "claim": "Starting, canceling, and Agent-reported job changes update the cached snapshot and emit a collection-scoped change for the persistent status strip."
       }]
@@ -610,9 +610,9 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/project-map-service.ts",
-        "startLine": 477,
-        "endLine": 681,
-        "lineDigest": "sha256:ffdde9ee79d1512ce959d9e13f9219fa30db950d23a1f23e092bacade94644cd",
+        "startLine": 478,
+        "endLine": 686,
+        "lineDigest": "sha256:a92a77cba171bd0841b9300e5c955428e3a8c3aa97ad4528e51cb559c65c8d9b",
         "claim": "Invalid evidence, stale inputs, layout errors, or provenance errors return diagnostics and prevent a clean Production cache entry."
       }]
     },

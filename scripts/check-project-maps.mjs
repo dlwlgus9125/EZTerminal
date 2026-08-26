@@ -17,8 +17,13 @@ function sha256(value) {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
 
-function fileVersion(bytes) {
+function rawFileVersion(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+function projectMapInputVersion(schema, bytes) {
+  const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  return createHash('sha256').update(schema.normalizeProjectMapInputText(content), 'utf8').digest('hex');
 }
 
 function compareText(left, right) {
@@ -29,15 +34,6 @@ function digestEvidence(content, startLine, endLine) {
   const lines = content.replace(/\r\n?/gu, '\n').split('\n');
   if (startLine < 1 || endLine < startLine || endLine > lines.length) return undefined;
   return sha256(lines.slice(startLine - 1, endLine).join('\n'));
-}
-
-function digestInputs(records) {
-  const normalized = [...records]
-    .sort((left, right) => compareText(left.rootAlias, right.rootAlias)
-      || compareText(left.relativePath, right.relativePath))
-    .map((record) => `${record.rootAlias}\u0000${record.relativePath}\u0000${record.version}`)
-    .join('\n');
-  return sha256(normalized);
 }
 
 function parseRootArguments(argv) {
@@ -181,13 +177,13 @@ try {
       if (!bound) continue;
       try {
         const bytes = readFileSync(resolveInside(bound.root, input.relativePath));
-        inputRecords.push({ ...input, version: fileVersion(bytes) });
+        inputRecords.push({ ...input, version: projectMapInputVersion(schema, bytes) });
         addRelevant(input.rootAlias, input.relativePath);
       } catch (error) {
         errors.push(`${entry.id}: cannot read authoritative input ${input.rootAlias}:${input.relativePath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    const inputDigest = digestInputs(inputRecords);
+    const inputDigest = sha256(schema.serializeProjectMapInputVersions(inputRecords));
     if (inputDigest !== entry.review.inputDigest) {
       errors.push(`${entry.id}: inputs review digest mismatch; expected ${entry.review.inputDigest}, actual ${inputDigest}`);
     }
@@ -240,7 +236,7 @@ try {
               files: [...relevant]
                 .map((relativePath) => [
                   relativePath,
-                  fileVersion(readFileSync(resolveInside(bound.root, relativePath))),
+                  rawFileVersion(readFileSync(resolveInside(bound.root, relativePath))),
                 ])
                 .sort((left, right) => compareText(left[0], right[0])),
             })).slice(0, 20)

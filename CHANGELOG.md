@@ -22,6 +22,9 @@
   Agent-authored layout intent, deterministic native layout and routing, ten
   named quality checks, selective input impact analysis, and a Production-only
   content-addressed cache.
+- Made Project Map input review portable across LF, CRLF, and mixed-line-ending
+  checkouts by centralizing normalized UTF-8 source versioning and canonical
+  record serialization across the app, CI checker, and profile gate.
 - Added Korean application chrome and responsive Project Map states while
   preserving the authored prose locale and stable English identifiers.
 

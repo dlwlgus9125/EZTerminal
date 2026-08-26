@@ -82,12 +82,13 @@ try {
     const inputs = [];
     for (const input of entry.authoritativeInputs) {
       const bytes = await readBytes(path.join(root, ...input.relativePath.split('/')));
-      inputs.push({ ...input, version: rawHash(bytes) });
+      const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      inputs.push({
+        ...input,
+        version: rawHash(contract.normalizeProjectMapInputText(content)),
+      });
     }
-    const inputHash = sha256([...inputs]
-      .sort((left, right) => left.rootAlias.localeCompare(right.rootAlias) || left.relativePath.localeCompare(right.relativePath))
-      .map((input) => `${input.rootAlias}\u0000${input.relativePath}\u0000${input.version}`)
-      .join('\n'));
+    const inputHash = sha256(contract.serializeProjectMapInputVersions(inputs));
     if (inputHash !== entry.review.inputDigest) throw new Error('Overview input review digest is stale.');
     const evidenceFiles = new Map();
     for (const anchor of contract.projectMapEvidence(spec)) {
