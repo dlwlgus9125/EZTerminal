@@ -5,6 +5,7 @@ import {
   ChevronsUp,
   GitBranch,
   GitCommitHorizontal,
+  Map as MapIcon,
   MessageSquarePlus,
   RefreshCw,
   Search,
@@ -44,6 +45,11 @@ interface ProjectWorkspacePanelProps {
     location?: ProjectCodeLocation,
   ) => void;
   readonly onNewSession: (target: ProjectSessionTarget, locationLabel: string) => void;
+  readonly onOpenProjectMap?: (target: {
+    readonly projectId: string;
+    readonly rootId: string;
+    readonly workspaceId: string;
+  }) => void;
   readonly onManage: () => void;
   /** Optional controlled state seam for App-owned sidebar restoration. */
   readonly explorerState?: ProjectExplorerState;
@@ -602,6 +608,7 @@ export function ProjectWorkspacePanel({
   onBack,
   onOpenDocument,
   onNewSession,
+  onOpenProjectMap,
   onManage,
   explorerState,
   onExplorerStateChange,
@@ -727,6 +734,20 @@ export function ProjectWorkspacePanel({
             }, workspace.displayPath);
           }}
           data-testid="project-workspace-new-session"
+        />
+        <IconButton
+          icon={MapIcon}
+          aria-label={t('projectMap.open', 'Open Project Map')}
+          disabled={!workspace || workspace.access !== 'granted' || !onOpenProjectMap}
+          onClick={() => {
+            if (!workspace || workspace.access !== 'granted') return;
+            onOpenProjectMap?.({
+              projectId: project.projectId,
+              rootId: workspace.rootId,
+              workspaceId: workspace.workspaceId,
+            });
+          }}
+          data-testid="project-workspace-open-map"
         />
         <IconButton
           icon={Settings}

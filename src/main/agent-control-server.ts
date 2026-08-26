@@ -3,8 +3,14 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 
 import type { AgentActivity, AgentState } from '../shared/agent';
 import { isSafeAgentPromptText, MAX_AGENT_READ_LINES } from '../shared/agent-coordination';
+import {
+  PROJECT_MAP_TYPES,
+  projectMapAuthoringGuide,
+  type ProjectMapType,
+} from '../shared/project-map';
 import type { AgentCoordinationService } from './agent-coordination-service';
 import type { ManagedMergeService } from './managed-merge-service';
+import type { ProjectMapService } from './project-map-service';
 import { sameSecret } from './managed-merge-service';
 
 const BODY_LIMIT_BYTES = 40 * 1024;
@@ -18,6 +24,19 @@ interface Capability {
   readonly issuedAt: number;
   timestamps: number[];
   concurrent: number;
+}
+
+interface ActivityWorkspaceIdentity {
+  readonly projectId: string;
+  readonly rootId: string;
+  readonly workspaceId: string;
+}
+
+function activityWorkspace(activity: AgentActivity): ActivityWorkspaceIdentity | null {
+  const projectId = activity.participant?.projectId ?? activity.projectId;
+  const rootId = activity.participant?.rootId ?? activity.rootId;
+  const workspaceId = activity.participant?.workspaceId ?? activity.workspaceId;
+  return projectId && rootId && workspaceId ? { projectId, rootId, workspaceId } : null;
 }
 
 function json(response: ServerResponse, statusCode: number, value: unknown): void {
@@ -53,6 +72,7 @@ export class AgentControlServer {
   constructor(private readonly deps: {
     readonly coordination: AgentCoordinationService;
     readonly merges: ManagedMergeService;
+    readonly maps?: ProjectMapService;
   }) {}
 
   async start(): Promise<void> {
@@ -131,6 +151,10 @@ export class AgentControlServer {
     try {
       const source = this.sourceActivity(capability.sessionId);
       if (!source) {
+        json(response, 403, { ok: false, error: 'collaboration-inactive' });
+        return;
+      }
+      if (!source.participant && request.url !== '/v1/map/guide' && request.url !== '/v1/map/check') {
         json(response, 403, { ok: false, error: 'collaboration-inactive' });
         return;
       }
@@ -253,6 +277,99 @@ export class AgentControlServer {
       json(response, activity ? 200 : 504, { ok: Boolean(activity), activity });
       return;
     }
+    if (url === '/v1/map/guide') {
+      const type = typeof body.type === 'string' && (PROJECT_MAP_TYPES as readonly string[]).includes(body.type)
+        ? body.type as ProjectMapType
+        : undefined;
+      if (!type) {
+        json(response, 400, { ok: false, error: 'invalid-map-type', allowed: PROJECT_MAP_TYPES });
+        return;
+      }
+      json(response, 200, { ok: true, guide: projectMapAuthoringGuide(type) });
+      return;
+    }
+    if (url === '/v1/map/check') {
+      const workspace = activityWorkspace(source);
+      if (!this.deps.maps || !workspace) {
+        json(response, 503, { ok: false, error: 'project-map-unavailable' });
+        return;
+      }
+      const mapId = body.mapId === undefined
+        ? undefined
+        : typeof body.mapId === 'string' && /^[a-z][a-z0-9-]{0,63}$/u.test(body.mapId)
+          ? body.mapId
+          : null;
+      if (mapId === null) {
+        json(response, 400, { ok: false, error: 'invalid-map-id' });
+        return;
+      }
+      const quality = body.quality === undefined
+        ? 'production'
+        : body.quality === 'draft' || body.quality === 'production'
+          ? body.quality
+          : null;
+      if (!quality) {
+        json(response, 400, { ok: false, error: 'invalid-quality-profile' });
+        return;
+      }
+      const result = await this.deps.maps.read({
+        projectId: workspace.projectId,
+        ownerRootId: workspace.rootId,
+        ownerWorkspaceId: workspace.workspaceId,
+        ...(mapId ? { mapId } : {}),
+        quality,
+      });
+      if (!result.ok) {
+        json(response, 409, {
+          ok: false,
+          error: result.error,
+          state: result.state,
+          diagnostics: result.diagnostics,
+          lastGood: result.lastGood ? {
+            mapId: result.lastGood.mapId,
+            verifiedAt: result.lastGood.verification.verifiedAt,
+          } : undefined,
+        });
+        return;
+      }
+      json(response, result.map.state === 'stale' ? 409 : 200, {
+        ok: result.map.state === 'valid',
+        state: result.map.state,
+        mapId: result.map.mapId,
+        type: result.map.spec.type,
+        verification: result.map.verification,
+        provenance: result.map.provenance,
+      });
+      return;
+    }
+    if (url === '/v1/map/job') {
+      if (!this.deps.maps) {
+        json(response, 503, { ok: false, error: 'project-map-unavailable' });
+        return;
+      }
+      const jobId = typeof body.jobId === 'string' && /^[a-f0-9-]{20,64}$/u.test(body.jobId)
+        ? body.jobId
+        : undefined;
+      const phases = [
+        'analyzing', 'authoring', 'validating-draft', 'validating-production',
+        'awaiting-review', 'completed', 'failed', 'canceled',
+      ] as const;
+      const phase = typeof body.phase === 'string' && (phases as readonly string[]).includes(body.phase)
+        ? body.phase as (typeof phases)[number]
+        : undefined;
+      const message = body.message === undefined
+        ? undefined
+        : typeof body.message === 'string' && body.message.length > 0 && body.message.length <= 512
+          ? body.message
+          : null;
+      if (!jobId || !phase || message === null) {
+        json(response, 400, { ok: false, error: 'invalid-job-update' });
+        return;
+      }
+      const job = await this.deps.maps.reportJob(jobId, source.id, phase, message);
+      json(response, job ? 200 : 409, job ? { ok: true, job } : { ok: false, error: 'job-update-rejected' });
+      return;
+    }
     if (url === '/v1/merge/request') {
       const targetBranch = typeof body.targetBranch === 'string' ? body.targetBranch : '';
       const result = await this.deps.merges.requestForActivity(source.id, targetBranch);
@@ -324,7 +441,7 @@ export class AgentControlServer {
 
   private sourceActivity(sessionId: string): AgentActivity | null {
     const matches = this.deps.coordination.getSnapshot().activities.filter((activity) => (
-      activity.live && activity.sessionId === sessionId && activity.participant
+      activity.live && activity.sessionId === sessionId && activityWorkspace(activity)
     ));
     return matches.length === 1 ? matches[0]! : null;
   }

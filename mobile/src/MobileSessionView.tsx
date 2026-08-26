@@ -10,6 +10,7 @@ import { registerPaneInput, unregisterPaneInput } from '../../src/renderer/pane-
 import { keyToPtyBytes } from '../../src/renderer/pty-keys';
 import { TerminalContextMenu, type TerminalContextMenuItem } from '../../src/renderer/TerminalContextMenu';
 import type { TerminalRuntimeOptions } from '../../src/renderer/xterm-runtime';
+import { writeOwnerDocumentClipboardText } from '../../src/renderer/terminal-copy';
 import { RuntimeSurfaceLifecycle } from '../../src/renderer/runtime-lifecycle';
 import type { ExecutionKind, RunStartedInfo } from '../../src/shared/ipc';
 import type { RuntimeLifecycleTier } from '../../src/shared/runtime-lifecycle';
@@ -90,6 +91,7 @@ function ctrlLatchToBytes(latched: boolean, key: string): string | null {
 const MOBILE_TERMINAL_RUNTIME_OPTIONS: TerminalRuntimeOptions = Object.freeze({
   platform: 'mobile',
   rendererPreference: 'dom',
+  writeUserClipboardText: writeOwnerDocumentClipboardText,
   openExternalHttpUrl: (value: string) => {
     const url = normalizeExternalHttpUrl(value);
     if (url) void Browser.open({ url });

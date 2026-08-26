@@ -151,6 +151,11 @@ export interface AgentHubProps {
     document: ProjectEditorDocument,
     location?: ProjectCodeLocation,
   ) => void;
+  readonly onOpenProjectMap?: (target: {
+    readonly projectId: string;
+    readonly rootId: string;
+    readonly workspaceId: string;
+  }) => void;
   /** Controlled project drill-in identity. Omit to retain local behavior. */
   readonly activeProjectId?: string | null;
   readonly onActiveProjectIdChange?: (projectId: string | null) => void;
@@ -213,6 +218,7 @@ export function AgentHub({
   onOpenHistorySession,
   onOpenHistoryReview,
   onOpenProjectDocument,
+  onOpenProjectMap,
   activeProjectId,
   onActiveProjectIdChange,
   projectWorkspaceState,
@@ -1414,6 +1420,7 @@ export function AgentHub({
             project={drillProject}
             onBack={() => selectDrillProject(null)}
             onOpenDocument={onOpenProjectDocument}
+            onOpenProjectMap={onOpenProjectMap}
             onNewSession={(target, locationLabel) => openLaunchPicker(
               drillProject,
               target,

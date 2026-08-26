@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 2,
+  "id": "runtime-architecture",
+  "type": "architecture",
+  "title": "EZTerminal runtime architecture",
+  "summary": "How desktop surfaces cross narrow trust boundaries into terminal, agent, and remote runtimes.",
+  "contentLocale": "en",
+  "layoutIntent": {
+    "density": "balanced",
+    "emphasisIds": ["workbench", "preload", "main-process", "interpreter-broker", "utility-runtime"]
+  },
+  "chapters": [
+    {
+      "id": "desktop-request-path",
+      "title": "Desktop request path",
+      "summary": "Follow a renderer action through preload and main into the isolated interpreter.",
+      "focusIds": ["workbench", "preload", "main-process", "interpreter-broker", "utility-runtime"]
+    },
+    {
+      "id": "remote-boundary",
+      "title": "Remote boundary",
+      "summary": "Main projects bounded runtime capabilities to authenticated remote clients.",
+      "focusIds": ["main-process", "remote-bridge", "main-to-remote"]
+    }
+  ],
+  "groups": [
+    { "id": "presentation", "label": "Presentation" },
+    { "id": "desktop-trust", "label": "Desktop trust boundary" },
+    { "id": "execution", "label": "Execution and transport" }
+  ],
+  "nodes": [
+    {
+      "id": "workbench",
+      "label": "React and Dockview workbench",
+      "detail": "Native panels render product state and issue typed requests.",
+      "kind": "surface",
+      "group": "presentation",
+      "rank": 0,
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/App.tsx",
+        "startLine": 522,
+        "endLine": 539,
+        "lineDigest": "sha256:3233f6e9f076c395212718bd1612fd8c2c8c6b74556f98546aea0a18de4c8a40",
+        "claim": "The workbench registers native Dockview panel components, including Project Map."
+      }]
+    },
+    {
+      "id": "preload",
+      "label": "Isolated preload bridge",
+      "detail": "Only explicit desktop APIs cross context isolation.",
+      "kind": "boundary",
+      "group": "desktop-trust",
+      "rank": 1,
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/preload/preload.ts",
+        "startLine": 706,
+        "endLine": 709,
+        "lineDigest": "sha256:c1447f89b07fdd8820ef72a5c7204b2d3eace7129cabfa1c5eff41b99434806b",
+        "claim": "The desktop API is exposed through one named context bridge surface."
+      }]
+    },
+    {
+      "id": "main-process",
+      "label": "Electron main authorities",
+      "detail": "Main owns filesystem, Git, process, window, and capability enforcement.",
+      "kind": "service",
+      "group": "desktop-trust",
+      "rank": 2,
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/main.ts",
+        "startLine": 881,
+        "endLine": 920,
+        "lineDigest": "sha256:a3b762c41cfea8e55d66b8ebcf1e1aa67ce1e6e3210a7482ecefe250993ba6e1",
+        "claim": "Main constructs Project Workspace and Project Map authorities and broadcasts bounded change events."
+      }]
+    },
+    {
+      "id": "interpreter-broker",
+      "label": "Interpreter broker",
+      "detail": "The broker owns session and run transport between main and the utility process.",
+      "kind": "service",
+      "group": "execution",
+      "rank": 3,
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/interpreter-broker.ts",
+        "startLine": 141,
+        "endLine": 153,
+        "lineDigest": "sha256:c1faf2e55986c94fa3f7882ab2f48959aee1ae520769af0db829f5970f83e593",
+        "claim": "InterpreterBroker is the main-side owner of interpreter session and run messaging."
+      }]
+    },
+    {
+      "id": "utility-runtime",
+      "label": "Utility interpreter runtime",
+      "detail": "Commands and PTYs execute outside the Electron main thread.",
+      "kind": "runtime",
+      "group": "execution",
+      "rank": 4,
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/interpreter/interpreter-process.ts",
+        "startLine": 1070,
+        "endLine": 1085,
+        "lineDigest": "sha256:3b7f414748941ccd75914f2859c6301abdd59306d2ccf77726e1c469e7a97dc1",
+        "claim": "The interpreter listens on the utility process parent port and handles typed main messages."
+      }]
+    },
+    {
+      "id": "remote-bridge",
+      "label": "Authenticated remote bridge",
+      "detail": "A bounded WebSocket protocol mirrors approved terminal and desktop capabilities.",
+      "kind": "boundary",
+      "group": "execution",
+      "rank": 3,
+      "order": 1,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/remote-bridge.ts",
+        "startLine": 1195,
+        "endLine": 1244,
+        "lineDigest": "sha256:6ccedfa737c04488912b8b673a21f47b0525f6a6a8297cc4a2c84ee125271ff9",
+        "claim": "Each remote connection receives isolated run, upload, packet, and terminal capability state."
+      }]
+    }
+  ],
+  "relations": [
+    {
+      "id": "workbench-to-preload",
+      "from": "workbench",
+      "to": "preload",
+      "label": "typed desktop API",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/preload/preload.ts",
+        "startLine": 561,
+        "endLine": 587,
+        "lineDigest": "sha256:9a552a66a8d00b83ca6a876adbc3691f2f82f6f9da38074b24bc1adb0252b37c",
+        "claim": "Preload maps project requests to named IPC channels without exposing ipcRenderer."
+      }]
+    },
+    {
+      "id": "preload-to-main",
+      "from": "preload",
+      "to": "main-process",
+      "label": "validated IPC",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/main.ts",
+        "startLine": 1597,
+        "endLine": 1730,
+        "lineDigest": "sha256:b92f849d807e719e9014508c22153fe0b716db5ea9a1e02643437af5208a3ff5",
+        "claim": "Main validates Project Workspace and Project Map IPC payloads before dispatch."
+      }]
+    },
+    {
+      "id": "main-to-broker",
+      "from": "main-process",
+      "to": "interpreter-broker",
+      "label": "session authority",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/session-surface-authority.ts",
+        "startLine": 335,
+        "endLine": 375,
+        "lineDigest": "sha256:d13ef7a168d1afbcb2b53e771322c59e84c90bbda6d6d68ba50bcd985b3fa1ca",
+        "claim": "SessionSurfaceAuthority resolves intent and asks the broker to create or adopt sessions."
+      }]
+    },
+    {
+      "id": "broker-to-runtime",
+      "from": "interpreter-broker",
+      "to": "utility-runtime",
+      "label": "MessagePort frames",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/interpreter-broker.ts",
+        "startLine": 491,
+        "endLine": 528,
+        "lineDigest": "sha256:585a1a9a707fb3bf5b8b846c4c5fcf10df50eb1238e70265366ead5cbc007ddd",
+        "claim": "runCommand creates a dedicated channel and transfers one port to the interpreter."
+      }]
+    },
+    {
+      "id": "main-to-remote",
+      "from": "main-process",
+      "to": "remote-bridge",
+      "label": "bounded projections",
+      "kind": "secondary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/remote-bridge.ts",
+        "startLine": 1279,
+        "endLine": 1301,
+        "lineDigest": "sha256:9cfc9b359352c4a9c3498fa6f5efdbe65c40581371a9f2582b432e6d335869d2",
+        "claim": "Remote run observation encodes interpreter frames before sending them to a client."
+      }]
+    }
+  ],
+  "mainPath": ["workbench", "preload", "main-process", "interpreter-broker", "utility-runtime"]
+}

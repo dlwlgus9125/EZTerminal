@@ -298,6 +298,45 @@ describe('layout-schema — validation pipeline (A-M1)', () => {
     expect(env?.layout.panels['openclaw-chat'].renderer).toBe('always');
   });
 
+  it('persists only bounded Project Map collection identity and restores it lazily', () => {
+    const layout = makeLayout();
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.contentComponent = 'project-map';
+    panel.params = {
+      projectId: 'project-1',
+      ownerRootId: 'root-1',
+      ownerWorkspaceId: 'workspace-1',
+      mapId: 'runtime-architecture',
+    };
+    delete panel.renderer;
+
+    const env = validateLayoutEnvelope(makeEnvelope(layout));
+    expect(env?.layout.panels['tab-1']).toMatchObject({
+      contentComponent: 'project-map',
+      renderer: 'onlyWhenVisible',
+      params: {
+        projectId: 'project-1',
+        ownerRootId: 'root-1',
+        ownerWorkspaceId: 'workspace-1',
+        mapId: 'runtime-architecture',
+      },
+    });
+  });
+
+  it('rejects executable or non-portable Project Map panel parameters', () => {
+    const layout = makeLayout();
+    const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];
+    panel.contentComponent = 'project-map';
+    panel.params = {
+      projectId: 'project-1',
+      ownerRootId: 'root-1',
+      ownerWorkspaceId: 'workspace-1',
+      mapId: '../runtime',
+      sourcePath: 'C:\\private\\map.json',
+    };
+    expect(validateLayoutEnvelope(makeEnvelope(layout))).toBeNull();
+  });
+
   it('migrates a legacy code-file descriptor to one path-based editor', () => {
     const layout = makeLayout();
     const panel = (layout.panels as Record<string, Record<string, unknown>>)['tab-1'];

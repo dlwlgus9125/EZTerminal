@@ -5,6 +5,7 @@ import type { AgentCoordinationSnapshot } from '../shared/agent-coordination';
 import type { AgentCoordinationService } from './agent-coordination-service';
 import { AgentControlServer, descriptorFingerprint } from './agent-control-server';
 import type { ManagedMergeService } from './managed-merge-service';
+import type { ProjectMapService } from './project-map-service';
 
 interface Descriptor {
   readonly version: number;
@@ -32,6 +33,7 @@ function activity(
     participant: {
       participantId: `participant-${id}`,
       projectId,
+      rootId: `root-${id}`,
       workspaceId: `workspace-${id}`,
       alias,
       role: 'implementation',
@@ -70,6 +72,7 @@ function fixture(): {
     resolveActivity: ReturnType<typeof vi.fn>;
     read: ReturnType<typeof vi.fn>;
   };
+  readonly maps: { readonly read: ReturnType<typeof vi.fn> };
   readonly setSnapshot: (snapshot: AgentCoordinationSnapshot) => void;
 } {
   const source = activity('source', 'project-1', 'Builder');
@@ -102,12 +105,26 @@ function fixture(): {
     listRequests: vi.fn(() => snapshot.mergeRequests),
     waitForRequest: vi.fn(async () => null),
   };
+  const maps = {
+    read: vi.fn(async () => ({
+      ok: true as const,
+      map: {
+        state: 'valid',
+        mapId: 'runtime-architecture',
+        spec: { type: 'architecture' },
+        verification: { checks: [], diagnostics: [] },
+        provenance: { kind: 'commit-pinned', roots: [] },
+      },
+    })),
+  };
   return {
     server: new AgentControlServer({
       coordination: coordination as unknown as AgentCoordinationService,
       merges: merges as unknown as ManagedMergeService,
+      maps: maps as unknown as ProjectMapService,
     }),
     coordination,
+    maps,
     setSnapshot: (next) => { snapshot = next; },
   };
 }
@@ -170,6 +187,79 @@ describe('AgentControlServer', () => {
       await expect(post(descriptor, '/v1/list', {})).resolves.toMatchObject({
         status: 403,
         body: { ok: false, error: 'collaboration-inactive' },
+      });
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('allows map authoring from an owning-workspace activity before collaboration join', async () => {
+    const { server, maps, setSnapshot } = fixture();
+    await server.start();
+    try {
+      const descriptor = JSON.parse(server.descriptorForSession('session-source')) as Descriptor;
+      setSnapshot({
+        revision: 2,
+        activityRevision: 2,
+        activities: [activity('source', 'project-1', 'Builder', {
+          projectId: 'project-1',
+          rootId: 'root-source',
+          workspaceId: 'workspace-source',
+          participant: undefined,
+        })],
+        projects: [],
+        mergeRequests: [],
+      });
+
+      await expect(post(descriptor, '/v1/list', {})).resolves.toMatchObject({
+        status: 403,
+        body: { ok: false, error: 'collaboration-inactive' },
+      });
+      await expect(post(descriptor, '/v1/map/guide', { type: 'architecture' })).resolves.toMatchObject({
+        status: 200,
+        body: { ok: true, guide: { type: 'architecture' } },
+      });
+      await expect(post(descriptor, '/v1/map/check', {})).resolves.toMatchObject({
+        status: 200,
+        body: { ok: true, state: 'valid' },
+      });
+      expect(maps.read).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        ownerRootId: 'root-source',
+        ownerWorkspaceId: 'workspace-source',
+        quality: 'production',
+      });
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('serves the native authoring guide and checks only the participant-owned workspace', async () => {
+    const { server, maps } = fixture();
+    await server.start();
+    try {
+      const descriptor = JSON.parse(server.descriptorForSession('session-source')) as Descriptor;
+      const guide = await post(descriptor, '/v1/map/guide', { type: 'sequence' });
+      expect(guide).toMatchObject({
+        status: 200,
+        body: { ok: true, guide: { type: 'sequence' } },
+      });
+      expect((guide.body.guide as { invariants: unknown[] }).invariants.length).toBeGreaterThan(3);
+
+      await expect(post(descriptor, '/v1/map/guide', { type: 'html' })).resolves.toMatchObject({
+        status: 400,
+        body: { ok: false, error: 'invalid-map-type' },
+      });
+      await expect(post(descriptor, '/v1/map/check', { mapId: 'runtime-architecture' })).resolves.toMatchObject({
+        status: 200,
+        body: { ok: true, state: 'valid', mapId: 'runtime-architecture' },
+      });
+      expect(maps.read).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        ownerRootId: 'root-source',
+        ownerWorkspaceId: 'workspace-source',
+        mapId: 'runtime-architecture',
+        quality: 'production',
       });
     } finally {
       await server.stop();

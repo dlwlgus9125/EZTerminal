@@ -7,6 +7,22 @@ const LINE_PROMPT = path.resolve(__dirname, 'fixtures', 'line-prompt.js');
 const FAKE_CODEX = path.resolve(__dirname, 'fixtures', 'fake-codex', 'codex');
 const INTERNAL_PATHS_MIME = 'application/x-ezterminal-paths';
 
+async function rejectRendererClipboardWrites(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const scope = globalThis as typeof globalThis & {
+      __ezRejectedClipboardWrites?: string[];
+    };
+    scope.__ezRejectedClipboardWrites = [];
+    Object.defineProperty(navigator.clipboard, 'writeText', {
+      configurable: true,
+      value: async (text: string) => {
+        scope.__ezRejectedClipboardWrites?.push(text);
+        throw new DOMException('Renderer clipboard writes are unavailable.', 'NotAllowedError');
+      },
+    });
+  });
+}
+
 async function popOutPanel(main: Page, app: ElectronApplication, panelId = 'tab-1'): Promise<Page> {
   await expect.poll(() => main.getByTestId('pane').count(), { timeout: 15_000 })
     .toBeGreaterThan(0);
@@ -72,6 +88,7 @@ test('popout structured output context Copy uses the popout selection', async ()
   await auxiliary.locator('[data-testid="btn-run"]:visible').click();
   await expect(auxiliary.getByTestId('block-status').last()).toHaveText('done', { timeout: 10_000 });
   const command = auxiliary.getByTestId('block-command').last();
+  await rejectRendererClipboardWrites(auxiliary);
   await selectContentsAndOpenMenu(command);
 
   const copy = auxiliary.getByTestId('term-ctx-copy');
@@ -80,6 +97,13 @@ test('popout structured output context Copy uses the popout selection', async ()
   await copy.click();
   await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
     .toBe('gen-rows 1');
+  await expect(auxiliary.locator('.ez-ui-toast').filter({ hasText: 'Copied to clipboard' }))
+    .toBeVisible();
+  await expect(main.locator('.ez-ui-toast')).toHaveCount(0);
+  expect(await auxiliary.evaluate(() => (
+    (globalThis as typeof globalThis & { __ezRejectedClipboardWrites?: string[] })
+      .__ezRejectedClipboardWrites ?? []
+  ))).toEqual([]);
   await app.close();
 });
 

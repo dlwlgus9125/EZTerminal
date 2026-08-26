@@ -35,6 +35,7 @@ import {
   type TerminalContextMenuItem,
 } from './TerminalContextMenu';
 import { pasteFromRuntimeClipboard } from './terminal-paste';
+import { copyTerminalText, type TerminalCopyRequest } from './terminal-copy';
 import { selectedTextWithin } from './terminal-selection';
 import { QuickCommandShelf } from './QuickCommandShelf';
 import { isDomElement, isDomNode } from './ui/utils';
@@ -54,9 +55,14 @@ import {
 import type { RunStartedInfo } from '../shared/ipc';
 import type { SessionSurfaceBinding } from '../shared/session-surface';
 import type { QuickCommand } from '../shared/quick-command';
-import type { AgentResumeBootstrap, AgentTerminalBootstrap } from '../shared/agent-history';
+import type {
+  AgentHistoryProvider,
+  AgentResumeBootstrap,
+  AgentTerminalBootstrap,
+} from '../shared/agent-history';
 import { classifyDirectAgentCommand } from '../shared/agent-command';
 import { clearAgentTerminalBootstrap } from './agent-terminal-bootstrap';
+import { dispatchProjectMapAgentRequest } from './project-map-agent-launch';
 import type { ProjectSessionTarget } from '../shared/project-workspace';
 import type { RuntimeLifecycleTier } from '../shared/runtime-lifecycle';
 
@@ -73,6 +79,7 @@ interface BlockEntry {
 interface PaneContextMenuSource {
   readonly kind: 'input' | 'pane';
   readonly selectedText: string;
+  readonly ownerDocument: Document;
   readonly draftSelectionStart: number;
   readonly draftSelectionEnd: number;
 }
@@ -222,6 +229,8 @@ export function TerminalPane({
   const [sessionBindingError, setSessionBindingError] = useState<string | null>(null);
   const [sessionBindingRetryToken, setSessionBindingRetryToken] = useState(0);
   const [resumeError, setResumeError] = useState<string | null>(null);
+  const projectMapDispatchRetryRef = useRef<(() => void) | null>(null);
+  const projectMapDispatchAbortRef = useRef<AbortController | null>(null);
   // Unsubscribe from the active controller's status (replaced on each new run).
   const activeUnsub = useRef<(() => void) | null>(null);
 
@@ -329,6 +338,9 @@ export function TerminalPane({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      projectMapDispatchAbortRef.current?.abort('unmount');
+      projectMapDispatchAbortRef.current = null;
+      projectMapDispatchRetryRef.current = null;
     };
   }, []);
 
@@ -715,11 +727,66 @@ export function TerminalPane({
         bindActiveController(controller);
         setBlocks((previous) => previous.map((entry) =>
           entry.id === runId ? { ...entry, controller } : entry));
-        if (bootstrap.kind === 'new-chat') clearAgentTerminalBootstrap(panelId);
+        if (bootstrap.kind === 'new-chat') {
+          if (!bootstrap.projectMapRequest) {
+            clearAgentTerminalBootstrap(panelId);
+          } else if (bootstrap.provider !== 'codex' && bootstrap.provider !== 'claude') {
+            setResumeError(t(
+              'projectMap.unsupportedAgent',
+              'Project Map requests require Codex or Claude.',
+            ));
+          } else {
+            const projectMapProvider: AgentHistoryProvider = bootstrap.provider;
+            const projectMapRequest = bootstrap.projectMapRequest;
+            const desktop = window.ezterminalDesktop;
+            const startProjectMapDispatch = (): void => {
+              if (!desktop) {
+                setResumeError(t(
+                  'projectMap.sessionRequestFailed',
+                  'The dedicated Agent started, but the Project Map request could not be queued. Retry in this session.',
+                ));
+                return;
+              }
+              projectMapDispatchAbortRef.current?.abort('retry');
+              const dispatchAbort = new AbortController();
+              projectMapDispatchAbortRef.current = dispatchAbort;
+              setResumeError(null);
+              void dispatchProjectMapAgentRequest({
+                sessionId: runSessionId,
+                provider: projectMapProvider,
+                agentLabel: bootstrap.name,
+                request: projectMapRequest,
+                signal: dispatchAbort.signal,
+                dependencies: {
+                  getAgentActivitySnapshot: () => window.ezterminal.getAgentActivitySnapshot(),
+                  onAgentActivitySnapshot: (listener) => window.ezterminal.onAgentActivitySnapshot(listener),
+                  startProjectMapJob: (request) => desktop.startProjectMapJob(request),
+                  cancelProjectMapJob: (request) => desktop.cancelProjectMapJob(request),
+                  submitPrompt: (prompt) => controller.submitPtyWhenReady(prompt),
+                },
+              }).then(() => {
+                if (projectMapDispatchAbortRef.current !== dispatchAbort) return;
+                projectMapDispatchAbortRef.current = null;
+                projectMapDispatchRetryRef.current = null;
+                clearAgentTerminalBootstrap(panelId);
+              }).catch((error: unknown) => {
+                if (projectMapDispatchAbortRef.current !== dispatchAbort || dispatchAbort.signal.aborted) return;
+                projectMapDispatchAbortRef.current = null;
+                setResumeError(t(
+                  'projectMap.sessionRequestFailed',
+                  'The dedicated Agent started, but the Project Map request could not be queued. Retry in this session.',
+                ));
+                console.error('[renderer] Project Map Agent dispatch failed:', error);
+              });
+            };
+            projectMapDispatchRetryRef.current = startProjectMapDispatch;
+            startProjectMapDispatch();
+          }
+        }
       } catch (error) {
         closeRunPort(port);
         knownRunIdsRef.current.delete(runId);
-        console.error('[renderer] failed to bind Agent resume port:', error);
+        console.error('[renderer] failed to bind Agent port:', error);
       }
     }).catch((error: unknown) => {
       handoffAbortByRunRef.current.delete(runId);
@@ -748,6 +815,7 @@ export function TerminalPane({
     resumeBootstrap,
     sessionDead,
     sessionId,
+    t,
   ]);
 
   const handleRun = useCallback((): void => {
@@ -942,9 +1010,26 @@ export function TerminalPane({
     activeController.current?.recoverCodexSession();
   }, []);
 
-  const selectedPlainOutputText = useCallback((): string => {
-    const pane = cmdInputRef.current?.closest('.pane');
-    return selectedTextWithin(pane ?? null);
+  const capturePaneCopySelection = useCallback((): TerminalCopyRequest | null => {
+    const input = cmdInputRef.current;
+    const pane = paneRef.current;
+    if (!pane) return null;
+    // Output selections are document ranges and survive while the composer keeps
+    // focus. Prefer that live range over a stale selection range retained by the
+    // controlled input after the user drags across terminal output.
+    const selectedPaneText = selectedTextWithin(pane);
+    if (selectedPaneText) {
+      return { text: selectedPaneText, ownerDocument: pane.ownerDocument };
+    }
+    if (input) {
+      const start = input.selectionStart ?? 0;
+      const end = input.selectionEnd ?? start;
+      const selectedInputText = input.value.slice(start, end);
+      if (selectedInputText) {
+        return { text: selectedInputText, ownerDocument: input.ownerDocument };
+      }
+    }
+    return null;
   }, []);
 
   const pasteIntoActivePlainPty = useCallback((mode: 'default' | 'text'): void => {
@@ -981,6 +1066,7 @@ export function TerminalPane({
         selectedText: inputWasClicked
           ? draftValue.slice(draftSelectionStart, draftSelectionEnd)
           : selectedTextWithin(paneRef.current),
+        ownerDocument: input?.ownerDocument ?? paneRef.current?.ownerDocument ?? document,
         draftSelectionStart,
         draftSelectionEnd,
       };
@@ -1053,7 +1139,10 @@ export function TerminalPane({
         disabled: paneContextMenu.source.selectedText === '',
         onClick: () => {
           const text = paneContextMenu.source.selectedText;
-          if (text) void navigator.clipboard.writeText(text);
+          if (text) void copyTerminalText(resolvedTerminalRuntimeOptions, {
+            text,
+            ownerDocument: paneContextMenu.source.ownerDocument,
+          });
         },
       },
       {
@@ -1185,7 +1274,9 @@ export function TerminalPane({
                 variant="ghost"
                 onClick={() => {
                   setResumeError(null);
-                  setBootstrapRetryToken((value) => value + 1);
+                  const retryProjectMapDispatch = projectMapDispatchRetryRef.current;
+                  if (retryProjectMapDispatch) retryProjectMapDispatch();
+                  else setBootstrapRetryToken((value) => value + 1);
                 }}
               >
                 {t('common.retry')}
@@ -1275,6 +1366,27 @@ export function TerminalPane({
           disabled={!sessionId || sessionDead || activeTakeover}
           onChange={(e) => setCommand(e.target.value)}
           onKeyDown={(e) => {
+            const copySelection = capturePaneCopySelection();
+            if (copySelection) {
+              const copyShortcut = resolveTerminalShortcut({
+                code: e.code,
+                key: e.key,
+                ctrlKey: e.ctrlKey,
+                metaKey: e.metaKey,
+                altKey: e.altKey,
+                shiftKey: e.shiftKey,
+                isCodex: activePlainPty
+                  && classifyDirectAgentCommand(activeController.current?.command ?? '') === 'codex',
+                hasSelection: true,
+                canFind: false,
+              });
+              if (copyShortcut.kind === 'copy') {
+                e.preventDefault();
+                e.stopPropagation();
+                void copyTerminalText(resolvedTerminalRuntimeOptions, copySelection);
+                return;
+              }
+            }
             if (activePlainPty) {
               // IME composing (CJK / dead-key input, M4): let the input
               // compose normally — don't route the in-progress keydowns to
@@ -1284,7 +1396,6 @@ export function TerminalPane({
               // NOT also go through this per-keydown path.
               if (e.nativeEvent.isComposing || e.key === 'Process') return;
               const controller = activeController.current;
-              const selectedText = selectedPlainOutputText();
               const shortcut = resolveTerminalShortcut({
                 code: e.code,
                 key: e.key,
@@ -1293,14 +1404,12 @@ export function TerminalPane({
                 altKey: e.altKey,
                 shiftKey: e.shiftKey,
                 isCodex: classifyDirectAgentCommand(controller?.command ?? '') === 'codex',
-                hasSelection: selectedText !== '',
+                hasSelection: false,
                 canFind: false,
               });
               if (shortcut.kind !== 'pass') {
                 e.preventDefault();
-                if (shortcut.kind === 'copy') {
-                  if (selectedText) void navigator.clipboard.writeText(selectedText);
-                } else if (shortcut.kind === 'paste') {
+                if (shortcut.kind === 'paste') {
                   pasteIntoActivePlainPty(shortcut.mode);
                 } else if (
                   shortcut.kind === 'block'

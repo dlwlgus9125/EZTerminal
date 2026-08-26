@@ -80,6 +80,65 @@ async function configuredStore(directory = makeDir()): Promise<AgentCoordination
 const projects = [{ projectId: 'project-1' }] as unknown as readonly AgentProjectRecord[];
 
 describe('AgentCoordinationService', () => {
+  it('projects workspace identity for a live activity before coordination join', async () => {
+    const store = await configuredStore();
+    const activities = new FakeActivities([activity()]);
+    const resolveWorkspace = vi.fn(async () => ({
+      projectId: 'project-1',
+      rootId: 'root-1',
+      workspaceId: 'workspace-1',
+    }));
+    const service = new AgentCoordinationService({
+      activities,
+      store,
+      listProjects: () => projects,
+      resolveWorkspace,
+    });
+
+    await vi.waitFor(() => {
+      expect(service.getSnapshot().activities[0]).toMatchObject({
+        id: 'activity-1',
+        projectId: 'project-1',
+        rootId: 'root-1',
+        workspaceId: 'workspace-1',
+      });
+    });
+    expect(service.getSnapshot().activities[0]?.participant).toBeUndefined();
+    expect(resolveWorkspace).toHaveBeenCalledOnce();
+    service.dispose();
+  });
+
+  it('waits for a working activity before delivering a queued prompt', async () => {
+    const store = await configuredStore();
+    const activities = new FakeActivities([activity({
+      state: 'working',
+      status: 'working',
+      stateSeq: 1,
+    })]);
+    const service = new AgentCoordinationService({
+      activities,
+      store,
+      listProjects: () => projects,
+      resolveWorkspace: async () => ({
+        projectId: 'project-1',
+        rootId: 'root-1',
+        workspaceId: 'workspace-1',
+      }),
+    });
+
+    const pending = service.prompt('activity-1', 'Create the map.', {
+      whenReady: true,
+      timeoutMs: 1_000,
+    });
+    await Promise.resolve();
+    expect(activities.sendPrompt).not.toHaveBeenCalled();
+    activities.emit([activity({ state: 'done', status: 'done', stateSeq: 2 })]);
+
+    await expect(pending).resolves.toEqual({ ok: true });
+    expect(activities.sendPrompt).toHaveBeenCalledWith('activity-1', 'Create the map.');
+    service.dispose();
+  });
+
   it('joins only a live provider activity, projects transient metadata, and generates an explicit brief', async () => {
     const directory = makeDir();
     const store = await configuredStore(directory);
@@ -90,6 +149,7 @@ describe('AgentCoordinationService', () => {
       listProjects: () => projects,
       resolveWorkspace: async () => ({
         projectId: 'project-1',
+        rootId: 'root-1',
         workspaceId: 'workspace-1',
         worktreeId: 'worktree-1',
       }),
@@ -146,6 +206,7 @@ describe('AgentCoordinationService', () => {
       listProjects: () => projects,
       resolveWorkspace: async (item) => ({
         projectId: 'project-1',
+        rootId: 'root-1',
         workspaceId: `workspace-${item.id}`,
       }),
       newId: () => `participant-${String(++nextId)}`,
@@ -173,7 +234,7 @@ describe('AgentCoordinationService', () => {
       activities,
       store,
       listProjects: () => projects,
-      resolveWorkspace: async () => ({ projectId: 'project-1', workspaceId: 'workspace-1' }),
+      resolveWorkspace: async () => ({ projectId: 'project-1', rootId: 'root-1', workspaceId: 'workspace-1' }),
     });
     const mergeRequest = {
       requestId: 'request-1',

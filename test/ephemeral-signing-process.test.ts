@@ -285,16 +285,52 @@ describe.runIf(process.platform === 'win32')(
           '${grandchild}'
         )
         $grandchild = Start-Process -FilePath $self -WindowStyle Hidden -PassThru -ArgumentList $grandchildArguments
+        $pidPath = $env:EZTERMINAL_TEST_PID_PATH
+        $pendingPidPath = "$pidPath.pending"
         [IO.File]::WriteAllText(
-          $env:EZTERMINAL_TEST_PID_PATH,
+          $pendingPidPath,
           "$PID,$($grandchild.Id),$(
             $env:EZTERMINAL_TEST_SIGNING_SECRET -ceq 'ephemeral-secret'
           )"
         )
+        [IO.File]::Move($pendingPidPath, $pidPath)
         Start-Sleep -Seconds 30
       `;
       const result = runPowerShell(`
         . ${quotePowerShell(helper)}
+        Add-Type -TypeDefinition @'
+        using System;
+        using System.IO;
+        using System.Threading;
+
+        public static class EZTerminalSigningCancellationProbe
+        {
+            public static Thread CancelWhenReady(
+                string pidPath,
+                CancellationTokenSource cancellation,
+                int timeoutMilliseconds)
+            {
+                var watcher = new Thread(() =>
+                {
+                    var deadline = DateTime.UtcNow.AddMilliseconds(
+                        timeoutMilliseconds
+                    );
+                    while (DateTime.UtcNow < deadline)
+                    {
+                        if (File.Exists(pidPath))
+                        {
+                            cancellation.Cancel();
+                            return;
+                        }
+                        Thread.Sleep(20);
+                    }
+                });
+                watcher.IsBackground = true;
+                watcher.Start();
+                return watcher;
+            }
+        }
+'@
         ${startInfoSource(child)}
         $startInfo.EnvironmentVariables['EZTERMINAL_TEST_PID_PATH'] = ${
           quotePowerShell(pidPath)
@@ -303,13 +339,18 @@ describe.runIf(process.platform === 'win32')(
           EZTERMINAL_TEST_SIGNING_SECRET = 'ephemeral-secret'
         }
         $cancellation = [Threading.CancellationTokenSource]::new()
+        $watcher = [EZTerminalSigningCancellationProbe]::CancelWhenReady(
+          ${quotePowerShell(pidPath)},
+          $cancellation,
+          19000
+        )
         $cancelled = $false
         try {
-          $cancellation.CancelAfter(5000)
           Invoke-EphemeralSigningProcess -StartInfo $startInfo -EphemeralEnvironment $ephemeral -TimeoutMilliseconds 20000 -CancellationToken $cancellation.Token
         } catch [OperationCanceledException] {
           $cancelled = $true
         } finally {
+          $watcher.Join()
           $cancellation.Dispose()
         }
         if (-not $cancelled) { throw 'The signing child was not cancelled.' }

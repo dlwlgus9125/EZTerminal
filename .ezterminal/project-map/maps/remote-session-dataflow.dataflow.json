@@ -1,0 +1,245 @@
+{
+  "schemaVersion": 2,
+  "id": "remote-session-dataflow",
+  "type": "dataflow",
+  "title": "Remote session dataflow",
+  "summary": "How terminal frames and desktop-control signals cross the authenticated desktop-to-mobile transport.",
+  "contentLocale": "en",
+  "layoutIntent": {
+    "density": "balanced",
+    "emphasisIds": ["interpreter-frame", "encoded-frame", "authenticated-socket", "mobile-run"]
+  },
+  "chapters": [
+    {
+      "id": "terminal-mirror",
+      "title": "Terminal mirror",
+      "summary": "Interpreter frames are encoded, transported, decoded, and applied to a mobile run.",
+      "focusIds": ["interpreter-frame", "encoded-frame", "authenticated-socket", "mobile-run", "frame-to-wire", "wire-to-mobile"]
+    },
+    {
+      "id": "control-return-path",
+      "title": "Control return path",
+      "summary": "Mobile controls return through the same authenticated connection to the exact run or desktop lease.",
+      "focusIds": ["mobile-control", "authenticated-socket", "run-control", "control-to-socket", "socket-to-control"]
+    },
+    {
+      "id": "desktop-control",
+      "title": "Desktop control",
+      "summary": "Desktop video and input are governed by a single main-owned lease beside terminal mirroring.",
+      "focusIds": ["desktop-lease", "mobile-run", "desktop-to-mobile"]
+    }
+  ],
+  "stages": [
+    { "id": "desktop-runtime", "label": "Desktop runtime" },
+    { "id": "host-projection", "label": "Host projection" },
+    { "id": "trusted-transport", "label": "Trusted transport" },
+    { "id": "mobile-runtime", "label": "Mobile runtime" }
+  ],
+  "entities": [
+    {
+      "id": "interpreter-frame",
+      "label": "Interpreter frame",
+      "detail": "Typed start/schema/chunk/PTY lifecycle data from one run port.",
+      "kind": "source",
+      "stage": "desktop-runtime",
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/remote-bridge.ts",
+        "startLine": 1279,
+        "endLine": 1297,
+        "lineDigest": "sha256:6fb3bc09beb75f7d4ed809ca244cf7d48ed77e80c39ab0bc28cea537bd715e1e",
+        "claim": "The bridge observes a run MessagePort and receives InterpreterFrame values."
+      }]
+    },
+    {
+      "id": "encoded-frame",
+      "label": "Wire-safe run frame",
+      "detail": "Binary and structured frame fields are converted to the remote protocol shape.",
+      "kind": "transform",
+      "stage": "host-projection",
+      "order": 1,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/remote-bridge.ts",
+        "startLine": 1288,
+        "endLine": 1300,
+        "lineDigest": "sha256:5584a204b526823be19e9d1556e1e6140962b8177f8228b6f77dcbd85860930c",
+        "claim": "The bridge encodes an InterpreterFrame immediately before sending it."
+      }]
+    },
+    {
+      "id": "authenticated-socket",
+      "label": "Authenticated WebSocket",
+      "detail": "One size-capped, generation-bound connection carries remote protocol messages.",
+      "kind": "boundary",
+      "stage": "trusted-transport",
+      "order": 2,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/remote-bridge.ts",
+        "startLine": 1660,
+        "endLine": 1743,
+        "lineDigest": "sha256:11769dadaaca439fdbaa339e54b4ff1d7a34f75be97e508aef08998ed669512c",
+        "claim": "The connection ignores operational frames until token authentication and client identity settle."
+      }]
+    },
+    {
+      "id": "mobile-run",
+      "label": "Mobile run projection",
+      "detail": "The mobile transport routes decoded frames to the matching run observer.",
+      "kind": "sink",
+      "stage": "mobile-runtime",
+      "order": 3,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+        "startLine": 3600,
+        "endLine": 3632,
+        "lineDigest": "sha256:6996c4150a20020c2f3a7e0499aada0ad11861b7207a9065030cd2281d7562b5",
+        "claim": "The mobile transport dispatches a frame message to the matching run handler."
+      }]
+    },
+    {
+      "id": "mobile-control",
+      "label": "Mobile input and flow control",
+      "detail": "PTY input, resize, acknowledgement, and viewport controls originate on mobile.",
+      "kind": "source",
+      "stage": "mobile-runtime",
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+        "startLine": 2440,
+        "endLine": 2492,
+        "lineDigest": "sha256:58692c59b3263d874dd9f3d2475eaac050b4a3caedbfc755fe6b44cdd5dd0879",
+        "claim": "The mobile client checks negotiated capability and sends desktop-control requests through its authenticated transport."
+      }]
+    },
+    {
+      "id": "run-control",
+      "label": "Exact run control",
+      "detail": "The bridge forwards admissible controls only to the named live run port.",
+      "kind": "sink",
+      "stage": "desktop-runtime",
+      "order": 3,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/remote-bridge.ts",
+        "startLine": 2080,
+        "endLine": 2110,
+        "lineDigest": "sha256:66c154f07c92556fbfcb7ae3a7c107d7c79dbf09e717c713ffada97d4276ff4f",
+        "claim": "A control message resolves the exact run record before posting to its MessagePort."
+      }]
+    },
+    {
+      "id": "desktop-lease",
+      "label": "Desktop-control lease",
+      "detail": "Main owns one graphical-control session and its native child process.",
+      "kind": "store",
+      "stage": "desktop-runtime",
+      "order": 4,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/remote-desktop-controller.ts",
+        "startLine": 98,
+        "endLine": 127,
+        "lineDigest": "sha256:9dbec057f703ce586209b103c80c846dbf01d08baa53efde16ff055e47e19f85",
+        "claim": "RemoteDesktopController owns the single desktop-control lease and unprivileged WebRTC child."
+      }]
+    }
+  ],
+  "flows": [
+    {
+      "id": "frame-to-wire",
+      "from": "interpreter-frame",
+      "to": "encoded-frame",
+      "label": "encode",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/remote-bridge.ts",
+        "startLine": 1288,
+        "endLine": 1297,
+        "lineDigest": "sha256:4749b93d5a29318563fb942e394546946c84540a78eb4e963a44c077986e5027",
+        "claim": "Each observed interpreter frame is encoded into a frame protocol message."
+      }]
+    },
+    {
+      "id": "wire-to-socket",
+      "from": "encoded-frame",
+      "to": "authenticated-socket",
+      "label": "bounded send",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/remote-bridge.ts",
+        "startLine": 1288,
+        "endLine": 1301,
+        "lineDigest": "sha256:27108294dce5441ab30ae4d61ab65c78378915d70b1c0b42fa3ba43536189f9c",
+        "claim": "The encoded frame is sent on the connection that owns this run observer."
+      }]
+    },
+    {
+      "id": "wire-to-mobile",
+      "from": "authenticated-socket",
+      "to": "mobile-run",
+      "label": "decode and route",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+        "startLine": 3604,
+        "endLine": 3628,
+        "lineDigest": "sha256:6abeee58d68048efedc0e34fac85c9e8a246642c7a35584002a1f7693f5c4aba",
+        "claim": "Mobile routes only decoded frame messages with a matching run identifier."
+      }]
+    },
+    {
+      "id": "control-to-socket",
+      "from": "mobile-control",
+      "to": "authenticated-socket",
+      "label": "send control",
+      "kind": "secondary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+        "startLine": 2468,
+        "endLine": 2490,
+        "lineDigest": "sha256:efc2a2f06d874f9608e6a94aa5a3621f4a7f2e145055029aa8b62b75c3e1622d",
+        "claim": "Desktop signal messages use the same authenticated client send path."
+      }]
+    },
+    {
+      "id": "socket-to-control",
+      "from": "authenticated-socket",
+      "to": "run-control",
+      "label": "authorize and forward",
+      "kind": "secondary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/remote-bridge.ts",
+        "startLine": 2089,
+        "endLine": 2110,
+        "lineDigest": "sha256:43cb5e955dc6452b380eeb8baa02309fbdcb42f1db4fcb5daa7dd4d27776b1a5",
+        "claim": "The host forwards a control only when the exact run record exists."
+      }]
+    },
+    {
+      "id": "desktop-to-mobile",
+      "from": "desktop-lease",
+      "to": "mobile-run",
+      "label": "WebRTC video and status",
+      "kind": "optional",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/remote-bridge.ts",
+        "startLine": 1809,
+        "endLine": 1870,
+        "lineDigest": "sha256:81d8f6a26082207e55a37e9fb554bf1706a29488e0dbf8d8da843aa32bf4ec2d",
+        "claim": "Desktop-control start, signal, and stop messages are delegated to the main-owned desktop source."
+      }]
+    }
+  ],
+  "primaryPath": ["interpreter-frame", "encoded-frame", "authenticated-socket", "mobile-run"]
+}

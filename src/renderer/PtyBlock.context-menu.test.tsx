@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InterpreterFrame, RendererControl } from '../shared/ipc';
 import { BlockController } from './block-controller';
 import { AppI18nProvider } from './i18n';
+import { DEFAULT_TERMINAL_RUNTIME_OPTIONS } from './xterm-runtime';
 
 // This suite exercises only the plain PTY branch. Avoid xterm/WebGL's import-
 // time canvas probes, which jsdom intentionally does not implement.
@@ -182,5 +183,48 @@ describe('plain PTY keyboard context menu', () => {
     expect(document.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(commandInput);
     expect(window.getSelection()?.toString()).toContain('plain output selection');
+  });
+
+  it('copies the selection captured when the menu opened after menu focus clears the range', async () => {
+    const writeUserClipboardText = vi.fn(async () => true);
+    const notifyTerminal = vi.fn();
+    act(() => root.render(
+      <PtyBlock
+        controller={controller}
+        runtimeOptions={{
+          ...DEFAULT_TERMINAL_RUNTIME_OPTIONS,
+          writeUserClipboardText,
+          notifyTerminal,
+        }}
+      />,
+    ));
+    const output = mount.querySelector<HTMLElement>('[data-testid="text-output"]');
+    expect(output).not.toBeNull();
+    output!.textContent = 'frozen output selection';
+    const range = document.createRange();
+    range.selectNodeContents(output!);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+
+    act(() => {
+      output!.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 8,
+        clientY: 8,
+      }));
+    });
+    const copy = document.querySelector<HTMLButtonElement>('[data-testid="term-ctx-copy"]');
+    expect(copy?.disabled).toBe(false);
+    window.getSelection()?.removeAllRanges();
+
+    await act(async () => {
+      copy?.click();
+      await Promise.resolve();
+    });
+
+    expect(writeUserClipboardText).toHaveBeenCalledOnce();
+    expect(writeUserClipboardText).toHaveBeenCalledWith('frozen output selection', document);
+    expect(notifyTerminal).toHaveBeenCalledWith('clipboard-write-succeeded', document);
   });
 });

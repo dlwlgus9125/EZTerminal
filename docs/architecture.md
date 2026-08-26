@@ -152,8 +152,21 @@ Main만 사용자 데이터 파일을 쓴다. 레이아웃과 프리셋은 Zod �
 표시 설정을 보존하지만 live PTY나 명령 결과를 직렬화하지 않는다. 분리 창과 다시
 도킹하는 표면도 동일한 세션·닫기 권한 계약을 따른다.
 
+사용자 주도 terminal copy도 main-owned OS side effect다. Renderer의 각 terminal 표면은
+선택과 source document만 캡처하고, 공통 renderer 경계와 context-isolated preload IPC를
+거쳐 main이 Electron clipboard를 한 번 쓴다. 사용자 Copy와 OSC 52 policy는 별도
+capability이며 상세 소유권과 실패 계약은
+[`terminal-clipboard.md`](design/terminal-clipboard.md)에 있다.
+
 시각·상호작용 규범은 [`frontend-design.md`](ux/frontend-design.md), 수명과 저장 규범은
 [`workbench-lifecycle.md`](design/workbench-lifecycle.md)가 소유한다.
+
+Project-wide Architecture/Workflow/Sequence/Dataflow/Lifecycle 지도는 repo-owned schema v2
+근거와 로컬 Git provenance에서 deterministic canonical scene을 만든 뒤 native Dockview
+surface와 SVG/PNG export가 함께 사용한다. Main은 binding, Production last-good cache,
+exact-fingerprint approval, persisted Agent job과 atomic verification receipt export를 소유한다.
+저장·검증·승인·export 경계와 Agent authoring protocol은
+[`project-map.md`](design/project-map.md)가 소유한다.
 
 ## 6. 원격 터미널과 Android
 

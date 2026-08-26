@@ -17,6 +17,10 @@ import {
 } from '../shared/terminal-file-location';
 import type { ExecutionKind } from '../shared/ipc';
 import type { TerminalPasteRuntime } from './terminal-paste';
+import {
+  writeOwnerDocumentClipboardText,
+  type TerminalCopyRuntime,
+} from './terminal-copy';
 
 export { normalizeExternalHttpUrl };
 
@@ -25,13 +29,13 @@ export type ActiveTerminalRenderer = 'webgl' | 'dom';
 
 /** Platform-owned capabilities for one xterm surface. The component never
  * reaches into Electron or Capacitor directly; its host supplies the adapter. */
-export interface TerminalRuntimeOptions extends TerminalPasteRuntime {
+export interface TerminalRuntimeOptions extends TerminalPasteRuntime, TerminalCopyRuntime {
   readonly platform: 'desktop' | 'mobile';
   readonly rendererPreference: TerminalRendererPreference;
   readonly openExternalHttpUrl?: (url: string) => void;
   /** OSC 52 stays off unless the desktop user explicitly enables it. */
   readonly allowOsc52Clipboard?: boolean;
-  readonly writeClipboardText?: (text: string) => Promise<void> | void;
+  readonly writeOsc52ClipboardText?: (text: string) => Promise<void> | void;
   readonly openTerminalFileLocation?: (
     request: TerminalFileLocationRequest,
     event: MouseEvent,
@@ -43,7 +47,19 @@ export interface TerminalRuntimeOptions extends TerminalPasteRuntime {
 export const DEFAULT_TERMINAL_RUNTIME_OPTIONS: TerminalRuntimeOptions = Object.freeze({
   platform: 'desktop',
   rendererPreference: 'auto',
+  writeUserClipboardText: writeOwnerDocumentClipboardText,
 });
+
+/** Addon/render policy consumed by XtermRuntime itself. Clipboard, paste and
+ * notice capabilities remain owned by PtyBlock's interaction adapter. */
+export type XtermHostOptions = Pick<
+  TerminalRuntimeOptions,
+  | 'platform'
+  | 'rendererPreference'
+  | 'openExternalHttpUrl'
+  | 'openTerminalFileLocation'
+  | 'getTerminalFileContext'
+>;
 
 export interface TerminalSearchResults {
   /** Zero-based active result, or -1 when there is no active result. */
@@ -134,7 +150,7 @@ export class XtermRuntime {
   constructor(
     private readonly terminal: Terminal,
     private readonly host: HTMLElement,
-    private readonly options: TerminalRuntimeOptions = DEFAULT_TERMINAL_RUNTIME_OPTIONS,
+    private readonly options: XtermHostOptions = DEFAULT_TERMINAL_RUNTIME_OPTIONS,
     events: XtermRuntimeEvents = {},
     factories: XtermRuntimeFactories = DEFAULT_FACTORIES,
   ) {

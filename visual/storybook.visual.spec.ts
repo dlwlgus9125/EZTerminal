@@ -298,6 +298,143 @@ test("project workbench content is readable and bounded", async ({ page }) => {
   });
 });
 
+test.describe("Project Map creation visual contracts", () => {
+  for (const visualCase of [
+    {
+      name: "wide English creation brief",
+      viewport: { width: 1200, height: 800 },
+      storyId: "compositions-project-map--empty-create",
+      heading: "Create Project Map",
+      locale: "en",
+      theme: "dark",
+      screenshot: "desktop-1200x800-project-map-create-dark-en.png",
+    },
+    {
+      name: "narrow Korean creation brief",
+      viewport: { width: 800, height: 600 },
+      storyId: "compositions-project-map--empty-create-korean",
+      heading: "프로젝트 맵 만들기",
+      locale: "ko",
+      theme: "light",
+      screenshot: "desktop-800x600-project-map-create-light-ko.png",
+    },
+  ] as const) {
+    test(visualCase.name, async ({ page }) => {
+      await page.setViewportSize(visualCase.viewport);
+      await openStory(page, visualCase.storyId, {
+        theme: visualCase.theme,
+        locale: visualCase.locale,
+        density: "adaptive",
+        motion: "reduced",
+      });
+
+      const creator = page.locator(".project-map__creator");
+      await expect(creator).toBeVisible();
+      await expect(creator.getByRole("heading", { name: visualCase.heading })).toBeVisible();
+      await expect(page.getByTestId("project-map-create-type")).toBeVisible();
+      await expect(page.getByTestId("project-map-create-participant")).toContainText("Codex");
+      await expect(page.getByTestId("project-map-send-creation")).toBeEnabled();
+      expect(await page.evaluate(() => (
+        document.documentElement.scrollWidth <= window.innerWidth
+        && document.documentElement.scrollHeight <= window.innerHeight
+      ))).toBe(true);
+      await expectNoAccessibilityViolations(page);
+      await expect(page).toHaveScreenshot(visualCase.screenshot, {
+        animations: "disabled",
+      });
+    });
+  }
+});
+
+test.describe("Project Map dedicated Agent session status", () => {
+  for (const visualCase of [
+    {
+      name: "wide English queued delivery",
+      viewport: { width: 1200, height: 800 },
+      storyId: "compositions-project-map--queued-delivery",
+      locale: "en",
+      theme: "dark",
+      headline: "Codex session started",
+      saved: "Request saved",
+      screenshot: "desktop-1200x800-project-map-queued-dark-en.png",
+    },
+    {
+      name: "narrow Korean queued delivery",
+      viewport: { width: 800, height: 600 },
+      storyId: "compositions-project-map--queued-delivery-korean",
+      locale: "ko",
+      theme: "light",
+      headline: "Codex 세션 시작됨",
+      saved: "요청 저장",
+      screenshot: "desktop-800x600-project-map-queued-light-ko.png",
+    },
+  ] as const) {
+    test(visualCase.name, async ({ page }) => {
+      await page.setViewportSize(visualCase.viewport);
+      await openStory(page, visualCase.storyId, {
+        theme: visualCase.theme,
+        locale: visualCase.locale,
+        density: "adaptive",
+        motion: "reduced",
+      });
+
+      const status = page.getByTestId("project-map-delivery-status");
+      await expect(status).toBeVisible();
+      await expect(status).toContainText(visualCase.headline);
+      await expect(status).toContainText(visualCase.saved);
+      await expect(page.getByTestId("project-map-create")).toBeDisabled();
+      expect(await page.evaluate(() => (
+        document.documentElement.scrollWidth <= window.innerWidth
+        && document.documentElement.scrollHeight <= window.innerHeight
+      ))).toBe(true);
+      await expectNoAccessibilityViolations(page);
+      await expect(page).toHaveScreenshot(visualCase.screenshot, {
+        animations: "disabled",
+      });
+    });
+  }
+});
+
+test.describe("Project Map reader visual matrix", () => {
+  const modes = [
+    { name: "architecture", story: "architecture", koreanStory: "architecture-korean" },
+    { name: "workflow", story: "workflow", koreanStory: "workflow-korean" },
+    { name: "sequence", story: "sequence", koreanStory: "sequence-korean" },
+    { name: "dataflow", story: "dataflow", koreanStory: "dataflow-korean" },
+    { name: "lifecycle", story: "lifecycle", koreanStory: "lifecycle-korean" },
+  ] as const;
+  const surfaces = [
+    { name: "dark-en", viewport: { width: 1200, height: 800 }, theme: "dark", locale: "en" },
+    { name: "light-ko", viewport: { width: 800, height: 600 }, theme: "light", locale: "ko" },
+  ] as const;
+  for (const mode of modes) {
+    for (const surface of surfaces) {
+      test(`${mode.name} ${surface.name}`, async ({ page }) => {
+        await page.setViewportSize(surface.viewport);
+        const story = surface.locale === "ko" ? mode.koreanStory : mode.story;
+        await openStory(page, `compositions-project-map--${story}`, {
+          theme: surface.theme,
+          locale: surface.locale,
+          density: "adaptive",
+          motion: "reduced",
+        });
+        await expect(page.locator(".project-map__canvas")).toBeVisible();
+        await expect(page.locator(".project-map__minimap")).toBeVisible();
+        await expect(page.getByText(surface.locale === "ko" ? "검증" : "Verification", { exact: true })).toBeVisible();
+        expect(await page.evaluate(() => (
+          document.documentElement.scrollWidth <= window.innerWidth
+          && document.documentElement.scrollHeight <= window.innerHeight
+        ))).toBe(true);
+        await expectNoAccessibilityViolations(page);
+        await expect(page).toHaveScreenshot(
+          `desktop-project-map-${mode.name}-${surface.name}.png`,
+          { animations: "disabled" },
+        );
+      });
+    }
+  }
+});
+
 for (const workspaceCase of [
   {
     name: "wide",

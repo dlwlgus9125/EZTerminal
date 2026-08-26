@@ -2,6 +2,54 @@
 
 ## [Unreleased]
 
+## [1.0.40] - 2026-08-26
+
+### Added
+
+- Added a native interactive Project Map reader with architecture, workflow,
+  sequence, data-flow, and lifecycle views; search, chapters, main-path and
+  upstream/downstream exploration; Fit, pan, zoom, and minimap controls.
+- Added guided create and update requests that open a fresh, dedicated Codex or
+  Claude session in the owning workspace; persisted authoring jobs, Draft and
+  Production validation, candidate diff/review, and exact-fingerprint human
+  approval.
+- Added canonical SVG, 1600x900 PNG, and verification-receipt export into a new
+  non-overwriting fingerprinted directory.
+
+### Changed
+
+- Replaced the prototype Project Map contract with strict schema v2, semantic
+  Agent-authored layout intent, deterministic native layout and routing, ten
+  named quality checks, selective input impact analysis, and a Production-only
+  content-addressed cache.
+- Added Korean application chrome and responsive Project Map states while
+  preserving the authored prose locale and stable English identifiers.
+
+### Fixed
+
+- Replaced the indeterminate Project Map `Sending…` state and busy-Agent queue
+  with a visible dedicated Agent tab plus a persistent tracked-request strip.
+  The strip distinguishes request storage, dedicated-session startup, and
+  reported Agent work while keeping the target, update time, job ID, and
+  cooperative Cancel visible before the first map exists and after panel reopen.
+- Restored selection-aware terminal copy after pane splitting and detaching.
+  `Ctrl+C`, `Ctrl+Shift+C`, `Ctrl+Insert`, and right-click Copy now share one
+  owner-document-aware adapter and one main-process OS clipboard capability for
+  structured output, the composer, plain PTY output, and xterm output.
+- Preserved process interrupt when no terminal text is selected, and kept copy
+  success or failure feedback in the window where the action originated.
+
+### Security
+
+- Kept authoritative maps repository-owned, rejected exports into
+  `.ezterminal/project-map`, sandboxed PNG rendering, and locked default display
+  and export to the exact locally approved Production fingerprint.
+- Separated user-driven terminal copy from OSC 52, kept selected text out of
+  logs and feedback, and exposed only a narrow context-isolated clipboard-write
+  IPC capability to desktop renderers.
+
+See [1.0.40 release notes](docs/release/release-notes-1.0.40.md).
+
 ## [1.0.39] - 2026-08-19
 
 ### Fixed

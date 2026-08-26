@@ -411,10 +411,12 @@ const AGENT_COORDINATION: AgentCoordinationSnapshot = {
   activities: AGENTS.items.map((item) => ({
     ...item,
     projectId: 'project-ezterminal',
+    rootId: 'root-ezterminal',
     workspaceId: item.id === 'claude-release' ? 'workspace-review' : 'workspace-build',
     participant: {
       participantId: item.id === 'claude-release' ? 'participant-review' : 'participant-build',
       projectId: 'project-ezterminal',
+      rootId: 'root-ezterminal',
       workspaceId: item.id === 'claude-release' ? 'workspace-review' : 'workspace-build',
       worktreeId: item.id === 'claude-release' ? 'worktree-review' : 'worktree-build',
       alias: item.id === 'claude-release' ? 'Reviewer' : 'Builder',
@@ -448,6 +450,7 @@ const AGENT_COORDINATION: AgentCoordinationSnapshot = {
         projectId: 'project-ezterminal',
         activityId: 'claude-release',
         sessionId: 'session-2',
+        rootId: 'root-ezterminal',
         workspaceId: 'workspace-review',
         worktreeId: 'worktree-review',
         alias: 'Reviewer',
@@ -463,6 +466,7 @@ const AGENT_COORDINATION: AgentCoordinationSnapshot = {
         projectId: 'project-ezterminal',
         activityId: 'codex-audit',
         sessionId: 'session-3',
+        rootId: 'root-ezterminal',
         workspaceId: 'workspace-build',
         worktreeId: 'worktree-build',
         alias: 'Builder',

@@ -2,6 +2,7 @@ export const DOCK_PANEL_COMPONENTS = [
   'terminal',
   'agent-session',
   'project-editor',
+  'project-map',
   'openclaw-chat',
 ] as const;
 
@@ -17,6 +18,7 @@ const CAPABILITIES: Readonly<Record<DockPanelComponent, DockPanelCapabilities>> 
   terminal: Object.freeze({ detachable: true, lifecycle: 'session-surface' }),
   'agent-session': Object.freeze({ detachable: true, lifecycle: 'passive' }),
   'project-editor': Object.freeze({ detachable: true, lifecycle: 'passive' }),
+  'project-map': Object.freeze({ detachable: false, lifecycle: 'passive' }),
   'openclaw-chat': Object.freeze({ detachable: true, lifecycle: 'passive' }),
 });
 

@@ -15,11 +15,13 @@ import {
 export const ACTIVE_CONTRACTS = Object.freeze([
   'DESIGN.md',
   'docs/design/terminal-runtime.md',
+  'docs/design/terminal-clipboard.md',
   'docs/design/workbench-lifecycle.md',
   'docs/design/remote-terminal.md',
   'docs/design/remote-desktop.md',
   'docs/design/external-integrations.md',
   'docs/design/agent-collaboration.md',
+  'docs/design/project-map.md',
   'docs/ux/frontend-design.md',
 ]);
 

@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 2,
+  "collectionId": "ezterminal-system",
+  "ownerRootAlias": "app",
+  "overviewMapId": "runtime-architecture",
+  "roots": [
+    {
+      "alias": "app",
+      "label": "EZTerminal"
+    }
+  ],
+  "maps": [
+    {
+      "id": "runtime-architecture",
+      "type": "architecture",
+      "path": "maps/runtime-architecture.architecture.json",
+      "authoritativeInputs": [
+        { "rootAlias": "app", "relativePath": "src/renderer/App.tsx" },
+        { "rootAlias": "app", "relativePath": "src/preload/preload.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/main.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/interpreter-broker.ts" },
+        { "rootAlias": "app", "relativePath": "src/interpreter/interpreter-process.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" }
+      ],
+      "review": {
+        "inputDigest": "sha256:44478d868f0bf4f2388402d740f1b5953227baa72f69659c9e80884a344a827a",
+        "decision": "no-semantic-impact",
+        "reason": "Project Map gained a dedicated Agent-session launch callback and terminal copy gained a main-process clipboard adapter; both reuse the existing renderer-preload-main boundary, so the process topology and trust boundaries represented by this map are unchanged."
+      }
+    },
+    {
+      "id": "terminal-pty-sequence",
+      "type": "sequence",
+      "path": "maps/terminal-pty-sequence.sequence.json",
+      "authoritativeInputs": [
+        { "rootAlias": "app", "relativePath": "src/renderer/TerminalPane.tsx" },
+        { "rootAlias": "app", "relativePath": "src/main/session-surface-authority.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/run-command-ipc.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/interpreter-broker.ts" },
+        { "rootAlias": "app", "relativePath": "src/interpreter/interpreter-process.ts" },
+        { "rootAlias": "app", "relativePath": "src/interpreter/pty-session.ts" }
+      ],
+      "review": {
+        "inputDigest": "sha256:7cccb14773bac487193742f5e3c1a383840690085fa36d7d65b8f48d63aeca28",
+        "decision": "no-semantic-impact",
+        "reason": "The new Agent bootstrap submits a Project Map brief through the existing ready-aware PTY path, while terminal copy is handled outside command submission; ordinary shell command correlation and port handoff are unchanged."
+      }
+    },
+    {
+      "id": "workbench-lifecycle",
+      "type": "lifecycle",
+      "path": "maps/workbench-lifecycle.lifecycle.json",
+      "authoritativeInputs": [
+        { "rootAlias": "app", "relativePath": "src/renderer/workbench-coordinator.ts" },
+        { "rootAlias": "app", "relativePath": "src/shared/layout-schema.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/layout-store.ts" },
+        { "rootAlias": "app", "relativePath": "src/renderer/App.tsx" },
+        { "rootAlias": "app", "relativePath": "src/main/renderer-recovery-checkpoint-store.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/main.ts" }
+      ],
+      "review": {
+        "inputDigest": "sha256:1fe41a39c916db9dd291f21a6a8a529209652ef542c4e5db411cfb0f4f46bfce",
+        "decision": "no-semantic-impact",
+        "reason": "Opening a Project Map Agent tab reuses the existing workbench pane path, and terminal copy stays within existing pane/document ownership; neither changes restore, persistence, checkpoint, or replacement lifecycle transitions."
+      }
+    },
+    {
+      "id": "remote-session-dataflow",
+      "type": "dataflow",
+      "path": "maps/remote-session-dataflow.dataflow.json",
+      "authoritativeInputs": [
+        { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/remote-runtime.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/remote-desktop-controller.ts" },
+        { "rootAlias": "app", "relativePath": "src/shared/remote-protocol.ts" },
+        { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" }
+      ],
+      "review": {
+        "inputDigest": "sha256:0fdf2a00253c16ff19de98142091b96fbd4619c739b2c63ccddd9baf072d7037",
+        "decision": "map-updated"
+      }
+    },
+    {
+      "id": "human-agent-collaboration",
+      "type": "workflow",
+      "path": "maps/human-agent-collaboration.workflow.json",
+      "authoritativeInputs": [
+        { "rootAlias": "app", "relativePath": "src/renderer/ProjectMapPanel.tsx" },
+        { "rootAlias": "app", "relativePath": "src/renderer/project-map-agent-launch.ts" },
+        { "rootAlias": "app", "relativePath": "src/renderer/TerminalPane.tsx" },
+        { "rootAlias": "app", "relativePath": "src/renderer/App.tsx" },
+        { "rootAlias": "app", "relativePath": "src/renderer/workbench-coordinator.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-control-server.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-map-service.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-map-job-store.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-map-approval-store.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/project-map-exporter.ts" },
+        { "rootAlias": "app", "relativePath": "src/shared/project-map.ts" },
+        { "rootAlias": "app", "relativePath": "src/shared/project-map-scene.ts" },
+        { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" }
+      ],
+      "review": {
+        "inputDigest": "sha256:73bd606f773ab7e7eead7177159c54bf09bcf1080111984725840c2718bc8381",
+        "decision": "map-updated"
+      }
+    }
+  ]
+}

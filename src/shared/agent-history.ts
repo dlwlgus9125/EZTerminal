@@ -6,6 +6,7 @@
  */
 
 import type { ProjectSessionTarget } from './project-workspace';
+import type { ProjectMapAgentLaunchRequest } from './project-map';
 
 export type AgentHistoryProvider = 'codex' | 'claude';
 export type AgentProjectLauncherProvider = AgentHistoryProvider | 'generic';
@@ -202,6 +203,8 @@ export interface AgentLaunchBootstrap {
   readonly name: string;
   readonly cwd: string;
   readonly revision: string;
+  /** Runtime-only Project Map work handed to this fresh Agent session. */
+  readonly projectMapRequest?: ProjectMapAgentLaunchRequest;
 }
 
 /** Protocol-v5 compatibility shape. New callers use AgentLaunchPreparation. */

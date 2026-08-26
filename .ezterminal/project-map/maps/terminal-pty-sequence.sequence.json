@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 2,
+  "id": "terminal-pty-sequence",
+  "type": "sequence",
+  "title": "Terminal and PTY run sequence",
+  "summary": "A command handoff, byte stream, render flush, and cumulative backpressure acknowledgement.",
+  "contentLocale": "en",
+  "layoutIntent": {
+    "density": "balanced",
+    "emphasisIds": ["submit-command", "request-port", "dispatch-run", "start-pty", "emit-bytes", "render-bytes", "ack-flush"]
+  },
+  "chapters": [
+    {
+      "id": "command-handoff",
+      "title": "Command handoff",
+      "summary": "The renderer correlates a run before main transfers its dedicated port.",
+      "focusIds": ["renderer", "main", "broker", "submit-command", "transfer-port", "dispatch-run"]
+    },
+    {
+      "id": "pty-backpressure",
+      "title": "PTY backpressure",
+      "summary": "The runtime streams bytes and resumes only after renderer flush acknowledgements.",
+      "focusIds": ["runtime", "pty", "emit-bytes", "render-bytes", "ack-flush"]
+    }
+  ],
+  "participants": [
+    {
+      "id": "renderer",
+      "label": "Terminal pane",
+      "kind": "surface",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/TerminalPane.tsx",
+        "startLine": 578,
+        "endLine": 600,
+        "lineDigest": "sha256:2ec7eb3628fc84be7e39162a986d916dbcebf19889c51c407f7310abc5935d8b",
+        "claim": "TerminalPane registers run correlation before asking preload to submit the command."
+      }]
+    },
+    {
+      "id": "main",
+      "label": "Main IPC",
+      "kind": "service",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/run-command-ipc.ts",
+        "startLine": 55,
+        "endLine": 86,
+        "lineDigest": "sha256:bec7c2cb82d901c5e2c36a7ca44a8c8992a2bba72a40ff12a397b9836b403140",
+        "claim": "One app-lifetime IPC listener validates the request and transfers the returned port."
+      }]
+    },
+    {
+      "id": "broker",
+      "label": "Interpreter broker",
+      "kind": "service",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/interpreter-broker.ts",
+        "startLine": 500,
+        "endLine": 533,
+        "lineDigest": "sha256:cd5458b7f310ae71ce7d536e78a838ce406ca8e6718647086e0990c5fd531892",
+        "claim": "The broker creates a MessageChannel and transfers port2 with the typed run message."
+      }]
+    },
+    {
+      "id": "runtime",
+      "label": "Interpreter runtime",
+      "kind": "runtime",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/interpreter/interpreter-process.ts",
+        "startLine": 1073,
+        "endLine": 1119,
+        "lineDigest": "sha256:489749075dc83f715f4019ce2fde4afec1c2dfa59a3323dab5efbf20214bcbd6",
+        "claim": "The utility runtime accepts typed parent-port requests and posts bounded replies."
+      }]
+    },
+    {
+      "id": "pty",
+      "label": "OS PTY child",
+      "kind": "system",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/interpreter/pty-session.ts",
+        "startLine": 428,
+        "endLine": 464,
+        "lineDigest": "sha256:0fe18dd9db987e4aa2e68fecf676a49d410d9728aaaf4a64b49b8c566099f7ae",
+        "claim": "PtySession observes child bytes, updates terminal modes, emits frames, and applies high-water pausing."
+      }]
+    }
+  ],
+  "messages": [
+    {
+      "id": "submit-command",
+      "from": "renderer",
+      "to": "main",
+      "label": "runCommand(command, runId, sessionId)",
+      "kind": "call",
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/TerminalPane.tsx",
+        "startLine": 590,
+        "endLine": 598,
+        "lineDigest": "sha256:7e0a45a9a19a0f6b71da0246acb57141229280fc80cd7522820f0de88bc2ca92",
+        "claim": "The renderer sends command text only after recording the runId correlation."
+      }]
+    },
+    {
+      "id": "request-port",
+      "from": "main",
+      "to": "broker",
+      "label": "runCommand",
+      "kind": "call",
+      "order": 1,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/run-command-ipc.ts",
+        "startLine": 67,
+        "endLine": 76,
+        "lineDigest": "sha256:759705e237a866fd0d9a6de50d7f8d92d486511017b77206689b1219131297a4",
+        "claim": "Main delegates a valid run to InterpreterBroker."
+      }]
+    },
+    {
+      "id": "dispatch-run",
+      "from": "broker",
+      "to": "runtime",
+      "label": "run + transferred port2",
+      "kind": "call",
+      "order": 2,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/interpreter-broker.ts",
+        "startLine": 511,
+        "endLine": 527,
+        "lineDigest": "sha256:74481166c5b0c8a02ac7748cd5b9399f63e0e68db1ca1ac233e65a0de5bc1823",
+        "claim": "The broker posts the run envelope with one end of a new MessageChannel."
+      }]
+    },
+    {
+      "id": "transfer-port",
+      "from": "main",
+      "to": "renderer",
+      "label": "cmd-port + port1",
+      "kind": "return",
+      "order": 3,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/run-command-ipc.ts",
+        "startLine": 77,
+        "endLine": 84,
+        "lineDigest": "sha256:60671dbbccbc0ba19467de13c7436d47be0cf33ba5de28ef5af629a9ac5299be",
+        "claim": "Main transfers port1 back to the exact renderer sender with the runId."
+      }]
+    },
+    {
+      "id": "start-pty",
+      "from": "runtime",
+      "to": "pty",
+      "label": "spawn and attach PTY session",
+      "kind": "call",
+      "order": 4,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/interpreter/interpreter-process.ts",
+        "startLine": 1199,
+        "endLine": 1245,
+        "lineDigest": "sha256:cf918282513f475625374ce14cd92d5cf945520dfd4d252cf3d40126c6528f5d",
+        "claim": "A run message enters the interpreter execution path that owns its transferred port."
+      }]
+    },
+    {
+      "id": "emit-bytes",
+      "from": "pty",
+      "to": "renderer",
+      "label": "schema:pty then pty-data",
+      "kind": "event",
+      "order": 5,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/interpreter/pty-session.ts",
+        "startLine": 428,
+        "endLine": 445,
+        "lineDigest": "sha256:e28937b4ee094568a1bc33dda8eeee399f997dfca45a1741d3d956d4ae5534b1",
+        "claim": "PTY output bytes become pty-data frames after terminal-mode detection."
+      }]
+    },
+    {
+      "id": "render-bytes",
+      "from": "renderer",
+      "to": "renderer",
+      "label": "xterm flush callback",
+      "kind": "event",
+      "order": 6,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/block-controller.ts",
+        "startLine": 623,
+        "endLine": 637,
+        "lineDigest": "sha256:1e1658cf69922e6c5649bb4644b9065d6a6194ab091a75b636a6746a88143c93",
+        "claim": "BlockController advances consumed byte counts only through the render flush path."
+      }]
+    },
+    {
+      "id": "ack-flush",
+      "from": "renderer",
+      "to": "pty",
+      "label": "cumulative pty-ack",
+      "kind": "return",
+      "order": 7,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/interpreter/pty-session.ts",
+        "startLine": 520,
+        "endLine": 532,
+        "lineDigest": "sha256:fdfe328190b08954d0492f3e32321a9a02ee08672b1eb8cf167e9966c139548d",
+        "claim": "Monotonic acknowledgements resume a paused PTY once the low-water threshold is reached."
+      }]
+    }
+  ]
+}

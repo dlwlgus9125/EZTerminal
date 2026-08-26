@@ -32,6 +32,7 @@ export interface CoordinationActivitySource {
 
 export interface AgentWorkspaceIdentity {
   readonly projectId: string;
+  readonly rootId: string;
   readonly workspaceId: string;
   readonly worktreeId?: string;
 }
@@ -39,6 +40,15 @@ export interface AgentWorkspaceIdentity {
 export interface CoordinationMergeSource {
   listRequests(): readonly ManagedMergeRequest[];
   onRequests(listener: () => void): () => void;
+}
+
+interface ResolvedActivityWorkspace {
+  readonly cwd: string;
+  readonly identity: AgentWorkspaceIdentity;
+}
+
+interface PendingActivityWorkspace {
+  readonly cwd: string;
 }
 
 const EMPTY_COUNTS: Readonly<Record<AgentState, number>> = Object.freeze({
@@ -73,12 +83,15 @@ function makeBrief(project: AgentProjectCoordination, participant: AgentParticip
 
 export class AgentCoordinationService {
   private readonly participantsByActivity = new Map<string, AgentParticipant>();
+  private readonly resolvedWorkspacesByActivity = new Map<string, ResolvedActivityWorkspace>();
+  private readonly pendingWorkspacesByActivity = new Map<string, PendingActivityWorkspace>();
   private readonly listeners = new Set<(snapshot: AgentCoordinationSnapshot) => void>();
   private readonly unsubscribeActivity: () => void;
   private unsubscribeMerge: (() => void) | null = null;
   private mergeSource: CoordinationMergeSource | null = null;
   private revision = 0;
   private lastSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT;
+  private disposed = false;
 
   constructor(private readonly deps: {
     readonly activities: CoordinationActivitySource;
@@ -96,9 +109,20 @@ export class AgentCoordinationService {
         this.participantsByActivity.delete(activityId);
         changed = true;
       }
+      for (const activityId of this.resolvedWorkspacesByActivity.keys()) {
+        if (liveIds.has(activityId)) continue;
+        this.resolvedWorkspacesByActivity.delete(activityId);
+      }
+      for (const activityId of this.pendingWorkspacesByActivity.keys()) {
+        if (liveIds.has(activityId)) continue;
+        this.pendingWorkspacesByActivity.delete(activityId);
+      }
+      this.resolveActivityWorkspaces(snapshot);
       this.publish(changed ? undefined : snapshot);
     });
-    this.publish(deps.activities.getSnapshot());
+    const initialSnapshot = deps.activities.getSnapshot();
+    this.resolveActivityWorkspaces(initialSnapshot);
+    this.publish(initialSnapshot);
   }
 
   bindMergeSource(source: CoordinationMergeSource): void {
@@ -185,6 +209,7 @@ export class AgentCoordinationService {
       projectId: workspace.projectId,
       activityId: activity.id,
       sessionId: activity.sessionId,
+      rootId: workspace.rootId,
       workspaceId: workspace.workspaceId,
       ...(workspace.worktreeId ? { worktreeId: workspace.worktreeId } : {}),
       alias,
@@ -235,11 +260,31 @@ export class AgentCoordinationService {
       : Promise.resolve({ ok: false, reason: 'run-not-found' });
   }
 
-  prompt(target: string, text: string): Promise<AgentFollowupResult> {
-    const activity = this.resolveActivity(target);
-    return activity
-      ? this.deps.activities.sendPrompt(activity.id, text)
-      : Promise.resolve({ ok: false, error: 'not-found' });
+  async prompt(
+    target: string,
+    text: string,
+    options: {
+      readonly whenReady?: boolean;
+      readonly timeoutMs?: number;
+      readonly signal?: AbortSignal;
+    } = {},
+  ): Promise<AgentFollowupResult> {
+    let activity = this.resolveActivity(target);
+    if (!activity) return { ok: false, error: 'not-found' };
+    if (options.whenReady === true && (
+      (activity.state !== 'done' && activity.state !== 'idle')
+      || !activity.interactiveReady
+    )) {
+      activity = await this.waitFor(
+        activity.id,
+        new Set<AgentState>(['done', 'idle']),
+        activity.stateSeq,
+        options.timeoutMs ?? 30 * 60_000,
+        options.signal,
+      );
+      if (!activity?.interactiveReady) return { ok: false, error: 'not-ready' };
+    }
+    return this.deps.activities.sendPrompt(activity.id, text);
   }
 
   waitFor(
@@ -281,10 +326,37 @@ export class AgentCoordinationService {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.unsubscribeActivity();
     this.unsubscribeMerge?.();
     this.listeners.clear();
     this.participantsByActivity.clear();
+    this.resolvedWorkspacesByActivity.clear();
+    this.pendingWorkspacesByActivity.clear();
+  }
+
+  private resolveActivityWorkspaces(snapshot: AgentActivitySnapshot): void {
+    for (const activity of snapshot.items) {
+      if (!activity.live) continue;
+      const resolved = this.resolvedWorkspacesByActivity.get(activity.id);
+      if (resolved?.cwd === activity.cwd) continue;
+      if (resolved) this.resolvedWorkspacesByActivity.delete(activity.id);
+      const pending = this.pendingWorkspacesByActivity.get(activity.id);
+      if (pending?.cwd === activity.cwd) continue;
+      const request = { cwd: activity.cwd } satisfies PendingActivityWorkspace;
+      this.pendingWorkspacesByActivity.set(activity.id, request);
+      void this.deps.resolveWorkspace(activity).then((identity) => {
+        if (this.disposed || this.pendingWorkspacesByActivity.get(activity.id) !== request) return;
+        this.pendingWorkspacesByActivity.delete(activity.id);
+        if (!identity) return;
+        this.resolvedWorkspacesByActivity.set(activity.id, { cwd: activity.cwd, identity });
+        this.publish();
+      }).catch(() => {
+        if (this.pendingWorkspacesByActivity.get(activity.id) === request) {
+          this.pendingWorkspacesByActivity.delete(activity.id);
+        }
+      });
+    }
   }
 
   private withParticipants(project: AgentProjectCoordination): AgentProjectCoordination {
@@ -300,20 +372,23 @@ export class AgentCoordinationService {
     const participants = this.participantsByActivity;
     const activities = activitySnapshot.items.map((activity) => {
       const participant = participants.get(activity.id);
-      return participant
+      const workspace = participant ?? this.resolvedWorkspacesByActivity.get(activity.id)?.identity;
+      return workspace
         ? {
             ...activity,
-            projectId: participant.projectId,
-            workspaceId: participant.workspaceId,
-            participant: {
+            projectId: workspace.projectId,
+            rootId: workspace.rootId,
+            workspaceId: workspace.workspaceId,
+            ...(participant ? { participant: {
               participantId: participant.participantId,
               projectId: participant.projectId,
+              rootId: participant.rootId,
               workspaceId: participant.workspaceId,
               ...(participant.worktreeId ? { worktreeId: participant.worktreeId } : {}),
               alias: participant.alias,
               role: participant.role,
               task: participant.task,
-            },
+            } } : {}),
           }
         : activity;
     });

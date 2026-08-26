@@ -8,13 +8,13 @@
 
 Structured pipelines · block history · full PTY/TUI support · Agent workbench · Android remote control
 
-[![Release](https://img.shields.io/badge/release-v1.0.39-brightgreen)](https://github.com/dlwlgus9125/EZTerminal/releases/latest)
+[![Release](https://img.shields.io/badge/release-v1.0.40-brightgreen)](https://github.com/dlwlgus9125/EZTerminal/releases/latest)
 [![CI](https://github.com/dlwlgus9125/EZTerminal/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dlwlgus9125/EZTerminal/actions/workflows/ci.yml)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [Download the latest release](https://github.com/dlwlgus9125/EZTerminal/releases/latest) ·
-[Read the release notes](docs/release/release-notes-1.0.39.md) ·
+[Read the release notes](docs/release/release-notes-1.0.40.md) ·
 [Review the security model](SECURITY.md)
 
 <br />
@@ -119,18 +119,18 @@ desktop, audio, privacy mode, and Ctrl+Alt+Delete are not supported.
 
 ## Install
 
-The current stable release is **v1.0.39**.
+The current stable release is **v1.0.40**.
 
 | Platform | Supported system | Release asset |
 | --- | --- | --- |
 | Windows desktop | Windows 10 22H2 or Windows 11, x64 | `EZTerminal-Setup.exe` |
-| Android companion | Android 10 / API 29 or newer | `EZTerminal-Android-1.0.39-vc60.apk` |
+| Android companion | Android 10 / API 29 or newer | `EZTerminal-Android-1.0.40-vc61.apk` |
 
 Download both artifacts, `release-manifest.json`, and `SHA256SUMS.txt` from the
 [latest GitHub Release](https://github.com/dlwlgus9125/EZTerminal/releases/latest).
 
 > [!IMPORTANT]
-> The v1.0.39 Windows installer is published unsigned while the SignPath Foundation application is
+> The v1.0.40 Windows installer is published unsigned while the SignPath Foundation application is
 > pending, so Windows displays an unknown-publisher warning. Verify the release manifest and SHA-256
 > checksums before opening it. The in-app updater performs the same digest verification and never
 > installs an update silently.
@@ -185,7 +185,7 @@ boundaries, data flows, and native components are documented in the
 | Product direction and unimplemented candidates | [docs/ROADMAP.md](docs/ROADMAP.md) |
 | Visual identity and UX contracts | [DESIGN.md](DESIGN.md) · [frontend design](docs/ux/frontend-design.md) |
 | Agent collaboration and managed merge | [docs/design/agent-collaboration.md](docs/design/agent-collaboration.md) |
-| Current release | [v1.0.39 notes](docs/release/release-notes-1.0.39.md) · [1.0.39 validation policy](docs/release/validation-policy-1.0.39.md) |
+| Current release | [v1.0.40 notes](docs/release/release-notes-1.0.40.md) · [1.0.40 validation policy](docs/release/validation-policy-1.0.40.md) |
 | Terminal, remote, lifecycle, and integration contracts | [docs/design/](docs/design/) |
 | Release history | [CHANGELOG.md](CHANGELOG.md) |
 

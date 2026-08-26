@@ -31,6 +31,21 @@ import type {
   ProjectWorkspaceAccessRequest,
   ProjectWorkspaceAccessResult,
 } from './project-workspace';
+import type {
+  ProjectMapBindingRequest,
+  ProjectMapApprovalRequest,
+  ProjectMapChangeNotice,
+  ProjectMapCollectionRequest,
+  ProjectMapDescribeResult,
+  ProjectMapExportRequest,
+  ProjectMapExportResult,
+  ProjectMapJob,
+  ProjectMapJobRequest,
+  ProjectMapOpenResult,
+  ProjectMapReadRequest,
+  ProjectMapReadResult,
+  ProjectMapStartJobRequest,
+} from './project-map';
 import type { TerminalFileLocationRequest, TerminalFileLocationResult } from './terminal-file-location';
 import type { SSH_FORWARD_BIND_HOST, SshForwardAction, SshForwardInfo, SshForwardResult } from './ssh-forward';
 import type {
@@ -1303,7 +1318,11 @@ export interface EzTerminalApi extends SessionSurfaceApi {
     input: AgentProjectCoordinationInput,
   ) => Promise<AgentCoordinationMutationResult<AgentProjectCoordination>>;
   markAgentSeen: (activityId: string, stateSeq: number) => Promise<boolean>;
-  sendAgentPrompt: (activityId: string, text: string) => Promise<AgentFollowupResult>;
+  sendAgentPrompt: (
+    activityId: string,
+    text: string,
+    options?: { readonly whenReady?: boolean },
+  ) => Promise<AgentFollowupResult>;
   requestManagedMerge: (
     activityId: string,
     targetBranch: string,
@@ -1469,6 +1488,8 @@ export interface EzTerminalDesktopApi {
   setTerminalPastePreferences: (preferences: TerminalPastePreferences) => Promise<void>;
   /** User-initiated routing snapshot; image bytes and paths never cross IPC. */
   readTerminalClipboard: () => Promise<TerminalClipboardSnapshot>;
+  /** User-initiated terminal copy. False means validation or the OS write failed. */
+  writeTerminalClipboard: (text: string) => Promise<boolean>;
   /** Main rechecks opt-in, size and rate limits before touching the OS clipboard. */
   writeOsc52Clipboard: (text: string) => Promise<boolean>;
   /** Active loopback-only listeners, for the compact Settings summary. */
@@ -1504,6 +1525,25 @@ export interface EzTerminalDesktopApi {
   cancelProjectWorkspaceSearch: (requestId: string) => void;
   approveProjectWorkspace: (request: ProjectWorkspaceAccessRequest) => Promise<ProjectWorkspaceAccessResult>;
   revokeProjectWorkspace: (request: ProjectWorkspaceAccessRequest) => Promise<boolean>;
+  /** Read-only, project-owned semantic maps. Repo sources remain the authority. */
+  describeProjectMapCollection: (request: ProjectMapCollectionRequest) => Promise<ProjectMapDescribeResult>;
+  setProjectMapBindings: (request: ProjectMapBindingRequest) => Promise<ProjectMapDescribeResult>;
+  readProjectMap: (request: ProjectMapReadRequest) => Promise<ProjectMapReadResult>;
+  refreshProjectMap: (request: ProjectMapReadRequest) => Promise<ProjectMapReadResult>;
+  openProjectMap: (request: ProjectMapReadRequest) => Promise<ProjectMapOpenResult>;
+  refreshProjectMapSnapshot: (request: ProjectMapReadRequest) => Promise<ProjectMapOpenResult>;
+  approveProjectMap: (request: ProjectMapApprovalRequest) => Promise<ProjectMapOpenResult>;
+  startProjectMapJob: (request: ProjectMapStartJobRequest) => Promise<
+    { readonly ok: true; readonly job: ProjectMapJob } | { readonly ok: false; readonly error: string }
+  >;
+  cancelProjectMapJob: (request: ProjectMapJobRequest) => Promise<
+    { readonly ok: true; readonly job: ProjectMapJob } | { readonly ok: false; readonly error: string }
+  >;
+  selectProjectMapExportDirectory: () => Promise<
+    { readonly ok: true; readonly directory: string } | { readonly ok: false; readonly error: string }
+  >;
+  exportProjectMap: (request: ProjectMapExportRequest) => Promise<ProjectMapExportResult>;
+  onProjectMapChanged: (listener: (request: ProjectMapChangeNotice) => void) => () => void;
 
   /** Custom theme mods folder-scanned from `.ezterminal/themes/*.json` at
    * startup (main/theme-store.ts) — already validated (`ThemeMod`, not raw JSON). */

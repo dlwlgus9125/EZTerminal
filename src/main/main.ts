@@ -8,6 +8,7 @@ import {
   Menu,
   MessageChannelMain,
   net,
+  nativeTheme,
   Notification,
   protocol,
   session,
@@ -17,6 +18,7 @@ import {
 import type {
   IpcMainInvokeEvent,
   MessagePortMain,
+  OpenDialogOptions,
   UtilityProcess,
   WebContents,
 } from 'electron';
@@ -78,7 +80,13 @@ import { ProjectWorkspaceService } from './project-workspace-service';
 import { ProjectReviewService } from './project-review-service';
 import { ProjectDocumentService } from './project-document-service';
 import { ProjectWorkspaceAccessStore } from './project-workspace-access-store';
-import { WorktreeService } from './worktree-service';
+import { ProjectMapBindingStore } from './project-map-binding-store';
+import { ProjectMapCacheStore } from './project-map-cache-store';
+import { ProjectMapApprovalStore } from './project-map-approval-store';
+import { ProjectMapJobStore } from './project-map-job-store';
+import { exportProjectMap } from './project-map-exporter';
+import { ProjectMapService } from './project-map-service';
+import { GitRunner, WorktreeService } from './worktree-service';
 import { AsyncMutationGate } from './async-mutation-gate';
 import { SessionWorktreeGuard } from './session-worktree-guard';
 import { SessionSurfaceAuthority } from './session-surface-authority';
@@ -103,6 +111,15 @@ import {
 import {
   MAX_GUARDED_DESTROY_RUN_IDS,
 } from '../shared/ipc';
+import {
+  isProjectMapBindingRequest,
+  isProjectMapCollectionRequest,
+  isProjectMapApprovalRequest,
+  isProjectMapExportRequest,
+  isProjectMapJobRequest,
+  isProjectMapReadRequest,
+  isProjectMapStartJobRequest,
+} from '../shared/project-map';
 import {
   EMPTY_AGENT_COORDINATION_SNAPSHOT,
   type AgentParticipantInput,
@@ -147,7 +164,10 @@ import {
   isSessionSurfaceId,
   isSessionSurfaceIntent,
 } from '../shared/session-surface';
-import { readTerminalClipboardSnapshot } from './terminal-clipboard';
+import {
+  readTerminalClipboardSnapshot,
+  writeTerminalClipboardText,
+} from './terminal-clipboard';
 import { isTerminalPastePreferences } from '../shared/terminal-clipboard';
 import { TerminalFileCapabilityStore } from './terminal-file-capability';
 import { AppUpdateService } from './app-update-service';
@@ -866,6 +886,40 @@ app.on('ready', async () => {
     listWorktrees: (cwd) => worktreeService.execute({ action: 'list', cwd }, 'desktop'),
     accessStore: projectWorkspaceAccessStore,
   });
+  const projectMapBindingStore = new ProjectMapBindingStore(app.getPath('userData'));
+  const projectMapCacheStore = new ProjectMapCacheStore(app.getPath('userData'));
+  const projectMapApprovalStore = new ProjectMapApprovalStore(app.getPath('userData'));
+  const projectMapJobStore = new ProjectMapJobStore(app.getPath('userData'));
+  const projectMapReady = Promise.all([
+    projectMapBindingStore.init(),
+    projectMapCacheStore.init(),
+    projectMapApprovalStore.init(),
+    projectMapJobStore.init(),
+  ]).catch((err) => {
+    console.error('[main] project map stores init failed:', err);
+  });
+  const projectMapService = new ProjectMapService(
+    projectWorkspaceService,
+    projectMapBindingStore,
+    projectMapCacheStore,
+    new GitRunner(),
+    projectMapApprovalStore,
+    projectMapJobStore,
+  );
+  projectMapService.onChanged((event) => {
+    const request = {
+      projectId: event.projectId,
+      ownerRootId: event.ownerRootId,
+      ownerWorkspaceId: event.ownerWorkspaceId,
+      reason: event.reason,
+      ...(event.impactedMapIds ? { impactedMapIds: event.impactedMapIds } : {}),
+    };
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+        win.webContents.send('project-map:changed', request);
+      }
+    }
+  });
   const projectReviewService = new ProjectReviewService(projectWorkspaceService, agentHistoryService);
   const projectDocumentService = new ProjectDocumentService(projectWorkspaceService, projectReviewService);
   const projectWorkspaceSearches = new Map<string, AbortController>();
@@ -1122,6 +1176,8 @@ app.on('ready', async () => {
     await layoutStore.setTerminalPastePreferences(preferences);
   });
   ipcMain.handle('terminal:read-clipboard', () => readTerminalClipboardSnapshot(clipboard));
+  ipcMain.handle('terminal:write-clipboard', (_event, text: unknown): boolean =>
+    writeTerminalClipboardText(clipboard, text));
   ipcMain.handle('terminal:write-osc52-clipboard', async (event, text: unknown): Promise<boolean> => {
     if (typeof text !== 'string' || Buffer.byteLength(text, 'utf8') > OSC52_MAIN_MAX_BYTES) return false;
     await storeReady;
@@ -1184,9 +1240,34 @@ app.on('ready', async () => {
     && Number.isSafeInteger(stateSeq)
     && agentCoordinationService?.markSeen(activityId, stateSeq) === true
   ));
-  ipcMain.handle('agents:prompt', (_event, activityId: unknown, text: unknown) => {
-    if (typeof activityId !== 'string' || typeof text !== 'string' || !agentActivityService) {
+  ipcMain.handle('agents:prompt', (
+    _event,
+    activityId: unknown,
+    text: unknown,
+    options?: unknown,
+  ) => {
+    const validOptions = options === undefined || (
+      typeof options === 'object'
+      && options !== null
+      && !Array.isArray(options)
+      && Object.keys(options).every((key) => key === 'whenReady')
+      && (
+        (options as { readonly whenReady?: unknown }).whenReady === undefined
+        || typeof (options as { readonly whenReady?: unknown }).whenReady === 'boolean'
+      )
+    );
+    if (
+      typeof activityId !== 'string'
+      || typeof text !== 'string'
+      || !validOptions
+      || !agentActivityService
+    ) {
       return { ok: false, error: 'invalid-text' } as const;
+    }
+    const whenReady = (options as { readonly whenReady?: boolean } | undefined)?.whenReady === true;
+    if (whenReady) {
+      return agentCoordinationService?.prompt(activityId, text, { whenReady: true })
+        ?? { ok: false, error: 'not-found' } as const;
     }
     return agentActivityService.sendPrompt(activityId, text);
   });
@@ -1513,6 +1594,141 @@ app.on('ready', async () => {
     await projectWorkspaceReady;
     return projectWorkspaceService.revokeWorkspace(request);
   });
+  ipcMain.handle('project-map:describe', async (_event, request: unknown) => {
+    if (!isProjectMapCollectionRequest(request)) {
+      return {
+        ok: false,
+        error: 'invalid-request',
+        collection: {
+          projectId: '',
+          state: 'invalid',
+          roots: [],
+          bindings: [],
+          maps: [],
+          diagnostics: [{
+            severity: 'error',
+            code: 'request.invalid',
+            subject: '$',
+            message: 'Invalid Project Map collection request.',
+          }],
+        },
+      };
+    }
+    await Promise.all([projectWorkspaceReady, projectMapReady]);
+    return projectMapService.describe(request);
+  });
+  ipcMain.handle('project-map:set-bindings', async (_event, request: unknown) => {
+    if (!isProjectMapBindingRequest(request)) {
+      return {
+        ok: false,
+        error: 'invalid-request',
+        collection: {
+          projectId: '',
+          state: 'binding-required',
+          roots: [],
+          bindings: [],
+          maps: [],
+          diagnostics: [{
+            severity: 'error',
+            code: 'request.invalid',
+            subject: '$',
+            message: 'Invalid Project Map root binding request.',
+          }],
+        },
+      };
+    }
+    await Promise.all([projectWorkspaceReady, projectMapReady]);
+    return projectMapService.setBindings(request);
+  });
+  const readProjectMap = async (request: unknown) => {
+    if (!isProjectMapReadRequest(request)) {
+      return {
+        ok: false,
+        error: 'invalid-request',
+        state: 'invalid',
+        diagnostics: [{
+          severity: 'error',
+          code: 'request.invalid',
+          subject: '$',
+          message: 'Invalid Project Map read request.',
+        }],
+      };
+    }
+    await Promise.all([projectWorkspaceReady, projectMapReady]);
+    return projectMapService.read(request);
+  };
+  ipcMain.handle('project-map:read', (_event, request: unknown) => readProjectMap(request));
+  ipcMain.handle('project-map:refresh', (_event, request: unknown) => readProjectMap(request));
+  const invalidProjectMapOpen = () => ({
+    ok: false as const,
+    error: 'invalid-request',
+    snapshot: {
+      collection: {
+        projectId: '',
+        state: 'invalid' as const,
+        roots: [],
+        bindings: [],
+        maps: [],
+        diagnostics: [{
+          severity: 'error' as const,
+          code: 'request.invalid',
+          subject: '$',
+          message: 'Invalid Project Map request.',
+        }],
+      },
+      freshness: 'verified' as const,
+      verificationPending: false,
+    },
+  });
+  ipcMain.handle('project-map:open', async (_event, request: unknown) => {
+    if (!isProjectMapReadRequest(request)) return invalidProjectMapOpen();
+    await Promise.all([projectWorkspaceReady, projectMapReady]);
+    return projectMapService.open(request);
+  });
+  ipcMain.handle('project-map:refresh-v2', async (_event, request: unknown) => {
+    if (!isProjectMapReadRequest(request)) return invalidProjectMapOpen();
+    await Promise.all([projectWorkspaceReady, projectMapReady]);
+    return projectMapService.open(request, true);
+  });
+  ipcMain.handle('project-map:approve', async (_event, request: unknown) => {
+    if (!isProjectMapApprovalRequest(request)) return invalidProjectMapOpen();
+    await Promise.all([projectWorkspaceReady, projectMapReady]);
+    return projectMapService.approve(request);
+  });
+  ipcMain.handle('project-map:start-job', async (_event, request: unknown) => {
+    if (!isProjectMapStartJobRequest(request)) return { ok: false, error: 'invalid-request' };
+    await Promise.all([projectWorkspaceReady, projectMapReady]);
+    try {
+      return { ok: true, job: await projectMapService.startJob(request) };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'job-start-failed' };
+    }
+  });
+  ipcMain.handle('project-map:cancel-job', async (_event, request: unknown) => {
+    if (!isProjectMapJobRequest(request)) return { ok: false, error: 'invalid-request' };
+    await Promise.all([projectWorkspaceReady, projectMapReady]);
+    const job = await projectMapService.cancelJob(request);
+    return job ? { ok: true, job } : { ok: false, error: 'job-not-found' };
+  });
+  ipcMain.handle('project-map:select-export-directory', async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindowRef ?? undefined;
+    const options: OpenDialogOptions = { properties: ['openDirectory', 'createDirectory'] };
+    const result = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled || !result.filePaths[0]
+      ? { ok: false as const, error: 'canceled' }
+      : { ok: true as const, directory: result.filePaths[0] };
+  });
+  ipcMain.handle('project-map:export', async (_event, request: unknown) => {
+    if (!isProjectMapExportRequest(request) || !request.mapId) {
+      return { ok: false, error: 'invalid-request' };
+    }
+    await Promise.all([projectWorkspaceReady, projectMapReady]);
+    const document = await projectMapService.approvedDocument(request);
+    if (!document) return { ok: false, error: 'approved-map-not-found' };
+    return exportProjectMap(request, document, nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+  });
   ipcMain.handle('agents:followup', (_event, activityId: string, text: string) => {
     if (typeof activityId !== 'string' || typeof text !== 'string') return { ok: false, error: 'invalid-text' };
     return agentActivityService?.sendPrompt(activityId, text) ?? { ok: false, error: 'delivery-failed' };
@@ -1705,6 +1921,18 @@ app.on('ready', async () => {
       { name: 'agent coordination store', run: () => agentCoordinationStore.flush() },
       { name: 'agent settings', run: () => agentSettingsStore.flush() },
       { name: 'project workspace access', run: () => projectWorkspaceAccessStore.flush() },
+      {
+        name: 'project maps',
+        run: async () => {
+          projectMapService.close();
+          await Promise.all([
+            projectMapBindingStore.flush(),
+            projectMapCacheStore.flush(),
+            projectMapApprovalStore.flush(),
+            projectMapJobStore.flush(),
+          ]);
+        },
+      },
       { name: 'quick commands', run: () => quickCommandStore.flush() },
       { name: 'app update', run: () => appUpdateService.dispose() },
       { name: 'workspace search', run: () => workspaceFileSearch.dispose() },
@@ -2009,6 +2237,7 @@ app.on('ready', async () => {
       if (!workspace) return null;
       return {
         projectId: resolved.request.projectId,
+        rootId: workspace.rootId,
         workspaceId: workspace.workspaceId,
         ...(workspace.kind === 'managed' ? { worktreeId: workspace.workspaceId } : {}),
       };
@@ -2042,11 +2271,12 @@ app.on('ready', async () => {
     },
   });
   try {
-    await managedMergeService.init();
+    await Promise.all([managedMergeService.init(), projectMapReady]);
     agentCoordinationService.bindMergeSource(managedMergeService);
     agentControlServer = new AgentControlServer({
       coordination: agentCoordinationService,
       merges: managedMergeService,
+      maps: projectMapService,
     });
     await agentControlServer.start();
     for (const session of broker.listSessions()) {

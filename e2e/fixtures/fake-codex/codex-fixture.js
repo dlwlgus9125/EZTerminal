@@ -3,6 +3,7 @@
 // without requiring the real CLI or authentication in CI. `--xterm` emits the
 // same high-confidence bracketed-paste/focus burst used by interactive agents.
 const scrollbackScenario = process.env.EZTERMINAL_E2E_CODEX_SCROLLBACK === '1';
+const projectMapScenario = process.env.EZTERMINAL_E2E_PROJECT_MAP_AGENT === '1';
 if (scrollbackScenario) {
   // Codex normally owns the alternate screen. That buffer has no scrollback,
   // so overflowing it reproduces the missing-middle transcript symptom. The
@@ -17,7 +18,7 @@ if (scrollbackScenario) {
     process.stdout.write(`${markers.join('\r\n')}\r\n`);
   }, 100);
 } else {
-  if (process.argv.includes('--xterm')) {
+  if (process.argv.includes('--xterm') || projectMapScenario) {
     process.stdout.write('\x1b[?2004h\x1b[?1004h');
   }
   process.stdout.write('FAKE-CODEX-READY COPY-ME\r\n');

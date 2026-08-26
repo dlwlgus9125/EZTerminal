@@ -53,7 +53,102 @@ fn parse_args(args: &[String]) -> Result<RequestSpec> {
         Some("read") => parse_read(&args[1..]),
         Some("prompt") => parse_prompt(&args[1..]),
         Some("wait") => parse_wait(&args[1..]),
+        Some("map") => parse_map(&args[1..]),
         Some("merge") => parse_merge(&args[1..]),
+        _ => bail!(usage()),
+    }
+}
+
+fn parse_map(args: &[String]) -> Result<RequestSpec> {
+    match args.first().map(String::as_str) {
+        Some("guide") if args.len() == 2 => {
+            let map_type = args[1].as_str();
+            if ![
+                "architecture",
+                "workflow",
+                "sequence",
+                "dataflow",
+                "lifecycle",
+            ]
+            .contains(&map_type)
+            {
+                bail!("unknown Project Map type: {map_type}");
+            }
+            Ok(RequestSpec {
+                path: "/v1/map/guide",
+                body: json!({ "type": map_type }),
+            })
+        }
+        Some("check") => {
+            let mut map_id: Option<&String> = None;
+            let mut quality = "production";
+            let mut index = 1;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--quality" => {
+                        index += 1;
+                        quality = args
+                            .get(index)
+                            .context("--quality requires draft or production")?;
+                        if quality != "draft" && quality != "production" {
+                            bail!("--quality must be draft or production");
+                        }
+                    }
+                    value if !value.starts_with('-') && map_id.is_none() => {
+                        map_id = args.get(index)
+                    }
+                    _ => bail!(usage()),
+                }
+                index += 1;
+            }
+            if let Some(value) = map_id
+                && (value.is_empty()
+                    || value.len() > 64
+                    || !value.chars().enumerate().all(|(index, character)| {
+                        (index == 0 && character.is_ascii_lowercase())
+                            || (index > 0
+                                && (character.is_ascii_lowercase()
+                                    || character.is_ascii_digit()
+                                    || character == '-'))
+                    }))
+            {
+                bail!("map id must match [a-z][a-z0-9-]{{0,63}}");
+            }
+            Ok(RequestSpec {
+                path: "/v1/map/check",
+                body: json!({ "mapId": map_id, "quality": quality }),
+            })
+        }
+        Some("job") if args.len() == 3 => {
+            let job_id = &args[1];
+            let phase = args[2].as_str();
+            if job_id.len() < 20
+                || job_id.len() > 64
+                || !job_id
+                    .chars()
+                    .all(|character| character.is_ascii_hexdigit() || character == '-')
+            {
+                bail!("job id is invalid");
+            }
+            if ![
+                "analyzing",
+                "authoring",
+                "validating-draft",
+                "validating-production",
+                "awaiting-review",
+                "completed",
+                "failed",
+                "canceled",
+            ]
+            .contains(&phase)
+            {
+                bail!("unknown Project Map job phase: {phase}");
+            }
+            Ok(RequestSpec {
+                path: "/v1/map/job",
+                body: json!({ "jobId": job_id, "phase": phase }),
+            })
+        }
         _ => bail!(usage()),
     }
 }
@@ -239,5 +334,31 @@ async fn post_json(descriptor: &Descriptor, request: RequestSpec) -> Result<(u16
 }
 
 fn usage() -> &'static str {
-    "usage: ezterminal-agent list | read <id|alias> [--lines N] | prompt <id|alias> --stdin [--when-ready] [--wait] | wait <id|alias> --until <state> [--after stateSeq] | merge request --target <local-branch> [--wait] | merge wait <request-id>"
+    "usage: ezterminal-agent list | read <id|alias> [--lines N] | prompt <id|alias> --stdin [--when-ready] [--wait] | wait <id|alias> --until <state> [--after stateSeq] | map guide <architecture|workflow|sequence|dataflow|lifecycle> | map check [map-id] [--quality draft|production] | map job <job-id> <phase> | merge request --target <local-branch> [--wait] | merge wait <request-id>"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_args;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn parses_project_map_guide_and_check() {
+        let guide = parse_args(&args(&["map", "guide", "sequence"])).expect("guide");
+        assert_eq!(guide.path, "/v1/map/guide");
+        assert_eq!(guide.body["type"], "sequence");
+
+        let check = parse_args(&args(&["map", "check", "runtime-architecture"])).expect("check");
+        assert_eq!(check.path, "/v1/map/check");
+        assert_eq!(check.body["mapId"], "runtime-architecture");
+    }
+
+    #[test]
+    fn rejects_unknown_map_types_and_non_portable_ids() {
+        assert!(parse_args(&args(&["map", "guide", "html"])).is_err());
+        assert!(parse_args(&args(&["map", "check", "../runtime"])).is_err());
+    }
 }

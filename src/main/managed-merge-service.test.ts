@@ -50,6 +50,7 @@ async function createFixture(options: {
     projectId: 'project-1',
     activityId: 'activity-1',
     sessionId: 'session-1',
+    rootId: 'root-1',
     workspaceId: 'workspace-1',
     worktreeId: 'worktree-1',
     alias: 'Builder',

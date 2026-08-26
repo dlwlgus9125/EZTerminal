@@ -7,18 +7,12 @@ import {
   type TerminalPastePreferences,
   type TerminalPasteRisk,
 } from '../shared/terminal-clipboard';
+import type { TerminalNoticeKind, TerminalNoticeRuntime } from './terminal-notice';
 
-export type TerminalNoticeKind =
-  | 'clipboard-empty'
-  | 'clipboard-no-text'
-  | 'clipboard-read-failed'
-  | 'codex-interrupt-help';
-
-export interface TerminalPasteRuntime {
+export interface TerminalPasteRuntime extends TerminalNoticeRuntime {
   readonly readClipboard?: () => Promise<TerminalClipboardSnapshot>;
   readonly pastePreferences?: TerminalPastePreferences;
   readonly confirmPaste?: (risk: TerminalPasteRisk, ownerDocument?: Document) => Promise<boolean>;
-  readonly notifyTerminal?: (notice: TerminalNoticeKind, ownerDocument?: Document) => void;
 }
 
 interface TerminalPasteRequest {

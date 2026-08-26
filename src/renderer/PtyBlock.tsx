@@ -39,6 +39,7 @@ import {
   takeCodexInterruptNotice,
 } from './terminal-key-policy';
 import { pasteFromRuntimeClipboard } from './terminal-paste';
+import { copyTerminalText } from './terminal-copy';
 import { selectedTextWithin } from './terminal-selection';
 import { addAppWindowEventListener } from './desktop-window-registry';
 import { isDomElement } from './ui/utils';
@@ -109,6 +110,11 @@ function computeBaseFontSize(): number {
 
 const EMPTY_SEARCH_RESULTS: TerminalSearchResults = Object.freeze({ resultIndex: -1, resultCount: 0 });
 
+interface TerminalCopyMenuState {
+  readonly invocation: TerminalContextMenuInvocation;
+  readonly selectedText: string;
+}
+
 function PtyXtermView({
   controller,
   runtimeOptions,
@@ -132,8 +138,8 @@ function PtyXtermView({
   rendererPreferenceRef.current = runtimeOptions.rendererPreference;
   const allowOsc52ClipboardRef = useRef(Boolean(runtimeOptions.allowOsc52Clipboard));
   allowOsc52ClipboardRef.current = Boolean(runtimeOptions.allowOsc52Clipboard);
-  const writeClipboardTextRef = useRef(runtimeOptions.writeClipboardText);
-  writeClipboardTextRef.current = runtimeOptions.writeClipboardText;
+  const writeOsc52ClipboardTextRef = useRef(runtimeOptions.writeOsc52ClipboardText);
+  writeOsc52ClipboardTextRef.current = runtimeOptions.writeOsc52ClipboardText;
   const openTerminalFileLocationRef = useRef(runtimeOptions.openTerminalFileLocation);
   openTerminalFileLocationRef.current = runtimeOptions.openTerminalFileLocation;
   const [findOpen, setFindOpen] = useState(false);
@@ -157,11 +163,16 @@ function PtyXtermView({
 
   // Right-click context menu (WT-parity M2) — position of the triggering
   // `contextmenu` event, or null when closed.
-  const [menuPos, setMenuPos] = useState<TerminalContextMenuInvocation | null>(null);
+  const [menuState, setMenuState] = useState<TerminalCopyMenuState | null>(null);
   const openKeyboardMenuRef = useRef<() => void>(() => {});
   openKeyboardMenuRef.current = () => {
     const host = containerRef.current;
-    if (host) setMenuPos(keyboardTerminalContextMenuInvocation(host));
+    if (host) {
+      setMenuState({
+        invocation: keyboardTerminalContextMenuInvocation(host),
+        selectedText: termRef.current?.getSelection() ?? '',
+      });
+    }
   };
 
   // The mount effect (re)creates these per mount, closing over that mount's
@@ -203,10 +214,10 @@ function PtyXtermView({
     const osc52Gate = new Osc52WriteGate();
     const sideEffectSuppression = new TerminalSideEffectSuppression();
     const osc52Disposable = term.parser.registerOscHandler(52, (payload) => {
-      if (!allowOsc52ClipboardRef.current || !writeClipboardTextRef.current) return true;
+      if (!allowOsc52ClipboardRef.current || !writeOsc52ClipboardTextRef.current) return true;
       const text = acceptOsc52ClipboardWrite(payload, osc52Gate, sideEffectSuppression.active);
       if (text === null) return true;
-      void Promise.resolve(writeClipboardTextRef.current(text)).catch(() => undefined);
+      void Promise.resolve(writeOsc52ClipboardTextRef.current(text)).catch(() => undefined);
       return true;
     });
     termRef.current = term;
@@ -284,7 +295,10 @@ function PtyXtermView({
         }
         if (!e.ctrlKey || !e.shiftKey) return true;
         if (e.code === 'KeyC') {
-          if (term.hasSelection()) void navigator.clipboard.writeText(term.getSelection());
+          if (term.hasSelection()) void copyTerminalText(terminalRuntimeOptionsRef.current, {
+            text: term.getSelection(),
+            ownerDocument: el.ownerDocument,
+          });
           e.preventDefault();
           return false;
         }
@@ -311,7 +325,10 @@ function PtyXtermView({
       if (action.kind === 'pass') return true;
       e.preventDefault();
       if (action.kind === 'copy') {
-        if (term.hasSelection()) void navigator.clipboard.writeText(term.getSelection());
+        if (term.hasSelection()) void copyTerminalText(terminalRuntimeOptionsRef.current, {
+          text: term.getSelection(),
+          ownerDocument: el.ownerDocument,
+        });
       } else if (action.kind === 'paste') {
         requestClipboardPaste(action.mode);
       } else if (action.kind === 'find') {
@@ -729,10 +746,15 @@ function PtyXtermView({
       shortcut: runtimeOptions.platform === 'desktop'
         ? 'Ctrl+C / Ctrl+Shift+C / Ctrl+Insert'
         : undefined,
-      disabled: !termRef.current?.hasSelection(),
+      disabled: !menuState?.selectedText,
       onClick: () => {
-        const term = termRef.current;
-        if (term) void navigator.clipboard.writeText(term.getSelection());
+        if (!menuState?.selectedText) return;
+        void copyTerminalText(runtimeOptions, {
+          text: menuState.selectedText,
+          ownerDocument: menuState.invocation.originPane?.ownerDocument
+            ?? containerRef.current?.ownerDocument
+            ?? document,
+        });
       },
     },
     {
@@ -786,7 +808,10 @@ function PtyXtermView({
         // is a fine-pointer affordance, so skip it here to avoid a double menu.
         if (e.currentTarget.ownerDocument.defaultView?.matchMedia?.('(pointer: coarse)').matches) return;
         e.preventDefault();
-        setMenuPos(captureTerminalContextMenuInvocation(e.currentTarget, e.clientX, e.clientY));
+        setMenuState({
+          invocation: captureTerminalContextMenuInvocation(e.currentTarget, e.clientX, e.clientY),
+          selectedText: termRef.current?.getSelection() ?? '',
+        });
       }}
     >
       <PtyControlChip
@@ -806,18 +831,18 @@ function PtyXtermView({
           onClose={closeFind}
         />
       )}
-      {menuPos && (
+      {menuState && (
         <TerminalContextMenu
-          x={menuPos.x}
-          y={menuPos.y}
+          x={menuState.invocation.x}
+          y={menuState.invocation.y}
           items={menuItems}
           ariaLabel={t('terminalContext.actionsLabel')}
           shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
-          ownerDocument={menuPos.originPane?.ownerDocument}
+          ownerDocument={menuState.invocation.originPane?.ownerDocument}
           onClose={(detail) => closeTerminalContextMenu(
-            menuPos,
+            menuState.invocation,
             detail,
-            () => setMenuPos(null),
+            () => setMenuState(null),
             () => termRef.current?.focus(),
           )}
         />
@@ -862,7 +887,7 @@ function PtyPlainView({
   const isCodex = runtimeOptions.platform === 'desktop'
     && classifyDirectAgentCommand(controller.command) === 'codex';
   // Right-click context menu (WT-parity M2) — same pattern as PtyXtermView's.
-  const [menuPos, setMenuPos] = useState<TerminalContextMenuInvocation | null>(null);
+  const [menuState, setMenuState] = useState<TerminalCopyMenuState | null>(null);
 
   // Mount: wire the plain sink (input focus now lives on cmd-input — M1 focus
   // retention routes plain-PTY keystrokes there, TerminalPane.tsx's
@@ -933,7 +958,10 @@ function PtyPlainView({
       }
       event.preventDefault();
       event.stopPropagation();
-      setMenuPos(keyboardTerminalContextMenuInvocation(host));
+      setMenuState({
+        invocation: keyboardTerminalContextMenuInvocation(host),
+        selectedText: selectedTextWithin(outputRef.current),
+      });
     };
     // Capture before TerminalPane's composer handler so Shift+F10 is never
     // translated to the PTY's ordinary F10 byte sequence.
@@ -978,10 +1006,15 @@ function PtyPlainView({
       shortcut: runtimeOptions.platform === 'desktop'
         ? 'Ctrl+C / Ctrl+Shift+C / Ctrl+Insert'
         : undefined,
-      disabled: selectedOutputText() === '',
+      disabled: !menuState?.selectedText,
       onClick: () => {
-        const text = selectedOutputText();
-        if (text) void navigator.clipboard.writeText(text);
+        if (!menuState?.selectedText) return;
+        void copyTerminalText(runtimeOptions, {
+          text: menuState.selectedText,
+          ownerDocument: menuState.invocation.originPane?.ownerDocument
+            ?? containerRef.current?.ownerDocument
+            ?? document,
+        });
       },
     },
     {
@@ -1011,7 +1044,10 @@ function PtyPlainView({
         // is a fine-pointer affordance, so skip it here to avoid a double menu.
         if (e.currentTarget.ownerDocument.defaultView?.matchMedia?.('(pointer: coarse)').matches) return;
         e.preventDefault();
-        setMenuPos(captureTerminalContextMenuInvocation(e.currentTarget, e.clientX, e.clientY));
+        setMenuState({
+          invocation: captureTerminalContextMenuInvocation(e.currentTarget, e.clientX, e.clientY),
+          selectedText: selectedOutputText(),
+        });
       }}
     >
       <PtyControlChip
@@ -1051,18 +1087,18 @@ function PtyPlainView({
           ▍
         </span>
       )}
-      {menuPos && (
+      {menuState && (
         <TerminalContextMenu
-          x={menuPos.x}
-          y={menuPos.y}
+          x={menuState.invocation.x}
+          y={menuState.invocation.y}
           items={menuItems}
           ariaLabel={t('terminalContext.actionsLabel')}
           shortcutLabel={(shortcut) => t('terminalContext.shortcut', { shortcut })}
-          ownerDocument={menuPos.originPane?.ownerDocument}
+          ownerDocument={menuState.invocation.originPane?.ownerDocument}
           onClose={(detail) => closeTerminalContextMenu(
-            menuPos,
+            menuState.invocation,
             detail,
-            () => setMenuPos(null),
+            () => setMenuState(null),
             () => {
               const pane = containerRef.current?.closest('.pane');
               pane?.querySelector<HTMLInputElement>('.cmd-input')?.focus();

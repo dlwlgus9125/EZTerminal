@@ -72,10 +72,12 @@ export interface AgentActivity {
   readonly interactiveReady: boolean;
   readonly stateSource: AgentStateSource;
   readonly projectId?: string;
+  readonly rootId?: string;
   readonly workspaceId?: string;
   readonly participant?: {
     readonly participantId: string;
     readonly projectId: string;
+    readonly rootId: string;
     readonly workspaceId: string;
     readonly worktreeId?: string;
     readonly alias: string;

@@ -213,7 +213,9 @@ const api: EzTerminalApi = {
   leaveAgentCollaboration: (activityId) => ipcRenderer.invoke('agents:leave-collaboration', activityId),
   saveAgentCoordinationProject: (input) => ipcRenderer.invoke('agents:save-coordination-project', input),
   markAgentSeen: (activityId, stateSeq) => ipcRenderer.invoke('agents:mark-seen', activityId, stateSeq),
-  sendAgentPrompt: (activityId, text) => ipcRenderer.invoke('agents:prompt', activityId, text),
+  sendAgentPrompt: (activityId, text, options) => (
+    ipcRenderer.invoke('agents:prompt', activityId, text, options)
+  ),
   requestManagedMerge: (activityId, targetBranch) => (
     ipcRenderer.invoke('agents:request-managed-merge', activityId, targetBranch)
   ),
@@ -490,6 +492,8 @@ const desktopApi: EzTerminalDesktopApi = {
   ): Promise<void> => ipcRenderer.invoke('settings:set-terminal-paste-preferences', preferences),
   readTerminalClipboard: (): Promise<import('../shared/terminal-clipboard').TerminalClipboardSnapshot> =>
     ipcRenderer.invoke('terminal:read-clipboard'),
+  writeTerminalClipboard: (text: string): Promise<boolean> =>
+    ipcRenderer.invoke('terminal:write-clipboard', text),
   writeOsc52Clipboard: (text: string): Promise<boolean> =>
     ipcRenderer.invoke('terminal:write-osc52-clipboard', text),
   listSshForwards: (): Promise<readonly import('../shared/ssh-forward').SshForwardInfo[]> =>
@@ -552,6 +556,36 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.invoke('project-workspace:approve', request),
   revokeProjectWorkspace: (request) =>
     ipcRenderer.invoke('project-workspace:revoke', request),
+  describeProjectMapCollection: (request) =>
+    ipcRenderer.invoke('project-map:describe', request),
+  setProjectMapBindings: (request) =>
+    ipcRenderer.invoke('project-map:set-bindings', request),
+  readProjectMap: (request) =>
+    ipcRenderer.invoke('project-map:read', request),
+  refreshProjectMap: (request) =>
+    ipcRenderer.invoke('project-map:refresh', request),
+  openProjectMap: (request) =>
+    ipcRenderer.invoke('project-map:open', request),
+  refreshProjectMapSnapshot: (request) =>
+    ipcRenderer.invoke('project-map:refresh-v2', request),
+  approveProjectMap: (request) =>
+    ipcRenderer.invoke('project-map:approve', request),
+  startProjectMapJob: (request) =>
+    ipcRenderer.invoke('project-map:start-job', request),
+  cancelProjectMapJob: (request) =>
+    ipcRenderer.invoke('project-map:cancel-job', request),
+  selectProjectMapExportDirectory: () =>
+    ipcRenderer.invoke('project-map:select-export-directory'),
+  exportProjectMap: (request) =>
+    ipcRenderer.invoke('project-map:export', request),
+  onProjectMapChanged: (listener): (() => void) => {
+    const handler = (
+      _event: unknown,
+      request: import('../shared/project-map').ProjectMapChangeNotice,
+    ): void => listener(request);
+    ipcRenderer.on('project-map:changed', handler);
+    return () => ipcRenderer.removeListener('project-map:changed', handler);
+  },
 
   getAvailableThemes: (): Promise<ThemeMod[]> => ipcRenderer.invoke('theme:get-available'),
   importTheme: (json: string): Promise<{ ok: boolean; error?: string }> =>

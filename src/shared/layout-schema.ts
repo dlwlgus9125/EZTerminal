@@ -63,6 +63,13 @@ const ProjectEditorParamsSchema = z.strictObject({
   relativePath: z.string().min(1).max(4096),
 });
 
+const ProjectMapParamsSchema = z.strictObject({
+  projectId: z.string().min(1).max(128),
+  ownerRootId: z.string().min(1).max(128),
+  ownerWorkspaceId: z.string().min(1).max(128),
+  mapId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
+});
+
 const ProjectSessionParamsSchema = z.strictObject({
   projectId: z.string().min(1).max(128),
   rootId: z.string().min(1).max(128).optional(),
@@ -102,6 +109,11 @@ const PanelSchema = z.discriminatedUnion('contentComponent', [
     contentComponent: z.literal('project-editor'),
     renderer: z.literal('onlyWhenVisible').optional(),
     params: ProjectEditorParamsSchema,
+  }),
+  PanelBaseSchema.extend({
+    contentComponent: z.literal('project-map'),
+    renderer: z.literal('onlyWhenVisible').optional(),
+    params: ProjectMapParamsSchema,
   }),
 ]);
 
@@ -473,7 +485,10 @@ export function sanitizeSerializedLayout(raw: unknown): unknown {
             transient.add(panelId);
           }
         }
-        record.renderer = record.contentComponent === 'project-editor' ? 'onlyWhenVisible' : 'always';
+        record.renderer = record.contentComponent === 'project-editor'
+          || record.contentComponent === 'project-map'
+          ? 'onlyWhenVisible'
+          : 'always';
       }
     }
     for (const panelId of transient) delete panels[panelId];

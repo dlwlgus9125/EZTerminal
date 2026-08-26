@@ -136,6 +136,12 @@ Active pane composer는 48px 높이, 최대 820px이고 작은 폭에서는 docu
 없이 줄어든다. terminal-specific keyboard, paste와 close safety를 app chrome shortcut이
 가로채지 않는다.
 
+선택된 terminal text의 context-menu Copy와 keyboard alias는 main, split, auxiliary
+window에서 같은 동작이어야 한다. 성공과 실패 toast는 action을 시작한 document에
+표시하고 선택 내용은 feedback에 노출하지 않는다. 선택 없는 `Ctrl+C`의 PTY/Codex 의미는
+복사 편의를 위해 바꾸지 않는다. Transport와 selection snapshot의 상세 계약은
+[`terminal-clipboard.md`](../design/terminal-clipboard.md)가 소유한다.
+
 ### 3.6 Settings information architecture
 
 Settings category는 다음 여섯 개다.
@@ -723,3 +729,78 @@ telemetry 또는 persisted theme role을 추가하지 않는다.
 test/media/generic entry와 High Contrast를 포함한다. resolver unit test, 두 Explorer의
 component test, Storybook axe/visual, lint, typecheck와 ordinary `pnpm e2e`가 검증 gate다.
 release performance benchmark는 이 변경의 검증 lane이 아니다. 미해결 제품 결정은 없다.
+
+## 15. Project Map surface
+
+Project Map은 Agent Project Explorer에서 명시적으로 여는 desktop-only Dockview 패널이다.
+기존 Project 문서·PTY·Agent 패널을 대체하지 않으며 collection 하나당 하나의 패널을
+재사용한다. 패널은 renderer에서 native React/SVG로 그린다. 외부 HTML, WebContentsView,
+repository가 제공한 CSS나 실행 가능한 내용을 렌더링하지 않는다. 저장·검증·provenance
+계약과 mode 의미는 [`project-map.md`](../design/project-map.md)가 소유한다.
+
+정보 순서는 map 선택과 검증/승인 상태, 검색·chapter, diagram, 선택한 항목의 근거,
+검증 check와 Agent authoring이다. Header에는 map selector, candidate가 있을 때의 **맵 승인**,
+승인 뒤에만 활성화되는 theme/export와 refresh를 둔다. Candidate/last-approved/background
+verification은 diagram을 가리지 않는 inline banner로 구분한다. Stable-ID semantic/evidence
+diff는 접힌 summary에서 수량을 먼저 보여 주고 필요할 때 펼친다.
+
+`binding-required`에서는 diagram 대신 logical root별 workspace 선택과 명시적 Save를 먼저
+보여 준다. `stale`은 현재 source가 review를 요구함을 알리고, invalid current source는 raw
+결과를 그리지 않는다. 기존 승인이 있으면 last-approved를 계속 탐색하게 하고 없으면 원인과
+recovery가 있는 invalid state를 보여 준다. Loading은 최초 검증과 approved cache 뒤 background
+검증을 구분하며 후자는 기존 map interaction을 막지 않는다.
+
+검토한 실행 방향은 (1) 기존 active Agent의 현재 turn 뒤에 요청을 queue하는 방식, (2) 요청마다
+전용 Agent session을 여는 방식, (3) 보이지 않는 background worker를 main에서 만드는 방식이다.
+**방향 2를 선택한다.** 방향 1은 기존 turn의 종료 시점에 진행이 묶이고 사용자가 실제 작업 surface를
+볼 수 없으며, 방향 3은 terminal-first 제품에서 실행·승인·오류를 관찰할 수 있는 표면을 숨긴다.
+전용 session은 Project Explorer의 검증된 `새 세션` 준비·실행 경로를 재사용하고 정확한
+Project/root/workspace를 고정한다.
+
+Manifest가 없는 empty state의 primary action은 **Project Map 만들기**다. 별도 modal이 아니라
+같은 panel에서 첫 map type, 설치된 Codex/Claude Agent와 editable creation brief를 순서대로 보여
+준다. active Agent 유무와 coordination join 여부는 생성 가능 조건이 아니다. 설치된 지원 Agent가
+없으면 Agent 설정으로 복구할 수 있음을 표시하고 실행을 비활성화한다. Create/Update를 누르면 main이
+선택한 Agent와 exact owning workspace를 다시 준비한 뒤 새 project terminal tab을 열고 focus한다.
+이 tab은 일반 `새 세션`과 같은 실제 Agent PTY이며 Project Map 전용 요청이라는 사실과 이후 출력·승인·
+오류를 사용자가 직접 볼 수 있어야 한다.
+
+새 PTY의 Agent activity가 식별된 뒤에만 그 activity를 소유자로 하는 tracked job을 저장한다. 같은
+runtime-only bootstrap이 반환된 job ID를 brief에 결합하고 PTY의 bracketed-paste ready 신호에 맞춰
+최초 prompt를 한 번 제출한다. 기존 Agent의 `whenReady` queue로 우회하지 않는다. Agent 준비,
+session 실행 또는 job 저장이 실패하면 완료나 전달 성공으로 표현하지 않고 새 session 안의 retry
+가능한 오류와 Project Map authoring surface의 실행 실패 상태를 유지한다. 요청 제출 성공은 map 생성
+완료가 아니라 전용 session과 tracked job이 시작됐다는 뜻이다.
+
+버튼을 누른 뒤 준비가 끝날 때까지는 **전용 Agent 세션 여는 중**을 transient state로 쓰고 중복 실행을
+막는다. tracked job이 반환되는 즉시 empty/creation/diagram 어느 화면에서도 사라지지 않는 compact
+status strip을 panel header 아래에 고정한다. Strip은 대상 Agent, exact job phase, 마지막 갱신 시각과
+cooperative Cancel을 보여 주며 **요청 저장 → 전용 세션 → Agent 작업**의 세 milestone을 구분한다.
+queued에서는 새 session에서 첫 progress report를 기다린다고 표시한다. 이전 버전에서 복원된 기존
+session job은 dispatch 방식을 추정하지 않고 **Agent 수락 또는 progress report 대기**라고 표현한다.
+알 수 없는 진행률을 percentage나 animation으로 추정하지 않는다.
+
+Agent가 Draft와 Production을 통과해 `awaiting-review`를 보고해도 완료로 표현하지 않는다. 사람의
+승인 뒤에만 completed가 되며 export는 exact approved fingerprint가 있을 때만 가능하다. 앱의
+Create/Update는 Agent orchestration control이지 자동 source write, 성공으로 가장한 generation,
+commit 또는 merge action이 아니다.
+
+넓은 panel에서는 rail, diagram, inspector가 나란히 있다. 좁아지면 선택된 inspector와
+authoring은 아래로 흐른다. 선택 항목이 없는 좁은 상태는 빈 inspector를 숨기고 verification
+통과 수와 Agent authoring 진입만 compact footer로 남겨 diagram 높이를 보존한다. Map은 panel
+resize나 Dockview 이동으로 remount하지 않으며 Fit은 camera만 바꾼다. Wheel zoom, zoom button,
+pointer pan, minimap, 검색, chapter, authored route, upstream/downstream는 동일한 stable semantic
+ID를 사용한다.
+
+SVG item과 relation은 keyboard focus와 accessible name을 가지며 동일 내용을 탐색하는 semantic
+outline을 제공한다. 상태·검증은 색만으로 전달하지 않는다. Evidence button은 opaque
+project/root/workspace identity와 상대 경로·line만 source navigation에 전달한다. Motion은 기능
+이해에 필요하지 않고 `prefers-reduced-motion`에서 즉시 상태 전환한다. App chrome은 현재 UI
+locale을 따르지만 map authored prose와 English identifier를 자동 번역하지 않는다.
+
+Production Storybook은 다섯 mode의 영문/한국어 variant와 empty/create, cold open, background
+verification, active job, candidate, approved, stale, last-approved 상태를 고정 입력으로 보여 준다.
+Reader visual matrix는 1200×800 dark English와 800×600 light Korean에서 다섯 mode를 모두
+검토하고 creation baseline도 같은 두 viewport를 유지한다. Story는 layout·responsive·keyboard·
+axe evidence이며 임의 repository map의 사실성을 자동 증명하지 않는다. Snapshot은 실제
+reference와 side-by-side로 확인한 뒤에만 accepted baseline을 갱신한다.

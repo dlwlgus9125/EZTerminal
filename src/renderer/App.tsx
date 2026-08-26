@@ -89,6 +89,10 @@ import {
 } from './effect-params';
 import { ProjectEditorPanel } from './ProjectEditorPanel';
 import {
+  ProjectMapPanel,
+  type ProjectMapEvidenceTarget,
+} from './ProjectMapPanel';
+import {
   projectEditorDocumentParametersEqual,
   projectEditorDocumentPathKey,
   projectEditorDocumentsEqual,
@@ -177,7 +181,7 @@ import {
   useProfileFeaturePreload,
   type PreloadableFeature,
 } from './feature-loader';
-import type { TerminalNoticeKind } from './terminal-paste';
+import type { TerminalNoticeKind } from './terminal-notice';
 import {
   ActivityRail,
   AppHeader,
@@ -301,6 +305,14 @@ interface ProjectReviewNavigationContextValue {
   ) => void;
 }
 const ProjectReviewNavigationContext = createContext<ProjectReviewNavigationContextValue | null>(null);
+interface ProjectMapNavigationContextValue {
+  readonly openEvidence: (target: ProjectMapEvidenceTarget) => void;
+  readonly launchAgent: (
+    bootstrap: AgentLaunchBootstrap,
+    projectSession: ProjectSessionPanelMetadata,
+  ) => boolean;
+}
+const ProjectMapNavigationContext = createContext<ProjectMapNavigationContextValue | null>(null);
 interface PresetMutationContextValue {
   readonly locked: boolean;
   readonly isLocked: () => boolean;
@@ -507,11 +519,23 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
   );
 }
 
+function ProjectMapDockPanel(props: IDockviewPanelProps): JSX.Element {
+  const navigation = useContext(ProjectMapNavigationContext);
+  return (
+    <ProjectMapPanel
+      {...props}
+      onOpenEvidence={navigation?.openEvidence}
+      onLaunchAgent={navigation?.launchAgent}
+    />
+  );
+}
+
 const components = {
   terminal: TerminalPanel,
   'openclaw-chat': OpenClawChatPanel,
   'agent-session': AgentSessionDockPanel,
   'project-editor': ProjectEditorPanel,
+  'project-map': ProjectMapDockPanel,
 };
 
 type OpenStateUpdate = boolean | ((open: boolean) => boolean);
@@ -933,6 +957,21 @@ export function App(): JSX.Element {
     notice: TerminalNoticeKind,
     ownerDocument: Document = getActiveAppDocument(),
   ): void => {
+    if (notice === 'clipboard-write-succeeded') {
+      pushToast({
+        title: t('terminalSafety.clipboardWriteSucceededTitle'),
+        variant: 'success',
+      }, ownerDocument);
+      return;
+    }
+    if (notice === 'clipboard-write-failed') {
+      pushToast({
+        title: t('terminalSafety.clipboardWriteFailedTitle'),
+        description: t('terminalSafety.clipboardWriteFailedDescription'),
+        variant: 'warning',
+      }, ownerDocument);
+      return;
+    }
     if (notice === 'codex-interrupt-help') {
       pushToast({
         title: t('terminalSafety.codexInterruptTitle'),
@@ -1769,6 +1808,7 @@ export function App(): JSX.Element {
   }, [sessionMirroringCoordinator]);
 
   const codePanelSequence = useRef(0);
+  const projectMapPanelSequence = useRef(0);
   const projectDocumentNavigationSequence = useRef(0);
   const projectDocumentNavigation = useRef(new Map<string, number>());
 
@@ -1911,6 +1951,41 @@ export function App(): JSX.Element {
     openProjectDocument({ projectId, rootId, workspaceId, relativePath }, location);
   }, [openProjectDocument]);
 
+  const openProjectMap = useCallback((target: {
+    readonly projectId: string;
+    readonly rootId: string;
+    readonly workspaceId: string;
+  }): void => {
+    if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
+    const api = apiRef.current;
+    if (!api) return;
+    const params = {
+      projectId: target.projectId,
+      ownerRootId: target.rootId,
+      ownerWorkspaceId: target.workspaceId,
+    };
+    let panel = api.panels.find((candidate) => {
+      if (candidate.api.component !== 'project-map') return false;
+      const current = candidate.api.getParameters<typeof params>();
+      return current?.projectId === params.projectId
+        && current.ownerRootId === params.ownerRootId
+        && current.ownerWorkspaceId === params.ownerWorkspaceId;
+    });
+    if (!panel) {
+      projectMapPanelSequence.current += 1;
+      panel = dockWindowCoordinatorRef.current?.addPanel({
+        id: `project-map-${Date.now().toString(36)}-${String(projectMapPanelSequence.current)}`,
+        component: 'project-map',
+        title: t('projectMap.title', 'Project Map'),
+        renderer: 'onlyWhenVisible',
+        params,
+      }, { kind: 'main-tab' });
+      panel?.api.updateParameters(params);
+    }
+    panel?.api.setActive();
+    if (panel) dockWindowCoordinatorRef.current?.focusPanelWindow(panel);
+  }, [sessionMirroringCoordinator, t]);
+
   const showProjectWorkspace = useCallback((projectId: string): void => {
     window.focus();
     setActiveProjectId(projectId);
@@ -1983,14 +2058,12 @@ export function App(): JSX.Element {
   const launchAgent = useCallback((
     bootstrap: AgentLaunchBootstrap,
     projectSession?: ProjectSessionPanelMetadata,
-  ): void => {
-    workbenchCoordinator.openTerminal({
-      ...(projectSession
-        ? { title: projectSession.projectName, projectSession }
-        : { cwd: bootstrap.cwd, title: bootstrap.name }),
-      agentBootstrap: bootstrap,
-    });
-  }, [workbenchCoordinator]);
+  ): boolean => Boolean(workbenchCoordinator.openTerminal({
+    ...(projectSession
+      ? { title: projectSession.projectName, projectSession }
+      : { cwd: bootstrap.cwd, title: bootstrap.name }),
+    agentBootstrap: bootstrap,
+  })), [workbenchCoordinator]);
 
   const openProjectTerminal = useCallback((projectSession: ProjectSessionPanelMetadata): void => {
     workbenchCoordinator.openTerminal({
@@ -2145,7 +2218,11 @@ export function App(): JSX.Element {
         void window.ezterminalDesktop?.openExternalHttpUrl(url);
       },
       allowOsc52Clipboard,
-      writeClipboardText: async (text) => {
+      writeUserClipboardText: async (text) => {
+        const desktop = window.ezterminalDesktop;
+        return desktop ? desktop.writeTerminalClipboard(text) : false;
+      },
+      writeOsc52ClipboardText: async (text) => {
         await window.ezterminalDesktop?.writeOsc52Clipboard(text);
       },
       readClipboard: async () => {
@@ -3481,6 +3558,18 @@ export function App(): JSX.Element {
     () => ({ openHistoryReview: openSessionHistoryReview }),
     [openSessionHistoryReview],
   );
+  const projectMapNavigationValue = useMemo<ProjectMapNavigationContextValue>(
+    () => ({
+      openEvidence: (target) => openProjectDocument({
+        projectId: target.projectId,
+        rootId: target.rootId,
+        workspaceId: target.workspaceId,
+        relativePath: target.relativePath,
+      }, { line: target.line }),
+      launchAgent: (bootstrap, projectSession) => launchAgent(bootstrap, projectSession),
+    }),
+    [launchAgent, openProjectDocument],
+  );
 
   const sidebarTitle: Record<SidebarDestination, string> = {
     explorer: t('rail.explorer'),
@@ -3530,6 +3619,7 @@ export function App(): JSX.Element {
           onOpenHistorySession: openAgentHistorySession,
           onOpenHistoryReview: (session, project) => void openHistoryReview(session, project),
           onOpenProjectDocument: openProjectDocument,
+          onOpenProjectMap: openProjectMap,
           activeProjectId,
           onActiveProjectIdChange: setActiveProjectId,
           projectWorkspaceState: activeProjectId ? projectWorkspaceStates[activeProjectId] : undefined,
@@ -3757,22 +3847,24 @@ export function App(): JSX.Element {
                   <WorkspaceTabActionContext.Provider value={workspaceTabActionValue}>
                     <QuickCommandShelfContext.Provider value={quickCommandShelfValue}>
                       <ProjectReviewNavigationContext.Provider value={projectReviewNavigationValue}>
-                        <TerminalRuntimeContext.Provider value={terminalRuntimeOptions}>
-                          <PresetMutationContext.Provider value={presetMutationValue}>
-                            <DesktopRuntimeLifecycleProvider>
-                              <DockviewReact
-                                className="dockview-theme-dark ez-dock"
-                                components={components}
-                                defaultTabComponent={AgentAwareTab}
-                                rightHeaderActionsComponent={PaneHeaderMeta}
-                                onReady={onReady}
-                                disableFloatingGroups
-                                dndStrategy="html5"
-                                popoutUrl={auxiliaryPopoutUrl()}
-                              />
-                            </DesktopRuntimeLifecycleProvider>
-                          </PresetMutationContext.Provider>
-                        </TerminalRuntimeContext.Provider>
+                        <ProjectMapNavigationContext.Provider value={projectMapNavigationValue}>
+                          <TerminalRuntimeContext.Provider value={terminalRuntimeOptions}>
+                            <PresetMutationContext.Provider value={presetMutationValue}>
+                              <DesktopRuntimeLifecycleProvider>
+                                <DockviewReact
+                                  className="dockview-theme-dark ez-dock"
+                                  components={components}
+                                  defaultTabComponent={AgentAwareTab}
+                                  rightHeaderActionsComponent={PaneHeaderMeta}
+                                  onReady={onReady}
+                                  disableFloatingGroups
+                                  dndStrategy="html5"
+                                  popoutUrl={auxiliaryPopoutUrl()}
+                                />
+                              </DesktopRuntimeLifecycleProvider>
+                            </PresetMutationContext.Provider>
+                          </TerminalRuntimeContext.Provider>
+                        </ProjectMapNavigationContext.Provider>
                       </ProjectReviewNavigationContext.Provider>
                     </QuickCommandShelfContext.Provider>
                   </WorkspaceTabActionContext.Provider>

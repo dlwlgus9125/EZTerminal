@@ -41,6 +41,7 @@ export interface AgentParticipant {
   readonly projectId: string;
   readonly activityId: string;
   readonly sessionId: string;
+  readonly rootId: string;
   readonly workspaceId: string;
   readonly worktreeId?: string;
   readonly alias: string;

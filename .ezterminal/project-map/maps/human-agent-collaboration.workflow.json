@@ -1,0 +1,697 @@
+{
+  "schemaVersion": 2,
+  "id": "human-agent-collaboration",
+  "type": "workflow",
+  "title": "Human-approved Project Map delivery",
+  "summary": "A user opens a dedicated owning-workspace Agent session for a scoped brief, follows its visible Draft and Production validation, reviews a candidate, approves its exact fingerprint, and exports verified artifacts.",
+  "contentLocale": "en",
+  "layoutIntent": {
+    "density": "balanced",
+    "emphasisIds": [
+      "start-creation",
+      "choose-type-agent",
+      "edit-brief",
+      "open-dedicated-session",
+      "queue-job",
+      "deliver-brief",
+      "surface-progress",
+      "read-contract",
+      "update-source",
+      "validate-draft",
+      "validate-production",
+      "show-candidate",
+      "review-candidate",
+      "approve-map",
+      "export-approved"
+    ]
+  },
+  "chapters": [
+    {
+      "id": "human-intent",
+      "title": "Human intent and delivery",
+      "summary": "The user chooses scope and a launcher, edits the request, explicitly opens a fresh Agent tab, and sees each known startup and work milestone.",
+      "focusIds": ["start-creation", "inspect-current", "choose-type-agent", "edit-brief", "open-dedicated-session", "queue-job", "deliver-brief", "surface-progress"]
+    },
+    {
+      "id": "agent-validation",
+      "title": "Agent authoring and validation",
+      "summary": "The selected Agent uses the local contract, updates repository-owned source, and reports Draft then Production validation.",
+      "focusIds": ["read-contract", "update-source", "validate-draft", "validate-production"]
+    },
+    {
+      "id": "approval-export",
+      "title": "Approval and export",
+      "summary": "EZTerminal presents semantic and evidence changes, locks approval to one Production fingerprint, and exports only that approved map.",
+      "focusIds": ["show-candidate", "review-candidate", "approve-map", "export-approved"]
+    }
+  ],
+  "lanes": [
+    { "id": "human", "label": "Human" },
+    { "id": "ezterminal", "label": "EZTerminal" },
+    { "id": "agent", "label": "Selected Agent" }
+  ],
+  "steps": [
+    {
+      "id": "start-creation",
+      "label": "Open guided Project Map creation",
+      "detail": "The empty state exposes one explicit action and states that EZTerminal will request, not author, repository files.",
+      "kind": "action",
+      "lane": "human",
+      "rank": 0,
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/ProjectMapPanel.tsx",
+        "startLine": 1339,
+        "endLine": 1368,
+        "lineDigest": "sha256:0e4c0661b7ec2fa089549ccae67cf2e10091d822255748b9ed598839a0654385",
+        "claim": "The empty state opens guided creation while explicitly retaining manual authoring and the no-app-write boundary."
+      }]
+    },
+    {
+      "id": "inspect-current",
+      "label": "Inspect approved map and evidence",
+      "detail": "An existing map remains searchable and evidence-backed before the user requests a selective update.",
+      "kind": "review",
+      "lane": "human",
+      "rank": 0,
+      "order": 1,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/ProjectMapPanel.tsx",
+        "startLine": 1452,
+        "endLine": 1503,
+        "lineDigest": "sha256:79a6b01fa77900509c5d0aee75178dd312d361c4e1aeeab24fc0f182f1369281",
+        "claim": "The inspector supports directed exploration, exact evidence navigation, and named verification checks."
+      }]
+    },
+    {
+      "id": "choose-type-agent",
+      "label": "Choose map type and new-session Agent",
+      "detail": "Creation is limited to native map types and configured Codex or Claude launchers; an already-active or coordination-joined Agent is not required.",
+      "kind": "decision",
+      "lane": "human",
+      "rank": 1,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ProjectMapPanel.tsx",
+          "startLine": 119,
+          "endLine": 149,
+          "lineDigest": "sha256:eed8703b2c3946e1c9eadf00f240784b5b92eecacb9bfdd55cd17b0643d49e23",
+          "claim": "The form loads configured launchers and admits only Codex or Claude for Project Map work."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ProjectMapPanel.tsx",
+          "startLine": 786,
+          "endLine": 853,
+          "lineDigest": "sha256:0dd1aafab89d893aee46c8c2f63ff9f94b44213ade8c0e2d08e506d8b4713854",
+          "claim": "The guided form exposes the closed map-type selector, new-session Agent selector, exact workspace hint, and editable brief before launch."
+        }
+      ]
+    },
+    {
+      "id": "edit-brief",
+      "label": "Review and edit the scoped brief",
+      "detail": "The visible brief defines schema v2, semantic layout intent, evidence, Draft and Production checks, and the no-auto-commit boundary.",
+      "kind": "action",
+      "lane": "human",
+      "rank": 2,
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/ProjectMapPanel.tsx",
+        "startLine": 91,
+        "endLine": 104,
+        "lineDigest": "sha256:506b237ac6b6ec89d45f429b238cc1dd072af0af2b516fa42ea2fce4cf2440e6",
+        "claim": "Creation instructions require repository-owned schema v2 source, evidence, semantic-only layout intent, both quality profiles, and human review."
+      }]
+    },
+    {
+      "id": "open-dedicated-session",
+      "label": "Open a dedicated Agent session",
+      "detail": "EZTerminal validates the exact project, root, workspace, and launcher, then opens and focuses a fresh terminal through the normal New session path.",
+      "kind": "action",
+      "lane": "ezterminal",
+      "rank": 3,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ProjectMapPanel.tsx",
+          "startLine": 884,
+          "endLine": 925,
+          "lineDigest": "sha256:172dd16ca7afa27958e8fb9e02142ba39ec8f7494d458a18cc12742750af60dc",
+          "claim": "The explicit action prepares the exact owning workspace and hands a runtime-only Project Map request to a new Agent terminal."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/App.tsx",
+          "startLine": 2058,
+          "endLine": 2066,
+          "lineDigest": "sha256:269830d8137e1d7644219237fbf0421fd14414ce31b5cc6a69f7671d4548a92b",
+          "claim": "The Project Map navigation callback routes the validated bootstrap and project session into a new workbench terminal and reports whether it opened."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/workbench-coordinator.ts",
+          "startLine": 198,
+          "endLine": 221,
+          "lineDigest": "sha256:dedb8d8eec4c440eb21ae705a1c642eaee927278ae3892254ee4967978ac37c6",
+          "claim": "The normal workbench path registers the bootstrap before adding a fresh terminal pane and clears it if pane creation fails."
+        }
+      ]
+    },
+    {
+      "id": "queue-job",
+      "label": "Bind a persisted job to the fresh activity",
+      "detail": "After observing the new terminal's exact session and provider, EZTerminal records collection, intent, activity, dedicated dispatch, Agent label, and queued phase.",
+      "kind": "action",
+      "lane": "ezterminal",
+      "rank": 4,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/project-map-agent-launch.ts",
+          "startLine": 43,
+          "endLine": 120,
+          "lineDigest": "sha256:2547a8111dc17f2e476504d9edf6f7667a77a3db3a004cec0100e33b79a83fac",
+          "claim": "Dispatch ignores older activities, waits for the exact fresh session and provider, then starts the job with that activity and dedicated-session metadata."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-map-job-store.ts",
+          "startLine": 116,
+          "endLine": 155,
+          "lineDigest": "sha256:9bd11e350ff380354d381315d68d4e173cbbdd924fbe431cee725131a91f0ea1",
+          "claim": "The main-owned store persists activity and dedicated-session identity, enforces one active job, ordered progress, and explicit cancellation."
+        }
+      ]
+    },
+    {
+      "id": "deliver-brief",
+      "label": "Submit the tracked brief in the new PTY",
+      "detail": "The new terminal embeds the persisted job ID and reporting contract, submits the brief once through its ready-aware PTY path, and cancels the new job if submission fails.",
+      "kind": "action",
+      "lane": "ezterminal",
+      "rank": 5,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/project-map-agent-launch.ts",
+          "startLine": 122,
+          "endLine": 142,
+          "lineDigest": "sha256:590f5a452f4528cebaedb2f4d1f0afd3ec231e1c5dfd8ecc6b626cec0043a4ba",
+          "claim": "The helper creates the final job-bound prompt, submits it once, and cooperatively cancels the just-created job if submission throws."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/TerminalPane.tsx",
+          "startLine": 730,
+          "endLine": 783,
+          "lineDigest": "sha256:89aec42c8a7ff0e40e79c04563114057bb3d698e0d81d19b9ff8e3aa5f214ab2",
+          "claim": "The fresh Agent terminal dispatches the Project Map request through its own BlockController and retains an in-tab retry path for startup or queue failure."
+        }
+      ]
+    },
+    {
+      "id": "surface-progress",
+      "label": "Show truthful request progress",
+      "detail": "Persistent saved, dedicated-session, and Agent-work milestones show only known progress, plus intent, phase, update time, job ID, and cooperative Cancel.",
+      "kind": "result",
+      "lane": "ezterminal",
+      "rank": 6,
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/ProjectMapPanel.tsx",
+        "startLine": 193,
+        "endLine": 306,
+        "lineDigest": "sha256:6afa8f5c1df288fd743774170012e107558115e9eee64ff6f50f21a0c5c1228a",
+        "claim": "The global request strip derives exact copy and three milestones from durable dispatch and phase data, exposes timestamps and cancellation, and preserves a compatibility fallback for older jobs."
+      }]
+    },
+    {
+      "id": "read-contract",
+      "label": "Load the native authoring contract",
+      "detail": "The Agent reads a closed local guide instead of importing external schemas, code, or generated output.",
+      "kind": "action",
+      "lane": "agent",
+      "rank": 7,
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/agent-control-server.ts",
+        "startLine": 280,
+        "endLine": 289,
+        "lineDigest": "sha256:de1afae1ba20c078081048a1263c6dade2890383f347ab30d9a62ce9dc4bbd1b",
+        "claim": "The capability-bound Agent endpoint returns the repository-native guide only for a closed Project Map type."
+      }]
+    },
+    {
+      "id": "update-source",
+      "label": "Update authoritative typed source",
+      "detail": "The Agent changes the manifest or impacted map spec and evidence in its dedicated owning-workspace session.",
+      "kind": "action",
+      "lane": "agent",
+      "rank": 8,
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/ProjectMapPanel.tsx",
+        "startLine": 963,
+        "endLine": 1088,
+        "lineDigest": "sha256:a8f93edbacdf14726a62f94895a05f807786b805242c2411dd900a95106f7fe0",
+        "claim": "Existing-map authoring names the owned source, preserves portability constraints, and opens a fresh exact-workspace Agent session only from an explicit handler."
+      }]
+    },
+    {
+      "id": "validate-draft",
+      "label": "Run Draft validation",
+      "detail": "Draft gives the Agent a named quality profile and structured diagnostics before the final gate.",
+      "kind": "result",
+      "lane": "agent",
+      "rank": 9,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "native/remote-host/src/agent_control.rs",
+          "startLine": 62,
+          "endLine": 147,
+          "lineDigest": "sha256:08938510b8a42b55b5b4623400bb029cc19bd98ad2309c8afc00426967ca5d09",
+          "claim": "The native shim validates guide, Draft or Production check, and job phase arguments without a system Node dependency."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/agent-control-server.ts",
+          "startLine": 291,
+          "endLine": 342,
+          "lineDigest": "sha256:f7b36a9092fcd4e3843e9de0395a0e7eb6182436add01fcd184036b7543e9521",
+          "claim": "The loopback check accepts an explicit Draft or Production profile and returns verification, provenance, or structured diagnostics."
+        }
+      ]
+    },
+    {
+      "id": "validate-production",
+      "label": "Pass Production validation",
+      "detail": "Production requires current inputs, exact evidence, deterministic layout, ten passing checks, clean diagnostics, and resolved provenance.",
+      "kind": "result",
+      "lane": "agent",
+      "rank": 10,
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/project-map-service.ts",
+        "startLine": 477,
+        "endLine": 681,
+        "lineDigest": "sha256:ffdde9ee79d1512ce959d9e13f9219fa30db950d23a1f23e092bacade94644cd",
+        "claim": "ProjectMapService validates source, evidence, authoritative inputs, deterministic scene, named checks, provenance, and caches only a clean Production document."
+      }]
+    },
+    {
+      "id": "show-candidate",
+      "label": "Keep approved map live and show candidate",
+      "detail": "An approved cache opens immediately while one coalesced Production verification prepares an exact candidate and semantic/evidence diff.",
+      "kind": "result",
+      "lane": "ezterminal",
+      "rank": 11,
+      "order": 0,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/project-map-service.ts",
+        "startLine": 338,
+        "endLine": 424,
+        "lineDigest": "sha256:5086397a8ec21d277e9ff4fae679c7dedb2a646ff79d0418b89800034135230a",
+        "claim": "Background verification is single-flight and builds a candidate, last-approved display source, approval state, and stable-ID semantic/evidence diff."
+      }]
+    },
+    {
+      "id": "review-candidate",
+      "label": "Review candidate changes and evidence",
+      "detail": "The human sees verification banners, semantic and evidence changes, source anchors, and all named checks while the persistent job strip remains above the surface.",
+      "kind": "review",
+      "lane": "human",
+      "rank": 12,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ProjectMapPanel.tsx",
+          "startLine": 1326,
+          "endLine": 1332,
+          "lineDigest": "sha256:f36ef1d6963117d499c7e62b1073f410d5a560c09a776f51cf6da2ac49906fbf",
+          "claim": "The request status is mounted above empty, creation, and diagram content whenever a persisted job exists."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ProjectMapPanel.tsx",
+          "startLine": 1424,
+          "endLine": 1441,
+          "lineDigest": "sha256:7f17da8e1055fbacdb394ed71b1fe5c299aa3bff7a0deabaded44d8755dc6b06",
+          "claim": "Candidate, last-approved, verification, and stale banners precede the semantic and evidence diff."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ProjectMapPanel.tsx",
+          "startLine": 1452,
+          "endLine": 1503,
+          "lineDigest": "sha256:79a6b01fa77900509c5d0aee75178dd312d361c4e1aeeab24fc0f182f1369281",
+          "claim": "Selected claims expose directed exploration, exact evidence, and every named verification check in the native inspector."
+        }
+      ]
+    },
+    {
+      "id": "approve-map",
+      "label": "Approve the exact Production fingerprint",
+      "detail": "Approval is enabled only for a valid Production candidate with every check passed and no diagnostics.",
+      "kind": "decision",
+      "lane": "human",
+      "rank": 13,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ProjectMapPanel.tsx",
+          "startLine": 1215,
+          "endLine": 1238,
+          "lineDigest": "sha256:10d873f8bc2209c9bdfe17a6f93866b232c59e4df2a1ca208e29f0fa6aa6e3af",
+          "claim": "The renderer derives candidate readiness from Production quality, valid state, zero diagnostics, and all passing checks before sending its fingerprint."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-map-service.ts",
+          "startLine": 250,
+          "endLine": 285,
+          "lineDigest": "sha256:77628e9d8620c6cb11f2315deedeeca65085597f2d0710b5ef8242ddb296118d",
+          "claim": "Main revalidates the exact fingerprint and Production gate, saves approval, and completes an awaiting-review job only after approval."
+        }
+      ]
+    },
+    {
+      "id": "export-approved",
+      "label": "Export canonical verified artifacts",
+      "detail": "The app exports SVG, 1600 by 900 PNG, and a verification receipt from the approved canonical scene into a new fingerprinted directory.",
+      "kind": "result",
+      "lane": "ezterminal",
+      "rank": 14,
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/renderer/ProjectMapPanel.tsx",
+          "startLine": 1241,
+          "endLine": 1262,
+          "lineDigest": "sha256:e924850495b217e0ecd30c4613b5b712a02a934d297d36fb9663a51918ec8b12",
+          "claim": "The UI selects a destination and exports only the currently approved map ID and fingerprint with an explicit theme."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/project-map-exporter.ts",
+          "startLine": 51,
+          "endLine": 121,
+          "lineDigest": "sha256:44a7444bb8b32472b3ffba20d4486bdf504076c255df9bc92b198169568515fe",
+          "claim": "Export rejects authoritative directories, stages canonical SVG, PNG, and receipt without overwrite, then atomically renames the fingerprinted folder."
+        }
+      ]
+    }
+  ],
+  "transitions": [
+    {
+      "id": "creation-to-choice",
+      "from": "start-creation",
+      "to": "choose-type-agent",
+      "label": "open form",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/ProjectMapPanel.tsx",
+        "startLine": 1339,
+        "endLine": 1368,
+        "lineDigest": "sha256:0e4c0661b7ec2fa089549ccae67cf2e10091d822255748b9ed598839a0654385",
+        "claim": "The primary empty-state action changes only the local guided-creation state."
+      }]
+    },
+    {
+      "id": "inspect-to-choice",
+      "from": "inspect-current",
+      "to": "choose-type-agent",
+      "label": "request update",
+      "kind": "secondary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/ProjectMapPanel.tsx",
+        "startLine": 941,
+        "endLine": 1088,
+        "lineDigest": "sha256:2f29d203094a6f21467be92897e55474a13d41dcc4f62867b94825b541642132",
+        "claim": "Existing maps expose a separate explicit update brief that opens the same dedicated owning-workspace Agent path."
+      }]
+    },
+    {
+      "id": "choice-to-edit",
+      "from": "choose-type-agent",
+      "to": "edit-brief",
+      "label": "scope request",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/ProjectMapPanel.tsx",
+        "startLine": 786,
+        "endLine": 853,
+        "lineDigest": "sha256:0dd1aafab89d893aee46c8c2f63ff9f94b44213ade8c0e2d08e506d8b4713854",
+        "claim": "Type and Agent selection precede the editable creation brief in one visible form."
+      }]
+    },
+    {
+      "id": "edit-to-session",
+      "from": "edit-brief",
+      "to": "open-dedicated-session",
+      "label": "explicit launch",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/ProjectMapPanel.tsx",
+        "startLine": 880,
+        "endLine": 925,
+        "lineDigest": "sha256:05fd9a11793972d1c6bd6e9809dd3536ec0c754344602aa9c2ddee5e9f935d40",
+        "claim": "The launch control requires a supported Agent and safe non-empty brief, validates the exact target, and opens a fresh-session bootstrap only in its click handler."
+      }]
+    },
+    {
+      "id": "session-to-job",
+      "from": "open-dedicated-session",
+      "to": "queue-job",
+      "label": "observe exact activity",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/project-map-agent-launch.ts",
+        "startLine": 43,
+        "endLine": 120,
+        "lineDigest": "sha256:2547a8111dc17f2e476504d9edf6f7667a77a3db3a004cec0100e33b79a83fac",
+        "claim": "The request waits for a live activity matching only the new terminal session and selected provider before persisting the job."
+      }]
+    },
+    {
+      "id": "job-to-delivery",
+      "from": "queue-job",
+      "to": "deliver-brief",
+      "label": "attach job ID",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/shared/project-map.ts",
+        "startLine": 898,
+        "endLine": 906,
+        "lineDigest": "sha256:be968a8e1a8ff8d7e945f472976b26f99907f72d21b1c23b6c84372c337afaae",
+        "claim": "The delivered prompt carries the job ID and the ordered analyzing through awaiting-review reporting contract."
+      }]
+    },
+    {
+      "id": "delivery-failed",
+      "from": "deliver-brief",
+      "to": "queue-job",
+      "label": "cancel safely",
+      "kind": "error",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/project-map-agent-launch.ts",
+        "startLine": 122,
+        "endLine": 142,
+        "lineDigest": "sha256:590f5a452f4528cebaedb2f4d1f0afd3ec231e1c5dfd8ecc6b626cec0043a4ba",
+        "claim": "A prompt submission failure immediately cancels the just-created queued job rather than leaving a false waiting state."
+      }]
+    },
+    {
+      "id": "delivery-to-status",
+      "from": "deliver-brief",
+      "to": "surface-progress",
+      "label": "show queued state",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/project-map-service.ts",
+        "startLine": 298,
+        "endLine": 336,
+        "lineDigest": "sha256:3c0c3b6fc9430f71d8ff3b21061caebbb2bbd173f0a1051858dd854e4efe6ce4",
+        "claim": "Starting, canceling, and Agent-reported job changes update the cached snapshot and emit a collection-scoped change for the persistent status strip."
+      }]
+    },
+    {
+      "id": "status-to-contract",
+      "from": "surface-progress",
+      "to": "read-contract",
+      "label": "Agent accepts",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/agent-control-server.ts",
+        "startLine": 280,
+        "endLine": 289,
+        "lineDigest": "sha256:de1afae1ba20c078081048a1263c6dade2890383f347ab30d9a62ce9dc4bbd1b",
+        "claim": "The Agent can retrieve the native map-type contract through its scoped loopback capability."
+      }]
+    },
+    {
+      "id": "contract-to-source",
+      "from": "read-contract",
+      "to": "update-source",
+      "label": "author claims",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/ProjectMapPanel.tsx",
+        "startLine": 91,
+        "endLine": 104,
+        "lineDigest": "sha256:506b237ac6b6ec89d45f429b238cc1dd072af0af2b516fa42ea2fce4cf2440e6",
+        "claim": "The brief directs the Agent to inspect authoritative implementation and add exact evidence before writing claims."
+      }]
+    },
+    {
+      "id": "source-to-draft",
+      "from": "update-source",
+      "to": "validate-draft",
+      "label": "fast feedback",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "native/remote-host/src/agent_control.rs",
+        "startLine": 62,
+        "endLine": 147,
+        "lineDigest": "sha256:08938510b8a42b55b5b4623400bb029cc19bd98ad2309c8afc00426967ca5d09",
+        "claim": "The native CLI accepts a map ID with an explicit Draft quality profile and rejects invalid arguments locally."
+      }]
+    },
+    {
+      "id": "draft-to-production",
+      "from": "validate-draft",
+      "to": "validate-production",
+      "label": "final gate",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/agent-control-server.ts",
+        "startLine": 291,
+        "endLine": 342,
+        "lineDigest": "sha256:f7b36a9092fcd4e3843e9de0395a0e7eb6182436add01fcd184036b7543e9521",
+        "claim": "Draft and Production are closed request values passed to the same main-owned validation service."
+      }]
+    },
+    {
+      "id": "production-rework",
+      "from": "validate-production",
+      "to": "update-source",
+      "label": "fix diagnostics",
+      "kind": "error",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/project-map-service.ts",
+        "startLine": 477,
+        "endLine": 681,
+        "lineDigest": "sha256:ffdde9ee79d1512ce959d9e13f9219fa30db950d23a1f23e092bacade94644cd",
+        "claim": "Invalid evidence, stale inputs, layout errors, or provenance errors return diagnostics and prevent a clean Production cache entry."
+      }]
+    },
+    {
+      "id": "production-to-candidate",
+      "from": "validate-production",
+      "to": "show-candidate",
+      "label": "await review",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/agent-control-server.ts",
+        "startLine": 345,
+        "endLine": 370,
+        "lineDigest": "sha256:e648a232119be5278658426b17aaefa9efe346b5f061223467f856286fad4c9f",
+        "claim": "The scoped Agent reports validating-production then awaiting-review against the persisted job."
+      }]
+    },
+    {
+      "id": "candidate-to-review",
+      "from": "show-candidate",
+      "to": "review-candidate",
+      "label": "compare changes",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/ProjectMapPanel.tsx",
+        "startLine": 1424,
+        "endLine": 1441,
+        "lineDigest": "sha256:7f17da8e1055fbacdb394ed71b1fe5c299aa3bff7a0deabaded44d8755dc6b06",
+        "claim": "Candidate state and semantic or evidence change counts are presented before approval."
+      }]
+    },
+    {
+      "id": "review-to-approval",
+      "from": "review-candidate",
+      "to": "approve-map",
+      "label": "human approves",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/renderer/ProjectMapPanel.tsx",
+        "startLine": 1294,
+        "endLine": 1317,
+        "lineDigest": "sha256:026b60d97927c03fbd4973c6ccd61c91279f9f6a5c86de805c1bb2cb11b79b3e",
+        "claim": "Approval appears for an unapproved candidate, while export controls stay disabled until an approval fingerprint exists."
+      }]
+    },
+    {
+      "id": "approval-to-export",
+      "from": "approve-map",
+      "to": "export-approved",
+      "label": "unlock export",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/project-map-exporter.ts",
+        "startLine": 26,
+        "endLine": 48,
+        "lineDigest": "sha256:6cb511eb4a93a26fe488905e6ff1f1d560f6b927e1df50daad15b6141b0e624d",
+        "claim": "PNG rendering uses a hidden sandboxed window with JavaScript and Node disabled at the fixed export viewport."
+      }]
+    }
+  ],
+  "mainPath": [
+    "start-creation",
+    "choose-type-agent",
+    "edit-brief",
+    "open-dedicated-session",
+    "queue-job",
+    "deliver-brief",
+    "surface-progress",
+    "read-contract",
+    "update-source",
+    "validate-draft",
+    "validate-production",
+    "show-candidate",
+    "review-candidate",
+    "approve-map",
+    "export-approved"
+  ]
+}
