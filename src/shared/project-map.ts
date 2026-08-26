@@ -942,7 +942,9 @@ export interface ProjectMapExportRequest extends ProjectMapReadRequest {
 export interface ProjectMapExportResult {
   readonly ok: boolean;
   readonly error?: string;
+  /** Canonical real path of the newly created export directory. */
   readonly directory?: string;
+  /** Canonical real paths of the exported artifacts. */
   readonly files?: readonly string[];
 }
 

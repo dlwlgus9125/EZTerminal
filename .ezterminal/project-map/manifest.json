@@ -100,7 +100,7 @@
         { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" }
       ],
       "review": {
-        "inputDigest": "sha256:67f7fb8f911b290c7491b232e389c73e27550b86ccbf73129162661dd46f8691",
+        "inputDigest": "sha256:deb9fa4dde5ec323e3a350f61b7041985c09ff0aab960b0a5345b8d21a2f92c9",
         "decision": "map-updated"
       }
     }

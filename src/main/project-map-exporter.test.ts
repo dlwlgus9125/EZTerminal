@@ -164,7 +164,11 @@ describe('exportProjectMap', () => {
     const result = await exportProjectMap(request(exportParent), map, 'dark');
 
     expect(result.ok).toBe(true);
-    expect(result.directory).toBe(path.join(exportParent, `runtime-${map.verification.fingerprint.slice(7, 19)}`));
+    const canonicalExportParent = await fs.realpath(exportParent);
+    expect(result.directory).toBe(path.join(
+      canonicalExportParent,
+      `runtime-${map.verification.fingerprint.slice(7, 19)}`,
+    ));
     const svgPath = path.join(result.directory!, 'runtime.svg');
     const pngPath = path.join(result.directory!, 'runtime.png');
     const receiptPath = path.join(result.directory!, 'runtime.verification.json');
