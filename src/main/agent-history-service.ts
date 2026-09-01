@@ -21,6 +21,7 @@ import {
   type AgentTranscriptPage,
 } from '../shared/agent-history';
 import type { GenericAgentProfile } from '../shared/agent';
+import type { AgentPersonaLaunch } from '../shared/agent-team';
 import type { ProjectSessionTarget, ProjectWorkspaceError } from '../shared/project-workspace';
 import type {
   AgentHistoryProviderAdapter,
@@ -421,12 +422,16 @@ export class AgentHistoryService {
   async prepareLaunch(
     target: AgentLaunchTarget,
     launcherId: string,
+    launch?: AgentPersonaLaunch,
   ): Promise<AgentLaunchPreparation> {
     if (!launcherId || typeof target !== 'object' || target === null) {
       return { ok: false, reason: 'invalid' };
     }
     const launcher = this.resolveLauncher(launcherId);
     if (!launcher) return { ok: false, reason: 'unavailable' };
+    if (launch && (launcher.provider === 'generic' || launch.provider !== launcher.provider)) {
+      return { ok: false, reason: 'invalid' };
+    }
 
     let canonicalTarget: AgentLaunchTarget;
     let configuredRoots: readonly string[];
@@ -491,7 +496,7 @@ export class AgentHistoryService {
       cwd: roots[0]!,
       roots,
       ignoredAdditionalRootCount: configuredRoots.length - roots.length,
-      revision: this.launchRevision(canonicalTarget, launcherId, roots, launcher.executable),
+      revision: this.launchRevision(canonicalTarget, launcherId, roots, launcher.executable, launch),
     };
   }
 
@@ -518,6 +523,7 @@ export class AgentHistoryService {
     target: AgentLaunchTarget,
     launcherId: string,
     revision: string,
+    launch?: AgentPersonaLaunch,
   ): Promise<
     | {
       readonly ok: true;
@@ -527,7 +533,7 @@ export class AgentHistoryService {
     }
     | { readonly ok: false; readonly reason: 'not-found' | 'stale' | 'missing-root' | 'unavailable' }
   > {
-    const preparation = await this.prepareLaunch(target, launcherId);
+    const preparation = await this.prepareLaunch(target, launcherId, launch);
     if (!preparation.ok) {
       if (preparation.reason === 'invalid') return { ok: false, reason: 'not-found' };
       return { ok: false, reason: preparation.reason };
@@ -544,7 +550,7 @@ export class AgentHistoryService {
         displayCommandText: launcher.name,
       };
     }
-    const command = this.adapters.get(launcher.provider)?.buildNewCommand?.(preparation.roots);
+    const command = this.adapters.get(launcher.provider)?.buildNewCommand?.(preparation.roots, launch);
     return command
       ? { ok: true, roots: preparation.roots, ...command }
       : { ok: false, reason: 'unavailable' };
@@ -664,6 +670,7 @@ export class AgentHistoryService {
     launcherId: string,
     roots: readonly string[],
     executable: string,
+    launch?: AgentPersonaLaunch,
   ): string {
     return createHash('sha256')
       .update(JSON.stringify(target))
@@ -673,6 +680,8 @@ export class AgentHistoryService {
       .update(JSON.stringify(roots))
       .update('\0')
       .update(executable)
+      .update('\0')
+      .update(JSON.stringify(launch ?? null))
       .digest('hex')
       .slice(0, 24);
   }

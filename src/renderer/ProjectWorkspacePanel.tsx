@@ -11,6 +11,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Users,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
@@ -51,6 +52,7 @@ interface ProjectWorkspacePanelProps {
     readonly workspaceId: string;
   }) => void;
   readonly onManage: () => void;
+  readonly onOpenTeam?: () => void;
   /** Optional controlled state seam for App-owned sidebar restoration. */
   readonly explorerState?: ProjectExplorerState;
   readonly onExplorerStateChange?: (state: ProjectExplorerState) => void;
@@ -610,6 +612,7 @@ export function ProjectWorkspacePanel({
   onNewSession,
   onOpenProjectMap,
   onManage,
+  onOpenTeam,
   explorerState,
   onExplorerStateChange,
 }: ProjectWorkspacePanelProps): JSX.Element {
@@ -748,6 +751,13 @@ export function ProjectWorkspacePanel({
             });
           }}
           data-testid="project-workspace-open-map"
+        />
+        <IconButton
+          icon={Users}
+          aria-label={t('agentTeams.runTeam')}
+          disabled={!onOpenTeam}
+          onClick={onOpenTeam}
+          data-testid="project-workspace-open-team"
         />
         <IconButton
           icon={Settings}

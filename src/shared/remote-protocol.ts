@@ -67,9 +67,10 @@ import type { WorktreeRequest, WorktreeResult } from './worktree';
 import type { GitDiffResult, GitDirectoryStatus } from './git-status';
 import type {
   OpenClawAgentSession,
+  OpenClawControlSnapshot,
   OpenClawCoreConfig,
   OpenClawLifecycleAction,
-  OpenClawLifecycleResult,
+  OpenClawLifecycleReceipt,
   OpenClawLogLine,
   OpenClawSetConfigResult,
   OpenClawStatus,
@@ -92,7 +93,7 @@ export type RemoteCapability =
   | typeof REMOTE_CAPABILITY_DESKTOP_CONTROL;
 
 /**
- * Version markers document when capabilities entered the protocol. v7 is the
+ * Version markers document when capabilities entered the protocol. v9 is the
  * only accepted wire version: session-surface authority is a security and
  * lifecycle invariant, so v1-v6 fail closed instead of negotiating down.
  *
@@ -100,7 +101,9 @@ export type RemoteCapability =
  * live Agent approval decisions, Git queries and the latency probe · v4 adds
  * on-demand Agent project/history reads and explicit history resume; v5 adds
  * project management/search and project-rooted fresh Agent launches; v6 adds
- * target-neutral project/direct-directory Agent launches.
+ * target-neutral project/direct-directory Agent launches; v7 adds session-
+ * surface authority; v8 adds Agent coordination; v9 adds durable OpenClaw
+ * control snapshots and lifecycle receipts.
  */
 export const REMOTE_PROTOCOL_VERSION_DESKTOP_CONTROL = 2 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_LIVE = 3 as const;
@@ -108,10 +111,11 @@ export const REMOTE_PROTOCOL_VERSION_AGENT_HISTORY = 4 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_PROJECTS = 5 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_LAUNCH_TARGETS = 6 as const;
 export const REMOTE_PROTOCOL_VERSION_AGENT_COORDINATION = 8 as const;
-export const REMOTE_PROTOCOL_VERSION = 8 as const;
-export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+export const REMOTE_PROTOCOL_VERSION_OPENCLAW_CONTROL = 9 as const;
+export const REMOTE_PROTOCOL_VERSION = 9 as const;
+export type RemoteProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
-export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [8];
+export const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: readonly RemoteProtocolVersion[] = [9];
 
 export function isRemoteProtocolVersion(value: unknown): value is RemoteProtocolVersion {
   return SUPPORTED_REMOTE_PROTOCOL_VERSIONS.includes(value as RemoteProtocolVersion);
@@ -1248,6 +1252,11 @@ export interface OpenClawStatusMessage {
   readonly status: OpenClawStatus;
 }
 
+export interface OpenClawControlMessage {
+  readonly kind: 'openclaw-control';
+  readonly control: OpenClawControlSnapshot;
+}
+
 /** Effective OpenClaw visibility on the DESKTOP side (openclaw-stabilization
  * M3) — sent once right after auth-ok, and again to every authed connection
  * whenever the desktop's tri-state `openclawMode` changes, so a phone can
@@ -1263,7 +1272,7 @@ export interface OpenClawAvailabilityMessage {
 export interface OpenClawLifecycleResultMessage {
   readonly kind: 'openclaw-lifecycle-result';
   readonly requestId: string;
-  readonly result: OpenClawLifecycleResult;
+  readonly result: OpenClawLifecycleReceipt;
 }
 
 export interface OpenClawLogLinesMessage {
@@ -1385,6 +1394,7 @@ export type ServerToClientMessage =
   | FileUploadAckMessage
   | FileUploadDoneMessage
   | OpenClawStatusMessage
+  | OpenClawControlMessage
   | OpenClawAvailabilityMessage
   | OpenClawLifecycleResultMessage
   | OpenClawLogLinesMessage

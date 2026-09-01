@@ -45,6 +45,10 @@ import {
   EMPTY_AGENT_COORDINATION_SNAPSHOT,
   type AgentCoordinationSnapshot,
 } from '../shared/agent-coordination';
+import {
+  EMPTY_AGENT_TEAM_DESKTOP_SNAPSHOT,
+  type AgentTeamDesktopSnapshot,
+} from '../shared/agent-team';
 import type { FilePreviewResult } from '../shared/file-preview';
 import type { SessionInfo } from '../shared/ipc';
 import type { AuxiliaryCloseRequest } from '../shared/desktop-window';
@@ -1337,6 +1341,9 @@ export function App(): JSX.Element {
   const [agentCoordinationSnapshot, setAgentCoordinationSnapshot] = useState<AgentCoordinationSnapshot>(
     EMPTY_AGENT_COORDINATION_SNAPSHOT,
   );
+  const [agentTeamSnapshot, setAgentTeamSnapshot] = useState<AgentTeamDesktopSnapshot>(
+    EMPTY_AGENT_TEAM_DESKTOP_SNAPSHOT,
+  );
   const [unreadAgentIds, setUnreadAgentIds] = useState<ReadonlySet<string>>(() => new Set());
   const latestAgentRevisionRef = useRef(-1);
   const previousAgentStatusesRef = useRef<Map<string, AgentStatus>>(new Map());
@@ -1387,6 +1394,24 @@ export function App(): JSX.Element {
     return () => {
       alive = false;
       unsubscribe?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const desktop = window.ezterminalDesktop;
+    if (!desktop) return undefined;
+    let alive = true;
+    let latestRevision = -1;
+    const applySnapshot = (next: AgentTeamDesktopSnapshot): void => {
+      if (!alive || next.revision <= latestRevision) return;
+      latestRevision = next.revision;
+      setAgentTeamSnapshot(next);
+    };
+    const unsubscribe = desktop.onAgentTeamSnapshot(applySnapshot);
+    void desktop.getAgentTeamSnapshot().then(applySnapshot).catch(() => undefined);
+    return () => {
+      alive = false;
+      unsubscribe();
     };
   }, []);
 
@@ -3606,6 +3631,7 @@ export function App(): JSX.Element {
         componentProps={{
           snapshot: agentSnapshot,
           coordinationSnapshot: agentCoordinationSnapshot,
+          teamSnapshot: agentTeamSnapshot,
           onFocusSession: focusAgentSession,
           onSendFollowup: (activityId, text) => window.ezterminal.sendAgentPrompt(activityId, text),
           onDecideApproval: (activityId, approvalId, decision) =>

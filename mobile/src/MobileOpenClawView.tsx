@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   OPENCLAW_CONFIG_UNSET,
+  type OpenClawControlSnapshot,
   type OpenClawCoreConfig,
   type OpenClawLifecycleAction,
   type OpenClawLogLine,
@@ -87,7 +88,8 @@ export function MobileOpenClawView({
   );
   const [tab, setTab] = useState<OpenClawTab>('status');
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
-  const [busyAction, setBusyAction] = useState<OpenClawLifecycleAction | null>(null);
+  const [control, setControl] = useState<OpenClawControlSnapshot | null>(null);
+  const [receiptAction, setReceiptAction] = useState<OpenClawLifecycleAction | null>(null);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
 
   // Background pause (openclaw-stabilization M6) — released while the app is
@@ -103,37 +105,52 @@ export function MobileOpenClawView({
   useEffect(() => {
     if (!pageVisible) return;
     const unsubscribe = transport.onOpenClawStatus((s) => setStatus(s));
+    const unsubscribeControl = transport.onOpenClawControl((snapshot) => {
+      setControl(snapshot);
+      setStatus(snapshot.status);
+    });
     transport.setOpenClawStatusSubscribed(true);
     return () => {
       unsubscribe();
+      unsubscribeControl();
       transport.setOpenClawStatusSubscribed(false);
     };
   }, [pageVisible, openclawAvailable, transport]);
 
   const runLifecycle = useCallback(
     (action: OpenClawLifecycleAction) => {
-      setBusyAction(action);
+      setReceiptAction(action);
       setLifecycleError(null);
       void transport.runOpenClawLifecycle(action).then((result) => {
-        setBusyAction(null);
-        if (result.ok) {
+        if (result.accepted) {
           // A successful restart applies whatever config change was pending
           // (openclaw-stabilization M6's one-tap "지금 재시작") — clear the
           // banner regardless of which button triggered the restart.
           if (action === 'restart') setRestartBanner(false);
         } else {
-          setLifecycleError(result.stderr || t('mobile.openClaw.actionFailed'));
+          setLifecycleError(
+            result.issue
+              ? `${result.issue.detail} ${result.issue.remediation}`
+              : t('mobile.openClaw.actionFailed'),
+          );
         }
-      });
+      }).catch(() => {
+        setLifecycleError(t('mobile.openClaw.actionFailed'));
+      }).finally(() => setReceiptAction(null));
     },
     [t, transport],
   );
 
-  const busy = busyAction !== null;
   const state = status?.state;
-  const canStart = !busy && state !== 'running' && state !== 'not-installed' && state !== 'starting';
-  const canStop = !busy && state === 'running';
-  const canRestart = !busy && state === 'running';
+  const activeOperation = control?.operation?.phase !== 'blocked' ? control?.operation : null;
+  const canRun = (action: OpenClawLifecycleAction): boolean => (
+    state !== 'not-installed'
+    && receiptAction !== action
+    && activeOperation?.action !== action
+  );
+  const canStart = canRun('start');
+  const canStop = canRun('stop');
+  const canRestart = canRun('restart');
 
   // ── Logs tab (M4): subscribes only while this tab is active. ─────────────
   const [logs, setLogs] = useState<OpenClawLogLine[]>([]);
@@ -390,6 +407,40 @@ export function MobileOpenClawView({
                   {t('mobile.openClaw.port', { port: status.port })}
                 </div>
 
+                {control && (
+                  <div
+                    className="openclaw-control-card"
+                    data-testid="mobile-openclaw-control"
+                    data-phase={control.operation?.phase ?? 'idle'}
+                    aria-live="polite"
+                  >
+                    <div className="openclaw-control-grid">
+                      <span>{t('openClaw.desiredState')}</span>
+                      <strong>{t(`openClaw.desired.${control.desiredState}`)}</strong>
+                      <span>{t('openClaw.supervisor')}</span>
+                      <strong>{t(`openClaw.supervisorState.${control.supervisorState}`)}</strong>
+                    </div>
+                    {control.operation && (
+                      <div className="openclaw-control-progress" role="status">
+                        <span>{t(`openClaw.phase.${control.operation.phase}`)}</span>
+                        {control.operation.attempt > 0 && (
+                          <span>{t('openClaw.attempt', {
+                            attempt: control.operation.attempt,
+                            max: control.operation.maxAttempts,
+                          })}</span>
+                        )}
+                      </div>
+                    )}
+                    {control.issue && (
+                      <div className="openclaw-control-issue" role="alert">
+                        <strong>{control.issue.detail}</strong>
+                        <span>{control.issue.remediation}</span>
+                        <code>{control.issue.diagnosticId}</code>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {status.state === 'not-installed' && (
                   <div className="openclaw-guidance" data-testid="openclaw-guidance">
                     {t('mobile.openClaw.notInstalledGuide')}
@@ -414,7 +465,7 @@ export function MobileOpenClawView({
                     onClick={() => runLifecycle('start')}
                     data-testid="openclaw-btn-start"
                   >
-                    {busyAction === 'start' ? t('mobile.openClaw.starting') : t('mobile.openClaw.start')}
+                    {receiptAction === 'start' ? t('mobile.openClaw.starting') : t('mobile.openClaw.start')}
                   </button>
                   <button
                     type="button"
@@ -423,7 +474,7 @@ export function MobileOpenClawView({
                     onClick={() => runLifecycle('stop')}
                     data-testid="openclaw-btn-stop"
                   >
-                    {busyAction === 'stop' ? t('mobile.openClaw.stopping') : t('mobile.openClaw.stop')}
+                    {receiptAction === 'stop' ? t('mobile.openClaw.stopping') : t('mobile.openClaw.stop')}
                   </button>
                   <button
                     type="button"
@@ -432,7 +483,7 @@ export function MobileOpenClawView({
                     onClick={() => runLifecycle('restart')}
                     data-testid="openclaw-btn-restart"
                   >
-                    {busyAction === 'restart' ? t('mobile.openClaw.restarting') : t('mobile.openClaw.restart')}
+                    {receiptAction === 'restart' ? t('mobile.openClaw.restarting') : t('mobile.openClaw.restart')}
                   </button>
                 </div>
                 {lifecycleError && (
@@ -485,11 +536,11 @@ export function MobileOpenClawView({
                   <button
                     type="button"
                     className="btn"
-                    disabled={busy}
+                    disabled={!canRestart}
                     onClick={() => runLifecycle('restart')}
                     data-testid="openclaw-restart-now"
                   >
-                    {busyAction === 'restart' ? t('mobile.openClaw.restarting') : t('mobile.openClaw.restartNow')}
+                    {receiptAction === 'restart' ? t('mobile.openClaw.restarting') : t('mobile.openClaw.restartNow')}
                   </button>
                 </div>
                 {lifecycleError && (
@@ -568,7 +619,7 @@ export function MobileOpenClawView({
                     onClick={() => runLifecycle('start')}
                     data-testid="openclaw-chat-start"
                   >
-                    {busyAction === 'start' ? t('mobile.openClaw.starting') : t('mobile.openClaw.start')}
+                    {receiptAction === 'start' ? t('mobile.openClaw.starting') : t('mobile.openClaw.start')}
                   </button>
                 </div>
               </div>

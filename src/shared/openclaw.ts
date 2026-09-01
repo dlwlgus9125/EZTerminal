@@ -65,6 +65,7 @@ export type OpenClawOperationErrorCode =
   | 'timeout'
   | 'invalid-value'
   | 'cli-failed'
+  | 'unhealthy'
   | 'unavailable';
 
 export interface OpenClawLifecycleResult {
@@ -109,6 +110,82 @@ export interface OpenClawChatBounds {
   readonly y: number;
   readonly width: number;
   readonly height: number;
+}
+
+/** Durable lifecycle intent accepted by the EZTerminal supervisor.  Acceptance
+ * means the intent is persisted and will continue after the requesting UI (or
+ * the whole Electron app) closes; completion is reported by
+ * `OpenClawControlSnapshot`, not by keeping this request open. */
+export interface OpenClawLifecycleReceipt {
+  readonly accepted: boolean;
+  readonly intentId?: string;
+  readonly generation?: number;
+  readonly coalesced?: boolean;
+  readonly issue?: OpenClawControlIssue;
+}
+
+export type OpenClawDesiredState = 'running' | 'stopped';
+
+export type OpenClawSupervisorState =
+  | 'unregistered'
+  | 'installing'
+  | 'ready'
+  | 'error';
+
+export type OpenClawOperationPhase =
+  | 'idle'
+  | 'starting'
+  | 'restarting'
+  | 'stopping'
+  | 'diagnosing'
+  | 'backing-up'
+  | 'repairing'
+  | 'verifying'
+  | 'blocked';
+
+export type OpenClawControlIssueCode =
+  | 'cli-missing'
+  | 'cli-incompatible'
+  | 'backup-failed'
+  | 'permission-denied'
+  | 'port-conflict'
+  | 'watchdog-conflict'
+  | 'unsafe-repair-required'
+  | 'repair-exhausted'
+  | 'supervisor-failed'
+  | 'gateway-unhealthy';
+
+export interface OpenClawControlIssue {
+  readonly code: OpenClawControlIssueCode;
+  readonly detail: string;
+  readonly remediation: string;
+  readonly diagnosticId: string;
+}
+
+export interface OpenClawControlOperation {
+  readonly intentId: string;
+  readonly generation: number;
+  readonly action: OpenClawLifecycleAction;
+  readonly phase: OpenClawOperationPhase;
+  readonly attempt: number;
+  readonly maxAttempts: 3;
+  readonly requestedAt: string;
+}
+
+/** Truthful control-plane snapshot shared by desktop and mobile.  `status`
+ * remains the physical gateway observation; `desiredState` and `operation`
+ * explain what the persistent supervisor is trying to make true. */
+export interface OpenClawControlSnapshot {
+  readonly schemaVersion: 1;
+  /** Latest lifecycle intent this runtime snapshot has fully observed. */
+  readonly intentId: string | null;
+  readonly generation: number;
+  readonly status: OpenClawStatus;
+  readonly desiredState: OpenClawDesiredState;
+  readonly supervisorState: OpenClawSupervisorState;
+  readonly operation: OpenClawControlOperation | null;
+  readonly issue: OpenClawControlIssue | null;
+  readonly updatedAt: string;
 }
 
 export interface OpenClawChatSurfaceSnapshot {

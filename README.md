@@ -8,13 +8,13 @@
 
 Structured pipelines · block history · full PTY/TUI support · Agent workbench · Android remote control
 
-[![Release](https://img.shields.io/badge/release-v1.0.40-brightgreen)](https://github.com/dlwlgus9125/EZTerminal/releases/latest)
+[![Release](https://img.shields.io/badge/release-v1.0.41-brightgreen)](https://github.com/dlwlgus9125/EZTerminal/releases/latest)
 [![CI](https://github.com/dlwlgus9125/EZTerminal/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dlwlgus9125/EZTerminal/actions/workflows/ci.yml)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Android-informational)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [Download the latest release](https://github.com/dlwlgus9125/EZTerminal/releases/latest) ·
-[Read the release notes](docs/release/release-notes-1.0.40.md) ·
+[Read the release notes](docs/release/release-notes-1.0.41.md) ·
 [Review the security model](SECURITY.md)
 
 <br />
@@ -83,6 +83,13 @@ ezterminal-agent wait Reviewer --until done
 ezterminal-agent merge request --target main --wait
 ```
 
+Desktop Settings can also create preset-based Codex/Claude Personas, arrange 2–8 of them into a Team,
+and optionally prefill a reusable desired outcome with observable completion criteria. A Team run
+keeps the Project purpose as read-only context, freezes one target commit, starts only its Planner,
+and waits for a structured plan to be
+reviewed. Approval returns the Planner's assignment and opens each other approved member in a
+separate managed worktree; partial launch failures stay visible and retryable.
+
 Managed merge never turns an arbitrary terminal command into an approval
 button. It accepts only committed changes from an EZTerminal-managed worktree,
 creates a detached candidate, runs the Project validations, and rechecks both
@@ -119,18 +126,18 @@ desktop, audio, privacy mode, and Ctrl+Alt+Delete are not supported.
 
 ## Install
 
-The current stable release is **v1.0.40**.
+The current stable release is **v1.0.41**.
 
 | Platform | Supported system | Release asset |
 | --- | --- | --- |
 | Windows desktop | Windows 10 22H2 or Windows 11, x64 | `EZTerminal-Setup.exe` |
-| Android companion | Android 10 / API 29 or newer | `EZTerminal-Android-1.0.40-vc61.apk` |
+| Android companion | Android 10 / API 29 or newer | `EZTerminal-Android-1.0.41-vc62.apk` |
 
 Download both artifacts, `release-manifest.json`, and `SHA256SUMS.txt` from the
 [latest GitHub Release](https://github.com/dlwlgus9125/EZTerminal/releases/latest).
 
 > [!IMPORTANT]
-> The v1.0.40 Windows installer is published unsigned while the SignPath Foundation application is
+> The v1.0.41 Windows installer is published unsigned while the SignPath Foundation application is
 > pending, so Windows displays an unknown-publisher warning. Verify the release manifest and SHA-256
 > checksums before opening it. The in-app updater performs the same digest verification and never
 > installs an update silently.
@@ -185,7 +192,7 @@ boundaries, data flows, and native components are documented in the
 | Product direction and unimplemented candidates | [docs/ROADMAP.md](docs/ROADMAP.md) |
 | Visual identity and UX contracts | [DESIGN.md](DESIGN.md) · [frontend design](docs/ux/frontend-design.md) |
 | Agent collaboration and managed merge | [docs/design/agent-collaboration.md](docs/design/agent-collaboration.md) |
-| Current release | [v1.0.40 notes](docs/release/release-notes-1.0.40.md) · [1.0.40 validation policy](docs/release/validation-policy-1.0.40.md) |
+| Current release | [v1.0.41 notes](docs/release/release-notes-1.0.41.md) · [1.0.41 validation policy](docs/release/validation-policy-1.0.41.md) |
 | Terminal, remote, lifecycle, and integration contracts | [docs/design/](docs/design/) |
 | Release history | [CHANGELOG.md](CHANGELOG.md) |
 

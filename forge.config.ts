@@ -71,6 +71,7 @@ const config: ForgeConfig = {
         'ezterminal-remote-host.exe',
       ),
       path.join(process.cwd(), 'assets', 'icon.ico'),
+      path.join(process.cwd(), 'assets', 'openclaw-supervisor.ps1'),
       path.join(process.cwd(), 'THIRD_PARTY_NOTICES.md'),
     ] : [],
     // App identity (B-M1, real art landed M4a). icon.ico is generated from

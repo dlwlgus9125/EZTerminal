@@ -160,6 +160,14 @@ export interface OpenClawServiceDeps {
   now?: () => number;
   cliTimeouts?: Partial<OpenClawCliTimeouts>;
   killProcess?: (child: ChildProcessLike) => void;
+  /** Production verifies start/restart with `/startupz` plus authenticated RPC.
+   * Existing narrow unit fakes can opt in explicitly without acquiring real
+   * timers or sockets. */
+  verifyLifecycleReadiness?: boolean;
+  lifecycleReadinessAttempts?: number;
+  lifecycleReadinessIntervalMs?: number;
+  lifecycleStableMs?: number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const defaultSpawn: SpawnFn = (file, args, options) =>
@@ -480,6 +488,11 @@ export class OpenClawService {
   private readonly now: () => number;
   private readonly cliTimeouts: OpenClawCliTimeouts;
   private readonly killProcess: (child: ChildProcessLike) => void;
+  private readonly verifyLifecycleReadiness: boolean;
+  private readonly lifecycleReadinessAttempts: number;
+  private readonly lifecycleReadinessIntervalMs: number;
+  private readonly lifecycleStableMs: number;
+  private readonly sleep: (ms: number) => Promise<void>;
   private endpoint: OpenClawEndpoint;
   private readonly endpointLockedByEnv: boolean;
   private readonly endpointUnavailableReason: string | null;
@@ -527,6 +540,11 @@ export class OpenClawService {
     this.now = deps.now ?? Date.now;
     this.cliTimeouts = { ...DEFAULT_CLI_TIMEOUTS, ...deps.cliTimeouts };
     this.killProcess = deps.killProcess ?? defaultKillProcess;
+    this.verifyLifecycleReadiness = deps.verifyLifecycleReadiness ?? deps.httpGet === undefined;
+    this.lifecycleReadinessAttempts = Math.max(1, deps.lifecycleReadinessAttempts ?? 12);
+    this.lifecycleReadinessIntervalMs = Math.max(0, deps.lifecycleReadinessIntervalMs ?? 2500);
+    this.lifecycleStableMs = Math.max(0, deps.lifecycleStableMs ?? 5000);
+    this.sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 
     const urlOverride = envGet(this.env, 'EZTERMINAL_OPENCLAW_URL');
     const defaultEndpoint = createEndpoint(`http://${DEFAULT_HOST}:${DEFAULT_PORT}`, 0, 'default');
@@ -751,7 +769,7 @@ export class OpenClawService {
     this.mutationBusy = true;
     this.busyAction = action;
     try {
-      const result = await this.execCli(['gateway', action], this.cliTimeouts.lifecycle, 'lifecycle').then(
+      let result: OpenClawLifecycleResult = await this.execCli(['gateway', action], this.cliTimeouts.lifecycle, 'lifecycle').then(
         ({ code, stderr, timedOut }) =>
           code === 0
             ? { ok: true as const }
@@ -761,6 +779,18 @@ export class OpenClawService {
                 stderr: stderr || `exit code ${code}`,
               },
       );
+      if (
+        result.ok
+        && this.verifyLifecycleReadiness
+        && (action === 'start' || action === 'restart')
+        && !(await this.waitForLifecycleReadiness())
+      ) {
+        result = {
+          ok: false,
+          code: 'unhealthy',
+          stderr: 'OpenClaw command completed but the gateway did not become RPC-ready',
+        };
+      }
       // A user-initiated stop must show up as `stopped` immediately, not
       // after riding out the debounce grace on the next poll.
       if (action === 'stop' && result.ok) {
@@ -776,6 +806,35 @@ export class OpenClawService {
       this.mutationBusy = false;
       await this.pushStatusNow();
     }
+  }
+
+  private async waitForLifecycleReadiness(): Promise<boolean> {
+    await this.ensureEndpointInitialized();
+    let firstReadyAt: number | null = null;
+    for (let attempt = 0; attempt < this.lifecycleReadinessAttempts; attempt += 1) {
+      const endpoint = this.endpoint;
+      let startupReady = false;
+      try {
+        startupReady = (await this.httpGet(`${endpoint.origin}/startupz`)).ok;
+      } catch {
+        startupReady = false;
+      }
+      const rpcReady = startupReady
+        ? (await this.withRpc((rpc) => rpc.call('status'))) !== undefined
+        : false;
+      if (startupReady && rpcReady) {
+        if (firstReadyAt === null) firstReadyAt = this.now();
+        if (this.lifecycleStableMs === 0 || this.now() - firstReadyAt >= this.lifecycleStableMs) {
+          return true;
+        }
+      } else {
+        firstReadyAt = null;
+      }
+      if (attempt + 1 < this.lifecycleReadinessAttempts) {
+        await this.sleep(this.lifecycleReadinessIntervalMs);
+      }
+    }
+    return false;
   }
 
   // ── Autostart (task #9: `gateway install`/`gateway uninstall`) ──────────

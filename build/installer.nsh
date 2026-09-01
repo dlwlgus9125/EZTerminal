@@ -63,6 +63,10 @@
 
 !macro customUnInstall
   SetRegView 64
+  ; Remove only the exact current-user supervisor task whose action points at
+  ; EZTerminal's user-data-owned script. Unknown same-name tasks are retained.
+  IfFileExists "$INSTDIR\resources\openclaw-supervisor.ps1" 0 +2
+    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\openclaw-supervisor.ps1" -RemoveTask -StateDirectory "$APPDATA\EZTerminal\openclaw-control" -CliPath "unused"'
   IfFileExists "$INSTDIR\resources\ezterminal-remote-host.exe" 0 +2
     ExecWait '"$INSTDIR\resources\ezterminal-remote-host.exe" --uninstall-service'
   nsExec::ExecToLog 'netsh.exe advfirewall firewall delete rule name="${EZ_FIREWALL_UDP}"'

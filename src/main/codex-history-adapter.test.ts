@@ -154,6 +154,22 @@ describe('CodexHistoryAdapter', () => {
     expect(adapter.buildNewCommand([])).toBeNull();
   });
 
+  it('maps a snapshotted Persona only to safe Codex launch flags', () => {
+    const adapter = new CodexHistoryAdapter(requester(vi.fn()));
+    expect(adapter.buildNewCommand(['C:\\Work'], {
+      provider: 'codex',
+      model: 'gpt-5.6-sol',
+      sandbox: 'read-only',
+    })).toEqual({
+      commandText: "!codex --no-alt-screen --cd 'C:\\\\Work' --model 'gpt-5.6-sol' --sandbox read-only",
+      displayCommandText: 'codex',
+    });
+    expect(adapter.buildNewCommand(['C:\\Work'], {
+      provider: 'claude',
+      permissionMode: 'manual',
+    })).toBeNull();
+  });
+
   it('resumes a chat inline without exposing its private id in display text', () => {
     const adapter = new CodexHistoryAdapter(requester(vi.fn()));
 

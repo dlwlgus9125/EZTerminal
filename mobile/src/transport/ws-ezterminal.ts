@@ -177,9 +177,10 @@ import {
   OPENCLAW_CONFIG_ALLOWLIST,
   OPENCLAW_CONFIG_UNSET,
   type OpenClawAgentSession,
+  type OpenClawControlSnapshot,
   type OpenClawCoreConfig,
   type OpenClawLifecycleAction,
-  type OpenClawLifecycleResult,
+  type OpenClawLifecycleReceipt,
   type OpenClawLogLine,
   type OpenClawSetConfigResult,
   type OpenClawStatus,
@@ -1123,6 +1124,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   // map precedent as `pendingFileOps` above) — a dropped connection resolves
   // every in-flight entry with a "connection lost" result, never left pending.
   private readonly openclawStatusListeners = new Set<(status: OpenClawStatus) => void>();
+  private readonly openclawControlListeners = new Set<(snapshot: OpenClawControlSnapshot) => void>();
   /** REFCOUNT, not a boolean (openclaw-stabilization M3): MobileWorkspace
    * (for the entry-button status dot) and MobileOpenClawView (while it's
    * open) both call `setOpenClawStatusSubscribed` independently on the SAME
@@ -1135,7 +1137,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private openclawStatusRefcount = 0;
   private readonly openclawLogListeners = new Set<(lines: readonly OpenClawLogLine[]) => void>();
   private openclawLogsSubscribed = false;
-  private readonly pendingOpenClawLifecycle = new Map<string, (result: OpenClawLifecycleResult) => void>();
+  private readonly pendingOpenClawLifecycle = new Map<string, (result: OpenClawLifecycleReceipt) => void>();
   private readonly pendingOpenClawSessions = new Map<string, (sessions: readonly OpenClawAgentSession[]) => void>();
   private readonly pendingOpenClawConfigGet = new Map<string, (config: OpenClawCoreConfig) => void>();
   private readonly pendingOpenClawConfigSet = new Map<string, (result: OpenClawSetConfigResult) => void>();
@@ -2199,6 +2201,12 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     return () => this.openclawStatusListeners.delete(listener);
   }
 
+  /** Desired state, recovery phase, and critical remediation paired with status. */
+  onOpenClawControl(listener: (snapshot: OpenClawControlSnapshot) => void): () => void {
+    this.openclawControlListeners.add(listener);
+    return () => this.openclawControlListeners.delete(listener);
+  }
+
   /** Tell the bridge whether THIS caller wants the OpenClaw status push —
    * REFCOUNTED (see `openclawStatusRefcount`'s doc): only the 0->1 and 1->0
    * transitions actually send a wire message; an already-subscribed second
@@ -2226,7 +2234,7 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     if (this.authed) this.send({ kind: subscribed ? 'openclaw-logs-subscribe' : 'openclaw-logs-unsubscribe' });
   }
 
-  runOpenClawLifecycle(action: OpenClawLifecycleAction): Promise<OpenClawLifecycleResult> {
+  runOpenClawLifecycle(action: OpenClawLifecycleAction): Promise<OpenClawLifecycleReceipt> {
     return new Promise((resolve) => {
       const requestId = this.newId();
       if (!this.tryStartTimedMapRequest(
@@ -2235,8 +2243,24 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         requestId,
         resolve,
         this.openClawLifecycleTimeoutMs,
-        { ok: false, code: 'timeout', stderr: 'OpenClaw lifecycle request timed out' },
-      )) resolve({ ok: false, stderr: 'Not connected to EZTerminal' });
+        {
+          accepted: false,
+          issue: {
+            code: 'supervisor-failed',
+            detail: 'OpenClaw lifecycle request timed out.',
+            remediation: 'Reconnect to EZTerminal and retry the action.',
+            diagnosticId: `mobile-timeout-${requestId}`,
+          },
+        },
+      )) resolve({
+        accepted: false,
+        issue: {
+          code: 'supervisor-failed',
+          detail: 'Not connected to EZTerminal.',
+          remediation: 'Reconnect to EZTerminal and retry the action.',
+          diagnosticId: `mobile-offline-${requestId}`,
+        },
+      });
     });
   }
 
@@ -3146,7 +3170,15 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     }
     this.pendingUploadDones.clear();
     for (const resolve of this.pendingOpenClawLifecycle.values()) {
-      resolve({ ok: false, stderr: 'Connection to EZTerminal lost' });
+      resolve({
+        accepted: false,
+        issue: {
+          code: 'supervisor-failed',
+          detail: 'Connection to EZTerminal lost.',
+          remediation: 'Reconnect to observe or retry the OpenClaw action.',
+          diagnosticId: `mobile-disconnect-${Date.now().toString(36)}`,
+        },
+      });
     }
     this.pendingOpenClawLifecycle.clear();
     for (const resolve of this.pendingOpenClawSessions.values()) resolve([]);
@@ -4036,6 +4068,10 @@ export class WsEzTerminalTransport implements EzTerminalApi {
 
       case 'openclaw-status':
         for (const listener of this.openclawStatusListeners) listener(msg.status);
+        break;
+
+      case 'openclaw-control':
+        for (const listener of this.openclawControlListeners) listener(msg.control);
         break;
 
       case 'openclaw-availability':

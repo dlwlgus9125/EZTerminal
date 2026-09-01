@@ -629,15 +629,41 @@ const desktopApi: EzTerminalDesktopApi = {
     ipcRenderer.invoke('agent-projects:remove', projectId),
   selectAgentProjectFolders: (multiple = true) =>
     ipcRenderer.invoke('agent-projects:select-folders', multiple),
+  getAgentTeamSnapshot: () => ipcRenderer.invoke('agent-teams:get-snapshot'),
+  onAgentTeamSnapshot: (listener): (() => void) => {
+    const handler = (
+      _event: unknown,
+      snapshot: import('../shared/agent-team').AgentTeamDesktopSnapshot,
+    ): void => listener(snapshot);
+    ipcRenderer.on('agent-teams:snapshot', handler);
+    return () => ipcRenderer.removeListener('agent-teams:snapshot', handler);
+  },
+  saveAgentPersona: (input) => ipcRenderer.invoke('agent-teams:save-persona', input),
+  deleteAgentPersona: (personaId, expectedRevision) => (
+    ipcRenderer.invoke('agent-teams:delete-persona', personaId, expectedRevision)
+  ),
+  createAgentStarterTeam: (input) => ipcRenderer.invoke('agent-teams:create-starter-team', input),
+  saveAgentTeam: (input) => ipcRenderer.invoke('agent-teams:save-team', input),
+  deleteAgentTeam: (teamId, expectedRevision) => (
+    ipcRenderer.invoke('agent-teams:delete-team', teamId, expectedRevision)
+  ),
+  createAgentTeamRun: (input) => ipcRenderer.invoke('agent-teams:create-run', input),
+  approveAgentTeamPlan: (input) => ipcRenderer.invoke('agent-teams:approve-plan', input),
+  decideAgentTeamRun: (input) => ipcRenderer.invoke('agent-teams:decide-run', input),
+  prepareAgentTeamMemberLaunch: (input) => ipcRenderer.invoke('agent-teams:prepare-member-launch', input),
+  activateAgentTeamMember: (input) => ipcRenderer.invoke('agent-teams:activate-member', input),
+  failAgentTeamMember: (input) => ipcRenderer.invoke('agent-teams:fail-member', input),
 
   // OpenClaw management (openclaw-management M1): thin invoke/send wrappers —
   // main's OpenClawService is the sole authority, same shape as the file
   // explorer/settings wrappers above.
   getOpenClawStatus: (force?: boolean): Promise<import('../shared/openclaw').OpenClawStatus> =>
     ipcRenderer.invoke('openclaw:get-status', force),
+  getOpenClawControl: (force?: boolean): Promise<import('../shared/openclaw').OpenClawControlSnapshot> =>
+    ipcRenderer.invoke('openclaw:get-control', force),
   runOpenClawLifecycle: (
     action: import('../shared/openclaw').OpenClawLifecycleAction,
-  ): Promise<import('../shared/openclaw').OpenClawLifecycleResult> => ipcRenderer.invoke('openclaw:lifecycle', action),
+  ): Promise<import('../shared/openclaw').OpenClawLifecycleReceipt> => ipcRenderer.invoke('openclaw:lifecycle', action),
   listOpenClawSessions: (): Promise<readonly import('../shared/openclaw').OpenClawAgentSession[]> =>
     ipcRenderer.invoke('openclaw:list-sessions'),
   getOpenClawConfig: (): Promise<import('../shared/openclaw').OpenClawCoreConfig> =>
@@ -683,6 +709,16 @@ const desktopApi: EzTerminalDesktopApi = {
   // OpenClawChatViewManager, same shape as the drawer wrappers above.
   setOpenClawChatPanelMounted: (mounted: boolean): void => {
     ipcRenderer.send('openclaw:chat-panel-mounted', mounted);
+  },
+  onOpenClawControl: (
+    listener: (snapshot: import('../shared/openclaw').OpenClawControlSnapshot) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: unknown,
+      snapshot: import('../shared/openclaw').OpenClawControlSnapshot,
+    ): void => listener(snapshot);
+    ipcRenderer.on('openclaw:control', handler);
+    return () => ipcRenderer.removeListener('openclaw:control', handler);
   },
   setOpenClawChatSurface: (
     surface: import('../shared/openclaw').OpenClawChatSurfaceSnapshot,

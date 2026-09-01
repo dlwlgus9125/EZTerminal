@@ -20,12 +20,14 @@
         { "rootAlias": "app", "relativePath": "src/main/main.ts" },
         { "rootAlias": "app", "relativePath": "src/main/interpreter-broker.ts" },
         { "rootAlias": "app", "relativePath": "src/interpreter/interpreter-process.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" }
+        { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/openclaw-lifecycle-coordinator.ts" },
+        { "rootAlias": "app", "relativePath": "assets/openclaw-supervisor.ps1" }
       ],
       "review": {
-        "inputDigest": "sha256:db05e827d24df25cf00fceba3ab39bfb0e6f1f6abdff9a4149f35d52fa7eb6d9",
-        "decision": "no-semantic-impact",
-        "reason": "Project Map gained a dedicated Agent-session launch callback and terminal copy gained a main-process clipboard adapter; both reuse the existing renderer-preload-main boundary, so the process topology and trust boundaries represented by this map are unchanged."
+        "inputDigest": "sha256:67d5ea6d876c20ae0e4f1b4517844f0bbe5d821e8a5a8453dbecbdda055f2b0e",
+        "decision": "map-updated",
+        "reason": "The map now includes the per-login Windows OpenClaw supervisor that reconciles durable main-process intent outside the Electron lifetime."
       }
     },
     {
@@ -41,9 +43,9 @@
         { "rootAlias": "app", "relativePath": "src/interpreter/pty-session.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:6bf82c31677dee07067f704f949b518340938639717517e8b99d76f05f95fe4d",
+        "inputDigest": "sha256:ae4dcae0ccd468889a1a46d7b573848b6fdc33e9444698dd2bb7828f839fbae3",
         "decision": "no-semantic-impact",
-        "reason": "The new Agent bootstrap submits a Project Map brief through the existing ready-aware PTY path, while terminal copy is handled outside command submission; ordinary shell command correlation and port handoff are unchanged."
+        "reason": "Team activation adds another guarded Agent brief dispatch through the existing ready-aware BlockController path; ordinary shell command correlation and MessagePort handoff are unchanged."
       }
     },
     {
@@ -59,9 +61,9 @@
         { "rootAlias": "app", "relativePath": "src/main/main.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:66387a61fdcc45d60719716844a041fd50edccf0d56537892aa7d5138753bd85",
+        "inputDigest": "sha256:91182d1d0cc95bc759bb8d2b6c6adcafb47027c2fab5950a9646df4a6738ac38",
         "decision": "no-semantic-impact",
-        "reason": "Opening a Project Map Agent tab reuses the existing workbench pane path, and terminal copy stays within existing pane/document ownership; neither changes restore, persistence, checkpoint, or replacement lifecycle transitions."
+        "reason": "Team members still use the existing pane path, and the OpenClaw coordinator is drained as another main-owned service; restore, checkpoint, replacement, and pane lifecycle transitions are unchanged."
       }
     },
     {
@@ -76,8 +78,9 @@
         { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:a25c310826c874628d40d6dc4bbbd3bd6a3d7ffca058f1e2db937fd00bd25980",
-        "decision": "map-updated"
+        "inputDigest": "sha256:72713b1dde786ceb826f8f840cdb4a5d7dfab4f3331736f47315376f8d699e0c",
+        "decision": "no-semantic-impact",
+        "reason": "OpenClaw lifecycle receipts and control snapshots reuse the same authenticated, size-capped WebSocket boundary; the represented terminal and desktop-control flows are unchanged."
       }
     },
     {
@@ -100,8 +103,9 @@
         { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" }
       ],
       "review": {
-        "inputDigest": "sha256:deb9fa4dde5ec323e3a350f61b7041985c09ff0aab960b0a5345b8d21a2f92c9",
-        "decision": "map-updated"
+        "inputDigest": "sha256:7af1c77de5fe7a1a8162302342e212f061d929bf7cf8c038f7449873e51ffb29",
+        "decision": "no-semantic-impact",
+        "reason": "This map specifically models human-approved Project Map delivery. Team planning adds adjacent Agent launch and loopback routes but does not change the represented Project Map authoring, validation, approval, or export workflow."
       }
     }
   ]

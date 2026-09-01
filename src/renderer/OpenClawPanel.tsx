@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   OPENCLAW_CONFIG_UNSET,
   type OpenClawAgentSession,
-  type OpenClawAutostartAction,
+  type OpenClawControlSnapshot,
   type OpenClawCoreConfig,
   type OpenClawLifecycleAction,
   type OpenClawLogLine,
@@ -65,6 +65,7 @@ export function OpenClawPanel({
 }: OpenClawPanelProps): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
+  const [control, setControl] = useState<OpenClawControlSnapshot | null>(null);
   const [sessions, setSessions] = useState<readonly OpenClawAgentSession[]>([]);
   const [sessionsLoad, setSessionsLoad] = useState<SessionsLoadState>({
     phase: 'idle',
@@ -73,7 +74,7 @@ export function OpenClawPanel({
   const sessionsGenerationRef = useRef(0);
   const [logLines, setLogLines] = useState<OpenClawLogLine[]>([]);
 
-  const [busyAction, setBusyAction] = useState<OpenClawLifecycleAction | null>(null);
+  const [receiptAction, setReceiptAction] = useState<OpenClawLifecycleAction | null>(null);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
 
   const [config, setConfig] = useState<OpenClawCoreConfig | null>(null);
@@ -97,44 +98,15 @@ export function OpenClawPanel({
     [locale],
   );
 
-  // ── Autostart toggle (task #9: `gateway install`/`gateway uninstall`) ────
-  // No fast way to know the CURRENT registration state (that's only in the
-  // 9-18s `gateway status --json` CLI call, M0 ⑥) — the UI stays
-  // state-agnostic (neutral copy + both actions) rather than lying with a
-  // stale/guessed toggle. Two-step click stands in for a confirm dialog
-  // without a blocking window.confirm (per the M3/#9 assignment's explicit
-  // "no window.confirm dialogs" constraint).
-  const [pendingAutostart, setPendingAutostart] = useState<OpenClawAutostartAction | null>(null);
-  const [autostartBusy, setAutostartBusy] = useState<OpenClawAutostartAction | null>(null);
-  const [autostartResult, setAutostartResult] = useState<string | null>(null);
-
-  const runAutostart = useCallback(async (action: OpenClawAutostartAction): Promise<void> => {
-    setPendingAutostart(null);
-    setAutostartBusy(action);
-    setAutostartResult(null);
-    try {
-      const result = await capabilities.openClaw.runAutostart(action);
-      if (result) {
-        setAutostartResult(
-          result.ok
-            ? action === 'install'
-              ? t('openClaw.autostartInstalled')
-              : t('openClaw.autostartRemoved')
-            : (result.stderr ?? t('openClaw.actionFailed', { action })),
-        );
-      }
-    } catch {
-      setAutostartResult(t('openClaw.actionFailed', { action }));
-    } finally {
-      setAutostartBusy(null);
-    }
-  }, [capabilities, t]);
-
   // ── Status seed + push (gated main-side by drawer-open, mirrors the stats
   // overlay's `setStatsPanelVisible`) ────────────────────────────────────────
   useEffect(() => {
     return capabilities.openClaw.observeDrawer({
       onStatus: setStatus,
+      onControl: (snapshot) => {
+        setControl(snapshot);
+        setStatus(snapshot.status);
+      },
       onLog: (line) => {
         setLogLines((current) => {
           const next = [...current, line];
@@ -199,19 +171,25 @@ export function OpenClawPanel({
 
   // ── Lifecycle actions ─────────────────────────────────────────────────────
   const runLifecycle = useCallback(async (action: OpenClawLifecycleAction): Promise<void> => {
-    setBusyAction(action);
+    setReceiptAction(action);
     setLifecycleError(null);
     try {
       const result = await capabilities.openClaw.runLifecycle(action);
-      if (result && !result.ok) {
+      if (result && 'accepted' in result && !result.accepted) {
+        setLifecycleError(
+          result.issue
+            ? `${result.issue.detail} ${result.issue.remediation}`
+            : t('openClaw.actionFailed', { action }),
+        );
+      } else if (result && 'ok' in result && !result.ok) {
         setLifecycleError(result.stderr ?? t('openClaw.actionFailed', { action }));
       }
-      const fresh = await capabilities.openClaw.getStatus(true);
-      if (fresh) setStatus(fresh);
+      if (result && (('accepted' in result && result.accepted) || ('ok' in result && result.ok))
+        && action === 'restart') setRestartBanner(false);
     } catch {
       setLifecycleError(t('openClaw.actionFailed', { action }));
     } finally {
-      setBusyAction(null);
+      setReceiptAction(null);
     }
   }, [capabilities, t]);
 
@@ -281,9 +259,14 @@ export function OpenClawPanel({
 
   const state = status?.state;
   const hasSessionsSnapshot = sessionsLoad.updatedAt !== null;
-  const busy = busyAction !== null;
-  const startDisabled = busy || state === undefined || state === 'running' || state === 'starting';
-  const stopDisabled = busy || state === undefined || state === 'stopped' || state === 'not-installed';
+  const activeOperation = control?.operation?.phase !== 'blocked' ? control?.operation : null;
+  const actionUnavailable = (action: OpenClawLifecycleAction): boolean => (
+    state === 'not-installed'
+    || receiptAction === action
+    || activeOperation?.action === action
+  );
+  const startDisabled = actionUnavailable('start');
+  const stopDisabled = actionUnavailable('stop');
   // The gateway does not expose a channel list, but every session records the
   // channel it last spoke on. Folding sessions by that field is what turns
   // "five agent sessions" into "two bridges, and this is what each is doing".
@@ -304,7 +287,7 @@ export function OpenClawPanel({
       .sort((a, b) => b.updatedAt - a.updatedAt || a.name.localeCompare(b.name));
   }, [sessions]);
 
-  const restartDisabled = busy || state === undefined || state === 'not-installed';
+  const restartDisabled = actionUnavailable('restart');
 
   return (
     <div
@@ -336,6 +319,41 @@ export function OpenClawPanel({
           <div className="openclaw-state-detail">{t('openClaw.port', { port: status.port })}</div>
         )}
       </section>
+
+      {control && (
+        <section
+          className="status-section openclaw-control-card"
+          data-testid="openclaw-control"
+          data-phase={control.operation?.phase ?? 'idle'}
+          aria-live="polite"
+        >
+          <h2 className="status-section-title">{t('openClaw.controlTitle')}</h2>
+          <div className="openclaw-control-grid">
+            <span>{t('openClaw.desiredState')}</span>
+            <strong>{t(`openClaw.desired.${control.desiredState}`)}</strong>
+            <span>{t('openClaw.supervisor')}</span>
+            <strong>{t(`openClaw.supervisorState.${control.supervisorState}`)}</strong>
+          </div>
+          {control.operation && (
+            <div className="openclaw-control-progress" role="status">
+              <span>{t(`openClaw.phase.${control.operation.phase}`)}</span>
+              {control.operation.attempt > 0 && (
+                <span>{t('openClaw.attempt', {
+                  attempt: control.operation.attempt,
+                  max: control.operation.maxAttempts,
+                })}</span>
+              )}
+            </div>
+          )}
+          {control.issue && (
+            <div className="openclaw-control-issue" role="alert" data-testid="openclaw-control-issue">
+              <strong>{control.issue.detail}</strong>
+              <span>{control.issue.remediation}</span>
+              <code>{control.issue.diagnosticId}</code>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Console read-out. The handoff asks for channels / messages today /
           queued work; the gateway reports none of those, so these are the three
@@ -628,59 +646,6 @@ export function OpenClawPanel({
                 </button>
               </div>
             )}
-            <div className="openclaw-autostart-row" data-testid="openclaw-autostart-row">
-              <span>{t('openClaw.autostart')}</span>
-              <div className="openclaw-autostart-actions">
-                <button
-                  type="button"
-                  className="btn btn-split"
-                  disabled={autostartBusy !== null}
-                  onClick={() => setPendingAutostart((current) => (current === 'install' ? null : 'install'))}
-                  data-testid="btn-openclaw-autostart-install"
-                >
-                  {pendingAutostart === 'install'
-                    ? t('openClaw.confirmQuestion')
-                    : t('openClaw.register')}
-                </button>
-                {pendingAutostart === 'install' && (
-                  <button
-                    type="button"
-                    className="btn btn-split"
-                    onClick={() => void runAutostart('install')}
-                    data-testid="btn-openclaw-autostart-install-confirm"
-                  >
-                    {t('openClaw.confirmRegister')}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-split"
-                  disabled={autostartBusy !== null}
-                  onClick={() => setPendingAutostart((current) => (current === 'uninstall' ? null : 'uninstall'))}
-                  data-testid="btn-openclaw-autostart-uninstall"
-                >
-                  {pendingAutostart === 'uninstall'
-                    ? t('openClaw.confirmQuestion')
-                    : t('openClaw.unregister')}
-                </button>
-                {pendingAutostart === 'uninstall' && (
-                  <button
-                    type="button"
-                    className="btn btn-split"
-                    onClick={() => void runAutostart('uninstall')}
-                    data-testid="btn-openclaw-autostart-uninstall-confirm"
-                  >
-                    {t('openClaw.confirmUnregister')}
-                  </button>
-                )}
-              </div>
-              {autostartBusy && <div className="status-loading">{t('openClaw.processing')}</div>}
-              {autostartResult && (
-                <div className="openclaw-error-inline" data-testid="openclaw-autostart-result">
-                  {autostartResult}
-                </div>
-              )}
-            </div>
           </section>
         </>
       )}

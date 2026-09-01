@@ -3,12 +3,14 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 
 import type { AgentActivity, AgentState } from '../shared/agent';
 import { isSafeAgentPromptText, MAX_AGENT_READ_LINES } from '../shared/agent-coordination';
+import { AgentTeamPlanProposalSchema } from '../shared/agent-team';
 import {
   PROJECT_MAP_TYPES,
   projectMapAuthoringGuide,
   type ProjectMapType,
 } from '../shared/project-map';
 import type { AgentCoordinationService } from './agent-coordination-service';
+import type { AgentTeamService } from './agent-team-service';
 import type { ManagedMergeService } from './managed-merge-service';
 import type { ProjectMapService } from './project-map-service';
 import { sameSecret } from './managed-merge-service';
@@ -40,7 +42,7 @@ function activityWorkspace(activity: AgentActivity): ActivityWorkspaceIdentity |
 }
 
 function json(response: ServerResponse, statusCode: number, value: unknown): void {
-  if (response.writableEnded) return;
+  if (response.writableEnded || response.destroyed) return;
   const body = JSON.stringify(value);
   response.writeHead(statusCode, {
     'content-type': 'application/json; charset=utf-8',
@@ -68,11 +70,13 @@ export class AgentControlServer {
   private server: http.Server | null = null;
   private origin = '';
   private readonly capabilities = new Map<string, Capability>();
+  private readonly activeControllers = new Set<AbortController>();
 
   constructor(private readonly deps: {
     readonly coordination: AgentCoordinationService;
     readonly merges: ManagedMergeService;
     readonly maps?: ProjectMapService;
+    readonly teams?: Pick<AgentTeamService, 'submitPlan' | 'waitForPlanDecision'>;
   }) {}
 
   async start(): Promise<void> {
@@ -130,8 +134,13 @@ export class AgentControlServer {
     this.server = null;
     this.origin = '';
     this.revokeAll();
+    for (const controller of this.activeControllers) controller.abort();
+    this.activeControllers.clear();
     if (!server) return;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      server.closeAllConnections();
+    });
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -148,6 +157,7 @@ export class AgentControlServer {
       json(response, 429, { ok: false, error: 'rate-limited' });
       return;
     }
+    let controller: AbortController | null = null;
     try {
       const source = this.sourceActivity(capability.sessionId);
       if (!source) {
@@ -163,12 +173,15 @@ export class AgentControlServer {
         json(response, 400, { ok: false, error: 'invalid-json' });
         return;
       }
-      const controller = new AbortController();
+      const requestController = new AbortController();
+      controller = requestController;
+      this.activeControllers.add(requestController);
       response.once('close', () => {
-        if (!response.writableEnded) controller.abort();
+        if (!response.writableEnded) requestController.abort();
       });
-      await this.route(request.url, body, source, response, controller.signal);
+      await this.route(request.url, body, source, response, requestController.signal);
     } finally {
+      if (controller) this.activeControllers.delete(controller);
       capability.concurrent = Math.max(0, capability.concurrent - 1);
     }
   }
@@ -180,6 +193,63 @@ export class AgentControlServer {
     response: ServerResponse,
     signal: AbortSignal,
   ): Promise<void> {
+    if (url === '/v1/team/plan') {
+      if (!this.deps.teams) {
+        json(response, 503, { ok: false, error: 'team-planning-unavailable' });
+        return;
+      }
+      const runId = typeof body.runId === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(body.runId)
+        ? body.runId
+        : undefined;
+      const expectedRevision = typeof body.expectedRevision === 'number'
+        && Number.isSafeInteger(body.expectedRevision)
+        && body.expectedRevision > 0
+        ? body.expectedRevision
+        : undefined;
+      const proposal = AgentTeamPlanProposalSchema.safeParse(body.proposal);
+      if (!runId || expectedRevision === undefined || !proposal.success) {
+        json(response, 400, { ok: false, error: 'invalid-request' });
+        return;
+      }
+      const result = await this.deps.teams.submitPlan(source.id, {
+        runId,
+        expectedRevision,
+        proposal: proposal.data,
+      });
+      if (!result.ok) {
+        const status = result.error === 'invalid'
+          ? 400
+          : result.error === 'not-found'
+            ? 404
+            : 409;
+        json(response, status, result);
+        return;
+      }
+      const decision = await this.deps.teams.waitForPlanDecision(
+        runId,
+        result.value.revision,
+        signal,
+      );
+      const status = decision.ok
+        ? 200
+        : decision.error === 'not-found'
+          ? 404
+          : decision.error === 'unavailable'
+            ? 503
+            : 409;
+      json(response, status, decision.ok
+        ? {
+            ok: true,
+            value: {
+              runId: decision.value.run.runId,
+              revision: decision.value.run.revision,
+              brief: decision.value.brief,
+            },
+          }
+        : decision);
+      return;
+    }
     if (url === '/v1/list') {
       const snapshot = this.deps.coordination.getSnapshot();
       const projectId = source.participant!.projectId;

@@ -179,6 +179,8 @@ export interface AgentLaunchStartRequest {
   readonly sessionId: string;
   readonly runId: string;
   readonly revision: string;
+  /** Main resolves the snapshotted Persona launch policy from this opaque Team reference. */
+  readonly teamMember?: AgentTeamLaunchReference;
 }
 
 export type AgentLaunchStartResult =
@@ -205,6 +207,13 @@ export interface AgentLaunchBootstrap {
   readonly revision: string;
   /** Runtime-only Project Map work handed to this fresh Agent session. */
   readonly projectMapRequest?: ProjectMapAgentLaunchRequest;
+  /** Runtime-only Team handoff. Main activates collaboration before this brief is submitted. */
+  readonly teamMemberRequest?: AgentTeamLaunchReference;
+}
+
+export interface AgentTeamLaunchReference {
+  readonly runId: string;
+  readonly personaId: string;
 }
 
 /** Protocol-v5 compatibility shape. New callers use AgentLaunchPreparation. */

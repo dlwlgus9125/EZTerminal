@@ -50,6 +50,7 @@ import { RendererRecoveryCheckpointStore } from './renderer-recovery-checkpoint-
 import { installRunCommandIpc } from './run-command-ipc';
 import { GracefulShutdownCoordinator } from './graceful-shutdown';
 import { OpenClawService } from './openclaw-service';
+import { OpenClawLifecycleCoordinator } from './openclaw-lifecycle-coordinator';
 import { OpenClawChatViewManager } from './openclaw-chat-view';
 import { OpenClawChatSurfaceRevisionGate } from './openclaw-chat-surface-revisions';
 import { startOpenClawProxy, DEFAULT_OPENCLAW_PROXY_PORT, type OpenClawProxyHandle } from './openclaw-proxy';
@@ -64,6 +65,8 @@ import { AgentSettingsStore } from './agent-settings-store';
 import { AgentProjectStore } from './agent-project-store';
 import { AgentCoordinationStore } from './agent-coordination-store';
 import { AgentCoordinationService } from './agent-coordination-service';
+import { AgentTeamStore } from './agent-team-store';
+import { AgentTeamService } from './agent-team-service';
 import { AgentValidationRunner } from './agent-validation-runner';
 import { ManagedMergeService } from './managed-merge-service';
 import { AgentControlServer } from './agent-control-server';
@@ -136,10 +139,28 @@ import type {
 import {
   isOpenClawChatSurfaceSnapshot,
   type OpenClawAutostartAction,
+  type OpenClawControlSnapshot,
   type OpenClawLifecycleAction,
+  type OpenClawLifecycleReceipt,
   type OpenClawVisibility,
 } from '../shared/openclaw';
 import type { AgentDecisionResult } from '../shared/agent';
+import {
+  EMPTY_AGENT_TEAM_DESKTOP_SNAPSHOT,
+  type AgentLauncherCapabilities,
+  type AgentPersonaInput,
+  type AgentStarterTeamInput,
+  type AgentTeamDesktopSnapshot,
+  type AgentTeamInput,
+  type AgentTeamMemberActivationInput,
+  type AgentTeamMemberBinding,
+  type AgentTeamMemberFailureInput,
+  type AgentTeamMemberLaunchInput,
+  type AgentTeamPlanApprovalInput,
+  type AgentTeamRunDecisionInput,
+  type AgentTeamRunInput,
+  composeAgentTeamPlanningBrief,
+} from '../shared/agent-team';
 import { normalizeExternalHttpUrl } from '../shared/external-url';
 import type {
   AgentLaunchStartRequest,
@@ -206,6 +227,30 @@ function isAgentLaunchTarget(value: unknown): value is AgentLaunchTarget {
   return false;
 }
 
+function isAgentTeamLaunchReference(value: unknown): value is NonNullable<AgentLaunchStartRequest['teamMember']> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const reference = value as Partial<NonNullable<AgentLaunchStartRequest['teamMember']>>;
+  return isBoundedAgentString(reference.runId, 64) && isBoundedAgentString(reference.personaId, 64);
+}
+
+function isAgentTeamMemberBinding(value: unknown): value is AgentTeamMemberBinding {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const binding = value as Record<string, unknown>;
+  const limits: Readonly<Record<string, number>> = {
+    branch: 200,
+    rootId: 128,
+    workspaceId: 128,
+    worktreeId: 128,
+    worktreePath: 8_192,
+    sessionId: 256,
+    activityId: 256,
+    participantId: 256,
+  };
+  return Object.entries(binding).every(([key, item]) => (
+    limits[key] !== undefined && isBoundedAgentString(item, limits[key]!)
+  ));
+}
+
 function isAgentLaunchStartRequest(value: unknown): value is AgentLaunchStartRequest {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const request = value as Partial<AgentLaunchStartRequest>;
@@ -215,6 +260,7 @@ function isAgentLaunchStartRequest(value: unknown): value is AgentLaunchStartReq
     && isBoundedAgentString(request.sessionId, 256)
     && isBoundedAgentString(request.runId, 256)
     && isBoundedAgentString(request.revision, 128)
+    && (request.teamMember === undefined || isAgentTeamLaunchReference(request.teamMember))
   );
 }
 
@@ -393,6 +439,7 @@ let openClawProxyHandle: OpenClawProxyHandle | null = null;
 // 'ready'; referenced only for before-quit dispose() below (all its IPC
 // handlers close over a local const, see the 'ready' handler).
 let openClawService: OpenClawService | null = null;
+let openClawLifecycleCoordinator: OpenClawLifecycleCoordinator | null = null;
 
 // OpenClaw chat WebContentsView manager (openclaw-management M3) — created
 // once on 'ready', attached to the main window in createWindow() (needs a
@@ -776,8 +823,12 @@ app.on('ready', async () => {
   const agentSettingsStore = new AgentSettingsStore(path.join(app.getPath('userData')));
   const agentProjectStore = new AgentProjectStore(path.join(app.getPath('userData')));
   const agentCoordinationStore = new AgentCoordinationStore(app.getPath('userData'));
+  const agentTeamStore = new AgentTeamStore(app.getPath('userData'));
   const agentCoordinationReady = agentCoordinationStore.init().catch((err) => {
     console.error('[main] agent coordination store init failed:', err);
+  });
+  const agentTeamReady = agentTeamStore.init().catch((err) => {
+    console.error('[main] agent Team store init failed:', err);
   });
   const codexHistoryAdapter = new CodexHistoryAdapter(new CodexAppServerClient());
   // Home resolution is left to the adapter so it matches how Claude Code itself
@@ -797,12 +848,16 @@ app.on('ready', async () => {
   const pairingCodeService = new PairingCodeService();
   let agentActivityService: AgentActivityService | null = null;
   let agentCoordinationService: AgentCoordinationService | null = null;
+  let agentTeamService: AgentTeamService | null = null;
   let managedMergeService: ManagedMergeService | null = null;
   let agentControlServer: AgentControlServer | null = null;
   const agentCliShim = new AgentCliShim(app.getPath('userData'), resolveNativeHostPath());
-  const agentCliReady = agentCliShim.init().catch((err) => {
-    console.error('[main] Agent CLI shim init failed:', err);
-  });
+  let agentCliAvailable = false;
+  const agentCliReady = agentCliShim.init()
+    .then(() => { agentCliAvailable = true; })
+    .catch((err) => {
+      console.error('[main] Agent CLI shim init failed:', err);
+    });
   let agentRelayReady = false;
   const agentHookRelay = new AgentHookRelay(
     app.getPath('userData'),
@@ -820,6 +875,48 @@ app.on('ready', async () => {
       console.error('[main] agent hook infrastructure init failed:', err);
     });
   const agentHookInstaller = new AgentHookInstaller(app.getPath('home'), agentHookRelay.scriptPath);
+  let agentTeamCapabilities: readonly AgentLauncherCapabilities[] = [
+    {
+      provider: 'codex',
+      available: false,
+      supportsModel: true,
+      effortValues: [],
+      permissionValues: ['read-only', 'workspace-write'],
+      modelAvailability: 'launch-time',
+    },
+    {
+      provider: 'claude',
+      available: false,
+      supportsModel: true,
+      effortValues: ['low', 'medium', 'high', 'xhigh', 'max'],
+      permissionValues: ['plan', 'manual', 'acceptEdits'],
+      modelAvailability: 'launch-time',
+    },
+  ];
+  const refreshAgentTeamCapabilities = async (): Promise<void> => {
+    await agentInfrastructureReady;
+    const [statuses, launchers] = await Promise.all([
+      agentHookInstaller.list(),
+      Promise.resolve(agentHistoryService.listLaunchers()),
+    ]);
+    const launchProviders = new Set(launchers.map((launcher) => launcher.provider));
+    const statusByProvider = new Map(statuses.map((status) => [status.provider, status]));
+    const next = agentTeamCapabilities.map((capability): AgentLauncherCapabilities => {
+      const status = statusByProvider.get(capability.provider);
+      return {
+        ...capability,
+        available: agentRelayReady
+          && agentCliAvailable
+          && agentControlServer !== null
+          && launchProviders.has(capability.provider)
+          && status?.enabled === true
+          && status.blockers.length === 0,
+      };
+    });
+    if (JSON.stringify(next) === JSON.stringify(agentTeamCapabilities)) return;
+    agentTeamCapabilities = next;
+    agentTeamService?.capabilitiesChanged();
+  };
 
   // ── Status overlay panel stats (status-overlay-panel + mobile M1) ─────────
   // The service always ticks its graph loop (CPU/MEM ring buffer, app
@@ -872,6 +969,7 @@ app.on('ready', async () => {
   };
   const sessionWorktreeMutationGate = new AsyncMutationGate();
   const sessionWorktreeRunGuard = new SessionWorktreeGuard();
+  const agentTeamGitRunner = new GitRunner();
   const worktreeService = new WorktreeService({
     userDataDir: app.getPath('userData'),
     getSessionCwds: () => broker?.listSessions().map((item) => item.cwd) ?? [],
@@ -902,7 +1000,7 @@ app.on('ready', async () => {
     projectWorkspaceService,
     projectMapBindingStore,
     projectMapCacheStore,
-    new GitRunner(),
+    agentTeamGitRunner,
     projectMapApprovalStore,
     projectMapJobStore,
   );
@@ -1234,6 +1332,106 @@ app.on('ready', async () => {
     }
     return agentCoordinationService.saveProject(input as AgentProjectCoordinationInput);
   });
+  ipcMain.handle('agent-teams:get-snapshot', async () => {
+    await Promise.all([agentTeamReady, refreshAgentTeamCapabilities()]);
+    return agentTeamService?.getSnapshot() ?? EMPTY_AGENT_TEAM_DESKTOP_SNAPSHOT;
+  });
+  ipcMain.handle('agent-teams:save-persona', async (_event, input: unknown) => {
+    await agentTeamReady;
+    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
+      return { ok: false, error: 'invalid', message: 'Invalid Persona settings.' } as const;
+    }
+    return agentTeamService.savePersona(input as AgentPersonaInput);
+  });
+  ipcMain.handle('agent-teams:delete-persona', async (
+    _event,
+    personaId: unknown,
+    expectedRevision: unknown,
+  ) => {
+    await agentTeamReady;
+    if (!isBoundedAgentString(personaId, 64)
+      || typeof expectedRevision !== 'number'
+      || !Number.isSafeInteger(expectedRevision)
+      || expectedRevision < 1
+      || !agentTeamService) {
+      return { ok: false, error: 'invalid', message: 'Invalid Persona deletion.' } as const;
+    }
+    return agentTeamService.deletePersona(personaId, expectedRevision);
+  });
+  ipcMain.handle('agent-teams:create-starter-team', async (_event, input: unknown) => {
+    await Promise.all([agentTeamReady, refreshAgentTeamCapabilities()]);
+    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
+      return { ok: false, error: 'invalid', message: 'Invalid starter Team settings.' } as const;
+    }
+    return agentTeamService.createStarterTeam(input as AgentStarterTeamInput);
+  });
+  ipcMain.handle('agent-teams:save-team', async (_event, input: unknown) => {
+    await agentTeamReady;
+    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
+      return { ok: false, error: 'invalid', message: 'Invalid Team settings.' } as const;
+    }
+    return agentTeamService.saveTeam(input as AgentTeamInput);
+  });
+  ipcMain.handle('agent-teams:delete-team', async (
+    _event,
+    teamId: unknown,
+    expectedRevision: unknown,
+  ) => {
+    await agentTeamReady;
+    if (!isBoundedAgentString(teamId, 64)
+      || typeof expectedRevision !== 'number'
+      || !Number.isSafeInteger(expectedRevision)
+      || expectedRevision < 1
+      || !agentTeamService) {
+      return { ok: false, error: 'invalid', message: 'Invalid Team deletion.' } as const;
+    }
+    return agentTeamService.deleteTeam(teamId, expectedRevision);
+  });
+  ipcMain.handle('agent-teams:create-run', async (_event, input: unknown) => {
+    await Promise.all([agentTeamReady, refreshAgentTeamCapabilities()]);
+    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
+      return { ok: false, error: 'invalid', message: 'Invalid Team run.' } as const;
+    }
+    return agentTeamService.createRun(input as AgentTeamRunInput);
+  });
+  ipcMain.handle('agent-teams:approve-plan', async (_event, input: unknown) => {
+    await agentTeamReady;
+    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
+      return { ok: false, error: 'invalid', message: 'Invalid Team plan approval.' } as const;
+    }
+    return agentTeamService.approvePlan(input as AgentTeamPlanApprovalInput);
+  });
+  ipcMain.handle('agent-teams:decide-run', async (_event, input: unknown) => {
+    await agentTeamReady;
+    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
+      return { ok: false, error: 'invalid', message: 'Invalid Team run decision.' } as const;
+    }
+    return agentTeamService.decideRun(input as AgentTeamRunDecisionInput);
+  });
+  ipcMain.handle('agent-teams:fail-member', async (_event, input: unknown) => {
+    await agentTeamReady;
+    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
+      return { ok: false, error: 'invalid', message: 'Invalid Team member failure.' } as const;
+    }
+    const candidate = input as Partial<AgentTeamMemberFailureInput>;
+    if (!isBoundedAgentString(candidate.runId, 64)
+      || !isBoundedAgentString(candidate.personaId, 64)
+      || typeof candidate.expectedRevision !== 'number'
+      || !Number.isSafeInteger(candidate.expectedRevision)
+      || candidate.expectedRevision < 1
+      || !isBoundedAgentString(candidate.error, 500)
+      || (candidate.binding !== undefined && !isAgentTeamMemberBinding(candidate.binding))) {
+      return { ok: false, error: 'invalid', message: 'Invalid Team member failure.' } as const;
+    }
+    return agentTeamService.bindMember(
+      candidate.runId,
+      candidate.personaId,
+      candidate.expectedRevision,
+      'failed',
+      candidate.binding,
+      candidate.error,
+    );
+  });
   ipcMain.handle('agents:mark-seen', (_event, activityId: unknown, stateSeq: unknown) => (
     typeof activityId === 'string'
     && typeof stateSeq === 'number'
@@ -1414,10 +1612,35 @@ app.on('ready', async () => {
     event: IpcMainInvokeEvent,
     candidate: AgentLaunchStartRequest,
   ): Promise<AgentLaunchStartResult> => {
+    let teamContext: ReturnType<AgentTeamService['launchContext']> | null = null;
+    if (candidate.teamMember) {
+      if (!agentTeamService || candidate.target.kind !== 'project') {
+        return { ok: false, reason: 'unavailable' };
+      }
+      teamContext = agentTeamService.launchContext(
+        candidate.teamMember.runId,
+        candidate.teamMember.personaId,
+      );
+      if (!teamContext.ok) {
+        return { ok: false, reason: teamContext.error === 'stale' ? 'stale' : 'unavailable' };
+      }
+      const slot = teamContext.value.run.slots.find(
+        (item) => item.personaId === candidate.teamMember!.personaId,
+      );
+      if (!slot
+        || slot.state !== 'prepared'
+        || candidate.launcherId !== teamContext.value.persona.launch.provider
+        || candidate.target.projectId !== teamContext.value.run.projectId
+        || candidate.target.rootId !== slot.rootId
+        || candidate.target.workspaceId !== slot.workspaceId) {
+        return { ok: false, reason: 'stale' };
+      }
+    }
     const resolved = await agentHistoryService.resolveLaunch(
       candidate.target,
       candidate.launcherId,
       candidate.revision,
+      teamContext?.ok ? teamContext.value.persona.launch : undefined,
     );
     if (!resolved.ok) return resolved;
     const session = broker?.listSessions().find((item) => item.sessionId === candidate.sessionId);
@@ -1425,13 +1648,35 @@ app.on('ready', async () => {
       || directoryKey(session.cwd) !== directoryKey(resolved.roots[0])) {
       return { ok: false, reason: 'session-mismatch' };
     }
+    let launchingTeamRevision: number | null = null;
+    if (candidate.teamMember && teamContext?.ok && agentTeamService) {
+      const launching = await agentTeamService.bindMemberCurrent(
+        candidate.teamMember.runId,
+        candidate.teamMember.personaId,
+        'launching',
+        { sessionId: candidate.sessionId },
+      );
+      if (!launching.ok) return { ok: false, reason: 'stale' };
+      launchingTeamRevision = launching.value.revision;
+    }
     const port = broker?.runPrivateCommand(
       candidate.sessionId,
       candidate.runId,
       resolved.commandText,
       resolved.displayCommandText,
     );
-    if (!port) return { ok: false, reason: 'unavailable' };
+    if (!port) {
+      if (candidate.teamMember && launchingTeamRevision && agentTeamService) {
+        await agentTeamService.bindMemberCurrent(
+          candidate.teamMember.runId,
+          candidate.teamMember.personaId,
+          'failed',
+          { sessionId: candidate.sessionId },
+          'The provider process could not be started.',
+        );
+      }
+      return { ok: false, reason: 'unavailable' };
+    }
     void agentHistoryService.recordLaunchTargetWork(candidate.target, resolved.roots, Date.now()).catch((err) => {
       console.error('[main] failed to record launched Agent project:', err);
     });
@@ -1448,6 +1693,194 @@ app.on('ready', async () => {
       return { ok: false, reason: 'invalid' };
     }
     return agentHistoryService.prepareLaunch(target, launcherId);
+  });
+  ipcMain.handle('agent-teams:prepare-member-launch', async (_event, input: unknown) => {
+    await Promise.all([agentHistoryReady, agentInfrastructureReady, agentTeamReady]);
+    if (typeof input !== 'object' || input === null || Array.isArray(input) || !agentTeamService) {
+      return { ok: false, error: 'invalid', message: 'Invalid Team member launch.' } as const;
+    }
+    const candidate = input as Partial<AgentTeamMemberLaunchInput>;
+    if (!isBoundedAgentString(candidate.runId, 64)
+      || !isBoundedAgentString(candidate.personaId, 64)
+      || typeof candidate.expectedRevision !== 'number'
+      || !Number.isSafeInteger(candidate.expectedRevision)
+      || candidate.expectedRevision < 1
+      || !isAgentLaunchTarget(candidate.target)
+      || candidate.target.kind !== 'project'
+      || !candidate.target.rootId
+      || !candidate.target.workspaceId
+      || !isAgentTeamMemberBinding(candidate.binding)
+      || !candidate.binding.branch
+      || !candidate.binding.rootId
+      || !candidate.binding.workspaceId
+      || !candidate.binding.worktreeId
+      || !candidate.binding.worktreePath
+      || candidate.binding.sessionId !== undefined
+      || candidate.binding.activityId !== undefined
+      || candidate.binding.participantId !== undefined
+      || candidate.target.rootId !== candidate.binding.rootId
+      || candidate.target.workspaceId !== candidate.binding.workspaceId) {
+      return { ok: false, error: 'invalid', message: 'A managed worktree target is required.' } as const;
+    }
+    const target = candidate.target;
+    const context = agentTeamService.launchContext(
+      candidate.runId,
+      candidate.personaId,
+      candidate.expectedRevision,
+    );
+    if (!context.ok) return context;
+    if (target.projectId !== context.value.run.projectId) {
+      return { ok: false, error: 'conflict', message: 'The worktree belongs to another Project.' } as const;
+    }
+    const described = await projectWorkspaceService.describeProjectWorkspaces(target.projectId);
+    const managedWorkspace = described.ok
+      ? described.project.workspaces?.find((workspace) => (
+          workspace.workspaceId === target.workspaceId
+          && workspace.rootId === target.rootId
+          && workspace.kind === 'managed'
+          && workspace.access === 'granted'
+        ))
+      : undefined;
+    if (!managedWorkspace
+      || managedWorkspace.workspaceId !== candidate.binding.worktreeId
+      || (managedWorkspace.branch !== undefined && managedWorkspace.branch !== candidate.binding.branch)) {
+      return { ok: false, error: 'conflict', message: 'The Team member requires the exact managed worktree.' } as const;
+    }
+    const canonicalBinding: AgentTeamMemberBinding = {
+      branch: managedWorkspace.branch ?? candidate.binding.branch,
+      rootId: managedWorkspace.rootId,
+      workspaceId: managedWorkspace.workspaceId,
+      worktreeId: managedWorkspace.workspaceId,
+      worktreePath: managedWorkspace.displayPath,
+    };
+    const slot = context.value.run.slots.find((item) => item.personaId === candidate.personaId);
+    if (!slot || !['planned', 'failed', 'prepared'].includes(slot.state)) {
+      return { ok: false, error: 'conflict', message: 'This Team member is not ready to prepare.' } as const;
+    }
+    const preparation = await agentHistoryService.prepareLaunch(
+      target,
+      context.value.persona.launch.provider,
+      context.value.persona.launch,
+    );
+    if (!preparation.ok) {
+      return {
+        ok: false,
+        error: preparation.reason === 'invalid' ? 'invalid' : 'unavailable',
+        message: `Unable to prepare ${context.value.persona.name}.`,
+      } as const;
+    }
+    if (directoryKey(preparation.cwd) !== directoryKey(managedWorkspace.displayPath)) {
+      return { ok: false, error: 'conflict', message: 'The prepared Agent path does not match the managed worktree.' } as const;
+    }
+    const bound = await agentTeamService.bindMemberCurrent(
+      candidate.runId,
+      candidate.personaId,
+      'prepared',
+      canonicalBinding,
+    );
+    return bound.ok
+      ? { ok: true, value: { run: bound.value, preparation } } as const
+      : bound;
+  });
+  ipcMain.handle('agent-teams:activate-member', async (_event, input: unknown) => {
+    await Promise.all([agentInfrastructureReady, agentTeamReady]);
+    if (typeof input !== 'object' || input === null || Array.isArray(input)
+      || !agentTeamService || !agentActivityService || !agentCoordinationService) {
+      return { ok: false, error: 'invalid', message: 'Invalid Team member activation.' } as const;
+    }
+    const candidate = input as Partial<AgentTeamMemberActivationInput>;
+    if (!isBoundedAgentString(candidate.runId, 64)
+      || !isBoundedAgentString(candidate.personaId, 64)
+      || !isBoundedAgentString(candidate.sessionId, 256)) {
+      return { ok: false, error: 'invalid', message: 'Invalid Team member activation.' } as const;
+    }
+    let context = agentTeamService.launchContext(candidate.runId, candidate.personaId);
+    if (!context.ok) return context;
+    let slot = context.value.run.slots.find((item) => item.personaId === candidate.personaId);
+    if (slot?.state === 'failed' && slot.sessionId === candidate.sessionId) {
+      const rebound = await agentTeamService.bindMemberCurrent(
+        candidate.runId,
+        candidate.personaId,
+        'launching',
+        { sessionId: candidate.sessionId },
+      );
+      if (!rebound.ok) return rebound;
+      context = agentTeamService.launchContext(candidate.runId, candidate.personaId);
+      if (!context.ok) return context;
+      slot = context.value.run.slots.find((item) => item.personaId === candidate.personaId);
+    }
+    if (!slot || slot.state !== 'launching' || slot.sessionId !== candidate.sessionId) {
+      return { ok: false, error: 'conflict', message: 'This terminal is not the prepared Team member.' } as const;
+    }
+    const activities = agentActivityService.getSnapshot().items.filter((activity) => (
+      activity.live
+      && activity.sessionId === candidate.sessionId
+      && activity.provider === context.value.persona.launch.provider
+    ));
+    if (activities.length === 0) {
+      return { ok: false, error: 'unavailable', message: 'Waiting for the Agent integration to observe this session.' } as const;
+    }
+    if (activities.length > 1) {
+      const message = 'More than one live Agent was observed in the prepared Team session.';
+      await agentTeamService.bindMemberCurrent(
+        candidate.runId,
+        candidate.personaId,
+        'failed',
+        { sessionId: candidate.sessionId },
+        message,
+      );
+      return { ok: false, error: 'conflict', message } as const;
+    }
+    const activity = activities[0]!;
+    const joined = await agentCoordinationService.join({
+      activityId: activity.id,
+      alias: context.value.persona.name,
+      role: context.value.persona.role,
+      task: context.value.task,
+      expectedProjectRevision: context.value.run.validationConfigRevision,
+    });
+    if (!joined.ok) {
+      await agentTeamService.bindMemberCurrent(
+        candidate.runId,
+        candidate.personaId,
+        'failed',
+        { sessionId: candidate.sessionId },
+        joined.message,
+      );
+      return joined;
+    }
+    if (joined.value.participant.projectId !== context.value.run.projectId
+      || joined.value.participant.rootId !== slot.rootId
+      || joined.value.participant.workspaceId !== slot.workspaceId) {
+      agentCoordinationService.leave(activity.id);
+      const message = 'The observed Agent started outside its prepared worktree.';
+      await agentTeamService.bindMemberCurrent(
+        candidate.runId,
+        candidate.personaId,
+        'failed',
+        { sessionId: candidate.sessionId },
+        message,
+      );
+      return { ok: false, error: 'conflict', message } as const;
+    }
+    const bound = await agentTeamService.bindMemberCurrent(
+      candidate.runId,
+      candidate.personaId,
+      'active',
+      {
+        sessionId: candidate.sessionId,
+        activityId: activity.id,
+        participantId: joined.value.participant.participantId,
+      },
+    );
+    if (!bound.ok) {
+      agentCoordinationService.leave(activity.id);
+      return bound;
+    }
+    const brief = !bound.value.approvedAt && candidate.personaId === bound.value.plannerPersonaId
+      ? composeAgentTeamPlanningBrief(bound.value)
+      : context.value.brief;
+    return { ok: true, value: { run: bound.value, brief } } as const;
   });
   ipcMain.handle('agent-launch:start', async (
     event,
@@ -1523,7 +1956,12 @@ app.on('ready', async () => {
     await agentHistoryReady;
     if (typeof projectId !== 'string' || projectId.length > 128) return false;
     const removed = await agentHistoryService.removeProject(projectId);
-    if (removed) await projectWorkspaceService.revokeProjectAccess(projectId);
+    if (removed) {
+      await Promise.all([
+        projectWorkspaceService.revokeProjectAccess(projectId),
+        agentTeamService?.removeProject(projectId),
+      ]);
+    }
     return removed;
   });
   ipcMain.handle('agent-projects:select-folders', async (event, multiple?: unknown) => {
@@ -1781,7 +2219,9 @@ app.on('ready', async () => {
         status: await agentHookInstaller.status(provider),
       } as const;
     }
-    return agentHookInstaller.mutate(provider, enabled);
+    const result = await agentHookInstaller.mutate(provider, enabled);
+    await refreshAgentTeamCapabilities();
+    return result;
   });
   ipcMain.handle('agents:get-settings', async () => {
     await agentInfrastructureReady;
@@ -1911,14 +2351,17 @@ app.on('ready', async () => {
         },
       },
       { name: 'OpenClaw endpoint subscription', run: () => unsubscribeOpenClawEndpoint() },
+      { name: 'OpenClaw lifecycle coordinator', run: () => openClawLifecycleCoordinator?.dispose() },
       { name: 'OpenClaw service', run: () => openClawService?.dispose() },
       { name: 'OpenClaw chat view', run: () => openClawChatView?.destroy() },
       { name: 'agent control server', run: () => agentControlServer?.stop() },
       { name: 'managed merge', run: () => managedMergeService?.dispose() },
+      { name: 'agent Teams', run: () => agentTeamService?.dispose() },
       { name: 'agent coordination', run: () => agentCoordinationService?.dispose() },
       { name: 'agent activity', run: () => agentActivityService?.dispose() },
       { name: 'agent history', run: () => agentHistoryService.dispose() },
       { name: 'agent coordination store', run: () => agentCoordinationStore.flush() },
+      { name: 'agent Team store', run: () => agentTeamStore.flush() },
       { name: 'agent settings', run: () => agentSettingsStore.flush() },
       { name: 'project workspace access', run: () => projectWorkspaceAccessStore.flush() },
       {
@@ -2217,7 +2660,13 @@ app.on('ready', async () => {
     broker,
     getSettings: () => agentSettingsStore.current,
   });
-  await Promise.all([agentCoordinationReady, agentCliReady, projectWorkspaceReady]);
+  await Promise.all([
+    agentCoordinationReady,
+    agentTeamReady,
+    agentCliReady,
+    projectWorkspaceReady,
+    refreshAgentTeamCapabilities(),
+  ]);
   agentCoordinationService = new AgentCoordinationService({
     activities: agentActivityService,
     store: agentCoordinationStore,
@@ -2241,6 +2690,32 @@ app.on('ready', async () => {
         workspaceId: workspace.workspaceId,
         ...(workspace.kind === 'managed' ? { worktreeId: workspace.workspaceId } : {}),
       };
+    },
+  });
+  agentTeamService = new AgentTeamService({
+    store: agentTeamStore,
+    listProjects: () => agentProjectStore.list(),
+    getCoordinationProject: (projectId) => agentCoordinationService?.getProject(projectId) ?? null,
+    capabilities: () => agentTeamCapabilities,
+    isActivityLive: (activityId) => agentActivityService?.getSnapshot().items.some(
+      (activity) => activity.id === activityId && activity.live,
+    ) === true,
+    inspectBase: async (project, targetBranch) => {
+      const status = await gitStatusService.getStatus(project.primaryRoot);
+      if (status.availability !== 'ready') return null;
+      try {
+        const head = (await agentTeamGitRunner.run(project.primaryRoot, [
+          'rev-parse',
+          '--verify',
+          '--end-of-options',
+          `${targetBranch}^{commit}`,
+        ])).trim();
+        return /^[0-9a-f]{40,64}$/iu.test(head)
+          ? { head, dirty: status.changes.length > 0 }
+          : null;
+      } catch {
+        return null;
+      }
     },
   });
   const validationRunner = new AgentValidationRunner(broker);
@@ -2277,8 +2752,10 @@ app.on('ready', async () => {
       coordination: agentCoordinationService,
       merges: managedMergeService,
       maps: projectMapService,
+      teams: agentTeamService,
     });
     await agentControlServer.start();
+    await refreshAgentTeamCapabilities();
     for (const session of broker.listSessions()) {
       broker.setPrivateSessionEnvironment(session.sessionId, {
         EZTERMINAL_AGENT_CONTROL_DESCRIPTOR: agentControlServer.descriptorForSession(session.sessionId),
@@ -2297,6 +2774,14 @@ app.on('ready', async () => {
       win.webContents.send('agents:coordination-snapshot', snapshot);
     }
   });
+  const broadcastAgentTeamSnapshot = (snapshot: AgentTeamDesktopSnapshot): void => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+      win.webContents.send('agent-teams:snapshot', snapshot);
+    }
+  };
+  agentTeamService.onSnapshot(broadcastAgentTeamSnapshot);
+  broadcastAgentTeamSnapshot(agentTeamService.getSnapshot());
   agentActivityService.onObserved((activity) => {
     // Every provider EZTerminal has local history for — generic profiles have no
     // adapter and so no sessions to come back to.
@@ -2598,6 +3083,71 @@ app.on('ready', async () => {
   // wiring right below needs it to build `remoteOpenClawSource`.
   const openclaw = new OpenClawService();
   openClawService = openclaw;
+  const openclawControl = process.platform === 'win32'
+    && process.env.EZTERMINAL_DISABLE_OPENCLAW_SUPERVISOR !== '1'
+    ? new OpenClawLifecycleCoordinator({
+        userDataDirectory: app.getPath('userData'),
+        supervisorAssetPath: app.isPackaged
+          ? path.join(process.resourcesPath, 'openclaw-supervisor.ps1')
+          : path.join(app.getAppPath(), 'assets', 'openclaw-supervisor.ps1'),
+        getPhysicalStatus: (force) => openclaw.getStatus(force),
+      })
+    : null;
+  openClawLifecycleCoordinator = openclawControl;
+  await openclawControl?.initialize();
+
+  const transientControlSnapshot = async (force = false): Promise<OpenClawControlSnapshot> => {
+    const status = await openclaw.getStatus(force);
+    return {
+      schemaVersion: 1,
+      intentId: null,
+      generation: 0,
+      status,
+      desiredState: status.state === 'running' || status.state === 'starting' ? 'running' : 'stopped',
+      supervisorState: 'unregistered',
+      operation: null,
+      issue: null,
+      updatedAt: new Date().toISOString(),
+    };
+  };
+  const getOpenClawControl = (force = false): Promise<OpenClawControlSnapshot> => (
+    openclawControl?.getSnapshot(force) ?? transientControlSnapshot(force)
+  );
+  const requestOpenClawLifecycle = async (
+    action: OpenClawLifecycleAction,
+  ): Promise<OpenClawLifecycleReceipt> => {
+    if (openclawControl) return openclawControl.requestLifecycle(action);
+    const result = await openclaw.runLifecycle(action);
+    return result.ok
+      ? { accepted: true }
+      : {
+          accepted: false,
+          issue: {
+            code: result.code === 'unhealthy' ? 'gateway-unhealthy' : 'supervisor-failed',
+            detail: result.stderr || 'OpenClaw did not accept the lifecycle request.',
+            remediation: 'Inspect the OpenClaw CLI output and retry the requested action.',
+            diagnosticId: `transient-${Date.now().toString(36)}`,
+          },
+        };
+  };
+  const subscribeOpenClawControl = (
+    listener: (snapshot: OpenClawControlSnapshot) => void,
+  ): (() => void) => {
+    if (openclawControl) return openclawControl.subscribe(listener);
+    return openclaw.subscribeStatus((status) => {
+      listener({
+        schemaVersion: 1,
+        intentId: null,
+        generation: 0,
+        status,
+        desiredState: status.state === 'running' || status.state === 'starting' ? 'running' : 'stopped',
+        supervisorState: 'unregistered',
+        operation: null,
+        issue: null,
+        updatedAt: new Date().toISOString(),
+      });
+    });
+  };
 
   // ── OpenClaw chat WebContentsView (openclaw-management M3) ────────────────
   // See openclaw-chat-view.ts's module doc for the config verified live in
@@ -2680,7 +3230,8 @@ app.on('ready', async () => {
   });
   const remoteOpenClawSource: RemoteOpenClawSource = {
     subscribeStatus: (listener) => openclaw.subscribeStatus(listener),
-    runLifecycle: (action) => openclaw.runLifecycle(action),
+    subscribeControl: subscribeOpenClawControl,
+    runLifecycle: requestOpenClawLifecycle,
     subscribeLogs: (listener) => openclaw.subscribeLogs(listener),
     listAgentSessions: () => openclaw.listAgentSessions(),
     getCoreConfig: () => openclaw.getCoreConfig(),
@@ -2810,7 +3361,8 @@ app.on('ready', async () => {
   // (M3 owns the WebContentsView main-side) — only a boolean "is a token
   // available" is exposed via `openclaw:chat-available`.
   ipcMain.handle('openclaw:get-status', (_event, force?: boolean) => openclaw.getStatus(force));
-  ipcMain.handle('openclaw:lifecycle', (_event, action: OpenClawLifecycleAction) => openclaw.runLifecycle(action));
+  ipcMain.handle('openclaw:get-control', (_event, force?: boolean) => getOpenClawControl(force));
+  ipcMain.handle('openclaw:lifecycle', (_event, action: OpenClawLifecycleAction) => requestOpenClawLifecycle(action));
   ipcMain.handle('openclaw:list-sessions', () => openclaw.listAgentSessions());
   ipcMain.handle('openclaw:get-config', () => openclaw.getCoreConfig());
   ipcMain.handle('openclaw:set-config', (_event, key: string, value: string) => openclaw.setCoreConfig(key, value));
@@ -2896,6 +3448,7 @@ app.on('ready', async () => {
     const wantStatus = openclawDrawerOpen || openclawChatPanelOpen;
     if (wantStatus && !openclawUnsubscribeStatus) {
       openclawUnsubscribeStatus = openclaw.subscribeStatus((status) => {
+        openclawControl?.updatePhysicalStatus(status);
         for (const win of BrowserWindow.getAllWindows()) {
           if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
           win.webContents.send('openclaw:status', status);
@@ -2904,6 +3457,21 @@ app.on('ready', async () => {
     } else if (!wantStatus && openclawUnsubscribeStatus) {
       openclawUnsubscribeStatus();
       openclawUnsubscribeStatus = null;
+    }
+  };
+  let openclawUnsubscribeControl: (() => void) | null = null;
+  const syncOpenClawControlSubscription = (): void => {
+    const wantControl = openclawDrawerOpen || openclawChatPanelOpen;
+    if (wantControl && !openclawUnsubscribeControl) {
+      openclawUnsubscribeControl = subscribeOpenClawControl((snapshot) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+          win.webContents.send('openclaw:control', snapshot);
+        }
+      });
+    } else if (!wantControl && openclawUnsubscribeControl) {
+      openclawUnsubscribeControl();
+      openclawUnsubscribeControl = null;
     }
   };
   const syncOpenClawLogSubscription = (): void => {
@@ -2922,11 +3490,13 @@ app.on('ready', async () => {
   ipcMain.on('openclaw:set-drawer-open', (_event, open: boolean) => {
     openclawDrawerOpen = Boolean(open);
     syncOpenClawStatusSubscription();
+    syncOpenClawControlSubscription();
     syncOpenClawLogSubscription();
   });
   ipcMain.on('openclaw:chat-panel-mounted', (_event, mounted: boolean) => {
     openclawChatPanelOpen = Boolean(mounted);
     syncOpenClawStatusSubscription();
+    syncOpenClawControlSubscription();
   });
 
   // ── OpenClaw chat WebContentsView IPC (openclaw-management M3) ───────────

@@ -33,6 +33,7 @@ import {
 } from '../shared/agent-history';
 import { hasProjectPathControlCharacters } from '../shared/project-workspace';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
+import type { AgentPersonaLaunch } from '../shared/agent-team';
 import type {
   AgentHistoryProviderAdapter,
   AgentResumeCommand,
@@ -619,10 +620,15 @@ export class ClaudeHistoryAdapter implements AgentHistoryProviderAdapter {
     return { commandText: parts.join(' '), displayCommandText: 'claude resume' };
   }
 
-  buildNewCommand(roots: readonly string[]): AgentResumeCommand | null {
+  buildNewCommand(roots: readonly string[], launch?: AgentPersonaLaunch): AgentResumeCommand | null {
     const [primaryRoot, ...additionalRoots] = roots;
-    if (!primaryRoot) return null;
+    if (!primaryRoot || (launch && launch.provider !== 'claude')) return null;
     const parts = ['!claude'];
+    if (launch?.provider === 'claude') {
+      if (launch.model) parts.push('--model', quoteEzArgument(launch.model));
+      if (launch.effort) parts.push('--effort', launch.effort);
+      parts.push('--permission-mode', launch.permissionMode);
+    }
     // Claude has no --cd. The caller creates the shell at primaryRoot, while
     // its variadic --add-dir receives every additional project root at once.
     if (additionalRoots.length > 0) {

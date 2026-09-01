@@ -562,4 +562,20 @@ describe('ClaudeHistoryAdapter.buildResumeCommand', () => {
     });
     expect(adapter.buildNewCommand([])).toBeNull();
   });
+
+  it('maps bounded Persona policy values to supported Claude flags', () => {
+    expect(adapter.buildNewCommand(['C:\\Work'], {
+      provider: 'claude',
+      model: 'sonnet',
+      effort: 'high',
+      permissionMode: 'manual',
+    })).toEqual({
+      commandText: "!claude --model 'sonnet' --effort high --permission-mode manual",
+      displayCommandText: 'claude',
+    });
+    expect(adapter.buildNewCommand(['C:\\Work'], {
+      provider: 'codex',
+      sandbox: 'workspace-write',
+    })).toBeNull();
+  });
 });

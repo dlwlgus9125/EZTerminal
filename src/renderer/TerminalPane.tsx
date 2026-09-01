@@ -63,6 +63,7 @@ import type {
 import { classifyDirectAgentCommand } from '../shared/agent-command';
 import { clearAgentTerminalBootstrap } from './agent-terminal-bootstrap';
 import { dispatchProjectMapAgentRequest } from './project-map-agent-launch';
+import { activateAgentTeamMemberWhenObserved } from './agent-team-activation';
 import type { ProjectSessionTarget } from '../shared/project-workspace';
 import type { RuntimeLifecycleTier } from '../shared/runtime-lifecycle';
 
@@ -692,15 +693,45 @@ export function TerminalPane({
         let launchTarget = bootstrap.target;
         let launchRevision = bootstrap.revision;
         if (bootstrapRetryToken > 0) {
-          const preparation = await window.ezterminal.prepareAgentLaunch(
-            bootstrap.target,
-            bootstrap.launcherId,
-          );
-          if (!preparation.ok) {
-            throw new Error(`Agent launch preparation failed: ${preparation.reason}`);
+          if (bootstrap.teamMemberRequest) {
+            const desktop = window.ezterminalDesktop;
+            const snapshot = await desktop?.getAgentTeamSnapshot();
+            const teamRun = snapshot?.runs.find(
+              (candidate) => candidate.runId === bootstrap.teamMemberRequest?.runId,
+            );
+            const slot = teamRun?.slots.find(
+              (candidate) => candidate.personaId === bootstrap.teamMemberRequest?.personaId,
+            );
+            if (!desktop || !teamRun || !slot?.branch || !slot.rootId || !slot.workspaceId
+              || !slot.worktreeId || !slot.worktreePath) {
+              throw new Error('The Team worktree is no longer available for retry.');
+            }
+            const prepared = await desktop.prepareAgentTeamMemberLaunch({
+              ...bootstrap.teamMemberRequest,
+              expectedRevision: teamRun.revision,
+              target: bootstrap.target,
+              binding: {
+                branch: slot.branch,
+                rootId: slot.rootId,
+                workspaceId: slot.workspaceId,
+                worktreeId: slot.worktreeId,
+                worktreePath: slot.worktreePath,
+              },
+            });
+            if (!prepared.ok) throw new Error(prepared.message);
+            launchTarget = prepared.value.preparation.target;
+            launchRevision = prepared.value.preparation.revision;
+          } else {
+            const preparation = await window.ezterminal.prepareAgentLaunch(
+              bootstrap.target,
+              bootstrap.launcherId,
+            );
+            if (!preparation.ok) {
+              throw new Error(`Agent launch preparation failed: ${preparation.reason}`);
+            }
+            launchTarget = preparation.target;
+            launchRevision = preparation.revision;
           }
-          launchTarget = preparation.target;
-          launchRevision = preparation.revision;
         }
         const result = await window.ezterminal.startAgentLaunch({
           target: launchTarget,
@@ -708,6 +739,7 @@ export function TerminalPane({
           sessionId: runSessionId,
           runId,
           revision: launchRevision,
+          ...(bootstrap.teamMemberRequest ? { teamMember: bootstrap.teamMemberRequest } : {}),
         });
         if (!result.ok) throw new Error(`Agent launch failed: ${result.reason}`);
       },
@@ -728,7 +760,56 @@ export function TerminalPane({
         setBlocks((previous) => previous.map((entry) =>
           entry.id === runId ? { ...entry, controller } : entry));
         if (bootstrap.kind === 'new-chat') {
-          if (!bootstrap.projectMapRequest) {
+          if (bootstrap.teamMemberRequest) {
+            const teamMemberRequest = bootstrap.teamMemberRequest;
+            const desktop = window.ezterminalDesktop;
+            const startTeamActivation = (): void => {
+              if (!desktop) {
+                setResumeError('The Team Agent started, but desktop collaboration is unavailable.');
+                return;
+              }
+              projectMapDispatchAbortRef.current?.abort('retry');
+              const dispatchAbort = new AbortController();
+              projectMapDispatchAbortRef.current = dispatchAbort;
+              setResumeError(null);
+              void activateAgentTeamMemberWhenObserved(
+                {
+                  activate: (input) => desktop.activateAgentTeamMember(input),
+                  onActivitySnapshot: (listener) => window.ezterminal.onAgentActivitySnapshot(() => listener()),
+                },
+                { ...teamMemberRequest, sessionId: runSessionId },
+                dispatchAbort.signal,
+              ).then((activated) => {
+                if (projectMapDispatchAbortRef.current !== dispatchAbort) return;
+                controller.submitPtyWhenReady(activated.value.brief);
+                projectMapDispatchAbortRef.current = null;
+                projectMapDispatchRetryRef.current = null;
+                clearAgentTerminalBootstrap(panelId);
+              }).catch((error: unknown) => {
+                  if (projectMapDispatchAbortRef.current !== dispatchAbort || dispatchAbort.signal.aborted) return;
+                  projectMapDispatchAbortRef.current = null;
+                  const message = error instanceof Error
+                    ? error.message
+                    : 'The Team Agent started, but its approved brief could not be delivered.';
+                  setResumeError(message);
+                  void desktop.getAgentTeamSnapshot().then(async (snapshot) => {
+                    const run = snapshot.runs.find((candidate) => candidate.runId === teamMemberRequest.runId);
+                    const slot = run?.slots.find(
+                      (candidate) => candidate.personaId === teamMemberRequest.personaId,
+                    );
+                    if (!run || slot?.state !== 'launching' || slot.sessionId !== runSessionId) return;
+                    await desktop.failAgentTeamMember({
+                      ...teamMemberRequest,
+                      expectedRevision: run.revision,
+                      error: message.slice(0, 500),
+                    });
+                  }).catch(() => undefined);
+                  console.error('[renderer] Team Agent activation failed:', error);
+                });
+            };
+            projectMapDispatchRetryRef.current = startTeamActivation;
+            startTeamActivation();
+          } else if (!bootstrap.projectMapRequest) {
             clearAgentTerminalBootstrap(panelId);
           } else if (bootstrap.provider !== 'codex' && bootstrap.provider !== 'claude') {
             setResumeError(t(

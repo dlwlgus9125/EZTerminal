@@ -107,7 +107,7 @@ describe('SecureAtomicFile', () => {
 });
 
 describe('applyAndVerifyWindowsAcl', () => {
-  it('uses a static PowerShell command with shell:false and carries the path only in the environment', async () => {
+  it('uses a static PowerShell command and commits the complete ACL in one filesystem update', async () => {
     const executeMock = vi.fn((
       _file: string,
       _args: readonly string[],
@@ -132,7 +132,11 @@ describe('applyAndVerifyWindowsAcl', () => {
     expect(args.join(' ')).not.toContain(trickyPath);
     expect(options.env.EZTERMINAL_SECURE_FILE).toBe(trickyPath);
     const command = args.join(' ');
-    expect(command).toContain('icacls.exe');
+    expect(command).not.toContain('icacls.exe');
+    expect(command).toContain('FileSecurity');
+    expect(command).toContain('SetAccessRuleProtection');
+    expect(command).toContain('AddAccessRule');
+    expect(command.match(/SetAccessControl/gu)).toHaveLength(1);
     expect(command).toContain('AreAccessRulesProtected');
     expect(command).toContain('GetAccessRules');
     expect(command).not.toContain('Get-Acl');

@@ -55,8 +55,85 @@ fn parse_args(args: &[String]) -> Result<RequestSpec> {
         Some("wait") => parse_wait(&args[1..]),
         Some("map") => parse_map(&args[1..]),
         Some("merge") => parse_merge(&args[1..]),
+        Some("team") => parse_team(&args[1..]),
         _ => bail!(usage()),
     }
+}
+
+fn parse_team(args: &[String]) -> Result<RequestSpec> {
+    let (run_id, expected_revision) = parse_team_plan_arguments(args)?;
+    let mut bytes = Vec::new();
+    io::stdin()
+        .take((MAX_STDIN_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.is_empty() || bytes.len() > MAX_STDIN_BYTES {
+        bail!("stdin must contain 1..32768 bytes");
+    }
+    let proposal: Value =
+        serde_json::from_slice(&bytes).context("stdin must contain one JSON plan object")?;
+    if !proposal.is_object() {
+        bail!("stdin must contain one JSON plan object");
+    }
+    Ok(RequestSpec {
+        path: "/v1/team/plan",
+        body: json!({
+            "runId": run_id,
+            "expectedRevision": expected_revision,
+            "proposal": proposal,
+        }),
+    })
+}
+
+fn parse_team_plan_arguments(args: &[String]) -> Result<(String, u64)> {
+    if args.first().map(String::as_str) != Some("plan")
+        || args.get(1).map(String::as_str) != Some("submit")
+    {
+        bail!(usage());
+    }
+    let run_id = args
+        .get(2)
+        .filter(|value| !value.starts_with('-'))
+        .context(usage())?;
+    let parts: Vec<&str> = run_id.split('-').collect();
+    if parts.len() != 5
+        || [8, 4, 4, 4, 12]
+            .iter()
+            .enumerate()
+            .any(|(index, length)| parts[index].len() != *length)
+        || !parts
+            .iter()
+            .all(|part| part.chars().all(|character| character.is_ascii_hexdigit()))
+    {
+        bail!("run id must be a UUID");
+    }
+    let mut expected_revision: Option<u64> = None;
+    let mut stdin = false;
+    let mut index = 3;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--revision" if expected_revision.is_none() => {
+                index += 1;
+                let value: u64 = args
+                    .get(index)
+                    .context("--revision requires a positive integer")?
+                    .parse()?;
+                if value == 0 {
+                    bail!("--revision requires a positive integer");
+                }
+                expected_revision = Some(value);
+            }
+            "--stdin" if !stdin => stdin = true,
+            _ => bail!(usage()),
+        }
+        index += 1;
+    }
+    if !stdin {
+        bail!("the Team plan is accepted only with --stdin");
+    }
+    Ok((
+        run_id.clone(),
+        expected_revision.context("--revision is required")?,
+    ))
 }
 
 fn parse_map(args: &[String]) -> Result<RequestSpec> {
@@ -334,12 +411,12 @@ async fn post_json(descriptor: &Descriptor, request: RequestSpec) -> Result<(u16
 }
 
 fn usage() -> &'static str {
-    "usage: ezterminal-agent list | read <id|alias> [--lines N] | prompt <id|alias> --stdin [--when-ready] [--wait] | wait <id|alias> --until <state> [--after stateSeq] | map guide <architecture|workflow|sequence|dataflow|lifecycle> | map check [map-id] [--quality draft|production] | map job <job-id> <phase> | merge request --target <local-branch> [--wait] | merge wait <request-id>"
+    "usage: ezterminal-agent list | read <id|alias> [--lines N] | prompt <id|alias> --stdin [--when-ready] [--wait] | wait <id|alias> --until <state> [--after stateSeq] | map guide <architecture|workflow|sequence|dataflow|lifecycle> | map check [map-id] [--quality draft|production] | map job <job-id> <phase> | team plan submit <run-id> --revision N --stdin | merge request --target <local-branch> [--wait] | merge wait <request-id>"
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_args;
+    use super::{parse_args, parse_team_plan_arguments};
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
@@ -360,5 +437,41 @@ mod tests {
     fn rejects_unknown_map_types_and_non_portable_ids() {
         assert!(parse_args(&args(&["map", "guide", "html"])).is_err());
         assert!(parse_args(&args(&["map", "check", "../runtime"])).is_err());
+    }
+
+    #[test]
+    fn validates_team_plan_submission_arguments_without_reading_stdin() {
+        let parsed = parse_team_plan_arguments(&args(&[
+            "plan",
+            "submit",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "--revision",
+            "7",
+            "--stdin",
+        ]))
+        .expect("team plan arguments");
+        assert_eq!(parsed.0, "123e4567-e89b-12d3-a456-426614174000");
+        assert_eq!(parsed.1, 7);
+        assert!(
+            parse_team_plan_arguments(&args(&[
+                "plan",
+                "submit",
+                "not-a-run",
+                "--revision",
+                "1",
+                "--stdin",
+            ]))
+            .is_err()
+        );
+        assert!(
+            parse_team_plan_arguments(&args(&[
+                "plan",
+                "submit",
+                "123e4567-e89b-12d3-a456-426614174000",
+                "--revision",
+                "1",
+            ]))
+            .is_err()
+        );
     }
 }

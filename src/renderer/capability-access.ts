@@ -27,8 +27,10 @@ import type {
   OpenClawChatSurfaceSnapshot,
   OpenClawChatViewState,
   OpenClawConfigKey,
+  OpenClawControlSnapshot,
   OpenClawCoreConfig,
   OpenClawLifecycleAction,
+  OpenClawLifecycleReceipt,
   OpenClawLifecycleResult,
   OpenClawLogLine,
   OpenClawSetConfigResult,
@@ -91,12 +93,14 @@ export interface AgentIntegrationAccess {
 
 export interface OpenClawDrawerObserver {
   readonly onStatus: (status: OpenClawStatus) => void;
+  readonly onControl?: (snapshot: OpenClawControlSnapshot) => void;
   readonly onLog: (line: OpenClawLogLine) => void;
   readonly onError?: (error: unknown) => void;
 }
 
 export interface OpenClawChatObserver {
   readonly onStatus: (status: OpenClawStatus) => void;
+  readonly onControl?: (snapshot: OpenClawControlSnapshot) => void;
   readonly onViewState: (state: OpenClawChatViewState) => void;
   readonly onError?: (error: unknown) => void;
 }
@@ -109,7 +113,10 @@ export interface OpenClawAccess {
     onError?: (error: unknown) => void,
   ) => CapabilityCleanup;
   getStatus: (force?: boolean) => Promise<OpenClawStatus | null>;
-  runLifecycle: (action: OpenClawLifecycleAction) => Promise<OpenClawLifecycleResult | null>;
+  getControl?: (force?: boolean) => Promise<OpenClawControlSnapshot | null>;
+  runLifecycle: (
+    action: OpenClawLifecycleAction,
+  ) => Promise<OpenClawLifecycleReceipt | OpenClawLifecycleResult | null>;
   runAutostart: (action: OpenClawAutostartAction) => Promise<OpenClawAutostartResult | null>;
   listSessions: () => Promise<readonly OpenClawAgentSession[] | null>;
   getConfig: () => Promise<OpenClawCoreConfig | null>;
@@ -411,6 +418,20 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
       cleanups.push(() => api.setOpenClawDrawerOpen(false));
       try {
         cleanups.push(api.onOpenClawStatus((status) => gate.push(status)));
+        if (
+          observer.onControl
+          && typeof api.onOpenClawControl === 'function'
+          && typeof api.getOpenClawControl === 'function'
+        ) {
+          const controlGate = createSeedPushGate(
+            observer.onControl,
+            observer.onControl,
+            observer.onError,
+          );
+          cleanups.push(api.onOpenClawControl((snapshot) => controlGate.push(snapshot)));
+          cleanups.push(() => controlGate.stop());
+          controlGate.seed(() => api.getOpenClawControl());
+        }
         cleanups.push(api.onOpenClawLog((line) => gate.event(() => observer.onLog(line))));
       } catch (error) {
         gate.event(() => observer.onError?.(error));
@@ -443,6 +464,20 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
       cleanups.push(() => api.setOpenClawChatPanelMounted(false));
       try {
         cleanups.push(api.onOpenClawStatus((status) => gate.push(status)));
+        if (
+          observer.onControl
+          && typeof api.onOpenClawControl === 'function'
+          && typeof api.getOpenClawControl === 'function'
+        ) {
+          const controlGate = createSeedPushGate(
+            observer.onControl,
+            observer.onControl,
+            observer.onError,
+          );
+          cleanups.push(api.onOpenClawControl((snapshot) => controlGate.push(snapshot)));
+          cleanups.push(() => controlGate.stop());
+          controlGate.seed(() => api.getOpenClawControl());
+        }
         cleanups.push(
           api.onOpenClawChatViewState((state) =>
             gate.event(() => observer.onViewState(state))),
@@ -478,6 +513,10 @@ export function createCapabilityAccess(source: CapabilitySource): CapabilityAcce
     async getStatus(force) {
       const api = desktopFor('getOpenClawStatus');
       return api ? api.getOpenClawStatus(force) : null;
+    },
+    async getControl(force) {
+      const api = desktopFor('getOpenClawControl');
+      return api ? api.getOpenClawControl(force) : null;
     },
     async runLifecycle(action) {
       const api = desktopFor('runOpenClawLifecycle');

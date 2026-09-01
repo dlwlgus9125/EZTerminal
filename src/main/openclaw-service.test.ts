@@ -451,6 +451,27 @@ describe('OpenClawService — runLifecycle', () => {
     expect(calls[0]?.args).toEqual(['gateway', 'start']);
   });
 
+  it('does not report start success when the CLI exits 0 but the gateway is not RPC-ready', async () => {
+    const { spawn } = makeExitSpawn(0);
+    const service = new OpenClawService({
+      env: cliEnv,
+      spawn,
+      httpGet: async () => ({ ok: false, reason: 'refused' }),
+      readFile: async () => '{}',
+      wsFactory: () => {
+        throw new Error('gateway is unreachable');
+      },
+      verifyLifecycleReadiness: true,
+      lifecycleReadinessAttempts: 1,
+      lifecycleStableMs: 0,
+    });
+
+    await expect(service.runLifecycle('start')).resolves.toMatchObject({
+      ok: false,
+      code: 'unhealthy',
+    });
+  });
+
   it('reports stderr on a non-zero exit', async () => {
     const { spawn } = makeExitSpawn(1, '', 'gateway already stopped');
     const service = new OpenClawService({ env: cliEnv, spawn, httpGet: async () => ({ ok: false }) });

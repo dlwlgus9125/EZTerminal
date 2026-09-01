@@ -201,7 +201,7 @@ describe('MobileOpenClawView — status tab', () => {
     expect(el.querySelector<HTMLButtonElement>('[data-testid="openclaw-btn-restart"]')!.disabled).toBe(true);
   });
 
-  it('shows a start CTA when stopped: Start enabled, Stop/Restart disabled', () => {
+  it('keeps every non-critical lifecycle intent available while stopped', () => {
     const { transport, socket } = makeAuthedTransport();
     const el = renderView(transport, vi.fn());
 
@@ -211,11 +211,11 @@ describe('MobileOpenClawView — status tab', () => {
 
     expect(el.querySelector('[data-testid="openclaw-guidance"]')).toBeTruthy();
     expect(el.querySelector<HTMLButtonElement>('[data-testid="openclaw-btn-start"]')!.disabled).toBe(false);
-    expect(el.querySelector<HTMLButtonElement>('[data-testid="openclaw-btn-stop"]')!.disabled).toBe(true);
-    expect(el.querySelector<HTMLButtonElement>('[data-testid="openclaw-btn-restart"]')!.disabled).toBe(true);
+    expect(el.querySelector<HTMLButtonElement>('[data-testid="openclaw-btn-stop"]')!.disabled).toBe(false);
+    expect(el.querySelector<HTMLButtonElement>('[data-testid="openclaw-btn-restart"]')!.disabled).toBe(false);
   });
 
-  it('when running: Start disabled, Stop/Restart enabled; clicking Stop sends openclaw-lifecycle', () => {
+  it('keeps Start available while running and only disables the requested Stop receipt', () => {
     const { transport, socket } = makeAuthedTransport();
     const el = renderView(transport, vi.fn());
 
@@ -225,7 +225,7 @@ describe('MobileOpenClawView — status tab', () => {
 
     const startBtn = el.querySelector<HTMLButtonElement>('[data-testid="openclaw-btn-start"]')!;
     const stopBtn = el.querySelector<HTMLButtonElement>('[data-testid="openclaw-btn-stop"]')!;
-    expect(startBtn.disabled).toBe(true);
+    expect(startBtn.disabled).toBe(false);
     expect(stopBtn.disabled).toBe(false);
 
     act(() => stopBtn.click());
@@ -250,12 +250,20 @@ describe('MobileOpenClawView — status tab', () => {
       socket.triggerMessage({
         kind: 'openclaw-lifecycle-result',
         requestId,
-        result: { ok: false, stderr: 'gateway busy' },
+        result: {
+          accepted: false,
+          issue: {
+            code: 'gateway-unhealthy',
+            detail: 'gateway unhealthy',
+            remediation: 'retry start',
+            diagnosticId: 'diag-mobile-1',
+          },
+        },
       });
       await flush();
     });
 
-    expect(el.querySelector('[data-testid="openclaw-lifecycle-error"]')?.textContent).toContain('gateway busy');
+    expect(el.querySelector('[data-testid="openclaw-lifecycle-error"]')?.textContent).toContain('gateway unhealthy');
   });
 
   it('close button fires onClose', () => {
@@ -420,7 +428,7 @@ describe('MobileOpenClawView — restart banner one-tap restart (openclaw-stabil
     expect(el.querySelector<HTMLButtonElement>('[data-testid="openclaw-restart-now"]')!.disabled).toBe(true);
 
     await act(async () => {
-      socket.triggerMessage({ kind: 'openclaw-lifecycle-result', requestId: lastMsg.requestId, result: { ok: true } });
+      socket.triggerMessage({ kind: 'openclaw-lifecycle-result', requestId: lastMsg.requestId, result: { accepted: true } });
       await flush();
     });
 
@@ -437,13 +445,21 @@ describe('MobileOpenClawView — restart banner one-tap restart (openclaw-stabil
       socket.triggerMessage({
         kind: 'openclaw-lifecycle-result',
         requestId: lastMsg.requestId,
-        result: { ok: false, stderr: 'gateway busy' },
+        result: {
+          accepted: false,
+          issue: {
+            code: 'gateway-unhealthy',
+            detail: 'gateway unhealthy',
+            remediation: 'retry start',
+            diagnosticId: 'diag-mobile-2',
+          },
+        },
       });
       await flush();
     });
 
     expect(el.querySelector('[data-testid="openclaw-restart-banner"]')).toBeTruthy();
-    expect(el.querySelector('[data-testid="openclaw-restart-error"]')?.textContent).toContain('gateway busy');
+    expect(el.querySelector('[data-testid="openclaw-restart-error"]')?.textContent).toContain('gateway unhealthy');
   });
 });
 

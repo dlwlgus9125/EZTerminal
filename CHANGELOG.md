@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+## [1.0.41] - 2026-09-01
+
+### Added
+
+- Added reusable Codex and Claude Personas, 2–8 member Teams, atomic starter
+  Team creation, reusable desired outcomes, and observable completion criteria.
+- Added Planner-first Team runs with a structured human review gate, frozen
+  target commit and configuration snapshots, isolated managed worktrees for
+  approved assignments, and visible retryable partial-launch failures.
+- Added a current-user Windows OpenClaw supervisor that persists desired
+  running or stopped state across app exit, lock, restart, and login.
+
+### Changed
+
+- Upgraded the remote protocol to v9 so desktop, chat, and Android receive the
+  same OpenClaw lifecycle receipts, recovery phase, attempt, and issue state.
+- OpenClaw lifecycle actions now use monotonic durable intents: matching active
+  requests coalesce, conflicting requests use the newest generation, and
+  external gateway starts or stops are reconciled to the user's last request.
+- Replaced direct OpenClaw autostart controls with supervisor-owned per-login
+  reconciliation and dedicated repairing and blocked UI states.
+
+### Fixed
+
+- Prevented OpenClaw CLI exit code 0 from being reported as success until the
+  startup endpoint and authenticated status RPC remain stable.
+- Added bounded three-attempt diagnosis, verified recovery backups,
+  non-destructive repair, and a 60-second safe-restart limit before force.
+- Preserved Team run snapshots across catalog edits and exposed interrupted,
+  excluded, failed, and partial member states without inferring progress from
+  terminal output.
+
+### Security
+
+- OpenClaw automatic recovery never deletes or resets user data, weakens
+  authentication, creates tokens, or installs and updates packages; CLI,
+  backup, permission, unrelated-port, and unknown-task failures block safely.
+- Persona and Team stores exclude transcripts, terminal output, tool calls,
+  credentials, tokens, and capabilities, and Team plan submission remains
+  bound to the exact authenticated Planner session and run revision.
+
+See [1.0.41 release notes](docs/release/release-notes-1.0.41.md).
+
 ## [1.0.40] - 2026-08-26
 
 ### Added

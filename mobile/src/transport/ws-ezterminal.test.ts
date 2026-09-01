@@ -12,7 +12,7 @@ import {
   uint8ArrayToBase64,
   type RemotePacketFrame,
 } from '../../../src/shared/remote-protocol';
-import type { OpenClawLogLine, OpenClawStatus } from '../../../src/shared/openclaw';
+import type { OpenClawControlSnapshot, OpenClawLogLine, OpenClawStatus } from '../../../src/shared/openclaw';
 
 // ── Fake socket ──────────────────────────────────────────────────────────────
 
@@ -878,7 +878,10 @@ describe('WsEzTerminalTransport — session surface lifecycle / listSessions', (
     await expect(fileOp).resolves.toEqual({ ok: false, error: expect.any(String) });
     await expect(read).resolves.toEqual({ ok: false, error: expect.any(String) });
     await uploadAssertion;
-    await expect(lifecycle).resolves.toEqual({ ok: false, stderr: expect.any(String) });
+    await expect(lifecycle).resolves.toMatchObject({
+      accepted: false,
+      issue: { code: 'supervisor-failed', detail: expect.any(String) },
+    });
     await expect(openClawSessions).resolves.toEqual([]);
     await expect(config).resolves.toEqual({ 'agents.defaults.model': 'unset', 'gateway.port': 'unset' });
     await expect(configSet).resolves.toEqual({ ok: false, restartRequired: false, error: expect.any(String) });
@@ -3817,6 +3820,31 @@ describe('WsEzTerminalTransport — OpenClaw management (M4)', () => {
     expect(received).toEqual([{ state: 'running', port: 18789 }]);
   });
 
+  it('onOpenClawControl relays recovery progress and stops after unsubscribe', () => {
+    const { createSocket, sockets } = makeCreateSocket();
+    const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
+    sockets[0].triggerMessage({ kind: 'auth-ok' });
+    const received: OpenClawControlSnapshot[] = [];
+    const unsubscribe = transport.onOpenClawControl((snapshot) => received.push(snapshot));
+    const control: OpenClawControlSnapshot = {
+      schemaVersion: 1,
+      intentId: 'intent-1',
+      generation: 1,
+      status: { state: 'stopped', port: 18789 },
+      desiredState: 'running',
+      supervisorState: 'ready',
+      operation: null,
+      issue: null,
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    };
+
+    sockets[0].triggerMessage({ kind: 'openclaw-control', control });
+    unsubscribe();
+    sockets[0].triggerMessage({ kind: 'openclaw-control', control: { ...control, generation: 2 } });
+
+    expect(received).toEqual([control]);
+  });
+
   it('setOpenClawStatusSubscribed(true) sends openclaw-status-subscribe once authed', () => {
     const { createSocket, sockets } = makeCreateSocket();
     const transport = new WsEzTerminalTransport({ url: 'ws://x', token: 'tok', createSocket });
@@ -3875,8 +3903,12 @@ describe('WsEzTerminalTransport — OpenClaw management (M4)', () => {
     const promise = transport.runOpenClawLifecycle('restart');
     expect(sockets[0].lastSent()).toEqual({ kind: 'openclaw-lifecycle', requestId: 'req-1', action: 'restart' });
 
-    sockets[0].triggerMessage({ kind: 'openclaw-lifecycle-result', requestId: 'req-1', result: { ok: true } });
-    await expect(promise).resolves.toEqual({ ok: true });
+    sockets[0].triggerMessage({
+      kind: 'openclaw-lifecycle-result',
+      requestId: 'req-1',
+      result: { accepted: true, intentId: 'intent-1', generation: 4 },
+    });
+    await expect(promise).resolves.toEqual({ accepted: true, intentId: 'intent-1', generation: 4 });
   });
 
   it('getOpenClawSessions sends openclaw-sessions-get and resolves with the sessions reply', async () => {
@@ -4031,7 +4063,10 @@ describe('WsEzTerminalTransport — OpenClaw management (M4)', () => {
 
     sockets[0].triggerClose();
 
-    await expect(lifecyclePromise).resolves.toEqual({ ok: false, stderr: expect.any(String) });
+    await expect(lifecyclePromise).resolves.toMatchObject({
+      accepted: false,
+      issue: { code: 'supervisor-failed', detail: expect.any(String) },
+    });
     await expect(sessionsPromise).resolves.toEqual([]);
     await expect(configPromise).resolves.toEqual({ 'agents.defaults.model': 'unset', 'gateway.port': 'unset' });
     await expect(configSetPromise).resolves.toEqual({ ok: false, restartRequired: false, error: expect.any(String) });

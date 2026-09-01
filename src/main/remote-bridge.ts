@@ -130,9 +130,10 @@ import {
   OPENCLAW_CONFIG_ALLOWLIST,
   OPENCLAW_CONFIG_UNSET,
   type OpenClawAgentSession,
+  type OpenClawControlSnapshot,
   type OpenClawCoreConfig,
   type OpenClawLifecycleAction,
-  type OpenClawLifecycleResult,
+  type OpenClawLifecycleReceipt,
   type OpenClawLogLine,
   type OpenClawSetConfigResult,
   type OpenClawStatus,
@@ -923,7 +924,8 @@ const OPENCLAW_CHAT_TICKET_TIMEOUT_MS = 15_000;
  * never let it propagate and crash the connection handler. */
 export interface RemoteOpenClawSource {
   subscribeStatus(listener: (status: OpenClawStatus) => void): () => void;
-  runLifecycle(action: OpenClawLifecycleAction): Promise<OpenClawLifecycleResult>;
+  subscribeControl(listener: (snapshot: OpenClawControlSnapshot) => void): () => void;
+  runLifecycle(action: OpenClawLifecycleAction): Promise<OpenClawLifecycleReceipt>;
   subscribeLogs(listener: (line: OpenClawLogLine) => void): () => void;
   listAgentSessions(): Promise<readonly OpenClawAgentSession[]>;
   getCoreConfig(): Promise<OpenClawCoreConfig>;
@@ -1249,6 +1251,7 @@ export function attachConnection(
   // "do I currently have one, and its unsubscribe").
   let openclawStatusSubscribed = false;
   let openclawStatusUnsub: (() => void) | null = null;
+  let openclawControlUnsub: (() => void) | null = null;
   let openclawLogsSubscribed = false;
   let openclawLogsUnsub: (() => void) | null = null;
   let pendingOpenClawLogLines: OpenClawLogLine[] = [];
@@ -1507,8 +1510,11 @@ export function attachConnection(
     if (!openclawStatusSubscribed) return;
     openclawStatusSubscribed = false;
     const unsubscribe = openclawStatusUnsub;
+    const unsubscribeControl = openclawControlUnsub;
     openclawStatusUnsub = null;
+    openclawControlUnsub = null;
     unsubscribe?.();
+    unsubscribeControl?.();
   };
 
   const flushPendingOpenClawLogs = (): void => {
@@ -3163,6 +3169,9 @@ export function attachConnection(
         openclawStatusUnsub = options.openclawSource.subscribeStatus((status) => {
           send({ kind: 'openclaw-status', status });
         });
+        openclawControlUnsub = options.openclawSource.subscribeControl((control) => {
+          send({ kind: 'openclaw-control', control });
+        });
         break;
       }
 
@@ -3180,7 +3189,15 @@ export function attachConnection(
             send({
               kind: 'openclaw-lifecycle-result',
               requestId,
-              result: { ok: false, stderr: err instanceof Error ? err.message : String(err) },
+              result: {
+                accepted: false,
+                issue: {
+                  code: 'supervisor-failed',
+                  detail: err instanceof Error ? err.message : String(err),
+                  remediation: 'Retry the requested OpenClaw action.',
+                  diagnosticId: `remote-${Date.now().toString(36)}`,
+                },
+              },
             });
           });
         break;

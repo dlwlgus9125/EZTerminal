@@ -23,19 +23,12 @@ $current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 $system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
 $allow = [System.Security.AccessControl.AccessControlType]::Allow
 $full = [System.Security.AccessControl.FileSystemRights]::FullControl
-& icacls.exe $target '/inheritance:r' | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "icacls inheritance update failed: $LASTEXITCODE" }
+$replacement = New-Object System.Security.AccessControl.FileSecurity
+$replacement.SetAccessRuleProtection($true, $false)
+$replacement.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($current, $full, $allow)))
+$replacement.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($system, $full, $allow)))
+[System.IO.File]::SetAccessControl($target, $replacement)
 $accessSections = [System.Security.AccessControl.AccessControlSections]::Access
-$existingAcl = [System.IO.File]::GetAccessControl($target, $accessSections)
-$existingSids = @($existingAcl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object {
-  $_.IdentityReference.Value
-} | Sort-Object -Unique)
-foreach ($sid in $existingSids) {
-  & icacls.exe $target '/remove:g' ('*' + $sid) '/remove:d' ('*' + $sid) | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "icacls principal removal failed: $LASTEXITCODE" }
-}
-& icacls.exe $target '/grant:r' ('*' + $current.Value + ':(F)') ('*' + $system.Value + ':(F)') | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "icacls grant failed: $LASTEXITCODE" }
 $verified = [System.IO.File]::GetAccessControl($target, $accessSections)
 if (-not $verified.AreAccessRulesProtected) { throw 'ACL inheritance is still enabled' }
 $allowedSids = @($current.Value, $system.Value)

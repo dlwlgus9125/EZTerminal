@@ -85,6 +85,10 @@ export async function launchApp(
     env.EZTERMINAL_ALLOW_MULTIPLE_INSTANCES = '1';
     // Live GitHub state must not make ordinary UI/E2E runs nondeterministic.
     env.EZTERMINAL_DISABLE_UPDATE_CHECK = '1';
+    // Keep ordinary UI E2E hermetic: production's durable OpenClaw supervisor
+    // owns a real current-user Scheduled Task and is covered by isolated
+    // coordinator + PowerShell RunOnce tests instead.
+    env.EZTERMINAL_DISABLE_OPENCLAW_SUPERVISOR = '1';
     Object.assign(env, extraEnv);
     // The broad legacy E2E suite asserts English copy. Keep its browser locale
     // deterministic across developer and CI machines; locale-specific product

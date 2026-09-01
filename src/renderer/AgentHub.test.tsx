@@ -10,6 +10,8 @@ import type {
   AgentApprovalRisk,
 } from '../shared/agent';
 import type { GitDiffResult } from '../shared/git-status';
+import type { EzTerminalDesktopApi } from '../shared/ipc';
+import type { AgentTeamDesktopSnapshot, AgentTeamRun } from '../shared/agent-team';
 import { AgentHub } from './AgentHub';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -17,6 +19,7 @@ import { AgentHub } from './AgentHub';
 let container: HTMLDivElement;
 let root: Root;
 let originalEzTerminal: typeof window.ezterminal | undefined;
+let originalEzTerminalDesktop: typeof window.ezterminalDesktop;
 
 function activity(input: {
   id: string;
@@ -81,6 +84,7 @@ async function renderHub(
 
 beforeEach(() => {
   originalEzTerminal = window.ezterminal;
+  originalEzTerminalDesktop = window.ezterminalDesktop;
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -236,6 +240,10 @@ describe('AgentHub local history paging', () => {
       '[data-testid="agent-project-history-back"]',
     )!.click());
     expect(container.querySelector('[data-testid="agent-projects"]')).not.toBeNull();
+  });
+  Object.defineProperty(window, 'ezterminalDesktop', {
+    configurable: true,
+    value: originalEzTerminalDesktop,
   });
 
   it('orders attention, projects, active, and recent in the document', async () => {
@@ -397,6 +405,190 @@ describe('AgentHub local history paging', () => {
     });
     expect(onLaunchAgent).not.toHaveBeenCalled();
     expect(prepareAgentLaunch).not.toHaveBeenCalled();
+  });
+
+  it('starts only the Planner from one frozen target commit in a managed worktree', async () => {
+    const plannerId = '123e4567-e89b-12d3-a456-426614174000';
+    const workerId = '123e4567-e89b-12d3-a456-426614174001';
+    const teamId = '123e4567-e89b-12d3-a456-426614174010';
+    const runId = '123e4567-e89b-12d3-a456-426614174020';
+    const project = {
+      projectId: 'project-1', name: 'Project', primaryRoot: 'C:\\Project', additionalRoots: [],
+      pinned: false, saved: true, sessionCount: 0, providers: [], lastActiveAt: 20,
+    } as const;
+    const personas = [
+      {
+        personaId: plannerId, revision: 1, name: 'Planner', icon: 'search' as const,
+        role: 'Planner', instructions: 'Plan only.',
+        launch: { provider: 'codex' as const, sandbox: 'read-only' as const },
+        createdAt: 1, updatedAt: 1,
+      },
+      {
+        personaId: workerId, revision: 1, name: 'Worker', icon: 'code' as const,
+        role: 'Worker', instructions: 'Implement.',
+        launch: { provider: 'claude' as const, permissionMode: 'acceptEdits' as const },
+        createdAt: 1, updatedAt: 1,
+      },
+    ];
+    const team = {
+      teamId, revision: 1, name: 'Core', instructions: 'Keep scopes bounded.',
+      defaultGoal: {
+        outcome: 'Ship Team launch',
+        acceptanceCriteria: ['Planner starts before any other member.'],
+      },
+      personaIds: [plannerId, workerId], plannerPersonaId: plannerId, createdAt: 1, updatedAt: 1,
+    };
+    const run: AgentTeamRun = {
+      schemaVersion: 1,
+      runId,
+      revision: 1,
+      projectId: project.projectId,
+      projectName: project.name,
+      projectGoal: 'Maintain reliable terminal collaboration',
+      goal: 'Ship Team launch',
+      goalAcceptanceCriteria: ['Planner starts before any other member.'],
+      targetBranch: 'main',
+      validationConfigRevision: 1,
+      validationCommands: [],
+      team,
+      personas,
+      plannerPersonaId: plannerId,
+      phase: 'preparing-planner',
+      slots: personas.map((persona) => ({ personaId: persona.personaId, state: 'planned' as const, updatedAt: 1 })),
+      baseHead: 'a'.repeat(40),
+      baseDirty: false,
+      warningAcknowledged: true,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const teamSnapshot: AgentTeamDesktopSnapshot = {
+      revision: 1,
+      catalog: {
+        revision: 1,
+        personas,
+        teams: [team],
+        capabilities: [
+          { provider: 'codex', available: true, supportsModel: true, effortValues: [], permissionValues: ['read-only', 'workspace-write'], modelAvailability: 'launch-time' },
+          { provider: 'claude', available: true, supportsModel: true, effortValues: ['low', 'medium', 'high', 'xhigh', 'max'], permissionValues: ['plan', 'manual', 'acceptEdits'], modelAvailability: 'launch-time' },
+        ],
+      },
+      runRevision: 0,
+      runs: [],
+    };
+    const opened = {
+      worktreeId: 'worktree-1', repoId: 'repo-1', path: 'C:\\Worktrees\\planner',
+      branch: 'ez/team-planner', head: run.baseHead!, main: false, locked: false, managed: true, prunable: false,
+    };
+    const executeWorktree = vi.fn(async () => ({ ok: true as const, action: 'create' as const, worktrees: [opened], opened }));
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: {
+        listAgentProjects: vi.fn(async () => ({ items: [project], nextCursor: null })),
+        executeWorktree,
+      },
+    });
+    const preparedRun: AgentTeamRun = {
+      ...run,
+      revision: 2,
+      slots: [
+        {
+          personaId: plannerId,
+          state: 'prepared',
+          branch: 'ez/team-planner',
+          rootId: 'root-1',
+          workspaceId: 'worktree-1',
+          worktreeId: 'worktree-1',
+          worktreePath: opened.path,
+          updatedAt: 2,
+        },
+        run.slots[1]!,
+      ],
+    };
+    const describeProjectWorkspace = vi.fn(async () => ({
+      ok: true as const,
+      project: {
+        projectId: project.projectId,
+        name: project.name,
+        roots: [{ rootId: 'root-1', name: project.name, displayPath: project.primaryRoot, primary: true }],
+        workspaces: [
+          { workspaceId: 'root-1', rootId: 'root-1', name: 'main', displayPath: project.primaryRoot, kind: 'main' as const, access: 'granted' as const },
+          { workspaceId: 'worktree-1', rootId: 'root-1', name: 'planner', displayPath: opened.path, kind: 'managed' as const, access: 'granted' as const },
+        ],
+      },
+    }));
+    const createAgentTeamRun = vi.fn(async () => ({ ok: true as const, value: run }));
+    const prepareAgentTeamMemberLaunch = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        run: preparedRun,
+        preparation: {
+          ok: true as const,
+          target: { kind: 'project' as const, projectId: project.projectId, rootId: 'root-1', workspaceId: 'worktree-1' },
+          launcherId: 'codex', provider: 'codex' as const, name: 'Codex', cwd: opened.path,
+          roots: [opened.path], ignoredAdditionalRootCount: 0, revision: 'launch-revision',
+        },
+      },
+    }));
+    Object.defineProperty(window, 'ezterminalDesktop', {
+      configurable: true,
+      value: {
+        describeProjectWorkspace,
+        listProjectDocumentDirectory: vi.fn(async () => ({ ok: true, relativePath: '', parent: null, entries: [] })),
+        getAgentTeamSnapshot: vi.fn(async () => teamSnapshot),
+        onAgentTeamSnapshot: vi.fn(() => () => undefined),
+        createAgentTeamRun,
+        prepareAgentTeamMemberLaunch,
+      } as unknown as EzTerminalDesktopApi,
+    });
+    const onLaunchAgent = vi.fn();
+    await renderHub({ revision: 1, items: [] }, {
+      teamSnapshot,
+      coordinationSnapshot: {
+        revision: 1,
+        activityRevision: 1,
+        activities: [],
+        mergeRequests: [],
+        projects: [{
+          projectId: project.projectId,
+          goal: 'Maintain reliable terminal collaboration',
+          defaultTargetBranch: 'main',
+          validationCommands: [],
+          configRevision: 1,
+          counts: { starting: 0, working: 0, blocked: 0, done: 0, idle: 0, error: 0, unknown: 0 },
+          participants: [],
+          pendingMergeCount: 0,
+        }],
+      },
+      onReadGitStatus: vi.fn(async () => ({ availability: 'ready' as const, tracked: true as const, branch: 'main', changes: [], truncated: false })),
+      onOpenProjectDocument: vi.fn(),
+      onLaunchAgent,
+    });
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="agent-project-open-project-1"]')!.click());
+    await flush();
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="project-workspace-open-team"]')!.click());
+    await flush();
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[data-testid="agent-team-start"]')!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(createAgentTeamRun).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: project.projectId,
+      teamId,
+      goal: 'Ship Team launch',
+      acceptanceCriteria: ['Planner starts before any other member.'],
+    }));
+    expect(document.body.textContent).toContain('Maintain reliable terminal collaboration');
+    expect(executeWorktree).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'create',
+      cwd: project.primaryRoot,
+      base: run.baseHead,
+    }));
+    expect(onLaunchAgent).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'codex',
+      teamMemberRequest: { runId, personaId: plannerId },
+    }), expect.objectContaining({ workspaceId: 'worktree-1' }));
   });
 });
 

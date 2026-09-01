@@ -51,7 +51,13 @@ import {
   type RemotePacketFrame,
   type ServerToClientMessage,
 } from '../shared/remote-protocol';
-import type { OpenClawAgentSession, OpenClawLifecycleResult, OpenClawLogLine, OpenClawStatus } from '../shared/openclaw';
+import type {
+  OpenClawAgentSession,
+  OpenClawControlSnapshot,
+  OpenClawLifecycleReceipt,
+  OpenClawLogLine,
+  OpenClawStatus,
+} from '../shared/openclaw';
 import type { AgentActivitySnapshot, AgentDecisionResult, AgentFollowupResult } from '../shared/agent';
 import type { AgentCoordinationSnapshot, ManagedMergeRequest } from '../shared/agent-coordination';
 import { EMPTY_GIT_DIRECTORY_STATUS } from '../shared/git-status';
@@ -278,12 +284,13 @@ class FakeAgentSource implements RemoteAgentSource {
  * values via `vi.fn()` overrides, same convention as `makeFileSource`. */
 class FakeOpenClawSource implements RemoteOpenClawSource {
   private readonly statusListeners = new Set<(status: OpenClawStatus) => void>();
+  private readonly controlListeners = new Set<(snapshot: OpenClawControlSnapshot) => void>();
   private readonly logListeners = new Set<(line: OpenClawLogLine) => void>();
   private readonly visibilityListeners = new Set<(visible: boolean) => void>();
   /** Mutable — tests flip this directly to script the M3 hidden-gating
    * scenarios, then call `emitVisibility` to also drive the broadcast path. */
   visible = true;
-  readonly runLifecycle = vi.fn(async (): Promise<OpenClawLifecycleResult> => ({ ok: true }));
+  readonly runLifecycle = vi.fn(async (): Promise<OpenClawLifecycleReceipt> => ({ accepted: true }));
   readonly listAgentSessions = vi.fn(async (): Promise<readonly OpenClawAgentSession[]> => []);
   readonly getCoreConfig = vi.fn(async () => ({ 'agents.defaults.model': 'unset', 'gateway.port': 'unset' }));
   readonly setCoreConfig = vi.fn(async () => ({ ok: true, restartRequired: true }));
@@ -295,6 +302,11 @@ class FakeOpenClawSource implements RemoteOpenClawSource {
   subscribeStatus(listener: (status: OpenClawStatus) => void): () => void {
     this.statusListeners.add(listener);
     return () => this.statusListeners.delete(listener);
+  }
+
+  subscribeControl(listener: (snapshot: OpenClawControlSnapshot) => void): () => void {
+    this.controlListeners.add(listener);
+    return () => this.controlListeners.delete(listener);
   }
 
   subscribeLogs(listener: (line: OpenClawLogLine) => void): () => void {
@@ -315,6 +327,10 @@ class FakeOpenClawSource implements RemoteOpenClawSource {
     return this.statusListeners.size;
   }
 
+  get controlListenerCount(): number {
+    return this.controlListeners.size;
+  }
+
   get logListenerCount(): number {
     return this.logListeners.size;
   }
@@ -326,6 +342,10 @@ class FakeOpenClawSource implements RemoteOpenClawSource {
   /** Test helper: simulate a status push. */
   emitStatus(status: OpenClawStatus): void {
     for (const l of this.statusListeners) l(status);
+  }
+
+  emitControl(snapshot: OpenClawControlSnapshot): void {
+    for (const listener of this.controlListeners) listener(snapshot);
   }
 
   /** Test helper: simulate a log line arriving. */
@@ -1162,6 +1182,7 @@ async function openRemoteOwner(
   if (reply?.kind !== 'session-surface-open-result' || !reply.result.ok) {
     throw new Error('expected surface binding');
   }
+
   return reply.result.binding;
 }
 
@@ -2937,9 +2958,23 @@ describe('RemoteBridge — OpenClaw management (M4)', () => {
     ws.clientSend({ kind: 'openclaw-status-subscribe' });
     ws.clientSend({ kind: 'openclaw-status-subscribe' }); // idempotent — no extra listener
     expect(openclawSource.statusListenerCount).toBe(1);
+    expect(openclawSource.controlListenerCount).toBe(1);
 
     openclawSource.emitStatus({ state: 'running', port: 18789 });
     expect(ws.sent).toContainEqual({ kind: 'openclaw-status', status: { state: 'running', port: 18789 } });
+    const control: OpenClawControlSnapshot = {
+      schemaVersion: 1,
+      intentId: 'intent-1',
+      generation: 1,
+      status: { state: 'stopped', port: 18789 },
+      desiredState: 'running',
+      supervisorState: 'ready',
+      operation: null,
+      issue: null,
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    };
+    openclawSource.emitControl(control);
+    expect(ws.sent).toContainEqual({ kind: 'openclaw-control', control });
   });
 
   it('openclaw-status-unsubscribe unsubscribes exactly once, including a redundant second call', async () => {
@@ -2953,6 +2988,7 @@ describe('RemoteBridge — OpenClaw management (M4)', () => {
     ws.clientSend({ kind: 'openclaw-status-unsubscribe' }); // redundant — must not throw
 
     expect(openclawSource.statusListenerCount).toBe(0);
+    expect(openclawSource.controlListenerCount).toBe(0);
   });
 
   it('closing the ws while status-subscribed unsubscribes exactly once', async () => {
@@ -2969,7 +3005,15 @@ describe('RemoteBridge — OpenClaw management (M4)', () => {
 
   it('openclaw-lifecycle round-trips via openclaw-lifecycle-result, echoing the client requestId', async () => {
     const openclawSource = new FakeOpenClawSource();
-    openclawSource.runLifecycle.mockResolvedValueOnce({ ok: false, stderr: 'boom' });
+    openclawSource.runLifecycle.mockResolvedValueOnce({
+      accepted: false,
+      issue: {
+        code: 'gateway-unhealthy',
+        detail: 'boom',
+        remediation: 'retry',
+        diagnosticId: 'diag-1',
+      },
+    });
     const ws = new FakeWs();
     const { options } = makeOptions({ openclawSource });
     await authed(ws, options);
@@ -2981,7 +3025,15 @@ describe('RemoteBridge — OpenClaw management (M4)', () => {
     expect(ws.sent).toContainEqual({
       kind: 'openclaw-lifecycle-result',
       requestId: 'r1',
-      result: { ok: false, stderr: 'boom' },
+      result: {
+        accepted: false,
+        issue: {
+          code: 'gateway-unhealthy',
+          detail: 'boom',
+          remediation: 'retry',
+          diagnosticId: 'diag-1',
+        },
+      },
     });
   });
 
@@ -2998,7 +3050,15 @@ describe('RemoteBridge — OpenClaw management (M4)', () => {
     expect(ws.sent).toContainEqual({
       kind: 'openclaw-lifecycle-result',
       requestId: 'r1',
-      result: { ok: false, stderr: 'boom' },
+      result: {
+        accepted: false,
+        issue: {
+          code: 'supervisor-failed',
+          detail: 'boom',
+          remediation: 'Retry the requested OpenClaw action.',
+          diagnosticId: expect.stringMatching(/^remote-/u),
+        },
+      },
     });
   });
 
@@ -3358,7 +3418,7 @@ describe('RemoteBridge — OpenClaw availability (openclaw-stabilization M3)', (
   it('desktop visibility does not gate remote OpenClaw request/reply operations', async () => {
     const openclawSource = new FakeOpenClawSource();
     openclawSource.visible = false;
-    openclawSource.runLifecycle.mockResolvedValueOnce({ ok: true });
+    openclawSource.runLifecycle.mockResolvedValueOnce({ accepted: true });
     openclawSource.listAgentSessions.mockResolvedValueOnce([{ key: 'k1', sessionId: 's1' }]);
     openclawSource.getCoreConfig.mockResolvedValueOnce({
       'agents.defaults.model': 'openai/gpt-5.5',
@@ -3382,7 +3442,7 @@ describe('RemoteBridge — OpenClaw availability (openclaw-stabilization M3)', (
     expect(openclawSource.getCoreConfig).toHaveBeenCalledOnce();
     expect(openclawSource.setCoreConfig).toHaveBeenCalledWith('agents.defaults.model', 'x');
     expect(openclawSource.mintChatTicket).toHaveBeenCalledOnce();
-    expect(ws.sent).toContainEqual({ kind: 'openclaw-lifecycle-result', requestId: 'r1', result: { ok: true } });
+    expect(ws.sent).toContainEqual({ kind: 'openclaw-lifecycle-result', requestId: 'r1', result: { accepted: true } });
     expect(ws.sent).toContainEqual({ kind: 'openclaw-sessions-reply', requestId: 'r2', sessions: [{ key: 'k1', sessionId: 's1' }] });
     expect(ws.sent).toContainEqual({
       kind: 'openclaw-config-reply',

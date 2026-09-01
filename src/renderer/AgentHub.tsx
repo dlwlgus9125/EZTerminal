@@ -1,6 +1,8 @@
 import {
   ArrowLeft,
   Check,
+  CircleAlert,
+  CheckCircle2,
   FolderPlus,
   GitCompareArrows,
   GitMerge,
@@ -8,6 +10,7 @@ import {
   MessageSquarePlus,
   MoreHorizontal,
   Pin,
+  Play,
   Plus,
   Search,
   Settings,
@@ -42,6 +45,15 @@ import {
   type ManagedMergeRequest,
   isSafeLocalBranch,
 } from '../shared/agent-coordination';
+import {
+  EMPTY_AGENT_TEAM_DESKTOP_SNAPSHOT,
+  MAX_AGENT_TEAM_GOAL_CRITERIA,
+  MAX_AGENT_TEAM_MEMBERS,
+  type AgentTeamDesktopSnapshot,
+  type AgentTeamMemberBinding,
+  type AgentTeamRun,
+  isTerminalAgentTeamRunPhase,
+} from '../shared/agent-team';
 import type {
   AgentHistorySessionSummary,
   AgentLaunchBootstrap,
@@ -118,9 +130,18 @@ function sortRecent(a: AgentActivity, b: AgentActivity): number {
   return b.updatedAt - a.updatedAt || a.id.localeCompare(b.id);
 }
 
+function validTeamRunCriteria(criteria: readonly string[]): boolean {
+  const normalized = criteria.map((criterion) => criterion.trim());
+  return normalized.length >= 1
+    && normalized.length <= MAX_AGENT_TEAM_GOAL_CRITERIA
+    && normalized.every((criterion) => criterion.length > 0 && criterion.length <= 500)
+    && new Set(normalized.map((criterion) => criterion.toLocaleLowerCase('en-US'))).size === normalized.length;
+}
+
 export interface AgentHubProps {
   readonly snapshot: AgentActivitySnapshot;
   readonly coordinationSnapshot?: AgentCoordinationSnapshot;
+  readonly teamSnapshot?: AgentTeamDesktopSnapshot;
   readonly onFocusSession: (sessionId: string) => void;
   readonly onSendFollowup: (activityId: string, text: string) => Promise<AgentFollowupResult>;
   /** Answers a parked permission hook. Absent leaves the queue read-only. */
@@ -208,6 +229,7 @@ type DiffView =
 export function AgentHub({
   snapshot,
   coordinationSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT,
+  teamSnapshot = EMPTY_AGENT_TEAM_DESKTOP_SNAPSHOT,
   onFocusSession,
   onSendFollowup,
   onDecideApproval,
@@ -297,6 +319,15 @@ export function AgentHub({
   const [coordinationValidations, setCoordinationValidations] = useState<readonly AgentValidationCommand[]>([]);
   const [coordinationSaving, setCoordinationSaving] = useState(false);
   const [coordinationError, setCoordinationError] = useState<string | null>(null);
+  const [teamProject, setTeamProject] = useState<AgentProjectSummary | null>(null);
+  const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [teamGoal, setTeamGoal] = useState('');
+  const [teamGoalCriteria, setTeamGoalCriteria] = useState<readonly string[]>(['']);
+  const [teamConstraints, setTeamConstraints] = useState('');
+  const [teamBaseState, setTeamBaseState] = useState<'loading' | 'clean' | 'dirty' | 'unavailable'>('loading');
+  const [teamWarningAcknowledged, setTeamWarningAcknowledged] = useState(false);
+  const [teamBusy, setTeamBusy] = useState(false);
+  const [teamError, setTeamError] = useState<string | null>(null);
   const [mergeActivity, setMergeActivity] = useState<AgentActivity | null>(null);
   const [mergeTargetBranch, setMergeTargetBranch] = useState('main');
   const [mergeBusy, setMergeBusy] = useState(false);
@@ -315,6 +346,38 @@ export function AgentHub({
     () => new Map(coordinationSnapshot.projects.map((project) => [project.projectId, project])),
     [coordinationSnapshot.projects],
   );
+  const activeTeamRun = useMemo(() => {
+    if (!teamProject) return null;
+    return teamSnapshot.runs.find((run) => (
+      run.projectId === teamProject.projectId && !isTerminalAgentTeamRunPhase(run.phase)
+    )) ?? null;
+  }, [teamProject, teamSnapshot.runs]);
+  const selectedTeam = useMemo(
+    () => teamSnapshot.catalog.teams.find((team) => team.teamId === selectedTeamId) ?? null,
+    [selectedTeamId, teamSnapshot.catalog.teams],
+  );
+  const selectedTeamUnavailable = useMemo(() => {
+    if (!selectedTeam) return false;
+    const personas = new Map(teamSnapshot.catalog.personas.map((persona) => [persona.personaId, persona]));
+    const capabilities = new Map(teamSnapshot.catalog.capabilities.map((capability) => [
+      capability.provider,
+      capability,
+    ]));
+    return selectedTeam.personaIds.some((personaId) => {
+      const persona = personas.get(personaId);
+      if (!persona) return true;
+      const capability = capabilities.get(persona.launch.provider);
+      const permission = persona.launch.provider === 'codex'
+        ? persona.launch.sandbox
+        : persona.launch.permissionMode;
+      return !capability?.available
+        || !capability.permissionValues.includes(permission)
+        || Boolean(persona.launch.model && !capability.supportsModel)
+        || Boolean(persona.launch.provider === 'claude'
+          && persona.launch.effort
+          && !capability.effortValues.includes(persona.launch.effort));
+    });
+  }, [selectedTeam, teamSnapshot.catalog.capabilities, teamSnapshot.catalog.personas]);
   const pendingMergeRequests = useMemo(() => coordinationSnapshot.mergeRequests.filter((request) => (
     ['preparing', 'validating', 'approval-required', 'override-required', 'merging'].includes(request.state)
   )), [coordinationSnapshot.mergeRequests]);
@@ -997,6 +1060,238 @@ export function AgentHub({
     onSaveCoordinationProject,
   ]);
 
+  const openTeamProject = useCallback(async (project: AgentProjectSummary): Promise<void> => {
+    setTeamProject(project);
+    const team = teamSnapshot.catalog.teams.find((candidate) => candidate.teamId === selectedTeamId)
+      ?? teamSnapshot.catalog.teams[0];
+    setSelectedTeamId(team?.teamId ?? '');
+    setTeamGoal(team?.defaultGoal?.outcome ?? '');
+    setTeamGoalCriteria(team?.defaultGoal?.acceptanceCriteria ?? ['']);
+    setTeamConstraints('');
+    setTeamWarningAcknowledged(false);
+    setTeamError(null);
+    setTeamBaseState('loading');
+    const status = await (onReadGitStatus ?? readNothing)(project.primaryRoot).catch(() => null);
+    setTeamBaseState(status?.availability === 'ready'
+      ? status.changes.length > 0 ? 'dirty' : 'clean'
+      : 'unavailable');
+  }, [onReadGitStatus, selectedTeamId, teamSnapshot.catalog.teams]);
+
+  const failTeamMember = useCallback(async (
+    run: AgentTeamRun,
+    personaId: string,
+    error: string,
+    binding?: AgentTeamMemberBinding,
+  ): Promise<AgentTeamRun> => {
+    const desktop = window.ezterminalDesktop;
+    if (!desktop) return run;
+    const submit = (candidate: AgentTeamRun) => desktop.failAgentTeamMember({
+      runId: candidate.runId,
+      personaId,
+      expectedRevision: candidate.revision,
+      error,
+      ...(binding ? { binding } : {}),
+    });
+    let candidate = run;
+    let result = await submit(candidate).catch(() => null);
+    for (let attempt = 0;
+      result && !result.ok && result.error === 'stale' && attempt < MAX_AGENT_TEAM_MEMBERS;
+      attempt += 1) {
+      const refreshed = await desktop.getAgentTeamSnapshot().catch(() => null);
+      const current = refreshed?.runs.find((candidate) => candidate.runId === run.runId);
+      if (!current) break;
+      candidate = current;
+      result = await submit(candidate).catch(() => null);
+    }
+    if (result?.ok) return result.value;
+    setTeamError(result && !result.ok ? result.message : error);
+    return run;
+  }, []);
+
+  const launchTeamMember = useCallback(async (
+    run: AgentTeamRun,
+    personaId: string,
+    project: AgentProjectSummary,
+  ): Promise<AgentTeamRun> => {
+    const desktop = window.ezterminalDesktop;
+    const persona = run.personas.find((candidate) => candidate.personaId === personaId);
+    const slot = run.slots.find((candidate) => candidate.personaId === personaId);
+    if (!desktop || !persona || !slot || !onLaunchAgent) {
+      return failTeamMember(run, personaId, t('agentTeams.launchUnavailable'));
+    }
+    if (slot.state === 'active' || slot.state === 'excluded') return run;
+
+    let branch = slot.branch;
+    let worktreeId = slot.worktreeId;
+    let worktreePath = slot.worktreePath;
+    if (!branch || !worktreeId || !worktreePath) {
+      const slug = persona.name
+        .normalize('NFKD')
+        .toLocaleLowerCase('en-US')
+        .replace(/[^a-z0-9]+/gu, '-')
+        .replace(/^-+|-+$/gu, '')
+        .slice(0, 32) || 'agent';
+      branch = `ez/team-${run.runId.slice(0, 8)}-${slug}-${persona.personaId.slice(0, 6)}`;
+      if (!isSafeLocalBranch(branch)) {
+        return failTeamMember(run, personaId, t('agentTeams.worktreeCreateFailed'));
+      }
+      const created = await window.ezterminal.executeWorktree({
+        action: 'create',
+        cwd: project.primaryRoot,
+        branch,
+        base: run.baseHead ?? run.targetBranch,
+        ...(run.baseDirty && run.warningAcknowledged ? { allowDirtyBase: true } : {}),
+      }).catch(() => null);
+      if (!created?.ok || !created.opened) {
+        const detail = created && !created.ok ? ` ${created.message}` : '';
+        return failTeamMember(run, personaId, `${t('agentTeams.worktreeCreateFailed')}${detail}`);
+      }
+      worktreeId = created.opened.worktreeId;
+      worktreePath = created.opened.path;
+    }
+
+    const described = await desktop.describeProjectWorkspace(project.projectId).catch(() => null);
+    const workspace = described?.ok
+      ? described.project.workspaces?.find((candidate) => (
+          candidate.workspaceId === worktreeId
+          || candidate.displayPath.toLocaleLowerCase('en-US') === worktreePath?.toLocaleLowerCase('en-US')
+        ))
+      : undefined;
+    const partialBinding: AgentTeamMemberBinding = { branch, worktreeId, worktreePath };
+    if (!workspace) {
+      return failTeamMember(
+        run,
+        personaId,
+        t('agentTeams.worktreePreserved', { path: worktreePath }),
+        partialBinding,
+      );
+    }
+    const binding: AgentTeamMemberBinding = {
+      ...partialBinding,
+      rootId: workspace.rootId,
+      workspaceId: workspace.workspaceId,
+    };
+    const preparation = await desktop.prepareAgentTeamMemberLaunch({
+      runId: run.runId,
+      personaId,
+      expectedRevision: run.revision,
+      target: {
+        kind: 'project',
+        projectId: project.projectId,
+        rootId: workspace.rootId,
+        workspaceId: workspace.workspaceId,
+      },
+      binding,
+    }).catch(() => null);
+    if (!preparation?.ok) {
+      return failTeamMember(
+        run,
+        personaId,
+        preparation && !preparation.ok ? preparation.message : t('agentTeams.launchUnavailable'),
+        binding,
+      );
+    }
+    const preparedRun = preparation.value.run;
+    const prepared = preparation.value.preparation;
+    onLaunchAgent({
+      kind: 'new-chat',
+      target: prepared.target,
+      launcherId: prepared.launcherId,
+      provider: prepared.provider,
+      name: persona.name,
+      cwd: prepared.cwd,
+      revision: prepared.revision,
+      teamMemberRequest: { runId: run.runId, personaId },
+    }, {
+      projectId: project.projectId,
+      rootId: workspace.rootId,
+      workspaceId: workspace.workspaceId,
+      projectName: project.name,
+      titleMode: 'generated',
+    });
+    return preparedRun;
+  }, [failTeamMember, onLaunchAgent, t]);
+
+  const startTeamRun = useCallback(async (): Promise<void> => {
+    const desktop = window.ezterminalDesktop;
+    if (!desktop || !teamProject || !selectedTeamId || !teamGoal.trim()
+      || !validTeamRunCriteria(teamGoalCriteria) || teamBusy) return;
+    setTeamBusy(true);
+    setTeamError(null);
+    const created = await desktop.createAgentTeamRun({
+      projectId: teamProject.projectId,
+      teamId: selectedTeamId,
+      goal: teamGoal.trim(),
+      acceptanceCriteria: teamGoalCriteria.map((criterion) => criterion.trim()),
+      ...(teamConstraints.trim() ? { constraints: teamConstraints.trim() } : {}),
+      warningAcknowledged: teamBaseState !== 'dirty' || teamWarningAcknowledged,
+    }).catch(() => null);
+    if (!created?.ok) {
+      setTeamBusy(false);
+      setTeamError(created && !created.ok ? created.message : t('agentTeams.startFailed'));
+      return;
+    }
+    await launchTeamMember(created.value, created.value.plannerPersonaId, teamProject);
+    setTeamBusy(false);
+  }, [
+    launchTeamMember,
+    selectedTeamId,
+    t,
+    teamBaseState,
+    teamBusy,
+    teamConstraints,
+    teamGoal,
+    teamGoalCriteria,
+    teamProject,
+    teamWarningAcknowledged,
+  ]);
+
+  const approveTeamPlan = useCallback(async (): Promise<void> => {
+    const desktop = window.ezterminalDesktop;
+    if (!desktop || !teamProject || !activeTeamRun?.proposal || teamBusy) return;
+    setTeamBusy(true);
+    setTeamError(null);
+    const approved = await desktop.approveAgentTeamPlan({
+      runId: activeTeamRun.runId,
+      expectedRevision: activeTeamRun.revision,
+      proposal: activeTeamRun.proposal,
+    }).catch(() => null);
+    if (!approved?.ok) {
+      setTeamBusy(false);
+      setTeamError(approved && !approved.ok ? approved.message : t('agentTeams.approveFailed'));
+      return;
+    }
+    let current = approved.value;
+    for (const assignment of approved.value.proposal?.assignments ?? []) {
+      if (assignment.personaId === approved.value.plannerPersonaId) continue;
+      current = await launchTeamMember(current, assignment.personaId, teamProject);
+    }
+    setTeamBusy(false);
+  }, [activeTeamRun, launchTeamMember, t, teamBusy, teamProject]);
+
+  const decideTeamRun = useCallback(async (decision: 'complete' | 'cancel'): Promise<void> => {
+    const desktop = window.ezterminalDesktop;
+    if (!desktop || !activeTeamRun || teamBusy) return;
+    setTeamBusy(true);
+    const result = await desktop.decideAgentTeamRun({
+      runId: activeTeamRun.runId,
+      expectedRevision: activeTeamRun.revision,
+      decision,
+    }).catch(() => null);
+    setTeamBusy(false);
+    if (!result?.ok) {
+      setTeamError(result && !result.ok ? result.message : t('agentTeams.decisionFailed'));
+    }
+  }, [activeTeamRun, t, teamBusy]);
+
+  const retryTeamMember = useCallback(async (personaId: string): Promise<void> => {
+    if (!activeTeamRun || !teamProject || teamBusy) return;
+    setTeamBusy(true);
+    setTeamError(null);
+    await launchTeamMember(activeTeamRun, personaId, teamProject);
+    setTeamBusy(false);
+  }, [activeTeamRun, launchTeamMember, teamBusy, teamProject]);
+
   const openMergeRequest = useCallback((activity: AgentActivity): void => {
     const project = activity.participant
       ? coordinationProjects.get(activity.participant.projectId)
@@ -1421,6 +1716,7 @@ export function AgentHub({
             onBack={() => selectDrillProject(null)}
             onOpenDocument={onOpenProjectDocument}
             onOpenProjectMap={onOpenProjectMap}
+            onOpenTeam={window.ezterminalDesktop ? () => void openTeamProject(drillProject) : undefined}
             onNewSession={(target, locationLabel) => openLaunchPicker(
               drillProject,
               target,
@@ -1766,6 +2062,287 @@ export function AgentHub({
           )}
         </footer>
       )}
+      <Dialog
+        open={teamProject !== null}
+        onOpenChange={(open) => { if (!open && !teamBusy) setTeamProject(null); }}
+        title={t('agentTeams.runTitle', { project: teamProject?.name ?? '' })}
+        description={activeTeamRun
+          ? t('agentTeams.runDescriptionActive')
+          : t('agentTeams.runDescription')}
+        closeLabel={t('common.close')}
+        dismissible={!teamBusy}
+        size="lg"
+        testId="agent-team-run-dialog"
+        footer={coordinationProjects.get(teamProject?.projectId ?? '') === undefined ? (
+          <>
+            <Button variant="ghost" disabled={teamBusy} onClick={() => setTeamProject(null)}>{t('common.close')}</Button>
+            {teamProject && onSaveCoordinationProject && (
+              <Button
+                variant="primary"
+                onClick={() => {
+                  const project = teamProject;
+                  setTeamProject(null);
+                  openCoordinationProject(project);
+                }}
+              >
+                {t('agentTeams.configureProject')}
+              </Button>
+            )}
+          </>
+        ) : activeTeamRun ? (
+          <>
+            <Button variant="ghost" disabled={teamBusy} onClick={() => setTeamProject(null)}>{t('common.close')}</Button>
+            <Button variant="danger" disabled={teamBusy} onClick={() => void decideTeamRun('cancel')}>{t('agentTeams.cancelRun')}</Button>
+            {activeTeamRun.phase === 'awaiting-review' && (
+              <Button variant="primary" loading={teamBusy} onClick={() => void approveTeamPlan()} data-testid="agent-team-approve-plan">
+                {t('agentTeams.approveAndLaunch')}
+              </Button>
+            )}
+            {(activeTeamRun.phase === 'active' || activeTeamRun.phase === 'partial') && (
+              <Button variant="primary" loading={teamBusy} onClick={() => void decideTeamRun('complete')}>
+                {t('agentTeams.completeRun')}
+              </Button>
+            )}
+          </>
+        ) : (
+          <>
+            <Button variant="ghost" disabled={teamBusy} onClick={() => setTeamProject(null)}>{t('common.cancel')}</Button>
+            <Button
+              variant="primary"
+              leadingIcon={<Play aria-hidden="true" />}
+              loading={teamBusy}
+              disabled={
+                !selectedTeamId
+                || !teamGoal.trim()
+                || !validTeamRunCriteria(teamGoalCriteria)
+                || selectedTeamUnavailable
+                || teamBaseState === 'loading'
+                || teamBaseState === 'unavailable'
+                || (teamBaseState === 'dirty' && !teamWarningAcknowledged)
+              }
+              onClick={() => void startTeamRun()}
+              data-testid="agent-team-start"
+            >
+              {t('agentTeams.startPlanner')}
+            </Button>
+          </>
+        )}
+      >
+        {coordinationProjects.get(teamProject?.projectId ?? '') === undefined ? (
+          <div className="agent-team-run-empty">
+            <Users aria-hidden="true" />
+            <p>{t('agentTeams.projectConfigRequired')}</p>
+          </div>
+        ) : activeTeamRun ? (
+          <div className="agent-team-run">
+            <div className="agent-team-run__status" data-phase={activeTeamRun.phase}>
+              <strong>{activeTeamRun.team.name}</strong>
+              <span>{t(`agentTeams.phase.${activeTeamRun.phase}`)}</span>
+              <small>{t('agentTeams.targetBranch')}: {activeTeamRun.targetBranch}</small>
+            </div>
+            <section className="agent-team-run-goal-summary" aria-label={t('agentTeams.runGoalSummary')}>
+              {activeTeamRun.projectGoal && (
+                <div>
+                  <strong>{t('agentTeams.projectPurpose')}</strong>
+                  <p>{activeTeamRun.projectGoal}</p>
+                </div>
+              )}
+              <div>
+                <strong>{t('agentTeams.desiredOutcome')}</strong>
+                <p>{activeTeamRun.goal}</p>
+              </div>
+              <div>
+                <strong>{t('agentTeams.completionCriteria')}</strong>
+                {activeTeamRun.goalAcceptanceCriteria ? (
+                  <ul>
+                    {activeTeamRun.goalAcceptanceCriteria.map((criterion, index) => (
+                      <li key={`run-criterion-${String(index)}`}>{criterion}</li>
+                    ))}
+                  </ul>
+                ) : <p>{t('agentTeams.legacyRunCriteria')}</p>}
+              </div>
+            </section>
+            {activeTeamRun.phase === 'awaiting-review' && activeTeamRun.proposal && (
+              <section className="agent-team-plan-review" data-testid="agent-team-plan-review">
+                <h3>{t('agentTeams.proposedPlan')}</h3>
+                <p>{activeTeamRun.proposal.summary}</p>
+                <div className="agent-team-plan-list">
+                  {activeTeamRun.proposal.assignments.map((assignment) => {
+                    const persona = activeTeamRun.personas.find((candidate) => candidate.personaId === assignment.personaId);
+                    return (
+                      <article className="agent-team-plan-card" key={assignment.taskId}>
+                        <div>
+                          <strong>{assignment.title}</strong>
+                          <span>{persona?.name ?? t('agentTeams.missingPersona')}</span>
+                        </div>
+                        <p>{assignment.outcome}</p>
+                        <div className="agent-team-plan-card__brief">
+                          <small>{t('agentTeams.assignmentInstructions')}</small>
+                          <p>{assignment.brief}</p>
+                        </div>
+                        {assignment.scopeHints.length > 0 && (
+                          <small>{t('agentTeams.scope')}: {assignment.scopeHints.join(' · ')}</small>
+                        )}
+                        {assignment.validationIds.length > 0 && (
+                          <small>
+                            {t('agentTeams.validations')}: {assignment.validationIds.map((validationId) => (
+                              activeTeamRun.validationCommands.find((command) => command.id === validationId)?.name
+                              ?? validationId
+                            )).join(' · ')}
+                          </small>
+                        )}
+                        <small>{t('agentTeams.acceptance')}</small>
+                        <ul>
+                          {assignment.acceptanceCriteria.map((criterion, index) => (
+                            <li key={`${assignment.taskId}-criterion-${String(index)}`}>{criterion}</li>
+                          ))}
+                        </ul>
+                      </article>
+                    );
+                  })}
+                </div>
+                {activeTeamRun.proposal.excludedMembers.length > 0 && (
+                  <div className="agent-team-plan-excluded">
+                    <strong>{t('agentTeams.notLaunching')}</strong>
+                    {activeTeamRun.proposal.excludedMembers.map((excluded) => {
+                      const persona = activeTeamRun.personas.find((candidate) => candidate.personaId === excluded.personaId);
+                      return <span key={excluded.personaId}>{persona?.name}: {excluded.reason}</span>;
+                    })}
+                  </div>
+                )}
+              </section>
+            )}
+            {(activeTeamRun.phase === 'preparing-planner' || activeTeamRun.phase === 'planning') && (
+              <p className="agent-team-run__notice">{t('agentTeams.plannerWorking')}</p>
+            )}
+            <section className="agent-team-run-members">
+              <h3>{t('agentTeams.members')}</h3>
+              {activeTeamRun.slots.map((slot) => {
+                const persona = activeTeamRun.personas.find((candidate) => candidate.personaId === slot.personaId);
+                const ActiveIcon = slot.state === 'active'
+                  ? CheckCircle2
+                  : slot.state === 'failed'
+                    ? CircleAlert
+                    : Play;
+                return (
+                  <article className="agent-team-run-member" data-state={slot.state} key={slot.personaId}>
+                    <ActiveIcon aria-hidden="true" />
+                    <div>
+                      <strong>{persona?.name ?? t('agentTeams.missingPersona')}</strong>
+                      <span>{t(`agentTeams.memberState.${slot.state}`)}</span>
+                      {slot.error && <small>{slot.error}</small>}
+                    </div>
+                    {slot.state === 'failed' && (
+                      <Button size="sm" variant="secondary" disabled={teamBusy} onClick={() => void retryTeamMember(slot.personaId)}>
+                        {t('common.retry')}
+                      </Button>
+                    )}
+                  </article>
+                );
+              })}
+            </section>
+            <p className="settings-hint">{t('agentTeams.endRunHint')}</p>
+          </div>
+        ) : (
+          <div className="agent-team-run-form">
+            <section className="agent-team-run-context" aria-label={t('agentTeams.projectContext')}>
+              <div>
+                <strong>{t('agentTeams.projectPurpose')}</strong>
+                <span>{t('agentTeams.readOnlyContext')}</span>
+              </div>
+              <p>{coordinationProjects.get(teamProject?.projectId ?? '')?.goal}</p>
+              <dl>
+                <div>
+                  <dt>{t('agentTeams.targetBranch')}</dt>
+                  <dd>{coordinationProjects.get(teamProject?.projectId ?? '')?.defaultTargetBranch}</dd>
+                </div>
+                <div>
+                  <dt>{t('agentTeams.linkedValidations')}</dt>
+                  <dd>
+                    {coordinationProjects.get(teamProject?.projectId ?? '')?.validationCommands.length
+                      ? coordinationProjects.get(teamProject?.projectId ?? '')?.validationCommands.map((command) => command.name).join(' · ')
+                      : t('agentTeams.noLinkedValidations')}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+            <Field label={t('agentTeams.team')} required>
+              <Select value={selectedTeamId} onChange={(event) => {
+                const teamId = event.currentTarget.value;
+                const team = teamSnapshot.catalog.teams.find((candidate) => candidate.teamId === teamId);
+                setSelectedTeamId(teamId);
+                setTeamGoal(team?.defaultGoal?.outcome ?? '');
+                setTeamGoalCriteria(team?.defaultGoal?.acceptanceCriteria ?? ['']);
+              }}>
+                <option value="">{t('agentTeams.chooseTeam')}</option>
+                {teamSnapshot.catalog.teams.map((team) => (
+                  <option key={team.teamId} value={team.teamId}>{team.name}</option>
+                ))}
+              </Select>
+            </Field>
+            {teamSnapshot.catalog.teams.length === 0 && (
+              <p className="settings-agent-warning">{t('agentTeams.createTeamFirst')}</p>
+            )}
+            {selectedTeamUnavailable && (
+              <p className="settings-agent-warning" role="alert">{t('agentTeams.enableHooksFirst')}</p>
+            )}
+            {selectedTeam?.defaultGoal && <p className="agent-team-run__notice">{t('agentTeams.defaultGoalCopied')}</p>}
+            <Field label={t('agentTeams.desiredOutcome')} description={t('agentTeams.goalHint')} required>
+              <textarea className="ui-textarea" rows={4} maxLength={2000} value={teamGoal} onChange={(event) => setTeamGoal(event.currentTarget.value)} />
+            </Field>
+            <fieldset className="agent-team-criteria-editor agent-team-run-criteria">
+              <legend>{t('agentTeams.completionCriteria')}</legend>
+              <p>{t('agentTeams.runCriteriaHint')}</p>
+              {teamGoalCriteria.map((criterion, index) => (
+                <div className="agent-team-criterion-row" key={index}>
+                  <Input
+                    aria-label={t('agentTeams.completionCriterionNumber', { number: index + 1 })}
+                    value={criterion}
+                    maxLength={500}
+                    onChange={(event) => setTeamGoalCriteria(teamGoalCriteria.map((candidate, candidateIndex) => (
+                      candidateIndex === index ? event.currentTarget.value : candidate
+                    )))}
+                  />
+                  <IconButton
+                    icon={X}
+                    aria-label={t('agentTeams.removeCriterion', { number: index + 1 })}
+                    disabled={teamGoalCriteria.length === 1}
+                    onClick={() => setTeamGoalCriteria(teamGoalCriteria.filter((_, candidateIndex) => candidateIndex !== index))}
+                  />
+                </div>
+              ))}
+              <Button
+                size="sm"
+                variant="ghost"
+                leadingIcon={<Plus />}
+                disabled={teamGoalCriteria.length >= MAX_AGENT_TEAM_GOAL_CRITERIA}
+                onClick={() => setTeamGoalCriteria([...teamGoalCriteria, ''])}
+              >
+                {t('agentTeams.addCriterion')}
+              </Button>
+            </fieldset>
+            <details className="agent-team-editor__advanced">
+              <summary>{t('agentTeams.advancedRunSettings')}</summary>
+              <div className="agent-team-editor__advanced-body">
+                <Field label={t('agentTeams.constraints')} description={t('agentTeams.constraintsHint')}>
+                  <textarea className="ui-textarea" rows={3} maxLength={2000} value={teamConstraints} onChange={(event) => setTeamConstraints(event.currentTarget.value)} />
+                </Field>
+              </div>
+            </details>
+            {teamBaseState === 'loading' && <p className="agent-team-run__notice">{t('agentTeams.checkingGit')}</p>}
+            {teamBaseState === 'unavailable' && <p className="settings-agent-warning" role="alert">{t('agentTeams.gitRequired')}</p>}
+            {teamBaseState === 'clean' && <p className="agent-team-run__clean"><Check aria-hidden="true" />{t('agentTeams.cleanBase')}</p>}
+            {teamBaseState === 'dirty' && (
+              <label className="agent-team-run__warning">
+                <input type="checkbox" checked={teamWarningAcknowledged} onChange={(event) => setTeamWarningAcknowledged(event.currentTarget.checked)} />
+                <span>{t('agentTeams.dirtyBaseWarning')}</span>
+              </label>
+            )}
+            <p className="settings-hint">{t('agentTeams.launchOrderHint')}</p>
+          </div>
+        )}
+        {teamError && <p className="agent-project-error" role="alert">{teamError}</p>}
+      </Dialog>
       <Dialog
         open={collaborationActivity !== null}
         onOpenChange={(open) => {

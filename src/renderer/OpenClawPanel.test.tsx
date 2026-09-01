@@ -4,7 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { OpenClawAgentSession, OpenClawStatus } from '../shared/openclaw';
+import type { OpenClawAgentSession, OpenClawControlSnapshot, OpenClawStatus } from '../shared/openclaw';
 import type { CapabilityAccess, OpenClawAccess } from './capability-access';
 import { OpenClawPanel } from './OpenClawPanel';
 
@@ -65,7 +65,8 @@ function makeCapabilities(
     observeChat: vi.fn(() => vi.fn()),
     observeVisibility: vi.fn(() => vi.fn()),
     getStatus: vi.fn(async () => status),
-    runLifecycle: vi.fn(async () => ({ ok: true })),
+    getControl: vi.fn(async () => null),
+    runLifecycle: vi.fn(async () => ({ accepted: true })),
     runAutostart: vi.fn(async () => ({ ok: true })),
     listSessions: vi.fn(async () => []),
     getConfig: vi.fn(async () => ({
@@ -166,22 +167,48 @@ describe('OpenClawPanel', () => {
     expect(container.querySelector('[data-testid="openclaw-restart-banner"]')).not.toBeNull();
   });
 
-  it('requires a second autostart click before invoking install and reports the result', async () => {
-    const runAutostart = vi.fn(async () => ({ ok: true }));
+  it('coalesces only the active action while keeping a conflicting intent available', async () => {
+    const requestedAt = '2026-09-01T00:00:00.000Z';
+    const control: OpenClawControlSnapshot = {
+      schemaVersion: 1,
+      intentId: 'intent-1',
+      generation: 1,
+      status: { state: 'stopped', port: 18789 },
+      desiredState: 'running',
+      supervisorState: 'ready',
+      operation: {
+        intentId: 'intent-1',
+        generation: 1,
+        action: 'start',
+        phase: 'repairing',
+        attempt: 2,
+        maxAttempts: 3,
+        requestedAt,
+      },
+      issue: null,
+      updatedAt: requestedAt,
+    };
+    const runLifecycle = vi.fn(async () => ({ accepted: true }));
     const { capabilities } = makeCapabilities(
       { state: 'stopped', port: 18789 },
-      { runAutostart },
+      {
+        observeDrawer: (observer) => {
+          observer.onStatus(control.status);
+          observer.onControl?.(control);
+          return vi.fn();
+        },
+        runLifecycle,
+      },
     );
     await render(capabilities);
 
-    await click('btn-openclaw-autostart-install');
-    expect(runAutostart).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-testid="btn-openclaw-autostart-install-confirm"]')).not.toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="btn-openclaw-start"]')?.disabled).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="btn-openclaw-stop"]')?.disabled).toBe(false);
+    expect(container.querySelector('[data-testid="openclaw-control"]')?.getAttribute('data-phase')).toBe('repairing');
 
-    await click('btn-openclaw-autostart-install-confirm');
-    expect(runAutostart).toHaveBeenCalledWith('install');
-    expect(container.querySelector('[data-testid="openclaw-autostart-result"]')?.textContent?.trim())
-      .not.toBe('');
+    await click('btn-openclaw-stop');
+    expect(runLifecycle).toHaveBeenCalledWith('stop');
+    expect(container.querySelector('[data-testid="openclaw-autostart-row"]')).toBeNull();
   });
 
   it('keeps session polling single-flight while the previous RPC is unresolved', async () => {

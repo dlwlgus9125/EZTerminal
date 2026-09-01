@@ -21,13 +21,27 @@ OpenClaw와 Agent CLI는 EZTerminal이 소유하는 내부 service가 아니다.
 
 ## OpenClaw
 
-`OpenClawService`가 gateway endpoint, CLI 호출, WS RPC, 상태·세션·로그 polling과 허용된
-설정 변경의 단일 소유자다.
+`OpenClawService`가 gateway endpoint, WS RPC, 물리 상태·세션·로그 polling과 허용된 설정
+변경을 소유한다. Windows의 시작·중지·재시작 기대 상태는
+`OpenClawLifecycleCoordinator`와 EZTerminal 소유 current-user supervisor가 소유한다.
 
 - 기본 endpoint는 loopback gateway이며 환경 또는 OpenClaw 설정에서 유효한 HTTP
   origin만 선택한다.
-- 시작·중지·재시작과 autostart는 `openclaw` CLI에 위임한다. `dispose()`는 polling,
-  RPC와 child handle을 정리할 뿐 gateway를 대신 종료하지 않는다.
+- 시작·중지·재시작 요청은 먼저 generation이 있는 durable intent로 원자 저장하고 즉시
+  접수 결과를 반환한다. 같은 활성 intent는 합치고 충돌 intent는 더 높은 generation으로
+  대체하여 마지막 요청이 이긴다. 앱 종료는 intent나 supervisor를 취소하지 않는다.
+- Windows supervisor는 사용자 로그인 때 등록되고 15초 quick check와 5분 authenticated
+  RPC check로 `running`/`stopped` 기대 상태를 유지한다. 외부에서 중지된 running 상태는
+  복구하고, stopped 상태에서 외부로 시작된 gateway는 다시 중지한다.
+- 실행 성공은 CLI exit code가 아니라 `/startupz`와 인증된 `status` RPC가 5초 동안
+  안정적으로 통과했을 때만 기록한다. 재시작은 active work를 최대 60초 기다린 뒤 bounded
+  force 경로를 사용한다.
+- 자동 복구는 진단 → 대상 파일 SHA-256 검증 백업 → `doctor --fix --non-interactive`
+  순서의 비파괴 경로만 사용한다. package 설치·업데이트, 데이터 삭제/reset, token 생성,
+  인증 약화와 aggressive doctor는 자동 실행하지 않는다. 세 번 실패하거나 CLI 호환성,
+  백업, 권한, unrelated port/task 충돌을 만나면 새 명시적 요청 전까지 blocked로 남긴다.
+- `dispose()`는 polling, RPC와 child handle을 정리할 뿐 gateway 또는 supervisor 기대 상태를
+  대신 종료하지 않는다. 기존 직접 autostart 등록 UI는 supervisor가 대체한다.
 - 설정 변경은 명시된 allowlist만 허용하며 gateway 설정 파일을 EZTerminal이 직접
   편집하지 않는다. port 변경은 restart 뒤 origin을 다시 계산한다.
 - desktop chat은 main-owned `WebContentsView`를 sandbox/context-isolation 상태로
@@ -83,6 +97,8 @@ client에 일부 payload를 보내지 않는다.
 ## 근거 소스
 
 - [`src/main/openclaw-service.ts`](../../src/main/openclaw-service.ts)
+- [`src/main/openclaw-lifecycle-coordinator.ts`](../../src/main/openclaw-lifecycle-coordinator.ts)
+- [`assets/openclaw-supervisor.ps1`](../../assets/openclaw-supervisor.ps1)
 - [`src/main/openclaw-chat-view.ts`](../../src/main/openclaw-chat-view.ts)
 - [`src/main/openclaw-proxy.ts`](../../src/main/openclaw-proxy.ts)
 - [`src/main/agent-activity-service.ts`](../../src/main/agent-activity-service.ts)
@@ -96,6 +112,8 @@ client에 일부 payload를 보내지 않는다.
 ## 검증
 
 - [`src/main/openclaw-service.test.ts`](../../src/main/openclaw-service.test.ts)
+- [`src/main/openclaw-lifecycle-coordinator.test.ts`](../../src/main/openclaw-lifecycle-coordinator.test.ts)
+- [`src/main/openclaw-supervisor-script.test.ts`](../../src/main/openclaw-supervisor-script.test.ts)
 - [`src/main/openclaw-chat-view.test.ts`](../../src/main/openclaw-chat-view.test.ts)
 - [`src/main/desktop-window-manager.test.ts`](../../src/main/desktop-window-manager.test.ts)
 - [`src/shared/openclaw.test.ts`](../../src/shared/openclaw.test.ts)

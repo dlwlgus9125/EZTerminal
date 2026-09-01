@@ -1,7 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 
-import type { OpenClawChatViewState, OpenClawStatus, OpenClawStatusState } from '../shared/openclaw';
+import type {
+  OpenClawChatViewState,
+  OpenClawControlSnapshot,
+  OpenClawStatus,
+  OpenClawStatusState,
+} from '../shared/openclaw';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
 import { useNativeOverlayOpen } from './native-overlay';
@@ -81,9 +86,11 @@ export function OpenClawChatPanel(
   const { t } = useAppTranslation();
   const capabilities = props.capabilities ?? rendererCapabilities;
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
+  const [control, setControl] = useState<OpenClawControlSnapshot | null>(null);
   const [viewState, setViewState] = useState<OpenClawChatViewState>({ hasError: false, loading: false });
   const [observationFailed, setObservationFailed] = useState(false);
-  const [busyLifecycle, setBusyLifecycle] = useState(false);
+  const [acceptingStart, setAcceptingStart] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const openedRef = useRef(false); // edge-trigger: chat-open sent once per stopped->running transition
@@ -142,6 +149,10 @@ export function OpenClawChatPanel(
       onStatus: (nextStatus) => {
         setObservationFailed(false);
         setStatus(nextStatus);
+      },
+      onControl: (snapshot) => {
+        setControl(snapshot);
+        setStatus(snapshot.status);
       },
       onViewState: (nextState) => {
         setObservationFailed(false);
@@ -202,17 +213,21 @@ export function OpenClawChatPanel(
   }, [host.ownerWindow, reportSurface]);
 
   const startGateway = useCallback(async (): Promise<void> => {
-    setBusyLifecycle(true);
+    setAcceptingStart(true);
+    setLifecycleError(null);
     try {
-      await capabilities.openClaw.runLifecycle('start');
-      const fresh = await capabilities.openClaw.getStatus(true);
-      if (fresh) setStatus(fresh);
+      const receipt = await capabilities.openClaw.runLifecycle('start');
+      if (receipt && 'accepted' in receipt && !receipt.accepted) {
+        setLifecycleError(receipt.issue?.detail ?? t('openClaw.actionFailed', { action: 'start' }));
+      } else if (receipt && 'ok' in receipt && !receipt.ok) {
+        setLifecycleError(receipt.stderr ?? t('openClaw.actionFailed', { action: 'start' }));
+      }
     } catch {
-      // The existing guidance remains actionable; avoid an unhandled IPC rejection.
+      setLifecycleError(t('openClaw.actionFailed', { action: 'start' }));
     } finally {
-      setBusyLifecycle(false);
+      setAcceptingStart(false);
     }
-  }, [capabilities]);
+  }, [capabilities, t]);
 
   const reconnect = useCallback((): void => {
     capabilities.openClaw.reloadChat();
@@ -227,6 +242,7 @@ export function OpenClawChatPanel(
   const showReconnect = observationFailed || (state === 'running' && viewState.hasError);
   const showLoading =
     !observationFailed && state === 'running' && viewState.loading && !viewState.hasError;
+  const startActive = control?.operation?.phase !== 'blocked' && control?.operation?.action === 'start';
 
   return (
     <div
@@ -245,13 +261,29 @@ export function OpenClawChatPanel(
                 ? t('openClaw.gatewayState', { state: t(STATE_LABEL_KEY[status.state]) })
                 : t('openClaw.checking')}
           </p>
+          {control?.operation && (
+            <p className="openclaw-guidance-text" role="status">
+              {t(`openClaw.phase.${control.operation.phase}`)}
+              {control.operation.attempt > 0
+                ? ` · ${t('openClaw.attempt', {
+                    attempt: control.operation.attempt,
+                    max: control.operation.maxAttempts,
+                  })}`
+                : ''}
+            </p>
+          )}
+          {(control?.issue || lifecycleError) && (
+            <p className="openclaw-guidance-text openclaw-error-inline" role="alert">
+              {lifecycleError ?? `${control?.issue?.detail} ${control?.issue?.remediation}`}
+            </p>
+          )}
           {state === 'not-installed' ? (
             <code className="openclaw-guidance-cmd">npm i -g openclaw</code>
           ) : (
             <button
               type="button"
               className="btn btn-split"
-              disabled={busyLifecycle || state === 'starting' || state === undefined}
+              disabled={acceptingStart || startActive}
               onClick={() => void startGateway()}
               data-testid="openclaw-chat-start"
             >

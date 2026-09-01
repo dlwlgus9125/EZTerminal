@@ -1028,6 +1028,38 @@ body,
   gap: 8px;
 }
 
+.mobile-openclaw-view .openclaw-control-card {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border-strong);
+  border-inline-start: 3px solid var(--ui-accent);
+  border-radius: 6px;
+  background: var(--ui-surface-inset);
+}
+
+.mobile-openclaw-view .openclaw-control-grid {
+  color: var(--ui-text-muted);
+}
+
+.mobile-openclaw-view .openclaw-control-grid strong,
+.mobile-openclaw-view .openclaw-control-issue {
+  color: var(--ui-text);
+}
+
+.mobile-openclaw-view .openclaw-control-progress,
+.mobile-openclaw-view .openclaw-control-issue {
+  background: var(--ui-surface);
+}
+
+.mobile-openclaw-view .openclaw-control-progress {
+  color: var(--ui-warning);
+}
+
+.mobile-openclaw-view .openclaw-control-issue,
+.mobile-openclaw-view .openclaw-control-issue strong {
+  color: var(--ui-danger);
+}
+
 /* Logs tab */
 .openclaw-logs-section {
   display: flex;

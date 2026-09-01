@@ -95,8 +95,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/renderer/App.tsx",
-        "startLine": 3420,
-        "endLine": 3434,
+        "startLine": 3445,
+        "endLine": 3459,
         "lineDigest": "sha256:8b421e60bdc6e5e3bf9c5988ba5ee9e18064f217cfb6a186496f535aca29c00b",
         "claim": "The app attaches persistence listeners only after startup restoration settles."
       }]
@@ -111,8 +111,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/renderer/App.tsx",
-        "startLine": 3384,
-        "endLine": 3392,
+        "startLine": 3409,
+        "endLine": 3417,
         "lineDigest": "sha256:a02cb05c616b1ef9d4ed9d9fb9695603efbfbf7ca8d14f2d985223f47e2fc24e",
         "claim": "Layout and active-panel changes schedule renderer recovery checkpoints."
       }]
@@ -143,9 +143,9 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 1835,
-        "endLine": 1961,
-        "lineDigest": "sha256:8640003eec43bd8b0ee466a6f72a11e1574217eeb2b7658a4d4ddc47e3188231",
+        "startLine": 2275,
+        "endLine": 2404,
+        "lineDigest": "sha256:10d666b820e7485411c130e1edf8ee42c6ecd69addf61a850a4e72b46c7f5f02",
         "claim": "Graceful shutdown flushes layout and disposes owned services under a deadline."
       }]
     }
@@ -193,8 +193,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/renderer/App.tsx",
-        "startLine": 3420,
-        "endLine": 3434,
+        "startLine": 3445,
+        "endLine": 3459,
         "lineDigest": "sha256:8b421e60bdc6e5e3bf9c5988ba5ee9e18064f217cfb6a186496f535aca29c00b",
         "claim": "After restore settles, the app attaches save listeners and persists the resulting state."
       }]
@@ -209,8 +209,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/renderer/App.tsx",
-        "startLine": 3384,
-        "endLine": 3392,
+        "startLine": 3409,
+        "endLine": 3417,
         "lineDigest": "sha256:a02cb05c616b1ef9d4ed9d9fb9695603efbfbf7ca8d14f2d985223f47e2fc24e",
         "claim": "Both layout and active-panel events feed the checkpoint scheduler."
       }]
@@ -241,8 +241,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 1540,
-        "endLine": 1548,
+        "startLine": 1978,
+        "endLine": 1986,
         "lineDigest": "sha256:e49f13b5b6411dc62fe43bc018f2acbc64e0a7c32ca4dcef829e7091cab9c7c1",
         "claim": "Main exposes save, consume, and prepare recovery IPC for renderer replacement."
       }]
@@ -257,8 +257,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/renderer/App.tsx",
-        "startLine": 626,
-        "endLine": 641,
+        "startLine": 630,
+        "endLine": 645,
         "lineDigest": "sha256:0fa4dbc73e891660215a38746ff0e475b4f7a89d888ce393a75d5f7df070e6dd",
         "claim": "A replacement renderer consumes the recovery seed before normal checkpoint scheduling resumes."
       }]
@@ -273,9 +273,9 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 1845,
-        "endLine": 1935,
-        "lineDigest": "sha256:4389f4dfb33309c27cd2c129335cd693f6d9121fab25ec6a50fb6ee89f430f60",
+        "startLine": 2275,
+        "endLine": 2404,
+        "lineDigest": "sha256:10d666b820e7485411c130e1edf8ee42c6ecd69addf61a850a4e72b46c7f5f02",
         "claim": "The shutdown task list flushes renderer layout before disposing runtime owners."
       }]
     }

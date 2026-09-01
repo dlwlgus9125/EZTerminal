@@ -85,9 +85,10 @@ import type {
   OpenClawAutostartResult,
   OpenClawChatSurfaceSnapshot,
   OpenClawChatViewState,
+  OpenClawControlSnapshot,
   OpenClawCoreConfig,
   OpenClawLifecycleAction,
-  OpenClawLifecycleResult,
+  OpenClawLifecycleReceipt,
   OpenClawLogLine,
   OpenClawSetConfigResult,
   OpenClawStatus,
@@ -117,6 +118,25 @@ import type {
   AgentResumeStartResult,
   AgentTranscriptPage,
 } from './agent-history';
+import type {
+  AgentPersona,
+  AgentPersonaInput,
+  AgentStarterTeam,
+  AgentStarterTeamInput,
+  AgentTeam,
+  AgentTeamDesktopSnapshot,
+  AgentTeamInput,
+  AgentTeamMemberActivationInput,
+  AgentTeamMemberActivationResult,
+  AgentTeamMemberFailureInput,
+  AgentTeamMemberLaunchInput,
+  AgentTeamMemberLaunchResult,
+  AgentTeamMutationResult,
+  AgentTeamPlanApprovalInput,
+  AgentTeamRun,
+  AgentTeamRunDecisionInput,
+  AgentTeamRunInput,
+} from './agent-team';
 import type { SessionSurfaceApi } from './session-surface';
 import type {
   AppUpdateOpenResult,
@@ -1584,13 +1604,29 @@ export interface EzTerminalDesktopApi {
   removeAgentProject: (projectId: string) => Promise<boolean>;
   selectAgentProjectFolders: (multiple?: boolean) => Promise<AgentProjectFolderSelection>;
 
+  // Desktop-only Persona/Team catalog and approved one-shot Team runs.
+  getAgentTeamSnapshot: () => Promise<AgentTeamDesktopSnapshot>;
+  onAgentTeamSnapshot: (listener: (snapshot: AgentTeamDesktopSnapshot) => void) => () => void;
+  saveAgentPersona: (input: AgentPersonaInput) => Promise<AgentTeamMutationResult<AgentPersona>>;
+  deleteAgentPersona: (personaId: string, expectedRevision: number) => Promise<AgentTeamMutationResult<true>>;
+  createAgentStarterTeam: (input: AgentStarterTeamInput) => Promise<AgentTeamMutationResult<AgentStarterTeam>>;
+  saveAgentTeam: (input: AgentTeamInput) => Promise<AgentTeamMutationResult<AgentTeam>>;
+  deleteAgentTeam: (teamId: string, expectedRevision: number) => Promise<AgentTeamMutationResult<true>>;
+  createAgentTeamRun: (input: AgentTeamRunInput) => Promise<AgentTeamMutationResult<AgentTeamRun>>;
+  approveAgentTeamPlan: (input: AgentTeamPlanApprovalInput) => Promise<AgentTeamMutationResult<AgentTeamRun>>;
+  decideAgentTeamRun: (input: AgentTeamRunDecisionInput) => Promise<AgentTeamMutationResult<AgentTeamRun>>;
+  prepareAgentTeamMemberLaunch: (input: AgentTeamMemberLaunchInput) => Promise<AgentTeamMemberLaunchResult>;
+  activateAgentTeamMember: (input: AgentTeamMemberActivationInput) => Promise<AgentTeamMemberActivationResult>;
+  failAgentTeamMember: (input: AgentTeamMemberFailureInput) => Promise<AgentTeamMutationResult<AgentTeamRun>>;
+
   // ── OpenClaw management (openclaw-management M1) ────────────────────────
   // `getChatUrl`/the raw token are deliberately ABSENT from this surface —
   // the token never crosses to the renderer (main owns the WebContentsView's
   // `#token=` URL assembly, M3); `isOpenClawChatAvailable` is the only signal
   // the UI needs to decide whether to offer the chat panel/CTA.
   getOpenClawStatus: (force?: boolean) => Promise<OpenClawStatus>;
-  runOpenClawLifecycle: (action: OpenClawLifecycleAction) => Promise<OpenClawLifecycleResult>;
+  getOpenClawControl: (force?: boolean) => Promise<OpenClawControlSnapshot>;
+  runOpenClawLifecycle: (action: OpenClawLifecycleAction) => Promise<OpenClawLifecycleReceipt>;
   listOpenClawSessions: () => Promise<readonly OpenClawAgentSession[]>;
   getOpenClawConfig: () => Promise<OpenClawCoreConfig>;
   setOpenClawConfig: (key: string, value: string) => Promise<OpenClawSetConfigResult>;
@@ -1598,6 +1634,7 @@ export interface EzTerminalDesktopApi {
   /** Gates the main-side status/log push loops (mirrors `setStatsPanelVisible`). */
   setOpenClawDrawerOpen: (open: boolean) => void;
   onOpenClawStatus: (listener: (status: OpenClawStatus) => void) => () => void;
+  onOpenClawControl: (listener: (snapshot: OpenClawControlSnapshot) => void) => () => void;
   onOpenClawLog: (listener: (line: OpenClawLogLine) => void) => () => void;
   /** `gateway install`/`gateway uninstall` (task #9, autostart toggle). */
   runOpenClawAutostart: (action: OpenClawAutostartAction) => Promise<OpenClawAutostartResult>;

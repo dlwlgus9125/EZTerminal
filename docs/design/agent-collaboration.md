@@ -81,6 +81,57 @@ Project coordination 설정은 목표, 기본 target branch와 순서가 있는 
 전 `stateSeq`보다 새 sequence가 관찰됐을 때만 수락을 확정하며 timeout이면 outcome을
 추측하지 않는다.
 
+## Persona, Team과 계획 승인
+
+Persona와 Team은 특정 Project에 종속되지 않는 전역 재사용 설정이다. Persona 기본 편집은
+`Planner`, `Implementer`, `Reviewer`, `Tester`, `Custom` 프리셋, 이름, provider와 provider가
+실제로 지원하는 permission만 요구한다. 프리셋은 안전한 icon·role·지침과 권한 기본값을
+채우며, model·Claude effort·icon·role·지침은 선택적인 고급 설정에서 바꾼다. 프리셋 필드가
+없는 기존 Persona는 `Custom`으로 표시하고 저장된 role과 지침을 보존한다. launch option은
+provider별 allow-list 필드만 저장·전달하며 raw argument나 shell fragment를 받지 않는다.
+
+Team은 2~8개의 Persona 순서와 그중 한 명인 Planner를 소유한다. 선택적인 기본 실행 목표는
+원하는 결과와 1~12개의 순서 있는 완료 조건으로 구성된다. 설명과 Team 공통 지침은 고급
+설정이며, 기존 값은 그대로 보존한다. 비어 있는 catalog에서는 사용자가 Planner와
+Implementer의 준비된 provider를 각각 고른 뒤 두 Persona와 `Starter team`을 한 번의 atomic
+catalog write로 만들 수 있다. 어느 하나라도 지원되지 않거나 catalog가 더는 비어 있지
+않으면 아무 항목도 만들지 않는다. Catalog 수정은 compare-and-swap revision으로 충돌을
+막고, 실행이 시작되면 해당 Team과 Persona의 snapshot을 실행 안에 고정한다.
+
+Team 실행은 다음 경계를 지킨다.
+
+1. 시작 dialog는 Project의 장기 목적을 읽기 전용 맥락으로 보여 주고, Team 기본 목표가
+   있으면 이번 실행의 원하는 결과와 완료 조건에 복사한다. 사용자의 수정은 이번 run에만
+   적용되고 Team 설정을 바꾸지 않는다. 새 run은 원하는 결과와 완료 조건 하나 이상이
+   없으면 시작하지 않는다.
+2. Main이 Project 장기 목적, run 결과·완료 조건, validation 설정, target branch의 정확한
+   commit과 dirty 여부를 실행에 고정한다. dirty checkout은 사용자의 명시적 확인 없이는
+   시작하지 않는다.
+3. Planner 하나만 그 commit에서 만든 managed worktree에 시작한다. provider activity와
+   exact session binding이 확인된 뒤 Main이 만든 planning brief를 한 번 전송한다.
+4. Planner는 자신의 session capability로 `ezterminal-agent team plan submit <run-id>
+   --revision <n> --stdin`을 호출한다. Main은 지정된 Planner activity, 현재 run revision,
+   전체 Team의 assignment 또는 exclusion, validation ID와 전체 JSON 크기를 검증한다.
+   이 호출은 사람의 결정을 기다리며, 승인되면 같은 응답으로 Planner 자신의 exact
+   assignment brief를 돌려준다. Planner는 응답 전에 구현을 시작하지 않는다.
+5. Desktop은 구조화된 계획을 사람에게 보여 주고 승인 전에는 다른 Persona를 시작하지
+   않는다. 승인하면 Planner를 제외한 assignment별로 같은 고정 commit에서 서로 다른
+   managed worktree와 session을 만들고, 각 Persona snapshot과 assignment로 만든 exact
+   brief를 한 번 전송한다.
+6. 일부 launch가 실패해도 성공으로 가장하거나 다른 Persona에 자동 재배정하지 않는다.
+   해당 slot은 실패 원인을 남기고 생성된 worktree를 보존해 사용자가 retry, cancel 또는
+   수동 복구를 선택할 수 있게 한다.
+
+실행 상태는 `preparing-planner`, `planning`, `awaiting-review`, `launching`, `active`,
+`partial`, `completed`, `canceled`, `failed`이며 member slot은 별도 상태를 가진다. UI는
+revisioned snapshot을 표시할 뿐, transcript나 terminal 출력을 읽어 실행 상태를
+추측하지 않는다. Team은 현재 desktop 전용이며 mobile remote protocol에 설정·시작·계획
+승인 capability를 광고하지 않는다.
+
+`complete`와 `cancel`은 Team의 계획 gate와 상태 추적을 끝내는 결정이다. 이미 열린 Agent
+terminal을 강제 종료하거나 worktree를 삭제하지 않으며, UI는 이 차이를 action 근처에
+명시한다.
+
 ## 관리 머지
 
 관리 머지는 terminal의 일반 Git 명령을 승인하는 버튼이 아니다. EZTerminal이 만든
@@ -131,6 +182,16 @@ provider session id, validation output, capability token과 1회 grant는 저장
 Audit는 validation 상태·시간·exit code와 output digest만 포함한다. Renderer/mobile용
 coordination snapshot에서도 validation output을 제거한다.
 
+`agent-team-catalog.json`은 Persona 프리셋과 Team 기본 실행 목표를 포함한 재사용 설정만,
+`agent-team-runs.json`은 Project 장기 목적, run 결과·완료 조건, 고정된 설정 snapshot,
+plan, slot identity와 상태만 저장한다. 두 파일은 prompt transcript,
+terminal output, tool call, token, capability와 provider credential을 저장하지 않는다.
+catalog에서 Persona나 Team을 수정·삭제해도 이미 시작한 run snapshot은 바뀌지 않는다.
+현재 schema version 안의 새 필드는 선택적이므로 기존 Persona는 Custom, 기존 Team은 기본
+목표 없음, 기존 run은 run-level 완료 조건 없음으로 계속 읽힌다.
+새 Main process가 시작될 때 남아 있는 비종료 run은 중단된 `failed` 상태로 기록하고
+worktree identity는 보존한다. 존재하지 않는 provider session을 active로 복원하지 않는다.
+
 Malformed 현재-version 파일은 quarantine한다. 저장 write는 직렬화·atomic rename을
 사용하고 audit 수는 공유 상한으로 제한한다. 종료 시 진행 중 candidate 준비를 먼저
 취소하고 완료를 기다린 뒤 audit store를 flush한다.
@@ -140,14 +201,21 @@ Malformed 현재-version 파일은 quarantine한다. 저장 write는 직렬화·
 - [`src/main/agent-activity-service.ts`](../../src/main/agent-activity-service.ts)
 - [`src/main/agent-coordination-service.ts`](../../src/main/agent-coordination-service.ts)
 - [`src/main/agent-control-server.ts`](../../src/main/agent-control-server.ts)
+- [`src/main/agent-team-service.ts`](../../src/main/agent-team-service.ts)
+- [`src/main/agent-team-store.ts`](../../src/main/agent-team-store.ts)
 - [`src/main/managed-merge-service.ts`](../../src/main/managed-merge-service.ts)
 - [`src/shared/agent-coordination.ts`](../../src/shared/agent-coordination.ts)
+- [`src/shared/agent-team.ts`](../../src/shared/agent-team.ts)
 - [`src/renderer/AgentHub.tsx`](../../src/renderer/AgentHub.tsx)
+- [`src/renderer/AgentTeamSettings.tsx`](../../src/renderer/AgentTeamSettings.tsx)
 - [`mobile/src/MobileAgentView.tsx`](../../mobile/src/MobileAgentView.tsx)
 
 ## 검증
 
 - [`src/main/managed-merge-service.test.ts`](../../src/main/managed-merge-service.test.ts)
 - [`src/main/agent-control-server.test.ts`](../../src/main/agent-control-server.test.ts)
+- [`src/main/agent-team-service.test.ts`](../../src/main/agent-team-service.test.ts)
+- [`src/main/agent-team-store.test.ts`](../../src/main/agent-team-store.test.ts)
+- [`src/renderer/AgentHub.test.tsx`](../../src/renderer/AgentHub.test.tsx)
 - [`src/main/remote-bridge.test.ts`](../../src/main/remote-bridge.test.ts)
 - [`mobile/src/transport/ws-ezterminal.test.ts`](../../mobile/src/transport/ws-ezterminal.test.ts)

@@ -15,7 +15,9 @@
  *
  * State is a shared JSON file (path = argv[2]) the fake CLI also writes to
  * (`running`, `config`) — re-read on every request/RPC call so a `gateway
- * start` from the CLI is visible on this process's very next answer.
+ * start` from the CLI is visible on this process's very next answer. `/startupz`
+ * mirrors the production lifecycle readiness gate; it is not treated as the
+ * Control UI document.
  *
  * Usage: `node fake-openclaw-gateway.mjs <statePath>` — prints `READY
  * <port>` to stdout once listening (ephemeral port, so parallel e2e runs
@@ -45,6 +47,11 @@ function handleRpc(method, params, state) {
 
 const server = createServer((req, res) => {
   const state = readState();
+  if (req.method === 'GET' && req.url === '/startupz') {
+    res.writeHead(state.running ? 200 : 503, { 'Content-Type': 'text/plain' });
+    res.end(state.running ? 'ready' : 'stopped');
+    return;
+  }
   if (req.method === 'GET' && req.url === '/') {
     if (!state.running) {
       res.writeHead(503);

@@ -4,6 +4,7 @@ import type { AgentActivity } from '../shared/agent';
 import type { AgentCoordinationSnapshot } from '../shared/agent-coordination';
 import type { AgentCoordinationService } from './agent-coordination-service';
 import { AgentControlServer, descriptorFingerprint } from './agent-control-server';
+import type { AgentTeamService } from './agent-team-service';
 import type { ManagedMergeService } from './managed-merge-service';
 import type { ProjectMapService } from './project-map-service';
 
@@ -73,6 +74,10 @@ function fixture(): {
     read: ReturnType<typeof vi.fn>;
   };
   readonly maps: { readonly read: ReturnType<typeof vi.fn> };
+  readonly teams: {
+    readonly submitPlan: ReturnType<typeof vi.fn>;
+    readonly waitForPlanDecision: ReturnType<typeof vi.fn>;
+  };
   readonly setSnapshot: (snapshot: AgentCoordinationSnapshot) => void;
 } {
   const source = activity('source', 'project-1', 'Builder');
@@ -117,14 +122,23 @@ function fixture(): {
       },
     })),
   };
+  const teams = {
+    submitPlan: vi.fn(async () => ({ ok: true as const, value: { revision: 2 } })),
+    waitForPlanDecision: vi.fn(async () => ({
+      ok: true as const,
+      value: { run: { revision: 3 }, assignment: { title: 'Implement' }, brief: 'Approved brief.' },
+    })),
+  };
   return {
     server: new AgentControlServer({
       coordination: coordination as unknown as AgentCoordinationService,
       merges: merges as unknown as ManagedMergeService,
       maps: maps as unknown as ProjectMapService,
+      teams: teams as unknown as Pick<AgentTeamService, 'submitPlan' | 'waitForPlanDecision'>,
     }),
     coordination,
     maps,
+    teams,
     setSnapshot: (next) => { snapshot = next; },
   };
 }
@@ -188,6 +202,53 @@ describe('AgentControlServer', () => {
         status: 403,
         body: { ok: false, error: 'collaboration-inactive' },
       });
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('accepts a bounded Team plan only from the authenticated session identity', async () => {
+    const { server, teams } = fixture();
+    await server.start();
+    try {
+      const descriptor = JSON.parse(server.descriptorForSession('session-source')) as Descriptor;
+      const runId = '123e4567-e89b-12d3-a456-426614174020';
+      const proposal = {
+        summary: 'Split implementation and review.',
+        assignments: [{
+          taskId: '123e4567-e89b-12d3-a456-426614174030',
+          personaId: '123e4567-e89b-12d3-a456-426614174000',
+          title: 'Implement the bounded change',
+          outcome: 'The requested behavior works.',
+          scopeHints: ['src/'],
+          validationIds: [],
+          acceptanceCriteria: ['The focused test passes.'],
+          brief: 'Implement only the assigned scope.',
+        }],
+        excludedMembers: [],
+      };
+
+      await expect(post(descriptor, '/v1/team/plan', {
+        runId,
+        expectedRevision: 1,
+        proposal,
+      })).resolves.toMatchObject({ status: 200, body: { ok: true } });
+      expect(teams.submitPlan).toHaveBeenCalledWith('source', {
+        runId,
+        expectedRevision: 1,
+        proposal,
+      });
+      expect(teams.waitForPlanDecision).toHaveBeenCalledWith(runId, 2, expect.any(AbortSignal));
+
+      await expect(post(descriptor, '/v1/team/plan', {
+        runId: '------------------------------------',
+        expectedRevision: 1,
+        proposal,
+      })).resolves.toMatchObject({
+        status: 400,
+        body: { ok: false, error: 'invalid-request' },
+      });
+      expect(teams.submitPlan).toHaveBeenCalledTimes(1);
     } finally {
       await server.stop();
     }

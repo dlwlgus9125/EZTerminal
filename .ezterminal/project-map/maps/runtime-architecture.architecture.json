@@ -3,11 +3,11 @@
   "id": "runtime-architecture",
   "type": "architecture",
   "title": "EZTerminal runtime architecture",
-  "summary": "How desktop surfaces cross narrow trust boundaries into terminal, agent, and remote runtimes.",
+  "summary": "How desktop surfaces cross narrow trust boundaries into terminal, agent, remote, and durable OpenClaw runtimes.",
   "contentLocale": "en",
   "layoutIntent": {
     "density": "balanced",
-    "emphasisIds": ["workbench", "preload", "main-process", "interpreter-broker", "utility-runtime"]
+    "emphasisIds": ["workbench", "preload", "main-process", "interpreter-broker", "utility-runtime", "openclaw-supervisor"]
   },
   "chapters": [
     {
@@ -21,6 +21,12 @@
       "title": "Remote boundary",
       "summary": "Main projects bounded runtime capabilities to authenticated remote clients.",
       "focusIds": ["main-process", "remote-bridge", "main-to-remote"]
+    },
+    {
+      "id": "openclaw-resilience",
+      "title": "OpenClaw resilience",
+      "summary": "A per-login Windows supervisor reconciles durable desired state independently of the Electron window lifetime.",
+      "focusIds": ["main-process", "openclaw-supervisor", "main-to-openclaw-supervisor"]
     }
   ],
   "groups": [
@@ -40,8 +46,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/renderer/App.tsx",
-        "startLine": 522,
-        "endLine": 539,
+        "startLine": 526,
+        "endLine": 543,
         "lineDigest": "sha256:3233f6e9f076c395212718bd1612fd8c2c8c6b74556f98546aea0a18de4c8a40",
         "claim": "The workbench registers native Dockview panel components, including Project Map."
       }]
@@ -57,9 +63,9 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/preload/preload.ts",
-        "startLine": 706,
-        "endLine": 709,
-        "lineDigest": "sha256:c1447f89b07fdd8820ef72a5c7204b2d3eace7129cabfa1c5eff41b99434806b",
+        "startLine": 745,
+        "endLine": 745,
+        "lineDigest": "sha256:d25cf0450be3f30201f2beb5bce28e021a3695bdde30f7673b71638f5bae3ab0",
         "claim": "The desktop API is exposed through one named context bridge surface."
       }]
     },
@@ -74,9 +80,9 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 881,
-        "endLine": 920,
-        "lineDigest": "sha256:a3b762c41cfea8e55d66b8ebcf1e1aa67ce1e6e3210a7482ecefe250993ba6e1",
+        "startLine": 979,
+        "endLine": 1020,
+        "lineDigest": "sha256:d77d506de89492f8dad370c00206d5db80c7b128c7c20ebac17a8870ae1bc5bd",
         "claim": "Main constructs Project Workspace and Project Map authorities and broadcasts bounded change events."
       }]
     },
@@ -125,10 +131,27 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1195,
-        "endLine": 1244,
+        "startLine": 1197,
+        "endLine": 1246,
         "lineDigest": "sha256:6ccedfa737c04488912b8b673a21f47b0525f6a6a8297cc4a2c84ee125271ff9",
         "claim": "Each remote connection receives isolated run, upload, packet, and terminal capability state."
+      }]
+    },
+    {
+      "id": "openclaw-supervisor",
+      "label": "Windows OpenClaw supervisor",
+      "detail": "A current-user Scheduled Task reconciles durable desired state, authenticated readiness, and bounded safe repair outside the Electron lifetime.",
+      "kind": "runtime",
+      "group": "execution",
+      "rank": 3,
+      "order": 2,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "assets/openclaw-supervisor.ps1",
+        "startLine": 721,
+        "endLine": 790,
+        "lineDigest": "sha256:7bc5080948750369b3c38900264ada6ae0ea55f1fc744c529451b40149cf66f7",
+        "claim": "The per-login supervisor continuously reconciles persisted desired state and authenticated gateway health, while preserving blocked attempts for the next explicit request."
       }]
     }
   ],
@@ -157,9 +180,9 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 1597,
-        "endLine": 1730,
-        "lineDigest": "sha256:b92f849d807e719e9014508c22153fe0b716db5ea9a1e02643437af5208a3ff5",
+        "startLine": 2027,
+        "endLine": 2169,
+        "lineDigest": "sha256:c7320658ed61af1ab384a4bb8abb2b4179e6a43344dfadbcf9fc4eb26841d763",
         "claim": "Main validates Project Workspace and Project Map IPC payloads before dispatch."
       }]
     },
@@ -202,10 +225,25 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1279,
-        "endLine": 1301,
+        "startLine": 1282,
+        "endLine": 1304,
         "lineDigest": "sha256:9cfc9b359352c4a9c3498fa6f5efdbe65c40581371a9f2582b432e6d335869d2",
         "claim": "Remote run observation encodes interpreter frames before sending them to a client."
+      }]
+    },
+    {
+      "id": "main-to-openclaw-supervisor",
+      "from": "main-process",
+      "to": "openclaw-supervisor",
+      "label": "atomic desired intent and runtime receipt",
+      "kind": "secondary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/openclaw-lifecycle-coordinator.ts",
+        "startLine": 557,
+        "endLine": 625,
+        "lineDigest": "sha256:25d030921015f3311fd82fcf8d4581f23fd08d63baeef2a16b56d4678b191b70",
+        "claim": "Main coalesces matching requests, persists a monotonic desired-state intent atomically, wakes the supervisor, and returns an immediate receipt."
       }]
     }
   ],

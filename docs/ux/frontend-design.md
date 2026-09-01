@@ -314,8 +314,13 @@ locale은 결함이다.
   failure를 건강한 0으로 만들지 않고 visible할 때만 수집한다.
 - **Remote/Pairing:** bridge off, VPN 없음, service 없음, idle, busy와 active를 구분한다.
   QR expiry/redeem과 device roster에서 stale generation을 복원하지 않는다.
-- **OpenClaw:** missing CLI, stopped, unreachable, timeout과 running을 구분한다. Chat의
-  external body는 pixel oracle에서 제외하지만 EZTerminal chrome과 상태는 포함한다.
+- **OpenClaw:** physical status와 durable desired state를 함께 표시하고 missing CLI,
+  stopped, unreachable, recovery phase, blocked와 authenticated-RPC running을 구분한다.
+  lifecycle 요청을 오래 열린 spinner로 표현하지 않고 접수 뒤 supervisor phase와 최대
+  3회 attempt를 하나의 polite live region에서 갱신한다. 같은 활성 action만 disable하며
+  충돌 action은 새 generation으로 대체할 수 있게 유지한다. blocked card는 detail,
+  remediation과 diagnostic ID를 함께 제공한다. Chat의 external body는 pixel oracle에서
+  제외하지만 EZTerminal chrome과 상태는 포함한다.
 - **Paste/Risky close:** 위험 이유를 유지하고 Cancel을 안전 focus로 둔다. 최종 상태
   비교가 실패하면 아무것도 실행하지 않는다.
 - **Explorer:** root, empty folder, non-repository와 Git unavailable을 구분하며 breadcrumb,
@@ -401,6 +406,46 @@ Button은 raw terminal Git 명령을 전송하지 않고 main의 관리 merge op
 preparing/validating/merging 중에는 중복 action을 막고 현재 단계 label을 유지한다. 성공,
 deny, conflict, stale, failed와 interrupted는 서로 다른 text 상태이며 color만으로 구분하지
 않는다. 상세 process·보안 계약은
+[`agent-collaboration.md`](../design/agent-collaboration.md)가 소유한다.
+
+### 10.3 Persona와 Team 실행
+
+Settings의 Agents 영역은 provider integration 다음에 **Team** section을 둔다. 이 안에서
+Persona 목록을 먼저, Team 목록을 다음에 보여 준다. Persona의 기본 편집 순서는 프리셋,
+이름, provider, 지원되는 permission이다. model·effort·icon·role·지침은 접힌 고급 설정에
+두되 프리셋이 채운 안전한 기본값과 기존 Custom 값을 잃지 않는다. Team 편집은 2~8개의
+Persona를 명시적으로 고르고 화면에 보이는 순서대로 재정렬하며 한 명을 Planner로
+지정한다. 선택적인 기본 실행 목표는 원하는 결과와 추가·제거 가능한 완료 조건 목록으로
+편집하고, description과 공통 지침은 고급 설정에 둔다. provider hook이 준비되지 않은
+Persona와 삭제를 막는 참조 관계는 일반적인 성공 상태로 숨기지 않고 card와 dialog 안에
+text로 설명한다.
+
+Persona와 Team이 모두 없으면 **Create starter team**을 제공한다. dialog에서 Planner와
+Implementer provider를 각각 명시적으로 고르며, 필요한 permission을 지원하는 준비된
+provider만 선택할 수 있다. 생성은 두 Persona와 Team 전부가 성공할 때만 한 번에 반영한다.
+설정을 저장해도 대화창이나 Agent terminal을 열지 않는다.
+
+Agent Hub의 Team 진입점은 Project 상세 안에만 둔다. 시작 dialog는 Project 장기 목적을
+읽기 전용 맥락으로, 이번 실행의 원하는 결과와 완료 조건을 편집 가능한 입력으로 분리한다.
+Team 기본 목표는 입력의 초기값일 뿐 수정해도 Team 설정을 바꾸지 않는다. 기본 목표가
+없으면 빈 결과와 빈 완료 조건 하나로 시작한다. target branch와 자동 연결된 validation,
+Git 상태를 함께 검토하게 하며 validation은 사용자가 끄는 안전 정책으로 표현하지 않는다.
+dirty checkout은 별도 acknowledgement를 요구한다. 시작 직후에는 Planner 한 명만 표시하고,
+계획을 받기 전에는 나머지 member를 running처럼 보이지 않는다.
+
+계획 검토 화면은 고정된 Project 맥락, run 결과·완료 조건과 summary 아래에 Persona별
+outcome, 실제 전달할 brief, scope, validation,
+acceptance criteria와 exclusion 이유를 구조적으로 표시한다. **Approve and launch**와
+**Cancel**은 run revision에 묶이며,
+승인 후 member별 `preparing/prepared/launching/active/failed/excluded` 상태를 text badge로
+보여 준다. 실패 member는 원인을 유지한 채 **Retry**를 제공하고, 일부 성공은 완료가 아닌
+partial 상태로 표현한다. Team 설정 변경은 진행 중 run의 이름·지침·Persona snapshot을
+바꾸지 않는다.
+
+이 기능은 desktop 전용이다. Android에는 동작하지 않는 Team control을 disabled 상태로
+복제하지 않는다. production Storybook은 준비된 Persona와 Team 설정 상태를 실제 component
+adapter로 보여 주며 고정 desktop handoff 원본을 Team 변경의 snapshot 대상으로 사용하지
+않는다. 실행·저장·권한의 상세 계약은
 [`agent-collaboration.md`](../design/agent-collaboration.md)가 소유한다.
 
 ## 11. PC Control UI 계약

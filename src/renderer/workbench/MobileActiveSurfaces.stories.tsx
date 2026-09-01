@@ -238,10 +238,24 @@ const STORY_TRANSPORT = {
     queueMicrotask(() => listener({ state: 'running', version: '2026.8', port: 18_789 }));
     return () => undefined;
   },
+  onOpenClawControl: (listener: (snapshot: import('../../shared/openclaw').OpenClawControlSnapshot) => void) => {
+    queueMicrotask(() => listener({
+      schemaVersion: 1,
+      intentId: 'story-openclaw-running',
+      generation: 1,
+      status: { state: 'running', version: '2026.8', port: 18_789 },
+      desiredState: 'running',
+      supervisorState: 'ready',
+      operation: null,
+      issue: null,
+      updatedAt: new Date(NOW).toISOString(),
+    }));
+    return () => undefined;
+  },
   setOpenClawStatusSubscribed: () => undefined,
   onOpenClawLogLines: () => () => undefined,
   setOpenClawLogsSubscribed: () => undefined,
-  runOpenClawLifecycle: async () => ({ ok: true }),
+  runOpenClawLifecycle: async () => ({ accepted: true }),
   getOpenClawConfig: async () => ({
     'agents.defaults.model': 'openai/gpt-5',
     'gateway.port': '18789',

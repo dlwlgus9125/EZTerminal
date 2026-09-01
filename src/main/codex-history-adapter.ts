@@ -10,6 +10,7 @@ import {
 } from '../shared/agent-history';
 import { hasProjectPathControlCharacters } from '../shared/project-workspace';
 import { quoteEzArgument } from '../shared/quote-ez-argument';
+import type { AgentPersonaLaunch } from '../shared/agent-team';
 import type {
   AgentHistoryProviderAdapter,
   AgentResumeCommand,
@@ -344,12 +345,16 @@ export class CodexHistoryAdapter implements AgentHistoryProviderAdapter {
     };
   }
 
-  buildNewCommand(roots: readonly string[]): AgentResumeCommand | null {
+  buildNewCommand(roots: readonly string[], launch?: AgentPersonaLaunch): AgentResumeCommand | null {
     const [primaryRoot, ...additionalRoots] = roots;
-    if (!primaryRoot) return null;
+    if (!primaryRoot || (launch && launch.provider !== 'codex')) return null;
     return {
       commandText: [
         `!codex --no-alt-screen --cd ${quoteEzArgument(primaryRoot)}`,
+        ...(launch?.provider === 'codex' && launch.model
+          ? [`--model ${quoteEzArgument(launch.model)}`]
+          : []),
+        ...(launch?.provider === 'codex' ? [`--sandbox ${launch.sandbox}`] : []),
         ...additionalRoots.map((root) => `--add-dir ${quoteEzArgument(root)}`),
       ].join(' '),
       displayCommandText: 'codex',
