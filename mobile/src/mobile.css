@@ -1038,17 +1038,33 @@ body,
 }
 
 .mobile-openclaw-view .openclaw-control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
   color: var(--ui-text-muted);
+  font-size: 0.75rem;
 }
 
 .mobile-openclaw-view .openclaw-control-grid strong,
 .mobile-openclaw-view .openclaw-control-issue {
-  color: var(--ui-text);
+  color: var(--ui-text-primary);
+}
+
+.mobile-openclaw-view .openclaw-control-grid strong {
+  font-weight: 600;
+  text-align: end;
 }
 
 .mobile-openclaw-view .openclaw-control-progress,
 .mobile-openclaw-view .openclaw-control-issue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 4px;
   background: var(--ui-surface);
+  font-size: 0.75rem;
 }
 
 .mobile-openclaw-view .openclaw-control-progress {
@@ -1058,6 +1074,15 @@ body,
 .mobile-openclaw-view .openclaw-control-issue,
 .mobile-openclaw-view .openclaw-control-issue strong {
   color: var(--ui-danger);
+}
+
+.mobile-openclaw-view .openclaw-control-issue {
+  border: 1px solid var(--ui-danger);
+}
+
+.mobile-openclaw-view .openclaw-control-issue code {
+  overflow-wrap: anywhere;
+  color: var(--ui-text-muted);
 }
 
 /* Logs tab */

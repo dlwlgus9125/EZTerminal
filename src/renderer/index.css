@@ -5708,7 +5708,7 @@ button.agent-work-activity:focus-visible {
 .project-workspace__header {
   display: grid;
   min-inline-size: 0;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
   align-items: center;
   gap: var(--ui-space-1);
   min-block-size: 48px;
