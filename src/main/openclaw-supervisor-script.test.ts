@@ -16,6 +16,26 @@ function quotePowerShellLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
+async function removeAllAccessRules(filePath: string): Promise<void> {
+  const command = [
+    `$target = ${quotePowerShellLiteral(filePath)}`,
+    '$acl = Get-Acl -LiteralPath $target',
+    '$identities = @($acl.Access | ForEach-Object { $_.IdentityReference } | Select-Object -Unique)',
+    '$acl.SetAccessRuleProtection($true, $false)',
+    'foreach ($identity in $identities) { $acl.PurgeAccessRules($identity) }',
+    'Set-Acl -LiteralPath $target -AclObject $acl',
+  ].join('; ');
+  await execFileAsync('powershell.exe', [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    command,
+  ], { timeout: 15_000, windowsHide: true });
+}
+
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(async (directory) => {
     await execFileAsync('icacls.exe', [directory, '/reset', '/T', '/C', '/Q'], {
@@ -65,9 +85,7 @@ describeWindows('openclaw-supervisor.ps1', () => {
     const installedScriptPath = path.join(stateDirectory, 'openclaw-supervisor.ps1');
     const sourceScriptPath = path.resolve('assets', 'openclaw-supervisor.ps1');
     await fs.copyFile(sourceScriptPath, installedScriptPath);
-    await execFileAsync('icacls.exe', [installedScriptPath, '/inheritance:r'], {
-      windowsHide: true,
-    });
+    await removeAllAccessRules(installedScriptPath);
     await expect(fs.readFile(installedScriptPath, 'utf8')).rejects.toMatchObject({ code: 'EPERM' });
 
     await execFileAsync('powershell.exe', [
@@ -88,7 +106,7 @@ describeWindows('openclaw-supervisor.ps1', () => {
     await expect(fs.readFile(installedScriptPath, 'utf8')).resolves.toContain(
       'EZTerminal-owned OpenClaw desired-state supervisor',
     );
-  });
+  }, 30_000);
 
   it('forces the non-interactive gateway stop command', async () => {
     const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-stop-'));

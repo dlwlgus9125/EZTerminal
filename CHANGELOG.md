@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.0.43] - 2026-09-02
+
+### Fixed
+
+- Applied the restricted recovery-backup ACL before creating sensitive child
+  files, avoiding Windows-image-dependent inheritance propagation.
+- Made the v1.0.41 unreadable-supervisor regression test construct an explicit
+  empty DACL and use a bounded OS-test timeout on every Windows runner.
+
+See [1.0.43 release notes](docs/release/release-notes-1.0.43.md).
+
 ## [1.0.42] - 2026-09-02
 
 ### Changed

@@ -448,6 +448,9 @@ function New-RecoveryBackup {
   [IO.Directory]::CreateDirectory($partial) | Out-Null
   $manifest = New-Object Collections.Generic.List[object]
   try {
+    # Establish the restricted inheritable ACL before any sensitive child is
+    # created. Existing-child ACL propagation differs across Windows images.
+    Protect-BackupAcl -Directory $partial
     $stateRoot = Get-OpenClawStateRoot
     Copy-VerifiedFile -Source (Join-Path $stateRoot 'openclaw.json') `
       -Destination (Join-Path $partial 'openclaw.json') -DestinationRoot $partial -Manifest $manifest
@@ -508,7 +511,6 @@ function New-RecoveryBackup {
       createdAt = [DateTime]::UtcNow.ToString('o')
       files = $manifest
     })
-    Protect-BackupAcl -Directory $partial
     Move-Item -LiteralPath $partial -Destination $complete
     Write-AtomicJson -Path $generationMarker -Value ([ordered]@{ path = $complete; verified = $true })
     Get-ChildItem -LiteralPath $BackupRoot -Directory -ErrorAction SilentlyContinue |

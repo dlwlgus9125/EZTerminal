@@ -7,8 +7,8 @@ param(
     [string]$MetadataPath,
 
     [string]$ExpectedApplicationId = 'com.ezterminal.remote',
-    [string]$ExpectedVersionName = '1.0.42',
-    [int]$ExpectedVersionCode = 63,
+    [string]$ExpectedVersionName = '1.0.43',
+    [int]$ExpectedVersionCode = 64,
     [int]$ExpectedMinSdk = 29,
     [int]$ExpectedTargetSdk = 35,
     [string]$ExpectedCertSha256 = '',
