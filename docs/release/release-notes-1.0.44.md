@@ -59,6 +59,8 @@ validation passed documentation and Project Map checks, lint, typecheck, 2,468
 desktop unit checks, 37 OS boundary checks and policy guards, and all 127
 ordinary Electron E2E scenarios. The OpenClaw regression suite executes the
 real Windows PowerShell supervisor against isolated ACL and fake-CLI boundaries.
+The dependency audit uses `browserslist` 4.28.7 and reports no known production
+or development dependency vulnerabilities.
 
 The exact tagged SHA must still pass the release workflow's Rust, Android,
 desktop/mobile, packaged smoke, signing, SBOM, manifest, and checksum gates

@@ -13,6 +13,11 @@
 - Treated a missing optional `OpenClaw Gateway` Scheduled Task as a normal
   backup condition instead of allowing native stderr to abort recovery.
 
+### Security
+
+- Pinned the transitive `browserslist` build dependency to 4.28.7, resolving
+  the two high-severity advisories rejected by the release audit gate.
+
 See [1.0.44 release notes](docs/release/release-notes-1.0.44.md).
 
 ## [1.0.43] - 2026-09-02
