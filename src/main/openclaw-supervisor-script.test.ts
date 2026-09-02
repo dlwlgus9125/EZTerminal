@@ -463,11 +463,19 @@ describeWindows('openclaw-supervisor.ps1', () => {
       completedBackup?.name ?? '',
       'manifest.json',
     ), 'utf8')) as { files: Array<{ source: string; destination: string }> };
+    const expectedBackupDestination = path.win32.join(
+      'workspace-state',
+      'agent-0',
+      'openclaw-workspace-state.json',
+    );
     const backedUpWorkspaceState = manifest.files.find((entry) => (
-      path.win32.normalize(entry.source).toLowerCase()
-        === path.win32.normalize(legacyWorkspaceState).toLowerCase()
+      path.win32.normalize(entry.destination).toLowerCase()
+        === expectedBackupDestination.toLowerCase()
     ));
-    expect(backedUpWorkspaceState).toBeDefined();
+    expect(
+      backedUpWorkspaceState,
+      `workspace backup missing from manifest: ${JSON.stringify(manifest.files)}`,
+    ).toBeDefined();
     await expect(fs.readFile(path.join(
       stateDirectory,
       'recovery',
