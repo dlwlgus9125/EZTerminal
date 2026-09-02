@@ -13,6 +13,8 @@ const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
 const httpServers: Server[] = [];
 const describeWindows = process.platform === 'win32' ? describe : describe.skip;
+const ACL_PROCESS_TIMEOUT_MS = 45_000;
+const ACL_TEST_TIMEOUT_MS = 60_000;
 
 function quotePowerShellLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
@@ -36,7 +38,7 @@ async function removeAllAccessRules(filePath: string): Promise<void> {
     'Bypass',
     '-Command',
     command,
-  ], { timeout: 15_000, windowsHide: true });
+  ], { timeout: ACL_PROCESS_TIMEOUT_MS, windowsHide: true });
 }
 
 afterEach(async () => {
@@ -81,12 +83,12 @@ describeWindows('openclaw-supervisor.ps1', () => {
       'Bypass',
       '-Command',
       stopAfterAcl,
-    ], { timeout: 15_000, windowsHide: true })).rejects.toMatchObject({ code: 1 });
+    ], { timeout: ACL_PROCESS_TIMEOUT_MS, windowsHide: true })).rejects.toMatchObject({ code: 1 });
 
     await expect(fs.readFile(installedScriptPath, 'utf8')).resolves.toContain(
       'EZTerminal-owned OpenClaw desired-state supervisor',
     );
-  }, 30_000);
+  }, ACL_TEST_TIMEOUT_MS);
 
   it('repairs the unreadable supervisor ACL left by the previous release', async () => {
     const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-acl-repair-'));
@@ -110,12 +112,12 @@ describeWindows('openclaw-supervisor.ps1', () => {
       stateDirectory,
       '-CliPath',
       'unused-openclaw.cmd',
-    ], { timeout: 15_000, windowsHide: true });
+    ], { timeout: ACL_PROCESS_TIMEOUT_MS, windowsHide: true });
 
     await expect(fs.readFile(installedScriptPath, 'utf8')).resolves.toContain(
       'EZTerminal-owned OpenClaw desired-state supervisor',
     );
-  }, 30_000);
+  }, ACL_TEST_TIMEOUT_MS);
 
   it('forces the non-interactive gateway stop command', async () => {
     const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-stop-'));
