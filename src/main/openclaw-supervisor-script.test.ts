@@ -335,7 +335,8 @@ describeWindows('openclaw-supervisor.ps1', () => {
     const legacyWorkspaceState = path.join(workspaceDirectory, 'openclaw-workspace-state.json');
     await fs.mkdir(openClawStateDirectory);
     await fs.mkdir(workspaceDirectory);
-    await fs.writeFile(legacyWorkspaceState, JSON.stringify({ version: 1, setupCompletedAt: 1 }));
+    const legacyWorkspaceStateContents = JSON.stringify({ version: 1, setupCompletedAt: 1 });
+    await fs.writeFile(legacyWorkspaceState, legacyWorkspaceStateContents);
 
     const healthServer = createServer((_request, response) => {
       void fs.access(runningMarker).then(() => {
@@ -461,8 +462,18 @@ describeWindows('openclaw-supervisor.ps1', () => {
       'recovery',
       completedBackup?.name ?? '',
       'manifest.json',
-    ), 'utf8')) as { files: Array<{ source: string }> };
-    expect(manifest.files.some((entry) => entry.source === legacyWorkspaceState)).toBe(true);
+    ), 'utf8')) as { files: Array<{ source: string; destination: string }> };
+    const backedUpWorkspaceState = manifest.files.find((entry) => (
+      path.win32.normalize(entry.source).toLowerCase()
+        === path.win32.normalize(legacyWorkspaceState).toLowerCase()
+    ));
+    expect(backedUpWorkspaceState).toBeDefined();
+    await expect(fs.readFile(path.join(
+      stateDirectory,
+      'recovery',
+      completedBackup?.name ?? '',
+      backedUpWorkspaceState?.destination ?? '',
+    ), 'utf8')).resolves.toBe(legacyWorkspaceStateContents);
 
     const runtime = JSON.parse(
       await fs.readFile(path.join(stateDirectory, 'runtime.json'), 'utf8'),
