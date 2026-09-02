@@ -537,6 +537,14 @@ function New-RecoveryBackup {
       ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
     return $true
   } catch {
+    $failure = $_
+    try {
+      Save-Diagnostic -Intent $Intent -Attempt 0 `
+        -Text ("recovery backup failed: {0}: {1}" -f `
+          $failure.Exception.GetType().FullName, $failure.Exception.Message)
+    } catch {
+      # Preserve the primary backup failure even if local diagnostics cannot be written.
+    }
     return $false
   }
 }

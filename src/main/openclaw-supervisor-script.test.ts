@@ -206,7 +206,23 @@ describeWindows('openclaw-supervisor.ps1', () => {
     });
 
     const calls = (await fs.readFile(path.join(stateDirectory, 'calls.log'), 'utf8')).split(/\r?\n/u);
-    expect(calls).toContain('doctor --session-sqlite import --session-sqlite-all-agents --yes');
+    const sessionMigration = 'doctor --session-sqlite import --session-sqlite-all-agents --yes';
+    if (!calls.includes(sessionMigration)) {
+      const runtime = await fs.readFile(path.join(stateDirectory, 'runtime.json'), 'utf8')
+        .catch((error: unknown) => `unavailable: ${String(error)}`);
+      const diagnosticDirectory = path.join(stateDirectory, 'diagnostics');
+      const diagnostics = await fs.readdir(diagnosticDirectory)
+        .then(async (entries) => (await Promise.all(entries.map(async (entry) => fs.readFile(
+          path.join(diagnosticDirectory, entry),
+          'utf8',
+        )))).join('\n'))
+        .catch((error: unknown) => `unavailable: ${String(error)}`);
+      throw new Error([
+        `session migration was not invoked; calls=${JSON.stringify(calls)}`,
+        `runtime=${runtime}`,
+        `diagnostics=${diagnostics}`,
+      ].join('\n'));
+    }
     expect(calls).toContain('approvals set --stdin --json');
     expect(calls).toContain('approvals get --json');
     await expect(fs.stat(path.join(openClawStateDirectory, 'exec-approvals.json'))).rejects.toMatchObject({
