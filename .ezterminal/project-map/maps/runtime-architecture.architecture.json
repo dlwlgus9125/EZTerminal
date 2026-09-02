@@ -140,7 +140,7 @@
     {
       "id": "openclaw-supervisor",
       "label": "Windows OpenClaw supervisor",
-      "detail": "A current-user Scheduled Task reconciles durable desired state, accepts authenticated readiness from final diagnostics, and bounds safe repair outside Electron.",
+      "detail": "A current-user task reconciles durable OpenClaw state, safely migrates retired workspace files, accepts late authenticated readiness, and bounds repair outside Electron.",
       "kind": "runtime",
       "group": "execution",
       "rank": 3,
@@ -149,24 +149,24 @@
         {
           "rootAlias": "app",
           "relativePath": "assets/openclaw-supervisor.ps1",
-          "startLine": 566,
-          "endLine": 605,
-          "lineDigest": "sha256:e36e0033a2ff3551790312110fdebe5d08ab6ca337bec7a1bef20c600e64036f",
-          "claim": "The final deep diagnostic converts authenticated RPC health into a running terminal status while retaining foreign-port blocking."
+          "startLine": 789,
+          "endLine": 854,
+          "lineDigest": "sha256:10f95aba28acdbdb2411718d869bf00148a44609861b8fc3e8feeebbc8cdfabb",
+          "claim": "Workspace migration requires a verified recovery backup and stopped gateway, then verifies every source and claim is absent before returning success."
         },
         {
           "rootAlias": "app",
           "relativePath": "assets/openclaw-supervisor.ps1",
-          "startLine": 750,
-          "endLine": 760,
-          "lineDigest": "sha256:ebbb73de80d2b9a747fb306186802ed4411dce4ca3a3b2912c161b87ff831b06",
-          "claim": "Reconciliation commits late diagnostic readiness before considering repair or a blocked result."
+          "startLine": 925,
+          "endLine": 960,
+          "lineDigest": "sha256:b220f8b1dbee2f23512fc78a42635750a8f36d6ac68f6593c8da38a4c082ce84",
+          "claim": "Reconciliation completes the workspace preflight before starting, then commits normal or late diagnostic readiness as terminal success."
         },
         {
           "rootAlias": "app",
           "relativePath": "assets/openclaw-supervisor.ps1",
-          "startLine": 890,
-          "endLine": 959,
+          "startLine": 1096,
+          "endLine": 1165,
           "lineDigest": "sha256:7bc5080948750369b3c38900264ada6ae0ea55f1fc744c529451b40149cf66f7",
           "claim": "The per-login supervisor continuously reconciles persisted desired state and authenticated gateway health, while preserving blocked attempts for the next explicit request."
         }

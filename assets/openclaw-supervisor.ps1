@@ -379,6 +379,118 @@ function Test-CliCapabilities {
   return $null
 }
 
+function Test-OwnedWorkspaceAttestation {
+  param([string]$Path)
+  $stream = $null
+  try {
+    $expected = [Text.Encoding]::UTF8.GetBytes("openclaw-workspace-attestation:v1`n")
+    $buffer = New-Object byte[] $expected.Length
+    $stream = [IO.File]::Open(
+      $Path,
+      [IO.FileMode]::Open,
+      [IO.FileAccess]::Read,
+      [IO.FileShare]::Read
+    )
+    if ($stream.Read($buffer, 0, $buffer.Length) -ne $expected.Length) { return $false }
+    for ($index = 0; $index -lt $expected.Length; $index++) {
+      if ($buffer[$index] -ne $expected[$index]) { return $false }
+    }
+    return $true
+  } catch {
+    # OpenClaw also fails closed when an owned-looking marker cannot be read.
+    return $true
+  } finally {
+    if ($null -ne $stream) { $stream.Dispose() }
+  }
+}
+
+function Get-LegacyWorkspaceStateSources {
+  $agents = Invoke-OpenClaw -Arguments @('agents', 'list', '--json') -TimeoutSeconds 30
+  $agentEntries = @()
+  if ($agents.code -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$agents.stdout)) {
+    try {
+      $agentEntries = @($agents.stdout | ConvertFrom-Json)
+    } catch {
+      $agentEntries = @()
+    }
+  }
+
+  $sources = New-Object Collections.Generic.List[object]
+  $seen = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+  function Add-LegacyWorkspaceSource {
+    param([string]$Source, [string]$Destination)
+    try {
+      $fullSource = [IO.Path]::GetFullPath($Source)
+      if (-not (Test-Path -LiteralPath $fullSource -PathType Leaf)) { return }
+      if ($seen.Add($fullSource)) {
+        $sources.Add([ordered]@{ source = $fullSource; destination = $Destination })
+      }
+    } catch {
+      # Invalid or inaccessible candidates are left for OpenClaw diagnostics.
+    }
+  }
+
+  $workspacePaths = New-Object Collections.Generic.List[string]
+  foreach ($agent in $agentEntries) {
+    $workspaceText = [string]$agent.workspace
+    if ([string]::IsNullOrWhiteSpace($workspaceText)) { continue }
+    try {
+      $workspacePath = [IO.Path]::GetFullPath(
+        [Environment]::ExpandEnvironmentVariables($workspaceText)
+      )
+      if (-not $workspacePaths.Contains($workspacePath)) { $workspacePaths.Add($workspacePath) }
+    } catch {
+      continue
+    }
+  }
+  if ($workspacePaths.Count -eq 0) {
+    $workspacePaths.Add([IO.Path]::GetFullPath((Join-Path (Get-OpenClawStateRoot) 'workspace')))
+  }
+
+  $workspaceIndex = 0
+  foreach ($workspacePath in $workspacePaths) {
+    $prefix = "workspace-state\agent-$workspaceIndex"
+    $currentSetup = Join-Path $workspacePath 'openclaw-workspace-state.json'
+    $legacySetup = Join-Path $workspacePath '.openclaw\workspace-state.json'
+    Add-LegacyWorkspaceSource -Source $currentSetup `
+      -Destination (Join-Path $prefix 'openclaw-workspace-state.json')
+    Add-LegacyWorkspaceSource -Source "$currentSetup.doctor-importing" `
+      -Destination (Join-Path $prefix 'openclaw-workspace-state.json.doctor-importing')
+    Add-LegacyWorkspaceSource -Source $legacySetup `
+      -Destination (Join-Path $prefix 'workspace-state.json')
+    Add-LegacyWorkspaceSource -Source "$legacySetup.doctor-importing" `
+      -Destination (Join-Path $prefix 'workspace-state.json.doctor-importing')
+
+    foreach ($sibling in @("$workspacePath.attested", "$workspacePath.attested.doctor-importing")) {
+      if (Test-OwnedWorkspaceAttestation -Path $sibling) {
+        Add-LegacyWorkspaceSource -Source $sibling `
+          -Destination (Join-Path $prefix (Split-Path -Leaf $sibling))
+      }
+    }
+    $workspaceIndex++
+  }
+
+  $attestationRoots = @(
+    (Get-OpenClawStateRoot),
+    ([IO.Path]::GetFullPath((Join-Path $HOME '.clawdbot')))
+  ) | Select-Object -Unique
+  $rootIndex = 0
+  foreach ($root in $attestationRoots) {
+    $attestationDirectory = Join-Path $root 'workspace-attestations'
+    $entries = @(
+      Get-ChildItem -LiteralPath $attestationDirectory -Filter '*.attested' -File -ErrorAction SilentlyContinue
+      Get-ChildItem -LiteralPath $attestationDirectory -Filter '*.attested.doctor-importing' -File -ErrorAction SilentlyContinue
+    )
+    foreach ($entry in $entries) {
+      if ($entry.Name -notmatch '^[a-f0-9]{64}\.attested(?:\.doctor-importing)?$') { continue }
+      Add-LegacyWorkspaceSource -Source $entry.FullName `
+        -Destination (Join-Path "workspace-state\attestations-$rootIndex" $entry.Name)
+    }
+    $rootIndex++
+  }
+  return $sources
+}
+
 function Get-StringsRecursively {
   param($Value)
   $found = New-Object Collections.Generic.List[string]
@@ -455,7 +567,7 @@ function Repair-StateDirectoryAcl {
 }
 
 function New-RecoveryBackup {
-  param($Intent)
+  param($Intent, [object[]]$AdditionalFiles = @())
   [IO.Directory]::CreateDirectory($BackupRoot) | Out-Null
   $generationMarker = Join-Path $BackupRoot ("generation-{0}.json" -f [int64]$Intent.generation)
   if (Test-Path -LiteralPath $generationMarker -PathType Leaf) { return $true }
@@ -477,6 +589,23 @@ function New-RecoveryBackup {
       -Destination (Join-Path $partial 'service\gateway.cmd') -DestinationRoot $partial -Manifest $manifest
     Copy-VerifiedFile -Source (Join-Path $stateRoot 'gateway.vbs') `
       -Destination (Join-Path $partial 'service\gateway.vbs') -DestinationRoot $partial -Manifest $manifest
+
+    foreach ($additional in @($AdditionalFiles)) {
+      $relativeDestination = [string]$additional.destination
+      if ([string]::IsNullOrWhiteSpace($relativeDestination)) {
+        throw 'recovery backup received an invalid additional destination'
+      }
+      $additionalDestination = [IO.Path]::GetFullPath((Join-Path $partial $relativeDestination))
+      $partialPrefix = $partial.TrimEnd('\') + '\'
+      if (-not $additionalDestination.StartsWith(
+          $partialPrefix,
+          [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw 'recovery backup additional destination escaped its root'
+      }
+      Copy-VerifiedFile -Source ([string]$additional.source) `
+        -Destination $additionalDestination -DestinationRoot $partial -Manifest $manifest
+    }
 
     $taskQuery = Invoke-BoundedProcess `
       -FilePath (Join-Path $env:SystemRoot 'System32\schtasks.exe') `
@@ -657,6 +786,74 @@ function Invoke-TargetedStateMigrations {
   return $sessions.code -eq 0 -and $approvals
 }
 
+function Invoke-LegacyWorkspaceStateMigration {
+  param($Intent, [int]$Port, [object[]]$Sources)
+  if (@($Sources).Count -eq 0) { return $true }
+  if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
+
+  Write-Runtime -Intent $Intent -Phase 'backing-up' -Attempt 1 -Status (
+    New-Status -State 'unknown' -Port $Port
+  )
+  if (-not (New-RecoveryBackup -Intent $Intent -AdditionalFiles $Sources)) {
+    $backupIssue = New-Issue -Code 'backup-failed' `
+      -Detail 'EZTerminal could not back up legacy OpenClaw workspace state before migration.' `
+      -Remediation 'Free disk space or repair folder permissions, then press Start again.'
+    Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt 1 `
+      -Status (New-Status -State 'unknown' -Port $Port) -Issue $backupIssue
+    return $false
+  }
+  if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
+
+  Write-Runtime -Intent $Intent -Phase 'stopping' -Attempt 1 `
+    -Status (New-Status -State 'unknown' -Port $Port)
+  Invoke-OpenClaw -Arguments @('gateway', 'stop', '--force', '--json') `
+    -TimeoutSeconds $LifecycleCommandTimeoutSeconds | Out-Null
+  if (-not (Test-StablyStopped -Intent $Intent -Port $Port)) {
+    $stopIssue = New-Issue -Code 'unsafe-repair-required' `
+      -Detail 'OpenClaw workspace migration requires the gateway to release its state database.' `
+      -Remediation 'Close the identified OpenClaw gateway process, then press Start again.'
+    Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt 1 `
+      -Status (New-Status -State 'unknown' -Port $Port) -Issue $stopIssue
+    return $false
+  }
+  if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
+
+  Write-Runtime -Intent $Intent -Phase 'repairing' -Attempt 1 `
+    -Status (New-Status -State 'stopped' -Port $Port)
+  $doctor = Invoke-OpenClaw `
+    -Arguments @('doctor', '--fix', '--non-interactive', '--yes') `
+    -TimeoutSeconds 300
+  if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
+
+  $remaining = New-Object Collections.Generic.List[string]
+  foreach ($source in @($Sources)) {
+    $sourcePath = [string]$source.source
+    foreach ($candidate in @($sourcePath, "$sourcePath.doctor-importing")) {
+      if ((Test-Path -LiteralPath $candidate -PathType Leaf) -and
+          -not $remaining.Contains($candidate)) {
+        $remaining.Add($candidate)
+      }
+    }
+  }
+  foreach ($source in @(Get-LegacyWorkspaceStateSources)) {
+    $sourcePath = [string]$source.source
+    if (-not $remaining.Contains($sourcePath)) { $remaining.Add($sourcePath) }
+  }
+  if ($remaining.Count -gt 0) {
+    Save-Diagnostic -Intent $Intent -Attempt 1 -Text (
+      "legacy workspace migration incomplete; exit={0}; remaining={1}`n{2}`n{3}" -f `
+        $doctor.code, $remaining.Count, $doctor.stdout, $doctor.stderr
+    )
+    $migrationIssue = New-Issue -Code 'unsafe-repair-required' `
+      -Detail 'OpenClaw did not safely finish the required workspace state migration.' `
+      -Remediation 'Review the diagnostic ID and recovery backup, then press Start again.'
+    Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt 1 `
+      -Status (New-Status -State 'stopped' -Port $Port) -Issue $migrationIssue
+    return $false
+  }
+  return $true
+}
+
 function Invoke-SafeRepair {
   param($Intent, [int]$Attempt, [int]$Port)
   if ($Attempt -eq 1) {
@@ -723,6 +920,15 @@ function Invoke-Reconcile {
     Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt $MaxAttempts `
       -Status (New-Status -State 'unknown' -Port $port) -Issue $issue
     return
+  }
+
+  $legacyWorkspaceSources = @(Get-LegacyWorkspaceStateSources)
+  if ($legacyWorkspaceSources.Count -gt 0) {
+    if (-not (Invoke-LegacyWorkspaceStateMigration `
+        -Intent $Intent -Port $port -Sources $legacyWorkspaceSources)) {
+      return
+    }
+    if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return }
   }
 
   for ($attempt = [Math]::Max(1, $ResumeAttempt + 1); $attempt -le $MaxAttempts; $attempt++) {

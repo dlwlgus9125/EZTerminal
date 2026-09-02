@@ -34,8 +34,6 @@ export interface OpenClawEndpoint {
   readonly source: 'environment' | 'config' | 'default';
 }
 
-export type OpenClawInsecureAuthStatus = 'enabled' | 'disabled' | 'unset' | 'error';
-
 /** A subset of `sessions.list`'s per-session fields (WS RPC, M0 ④) — the raw
  * payload carries far more (thinking levels, delivery context, ...); this is
  * what the drawer/mobile session list actually renders. */

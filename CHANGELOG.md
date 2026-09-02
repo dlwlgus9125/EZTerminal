@@ -11,6 +11,14 @@
   `repair-exhausted` after the final safe attempt.
 - Added a real Windows PowerShell regression for the late-ready boundary and
   verified an actual Stop → Start cycle plus Restart against OpenClaw 2026.8.1.
+- Detects retired OpenClaw workspace setup and attestation files before a
+  healthy gateway can mask them. Start and Restart now create a verified
+  restricted backup, stop only the gateway, run the supported Doctor migration,
+  verify that source and interrupted-claim files are gone, and then resume.
+- Stopped gating mobile OpenClaw chat on the retired
+  `gateway.controlUi.allowInsecureAuth` setting. Current OpenClaw HTTP Control
+  UI origins use the normal device-identity flow, so a missing legacy key no
+  longer returns `insecure-auth-required` before a tunnel ticket is minted.
 
 See [1.0.45 release notes](docs/release/release-notes-1.0.45.md).
 

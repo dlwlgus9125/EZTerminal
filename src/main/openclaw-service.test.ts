@@ -284,7 +284,6 @@ describe('OpenClawService — getStatus', () => {
     });
     await expect(service.getChatToken()).resolves.toBeNull();
     await expect(service.getChatUrl()).resolves.toBeNull();
-    await expect(service.getInsecureAuthStatus()).resolves.toBe('error');
     await expect(service.listAgentSessions()).resolves.toEqual([]);
 
     expect(httpGet).not.toHaveBeenCalled();
@@ -855,22 +854,6 @@ describe('OpenClawService — chat token', () => {
     });
     expect(await service.getChatToken()).toBe(FAKE_TOKEN);
     expect(await service.getChatUrl()).toBe(`http://127.0.0.1:18789/#token=${FAKE_TOKEN}`);
-  });
-
-  it('diagnoses insecure Control UI auth without mutating config', async () => {
-    const spawn = vi.fn<SpawnFn>();
-    const service = new OpenClawService({
-      env: cliEnv,
-      spawn,
-      readFile: async () =>
-        JSON.stringify({
-          gateway: { auth: { token: FAKE_TOKEN }, controlUi: { allowInsecureAuth: false } },
-        }),
-    });
-    const diagnostic = service as OpenClawService & { getInsecureAuthStatus(): Promise<string> };
-
-    await expect(diagnostic.getInsecureAuthStatus()).resolves.toBe('disabled');
-    expect(spawn).not.toHaveBeenCalled();
   });
 
   it('returns null when the config file is unreadable, rather than throwing', async () => {

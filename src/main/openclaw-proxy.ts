@@ -83,6 +83,8 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import net, { type Socket } from 'node:net';
 
+export { mintOpenClawChatTicket } from './openclaw-chat-ticket';
+
 export const DEFAULT_OPENCLAW_PROXY_PORT = 7421;
 
 /** The Capacitor mobile app's OWN origin (mobile/capacitor.config.ts's

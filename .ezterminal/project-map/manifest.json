@@ -25,9 +25,9 @@
         { "rootAlias": "app", "relativePath": "assets/openclaw-supervisor.ps1" }
       ],
       "review": {
-        "inputDigest": "sha256:58fe80e48150734e75220dde639bbefeeb3074d9224b7fb88b837c6e81d4fe45",
+        "inputDigest": "sha256:d495574537c26824a5f08c5817974aa510bcc8367ad2536f59864a4eb7208aa0",
         "decision": "map-updated",
-        "reason": "The supervisor now treats authenticated RPC readiness observed by the final deep diagnostic as terminal success instead of overwriting it with repair exhaustion."
+        "reason": "The supervisor accepts late authenticated RPC readiness, migrates detected retired workspace state behind verified backup and released gateway ownership, and mobile OpenClaw chat follows the current device-identity contract instead of a retired insecure-auth setting."
       }
     },
     {
@@ -61,9 +61,9 @@
         { "rootAlias": "app", "relativePath": "src/main/main.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:91182d1d0cc95bc759bb8d2b6c6adcafb47027c2fab5950a9646df4a6738ac38",
+        "inputDigest": "sha256:7cfaed7d0b2c7526e57dddc3c97710915093a76c59946f01deb6ae6f99d043ec",
         "decision": "no-semantic-impact",
-        "reason": "Team members still use the existing pane path, and the OpenClaw coordinator is drained as another main-owned service; restore, checkpoint, replacement, and pane lifecycle transitions are unchanged."
+        "reason": "Mobile OpenClaw ticket admission changed without altering restore, checkpoint, replacement, pane, or window lifecycle transitions."
       }
     },
     {

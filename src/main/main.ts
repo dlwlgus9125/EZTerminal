@@ -53,7 +53,7 @@ import { OpenClawService } from './openclaw-service';
 import { OpenClawLifecycleCoordinator } from './openclaw-lifecycle-coordinator';
 import { OpenClawChatViewManager } from './openclaw-chat-view';
 import { OpenClawChatSurfaceRevisionGate } from './openclaw-chat-surface-revisions';
-import { startOpenClawProxy, DEFAULT_OPENCLAW_PROXY_PORT, type OpenClawProxyHandle } from './openclaw-proxy';
+import { mintOpenClawChatTicket, startOpenClawProxy, DEFAULT_OPENCLAW_PROXY_PORT, type OpenClawProxyHandle } from './openclaw-proxy';
 import { resolveOpenClawVisibility } from './openclaw-visibility';
 import { InterpreterBroker, type BrokerInterpreter } from './interpreter-broker';
 import { SshForwardService } from './ssh-forward-service';
@@ -3236,27 +3236,13 @@ app.on('ready', async () => {
     listAgentSessions: () => openclaw.listAgentSessions(),
     getCoreConfig: () => openclaw.getCoreConfig(),
     setCoreConfig: (key, value) => openclaw.setCoreConfig(key, value),
-    mintChatTicket: async () => {
-      if (!desktopRuntime?.isRunning()) {
-        return { ticket: null, reason: 'proxy-unavailable' };
-      }
-      const status = await openclaw.getStatus();
-      if (status.state === 'unknown') return { ticket: null, reason: 'gateway-unreachable' };
-      if (status.state !== 'running') return { ticket: null, reason: 'gateway-stopped' };
-      const insecureAuth = await openclaw.getInsecureAuthStatus();
-      if (insecureAuth === 'disabled' || insecureAuth === 'unset') {
-        return { ticket: null, reason: 'insecure-auth-required' };
-      }
-      if (insecureAuth === 'error') return { ticket: null, reason: 'token-unavailable' };
-      const token = await openclaw.getChatToken();
-      if (!token) return { ticket: null, reason: 'token-unavailable' };
-      const proxy = await ensureOpenClawProxy();
-      if (!proxy || !desktopRuntime?.isRunning()) {
-        if (proxy) await stopOpenClawProxy();
-        return { ticket: null, reason: 'proxy-unavailable' };
-      }
-      return { ticket: proxy.mintTicket(), proxyPort: proxy.port, token };
-    },
+    mintChatTicket: () => mintOpenClawChatTicket({
+      isDesktopRuntimeRunning: () => desktopRuntime?.isRunning() === true,
+      getGatewayStatus: () => openclaw.getStatus(),
+      getChatToken: () => openclaw.getChatToken(),
+      ensureProxy: ensureOpenClawProxy,
+      stopProxy: stopOpenClawProxy,
+    }),
     isVisible: () => currentOpenClawVisible,
     subscribeVisibility: (listener) => {
       remoteOpenClawVisibilityListeners.add(listener);

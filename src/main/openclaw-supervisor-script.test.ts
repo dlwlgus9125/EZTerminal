@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
+import { createServer, type Server } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -10,6 +11,7 @@ import type { OpenClawControlSnapshot } from '../shared/openclaw';
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
+const httpServers: Server[] = [];
 const describeWindows = process.platform === 'win32' ? describe : describe.skip;
 
 function quotePowerShellLiteral(value: string): string {
@@ -38,6 +40,12 @@ async function removeAllAccessRules(filePath: string): Promise<void> {
 }
 
 afterEach(async () => {
+  await Promise.all(httpServers.splice(0).map((server) => new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  })));
   await Promise.all(temporaryDirectories.splice(0).map(async (directory) => {
     await execFileAsync('icacls.exe', [directory, '/reset', '/T', '/C', '/Q'], {
       windowsHide: true,
@@ -316,6 +324,157 @@ describeWindows('openclaw-supervisor.ps1', () => {
       completedBackup?.name ?? '',
       'exec-approvals.json',
     ), 'utf8')).resolves.toContain('"version":1');
+  }, 60_000);
+
+  it('migrates legacy workspace setup state while the gateway is stopped, then starts it', async () => {
+    const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-workspace-'));
+    temporaryDirectories.push(stateDirectory);
+    const openClawStateDirectory = path.join(stateDirectory, 'openclaw-state');
+    const workspaceDirectory = path.join(stateDirectory, 'agent-workspace');
+    const runningMarker = path.join(stateDirectory, 'gateway-running');
+    const legacyWorkspaceState = path.join(workspaceDirectory, 'openclaw-workspace-state.json');
+    await fs.mkdir(openClawStateDirectory);
+    await fs.mkdir(workspaceDirectory);
+    await fs.writeFile(legacyWorkspaceState, JSON.stringify({ version: 1, setupCompletedAt: 1 }));
+
+    const healthServer = createServer((_request, response) => {
+      void fs.access(runningMarker).then(() => {
+        response.statusCode = 200;
+        response.end('ready');
+      }, () => {
+        response.statusCode = 503;
+        response.end('stopped');
+      });
+    });
+    httpServers.push(healthServer);
+    await new Promise<void>((resolve, reject) => {
+      healthServer.once('error', reject);
+      healthServer.listen(0, '127.0.0.1', resolve);
+    });
+    const address = healthServer.address();
+    if (!address || typeof address === 'string') throw new Error('test health server has no TCP port');
+    await fs.writeFile(path.join(openClawStateDirectory, 'openclaw.json'), JSON.stringify({
+      gateway: { port: address.port },
+    }));
+
+    const cliPath = path.join(stateDirectory, 'fake-openclaw.cmd');
+    const agentsJson = JSON.stringify([{ id: 'main', workspace: workspaceDirectory }]);
+    await fs.writeFile(cliPath, [
+      '@echo off',
+      'echo %*>>"%~dp0calls.log"',
+      'if "%1 %2 %3"=="agents list --help" goto agents_help',
+      'if "%1 %2 %3"=="agents list --json" goto agents_json',
+      'if "%1 %2"=="doctor --help" goto doctor_help',
+      'if "%1 %2"=="doctor --fix" goto doctor_fix',
+      'if "%1 %2 %3"=="gateway status --help" goto status_help',
+      'if "%1 %2 %3"=="gateway status --require-rpc" goto status_rpc',
+      'if "%1 %2 %3"=="gateway restart --help" goto restart_help',
+      'if "%1 %2 %3"=="gateway start --help" goto start_help',
+      'if "%1 %2"=="gateway start" goto gateway_start',
+      'if "%1 %2 %3"=="gateway stop --help" goto stop_help',
+      'if "%1 %2"=="gateway stop" goto gateway_stop',
+      'exit /b 0',
+      ':agents_help',
+      'echo --json',
+      'exit /b 0',
+      ':agents_json',
+      `echo ${agentsJson}`,
+      'exit /b 0',
+      ':doctor_help',
+      'echo --fix --non-interactive --session-sqlite --session-sqlite-all-agents',
+      'exit /b 0',
+      ':doctor_fix',
+      `if exist "${runningMarker}" exit /b 19`,
+      `del /q "${legacyWorkspaceState}"`,
+      'exit /b 0',
+      ':status_help',
+      'echo --require-rpc',
+      'exit /b 0',
+      ':status_rpc',
+      `if not exist "${runningMarker}" exit /b 1`,
+      'echo {"cli":{"version":"2026.8.1"},"rpc":{"ok":true}}',
+      'exit /b 0',
+      ':restart_help',
+      'echo --safe --force',
+      'exit /b 0',
+      ':start_help',
+      'echo --json',
+      'exit /b 0',
+      ':gateway_start',
+      `type nul >"${runningMarker}"`,
+      'exit /b 0',
+      ':stop_help',
+      'echo --force --json',
+      'exit /b 0',
+      ':gateway_stop',
+      `del /q "${runningMarker}" 2>nul`,
+      'exit /b 0',
+    ].join('\r\n'));
+    await fs.writeFile(path.join(stateDirectory, 'intent.json'), JSON.stringify({
+      schemaVersion: 1,
+      intentId: 'intent-workspace-migrate-1',
+      generation: 1,
+      desiredState: 'running',
+      action: 'start',
+      requestedAt: '2026-09-02T00:00:00.000Z',
+    }));
+
+    await execFileAsync('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      path.resolve('assets', 'openclaw-supervisor.ps1'),
+      '-RunSupervisor',
+      '-RunOnce',
+      '-ReadyTimeoutSeconds',
+      '15',
+      '-StateDirectory',
+      stateDirectory,
+      '-CliPath',
+      cliPath,
+    ], {
+      timeout: 60_000,
+      windowsHide: true,
+      env: { ...process.env, OPENCLAW_STATE_DIR: openClawStateDirectory },
+    });
+
+    await expect(fs.stat(legacyWorkspaceState)).rejects.toMatchObject({ code: 'ENOENT' });
+    const calls = (await fs.readFile(path.join(stateDirectory, 'calls.log'), 'utf8')).split(/\r?\n/u);
+    const stopIndex = calls.indexOf('gateway stop --force --json');
+    const doctorIndex = calls.indexOf('doctor --fix --non-interactive --yes');
+    const startIndex = calls.indexOf('gateway start --json');
+    expect(calls).toContain('agents list --json');
+    expect(stopIndex).toBeGreaterThanOrEqual(0);
+    expect(doctorIndex).toBeGreaterThan(stopIndex);
+    expect(startIndex).toBeGreaterThan(doctorIndex);
+
+    const recoveryEntries = await fs.readdir(path.join(stateDirectory, 'recovery'), {
+      withFileTypes: true,
+    });
+    const completedBackup = recoveryEntries.find((entry) => entry.isDirectory());
+    expect(completedBackup).toBeDefined();
+    const manifest = JSON.parse(await fs.readFile(path.join(
+      stateDirectory,
+      'recovery',
+      completedBackup?.name ?? '',
+      'manifest.json',
+    ), 'utf8')) as { files: Array<{ source: string }> };
+    expect(manifest.files.some((entry) => entry.source === legacyWorkspaceState)).toBe(true);
+
+    const runtime = JSON.parse(
+      await fs.readFile(path.join(stateDirectory, 'runtime.json'), 'utf8'),
+    ) as OpenClawControlSnapshot;
+    expect(runtime).toMatchObject({
+      generation: 1,
+      desiredState: 'running',
+      status: { state: 'running', port: address.port, version: '2026.8.1' },
+      supervisorState: 'ready',
+      operation: null,
+      issue: null,
+    });
   }, 60_000);
 
   it('writes a truthful blocked snapshot for a critical missing CLI without mutating scheduled tasks', async () => {

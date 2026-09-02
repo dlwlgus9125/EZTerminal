@@ -62,7 +62,6 @@ import {
   type OpenClawLifecycleAction,
   type OpenClawLifecycleResult,
   type OpenClawLogLine,
-  type OpenClawInsecureAuthStatus,
   type OpenClawSetConfigResult,
   type OpenClawStatus,
 } from '../shared/openclaw';
@@ -1200,21 +1199,6 @@ export class OpenClawService {
       child.on('error', (err) => finish(-1, false, Buffer.concat(stderrChunks).toString('utf8') || String(err)));
       child.on('close', (code) => finish(code ?? -1, false));
     });
-  }
-
-  async getInsecureAuthStatus(): Promise<OpenClawInsecureAuthStatus> {
-    if (this.endpointUnavailableReason) return 'error';
-    try {
-      const configPath = await this.resolveConfigPath();
-      const text = await this.readFileFn(configPath);
-      const parsed = JSON.parse(text) as { gateway?: { controlUi?: { allowInsecureAuth?: unknown } } };
-      const value = parsed.gateway?.controlUi?.allowInsecureAuth;
-      if (value === true) return 'enabled';
-      if (value === false) return 'disabled';
-      return 'unset';
-    } catch {
-      return 'error';
-    }
   }
 
   // ── Disposal ──────────────────────────────────────────────────────────

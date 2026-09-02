@@ -39,6 +39,11 @@ OpenClaw와 Agent CLI는 EZTerminal이 소유하는 내부 service가 아니다.
 - 자동 복구는 진단 → 대상 파일 SHA-256 검증 백업 → 지원되는 비대화형 session SQLite
   import와 approval import → `doctor --fix --non-interactive` 순서의 비파괴 경로만 사용한다.
   approval import는 제한된 staging 파일과 표준 입력을 사용하고 실패하면 원본을 복구한다.
+- Start·Restart는 gateway HTTP/RPC 정상 판정 전에 OpenClaw가 반환한 agent workspace와
+  상태 루트의 폐기된 setup/attestation 원본·Doctor claim을 확인한다. 해당
+  파일이 있을 때만 제한 ACL·SHA-256 검증 백업을 만들고 gateway를 관리형으로
+  일시 중지한 다음 공식 Doctor로 SQLite 이전한다. 원본과 중단 claim이 모두
+  제거된 것을 확인해야만 gateway 시작을 재개한다.
   package 설치·업데이트, 데이터 삭제/reset, token 생성, 인증 약화와 aggressive doctor는
   자동 실행하지 않는다. 세 번 실패하거나 CLI 호환성, 백업, 권한, unrelated port/task
   충돌을 만나면 새 명시적 요청 전까지 blocked로 남긴다.
@@ -60,6 +65,9 @@ OpenClaw와 Agent CLI는 EZTerminal이 소유하는 내부 service가 아니다.
 - mobile chat은 실제 gateway token 대신 60초 one-time ticket으로 proxy session을
   시작한다. proxy는 connection·header·idle·session 상한을 적용하고 gateway origin/CSP
   경계를 명시적으로 다시 쓴다.
+- mobile ticket 발급은 desktop runtime, gateway 상태, token과 proxy 가용성을 확인하지만
+  OpenClaw 2026.8.1에서 폐기된 `gateway.controlUi.allowInsecureAuth`를 조회하거나 변경하지
+  않는다. plain HTTP에서도 Control UI의 정상 device-identity/pairing flow를 사용한다.
 
 ## Agent 실행과 상태
 
@@ -102,6 +110,7 @@ client에 일부 payload를 보내지 않는다.
 - [`src/main/openclaw-lifecycle-coordinator.ts`](../../src/main/openclaw-lifecycle-coordinator.ts)
 - [`assets/openclaw-supervisor.ps1`](../../assets/openclaw-supervisor.ps1)
 - [`src/main/openclaw-chat-view.ts`](../../src/main/openclaw-chat-view.ts)
+- [`src/main/openclaw-chat-ticket.ts`](../../src/main/openclaw-chat-ticket.ts)
 - [`src/main/openclaw-proxy.ts`](../../src/main/openclaw-proxy.ts)
 - [`src/main/agent-activity-service.ts`](../../src/main/agent-activity-service.ts)
 - [`src/main/agent-history-service.ts`](../../src/main/agent-history-service.ts)
@@ -117,6 +126,7 @@ client에 일부 payload를 보내지 않는다.
 - [`src/main/openclaw-lifecycle-coordinator.test.ts`](../../src/main/openclaw-lifecycle-coordinator.test.ts)
 - [`src/main/openclaw-supervisor-script.test.ts`](../../src/main/openclaw-supervisor-script.test.ts)
 - [`src/main/openclaw-chat-view.test.ts`](../../src/main/openclaw-chat-view.test.ts)
+- [`src/main/openclaw-chat-ticket.test.ts`](../../src/main/openclaw-chat-ticket.test.ts)
 - [`src/main/desktop-window-manager.test.ts`](../../src/main/desktop-window-manager.test.ts)
 - [`src/shared/openclaw.test.ts`](../../src/shared/openclaw.test.ts)
 - [`src/main/openclaw-proxy.test.ts`](../../src/main/openclaw-proxy.test.ts)

@@ -36,6 +36,27 @@ OpenClaw lifecycle coverage must additionally prove:
 - a live OpenClaw 2026.8.1 Restart and Stop → Start cycle finish with
   `desiredState=running`, physical `status=running`, `supervisorState=ready`,
   no active operation, and no issue.
+- transport-ready OpenClaw with a retired workspace setup file is not accepted
+  as functionally ready before migration;
+- the workspace source is included in a restricted, SHA-256-verified recovery
+  backup before the gateway is stopped or Doctor is invoked;
+- Doctor runs only after the gateway releases SQLite, and Start resumes only
+  after both the source and any interrupted claim are absent; and
+- the exact live OpenClaw 2026.8.1 failure is replayed through the new
+  supervisor path and an actual agent turn returns `OK` afterward while the
+  EZTerminal host process remains alive.
+
+Mobile OpenClaw chat coverage must additionally prove:
+
+- a running OpenClaw 2026.8.1 gateway with the retired
+  `gateway.controlUi.allowInsecureAuth` key absent can still mint a one-time
+  proxy ticket;
+- the retired setting is neither read nor written by the ticket path;
+- stopped and unreachable gateways, missing tokens, proxy failures, and a
+  desktop runtime that exits during proxy startup remain fail-closed; and
+- the exact installed-build remote request that previously returned
+  `insecure-auth-required` returns a ticket without exposing its token in
+  diagnostic output.
 
 All v1.0.44 ACL repair, atomic persistence, verified backup, supported migration,
 bounded process, forced Stop, and optional Scheduled Task contracts remain
