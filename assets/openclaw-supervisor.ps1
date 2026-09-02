@@ -13,7 +13,11 @@ param(
   [switch]$InstallTask,
   [switch]$RunSupervisor,
   [switch]$RemoveTask,
-  [switch]$RunOnce
+  [switch]$RepairStateAcl,
+  [switch]$RunOnce,
+
+  [ValidateRange(1, 300)]
+  [int]$ReadyTimeoutSeconds = 60
 )
 
 Set-StrictMode -Version Latest
@@ -24,6 +28,7 @@ $TaskDescription = 'EZTerminal-owned OpenClaw desired-state supervisor v1'
 $LegacyTaskName = 'OpenClaw Gateway Watchdog'
 $SchemaVersion = 1
 $MaxAttempts = 3
+$LifecycleCommandTimeoutSeconds = 90
 $QuickHealthSeconds = 15
 $DeepHealthSeconds = 300
 $StateDirectory = [IO.Path]::GetFullPath($StateDirectory)
@@ -88,7 +93,12 @@ function Write-AtomicJson {
   $json = $Value | ConvertTo-Json -Depth 16 -Compress
   [IO.File]::WriteAllText($temporary, $json, (New-Object Text.UTF8Encoding($false)))
   if (Test-Path -LiteralPath $Path) {
-    [IO.File]::Replace($temporary, $Path, $null, $true)
+    # Windows PowerShell 5.1 rejects a null backup path even though newer .NET
+    # runtimes accept it. A same-directory backup keeps replacement atomic.
+    $backup = "$Path.bak"
+    Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+    [IO.File]::Replace($temporary, $Path, $backup, $true)
+    Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
   } else {
     [IO.File]::Move($temporary, $Path)
   }
@@ -200,16 +210,29 @@ function Invoke-BoundedProcess {
   param(
     [string]$FilePath,
     [string[]]$Arguments,
-    [int]$TimeoutSeconds
+    [int]$TimeoutSeconds,
+    [AllowNull()]
+    [string]$StandardInput = $null
   )
   [IO.Directory]::CreateDirectory($StateDirectory) | Out-Null
   $id = [Guid]::NewGuid().ToString('N')
   $stdoutPath = Join-Path $StateDirectory "command-$id.stdout"
   $stderrPath = Join-Path $StateDirectory "command-$id.stderr"
+  $stdinPath = Join-Path $StateDirectory "command-$id.stdin"
   try {
-    $process = Start-Process -FilePath $FilePath -ArgumentList $Arguments `
-      -WindowStyle Hidden -PassThru `
-      -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    $start = @{
+      FilePath = $FilePath
+      ArgumentList = $Arguments
+      WindowStyle = 'Hidden'
+      PassThru = $true
+      RedirectStandardOutput = $stdoutPath
+      RedirectStandardError = $stderrPath
+    }
+    if ($null -ne $StandardInput) {
+      [IO.File]::WriteAllText($stdinPath, $StandardInput, (New-Object Text.UTF8Encoding($false)))
+      $start.RedirectStandardInput = $stdinPath
+    }
+    $process = Start-Process @start
     $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $TimeoutSeconds))
     while (-not $process.HasExited -and [DateTime]::UtcNow -lt $deadline) {
       Start-Sleep -Milliseconds 200
@@ -233,12 +256,19 @@ function Invoke-BoundedProcess {
   } finally {
     Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $stdinPath -Force -ErrorAction SilentlyContinue
   }
 }
 
 function Invoke-OpenClaw {
-  param([string[]]$Arguments, [int]$TimeoutSeconds = 30)
-  return Invoke-BoundedProcess -FilePath $CliPath -Arguments $Arguments -TimeoutSeconds $TimeoutSeconds
+  param(
+    [string[]]$Arguments,
+    [int]$TimeoutSeconds = 30,
+    [AllowNull()]
+    [string]$StandardInput = $null
+  )
+  return Invoke-BoundedProcess -FilePath $CliPath -Arguments $Arguments `
+    -TimeoutSeconds $TimeoutSeconds -StandardInput $StandardInput
 }
 
 function Test-StartupReady {
@@ -318,9 +348,13 @@ function Test-CliCapabilities {
   $doctor = Invoke-OpenClaw -Arguments @('doctor', '--help') -TimeoutSeconds 30
   $status = Invoke-OpenClaw -Arguments @('gateway', 'status', '--help') -TimeoutSeconds 30
   $restart = Invoke-OpenClaw -Arguments @('gateway', 'restart', '--help') -TimeoutSeconds 30
+  $start = Invoke-OpenClaw -Arguments @('gateway', 'start', '--help') -TimeoutSeconds 30
+  $stop = Invoke-OpenClaw -Arguments @('gateway', 'stop', '--help') -TimeoutSeconds 30
   if ($doctor.code -ne 0 -or $doctor.stdout -notmatch '--fix' -or $doctor.stdout -notmatch '--non-interactive' -or
       $status.code -ne 0 -or $status.stdout -notmatch '--require-rpc' -or
-      $restart.code -ne 0 -or $restart.stdout -notmatch '--safe' -or $restart.stdout -notmatch '--force') {
+      $restart.code -ne 0 -or $restart.stdout -notmatch '--safe' -or $restart.stdout -notmatch '--force' -or
+      $start.code -ne 0 -or $start.stdout -notmatch '--json' -or
+      $stop.code -ne 0 -or $stop.stdout -notmatch '--force' -or $stop.stdout -notmatch '--json') {
     return New-Issue -Code 'cli-incompatible' `
       -Detail 'The installed OpenClaw CLI does not provide the required safe lifecycle commands.' `
       -Remediation 'Install a compatible OpenClaw release, then press Start again.'
@@ -374,8 +408,33 @@ function Copy-VerifiedFile {
 function Protect-BackupAcl {
   param([string]$Directory)
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-  & icacls.exe $Directory /inheritance:r /grant:r "${identity}:(OI)(CI)F" 'SYSTEM:(OI)(CI)F' /T /C *> $null
+  # Protect the root and let its inheritable ACEs flow to children. Applying
+  # /inheritance:r recursively removes the only effective ACEs from files.
+  & icacls.exe $Directory /inheritance:r /grant:r "${identity}:(OI)(CI)F" 'SYSTEM:(OI)(CI)F' *> $null
   if ($LASTEXITCODE -ne 0) { throw 'backup ACL application failed' }
+}
+
+function Repair-StateDirectoryAcl {
+  [IO.Directory]::CreateDirectory($StateDirectory) | Out-Null
+  try {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    & icacls.exe $StateDirectory /inheritance:r /grant:r "${identity}:(OI)(CI)F" 'SYSTEM:(OI)(CI)F' *> $null
+    if ($LASTEXITCODE -ne 0) { throw 'state root ACL repair failed' }
+
+    # v1.0.41 recursively removed inherited ACEs from existing files. Grant
+    # access without changing child inheritance so upgrades can replace them.
+    & icacls.exe $StateDirectory /grant "${identity}:F" 'SYSTEM:F' /T /C *> $null
+    if ($LASTEXITCODE -ne 0) { throw 'state child ACL repair failed' }
+    return $null
+  } catch [UnauthorizedAccessException] {
+    return New-Issue -Code 'permission-denied' `
+      -Detail 'Windows denied repair of the OpenClaw supervisor files.' `
+      -Remediation 'Check the EZTerminal user-data folder permissions, then press Start again.'
+  } catch {
+    return New-Issue -Code 'supervisor-failed' `
+      -Detail 'EZTerminal could not repair the OpenClaw supervisor files.' `
+      -Remediation 'Check the EZTerminal user-data folder permissions, then press Start again.'
+  }
 }
 
 function New-RecoveryBackup {
@@ -504,9 +563,65 @@ function Diagnose-CriticalIssue {
   return $null
 }
 
+function Invoke-LegacyExecApprovalsMigration {
+  param($Intent)
+  $legacyPath = Join-Path (Get-OpenClawStateRoot) 'exec-approvals.json'
+  if (-not (Test-Path -LiteralPath $legacyPath -PathType Leaf)) { return $true }
+
+  $stagedPath = Join-Path $StateDirectory `
+    ("exec-approvals-g{0}-{1}.json" -f [int64]$Intent.generation, (New-DiagnosticId))
+  $moved = $false
+  $imported = $false
+  try {
+    $sourceInfo = Get-Item -LiteralPath $legacyPath
+    if ($sourceInfo.Length -gt 4194304) { throw 'legacy exec approvals exceed the migration limit' }
+    $sourceHash = (Get-FileHash -LiteralPath $legacyPath -Algorithm SHA256).Hash
+    Move-Item -LiteralPath $legacyPath -Destination $stagedPath
+    $moved = $true
+    if ((Get-FileHash -LiteralPath $stagedPath -Algorithm SHA256).Hash -ne $sourceHash) {
+      throw 'legacy exec approvals staging verification failed'
+    }
+
+    $raw = [IO.File]::ReadAllText($stagedPath)
+    $set = Invoke-OpenClaw -Arguments @('approvals', 'set', '--stdin', '--json') `
+      -TimeoutSeconds 60 -StandardInput $raw
+    if ($set.code -ne 0) { return $false }
+    $verify = Invoke-OpenClaw -Arguments @('approvals', 'get', '--json') -TimeoutSeconds 60
+    if ($verify.code -ne 0) { return $false }
+
+    $imported = $true
+    Remove-Item -LiteralPath $stagedPath -Force -ErrorAction SilentlyContinue
+    return $true
+  } catch {
+    return $false
+  } finally {
+    if (-not $imported -and $moved -and
+        (Test-Path -LiteralPath $stagedPath -PathType Leaf) -and
+        -not (Test-Path -LiteralPath $legacyPath)) {
+      Move-Item -LiteralPath $stagedPath -Destination $legacyPath -ErrorAction SilentlyContinue
+    }
+  }
+}
+
+function Invoke-TargetedStateMigrations {
+  param($Intent)
+  # OpenClaw 2026.8.1 can skip Doctor-owned migrations in a non-interactive
+  # task. Its dedicated session importer and approvals CLI remain supported.
+  $sessions = Invoke-OpenClaw `
+    -Arguments @('doctor', '--session-sqlite', 'import', '--session-sqlite-all-agents', '--yes') `
+    -TimeoutSeconds 300
+  if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
+  $approvals = Invoke-LegacyExecApprovalsMigration -Intent $Intent
+  return $sessions.code -eq 0 -and $approvals
+}
+
 function Invoke-SafeRepair {
   param($Intent, [int]$Attempt, [int]$Port)
-  $doctor = Invoke-OpenClaw -Arguments @('doctor', '--fix', '--non-interactive', '--yes') -TimeoutSeconds 180
+  if ($Attempt -eq 1) {
+    Invoke-TargetedStateMigrations -Intent $Intent | Out-Null
+    if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
+  }
+  $doctor = Invoke-OpenClaw -Arguments @('doctor', '--fix', '--non-interactive', '--yes') -TimeoutSeconds 300
   if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return $false }
   if ($Attempt -ge 2) {
     $install = Invoke-OpenClaw `
@@ -518,9 +633,11 @@ function Invoke-SafeRepair {
 }
 
 function Invoke-RestartCommand {
-  $safe = Invoke-OpenClaw -Arguments @('gateway', 'restart', '--safe', '--json') -TimeoutSeconds 60
+  $safe = Invoke-OpenClaw -Arguments @('gateway', 'restart', '--safe', '--json') `
+    -TimeoutSeconds $LifecycleCommandTimeoutSeconds
   if ($safe.code -eq 0) { return $safe }
-  return Invoke-OpenClaw -Arguments @('gateway', 'restart', '--force', '--json') -TimeoutSeconds 30
+  return Invoke-OpenClaw -Arguments @('gateway', 'restart', '--force', '--json') `
+    -TimeoutSeconds $LifecycleCommandTimeoutSeconds
 }
 
 function Complete-LegacyWatchdogMigration {
@@ -549,7 +666,8 @@ function Invoke-Reconcile {
     for ($attempt = [Math]::Max(1, $ResumeAttempt + 1); $attempt -le $MaxAttempts; $attempt++) {
       if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return }
       Write-Runtime -Intent $Intent -Phase 'stopping' -Attempt $attempt -Status $initialStatus
-      Invoke-OpenClaw -Arguments @('gateway', 'stop', '--json') -TimeoutSeconds 30 | Out-Null
+      Invoke-OpenClaw -Arguments @('gateway', 'stop', '--force', '--json') `
+        -TimeoutSeconds $LifecycleCommandTimeoutSeconds | Out-Null
       if (Test-StablyStopped -Intent $Intent -Port $port) {
         Write-Runtime -Intent $Intent -Phase 'idle' -Attempt $attempt `
           -Status (New-Status -State 'stopped' -Port $port) -Terminal
@@ -572,12 +690,13 @@ function Invoke-Reconcile {
     if ([string]$Intent.action -eq 'restart' -and $attempt -eq 1) {
       Invoke-RestartCommand | Out-Null
     } else {
-      Invoke-OpenClaw -Arguments @('gateway', 'start', '--json') -TimeoutSeconds 30 | Out-Null
+      Invoke-OpenClaw -Arguments @('gateway', 'start', '--json') `
+        -TimeoutSeconds $LifecycleCommandTimeoutSeconds | Out-Null
     }
     if (-not (Test-CurrentGeneration -Generation ([int64]$Intent.generation))) { return }
 
     Write-Runtime -Intent $Intent -Phase 'verifying' -Attempt $attempt -Status $initialStatus
-    $ready = Wait-GatewayReady -Intent $Intent -Port $port -TimeoutSeconds 60
+    $ready = Wait-GatewayReady -Intent $Intent -Port $port -TimeoutSeconds $ReadyTimeoutSeconds
     if ($ready.superseded) { return }
     if ($ready.ready) {
       Write-Runtime -Intent $Intent -Phase 'idle' -Attempt $attempt -Status $ready.status -Terminal
@@ -665,7 +784,9 @@ function Install-SupervisorTask {
   [IO.Directory]::CreateDirectory($StateDirectory) | Out-Null
   try {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    & icacls.exe $StateDirectory /inheritance:r /grant:r "${identity}:(OI)(CI)F" 'SYSTEM:(OI)(CI)F' /T /C *> $null
+    # Do not recurse with /inheritance:r: existing files (including this
+    # supervisor) would lose their inherited access entries while executing.
+    & icacls.exe $StateDirectory /inheritance:r /grant:r "${identity}:(OI)(CI)F" 'SYSTEM:(OI)(CI)F' *> $null
     if ($LASTEXITCODE -ne 0) { throw 'state ACL failed' }
 
     $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -788,6 +909,11 @@ function Run-SupervisorLoop {
     if ($RunOnce) { return }
     Start-Sleep -Seconds 1
   }
+}
+
+if ($RepairStateAcl) {
+  $issue = Repair-StateDirectoryAcl
+  Write-CommandResult -Ok ($null -eq $issue) -Issue $issue -ExitCode $(if ($null -eq $issue) { 0 } else { 1 })
 }
 
 if ($InstallTask) {

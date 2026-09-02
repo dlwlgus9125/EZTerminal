@@ -25,9 +25,9 @@
         { "rootAlias": "app", "relativePath": "assets/openclaw-supervisor.ps1" }
       ],
       "review": {
-        "inputDigest": "sha256:67d5ea6d876c20ae0e4f1b4517844f0bbe5d821e8a5a8453dbecbdda055f2b0e",
+        "inputDigest": "sha256:ad007cbc49e569af26697d5c7676cc052c79a245e2000c0d36310181f95e272d",
         "decision": "map-updated",
-        "reason": "The map now includes the per-login Windows OpenClaw supervisor that reconciles durable main-process intent outside the Electron lifetime."
+        "reason": "The Windows OpenClaw supervisor now self-heals v1.0.41 ACL state, preserves atomic runtime updates, and completes supported non-interactive recovery before retrying lifecycle commands."
       }
     },
     {

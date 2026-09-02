@@ -36,10 +36,12 @@ OpenClaw와 Agent CLI는 EZTerminal이 소유하는 내부 service가 아니다.
 - 실행 성공은 CLI exit code가 아니라 `/startupz`와 인증된 `status` RPC가 5초 동안
   안정적으로 통과했을 때만 기록한다. 재시작은 active work를 최대 60초 기다린 뒤 bounded
   force 경로를 사용한다.
-- 자동 복구는 진단 → 대상 파일 SHA-256 검증 백업 → `doctor --fix --non-interactive`
-  순서의 비파괴 경로만 사용한다. package 설치·업데이트, 데이터 삭제/reset, token 생성,
-  인증 약화와 aggressive doctor는 자동 실행하지 않는다. 세 번 실패하거나 CLI 호환성,
-  백업, 권한, unrelated port/task 충돌을 만나면 새 명시적 요청 전까지 blocked로 남긴다.
+- 자동 복구는 진단 → 대상 파일 SHA-256 검증 백업 → 지원되는 비대화형 session SQLite
+  import와 approval import → `doctor --fix --non-interactive` 순서의 비파괴 경로만 사용한다.
+  approval import는 제한된 staging 파일과 표준 입력을 사용하고 실패하면 원본을 복구한다.
+  package 설치·업데이트, 데이터 삭제/reset, token 생성, 인증 약화와 aggressive doctor는
+  자동 실행하지 않는다. 세 번 실패하거나 CLI 호환성, 백업, 권한, unrelated port/task
+  충돌을 만나면 새 명시적 요청 전까지 blocked로 남긴다.
 - `dispose()`는 polling, RPC와 child handle을 정리할 뿐 gateway 또는 supervisor 기대 상태를
   대신 종료하지 않는다. 기존 직접 autostart 등록 UI는 supervisor가 대체한다.
 - 설정 변경은 명시된 allowlist만 허용하며 gateway 설정 파일을 EZTerminal이 직접

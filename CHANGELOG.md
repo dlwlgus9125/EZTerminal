@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [1.0.42] - 2026-09-02
+
+### Changed
+
+- Extended bounded OpenClaw lifecycle commands to 90 seconds and made
+  non-interactive gateway stop use the CLI's required force path.
+- Added supported non-interactive session and exec-approval migrations after a
+  verified recovery backup, with hash-checked staging and rollback on failure.
+
+### Fixed
+
+- Repaired the v1.0.41 supervisor ACL regression before replacing the installed
+  script, so upgrades can restore a supervisor that lost all readable access.
+- Kept supervisor state updates atomic on Windows PowerShell 5.1 by using a
+  same-directory replacement backup instead of an unsupported null backup path.
+- Prevented OpenClaw 2026.8.1 startup from being killed just before its normal
+  completion or left blocked by legacy session and approval state.
+
+### Security
+
+- Recovery still requires a restricted, SHA-256-verified backup before state
+  migration and never resets data, weakens authentication, creates tokens, or
+  installs packages.
+
+See [1.0.42 release notes](docs/release/release-notes-1.0.42.md).
+
 ## [1.0.41] - 2026-09-01
 
 ### Added

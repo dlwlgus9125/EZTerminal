@@ -324,6 +324,22 @@ export class PowerShellOpenClawSupervisor implements OpenClawSupervisorAdapter {
         ),
       };
     }
+    const repair = await runProcess('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      this.assetPath,
+      '-RepairStateAcl',
+      '-StateDirectory',
+      this.stateDirectory,
+      '-CliPath',
+      cliPath,
+    ], 30_000);
+    const repairResult = this.parseResult(repair);
+    if (!repairResult.ok) return repairResult;
     try {
       await this.installAsset();
     } catch {
