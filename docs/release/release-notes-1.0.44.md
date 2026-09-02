@@ -28,6 +28,10 @@ optional PowerShell module. Approval staging is bounded to 4 MiB, hash-checked,
 removed after verification, and moved back to its original location if import
 fails.
 
+The optional `OpenClaw Gateway` Scheduled Task is captured through a bounded
+process call when present. A normal “task not found” result no longer becomes a
+terminating PowerShell stderr exception or prevents the data backup.
+
 Gateway Start, Stop, and Restart commands receive a 90-second bounded window.
 Non-interactive Stop uses the CLI's required force option. Recoverable failures
 continue through the existing three-attempt diagnosis and repair loop; only

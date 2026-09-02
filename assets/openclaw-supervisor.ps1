@@ -478,8 +478,12 @@ function New-RecoveryBackup {
     Copy-VerifiedFile -Source (Join-Path $stateRoot 'gateway.vbs') `
       -Destination (Join-Path $partial 'service\gateway.vbs') -DestinationRoot $partial -Manifest $manifest
 
-    $taskXml = & schtasks.exe /Query /TN 'OpenClaw Gateway' /XML 2>$null | Out-String
-    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($taskXml)) {
+    $taskQuery = Invoke-BoundedProcess `
+      -FilePath (Join-Path $env:SystemRoot 'System32\schtasks.exe') `
+      -Arguments @('/Query', '/TN', 'OpenClaw Gateway', '/XML') `
+      -TimeoutSeconds 15
+    $taskXml = [string]$taskQuery.stdout
+    if ($taskQuery.code -eq 0 -and -not [string]::IsNullOrWhiteSpace($taskXml)) {
       [IO.Directory]::CreateDirectory((Join-Path $partial 'service')) | Out-Null
       $taskBackupPath = Join-Path $partial 'service\OpenClaw-Gateway.xml'
       [IO.File]::WriteAllText($taskBackupPath, $taskXml, (New-Object Text.UTF8Encoding($false)))

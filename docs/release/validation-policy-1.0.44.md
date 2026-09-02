@@ -35,6 +35,8 @@ OpenClaw lifecycle coverage must prove:
   and authenticated RPC health rather than exit code 0 alone;
 - each recovery backup has its restricted inheritable ACL before sensitive
   children are created and every copied file is SHA-256 verified;
+- an absent optional `OpenClaw Gateway` Scheduled Task is nonfatal, while a
+  present task is captured only through the bounded process boundary;
 - the first repair attempt invokes supported non-interactive session and
   approval migrations only after that backup completes;
 - legacy approval migration uses bounded hash-checked staging, supported stdin

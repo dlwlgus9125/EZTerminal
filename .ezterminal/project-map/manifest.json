@@ -25,9 +25,9 @@
         { "rootAlias": "app", "relativePath": "assets/openclaw-supervisor.ps1" }
       ],
       "review": {
-        "inputDigest": "sha256:bf3e2119d5c724752cb432f49fa1220e7bd619b4de334db04ae8b6bceff40c5c",
+        "inputDigest": "sha256:edaaec61037c1667d7e56c49a062e302c91e384aba8c15b6b5ce9f7c759db6d1",
         "decision": "map-updated",
-        "reason": "The supervisor repairs v1.0.41 ACLs, protects recovery roots before child writes, hashes without optional modules, preserves atomic state, records backup failures locally, and completes supported non-interactive recovery before retries."
+        "reason": "The supervisor repairs v1.0.41 ACLs, protects and hashes recovery without optional modules, treats absent optional gateway tasks as nonfatal, records backup failures, and completes supported non-interactive retries."
       }
     },
     {

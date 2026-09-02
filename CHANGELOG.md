@@ -10,6 +10,8 @@
   module by using the Windows PowerShell 5.1/.NET SHA-256 implementation.
 - Made empty-DACL upgrade coverage independent of the optional
   `Microsoft.PowerShell.Security` module used by `Get-Acl` and `Set-Acl`.
+- Treated a missing optional `OpenClaw Gateway` Scheduled Task as a normal
+  backup condition instead of allowing native stderr to abort recovery.
 
 See [1.0.44 release notes](docs/release/release-notes-1.0.44.md).
 

@@ -148,8 +148,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "assets/openclaw-supervisor.ps1",
-        "startLine": 869,
-        "endLine": 938,
+        "startLine": 873,
+        "endLine": 942,
         "lineDigest": "sha256:7bc5080948750369b3c38900264ada6ae0ea55f1fc744c529451b40149cf66f7",
         "claim": "The per-login supervisor continuously reconciles persisted desired state and authenticated gateway health, while preserving blocked attempts for the next explicit request."
       }]
