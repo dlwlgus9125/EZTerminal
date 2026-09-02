@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [1.0.45] - 2026-09-02
+
+### Fixed
+
+- Accepted authenticated RPC readiness observed by the bounded deep diagnostic
+  instead of overwriting a late healthy OpenClaw gateway with
+  `repair-exhausted` after the final safe attempt.
+- Added a real Windows PowerShell regression for the late-ready boundary and
+  verified an actual Stop → Start cycle plus Restart against OpenClaw 2026.8.1.
+
+See [1.0.45 release notes](docs/release/release-notes-1.0.45.md).
+
 ## [1.0.44] - 2026-09-02
 
 ### Fixed

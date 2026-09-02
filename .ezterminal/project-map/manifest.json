@@ -25,9 +25,9 @@
         { "rootAlias": "app", "relativePath": "assets/openclaw-supervisor.ps1" }
       ],
       "review": {
-        "inputDigest": "sha256:edaaec61037c1667d7e56c49a062e302c91e384aba8c15b6b5ce9f7c759db6d1",
+        "inputDigest": "sha256:58fe80e48150734e75220dde639bbefeeb3074d9224b7fb88b837c6e81d4fe45",
         "decision": "map-updated",
-        "reason": "The supervisor repairs v1.0.41 ACLs, protects and hashes recovery without optional modules, treats absent optional gateway tasks as nonfatal, records backup failures, and completes supported non-interactive retries."
+        "reason": "The supervisor now treats authenticated RPC readiness observed by the final deep diagnostic as terminal success instead of overwriting it with repair exhaustion."
       }
     },
     {

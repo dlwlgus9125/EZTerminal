@@ -571,6 +571,13 @@ function Diagnose-CriticalIssue {
   }
   try {
     $parsed = $diagnostic.stdout | ConvertFrom-Json
+    if ($parsed.rpc.ok -eq $true) {
+      return [ordered]@{
+        ready = $true
+        status = (New-Status -State 'running' -Port $Port -Version ([string]$parsed.cli.version))
+        issue = $null
+      }
+    }
     $listeners = @($parsed.port.listeners)
     if ($parsed.rpc.ok -ne $true -and $listeners.Count -gt 0) {
       $knownOpenClaw = $false
@@ -583,15 +590,19 @@ function Diagnose-CriticalIssue {
         }
       }
       if (-not $knownOpenClaw) {
-        return New-Issue -Code 'port-conflict' `
-          -Detail "Another application owns the configured OpenClaw gateway port $Port." `
-          -Remediation 'Stop or reconfigure that application, then press Start again.'
+        return [ordered]@{
+          ready = $false
+          status = $null
+          issue = (New-Issue -Code 'port-conflict' `
+            -Detail "Another application owns the configured OpenClaw gateway port $Port." `
+            -Remediation 'Stop or reconfigure that application, then press Start again.')
+        }
       }
     }
   } catch {
     # Unparseable diagnostics remain local evidence; safe repair can still run.
   }
-  return $null
+  return [ordered]@{ ready = $false; status = $null; issue = $null }
 }
 
 function Invoke-LegacyExecApprovalsMigration {
@@ -736,9 +747,15 @@ function Invoke-Reconcile {
     }
 
     Write-Runtime -Intent $Intent -Phase 'diagnosing' -Attempt $attempt -Status $ready.status
-    $critical = Diagnose-CriticalIssue -Intent $Intent -Attempt $attempt -Port $port
-    if ($null -ne $critical) {
-      Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt $attempt -Status $ready.status -Issue $critical
+    $diagnosis = Diagnose-CriticalIssue -Intent $Intent -Attempt $attempt -Port $port
+    if ($diagnosis.ready) {
+      Write-Runtime -Intent $Intent -Phase 'idle' -Attempt $attempt -Status $diagnosis.status -Terminal
+      Complete-LegacyWatchdogMigration
+      return
+    }
+    if ($null -ne $diagnosis.issue) {
+      Write-Runtime -Intent $Intent -Phase 'blocked' -Attempt $attempt `
+        -Status $ready.status -Issue $diagnosis.issue
       return
     }
     if ($attempt -eq $MaxAttempts) { break }

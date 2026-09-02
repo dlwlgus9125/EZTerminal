@@ -153,6 +153,83 @@ describeWindows('openclaw-supervisor.ps1', () => {
     expect(calls.split(/\r?\n/u)).toContain('gateway stop --force --json');
   }, 30_000);
 
+  it('accepts authenticated RPC readiness observed by the final deep diagnostic', async () => {
+    const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-late-ready-'));
+    temporaryDirectories.push(stateDirectory);
+    const cliPath = path.join(stateDirectory, 'fake-openclaw.cmd');
+    await fs.writeFile(cliPath, [
+      '@echo off',
+      'echo %*>>"%~dp0calls.log"',
+      'if "%1 %2 %3"=="gateway status --deep" goto deep_status',
+      'if "%1"=="doctor" echo --fix --non-interactive --session-sqlite --session-sqlite-all-agents',
+      'if "%1 %2"=="gateway status" echo --require-rpc',
+      'if "%1 %2"=="gateway restart" echo --safe --force',
+      'if "%1 %2"=="gateway start" echo --json',
+      'if "%1 %2"=="gateway stop" echo --force --json',
+      'if "%1 %2 %3"=="approvals set --help" echo --stdin --json',
+      'exit /b 0',
+      ':deep_status',
+      'echo {"cli":{"version":"2026.8.1"},"service":{"runtime":{"status":"running","pid":1234}},"port":{"listeners":[]},"rpc":{"ok":true}}',
+      'exit /b 0',
+    ].join('\r\n'));
+    const intent = {
+      schemaVersion: 1,
+      intentId: 'intent-late-ready-1',
+      generation: 1,
+      desiredState: 'running',
+      action: 'start',
+      requestedAt: '2026-09-02T00:00:00.000Z',
+    } as const;
+    await fs.writeFile(path.join(stateDirectory, 'intent.json'), JSON.stringify(intent));
+    await fs.writeFile(path.join(stateDirectory, 'runtime.json'), JSON.stringify({
+      ...intent,
+      status: { state: 'stopped', port: 18789 },
+      supervisorState: 'ready',
+      operation: {
+        intentId: intent.intentId,
+        generation: intent.generation,
+        action: intent.action,
+        phase: 'diagnosing',
+        attempt: 2,
+        maxAttempts: 3,
+        requestedAt: intent.requestedAt,
+      },
+      issue: null,
+      updatedAt: intent.requestedAt,
+    }));
+
+    await execFileAsync('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      path.resolve('assets', 'openclaw-supervisor.ps1'),
+      '-RunSupervisor',
+      '-RunOnce',
+      '-ReadyTimeoutSeconds',
+      '1',
+      '-StateDirectory',
+      stateDirectory,
+      '-CliPath',
+      cliPath,
+    ], { timeout: 30_000, windowsHide: true });
+
+    const runtime = JSON.parse(
+      await fs.readFile(path.join(stateDirectory, 'runtime.json'), 'utf8'),
+    ) as OpenClawControlSnapshot;
+    expect(runtime).toMatchObject({
+      intentId: intent.intentId,
+      generation: intent.generation,
+      desiredState: 'running',
+      status: { state: 'running', port: 18789, version: '2026.8.1' },
+      supervisorState: 'ready',
+      operation: null,
+      issue: null,
+    });
+  }, 30_000);
+
   it('uses supported non-interactive migrations after a verified recovery backup', async () => {
     const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-migrate-'));
     temporaryDirectories.push(stateDirectory);
