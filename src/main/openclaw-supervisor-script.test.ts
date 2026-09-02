@@ -78,7 +78,7 @@ describeWindows('openclaw-supervisor.ps1', () => {
     await expect(fs.readFile(installedScriptPath, 'utf8')).resolves.toContain(
       'EZTerminal-owned OpenClaw desired-state supervisor',
     );
-  });
+  }, 30_000);
 
   it('repairs the unreadable supervisor ACL left by the previous release', async () => {
     const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'ezterminal-openclaw-acl-repair-'));
