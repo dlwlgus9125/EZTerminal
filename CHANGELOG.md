@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.0.44] - 2026-09-02
+
+### Fixed
+
+- Removed the supervisor's dependency on the optional `Get-FileHash` PowerShell
+  module by using the Windows PowerShell 5.1/.NET SHA-256 implementation.
+- Made empty-DACL upgrade coverage independent of the optional
+  `Microsoft.PowerShell.Security` module used by `Get-Acl` and `Set-Acl`.
+
+See [1.0.44 release notes](docs/release/release-notes-1.0.44.md).
+
 ## [1.0.43] - 2026-09-02
 
 ### Fixed

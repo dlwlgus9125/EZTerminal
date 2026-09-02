@@ -19,11 +19,12 @@ function quotePowerShellLiteral(value: string): string {
 async function removeAllAccessRules(filePath: string): Promise<void> {
   const command = [
     `$target = ${quotePowerShellLiteral(filePath)}`,
-    '$acl = Get-Acl -LiteralPath $target',
-    '$identities = @($acl.Access | ForEach-Object { $_.IdentityReference } | Select-Object -Unique)',
+    '$acl = [IO.File]::GetAccessControl($target)',
+    '$identities = @()',
+    'foreach ($rule in $acl.Access) { $identities += $rule.IdentityReference }',
     '$acl.SetAccessRuleProtection($true, $false)',
     'foreach ($identity in $identities) { $acl.PurgeAccessRules($identity) }',
-    'Set-Acl -LiteralPath $target -AclObject $acl',
+    '[IO.File]::SetAccessControl($target, $acl)',
   ].join('; ');
   await execFileAsync('powershell.exe', [
     '-NoLogo',

@@ -104,6 +104,23 @@ function Write-AtomicJson {
   }
 }
 
+function Get-FileSha256 {
+  param([string]$Path)
+  $stream = [IO.File]::Open(
+    $Path,
+    [IO.FileMode]::Open,
+    [IO.FileAccess]::Read,
+    [IO.FileShare]::Read
+  )
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try {
+    return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '')
+  } finally {
+    $algorithm.Dispose()
+    $stream.Dispose()
+  }
+}
+
 function Test-IntentShape {
   param($Intent)
   if ($null -eq $Intent) { return $false }
@@ -394,8 +411,8 @@ function Copy-VerifiedFile {
   $sourceInfo = Get-Item -LiteralPath $Source
   $destinationInfo = Get-Item -LiteralPath $Destination
   if ($sourceInfo.Length -ne $destinationInfo.Length) { throw 'backup length verification failed' }
-  $sourceHash = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
-  $destinationHash = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash
+  $sourceHash = Get-FileSha256 -Path $Source
+  $destinationHash = Get-FileSha256 -Path $Destination
   if ($sourceHash -ne $destinationHash) { throw 'backup hash verification failed' }
   $Manifest.Add([ordered]@{
     source = $Source
@@ -471,7 +488,7 @@ function New-RecoveryBackup {
         source = 'scheduled-task:OpenClaw Gateway'
         destination = 'service\OpenClaw-Gateway.xml'
         bytes = $taskBackupInfo.Length
-        sha256 = (Get-FileHash -LiteralPath $taskBackupPath -Algorithm SHA256).Hash
+        sha256 = Get-FileSha256 -Path $taskBackupPath
       })
     }
 
@@ -577,10 +594,10 @@ function Invoke-LegacyExecApprovalsMigration {
   try {
     $sourceInfo = Get-Item -LiteralPath $legacyPath
     if ($sourceInfo.Length -gt 4194304) { throw 'legacy exec approvals exceed the migration limit' }
-    $sourceHash = (Get-FileHash -LiteralPath $legacyPath -Algorithm SHA256).Hash
+    $sourceHash = Get-FileSha256 -Path $legacyPath
     Move-Item -LiteralPath $legacyPath -Destination $stagedPath
     $moved = $true
-    if ((Get-FileHash -LiteralPath $stagedPath -Algorithm SHA256).Hash -ne $sourceHash) {
+    if ((Get-FileSha256 -Path $stagedPath) -ne $sourceHash) {
       throw 'legacy exec approvals staging verification failed'
     }
 
@@ -767,8 +784,8 @@ function Prepare-LegacyWatchdogMigration {
   if (Test-Path -LiteralPath $expectedScript -PathType Leaf) {
     $legacyScriptBackup = Join-Path $backupDirectory 'gateway-watchdog.ps1'
     Copy-Item -LiteralPath $expectedScript -Destination $legacyScriptBackup -Force
-    if ((Get-FileHash -LiteralPath $expectedScript -Algorithm SHA256).Hash -ne
-        (Get-FileHash -LiteralPath $legacyScriptBackup -Algorithm SHA256).Hash) {
+    if ((Get-FileSha256 -Path $expectedScript) -ne
+        (Get-FileSha256 -Path $legacyScriptBackup)) {
       throw 'legacy watchdog backup verification failed'
     }
   }
