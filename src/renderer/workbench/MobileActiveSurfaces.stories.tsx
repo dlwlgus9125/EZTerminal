@@ -20,6 +20,11 @@ import type { WsEzTerminalTransport } from '../../../mobile/src/transport/ws-ezt
 import type { AgentActivitySnapshot } from '../../shared/agent';
 import type { AgentCoordinationSnapshot } from '../../shared/agent-coordination';
 import type { AgentHistorySessionSummary, AgentProjectSummary } from '../../shared/agent-history';
+import {
+  DAEMON_PROTOCOL_VERSION,
+  type DaemonSnapshot,
+  type DaemonTranscriptItem,
+} from '../../shared/daemon-protocol';
 import type { EzTerminalApi, SystemStatsSnapshot } from '../../shared/ipc';
 import { AppI18nProvider } from '../i18n';
 import '../mobile-shared.css';
@@ -33,6 +38,7 @@ type ActiveMobileSurface =
   | 'agents-merge'
   | 'agents-overflow'
   | 'agents-offline'
+  | 'agents-archived'
   | 'files'
   | 'stats'
   | 'openclaw'
@@ -209,6 +215,94 @@ const HISTORY_SESSION: AgentHistorySessionSummary = {
   updatedAt: NOW,
   roots: ['C:/Workspace/ezterminal'],
   source: 'Codex',
+};
+
+const ARCHIVED_DAEMON_TRANSCRIPT: DaemonTranscriptItem = {
+  id: 'archived-error',
+  sessionId: 'archived-agent',
+  sequence: 1,
+  kind: 'error',
+  text: 'Provider startup failed before legacy history was created.',
+  isDelta: false,
+  isSensitive: false,
+  createdAt: new Date(NOW - 90_000).toISOString(),
+};
+
+const ARCHIVED_DAEMON_SNAPSHOT: DaemonSnapshot = {
+  protocolVersion: DAEMON_PROTOCOL_VERSION,
+  revision: 9,
+  eventSequence: 14,
+  generatedAt: new Date(NOW).toISOString(),
+  runtime: {
+    keepRunning: true,
+    startAtLogin: false,
+    orchestrationToolsEnabled: true,
+    browserEnabled: false,
+  },
+  projects: [{
+    id: 'project-ezterminal',
+    name: 'EZTerminal',
+    rootPath: 'C:/Workspace/ezterminal',
+    source: 'native',
+    revision: 1,
+    createdAt: new Date(NOW - 120_000).toISOString(),
+    updatedAt: new Date(NOW).toISOString(),
+  }],
+  workspaces: [{
+    id: 'workspace-main',
+    projectId: 'project-ezterminal',
+    name: 'Main checkout',
+    kind: 'local',
+    rootPath: 'C:/Workspace/ezterminal',
+    revision: 1,
+    createdAt: new Date(NOW - 120_000).toISOString(),
+    updatedAt: new Date(NOW).toISOString(),
+  }],
+  sessions: [{
+    id: 'archived-agent',
+    projectId: 'project-ezterminal',
+    workspaceId: 'workspace-main',
+    kind: 'agent',
+    title: 'Archived provider failure',
+    state: 'archived',
+    source: 'structured',
+    archivedAt: new Date(NOW - 30_000).toISOString(),
+    revision: 2,
+    createdAt: new Date(NOW - 90_000).toISOString(),
+    updatedAt: new Date(NOW - 30_000).toISOString(),
+  }],
+  agents: [{
+    sessionId: 'archived-agent',
+    providerId: 'codex',
+    permissionPreset: 'standard',
+    state: 'archived',
+    queuedTurnCount: 0,
+    orchestrationEnabled: true,
+    revision: 2,
+    createdAt: new Date(NOW - 90_000).toISOString(),
+    updatedAt: new Date(NOW - 30_000).toISOString(),
+  }],
+  agentRelations: [],
+  turns: [],
+  transcriptHeads: [{ sessionId: 'archived-agent', lastSequence: 1, itemCount: 1 }],
+  approvals: [],
+  providers: [{
+    id: 'codex',
+    displayName: 'Codex',
+    protocol: 'codex-app-server',
+    executablePath: 'codex',
+    executableVersion: '1.0.0',
+    argv: ['app-server'],
+    environmentVariableNames: [],
+    capabilities: [],
+    enabled: true,
+    health: 'ready',
+    revision: 1,
+    createdAt: new Date(NOW - 120_000).toISOString(),
+    updatedAt: new Date(NOW).toISOString(),
+  }],
+  schedules: [],
+  heartbeats: [],
 };
 
 const STORY_TRANSPORT = {
@@ -433,8 +527,10 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
     case 'agents':
     case 'agents-merge':
     case 'agents-overflow':
-    case 'agents-offline': {
+    case 'agents-offline':
+    case 'agents-archived': {
       const overflow = surface === 'agents-overflow';
+      const archived = surface === 'agents-archived';
       content = (
         <MobileAgentView
           snapshot={AGENTS}
@@ -445,7 +541,13 @@ function MobileActiveSurface({ locale, surface }: MobileActiveSurfaceProps): JSX
           onFocusSession={close}
           onSendFollowup={async () => ({ ok: true })}
           onDecideApproval={async () => ({ ok: true })}
-          transport={overflow || surface === 'agents-merge' ? STORY_TRANSPORT : undefined}
+          transport={overflow || archived || surface === 'agents-merge' ? STORY_TRANSPORT : undefined}
+          daemonRuntimeState={archived
+            ? { status: 'ready', snapshot: ARCHIVED_DAEMON_SNAPSHOT }
+            : undefined}
+          structuredTranscripts={archived
+            ? { 'archived-agent': [ARCHIVED_DAEMON_TRANSCRIPT] }
+            : undefined}
           onResumeHistory={overflow ? async () => undefined : undefined}
           onLaunchAgent={overflow ? async () => undefined : undefined}
         />
@@ -586,6 +688,21 @@ export const Agents: Story = {};
 export const AgentsManagedMerge: Story = { args: { surface: 'agents-merge' } };
 export const AgentsOverflow: Story = { args: { surface: 'agents-overflow' } };
 export const AgentsOffline: Story = { args: { surface: 'agents-offline' } };
+export const AgentsArchivedHistory: Story = {
+  args: { surface: 'agents-archived' },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByTestId('mobile-daemon-archived'));
+    await userEvent.click(await canvas.findByText('EZTerminal'));
+    await userEvent.click(await canvas.findByText('Main checkout'));
+    await userEvent.click(await canvas.findByText('Archived provider failure'));
+    const session = await canvas.findByTestId('structured-agent-session');
+    await expect(session).toHaveAttribute('data-history-only', 'true');
+    await expect(session).toHaveTextContent('Provider startup failed before legacy history was created.');
+    await expect(canvas.queryByTestId('structured-agent-composer-input')).not.toBeInTheDocument();
+    await expect(canvas.queryByTestId('structured-agent-lifecycle')).not.toBeInTheDocument();
+  },
+};
 export const Files: Story = { args: { surface: 'files' } };
 export const Stats: Story = { args: { surface: 'stats' } };
 export const OpenClaw: Story = { args: { surface: 'openclaw' } };

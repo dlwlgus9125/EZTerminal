@@ -318,6 +318,75 @@ describe('MobileAgentView', () => {
     }));
   });
 
+  it('enters daemon-only archived history without exposing impossible mobile controls', () => {
+    const base = daemonSnapshotOf();
+    const archivedSession: DaemonSnapshot['sessions'][number] = {
+      id: 'archived-pre-provider',
+      projectId: 'project-1',
+      workspaceId: 'workspace-1',
+      kind: 'agent',
+      title: 'Archived pre-provider failure',
+      state: 'error',
+      source: 'structured',
+      archivedAt: DAEMON_TIMESTAMP,
+      revision: 2,
+      createdAt: DAEMON_TIMESTAMP,
+      updatedAt: DAEMON_TIMESTAMP,
+    };
+    const archivedAgent: DaemonSnapshot['agents'][number] = {
+      sessionId: archivedSession.id,
+      providerId: 'codex',
+      permissionPreset: 'standard',
+      state: 'archived',
+      queuedTurnCount: 0,
+      orchestrationEnabled: true,
+      revision: 2,
+      createdAt: DAEMON_TIMESTAMP,
+      updatedAt: DAEMON_TIMESTAMP,
+    };
+    const onFocusSession = vi.fn();
+    render(
+      <MobileAgentView
+        snapshot={snapshotOf()}
+        daemonRuntimeState={{
+          status: 'ready',
+          snapshot: daemonSnapshotOf({
+            sessions: [...base.sessions, archivedSession],
+            agents: [...base.agents, archivedAgent],
+          }),
+        }}
+        structuredTranscripts={{
+          [archivedSession.id]: [{
+            id: 'archived-message',
+            sessionId: archivedSession.id,
+            sequence: 1,
+            kind: 'error',
+            text: 'Provider startup failed before a legacy history id existed.',
+            isDelta: false,
+            isSensitive: false,
+            createdAt: DAEMON_TIMESTAMP,
+          }],
+        }}
+        transport={{ sendDaemonCommand: vi.fn() } as unknown as WsEzTerminalTransport}
+        {...noop}
+        onFocusSession={onFocusSession}
+      />,
+    );
+
+    clickButtonText(container, 'Archived');
+    clickButtonText(container, 'EZTerminal');
+    clickButtonText(container, 'Main checkout');
+    clickButtonText(container, 'Archived pre-provider failure');
+
+    expect(onFocusSession).toHaveBeenCalledWith(archivedSession.id);
+    expect(container.querySelector('[data-history-only="true"]')).not.toBeNull();
+    expect(container.textContent).toContain('Provider startup failed before a legacy history id existed.');
+    expect(testIds('structured-agent-composer-input')).toHaveLength(0);
+    expect(testIds('structured-agent-lifecycle')).toHaveLength(0);
+    expect(testIds('structured-agent-live-model')).toHaveLength(0);
+    expect(testIds('structured-agent-live-permission')).toHaveLength(0);
+  });
+
   it('pages persisted structured transcripts and follows daemon append events', async () => {
     const transcript: DaemonTranscriptItem[] = [
       {
@@ -595,7 +664,7 @@ describe('MobileAgentView', () => {
       agentRelations: detachedRelations,
     })));
     expect(testIds('mobile-structured-agent-session')).toHaveLength(1);
-    expect((testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement).disabled).toBe(true);
+    expect(testIds('structured-agent-composer-input')).toHaveLength(0);
     expect(testIds('structured-agent-lifecycle')).toHaveLength(0);
   });
 

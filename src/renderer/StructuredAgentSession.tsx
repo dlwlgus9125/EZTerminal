@@ -1043,6 +1043,8 @@ export interface StructuredAgentSessionPanelProps {
   readonly transcriptLoading?: boolean;
   readonly transcriptError?: string | null;
   readonly disabled?: boolean;
+  /** Transcript-only history surface; unavailable mutation controls are omitted. */
+  readonly historyOnly?: boolean;
   /** Provider-native sessions are inspectable, but their provider owns interaction and lifecycle. */
   readonly owner?: 'managed' | 'provider-native';
   readonly childTrack?: ReactNode;
@@ -1104,6 +1106,7 @@ export function StructuredAgentSessionPanel({
   transcriptLoading = false,
   transcriptError = null,
   disabled = false,
+  historyOnly = false,
   owner = 'managed',
   childTrack,
   heartbeatControl,
@@ -1132,8 +1135,8 @@ export function StructuredAgentSessionPanel({
   const canCancel = !providerOwned && CANCELLABLE_AGENT_STATES.has(state) && onCancel !== undefined;
   const canArchive = !providerOwned && ARCHIVABLE_AGENT_STATES.has(state) && onArchive !== undefined;
   const canDetach = !providerOwned && state !== 'archived' && onDetach !== undefined;
-  const hasLifecycleActions = canCancel || canArchive || canDetach;
-  const settingsReadOnly = providerOwned || terminal || onChangeSettings === undefined;
+  const hasLifecycleActions = !historyOnly && (canCancel || canArchive || canDetach);
+  const settingsReadOnly = historyOnly || providerOwned || terminal || onChangeSettings === undefined;
   const composerDisabledReason = providerOwned
     ? copy.providerOwnedReadOnly
     : state === 'archived'
@@ -1213,6 +1216,7 @@ export function StructuredAgentSessionPanel({
       data-session-id={sessionId}
       data-provider={providerId}
       data-state={state}
+      data-history-only={historyOnly || undefined}
       data-testid="structured-agent-session"
       aria-labelledby={titleId}
     >
@@ -1345,7 +1349,7 @@ export function StructuredAgentSessionPanel({
         loading={transcriptLoading}
         error={transcriptError}
         onRetry={onRetryTranscript}
-        onResolveApproval={onResolveApproval}
+        onResolveApproval={historyOnly ? undefined : onResolveApproval}
         onOpenRelatedSession={onOpenRelatedSession}
       />
       {childTrack !== undefined && (
@@ -1354,15 +1358,17 @@ export function StructuredAgentSessionPanel({
         </section>
       )}
       {heartbeatControl}
-      <StructuredAgentComposer
-        busy={busy}
-        queuedCount={queuedCount}
-        disabled={composerDisabled || lifecycleBusy !== null}
-        disabledReason={composerDisabledReason ?? lifecycleDisabledReason}
-        onSend={onSend}
-        onInterruptAndSend={onInterruptAndSend}
-        variant={variant}
-      />
+      {!historyOnly && (
+        <StructuredAgentComposer
+          busy={busy}
+          queuedCount={queuedCount}
+          disabled={composerDisabled || lifecycleBusy !== null}
+          disabledReason={composerDisabledReason ?? lifecycleDisabledReason}
+          onSend={onSend}
+          onInterruptAndSend={onInterruptAndSend}
+          variant={variant}
+        />
+      )}
     </section>
   );
 }

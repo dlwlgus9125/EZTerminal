@@ -280,6 +280,156 @@ describe('StructuredAgentDockPanel', () => {
     root = createRoot(container);
   });
 
+  it('reopens archived history with retry and related navigation but no mutation affordances', async () => {
+    const sessionId = 'session-archived';
+    const childSessionId = 'session-related';
+    const archivedSnapshot: DaemonSnapshot = {
+      ...snapshot,
+      sessions: [{
+        id: sessionId,
+        projectId: 'project-1',
+        workspaceId: 'project-1.root-1.workspace-1',
+        kind: 'agent',
+        title: 'Archived daemon history',
+        state: 'archived',
+        source: 'structured',
+        archivedAt: NOW,
+        revision: 3,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }, {
+        id: childSessionId,
+        projectId: 'project-1',
+        workspaceId: 'project-1.root-1.workspace-1',
+        kind: 'agent',
+        title: 'Related Agent',
+        state: 'idle',
+        source: 'structured',
+        revision: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      agents: [{
+        sessionId,
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        state: 'archived',
+        queuedTurnCount: 0,
+        orchestrationEnabled: true,
+        revision: 3,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }, {
+        sessionId: childSessionId,
+        providerId: 'codex',
+        permissionPreset: 'standard',
+        state: 'idle',
+        queuedTurnCount: 0,
+        orchestrationEnabled: true,
+        revision: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      agentRelations: [{
+        id: 'archived-related',
+        treeId: sessionId,
+        parentSessionId: sessionId,
+        childSessionId,
+        owner: 'managed',
+        depth: 1,
+        revision: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      approvals: [{
+        id: 'approval-history',
+        sessionId,
+        turnId: 'turn-history',
+        providerRequestId: 'provider-history',
+        risk: 'write',
+        title: 'Historical approval',
+        state: 'pending',
+        revision: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+      transcriptHeads: [{ sessionId, lastSequence: 2, itemCount: 2 }],
+    };
+    const notice: DaemonTranscriptItem = {
+      id: 'notice-related',
+      sessionId,
+      sequence: 1,
+      kind: 'notice',
+      text: 'A related Agent retained useful context.',
+      isDelta: false,
+      isSensitive: false,
+      relatedSessionId: childSessionId,
+      createdAt: NOW,
+    };
+    const getSnapshot = vi.fn(async () => archivedSnapshot);
+    const getTranscript = vi.fn(async (_sessionId: string, afterSequence = 0) => {
+      if (afterSequence === 0) return [notice];
+      throw new Error('incomplete archived transcript');
+    });
+    const sendCommand = vi.fn();
+    const access: CapabilityAccess = {
+      ...rendererCapabilities,
+      daemon: {
+        getSnapshot,
+        getTranscript,
+        sendCommand,
+        observeEvents: () => () => undefined,
+        getLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+        setLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+      },
+      structuredProviders: {
+        ...rendererCapabilities.structuredProviders,
+        listModels: async () => ({ ok: true, value: [] }),
+      },
+    };
+    const onOpenSession = vi.fn();
+    const props = {
+      capabilities: access,
+      onOpenSession,
+      params: { historyId: `${STRUCTURED_AGENT_SESSION_PREFIX}${sessionId}` },
+      api: { id: 'archived-agent', setTitle: vi.fn(), updateParameters: vi.fn() },
+    } as unknown as IDockviewPanelProps & {
+      capabilities: CapabilityAccess;
+      onOpenSession: typeof onOpenSession;
+    };
+
+    act(() => root.render(
+      <AppI18nProvider locale="en" languages={['en']}>
+        <StructuredAgentDockPanel {...props} />
+      </AppI18nProvider>,
+    ));
+    await flush();
+    await flush();
+
+    expect(container.querySelector('[data-history-only="true"]')).not.toBeNull();
+    expect(container.textContent).toContain('A related Agent retained useful context.');
+    expect(container.querySelector('[data-testid="structured-agent-composer-input"]')).toBeNull();
+    expect(container.querySelector('[data-testid="structured-agent-lifecycle"]')).toBeNull();
+    expect(container.querySelector('[data-testid="structured-agent-heartbeat"]')).toBeNull();
+    expect(container.querySelector('.structured-agent-approval__actions')).toBeNull();
+
+    const related = container.querySelector<HTMLButtonElement>('.structured-agent-message__child-link')!;
+    act(() => related.click());
+    expect(onOpenSession).toHaveBeenCalledWith({
+      sessionId: childSessionId,
+      title: 'Related Agent',
+      providerLabel: 'Codex',
+    });
+
+    const retry = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.includes('Retry'))!;
+    const snapshotCalls = getSnapshot.mock.calls.length;
+    act(() => retry.click());
+    await flush();
+    expect(getSnapshot.mock.calls.length).toBeGreaterThan(snapshotCalls);
+    expect(sendCommand).not.toHaveBeenCalled();
+  });
+
   it('drops an optimistic user item once its persisted turn is represented', () => {
     const sessionId = 'session-1';
     const optimistic: DaemonTranscriptItem = {

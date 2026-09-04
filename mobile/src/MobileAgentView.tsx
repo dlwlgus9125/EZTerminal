@@ -44,8 +44,12 @@ import {
   type ManagedAgentState,
   type PermissionPreset,
 } from '../../src/shared/daemon-protocol';
+import { isDaemonSessionArchived } from '../../src/shared/daemon-session-visibility';
 import { MobileActionSheet } from './MobileActionSheet';
-import { MobileDaemonNavigator } from './MobileDaemonNavigator';
+import {
+  MobileDaemonNavigator,
+  type MobileDaemonNavigatorVisibility,
+} from './MobileDaemonNavigator';
 import { MobileStructuredAgentSession } from './MobileStructuredAgentSession';
 import { useMobileToast } from './MobileToast';
 import type {
@@ -219,6 +223,8 @@ export function MobileAgentView({
   const [overrideReason, setOverrideReason] = useState('');
   const [diff, setDiff] = useState<MobileDiffView | null>(null);
   const [selectedDaemonSessionId, setSelectedDaemonSessionId] = useState<string | null>(null);
+  const [daemonNavigatorVisibility, setDaemonNavigatorVisibility]
+    = useState<MobileDaemonNavigatorVisibility>('active');
   const [loadedTranscriptSessionId, setLoadedTranscriptSessionId] = useState<string | null>(null);
   const [authoritativeTranscript, setAuthoritativeTranscript] = useState<readonly DaemonTranscriptItem[]>([]);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
@@ -705,15 +711,16 @@ export function MobileAgentView({
       availableModels.unshift({ id: selectedDaemonAgent.model, label: selectedDaemonAgent.model });
     }
     const providerOwned = selectedDaemonRelation?.owner === 'provider-native';
+    const archivedHistory = isDaemonSessionArchived(selectedDaemonSession, selectedDaemonAgent);
     const canCancel = !providerOwned
       && selectedDaemonAgent.providerSessionId !== undefined
       && DAEMON_CANCELLABLE_STATES.has(selectedDaemonAgent.state);
     const canArchive = !providerOwned
       && selectedDaemonAgent.currentTurnId === undefined
-      && selectedDaemonSession.archivedAt === undefined
+      && !archivedHistory
       && DAEMON_ARCHIVABLE_STATES.has(selectedDaemonAgent.state);
     const canDetach = selectedDaemonRelation?.owner === 'managed'
-      && selectedDaemonSession.archivedAt === undefined;
+      && !archivedHistory;
     return (
       <MobileStructuredAgentSession
         sessionId={selectedDaemonSession.id}
@@ -738,6 +745,7 @@ export function MobileAgentView({
         transcriptLoading={loadedTranscriptSessionId === selectedDaemonSession.id && transcriptLoading}
         transcriptError={visibleTranscriptError}
         disabled={disconnected || !transport}
+        historyOnly={archivedHistory}
         {...(selectedDaemonRelation ? { owner: selectedDaemonRelation.owner } : {})}
         {...(selectedDaemonChildren.length > 0 ? {
           childTrack: (
@@ -776,7 +784,7 @@ export function MobileAgentView({
             permissionPreset: settings.permissionPreset,
           },
         }))}
-        {...(!providerOwned ? {
+        {...(!providerOwned && !archivedHistory ? {
           onResolveApproval: (approvalId: string, decision: 'allow' | 'deny') => dispatchDaemonCommand(createDaemonCommand({
             ...buildCommandBase(),
             type: 'permission.resolve',
@@ -929,6 +937,8 @@ export function MobileAgentView({
                 <MobileDaemonNavigator
                   key="daemon-projects"
                   state={daemonRuntimeState}
+                  visibility={daemonNavigatorVisibility}
+                  onVisibilityChange={setDaemonNavigatorVisibility}
                   onRetry={() => {
                     void transport!.getDaemonSnapshot();
                   }}

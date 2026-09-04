@@ -171,6 +171,62 @@ describe('MobileDaemonNavigator', () => {
     expect(onSelectSession).toHaveBeenCalledWith('agent-session-1');
   });
 
+  it('keeps archived Agents out of current sessions and opens them from concise history navigation', () => {
+    const onSelectSession = vi.fn();
+    const model = snapshot({
+      projects: [{
+        id: 'project-1', name: 'EZTerminal', rootPath: 'C:\\Working\\EZTerminal', source: 'native',
+        revision: 1, createdAt: NOW, updatedAt: NOW,
+      }],
+      workspaces: [{
+        id: 'workspace-main', projectId: 'project-1', name: 'Main checkout', kind: 'local',
+        rootPath: 'C:\\Working\\EZTerminal', revision: 1, createdAt: NOW, updatedAt: NOW,
+      }],
+      sessions: [{
+        id: 'active-agent', projectId: 'project-1', workspaceId: 'workspace-main', kind: 'agent',
+        title: 'Current Agent', state: 'idle', source: 'structured',
+        revision: 1, createdAt: NOW, updatedAt: NOW,
+      }, {
+        id: 'failed-before-provider', projectId: 'project-1', workspaceId: 'workspace-main', kind: 'agent',
+        title: 'Failed before provider start', state: 'error', source: 'structured', archivedAt: NOW,
+        revision: 2, createdAt: NOW, updatedAt: NOW,
+      }],
+      agents: [{
+        sessionId: 'active-agent', providerId: 'codex', permissionPreset: 'standard', state: 'idle',
+        queuedTurnCount: 0, orchestrationEnabled: true,
+        revision: 1, createdAt: NOW, updatedAt: NOW,
+      }, {
+        sessionId: 'failed-before-provider', providerId: 'codex', permissionPreset: 'standard', state: 'archived',
+        queuedTurnCount: 0, orchestrationEnabled: true,
+        revision: 2, createdAt: NOW, updatedAt: NOW,
+      }],
+    });
+
+    renderNavigator({ status: 'ready', snapshot: model }, { onSelectSession });
+    expect(container.querySelector('[data-testid="mobile-daemon-archived"]')?.textContent)
+      .toContain('Archived');
+    act(() => buttonContaining('EZTerminal').click());
+    act(() => buttonContaining('Main checkout').click());
+    expect(container.querySelector('[data-session-id="active-agent"]')).not.toBeNull();
+    expect(container.querySelector('[data-session-id="failed-before-provider"]')).toBeNull();
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Back to workspaces"]')!.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Back to projects"]')!.click());
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="mobile-daemon-archived"]')!.click());
+    expect(container.querySelector('h2')?.textContent).toBe('Archived');
+    act(() => buttonContaining('EZTerminal').click());
+    act(() => buttonContaining('Main checkout').click());
+
+    const archived = container.querySelector<HTMLButtonElement>(
+      '[data-session-id="failed-before-provider"]',
+    );
+    expect(archived?.dataset.archived).toBe('true');
+    expect(archived?.textContent).toContain('Agent · Archived');
+    expect(container.querySelector('[data-session-id="active-agent"]')).toBeNull();
+    act(() => archived!.click());
+    expect(onSelectSession).toHaveBeenCalledWith('failed-before-provider');
+  });
+
   it('keeps a stale projection visible while reporting event-gap recovery', () => {
     renderNavigator({
       status: 'recovering',

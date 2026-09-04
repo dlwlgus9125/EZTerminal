@@ -156,6 +156,24 @@ export const Empty: Story = {
   },
 };
 
+export const ArchivedHistory: Story = {
+  args: {
+    state: 'archived',
+    historyOnly: true,
+    items: [
+      item('user-archived', 1, 'user-message', 'Capture the failure before provider startup.'),
+      item('error-archived', 2, 'error', 'The provider executable was unavailable.'),
+    ],
+  },
+  render: (args) => (
+    <AppI18nProvider locale="en" languages={['en']}>
+      <div style={{ width: 'min(100vw, 390px)', height: 'min(88vh, 720px)' }}>
+        <StructuredAgentSessionPanel {...args} variant="mobile" />
+      </div>
+    </AppI18nProvider>
+  ),
+};
+
 export const ChildAgentsAndLifecycle: Story = {
   args: {
     state: 'idle',

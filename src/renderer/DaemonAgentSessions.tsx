@@ -1,4 +1,4 @@
-import { Bot, CornerDownRight } from 'lucide-react';
+import { Archive, Bot, CornerDownRight } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import {
@@ -9,6 +9,10 @@ import {
   type DaemonSession,
   type DaemonSnapshot,
 } from '../shared/daemon-protocol';
+import {
+  isDaemonSessionArchived,
+  isStructuredDaemonAgentSession,
+} from '../shared/daemon-session-visibility';
 import {
   rendererCapabilities,
   type DaemonAccess,
@@ -29,6 +33,8 @@ export interface DaemonAgentSessionsProps {
   readonly onOpenSession: (input: DaemonAgentSessionOpenInput) => void;
   readonly access?: DaemonAgentSessionListAccess;
 }
+
+export type DaemonAgentSessionVisibility = 'active' | 'archived';
 
 interface SessionNode {
   readonly session: DaemonSession;
@@ -100,25 +106,27 @@ function compareNodes(left: Omit<SessionNode, 'children'>, right: Omit<SessionNo
  * Builds the compact daemon projection without inventing a second session
  * authority. Same-workspace children stay under their parent. Cross-workspace
  * managed children remain discoverable in their owning Workspace and carry
- * parent provenance. Provider-native children always stay below their parent,
- * so they cannot be mistaken for an independently managed top-level session.
+ * parent provenance. Provider-native children stay below a visible parent;
+ * when the visibility filter excludes that parent they remain discoverable as
+ * provider-owned roots with parent provenance instead of disappearing.
  */
-export function projectDaemonAgentSessions(snapshot: DaemonSnapshot): readonly ProjectGroup[] {
+export function projectDaemonAgentSessions(
+  snapshot: DaemonSnapshot,
+  visibility: DaemonAgentSessionVisibility = 'active',
+): readonly ProjectGroup[] {
   const providers = new Map(snapshot.providers.map((provider) => [provider.id, provider.displayName]));
   const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
   const workspaces = new Map(snapshot.workspaces.map((workspace) => [workspace.id, workspace]));
   const agents = new Map(snapshot.agents.map((agent) => [agent.sessionId, agent]));
+  const sessionTitles = new Map(snapshot.sessions.map((session) => [session.id, session.title]));
   const sessions = new Map<string, Omit<SessionNode, 'children'>>();
 
   for (const session of snapshot.sessions) {
-    if (
-      session.kind !== 'agent'
-      || session.source !== 'structured'
-      || session.archivedAt !== undefined
-      || session.state === 'archived'
-    ) continue;
+    if (!isStructuredDaemonAgentSession(session)) continue;
     const agent = agents.get(session.id);
-    if (!agent || agent.state === 'archived') continue;
+    if (!agent) continue;
+    const archived = isDaemonSessionArchived(session, agent);
+    if ((visibility === 'archived') !== archived) continue;
     const workspace = workspaces.get(session.workspaceId);
     sessions.set(session.id, {
       session,
@@ -146,11 +154,11 @@ export function projectDaemonAgentSessions(snapshot: DaemonSnapshot): readonly P
     const node = sessions.get(sessionId);
     if (!node) return undefined;
     const relation = relationByChild.get(sessionId);
-    const parent = relation ? sessions.get(relation.parentSessionId) : undefined;
+    const parentTitle = relation ? sessionTitles.get(relation.parentSessionId) : undefined;
     return {
       ...node,
       ...(relation ? { relation } : {}),
-      ...(parent ? { parentTitle: parent.session.title } : {}),
+      ...(parentTitle ? { parentTitle } : {}),
     };
   };
 
@@ -188,12 +196,15 @@ export function projectDaemonAgentSessions(snapshot: DaemonSnapshot): readonly P
   const rootsByWorkspace = new Map<string, string[]>();
   for (const node of sessions.values()) {
     const relation = relationByChild.get(node.session.id);
-    if (relation?.owner === 'provider-native') continue;
     const parent = relation ? sessions.get(relation.parentSessionId) : undefined;
-    const nestedInSameWorkspace = parent
-      && parent.session.projectId === node.session.projectId
-      && parent.session.workspaceId === node.session.workspaceId;
-    if (nestedInSameWorkspace) continue;
+    const nestedUnderSelectedParent = parent && (
+      relation?.owner === 'provider-native'
+      || (
+        parent.session.projectId === node.session.projectId
+        && parent.session.workspaceId === node.session.workspaceId
+      )
+    );
+    if (nestedUnderSelectedParent) continue;
     const roots = rootsByWorkspace.get(node.session.workspaceId) ?? [];
     roots.push(node.session.id);
     rootsByWorkspace.set(node.session.workspaceId, roots);
@@ -326,6 +337,7 @@ export function DaemonAgentSessions({
   const [loading, setLoading] = useState(true);
   const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState<'load' | 'refresh' | null>(null);
+  const [visibility, setVisibility] = useState<DaemonAgentSessionVisibility>('active');
   const mountedRef = useRef(false);
   const lifecycleGenerationRef = useRef(0);
   const snapshotRef = useRef<DaemonSnapshot | null>(null);
@@ -444,8 +456,17 @@ export function DaemonAgentSessions({
     };
   }, [access, refresh]);
 
-  const groups = useMemo(() => snapshot ? projectDaemonAgentSessions(snapshot) : [], [snapshot]);
-  const count = useMemo(() => sessionCount(groups), [groups]);
+  const activeGroups = useMemo(
+    () => snapshot ? projectDaemonAgentSessions(snapshot, 'active') : [],
+    [snapshot],
+  );
+  const archivedGroups = useMemo(
+    () => snapshot ? projectDaemonAgentSessions(snapshot, 'archived') : [],
+    [snapshot],
+  );
+  const activeCount = useMemo(() => sessionCount(activeGroups), [activeGroups]);
+  const archivedCount = useMemo(() => sessionCount(archivedGroups), [archivedGroups]);
+  const groups = visibility === 'archived' ? archivedGroups : activeGroups;
   const titleId = useId();
 
   return (
@@ -454,10 +475,33 @@ export function DaemonAgentSessions({
       aria-labelledby={titleId}
       aria-busy={loading || recovering || undefined}
       data-testid="daemon-agent-sessions"
+      data-visibility={visibility}
     >
       <div className="daemon-agent-sessions__heading">
         <h3 id={titleId}>{t('agentHub.structuredSessions.title')}</h3>
-        {count > 0 && <span>{count}</span>}
+        <div
+          className="daemon-agent-sessions__filters"
+          role="group"
+          aria-label={t('agentHub.structuredSessions.filterLabel')}
+        >
+          <button
+            type="button"
+            aria-pressed={visibility === 'active'}
+            onClick={() => setVisibility('active')}
+            data-testid="daemon-agent-sessions-active"
+          >
+            {t('agentHub.structuredSessions.current')} <span>{activeCount}</span>
+          </button>
+          <button
+            type="button"
+            aria-pressed={visibility === 'archived'}
+            onClick={() => setVisibility('archived')}
+            data-testid="daemon-agent-sessions-archived"
+          >
+            <Archive aria-hidden="true" />
+            {t('agentHub.structuredSessions.archived')} <span>{archivedCount}</span>
+          </button>
+        </div>
       </div>
       {loading && !snapshot && (
         <p className="daemon-agent-sessions__note" role="status">
@@ -478,7 +522,9 @@ export function DaemonAgentSessions({
         </div>
       )}
       {snapshot && groups.length === 0 && !error && (
-        <p className="daemon-agent-sessions__note">{t('agentHub.structuredSessions.empty')}</p>
+        <p className="daemon-agent-sessions__note">
+          {t(`agentHub.structuredSessions.${visibility === 'archived' ? 'archivedEmpty' : 'empty'}`)}
+        </p>
       )}
       {groups.length > 0 && (
         <ol className="daemon-agent-project-list">

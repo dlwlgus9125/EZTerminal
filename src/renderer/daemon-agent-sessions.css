@@ -11,6 +11,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--ui-space-2);
   min-inline-size: 0;
 }
@@ -32,7 +33,48 @@
   text-transform: none;
 }
 
-.daemon-agent-sessions__heading > span {
+.daemon-agent-sessions__filters {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-inset);
+}
+
+.daemon-agent-sessions__filters button {
+  display: inline-flex;
+  min-block-size: var(--ui-control-height-sm);
+  align-items: center;
+  gap: var(--ui-space-1);
+  padding-inline: var(--ui-space-2);
+  border: 0;
+  border-radius: calc(var(--ui-radius-sm) - 1px);
+  background: transparent;
+  color: var(--ui-text-muted);
+  font: inherit;
+  font-size: var(--ui-font-size-3xs);
+  cursor: pointer;
+}
+
+.daemon-agent-sessions__filters button[aria-pressed='true'] {
+  background: var(--ui-surface-selected);
+  color: var(--ui-text-primary);
+}
+
+.daemon-agent-sessions__filters button:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 1px;
+}
+
+.daemon-agent-sessions__filters svg {
+  inline-size: 12px;
+  block-size: 12px;
+}
+
+.daemon-agent-sessions__filters span {
   color: var(--ui-text-muted);
   font-family: var(--ui-font-terminal);
   font-size: var(--ui-font-size-2xs);

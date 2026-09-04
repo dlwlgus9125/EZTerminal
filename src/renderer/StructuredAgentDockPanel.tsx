@@ -9,6 +9,7 @@ import {
   type DaemonTranscriptItem,
   type PermissionPreset,
 } from '../shared/daemon-protocol';
+import { isDaemonSessionArchived } from '../shared/daemon-session-visibility';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import {
   StructuredAgentHeartbeat,
@@ -779,7 +780,9 @@ export function StructuredAgentDockPanel(
 
   const heartbeat = snapshot?.heartbeats.find((candidate) => candidate.sessionId === sessionId);
   const automationReady = snapshot?.runtime.keepRunning === true && snapshot.runtime.startAtLogin === true;
+  const historyOnly = session !== undefined && isDaemonSessionArchived(session, agent);
   const heartbeatAvailable = owner === 'managed'
+    && !historyOnly
     && session !== undefined
     && agent !== undefined
     && HEARTBEAT_SESSION_STATES.has(agent.state);
@@ -798,7 +801,7 @@ export function StructuredAgentDockPanel(
         providerModelCatalogs[providerId],
       )}
       permissionPreset={agent?.permissionPreset ?? createdDraft?.permissionPreset ?? 'standard'}
-      state={agent?.state ?? (createdDraft || loading ? 'starting' : 'error')}
+      state={historyOnly ? 'archived' : agent?.state ?? (createdDraft || loading ? 'starting' : 'error')}
       queuedCount={agent?.queuedTurnCount ?? 0}
       items={transcriptItems}
       approvals={(snapshot?.approvals ?? []).filter((approval) => approval.sessionId === sessionId)}
@@ -807,6 +810,7 @@ export function StructuredAgentDockPanel(
         ? 'This Agent session is no longer available.'
         : null)}
       disabled={!snapshot && !loading}
+      historyOnly={historyOnly}
       owner={owner}
       childTrack={directChildren.length > 0 && props.onOpenSession ? (
         <StructuredAgentChildTrack items={directChildren} onSelectSession={openRelatedSession} />
@@ -827,13 +831,13 @@ export function StructuredAgentDockPanel(
         if (sessionId) void syncTranscript(sessionId, transcriptTargetRef.current);
       }}
       onSend={(prompt) => runSessionCommand('agent.submit', prompt)}
-      onInterruptAndSend={(prompt) => runSessionCommand('agent.interrupt-and-submit', prompt)}
-      onChangeSettings={changeSettings}
-      onResolveApproval={resolveApproval}
+      onInterruptAndSend={historyOnly ? undefined : (prompt) => runSessionCommand('agent.interrupt-and-submit', prompt)}
+      onChangeSettings={historyOnly ? undefined : changeSettings}
+      onResolveApproval={historyOnly ? undefined : resolveApproval}
       onOpenRelatedSession={props.onOpenSession ? openRelatedSession : undefined}
-      onCancel={owner === 'managed' && session && agent ? () => runLifecycleCommand('agent.cancel') : undefined}
-      onArchive={owner === 'managed' && session && agent ? () => runLifecycleCommand('agent.archive') : undefined}
-      onDetach={owner === 'managed' && session && agent && activeRelation
+      onCancel={!historyOnly && owner === 'managed' && session && agent ? () => runLifecycleCommand('agent.cancel') : undefined}
+      onArchive={!historyOnly && owner === 'managed' && session && agent ? () => runLifecycleCommand('agent.archive') : undefined}
+      onDetach={!historyOnly && owner === 'managed' && session && agent && activeRelation
         ? () => runLifecycleCommand('agent.detach')
         : undefined}
     />

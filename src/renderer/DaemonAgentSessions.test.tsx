@@ -241,6 +241,31 @@ describe('projectDaemonAgentSessions', () => {
       .toEqual(['native-child']);
     expect(roots.some((node) => node.session.id === 'native-child')).toBe(false);
   });
+
+  it('keeps archived sessions out of the default tree and preserves orphaned child ownership in history', () => {
+    const base = snapshotOf();
+    const partiallyArchived = snapshotOf({
+      agents: base.agents.map((agent) => ['native-child', 'managed-child'].includes(agent.sessionId)
+        ? { ...agent, state: 'archived' }
+        : agent),
+      agentRelations: base.agentRelations.map((relation) => relation.id === 'relation-managed'
+        ? { ...relation, detachedAt: NOW }
+        : relation),
+    });
+
+    const active = projectDaemonAgentSessions(partiallyArchived);
+    expect(active[0]?.workspaces[0]?.sessions[0]?.children.map((node) => node.session.id))
+      .toEqual([]);
+
+    const archived = projectDaemonAgentSessions(partiallyArchived, 'archived');
+    const archivedRoots = archived[0]?.workspaces[0]?.sessions ?? [];
+    const native = archivedRoots.find((node) => node.session.id === 'native-child');
+    expect(native?.session.id).toBe('native-child');
+    expect(native?.relation?.owner).toBe('provider-native');
+    expect(native?.parentTitle).toBe('Lead session');
+    expect(archivedRoots.find((node) => node.session.id === 'managed-child')?.relation)
+      .toBeUndefined();
+  });
 });
 
 describe('DaemonAgentSessions', () => {
@@ -271,6 +296,39 @@ describe('DaemonAgentSessions', () => {
     act(() => root.unmount());
     expect(stop).toHaveBeenCalledOnce();
     root = createRoot(container);
+  });
+
+  it('opens archived daemon-only history through the explicit visibility filter', async () => {
+    const base = snapshotOf();
+    const archivedSnapshot = snapshotOf({
+      sessions: base.sessions.map((session) => session.id === 'managed-child'
+        ? { ...session, state: 'archived', archivedAt: NOW }
+        : session),
+      agents: base.agents.map((agent) => agent.sessionId === 'managed-child'
+        ? { ...agent, state: 'archived' }
+        : agent),
+    });
+    const onOpenSession = await renderSessions({
+      getSnapshot: vi.fn(async () => archivedSnapshot),
+      observeEvents: () => () => undefined,
+    });
+
+    expect(container.querySelector('[data-session-id="managed-child"]')).toBeNull();
+    const archived = container.querySelector<HTMLButtonElement>(
+      '[data-testid="daemon-agent-sessions-archived"]',
+    )!;
+    expect(archived.textContent).toContain('Archived 1');
+    act(() => archived.click());
+
+    const row = container.querySelector<HTMLButtonElement>('[data-session-id="managed-child"]');
+    expect(row?.textContent).toContain('Managed child of Lead session');
+    expect(container.querySelector('[data-session-id="lead"]')).toBeNull();
+    act(() => row!.click());
+    expect(onOpenSession).toHaveBeenCalledWith({
+      sessionId: 'managed-child',
+      title: 'Managed child',
+      providerLabel: 'Claude Code',
+    });
   });
 
   it('consumes contiguous transcript, turn, and command events without refreshing the projection', async () => {

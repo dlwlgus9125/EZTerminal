@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { fn } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 
 import {
   DAEMON_PROTOCOL_VERSION,
@@ -45,21 +45,36 @@ const snapshot: DaemonSnapshot = {
     updatedAt: NOW,
   }],
   sessions: [
-    ['lead', 'Ship durable Agent navigation', 'running'],
-    ['child', 'Review accessibility states', 'idle'],
-    ['native', 'Search provider documentation', 'running'],
-  ].map(([id, title, state]) => ({
-    id,
-    projectId: 'ezterminal',
-    workspaceId: 'workspace-main',
-    kind: 'agent' as const,
-    title,
-    state: state as 'running' | 'idle',
-    source: 'structured' as const,
-    revision: 1,
-    createdAt: NOW,
-    updatedAt: NOW,
-  })),
+    ...[
+      ['lead', 'Ship durable Agent navigation', 'running'],
+      ['child', 'Review accessibility states', 'idle'],
+      ['native', 'Search provider documentation', 'running'],
+    ].map(([id, title, state]) => ({
+      id,
+      projectId: 'ezterminal',
+      workspaceId: 'workspace-main',
+      kind: 'agent' as const,
+      title,
+      state: state as 'running' | 'idle',
+      source: 'structured' as const,
+      revision: 1,
+      createdAt: NOW,
+      updatedAt: NOW,
+    })),
+    {
+      id: 'archived-child',
+      projectId: 'ezterminal',
+      workspaceId: 'workspace-main',
+      kind: 'agent',
+      title: 'Inspect archived provider failure',
+      state: 'archived',
+      source: 'structured',
+      archivedAt: NOW,
+      revision: 2,
+      createdAt: NOW,
+      updatedAt: NOW,
+    },
+  ],
   agents: [{
     sessionId: 'lead',
     providerId: 'codex',
@@ -92,6 +107,16 @@ const snapshot: DaemonSnapshot = {
     revision: 1,
     createdAt: NOW,
     updatedAt: NOW,
+  }, {
+    sessionId: 'archived-child',
+    providerId: 'codex',
+    permissionPreset: 'standard',
+    state: 'archived',
+    queuedTurnCount: 0,
+    orchestrationEnabled: true,
+    revision: 2,
+    createdAt: NOW,
+    updatedAt: NOW,
   }],
   agentRelations: [{
     id: 'lead-child',
@@ -111,6 +136,16 @@ const snapshot: DaemonSnapshot = {
     owner: 'provider-native',
     depth: 1,
     revision: 1,
+    createdAt: NOW,
+    updatedAt: NOW,
+  }, {
+    id: 'lead-archived-child',
+    treeId: 'lead',
+    parentSessionId: 'lead',
+    childSessionId: 'archived-child',
+    owner: 'managed',
+    depth: 1,
+    revision: 2,
     createdAt: NOW,
     updatedAt: NOW,
   }],
@@ -178,3 +213,12 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const ProjectWorkspaceHierarchy: Story = {};
+
+export const ArchivedHistory: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByTestId('daemon-agent-sessions-archived'));
+    await expect(await canvas.findByText('Inspect archived provider failure')).toBeVisible();
+    await expect(canvas.getByText('Managed child of Ship durable Agent navigation')).toBeVisible();
+  },
+};
