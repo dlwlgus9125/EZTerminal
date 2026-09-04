@@ -46,17 +46,9 @@ test('terminating an Agent terminal session removes its activity and focus targe
   await window.setViewportSize({ width: 1440, height: 900 });
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
-  const projectId = await window.evaluate(async () =>
-    (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items[0]?.projectId);
-  expect(projectId).toBeTruthy();
-
-  await window.getByTestId('btn-toggle-agents').click();
-  await window.getByTestId(`agent-project-new-chat-${projectId!}`).click();
-  const picker = window.getByTestId('agent-launch-picker');
-  await expect(picker).toBeVisible();
-  await picker.getByTestId('agent-launch-agent').selectOption('codex');
-  await picker.getByTestId('agent-launch-submit').click();
-  await expect(picker).toHaveCount(0);
+  const input = window.getByTestId('cmd-input');
+  await input.fill('codex --xterm');
+  await input.press('Enter');
 
   const pane = window.locator('[data-testid="pane"]:visible');
   const terminal = pane.getByTestId('pty-block');
@@ -65,6 +57,7 @@ test('terminating an Agent terminal session removes its activity and focus targe
     .toContain('FAKE-CODEX-READY');
   const sessionId = await pane.getAttribute('data-session-id');
   expect(sessionId).toBeTruthy();
+  await window.getByTestId('btn-toggle-agents').click();
   await expect(window.getByTestId('agent-focus')).toHaveCount(1, { timeout: 15_000 });
 
   await window.locator('.ez-dock .dv-tab.dv-active-tab .dv-default-tab-action').click();

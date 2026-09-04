@@ -45,7 +45,7 @@ function pathEnvironment(): Record<string, string> {
   };
 }
 
-test('Agents new Codex session retains every sequential output line in scrollback', async () => {
+test('direct Codex terminal retains every sequential output line in scrollback', async () => {
   const projectRoot = createRegisteredE2eTempDir('ezterm-e2e-codex-scrollback-root-');
   const userDataDir = createRegisteredE2eTempDir('ezterm-e2e-codex-scrollback-data-');
   seedTerminalProject(userDataDir, projectRoot);
@@ -58,17 +58,9 @@ test('Agents new Codex session retains every sequential output line in scrollbac
   await window.setViewportSize({ width: 1440, height: 900 });
   await expect(window.getByRole('heading', { name: 'EZTerminal' })).toBeVisible();
 
-  const projectId = await window.evaluate(async () =>
-    (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items[0]?.projectId);
-  expect(projectId).toBeTruthy();
-
-  await window.getByTestId('btn-toggle-agents').click();
-  await window.getByTestId(`agent-project-new-chat-${projectId!}`).click();
-  const picker = window.getByTestId('agent-launch-picker');
-  await expect(picker).toBeVisible();
-  await picker.getByTestId('agent-launch-agent').selectOption('codex');
-  await picker.getByTestId('agent-launch-submit').click();
-  await expect(picker).toHaveCount(0);
+  const input = window.getByTestId('cmd-input');
+  await input.fill('codex --no-alt-screen');
+  await input.press('Enter');
 
   const terminal = window.locator('[data-testid="pane"]:visible').getByTestId('pty-block');
   await expect(terminal).toBeVisible({ timeout: 15_000 });

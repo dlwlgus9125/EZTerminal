@@ -192,7 +192,7 @@ async function flushLayout(window: Page): Promise<void> {
   });
 }
 
-test('project new session preserves fixed-root terminal identity across rename and restart', async () => {
+test('project root terminal preserves fixed-root identity across rename and restart', async () => {
   const { projectRoot, userDataDir } = createProjectFixture();
   const canonicalProjectRoot = realpathSync.native(projectRoot);
   const app = await launchApp(userDataDir);
@@ -204,17 +204,17 @@ test('project new session preserves fixed-root terminal identity across rename a
     (await globalThis.window.ezterminal.listAgentProjects(false, undefined, 100)).items[0]?.projectId);
   expect(publicProjectId).toBeTruthy();
 
-  await window.getByTestId('btn-toggle-agents').click();
-  const newSession = window.getByTestId(`agent-project-new-chat-${publicProjectId!}`);
-  await expect(newSession).toBeVisible({ timeout: 15_000 });
+  await openRegisteredProject(window, publicProjectId!);
+  await window.getByTestId('btn-toggle-files').click();
+  const pathInput = window.getByTestId('file-path-input');
+  await expect(pathInput).not.toHaveValue('', { timeout: 10_000 });
+  await pathInput.fill(projectRoot);
+  await pathInput.press('Enter');
+  await expect(pathInput).toHaveAttribute('title', canonicalProjectRoot, { timeout: 10_000 });
 
   const openTerminal = async (): Promise<void> => {
-    await newSession.click();
-    await expect(window.getByTestId('agent-launch-picker')).toBeVisible();
-    await expect(window.getByTestId('agent-launch-project')).toHaveCount(0);
-    await window.getByTestId('agent-launch-session-type').selectOption('terminal');
-    await window.getByTestId('agent-launch-submit').click();
-    await expect(window.getByTestId('agent-launch-picker')).toHaveCount(0);
+    await window.getByTestId('file-list').click({ button: 'right', position: { x: 10, y: 350 } });
+    await window.getByTestId('ctx-open-terminal').click();
   };
 
   await openTerminal();

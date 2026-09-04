@@ -121,6 +121,7 @@ import {
 import {
   projectRelativeReviewHint,
 } from './project-diff-navigation';
+import { projectTerminalMetadataForDirectory } from './project-terminal-context';
 import {
   applyProjectReviewLayout,
   captureProjectReviewLayout,
@@ -1135,9 +1136,30 @@ export function App(): JSX.Element {
 
   const addTab = useCallback(() => openPanel(), [openPanel]);
 
-  // File-explorer drawer's "open terminal here" (M2): a fresh tab whose session
-  // starts in `dirPath`, threaded through dockview panel params to TerminalPanel.
-  const onOpenTerminalAt = useCallback((dirPath: string) => openPanel(undefined, dirPath), [openPanel]);
+  // File Explorer's "open terminal here" keeps the safe opaque identity when
+  // the user is at the exact root of the actively drilled project workspace.
+  // Other directories retain the ordinary cwd-based terminal behavior.
+  const onOpenTerminalAt = useCallback((dirPath: string): void => {
+    const desktop = window.ezterminalDesktop;
+    const projectId = activeProjectId;
+    if (!desktop || !projectId) {
+      openPanel(undefined, dirPath);
+      return;
+    }
+    void desktop.describeProjectWorkspace(projectId).then((described) => {
+      const projectSession = described.ok
+        ? projectTerminalMetadataForDirectory(described.project, dirPath)
+        : null;
+      if (!projectSession) {
+        openPanel(undefined, dirPath);
+        return;
+      }
+      workbenchCoordinator.openTerminal({
+        title: projectSession.projectName,
+        projectSession,
+      });
+    }).catch(() => openPanel(undefined, dirPath));
+  }, [activeProjectId, openPanel, workbenchCoordinator]);
 
   // `worktree open` is resolved and boundary-checked by main. The renderer's
   // only role is the explicit UI seam: select a fresh terminal rooted at the
