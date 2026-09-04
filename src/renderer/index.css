@@ -4638,14 +4638,26 @@ button.agent-work-activity:focus-visible {
 
 .agent-host-settings,
 .structured-provider-section,
+.schedule-settings,
 .terminal-activity-hook-settings {
   min-width: 0;
 }
 
 .structured-provider-section,
+.schedule-settings,
 .terminal-activity-hook-settings {
   padding-top: var(--ui-space-5);
   border-top: 1px solid var(--ui-border-subtle);
+}
+
+.schedule-settings,
+.terminal-activity-hook-settings {
+  margin-top: var(--ui-space-6);
+}
+
+.agent-host-settings:focus {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: var(--ui-space-2);
 }
 
 .agent-settings-heading {
@@ -4905,9 +4917,218 @@ button.agent-work-activity:focus-visible {
   margin-top: var(--ui-space-3);
 }
 
+.schedule-settings {
+  display: grid;
+  gap: var(--ui-space-3);
+}
+
+.schedule-settings .ez-ui-status {
+  min-width: 0;
+  max-width: 100%;
+  align-items: flex-start;
+  line-height: var(--ui-line-height-normal);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.schedule-settings .ez-ui-status__icon {
+  flex: none;
+  margin-top: 0.1em;
+}
+
+.schedule-settings > .agent-settings-heading {
+  margin-bottom: 0;
+}
+
+.schedule-settings__automation-warning {
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-3);
+  border: 1px solid color-mix(in srgb, var(--ui-warning) 46%, var(--ui-border-subtle));
+  border-radius: var(--ui-radius-8);
+  background: var(--ui-warning-muted);
+}
+
+.schedule-settings__automation-warning p {
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+}
+
+.schedule-settings__status {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.schedule-create-form {
+  min-width: 0;
+  display: grid;
+  gap: var(--ui-space-3);
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-8);
+  background: var(--ui-surface-inset);
+}
+
+.schedule-create-form__heading {
+  min-width: 0;
+}
+
+.schedule-create-form__heading h3 {
+  margin: 0;
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-heading);
+  font-size: var(--ui-font-size-sm);
+}
+
+.schedule-create-form__heading p {
+  margin: var(--ui-space-1) 0 0;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+}
+
+.schedule-create-form__grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ui-space-3);
+}
+
+.schedule-create-form__prompt {
+  min-width: 0;
+}
+
+.schedule-create-form__textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 92px;
+  padding-block: var(--ui-space-2);
+  resize: vertical;
+  line-height: var(--ui-line-height-normal);
+}
+
+.schedule-create-form__error {
+  margin: 0;
+  color: var(--ui-danger);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+}
+
+.schedule-create-form__actions,
+.schedule-row__actions,
+.schedule-row__delete-confirmation > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--ui-space-2);
+}
+
+.schedule-list {
+  min-width: 0;
+  display: grid;
+  gap: var(--ui-space-3);
+}
+
+.schedule-row {
+  min-width: 0;
+  display: grid;
+  gap: var(--ui-space-3);
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-8);
+  background: var(--ui-surface-inset);
+}
+
+.schedule-row__header {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ui-space-3);
+}
+
+.schedule-row__identity {
+  min-width: 0;
+  display: grid;
+  gap: var(--ui-space-1);
+}
+
+.schedule-row__identity strong {
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-heading);
+  font-size: var(--ui-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.schedule-row__identity span {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.schedule-row__metadata {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-space-2) var(--ui-space-3);
+  margin: 0;
+}
+
+.schedule-row__metadata > div {
+  min-width: 0;
+  display: grid;
+  gap: var(--ui-space-1);
+}
+
+.schedule-row__metadata > .is-wide {
+  grid-column: 1 / -1;
+}
+
+.schedule-row__metadata dt {
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-2xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.schedule-row__metadata dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.schedule-row__metadata dd code {
+  margin-inline-end: var(--ui-space-2);
+  color: var(--ui-text-primary);
+  font-family: var(--ui-font-mono);
+}
+
+.schedule-row__delete-confirmation {
+  min-width: 0;
+  display: grid;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-3);
+  border-inline-start: 2px solid var(--ui-danger);
+  border-radius: var(--ui-radius-4);
+  color: var(--ui-text-primary);
+  background: var(--ui-danger-muted);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+}
+
 @media (max-width: 520px) {
   .agent-settings-heading,
-  .structured-provider-card__header {
+  .structured-provider-card__header,
+  .schedule-row__header {
     align-items: stretch;
     flex-direction: column;
   }
@@ -4921,11 +5142,21 @@ button.agent-work-activity:focus-visible {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .schedule-row__metadata {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .structured-provider-metadata > .is-wide {
     grid-column: auto;
   }
 
   .structured-provider-card__actions > .ez-ui-button {
+    flex: 1 1 auto;
+  }
+
+  .schedule-create-form__actions > .ez-ui-button,
+  .schedule-row__actions > .ez-ui-button,
+  .schedule-row__delete-confirmation > div > .ez-ui-button {
     flex: 1 1 auto;
   }
 }

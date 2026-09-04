@@ -9,6 +9,7 @@ import {
 } from '../shared/agent';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import { useAppTranslation } from './i18n';
+import { ScheduleSettings } from './ScheduleSettings';
 import { StructuredProviderSettings } from './StructuredProviderSettings';
 
 const DEFAULT_SETTINGS: AgentSettings = {
@@ -132,6 +133,8 @@ export function AgentIntegrationSettings({
   return (
     <>
       <StructuredProviderSettings capabilities={capabilities} />
+
+      <ScheduleSettings capabilities={capabilities} />
 
       <section className="terminal-activity-hook-settings" aria-labelledby="terminal-activity-hooks-title">
       <div className="agent-settings-heading">

@@ -21,7 +21,12 @@ import {
 import type { AgentActivitySnapshot } from '../../shared/agent';
 import type { AgentCoordinationSnapshot } from '../../shared/agent-coordination';
 import type { ClaudeProviderEnablement, ProviderInspection } from '../../shared/daemon-provider';
-import type { DaemonProvider, DaemonSnapshot } from '../../shared/daemon-protocol';
+import type {
+  DaemonProvider,
+  DaemonSchedule,
+  DaemonSnapshot,
+  DaemonWorkspace,
+} from '../../shared/daemon-protocol';
 import { EMPTY_GIT_DIRECTORY_STATUS } from '../../shared/git-status';
 import type { RemoteDesktopHostStatus, SystemStatsSnapshot } from '../../shared/ipc';
 import { PAIRING_CODE_TTL_MS } from '../../shared/pairing';
@@ -268,6 +273,7 @@ const EN_CAPABILITIES = storyCapabilities('en');
 const KO_CAPABILITIES = storyCapabilities('ko');
 
 type ProviderSettingsScenario = 'missing' | 'review' | 'claude-approval' | 'ready' | 'error';
+type ScheduleSettingsScenario = 'empty' | 'empty-ready' | 'ready' | 'runtime-required' | 'error';
 
 function providerStoryInspection(
   providerId: 'codex' | 'claude',
@@ -336,7 +342,10 @@ function providerStoryRecord(
   };
 }
 
-function providerSettingsCapabilities(scenario: ProviderSettingsScenario): CapabilityAccess {
+function providerSettingsCapabilities(
+  scenario: ProviderSettingsScenario,
+  scheduleScenario: ScheduleSettingsScenario = 'empty',
+): CapabilityAccess {
   const codex = providerStoryInspection('codex', scenario !== 'missing');
   const claudeAvailable = scenario === 'ready' || scenario === 'error';
   const claude = providerStoryInspection('claude', claudeAvailable);
@@ -347,19 +356,78 @@ function providerSettingsCapabilities(scenario: ProviderSettingsScenario): Capab
       : scenario === 'claude-approval'
         ? [providerStoryRecord(codex)]
         : [];
+  const scheduleWorkspaces: readonly DaemonWorkspace[] = scheduleScenario === 'empty' ? [] : [{
+    id: 'project-alpha.root-main.workspace-main',
+    projectId: 'project-alpha',
+    name: 'Alpha / main',
+    kind: 'local',
+    rootPath: 'C:\\Work\\alpha',
+    sourceWorkspaceId: 'workspace-main',
+    revision: 4,
+    createdAt: new Date(NOW - 86_400_000).toISOString(),
+    updatedAt: new Date(NOW - 60_000).toISOString(),
+  }];
+  const scheduleRecords: readonly DaemonSchedule[] = scheduleScenario === 'ready' ? [{
+    id: 'weekday-review',
+    name: 'Weekday review',
+    workspaceId: scheduleWorkspaces[0]!.id,
+    providerId: 'codex',
+    model: 'gpt-5.6-codex',
+    permissionPreset: 'standard',
+    prompt: 'Review the current worktree and summarize actionable risks.',
+    cron: '0 9 * * 1-5',
+    timezone: 'Asia/Seoul',
+    enabled: true,
+    maxRuns: 20,
+    runCount: 6,
+    nextRunAt: new Date(NOW + 3_600_000).toISOString(),
+    revision: 7,
+    createdAt: new Date(NOW - 604_800_000).toISOString(),
+    updatedAt: new Date(NOW - 3_600_000).toISOString(),
+  }, {
+    id: 'release-notes',
+    name: 'Release notes draft',
+    workspaceId: scheduleWorkspaces[0]!.id,
+    providerId: 'claude',
+    permissionPreset: 'plan',
+    prompt: 'Draft release notes from the current project changes.',
+    cron: '30 16 * * 5',
+    timezone: 'America/Los_Angeles',
+    enabled: false,
+    runCount: 2,
+    revision: 5,
+    createdAt: new Date(NOW - 345_600_000).toISOString(),
+    updatedAt: new Date(NOW - 7_200_000).toISOString(),
+  }] : scheduleScenario === 'runtime-required' ? [{
+    id: 'disabled-audit',
+    name: 'Nightly dependency audit',
+    workspaceId: scheduleWorkspaces[0]!.id,
+    providerId: 'codex',
+    permissionPreset: 'plan',
+    prompt: 'Audit dependency changes without modifying files.',
+    cron: '0 2 * * *',
+    timezone: 'UTC',
+    enabled: false,
+    runCount: 0,
+    revision: 2,
+    createdAt: new Date(NOW - 86_400_000).toISOString(),
+    updatedAt: new Date(NOW - 86_400_000).toISOString(),
+  }] : [];
+  const keepRunning = scheduleScenario === 'runtime-required' ? false : true;
+  const startAtLogin = scheduleScenario === 'ready' || scheduleScenario === 'empty-ready';
   const daemonSnapshot: DaemonSnapshot = {
     protocolVersion: 12,
     revision: 18,
     eventSequence: 42,
     generatedAt: new Date(NOW).toISOString(),
     runtime: {
-      keepRunning: true,
-      startAtLogin: false,
+      keepRunning,
+      startAtLogin,
       orchestrationToolsEnabled: scenario === 'ready',
       browserEnabled: false,
     },
     projects: [],
-    workspaces: [],
+    workspaces: scheduleWorkspaces,
     sessions: [],
     agents: [],
     agentRelations: [],
@@ -367,7 +435,7 @@ function providerSettingsCapabilities(scenario: ProviderSettingsScenario): Capab
     transcriptHeads: [],
     approvals: [],
     providers,
-    schedules: [],
+    schedules: scheduleRecords,
     heartbeats: [],
   };
   const claudeEnablement: ClaudeProviderEnablement = scenario === 'ready' || scenario === 'error'
@@ -401,7 +469,10 @@ function providerSettingsCapabilities(scenario: ProviderSettingsScenario): Capab
       setClaudeEnablement: async (value) => ({ ok: true, value }),
     },
     daemon: {
-      getSnapshot: async () => daemonSnapshot,
+      getSnapshot: async () => {
+        if (scheduleScenario === 'error') throw new Error('Static schedule service failure');
+        return daemonSnapshot;
+      },
       getTranscript: async () => [],
       sendCommand: async (command) => ({
         ok: false,
@@ -411,8 +482,8 @@ function providerSettingsCapabilities(scenario: ProviderSettingsScenario): Capab
         error: { code: 'invalid-state', message: 'Static Storybook fixture', retryable: false },
       }),
       observeEvents: () => () => undefined,
-      getLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
-      setLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+      getLifecycleSettings: async () => ({ keepRunning, startAtLogin }),
+      setLifecycleSettings: async () => ({ keepRunning, startAtLogin }),
     },
   };
 }
@@ -1418,9 +1489,19 @@ export const Settings: Story = {
 
 function ProviderSettingsStory({
   scenario,
+  scheduleScenario = 'empty',
 }: {
   readonly scenario: ProviderSettingsScenario;
+  readonly scheduleScenario?: ScheduleSettingsScenario;
 }): JSX.Element {
+  useEffect(() => {
+    if (scheduleScenario === 'empty') return undefined;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector('.schedule-settings')?.scrollIntoView({ block: 'start' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [scheduleScenario]);
+
   return (
     <LocaleFrame>
       <WorkbenchFrame
@@ -1428,7 +1509,7 @@ function ProviderSettingsStory({
         sidebar={(
           <SettingsFixture
             requestedCategory="agents"
-            capabilities={providerSettingsCapabilities(scenario)}
+            capabilities={providerSettingsCapabilities(scenario, scheduleScenario)}
           />
         )}
       />
@@ -1454,6 +1535,22 @@ export const ProviderSettingsReady: Story = {
 
 export const ProviderSettingsError: Story = {
   render: () => <ProviderSettingsStory scenario="error" />,
+};
+
+export const ScheduleSettingsEmpty: Story = {
+  render: () => <ProviderSettingsStory scenario="ready" scheduleScenario="empty-ready" />,
+};
+
+export const ScheduleSettingsReady: Story = {
+  render: () => <ProviderSettingsStory scenario="ready" scheduleScenario="ready" />,
+};
+
+export const ScheduleSettingsRuntimeRequired: Story = {
+  render: () => <ProviderSettingsStory scenario="ready" scheduleScenario="runtime-required" />,
+};
+
+export const ScheduleSettingsError: Story = {
+  render: () => <ProviderSettingsStory scenario="ready" scheduleScenario="error" />,
 };
 
 export const EnglishWorkbench: Story = {

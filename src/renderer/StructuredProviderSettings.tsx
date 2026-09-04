@@ -466,7 +466,12 @@ export function StructuredProviderSettings({
 
   return (
     <div className="structured-provider-settings">
-      <section className="agent-host-settings" aria-labelledby="agent-host-settings-title">
+      <section
+        className="agent-host-settings"
+        id="agent-host-settings"
+        tabIndex={-1}
+        aria-labelledby="agent-host-settings-title"
+      >
         <div className="agent-settings-heading">
           <div>
             <h2 className="status-section-title" id="agent-host-settings-title">
