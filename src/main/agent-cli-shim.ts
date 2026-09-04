@@ -14,12 +14,14 @@ export class AgentCliShim {
 
   async init(): Promise<void> {
     await fs.mkdir(this.directory, { recursive: true });
-    const target = path.join(this.directory, 'ezterminal-agent.cmd');
     const escapedHost = this.nativeHostPath.replaceAll('%', '%%');
     const contents = `@echo off\r\n"${escapedHost}" --agent-control %*\r\n`;
-    const existing = await fs.readFile(target, 'utf8').catch(() => null);
-    if (existing !== contents) {
-      await fs.writeFile(target, contents, { encoding: 'utf8', flag: 'w' });
+    for (const name of ['ezterminal.cmd', 'ezterminal-agent.cmd']) {
+      const target = path.join(this.directory, name);
+      const existing = await fs.readFile(target, 'utf8').catch(() => null);
+      if (existing !== contents) {
+        await fs.writeFile(target, contents, { encoding: 'utf8', flag: 'w' });
+      }
     }
   }
 

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentActivity } from '../shared/agent';
 import type { AgentCoordinationSnapshot } from '../shared/agent-coordination';
+import { DAEMON_PROTOCOL_VERSION, type DaemonSnapshot } from '../shared/daemon-protocol';
 import type { AgentCoordinationService } from './agent-coordination-service';
 import { AgentControlServer, descriptorFingerprint } from './agent-control-server';
 import type { AgentOrchestrationService } from './agent-orchestration-service';
@@ -87,6 +88,10 @@ function fixture(): {
     readonly completeRun: ReturnType<typeof vi.fn>;
     readonly reportWorker: ReturnType<typeof vi.fn>;
   };
+  readonly daemon: {
+    readonly getSnapshot: ReturnType<typeof vi.fn>;
+    readonly execute: ReturnType<typeof vi.fn>;
+  };
   readonly setSnapshot: (snapshot: AgentCoordinationSnapshot) => void;
 } {
   const source = activity('source', 'project-1', 'Builder');
@@ -144,16 +149,41 @@ function fixture(): {
     completeRun: vi.fn(async () => ({ ok: true as const, value: { runId: 'run-1', state: 'completed' } })),
     reportWorker: vi.fn(async () => ({ ok: true as const, value: { taskId: 'task-1', state: 'done' } })),
   };
+  const timestamp = '2026-09-04T00:00:00.000Z';
+  const daemonSnapshot = {
+    protocolVersion: DAEMON_PROTOCOL_VERSION,
+    revision: 4,
+    eventSequence: 9,
+    generatedAt: timestamp,
+    runtime: { keepRunning: false, startAtLogin: false, orchestrationToolsEnabled: true, browserEnabled: false },
+    projects: [{ id: 'project-1', name: 'One', source: 'native', revision: 1, createdAt: timestamp, updatedAt: timestamp }],
+    workspaces: [{ id: 'daemon-workspace-1', projectId: 'project-1', name: 'Main', kind: 'local', rootPath: 'C:\\repo', revision: 1, createdAt: timestamp, updatedAt: timestamp }],
+    sessions: [{ id: 'session-source', projectId: 'project-1', workspaceId: 'daemon-workspace-1', kind: 'terminal', title: 'Shell', state: 'running', source: 'legacy-pty', revision: 1, createdAt: timestamp, updatedAt: timestamp }],
+    agents: [],
+    agentRelations: [],
+    turns: [],
+    transcriptHeads: [],
+    approvals: [],
+    providers: [],
+    schedules: [],
+    heartbeats: [],
+  } satisfies DaemonSnapshot;
+  const daemon = {
+    getSnapshot: vi.fn(() => daemonSnapshot),
+    execute: vi.fn(async () => ({ ok: true as const, status: 'applied' as const, commandId: 'command-1', revision: 5, eventSequence: 10 })),
+  };
   return {
     server: new AgentControlServer({
       coordination: coordination as unknown as AgentCoordinationService,
       merges: merges as unknown as ManagedMergeService,
       maps: maps as unknown as ProjectMapService,
       orchestration: orchestration as unknown as AgentOrchestrationService,
+      daemon,
     }),
     coordination,
     maps,
     orchestration,
+    daemon,
     setSnapshot: (next) => { snapshot = next; },
   };
 }
@@ -200,7 +230,7 @@ describe('AgentControlServer', () => {
     }
   });
 
-  it('keeps a dormant descriptor powerless until its session has joined collaboration', async () => {
+  it('keeps legacy collaboration dormant while daemon control uses the registered Session scope', async () => {
     const { server, setSnapshot } = fixture();
     await server.start();
     try {
@@ -208,7 +238,7 @@ describe('AgentControlServer', () => {
       setSnapshot({
         revision: 2,
         activityRevision: 2,
-        activities: [activity('source', 'project-1', 'Builder', { participant: undefined })],
+        activities: [],
         projects: [],
         mergeRequests: [],
       });
@@ -216,6 +246,10 @@ describe('AgentControlServer', () => {
       await expect(post(descriptor, '/v1/list', {})).resolves.toMatchObject({
         status: 403,
         body: { ok: false, error: 'collaboration-inactive' },
+      });
+      await expect(post(descriptor, '/v1/daemon/status', {})).resolves.toMatchObject({
+        status: 200,
+        body: { ok: true, protocolVersion: 12, projectId: 'project-1' },
       });
     } finally {
       await server.stop();

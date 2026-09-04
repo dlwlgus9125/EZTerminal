@@ -14,6 +14,7 @@ import {
 } from '../shared/project-map';
 import type { AgentCoordinationService } from './agent-coordination-service';
 import type { AgentOrchestrationService } from './agent-orchestration-service';
+import { DaemonCliControl, type DaemonCliAuthority } from './daemon-cli-control';
 import type { ManagedMergeService } from './managed-merge-service';
 import type { ProjectMapService } from './project-map-service';
 import { sameSecret } from './managed-merge-service';
@@ -74,13 +75,17 @@ export class AgentControlServer {
   private origin = '';
   private readonly capabilities = new Map<string, Capability>();
   private readonly activeControllers = new Set<AbortController>();
+  private readonly daemonControl?: DaemonCliControl;
 
   constructor(private readonly deps: {
     readonly coordination: AgentCoordinationService;
     readonly merges: ManagedMergeService;
     readonly maps?: ProjectMapService;
     readonly orchestration?: AgentOrchestrationService;
-  }) {}
+    readonly daemon?: DaemonCliAuthority;
+  }) {
+    this.daemonControl = deps.daemon ? new DaemonCliControl(deps.daemon) : undefined;
+  }
 
   async start(): Promise<void> {
     if (this.server) return;
@@ -162,25 +167,28 @@ export class AgentControlServer {
     }
     let controller: AbortController | null = null;
     try {
-      const source = this.sourceActivity(capability.sessionId);
-      if (!source) {
-        json(response, 403, { ok: false, error: 'collaboration-inactive' });
-        return;
-      }
-      if (this.deps.orchestration?.isWorkerSession(source.sessionId)
-        && request.url !== '/v1/worker/report') {
-        json(response, 403, { ok: false, error: 'worker-depth-limit' });
-        return;
-      }
-      const orchestrationRoute = request.url.startsWith('/v1/workers/')
-        || request.url === '/v1/workers'
-        || request.url === '/v1/worker/report';
-      if (!source.participant
-        && request.url !== '/v1/map/guide'
-        && request.url !== '/v1/map/check'
-        && !orchestrationRoute) {
-        json(response, 403, { ok: false, error: 'collaboration-inactive' });
-        return;
+      const daemonRoute = request.url.startsWith('/v1/daemon/');
+      const source = daemonRoute ? null : this.sourceActivity(capability.sessionId);
+      if (!daemonRoute) {
+        if (!source) {
+          json(response, 403, { ok: false, error: 'collaboration-inactive' });
+          return;
+        }
+        if (this.deps.orchestration?.isWorkerSession(source.sessionId)
+          && request.url !== '/v1/worker/report') {
+          json(response, 403, { ok: false, error: 'worker-depth-limit' });
+          return;
+        }
+        const orchestrationRoute = request.url.startsWith('/v1/workers/')
+          || request.url === '/v1/workers'
+          || request.url === '/v1/worker/report';
+        if (!source.participant
+          && request.url !== '/v1/map/guide'
+          && request.url !== '/v1/map/check'
+          && !orchestrationRoute) {
+          json(response, 403, { ok: false, error: 'collaboration-inactive' });
+          return;
+        }
       }
       const body = await this.readBody(request);
       if (body === null) {
@@ -193,7 +201,11 @@ export class AgentControlServer {
       response.once('close', () => {
         if (!response.writableEnded) requestController.abort();
       });
-      await this.route(request.url, body, source, response, requestController.signal);
+      if (daemonRoute) {
+        await this.routeDaemon(request.url, body, capability.sessionId, response);
+      } else {
+        await this.route(request.url, body, source!, response, requestController.signal);
+      }
     } finally {
       if (controller) this.activeControllers.delete(controller);
       capability.concurrent = Math.max(0, capability.concurrent - 1);
@@ -517,6 +529,20 @@ export class AgentControlServer {
       return;
     }
     json(response, 404, { ok: false, error: 'not-found' });
+  }
+
+  private async routeDaemon(
+    url: string,
+    body: Record<string, unknown>,
+    sourceSessionId: string,
+    response: ServerResponse,
+  ): Promise<void> {
+    if (!this.daemonControl) {
+      json(response, 503, { ok: false, error: 'daemon-unavailable', message: 'The local daemon control surface is unavailable.' });
+      return;
+    }
+    const result = await this.daemonControl.handle(url, body, { sessionId: sourceSessionId });
+    json(response, result?.status ?? 404, result?.body ?? { ok: false, error: 'not-found' });
   }
 
   private authenticate(request: IncomingMessage): Capability | null {

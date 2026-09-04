@@ -68,12 +68,29 @@ the terminal session.
 
 <img src="docs/assets/readme/desktop-project-workspace.png" width="100%" alt="EZTerminal Project Workspace with a file tree, inline diff, and live PowerShell terminal" />
 
-## Agent collaboration
+## Local Agent control
 
-A live Codex or Claude session can join its Project with an alias, role, and
-task. EZTerminal previews the generated brief before you send it, then exposes
-the Project's joined sessions through a capability available only inside that
-terminal:
+Each EZTerminal shell receives a short-lived, session-scoped loopback capability for local control.
+The integrated CLI shows only the shell's Project and sends every mutation through the same durable
+v12 command router as Desktop, Android, and managed Agent tools:
+
+```powershell
+ezterminal status
+ezterminal sessions
+ezterminal agents
+ezterminal schedules
+'Continue with the approved task.' | ezterminal send Builder --stdin
+ezterminal cancel Builder
+ezterminal schedule run Morning
+ezterminal heartbeat trigger Builder
+```
+
+`ezterminal snapshot` returns the Project-scoped recovery snapshot. Session ids are always accepted;
+a title or schedule name is accepted only when it is unique in the Project. Run `ezterminal --help`
+for the complete local command list.
+
+The previous collaboration commands remain available through `ezterminal-agent` as a compatibility
+alias during the migration:
 
 ```powershell
 ezterminal-agent list

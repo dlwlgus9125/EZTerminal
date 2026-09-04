@@ -3452,6 +3452,7 @@ app.on('ready', async () => {
       merges: managedMergeService,
       maps: projectMapService,
       orchestration: agentOrchestrationService,
+      daemon: daemonCommandRouter,
     });
     await agentControlServer.start();
     await refreshAgentLauncherCapabilities();

@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use uuid::Uuid;
 
 const DESCRIPTOR_ENV: &str = "EZTERMINAL_AGENT_CONTROL_DESCRIPTOR";
 const MAX_STDIN_BYTES: usize = 32 * 1024;
@@ -24,8 +25,15 @@ struct RequestSpec {
 }
 
 pub fn run(args: &[String]) -> Result<()> {
+    if matches!(
+        args.first().map(String::as_str),
+        Some("help" | "--help" | "-h")
+    ) {
+        println!("{}", usage());
+        return Ok(());
+    }
     let descriptor_text = env::var(DESCRIPTOR_ENV)
-        .context("this shell has no EZTerminal Agent collaboration capability")?;
+        .context("this shell has no EZTerminal local control capability")?;
     let descriptor: Descriptor = serde_json::from_str(&descriptor_text)
         .context("the EZTerminal Agent capability descriptor is invalid")?;
     if descriptor.version != 1 || descriptor.token.len() < 32 {
@@ -46,6 +54,30 @@ pub fn run(args: &[String]) -> Result<()> {
 
 fn parse_args(args: &[String]) -> Result<RequestSpec> {
     match args.first().map(String::as_str) {
+        Some("status") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/daemon/status",
+            body: json!({}),
+        }),
+        Some("snapshot") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/daemon/snapshot",
+            body: json!({}),
+        }),
+        Some("sessions") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/daemon/sessions",
+            body: json!({}),
+        }),
+        Some("agents") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/daemon/agents",
+            body: json!({}),
+        }),
+        Some("schedules") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/daemon/schedules",
+            body: json!({}),
+        }),
+        Some("send") => parse_daemon_send(&args[1..]),
+        Some("cancel") => parse_daemon_cancel(&args[1..]),
+        Some("schedule") => parse_daemon_schedule(&args[1..]),
+        Some("heartbeat") => parse_daemon_heartbeat(&args[1..]),
         Some("list") if args.len() == 1 => Ok(RequestSpec {
             path: "/v1/list",
             body: json!({}),
@@ -59,6 +91,54 @@ fn parse_args(args: &[String]) -> Result<RequestSpec> {
         Some("worker") => parse_worker(&args[1..]),
         _ => bail!(usage()),
     }
+}
+
+fn request_id() -> String {
+    Uuid::new_v4().to_string()
+}
+
+fn parse_daemon_send(args: &[String]) -> Result<RequestSpec> {
+    let target = args
+        .first()
+        .filter(|value| !value.starts_with('-'))
+        .context(usage())?;
+    if args.len() != 2 || args[1] != "--stdin" {
+        bail!("send prompt text is accepted only with --stdin");
+    }
+    Ok(RequestSpec {
+        path: "/v1/daemon/agents/send",
+        body: json!({ "target": target, "prompt": read_stdin_text()?, "requestId": request_id() }),
+    })
+}
+
+fn parse_daemon_cancel(args: &[String]) -> Result<RequestSpec> {
+    if args.len() != 1 || args[0].starts_with('-') {
+        bail!(usage());
+    }
+    Ok(RequestSpec {
+        path: "/v1/daemon/agents/cancel",
+        body: json!({ "target": args[0], "requestId": request_id() }),
+    })
+}
+
+fn parse_daemon_schedule(args: &[String]) -> Result<RequestSpec> {
+    if args.len() != 2 || args[0] != "run" || args[1].starts_with('-') {
+        bail!(usage());
+    }
+    Ok(RequestSpec {
+        path: "/v1/daemon/schedules/run",
+        body: json!({ "target": args[1], "requestId": request_id() }),
+    })
+}
+
+fn parse_daemon_heartbeat(args: &[String]) -> Result<RequestSpec> {
+    if args.len() != 2 || args[0] != "trigger" || args[1].starts_with('-') {
+        bail!(usage());
+    }
+    Ok(RequestSpec {
+        path: "/v1/daemon/heartbeats/trigger",
+        body: json!({ "target": args[1], "requestId": request_id() }),
+    })
 }
 
 fn read_stdin_bytes() -> Result<Vec<u8>> {
@@ -514,7 +594,26 @@ async fn post_json(descriptor: &Descriptor, request: RequestSpec) -> Result<(u16
 }
 
 fn usage() -> &'static str {
-    "usage: ezterminal-agent list | read <id|alias> [--lines N] | prompt <id|alias> --stdin [--when-ready] [--wait] | wait <id|alias> --until <state> [--after stateSeq] | workers profiles|list|create --stdin|read <task>|prompt <task> --stdin|cancel <task>|archive <task>|merge <task> --target <branch>|complete <run> | worker report <task> --outcome <succeeded|failed> --stdin [--source-head <oid>] [--verifies-task <task> --verifies-head <oid>] | map guide <architecture|workflow|sequence|dataflow|lifecycle> | map check [map-id] [--quality draft|production] | map job <job-id> <phase> | merge request --target <local-branch> [--wait] | merge wait <request-id>"
+    "EZTerminal local control\n\
+usage:\n\
+  ezterminal status|snapshot|sessions|agents|schedules\n\
+  ezterminal send <session-id|unique-title> --stdin\n\
+  ezterminal cancel <session-id|unique-title>\n\
+  ezterminal schedule run <schedule-id|unique-name>\n\
+  ezterminal heartbeat trigger <session-id|unique-title>\n\
+\n\
+Compatibility commands:\n\
+  ezterminal-agent list\n\
+  ezterminal-agent read <id|alias> [--lines N]\n\
+  ezterminal-agent prompt <id|alias> --stdin [--when-ready] [--wait]\n\
+  ezterminal-agent wait <id|alias> --until <state> [--after stateSeq]\n\
+  ezterminal-agent workers profiles|list|create --stdin|read <task>|prompt <task> --stdin|cancel <task>|archive <task>|merge <task> --target <branch>|complete <run>\n\
+  ezterminal-agent worker report <task> --outcome <succeeded|failed> --stdin [--source-head <oid>] [--verifies-task <task> --verifies-head <oid>]\n\
+  ezterminal-agent map guide <architecture|workflow|sequence|dataflow|lifecycle>\n\
+  ezterminal-agent map check [map-id] [--quality draft|production]\n\
+  ezterminal-agent map job <job-id> <phase>\n\
+  ezterminal-agent merge request --target <local-branch> [--wait]\n\
+  ezterminal-agent merge wait <request-id>"
 }
 
 #[cfg(test)]
@@ -534,6 +633,50 @@ mod tests {
         let check = parse_args(&args(&["map", "check", "runtime-architecture"])).expect("check");
         assert_eq!(check.path, "/v1/map/check");
         assert_eq!(check.body["mapId"], "runtime-architecture");
+    }
+
+    #[test]
+    fn parses_daemon_reads_and_safe_mutations() {
+        assert_eq!(
+            parse_args(&args(&["status"])).expect("status").path,
+            "/v1/daemon/status"
+        );
+        assert_eq!(
+            parse_args(&args(&["snapshot"])).expect("snapshot").path,
+            "/v1/daemon/snapshot"
+        );
+        assert_eq!(
+            parse_args(&args(&["sessions"])).expect("sessions").path,
+            "/v1/daemon/sessions"
+        );
+        assert_eq!(
+            parse_args(&args(&["agents"])).expect("agents").path,
+            "/v1/daemon/agents"
+        );
+        assert_eq!(
+            parse_args(&args(&["schedules"])).expect("schedules").path,
+            "/v1/daemon/schedules"
+        );
+
+        let cancel = parse_args(&args(&["cancel", "agent-1"])).expect("cancel");
+        assert_eq!(cancel.path, "/v1/daemon/agents/cancel");
+        assert_eq!(cancel.body["target"], "agent-1");
+        assert!(
+            cancel.body["requestId"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+
+        let schedule = parse_args(&args(&["schedule", "run", "morning"])).expect("schedule");
+        assert_eq!(schedule.path, "/v1/daemon/schedules/run");
+        assert_eq!(schedule.body["target"], "morning");
+
+        let heartbeat = parse_args(&args(&["heartbeat", "trigger", "agent-1"])).expect("heartbeat");
+        assert_eq!(heartbeat.path, "/v1/daemon/heartbeats/trigger");
+        assert_eq!(heartbeat.body["target"], "agent-1");
+
+        assert!(parse_args(&args(&["cancel", "agent-1", "extra"])).is_err());
+        assert!(parse_args(&args(&["schedule", "delete", "morning"])).is_err());
     }
 
     #[test]
