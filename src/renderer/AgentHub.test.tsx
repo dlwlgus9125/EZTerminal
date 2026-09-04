@@ -457,8 +457,8 @@ describe('AgentHub Lead-only orchestration projection', () => {
   });
 });
 
-describe('AgentHub collaboration policy concurrency', () => {
-  it('offers in-place integration recovery when installed providers are not worker-ready', async () => {
+describe('AgentHub retired project collaboration settings', () => {
+  it('does not expose project-level integration recovery controls', async () => {
     const project = {
       projectId: 'project-recovery',
       name: 'Recovery Project',
@@ -546,40 +546,14 @@ describe('AgentHub collaboration policy concurrency', () => {
     };
 
     await renderHub({ revision: 1, items: [] }, overrides);
-    act(() => container.querySelector<HTMLButtonElement>('.agent-project-coordination-start')!.click());
-    await flush();
-
-    const activateCodex = document.body.querySelector<HTMLButtonElement>(
-      '[data-testid="agent-collaboration-enable-integration-codex"]',
-    );
-    expect(activateCodex).not.toBeNull();
-    expect(document.body.querySelector(
-      '[data-testid="agent-collaboration-enable-integration-claude"]',
-    )).not.toBeNull();
-
-    act(() => activateCodex!.click());
-    await flush();
-    expect(setAgentIntegrationEnabled).toHaveBeenCalledWith('codex', true);
-
-    await renderHub({ revision: 1, items: [] }, {
-      ...overrides,
-      orchestrationSnapshot: {
-        ...orchestrationSnapshot,
-        revision: 2,
-        profiles: profiles.map((profile) => profile.providerId === 'codex'
-          ? { ...profile, available: true }
-          : profile),
-      },
-    });
-    expect(document.body.querySelector(
-      '[data-testid="agent-collaboration-enable-integration-codex"]',
-    )).toBeNull();
-    expect(document.body.querySelector<HTMLInputElement>(
-      '[data-testid="agent-collaboration-profile-builtin:codex:read"]',
-    )?.disabled).toBe(false);
+    expect(container.querySelector('.agent-project-coordination-start')).toBeNull();
+    expect(container.textContent).not.toContain('Configure collaboration');
+    expect(document.body.querySelector('[data-testid="agent-coordination-project-dialog"]')).toBeNull();
+    expect(listAgentIntegrations).not.toHaveBeenCalled();
+    expect(setAgentIntegrationEnabled).not.toHaveBeenCalled();
   });
 
-  it('saves against the revisions captured when the dialog opened', async () => {
+  it('keeps a coordination rollup read-only without opening the retired settings dialog', async () => {
     const project = {
       projectId: 'project-1',
       name: 'Project',
@@ -660,31 +634,34 @@ describe('AgentHub collaboration policy concurrency', () => {
     const overrides = { coordinationSnapshot, orchestrationSnapshot, onSaveCoordinationProject, onSaveCollaborationPolicy };
 
     await renderHub({ revision: 1, items: [] }, overrides);
-    act(() => container.querySelector<HTMLButtonElement>('.agent-project-coordination button')!.click());
-    expect(document.body.querySelector('[data-testid="agent-coordination-project-dialog"]')).not.toBeNull();
-
-    await renderHub({ revision: 1, items: [] }, {
-      ...overrides,
-      coordinationSnapshot: {
-        ...coordinationSnapshot,
-        revision: 5,
-        projects: [{ ...coordinationSnapshot.projects[0]!, configRevision: 5 }],
-      },
-      orchestrationSnapshot: {
-        ...orchestrationSnapshot,
-        revision: 8,
-        policies: [{ ...policy, revision: 8 }],
-      },
-    });
-    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="agent-coordination-project-save"]')!.click());
-    await flush();
-
-    expect(onSaveCoordinationProject).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 4 }));
-    expect(onSaveCollaborationPolicy).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 7 }));
+    expect(container.querySelector('.agent-project-coordination')?.textContent)
+      .toContain('Keep collaboration safe');
+    expect(container.querySelector('.agent-project-coordination button')).toBeNull();
+    expect(document.body.querySelector('[data-testid="agent-coordination-project-dialog"]')).toBeNull();
+    expect(onSaveCoordinationProject).not.toHaveBeenCalled();
+    expect(onSaveCollaborationPolicy).not.toHaveBeenCalled();
   });
 });
 
 describe('AgentHub real actions and honest diff', () => {
+  it('opens the structured Agent draft entry without showing the legacy launch modal', async () => {
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: {
+        listAgentProjects: vi.fn(async () => ({ items: [], nextCursor: null })),
+      },
+    });
+    const onOpenStructuredAgentDraft = vi.fn();
+    await renderHub(
+      { revision: 1, items: [] },
+      { onLaunchAgent: vi.fn(), onOpenStructuredAgentDraft },
+    );
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="agent-new-run"]')!.click());
+    expect(onOpenStructuredAgentDraft).toHaveBeenCalledWith();
+    expect(document.body.querySelector('[data-testid="agent-launch-picker"]')).toBeNull();
+  });
+
   it('opens the unified picker with blank agent and location from the global action', async () => {
     Object.defineProperty(window, 'ezterminal', {
       configurable: true,

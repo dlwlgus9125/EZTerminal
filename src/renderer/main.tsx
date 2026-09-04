@@ -8,6 +8,7 @@ import { useAppTranslation } from './i18n';
 import { DesktopUiPreferencesProvider } from './ui-preferences';
 import { ToastProvider } from './ui';
 import './index.css';
+import './structured-agent.css';
 import './ui/styles.css';
 import './workbench/workbench.css';
 

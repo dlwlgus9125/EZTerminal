@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useEffect, useState } from 'react';
-import { expect, userEvent, waitFor, within } from 'storybook/test';
+import { expect, waitFor, within } from 'storybook/test';
 
 import type { AgentOrchestrationSnapshot, CollaborationPolicy } from '../shared/agent-orchestration';
 import {
@@ -121,14 +121,12 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const IntegrationRequired: Story = {
+export const ProjectSettingsRetired: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(await canvas.findByRole('button', { name: 'Configure collaboration' }));
-    const page = within(canvasElement.ownerDocument.body);
     await waitFor(async () => {
-      await expect(await page.findByTestId('agent-collaboration-enable-integration-codex')).toBeVisible();
-      await expect(await page.findByTestId('agent-collaboration-enable-integration-claude')).toBeVisible();
+      await expect(await canvas.findByText(project.name)).toBeVisible();
     });
+    await expect(canvas.queryByRole('button', { name: 'Configure collaboration' })).not.toBeInTheDocument();
   },
 };

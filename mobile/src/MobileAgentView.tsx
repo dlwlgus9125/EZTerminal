@@ -36,8 +36,15 @@ import { useGitBranches } from '../../src/renderer/use-git-branch';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { AgentFollowupComposer } from '../../src/renderer/AgentFollowupComposer';
 import { AgentRelativeAge } from '../../src/renderer/AgentTime';
+import {
+  createDaemonCommand,
+  type DaemonCommand,
+  type DaemonTranscriptItem,
+  type PermissionPreset,
+} from '../../src/shared/daemon-protocol';
 import { MobileActionSheet } from './MobileActionSheet';
 import { MobileDaemonNavigator } from './MobileDaemonNavigator';
+import { MobileStructuredAgentSession } from './MobileStructuredAgentSession';
 import { useMobileToast } from './MobileToast';
 import type {
   DaemonRuntimeViewState,
@@ -66,6 +73,15 @@ const PROVIDER_LABEL: Record<AgentProvider, string> = {
   claude: 'Claude',
   generic: 'CLI',
 };
+
+let mobileAgentCommandSequence = 0;
+
+function mobileAgentCommandId(): string {
+  const random = globalThis.crypto?.randomUUID?.();
+  if (random) return `mobile-${random}`;
+  mobileAgentCommandSequence += 1;
+  return `mobile-${Date.now().toString(36)}-${mobileAgentCommandSequence.toString(36)}`;
+}
 
 const STATUS_LABEL_KEY = {
   starting: 'agentHub.status.starting',
@@ -138,6 +154,7 @@ export function MobileAgentView({
   onReadGitStatus,
   transport,
   daemonRuntimeState = INITIAL_DAEMON_RUNTIME_STATE,
+  structuredTranscripts = {},
 }: {
   readonly snapshot: AgentActivitySnapshot;
   readonly coordinationSnapshot?: AgentCoordinationSnapshot;
@@ -158,6 +175,8 @@ export function MobileAgentView({
   readonly onLaunchAgent?: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
   readonly transport?: WsEzTerminalTransport;
   readonly daemonRuntimeState?: DaemonRuntimeViewState;
+  /** Transcript pages are supplied by the transport adapter once fetched. */
+  readonly structuredTranscripts?: Readonly<Record<string, readonly DaemonTranscriptItem[]>>;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const showToast = useMobileToast();
@@ -169,7 +188,9 @@ export function MobileAgentView({
   const [overrideRequest, setOverrideRequest] = useState<ManagedMergeRequest | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
   const [diff, setDiff] = useState<MobileDiffView | null>(null);
+  const [selectedDaemonSessionId, setSelectedDaemonSessionId] = useState<string | null>(null);
   const diffRequestGeneration = useRef(0);
+  const daemonRevisionRef = useRef(daemonRuntimeState.snapshot?.revision ?? 0);
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const workerActivityIds = useMemo(
     () => orchestrationWorkerActivityIds(orchestrationSnapshot),
@@ -188,6 +209,23 @@ export function MobileAgentView({
     () => new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' }),
     [locale],
   );
+
+  useEffect(() => {
+    if (daemonRuntimeState.snapshot) {
+      daemonRevisionRef.current = Math.max(
+        daemonRevisionRef.current,
+        daemonRuntimeState.snapshot.revision,
+      );
+    }
+  }, [daemonRuntimeState.snapshot]);
+
+  useEffect(() => {
+    if (selectedDaemonSessionId && daemonRuntimeState.snapshot && !daemonRuntimeState.snapshot.sessions.some((session) => (
+      session.id === selectedDaemonSessionId && session.archivedAt === undefined
+    ))) {
+      setSelectedDaemonSessionId(null);
+    }
+  }, [daemonRuntimeState.snapshot, selectedDaemonSessionId]);
 
   const managedMerges = useMemo(() => coordinationSnapshot.mergeRequests.filter((request) => (
     ['preparing', 'validating', 'approval-required', 'override-required', 'merging'].includes(request.state)
@@ -326,6 +364,113 @@ export function MobileAgentView({
     { id: 'done', label: t('mobile.agentView.filterDone'), count: counts.done },
   ];
 
+  const selectSession = (sessionId: string): void => {
+    const daemonSession = daemonRuntimeState.snapshot?.sessions.find((session) => session.id === sessionId);
+    if (daemonSession?.kind === 'agent' && daemonSession.source === 'structured') {
+      setSelectedDaemonSessionId(sessionId);
+    }
+    onFocusSession(sessionId);
+  };
+
+  const dispatchDaemonCommand = async (command: DaemonCommand) => {
+    if (!transport || disconnected) return { ok: false as const, message: 'Not connected to EZTerminal.' };
+    const receipt = await transport.sendDaemonCommand(command).catch(() => null);
+    if (!receipt) return { ok: false as const, message: 'The command could not be delivered.' };
+    if (!receipt.ok) return { ok: false as const, message: receipt.error.message };
+    daemonRevisionRef.current = Math.max(daemonRevisionRef.current, receipt.revision);
+    return { ok: true as const };
+  };
+
+  const selectedDaemonSession = daemonRuntimeState.snapshot?.sessions.find((session) => (
+    session.id === selectedDaemonSessionId && session.kind === 'agent' && session.source === 'structured'
+  ));
+  const selectedDaemonAgent = daemonRuntimeState.snapshot?.agents.find((agent) => (
+    agent.sessionId === selectedDaemonSessionId
+  ));
+  const selectedDaemonWorkspace = daemonRuntimeState.snapshot?.workspaces.find((workspace) => (
+    workspace.id === selectedDaemonSession?.workspaceId
+  ));
+  const selectedDaemonProvider = daemonRuntimeState.snapshot?.providers.find((provider) => (
+    provider.id === selectedDaemonAgent?.providerId
+  ));
+
+  if (selectedDaemonSession && selectedDaemonAgent && selectedDaemonWorkspace) {
+    const buildCommandBase = () => {
+      const commandId = mobileAgentCommandId();
+      return {
+        commandId,
+        idempotencyKey: commandId,
+        expectedRevision: daemonRevisionRef.current,
+        issuedAt: new Date().toISOString(),
+        principal: { kind: 'android' as const, id: 'mobile-agent-ui' },
+      };
+    };
+    const availableModels = selectedDaemonProvider?.capabilities.flatMap((capability) => {
+      const match = /^(?:model:|model=)(.+)$/u.exec(capability);
+      return match?.[1] ? [{ id: match[1], label: match[1] }] : [];
+    }) ?? [];
+    if (selectedDaemonAgent.model && !availableModels.some((model) => model.id === selectedDaemonAgent.model)) {
+      availableModels.unshift({ id: selectedDaemonAgent.model, label: selectedDaemonAgent.model });
+    }
+    return (
+      <MobileStructuredAgentSession
+        sessionId={selectedDaemonSession.id}
+        title={selectedDaemonSession.title}
+        providerId={selectedDaemonAgent.providerId}
+        providerLabel={selectedDaemonProvider?.displayName ?? selectedDaemonAgent.providerId}
+        workspace={{
+          id: selectedDaemonWorkspace.id,
+          label: selectedDaemonWorkspace.name,
+          kind: selectedDaemonWorkspace.kind,
+          path: selectedDaemonWorkspace.rootPath,
+        }}
+        model={selectedDaemonAgent.model}
+        modelOptions={availableModels}
+        permissionPreset={selectedDaemonAgent.permissionPreset}
+        state={selectedDaemonAgent.state}
+        queuedCount={selectedDaemonAgent.queuedTurnCount}
+        items={structuredTranscripts[selectedDaemonSession.id] ?? []}
+        approvals={(daemonRuntimeState.snapshot?.approvals ?? []).filter((approval) => (
+          approval.sessionId === selectedDaemonSession.id
+        ))}
+        transcriptError={daemonRuntimeState.error === 'event-gap'
+          ? 'Some transcript updates were missed. Reloading the authoritative state…'
+          : null}
+        disabled={disconnected || !transport}
+        onBack={() => setSelectedDaemonSessionId(null)}
+        onRetryTranscript={() => { void transport?.getDaemonSnapshot(); }}
+        onSend={(prompt) => dispatchDaemonCommand(createDaemonCommand({
+          ...buildCommandBase(),
+          type: 'agent.submit',
+          payload: { sessionId: selectedDaemonSession.id, prompt },
+        }))}
+        onInterruptAndSend={(prompt) => dispatchDaemonCommand(createDaemonCommand({
+          ...buildCommandBase(),
+          type: 'agent.interrupt-and-submit',
+          payload: { sessionId: selectedDaemonSession.id, prompt },
+        }))}
+        onChangeSettings={(settings: {
+          readonly model?: string;
+          readonly permissionPreset: PermissionPreset;
+        }) => dispatchDaemonCommand(createDaemonCommand({
+          ...buildCommandBase(),
+          type: 'agent.set-settings',
+          payload: {
+            sessionId: selectedDaemonSession.id,
+            ...(settings.model ? { model: settings.model } : {}),
+            permissionPreset: settings.permissionPreset,
+          },
+        }))}
+        onResolveApproval={(approvalId, decision) => dispatchDaemonCommand(createDaemonCommand({
+          ...buildCommandBase(),
+          type: 'permission.resolve',
+          payload: { approvalId, decision },
+        }))}
+        onOpenRelatedSession={selectSession}
+      />
+    );
+  }
+
   return (
     <main className="mob-page" data-testid="mobile-agent-view" aria-label={t('agentHub.activity')}>
       <header className="mob-page__head">
@@ -449,7 +594,7 @@ export function MobileAgentView({
                   onRetry={() => {
                     void transport!.getDaemonSnapshot();
                   }}
-                  onSelectSession={onFocusSession}
+                  onSelectSession={selectSession}
                 />
               );
             }
@@ -481,7 +626,7 @@ export function MobileAgentView({
                       <button
                         type="button"
                         className="mob-btn-ghost"
-                        onClick={() => onFocusSession(item.sessionId)}
+                        onClick={() => selectSession(item.sessionId)}
                         data-testid="agent-focus"
                       >
                         {t('agentHub.focus')}
@@ -591,7 +736,7 @@ export function MobileAgentView({
                     <button
                       type="button"
                       className="mob-btn-warning"
-                      onClick={() => onFocusSession(item.sessionId)}
+                      onClick={() => selectSession(item.sessionId)}
                       data-testid="agent-focus"
                     >
                       {t('agentHub.review')} →

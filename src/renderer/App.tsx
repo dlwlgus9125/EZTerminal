@@ -82,6 +82,11 @@ import {
 } from './AuxiliaryCloseDialog';
 import { peekAgentTerminalBootstrap } from './agent-terminal-bootstrap';
 import { AgentSessionPanel } from './AgentSessionPanel';
+import {
+  isStructuredAgentDockHistoryId,
+  STRUCTURED_AGENT_DRAFT_PREFIX,
+  StructuredAgentDockPanel,
+} from './StructuredAgentDockPanel';
 import { EFFECT_CATALOG, type EffectId } from './effects';
 import {
   DEFAULT_INTERFERENCE_PARAMS,
@@ -474,7 +479,7 @@ function TerminalPanel(props: IDockviewPanelProps): JSX.Element {
   );
 }
 
-function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
+function LegacyAgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
   const historyId = typeof props.params?.historyId === 'string'
     ? props.params.historyId
     : '';
@@ -531,6 +536,13 @@ function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
       )}
     />
   );
+}
+
+function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
+  const historyId = typeof props.params?.historyId === 'string' ? props.params.historyId : '';
+  return isStructuredAgentDockHistoryId(historyId)
+    ? <StructuredAgentDockPanel {...props} />
+    : <LegacyAgentSessionDockPanel {...props} />;
 }
 
 function ProjectMapDockPanel(props: IDockviewPanelProps): JSX.Element {
@@ -1788,6 +1800,33 @@ export function App(): JSX.Element {
       ?.activePanelIdForDocument(ownerDocument);
     if (panelId) workbenchCoordinator.activatePanel(panelId);
   }, [workbenchCoordinator]);
+
+  const structuredAgentDraftSequence = useRef(0);
+
+  const openStructuredAgentDraft = useCallback((
+    project?: AgentProjectSummary,
+    target?: ProjectSessionTarget,
+  ): void => {
+    if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
+    structuredAgentDraftSequence.current += 1;
+    const draftId = `${STRUCTURED_AGENT_DRAFT_PREFIX}${Date.now().toString(36)}-${structuredAgentDraftSequence.current.toString(36)}`;
+    const korean = (i18n.resolvedLanguage ?? i18n.language).toLowerCase().startsWith('ko');
+    dockWindowCoordinatorRef.current?.addPanel({
+      id: `agent-session-${draftId}`,
+      component: 'agent-session',
+      title: project
+        ? `${project.name} · ${korean ? '새 Agent' : 'New Agent'}`
+        : korean ? '새 Agent' : 'New Agent',
+      renderer: 'always',
+      params: {
+        historyId: draftId,
+        ...(project ? { projectId: project.projectId } : {}),
+        ...(target?.rootId && target.workspaceId
+          ? { rootId: target.rootId, workspaceId: target.workspaceId }
+          : {}),
+      },
+    }, { kind: 'main-tab' });
+  }, [i18n, sessionMirroringCoordinator]);
 
   const openAgentHistorySession = useCallback(async (
     session: AgentHistorySessionSummary,
@@ -3677,6 +3716,7 @@ export function App(): JSX.Element {
             setProjectWorkspaceStates((current) => ({ ...current, [activeProjectId]: state }));
           },
           onLaunchAgent: launchAgent,
+          onOpenStructuredAgentDraft: openStructuredAgentDraft,
           onOpenProjectTerminal: openProjectTerminal,
           onOpenAgentSettings: () => {
             setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));

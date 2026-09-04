@@ -12,7 +12,6 @@ import {
   Search,
   Settings,
   Trash2,
-  Users,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -179,6 +178,12 @@ export interface AgentHubProps {
     bootstrap: AgentLaunchBootstrap,
     projectSession?: ProjectSessionPanelMetadata,
   ) => void;
+  /** Opens a normal structured Agent draft tab. No daemon session exists yet. */
+  readonly onOpenStructuredAgentDraft?: (
+    project?: AgentProjectSummary,
+    target?: ProjectSessionTarget,
+    locationLabel?: string,
+  ) => void;
   readonly onOpenProjectTerminal?: (projectSession: ProjectSessionPanelMetadata) => void;
   readonly onOpenAgentSettings?: () => void;
   readonly onSaveCoordinationProject?: (
@@ -228,6 +233,7 @@ export function AgentHub({
   onProjectWorkspaceStateChange,
   onProjectDrillChange,
   onLaunchAgent,
+  onOpenStructuredAgentDraft,
   onOpenProjectTerminal,
   onOpenAgentSettings,
   onSaveCoordinationProject,
@@ -304,7 +310,7 @@ export function AgentHub({
   const [collaborationMaxMinutes, setCollaborationMaxMinutes] = useState(DEFAULT_COLLABORATION_LIMITS.maxDurationMs / 60_000);
   const [collaborationMaxFiles, setCollaborationMaxFiles] = useState(DEFAULT_COLLABORATION_MERGE_POLICY.maxChangedFiles);
   const [collaborationMaxLines, setCollaborationMaxLines] = useState(DEFAULT_COLLABORATION_MERGE_POLICY.maxChangedLines);
-  const [collaborationPolicyRevision, setCollaborationPolicyRevision] = useState(0);
+  const [collaborationPolicyRevision] = useState(0);
   const [mergeBusy, setMergeBusy] = useState(false);
   const [mergeError, setMergeError] = useState<string | null>(null);
   const [overrideRequest, setOverrideRequest] = useState<ManagedMergeRequest | null>(null);
@@ -915,34 +921,6 @@ export function AgentHub({
           : t('agentHub.errorDeliveryFailed');
   }, [onSendFollowup, sendingId, t]);
 
-  const openCoordinationProject = useCallback((project: AgentProjectSummary): void => {
-    const current = coordinationProjects.get(project.projectId);
-    const policy = orchestrationSnapshot.policies.find((candidate) => candidate.projectId === project.projectId);
-    const availableProfiles = orchestrationSnapshot.profiles.filter((profile) => profile.available
-      && profile.capabilities.includes('worker')).map((profile) => profile.profileId);
-    setCoordinationProject(project);
-    setCoordinationGoal(current?.goal ?? '');
-    setCoordinationTarget(current?.defaultTargetBranch ?? 'main');
-    setCoordinationValidations(current?.validationCommands ?? []);
-    setCoordinationConfigRevision(current?.configRevision ?? 0);
-    setCollaborationEnabled(policy?.enabled ?? false);
-    setCollaborationPermission(policy?.permissionMode ?? 'ask');
-    setCollaborationProfiles(policy?.allowedWorkerProfileIds ?? availableProfiles);
-    setCollaborationAllowPaths(policy?.mergePolicy.allowPaths.join('\n') ?? '');
-    setCollaborationDenyPaths(policy?.mergePolicy.denyPaths.join('\n')
-      ?? DEFAULT_COLLABORATION_MERGE_POLICY.denyPaths.join('\n'));
-    setCollaborationMaxConcurrent(policy?.limits.maxConcurrent ?? DEFAULT_COLLABORATION_LIMITS.maxConcurrent);
-    setCollaborationMaxCreated(policy?.limits.maxCreated ?? DEFAULT_COLLABORATION_LIMITS.maxCreated);
-    setCollaborationMaxMinutes((policy?.limits.maxDurationMs ?? DEFAULT_COLLABORATION_LIMITS.maxDurationMs) / 60_000);
-    setCollaborationMaxFiles(policy?.mergePolicy.maxChangedFiles ?? DEFAULT_COLLABORATION_MERGE_POLICY.maxChangedFiles);
-    setCollaborationMaxLines(policy?.mergePolicy.maxChangedLines ?? DEFAULT_COLLABORATION_MERGE_POLICY.maxChangedLines);
-    setCollaborationPolicyRevision(policy?.revision ?? 0);
-    setCoordinationError(null);
-    setCoordinationIntegrationBusy(null);
-    setCoordinationIntegrationMessage(null);
-    setCoordinationIntegrationError(null);
-  }, [coordinationProjects, orchestrationSnapshot.policies, orchestrationSnapshot.profiles]);
-
   const enableCoordinationIntegration = useCallback(async (
     provider: AgentIntegrationProvider,
     displayName: string,
@@ -1386,14 +1364,13 @@ export function AgentHub({
             onBack={() => selectDrillProject(null)}
             onOpenDocument={onOpenProjectDocument}
             onOpenProjectMap={onOpenProjectMap}
-            onConfigureCollaboration={onSaveCoordinationProject
-              ? () => openCoordinationProject(drillProject)
-              : undefined}
-            onNewSession={(target, locationLabel) => openLaunchPicker(
-              drillProject,
-              target,
-              locationLabel,
-            )}
+            onNewSession={(target, locationLabel) => {
+              if (onOpenStructuredAgentDraft) {
+                onOpenStructuredAgentDraft(drillProject, target, locationLabel);
+              } else {
+                openLaunchPicker(drillProject, target, locationLabel);
+              }
+            }}
             onManage={() => openProjectEditor(drillProject)}
             explorerState={projectWorkspaceState}
             onExplorerStateChange={onProjectWorkspaceStateChange}
@@ -1599,12 +1576,15 @@ export function AgentHub({
                           </span>
                         )}
                       </button>
-                      {(onLaunchAgent || onOpenProjectTerminal) && (
+                      {(onOpenStructuredAgentDraft || onLaunchAgent || onOpenProjectTerminal) && (
                         <Button
                           variant="secondary"
                           size="sm"
                           leadingIcon={<MessageSquarePlus aria-hidden="true" />}
-                          onClick={() => openLaunchPicker(project)}
+                          onClick={() => {
+                            if (onOpenStructuredAgentDraft) onOpenStructuredAgentDraft(project);
+                            else openLaunchPicker(project);
+                          }}
                           data-testid={`agent-project-new-chat-${project.projectId}`}
                         >
                           {t('agentHub.projects.newSession')}
@@ -1661,26 +1641,7 @@ export function AgentHub({
                             branch: coordination.defaultTargetBranch,
                           })}
                         </span>
-                        {onSaveCoordinationProject && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openCoordinationProject(project)}
-                          >
-                            {t('agentHub.collaboration.configure')}
-                          </Button>
-                        )}
                       </div>
-                    ) : onSaveCoordinationProject ? (
-                      <Button
-                        className="agent-project-coordination-start"
-                        variant="ghost"
-                        size="sm"
-                        leadingIcon={<Users aria-hidden="true" />}
-                        onClick={() => openCoordinationProject(project)}
-                      >
-                        {t('agentHub.collaboration.configure')}
-                      </Button>
                     ) : null}
                   </li>
                 );
@@ -1708,14 +1669,17 @@ export function AgentHub({
           </>
         )}
       </div>
-      {!drillProject && !historyProject && (onLaunchAgent || onOpenAgentSettings) && (
+      {!drillProject && !historyProject && (onOpenStructuredAgentDraft || onLaunchAgent || onOpenAgentSettings) && (
         <footer className="agent-hub-footer">
-          {onLaunchAgent && (
+          {(onOpenStructuredAgentDraft || onLaunchAgent) && (
             <Button
               variant="primary"
               size="sm"
               leadingIcon={<Plus aria-hidden="true" />}
-              onClick={() => openLaunchPicker()}
+              onClick={() => {
+                if (onOpenStructuredAgentDraft) onOpenStructuredAgentDraft();
+                else openLaunchPicker();
+              }}
               data-testid="agent-new-run"
             >
               {t('agentHub.newAgentRun')}

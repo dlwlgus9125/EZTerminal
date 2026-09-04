@@ -11,6 +11,7 @@ import {
   type AgentOrchestrationSnapshot,
 } from '../../src/shared/agent-orchestration';
 import type { GitDiffResult } from '../../src/shared/git-status';
+import type { DaemonSnapshot } from '../../src/shared/daemon-protocol';
 import { MobileAgentView } from './MobileAgentView';
 import { MobileNavigationHistoryProvider } from './MobileNavigationHistory';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
@@ -208,6 +209,94 @@ describe('MobileAgentView', () => {
         : element.getAttribute('data-status')
     ));
     expect(order).toEqual(['blocked', 'done', 'projects', 'working', 'idle']);
+  });
+
+  it('keeps the navigator session id stable and opens a direct structured Agent composer', async () => {
+    const timestamp = '2026-09-04T09:30:00.000Z';
+    const daemonSnapshot: DaemonSnapshot = {
+      protocolVersion: 12,
+      revision: 8,
+      eventSequence: 12,
+      generatedAt: timestamp,
+      runtime: { keepRunning: true, startAtLogin: false, orchestrationToolsEnabled: true, browserEnabled: false },
+      projects: [{
+        id: 'project-1', name: 'EZTerminal', source: 'native', revision: 1,
+        createdAt: timestamp, updatedAt: timestamp,
+      }],
+      workspaces: [{
+        id: 'workspace-1', projectId: 'project-1', name: 'Main checkout', kind: 'local',
+        rootPath: 'C:\\Working\\EZTerminal', revision: 1, createdAt: timestamp, updatedAt: timestamp,
+      }],
+      sessions: [{
+        id: 'structured-session-1', projectId: 'project-1', workspaceId: 'workspace-1',
+        kind: 'agent', title: 'Structured mobile task', state: 'idle', source: 'structured',
+        revision: 1, createdAt: timestamp, updatedAt: timestamp,
+      }],
+      agents: [{
+        sessionId: 'structured-session-1', providerId: 'codex', model: 'gpt-5',
+        permissionPreset: 'standard', state: 'idle', queuedTurnCount: 0,
+        orchestrationEnabled: true, revision: 1, createdAt: timestamp, updatedAt: timestamp,
+      }],
+      agentRelations: [],
+      turns: [],
+      transcriptHeads: [],
+      approvals: [],
+      providers: [{
+        id: 'codex', displayName: 'Codex', protocol: 'codex-app-server', executablePath: 'codex',
+        executableVersion: '1.0.0', argv: [], environmentVariableNames: [], capabilities: ['model:gpt-5'],
+        enabled: true, health: 'ready', revision: 1, createdAt: timestamp, updatedAt: timestamp,
+      }],
+      schedules: [],
+      heartbeats: [],
+    };
+    const sendDaemonCommand = vi.fn(async (command: Parameters<WsEzTerminalTransport['sendDaemonCommand']>[0]) => ({
+      ok: true as const,
+      status: 'queued' as const,
+      commandId: command.commandId,
+      revision: 9,
+      eventSequence: 13,
+    }));
+    const transport = { sendDaemonCommand } as unknown as WsEzTerminalTransport;
+    const onFocusSession = vi.fn();
+    render(
+      <MobileAgentView
+        snapshot={snapshotOf()}
+        daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshot }}
+        transport={transport}
+        {...noop}
+        onFocusSession={onFocusSession}
+      />,
+    );
+
+    const clickText = (text: string): void => {
+      const button = Array.from(container.querySelectorAll('button')).find((candidate) => (
+        candidate.textContent?.includes(text)
+      ));
+      if (!button) throw new Error(`Missing button: ${text}`);
+      act(() => button.click());
+    };
+    clickText('EZTerminal');
+    clickText('Main checkout');
+    clickText('Structured mobile task');
+    expect(onFocusSession).toHaveBeenCalledWith('structured-session-1');
+    expect(testIds('mobile-structured-agent-session')).toHaveLength(1);
+
+    const input = testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    act(() => {
+      setValue.call(input, 'Continue directly');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      testIds('structured-agent-send')[0]!.click();
+      await Promise.resolve();
+    });
+    expect(sendDaemonCommand).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'agent.submit',
+      expectedRevision: 8,
+      principal: { kind: 'android', id: 'mobile-agent-ui' },
+      payload: { sessionId: 'structured-session-1', prompt: 'Continue directly' },
+    }));
   });
 
   it('orders parked approvals first by risk, expiry, then recency', () => {

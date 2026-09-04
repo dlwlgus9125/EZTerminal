@@ -15,6 +15,7 @@ import { setUserFontId } from '../../src/renderer/theme-runtime';
 import { applyUiScale } from '../../src/renderer/ui-scale';
 import '../../src/renderer/mobile-shared.css';
 import '../../src/renderer/ui/styles.css';
+import '../../src/renderer/structured-agent.css';
 import './mobile.css';
 import './workbench.css';
 import './mobile-shell.css';

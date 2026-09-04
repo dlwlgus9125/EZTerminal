@@ -846,6 +846,10 @@ export function MobileWorkspace({
           onFocusSession: (sessionId) => {
             const activity = agentSnapshot.items.find((item) => item.sessionId === sessionId);
             if (activity) void transport.markAgentSeen(activity.id, activity.stateSeq);
+            const structuredSession = daemonRuntimeState.snapshot?.sessions.find((session) => (
+              session.id === sessionId && session.kind === 'agent' && session.source === 'structured'
+            ));
+            if (structuredSession) return;
             void adoptAndOpenTab(sessionId);
           },
         }}
