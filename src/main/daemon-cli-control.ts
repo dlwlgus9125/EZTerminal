@@ -1,3 +1,6 @@
+import { realpath, stat } from 'node:fs/promises';
+import path from 'node:path';
+
 import {
   createDaemonCommand,
   type DaemonCommand,
@@ -7,6 +10,8 @@ import {
   type DaemonSnapshot,
   type DaemonTranscriptItem,
   type PermissionPreset,
+  type SessionKind,
+  type WorkspaceKind,
 } from '../shared/daemon-protocol';
 
 const DAEMON_CLI_PREFIX = '/v1/daemon/';
@@ -14,6 +19,15 @@ const MAX_REVISION_RETRIES = 3;
 const MAX_TRANSCRIPT_PAGE_SIZE = 500;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const PERMISSION_PRESETS = new Set<PermissionPreset>(['plan', 'standard', 'full-access']);
+const WORKSPACE_KINDS = new Set<WorkspaceKind>(['local', 'worktree']);
+const CLI_SESSION_KINDS = new Set<Exclude<SessionKind, 'agent'>>(['terminal', 'diff']);
+const MAX_IDENTIFIER_LENGTH = 256;
+
+async function resolveDirectory(value: string): Promise<string> {
+  const resolved = await realpath(value);
+  if (!(await stat(resolved)).isDirectory()) throw new Error('Path is not a directory.');
+  return resolved;
+}
 
 export interface DaemonCliAuthority {
   getSnapshot(): DaemonSnapshot;
@@ -63,6 +77,10 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function isIdentifier(value: unknown): value is string {
+  return isNonEmptyString(value) && value.trim().length <= MAX_IDENTIFIER_LENGTH;
+}
+
 function optionalNonEmptyString(value: unknown): value is string | undefined {
   return value === undefined || isNonEmptyString(value);
 }
@@ -94,6 +112,24 @@ function commandStatus(receipt: DaemonCommandReceipt): number {
   }
 }
 
+function pathDialect(value: string): typeof path.win32 | typeof path.posix | null {
+  if (path.win32.isAbsolute(value)) return path.win32;
+  if (path.posix.isAbsolute(value)) return path.posix;
+  return null;
+}
+
+function containsPhysicalPath(root: string, candidate: string): boolean {
+  const rootDialect = pathDialect(root);
+  const candidateDialect = pathDialect(candidate);
+  if (!rootDialect || rootDialect !== candidateDialect) return false;
+  const relative = rootDialect.relative(rootDialect.resolve(root), rootDialect.resolve(candidate));
+  return relative === '' || (
+    relative !== '..'
+    && !relative.startsWith(`..${rootDialect.sep}`)
+    && !rootDialect.isAbsolute(relative)
+  );
+}
+
 /**
  * Project-scoped local CLI adapter over the same daemon command authority used
  * by Desktop, Android, and MCP. The loopback server authenticates the caller;
@@ -104,6 +140,7 @@ export class DaemonCliControl {
   constructor(
     private readonly authority: DaemonCliAuthority,
     private readonly now: () => Date = () => new Date(),
+    private readonly resolvePhysicalDirectory: (value: string) => Promise<string> = resolveDirectory,
   ) {}
 
   async handle(
@@ -124,6 +161,20 @@ export class DaemonCliControl {
           projectId: scope.value.projectId,
           sourceSessionId: source.sessionId,
           snapshot: this.scopedSnapshot(scope.value),
+        });
+      case '/v1/daemon/projects':
+        return response(200, {
+          ok: true,
+          protocolVersion: scope.value.snapshot.protocolVersion,
+          revision: scope.value.snapshot.revision,
+          items: scope.value.snapshot.projects.filter((project) => project.id === scope.value.projectId),
+        });
+      case '/v1/daemon/workspaces':
+        return response(200, {
+          ok: true,
+          protocolVersion: scope.value.snapshot.protocolVersion,
+          revision: scope.value.snapshot.revision,
+          items: scope.value.snapshot.workspaces.filter((workspace) => scope.value.workspaceIds.has(workspace.id)),
         });
       case '/v1/daemon/sessions':
         return response(200, {
@@ -146,6 +197,8 @@ export class DaemonCliControl {
         });
       case '/v1/daemon/agents/read':
         return this.readAgent(scope.value, body);
+      case '/v1/daemon/providers':
+        return this.providers(scope.value);
       case '/v1/daemon/schedules':
         return response(200, {
           ok: true,
@@ -172,6 +225,41 @@ export class DaemonCliControl {
         return this.agentSessionCommand(scope.value, body, source.sessionId, 'agent.detach');
       case '/v1/daemon/agents/settings':
         return this.setAgentSettings(scope.value, body, source.sessionId);
+      case '/v1/daemon/projects/create':
+        return this.desktopOnly(
+          'project-scope-expansion-denied',
+          'Creating another Project is outside this Session capability.',
+          'create-project',
+        );
+      case '/v1/daemon/projects/update':
+        return this.updateProject(scope.value, body, source.sessionId);
+      case '/v1/daemon/projects/archive':
+        return this.archiveProject(scope.value, body, source.sessionId);
+      case '/v1/daemon/workspaces/create':
+        return this.createWorkspace(scope.value, body, source.sessionId);
+      case '/v1/daemon/workspaces/update':
+        return this.updateWorkspace(scope.value, body, source.sessionId);
+      case '/v1/daemon/workspaces/archive':
+        return this.archiveWorkspace(scope.value, body, source.sessionId);
+      case '/v1/daemon/sessions/create':
+        return this.createSession(scope.value, body, source.sessionId);
+      case '/v1/daemon/sessions/update':
+        return this.updateSession(scope.value, body, source.sessionId);
+      case '/v1/daemon/sessions/archive':
+        return this.archiveSession(scope.value, body, source.sessionId);
+      case '/v1/daemon/agents/create':
+        return this.createAgent(scope.value, body, source.sessionId);
+      case '/v1/daemon/agents/resume':
+        return this.resumeAgent(scope.value, body, source.sessionId);
+      case '/v1/daemon/providers/enable':
+      case '/v1/daemon/providers/update':
+        return this.desktopOnly(
+          'desktop-principal-required',
+          'Provider review and enablement require the authenticated Desktop settings flow.',
+          'review-provider',
+        );
+      case '/v1/daemon/providers/disable':
+        return this.disableProvider(scope.value, body, source.sessionId);
       case '/v1/daemon/schedules/create':
         return this.createSchedule(scope.value, body, source.sessionId);
       case '/v1/daemon/schedules/update':
@@ -272,6 +360,405 @@ export class DaemonCliControl {
       schedules: snapshot.schedules.filter((schedule) => scope.workspaceIds.has(schedule.workspaceId)),
       heartbeats: snapshot.heartbeats.filter((heartbeat) => scope.sessionIds.has(heartbeat.sessionId)),
     };
+  }
+
+  private providers(scope: DaemonProjectScope): DaemonCliResponse {
+    return response(200, {
+      ok: true,
+      protocolVersion: scope.snapshot.protocolVersion,
+      revision: scope.snapshot.revision,
+      items: scope.snapshot.providers.map((provider) => ({
+        id: provider.id,
+        displayName: provider.displayName,
+        protocol: provider.protocol,
+        executableVersion: provider.executableVersion,
+        capabilities: provider.capabilities,
+        enabled: provider.enabled,
+        health: provider.health,
+        ...(provider.healthDetail ? { healthDetail: provider.healthDetail } : {}),
+        reviewCurrent: isNonEmptyString(provider.reviewDigest),
+        updatedAt: provider.updatedAt,
+      })),
+    });
+  }
+
+  private desktopOnly(code: string, message: string, action: string): DaemonCliResponse {
+    return response(403, {
+      ok: false,
+      error: 'unauthorized',
+      code,
+      message,
+      remediation: { surface: 'desktop', action },
+    });
+  }
+
+  private async updateProject(
+    scope: DaemonProjectScope,
+    body: Readonly<Record<string, unknown>>,
+    sourceSessionId: string,
+  ): Promise<DaemonCliResponse> {
+    if (!hasOnlyKeys(body, new Set(['target', 'name', 'rootPath', 'requestId']))) {
+      return errorResponse(400, 'invalid-request', 'The Project update request contains unsupported fields.');
+    }
+    const target = this.resolveProject(scope, body.target);
+    if (!target.ok) return target.response;
+    if (!optionalNonEmptyString(body.name) || !optionalNonEmptyString(body.rootPath)) {
+      return errorResponse(400, 'invalid-request', 'Project name and rootPath must be non-empty strings when provided.');
+    }
+    if (body.name === undefined && body.rootPath === undefined) {
+      return errorResponse(400, 'invalid-request', 'At least one Project update is required.');
+    }
+    if (body.rootPath !== undefined) {
+      return this.desktopOnly(
+        'root-verification-required',
+        'Changing the Project root requires Desktop to revalidate every Workspace root.',
+        'manage-project-roots',
+      );
+    }
+    const requestId = this.requestId(body.requestId);
+    if (!requestId.ok) return requestId.response;
+    return this.execute(sourceSessionId, requestId.value, 'project.update', {
+      projectId: target.value.id,
+      ...(body.name !== undefined ? { name: body.name } : {}),
+    });
+  }
+
+  private async archiveProject(
+    scope: DaemonProjectScope,
+    body: Readonly<Record<string, unknown>>,
+    sourceSessionId: string,
+  ): Promise<DaemonCliResponse> {
+    if (!hasOnlyKeys(body, new Set(['target', 'requestId']))) {
+      return errorResponse(400, 'invalid-request', 'The Project archive request contains unsupported fields.');
+    }
+    const target = this.resolveProject(scope, body.target);
+    if (!target.ok) return target.response;
+    const requestId = this.requestId(body.requestId);
+    if (!requestId.ok) return requestId.response;
+    return this.execute(sourceSessionId, requestId.value, 'project.archive', { projectId: target.value.id });
+  }
+
+  private async createWorkspace(
+    scope: DaemonProjectScope,
+    body: Readonly<Record<string, unknown>>,
+    sourceSessionId: string,
+  ): Promise<DaemonCliResponse> {
+    const allowed = new Set([
+      'workspaceId', 'name', 'kind', 'rootPath', 'sourceWorkspace', 'sourceWorkspaceId', 'requestId',
+    ]);
+    if (!hasOnlyKeys(body, allowed)) {
+      return errorResponse(400, 'invalid-request', 'The Workspace create request contains unsupported fields.');
+    }
+    if (body.sourceWorkspace !== undefined && body.sourceWorkspaceId !== undefined) {
+      return errorResponse(400, 'invalid-request', 'Use either sourceWorkspace or sourceWorkspaceId, not both.');
+    }
+    if (!isIdentifier(body.workspaceId) || !isNonEmptyString(body.name)
+      || !WORKSPACE_KINDS.has(body.kind as WorkspaceKind) || !isNonEmptyString(body.rootPath)) {
+      return errorResponse(400, 'invalid-request', 'Workspace id, name, kind, and rootPath are required.');
+    }
+    if (body.kind === 'worktree') {
+      return this.desktopOnly(
+        'worktree-service-required',
+        'Creating a Git worktree requires the Desktop worktree service.',
+        'manage-worktrees',
+      );
+    }
+    if (scope.snapshot.workspaces.some((workspace) => workspace.id === body.workspaceId)) {
+      return errorResponse(409, 'invalid-state', 'Workspace id is already in use.');
+    }
+    const sourceValue = body.sourceWorkspace ?? body.sourceWorkspaceId;
+    const source = sourceValue === undefined ? undefined : this.resolveWorkspace(scope, sourceValue);
+    if (source && !source.ok) return source.response;
+    const rootPath = await this.projectContainedPath(scope, body.rootPath);
+    if (!rootPath.ok) return rootPath.response;
+    const requestId = this.requestId(body.requestId);
+    if (!requestId.ok) return requestId.response;
+    return this.execute(sourceSessionId, requestId.value, 'workspace.create', {
+      workspaceId: body.workspaceId.trim(),
+      projectId: scope.projectId,
+      name: body.name,
+      kind: body.kind as WorkspaceKind,
+      rootPath: rootPath.value,
+      ...(source?.ok ? { sourceWorkspaceId: source.value.id } : {}),
+    });
+  }
+
+  private async updateWorkspace(
+    scope: DaemonProjectScope,
+    body: Readonly<Record<string, unknown>>,
+    sourceSessionId: string,
+  ): Promise<DaemonCliResponse> {
+    if (!hasOnlyKeys(body, new Set(['target', 'name', 'rootPath', 'requestId']))) {
+      return errorResponse(400, 'invalid-request', 'The Workspace update request contains unsupported fields.');
+    }
+    const target = this.resolveWorkspace(scope, body.target);
+    if (!target.ok) return target.response;
+    if (!optionalNonEmptyString(body.name) || !optionalNonEmptyString(body.rootPath)) {
+      return errorResponse(400, 'invalid-request', 'Workspace name and rootPath must be non-empty strings when provided.');
+    }
+    if (body.name === undefined && body.rootPath === undefined) {
+      return errorResponse(400, 'invalid-request', 'At least one Workspace update is required.');
+    }
+    if (target.value.kind === 'worktree' && body.rootPath !== undefined) {
+      return this.desktopOnly(
+        'worktree-service-required',
+        'Changing a Git worktree root requires the Desktop worktree service.',
+        'manage-worktrees',
+      );
+    }
+    const rootPath = body.rootPath === undefined
+      ? undefined
+      : await this.projectContainedPath(scope, body.rootPath);
+    if (rootPath && !rootPath.ok) return rootPath.response;
+    const requestId = this.requestId(body.requestId);
+    if (!requestId.ok) return requestId.response;
+    return this.execute(sourceSessionId, requestId.value, 'workspace.update', {
+      workspaceId: target.value.id,
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(rootPath?.ok ? { rootPath: rootPath.value } : {}),
+    });
+  }
+
+  private async archiveWorkspace(
+    scope: DaemonProjectScope,
+    body: Readonly<Record<string, unknown>>,
+    sourceSessionId: string,
+  ): Promise<DaemonCliResponse> {
+    if (!hasOnlyKeys(body, new Set(['target', 'requestId']))) {
+      return errorResponse(400, 'invalid-request', 'The Workspace archive request contains unsupported fields.');
+    }
+    const target = this.resolveWorkspace(scope, body.target);
+    if (!target.ok) return target.response;
+    const requestId = this.requestId(body.requestId);
+    if (!requestId.ok) return requestId.response;
+    return this.execute(sourceSessionId, requestId.value, 'workspace.archive', { workspaceId: target.value.id });
+  }
+
+  private async createSession(
+    scope: DaemonProjectScope,
+    body: Readonly<Record<string, unknown>>,
+    sourceSessionId: string,
+  ): Promise<DaemonCliResponse> {
+    const allowed = new Set(['sessionId', 'workspace', 'workspaceId', 'kind', 'title', 'requestId']);
+    if (!hasOnlyKeys(body, allowed)) {
+      return errorResponse(400, 'invalid-request', 'The Session create request contains unsupported fields.');
+    }
+    if (body.workspace !== undefined && body.workspaceId !== undefined) {
+      return errorResponse(400, 'invalid-request', 'Use either workspace or workspaceId, not both.');
+    }
+    const workspace = this.resolveWorkspace(scope, body.workspace ?? body.workspaceId);
+    if (!workspace.ok) return workspace.response;
+    if (!isIdentifier(body.sessionId) || !isNonEmptyString(body.title) || typeof body.kind !== 'string') {
+      return errorResponse(400, 'invalid-request', 'Session id, title, and kind are required.');
+    }
+    if (!CLI_SESSION_KINDS.has(body.kind as Exclude<SessionKind, 'agent'>)) {
+      return errorResponse(
+        409,
+        'unsupported-session-kind',
+        'CLI Session create supports terminal and diff metadata only; use Agent create for executable sessions.',
+      );
+    }
+    if (scope.snapshot.sessions.some((session) => session.id === body.sessionId)) {
+      return errorResponse(409, 'invalid-state', 'Session id is already in use.');
+    }
+    const requestId = this.requestId(body.requestId);
+    if (!requestId.ok) return requestId.response;
+    return this.execute(sourceSessionId, requestId.value, 'session.create', {
+      sessionId: body.sessionId.trim(),
+      workspaceId: workspace.value.id,
+      kind: body.kind as 'terminal' | 'diff',
+      title: body.title,
+    });
+  }
+
+  private async updateSession(
+    scope: DaemonProjectScope,
+    body: Readonly<Record<string, unknown>>,
+    sourceSessionId: string,
+  ): Promise<DaemonCliResponse> {
+    if (!hasOnlyKeys(body, new Set(['target', 'title', 'requestId'])) || !isNonEmptyString(body.title)) {
+      return errorResponse(400, 'invalid-request', 'A Session target and non-empty title are required.');
+    }
+    const target = this.resolveSession(scope, body.target);
+    if (!target.ok) return target.response;
+    const requestId = this.requestId(body.requestId);
+    if (!requestId.ok) return requestId.response;
+    return this.execute(sourceSessionId, requestId.value, 'session.update', {
+      sessionId: target.value.id,
+      title: body.title,
+    });
+  }
+
+  private async archiveSession(
+    scope: DaemonProjectScope,
+    body: Readonly<Record<string, unknown>>,
+    sourceSessionId: string,
+  ): Promise<DaemonCliResponse> {
+    if (!hasOnlyKeys(body, new Set(['target', 'requestId']))) {
+      return errorResponse(400, 'invalid-request', 'The Session archive request contains unsupported fields.');
+    }
+    const target = this.resolveSession(scope, body.target);
+    if (!target.ok) return target.response;
+    const requestId = this.requestId(body.requestId);
+    if (!requestId.ok) return requestId.response;
+    return this.execute(sourceSessionId, requestId.value, 'session.archive', { sessionId: target.value.id });
+  }
+
+  private async createAgent(
+    scope: DaemonProjectScope,
+    body: Readonly<Record<string, unknown>>,
+    sourceSessionId: string,
+  ): Promise<DaemonCliResponse> {
+    const allowed = new Set([
+      'sessionId', 'workspace', 'workspaceId', 'title', 'providerId', 'model', 'permissionPreset',
+      'prompt', 'initialPrompt', 'parent', 'parentSessionId', 'requestId',
+    ]);
+    if (!hasOnlyKeys(body, allowed)) {
+      return errorResponse(400, 'invalid-request', 'The Agent create request contains unsupported fields.');
+    }
+    if ((body.workspace !== undefined && body.workspaceId !== undefined)
+      || (body.prompt !== undefined && body.initialPrompt !== undefined)
+      || (body.parent !== undefined && body.parentSessionId !== undefined)) {
+      return errorResponse(400, 'invalid-request', 'The Agent create request contains conflicting aliases.');
+    }
+    const workspace = this.resolveWorkspace(scope, body.workspace ?? body.workspaceId);
+    if (!workspace.ok) return workspace.response;
+    const parentValue = body.parent ?? body.parentSessionId;
+    const parent = parentValue === undefined ? undefined : this.resolveAgent(scope, parentValue);
+    if (parent && !parent.ok) return parent.response;
+    const prompt = body.prompt ?? body.initialPrompt;
+    if (!isIdentifier(body.sessionId) || !isNonEmptyString(body.title) || !isIdentifier(body.providerId)
+      || !isNonEmptyString(prompt) || !optionalNonEmptyString(body.model)
+      || !PERMISSION_PRESETS.has(body.permissionPreset as PermissionPreset)) {
+      return errorResponse(400, 'invalid-request', 'The Agent create configuration is invalid.');
+    }
+    if (scope.snapshot.sessions.some((session) => session.id === body.sessionId)) {
+      return errorResponse(409, 'invalid-state', 'Session id is already in use.');
+    }
+    const provider = this.resolveReadyProvider(scope, body.providerId);
+    if (!provider.ok) return provider.response;
+    const requestId = this.requestId(body.requestId);
+    if (!requestId.ok) return requestId.response;
+    return this.execute(sourceSessionId, requestId.value, 'agent.create', {
+      sessionId: body.sessionId.trim(),
+      workspaceId: workspace.value.id,
+      title: body.title,
+      providerId: provider.value.id,
+      ...(body.model !== undefined ? { model: body.model } : {}),
+      permissionPreset: body.permissionPreset as PermissionPreset,
+      initialPrompt: prompt,
+      ...(parent?.ok ? { parentSessionId: parent.value.session.id } : {}),
+    });
+  }
+
+  private async resumeAgent(
+    scope: DaemonProjectScope,
+    body: Readonly<Record<string, unknown>>,
+    sourceSessionId: string,
+  ): Promise<DaemonCliResponse> {
+    const allowed = new Set([
+      'target', 'sessionId', 'workspace', 'workspaceId', 'title', 'model', 'permissionPreset',
+      'parent', 'parentSessionId', 'requestId',
+    ]);
+    if (!hasOnlyKeys(body, allowed)) {
+      return errorResponse(400, 'invalid-request', 'The Agent resume request contains unsupported fields.');
+    }
+    if ((body.workspace !== undefined && body.workspaceId !== undefined)
+      || (body.parent !== undefined && body.parentSessionId !== undefined)) {
+      return errorResponse(400, 'invalid-request', 'The Agent resume request contains conflicting aliases.');
+    }
+    const source = this.resolveAgent(scope, body.target);
+    if (!source.ok) return source.response;
+    if (!source.value.agent.providerSessionId) {
+      return errorResponse(409, 'invalid-state', 'The source Agent has no resumable provider Session.');
+    }
+    if (!['completed', 'interrupted', 'failed', 'archived'].includes(source.value.session.state)) {
+      return errorResponse(409, 'invalid-state', 'Only a stopped source Agent Session can be resumed.');
+    }
+    const workspace = this.resolveWorkspace(
+      scope,
+      body.workspace ?? body.workspaceId ?? source.value.session.workspaceId,
+    );
+    if (!workspace.ok) return workspace.response;
+    const parentValue = body.parent ?? body.parentSessionId;
+    const parent = parentValue === undefined ? undefined : this.resolveAgent(scope, parentValue);
+    if (parent && !parent.ok) return parent.response;
+    if (!isIdentifier(body.sessionId) || !optionalNonEmptyString(body.title)
+      || !optionalNonEmptyString(body.model)
+      || (body.permissionPreset !== undefined
+        && !PERMISSION_PRESETS.has(body.permissionPreset as PermissionPreset))) {
+      return errorResponse(400, 'invalid-request', 'The Agent resume configuration is invalid.');
+    }
+    if (scope.snapshot.sessions.some((session) => session.id === body.sessionId)) {
+      return errorResponse(409, 'invalid-state', 'Session id is already in use.');
+    }
+    const provider = this.resolveReadyProvider(scope, source.value.agent.providerId);
+    if (!provider.ok) return provider.response;
+    const requestId = this.requestId(body.requestId);
+    if (!requestId.ok) return requestId.response;
+    const model = body.model ?? source.value.agent.model;
+    return this.execute(sourceSessionId, requestId.value, 'agent.resume', {
+      sessionId: body.sessionId.trim(),
+      workspaceId: workspace.value.id,
+      providerId: provider.value.id,
+      providerSessionId: source.value.agent.providerSessionId,
+      title: body.title ?? source.value.session.title,
+      ...(model ? { model } : {}),
+      permissionPreset: (body.permissionPreset ?? source.value.agent.permissionPreset) as PermissionPreset,
+      ...(parent?.ok ? { parentSessionId: parent.value.session.id } : {}),
+    });
+  }
+
+  private async disableProvider(
+    scope: DaemonProjectScope,
+    body: Readonly<Record<string, unknown>>,
+    sourceSessionId: string,
+  ): Promise<DaemonCliResponse> {
+    if (!hasOnlyKeys(body, new Set(['target', 'providerId', 'requestId']))
+      || (body.target !== undefined && body.providerId !== undefined)) {
+      return errorResponse(400, 'invalid-request', 'A single Provider id is required.');
+    }
+    const provider = this.resolveProvider(scope, body.target ?? body.providerId);
+    if (!provider.ok) return provider.response;
+    const requestId = this.requestId(body.requestId);
+    if (!requestId.ok) return requestId.response;
+    return this.execute(sourceSessionId, requestId.value, 'provider.disable', { providerId: provider.value.id });
+  }
+
+  private async projectContainedPath(scope: DaemonProjectScope, value: string): Promise<ScopedTarget<string>> {
+    const project = scope.snapshot.projects.find((candidate) => candidate.id === scope.projectId);
+    if (!project?.rootPath || !pathDialect(project.rootPath) || !pathDialect(value)) {
+      return {
+        ok: false,
+        response: this.desktopOnly(
+          'root-verification-required',
+          'Root changes require an existing absolute Project root and Desktop verification.',
+          'manage-project-roots',
+        ),
+      };
+    }
+    try {
+      const [root, candidate] = await Promise.all([
+        this.resolvePhysicalDirectory(project.rootPath),
+        this.resolvePhysicalDirectory(value),
+      ]);
+      if (!containsPhysicalPath(root, candidate)) {
+        return {
+          ok: false,
+          response: errorResponse(403, 'path-outside-project', 'The root must remain inside the current Project.'),
+        };
+      }
+      return { ok: true, value: candidate };
+    } catch {
+      return {
+        ok: false,
+        response: this.desktopOnly(
+          'root-verification-required',
+          'The root could not be physically verified; use Desktop Project settings.',
+          'manage-project-roots',
+        ),
+      };
+    }
   }
 
   private async send(
@@ -568,6 +1055,24 @@ export class DaemonCliControl {
     return { ok: true, value: { session: session.value, agent } };
   }
 
+  private resolveProject(
+    scope: DaemonProjectScope,
+    value: unknown,
+  ): ScopedTarget<DaemonSnapshot['projects'][number]> {
+    if (!isNonEmptyString(value)) {
+      return { ok: false, response: errorResponse(400, 'invalid-request', 'A Project id or unique name is required.') };
+    }
+    const target = value.trim();
+    const projects = scope.snapshot.projects.filter((project) => project.id === scope.projectId);
+    const exact = projects.find((project) => project.id === target);
+    if (exact) return { ok: true, value: exact };
+    const nameMatches = projects.filter((project) => (
+      project.name.toLocaleLowerCase('en-US') === target.toLocaleLowerCase('en-US')
+    ));
+    if (nameMatches.length === 1) return { ok: true, value: nameMatches[0]! };
+    return { ok: false, response: errorResponse(404, 'not-found', 'Project was not found in this capability.') };
+  }
+
   private resolveSession(
     scope: DaemonProjectScope,
     value: unknown,
@@ -622,6 +1127,38 @@ export class DaemonCliControl {
     return nameMatches.length > 1
       ? { ok: false, response: errorResponse(409, 'ambiguous-target', 'More than one Schedule has that name; use its id.') }
       : { ok: false, response: errorResponse(404, 'not-found', 'Schedule was not found in this Project.') };
+  }
+
+  private resolveProvider(
+    scope: DaemonProjectScope,
+    value: unknown,
+  ): ScopedTarget<DaemonSnapshot['providers'][number]> {
+    if (!isIdentifier(value)) {
+      return { ok: false, response: errorResponse(400, 'invalid-request', 'A stable Provider id is required.') };
+    }
+    const provider = scope.snapshot.providers.find((candidate) => candidate.id === value.trim());
+    return provider
+      ? { ok: true, value: provider }
+      : { ok: false, response: errorResponse(404, 'not-found', 'Provider was not found.') };
+  }
+
+  private resolveReadyProvider(
+    scope: DaemonProjectScope,
+    value: unknown,
+  ): ScopedTarget<DaemonSnapshot['providers'][number]> {
+    const provider = this.resolveProvider(scope, value);
+    if (!provider.ok) return provider;
+    if (!provider.value.enabled || provider.value.health !== 'ready' || !isNonEmptyString(provider.value.reviewDigest)) {
+      return {
+        ok: false,
+        response: errorResponse(
+          409,
+          'provider-unavailable',
+          'Provider is not enabled with a current reviewed launch descriptor.',
+        ),
+      };
+    }
+    return provider;
   }
 
   private requestId(value: unknown): ScopedTarget<string> {

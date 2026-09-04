@@ -177,6 +177,74 @@ describe('AgentOrchestrationMcpServer', () => {
     });
   });
 
+  it('archives only through the session-scoped managed-descendant command surface', async () => {
+    const current = snapshot();
+    const revisioned = current.sessions[0]!;
+    const childSession: DaemonSnapshot['sessions'][number] = {
+      revision: revisioned.revision,
+      createdAt: revisioned.createdAt,
+      updatedAt: revisioned.updatedAt,
+      id: 'child-1', projectId: 'project-1', workspaceId: 'workspace-1', kind: 'agent',
+      title: 'Child', state: 'completed', source: 'structured',
+    };
+    const childAgent: DaemonSnapshot['agents'][number] = {
+      revision: revisioned.revision,
+      createdAt: revisioned.createdAt,
+      updatedAt: revisioned.updatedAt,
+      sessionId: 'child-1', providerId: 'codex', permissionPreset: 'standard', state: 'done',
+      queuedTurnCount: 0, orchestrationEnabled: true,
+    };
+    const relation: DaemonSnapshot['agentRelations'][number] = {
+      revision: revisioned.revision,
+      createdAt: revisioned.createdAt,
+      updatedAt: revisioned.updatedAt,
+      id: 'relation-1', treeId: 'lead-1', parentSessionId: 'lead-1', childSessionId: 'child-1',
+      owner: 'managed', depth: 1,
+    };
+    const scoped = {
+      ...current,
+      sessions: [...current.sessions, childSession],
+      agents: [...current.agents, childAgent],
+      agentRelations: [relation],
+    };
+    const commands: DaemonCommand[] = [];
+    const authority = {
+      getSnapshot: () => scoped,
+      execute: vi.fn(async (command: DaemonCommand) => {
+        commands.push(command);
+        return applied(command);
+      }),
+    };
+    const server = new AgentOrchestrationMcpServer({ authority, createId: () => 'archive-command' });
+    servers.push(server);
+    await server.start();
+    const descriptor = server.descriptorForSession('lead-1');
+
+    const listed = await post(descriptor.endpoint, descriptor.bearerToken, rpc(4, 'tools/list'));
+    const definitions = (listed.value?.result as { tools: Array<{ name: string }> }).tools;
+    const toolNames = definitions.map((tool) => tool.name);
+    expect(toolNames).toContain('archive_agent');
+    expect(toolNames.some((name) => /project|provider|schedule/u.test(name))).toBe(false);
+
+    const archived = await post(descriptor.endpoint, descriptor.bearerToken, rpc(5, 'tools/call', {
+      name: 'archive_agent', arguments: { sessionId: 'child-1' },
+    }));
+    expect(archived.status).toBe(200);
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({
+      principal: { kind: 'mcp', id: 'session-lead-1', sessionId: 'lead-1' },
+      type: 'agent.archive',
+      payload: { sessionId: 'child-1' },
+    });
+
+    const unrelated = await post(descriptor.endpoint, descriptor.bearerToken, rpc(6, 'tools/call', {
+      name: 'archive_agent', arguments: { sessionId: 'unrelated-1' },
+    }));
+    const result = unrelated.value?.result as { isError?: boolean };
+    expect(result.isError).toBe(true);
+    expect(commands).toHaveLength(1);
+  });
+
   it('rotates bearer capabilities and revokes them when orchestration is disabled', async () => {
     const current = snapshot();
     const tokens = ['a'.repeat(40), 'b'.repeat(40)];
@@ -207,7 +275,14 @@ describe('AgentOrchestrationMcpServer', () => {
   });
 
   it('retries only optimistic revision conflicts with a fresh command identity', async () => {
-    const current = snapshot();
+    const base = snapshot();
+    const current: DaemonSnapshot = {
+      ...base,
+      agentRelations: [{
+        id: 'retry-relation', treeId: 'lead-1', parentSessionId: 'lead-1', childSessionId: 'child-1',
+        owner: 'managed', depth: 1, revision: 1, createdAt: NOW, updatedAt: NOW,
+      }],
+    };
     let calls = 0;
     const authority = {
       getSnapshot: () => current,

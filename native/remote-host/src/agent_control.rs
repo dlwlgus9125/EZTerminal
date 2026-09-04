@@ -64,6 +64,14 @@ fn parse_args(args: &[String]) -> Result<RequestSpec> {
             path: "/v1/daemon/snapshot",
             body: json!({}),
         }),
+        Some("projects") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/daemon/projects",
+            body: json!({}),
+        }),
+        Some("workspaces") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/daemon/workspaces",
+            body: json!({}),
+        }),
         Some("sessions") if args.len() == 1 => Ok(RequestSpec {
             path: "/v1/daemon/sessions",
             body: json!({}),
@@ -76,9 +84,17 @@ fn parse_args(args: &[String]) -> Result<RequestSpec> {
             path: "/v1/daemon/schedules",
             body: json!({}),
         }),
+        Some("providers") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/daemon/providers",
+            body: json!({}),
+        }),
         Some("send") => parse_daemon_send(&args[1..]),
         Some("cancel") => parse_daemon_cancel(&args[1..]),
+        Some("project") => parse_daemon_project(&args[1..]),
+        Some("workspace") => parse_daemon_workspace(&args[1..]),
+        Some("session") => parse_daemon_session(&args[1..]),
         Some("agent") => parse_daemon_agent(&args[1..]),
+        Some("provider") => parse_daemon_provider(&args[1..]),
         Some("schedule") => parse_daemon_schedule(&args[1..]),
         Some("heartbeat") => parse_daemon_heartbeat(&args[1..]),
         Some("list") if args.len() == 1 => Ok(RequestSpec {
@@ -151,8 +167,166 @@ fn build_targeted_json_request(
     })
 }
 
+fn build_daemon_create_request(
+    path: &'static str,
+    id_field: &str,
+    id_prefix: &str,
+    value: Value,
+) -> Result<RequestSpec> {
+    let mut body = value
+        .as_object()
+        .cloned()
+        .context("stdin must contain one JSON create object")?;
+    reject_reserved_fields(&body, &["target", "requestId"])?;
+    if !body.contains_key(id_field) {
+        body.insert(
+            id_field.to_owned(),
+            Value::String(format!("{id_prefix}-{}", Uuid::new_v4())),
+        );
+    }
+    body.insert("requestId".to_owned(), Value::String(request_id()));
+    Ok(RequestSpec {
+        path,
+        body: Value::Object(body),
+    })
+}
+
+fn build_daemon_agent_resume(target: &str, value: Value) -> Result<RequestSpec> {
+    let mut body = value
+        .as_object()
+        .cloned()
+        .context("stdin must contain one JSON Agent resume object")?;
+    reject_reserved_fields(
+        &body,
+        &["target", "requestId", "providerId", "providerSessionId"],
+    )?;
+    if !body.contains_key("sessionId") {
+        body.insert(
+            "sessionId".to_owned(),
+            Value::String(format!("agent-{}", Uuid::new_v4())),
+        );
+    }
+    build_targeted_json_request("/v1/daemon/agents/resume", target, Value::Object(body))
+}
+
+fn daemon_lifecycle_request(path: &'static str, target: &str) -> Result<RequestSpec> {
+    Ok(RequestSpec {
+        path,
+        body: json!({ "target": daemon_target(target)?, "requestId": request_id() }),
+    })
+}
+
+fn parse_daemon_project(args: &[String]) -> Result<RequestSpec> {
+    match args.first().map(String::as_str) {
+        Some("list") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/daemon/projects",
+            body: json!({}),
+        }),
+        Some("create") if args.len() == 2 && args[1] == "--stdin" => build_daemon_create_request(
+            "/v1/daemon/projects/create",
+            "projectId",
+            "project",
+            Value::Object(read_stdin_json_object("Project create")?),
+        ),
+        Some("update") if args.len() == 3 && args[2] == "--stdin" => build_targeted_json_request(
+            "/v1/daemon/projects/update",
+            daemon_target(&args[1])?,
+            Value::Object(read_stdin_json_object("Project update")?),
+        ),
+        Some("archive") if args.len() == 2 => {
+            daemon_lifecycle_request("/v1/daemon/projects/archive", &args[1])
+        }
+        _ => bail!(usage()),
+    }
+}
+
+fn parse_daemon_workspace(args: &[String]) -> Result<RequestSpec> {
+    match args.first().map(String::as_str) {
+        Some("list") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/daemon/workspaces",
+            body: json!({}),
+        }),
+        Some("create") if args.len() == 2 && args[1] == "--stdin" => build_daemon_create_request(
+            "/v1/daemon/workspaces/create",
+            "workspaceId",
+            "workspace",
+            Value::Object(read_stdin_json_object("Workspace create")?),
+        ),
+        Some("update") if args.len() == 3 && args[2] == "--stdin" => build_targeted_json_request(
+            "/v1/daemon/workspaces/update",
+            daemon_target(&args[1])?,
+            Value::Object(read_stdin_json_object("Workspace update")?),
+        ),
+        Some("archive") if args.len() == 2 => {
+            daemon_lifecycle_request("/v1/daemon/workspaces/archive", &args[1])
+        }
+        _ => bail!(usage()),
+    }
+}
+
+fn parse_daemon_session(args: &[String]) -> Result<RequestSpec> {
+    match args.first().map(String::as_str) {
+        Some("list") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/daemon/sessions",
+            body: json!({}),
+        }),
+        Some("create") if args.len() == 2 && args[1] == "--stdin" => build_daemon_create_request(
+            "/v1/daemon/sessions/create",
+            "sessionId",
+            "session",
+            Value::Object(read_stdin_json_object("Session create")?),
+        ),
+        Some("update") if args.len() == 3 && args[2] == "--stdin" => build_targeted_json_request(
+            "/v1/daemon/sessions/update",
+            daemon_target(&args[1])?,
+            Value::Object(read_stdin_json_object("Session update")?),
+        ),
+        Some("archive") if args.len() == 2 => {
+            daemon_lifecycle_request("/v1/daemon/sessions/archive", &args[1])
+        }
+        _ => bail!(usage()),
+    }
+}
+
+fn parse_daemon_provider(args: &[String]) -> Result<RequestSpec> {
+    match args.first().map(String::as_str) {
+        Some("list") if args.len() == 1 => Ok(RequestSpec {
+            path: "/v1/daemon/providers",
+            body: json!({}),
+        }),
+        Some("enable") if args.len() == 2 && args[1] == "--stdin" => {
+            let mut body = read_stdin_json_object("Provider enable")?;
+            reject_reserved_fields(&body, &["target", "requestId"])?;
+            body.insert("requestId".to_owned(), Value::String(request_id()));
+            Ok(RequestSpec {
+                path: "/v1/daemon/providers/enable",
+                body: Value::Object(body),
+            })
+        }
+        Some("update") if args.len() == 3 && args[2] == "--stdin" => build_targeted_json_request(
+            "/v1/daemon/providers/update",
+            daemon_target(&args[1])?,
+            Value::Object(read_stdin_json_object("Provider update")?),
+        ),
+        Some("disable") if args.len() == 2 => {
+            daemon_lifecycle_request("/v1/daemon/providers/disable", &args[1])
+        }
+        _ => bail!(usage()),
+    }
+}
+
 fn parse_daemon_agent(args: &[String]) -> Result<RequestSpec> {
     match args.first().map(String::as_str) {
+        Some("create") if args.len() == 2 && args[1] == "--stdin" => build_daemon_create_request(
+            "/v1/daemon/agents/create",
+            "sessionId",
+            "agent",
+            Value::Object(read_stdin_json_object("Agent create")?),
+        ),
+        Some("resume") if args.len() == 3 && args[2] == "--stdin" => build_daemon_agent_resume(
+            daemon_target(&args[1])?,
+            Value::Object(read_stdin_json_object("Agent resume")?),
+        ),
         Some("read") => parse_daemon_agent_read(&args[1..]),
         Some("send") => parse_daemon_send(&args[1..]),
         Some("interrupt-and-send") => parse_daemon_prompt_action(
@@ -779,13 +953,19 @@ async fn post_json(descriptor: &Descriptor, request: RequestSpec) -> Result<(u16
 fn usage() -> &'static str {
     "EZTerminal local control\n\
 usage:\n\
-  ezterminal status|snapshot|sessions|agents|schedules\n\
+  ezterminal status|snapshot|projects|workspaces|sessions|agents|providers|schedules\n\
+  ezterminal project list|create --stdin|update <project-id|unique-name> --stdin|archive <project-id|unique-name>\n\
+  ezterminal workspace list|create --stdin|update <workspace-id|unique-name> --stdin|archive <workspace-id|unique-name>\n\
+  ezterminal session list|create --stdin|update <session-id|unique-title> --stdin|archive <session-id|unique-title>\n\
   ezterminal send <session-id|unique-title> --stdin\n\
   ezterminal cancel <session-id|unique-title>\n\
+  ezterminal agent create --stdin\n\
+  ezterminal agent resume <stopped-session-id|unique-title> --stdin\n\
   ezterminal agent read <session-id|unique-title> [--after SEQUENCE] [--limit 1..500]\n\
   ezterminal agent send|interrupt-and-send <session-id|unique-title> --stdin\n\
   ezterminal agent interrupt|cancel|archive|detach <session-id|unique-title>\n\
   ezterminal agent settings <session-id|unique-title> --stdin\n\
+  ezterminal provider list|enable --stdin|update <provider-id> --stdin|disable <provider-id>\n\
   ezterminal schedule create --stdin\n\
   ezterminal schedule update <schedule-id|unique-name> --stdin\n\
   ezterminal schedule delete|run <schedule-id|unique-name>\n\
@@ -793,7 +973,9 @@ usage:\n\
   ezterminal heartbeat trigger <session-id|unique-title>\n\
 \n\
 JSON stdin is limited to 32 KiB. Complex commands reject reserved target/requestId fields.\n\
-Schedule create accepts an optional scheduleId and generates one when omitted.\n\
+Create commands accept optional stable ids and generate one when omitted.\n\
+Project creation and Provider enable/update require Desktop review and return remediation without mutating state.\n\
+Agent resume accepts only a stopped Agent already owned by this Project; raw Provider Session ids are not accepted.\n\
 \n\
 Compatibility commands:\n\
   ezterminal-agent list\n\
@@ -812,7 +994,8 @@ Compatibility commands:\n\
 #[cfg(test)]
 mod tests {
     use super::{
-        build_daemon_schedule_create, build_targeted_json_request, build_worker_report, parse_args,
+        build_daemon_agent_resume, build_daemon_create_request, build_daemon_schedule_create,
+        build_targeted_json_request, build_worker_report, parse_args, usage,
     };
     use serde_json::json;
 
@@ -853,6 +1036,13 @@ mod tests {
             parse_args(&args(&["schedules"])).expect("schedules").path,
             "/v1/daemon/schedules"
         );
+        for (command, path) in [
+            ("projects", "/v1/daemon/projects"),
+            ("workspaces", "/v1/daemon/workspaces"),
+            ("providers", "/v1/daemon/providers"),
+        ] {
+            assert_eq!(parse_args(&args(&[command])).expect("list").path, path);
+        }
 
         let cancel = parse_args(&args(&["cancel", "agent-1"])).expect("cancel");
         assert_eq!(cancel.path, "/v1/daemon/agents/cancel");
@@ -878,6 +1068,49 @@ mod tests {
         assert!(parse_args(&args(&["cancel", "agent-1", "extra"])).is_err());
         assert!(parse_args(&args(&["schedule", "delete", "../"])).is_err());
         assert!(parse_args(&args(&["schedule", "delete", "-foreign"])).is_err());
+    }
+
+    #[test]
+    fn parses_entity_lifecycle_routes_without_cross_scope_targets() {
+        for (entity, action, target, path) in [
+            (
+                "project",
+                "archive",
+                "Project",
+                "/v1/daemon/projects/archive",
+            ),
+            (
+                "workspace",
+                "archive",
+                "Main",
+                "/v1/daemon/workspaces/archive",
+            ),
+            (
+                "session",
+                "archive",
+                "Session",
+                "/v1/daemon/sessions/archive",
+            ),
+            (
+                "provider",
+                "disable",
+                "codex",
+                "/v1/daemon/providers/disable",
+            ),
+        ] {
+            let request =
+                parse_args(&args(&[entity, action, target])).expect("entity lifecycle request");
+            assert_eq!(request.path, path);
+            assert_eq!(request.body["target"], target);
+            assert!(
+                request.body["requestId"]
+                    .as_str()
+                    .is_some_and(|value| !value.is_empty())
+            );
+        }
+        assert!(parse_args(&args(&["project", "archive", "../foreign"])).is_err());
+        assert!(parse_args(&args(&["provider", "disable", "Codex", "extra"])).is_err());
+        assert!(parse_args(&args(&["provider", "enable"])).is_err());
     }
 
     #[test]
@@ -947,6 +1180,73 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn generates_stable_ids_for_structured_creates_and_owned_agent_resume() {
+        for (path, field, prefix) in [
+            ("/v1/daemon/projects/create", "projectId", "project-"),
+            ("/v1/daemon/workspaces/create", "workspaceId", "workspace-"),
+            ("/v1/daemon/sessions/create", "sessionId", "session-"),
+            ("/v1/daemon/agents/create", "sessionId", "agent-"),
+        ] {
+            let request = build_daemon_create_request(
+                path,
+                field,
+                prefix.trim_end_matches('-'),
+                json!({
+                    "name": "bounded"
+                }),
+            )
+            .expect("create request");
+            assert_eq!(request.path, path);
+            assert!(
+                request.body[field]
+                    .as_str()
+                    .is_some_and(|value| value.starts_with(prefix))
+            );
+        }
+
+        let explicit = build_daemon_create_request(
+            "/v1/daemon/sessions/create",
+            "sessionId",
+            "session",
+            json!({ "sessionId": "stable-session", "title": "Stable" }),
+        )
+        .expect("explicit id");
+        assert_eq!(explicit.body["sessionId"], "stable-session");
+
+        let resumed = build_daemon_agent_resume("Dormant", json!({ "title": "Resumed" }))
+            .expect("Agent resume");
+        assert_eq!(resumed.path, "/v1/daemon/agents/resume");
+        assert_eq!(resumed.body["target"], "Dormant");
+        assert!(
+            resumed.body["sessionId"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("agent-"))
+        );
+        assert!(
+            build_daemon_agent_resume("Dormant", json!({ "providerSessionId": "raw-handle" }),)
+                .is_err()
+        );
+        assert!(
+            build_daemon_create_request(
+                "/v1/daemon/workspaces/create",
+                "workspaceId",
+                "workspace",
+                json!({ "requestId": "caller-controlled" }),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn help_truthfully_marks_desktop_only_and_project_owned_operations() {
+        let text = usage();
+        assert!(text.contains("project list|create --stdin|update"));
+        assert!(text.contains("provider list|enable --stdin|update"));
+        assert!(text.contains("require Desktop review"));
+        assert!(text.contains("raw Provider Session ids are not accepted"));
     }
 
     #[test]

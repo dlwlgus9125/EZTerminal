@@ -355,7 +355,7 @@ export class AgentOrchestrationMcpServer {
       }
       case 'send_message': {
         const args = strictObject(value, ['sessionId', 'prompt', 'interrupt']);
-        const targetSessionId = requiredString(args.sessionId, 'sessionId');
+        const targetSessionId = this.managedTarget(snapshot, sessionId, args.sessionId);
         const prompt = requiredString(args.prompt, 'prompt', MAX_PROMPT_LENGTH);
         if (args.interrupt !== undefined && typeof args.interrupt !== 'boolean') {
           throw new McpRequestError(-32602, 'interrupt must be a boolean.');
@@ -367,7 +367,7 @@ export class AgentOrchestrationMcpServer {
       case 'interrupt_agent': {
         const args = strictObject(value, ['sessionId']);
         const receipt = await this.executeCommand(sessionId, 'agent.interrupt', {
-          sessionId: requiredString(args.sessionId, 'sessionId'),
+          sessionId: this.managedTarget(snapshot, sessionId, args.sessionId),
         });
         return toolText({ ok: receipt.ok, receipt }, !receipt.ok);
       }
@@ -377,18 +377,23 @@ export class AgentOrchestrationMcpServer {
         const preset = permissionPreset(args.permissionPreset);
         if (!model && !preset) throw new McpRequestError(-32602, 'model or permissionPreset is required.');
         const receipt = await this.executeCommand(sessionId, 'agent.set-settings', {
-          sessionId: requiredString(args.sessionId, 'sessionId'),
+          sessionId: this.managedTarget(snapshot, sessionId, args.sessionId),
           ...(model ? { model } : {}),
           ...(preset ? { permissionPreset: preset } : {}),
         });
         return toolText({ ok: receipt.ok, receipt }, !receipt.ok);
       }
       case 'cancel_agent':
+      case 'archive_agent':
       case 'detach_agent': {
         const args = strictObject(value, ['sessionId']);
-        const type = name === 'cancel_agent' ? 'agent.cancel' : 'agent.detach';
+        const type = name === 'cancel_agent'
+          ? 'agent.cancel'
+          : name === 'archive_agent'
+            ? 'agent.archive'
+            : 'agent.detach';
         const receipt = await this.executeCommand(sessionId, type, {
-          sessionId: requiredString(args.sessionId, 'sessionId'),
+          sessionId: this.managedTarget(snapshot, sessionId, args.sessionId),
         });
         return toolText({ ok: receipt.ok, receipt }, !receipt.ok);
       }
@@ -461,6 +466,14 @@ export class AgentOrchestrationMcpServer {
       }
     }
     return descendants;
+  }
+
+  private managedTarget(snapshot: DaemonSnapshot, ownerSessionId: string, value: unknown): string {
+    const targetSessionId = requiredString(value, 'sessionId');
+    if (!this.managedDescendants(snapshot, ownerSessionId).has(targetSessionId)) {
+      throw new McpRequestError(-32602, 'sessionId must identify a managed descendant.');
+    }
+    return targetSessionId;
   }
 
   private authorized(sessionId: string, authorization: string | undefined): boolean {
@@ -539,6 +552,11 @@ export class AgentOrchestrationMcpServer {
       {
         name: 'cancel_agent',
         description: 'Stop a managed descendant and its queued work.',
+        inputSchema: objectSchema({ sessionId }, ['sessionId']),
+      },
+      {
+        name: 'archive_agent',
+        description: 'Archive a stopped managed descendant.',
         inputSchema: objectSchema({ sessionId }, ['sessionId']),
       },
       {
