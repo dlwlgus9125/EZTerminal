@@ -112,9 +112,9 @@
         { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" }
       ],
       "review": {
-        "inputDigest": "sha256:f178c9fd7705b31b146d0264ca16bebabb9e4d14b5b284f0c7d2505a760ba5f4",
+        "inputDigest": "sha256:1534803c5b206b6fec47cb4f1234ad2d7ee08cf4a96c6ab69c6661d5498a7bd3",
         "decision": "no-semantic-impact",
-        "reason": "Structured daemon Sessions, reviewed provider onboarding, direct managed-child control, and remote v12 are adjacent to this flow; dedicated owning-workspace map dispatch, scoped guide/check/report, human approval, and verified export remain unchanged."
+        "reason": "Preserving opaque Project identity for File Explorer terminals is adjacent to this flow; dedicated Project Map launch, scoped guide/check/report, human approval, and verified export remain unchanged."
       }
     }
   ]
