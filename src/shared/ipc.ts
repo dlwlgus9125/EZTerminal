@@ -154,6 +154,12 @@ import type {
   DaemonSnapshot,
   DaemonTranscriptItem,
 } from './daemon-protocol';
+import type {
+  ClaudeProviderEnablement,
+  DaemonProviderManagementResult,
+  ProviderInspection,
+  ProviderModel,
+} from './daemon-provider';
 
 export type DaemonLifecycleSettings = Pick<
   DaemonRuntimeSettings,
@@ -1346,6 +1352,20 @@ export interface EzTerminalApi extends SessionSurfaceApi {
   onDaemonEvent: (listener: (event: DaemonEvent) => void) => () => void;
   /** Reference-counted by callers; only subscribed renderers receive live events. */
   setDaemonEventsSubscribed: (subscribed: boolean) => Promise<void>;
+  /** Inspect the current executable identity and policy notices before enablement. */
+  inspectDaemonProvider: (
+    providerId: string,
+  ) => Promise<DaemonProviderManagementResult<ProviderInspection>>;
+  /** List models through the registered provider adapter without exposing credentials. */
+  listDaemonProviderModels: (
+    providerId: string,
+  ) => Promise<DaemonProviderManagementResult<readonly ProviderModel[]>>;
+  /** Read the non-secret, fail-closed Claude consent snapshot. */
+  getClaudeProviderEnablement: () => Promise<DaemonProviderManagementResult<ClaudeProviderEnablement>>;
+  /** Replace the complete Claude consent snapshot after every required gate passes. */
+  setClaudeProviderEnablement: (
+    enablement: ClaudeProviderEnablement,
+  ) => Promise<DaemonProviderManagementResult<ClaudeProviderEnablement>>;
 
   // ── Agent Activity (desktop + connected mobile) ─────────────────────────
   /** Level-triggered seed. Snapshots never contain prompts or transcripts; the

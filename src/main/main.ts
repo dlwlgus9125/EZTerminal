@@ -201,6 +201,9 @@ import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { AgentProviderRegistry } from './agent-provider-registry';
 import { CodexProviderAdapter } from './codex-provider-adapter';
+import { ClaudeProviderAdapter } from './claude-provider-adapter';
+import { UserDataClaudeProviderEnablementStore } from './claude-provider-enablement-store';
+import { installDaemonProviderIpc } from './daemon-provider-ipc';
 import type { DaemonCommandReceipt } from '../shared/daemon-protocol';
 import { ElectronUpdateHttpClient } from './app-update-network';
 import {
@@ -824,6 +827,17 @@ app.on('ready', async () => {
     mainLog?.line(`daemon lifecycle settings failed to initialize: ${String(error)}`);
     return daemonRuntime!.settingsSnapshot();
   });
+  const claudeEnablementStore = new UserDataClaudeProviderEnablementStore(
+    app.getPath('userData'),
+  );
+  const claudeEnablementStoreReady = claudeEnablementStore.init();
+  void claudeEnablementStoreReady.catch((error) => {
+    console.error('[main] Claude provider enablement store failed to initialize:', error);
+    mainLog?.line(`Claude provider enablement store failed to initialize: ${String(error)}`);
+  });
+  const claudeProviderAdapter = new ClaudeProviderAdapter({
+    enablementStore: claudeEnablementStore,
+  });
   const providerRegistry = new AgentProviderRegistry([
     new CodexProviderAdapter({
       clientOptions: {
@@ -834,7 +848,20 @@ app.on('ready', async () => {
         },
       },
     }),
+    claudeProviderAdapter,
   ]);
+  installDaemonProviderIpc({
+    ipc: ipcMain,
+    registry: providerRegistry,
+    claudeAdapter: claudeProviderAdapter,
+    claudeStore: claudeEnablementStore,
+    resolveDesktopPrincipal: resolveDesktopSessionPrincipal,
+    claudeStoreReady: claudeEnablementStoreReady,
+    reportError: (context, error) => {
+      console.error(`[main] ${context}:`, error);
+      mainLog?.line(`${context}: ${String(error)}`);
+    },
+  });
   const daemonRouterRef: { current?: DaemonCommandRouter } = {};
   const daemonAgentRuntime = new DaemonAgentRuntime({
     providers: providerRegistry,

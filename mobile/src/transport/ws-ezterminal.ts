@@ -134,6 +134,12 @@ import {
   type DaemonTranscriptItem,
 } from '../../../src/shared/daemon-protocol';
 import type {
+  ClaudeProviderEnablement,
+  DaemonProviderManagementResult,
+  ProviderInspection,
+  ProviderModel,
+} from '../../../src/shared/daemon-provider';
+import type {
   AgentHistorySessionPage,
   AgentLaunchPreparation,
   AgentLaunchStartRequest,
@@ -1888,6 +1894,44 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       this.send({ kind: 'daemon-events-unsubscribe' });
     }
     return Promise.resolve();
+  }
+
+  inspectDaemonProvider(
+    _providerId: string,
+  ): Promise<DaemonProviderManagementResult<ProviderInspection>> {
+    return Promise.resolve({
+      ok: false,
+      code: 'desktop-principal-required',
+      message: 'Provider management is available only from the desktop app.',
+    });
+  }
+
+  listDaemonProviderModels(
+    _providerId: string,
+  ): Promise<DaemonProviderManagementResult<readonly ProviderModel[]>> {
+    return Promise.resolve({
+      ok: false,
+      code: 'desktop-principal-required',
+      message: 'Provider management is available only from the desktop app.',
+    });
+  }
+
+  getClaudeProviderEnablement(): Promise<DaemonProviderManagementResult<ClaudeProviderEnablement>> {
+    return Promise.resolve({
+      ok: false,
+      code: 'desktop-principal-required',
+      message: 'Provider management is available only from the desktop app.',
+    });
+  }
+
+  setClaudeProviderEnablement(
+    _enablement: ClaudeProviderEnablement,
+  ): Promise<DaemonProviderManagementResult<ClaudeProviderEnablement>> {
+    return Promise.resolve({
+      ok: false,
+      code: 'desktop-principal-required',
+      message: 'Provider management is available only from the desktop app.',
+    });
   }
 
   /** Commands are never replayed by the mobile client. The daemon's command

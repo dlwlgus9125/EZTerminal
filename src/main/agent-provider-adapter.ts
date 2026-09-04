@@ -2,48 +2,14 @@ import type {
   DaemonCommand,
   DaemonTranscriptItem,
   PermissionPreset,
-  ProviderProtocol,
 } from '../shared/daemon-protocol';
+import type { ProviderModel, ProviderProbeResult } from '../shared/daemon-provider';
 
-export interface ProviderModel {
-  readonly id: string;
-  readonly displayName: string;
-  readonly description?: string;
-  readonly supportsReasoning: boolean;
-  readonly isDefault: boolean;
-}
-
-export interface ProviderReviewNotice {
-  readonly id: string;
-  readonly level: 'required' | 'information';
-  readonly title: string;
-  readonly message: string;
-  readonly url?: string;
-}
-
-export interface ProviderProbeResult {
-  readonly providerId: string;
-  readonly displayName: string;
-  readonly protocol: ProviderProtocol;
-  readonly available: boolean;
-  readonly executablePath: string;
-  readonly executableVersion: string;
-  readonly argv: readonly string[];
-  readonly environmentVariableNames: readonly string[];
-  readonly capabilities: readonly (
-    | 'create'
-    | 'resume'
-    | 'interrupt'
-    | 'model-change'
-    | 'permission-change'
-    | 'approvals'
-    | 'native-subagents'
-    | 'history-reconciliation'
-  )[];
-  /** User-visible policy notices included in the provider enable review digest. */
-  readonly reviewNotices?: readonly ProviderReviewNotice[];
-  readonly unavailableReason?: string;
-}
+export type {
+  ProviderModel,
+  ProviderProbeResult,
+  ProviderReviewNotice,
+} from '../shared/daemon-provider';
 
 export interface ProviderSessionContext {
   readonly sessionId: string;

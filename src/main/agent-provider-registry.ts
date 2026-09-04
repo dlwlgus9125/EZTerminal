@@ -5,33 +5,23 @@ import type {
   DaemonSnapshot,
   ProviderEnableInput,
 } from '../shared/daemon-protocol';
+import type {
+  ProviderInspection,
+  ProviderModel,
+  ProviderProbeResult,
+  ProviderRegistryResult,
+} from '../shared/daemon-provider';
 import {
   validateProviderProbe,
   type AgentProviderEvent,
   type AgentProviderAdapter,
-  type ProviderModel,
-  type ProviderProbeResult,
 } from './agent-provider-adapter';
 
-export interface ProviderInspection {
-  readonly probe: ProviderProbeResult;
-  /** Binds the executable, argv, capabilities and every review notice. */
-  readonly reviewDigest: string;
-}
-
-export type ProviderRegistryFailureCode =
-  | 'provider-not-registered'
-  | 'provider-unavailable'
-  | 'provider-incompatible'
-  | 'review-mismatch';
-
-export type ProviderRegistryResult<T> =
-  | { readonly ok: true; readonly value: T }
-  | {
-      readonly ok: false;
-      readonly code: ProviderRegistryFailureCode;
-      readonly message: string;
-    };
+export type {
+  ProviderInspection,
+  ProviderRegistryFailureCode,
+  ProviderRegistryResult,
+} from '../shared/daemon-provider';
 
 function canonicalProbe(probe: ProviderProbeResult): Readonly<Record<string, unknown>> {
   const reviewNotices = 'reviewNotices' in probe && Array.isArray(probe.reviewNotices)

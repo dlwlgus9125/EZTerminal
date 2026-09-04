@@ -223,6 +223,14 @@ const api: EzTerminalApi = {
     }
     return Promise.resolve();
   },
+  inspectDaemonProvider: (providerId) =>
+    ipcRenderer.invoke('daemon:inspect-provider', sessionSurfaceClientId, providerId),
+  listDaemonProviderModels: (providerId) =>
+    ipcRenderer.invoke('daemon:list-provider-models', sessionSurfaceClientId, providerId),
+  getClaudeProviderEnablement: () =>
+    ipcRenderer.invoke('daemon:get-claude-enablement', sessionSurfaceClientId),
+  setClaudeProviderEnablement: (enablement) =>
+    ipcRenderer.invoke('daemon:set-claude-enablement', sessionSurfaceClientId, enablement),
 
   getAgentActivitySnapshot: () => ipcRenderer.invoke('agents:get-snapshot'),
   onAgentActivitySnapshot: (

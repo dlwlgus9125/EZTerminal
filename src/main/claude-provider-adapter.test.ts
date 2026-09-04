@@ -312,6 +312,45 @@ describe('ClaudeProviderAdapter sessions', () => {
     await resumed.adapter.dispose();
   });
 
+  it('passes the ephemeral orchestration endpoint and bearer header as an SDK HTTP MCP server', async () => {
+    const fixture = makeAdapter();
+    const bearerToken = 'session-only-secret';
+
+    await fixture.adapter.createSession({
+      ...context,
+      orchestration: {
+        endpoint: 'http://127.0.0.1:43111/mcp',
+        bearerToken,
+      },
+    });
+
+    expect(fixture.query.inputOptions.mcpServers).toEqual({
+      ezterminal_orchestration: {
+        type: 'http',
+        url: 'http://127.0.0.1:43111/mcp',
+        headers: { Authorization: `Bearer ${bearerToken}` },
+      },
+    });
+    expect(fixture.query.inputOptions).not.toHaveProperty('env');
+    await fixture.adapter.dispose();
+  });
+
+  it('rejects unsafe orchestration endpoints before starting the SDK query', async () => {
+    const fixture = makeAdapter();
+
+    await expect(fixture.adapter.createSession({
+      ...context,
+      orchestration: {
+        endpoint: 'file:///tmp/not-http',
+        bearerToken: 'must-never-appear-in-an-error',
+      },
+    })).rejects.toMatchObject({
+      code: 'CLAUDE_INVALID_REQUEST',
+      message: expect.not.stringContaining('must-never-appear-in-an-error'),
+    });
+    expect(() => fixture.query).toThrow('query not created');
+  });
+
   it('fails closed when API-key mode does not report an environment API key', async () => {
     const fixture = makeAdapter({ apiKeySource: 'none' });
 

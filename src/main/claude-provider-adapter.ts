@@ -16,6 +16,12 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 
 import type { DaemonTranscriptItem, PermissionPreset } from '../shared/daemon-protocol';
+import {
+  DEFAULT_CLAUDE_PROVIDER_ENABLEMENT,
+  getClaudeEnablementGateFailure,
+  type ClaudeAuthenticationPath,
+  type ClaudeProviderEnablement,
+} from '../shared/daemon-provider';
 import type {
   AgentProviderAdapter,
   AgentProviderEvent,
@@ -39,39 +45,13 @@ const MAX_PROVIDER_HISTORY_MESSAGES = 5_000;
 
 type JsonObject = Record<string, unknown>;
 
-export type ClaudeAuthenticationPath =
-  /** API key remains solely in the inherited process environment. */
-  | 'api-key-environment'
-  /** Existing CLI configuration that does not use a claude.ai subscription login. */
-  | 'existing-cli-environment'
-  /** Already-authenticated claude.ai CLI state; only legal after prior Anthropic approval. */
-  | 'existing-claude-ai-login';
-
-/**
- * Non-secret consent state. Authentication material is deliberately absent:
- * the SDK subprocess inherits the user's environment and existing CLI state.
- */
-export interface ClaudeProviderEnablement {
-  readonly enabled: boolean;
-  readonly termsAccepted: boolean;
-  readonly commercialUseApproved: boolean;
-  readonly authenticationPath: ClaudeAuthenticationPath;
-  /** Required only when using an existing claude.ai subscription login. */
-  readonly anthropicThirdPartyApproval: boolean;
-}
+export type { ClaudeAuthenticationPath, ClaudeProviderEnablement } from '../shared/daemon-provider';
+export { DEFAULT_CLAUDE_PROVIDER_ENABLEMENT } from '../shared/daemon-provider';
 
 export interface ClaudeProviderEnablementStore {
   load(): Promise<ClaudeProviderEnablement>;
   save(value: ClaudeProviderEnablement): Promise<void>;
 }
-
-export const DEFAULT_CLAUDE_PROVIDER_ENABLEMENT: ClaudeProviderEnablement = Object.freeze({
-  enabled: false,
-  termsAccepted: false,
-  commercialUseApproved: false,
-  authenticationPath: 'existing-cli-environment',
-  anthropicThirdPartyApproval: false,
-});
 
 export class MemoryClaudeProviderEnablementStore implements ClaudeProviderEnablementStore {
   private value: ClaudeProviderEnablement;
@@ -410,14 +390,8 @@ function normalizeEnablement(value: ClaudeProviderEnablement): ClaudeProviderEna
 }
 
 function validateEnablement(value: ClaudeProviderEnablement): void {
-  if (!value.enabled) return;
-  if (!value.termsAccepted) throw new ClaudeProviderError('CLAUDE_TERMS_REQUIRED');
-  if (!value.commercialUseApproved) {
-    throw new ClaudeProviderError('CLAUDE_COMMERCIAL_APPROVAL_REQUIRED');
-  }
-  if (value.authenticationPath === 'existing-claude-ai-login' && !value.anthropicThirdPartyApproval) {
-    throw new ClaudeProviderError('CLAUDE_THIRD_PARTY_AUTHORIZATION_REQUIRED');
-  }
+  const failure = getClaudeEnablementGateFailure(value);
+  if (failure) throw new ClaudeProviderError(failure.code);
 }
 
 function classifyErrorCode(value: unknown): ClaudeProviderErrorCode {
@@ -520,6 +494,39 @@ function providerModel(model: ModelInfo, isDefault: boolean): ProviderModel {
     description: safeText(model.description, 500) || undefined,
     supportsReasoning: model.supportsEffort !== false,
     isDefault,
+  };
+}
+
+function orchestrationMcpServers(
+  context: ProviderSessionContext,
+): NonNullable<Options['mcpServers']> | undefined {
+  if (!context.orchestration) return undefined;
+  const { endpoint: rawEndpoint, bearerToken } = context.orchestration;
+  if (
+    rawEndpoint.length > 2_048
+    || !/^[\x21-\x7e]{1,4096}$/u.test(bearerToken)
+  ) {
+    throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+  }
+  let endpoint: URL;
+  try {
+    endpoint = new URL(rawEndpoint);
+  } catch {
+    throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+  }
+  if (
+    (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:')
+    || endpoint.username.length > 0
+    || endpoint.password.length > 0
+  ) {
+    throw new ClaudeProviderError('CLAUDE_INVALID_REQUEST');
+  }
+  return {
+    ezterminal_orchestration: {
+      type: 'http',
+      url: endpoint.toString(),
+      headers: { Authorization: `Bearer ${bearerToken}` },
+    },
   };
 }
 
@@ -889,6 +896,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     }
     const readiness = await this.assertReady();
     const executablePath = readiness.executablePath;
+    const mcpServers = orchestrationMcpServers(context);
     this.throwIfAborted(signal);
     const providerSessionId = resumeSessionId ?? this.createId();
     const abortController = new AbortController();
@@ -951,6 +959,7 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
       forwardSubagentText: true,
       agentProgressSummaries: true,
       persistSession: true,
+      ...(mcpServers ? { mcpServers } : {}),
       ...(context.model ? { model: context.model } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : { sessionId: providerSessionId }),
       // `env` is intentionally omitted. The SDK then inherits the process
