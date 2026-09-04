@@ -549,8 +549,9 @@ function LegacyAgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
 
 function AgentSessionDockPanel(props: IDockviewPanelProps): JSX.Element {
   const historyId = typeof props.params?.historyId === 'string' ? props.params.historyId : '';
+  const navigation = useContext(StructuredAgentNavigationContext);
   return isStructuredAgentDockHistoryId(historyId)
-    ? <StructuredAgentDockPanel {...props} />
+    ? <StructuredAgentDockPanel {...props} onOpenSession={navigation?.openSession} />
     : <LegacyAgentSessionDockPanel {...props} />;
 }
 

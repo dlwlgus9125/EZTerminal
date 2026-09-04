@@ -365,6 +365,122 @@
   background: var(--ui-surface-raised);
 }
 
+.structured-agent-heartbeat {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--ui-border-subtle);
+  background: var(--ui-surface-raised);
+}
+
+.structured-agent-heartbeat__summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(8rem, auto) auto;
+  align-items: center;
+  gap: var(--ui-space-3);
+  width: 100%;
+  min-height: 2.75rem;
+  padding: var(--ui-space-2) var(--ui-space-4);
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.structured-agent-heartbeat__summary:hover {
+  background: var(--ui-surface-hover);
+}
+
+.structured-agent-heartbeat__summary:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: -2px;
+}
+
+.structured-agent-heartbeat__summary > svg {
+  width: 1rem;
+  height: 1rem;
+  color: var(--ui-accent);
+}
+
+.structured-agent-heartbeat__summary > svg:last-child {
+  color: var(--ui-text-muted);
+  transition: transform var(--ui-motion-fast) var(--ui-ease-standard);
+}
+
+.structured-agent-heartbeat__summary[aria-expanded='true'] > svg:last-child {
+  transform: rotate(180deg);
+}
+
+.structured-agent-heartbeat__identity,
+.structured-agent-heartbeat__status {
+  display: grid;
+  min-width: 0;
+  gap: 0.125rem;
+}
+
+.structured-agent-heartbeat__identity strong,
+.structured-agent-heartbeat__status strong {
+  font-size: var(--ui-font-size-sm);
+}
+
+.structured-agent-heartbeat__identity small,
+.structured-agent-heartbeat__status small {
+  overflow: hidden;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.structured-agent-heartbeat__status {
+  justify-items: end;
+  max-width: 22rem;
+  text-align: right;
+}
+
+.structured-agent-heartbeat__form {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(10rem, 1fr);
+  gap: var(--ui-space-3);
+  padding: var(--ui-space-3) var(--ui-space-4);
+  border-top: 1px solid var(--ui-border-subtle);
+  background: var(--ui-surface);
+}
+
+.structured-agent-heartbeat__prompt,
+.structured-agent-heartbeat__form > .ez-ui-switch,
+.structured-agent-heartbeat__host-confirm,
+.structured-agent-heartbeat__form > .structured-agent__form-error,
+.structured-agent-heartbeat__actions {
+  grid-column: 1 / -1;
+}
+
+.structured-agent-heartbeat__host-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-4);
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-raised);
+}
+
+.structured-agent-heartbeat__host-confirm p {
+  margin-top: var(--ui-space-1);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-relaxed);
+}
+
+.structured-agent-heartbeat__host-confirm > div:last-child,
+.structured-agent-heartbeat__actions {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: var(--ui-space-2);
+}
+
 .structured-agent-children {
   display: grid;
   min-width: 0;
@@ -785,6 +901,33 @@
 .structured-agent[data-variant='mobile'] .structured-agent-child-track {
   padding-right: var(--ui-space-3);
   padding-left: var(--ui-space-3);
+}
+
+.structured-agent[data-variant='mobile'] .structured-agent-heartbeat__summary {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding-inline: var(--ui-space-3);
+}
+
+.structured-agent[data-variant='mobile'] .structured-agent-heartbeat__status {
+  display: none;
+}
+
+.structured-agent[data-variant='mobile'] .structured-agent-heartbeat__form {
+  grid-template-columns: 1fr;
+  padding-inline: var(--ui-space-3);
+}
+
+.structured-agent[data-variant='mobile'] .structured-agent-heartbeat__host-confirm {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.structured-agent[data-variant='mobile'] .structured-agent-heartbeat__host-confirm > div:last-child {
+  justify-content: stretch;
+}
+
+.structured-agent[data-variant='mobile'] .structured-agent-heartbeat__host-confirm .ez-ui-button {
+  flex: 1 1 0;
 }
 
 .structured-agent[data-variant='mobile'] .structured-agent-children__list > li {

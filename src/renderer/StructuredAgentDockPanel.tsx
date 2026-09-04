@@ -11,8 +11,14 @@ import {
 } from '../shared/daemon-protocol';
 import { rendererCapabilities, type CapabilityAccess } from './capability-access';
 import {
+  StructuredAgentHeartbeat,
+  type StructuredAgentHeartbeatInput,
+} from './StructuredAgentHeartbeat';
+import {
+  StructuredAgentChildTrack,
   StructuredAgentDraftPanel,
   StructuredAgentSessionPanel,
+  type StructuredAgentChildTrackItem,
   type StructuredAgentDraftInput,
   type StructuredAgentProviderOption,
   type StructuredAgentUiResult,
@@ -41,6 +47,14 @@ let fallbackId = 0;
 
 const TRANSCRIPT_PAGE_SIZE = 500;
 const TRANSCRIPT_PAGES_PER_YIELD = 10;
+const HEARTBEAT_SESSION_STATES = new Set([
+  'starting',
+  'queued',
+  'working',
+  'blocked',
+  'idle',
+  'delivery-uncertain',
+]);
 
 function opaqueId(prefix: string): string {
   const random = globalThis.crypto?.randomUUID?.();
@@ -188,7 +202,14 @@ interface CreatedDraftState extends StructuredAgentDraftInput {
  * command receipts into those callbacks.
  */
 export function StructuredAgentDockPanel(
-  props: IDockviewPanelProps & { readonly capabilities?: CapabilityAccess },
+  props: IDockviewPanelProps & {
+    readonly capabilities?: CapabilityAccess;
+    readonly onOpenSession?: (input: {
+      readonly sessionId: string;
+      readonly title?: string;
+      readonly providerLabel?: string;
+    }) => void;
+  },
 ): JSX.Element {
   const capabilities = props.capabilities ?? rendererCapabilities;
   const historyId = typeof props.params?.historyId === 'string' ? props.params.historyId : '';
@@ -635,6 +656,134 @@ export function StructuredAgentDockPanel(
     return receipt ? resultOf(receipt) : { ok: false, message: 'The Agent daemon is unavailable.' };
   };
 
+  const activeRelation = snapshot?.agentRelations.find((relation) => (
+    relation.childSessionId === sessionId && relation.detachedAt === undefined
+  ));
+  const owner = activeRelation?.owner ?? 'managed';
+  const directChildren = (snapshot?.agentRelations ?? [])
+    .filter((relation) => relation.parentSessionId === sessionId && relation.detachedAt === undefined)
+    .flatMap((relation): StructuredAgentChildTrackItem[] => {
+      const childSession = snapshot?.sessions.find((candidate) => candidate.id === relation.childSessionId);
+      const childAgent = snapshot?.agents.find((candidate) => candidate.sessionId === relation.childSessionId);
+      if (!childSession || !childAgent) return [];
+      const childProvider = snapshot?.providers.find((candidate) => candidate.id === childAgent.providerId);
+      return [{
+        sessionId: childSession.id,
+        title: childSession.title,
+        providerLabel: childProvider?.displayName ?? childAgent.providerId,
+        state: childAgent.state,
+        owner: relation.owner,
+      }];
+    });
+
+  const openRelatedSession = (targetSessionId: string): void => {
+    const targetSession = snapshot?.sessions.find((candidate) => candidate.id === targetSessionId);
+    const targetAgent = snapshot?.agents.find((candidate) => candidate.sessionId === targetSessionId);
+    const targetProvider = snapshot?.providers.find((candidate) => candidate.id === targetAgent?.providerId);
+    props.onOpenSession?.({
+      sessionId: targetSessionId,
+      ...(targetSession ? { title: targetSession.title } : {}),
+      ...(targetProvider ? { providerLabel: targetProvider.displayName } : {}),
+    });
+  };
+
+  const runLifecycleCommand = async (
+    type: 'agent.cancel' | 'agent.archive' | 'agent.detach',
+  ): Promise<StructuredAgentUiResult> => {
+    const authority = await latestSnapshot();
+    if (!authority) return { ok: false, message: 'The Agent daemon is unavailable.' };
+    const currentSession = authority.sessions.find((candidate) => candidate.id === sessionId);
+    const currentAgent = authority.agents.find((candidate) => candidate.sessionId === sessionId);
+    const currentRelation = authority.agentRelations.find((relation) => (
+      relation.childSessionId === sessionId && relation.detachedAt === undefined
+    ));
+    if (!currentSession || !currentAgent) {
+      return { ok: false, message: 'This Agent session is no longer available.' };
+    }
+    if (currentRelation?.owner === 'provider-native') {
+      return { ok: false, message: 'This provider-owned subagent is read-only.' };
+    }
+    if (type === 'agent.detach' && !currentRelation) {
+      return { ok: false, message: 'This Agent is already a top-level session.' };
+    }
+    const commandId = opaqueId('command');
+    const receipt = await sendCommand(createDaemonCommand({
+      commandId,
+      idempotencyKey: commandId,
+      expectedRevision: authority.revision,
+      issuedAt: new Date().toISOString(),
+      principal: { kind: 'desktop', id: 'renderer-agent-ui' },
+      type,
+      payload: { sessionId },
+    }));
+    return receipt ? resultOf(receipt) : { ok: false, message: 'The Agent daemon is unavailable.' };
+  };
+
+  const configureHeartbeat = async (
+    input: StructuredAgentHeartbeatInput,
+  ): Promise<StructuredAgentUiResult> => {
+    const authority = await latestSnapshot();
+    if (!authority) return { ok: false, message: 'The Agent daemon is unavailable.' };
+    const currentAgent = authority.agents.find((candidate) => candidate.sessionId === sessionId);
+    const currentSession = authority.sessions.find((candidate) => candidate.id === sessionId);
+    if (!currentAgent || !currentSession) {
+      return { ok: false, message: 'This Agent session is no longer available.' };
+    }
+    const relation = authority.agentRelations.find((candidate) => (
+      candidate.childSessionId === sessionId && candidate.detachedAt === undefined
+    ));
+    if (relation?.owner === 'provider-native') {
+      return { ok: false, message: 'This provider-owned subagent is read-only.' };
+    }
+    const commandId = opaqueId('command');
+    const receipt = await sendCommand(createDaemonCommand({
+      commandId,
+      idempotencyKey: commandId,
+      expectedRevision: authority.revision,
+      issuedAt: new Date().toISOString(),
+      principal: { kind: 'desktop', id: 'renderer-agent-ui' },
+      type: 'heartbeat.configure',
+      payload: { sessionId, ...input },
+    }));
+    return receipt ? resultOf(receipt) : { ok: false, message: 'The Agent daemon is unavailable.' };
+  };
+
+  const runHeartbeatNow = async (): Promise<StructuredAgentUiResult> => {
+    const authority = await latestSnapshot();
+    if (!authority) return { ok: false, message: 'The Agent daemon is unavailable.' };
+    const heartbeat = authority.heartbeats.find((candidate) => candidate.sessionId === sessionId);
+    if (!heartbeat?.enabled) return { ok: false, message: 'This heartbeat is no longer active.' };
+    const commandId = opaqueId('command');
+    const receipt = await sendCommand(createDaemonCommand({
+      commandId,
+      idempotencyKey: commandId,
+      expectedRevision: authority.revision,
+      issuedAt: new Date().toISOString(),
+      principal: { kind: 'desktop', id: 'renderer-agent-ui' },
+      type: 'heartbeat.trigger',
+      payload: { sessionId },
+    }));
+    return receipt ? resultOf(receipt) : { ok: false, message: 'The Agent daemon is unavailable.' };
+  };
+
+  const enableAutomationHost = async (): Promise<StructuredAgentUiResult> => {
+    const lifecycle = await capabilities.daemon
+      .setLifecycleSettings({ keepRunning: true, startAtLogin: true })
+      .catch(() => null);
+    if (!lifecycle?.keepRunning || !lifecycle.startAtLogin) {
+      return { ok: false, message: 'Keep running and Start at login could not be enabled.' };
+    }
+    await refresh();
+    return { ok: true };
+  };
+
+  const heartbeat = snapshot?.heartbeats.find((candidate) => candidate.sessionId === sessionId);
+  const automationReady = snapshot?.runtime.keepRunning === true && snapshot.runtime.startAtLogin === true;
+  const heartbeatAvailable = owner === 'managed'
+    && session !== undefined
+    && agent !== undefined
+    && HEARTBEAT_SESSION_STATES.has(agent.state);
+
   return (
     <StructuredAgentSessionPanel
       sessionId={sessionId}
@@ -658,6 +807,21 @@ export function StructuredAgentDockPanel(
         ? 'This Agent session is no longer available.'
         : null)}
       disabled={!snapshot && !loading}
+      owner={owner}
+      childTrack={directChildren.length > 0 && props.onOpenSession ? (
+        <StructuredAgentChildTrack items={directChildren} onSelectSession={openRelatedSession} />
+      ) : undefined}
+      heartbeatControl={heartbeatAvailable ? (
+        <StructuredAgentHeartbeat
+          sessionId={sessionId}
+          value={heartbeat}
+          automationReady={automationReady}
+          disabled={!snapshot || loading}
+          onSave={configureHeartbeat}
+          onRunNow={runHeartbeatNow}
+          onEnableHost={enableAutomationHost}
+        />
+      ) : undefined}
       onRetryTranscript={() => {
         void refresh();
         if (sessionId) void syncTranscript(sessionId, transcriptTargetRef.current);
@@ -666,6 +830,12 @@ export function StructuredAgentDockPanel(
       onInterruptAndSend={(prompt) => runSessionCommand('agent.interrupt-and-submit', prompt)}
       onChangeSettings={changeSettings}
       onResolveApproval={resolveApproval}
+      onOpenRelatedSession={props.onOpenSession ? openRelatedSession : undefined}
+      onCancel={owner === 'managed' && session && agent ? () => runLifecycleCommand('agent.cancel') : undefined}
+      onArchive={owner === 'managed' && session && agent ? () => runLifecycleCommand('agent.archive') : undefined}
+      onDetach={owner === 'managed' && session && agent && activeRelation
+        ? () => runLifecycleCommand('agent.detach')
+        : undefined}
     />
   );
 }

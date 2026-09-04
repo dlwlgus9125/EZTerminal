@@ -1046,6 +1046,7 @@ export interface StructuredAgentSessionPanelProps {
   /** Provider-native sessions are inspectable, but their provider owns interaction and lifecycle. */
   readonly owner?: 'managed' | 'provider-native';
   readonly childTrack?: ReactNode;
+  readonly heartbeatControl?: ReactNode;
   readonly onRetryTranscript?: () => void;
   readonly onSend: (prompt: string) => Promise<StructuredAgentUiResult>;
   readonly onInterruptAndSend?: (prompt: string) => Promise<StructuredAgentUiResult>;
@@ -1105,6 +1106,7 @@ export function StructuredAgentSessionPanel({
   disabled = false,
   owner = 'managed',
   childTrack,
+  heartbeatControl,
   onRetryTranscript,
   onSend,
   onInterruptAndSend,
@@ -1351,6 +1353,7 @@ export function StructuredAgentSessionPanel({
           {childTrack}
         </section>
       )}
+      {heartbeatControl}
       <StructuredAgentComposer
         busy={busy}
         queuedCount={queuedCount}

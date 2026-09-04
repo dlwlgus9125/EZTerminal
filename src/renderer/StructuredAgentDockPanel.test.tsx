@@ -318,4 +318,98 @@ describe('StructuredAgentDockPanel', () => {
 
     expect(mergeOptimisticTranscript([authoritative], [optimistic], withTurn)).toEqual([authoritative]);
   });
+
+  it('opens direct children and sends guarded lifecycle commands through the v12 authority', async () => {
+    const parentSession = {
+      id: 'agent-parent', projectId: 'project-1', workspaceId: 'project-1.root-1.workspace-1', kind: 'agent' as const,
+      title: 'Parent', state: 'idle' as const, source: 'structured' as const,
+      revision: 1, createdAt: NOW, updatedAt: NOW,
+    };
+    const childSession = {
+      ...parentSession,
+      id: 'agent-child', title: 'Child implementation',
+    };
+    const grandchildSession = {
+      ...parentSession,
+      id: 'agent-native', title: 'Native reviewer', state: 'running' as const,
+    };
+    const baseAgent = {
+      providerId: 'codex', model: 'gpt-5', permissionPreset: 'standard' as const,
+      state: 'idle' as const, queuedTurnCount: 0, orchestrationEnabled: true,
+      revision: 1, createdAt: NOW, updatedAt: NOW,
+    };
+    const childSnapshot: DaemonSnapshot = {
+      ...snapshot,
+      sessions: [parentSession, childSession, grandchildSession],
+      agents: [
+        { ...baseAgent, sessionId: parentSession.id },
+        { ...baseAgent, sessionId: childSession.id },
+        { ...baseAgent, sessionId: grandchildSession.id, state: 'working' },
+      ],
+      agentRelations: [{
+        id: 'relation-child', treeId: parentSession.id, parentSessionId: parentSession.id,
+        childSessionId: childSession.id, owner: 'managed', depth: 1,
+        revision: 1, createdAt: NOW, updatedAt: NOW,
+      }, {
+        id: 'relation-native', treeId: parentSession.id, parentSessionId: childSession.id,
+        childSessionId: grandchildSession.id, owner: 'provider-native', depth: 2,
+        revision: 1, createdAt: NOW, updatedAt: NOW,
+      }],
+    };
+    const commands: DaemonCommand[] = [];
+    const access: CapabilityAccess = {
+      ...rendererCapabilities,
+      daemon: {
+        getSnapshot: async () => childSnapshot,
+        getTranscript: async () => [],
+        sendCommand: async (command) => {
+          commands.push(command);
+          return {
+            ok: true, status: 'applied', commandId: command.commandId,
+            revision: childSnapshot.revision + 1, eventSequence: childSnapshot.eventSequence + 1,
+          };
+        },
+        observeEvents: () => () => undefined,
+        getLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: false }),
+        setLifecycleSettings: async () => ({ keepRunning: true, startAtLogin: true }),
+      },
+      structuredProviders: {
+        ...rendererCapabilities.structuredProviders,
+        listModels: async () => ({ ok: true, value: [] }),
+      },
+    };
+    const onOpenSession = vi.fn();
+    const props = {
+      capabilities: access,
+      onOpenSession,
+      params: { historyId: `${STRUCTURED_AGENT_SESSION_PREFIX}${childSession.id}` },
+      api: { id: 'child-agent', setTitle: vi.fn(), updateParameters: vi.fn() },
+    } as unknown as IDockviewPanelProps & {
+      capabilities: CapabilityAccess;
+      onOpenSession: typeof onOpenSession;
+    };
+
+    act(() => root.render(
+      <AppI18nProvider locale="en" languages={['en']}>
+        <StructuredAgentDockPanel {...props} />
+      </AppI18nProvider>,
+    ));
+    await flush();
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-child"]')!.click());
+    expect(onOpenSession).toHaveBeenCalledWith({
+      sessionId: grandchildSession.id,
+      title: grandchildSession.title,
+      providerLabel: 'Codex',
+    });
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-detach"]')!.click());
+    await flush();
+    expect(commands.at(-1)).toMatchObject({
+      protocolVersion: 12,
+      expectedRevision: childSnapshot.revision,
+      type: 'agent.detach',
+      payload: { sessionId: childSession.id },
+    });
+  });
 });
