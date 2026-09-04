@@ -112,6 +112,41 @@ describe('DaemonStore.applySystemTransition', () => {
     expect(store.getScheduleRuns()).toEqual([
       expect.objectContaining({ id: 'run-1', state: 'queued', revision: 2 }),
     ]);
+    expect(store.listEventsAfter(0)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        revision: 2,
+        kind: 'entity.upserted',
+        payload: { entityType: 'schedule-run', entityId: 'run-1' },
+      }),
+    ]));
+    await store.close();
+  });
+
+  it('emits event continuity when only a Schedule run changes', async () => {
+    const store = await storeHarness();
+    const before = store.getSnapshot();
+
+    const receipt = await store.applySystemTransition(() => ({
+      commit: { mutations: [{ kind: 'schedule-run.upsert', value: {
+        id: 'run-only',
+        scheduleId: 'schedule-1',
+        state: 'queued',
+        scheduledFor: '2026-09-04T10:01:00.000Z',
+      } }] },
+      value: undefined,
+    }));
+
+    expect(receipt).toMatchObject({
+      applied: true,
+      revision: before.revision + 1,
+      eventSequence: before.eventSequence + 1,
+    });
+    expect(store.listEventsAfter(before.eventSequence)).toMatchObject([{
+      sequence: before.eventSequence + 1,
+      revision: before.revision + 1,
+      kind: 'entity.upserted',
+      payload: { entityType: 'schedule-run', entityId: 'run-only' },
+    }]);
     await store.close();
   });
 

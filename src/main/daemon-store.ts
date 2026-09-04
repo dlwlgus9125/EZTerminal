@@ -1400,7 +1400,11 @@ export class DaemonStore {
           value.startedAt ?? null, value.finishedAt ?? null, value.summary ?? null, value.errorCode ?? null,
           revision, now, now,
         );
-        return [];
+        // Schedule runs are internal dispatch records rather than snapshot
+        // entities, but their transitions still advance the shared revision.
+        // Emit continuity so subscribed clients never observe an unexplained
+        // revision jump before their next command.
+        return [{ kind: 'entity.upserted', payload: { entityType: 'schedule-run', entityId: value.id } }];
       }
       case 'heartbeat.upsert': {
         const value = mutation.value;

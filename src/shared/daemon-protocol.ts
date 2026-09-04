@@ -468,7 +468,7 @@ export type DaemonCommandReceipt =
 
 export interface DaemonEventPayloads {
   readonly 'entity.upserted': {
-    readonly entityType: 'project' | 'workspace' | 'session' | 'agent' | 'relation' | 'turn' | 'approval' | 'provider' | 'schedule' | 'heartbeat';
+    readonly entityType: 'project' | 'workspace' | 'session' | 'agent' | 'relation' | 'turn' | 'approval' | 'provider' | 'schedule' | 'schedule-run' | 'heartbeat';
     readonly entityId: string;
   };
   readonly 'entity.archived': { readonly entityType: 'project' | 'workspace' | 'session'; readonly entityId: string };
