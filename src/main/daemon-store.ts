@@ -1144,6 +1144,12 @@ export class DaemonStore {
         if (!reviewDigestColumn) {
           database.exec('ALTER TABLE providers ADD COLUMN review_digest TEXT');
         }
+        database.exec(`
+          UPDATE providers
+          SET health = 'unknown',
+              health_detail = 'Provider executable review must be renewed before launch.'
+          WHERE enabled = 1 AND review_digest IS NULL
+        `);
         database.exec('PRAGMA user_version = 3');
         database.exec('COMMIT');
       } catch (error) {

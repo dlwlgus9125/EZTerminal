@@ -121,6 +121,12 @@ describe('AgentProviderRegistry', () => {
     expect(registry.enabledAdapter(snapshot({
       ...snapshot().providers[0]!,
       reviewDigest: undefined,
+      health: 'unknown',
+      healthDetail: 'Provider executable review must be renewed before launch.',
+    }), 'codex')).toMatchObject({ ok: false, code: 'provider-unavailable' });
+    expect(registry.enabledAdapter(snapshot({
+      ...snapshot().providers[0]!,
+      reviewDigest: undefined,
     }), 'codex')).toMatchObject({ ok: false, code: 'review-mismatch' });
   });
 

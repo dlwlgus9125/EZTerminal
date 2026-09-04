@@ -737,6 +737,7 @@ describe('DaemonStore', () => {
       DROP INDEX turns_fifo_queue;
       DROP INDEX transcript_items_turn_kind;
       ALTER TABLE turns DROP COLUMN enqueue_sequence;
+      UPDATE providers SET review_digest = NULL;
       PRAGMA user_version = 1;
     `);
     database.close();
@@ -746,6 +747,14 @@ describe('DaemonStore', () => {
     expect(migrated.getDiagnostics().schemaVersion).toBe(3);
     expect(migrated.getSnapshot().turns).toEqual([
       expect.objectContaining({ id: 'turn-v1', enqueueSequence: expect.any(Number) }),
+    ]);
+    expect(migrated.getSnapshot().providers).toEqual([
+      expect.objectContaining({
+        id: 'codex',
+        enabled: true,
+        health: 'unknown',
+        healthDetail: 'Provider executable review must be renewed before launch.',
+      }),
     ]);
     await migrated.close();
   });
