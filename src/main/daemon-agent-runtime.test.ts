@@ -539,7 +539,7 @@ describe('DaemonAgentRuntime', () => {
         permissionPreset: 'standard',
         initialPrompt: 'Recover the pre-provider claim.',
       });
-      await first.router.applySystemTransition((snapshot) => {
+      await first.router.applySystemCommit((snapshot) => {
         const session = snapshot.sessions.find((entry) => entry.id === 'agent-2')!;
         const agent = snapshot.agents.find((entry) => entry.sessionId === 'agent-2')!;
         const turn = snapshot.turns.find((entry) => entry.sessionId === 'agent-2')!;

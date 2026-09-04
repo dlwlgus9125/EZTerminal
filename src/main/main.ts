@@ -203,6 +203,7 @@ import { DaemonRuntime } from './daemon-runtime';
 import { DaemonStore } from './daemon-store';
 import { DaemonCommandRouter } from './daemon-command-router';
 import { DaemonAgentRuntime } from './daemon-agent-runtime';
+import { DaemonAutomationRuntime } from './daemon-automation-runtime';
 import { AgentProviderRegistry } from './agent-provider-registry';
 import { CodexProviderAdapter } from './codex-provider-adapter';
 import { ClaudeProviderAdapter } from './claude-provider-adapter';
@@ -898,9 +899,22 @@ app.on('ready', async () => {
       mainLog?.line(`${context}: ${String(error)}`);
     },
   });
+  const daemonAutomationRuntime = new DaemonAutomationRuntime({
+    getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
+    getScheduleRuns: (states) => daemonRouterRef.current!.getScheduleRuns(states),
+    applySystemTransition: (transition) => (
+      daemonRouterRef.current!.applySystemTransition(transition)
+    ),
+    executeCommand: (command) => daemonRouterRef.current!.execute(command),
+    reportError: (context, error) => {
+      console.error(`[main] ${context}:`, error);
+      mainLog?.line(`${context}: ${String(error)}`);
+    },
+  });
   const daemonCommandRouter = new DaemonCommandRouter(daemonStore, {
     handlers: {
       ...daemonAgentRuntime.handlers(),
+      ...daemonAutomationRuntime.handlers(),
       'runtime.set-settings': async (command, context) => {
         if (command.type !== 'runtime.set-settings') {
           return {
@@ -944,19 +958,32 @@ app.on('ready', async () => {
     },
   });
   daemonRouterRef.current = daemonCommandRouter;
-  let daemonAgentRuntimeStopped = false;
+  const unsubscribeDaemonAutomationWake = daemonCommandRouter.onEvent((event) => {
+    if (
+      event.kind === 'runtime.changed'
+      || (event.kind === 'entity.upserted'
+        && ['schedule', 'heartbeat', 'session', 'agent'].includes(event.payload.entityType))
+    ) {
+      daemonAutomationRuntime.notifyAuthorityChanged();
+    }
+  });
+  let daemonAuthorityRuntimesStopped = false;
   daemonProcesses.register({
-    id: 'managed-agent-runtime',
+    id: 'daemon-authority-runtimes',
     gracefulStop: async () => {
+      unsubscribeDaemonAutomationWake();
+      await daemonAutomationRuntime.dispose();
       await daemonAgentRuntime.dispose();
       await agentOrchestrationMcpServer.stop();
-      daemonAgentRuntimeStopped = true;
+      daemonAuthorityRuntimesStopped = true;
     },
-    hasStopped: () => daemonAgentRuntimeStopped,
+    hasStopped: () => daemonAuthorityRuntimesStopped,
     forceStop: async () => {
+      unsubscribeDaemonAutomationWake();
+      await daemonAutomationRuntime.dispose();
       await daemonAgentRuntime.dispose();
       await agentOrchestrationMcpServer.stop();
-      daemonAgentRuntimeStopped = true;
+      daemonAuthorityRuntimesStopped = true;
     },
   });
   const daemonAuthorityReady = Promise.all([daemonStoreReady, daemonRuntimeReady])
@@ -978,6 +1005,7 @@ app.on('ready', async () => {
       }
       await agentOrchestrationMcpServer.start();
       await daemonAgentRuntime.start();
+      await daemonAutomationRuntime.start();
       return daemonCommandRouter;
     });
   const daemonEventSubscribers = new Set<WebContents>();
@@ -1568,6 +1596,7 @@ app.on('ready', async () => {
           },
         }],
       });
+      daemonAutomationRuntime.notifyAuthorityChanged();
     }
     return lifecycle;
   });

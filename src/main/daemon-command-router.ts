@@ -12,8 +12,11 @@ import {
 import { AsyncMutationGate } from './async-mutation-gate';
 import { authorizeDaemonCommand } from './daemon-command-policy';
 import {
+  type DaemonScheduleRun,
   type DaemonStoreCommit,
   type DaemonStoreMutation,
+  type DaemonSystemTransition,
+  type DaemonSystemTransitionReceipt,
   DaemonStore,
 } from './daemon-store';
 import {
@@ -156,27 +159,38 @@ export class DaemonCommandRouter {
   async applySystemCommit(
     commit: DaemonStoreCommit | DaemonSystemTransitionPlanner,
   ): Promise<{ readonly revision: number; readonly eventSequence: number }> {
-    return this.applySystemTransition(typeof commit === 'function' ? commit : () => commit);
+    return this.gate.runExclusive(async () => {
+      const before = this.store.getEventSequence();
+      const receipt = await this.store.applySystemTransition(({ snapshot }) => {
+        const planned = typeof commit === 'function' ? commit(snapshot) : commit;
+        return planned ? { commit: planned, value: undefined } : undefined;
+      });
+      if (receipt?.applied) this.publishEventsAfter(before);
+      if (receipt) return { revision: receipt.revision, eventSequence: receipt.eventSequence };
+      const snapshot = this.store.getSnapshot();
+      return { revision: snapshot.revision, eventSequence: snapshot.eventSequence };
+    });
   }
 
   /**
-   * Derive and commit a system transition from one fresh authoritative snapshot
-   * while holding the same FIFO gate used by commands.
+   * Atomically derive and commit a value-returning system transition while
+   * holding both the command FIFO gate and the SQLite write transaction.
    */
-  async applySystemTransition(
-    planner: DaemonSystemTransitionPlanner,
-  ): Promise<{ readonly revision: number; readonly eventSequence: number }> {
+  async applySystemTransition<T>(
+    transition: DaemonSystemTransition<T>,
+  ): Promise<DaemonSystemTransitionReceipt<T> | undefined> {
     return this.gate.runExclusive(async () => {
-      const snapshot = this.store.getSnapshot();
-      const commit = planner(snapshot);
-      if (!commit) {
-        return { revision: snapshot.revision, eventSequence: snapshot.eventSequence };
-      }
       const before = this.store.getEventSequence();
-      const receipt = await this.store.applySystemCommit(commit);
-      this.publishEventsAfter(before);
+      const receipt = await this.store.applySystemTransition(transition);
+      if (receipt?.applied) this.publishEventsAfter(before);
       return receipt;
     });
+  }
+
+  getScheduleRuns(
+    states?: readonly DaemonScheduleRun['state'][],
+  ): readonly DaemonScheduleRun[] {
+    return this.store.getScheduleRuns(states);
   }
 
   async registerLegacyTerminals(

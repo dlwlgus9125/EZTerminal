@@ -65,6 +65,12 @@ export interface DaemonScheduleRunInput {
   readonly errorCode?: string;
 }
 
+export interface DaemonScheduleRun extends DaemonScheduleRunInput {
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface DaemonMigrationReceiptInput {
   readonly id: string;
   readonly source: string;
@@ -109,6 +115,27 @@ export interface DaemonStoreCommit {
     readonly detail?: string;
   }[];
 }
+
+export interface DaemonSystemTransitionState {
+  readonly snapshot: DaemonSnapshot;
+  readonly scheduleRuns: readonly DaemonScheduleRun[];
+}
+
+export interface DaemonSystemTransitionPlan<T> {
+  readonly commit: DaemonStoreCommit;
+  readonly value: T;
+}
+
+export interface DaemonSystemTransitionReceipt<T> {
+  readonly applied: boolean;
+  readonly revision: number;
+  readonly eventSequence: number;
+  readonly value: T;
+}
+
+export type DaemonSystemTransition<T> = (
+  state: DaemonSystemTransitionState,
+) => DaemonSystemTransitionPlan<T> | undefined;
 
 export type DaemonOutboxState = 'pending' | 'sent' | 'applied' | 'delivery-uncertain' | 'failed';
 
@@ -686,6 +713,45 @@ export class DaemonStore {
     };
   }
 
+  getScheduleRuns(
+    states?: readonly DaemonScheduleRun['state'][],
+  ): readonly DaemonScheduleRun[] {
+    const database = this.requireDatabase();
+    const rows = states === undefined
+      ? this.all(database, 'SELECT * FROM schedule_runs ORDER BY created_at, id')
+      : states.length === 0
+        ? []
+        : this.all(
+            database,
+            `SELECT * FROM schedule_runs WHERE state IN (${states.map(() => '?').join(', ')}) ORDER BY created_at, id`,
+            ...states,
+          );
+    return rows.map((row): DaemonScheduleRun => ({
+      id: requiredString(row, 'id'),
+      scheduleId: requiredString(row, 'schedule_id'),
+      ...(optionalString(row, 'session_id') === undefined
+        ? {}
+        : { sessionId: optionalString(row, 'session_id') }),
+      state: requiredString(row, 'state') as DaemonScheduleRun['state'],
+      scheduledFor: requiredString(row, 'scheduled_for'),
+      ...(optionalString(row, 'started_at') === undefined
+        ? {}
+        : { startedAt: optionalString(row, 'started_at') }),
+      ...(optionalString(row, 'finished_at') === undefined
+        ? {}
+        : { finishedAt: optionalString(row, 'finished_at') }),
+      ...(optionalString(row, 'summary') === undefined
+        ? {}
+        : { summary: optionalString(row, 'summary') }),
+      ...(optionalString(row, 'error_code') === undefined
+        ? {}
+        : { errorCode: optionalString(row, 'error_code') }),
+      revision: integer(row, 'revision'),
+      createdAt: requiredString(row, 'created_at'),
+      updatedAt: requiredString(row, 'updated_at'),
+    }));
+  }
+
   getTranscript(sessionId: string, afterSequence = 0, limit = 500): readonly DaemonTranscriptItem[] {
     if (!Number.isSafeInteger(afterSequence) || afterSequence < 0) throw new Error('afterSequence must be a non-negative integer.');
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 2_000) throw new Error('Transcript limit must be between 1 and 2000.');
@@ -860,21 +926,51 @@ export class DaemonStore {
     });
   }
 
-  applySystemCommit(commit: DaemonStoreCommit): Promise<{ readonly revision: number; readonly eventSequence: number }> {
+  async applySystemCommit(
+    commit: DaemonStoreCommit,
+  ): Promise<{ readonly revision: number; readonly eventSequence: number }> {
+    const receipt = await this.applySystemTransition(() => ({ commit, value: undefined }));
+    return receipt
+      ? { revision: receipt.revision, eventSequence: receipt.eventSequence }
+      : { revision: this.getRevision(), eventSequence: this.getEventSequence() };
+  }
+
+  /**
+   * Decide and persist a system claim under the same SQLite write lock. The
+   * planner is synchronous by design: provider, network, and timer work cannot
+   * run while the authoritative transaction is open.
+   */
+  applySystemTransition<T>(
+    transition: DaemonSystemTransition<T>,
+  ): Promise<DaemonSystemTransitionReceipt<T> | undefined> {
     return this.writer.runExclusive(() => {
       const database = this.requireDatabase();
-      if (
-        (commit.mutations?.length ?? 0) === 0
-        && (commit.events?.length ?? 0) === 0
-        && (commit.reconciledCommands?.length ?? 0) === 0
-      ) {
-        return { revision: this.getRevision(), eventSequence: this.getEventSequence() };
-      }
-      const runtime = this.runtimeRow(database);
-      const revision = runtime.revision + 1;
-      const now = this.isoNow();
       database.exec('BEGIN IMMEDIATE');
       try {
+        const runtime = this.runtimeRow(database);
+        const plan = transition({
+          snapshot: this.getSnapshot(),
+          scheduleRuns: this.getScheduleRuns(),
+        });
+        if (!plan) {
+          database.exec('COMMIT');
+          return undefined;
+        }
+        const commit = plan.commit;
+        const hasChanges = (commit.mutations?.length ?? 0) > 0
+          || (commit.events?.length ?? 0) > 0
+          || (commit.reconciledCommands?.length ?? 0) > 0;
+        if (!hasChanges) {
+          database.exec('COMMIT');
+          return {
+            applied: false,
+            revision: runtime.revision,
+            eventSequence: runtime.eventSequence,
+            value: plan.value,
+          };
+        }
+        const revision = runtime.revision + 1;
+        const now = this.isoNow();
         const generatedEvents: DaemonEventDraft[] = [];
         for (const mutation of commit.mutations ?? []) {
           generatedEvents.push(...this.applyMutation(database, mutation, revision, now));
@@ -893,7 +989,13 @@ export class DaemonStore {
           return [{ reconciliation, record }];
         });
         generatedEvents.push(...(commit.events ?? []));
-        const eventSequence = this.appendEvents(database, generatedEvents, revision, runtime.eventSequence, now);
+        const eventSequence = this.appendEvents(
+          database,
+          generatedEvents,
+          revision,
+          runtime.eventSequence,
+          now,
+        );
         for (const { reconciliation } of commandReconciliations) {
           if (reconciliation.state === 'applied') {
             const receipt: DaemonCommandReceipt = {
@@ -915,10 +1017,11 @@ export class DaemonStore {
             `).run(reconciliation.detail, now, reconciliation.commandId);
           }
         }
-        database.prepare('UPDATE runtime_settings SET revision = ?, event_sequence = ?, updated_at = ? WHERE singleton = 1')
-          .run(revision, eventSequence, now);
+        database.prepare(
+          'UPDATE runtime_settings SET revision = ?, event_sequence = ?, updated_at = ? WHERE singleton = 1',
+        ).run(revision, eventSequence, now);
         database.exec('COMMIT');
-        return { revision, eventSequence };
+        return { applied: true, revision, eventSequence, value: plan.value };
       } catch (error) {
         database.exec('ROLLBACK');
         throw error;

@@ -212,7 +212,10 @@ describe('StructuredProviderSettings', () => {
   it('guards duplicate provider submissions before React can repaint the disabled button', async () => {
     let resolveReceipt!: (receipt: DaemonCommandReceipt) => void;
     const pendingReceipt = new Promise<DaemonCommandReceipt>((resolve) => { resolveReceipt = resolve; });
-    const sendCommand = vi.fn(() => pendingReceipt);
+    const sendCommand = vi.fn((command: DaemonCommand) => {
+      void command;
+      return pendingReceipt;
+    });
     renderSettings(capabilities({ sendCommand }));
     await flush();
 
@@ -225,7 +228,7 @@ describe('StructuredProviderSettings', () => {
     await flush();
 
     expect(sendCommand).toHaveBeenCalledTimes(1);
-    const sent = sendCommand.mock.calls[0][0] as DaemonCommand;
+    const sent = sendCommand.mock.calls[0]![0];
     expect(sent).toMatchObject({ type: 'provider.enable', expectedRevision: 4 });
 
     resolveReceipt({

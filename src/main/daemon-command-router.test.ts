@@ -159,11 +159,11 @@ describe('DaemonCommandRouter', () => {
     const observedRevisions: number[] = [];
 
     await Promise.all([
-      router.applySystemTransition((snapshot) => {
+      router.applySystemCommit((snapshot) => {
         observedRevisions.push(snapshot.revision);
         return { mutations: [{ kind: 'runtime.update', value: { keepRunning: true } }] };
       }),
-      router.applySystemTransition((snapshot) => {
+      router.applySystemCommit((snapshot) => {
         observedRevisions.push(snapshot.revision);
         return { mutations: [{ kind: 'runtime.update', value: { browserEnabled: true } }] };
       }),
