@@ -153,4 +153,27 @@ describe('DaemonCommandRouter', () => {
     ]);
     await store.close();
   });
+
+  it('derives serialized system transitions from a fresh snapshot inside the command gate', async () => {
+    const { store, router } = await runtime();
+    const observedRevisions: number[] = [];
+
+    await Promise.all([
+      router.applySystemTransition((snapshot) => {
+        observedRevisions.push(snapshot.revision);
+        return { mutations: [{ kind: 'runtime.update', value: { keepRunning: true } }] };
+      }),
+      router.applySystemTransition((snapshot) => {
+        observedRevisions.push(snapshot.revision);
+        return { mutations: [{ kind: 'runtime.update', value: { browserEnabled: true } }] };
+      }),
+    ]);
+
+    expect(observedRevisions).toEqual([0, 1]);
+    expect(router.getSnapshot()).toMatchObject({
+      revision: 2,
+      runtime: { keepRunning: true, browserEnabled: true },
+    });
+    await store.close();
+  });
 });

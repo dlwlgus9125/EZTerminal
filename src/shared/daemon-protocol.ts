@@ -116,6 +116,8 @@ export interface DaemonTurn extends RevisionedRecord {
   readonly id: string;
   readonly sessionId: string;
   readonly commandId: string;
+  /** Stable daemon-assigned FIFO position; preserved across lifecycle updates. */
+  readonly enqueueSequence?: number;
   readonly state: TurnState;
   readonly providerTurnId?: string;
   readonly startedAt?: string;

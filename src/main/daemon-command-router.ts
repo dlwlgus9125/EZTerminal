@@ -22,8 +22,17 @@ import {
 } from './legacy-terminal-registration';
 
 export type DaemonCommandExecutionResult =
-  | { readonly ok: true; readonly commit?: DaemonStoreCommit }
+  | {
+      readonly ok: true;
+      readonly commit?: DaemonStoreCommit;
+      /** Synchronous wake-up hook run only after the durable command commit. */
+      readonly afterCommit?: () => void;
+    }
   | { readonly ok: false; readonly error: DaemonCommandError };
+
+export type DaemonSystemTransitionPlanner = (
+  snapshot: DaemonSnapshot,
+) => DaemonStoreCommit | undefined;
 
 export interface DaemonCommandExecutionContext {
   readonly snapshot: DaemonSnapshot;
@@ -144,8 +153,25 @@ export class DaemonCommandRouter {
     return this.gate.runExclusive(() => this.executeExclusive(command));
   }
 
-  async applySystemCommit(commit: DaemonStoreCommit): Promise<{ readonly revision: number; readonly eventSequence: number }> {
+  async applySystemCommit(
+    commit: DaemonStoreCommit | DaemonSystemTransitionPlanner,
+  ): Promise<{ readonly revision: number; readonly eventSequence: number }> {
+    return this.applySystemTransition(typeof commit === 'function' ? commit : () => commit);
+  }
+
+  /**
+   * Derive and commit a system transition from one fresh authoritative snapshot
+   * while holding the same FIFO gate used by commands.
+   */
+  async applySystemTransition(
+    planner: DaemonSystemTransitionPlanner,
+  ): Promise<{ readonly revision: number; readonly eventSequence: number }> {
     return this.gate.runExclusive(async () => {
+      const snapshot = this.store.getSnapshot();
+      const commit = planner(snapshot);
+      if (!commit) {
+        return { revision: snapshot.revision, eventSequence: snapshot.eventSequence };
+      }
       const before = this.store.getEventSequence();
       const receipt = await this.store.applySystemCommit(commit);
       this.publishEventsAfter(before);
@@ -271,6 +297,11 @@ export class DaemonCommandRouter {
       }
       const receipt = await this.store.commitCommand(command.commandId, result.commit);
       this.publishEventsAfter(beforeSequence);
+      try {
+        result.afterCommit?.();
+      } catch {
+        // A wake-up hook cannot roll back a command that is already durable.
+      }
       return receipt;
     } catch (error) {
       const receipt = providerDispatchStarted

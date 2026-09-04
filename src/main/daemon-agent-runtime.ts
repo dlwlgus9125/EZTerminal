@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 import {
   DAEMON_HARD_LIMITS,
@@ -19,11 +19,16 @@ import type {
   DaemonCommandExecutionContext,
   DaemonCommandExecutionResult,
   DaemonCommandHandler,
+  DaemonSystemTransitionPlanner,
 } from './daemon-command-router';
 import type {
   DaemonStoreCommit,
   DaemonStoreMutation,
   DaemonTranscriptItemInput,
+} from './daemon-store';
+import {
+  MAX_TRANSCRIPT_BATCH_ITEMS,
+  MAX_TRANSCRIPT_BATCH_UTF8_BYTES,
 } from './daemon-store';
 import { AgentProviderRegistry } from './agent-provider-registry';
 
@@ -46,7 +51,9 @@ type AgentCommandType = Extract<DaemonCommandType,
 export interface DaemonAgentRuntimeOptions {
   readonly providers: AgentProviderRegistry;
   readonly getSnapshot: () => DaemonSnapshot;
-  readonly applySystemCommit: (commit: DaemonStoreCommit) => Promise<unknown>;
+  readonly applySystemCommit: (
+    commit: DaemonStoreCommit | DaemonSystemTransitionPlanner,
+  ) => Promise<unknown>;
   readonly readTranscript: (
     sessionId: string,
     afterSequence?: number,
@@ -72,6 +79,27 @@ const ACTIVE_TURN_STATES = new Set<DaemonTurn['state']>([
   'submitting',
   'working',
   'blocked',
+  'delivery-uncertain',
+]);
+
+const TERMINAL_TURN_STATES = new Set<DaemonTurn['state']>([
+  'completed',
+  'interrupted',
+  'failed',
+]);
+
+const TERMINAL_AGENT_STATES = new Set<DaemonAgent['state']>([
+  'done',
+  'interrupted',
+  'error',
+  'archived',
+]);
+
+const TERMINAL_SESSION_STATES = new Set<DaemonSession['state']>([
+  'completed',
+  'interrupted',
+  'failed',
+  'archived',
 ]);
 
 function commandError(
@@ -133,17 +161,23 @@ function turnInput(
   turn: DaemonTurn,
   patch: Partial<Omit<DaemonTurn, 'revision' | 'createdAt' | 'updatedAt'>> = {},
 ): Omit<DaemonTurn, 'revision' | 'createdAt' | 'updatedAt'> {
+  const optional = <K extends 'providerTurnId' | 'startedAt' | 'finishedAt' | 'errorCode'>(key: K) => (
+    Object.prototype.hasOwnProperty.call(patch, key) ? patch[key] : turn[key]
+  );
+  const providerTurnId = optional('providerTurnId');
+  const startedAt = optional('startedAt');
+  const finishedAt = optional('finishedAt');
+  const errorCode = optional('errorCode');
   return {
     id: turn.id,
     sessionId: turn.sessionId,
     commandId: turn.commandId,
+    ...(turn.enqueueSequence ? { enqueueSequence: turn.enqueueSequence } : {}),
     state: patch.state ?? turn.state,
-    ...(patch.providerTurnId ?? turn.providerTurnId
-      ? { providerTurnId: patch.providerTurnId ?? turn.providerTurnId }
-      : {}),
-    ...(patch.startedAt ?? turn.startedAt ? { startedAt: patch.startedAt ?? turn.startedAt } : {}),
-    ...(patch.finishedAt ?? turn.finishedAt ? { finishedAt: patch.finishedAt ?? turn.finishedAt } : {}),
-    ...(patch.errorCode ?? turn.errorCode ? { errorCode: patch.errorCode ?? turn.errorCode } : {}),
+    ...(providerTurnId ? { providerTurnId } : {}),
+    ...(startedAt ? { startedAt } : {}),
+    ...(finishedAt ? { finishedAt } : {}),
+    ...(errorCode ? { errorCode } : {}),
   };
 }
 
@@ -196,19 +230,19 @@ function providerStateToSession(
  */
 export class DaemonAgentRuntime {
   private readonly now: () => Date;
-  private readonly idFactory: () => string;
   private readonly setTimer: NonNullable<DaemonAgentRuntimeOptions['setTimer']>;
   private readonly clearTimer: NonNullable<DaemonAgentRuntimeOptions['clearTimer']>;
   private readonly turnTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly backgroundTasks = new Set<Promise<void>>();
   private unsubscribeProviders: (() => void) | null = null;
   private eventTail: Promise<void> = Promise.resolve();
   private pumpPromise: Promise<void> | null = null;
+  private pumpRequested = false;
   private started = false;
   private disposed = false;
 
   constructor(private readonly options: DaemonAgentRuntimeOptions) {
     this.now = options.now ?? (() => new Date());
-    this.idFactory = options.idFactory ?? randomUUID;
     this.setTimer = options.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
     this.clearTimer = options.clearTimer ?? ((timer) => clearTimeout(timer));
   }
@@ -239,7 +273,11 @@ export class DaemonAgentRuntime {
         .then(() => this.handleProviderEvent(providerId, event))
         .catch((error) => this.report('provider event failed', error));
     });
+    await this.expirePersistedApprovals();
+    await this.recoverUnattachedClaims();
+    await this.rehydratePersistedSessions();
     await this.reconcileUnsettled();
+    await this.drainEventTail();
     this.rearmPersistedTimeouts();
     this.queuePump();
   }
@@ -251,8 +289,29 @@ export class DaemonAgentRuntime {
     this.unsubscribeProviders = null;
     for (const timer of this.turnTimers.values()) this.clearTimer(timer);
     this.turnTimers.clear();
-    await Promise.allSettled([this.eventTail, this.pumpPromise ?? Promise.resolve()]);
+    await Promise.allSettled([
+      this.eventTail,
+      this.pumpPromise ?? Promise.resolve(),
+      ...this.backgroundTasks,
+    ]);
+    await this.drainEventTail();
     await this.options.providers.dispose();
+  }
+
+  /** Wait until all currently reachable provider events and dispatch work settle. */
+  async whenIdle(): Promise<void> {
+    for (;;) {
+      const eventTail = this.eventTail;
+      const pump = this.pumpPromise;
+      const background = [...this.backgroundTasks];
+      await Promise.allSettled([eventTail, pump ?? Promise.resolve(), ...background]);
+      if (
+        eventTail === this.eventTail
+        && pump === this.pumpPromise
+        && background.length === this.backgroundTasks.size
+        && background.every((task) => this.backgroundTasks.has(task))
+      ) return;
+    }
   }
 
   private async create(
@@ -276,29 +335,7 @@ export class DaemonAgentRuntime {
     if (relation && !relation.ok) return relation.result;
 
     const turnId = stableId('turn', command.commandId);
-    const shouldQueue = snapshot.turns.filter((turn) => ACTIVE_TURN_STATES.has(turn.state)).length
-      >= DAEMON_HARD_LIMITS.concurrentManagedTurns;
-    const sessionContext = this.sessionContext(
-      command.payload.sessionId,
-      workspace.id,
-      workspace.rootPath,
-      command.payload.model,
-      command.payload.permissionPreset,
-      snapshot.runtime.orchestrationToolsEnabled,
-    );
-    await context.markProviderDispatchStarted();
-    const handle = await provider.value.createSession(sessionContext);
-    if (!shouldQueue) {
-      await provider.value.submit({
-        sessionId: command.payload.sessionId,
-        providerSessionId: handle.providerSessionId,
-        turnId,
-        commandId: command.commandId,
-        prompt: command.payload.initialPrompt,
-      });
-    }
     const now = this.isoNow();
-    if (!shouldQueue) this.armTurnTimeout(turnId, command.payload.sessionId, handle.providerSessionId);
     const mutations: DaemonStoreMutation[] = [
       { kind: 'session.upsert', value: {
         id: command.payload.sessionId,
@@ -306,34 +343,32 @@ export class DaemonAgentRuntime {
         workspaceId: workspace.id,
         kind: 'agent',
         title: command.payload.title,
-        state: shouldQueue ? 'idle' : 'running',
+        state: 'idle',
         source: 'structured',
       } },
       { kind: 'agent.upsert', value: {
         sessionId: command.payload.sessionId,
         providerId: command.payload.providerId,
-        providerSessionId: handle.providerSessionId,
-        ...(handle.model ?? command.payload.model ? { model: handle.model ?? command.payload.model } : {}),
-        permissionPreset: handle.permissionPreset,
-        state: shouldQueue ? 'idle' : 'working',
-        ...(!shouldQueue ? { currentTurnId: turnId } : {}),
-        queuedTurnCount: shouldQueue ? 1 : 0,
+        ...(command.payload.model ? { model: command.payload.model } : {}),
+        permissionPreset: command.payload.permissionPreset,
+        state: 'queued',
+        queuedTurnCount: 1,
         orchestrationEnabled: snapshot.runtime.orchestrationToolsEnabled,
       } },
       { kind: 'turn.upsert', value: {
         id: turnId,
         sessionId: command.payload.sessionId,
         commandId: command.commandId,
-        state: shouldQueue ? 'queued' : 'working',
-        ...(!shouldQueue ? { startedAt: now } : {}),
+        enqueueSequence: command.expectedRevision + 1,
+        state: 'queued',
       } },
-      { kind: 'transcript.append', items: [this.userTranscript(
+      ...this.transcriptMutations([this.userTranscript(
         command.payload.sessionId,
         turnId,
         command.commandId,
         command.payload.initialPrompt,
         now,
-      )] },
+      )]),
     ];
     if (relation?.ok) {
       mutations.push({ kind: 'agent-relation.upsert', value: {
@@ -345,7 +380,7 @@ export class DaemonAgentRuntime {
         depth: relation.value.depth,
       } });
     }
-    return { ok: true, commit: { mutations } };
+    return { ok: true, commit: { mutations }, afterCommit: () => this.queuePump() };
   }
 
   private async resume(
@@ -367,18 +402,6 @@ export class DaemonAgentRuntime {
       ? this.planChildRelation(snapshot, command.payload.parentSessionId, workspace.projectId)
       : undefined;
     if (relation && !relation.ok) return relation.result;
-    await context.markProviderDispatchStarted();
-    const handle = await provider.value.resumeSession({
-      ...this.sessionContext(
-        command.payload.sessionId,
-        workspace.id,
-        workspace.rootPath,
-        command.payload.model,
-        command.payload.permissionPreset,
-        snapshot.runtime.orchestrationToolsEnabled,
-      ),
-      providerSessionId: command.payload.providerSessionId,
-    });
     const mutations: DaemonStoreMutation[] = [
       { kind: 'session.upsert', value: {
         id: command.payload.sessionId,
@@ -386,16 +409,16 @@ export class DaemonAgentRuntime {
         workspaceId: workspace.id,
         kind: 'agent',
         title: command.payload.title,
-        state: 'idle',
+        state: 'starting',
         source: 'structured',
       } },
       { kind: 'agent.upsert', value: {
         sessionId: command.payload.sessionId,
         providerId: command.payload.providerId,
-        providerSessionId: handle.providerSessionId,
-        ...(handle.model ?? command.payload.model ? { model: handle.model ?? command.payload.model } : {}),
-        permissionPreset: handle.permissionPreset,
-        state: 'idle',
+        providerSessionId: command.payload.providerSessionId,
+        ...(command.payload.model ? { model: command.payload.model } : {}),
+        permissionPreset: command.payload.permissionPreset,
+        state: 'starting',
         queuedTurnCount: 0,
         orchestrationEnabled: snapshot.runtime.orchestrationToolsEnabled,
       } },
@@ -410,7 +433,14 @@ export class DaemonAgentRuntime {
         depth: relation.value.depth,
       } });
     }
-    return { ok: true, commit: { mutations } };
+    return {
+      ok: true,
+      commit: { mutations },
+      afterCommit: () => this.runBackground(
+        `resume Agent ${command.payload.sessionId}`,
+        () => this.rehydrateSession(command.payload.sessionId),
+      ),
+    };
   }
 
   private async submit(
@@ -426,7 +456,7 @@ export class DaemonAgentRuntime {
     if (!session || !agent || session.kind !== 'agent') {
       return commandError('not-found', 'Agent Session was not found.');
     }
-    if (!agent.providerSessionId || ['archived', 'done', 'interrupted', 'error'].includes(agent.state)) {
+    if (['archived', 'done', 'interrupted', 'error'].includes(agent.state)) {
       return commandError('invalid-state', 'Agent Session is not available for a new turn.');
     }
     const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
@@ -435,75 +465,52 @@ export class DaemonAgentRuntime {
       ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
       : undefined;
     const hasActiveCurrentTurn = Boolean(currentTurn && ACTIVE_TURN_STATES.has(currentTurn.state));
-    const activeCount = snapshot.turns.filter((turn) => ACTIVE_TURN_STATES.has(turn.state)).length;
-    const canStart = interruptFirst
-      ? hasActiveCurrentTurn || activeCount < DAEMON_HARD_LIMITS.concurrentManagedTurns
-      : !hasActiveCurrentTurn && activeCount < DAEMON_HARD_LIMITS.concurrentManagedTurns;
     const turnId = stableId('turn', command.commandId);
     const now = this.isoNow();
-    if (!canStart) {
-      return { ok: true, commit: { mutations: [
-        { kind: 'turn.upsert', value: {
-          id: turnId,
-          sessionId: session.id,
-          commandId: command.commandId,
-          state: 'queued',
-        } },
-        { kind: 'agent.upsert', value: agentInput(agent, {
-          queuedTurnCount: agent.queuedTurnCount + 1,
-        }) },
-        { kind: 'transcript.append', items: [this.userTranscript(
-          session.id,
-          turnId,
-          command.commandId,
-          command.payload.prompt,
-          now,
-        )] },
-      ] } };
-    }
-
-    await context.markProviderDispatchStarted();
-    if (interruptFirst && currentTurn && hasActiveCurrentTurn) {
-      await provider.value.interrupt(session.id, agent.providerSessionId);
-      this.clearTurnTimeout(currentTurn.id);
-    }
-    await provider.value.submit({
+    const mutations: DaemonStoreMutation[] = [{ kind: 'turn.upsert', value: {
+      id: turnId,
       sessionId: session.id,
-      providerSessionId: agent.providerSessionId,
-      turnId,
       commandId: command.commandId,
-      prompt: command.payload.prompt,
-    });
-    this.armTurnTimeout(turnId, session.id, agent.providerSessionId);
-    const mutations: DaemonStoreMutation[] = [];
+      enqueueSequence: command.expectedRevision + 1,
+      state: 'queued',
+    } }];
     if (interruptFirst && currentTurn && hasActiveCurrentTurn) {
       mutations.push({ kind: 'turn.upsert', value: turnInput(currentTurn, {
-        state: 'interrupted',
-        finishedAt: now,
+        state: 'delivery-uncertain',
+        errorCode: 'interrupt-requested',
       }) });
     }
     mutations.push(
-      { kind: 'turn.upsert', value: {
-        id: turnId,
-        sessionId: session.id,
-        commandId: command.commandId,
-        state: 'working',
-        startedAt: now,
-      } },
       { kind: 'agent.upsert', value: agentInput(agent, {
-        state: 'working',
-        currentTurnId: turnId,
+        state: interruptFirst && hasActiveCurrentTurn ? 'delivery-uncertain' : hasActiveCurrentTurn ? agent.state : 'queued',
+        ...(!hasActiveCurrentTurn ? { currentTurnId: undefined } : {}),
+        queuedTurnCount: agent.queuedTurnCount + 1,
       }) },
-      { kind: 'session.upsert', value: sessionInput(session, 'running') },
-      { kind: 'transcript.append', items: [this.userTranscript(
+      ...(interruptFirst && hasActiveCurrentTurn
+        ? [{ kind: 'session.upsert' as const, value: sessionInput(session, 'delivery-uncertain') }]
+        : []),
+      ...this.transcriptMutations([this.userTranscript(
         session.id,
         turnId,
         command.commandId,
         command.payload.prompt,
         now,
-      )] },
+      )]),
     );
-    return { ok: true, commit: { mutations } };
+    return {
+      ok: true,
+      commit: { mutations },
+      afterCommit: () => {
+        if (interruptFirst && currentTurn && hasActiveCurrentTurn && agent.providerSessionId) {
+          this.runBackground(
+            `interrupt Agent ${session.id}`,
+            () => this.requestInterrupt(session.id, currentTurn.id, agent.providerId, agent.providerSessionId!),
+          );
+        } else {
+          this.queuePump();
+        }
+      },
+    };
   }
 
   private async interrupt(
@@ -520,15 +527,21 @@ export class DaemonAgentRuntime {
     if (!currentTurn || !ACTIVE_TURN_STATES.has(currentTurn.state)) return { ok: true };
     const provider = this.options.providers.enabledAdapter(context.snapshot, agent.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
-    await context.markProviderDispatchStarted();
-    await provider.value.interrupt(session.id, agent.providerSessionId);
-    this.clearTurnTimeout(currentTurn.id);
-    const now = this.isoNow();
-    return { ok: true, commit: { mutations: [
-      { kind: 'turn.upsert', value: turnInput(currentTurn, { state: 'interrupted', finishedAt: now }) },
-      { kind: 'agent.upsert', value: agentInput(agent, { state: 'idle', currentTurnId: undefined }) },
-      { kind: 'session.upsert', value: sessionInput(session, 'idle') },
-    ] } };
+    return {
+      ok: true,
+      commit: { mutations: [
+        { kind: 'turn.upsert', value: turnInput(currentTurn, {
+          state: 'delivery-uncertain',
+          errorCode: 'interrupt-requested',
+        }) },
+        { kind: 'agent.upsert', value: agentInput(agent, { state: 'delivery-uncertain' }) },
+        { kind: 'session.upsert', value: sessionInput(session, 'delivery-uncertain') },
+      ] },
+      afterCommit: () => this.runBackground(
+        `interrupt Agent ${session.id}`,
+        () => this.requestInterrupt(session.id, currentTurn.id, agent.providerId, agent.providerSessionId!),
+      ),
+    };
   }
 
   private async setSettings(
@@ -541,20 +554,25 @@ export class DaemonAgentRuntime {
     if (agent.currentTurnId) return commandError('invalid-state', 'Change Agent settings between turns.');
     const provider = this.options.providers.enabledAdapter(context.snapshot, agent.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
-    await context.markProviderDispatchStarted();
-    const handle = await provider.value.setSettings({
-      sessionId: agent.sessionId,
-      providerSessionId: agent.providerSessionId,
-      ...(command.payload.model ? { model: command.payload.model } : {}),
-      ...(command.payload.permissionPreset
-        ? { permissionPreset: command.payload.permissionPreset }
-        : {}),
-    });
-    return { ok: true, commit: { mutations: [{ kind: 'agent.upsert', value: agentInput(agent, {
-      providerSessionId: handle.providerSessionId,
-      ...(handle.model ? { model: handle.model } : {}),
-      permissionPreset: handle.permissionPreset,
-    }) }] } };
+    const nextModel = command.payload.model ?? agent.model;
+    const nextPermissionPreset = command.payload.permissionPreset ?? agent.permissionPreset;
+    return {
+      ok: true,
+      commit: { mutations: [{ kind: 'agent.upsert', value: agentInput(agent, {
+        ...(nextModel ? { model: nextModel } : {}),
+        permissionPreset: nextPermissionPreset,
+      }) }] },
+      afterCommit: () => this.runBackground(
+        `update Agent settings ${agent.sessionId}`,
+        () => this.applyProviderSettings(
+          agent.sessionId,
+          agent.providerId,
+          agent.providerSessionId!,
+          nextModel,
+          nextPermissionPreset,
+        ),
+      ),
+    };
   }
 
   private async cancel(
@@ -564,25 +582,38 @@ export class DaemonAgentRuntime {
     if (command.type !== 'agent.cancel') return commandError('invalid-command', 'Unexpected Agent cancel command.');
     const session = context.snapshot.sessions.find((entry) => entry.id === command.payload.sessionId);
     const agent = context.snapshot.agents.find((entry) => entry.sessionId === command.payload.sessionId);
-    if (!session || !agent?.providerSessionId) return commandError('not-found', 'Agent Session was not found.');
-    const provider = this.options.providers.enabledAdapter(context.snapshot, agent.providerId);
-    if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
-    await context.markProviderDispatchStarted();
-    if (agent.currentTurnId) await provider.value.interrupt(session.id, agent.providerSessionId);
-    await provider.value.disposeSession(session.id, agent.providerSessionId);
-    if (agent.currentTurnId) this.clearTurnTimeout(agent.currentTurnId);
+    if (!session || !agent) return commandError('not-found', 'Agent Session was not found.');
     const now = this.isoNow();
-    const currentTurn = agent.currentTurnId
-      ? context.snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
-      : undefined;
+    const unsettledTurns = context.snapshot.turns.filter((turn) => (
+      turn.sessionId === session.id && !TERMINAL_TURN_STATES.has(turn.state)
+    ));
+    const pendingApprovals = context.snapshot.approvals.filter((approval) => (
+      approval.sessionId === session.id && approval.state === 'pending'
+    ));
     return { ok: true, commit: { mutations: [
-      ...(currentTurn && ACTIVE_TURN_STATES.has(currentTurn.state) ? [{
-        kind: 'turn.upsert' as const,
-        value: turnInput(currentTurn, { state: 'interrupted', finishedAt: now }),
-      }] : []),
-      { kind: 'agent.upsert', value: agentInput(agent, { state: 'interrupted', currentTurnId: undefined }) },
+      ...unsettledTurns.map((turn): DaemonStoreMutation => ({
+        kind: 'turn.upsert',
+        value: turnInput(turn, { state: 'interrupted', finishedAt: now, errorCode: undefined }),
+      })),
+      ...pendingApprovals.map((approval): DaemonStoreMutation => ({
+        kind: 'approval.upsert',
+        value: this.resolvedApprovalInput(approval, 'expired', now),
+      })),
+      { kind: 'agent.upsert', value: agentInput(agent, {
+        state: 'interrupted',
+        currentTurnId: undefined,
+        queuedTurnCount: 0,
+      }) },
       { kind: 'session.upsert', value: sessionInput(session, 'interrupted') },
-    ] } };
+    ] }, afterCommit: () => {
+      for (const turn of unsettledTurns) this.clearTurnTimeout(turn.id);
+      if (agent.providerSessionId) {
+        this.runBackground(
+          `cancel Agent ${session.id}`,
+          () => this.cancelProviderSession(session.id, agent.providerId, agent.providerSessionId!),
+        );
+      }
+    } };
   }
 
   private async archive(
@@ -593,21 +624,27 @@ export class DaemonAgentRuntime {
     const session = context.snapshot.sessions.find((entry) => entry.id === command.payload.sessionId);
     const agent = context.snapshot.agents.find((entry) => entry.sessionId === command.payload.sessionId);
     if (!session || !agent) return commandError('not-found', 'Agent Session was not found.');
-    if (agent.currentTurnId || ACTIVE_TURN_STATES.has(
-      context.snapshot.turns.find((entry) => entry.id === agent.currentTurnId)?.state ?? 'completed',
-    )) return commandError('invalid-state', 'Stop the Agent before archiving it.');
-    if (agent.providerSessionId) {
-      const provider = this.options.providers.enabledAdapter(context.snapshot, agent.providerId);
-      if (provider.ok) {
-        await context.markProviderDispatchStarted();
-        await provider.value.disposeSession(session.id, agent.providerSessionId);
-      }
+    const hasUnsettledTurns = context.snapshot.turns.some((turn) => (
+      turn.sessionId === session.id && !TERMINAL_TURN_STATES.has(turn.state)
+    ));
+    if (agent.currentTurnId || agent.queuedTurnCount > 0 || hasUnsettledTurns) {
+      return commandError('invalid-state', 'Stop the Agent and clear queued turns before archiving it.');
     }
     const now = this.isoNow();
+    const pendingApprovals = context.snapshot.approvals.filter((approval) => (
+      approval.sessionId === session.id && approval.state === 'pending'
+    ));
     return { ok: true, commit: { mutations: [
+      ...pendingApprovals.map((approval): DaemonStoreMutation => ({
+        kind: 'approval.upsert',
+        value: this.resolvedApprovalInput(approval, 'expired', now),
+      })),
       { kind: 'agent.upsert', value: agentInput(agent, { state: 'archived', currentTurnId: undefined }) },
       { kind: 'session.upsert', value: sessionInput(session, 'archived', now) },
-    ] } };
+    ] }, ...(agent.providerSessionId ? { afterCommit: () => this.runBackground(
+      `archive Agent ${session.id}`,
+      () => this.disposeProviderSession(session.id, agent.providerId, agent.providerSessionId!),
+    ) } : {}) };
   }
 
   private detach(command: DaemonCommand): DaemonCommandExecutionResult {
@@ -636,31 +673,45 @@ export class DaemonAgentRuntime {
     const approval = context.snapshot.approvals.find((entry) => entry.id === command.payload.approvalId);
     if (!approval || approval.state !== 'pending') return commandError('not-found', 'Pending approval was not found.');
     const agent = context.snapshot.agents.find((entry) => entry.sessionId === approval.sessionId);
+    const session = context.snapshot.sessions.find((entry) => entry.id === approval.sessionId);
     if (!agent?.providerSessionId) return commandError('invalid-state', 'Approval Agent is unavailable.');
+    if (!session || TERMINAL_SESSION_STATES.has(session.state)) {
+      return commandError('invalid-state', 'Approval Session is no longer active.');
+    }
+    const turn = approval.turnId
+      ? context.snapshot.turns.find((entry) => entry.id === approval.turnId)
+      : undefined;
+    if (
+      approval.turnId
+      && (!turn || TERMINAL_TURN_STATES.has(turn.state) || agent.currentTurnId !== approval.turnId)
+    ) {
+      return commandError('invalid-state', 'Approval no longer belongs to the active turn.');
+    }
     const provider = this.options.providers.enabledAdapter(context.snapshot, agent.providerId);
     if (!provider.ok) return commandError('provider-unavailable', provider.message, true);
-    await context.markProviderDispatchStarted();
-    await provider.value.resolveApproval({
-      sessionId: agent.sessionId,
-      providerSessionId: agent.providerSessionId,
-      providerRequestId: approval.providerRequestId,
-      decision: command.payload.decision,
-    });
     const resolvedAt = this.isoNow();
     return { ok: true, commit: { mutations: [
-      { kind: 'approval.upsert', value: {
-        id: approval.id,
-        sessionId: approval.sessionId,
-        ...(approval.turnId ? { turnId: approval.turnId } : {}),
-        providerRequestId: approval.providerRequestId,
-        risk: approval.risk,
-        title: approval.title,
-        ...(approval.detail ? { detail: approval.detail } : {}),
-        state: command.payload.decision === 'allow' ? 'allowed' : 'denied',
+      { kind: 'approval.upsert', value: this.resolvedApprovalInput(
+        approval,
+        command.payload.decision === 'allow' ? 'allowed' : 'denied',
         resolvedAt,
-      } },
+      ) },
+      ...(turn && !TERMINAL_TURN_STATES.has(turn.state) ? [{
+        kind: 'turn.upsert' as const,
+        value: turnInput(turn, { state: 'working' }),
+      }] : []),
       { kind: 'agent.upsert', value: agentInput(agent, { state: 'working' }) },
-    ] } };
+      { kind: 'session.upsert', value: sessionInput(session, 'running') },
+    ] }, afterCommit: () => this.runBackground(
+      `resolve approval ${approval.id}`,
+      () => this.resolveProviderApproval(
+        agent.providerId,
+        agent.sessionId,
+        agent.providerSessionId!,
+        approval.providerRequestId,
+        command.payload.decision,
+      ),
+    ) };
   }
 
   private async enableProvider(command: DaemonCommand): Promise<DaemonCommandExecutionResult> {
@@ -674,7 +725,11 @@ export class DaemonAgentRuntime {
         : 'provider-unavailable';
       return commandError(code, authorized.message);
     }
-    return { ok: true, commit: { mutations: [{ kind: 'provider.upsert', value: authorized.value }] } };
+    return {
+      ok: true,
+      commit: { mutations: [{ kind: 'provider.upsert', value: authorized.value }] },
+      afterCommit: () => this.queuePump(),
+    };
   }
 
   private disableProvider(command: DaemonCommand): DaemonCommandExecutionResult {
@@ -683,7 +738,13 @@ export class DaemonAgentRuntime {
     const current = snapshot.providers.find((entry) => entry.id === command.payload.providerId);
     if (!current) return commandError('not-found', 'Provider was not found.');
     if (snapshot.agents.some((agent) => (
-      agent.providerId === current.id && ['starting', 'queued', 'working', 'blocked'].includes(agent.state)
+      agent.providerId === current.id && (
+        agent.queuedTurnCount > 0
+        || ['starting', 'queued', 'working', 'blocked', 'delivery-uncertain'].includes(agent.state)
+        || snapshot.turns.some((turn) => (
+          turn.sessionId === agent.sessionId && !TERMINAL_TURN_STATES.has(turn.state)
+        ))
+      )
     ))) return commandError('invalid-state', 'Stop active Agent Sessions before disabling their provider.');
     return { ok: true, commit: { mutations: [{ kind: 'provider.upsert', value: {
       id: current.id,
@@ -790,197 +851,468 @@ export class DaemonAgentRuntime {
     };
   }
 
+  private transcriptMutations(
+    items: readonly DaemonTranscriptItemInput[],
+  ): DaemonStoreMutation[] {
+    return this.transcriptBatches(items).map((batch) => ({
+      kind: 'transcript.append',
+      items: batch,
+    }));
+  }
+
   private queuePump(): void {
-    if (this.disposed || this.pumpPromise) return;
+    if (this.disposed) return;
+    this.pumpRequested = true;
+    if (this.pumpPromise) return;
     this.pumpPromise = Promise.resolve()
-      .then(() => this.pumpQueuedTurns())
+      .then(async () => {
+        while (this.pumpRequested && !this.disposed) {
+          this.pumpRequested = false;
+          await this.pumpQueuedTurns();
+        }
+      })
       .catch((error) => this.report('queued turn pump failed', error))
       .finally(() => {
         this.pumpPromise = null;
+        if (this.pumpRequested && !this.disposed) this.queuePump();
       });
   }
 
   private async pumpQueuedTurns(): Promise<void> {
     while (!this.disposed) {
-      const snapshot = this.options.getSnapshot();
-      const activeCount = snapshot.turns.filter((turn) => ACTIVE_TURN_STATES.has(turn.state)).length;
-      if (activeCount >= DAEMON_HARD_LIMITS.concurrentManagedTurns) return;
-      const queued = snapshot.turns
-        .filter((turn) => turn.state === 'queued')
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
-      const turn = queued.find((candidate) => {
-        const agent = snapshot.agents.find((entry) => entry.sessionId === candidate.sessionId);
-        return agent && !agent.currentTurnId;
-      });
-      if (!turn) return;
-      const agent = snapshot.agents.find((entry) => entry.sessionId === turn.sessionId)!;
-      const session = snapshot.sessions.find((entry) => entry.id === turn.sessionId);
-      const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
-      const prompt = this.options.readTranscript(turn.sessionId, 0, 2_000).find((item) => (
-        item.turnId === turn.id && item.kind === 'user-message'
-      ))?.text;
-      if (!session || !agent.providerSessionId || !provider.ok || !prompt) {
-        await this.options.applySystemCommit({ mutations: [
-          { kind: 'turn.upsert', value: turnInput(turn, {
-            state: 'failed',
-            finishedAt: this.isoNow(),
-            errorCode: 'queue-state-invalid',
-          }) },
-          { kind: 'agent.upsert', value: agentInput(agent, {
-            state: 'error',
-            queuedTurnCount: Math.max(0, agent.queuedTurnCount - 1),
-          }) },
-          ...(session ? [{ kind: 'session.upsert' as const, value: sessionInput(session, 'failed') }] : []),
-        ] });
-        continue;
-      }
+      let claim: {
+        turn: DaemonTurn;
+        agent: DaemonAgent;
+        session: DaemonSession;
+        workspaceId: string;
+        workspaceRoot: string;
+        prompt: string;
+        startedAt: string;
+      } | undefined;
+      let repairedInvalidTurn = false;
       const startedAt = this.isoNow();
-      await this.options.applySystemCommit({ mutations: [
-        { kind: 'turn.upsert', value: turnInput(turn, { state: 'submitting', startedAt }) },
-        { kind: 'agent.upsert', value: agentInput(agent, {
-          state: 'working',
-          currentTurnId: turn.id,
-          queuedTurnCount: Math.max(0, agent.queuedTurnCount - 1),
-        }) },
-        { kind: 'session.upsert', value: sessionInput(session, 'running') },
-      ] });
-      try {
-        await provider.value.submit({
-          sessionId: turn.sessionId,
-          providerSessionId: agent.providerSessionId,
-          turnId: turn.id,
-          commandId: turn.commandId,
-          prompt,
+      await this.transition((snapshot) => {
+        const activeCount = snapshot.turns.filter((turn) => ACTIVE_TURN_STATES.has(turn.state)).length;
+        if (activeCount >= DAEMON_HARD_LIMITS.concurrentManagedTurns) return undefined;
+        const queued = snapshot.turns
+          .filter((turn) => turn.state === 'queued')
+          .sort((left, right) => (
+            (left.enqueueSequence ?? Number.MAX_SAFE_INTEGER) - (right.enqueueSequence ?? Number.MAX_SAFE_INTEGER)
+            || left.createdAt.localeCompare(right.createdAt)
+            || left.id.localeCompare(right.id)
+          ));
+        const turn = queued.find((candidate) => {
+          const agent = snapshot.agents.find((entry) => entry.sessionId === candidate.sessionId);
+          const session = snapshot.sessions.find((entry) => entry.id === candidate.sessionId);
+          return Boolean(
+            agent
+            && session
+            && !agent.currentTurnId
+            && !TERMINAL_AGENT_STATES.has(agent.state)
+            && agent.state !== 'delivery-uncertain'
+            && !TERMINAL_SESSION_STATES.has(session.state),
+          );
         });
-        await this.options.applySystemCommit({ mutations: [{
-          kind: 'turn.upsert',
-          value: turnInput({ ...turn, state: 'submitting', startedAt }, { state: 'working' }),
-        }] });
-        this.armTurnTimeout(turn.id, turn.sessionId, agent.providerSessionId);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : 'Provider delivery could not be confirmed.';
-        await this.options.applySystemCommit({ mutations: [
+        if (!turn) return undefined;
+        const agent = snapshot.agents.find((entry) => entry.sessionId === turn.sessionId)!;
+        const session = snapshot.sessions.find((entry) => entry.id === turn.sessionId)!;
+        const workspace = snapshot.workspaces.find((entry) => entry.id === session.workspaceId);
+        const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
+        const prompt = this.promptForTurn(turn);
+        if (!workspace || !provider.ok || !prompt) {
+          if (!workspace || !prompt) {
+            repairedInvalidTurn = true;
+            const remaining = Math.max(0, agent.queuedTurnCount - 1);
+            return { mutations: [
+              { kind: 'turn.upsert', value: turnInput(turn, {
+                state: 'failed',
+                finishedAt: startedAt,
+                errorCode: 'queue-state-invalid',
+              }) },
+              { kind: 'agent.upsert', value: agentInput(agent, {
+                state: remaining > 0 ? 'queued' : 'idle',
+                queuedTurnCount: remaining,
+              }) },
+            ] };
+          }
+          return undefined;
+        }
+        claim = {
+          turn,
+          agent,
+          session,
+          workspaceId: workspace.id,
+          workspaceRoot: workspace.rootPath,
+          prompt,
+          startedAt,
+        };
+        return { mutations: [
           { kind: 'turn.upsert', value: turnInput(turn, {
-            state: 'delivery-uncertain',
+            state: 'submitting',
             startedAt,
-            errorCode: 'delivery-uncertain',
+            finishedAt: undefined,
+            errorCode: undefined,
           }) },
           { kind: 'agent.upsert', value: agentInput(agent, {
-            state: 'delivery-uncertain',
+            state: agent.providerSessionId ? 'working' : 'starting',
             currentTurnId: turn.id,
             queuedTurnCount: Math.max(0, agent.queuedTurnCount - 1),
           }) },
-          { kind: 'session.upsert', value: sessionInput(session, 'delivery-uncertain') },
-          { kind: 'transcript.append', items: [{
-            id: this.idFactory(),
-            sessionId: turn.sessionId,
-            turnId: turn.id,
-            kind: 'error',
-            text: detail,
-            isDelta: false,
-            isSensitive: false,
-          }] },
-        ] });
+          { kind: 'session.upsert', value: sessionInput(session, agent.providerSessionId ? 'running' : 'starting') },
+        ] };
+      });
+      if (!claim) {
+        if (repairedInvalidTurn) continue;
+        return;
+      }
+
+      const selected = claim;
+      const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), selected.agent.providerId);
+      if (!provider.ok) return;
+      let providerSessionId = selected.agent.providerSessionId;
+      try {
+        if (!providerSessionId) {
+          const handle = await provider.value.createSession(this.sessionContext(
+            selected.session.id,
+            selected.workspaceId,
+            selected.workspaceRoot,
+            selected.agent.model,
+            selected.agent.permissionPreset,
+            selected.agent.orchestrationEnabled,
+          ));
+          let attached = false;
+          await this.transition((snapshot) => {
+            const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
+            const agent = snapshot.agents.find((entry) => entry.sessionId === selected.session.id);
+            if (!turn || !agent || TERMINAL_TURN_STATES.has(turn.state) || agent.currentTurnId !== turn.id) {
+              return undefined;
+            }
+            attached = true;
+            return { mutations: [{ kind: 'agent.upsert', value: agentInput(agent, {
+              providerSessionId: handle.providerSessionId,
+              ...(handle.model ? { model: handle.model } : {}),
+              permissionPreset: handle.permissionPreset,
+              state: 'working',
+            }) }] };
+          });
+          if (!attached) {
+            await provider.value.disposeSession(selected.session.id, handle.providerSessionId);
+            continue;
+          }
+          providerSessionId = handle.providerSessionId;
+        }
+        await provider.value.submit({
+          sessionId: selected.turn.sessionId,
+          providerSessionId,
+          turnId: selected.turn.id,
+          commandId: selected.turn.commandId,
+          prompt: selected.prompt,
+        });
+        let shouldArmTimeout = false;
+        await this.transition((snapshot) => {
+          const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
+          const agent = snapshot.agents.find((entry) => entry.sessionId === selected.turn.sessionId);
+          const session = snapshot.sessions.find((entry) => entry.id === selected.turn.sessionId);
+          if (!turn || !agent || !session || TERMINAL_TURN_STATES.has(turn.state) || agent.currentTurnId !== turn.id) {
+            return undefined;
+          }
+          shouldArmTimeout = ACTIVE_TURN_STATES.has(turn.state);
+          if (turn.state !== 'submitting') return undefined;
+          return { mutations: [
+            { kind: 'turn.upsert', value: turnInput(turn, { state: 'working' }) },
+            { kind: 'agent.upsert', value: agentInput(agent, { state: 'working' }) },
+            { kind: 'session.upsert', value: sessionInput(session, 'running') },
+          ] };
+        });
+        if (shouldArmTimeout) {
+          this.armTurnTimeout(selected.turn.id, selected.turn.sessionId, providerSessionId);
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'Provider delivery could not be confirmed.';
+        let markedUncertain = false;
+        await this.transition((snapshot) => {
+          const turn = snapshot.turns.find((entry) => entry.id === selected.turn.id);
+          const agent = snapshot.agents.find((entry) => entry.sessionId === selected.turn.sessionId);
+          const session = snapshot.sessions.find((entry) => entry.id === selected.turn.sessionId);
+          if (!turn || !agent || !session || TERMINAL_TURN_STATES.has(turn.state) || agent.currentTurnId !== turn.id) {
+            return undefined;
+          }
+          markedUncertain = true;
+          return { mutations: [
+            { kind: 'turn.upsert', value: turnInput(turn, {
+              state: 'delivery-uncertain',
+              errorCode: 'delivery-uncertain',
+            }) },
+            { kind: 'agent.upsert', value: agentInput(agent, { state: 'delivery-uncertain' }) },
+            { kind: 'session.upsert', value: sessionInput(session, 'delivery-uncertain') },
+            ...this.transcriptMutations([{
+              id: stableId('delivery-error', selected.turn.id, detail),
+              sessionId: selected.turn.sessionId,
+              turnId: selected.turn.id,
+              kind: 'error',
+              text: detail,
+              isDelta: false,
+              isSensitive: false,
+            }]),
+          ] };
+        });
+        if (markedUncertain && providerSessionId) {
+          this.armTurnTimeout(selected.turn.id, selected.turn.sessionId, providerSessionId);
+        }
       }
     }
   }
 
   private async handleProviderEvent(providerId: string, event: AgentProviderEvent): Promise<void> {
     if (this.disposed) return;
-    const snapshot = this.options.getSnapshot();
     if (event.kind === 'transcript') {
-      const agent = snapshot.agents.find((entry) => entry.sessionId === event.item.sessionId);
-      if (!agent || agent.providerId !== providerId) return;
-      await this.options.applySystemCommit({ mutations: [{
-        kind: 'transcript.append',
-        items: [transcriptInput(event.item)],
-      }] });
+      const mutations = this.transcriptMutations([transcriptInput(event.item)]);
+      await this.transition((snapshot) => {
+        const agent = snapshot.agents.find((entry) => entry.sessionId === event.item.sessionId);
+        const session = snapshot.sessions.find((entry) => entry.id === event.item.sessionId);
+        const turn = event.item.turnId
+          ? snapshot.turns.find((entry) => entry.id === event.item.turnId)
+          : undefined;
+        if (
+          !agent
+          || !session
+          || agent.providerId !== providerId
+          || session.state === 'archived'
+          || (event.item.turnId !== undefined && turn?.sessionId !== event.item.sessionId)
+        ) return undefined;
+        return { mutations };
+      });
       return;
     }
     if (event.kind === 'session-state') {
-      const session = snapshot.sessions.find((entry) => entry.id === event.sessionId);
-      const agent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
-      if (!session || !agent || agent.providerId !== providerId) return;
-      await this.options.applySystemCommit({ mutations: [
-        { kind: 'agent.upsert', value: agentInput(agent, { state: providerStateToAgent(event.state) }) },
-        { kind: 'session.upsert', value: sessionInput(session, providerStateToSession(event.state)) },
-      ] });
+      let failedTurnIds: string[] = [];
+      await this.transition((snapshot) => {
+        const session = snapshot.sessions.find((entry) => entry.id === event.sessionId);
+        const agent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
+        if (!session || !agent || agent.providerId !== providerId || TERMINAL_SESSION_STATES.has(session.state)) {
+          return undefined;
+        }
+        const currentTurn = agent.currentTurnId
+          ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
+          : undefined;
+        if (event.state === 'failed') {
+          const now = this.isoNow();
+          failedTurnIds = snapshot.turns.filter((turn) => (
+            turn.sessionId === event.sessionId && ACTIVE_TURN_STATES.has(turn.state)
+          )).map((turn) => turn.id);
+          return { mutations: [
+            ...this.terminalTurnMutations(
+              snapshot,
+              event.sessionId,
+              'failed',
+              now,
+              'provider-session-failed',
+            ),
+            ...this.expireApprovalMutations(snapshot, event.sessionId, undefined, now),
+            { kind: 'agent.upsert', value: agentInput(agent, {
+              state: 'error',
+              currentTurnId: undefined,
+              queuedTurnCount: 0,
+            }) },
+            { kind: 'session.upsert', value: sessionInput(session, 'failed') },
+          ] };
+        }
+        if (currentTurn && !TERMINAL_TURN_STATES.has(currentTurn.state)) {
+          if (event.state === 'idle' || event.state === 'completed' || event.state === 'interrupted') {
+            // Session notifications do not carry a turn generation. A delayed
+            // predecessor state must not complete the current turn.
+            return undefined;
+          }
+          if (event.state === 'starting' && currentTurn.state !== 'submitting') return undefined;
+          if (event.state === 'working' && currentTurn.state === 'blocked') return undefined;
+          const turnState = event.state === 'blocked'
+            ? 'blocked'
+            : event.state === 'working'
+              ? 'working'
+              : currentTurn.state;
+          return { mutations: [
+            { kind: 'turn.upsert', value: turnInput(currentTurn, {
+              state: turnState,
+              ...(turnState === 'working' ? { errorCode: undefined } : {}),
+            }) },
+            { kind: 'agent.upsert', value: agentInput(agent, { state: providerStateToAgent(event.state) }) },
+            { kind: 'session.upsert', value: sessionInput(session, providerStateToSession(event.state)) },
+          ] };
+        }
+        if (
+          agent.queuedTurnCount > 0
+          && (event.state === 'completed' || event.state === 'interrupted')
+        ) return undefined;
+        return { mutations: [
+          { kind: 'agent.upsert', value: agentInput(agent, { state: providerStateToAgent(event.state) }) },
+          { kind: 'session.upsert', value: sessionInput(session, providerStateToSession(event.state)) },
+        ] };
+      });
+      if (failedTurnIds.length > 0) {
+        for (const turnId of failedTurnIds) this.clearTurnTimeout(turnId);
+        this.queuePump();
+      }
       return;
     }
     if (event.kind === 'turn-started') {
-      const turn = snapshot.turns.find((entry) => entry.id === event.turnId);
-      const agent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
-      const session = snapshot.sessions.find((entry) => entry.id === event.sessionId);
-      if (!turn || !agent || !session || agent.providerId !== providerId) return;
-      await this.options.applySystemCommit({ mutations: [
-        { kind: 'turn.upsert', value: turnInput(turn, {
-          state: 'working',
-          ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
-          startedAt: turn.startedAt ?? this.isoNow(),
-        }) },
-        { kind: 'agent.upsert', value: agentInput(agent, { state: 'working', currentTurnId: turn.id }) },
-        { kind: 'session.upsert', value: sessionInput(session, 'running') },
-      ] });
+      await this.transition((snapshot) => {
+        const turn = snapshot.turns.find((entry) => (
+          entry.id === event.turnId || entry.commandId === event.commandId
+        ));
+        const agent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
+        const session = snapshot.sessions.find((entry) => entry.id === event.sessionId);
+        if (
+          !turn
+          || !agent
+          || !session
+          || turn.sessionId !== event.sessionId
+          || turn.commandId !== event.commandId
+          || agent.providerId !== providerId
+          || TERMINAL_TURN_STATES.has(turn.state)
+          || TERMINAL_SESSION_STATES.has(session.state)
+          || (agent.currentTurnId !== undefined && agent.currentTurnId !== turn.id)
+        ) return undefined;
+        return { mutations: [
+          { kind: 'turn.upsert', value: turnInput(turn, {
+            state: 'working',
+            ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
+            startedAt: turn.startedAt ?? this.isoNow(),
+            errorCode: undefined,
+          }) },
+          { kind: 'agent.upsert', value: agentInput(agent, { state: 'working', currentTurnId: turn.id }) },
+          { kind: 'session.upsert', value: sessionInput(session, 'running') },
+        ] };
+      });
       return;
     }
     if (event.kind === 'turn-finished') {
-      const turn = snapshot.turns.find((entry) => entry.id === event.turnId);
-      const agent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
-      const session = snapshot.sessions.find((entry) => entry.id === event.sessionId);
-      if (!turn || !agent || !session || agent.providerId !== providerId) return;
-      this.clearTurnTimeout(turn.id);
-      const failed = event.outcome === 'failed';
-      const interrupted = event.outcome === 'interrupted';
-      await this.options.applySystemCommit({ mutations: [
-        { kind: 'turn.upsert', value: turnInput(turn, {
-          state: failed ? 'failed' : interrupted ? 'interrupted' : 'completed',
-          finishedAt: this.isoNow(),
-          ...(event.errorCode ? { errorCode: event.errorCode } : {}),
-        }) },
-        { kind: 'agent.upsert', value: agentInput(agent, {
-          state: failed ? 'error' : interrupted ? 'interrupted' : 'idle',
-          currentTurnId: undefined,
-        }) },
-        { kind: 'session.upsert', value: sessionInput(
-          session,
-          failed ? 'failed' : interrupted ? 'interrupted' : 'idle',
-        ) },
-        ...(event.summary ? [{ kind: 'transcript.append' as const, items: [{
-          id: this.idFactory(),
-          sessionId: event.sessionId,
-          turnId: event.turnId,
-          kind: 'notice' as const,
-          text: event.summary,
-          isDelta: false,
-          isSensitive: false,
-        }] }] : []),
-      ] });
-      this.queuePump();
+      let finishedTurnId: string | undefined;
+      let releasedCurrent = false;
+      await this.transition((snapshot) => {
+        const providerTurnId = event.turnId.startsWith('provider:') ? event.turnId.slice('provider:'.length) : undefined;
+        const turn = snapshot.turns.find((entry) => (
+          entry.id === event.turnId || (providerTurnId !== undefined && entry.providerTurnId === providerTurnId)
+        ));
+        const agent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
+        const session = snapshot.sessions.find((entry) => entry.id === event.sessionId);
+        if (
+          !turn
+          || !agent
+          || !session
+          || turn.sessionId !== event.sessionId
+          || agent.providerId !== providerId
+          || TERMINAL_TURN_STATES.has(turn.state)
+        ) return undefined;
+        const failed = event.outcome === 'failed';
+        const interrupted = event.outcome === 'interrupted';
+        const now = this.isoNow();
+        finishedTurnId = turn.id;
+        releasedCurrent = agent.currentTurnId === turn.id;
+        const hasQueuedSuccessor = releasedCurrent && agent.queuedTurnCount > 0;
+        return { mutations: [
+          { kind: 'turn.upsert', value: turnInput(turn, {
+            state: failed ? 'failed' : interrupted ? 'interrupted' : 'completed',
+            finishedAt: now,
+            errorCode: event.errorCode,
+          }) },
+          ...(releasedCurrent ? [
+            ...this.expireApprovalMutations(snapshot, event.sessionId, turn.id, now),
+            { kind: 'agent.upsert' as const, value: agentInput(agent, {
+              state: hasQueuedSuccessor
+                ? 'queued'
+                : failed ? 'error' : interrupted ? 'interrupted' : agent.queuedTurnCount > 0 ? 'queued' : 'idle',
+              currentTurnId: undefined,
+            }) },
+            { kind: 'session.upsert' as const, value: sessionInput(
+              session,
+              hasQueuedSuccessor ? 'idle' : failed ? 'failed' : interrupted ? 'interrupted' : 'idle',
+            ) },
+          ] : []),
+          ...(event.summary ? this.transcriptMutations([{
+            id: stableId('turn-summary', providerId, event.sessionId, turn.id, event.outcome, event.summary),
+            sessionId: event.sessionId,
+            turnId: turn.id,
+            kind: 'notice' as const,
+            text: event.summary,
+            isDelta: false,
+            isSensitive: false,
+          }]) : []),
+        ] };
+      });
+      if (finishedTurnId) this.clearTurnTimeout(finishedTurnId);
+      if (releasedCurrent) this.queuePump();
       return;
     }
     if (event.kind === 'approval-requested') {
-      const agent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
-      const session = snapshot.sessions.find((entry) => entry.id === event.sessionId);
-      if (!agent || !session || agent.providerId !== providerId) return;
-      const approvalId = stableId('approval', event.sessionId, event.providerRequestId);
-      await this.options.applySystemCommit({ mutations: [
-        { kind: 'approval.upsert', value: {
-          id: approvalId,
-          sessionId: event.sessionId,
-          ...(event.turnId ? { turnId: event.turnId } : {}),
-          providerRequestId: event.providerRequestId,
-          risk: event.risk,
-          title: event.title,
-          ...(event.detail ? { detail: event.detail } : {}),
-          state: 'pending',
-        } },
-        { kind: 'agent.upsert', value: agentInput(agent, { state: 'blocked' }) },
-        { kind: 'session.upsert', value: sessionInput(session, 'needs-attention') },
-      ] });
+      let response: 'allow' | 'deny' | undefined;
+      let providerSessionId: string | undefined;
+      await this.transition((snapshot) => {
+        const agent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
+        const session = snapshot.sessions.find((entry) => entry.id === event.sessionId);
+        if (!agent || !session || !agent.providerSessionId || agent.providerId !== providerId) return undefined;
+        providerSessionId = agent.providerSessionId;
+        const approvalId = stableId(
+          'approval',
+          providerId,
+          agent.providerSessionId,
+          event.sessionId,
+          event.providerRequestId,
+        );
+        const existing = snapshot.approvals.find((entry) => entry.id === approvalId);
+        if (existing) {
+          if (existing.state === 'allowed') response = 'allow';
+          else if (existing.state === 'denied' || existing.state === 'expired') response = 'deny';
+          return undefined;
+        }
+        const turn = event.turnId
+          ? snapshot.turns.find((entry) => entry.id === event.turnId)
+          : agent.currentTurnId
+            ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
+            : undefined;
+        const stale = TERMINAL_SESSION_STATES.has(session.state)
+          || (event.turnId !== undefined && (!turn || TERMINAL_TURN_STATES.has(turn.state)))
+          || (turn !== undefined && agent.currentTurnId !== turn.id);
+        if (stale) response = 'deny';
+        const now = this.isoNow();
+        return { mutations: [
+          { kind: 'approval.upsert', value: {
+            id: approvalId,
+            sessionId: event.sessionId,
+            ...(turn ? { turnId: turn.id } : {}),
+            providerRequestId: event.providerRequestId,
+            risk: event.risk,
+            title: event.title,
+            ...(event.detail ? { detail: event.detail } : {}),
+            state: stale ? 'expired' : 'pending',
+            ...(stale ? { resolvedAt: now } : {}),
+          } },
+          ...(!stale && turn ? [{
+            kind: 'turn.upsert' as const,
+            value: turnInput(turn, { state: 'blocked' }),
+          }] : []),
+          ...(!stale ? [
+            { kind: 'agent.upsert' as const, value: agentInput(agent, { state: 'blocked' }) },
+            { kind: 'session.upsert' as const, value: sessionInput(session, 'needs-attention') },
+          ] : []),
+        ] };
+      });
+      if (response && providerSessionId) {
+        try {
+          const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
+          if (provider.ok) await provider.value.resolveApproval({
+            sessionId: event.sessionId,
+            providerSessionId,
+            providerRequestId: event.providerRequestId,
+            decision: response,
+          });
+        } catch (error) {
+          this.report('duplicate or stale provider approval response failed', error);
+        }
+      }
       return;
     }
     if (event.kind === 'native-subagent') {
-      await this.handleNativeSubagent(providerId, event, snapshot);
+      await this.handleNativeSubagent(providerId, event);
       return;
     }
     if (event.kind === 'provider-error') {
@@ -988,105 +1320,142 @@ export class DaemonAgentRuntime {
         this.report(`${providerId} provider error: ${event.code}`, new Error(event.message));
         return;
       }
-      const agent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
-      const session = snapshot.sessions.find((entry) => entry.id === event.sessionId);
-      if (!agent || !session || agent.providerId !== providerId) return;
-      await this.options.applySystemCommit({ mutations: [
-        { kind: 'agent.upsert', value: agentInput(agent, { state: 'error' }) },
-        { kind: 'session.upsert', value: sessionInput(session, 'failed') },
-        { kind: 'transcript.append', items: [{
-          id: this.idFactory(),
-          sessionId: event.sessionId,
-          kind: 'error',
-          text: event.message,
-          isDelta: false,
-          isSensitive: false,
-        }] },
-      ] });
+      const sessionId = event.sessionId;
+      let terminalTurnIds: string[] = [];
+      await this.transition((snapshot) => {
+        const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+        const session = snapshot.sessions.find((entry) => entry.id === sessionId);
+        if (!agent || !session || agent.providerId !== providerId || session.state === 'archived') return undefined;
+        const turn = agent.currentTurnId
+          ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
+          : undefined;
+        const now = this.isoNow();
+        if (!event.recoverable) {
+          terminalTurnIds = snapshot.turns.filter((candidate) => (
+            candidate.sessionId === sessionId && ACTIVE_TURN_STATES.has(candidate.state)
+          )).map((candidate) => candidate.id);
+        }
+        return { mutations: [
+          ...(event.recoverable && turn && !TERMINAL_TURN_STATES.has(turn.state) ? [{
+            kind: 'turn.upsert' as const,
+            value: turnInput(turn, {
+              state: 'delivery-uncertain',
+              errorCode: event.code,
+            }),
+          }] : []),
+          ...(!event.recoverable
+            ? this.terminalTurnMutations(snapshot, sessionId, 'failed', now, event.code)
+            : []),
+          ...(!event.recoverable ? this.expireApprovalMutations(snapshot, sessionId, undefined, now) : []),
+          { kind: 'agent.upsert', value: agentInput(agent, event.recoverable ? {
+            state: 'delivery-uncertain',
+          } : { state: 'error', currentTurnId: undefined, queuedTurnCount: 0 }) },
+          { kind: 'session.upsert', value: sessionInput(
+            session,
+            event.recoverable ? 'delivery-uncertain' : 'failed',
+          ) },
+          ...this.transcriptMutations([{
+            id: stableId('provider-error', providerId, sessionId, event.code, event.message),
+            sessionId,
+            ...(turn ? { turnId: turn.id } : {}),
+            kind: 'error',
+            text: event.message,
+            isDelta: false,
+            isSensitive: false,
+          }]),
+        ] };
+      });
+      if (terminalTurnIds.length > 0) {
+        for (const turnId of terminalTurnIds) this.clearTurnTimeout(turnId);
+        this.queuePump();
+      }
     }
   }
 
   private async handleNativeSubagent(
     providerId: string,
     event: Extract<AgentProviderEvent, { kind: 'native-subagent' }>,
-    snapshot: DaemonSnapshot,
   ): Promise<void> {
-    const parent = snapshot.sessions.find((entry) => entry.id === event.sessionId);
-    const parentAgent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
-    if (!parent || !parentAgent || parentAgent.providerId !== providerId) return;
-    const childId = stableId('native-agent', providerId, event.providerChildId);
-    const existingSession = snapshot.sessions.find((entry) => entry.id === childId);
-    const existingAgent = snapshot.agents.find((entry) => entry.sessionId === childId);
-    const existingRelation = snapshot.agentRelations.find((entry) => entry.childSessionId === childId);
-    const relationPlan = existingRelation
-      ? { treeId: existingRelation.treeId, depth: existingRelation.depth }
-      : this.planNativeRelation(snapshot, event.sessionId);
-    if (!relationPlan) {
-      await this.options.applySystemCommit({ mutations: [{ kind: 'transcript.append', items: [{
-        id: this.idFactory(),
-        sessionId: event.sessionId,
-        kind: 'error',
-        text: 'A provider-native subagent exceeded the managed tree safety limits.',
+    await this.transition((snapshot) => {
+      const parent = snapshot.sessions.find((entry) => entry.id === event.sessionId);
+      const parentAgent = snapshot.agents.find((entry) => entry.sessionId === event.sessionId);
+      if (!parent || !parentAgent || parentAgent.providerId !== providerId || parent.state === 'archived') {
+        return undefined;
+      }
+      const childId = stableId('native-agent', providerId, event.sessionId, event.providerChildId);
+      const existingSession = snapshot.sessions.find((entry) => entry.id === childId);
+      const existingAgent = snapshot.agents.find((entry) => entry.sessionId === childId);
+      const existingRelation = snapshot.agentRelations.find((entry) => entry.childSessionId === childId);
+      const relationPlan = existingRelation
+        ? { treeId: existingRelation.treeId, depth: existingRelation.depth }
+        : this.planNativeRelation(snapshot, event.sessionId);
+      if (!relationPlan) {
+        return { mutations: [{ kind: 'transcript.append', items: [{
+          id: stableId('native-agent-limit', providerId, event.sessionId, event.providerChildId),
+          sessionId: event.sessionId,
+          kind: 'error',
+          text: 'A provider-native subagent exceeded the managed tree safety limits.',
+          isDelta: false,
+          isSensitive: false,
+        }] }] };
+      }
+      if (existingSession && TERMINAL_SESSION_STATES.has(existingSession.state)) return undefined;
+      const state: DaemonAgent['state'] = event.state === 'done'
+        ? 'done'
+        : event.state === 'error'
+          ? 'error'
+          : event.state;
+      const sessionState: DaemonSession['state'] = event.state === 'done'
+        ? 'completed'
+        : event.state === 'error'
+          ? 'failed'
+          : event.state === 'blocked'
+            ? 'needs-attention'
+            : event.state === 'starting' ? 'starting' : 'running';
+      const mutations: DaemonStoreMutation[] = [
+        { kind: 'session.upsert', value: existingSession
+          ? sessionInput(existingSession, sessionState)
+          : {
+              id: childId,
+              projectId: parent.projectId,
+              workspaceId: parent.workspaceId,
+              kind: 'agent',
+              title: event.title,
+              state: sessionState,
+              source: 'structured',
+            } },
+        { kind: 'agent.upsert', value: existingAgent
+          ? agentInput(existingAgent, { state, providerSessionId: event.providerChildId })
+          : {
+              sessionId: childId,
+              providerId,
+              providerSessionId: event.providerChildId,
+              model: parentAgent.model,
+              permissionPreset: parentAgent.permissionPreset,
+              state,
+              queuedTurnCount: 0,
+              orchestrationEnabled: parentAgent.orchestrationEnabled,
+            } },
+      ];
+      if (!existingRelation) mutations.push({ kind: 'agent-relation.upsert', value: {
+        id: stableId('relation', relationPlan.treeId, childId),
+        treeId: relationPlan.treeId,
+        parentSessionId: event.sessionId,
+        childSessionId: childId,
+        owner: 'provider-native',
+        depth: relationPlan.depth,
+      } });
+      if (event.summary) mutations.push(...this.transcriptMutations([{
+        id: stableId('native-summary', providerId, event.sessionId, event.providerChildId, event.summary),
+        sessionId: childId,
+        kind: 'child-summary',
+        text: event.summary,
         isDelta: false,
         isSensitive: false,
-      }] }] });
-      return;
-    }
-    const state: DaemonAgent['state'] = event.state === 'done'
-      ? 'done'
-      : event.state === 'error'
-        ? 'error'
-        : event.state;
-    const sessionState: DaemonSession['state'] = event.state === 'done'
-      ? 'completed'
-      : event.state === 'error'
-        ? 'failed'
-        : event.state === 'blocked'
-          ? 'needs-attention'
-          : event.state === 'starting' ? 'starting' : 'running';
-    const mutations: DaemonStoreMutation[] = [
-      { kind: 'session.upsert', value: existingSession
-        ? sessionInput(existingSession, sessionState)
-        : {
-            id: childId,
-            projectId: parent.projectId,
-            workspaceId: parent.workspaceId,
-            kind: 'agent',
-            title: event.title,
-            state: sessionState,
-            source: 'structured',
-          } },
-      { kind: 'agent.upsert', value: existingAgent
-        ? agentInput(existingAgent, { state, providerSessionId: event.providerChildId })
-        : {
-            sessionId: childId,
-            providerId,
-            providerSessionId: event.providerChildId,
-            model: parentAgent.model,
-            permissionPreset: parentAgent.permissionPreset,
-            state,
-            queuedTurnCount: 0,
-            orchestrationEnabled: parentAgent.orchestrationEnabled,
-          } },
-    ];
-    if (!existingRelation) mutations.push({ kind: 'agent-relation.upsert', value: {
-      id: stableId('relation', relationPlan.treeId, childId),
-      treeId: relationPlan.treeId,
-      parentSessionId: event.sessionId,
-      childSessionId: childId,
-      owner: 'provider-native',
-      depth: relationPlan.depth,
-    } });
-    if (event.summary) mutations.push({ kind: 'transcript.append', items: [{
-      id: this.idFactory(),
-      sessionId: childId,
-      kind: 'child-summary',
-      text: event.summary,
-      isDelta: false,
-      isSensitive: false,
-      relatedSessionId: event.sessionId,
-    }] });
-    await this.options.applySystemCommit({ mutations });
+        relatedSessionId: event.sessionId,
+      }]));
+      return { mutations };
+    });
   }
 
   private planNativeRelation(snapshot: DaemonSnapshot, parentSessionId: string): ChildRelationPlan | null {
@@ -1152,12 +1521,46 @@ export class DaemonAgentRuntime {
     sessionId: string,
     providerSessionId: string,
   ): Promise<void> {
-    const snapshot = this.options.getSnapshot();
-    const turn = snapshot.turns.find((entry) => entry.id === turnId);
-    const session = snapshot.sessions.find((entry) => entry.id === sessionId);
-    const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
-    if (!turn || !session || !agent || !ACTIVE_TURN_STATES.has(turn.state)) return;
-    const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
+    const now = this.isoNow();
+    let providerId: string | undefined;
+    let expired = false;
+    await this.transition((snapshot) => {
+      const turn = snapshot.turns.find((entry) => entry.id === turnId);
+      const session = snapshot.sessions.find((entry) => entry.id === sessionId);
+      const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+      if (!turn || !session || !agent || !ACTIVE_TURN_STATES.has(turn.state) || agent.currentTurnId !== turn.id) {
+        return undefined;
+      }
+      expired = true;
+      providerId = agent.providerId;
+      return { mutations: [
+        ...this.terminalTurnMutations(
+          snapshot,
+          sessionId,
+          'failed',
+          now,
+          'background-turn-timeout',
+        ),
+        ...this.expireApprovalMutations(snapshot, sessionId, undefined, now),
+        { kind: 'agent.upsert', value: agentInput(agent, {
+          state: 'error',
+          currentTurnId: undefined,
+          queuedTurnCount: 0,
+        }) },
+        { kind: 'session.upsert', value: sessionInput(session, 'failed') },
+        { kind: 'transcript.append', items: [{
+          id: stableId('turn-timeout', turnId),
+          sessionId,
+          turnId,
+          kind: 'error',
+          text: 'The background Agent turn exceeded the two-hour safety limit and was interrupted.',
+          isDelta: false,
+          isSensitive: false,
+        }] },
+      ] };
+    });
+    if (!expired || !providerId) return;
+    const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
     if (provider.ok) {
       try {
         await provider.value.interrupt(sessionId, providerSessionId);
@@ -1165,26 +1568,404 @@ export class DaemonAgentRuntime {
         this.report('provider timeout interrupt failed', error);
       }
     }
-    const now = this.isoNow();
-    await this.options.applySystemCommit({ mutations: [
-      { kind: 'turn.upsert', value: turnInput(turn, {
-        state: 'failed',
-        finishedAt: now,
-        errorCode: 'background-turn-timeout',
-      }) },
-      { kind: 'agent.upsert', value: agentInput(agent, { state: 'error', currentTurnId: undefined }) },
-      { kind: 'session.upsert', value: sessionInput(session, 'failed') },
-      { kind: 'transcript.append', items: [{
-        id: this.idFactory(),
-        sessionId,
-        turnId,
-        kind: 'error',
-        text: 'The background Agent turn exceeded the two-hour safety limit and was interrupted.',
-        isDelta: false,
-        isSensitive: false,
-      }] },
-    ] });
     this.queuePump();
+  }
+
+  private transition(planner: DaemonSystemTransitionPlanner): Promise<unknown> {
+    return this.options.applySystemCommit(planner);
+  }
+
+  private runBackground(context: string, task: () => Promise<void>): void {
+    if (this.disposed) return;
+    const running = Promise.resolve()
+      .then(task)
+      .catch((error) => this.report(context, error))
+      .finally(() => this.backgroundTasks.delete(running));
+    this.backgroundTasks.add(running);
+  }
+
+  private async drainEventTail(): Promise<void> {
+    for (;;) {
+      const tail = this.eventTail;
+      await tail;
+      if (tail === this.eventTail) return;
+    }
+  }
+
+  private resolvedApprovalInput(
+    approval: DaemonSnapshot['approvals'][number],
+    state: 'allowed' | 'denied' | 'expired',
+    resolvedAt: string,
+  ): Omit<DaemonSnapshot['approvals'][number], 'revision' | 'createdAt' | 'updatedAt'> {
+    return {
+      id: approval.id,
+      sessionId: approval.sessionId,
+      ...(approval.turnId ? { turnId: approval.turnId } : {}),
+      providerRequestId: approval.providerRequestId,
+      risk: approval.risk,
+      title: approval.title,
+      ...(approval.detail ? { detail: approval.detail } : {}),
+      state,
+      resolvedAt,
+    };
+  }
+
+  private expireApprovalMutations(
+    snapshot: DaemonSnapshot,
+    sessionId: string,
+    turnId: string | undefined,
+    resolvedAt: string,
+  ): DaemonStoreMutation[] {
+    return snapshot.approvals
+      .filter((approval) => (
+        approval.sessionId === sessionId
+        && approval.state === 'pending'
+        && (turnId === undefined || approval.turnId === undefined || approval.turnId === turnId)
+      ))
+      .map((approval): DaemonStoreMutation => ({
+        kind: 'approval.upsert',
+        value: this.resolvedApprovalInput(approval, 'expired', resolvedAt),
+      }));
+  }
+
+  private terminalTurnMutations(
+    snapshot: DaemonSnapshot,
+    sessionId: string,
+    state: 'interrupted' | 'failed',
+    finishedAt: string,
+    errorCode: string | undefined,
+  ): DaemonStoreMutation[] {
+    return snapshot.turns
+      .filter((turn) => turn.sessionId === sessionId && !TERMINAL_TURN_STATES.has(turn.state))
+      .map((turn): DaemonStoreMutation => ({
+        kind: 'turn.upsert',
+        value: turnInput(turn, { state, finishedAt, errorCode }),
+      }));
+  }
+
+  private async expirePersistedApprovals(): Promise<void> {
+    const now = this.isoNow();
+    await this.transition((snapshot) => {
+      const pending = snapshot.approvals.filter((approval) => approval.state === 'pending');
+      if (pending.length === 0) return undefined;
+      return { mutations: pending.map((approval): DaemonStoreMutation => ({
+        kind: 'approval.upsert',
+        value: this.resolvedApprovalInput(approval, 'expired', now),
+      })) };
+    });
+  }
+
+  /**
+   * A provider turn cannot be submitted until its provider Session id is
+   * durable. Therefore a submitting claim without that id is safe to put back
+   * on the queue after restart; at most an empty provider Session was orphaned
+   * while createSession was in flight. Delivery-uncertain claims remain held.
+   */
+  private async recoverUnattachedClaims(): Promise<void> {
+    await this.transition((snapshot) => {
+      const mutations: DaemonStoreMutation[] = [];
+      for (const turn of snapshot.turns) {
+        if (turn.state !== 'submitting') continue;
+        const agent = snapshot.agents.find((entry) => entry.sessionId === turn.sessionId);
+        const session = snapshot.sessions.find((entry) => entry.id === turn.sessionId);
+        if (
+          !agent
+          || !session
+          || agent.providerSessionId
+          || agent.currentTurnId !== turn.id
+          || TERMINAL_AGENT_STATES.has(agent.state)
+          || TERMINAL_SESSION_STATES.has(session.state)
+        ) continue;
+        const queuedTurnCount = snapshot.turns.filter((candidate) => (
+          candidate.sessionId === turn.sessionId
+          && candidate.state === 'queued'
+          && candidate.id !== turn.id
+        )).length + 1;
+        mutations.push(
+          { kind: 'turn.upsert', value: turnInput(turn, {
+            state: 'queued',
+            startedAt: undefined,
+            finishedAt: undefined,
+            errorCode: undefined,
+          }) },
+          { kind: 'agent.upsert', value: agentInput(agent, {
+            state: 'queued',
+            currentTurnId: undefined,
+            queuedTurnCount,
+          }) },
+          { kind: 'session.upsert', value: sessionInput(session, 'idle') },
+        );
+      }
+      return mutations.length > 0 ? { mutations } : undefined;
+    });
+  }
+
+  private promptForTurn(turn: DaemonTurn): string | undefined {
+    const command = this.options.findCommand?.(turn.commandId);
+    if (command?.type === 'agent.create' && command.payload.sessionId === turn.sessionId) {
+      return command.payload.initialPrompt;
+    }
+    if (
+      (command?.type === 'agent.submit' || command?.type === 'agent.interrupt-and-submit')
+      && command.payload.sessionId === turn.sessionId
+    ) return command.payload.prompt;
+
+    let afterSequence = 0;
+    for (;;) {
+      const page = this.options.readTranscript(turn.sessionId, afterSequence, 2_000);
+      const prompt = page.find((item) => item.turnId === turn.id && item.kind === 'user-message');
+      if (prompt) return prompt.text;
+      if (page.length < 2_000) return undefined;
+      const next = page.at(-1)?.sequence;
+      if (next === undefined || next <= afterSequence) return undefined;
+      afterSequence = next;
+    }
+  }
+
+  private async rehydratePersistedSessions(): Promise<void> {
+    const snapshot = this.options.getSnapshot();
+    for (const agent of snapshot.agents) {
+      const session = snapshot.sessions.find((entry) => entry.id === agent.sessionId);
+      if (
+        !agent.providerSessionId
+        || !session
+        || TERMINAL_AGENT_STATES.has(agent.state)
+        || TERMINAL_SESSION_STATES.has(session.state)
+      ) continue;
+      await this.rehydrateSession(agent.sessionId);
+    }
+  }
+
+  private async rehydrateSession(sessionId: string): Promise<void> {
+    const snapshot = this.options.getSnapshot();
+    const session = snapshot.sessions.find((entry) => entry.id === sessionId);
+    const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+    const workspace = session
+      ? snapshot.workspaces.find((entry) => entry.id === session.workspaceId)
+      : undefined;
+    if (
+      !session
+      || !agent?.providerSessionId
+      || !workspace
+      || TERMINAL_AGENT_STATES.has(agent.state)
+      || TERMINAL_SESSION_STATES.has(session.state)
+    ) return;
+    const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
+    if (!provider.ok) {
+      await this.markSessionDeliveryUncertain(sessionId, 'provider-unavailable', provider.message);
+      return;
+    }
+    try {
+      const handle = await provider.value.resumeSession({
+        ...this.sessionContext(
+          sessionId,
+          workspace.id,
+          workspace.rootPath,
+          agent.model,
+          agent.permissionPreset,
+          agent.orchestrationEnabled,
+        ),
+        providerSessionId: agent.providerSessionId,
+      });
+      await this.transition((fresh) => {
+        const currentAgent = fresh.agents.find((entry) => entry.sessionId === sessionId);
+        const currentSession = fresh.sessions.find((entry) => entry.id === sessionId);
+        if (!currentAgent || !currentSession || TERMINAL_SESSION_STATES.has(currentSession.state)) return undefined;
+        const hasCurrent = currentAgent.currentTurnId !== undefined;
+        return { mutations: [
+          { kind: 'agent.upsert', value: agentInput(currentAgent, {
+            providerSessionId: handle.providerSessionId,
+            ...(handle.model ? { model: handle.model } : {}),
+            permissionPreset: handle.permissionPreset,
+            ...(!hasCurrent ? { state: currentAgent.queuedTurnCount > 0 ? 'queued' : 'idle' } : {}),
+          }) },
+          ...(!hasCurrent ? [{
+            kind: 'session.upsert' as const,
+            value: sessionInput(currentSession, 'idle'),
+          }] : []),
+        ] };
+      });
+    } catch (error) {
+      await this.markSessionDeliveryUncertain(
+        sessionId,
+        'provider-resume-failed',
+        error instanceof Error ? error.message : 'Provider Session could not be resumed.',
+      );
+    }
+  }
+
+  private async markSessionDeliveryUncertain(sessionId: string, code: string, detail: string): Promise<void> {
+    await this.transition((snapshot) => {
+      const session = snapshot.sessions.find((entry) => entry.id === sessionId);
+      const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+      if (!session || !agent || TERMINAL_SESSION_STATES.has(session.state)) return undefined;
+      const turn = agent.currentTurnId
+        ? snapshot.turns.find((entry) => entry.id === agent.currentTurnId)
+        : undefined;
+      return { mutations: [
+        ...(turn && !TERMINAL_TURN_STATES.has(turn.state) ? [{
+          kind: 'turn.upsert' as const,
+          value: turnInput(turn, { state: 'delivery-uncertain', errorCode: code }),
+        }] : []),
+        { kind: 'agent.upsert', value: agentInput(agent, { state: 'delivery-uncertain' }) },
+        { kind: 'session.upsert', value: sessionInput(session, 'delivery-uncertain') },
+        ...this.transcriptMutations([{
+          id: stableId('session-error', sessionId, code, detail),
+          sessionId,
+          ...(turn ? { turnId: turn.id } : {}),
+          kind: 'error',
+          text: detail,
+          isDelta: false,
+          isSensitive: false,
+        }]),
+      ] };
+    });
+  }
+
+  private async requestInterrupt(
+    sessionId: string,
+    turnId: string,
+    providerId: string,
+    providerSessionId: string,
+  ): Promise<void> {
+    const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
+    if (!provider.ok) {
+      await this.markSessionDeliveryUncertain(sessionId, 'interrupt-provider-unavailable', provider.message);
+      return;
+    }
+    try {
+      await provider.value.interrupt(sessionId, providerSessionId);
+    } catch (error) {
+      await this.markSessionDeliveryUncertain(
+        sessionId,
+        'interrupt-failed',
+        error instanceof Error ? error.message : `Turn ${turnId} could not be interrupted.`,
+      );
+    }
+  }
+
+  private async applyProviderSettings(
+    sessionId: string,
+    providerId: string,
+    providerSessionId: string,
+    model: string | undefined,
+    permissionPreset: DaemonAgent['permissionPreset'],
+  ): Promise<void> {
+    const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
+    if (!provider.ok) {
+      await this.markSessionDeliveryUncertain(sessionId, 'settings-provider-unavailable', provider.message);
+      return;
+    }
+    try {
+      const handle = await provider.value.setSettings({ sessionId, providerSessionId, ...(model ? { model } : {}), permissionPreset });
+      await this.transition((snapshot) => {
+        const agent = snapshot.agents.find((entry) => entry.sessionId === sessionId);
+        if (!agent || agent.state === 'archived') return undefined;
+        return { mutations: [{ kind: 'agent.upsert', value: agentInput(agent, {
+          providerSessionId: handle.providerSessionId,
+          ...(handle.model ? { model: handle.model } : {}),
+          permissionPreset: handle.permissionPreset,
+        }) }] };
+      });
+    } catch (error) {
+      await this.markSessionDeliveryUncertain(
+        sessionId,
+        'settings-update-failed',
+        error instanceof Error ? error.message : 'Provider settings could not be updated.',
+      );
+    }
+  }
+
+  private async resolveProviderApproval(
+    providerId: string,
+    sessionId: string,
+    providerSessionId: string,
+    providerRequestId: string,
+    decision: 'allow' | 'deny',
+  ): Promise<void> {
+    const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
+    if (!provider.ok) {
+      await this.markSessionDeliveryUncertain(sessionId, 'approval-provider-unavailable', provider.message);
+      return;
+    }
+    try {
+      await provider.value.resolveApproval({ sessionId, providerSessionId, providerRequestId, decision });
+    } catch (error) {
+      await this.markSessionDeliveryUncertain(
+        sessionId,
+        'approval-delivery-failed',
+        error instanceof Error ? error.message : 'Approval decision could not be delivered.',
+      );
+    }
+  }
+
+  private async cancelProviderSession(
+    sessionId: string,
+    providerId: string,
+    providerSessionId: string,
+  ): Promise<void> {
+    const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
+    if (!provider.ok) return;
+    try {
+      await provider.value.interrupt(sessionId, providerSessionId);
+    } catch (error) {
+      this.report('provider cancel interrupt failed', error);
+    }
+    await this.disposeProviderSession(sessionId, providerId, providerSessionId);
+  }
+
+  private async disposeProviderSession(
+    sessionId: string,
+    providerId: string,
+    providerSessionId: string,
+  ): Promise<void> {
+    const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), providerId);
+    if (!provider.ok) return;
+    try {
+      await provider.value.disposeSession(sessionId, providerSessionId);
+    } catch (error) {
+      this.report('provider Session disposal failed', error);
+    }
+  }
+
+  private transcriptBatches(items: readonly DaemonTranscriptItemInput[]): readonly DaemonTranscriptItemInput[][] {
+    const expanded: DaemonTranscriptItemInput[] = [];
+    for (const item of items) {
+      const input = item;
+      if (Buffer.byteLength(input.text, 'utf8') <= MAX_TRANSCRIPT_BATCH_UTF8_BYTES) {
+        expanded.push(input);
+        continue;
+      }
+      let part = '';
+      let partBytes = 0;
+      let index = 0;
+      for (const character of input.text) {
+        const bytes = Buffer.byteLength(character, 'utf8');
+        if (partBytes + bytes > MAX_TRANSCRIPT_BATCH_UTF8_BYTES && part) {
+          expanded.push({ ...input, id: stableId('transcript-part', input.id, String(index++)), text: part, isDelta: true });
+          part = '';
+          partBytes = 0;
+        }
+        part += character;
+        partBytes += bytes;
+      }
+      if (part) expanded.push({ ...input, id: stableId('transcript-part', input.id, String(index)), text: part, isDelta: true });
+    }
+    const batches: DaemonTranscriptItemInput[][] = [];
+    let batch: DaemonTranscriptItemInput[] = [];
+    let bytes = 0;
+    for (const item of expanded) {
+      const itemBytes = Buffer.byteLength(item.text, 'utf8');
+      if (batch.length >= MAX_TRANSCRIPT_BATCH_ITEMS || bytes + itemBytes > MAX_TRANSCRIPT_BATCH_UTF8_BYTES) {
+        batches.push(batch);
+        batch = [];
+        bytes = 0;
+      }
+      batch.push(item);
+      bytes += itemBytes;
+    }
+    if (batch.length > 0) batches.push(batch);
+    return batches;
   }
 
   private async reconcileUnsettled(): Promise<void> {
@@ -1192,11 +1973,10 @@ export class DaemonAgentRuntime {
     for (const agent of snapshot.agents) {
       if (!agent.providerSessionId || agent.state === 'archived') continue;
       const turns = snapshot.turns.filter((turn) => (
-        turn.sessionId === agent.sessionId
-        && ['submitting', 'delivery-uncertain'].includes(turn.state)
+        turn.sessionId === agent.sessionId && ACTIVE_TURN_STATES.has(turn.state)
       ));
       if (turns.length === 0) continue;
-      const provider = this.options.providers.enabledAdapter(snapshot, agent.providerId);
+      const provider = this.options.providers.enabledAdapter(this.options.getSnapshot(), agent.providerId);
       if (!provider.ok) continue;
       try {
         const reconciliation = await provider.value.reconcile({
@@ -1208,27 +1988,143 @@ export class DaemonAgentRuntime {
               commandId: command.commandId,
               idempotencyKey: command.idempotencyKey,
               type: command.type,
+              turnId: turn.id,
+              ...(turn.providerTurnId ? { providerTurnId: turn.providerTurnId } : {}),
+              state: turn.state as 'submitting' | 'working' | 'blocked' | 'delivery-uncertain',
             }] : [];
           }),
         });
-        const mutations: DaemonStoreMutation[] = reconciliation.transcriptItems.length > 0
-          ? [{ kind: 'transcript.append', items: reconciliation.transcriptItems.map(transcriptInput) }]
-          : [];
-        for (const result of reconciliation.commands) {
-          const turn = turns.find((candidate) => candidate.commandId === result.commandId);
-          if (!turn) continue;
-          mutations.push({ kind: 'turn.upsert', value: turnInput(turn, {
-            state: result.state === 'applied'
-              ? 'working'
-              : result.state === 'not-applied'
-                ? 'queued'
-                : 'delivery-uncertain',
-            ...(result.providerTurnId ? { providerTurnId: result.providerTurnId } : {}),
-          }) });
+        const reconciledSnapshot = this.options.getSnapshot();
+        const invalidTranscript = reconciliation.transcriptItems.find((item) => {
+          if (item.sessionId !== agent.sessionId) return true;
+          if (!item.turnId) return false;
+          return reconciledSnapshot.turns.find((turn) => turn.id === item.turnId)?.sessionId !== agent.sessionId;
+        });
+        if (invalidTranscript) {
+          throw new Error(`Provider reconciliation returned transcript ${invalidTranscript.id} for another Session or turn.`);
         }
-        if (mutations.length > 0) await this.options.applySystemCommit({ mutations });
+        for (const batch of this.transcriptBatches(reconciliation.transcriptItems.map(transcriptInput))) {
+          await this.transition(() => ({ mutations: [{ kind: 'transcript.append', items: batch }] }));
+        }
+        for (const result of reconciliation.commands) {
+          let terminalTurnId: string | undefined;
+          let shouldPump = false;
+          await this.transition((fresh) => {
+            const turn = fresh.turns.find((candidate) => candidate.commandId === result.commandId);
+            if (!turn || TERMINAL_TURN_STATES.has(turn.state)) return undefined;
+            const currentAgent = fresh.agents.find((entry) => entry.sessionId === turn.sessionId);
+            const session = fresh.sessions.find((entry) => entry.id === turn.sessionId);
+            if (
+              turn.sessionId !== agent.sessionId
+              || !currentAgent
+              || !session
+              || currentAgent.providerId !== agent.providerId
+            ) return undefined;
+            if (result.state === 'not-applied') {
+              const queuedCount = fresh.turns.filter((candidate) => (
+                candidate.sessionId === turn.sessionId
+                && candidate.state === 'queued'
+                && candidate.id !== turn.id
+              )).length + 1;
+              shouldPump = true;
+              return {
+                mutations: [
+                  { kind: 'turn.upsert', value: turnInput(turn, {
+                    state: 'queued',
+                    providerTurnId: undefined,
+                    startedAt: undefined,
+                    finishedAt: undefined,
+                    errorCode: undefined,
+                  }) },
+                  { kind: 'agent.upsert', value: agentInput(currentAgent, {
+                    state: 'queued',
+                    ...(currentAgent.currentTurnId === turn.id ? { currentTurnId: undefined } : {}),
+                    queuedTurnCount: queuedCount,
+                  }) },
+                  { kind: 'session.upsert', value: sessionInput(session, 'idle') },
+                ],
+                reconciledCommands: [{ commandId: result.commandId, state: 'applied' }],
+              };
+            }
+            if (result.state === 'delivery-uncertain') {
+              return {
+                mutations: [
+                  { kind: 'turn.upsert', value: turnInput(turn, {
+                    state: 'delivery-uncertain',
+                    ...(result.providerTurnId ? { providerTurnId: result.providerTurnId } : {}),
+                    errorCode: result.errorCode ?? 'delivery-uncertain',
+                  }) },
+                  { kind: 'agent.upsert', value: agentInput(currentAgent, {
+                    state: 'delivery-uncertain',
+                    currentTurnId: turn.id,
+                  }) },
+                  { kind: 'session.upsert', value: sessionInput(session, 'delivery-uncertain') },
+                ],
+                reconciledCommands: [{
+                  commandId: result.commandId,
+                  state: 'delivery-uncertain',
+                  detail: 'Provider delivery remains uncertain after reconciliation.',
+                }],
+              };
+            }
+            const state = result.turnState ?? (turn.state === 'blocked' ? 'blocked' : 'working');
+            if (state === 'completed' || state === 'interrupted' || state === 'failed') {
+              const now = this.isoNow();
+              terminalTurnId = turn.id;
+              shouldPump = currentAgent.currentTurnId === turn.id;
+              return {
+                mutations: [
+                  { kind: 'turn.upsert', value: turnInput(turn, {
+                    state,
+                    ...(result.providerTurnId ? { providerTurnId: result.providerTurnId } : {}),
+                    finishedAt: turn.finishedAt ?? now,
+                    errorCode: result.errorCode,
+                  }) },
+                  ...this.expireApprovalMutations(fresh, turn.sessionId, turn.id, now),
+                  ...(shouldPump ? [
+                    { kind: 'agent.upsert' as const, value: agentInput(currentAgent, {
+                      state: state === 'failed' ? 'error' : state === 'interrupted' ? 'interrupted' : currentAgent.queuedTurnCount > 0 ? 'queued' : 'idle',
+                      currentTurnId: undefined,
+                    }) },
+                    { kind: 'session.upsert' as const, value: sessionInput(
+                      session,
+                      state === 'failed' ? 'failed' : state === 'interrupted' ? 'interrupted' : 'idle',
+                    ) },
+                  ] : []),
+                ],
+                reconciledCommands: [{ commandId: result.commandId, state: 'applied' }],
+              };
+            }
+            return {
+              mutations: [
+                { kind: 'turn.upsert', value: turnInput(turn, {
+                  state,
+                  ...(result.providerTurnId ? { providerTurnId: result.providerTurnId } : {}),
+                  startedAt: turn.startedAt ?? this.isoNow(),
+                  errorCode: undefined,
+                }) },
+                { kind: 'agent.upsert', value: agentInput(currentAgent, {
+                  state,
+                  currentTurnId: turn.id,
+                }) },
+                { kind: 'session.upsert', value: sessionInput(
+                  session,
+                  state === 'blocked' ? 'needs-attention' : 'running',
+                ) },
+              ],
+              reconciledCommands: [{ commandId: result.commandId, state: 'applied' }],
+            };
+          });
+          if (terminalTurnId) this.clearTurnTimeout(terminalTurnId);
+          if (shouldPump) this.queuePump();
+        }
       } catch (error) {
         this.report(`provider reconciliation failed for ${agent.sessionId}`, error);
+        await this.markSessionDeliveryUncertain(
+          agent.sessionId,
+          'provider-reconciliation-failed',
+          error instanceof Error ? error.message : 'Provider reconciliation failed.',
+        );
       }
     }
   }

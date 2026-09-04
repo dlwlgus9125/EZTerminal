@@ -462,7 +462,7 @@ describe('CodexProviderAdapter', () => {
     })).resolves.toMatchObject({
       commands: [
         { commandId: 'command-delivered', state: 'applied', providerTurnId: 'provider-turn-1' },
-        { commandId: 'command-unknown', state: 'delivery-uncertain' },
+        { commandId: 'command-unknown', state: 'not-applied' },
       ],
       transcriptItems: [
         { sequence: 1, sessionId: 'session-1', kind: 'user-message', text: 'hello' },

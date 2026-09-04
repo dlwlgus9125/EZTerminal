@@ -153,7 +153,9 @@ describe('DaemonStore', () => {
       'turns',
       'workspaces',
     ]);
-    expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 1 });
+    expect(database.prepare('PRAGMA user_version').get()).toEqual({ user_version: 2 });
+    expect(database.prepare("SELECT name FROM pragma_table_info('turns') WHERE name = 'enqueue_sequence'").get())
+      .toEqual({ name: 'enqueue_sequence' });
     expect(database.prepare('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'wal' });
     database.close();
   });
@@ -425,6 +427,74 @@ describe('DaemonStore', () => {
     await store.close();
   });
 
+  it('makes stable transcript ids idempotent without consuming sequence numbers', async () => {
+    const store = new DaemonStore(makeDirectory());
+    await store.init();
+    await store.applySystemCommit({
+      mutations: [projectMutation(), workspaceMutation(), sessionMutation('terminal-1', 'terminal')],
+    });
+    const replayed = {
+      id: 'stable-provider-item',
+      sessionId: 'terminal-1',
+      sequence: 1,
+      kind: 'assistant-message' as const,
+      text: 'Recovered once.',
+      isDelta: false,
+      isSensitive: false,
+    };
+
+    await store.appendTranscriptBatch([replayed]);
+    await store.appendTranscriptBatch([replayed]);
+    await store.appendTranscriptBatch([{
+      ...replayed,
+      id: 'next-provider-item',
+      sequence: 2,
+      text: 'Still contiguous.',
+    }]);
+
+    expect(store.getTranscript('terminal-1')).toMatchObject([
+      { id: 'stable-provider-item', sequence: 1 },
+      { id: 'next-provider-item', sequence: 2 },
+    ]);
+    await store.close();
+  });
+
+  it('keeps approval decisions monotonic across duplicate and conflicting provider events', async () => {
+    const store = new DaemonStore(makeDirectory());
+    await store.init();
+    await store.applySystemCommit({
+      mutations: [projectMutation(), workspaceMutation(), sessionMutation()],
+    });
+    const pending: DaemonStoreMutation = {
+      kind: 'approval.upsert',
+      value: {
+        id: 'approval-stable',
+        sessionId: 'session-1',
+        providerRequestId: 'provider-request',
+        risk: 'write',
+        title: 'Write file',
+        state: 'pending',
+      },
+    };
+    await store.applySystemCommit({ mutations: [pending] });
+    await store.applySystemCommit({ mutations: [{
+      kind: 'approval.upsert',
+      value: { ...pending.value, state: 'allowed', resolvedAt: FIXED_TIME },
+    }] });
+    await store.applySystemCommit({ mutations: [pending] });
+
+    expect(store.getSnapshot().approvals).toEqual([
+      expect.objectContaining({ id: 'approval-stable', state: 'allowed', resolvedAt: FIXED_TIME }),
+    ]);
+    const revision = store.getRevision();
+    await expect(store.applySystemCommit({ mutations: [{
+      kind: 'approval.upsert',
+      value: { ...pending.value, state: 'denied', resolvedAt: FIXED_TIME },
+    }] })).rejects.toThrow(/cannot transition from allowed to denied/);
+    expect(store.getRevision()).toBe(revision);
+    await store.close();
+  });
+
   it('serializes competing commits so only the command with the current revision applies', async () => {
     const store = new DaemonStore(makeDirectory());
     await store.init();
@@ -473,6 +543,40 @@ describe('DaemonStore', () => {
     await restartedAgain.close();
   });
 
+  it('settles a recovered outbox command only through explicit reconciliation', async () => {
+    const directory = makeDirectory();
+    const first = new DaemonStore(directory);
+    await first.init();
+    const pending = command('agent.submit', {
+      sessionId: 'agent-1',
+      prompt: 'Maybe delivered',
+    }, { id: 'reconcile-me' });
+    await first.beginOutbox(pending);
+    await first.close();
+
+    const restarted = new DaemonStore(directory);
+    await restarted.init();
+    expect(restarted.findCommand(pending.commandId)?.state).toBe('delivery-uncertain');
+    const transition = await restarted.applySystemCommit({
+      reconciledCommands: [{ commandId: pending.commandId, state: 'applied' }],
+    });
+
+    expect(restarted.findCommand(pending.commandId)).toMatchObject({
+      state: 'applied',
+      receipt: {
+        ok: true,
+        status: 'applied',
+        revision: transition.revision,
+        eventSequence: transition.eventSequence,
+      },
+    });
+    expect(restarted.listEventsAfter(0).at(-1)).toMatchObject({
+      kind: 'command.changed',
+      payload: { commandId: pending.commandId, state: 'applied' },
+    });
+    await restarted.close();
+  });
+
   it('marks linked turn, session, and agent state uncertain during crash recovery', async () => {
     const directory = makeDirectory();
     const first = new DaemonStore(directory);
@@ -509,6 +613,64 @@ describe('DaemonStore', () => {
     await restarted.close();
   });
 
+  it('does not resurrect a terminal turn while recovering an unsettled outbox command', async () => {
+    const directory = makeDirectory();
+    const first = new DaemonStore(directory);
+    await first.init();
+    const submit = command('agent.submit', { sessionId: 'session-1', prompt: 'Already finished' }, { id: 'finished-submit' });
+    await first.beginOutbox(submit);
+    await first.applySystemCommit({ mutations: [
+      projectMutation(),
+      workspaceMutation(),
+      providerMutation(),
+      {
+        kind: 'session.upsert',
+        value: {
+          id: 'session-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          kind: 'agent',
+          title: 'Finished',
+          state: 'interrupted',
+          source: 'structured',
+        },
+      },
+      {
+        kind: 'agent.upsert',
+        value: {
+          sessionId: 'session-1',
+          providerId: 'codex',
+          permissionPreset: 'standard',
+          state: 'interrupted',
+          queuedTurnCount: 0,
+          orchestrationEnabled: false,
+        },
+      },
+      {
+        kind: 'turn.upsert',
+        value: {
+          id: 'turn-finished',
+          sessionId: 'session-1',
+          commandId: submit.commandId,
+          state: 'interrupted',
+          finishedAt: FIXED_TIME,
+        },
+      },
+    ] });
+    await first.markOutboxSent(submit.commandId);
+    await first.close();
+
+    const restarted = new DaemonStore(directory);
+    await restarted.init();
+    expect(restarted.findCommand(submit.commandId)?.state).toBe('delivery-uncertain');
+    expect(restarted.getSnapshot()).toMatchObject({
+      sessions: [{ id: 'session-1', state: 'interrupted' }],
+      agents: [{ sessionId: 'session-1', state: 'interrupted' }],
+      turns: [{ id: 'turn-finished', state: 'interrupted' }],
+    });
+    await restarted.close();
+  });
+
   it('records migration receipts idempotently and refuses a newer database schema', async () => {
     const directory = makeDirectory();
     const store = new DaemonStore(directory);
@@ -527,6 +689,57 @@ describe('DaemonStore', () => {
 
     const newer = new DaemonStore(directory);
     await expect(newer.init()).rejects.toThrow(/newer than supported/);
+  });
+
+  it('migrates a version-one turn queue and backfills a durable FIFO sequence', async () => {
+    const directory = makeDirectory();
+    const initial = new DaemonStore(directory);
+    await initial.init();
+    const create = command('agent.create', {
+      sessionId: 'session-1',
+      workspaceId: 'workspace-1',
+      title: 'Queued Agent',
+      providerId: 'codex',
+      permissionPreset: 'standard',
+      initialPrompt: 'Queue me',
+    }, { id: 'queued-agent' });
+    await initial.beginOutbox(create);
+    await initial.commitCommand(create.commandId, {
+      mutations: [
+        projectMutation(),
+        workspaceMutation(),
+        providerMutation(),
+        sessionMutation(),
+        {
+          kind: 'turn.upsert',
+          value: {
+            id: 'turn-v1',
+            sessionId: 'session-1',
+            commandId: create.commandId,
+            enqueueSequence: 99,
+            state: 'queued',
+          },
+        },
+      ],
+    });
+    await initial.close();
+
+    const database = new DatabaseSync(path.join(directory, DAEMON_DATABASE_FILE_NAME));
+    database.exec(`
+      DROP INDEX turns_fifo_queue;
+      DROP INDEX transcript_items_turn_kind;
+      ALTER TABLE turns DROP COLUMN enqueue_sequence;
+      PRAGMA user_version = 1;
+    `);
+    database.close();
+
+    const migrated = new DaemonStore(directory);
+    await migrated.init();
+    expect(migrated.getDiagnostics().schemaVersion).toBe(2);
+    expect(migrated.getSnapshot().turns).toEqual([
+      expect.objectContaining({ id: 'turn-v1', enqueueSequence: expect.any(Number) }),
+    ]);
+    await migrated.close();
   });
 
   it('closes deterministically and rejects use after close', async () => {

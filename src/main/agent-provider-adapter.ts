@@ -49,7 +49,11 @@ export interface ProviderApprovalDecision {
 export interface ProviderReconciliationInput {
   readonly sessionId: string;
   readonly providerSessionId: string;
-  readonly unsettledCommands: readonly Pick<DaemonCommand, 'commandId' | 'idempotencyKey' | 'type'>[];
+  readonly unsettledCommands: readonly (Pick<DaemonCommand, 'commandId' | 'idempotencyKey' | 'type'> & {
+    readonly turnId?: string;
+    readonly providerTurnId?: string;
+    readonly state?: 'submitting' | 'working' | 'blocked' | 'delivery-uncertain';
+  })[];
 }
 
 export interface ProviderReconciliationResult {
@@ -57,6 +61,8 @@ export interface ProviderReconciliationResult {
     readonly commandId: string;
     readonly state: 'applied' | 'not-applied' | 'delivery-uncertain';
     readonly providerTurnId?: string;
+    readonly turnState?: 'working' | 'blocked' | 'completed' | 'interrupted' | 'failed';
+    readonly errorCode?: string;
   }[];
   readonly transcriptItems: readonly DaemonTranscriptItem[];
 }

@@ -156,6 +156,25 @@ function turnStatus(value: unknown): 'completed' | 'interrupted' | 'failed' {
   return value === 'interrupted' ? 'interrupted' : value === 'failed' ? 'failed' : 'completed';
 }
 
+function reconciliationTurnState(
+  value: unknown,
+): 'working' | 'blocked' | 'completed' | 'interrupted' | 'failed' {
+  switch (value) {
+    case 'completed':
+      return 'completed';
+    case 'interrupted':
+    case 'cancelled':
+      return 'interrupted';
+    case 'failed':
+      return 'failed';
+    case 'blocked':
+    case 'waitingForApproval':
+      return 'blocked';
+    default:
+      return 'working';
+  }
+}
+
 function nativeState(value: unknown): 'starting' | 'working' | 'blocked' | 'done' | 'error' {
   switch (value) {
     case 'pendingInit':
@@ -556,12 +575,34 @@ export class CodexProviderAdapter implements AgentProviderAdapter {
         if (clientId) byCommand.set(clientId, turn);
       }
     }
+    const live = this.sessions.get(input.sessionId);
     const commands = input.unsettledCommands.map((command) => {
       const turn = byCommand.get(command.commandId);
       const providerTurnId = asString(turn?.id);
-      return turn && providerTurnId
-        ? { commandId: command.commandId, state: 'applied' as const, providerTurnId }
-        : { commandId: command.commandId, state: 'delivery-uncertain' as const };
+      if (!turn || !providerTurnId) {
+        // thread/read with includeTurns is the authoritative turn history. A
+        // missing clientUserMessageId was not delivered and is safe to queue.
+        return { commandId: command.commandId, state: 'not-applied' as const };
+      }
+      const turnState = reconciliationTurnState(turn.status);
+      if (
+        live
+        && command.turnId
+        && (turnState === 'working' || turnState === 'blocked')
+      ) {
+        live.activeTurn = {
+          localTurnId: command.turnId,
+          commandId: command.commandId,
+          providerTurnId,
+          startedEmitted: true,
+        };
+      }
+      return {
+        commandId: command.commandId,
+        state: 'applied' as const,
+        providerTurnId,
+        turnState,
+      };
     });
     let sequence = 0;
     const transcriptItems: DaemonTranscriptItem[] = [];

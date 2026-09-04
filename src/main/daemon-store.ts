@@ -31,7 +31,7 @@ import {
 import { AsyncMutationGate } from './async-mutation-gate';
 
 export const DAEMON_DATABASE_FILE_NAME = 'orchestration.sqlite3';
-export const DAEMON_DATABASE_SCHEMA_VERSION = 1;
+export const DAEMON_DATABASE_SCHEMA_VERSION = 2;
 export const MAX_TRANSCRIPT_BATCH_ITEMS = 128;
 export const MAX_TRANSCRIPT_BATCH_UTF8_BYTES = 1024 * 1024;
 
@@ -102,6 +102,12 @@ export interface DaemonStoreCommit {
   readonly mutations?: readonly DaemonStoreMutation[];
   /** Extra events. Entity, transcript, runtime, and command lifecycle events are generated automatically. */
   readonly events?: readonly DaemonEventDraft[];
+  /** Settle crash-recovered commands in the same revision as repaired domain state. */
+  readonly reconciledCommands?: readonly {
+    readonly commandId: string;
+    readonly state: 'applied' | 'delivery-uncertain';
+    readonly detail?: string;
+  }[];
 }
 
 export type DaemonOutboxState = 'pending' | 'sent' | 'applied' | 'delivery-uncertain' | 'failed';
@@ -629,6 +635,7 @@ export class DaemonStore {
       })),
       turns: this.all(database, 'SELECT * FROM turns ORDER BY created_at, id').map((row): DaemonTurn => ({
         id: requiredString(row, 'id'), sessionId: requiredString(row, 'session_id'), commandId: requiredString(row, 'command_id'),
+        ...(row.enqueue_sequence === null ? {} : { enqueueSequence: integer(row, 'enqueue_sequence') }),
         state: requiredString(row, 'state') as DaemonTurn['state'],
         ...(optionalString(row, 'provider_turn_id') === undefined ? {} : { providerTurnId: optionalString(row, 'provider_turn_id') }),
         ...(optionalString(row, 'started_at') === undefined ? {} : { startedAt: optionalString(row, 'started_at') }),
@@ -856,7 +863,11 @@ export class DaemonStore {
   applySystemCommit(commit: DaemonStoreCommit): Promise<{ readonly revision: number; readonly eventSequence: number }> {
     return this.writer.runExclusive(() => {
       const database = this.requireDatabase();
-      if ((commit.mutations?.length ?? 0) === 0 && (commit.events?.length ?? 0) === 0) {
+      if (
+        (commit.mutations?.length ?? 0) === 0
+        && (commit.events?.length ?? 0) === 0
+        && (commit.reconciledCommands?.length ?? 0) === 0
+      ) {
         return { revision: this.getRevision(), eventSequence: this.getEventSequence() };
       }
       const runtime = this.runtimeRow(database);
@@ -868,8 +879,42 @@ export class DaemonStore {
         for (const mutation of commit.mutations ?? []) {
           generatedEvents.push(...this.applyMutation(database, mutation, revision, now));
         }
+        const commandReconciliations = (commit.reconciledCommands ?? []).flatMap((reconciliation) => {
+          const row = database.prepare('SELECT * FROM command_outbox WHERE command_id = ?')
+            .get(reconciliation.commandId) as SqlRow | undefined;
+          const record = row ? outboxFromRow(row) : undefined;
+          if (!record || record.state !== 'delivery-uncertain') return [];
+          if (reconciliation.state === 'applied') {
+            generatedEvents.push({
+              kind: 'command.changed',
+              payload: { commandId: reconciliation.commandId, state: 'applied' },
+            });
+          }
+          return [{ reconciliation, record }];
+        });
         generatedEvents.push(...(commit.events ?? []));
         const eventSequence = this.appendEvents(database, generatedEvents, revision, runtime.eventSequence, now);
+        for (const { reconciliation } of commandReconciliations) {
+          if (reconciliation.state === 'applied') {
+            const receipt: DaemonCommandReceipt = {
+              ok: true,
+              status: 'applied',
+              commandId: reconciliation.commandId,
+              revision,
+              eventSequence,
+            };
+            database.prepare(`
+              UPDATE command_outbox
+              SET state = 'applied', receipt_json = ?, detail = NULL, updated_at = ?, settled_at = ?
+              WHERE command_id = ? AND state = 'delivery-uncertain'
+            `).run(JSON.stringify(receipt), now, now, reconciliation.commandId);
+          } else if (reconciliation.detail) {
+            database.prepare(`
+              UPDATE command_outbox SET detail = ?, updated_at = ?
+              WHERE command_id = ? AND state = 'delivery-uncertain'
+            `).run(reconciliation.detail, now, reconciliation.commandId);
+          }
+        }
         database.prepare('UPDATE runtime_settings SET revision = ?, event_sequence = ?, updated_at = ? WHERE singleton = 1')
           .run(revision, eventSequence, now);
         database.exec('COMMIT');
@@ -964,6 +1009,22 @@ export class DaemonStore {
           INSERT OR IGNORE INTO runtime_settings (singleton, created_at, updated_at) VALUES (1, ?, ?)
         `).run(now, now);
         database.exec('PRAGMA user_version = 1');
+        database.exec('COMMIT');
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+    }
+    if (version < 2) {
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        database.exec(`
+          ALTER TABLE turns ADD COLUMN enqueue_sequence INTEGER CHECK (enqueue_sequence IS NULL OR enqueue_sequence > 0);
+          UPDATE turns SET enqueue_sequence = rowid WHERE enqueue_sequence IS NULL;
+          CREATE INDEX turns_fifo_queue ON turns(state, enqueue_sequence, id);
+          CREATE INDEX transcript_items_turn_kind ON transcript_items(turn_id, kind, sequence);
+          PRAGMA user_version = 2;
+        `);
         database.exec('COMMIT');
       } catch (error) {
         database.exec('ROLLBACK');
@@ -1129,17 +1190,19 @@ export class DaemonStore {
         const value = mutation.value;
         database.prepare(`
           INSERT INTO turns (
-            id, session_id, command_id, state, provider_turn_id, started_at, finished_at, error_code,
-            revision, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, session_id, command_id, enqueue_sequence, state, provider_turn_id, started_at, finished_at,
+            error_code, revision, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
-            session_id = excluded.session_id, command_id = excluded.command_id, state = excluded.state,
+            session_id = excluded.session_id, command_id = excluded.command_id,
+            enqueue_sequence = COALESCE(turns.enqueue_sequence, excluded.enqueue_sequence), state = excluded.state,
             provider_turn_id = excluded.provider_turn_id, started_at = excluded.started_at,
             finished_at = excluded.finished_at, error_code = excluded.error_code,
             revision = excluded.revision, updated_at = excluded.updated_at
         `).run(
-          value.id, value.sessionId, value.commandId, value.state, value.providerTurnId ?? null,
-          value.startedAt ?? null, value.finishedAt ?? null, value.errorCode ?? null, revision, now, now,
+          value.id, value.sessionId, value.commandId, value.enqueueSequence ?? null, value.state,
+          value.providerTurnId ?? null, value.startedAt ?? null, value.finishedAt ?? null,
+          value.errorCode ?? null, revision, now, now,
         );
         return [{ kind: 'entity.upserted', payload: { entityType: 'turn', entityId: value.id } }];
       }
@@ -1147,6 +1210,14 @@ export class DaemonStore {
         return this.appendTranscriptItems(database, mutation.items, now);
       case 'approval.upsert': {
         const value = mutation.value;
+        const existing = database.prepare('SELECT state FROM approvals WHERE id = ?').get(value.id) as SqlRow | undefined;
+        if (existing) {
+          const state = requiredString(existing, 'state') as DaemonApproval['state'];
+          if (state !== 'pending') {
+            if (value.state === 'pending' || value.state === state) return [];
+            throw new Error(`Approval ${value.id} cannot transition from ${state} to ${value.state}.`);
+          }
+        }
         database.prepare(`
           INSERT INTO approvals (
             id, session_id, turn_id, provider_request_id, risk, title, detail, state, resolved_at,
@@ -1293,7 +1364,11 @@ export class DaemonStore {
         id, session_id, turn_id, sequence, kind, text, is_delta, is_sensitive, related_session_id, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+    const findExisting = database.prepare('SELECT id FROM transcript_items WHERE id = ?');
     for (const item of items) {
+      // Provider history reconciliation is at-least-once. Stable item ids make
+      // replay a no-op without consuming a new per-session sequence.
+      if (findExisting.get(item.id)) continue;
       let previous = nextSequenceBySession.get(item.sessionId);
       if (previous === undefined) {
         const row = database.prepare('SELECT COALESCE(MAX(sequence), 0) AS sequence FROM transcript_items WHERE session_id = ?')
@@ -1342,7 +1417,10 @@ export class DaemonStore {
       const drafts: DaemonEventDraft[] = [];
       const receipts: DaemonCommandReceipt[] = [];
       for (const record of records) {
-        const sessionRows = this.all(database, 'SELECT id, session_id FROM turns WHERE command_id = ?', record.commandId);
+        const sessionRows = this.all(database, `
+          SELECT id, session_id FROM turns
+          WHERE command_id = ? AND state IN ('queued', 'submitting', 'working', 'blocked')
+        `, record.commandId);
         database.prepare(`
           UPDATE turns SET state = 'delivery-uncertain', error_code = 'delivery-uncertain', revision = ?, updated_at = ?
           WHERE command_id = ? AND state IN ('queued', 'submitting', 'working', 'blocked')
@@ -1352,11 +1430,11 @@ export class DaemonStore {
           const sessionId = requiredString(row, 'session_id');
           database.prepare(`
             UPDATE sessions SET state = 'delivery-uncertain', revision = ?, updated_at = ?
-            WHERE id = ? AND state NOT IN ('completed', 'archived')
+            WHERE id = ? AND state NOT IN ('completed', 'interrupted', 'failed', 'archived')
           `).run(revision, now, sessionId);
           database.prepare(`
             UPDATE agents SET state = 'delivery-uncertain', revision = ?, updated_at = ?
-            WHERE session_id = ? AND state NOT IN ('done', 'archived')
+            WHERE session_id = ? AND state NOT IN ('done', 'interrupted', 'error', 'archived')
           `).run(revision, now, sessionId);
           drafts.push(
             { kind: 'entity.upserted', payload: { entityType: 'turn', entityId: turnId } },

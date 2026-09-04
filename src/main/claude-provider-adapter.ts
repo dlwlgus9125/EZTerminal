@@ -833,16 +833,35 @@ export class ClaudeProviderAdapter implements AgentProviderAdapter {
     const historicalIds = new Set(history?.map((message) => message.uuid) ?? []);
     const commands = input.unsettledCommands.map((command) => {
       const local = matchingLive?.turnsByCommand.get(command.commandId);
-      if (local && local.state !== 'submitted') {
+      if (local) {
         return {
           commandId: command.commandId,
           state: 'applied' as const,
           ...(local.providerTurnId ? { providerTurnId: local.providerTurnId } : {}),
+          turnState: local.state === 'submitted' ? 'working' as const : local.state,
         };
       }
-      if (local) return { commandId: command.commandId, state: 'delivery-uncertain' as const };
       const appearedInHistory = historicalIds.has(deterministicCommandUuid(command.commandId));
-      if (appearedInHistory) return { commandId: command.commandId, state: 'applied' as const };
+      if (appearedInHistory) {
+        if (matchingLive && command.turnId) {
+          const recovered: TurnRecord = {
+            turnId: command.turnId,
+            commandId: command.commandId,
+            clientUuid: deterministicCommandUuid(command.commandId),
+            state: 'submitted',
+            ...(command.providerTurnId ? { providerTurnId: command.providerTurnId } : {}),
+            interruptRequested: false,
+          };
+          matchingLive.turnsByCommand.set(command.commandId, recovered);
+          matchingLive.turnsByUuid.set(recovered.clientUuid, recovered);
+        }
+        return {
+          commandId: command.commandId,
+          state: 'applied' as const,
+          ...(command.providerTurnId ? { providerTurnId: command.providerTurnId } : {}),
+          turnState: command.state === 'blocked' ? 'blocked' as const : 'working' as const,
+        };
+      }
       return {
         commandId: command.commandId,
         state: historyAvailable && historyComplete ? 'not-applied' as const : 'delivery-uncertain' as const,
