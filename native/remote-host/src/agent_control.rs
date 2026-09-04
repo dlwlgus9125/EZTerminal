@@ -11,6 +11,8 @@ use uuid::Uuid;
 const DESCRIPTOR_ENV: &str = "EZTERMINAL_AGENT_CONTROL_DESCRIPTOR";
 const MAX_STDIN_BYTES: usize = 32 * 1024;
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_TRANSCRIPT_PAGE_SIZE: u64 = 500;
+const MAX_SAFE_JS_INTEGER: u64 = 9_007_199_254_740_991;
 
 #[derive(Deserialize)]
 struct Descriptor {
@@ -76,6 +78,7 @@ fn parse_args(args: &[String]) -> Result<RequestSpec> {
         }),
         Some("send") => parse_daemon_send(&args[1..]),
         Some("cancel") => parse_daemon_cancel(&args[1..]),
+        Some("agent") => parse_daemon_agent(&args[1..]),
         Some("schedule") => parse_daemon_schedule(&args[1..]),
         Some("heartbeat") => parse_daemon_heartbeat(&args[1..]),
         Some("list") if args.len() == 1 => Ok(RequestSpec {
@@ -97,48 +100,228 @@ fn request_id() -> String {
     Uuid::new_v4().to_string()
 }
 
-fn parse_daemon_send(args: &[String]) -> Result<RequestSpec> {
-    let target = args
-        .first()
-        .filter(|value| !value.starts_with('-'))
-        .context(usage())?;
-    if args.len() != 2 || args[1] != "--stdin" {
-        bail!("send prompt text is accepted only with --stdin");
+fn daemon_target(value: &str) -> Result<&str> {
+    let target = value.trim();
+    let traversal_like = target.split(['/', '\\']).any(|segment| segment == "..");
+    if target.is_empty()
+        || target.starts_with('-')
+        || target.len() > 1024
+        || target.chars().any(char::is_control)
+        || traversal_like
+    {
+        bail!(
+            "target must contain 1..1024 UTF-8 bytes without flags, control characters, or traversal segments"
+        );
+    }
+    Ok(target)
+}
+
+fn read_stdin_json_object(label: &str) -> Result<serde_json::Map<String, Value>> {
+    let value: Value = serde_json::from_slice(&read_stdin_bytes()?)
+        .with_context(|| format!("stdin must contain one JSON {label} object"))?;
+    value
+        .as_object()
+        .cloned()
+        .with_context(|| format!("stdin must contain one JSON {label} object"))
+}
+
+fn reject_reserved_fields(body: &serde_json::Map<String, Value>, fields: &[&str]) -> Result<()> {
+    if let Some(field) = fields.iter().find(|field| body.contains_key(**field)) {
+        bail!("JSON input cannot set reserved field {field}");
+    }
+    Ok(())
+}
+
+fn build_targeted_json_request(
+    path: &'static str,
+    target: &str,
+    value: Value,
+) -> Result<RequestSpec> {
+    let target = daemon_target(target)?;
+    let mut body = value
+        .as_object()
+        .cloned()
+        .context("stdin must contain one JSON configuration object")?;
+    reject_reserved_fields(&body, &["target", "requestId"])?;
+    body.insert("target".to_owned(), Value::String(target.to_owned()));
+    body.insert("requestId".to_owned(), Value::String(request_id()));
+    Ok(RequestSpec {
+        path,
+        body: Value::Object(body),
+    })
+}
+
+fn parse_daemon_agent(args: &[String]) -> Result<RequestSpec> {
+    match args.first().map(String::as_str) {
+        Some("read") => parse_daemon_agent_read(&args[1..]),
+        Some("send") => parse_daemon_send(&args[1..]),
+        Some("interrupt-and-send") => parse_daemon_prompt_action(
+            &args[1..],
+            "/v1/daemon/agents/interrupt-and-send",
+            "interrupt-and-send",
+        ),
+        Some(action @ ("interrupt" | "cancel" | "archive" | "detach")) if args.len() == 2 => {
+            let target = daemon_target(&args[1])?;
+            let path = match action {
+                "interrupt" => "/v1/daemon/agents/interrupt",
+                "cancel" => "/v1/daemon/agents/cancel",
+                "archive" => "/v1/daemon/agents/archive",
+                "detach" => "/v1/daemon/agents/detach",
+                _ => unreachable!(),
+            };
+            Ok(RequestSpec {
+                path,
+                body: json!({ "target": target, "requestId": request_id() }),
+            })
+        }
+        Some("settings") if args.len() == 3 && args[2] == "--stdin" => {
+            let target = daemon_target(&args[1])?;
+            let body = Value::Object(read_stdin_json_object("Agent settings")?);
+            build_targeted_json_request("/v1/daemon/agents/settings", target, body)
+        }
+        _ => bail!(usage()),
+    }
+}
+
+fn parse_daemon_agent_read(args: &[String]) -> Result<RequestSpec> {
+    let target = daemon_target(args.first().context(usage())?)?;
+    let mut after_sequence: Option<u64> = None;
+    let mut limit: Option<u64> = None;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--after" if after_sequence.is_none() => {
+                index += 1;
+                let value = args.get(index).context("--after requires a sequence")?;
+                let parsed: u64 = value
+                    .parse()
+                    .context("--after requires a non-negative integer")?;
+                if parsed > MAX_SAFE_JS_INTEGER {
+                    bail!("--after must be a JavaScript-safe integer");
+                }
+                after_sequence = Some(parsed);
+            }
+            "--limit" if limit.is_none() => {
+                index += 1;
+                let parsed: u64 = args
+                    .get(index)
+                    .context("--limit requires a number")?
+                    .parse()
+                    .context("--limit requires a positive integer")?;
+                if !(1..=MAX_TRANSCRIPT_PAGE_SIZE).contains(&parsed) {
+                    bail!("--limit must be between 1 and {MAX_TRANSCRIPT_PAGE_SIZE}");
+                }
+                limit = Some(parsed);
+            }
+            _ => bail!(usage()),
+        }
+        index += 1;
+    }
+    let mut body = serde_json::Map::new();
+    body.insert("target".to_owned(), Value::String(target.to_owned()));
+    if let Some(value) = after_sequence {
+        body.insert("afterSequence".to_owned(), Value::Number(value.into()));
+    }
+    if let Some(value) = limit {
+        body.insert("limit".to_owned(), Value::Number(value.into()));
     }
     Ok(RequestSpec {
-        path: "/v1/daemon/agents/send",
+        path: "/v1/daemon/agents/read",
+        body: Value::Object(body),
+    })
+}
+
+fn parse_daemon_prompt_action(
+    args: &[String],
+    path: &'static str,
+    action: &str,
+) -> Result<RequestSpec> {
+    let target = daemon_target(args.first().context(usage())?)?;
+    if args.len() != 2 || args[1] != "--stdin" {
+        bail!("{action} prompt text is accepted only with --stdin");
+    }
+    Ok(RequestSpec {
+        path,
         body: json!({ "target": target, "prompt": read_stdin_text()?, "requestId": request_id() }),
     })
 }
 
+fn parse_daemon_send(args: &[String]) -> Result<RequestSpec> {
+    parse_daemon_prompt_action(args, "/v1/daemon/agents/send", "send")
+}
+
 fn parse_daemon_cancel(args: &[String]) -> Result<RequestSpec> {
-    if args.len() != 1 || args[0].starts_with('-') {
+    if args.len() != 1 {
         bail!(usage());
     }
+    let target = daemon_target(&args[0])?;
     Ok(RequestSpec {
         path: "/v1/daemon/agents/cancel",
-        body: json!({ "target": args[0], "requestId": request_id() }),
+        body: json!({ "target": target, "requestId": request_id() }),
     })
 }
 
 fn parse_daemon_schedule(args: &[String]) -> Result<RequestSpec> {
-    if args.len() != 2 || args[0] != "run" || args[1].starts_with('-') {
-        bail!(usage());
+    match args.first().map(String::as_str) {
+        Some("create") if args.len() == 2 && args[1] == "--stdin" => {
+            let body = Value::Object(read_stdin_json_object("Schedule create")?);
+            build_daemon_schedule_create(body)
+        }
+        Some("update") if args.len() == 3 && args[2] == "--stdin" => {
+            let target = daemon_target(&args[1])?;
+            let body = Value::Object(read_stdin_json_object("Schedule update")?);
+            build_targeted_json_request("/v1/daemon/schedules/update", target, body)
+        }
+        Some(action @ ("delete" | "run")) if args.len() == 2 => {
+            let target = daemon_target(&args[1])?;
+            Ok(RequestSpec {
+                path: if action == "delete" {
+                    "/v1/daemon/schedules/delete"
+                } else {
+                    "/v1/daemon/schedules/run"
+                },
+                body: json!({ "target": target, "requestId": request_id() }),
+            })
+        }
+        _ => bail!(usage()),
     }
+}
+
+fn build_daemon_schedule_create(value: Value) -> Result<RequestSpec> {
+    let mut body = value
+        .as_object()
+        .cloned()
+        .context("stdin must contain one JSON Schedule create object")?;
+    reject_reserved_fields(&body, &["target", "requestId"])?;
+    if !body.contains_key("scheduleId") {
+        body.insert(
+            "scheduleId".to_owned(),
+            Value::String(format!("schedule-{}", Uuid::new_v4())),
+        );
+    }
+    body.insert("requestId".to_owned(), Value::String(request_id()));
     Ok(RequestSpec {
-        path: "/v1/daemon/schedules/run",
-        body: json!({ "target": args[1], "requestId": request_id() }),
+        path: "/v1/daemon/schedules/create",
+        body: Value::Object(body),
     })
 }
 
 fn parse_daemon_heartbeat(args: &[String]) -> Result<RequestSpec> {
-    if args.len() != 2 || args[0] != "trigger" || args[1].starts_with('-') {
-        bail!(usage());
+    match args.first().map(String::as_str) {
+        Some("configure") if args.len() == 3 && args[2] == "--stdin" => {
+            let target = daemon_target(&args[1])?;
+            let body = Value::Object(read_stdin_json_object("heartbeat configuration")?);
+            build_targeted_json_request("/v1/daemon/heartbeats/configure", target, body)
+        }
+        Some("trigger") if args.len() == 2 => {
+            let target = daemon_target(&args[1])?;
+            Ok(RequestSpec {
+                path: "/v1/daemon/heartbeats/trigger",
+                body: json!({ "target": target, "requestId": request_id() }),
+            })
+        }
+        _ => bail!(usage()),
     }
-    Ok(RequestSpec {
-        path: "/v1/daemon/heartbeats/trigger",
-        body: json!({ "target": args[1], "requestId": request_id() }),
-    })
 }
 
 fn read_stdin_bytes() -> Result<Vec<u8>> {
@@ -599,8 +782,18 @@ usage:\n\
   ezterminal status|snapshot|sessions|agents|schedules\n\
   ezterminal send <session-id|unique-title> --stdin\n\
   ezterminal cancel <session-id|unique-title>\n\
-  ezterminal schedule run <schedule-id|unique-name>\n\
+  ezterminal agent read <session-id|unique-title> [--after SEQUENCE] [--limit 1..500]\n\
+  ezterminal agent send|interrupt-and-send <session-id|unique-title> --stdin\n\
+  ezterminal agent interrupt|cancel|archive|detach <session-id|unique-title>\n\
+  ezterminal agent settings <session-id|unique-title> --stdin\n\
+  ezterminal schedule create --stdin\n\
+  ezterminal schedule update <schedule-id|unique-name> --stdin\n\
+  ezterminal schedule delete|run <schedule-id|unique-name>\n\
+  ezterminal heartbeat configure <session-id|unique-title> --stdin\n\
   ezterminal heartbeat trigger <session-id|unique-title>\n\
+\n\
+JSON stdin is limited to 32 KiB. Complex commands reject reserved target/requestId fields.\n\
+Schedule create accepts an optional scheduleId and generates one when omitted.\n\
 \n\
 Compatibility commands:\n\
   ezterminal-agent list\n\
@@ -618,7 +811,10 @@ Compatibility commands:\n\
 
 #[cfg(test)]
 mod tests {
-    use super::{build_worker_report, parse_args};
+    use super::{
+        build_daemon_schedule_create, build_targeted_json_request, build_worker_report, parse_args,
+    };
+    use serde_json::json;
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
@@ -671,12 +867,117 @@ mod tests {
         assert_eq!(schedule.path, "/v1/daemon/schedules/run");
         assert_eq!(schedule.body["target"], "morning");
 
+        let schedule_delete =
+            parse_args(&args(&["schedule", "delete", "morning"])).expect("schedule delete");
+        assert_eq!(schedule_delete.path, "/v1/daemon/schedules/delete");
+
         let heartbeat = parse_args(&args(&["heartbeat", "trigger", "agent-1"])).expect("heartbeat");
         assert_eq!(heartbeat.path, "/v1/daemon/heartbeats/trigger");
         assert_eq!(heartbeat.body["target"], "agent-1");
 
         assert!(parse_args(&args(&["cancel", "agent-1", "extra"])).is_err());
-        assert!(parse_args(&args(&["schedule", "delete", "morning"])).is_err());
+        assert!(parse_args(&args(&["schedule", "delete", "../"])).is_err());
+        assert!(parse_args(&args(&["schedule", "delete", "-foreign"])).is_err());
+    }
+
+    #[test]
+    fn parses_direct_agent_controls_and_bounded_transcript_reads() {
+        let read = parse_args(&args(&[
+            "agent", "read", "Builder", "--after", "12", "--limit", "250",
+        ]))
+        .expect("agent read");
+        assert_eq!(read.path, "/v1/daemon/agents/read");
+        assert_eq!(read.body["target"], "Builder");
+        assert_eq!(read.body["afterSequence"], 12);
+        assert_eq!(read.body["limit"], 250);
+
+        for (action, path) in [
+            ("interrupt", "/v1/daemon/agents/interrupt"),
+            ("cancel", "/v1/daemon/agents/cancel"),
+            ("archive", "/v1/daemon/agents/archive"),
+            ("detach", "/v1/daemon/agents/detach"),
+        ] {
+            let request = parse_args(&args(&["agent", action, "agent-1"])).expect("Agent action");
+            assert_eq!(request.path, path);
+            assert_eq!(request.body["target"], "agent-1");
+        }
+
+        assert!(parse_args(&args(&["agent", "read", "agent-1", "--limit", "501"])).is_err());
+        assert!(
+            parse_args(&args(&[
+                "agent",
+                "read",
+                "agent-1",
+                "--after",
+                "9007199254740992",
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn builds_bounded_json_control_requests_without_reserved_field_override() {
+        let settings = build_targeted_json_request(
+            "/v1/daemon/agents/settings",
+            "Builder",
+            json!({ "model": "gpt-5.6", "permissionPreset": "plan" }),
+        )
+        .expect("settings");
+        assert_eq!(settings.body["target"], "Builder");
+        assert_eq!(settings.body["model"], "gpt-5.6");
+        assert!(
+            settings.body["requestId"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+
+        assert!(
+            build_targeted_json_request(
+                "/v1/daemon/agents/settings",
+                "Builder",
+                json!({ "target": "Foreign", "model": "gpt-5.6" }),
+            )
+            .is_err()
+        );
+        assert!(
+            build_targeted_json_request(
+                "/v1/daemon/agents/settings",
+                "Builder",
+                json!(["not", "an", "object"]),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn generates_schedule_ids_without_overwriting_explicit_ids() {
+        let generated = build_daemon_schedule_create(json!({
+            "name": "Morning",
+            "workspace": "Main",
+            "providerId": "codex"
+        }))
+        .expect("generated schedule");
+        assert!(
+            generated.body["scheduleId"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("schedule-"))
+        );
+
+        let explicit = build_daemon_schedule_create(json!({
+            "scheduleId": "daily-review",
+            "name": "Morning",
+            "workspaceId": "workspace-1",
+            "providerId": "codex"
+        }))
+        .expect("explicit schedule");
+        assert_eq!(explicit.body["scheduleId"], "daily-review");
+        assert!(
+            build_daemon_schedule_create(json!({
+                "requestId": "caller-controlled",
+                "name": "Morning"
+            }))
+            .is_err()
+        );
     }
 
     #[test]

@@ -64,8 +64,22 @@ function fixture(receipts?: DaemonCommandReceipt[]) {
       eventSequence: current.eventSequence + 1,
     };
   });
-  const control = new DaemonCliControl({ getSnapshot: () => current, execute }, () => new Date('2026-09-04T01:00:00.000Z'));
-  return { control, execute, setSnapshot: (value: DaemonSnapshot) => { current = value; } };
+  const readTranscript = vi.fn(() => ([{
+    id: 'transcript-1',
+    sessionId: 'agent-1',
+    sequence: 4,
+    kind: 'assistant-message' as const,
+    text: 'Bounded result',
+    isDelta: false,
+    isSensitive: false,
+    createdAt: '2026-09-04T00:30:00.000Z',
+  }]));
+  const control = new DaemonCliControl({
+    getSnapshot: () => current,
+    execute,
+    readTranscript,
+  }, () => new Date('2026-09-04T01:00:00.000Z'));
+  return { control, execute, readTranscript, setSnapshot: (value: DaemonSnapshot) => { current = value; } };
 }
 
 const source = { sessionId: 'terminal-1', projectId: 'project-1' } as const;
@@ -156,6 +170,119 @@ describe('DaemonCliControl', () => {
       'schedule.run-now',
       'heartbeat.trigger',
     ]);
+  });
+
+  it('reads one Project-scoped Agent and a bounded transcript page', async () => {
+    const { control, readTranscript } = fixture();
+    await expect(control.handle('/v1/daemon/agents/read', {
+      target: 'Builder', afterSequence: 3, limit: 25,
+    }, source)).resolves.toMatchObject({
+      status: 200,
+      body: {
+        ok: true,
+        session: { id: 'agent-1' },
+        agent: { sessionId: 'agent-1' },
+        transcript: [{ sequence: 4, text: 'Bounded result' }],
+      },
+    });
+    expect(readTranscript).toHaveBeenCalledWith('agent-1', 3, 25);
+
+    await expect(control.handle('/v1/daemon/agents/read', {
+      target: 'agent-1', limit: 501,
+    }, source)).resolves.toMatchObject({ status: 400, body: { error: 'invalid-request' } });
+    await expect(control.handle('/v1/daemon/agents/read', {
+      target: 'agent-2',
+    }, source)).resolves.toMatchObject({ status: 404, body: { error: 'not-found' } });
+  });
+
+  it('maps direct Agent lifecycle and settings operations to typed commands', async () => {
+    const { control, execute } = fixture();
+    await control.handle('/v1/daemon/agents/interrupt', { target: 'Builder', requestId: 'interrupt-1' }, source);
+    await control.handle('/v1/daemon/agents/cancel', { target: 'Builder', requestId: 'cancel-1' }, source);
+    await control.handle('/v1/daemon/agents/archive', { target: 'Builder', requestId: 'archive-1' }, source);
+    await control.handle('/v1/daemon/agents/detach', { target: 'Builder', requestId: 'detach-1' }, source);
+    await control.handle('/v1/daemon/agents/settings', {
+      target: 'Builder', model: 'gpt-5.6', permissionPreset: 'plan', requestId: 'settings-1',
+    }, source);
+    await control.handle('/v1/daemon/agents/interrupt-and-send', {
+      target: 'Builder', prompt: 'Use the latest requirements.', requestId: 'replace-1',
+    }, source);
+
+    expect(execute.mock.calls.map((call) => (call[0] as DaemonCommand).type)).toEqual([
+      'agent.interrupt',
+      'agent.cancel',
+      'agent.archive',
+      'agent.detach',
+      'agent.set-settings',
+      'agent.interrupt-and-submit',
+    ]);
+    expect(execute.mock.calls[4]![0]).toMatchObject({
+      payload: { sessionId: 'agent-1', model: 'gpt-5.6', permissionPreset: 'plan' },
+    });
+    expect(execute.mock.calls[5]![0]).toMatchObject({
+      payload: { sessionId: 'agent-1', prompt: 'Use the latest requirements.' },
+    });
+  });
+
+  it('creates, updates, runs, and deletes Project-scoped schedules', async () => {
+    const { control, execute } = fixture();
+    await expect(control.handle('/v1/daemon/schedules/create', {
+      scheduleId: 'schedule-new',
+      name: 'Evening review',
+      workspace: 'Main',
+      providerId: 'codex',
+      model: 'gpt-5.6',
+      permissionPreset: 'standard',
+      prompt: 'Review today changes',
+      cron: '0 18 * * *',
+      timezone: 'Asia/Seoul',
+      maxRuns: 10,
+      enabled: true,
+      requestId: 'schedule-create',
+    }, source)).resolves.toMatchObject({ status: 200, body: { ok: true } });
+    await control.handle('/v1/daemon/schedules/update', {
+      target: 'Morning', enabled: false, cron: '30 9 * * *', requestId: 'schedule-update',
+    }, source);
+    await control.handle('/v1/daemon/schedules/run', {
+      target: 'Morning', requestId: 'schedule-run',
+    }, source);
+    await control.handle('/v1/daemon/schedules/delete', {
+      target: 'Morning', requestId: 'schedule-delete',
+    }, source);
+
+    expect(execute.mock.calls.map((call) => (call[0] as DaemonCommand).type)).toEqual([
+      'schedule.create', 'schedule.update', 'schedule.run-now', 'schedule.delete',
+    ]);
+    expect(execute.mock.calls[0]![0]).toMatchObject({
+      payload: { scheduleId: 'schedule-new', workspaceId: 'workspace-1', providerId: 'codex' },
+    });
+    expect(execute.mock.calls[1]![0]).toMatchObject({
+      payload: { scheduleId: 'schedule-1', enabled: false, cron: '30 9 * * *' },
+    });
+  });
+
+  it('configures heartbeats and rejects malformed or expansive payloads', async () => {
+    const { control, execute } = fixture();
+    await expect(control.handle('/v1/daemon/heartbeats/configure', {
+      target: 'Builder',
+      prompt: 'Report blockers',
+      cron: '*/10 * * * *',
+      timezone: 'UTC',
+      enabled: true,
+      requestId: 'heartbeat-configure',
+    }, source)).resolves.toMatchObject({ status: 200, body: { ok: true } });
+    expect(execute.mock.calls[0]![0]).toMatchObject({
+      type: 'heartbeat.configure',
+      payload: { sessionId: 'agent-1', prompt: 'Report blockers', enabled: true },
+    });
+
+    await expect(control.handle('/v1/daemon/agents/settings', {
+      target: 'Builder', requestId: 'empty-settings',
+    }, source)).resolves.toMatchObject({ status: 400, body: { error: 'invalid-request' } });
+    await expect(control.handle('/v1/daemon/schedules/update', {
+      target: 'Morning', providerId: 'claude', requestId: 'unsupported-update',
+    }, source)).resolves.toMatchObject({ status: 400, body: { error: 'invalid-request' } });
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed when the bearer Session and claimed Project diverge', async () => {
