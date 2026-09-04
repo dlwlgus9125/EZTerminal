@@ -85,6 +85,7 @@ import { AgentSessionPanel } from './AgentSessionPanel';
 import {
   isStructuredAgentDockHistoryId,
   STRUCTURED_AGENT_DRAFT_PREFIX,
+  structuredAgentSessionHistoryId,
   StructuredAgentDockPanel,
 } from './StructuredAgentDockPanel';
 import { EFFECT_CATALOG, type EffectId } from './effects';
@@ -306,6 +307,14 @@ interface PaneApprovalContextValue {
 
 const PaneApprovalContext = createContext<PaneApprovalContextValue | null>(null);
 const AgentOrchestrationContext = createContext<AgentOrchestrationSnapshot>(EMPTY_AGENT_ORCHESTRATION_SNAPSHOT);
+interface StructuredAgentNavigationContextValue {
+  readonly openSession: (input: {
+    readonly sessionId: string;
+    readonly title?: string;
+    readonly providerLabel?: string;
+  }) => void;
+}
+const StructuredAgentNavigationContext = createContext<StructuredAgentNavigationContextValue | null>(null);
 const TerminalRuntimeContext = createContext<TerminalRuntimeOptions>(DEFAULT_TERMINAL_RUNTIME_OPTIONS);
 interface ProjectReviewNavigationContextValue {
   readonly openHistoryReview: (
@@ -1827,6 +1836,40 @@ export function App(): JSX.Element {
       },
     }, { kind: 'main-tab' });
   }, [i18n, sessionMirroringCoordinator]);
+
+  const openStructuredAgentSession = useCallback((input: {
+    readonly sessionId: string;
+    readonly title?: string;
+    readonly providerLabel?: string;
+  }): void => {
+    if (sessionMirroringCoordinator.getSnapshot().replacementLocked) return;
+    const sessionId = input.sessionId.trim();
+    if (!sessionId) return;
+    const api = apiRef.current;
+    const dockWindows = dockWindowCoordinatorRef.current;
+    if (!api || !dockWindows) return;
+    const historyId = structuredAgentSessionHistoryId(sessionId);
+    const panelId = `agent-session-${historyId}`;
+    const title = input.title?.trim() || input.providerLabel?.trim() || 'Agent';
+    const existing = api.getPanel(panelId);
+    if (existing) {
+      existing.api.setTitle(title);
+      existing.api.setActive();
+      dockWindows.focusPanelWindow(existing);
+      return;
+    }
+    dockWindows.addPanel({
+      id: panelId,
+      component: 'agent-session',
+      title,
+      renderer: 'always',
+      params: { historyId },
+    }, { kind: 'main-tab' });
+  }, [sessionMirroringCoordinator]);
+
+  const structuredAgentNavigationValue = useMemo<StructuredAgentNavigationContextValue>(() => ({
+    openSession: openStructuredAgentSession,
+  }), [openStructuredAgentSession]);
 
   const openAgentHistorySession = useCallback(async (
     session: AgentHistorySessionSummary,
@@ -3927,6 +3970,7 @@ export function App(): JSX.Element {
               <AgentTabStatusContext.Provider value={agentTabStatuses}>
                 <PaneApprovalContext.Provider value={paneApprovalValue}>
                 <AgentOrchestrationContext.Provider value={agentOrchestrationSnapshot}>
+                <StructuredAgentNavigationContext.Provider value={structuredAgentNavigationValue}>
                 <PaneCloseContext.Provider value={paneCloseContextValue}>
                   <WorkspaceTabActionContext.Provider value={workspaceTabActionValue}>
                     <QuickCommandShelfContext.Provider value={quickCommandShelfValue}>
@@ -3953,6 +3997,7 @@ export function App(): JSX.Element {
                     </QuickCommandShelfContext.Provider>
                   </WorkspaceTabActionContext.Provider>
                 </PaneCloseContext.Provider>
+                </StructuredAgentNavigationContext.Provider>
                 </AgentOrchestrationContext.Provider>
                 </PaneApprovalContext.Provider>
               </AgentTabStatusContext.Provider>
