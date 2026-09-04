@@ -42,7 +42,10 @@ import {
 } from './terminal-accessory-layout';
 import { applyTheme, loadTheme, saveTheme } from './theme';
 import { initialTabsState, mobileTerminalPanelId, tabsReducer } from './tabs';
-import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+import type {
+  DaemonRuntimeViewState,
+  WsEzTerminalTransport,
+} from './transport/ws-ezterminal';
 import { usePageVisible } from './use-page-visible';
 import {
   createInitialAppUpdateSnapshot,
@@ -174,6 +177,10 @@ export function MobileWorkspace({
   const [agentOrchestrationSnapshot, setAgentOrchestrationSnapshot] = useState<AgentOrchestrationSnapshot>(
     EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
   );
+  const [daemonRuntimeState, setDaemonRuntimeState] = useState<DaemonRuntimeViewState>({
+    status: 'loading',
+    snapshot: null,
+  });
   const [connected, setConnected] = useState(false);
   const [authGeneration, setAuthGeneration] = useState(0);
   const [connectedSince, setConnectedSince] = useState<number | null>(null);
@@ -352,6 +359,19 @@ export function MobileWorkspace({
     return () => {
       alive = false;
       unsubscribe();
+    };
+  }, [transport]);
+
+  useEffect(() => {
+    let alive = true;
+    const unsubscribe = transport.onDaemonRuntimeState((state) => {
+      if (alive) setDaemonRuntimeState(state);
+    });
+    transport.setDaemonEventsSubscribed(true);
+    return () => {
+      alive = false;
+      unsubscribe();
+      transport.setDaemonEventsSubscribed(false);
     };
   }, [transport]);
 
@@ -812,6 +832,7 @@ export function MobileWorkspace({
           snapshot: agentSnapshot,
           coordinationSnapshot: agentCoordinationSnapshot,
           orchestrationSnapshot: agentOrchestrationSnapshot,
+          daemonRuntimeState,
           disconnected: !connected,
           onBack: () => selectTab('home'),
           onSendFollowup: (activityId, text) => transport.sendAgentFollowup(activityId, text),

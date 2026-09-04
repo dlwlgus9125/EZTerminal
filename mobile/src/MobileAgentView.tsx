@@ -37,15 +37,23 @@ import { useAppTranslation } from '../../src/renderer/i18n';
 import { AgentFollowupComposer } from '../../src/renderer/AgentFollowupComposer';
 import { AgentRelativeAge } from '../../src/renderer/AgentTime';
 import { MobileActionSheet } from './MobileActionSheet';
-import { MobileAgentProjects } from './MobileAgentProjects';
+import { MobileDaemonNavigator } from './MobileDaemonNavigator';
 import { useMobileToast } from './MobileToast';
-import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
+import type {
+  DaemonRuntimeViewState,
+  WsEzTerminalTransport,
+} from './transport/ws-ezterminal';
 
 /** Used when the host predates the Git arms; every card then shows its cwd. */
 const readNothing = (): Promise<GitDirectoryStatus> => Promise.resolve(EMPTY_GIT_DIRECTORY_STATUS);
 
 const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'done']);
 const RUNNING = new Set<AgentStatus>(['starting', 'working']);
+
+const INITIAL_DAEMON_RUNTIME_STATE: DaemonRuntimeViewState = {
+  status: 'loading',
+  snapshot: null,
+};
 
 const RISK_RANK = {
   danger: 0,
@@ -128,9 +136,8 @@ export function MobileAgentView({
   onDecideApproval,
   onLoadDiff,
   onReadGitStatus,
-  onResumeHistory,
-  onLaunchAgent,
   transport,
+  daemonRuntimeState = INITIAL_DAEMON_RUNTIME_STATE,
 }: {
   readonly snapshot: AgentActivitySnapshot;
   readonly coordinationSnapshot?: AgentCoordinationSnapshot;
@@ -150,6 +157,7 @@ export function MobileAgentView({
   readonly onResumeHistory?: (bootstrap: AgentResumeBootstrap) => Promise<void>;
   readonly onLaunchAgent?: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
   readonly transport?: WsEzTerminalTransport;
+  readonly daemonRuntimeState?: DaemonRuntimeViewState;
 }): JSX.Element {
   const { t, i18n } = useAppTranslation();
   const showToast = useMobileToast();
@@ -430,18 +438,18 @@ export function MobileAgentView({
           ))}
           {[
             ...visible.filter((item) => bucketOf(item.status) === 'attention'),
-            ...(transport && onResumeHistory && onLaunchAgent ? [null] : []),
+            ...(transport ? [null] : []),
             ...visible.filter((item) => bucketOf(item.status) !== 'attention'),
           ].map((item) => {
             if (item === null) {
               return (
-                <MobileAgentProjects
-                  key="agent-projects"
-                  transport={transport!}
-                  coordinationSnapshot={coordinationSnapshot}
-                  orchestrationSnapshot={orchestrationSnapshot}
-                  onResumeHistory={onResumeHistory!}
-                  onLaunchAgent={onLaunchAgent!}
+                <MobileDaemonNavigator
+                  key="daemon-projects"
+                  state={daemonRuntimeState}
+                  onRetry={() => {
+                    void transport!.getDaemonSnapshot();
+                  }}
+                  onSelectSession={onFocusSession}
                 />
               );
             }
@@ -610,7 +618,7 @@ export function MobileAgentView({
               </article>
             );
           })}
-          {visible.length === 0 && managedMerges.length === 0 && (
+          {visible.length === 0 && managedMerges.length === 0 && !transport && (
             <p className="mob-empty" data-testid="agent-empty">
               {userFacingItems.length === 0 ? t('agentHub.empty') : t('mobile.agentView.noMatches')}
             </p>

@@ -123,6 +123,15 @@ import {
   type CollaborationTask,
   type LegacyTeamMigrationStatus,
 } from '../../../src/shared/agent-orchestration';
+import {
+  DAEMON_PROTOCOL_VERSION,
+  classifyDaemonEvent,
+  type DaemonCommand,
+  type DaemonCommandReceipt,
+  type DaemonEvent,
+  type DaemonEventContinuity,
+  type DaemonSnapshot,
+} from '../../../src/shared/daemon-protocol';
 import type {
   AgentHistorySessionPage,
   AgentLaunchPreparation,
@@ -212,6 +221,25 @@ import { MOBILE_BUILD_INFO } from '../build-info';
 import { e2eLog } from '../e2e-telemetry';
 
 export type { ConnectionHealthSnapshot, RemoteConnectionState } from './connection-health';
+
+export type DaemonRuntimeSyncStatus = 'loading' | 'ready' | 'recovering' | 'error';
+
+/**
+ * Mobile's read model for the daemon runtime. `snapshot` remains available
+ * while a reconnect or event-gap recovery is in progress, but callers must
+ * treat it as stale unless `status === 'ready'`.
+ */
+export interface DaemonRuntimeViewState {
+  readonly status: DaemonRuntimeSyncStatus;
+  readonly snapshot: DaemonSnapshot | null;
+  readonly lastContinuity?: DaemonEventContinuity;
+  readonly error?: 'connection-lost' | 'invalid-snapshot' | 'event-gap';
+}
+
+export type DaemonEventListener = (
+  event: DaemonEvent,
+  continuity: DaemonEventContinuity,
+) => void;
 
 /** WebView-74-compatible RFC 4122 v4 request id. Android 10 may start with a
  * WebView that predates `crypto.randomUUID`, but it still provides the secure
@@ -354,6 +382,96 @@ function maxFileReadBytes(mode: FileReadMode): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const DAEMON_SNAPSHOT_ARRAY_KEYS = [
+  'projects',
+  'workspaces',
+  'sessions',
+  'agents',
+  'agentRelations',
+  'turns',
+  'transcriptHeads',
+  'approvals',
+  'providers',
+  'schedules',
+  'heartbeats',
+] as const;
+
+const DAEMON_EVENT_KINDS = new Set([
+  'entity.upserted',
+  'entity.archived',
+  'transcript.appended',
+  'command.changed',
+  'approval.changed',
+  'runtime.changed',
+  'runtime.recovery',
+]);
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function hasDaemonEntityIdentity(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const id = typeof value.id === 'string' ? value.id : value.sessionId;
+  return typeof id === 'string' && id.length > 0;
+}
+
+/** Reject malformed remote state before it can become the UI's authority. */
+function isDaemonSnapshot(value: unknown): value is DaemonSnapshot {
+  if (
+    !isRecord(value)
+    || value.protocolVersion !== DAEMON_PROTOCOL_VERSION
+    || !isNonNegativeSafeInteger(value.revision)
+    || !isNonNegativeSafeInteger(value.eventSequence)
+    || typeof value.generatedAt !== 'string'
+    || !isRecord(value.runtime)
+    || typeof value.runtime.keepRunning !== 'boolean'
+    || typeof value.runtime.startAtLogin !== 'boolean'
+    || typeof value.runtime.orchestrationToolsEnabled !== 'boolean'
+    || typeof value.runtime.browserEnabled !== 'boolean'
+  ) return false;
+  for (const key of DAEMON_SNAPSHOT_ARRAY_KEYS) {
+    const collection = value[key];
+    if (!Array.isArray(collection) || !collection.every(hasDaemonEntityIdentity)) return false;
+  }
+  return true;
+}
+
+function isDaemonEvent(value: unknown): value is DaemonEvent {
+  return isRecord(value)
+    && value.protocolVersion === DAEMON_PROTOCOL_VERSION
+    && typeof value.eventId === 'string'
+    && value.eventId.length > 0
+    && isNonNegativeSafeInteger(value.sequence)
+    && isNonNegativeSafeInteger(value.revision)
+    && typeof value.occurredAt === 'string'
+    && typeof value.kind === 'string'
+    && DAEMON_EVENT_KINDS.has(value.kind)
+    && isRecord(value.payload);
+}
+
+function isDaemonCommandReceipt(
+  value: unknown,
+  expectedCommandId: string,
+): value is DaemonCommandReceipt {
+  if (
+    !isRecord(value)
+    || value.commandId !== expectedCommandId
+    || typeof value.ok !== 'boolean'
+    || !isNonNegativeSafeInteger(value.revision)
+    || typeof value.status !== 'string'
+  ) return false;
+  if (value.ok) {
+    return (value.status === 'applied' || value.status === 'queued' || value.status === 'replayed')
+      && isNonNegativeSafeInteger(value.eventSequence);
+  }
+  return (value.status === 'rejected' || value.status === 'delivery-uncertain')
+    && isRecord(value.error)
+    && typeof value.error.code === 'string'
+    && typeof value.error.message === 'string'
+    && typeof value.error.retryable === 'boolean';
 }
 
 function isFilePreviewStreamMetadata(value: unknown): value is FilePreviewStreamMetadata {
@@ -1089,6 +1207,33 @@ export class WsEzTerminalTransport implements EzTerminalApi {
   private readonly sessionRemovedListeners = new Set<(sessionId: string) => void>();
   private readonly runStartedListeners = new Set<(info: RunStartedInfo) => void>();
 
+  private daemonRuntimeState: DaemonRuntimeViewState = {
+    status: 'loading',
+    snapshot: null,
+  };
+  private daemonCursor = { revision: 0, eventSequence: 0 };
+  /** A new authenticated socket is a new daemon epoch until its first
+   * authoritative snapshot arrives, so a legitimate lower revision is not
+   * mistaken for stale data after a host restore/restart. */
+  private awaitingDaemonSeed = true;
+  private daemonEventsRefcount = 0;
+  private daemonSnapshotRefreshInFlight = false;
+  private daemonSnapshotRefreshQueued = false;
+  private daemonNeedsResubscribe = false;
+  private readonly daemonRuntimeListeners = new Set<(state: DaemonRuntimeViewState) => void>();
+  private readonly daemonEventListeners = new Set<DaemonEventListener>();
+  private readonly pendingDaemonSnapshots = new Map<
+    string,
+    (snapshot: DaemonSnapshot | null) => void
+  >();
+  private readonly pendingDaemonCommands = new Map<
+    string,
+    {
+      readonly commandId: string;
+      readonly resolve: (receipt: DaemonCommandReceipt) => void;
+    }
+  >();
+
   private agentSnapshot: AgentActivitySnapshot = EMPTY_AGENT_ACTIVITY_SNAPSHOT;
   private agentCoordinationSnapshot: AgentCoordinationSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT;
   private agentOrchestrationSnapshot: AgentOrchestrationSnapshot = EMPTY_AGENT_ORCHESTRATION_SNAPSHOT;
@@ -1632,6 +1777,77 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       if (oldest) this.handledWorktreeOpenIntents.delete(oldest);
     }
     return true;
+  }
+
+  /** Request a full v12 daemon projection. A null result means no new
+   * authority was obtained; callers may continue to show the stale snapshot
+   * already present in `DaemonRuntimeViewState`. */
+  getDaemonSnapshot(): Promise<DaemonSnapshot | null> {
+    if (!this.authed) return Promise.resolve(null);
+    this.updateDaemonRuntimeState({
+      status: this.daemonRuntimeState.snapshot ? 'recovering' : 'loading',
+      snapshot: this.daemonRuntimeState.snapshot,
+    });
+    return this.requestDaemonSnapshot();
+  }
+
+  onDaemonRuntimeState(listener: (state: DaemonRuntimeViewState) => void): () => void {
+    this.daemonRuntimeListeners.add(listener);
+    listener(this.daemonRuntimeState);
+    return () => this.daemonRuntimeListeners.delete(listener);
+  }
+
+  onDaemonEvent(listener: DaemonEventListener): () => void {
+    this.daemonEventListeners.add(listener);
+    return () => this.daemonEventListeners.delete(listener);
+  }
+
+  /** Ref-counted because the shell and an open session surface may observe
+   * the same stream independently. Only the 0→1 and 1→0 transitions reach
+   * the wire, and the desired state is replayed after reconnect. */
+  setDaemonEventsSubscribed(subscribed: boolean): void {
+    const previous = this.daemonEventsRefcount;
+    this.daemonEventsRefcount = subscribed
+      ? previous + 1
+      : Math.max(0, previous - 1);
+    if (previous === 0 && this.daemonEventsRefcount === 1) {
+      this.updateDaemonRuntimeState({
+        status: this.daemonRuntimeState.snapshot ? 'recovering' : 'loading',
+        snapshot: this.daemonRuntimeState.snapshot,
+      });
+      if (this.authed) {
+        this.send({
+          kind: 'daemon-events-subscribe',
+          afterSequence: this.daemonCursor.eventSequence,
+        });
+        this.queueDaemonSnapshotRefresh();
+      }
+      return;
+    }
+    if (previous === 1 && this.daemonEventsRefcount === 0 && this.authed) {
+      this.send({ kind: 'daemon-events-unsubscribe' });
+    }
+  }
+
+  /** Commands are never replayed by the mobile client. The daemon's command
+   * idempotency key owns de-duplication; a dropped connection yields an
+   * explicit delivery-uncertain receipt for the original command id. */
+  sendDaemonCommand(command: DaemonCommand): Promise<DaemonCommandReceipt> {
+    const requestId = this.newId();
+    return new Promise((resolve) => {
+      const pending = { commandId: command.commandId, resolve };
+      if (!this.tryStartMapRequest(
+        { kind: 'daemon-command', requestId, command },
+        this.pendingDaemonCommands,
+        requestId,
+        pending,
+      )) {
+        resolve(this.daemonDeliveryUncertainReceipt(
+          command.commandId,
+          'Not connected to EZTerminal.',
+        ));
+      }
+    });
   }
 
   getAgentActivitySnapshot(): Promise<AgentActivitySnapshot> {
@@ -3042,6 +3258,111 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     });
   }
 
+  private updateDaemonRuntimeState(state: DaemonRuntimeViewState): void {
+    this.daemonRuntimeState = state;
+    for (const listener of this.daemonRuntimeListeners) listener(state);
+  }
+
+  private requestDaemonSnapshot(): Promise<DaemonSnapshot | null> {
+    const requestId = this.newId();
+    return new Promise((resolve) => {
+      if (!this.tryStartMapRequest(
+        { kind: 'daemon-snapshot-get', requestId },
+        this.pendingDaemonSnapshots,
+        requestId,
+        resolve,
+      )) resolve(null);
+    });
+  }
+
+  private queueDaemonSnapshotRefresh(): void {
+    if (!this.authed || this.daemonSnapshotRefreshInFlight) {
+      this.daemonSnapshotRefreshQueued = this.daemonSnapshotRefreshInFlight;
+      return;
+    }
+    this.daemonSnapshotRefreshInFlight = true;
+    void this.requestDaemonSnapshot().finally(() => {
+      this.daemonSnapshotRefreshInFlight = false;
+      if (!this.daemonSnapshotRefreshQueued) return;
+      this.daemonSnapshotRefreshQueued = false;
+      this.queueDaemonSnapshotRefresh();
+    });
+  }
+
+  private applyDaemonSnapshot(snapshot: DaemonSnapshot): boolean {
+    const current = this.daemonRuntimeState.snapshot;
+    const accept = this.awaitingDaemonSeed
+      || current === null
+      || snapshot.revision > this.daemonCursor.revision
+      || (
+        snapshot.revision === this.daemonCursor.revision
+        && snapshot.eventSequence >= this.daemonCursor.eventSequence
+      );
+    this.awaitingDaemonSeed = false;
+    if (!accept) return false;
+    this.daemonCursor = {
+      revision: snapshot.revision,
+      eventSequence: snapshot.eventSequence,
+    };
+    this.updateDaemonRuntimeState({ status: 'ready', snapshot });
+    if (this.daemonNeedsResubscribe && this.daemonEventsRefcount > 0 && this.authed) {
+      this.daemonNeedsResubscribe = false;
+      this.send({ kind: 'daemon-events-unsubscribe' });
+      this.send({
+        kind: 'daemon-events-subscribe',
+        afterSequence: snapshot.eventSequence,
+      });
+    }
+    return true;
+  }
+
+  private handleDaemonEvent(event: DaemonEvent): void {
+    const continuity = classifyDaemonEvent(this.daemonCursor, event);
+    for (const listener of this.daemonEventListeners) listener(event, continuity);
+    if (continuity === 'duplicate') return;
+    if (continuity === 'next') {
+      this.daemonCursor = {
+        revision: event.revision,
+        eventSequence: event.sequence,
+      };
+      this.updateDaemonRuntimeState({
+        status: 'recovering',
+        snapshot: this.daemonRuntimeState.snapshot,
+        lastContinuity: continuity,
+      });
+      this.queueDaemonSnapshotRefresh();
+      return;
+    }
+    // Missing events and revision regression both invalidate any local
+    // projection. Fetch one authoritative snapshot and resume strictly after
+    // its sequence rather than guessing or applying a partial event.
+    this.daemonNeedsResubscribe = true;
+    this.updateDaemonRuntimeState({
+      status: 'recovering',
+      snapshot: this.daemonRuntimeState.snapshot,
+      lastContinuity: continuity,
+      error: 'event-gap',
+    });
+    this.queueDaemonSnapshotRefresh();
+  }
+
+  private daemonDeliveryUncertainReceipt(
+    commandId: string,
+    message: string,
+  ): DaemonCommandReceipt {
+    return {
+      ok: false,
+      status: 'delivery-uncertain',
+      commandId,
+      revision: this.daemonRuntimeState.snapshot?.revision ?? this.daemonCursor.revision,
+      error: {
+        code: 'delivery-uncertain',
+        message,
+        retryable: false,
+      },
+    };
+  }
+
   // ── connection lifecycle ─────────────────────────────────────────────────
 
   private connect(): void {
@@ -3051,6 +3372,8 @@ export class WsEzTerminalTransport implements EzTerminalApi {
     this.emitConnectionHealth();
     const socket = this.createSocket(this.url);
     this.socket = socket;
+    this.awaitingDaemonSeed = true;
+    this.daemonNeedsResubscribe = this.daemonEventsRefcount > 0;
     this.awaitingAgentSeed = true;
     this.awaitingAgentCoordinationSeed = true;
     this.awaitingAgentOrchestrationSeed = true;
@@ -3304,6 +3627,22 @@ export class WsEzTerminalTransport implements EzTerminalApi {
       });
     }
     this.pendingWorktrees.clear();
+    for (const resolve of this.pendingDaemonSnapshots.values()) resolve(null);
+    this.pendingDaemonSnapshots.clear();
+    for (const pending of this.pendingDaemonCommands.values()) {
+      pending.resolve(this.daemonDeliveryUncertainReceipt(
+        pending.commandId,
+        'Connection to EZTerminal was lost before the receipt arrived.',
+      ));
+    }
+    this.pendingDaemonCommands.clear();
+    if (this.daemonEventsRefcount > 0) {
+      this.updateDaemonRuntimeState({
+        status: this.daemonRuntimeState.snapshot ? 'recovering' : 'error',
+        snapshot: this.daemonRuntimeState.snapshot,
+        error: 'connection-lost',
+      });
+    }
     for (const resolve of this.pendingAgentSnapshots.values()) resolve(this.agentSnapshot);
     this.pendingAgentSnapshots.clear();
     for (const resolve of this.pendingAgentCoordinationSnapshots.values()) {
@@ -3824,6 +4163,17 @@ export class WsEzTerminalTransport implements EzTerminalApi {
         // OpenClaw management (M4): same replay shape for status/logs.
         if (this.openclawStatusRefcount > 0) this.send({ kind: 'openclaw-status-subscribe' });
         if (this.openclawLogsSubscribed) this.send({ kind: 'openclaw-logs-subscribe' });
+        if (this.daemonEventsRefcount > 0) {
+          this.updateDaemonRuntimeState({
+            status: this.daemonRuntimeState.snapshot ? 'recovering' : 'loading',
+            snapshot: this.daemonRuntimeState.snapshot,
+          });
+          this.send({
+            kind: 'daemon-events-subscribe',
+            afterSequence: this.daemonCursor.eventSequence,
+          });
+          this.queueDaemonSnapshotRefresh();
+        }
         break;
       case 'auth-fail':
         if (this.authed) break;
@@ -3966,6 +4316,44 @@ export class WsEzTerminalTransport implements EzTerminalApi {
             commandText: msg.commandText,
             executionKind: msg.executionKind,
           });
+        }
+        break;
+      case 'daemon-snapshot': {
+        const pending = typeof msg.requestId === 'string'
+          ? this.pendingDaemonSnapshots.get(msg.requestId)
+          : undefined;
+        if (typeof msg.requestId === 'string') this.pendingDaemonSnapshots.delete(msg.requestId);
+        if (!isDaemonSnapshot(msg.snapshot)) {
+          this.updateDaemonRuntimeState({
+            status: 'error',
+            snapshot: this.daemonRuntimeState.snapshot,
+            error: 'invalid-snapshot',
+          });
+          pending?.(null);
+          break;
+        }
+        const accepted = this.applyDaemonSnapshot(msg.snapshot);
+        pending?.(accepted ? msg.snapshot : this.daemonRuntimeState.snapshot);
+        break;
+      }
+      case 'daemon-command-reply': {
+        const pending = this.pendingDaemonCommands.get(msg.requestId);
+        this.pendingDaemonCommands.delete(msg.requestId);
+        if (!pending) break;
+        if (!isDaemonCommandReceipt(msg.receipt, pending.commandId)) {
+          pending.resolve(this.daemonDeliveryUncertainReceipt(
+            pending.commandId,
+            'Desktop returned an invalid command receipt.',
+          ));
+          break;
+        }
+        pending.resolve(msg.receipt);
+        if (msg.receipt.ok) this.queueDaemonSnapshotRefresh();
+        break;
+      }
+      case 'daemon-event':
+        if (this.daemonEventsRefcount > 0 && isDaemonEvent(msg.event)) {
+          this.handleDaemonEvent(msg.event);
         }
         break;
       case 'agent-snapshot': {

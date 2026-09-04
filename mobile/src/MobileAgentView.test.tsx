@@ -177,7 +177,7 @@ describe('MobileAgentView', () => {
       .toEqual(['blocked', 'done', 'working', 'idle']);
   });
 
-  it('places projects between attention and active history in document order', async () => {
+  it('places the daemon project navigator between attention and active history', async () => {
     const transport = {
       supportsAgentProjectManagement: true,
       supportsAgentDirectLaunch: true,
@@ -203,7 +203,7 @@ describe('MobileAgentView', () => {
     });
 
     const order = Array.from(container.querySelector('.mob-column')!.children).map((element) => (
-      element.getAttribute('data-testid') === 'mobile-agent-projects'
+      element.getAttribute('data-testid') === 'mobile-daemon-navigator'
         ? 'projects'
         : element.getAttribute('data-status')
     ));
