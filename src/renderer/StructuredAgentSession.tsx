@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Archive,
   Bot,
   Check,
   ChevronRight,
@@ -11,6 +12,7 @@ import {
   Send,
   ShieldAlert,
   Square,
+  Unlink2,
   Wrench,
 } from 'lucide-react';
 import {
@@ -106,7 +108,6 @@ interface StructuredAgentCopy {
   readonly notice: string;
   readonly error: string;
   readonly streaming: string;
-  readonly openChild: string;
   readonly allow: string;
   readonly deny: string;
   readonly pending: string;
@@ -123,6 +124,21 @@ interface StructuredAgentCopy {
   readonly settings: string;
   readonly status: string;
   readonly childTrack: string;
+  readonly managed: string;
+  readonly providerOwned: string;
+  readonly readOnly: string;
+  readonly openRelated: string;
+  readonly lifecycle: string;
+  readonly stopAgent: string;
+  readonly stoppingAgent: string;
+  readonly archiveSession: string;
+  readonly archivingSession: string;
+  readonly detachSession: string;
+  readonly detachingSession: string;
+  readonly lifecycleFailed: string;
+  readonly providerOwnedReadOnly: string;
+  readonly archivedReadOnly: string;
+  readonly endedReadOnly: string;
 }
 
 const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
@@ -164,7 +180,6 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     notice: 'Notice',
     error: 'Error',
     streaming: 'Streaming',
-    openChild: 'Open child session',
     allow: 'Allow',
     deny: 'Deny',
     pending: 'Pending',
@@ -181,6 +196,21 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     settings: 'Session settings',
     status: 'Status',
     childTrack: 'Child Agents',
+    managed: 'Managed',
+    providerOwned: 'Provider-owned',
+    readOnly: 'Read only',
+    openRelated: 'Open related session',
+    lifecycle: 'Session actions',
+    stopAgent: 'Stop Agent',
+    stoppingAgent: 'Stopping Agent',
+    archiveSession: 'Archive',
+    archivingSession: 'Archiving session',
+    detachSession: 'Detach',
+    detachingSession: 'Detaching session',
+    lifecycleFailed: 'The session action could not be completed.',
+    providerOwnedReadOnly: 'This subagent is owned by the provider. You can review its transcript here, but direct messages and lifecycle changes stay with the parent provider.',
+    archivedReadOnly: 'This session is archived. Its transcript remains available, but new messages are disabled.',
+    endedReadOnly: 'This session has ended. Its transcript remains available, but new messages are disabled.',
   },
   ko: {
     newSession: '새 Agent 세션',
@@ -220,7 +250,6 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     notice: '알림',
     error: '오류',
     streaming: '응답 중',
-    openChild: '하위 세션 열기',
     allow: '허용',
     deny: '거부',
     pending: '대기 중',
@@ -237,6 +266,21 @@ const COPY: Readonly<Record<'en' | 'ko', StructuredAgentCopy>> = {
     settings: '세션 설정',
     status: '상태',
     childTrack: '하위 Agent',
+    managed: '관리형',
+    providerOwned: 'Provider 소유',
+    readOnly: '읽기 전용',
+    openRelated: '관련 세션 열기',
+    lifecycle: '세션 동작',
+    stopAgent: 'Agent 중지',
+    stoppingAgent: 'Agent 중지 중',
+    archiveSession: '보관',
+    archivingSession: '세션 보관 중',
+    detachSession: '분리',
+    detachingSession: '세션 분리 중',
+    lifecycleFailed: '세션 동작을 완료하지 못했습니다.',
+    providerOwnedReadOnly: '이 하위 Agent는 provider가 소유합니다. 여기서 대화를 확인할 수 있지만 직접 메시지와 수명주기 변경은 상위 provider가 관리합니다.',
+    archivedReadOnly: '보관된 세션입니다. 대화는 계속 볼 수 있지만 새 메시지는 보낼 수 없습니다.',
+    endedReadOnly: '종료된 세션입니다. 대화는 계속 볼 수 있지만 새 메시지는 보낼 수 없습니다.',
   },
 };
 
@@ -756,7 +800,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
                     />
                   )}
 
-                  {item.kind === 'child-summary' && item.relatedSessionId && onOpenRelatedSession && (
+                  {item.relatedSessionId && onOpenRelatedSession && (
                     <Button
                       className="structured-agent-message__child-link"
                       variant="ghost"
@@ -764,7 +808,7 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
                       trailingIcon={<ChevronRight />}
                       onClick={() => onOpenRelatedSession(item.relatedSessionId!)}
                     >
-                      {copy.openChild}
+                      {copy.openRelated}
                     </Button>
                   )}
                   {isAssistant && item.isDelta && (
@@ -783,10 +827,73 @@ export const StructuredAgentTranscript = memo(function StructuredAgentTranscript
   );
 });
 
+export interface StructuredAgentChildTrackItem {
+  readonly sessionId: string;
+  readonly title: string;
+  readonly providerLabel: string;
+  readonly state: ManagedAgentState;
+  readonly owner: 'managed' | 'provider-native';
+}
+
+export interface StructuredAgentChildTrackProps {
+  readonly items: readonly StructuredAgentChildTrackItem[];
+  readonly onSelectSession: (sessionId: string) => void;
+}
+
+/** A compact projection of direct children; the authoritative tree remains in the daemon snapshot. */
+export function StructuredAgentChildTrack({
+  items,
+  onSelectSession,
+}: StructuredAgentChildTrackProps): JSX.Element | null {
+  const copy = useStructuredAgentCopy();
+  if (items.length === 0) return null;
+
+  return (
+    <nav className="structured-agent-children" aria-label={copy.childTrack}>
+      <div className="structured-agent-children__heading">
+        <span>{copy.childTrack}</span>
+        <span aria-label={`${items.length} ${copy.childTrack}`}>{items.length}</span>
+      </div>
+      <ul className="structured-agent-children__list">
+        {items.map((item) => (
+          <li key={item.sessionId}>
+            <button
+              type="button"
+              className="structured-agent-child"
+              data-owner={item.owner}
+              data-state={item.state}
+              aria-label={`${copy.openRelated}: ${item.title}`}
+              onClick={() => onSelectSession(item.sessionId)}
+              data-testid="structured-agent-child"
+            >
+              <span className="structured-agent-child__identity">
+                <strong>{item.title}</strong>
+                <small>{item.providerLabel}</small>
+              </span>
+              <span className="structured-agent-child__meta">
+                <span className="structured-agent-state" data-state={item.state}>
+                  <span aria-hidden="true" />
+                  <span className="ez-ui-visually-hidden">{copy.status}: </span>{item.state}
+                </span>
+                <span className="structured-agent-child__owner">
+                  {item.owner === 'provider-native' ? copy.providerOwned : copy.managed}
+                  {item.owner === 'provider-native' && <> · {copy.readOnly}</>}
+                </span>
+              </span>
+              <ChevronRight aria-hidden="true" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
 export interface StructuredAgentComposerProps {
   readonly busy: boolean;
   readonly queuedCount?: number;
   readonly disabled?: boolean;
+  readonly disabledReason?: string;
   readonly initialDraft?: string;
   readonly onSend: (prompt: string) => Promise<StructuredAgentUiResult>;
   readonly onInterruptAndSend?: (prompt: string) => Promise<StructuredAgentUiResult>;
@@ -798,6 +905,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
   busy,
   queuedCount = 0,
   disabled = false,
+  disabledReason,
   initialDraft = '',
   onSend,
   onInterruptAndSend,
@@ -805,6 +913,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
 }: StructuredAgentComposerProps): JSX.Element {
   const copy = useStructuredAgentCopy();
   const composerId = useId();
+  const disabledReasonId = `${composerId}-disabled-reason`;
   const [draft, setDraft] = useState(initialDraft);
   const [submitting, setSubmitting] = useState<'send' | 'interrupt' | null>(null);
   const [attempted, setAttempted] = useState(false);
@@ -861,6 +970,7 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
           value={draft}
           placeholder={copy.messagePlaceholder}
           disabled={disabled}
+          aria-describedby={disabledReason ? disabledReasonId : undefined}
           onKeyDown={keyDown}
           onChange={(event) => {
             setDraft(event.currentTarget.value);
@@ -869,6 +979,16 @@ export const StructuredAgentComposer = memo(function StructuredAgentComposer({
           data-testid="structured-agent-composer-input"
         />
       </Field>
+      {disabledReason && (
+        <p
+          id={disabledReasonId}
+          className="structured-agent-composer__disabled-reason"
+          role="status"
+          data-testid="structured-agent-composer-disabled-reason"
+        >
+          {disabledReason}
+        </p>
+      )}
       <div className="structured-agent-composer__meta">
         <span aria-live="polite">
           {queuedCount > 0 ? formatTemplate(copy.queued, { count: queuedCount }) : busy ? copy.busyHint : ''}
@@ -923,6 +1043,8 @@ export interface StructuredAgentSessionPanelProps {
   readonly transcriptLoading?: boolean;
   readonly transcriptError?: string | null;
   readonly disabled?: boolean;
+  /** Provider-native sessions are inspectable, but their provider owns interaction and lifecycle. */
+  readonly owner?: 'managed' | 'provider-native';
   readonly childTrack?: ReactNode;
   readonly onRetryTranscript?: () => void;
   readonly onSend: (prompt: string) => Promise<StructuredAgentUiResult>;
@@ -936,10 +1058,34 @@ export interface StructuredAgentSessionPanelProps {
     decision: 'allow' | 'deny',
   ) => Promise<StructuredAgentUiResult>;
   readonly onOpenRelatedSession?: (sessionId: string) => void;
+  readonly onCancel?: () => Promise<StructuredAgentUiResult>;
+  readonly onArchive?: () => Promise<StructuredAgentUiResult>;
+  readonly onDetach?: () => Promise<StructuredAgentUiResult>;
   readonly variant?: 'desktop' | 'mobile';
 }
 
 const BUSY_AGENT_STATES = new Set<ManagedAgentState>(['starting', 'queued', 'working']);
+const CANCELLABLE_AGENT_STATES = new Set<ManagedAgentState>([
+  'starting',
+  'queued',
+  'working',
+  'blocked',
+  'delivery-uncertain',
+]);
+const ARCHIVABLE_AGENT_STATES = new Set<ManagedAgentState>([
+  'idle',
+  'done',
+  'interrupted',
+  'error',
+]);
+const TERMINAL_AGENT_STATES = new Set<ManagedAgentState>([
+  'done',
+  'interrupted',
+  'error',
+  'archived',
+]);
+
+type StructuredAgentLifecycleAction = 'cancel' | 'archive' | 'detach';
 
 export function StructuredAgentSessionPanel({
   sessionId,
@@ -957,6 +1103,7 @@ export function StructuredAgentSessionPanel({
   transcriptLoading = false,
   transcriptError = null,
   disabled = false,
+  owner = 'managed',
   childTrack,
   onRetryTranscript,
   onSend,
@@ -964,6 +1111,9 @@ export function StructuredAgentSessionPanel({
   onChangeSettings,
   onResolveApproval,
   onOpenRelatedSession,
+  onCancel,
+  onArchive,
+  onDetach,
   variant = 'desktop',
 }: StructuredAgentSessionPanelProps): JSX.Element {
   const copy = useStructuredAgentCopy();
@@ -972,10 +1122,47 @@ export function StructuredAgentSessionPanel({
   const [selectedPermission, setSelectedPermission] = useState(permissionPreset);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [lifecycleBusy, setLifecycleBusy] = useState<StructuredAgentLifecycleAction | null>(null);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const busy = BUSY_AGENT_STATES.has(state);
+  const providerOwned = owner === 'provider-native';
+  const terminal = TERMINAL_AGENT_STATES.has(state);
+  const canCancel = !providerOwned && CANCELLABLE_AGENT_STATES.has(state) && onCancel !== undefined;
+  const canArchive = !providerOwned && ARCHIVABLE_AGENT_STATES.has(state) && onArchive !== undefined;
+  const canDetach = !providerOwned && state !== 'archived' && onDetach !== undefined;
+  const hasLifecycleActions = canCancel || canArchive || canDetach;
+  const settingsReadOnly = providerOwned || terminal || onChangeSettings === undefined;
+  const composerDisabledReason = providerOwned
+    ? copy.providerOwnedReadOnly
+    : state === 'archived'
+      ? copy.archivedReadOnly
+      : terminal
+        ? copy.endedReadOnly
+        : undefined;
+  const lifecycleDisabledReason = lifecycleBusy === 'cancel'
+    ? copy.stoppingAgent
+    : lifecycleBusy === 'archive'
+      ? copy.archivingSession
+      : lifecycleBusy === 'detach'
+        ? copy.detachingSession
+        : undefined;
+  const composerDisabled = disabled || composerDisabledReason !== undefined;
 
   useEffect(() => setSelectedModel(model ?? ''), [model]);
   useEffect(() => setSelectedPermission(permissionPreset), [permissionPreset]);
+  useEffect(() => {
+    setLifecycleBusy(null);
+    setLifecycleError(null);
+  }, [owner, sessionId, state]);
+  useEffect(() => {
+    if (
+      (lifecycleBusy === 'cancel' && !canCancel)
+      || (lifecycleBusy === 'archive' && !canArchive)
+      || (lifecycleBusy === 'detach' && !canDetach)
+    ) {
+      setLifecycleBusy(null);
+    }
+  }, [canArchive, canCancel, canDetach, lifecycleBusy]);
 
   const updateSettings = async (nextModel: string, nextPermission: PermissionPreset): Promise<void> => {
     const previousModel = selectedModel;
@@ -1000,6 +1187,23 @@ export function StructuredAgentSessionPanel({
     }
   };
 
+  const runLifecycle = async (
+    action: StructuredAgentLifecycleAction,
+    callback: (() => Promise<StructuredAgentUiResult>) | undefined,
+  ): Promise<void> => {
+    if (!callback || disabled || settingsBusy || lifecycleBusy) return;
+    setLifecycleBusy(action);
+    setLifecycleError(null);
+    const result = await callback().catch((): StructuredAgentUiResult => ({
+      ok: false,
+      message: copy.lifecycleFailed,
+    }));
+    if (!result.ok) {
+      setLifecycleBusy(null);
+      setLifecycleError(result.message);
+    }
+  };
+
   return (
     <section
       className="structured-agent structured-agent--live"
@@ -1021,47 +1225,116 @@ export function StructuredAgentSessionPanel({
             <span aria-hidden="true" />
             <span className="ez-ui-visually-hidden">{copy.status}: </span>{state}
           </span>
+          {owner === 'provider-native' && (
+            <span className="structured-agent-session-header__owner">
+              {copy.providerOwned} · {copy.readOnly}
+            </span>
+          )}
         </div>
-        <div className="structured-agent-session-settings" role="group" aria-label={copy.settings}>
-          <Field label={copy.model} labelHidden>
-            <Select
-              uiSize="sm"
-              value={selectedModel}
-              disabled={disabled || settingsBusy || !onChangeSettings}
-              aria-label={copy.model}
-              onChange={(event) => void updateSettings(event.currentTarget.value, selectedPermission)}
-              data-testid="structured-agent-live-model"
+        <div className="structured-agent-session-controls">
+          <div className="structured-agent-session-settings" role="group" aria-label={copy.settings}>
+            {settingsReadOnly ? (
+              <>
+                <span className="structured-agent-session-setting" data-testid="structured-agent-live-model-value">
+                  <small>{copy.model}</small>
+                  <strong>{selectedModel || copy.providerDefault}</strong>
+                </span>
+                <span className="structured-agent-session-setting" data-testid="structured-agent-live-permission-value">
+                  <small>{copy.permission}</small>
+                  <strong>{permissionCopy(copy, selectedPermission).label}</strong>
+                </span>
+              </>
+            ) : (
+              <>
+                <Field label={copy.model} labelHidden>
+                  <Select
+                    uiSize="sm"
+                    value={selectedModel}
+                    disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                    aria-label={copy.model}
+                    onChange={(event) => void updateSettings(event.currentTarget.value, selectedPermission)}
+                    data-testid="structured-agent-live-model"
+                  >
+                    {!model && <option value="">{copy.providerDefault}</option>}
+                    {modelOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                  </Select>
+                </Field>
+                <Field label={copy.permission} labelHidden>
+                  <Select
+                    uiSize="sm"
+                    value={selectedPermission}
+                    disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                    aria-label={copy.permission}
+                    onChange={(event) => void updateSettings(
+                      selectedModel,
+                      event.currentTarget.value as PermissionPreset,
+                    )}
+                    data-testid="structured-agent-live-permission"
+                  >
+                    {PERMISSION_ORDER.map((preset) => (
+                      <option key={preset} value={preset}>{permissionCopy(copy, preset).label}</option>
+                    ))}
+                  </Select>
+                </Field>
+              </>
+            )}
+          </div>
+          {hasLifecycleActions && (
+            <div
+              className="structured-agent-session-lifecycle"
+              role="group"
+              aria-label={copy.lifecycle}
+              aria-busy={lifecycleBusy !== null || undefined}
+              data-testid="structured-agent-lifecycle"
             >
-              {!model && <option value="">{copy.providerDefault}</option>}
-              {modelOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-            </Select>
-          </Field>
-          <Field label={copy.permission} labelHidden>
-            <Select
-              uiSize="sm"
-              value={selectedPermission}
-              disabled={disabled || settingsBusy || !onChangeSettings}
-              aria-label={copy.permission}
-              onChange={(event) => void updateSettings(
-                selectedModel,
-                event.currentTarget.value as PermissionPreset,
+              {canDetach && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  leadingIcon={<Unlink2 />}
+                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                  loading={lifecycleBusy === 'detach'}
+                  loadingLabel={copy.detachingSession}
+                  onClick={() => void runLifecycle('detach', onDetach)}
+                  data-testid="structured-agent-detach"
+                >
+                  {copy.detachSession}
+                </Button>
               )}
-              data-testid="structured-agent-live-permission"
-            >
-              {PERMISSION_ORDER.map((preset) => (
-                <option key={preset} value={preset}>{permissionCopy(copy, preset).label}</option>
-              ))}
-            </Select>
-          </Field>
+              {canArchive && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  leadingIcon={<Archive />}
+                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                  loading={lifecycleBusy === 'archive'}
+                  loadingLabel={copy.archivingSession}
+                  onClick={() => void runLifecycle('archive', onArchive)}
+                  data-testid="structured-agent-archive"
+                >
+                  {copy.archiveSession}
+                </Button>
+              )}
+              {canCancel && (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  leadingIcon={<Square />}
+                  disabled={disabled || settingsBusy || lifecycleBusy !== null}
+                  loading={lifecycleBusy === 'cancel'}
+                  loadingLabel={copy.stoppingAgent}
+                  onClick={() => void runLifecycle('cancel', onCancel)}
+                  data-testid="structured-agent-cancel"
+                >
+                  {copy.stopAgent}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
         {settingsError && <p className="structured-agent__form-error" role="alert">{settingsError}</p>}
+        {lifecycleError && <p className="structured-agent__form-error" role="alert">{lifecycleError}</p>}
       </header>
-
-      {childTrack !== undefined && (
-        <section className="structured-agent-child-track" aria-label={copy.childTrack} data-testid="structured-agent-child-track">
-          {childTrack}
-        </section>
-      )}
 
       <StructuredAgentTranscript
         items={items}
@@ -1073,10 +1346,16 @@ export function StructuredAgentSessionPanel({
         onResolveApproval={onResolveApproval}
         onOpenRelatedSession={onOpenRelatedSession}
       />
+      {childTrack !== undefined && (
+        <section className="structured-agent-child-track" aria-label={copy.childTrack} data-testid="structured-agent-child-track">
+          {childTrack}
+        </section>
+      )}
       <StructuredAgentComposer
         busy={busy}
         queuedCount={queuedCount}
-        disabled={disabled}
+        disabled={composerDisabled || lifecycleBusy !== null}
+        disabledReason={composerDisabledReason ?? lifecycleDisabledReason}
         onSend={onSend}
         onInterruptAndSend={onInterruptAndSend}
         variant={variant}

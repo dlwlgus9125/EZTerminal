@@ -6,7 +6,6 @@ import {
   Pin,
   Search,
   Settings,
-  ShieldCheck,
   Trash2,
   X,
 } from 'lucide-react';
@@ -25,16 +24,7 @@ import type {
   AgentProjectSummary,
   AgentResumeBootstrap,
 } from '../../src/shared/agent-history';
-import {
-  EMPTY_AGENT_COORDINATION_SNAPSHOT,
-  type AgentCoordinationSnapshot,
-} from '../../src/shared/agent-coordination';
-import {
-  EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
-  type AgentOrchestrationSnapshot,
-} from '../../src/shared/agent-orchestration';
 import { MobileActionSheet } from './MobileActionSheet';
-import { MobileCollaborationPolicySheet } from './MobileCollaborationPolicySheet';
 import { MobileAgentFolderPicker } from './MobileAgentFolderPicker';
 import { MobileAgentHistorySheet } from './MobileAgentHistorySheet';
 import type { WsEzTerminalTransport } from './transport/ws-ezterminal';
@@ -46,14 +36,10 @@ const HISTORY_PROVIDER_LABEL = {
 
 export function MobileAgentProjects({
   transport,
-  coordinationSnapshot = EMPTY_AGENT_COORDINATION_SNAPSHOT,
-  orchestrationSnapshot = EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
   onResumeHistory,
   onLaunchAgent,
 }: {
   readonly transport: WsEzTerminalTransport;
-  readonly coordinationSnapshot?: AgentCoordinationSnapshot;
-  readonly orchestrationSnapshot?: AgentOrchestrationSnapshot;
   readonly onResumeHistory: (bootstrap: AgentResumeBootstrap) => Promise<void>;
   readonly onLaunchAgent: (bootstrap: AgentLaunchBootstrap) => Promise<void>;
 }): JSX.Element {
@@ -80,7 +66,6 @@ export function MobileAgentProjects({
   const [folderPickerMode, setFolderPickerMode] = useState<'editor' | 'launch' | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AgentProjectSummary | null>(null);
-  const [collaborationProject, setCollaborationProject] = useState<AgentProjectSummary | null>(null);
   const [launchPickerOpen, setLaunchPickerOpen] = useState(false);
   const [launchTarget, setLaunchTarget] = useState<AgentLaunchTarget | null>(null);
   const [launchTargetProject, setLaunchTargetProject] = useState<AgentProjectSummary | null>(null);
@@ -419,15 +404,6 @@ export function MobileAgentProjects({
                     <button
                       type="button"
                       className="mob-icon-btn"
-                      aria-label={t('collaboration.projectPolicy')}
-                      onClick={() => setCollaborationProject(project)}
-                      data-testid="mobile-agent-collaboration-policy"
-                    >
-                      <ShieldCheck aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      className="mob-icon-btn"
                       aria-label={project.pinned
                         ? t('agentHub.projects.unpin')
                         : t('agentHub.projects.pin')}
@@ -519,15 +495,6 @@ export function MobileAgentProjects({
           session={historySession}
           onClose={() => setHistorySession(null)}
           onResume={onResumeHistory}
-        />
-      )}
-      {collaborationProject && (
-        <MobileCollaborationPolicySheet
-          project={collaborationProject}
-          coordinationSnapshot={coordinationSnapshot}
-          snapshot={orchestrationSnapshot}
-          transport={transport}
-          onClose={() => setCollaborationProject(null)}
         />
       )}
       {editorOpen && (

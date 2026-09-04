@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 
 import type { DaemonApproval, DaemonTranscriptItem } from '../shared/daemon-protocol';
 import {
+  StructuredAgentChildTrack,
   StructuredAgentDraftPanel,
   StructuredAgentSessionPanel,
   type StructuredAgentSessionPanelProps,
@@ -152,5 +153,40 @@ export const Empty: Story = {
   args: {
     state: 'idle',
     items: [],
+  },
+};
+
+export const ChildAgentsAndLifecycle: Story = {
+  args: {
+    state: 'idle',
+    items: [
+      item('child-update', 1, 'child-summary', 'The accessibility review is ready.', {
+        relatedSessionId: 'agent-child-a11y',
+      }),
+    ],
+    childTrack: (
+      <StructuredAgentChildTrack
+        items={[
+          {
+            sessionId: 'agent-child-a11y',
+            title: 'Review keyboard and screen reader flow',
+            providerLabel: 'Codex',
+            state: 'idle',
+            owner: 'managed',
+          },
+          {
+            sessionId: 'agent-child-native',
+            title: 'Provider search worker',
+            providerLabel: 'Claude Code',
+            state: 'working',
+            owner: 'provider-native',
+          },
+        ]}
+        onSelectSession={fn()}
+      />
+    ),
+    onOpenRelatedSession: fn(),
+    onArchive: fn(async () => ({ ok: true as const })),
+    onDetach: fn(async () => ({ ok: true as const })),
   },
 };

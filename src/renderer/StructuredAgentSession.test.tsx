@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DaemonApproval, DaemonTranscriptItem } from '../shared/daemon-protocol';
 import {
   StructuredAgentComposer,
+  StructuredAgentChildTrack,
   StructuredAgentDraftPanel,
   StructuredAgentSessionPanel,
   StructuredAgentTranscript,
@@ -42,9 +43,9 @@ function transcriptItem(
 let container: HTMLDivElement;
 let root: Root;
 
-function render(node: ReactNode): void {
+function render(node: ReactNode, locale: 'en' | 'ko' = 'en'): void {
   act(() => root.render(
-    <AppI18nProvider locale="en" languages={['en']}>
+    <AppI18nProvider locale={locale} languages={[locale]}>
       {node}
     </AppI18nProvider>,
   ));
@@ -182,6 +183,63 @@ describe('StructuredAgentTranscript', () => {
     render(<StructuredAgentTranscript items={[]} providerLabel="Codex" error="Transcript failed" />);
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('Transcript failed');
   });
+
+  it('opens any transcript relation through the same session callback', () => {
+    const onOpen = vi.fn();
+    render(
+      <StructuredAgentTranscript
+        items={[transcriptItem('related', 1, 'notice', 'A related session has context.', {
+          relatedSessionId: 'child-session',
+        })]}
+        providerLabel="Codex"
+        onOpenRelatedSession={onOpen}
+      />,
+    );
+    const button = container.querySelector<HTMLButtonElement>('.structured-agent-message__child-link')!;
+    expect(button.textContent).toContain('Open related session');
+    act(() => button.click());
+    expect(onOpen).toHaveBeenCalledWith('child-session');
+  });
+});
+
+describe('StructuredAgentChildTrack', () => {
+  it('exposes direct child identity, state, ownership, and stable selection', () => {
+    const onSelect = vi.fn();
+    render(
+      <StructuredAgentChildTrack
+        items={[
+          {
+            sessionId: 'managed-child',
+            title: 'Accessibility review',
+            providerLabel: 'Codex',
+            state: 'idle',
+            owner: 'managed',
+          },
+          {
+            sessionId: 'native-child',
+            title: 'Provider search worker',
+            providerLabel: 'Claude Code',
+            state: 'working',
+            owner: 'provider-native',
+          },
+        ]}
+        onSelectSession={onSelect}
+      />,
+    );
+
+    const children = Array.from(container.querySelectorAll<HTMLButtonElement>(
+      '[data-testid="structured-agent-child"]',
+    ));
+    expect(children).toHaveLength(2);
+    expect(children[0]?.textContent).toContain('Accessibility review');
+    expect(children[0]?.textContent).toContain('Codex');
+    expect(children[0]?.textContent).toContain('idle');
+    expect(children[0]?.textContent).toContain('Managed');
+    expect(children[1]?.textContent).toContain('Provider-owned');
+    expect(children[1]?.textContent).toContain('Read only');
+    act(() => children[0]!.click());
+    expect(onSelect).toHaveBeenCalledWith('managed-child');
+  });
 });
 
 describe('StructuredAgentComposer', () => {
@@ -242,5 +300,84 @@ describe('StructuredAgentSessionPanel', () => {
     setValue(model, 'gpt-6');
     await flush();
     expect(onChangeSettings).toHaveBeenCalledWith({ model: 'gpt-6', permissionPreset: 'standard' });
+  });
+
+  it('guards lifecycle actions, reports failure, and preserves a typed draft', async () => {
+    const onCancel = vi.fn(async () => ({ ok: false as const, message: 'Stop failed safely' }));
+    const onDetach = vi.fn(async () => ({ ok: true as const }));
+    render(
+      <StructuredAgentSessionPanel
+        sessionId="session-1"
+        title="Managed child"
+        providerId="codex"
+        providerLabel="Codex"
+        workspace={{ id: 'workspace-1', label: 'Feature', kind: 'worktree' }}
+        permissionPreset="standard"
+        state="working"
+        items={[]}
+        onSend={async () => ({ ok: true })}
+        onCancel={onCancel}
+        onArchive={async () => ({ ok: true })}
+        onDetach={onDetach}
+      />,
+    );
+    const input = container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]')!;
+    setValue(input, 'Keep this draft');
+    expect(container.querySelector('[data-testid="structured-agent-archive"]')).toBeNull();
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-cancel"]')!.click());
+    expect(container.querySelector('[data-testid="structured-agent-lifecycle"]')?.getAttribute('aria-busy')).toBe('true');
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-detach"]')?.disabled).toBe(true);
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-cancel"]')!.click());
+    await flush();
+
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Stop failed safely');
+    expect(input.value).toBe('Keep this draft');
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="structured-agent-detach"]')!.click());
+    await flush();
+    expect(onDetach).toHaveBeenCalledOnce();
+  });
+
+  it('renders provider-owned and terminal sessions as read-only in English and Korean', () => {
+    render(
+      <StructuredAgentSessionPanel
+        sessionId="native-child"
+        title="Native child"
+        providerId="claude"
+        providerLabel="Claude Code"
+        workspace={{ id: 'workspace-1', label: 'Feature', kind: 'worktree' }}
+        permissionPreset="standard"
+        state="working"
+        owner="provider-native"
+        items={[]}
+        onSend={async () => ({ ok: true })}
+        onCancel={async () => ({ ok: true })}
+        onDetach={async () => ({ ok: true })}
+      />,
+    );
+    expect(container.querySelector('[data-testid="structured-agent-lifecycle"]')).toBeNull();
+    expect(container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="structured-agent-composer-disabled-reason"]')?.textContent)
+      .toContain('owned by the provider');
+    expect(container.querySelector('[data-testid="structured-agent-live-model-value"]')).not.toBeNull();
+
+    render(
+      <StructuredAgentSessionPanel
+        sessionId="archived-child"
+        title="Archived child"
+        providerId="codex"
+        providerLabel="Codex"
+        workspace={{ id: 'workspace-1', label: 'Feature', kind: 'worktree' }}
+        permissionPreset="standard"
+        state="archived"
+        items={[]}
+        onSend={async () => ({ ok: true })}
+      />,
+      'ko',
+    );
+    expect(container.querySelector<HTMLTextAreaElement>('[data-testid="structured-agent-composer-input"]')?.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="structured-agent-composer-disabled-reason"]')?.textContent)
+      .toContain('보관된 세션');
   });
 });

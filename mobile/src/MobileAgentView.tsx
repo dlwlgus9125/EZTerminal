@@ -36,10 +36,12 @@ import { useGitBranches } from '../../src/renderer/use-git-branch';
 import { useAppTranslation } from '../../src/renderer/i18n';
 import { AgentFollowupComposer } from '../../src/renderer/AgentFollowupComposer';
 import { AgentRelativeAge } from '../../src/renderer/AgentTime';
+import { StructuredAgentChildTrack } from '../../src/renderer/StructuredAgentSession';
 import {
   createDaemonCommand,
   type DaemonCommand,
   type DaemonTranscriptItem,
+  type ManagedAgentState,
   type PermissionPreset,
 } from '../../src/shared/daemon-protocol';
 import { MobileActionSheet } from './MobileActionSheet';
@@ -56,6 +58,19 @@ const readNothing = (): Promise<GitDirectoryStatus> => Promise.resolve(EMPTY_GIT
 
 const ATTENTION = new Set<AgentStatus>(['blocked', 'error', 'done']);
 const RUNNING = new Set<AgentStatus>(['starting', 'working']);
+const DAEMON_CANCELLABLE_STATES = new Set<ManagedAgentState>([
+  'starting',
+  'queued',
+  'working',
+  'blocked',
+  'delivery-uncertain',
+]);
+const DAEMON_ARCHIVABLE_STATES = new Set<ManagedAgentState>([
+  'idle',
+  'done',
+  'interrupted',
+  'error',
+]);
 
 const INITIAL_DAEMON_RUNTIME_STATE: DaemonRuntimeViewState = {
   status: 'loading',
@@ -221,7 +236,9 @@ export function MobileAgentView({
 
   useEffect(() => {
     if (selectedDaemonSessionId && daemonRuntimeState.snapshot && !daemonRuntimeState.snapshot.sessions.some((session) => (
-      session.id === selectedDaemonSessionId && session.archivedAt === undefined
+      session.id === selectedDaemonSessionId
+      && session.kind === 'agent'
+      && session.source === 'structured'
     ))) {
       setSelectedDaemonSessionId(null);
     }
@@ -393,6 +410,34 @@ export function MobileAgentView({
   const selectedDaemonProvider = daemonRuntimeState.snapshot?.providers.find((provider) => (
     provider.id === selectedDaemonAgent?.providerId
   ));
+  const selectedDaemonRelation = daemonRuntimeState.snapshot?.agentRelations.find((relation) => (
+    relation.childSessionId === selectedDaemonSessionId && relation.detachedAt === undefined
+  ));
+  const selectedDaemonChildren = useMemo(() => {
+    const daemonSnapshot = daemonRuntimeState.snapshot;
+    if (!daemonSnapshot || !selectedDaemonSessionId) return [];
+    return daemonSnapshot.agentRelations.flatMap((relation) => {
+      if (
+        relation.parentSessionId !== selectedDaemonSessionId
+        || relation.detachedAt !== undefined
+      ) return [];
+      const session = daemonSnapshot.sessions.find((entry) => (
+        entry.id === relation.childSessionId
+        && entry.kind === 'agent'
+        && entry.source === 'structured'
+      ));
+      const agent = daemonSnapshot.agents.find((entry) => entry.sessionId === relation.childSessionId);
+      if (!session || !agent) return [];
+      const provider = daemonSnapshot.providers.find((entry) => entry.id === agent.providerId);
+      return [{
+        sessionId: session.id,
+        title: session.title,
+        providerLabel: provider?.displayName ?? agent.providerId,
+        state: agent.state,
+        owner: relation.owner,
+      }];
+    });
+  }, [daemonRuntimeState.snapshot, selectedDaemonSessionId]);
 
   if (selectedDaemonSession && selectedDaemonAgent && selectedDaemonWorkspace) {
     const buildCommandBase = () => {
@@ -412,6 +457,16 @@ export function MobileAgentView({
     if (selectedDaemonAgent.model && !availableModels.some((model) => model.id === selectedDaemonAgent.model)) {
       availableModels.unshift({ id: selectedDaemonAgent.model, label: selectedDaemonAgent.model });
     }
+    const providerOwned = selectedDaemonRelation?.owner === 'provider-native';
+    const canCancel = !providerOwned
+      && selectedDaemonAgent.providerSessionId !== undefined
+      && DAEMON_CANCELLABLE_STATES.has(selectedDaemonAgent.state);
+    const canArchive = !providerOwned
+      && selectedDaemonAgent.currentTurnId === undefined
+      && selectedDaemonSession.archivedAt === undefined
+      && DAEMON_ARCHIVABLE_STATES.has(selectedDaemonAgent.state);
+    const canDetach = selectedDaemonRelation?.owner === 'managed'
+      && selectedDaemonSession.archivedAt === undefined;
     return (
       <MobileStructuredAgentSession
         sessionId={selectedDaemonSession.id}
@@ -437,6 +492,15 @@ export function MobileAgentView({
           ? 'Some transcript updates were missed. Reloading the authoritative state…'
           : null}
         disabled={disconnected || !transport}
+        {...(selectedDaemonRelation ? { owner: selectedDaemonRelation.owner } : {})}
+        {...(selectedDaemonChildren.length > 0 ? {
+          childTrack: (
+            <StructuredAgentChildTrack
+              items={selectedDaemonChildren}
+              onSelectSession={selectSession}
+            />
+          ),
+        } : {})}
         onBack={() => setSelectedDaemonSessionId(null)}
         onRetryTranscript={() => { void transport?.getDaemonSnapshot(); }}
         onSend={(prompt) => dispatchDaemonCommand(createDaemonCommand({
@@ -461,12 +525,35 @@ export function MobileAgentView({
             permissionPreset: settings.permissionPreset,
           },
         }))}
-        onResolveApproval={(approvalId, decision) => dispatchDaemonCommand(createDaemonCommand({
-          ...buildCommandBase(),
-          type: 'permission.resolve',
-          payload: { approvalId, decision },
-        }))}
+        {...(!providerOwned ? {
+          onResolveApproval: (approvalId: string, decision: 'allow' | 'deny') => dispatchDaemonCommand(createDaemonCommand({
+            ...buildCommandBase(),
+            type: 'permission.resolve',
+            payload: { approvalId, decision },
+          })),
+        } : {})}
         onOpenRelatedSession={selectSession}
+        {...(canCancel ? {
+          onCancel: () => dispatchDaemonCommand(createDaemonCommand({
+            ...buildCommandBase(),
+            type: 'agent.cancel',
+            payload: { sessionId: selectedDaemonSession.id },
+          })),
+        } : {})}
+        {...(canArchive ? {
+          onArchive: () => dispatchDaemonCommand(createDaemonCommand({
+            ...buildCommandBase(),
+            type: 'agent.archive',
+            payload: { sessionId: selectedDaemonSession.id },
+          })),
+        } : {})}
+        {...(canDetach ? {
+          onDetach: () => dispatchDaemonCommand(createDaemonCommand({
+            ...buildCommandBase(),
+            type: 'agent.detach',
+            payload: { sessionId: selectedDaemonSession.id },
+          })),
+        } : {})}
       />
     );
   }

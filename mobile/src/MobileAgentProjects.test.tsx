@@ -135,4 +135,37 @@ describe('MobileAgentProjects launch picker', () => {
       launcherId: launcher.launcherId,
     }));
   });
+
+  it('does not expose the retired project-level collaboration settings flow', async () => {
+    const project: AgentProjectSummary = {
+      projectId: 'project-1',
+      name: 'Workspace',
+      primaryRoot: 'C:\\Workspace',
+      additionalRoots: [],
+      pinned: false,
+      saved: true,
+      sessionCount: 0,
+      providers: [],
+      lastActiveAt: 20,
+    };
+    const transport = {
+      supportsAgentProjectManagement: true,
+      supportsAgentDirectLaunch: false,
+      listAgentProjects: vi.fn(async () => ({ items: [project], nextCursor: null })),
+    } as unknown as WsEzTerminalTransport;
+
+    act(() => root.render(
+      <MobileNavigationHistoryProvider>
+        <MobileAgentProjects
+          transport={transport}
+          onResumeHistory={async () => undefined}
+          onLaunchAgent={async () => undefined}
+        />
+      </MobileNavigationHistoryProvider>,
+    ));
+    await flush();
+
+    expect(container.querySelector('[data-testid="mobile-agent-collaboration-policy"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="mobile-collaboration-policy"]')).toBeNull();
+  });
 });

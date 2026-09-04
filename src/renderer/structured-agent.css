@@ -252,7 +252,18 @@
 }
 
 .structured-agent-session-header__status {
+  display: grid;
   justify-self: end;
+  justify-items: end;
+  gap: var(--ui-space-1);
+}
+
+.structured-agent-session-header__owner {
+  color: var(--ui-text-muted);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-3xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .structured-agent-state {
@@ -288,15 +299,58 @@
   background: var(--ui-danger);
 }
 
-.structured-agent-session-settings {
+.structured-agent-session-controls {
   display: flex;
   grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--ui-space-2) var(--ui-space-4);
+}
+
+.structured-agent-session-settings {
+  display: flex;
+  min-width: 0;
   align-items: center;
   gap: var(--ui-space-2);
 }
 
 .structured-agent-session-settings .ez-ui-field {
   min-width: min(14rem, 38vw);
+}
+
+.structured-agent-session-setting {
+  display: grid;
+  min-width: min(11rem, 34vw);
+  gap: 0.1rem;
+  padding: var(--ui-space-1) var(--ui-space-2);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-inset);
+}
+
+.structured-agent-session-setting small {
+  color: var(--ui-text-muted);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-3xs);
+  text-transform: uppercase;
+}
+
+.structured-agent-session-setting strong {
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-xs);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.structured-agent-session-lifecycle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--ui-space-1);
 }
 
 .structured-agent-session-header > .structured-agent__form-error {
@@ -306,8 +360,139 @@
 .structured-agent-child-track {
   flex: 0 0 auto;
   padding: var(--ui-space-2) var(--ui-space-4);
+  border-top: 1px solid var(--ui-border-subtle);
   border-bottom: 1px solid var(--ui-border-subtle);
   background: var(--ui-surface-raised);
+}
+
+.structured-agent-children {
+  display: grid;
+  min-width: 0;
+  gap: var(--ui-space-2);
+}
+
+.structured-agent-children__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+  color: var(--ui-text-secondary);
+  font-family: var(--ui-font-terminal);
+  font-size: var(--ui-font-size-3xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.structured-agent-children__heading > span:last-child {
+  min-width: 1.35rem;
+  padding: 0.05rem var(--ui-space-1);
+  border-radius: var(--ui-radius-pill);
+  background: var(--ui-surface-selected);
+  text-align: center;
+}
+
+.structured-agent-children__list {
+  display: flex;
+  min-width: 0;
+  gap: var(--ui-space-2);
+  margin: 0;
+  padding: 0 0 var(--ui-space-1);
+  overflow-x: auto;
+  list-style: none;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+.structured-agent-children__list > li {
+  min-width: 0;
+  max-width: 72vw;
+  flex: 0 0 17rem;
+}
+
+.structured-agent-child {
+  display: grid;
+  width: 100%;
+  min-height: 3.25rem;
+  box-sizing: border-box;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: var(--ui-space-1) var(--ui-space-2);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text-primary);
+  cursor: pointer;
+  text-align: start;
+}
+
+.structured-agent-child:hover {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-surface-hover);
+}
+
+.structured-agent-child:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-focus-ring);
+}
+
+.structured-agent-child[data-owner='provider-native'] {
+  border-style: dashed;
+}
+
+.structured-agent-child > svg {
+  width: 0.9rem;
+  height: 0.9rem;
+  grid-column: 2;
+  grid-row: 1 / 3;
+  color: var(--ui-text-muted);
+}
+
+.structured-agent-child__identity {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--ui-space-2);
+}
+
+.structured-agent-child__identity strong,
+.structured-agent-child__identity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.structured-agent-child__identity strong {
+  min-width: 0;
+  font-size: var(--ui-font-size-sm);
+}
+
+.structured-agent-child__identity small {
+  flex: 0 1 auto;
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-3xs);
+}
+
+.structured-agent-child__meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ui-space-2);
+}
+
+.structured-agent-child__meta .structured-agent-state,
+.structured-agent-child__owner {
+  font-size: var(--ui-font-size-3xs);
+}
+
+.structured-agent-child__owner {
+  overflow: hidden;
+  color: var(--ui-text-muted);
+  font-family: var(--ui-font-terminal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .structured-agent-transcript {
@@ -564,6 +749,13 @@
   margin-top: var(--ui-space-2);
 }
 
+.structured-agent-composer__disabled-reason {
+  margin-top: var(--ui-space-2);
+  color: var(--ui-text-muted);
+  font-size: var(--ui-font-size-xs);
+  line-height: var(--ui-line-height-normal);
+}
+
 .structured-agent[data-variant='mobile'] .structured-agent-session-header {
   padding: var(--ui-space-3);
 }
@@ -571,10 +763,32 @@
 .structured-agent[data-variant='mobile'] .structured-agent-session-settings {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
 }
 
 .structured-agent[data-variant='mobile'] .structured-agent-session-settings .ez-ui-field {
   min-width: 0;
+}
+
+.structured-agent[data-variant='mobile'] .structured-agent-session-setting {
+  min-width: 0;
+}
+
+.structured-agent[data-variant='mobile'] .structured-agent-session-lifecycle {
+  width: 100%;
+}
+
+.structured-agent[data-variant='mobile'] .structured-agent-session-lifecycle .ez-ui-button {
+  min-height: 2.75rem;
+}
+
+.structured-agent[data-variant='mobile'] .structured-agent-child-track {
+  padding-right: var(--ui-space-3);
+  padding-left: var(--ui-space-3);
+}
+
+.structured-agent[data-variant='mobile'] .structured-agent-children__list > li {
+  max-width: 78vw;
 }
 
 .structured-agent[data-variant='mobile'] .structured-agent-transcript__list {

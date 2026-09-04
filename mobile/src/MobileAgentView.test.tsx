@@ -42,6 +42,64 @@ function snapshotOf(...items: readonly AgentActivity[]): AgentActivitySnapshot {
   return { revision: 1, items };
 }
 
+const DAEMON_TIMESTAMP = '2026-09-04T09:30:00.000Z';
+
+function daemonSnapshotOf(overrides: Partial<DaemonSnapshot> = {}): DaemonSnapshot {
+  return {
+    protocolVersion: 12,
+    revision: 8,
+    eventSequence: 12,
+    generatedAt: DAEMON_TIMESTAMP,
+    runtime: { keepRunning: true, startAtLogin: false, orchestrationToolsEnabled: true, browserEnabled: false },
+    projects: [{
+      id: 'project-1', name: 'EZTerminal', source: 'native', revision: 1,
+      createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+    }],
+    workspaces: [{
+      id: 'workspace-1', projectId: 'project-1', name: 'Main checkout', kind: 'local',
+      rootPath: 'C:\\Working\\EZTerminal', revision: 1,
+      createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+    }],
+    sessions: [{
+      id: 'structured-session-1', projectId: 'project-1', workspaceId: 'workspace-1',
+      kind: 'agent', title: 'Structured mobile task', state: 'idle', source: 'structured',
+      revision: 1, createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+    }],
+    agents: [{
+      sessionId: 'structured-session-1', providerId: 'codex', providerSessionId: 'provider-parent',
+      model: 'gpt-5', permissionPreset: 'standard', state: 'idle', queuedTurnCount: 0,
+      orchestrationEnabled: true, revision: 1,
+      createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+    }],
+    agentRelations: [],
+    turns: [],
+    transcriptHeads: [],
+    approvals: [],
+    providers: [{
+      id: 'codex', displayName: 'Codex', protocol: 'codex-app-server', executablePath: 'codex',
+      executableVersion: '1.0.0', argv: [], environmentVariableNames: [], capabilities: ['model:gpt-5'],
+      enabled: true, health: 'ready', revision: 1,
+      createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+    }, {
+      id: 'claude', displayName: 'Claude Code', protocol: 'claude-agent-sdk', executablePath: 'claude',
+      executableVersion: '1.0.0', argv: [], environmentVariableNames: [], capabilities: [],
+      enabled: true, health: 'ready', revision: 1,
+      createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+    }],
+    schedules: [],
+    heartbeats: [],
+    ...overrides,
+  };
+}
+
+function clickButtonText(rootElement: ParentNode, text: string): void {
+  const button = Array.from(rootElement.querySelectorAll<HTMLButtonElement>('button')).find((candidate) => (
+    candidate.textContent?.includes(text)
+  ));
+  if (!button) throw new Error(`Missing button: ${text}`);
+  act(() => button.click());
+}
+
 function orchestrationWithWorker(activityId: string): AgentOrchestrationSnapshot {
   return {
     revision: 1,
@@ -212,43 +270,7 @@ describe('MobileAgentView', () => {
   });
 
   it('keeps the navigator session id stable and opens a direct structured Agent composer', async () => {
-    const timestamp = '2026-09-04T09:30:00.000Z';
-    const daemonSnapshot: DaemonSnapshot = {
-      protocolVersion: 12,
-      revision: 8,
-      eventSequence: 12,
-      generatedAt: timestamp,
-      runtime: { keepRunning: true, startAtLogin: false, orchestrationToolsEnabled: true, browserEnabled: false },
-      projects: [{
-        id: 'project-1', name: 'EZTerminal', source: 'native', revision: 1,
-        createdAt: timestamp, updatedAt: timestamp,
-      }],
-      workspaces: [{
-        id: 'workspace-1', projectId: 'project-1', name: 'Main checkout', kind: 'local',
-        rootPath: 'C:\\Working\\EZTerminal', revision: 1, createdAt: timestamp, updatedAt: timestamp,
-      }],
-      sessions: [{
-        id: 'structured-session-1', projectId: 'project-1', workspaceId: 'workspace-1',
-        kind: 'agent', title: 'Structured mobile task', state: 'idle', source: 'structured',
-        revision: 1, createdAt: timestamp, updatedAt: timestamp,
-      }],
-      agents: [{
-        sessionId: 'structured-session-1', providerId: 'codex', model: 'gpt-5',
-        permissionPreset: 'standard', state: 'idle', queuedTurnCount: 0,
-        orchestrationEnabled: true, revision: 1, createdAt: timestamp, updatedAt: timestamp,
-      }],
-      agentRelations: [],
-      turns: [],
-      transcriptHeads: [],
-      approvals: [],
-      providers: [{
-        id: 'codex', displayName: 'Codex', protocol: 'codex-app-server', executablePath: 'codex',
-        executableVersion: '1.0.0', argv: [], environmentVariableNames: [], capabilities: ['model:gpt-5'],
-        enabled: true, health: 'ready', revision: 1, createdAt: timestamp, updatedAt: timestamp,
-      }],
-      schedules: [],
-      heartbeats: [],
-    };
+    const daemonSnapshot = daemonSnapshotOf();
     const sendDaemonCommand = vi.fn(async (command: Parameters<WsEzTerminalTransport['sendDaemonCommand']>[0]) => ({
       ok: true as const,
       status: 'queued' as const,
@@ -268,16 +290,9 @@ describe('MobileAgentView', () => {
       />,
     );
 
-    const clickText = (text: string): void => {
-      const button = Array.from(container.querySelectorAll('button')).find((candidate) => (
-        candidate.textContent?.includes(text)
-      ));
-      if (!button) throw new Error(`Missing button: ${text}`);
-      act(() => button.click());
-    };
-    clickText('EZTerminal');
-    clickText('Main checkout');
-    clickText('Structured mobile task');
+    clickButtonText(container, 'EZTerminal');
+    clickButtonText(container, 'Main checkout');
+    clickButtonText(container, 'Structured mobile task');
     expect(onFocusSession).toHaveBeenCalledWith('structured-session-1');
     expect(testIds('mobile-structured-agent-session')).toHaveLength(1);
 
@@ -297,6 +312,253 @@ describe('MobileAgentView', () => {
       principal: { kind: 'android', id: 'mobile-agent-ui' },
       payload: { sessionId: 'structured-session-1', prompt: 'Continue directly' },
     }));
+  });
+
+  it('projects only direct attached children and routes valid lifecycle commands', async () => {
+    const base = daemonSnapshotOf();
+    const sessions: DaemonSnapshot['sessions'] = [
+      ...base.sessions,
+      {
+        id: 'managed-child', projectId: 'project-1', workspaceId: 'workspace-1',
+        kind: 'agent', title: 'Managed accessibility child', state: 'running', source: 'structured',
+        revision: 1, createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+      },
+      {
+        id: 'native-child', projectId: 'project-1', workspaceId: 'workspace-1',
+        kind: 'agent', title: 'Native provider child', state: 'running', source: 'structured',
+        revision: 1, createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+      },
+      {
+        id: 'detached-child', projectId: 'project-1', workspaceId: 'workspace-1',
+        kind: 'agent', title: 'Detached child', state: 'idle', source: 'structured',
+        revision: 1, createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+      },
+      {
+        id: 'grandchild', projectId: 'project-1', workspaceId: 'workspace-1',
+        kind: 'agent', title: 'Grandchild', state: 'idle', source: 'structured',
+        revision: 1, createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+      },
+    ];
+    const agents: DaemonSnapshot['agents'] = [
+      ...base.agents,
+      {
+        sessionId: 'managed-child', providerId: 'codex', providerSessionId: 'provider-managed',
+        model: 'gpt-5', permissionPreset: 'standard', state: 'working', currentTurnId: 'turn-child',
+        queuedTurnCount: 0, orchestrationEnabled: true, revision: 1,
+        createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+      },
+      {
+        sessionId: 'native-child', providerId: 'claude', providerSessionId: 'provider-native',
+        permissionPreset: 'plan', state: 'working', queuedTurnCount: 0,
+        orchestrationEnabled: true, revision: 1,
+        createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+      },
+      {
+        sessionId: 'detached-child', providerId: 'codex', providerSessionId: 'provider-detached',
+        permissionPreset: 'standard', state: 'idle', queuedTurnCount: 0,
+        orchestrationEnabled: true, revision: 1,
+        createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+      },
+      {
+        sessionId: 'grandchild', providerId: 'codex', providerSessionId: 'provider-grandchild',
+        permissionPreset: 'standard', state: 'idle', queuedTurnCount: 0,
+        orchestrationEnabled: true, revision: 1,
+        createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+      },
+    ];
+    const relations: DaemonSnapshot['agentRelations'] = [{
+      id: 'relation-managed', treeId: 'structured-session-1',
+      parentSessionId: 'structured-session-1', childSessionId: 'managed-child',
+      owner: 'managed', depth: 1, revision: 1,
+      createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+    }, {
+      id: 'relation-native', treeId: 'structured-session-1',
+      parentSessionId: 'structured-session-1', childSessionId: 'native-child',
+      owner: 'provider-native', depth: 1, revision: 1,
+      createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+    }, {
+      id: 'relation-detached', treeId: 'structured-session-1',
+      parentSessionId: 'structured-session-1', childSessionId: 'detached-child',
+      owner: 'managed', depth: 1, detachedAt: DAEMON_TIMESTAMP, revision: 1,
+      createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+    }, {
+      id: 'relation-grandchild', treeId: 'structured-session-1',
+      parentSessionId: 'managed-child', childSessionId: 'grandchild',
+      owner: 'managed', depth: 2, revision: 1,
+      createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+    }];
+    const firstSnapshot = daemonSnapshotOf({ sessions, agents, agentRelations: relations });
+    let receiptRevision = firstSnapshot.revision;
+    const sendDaemonCommand = vi.fn(async (command: Parameters<WsEzTerminalTransport['sendDaemonCommand']>[0]) => ({
+      ok: true as const,
+      status: 'queued' as const,
+      commandId: command.commandId,
+      revision: ++receiptRevision,
+      eventSequence: ++receiptRevision,
+    }));
+    const transport = { sendDaemonCommand } as unknown as WsEzTerminalTransport;
+    const onFocusSession = vi.fn();
+    const view = (daemonSnapshot: DaemonSnapshot) => (
+      <MobileAgentView
+        snapshot={snapshotOf()}
+        daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshot }}
+        transport={transport}
+        {...noop}
+        onFocusSession={onFocusSession}
+      />
+    );
+    render(view(firstSnapshot));
+    clickButtonText(container, 'EZTerminal');
+    clickButtonText(container, 'Main checkout');
+    clickButtonText(container, 'Structured mobile task');
+
+    const childButtons = testIds('structured-agent-child');
+    expect(childButtons).toHaveLength(2);
+    expect(childButtons[0]?.textContent).toContain('Managed accessibility child');
+    expect(childButtons[0]?.textContent).toContain('Codex');
+    expect(childButtons[0]?.textContent).toContain('working');
+    expect(childButtons[0]?.textContent).toContain('Managed');
+    expect(childButtons[1]?.textContent).toContain('Provider-owned');
+    expect(container.textContent).not.toContain('Detached child');
+    expect(container.textContent).not.toContain('Grandchild');
+
+    act(() => childButtons[0]!.click());
+    expect(onFocusSession).toHaveBeenLastCalledWith('managed-child');
+    expect((testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement).disabled).toBe(false);
+    expect(testIds('structured-agent-cancel')).toHaveLength(1);
+    expect(testIds('structured-agent-archive')).toHaveLength(0);
+    expect(testIds('structured-agent-detach')).toHaveLength(1);
+
+    await act(async () => {
+      testIds('structured-agent-cancel')[0]!.click();
+      await Promise.resolve();
+    });
+    expect(sendDaemonCommand).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'agent.cancel',
+      payload: { sessionId: 'managed-child' },
+    }));
+
+    const stoppedAgents = agents.map((agent) => agent.sessionId === 'managed-child'
+      ? { ...agent, state: 'interrupted' as const, currentTurnId: undefined }
+      : agent);
+    const stoppedSessions = sessions.map((session) => session.id === 'managed-child'
+      ? { ...session, state: 'interrupted' as const }
+      : session);
+    render(view(daemonSnapshotOf({
+      revision: 9,
+      sessions: stoppedSessions,
+      agents: stoppedAgents,
+      agentRelations: relations,
+    })));
+    expect(testIds('structured-agent-cancel')).toHaveLength(0);
+    expect(testIds('structured-agent-archive')).toHaveLength(1);
+    expect(testIds('structured-agent-detach')).toHaveLength(1);
+    expect((testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement).disabled).toBe(true);
+
+    await act(async () => {
+      testIds('structured-agent-detach')[0]!.click();
+      await Promise.resolve();
+    });
+    expect(sendDaemonCommand).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'agent.detach',
+      payload: { sessionId: 'managed-child' },
+    }));
+
+    const detachedRelations = relations.map((relation) => relation.id === 'relation-managed'
+      ? { ...relation, detachedAt: DAEMON_TIMESTAMP }
+      : relation);
+    render(view(daemonSnapshotOf({
+      revision: 10,
+      sessions: stoppedSessions,
+      agents: stoppedAgents,
+      agentRelations: detachedRelations,
+    })));
+    expect(testIds('structured-agent-detach')).toHaveLength(0);
+    expect(testIds('structured-agent-archive')).toHaveLength(1);
+
+    await act(async () => {
+      testIds('structured-agent-archive')[0]!.click();
+      await Promise.resolve();
+    });
+    expect(sendDaemonCommand).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'agent.archive',
+      payload: { sessionId: 'managed-child' },
+    }));
+
+    const archivedAgents = stoppedAgents.map((agent) => agent.sessionId === 'managed-child'
+      ? { ...agent, state: 'archived' as const }
+      : agent);
+    const archivedSessions = stoppedSessions.map((session) => session.id === 'managed-child'
+      ? { ...session, state: 'archived' as const, archivedAt: DAEMON_TIMESTAMP }
+      : session);
+    render(view(daemonSnapshotOf({
+      revision: 11,
+      sessions: archivedSessions,
+      agents: archivedAgents,
+      agentRelations: detachedRelations,
+    })));
+    expect(testIds('mobile-structured-agent-session')).toHaveLength(1);
+    expect((testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement).disabled).toBe(true);
+    expect(testIds('structured-agent-lifecycle')).toHaveLength(0);
+  });
+
+  it('opens transcript-related provider-owned children through the same read-only session route', () => {
+    const base = daemonSnapshotOf();
+    const childSession: DaemonSnapshot['sessions'][number] = {
+      id: 'native-child', projectId: 'project-1', workspaceId: 'workspace-1',
+      kind: 'agent', title: 'Provider-owned child', state: 'running', source: 'structured',
+      revision: 1, createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+    };
+    const childAgent: DaemonSnapshot['agents'][number] = {
+      sessionId: 'native-child', providerId: 'claude', providerSessionId: 'native-provider-id',
+      permissionPreset: 'plan', state: 'working', queuedTurnCount: 0,
+      orchestrationEnabled: true, revision: 1,
+      createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+    };
+    const daemonSnapshot = daemonSnapshotOf({
+      sessions: [...base.sessions, childSession],
+      agents: [...base.agents, childAgent],
+      agentRelations: [{
+        id: 'relation-native', treeId: 'structured-session-1',
+        parentSessionId: 'structured-session-1', childSessionId: 'native-child',
+        owner: 'provider-native', depth: 1, revision: 1,
+        createdAt: DAEMON_TIMESTAMP, updatedAt: DAEMON_TIMESTAMP,
+      }],
+    });
+    const transport = { sendDaemonCommand: vi.fn() } as unknown as WsEzTerminalTransport;
+    const onFocusSession = vi.fn();
+    render(
+      <MobileAgentView
+        snapshot={snapshotOf()}
+        daemonRuntimeState={{ status: 'ready', snapshot: daemonSnapshot }}
+        structuredTranscripts={{
+          'structured-session-1': [{
+            id: 'related-native',
+            sessionId: 'structured-session-1',
+            sequence: 1,
+            kind: 'notice',
+            text: 'Provider child has an update.',
+            isDelta: false,
+            isSensitive: false,
+            relatedSessionId: 'native-child',
+            createdAt: DAEMON_TIMESTAMP,
+          }],
+        }}
+        transport={transport}
+        {...noop}
+        onFocusSession={onFocusSession}
+      />,
+    );
+    clickButtonText(container, 'EZTerminal');
+    clickButtonText(container, 'Main checkout');
+    clickButtonText(container, 'Structured mobile task');
+    clickButtonText(container, 'Open related session');
+
+    expect(onFocusSession).toHaveBeenLastCalledWith('native-child');
+    expect(container.querySelector('h1')?.textContent).toContain('Provider-owned child');
+    expect(container.textContent).toContain('Provider-owned · Read only');
+    expect((testIds('structured-agent-composer-input')[0] as HTMLTextAreaElement).disabled).toBe(true);
+    expect(testIds('structured-agent-lifecycle')).toHaveLength(0);
   });
 
   it('orders parked approvals first by risk, expiry, then recency', () => {
