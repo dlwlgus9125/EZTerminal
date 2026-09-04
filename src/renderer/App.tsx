@@ -3765,8 +3765,6 @@ export function App(): JSX.Element {
             setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));
             setSidebarDestination('settings');
           },
-          onSaveCoordinationProject: (input) => window.ezterminal.saveAgentCoordinationProject(input),
-          onSaveCollaborationPolicy: (input) => window.ezterminalDesktop!.saveCollaborationPolicy(input),
           onDecideManagedMerge: (input) => window.ezterminal.decideManagedMerge(input),
           onClose: () => setSidebarDestination(null),
         }}

@@ -104,8 +104,6 @@ function StorySurface(): JSX.Element {
           orchestrationSnapshot={orchestrationSnapshot}
           onFocusSession={() => undefined}
           onSendFollowup={async () => ({ ok: true })}
-          onSaveCoordinationProject={async () => ({ ok: false, error: 'unavailable', message: 'Story only' })}
-          onSaveCollaborationPolicy={async () => ({ ok: true, value: policy })}
         />
       </div>
     </AppI18nProvider>

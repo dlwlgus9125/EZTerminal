@@ -539,11 +539,7 @@ describe('AgentHub retired project collaboration settings', () => {
       configurable: true,
       value: { listAgentIntegrations, setAgentIntegrationEnabled },
     });
-    const overrides = {
-      orchestrationSnapshot,
-      onSaveCoordinationProject: vi.fn(),
-      onSaveCollaborationPolicy: vi.fn(),
-    };
+    const overrides = { orchestrationSnapshot };
 
     await renderHub({ revision: 1, items: [] }, overrides);
     expect(container.querySelector('.agent-project-coordination-start')).toBeNull();
@@ -618,28 +614,13 @@ describe('AgentHub retired project collaboration settings', () => {
         listAgentProjects: vi.fn(async () => ({ items: [project], nextCursor: null })),
       },
     });
-    const onSaveCoordinationProject = vi.fn(async () => ({
-      ok: true as const,
-      value: {
-        projectId: project.projectId,
-        goal: 'Keep collaboration safe',
-        defaultTargetBranch: 'main',
-        validationCommands: [],
-        configRevision: 5,
-        participants: [],
-        updatedAt: 30,
-      },
-    }));
-    const onSaveCollaborationPolicy = vi.fn(async () => ({ ok: true as const, value: policy }));
-    const overrides = { coordinationSnapshot, orchestrationSnapshot, onSaveCoordinationProject, onSaveCollaborationPolicy };
+    const overrides = { coordinationSnapshot, orchestrationSnapshot };
 
     await renderHub({ revision: 1, items: [] }, overrides);
     expect(container.querySelector('.agent-project-coordination')?.textContent)
       .toContain('Keep collaboration safe');
     expect(container.querySelector('.agent-project-coordination button')).toBeNull();
     expect(document.body.querySelector('[data-testid="agent-coordination-project-dialog"]')).toBeNull();
-    expect(onSaveCoordinationProject).not.toHaveBeenCalled();
-    expect(onSaveCollaborationPolicy).not.toHaveBeenCalled();
   });
 });
 

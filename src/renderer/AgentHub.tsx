@@ -23,8 +23,6 @@ import type {
   AgentDecision,
   AgentDecisionResult,
   AgentFollowupResult,
-  AgentIntegrationProvider,
-  AgentIntegrationStatus,
   AgentProvider,
   AgentStatus,
 } from '../shared/agent';
@@ -32,23 +30,14 @@ import {
   EMPTY_AGENT_COORDINATION_SNAPSHOT,
   type AgentCoordinationMutationResult,
   type AgentCoordinationSnapshot,
-  type AgentProjectCoordination,
-  type AgentProjectCoordinationInput,
-  type AgentValidationCommand,
   type ManagedMergeDecisionInput,
   type ManagedMergeRequest,
   isSafeLocalBranch,
 } from '../shared/agent-coordination';
 import {
-  DEFAULT_COLLABORATION_LIMITS,
-  DEFAULT_COLLABORATION_MERGE_POLICY,
   EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
   orchestrationWorkerActivityIds,
-  type AgentOrchestrationMutationResult,
   type AgentOrchestrationSnapshot,
-  type CollaborationPermissionMode,
-  type CollaborationPolicy,
-  type CollaborationPolicyInput,
 } from '../shared/agent-orchestration';
 import type {
   AgentHistorySessionSummary,
@@ -86,7 +75,6 @@ import {
   Menu,
   MenuItem,
   Select,
-  Switch,
 } from './ui';
 
 /** Used when no Git reader is supplied; every row then shows its directory. */
@@ -186,12 +174,6 @@ export interface AgentHubProps {
   ) => void;
   readonly onOpenProjectTerminal?: (projectSession: ProjectSessionPanelMetadata) => void;
   readonly onOpenAgentSettings?: () => void;
-  readonly onSaveCoordinationProject?: (
-    input: AgentProjectCoordinationInput,
-  ) => Promise<AgentCoordinationMutationResult<AgentProjectCoordination>>;
-  readonly onSaveCollaborationPolicy?: (
-    input: CollaborationPolicyInput,
-  ) => Promise<AgentOrchestrationMutationResult<CollaborationPolicy>>;
   readonly onDecideManagedMerge?: (
     input: ManagedMergeDecisionInput,
   ) => Promise<AgentCoordinationMutationResult<ManagedMergeRequest>>;
@@ -236,8 +218,6 @@ export function AgentHub({
   onOpenStructuredAgentDraft,
   onOpenProjectTerminal,
   onOpenAgentSettings,
-  onSaveCoordinationProject,
-  onSaveCollaborationPolicy,
   onDecideManagedMerge,
   onClose,
   mobile = false,
@@ -289,28 +269,6 @@ export function AgentHub({
   const [projectSaving, setProjectSaving] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState<AgentProjectSummary | null>(null);
   const [localDrillProject, setLocalDrillProject] = useState<AgentProjectSummary | null>(null);
-  const [coordinationProject, setCoordinationProject] = useState<AgentProjectSummary | null>(null);
-  const [coordinationGoal, setCoordinationGoal] = useState('');
-  const [coordinationTarget, setCoordinationTarget] = useState('main');
-  const [coordinationValidations, setCoordinationValidations] = useState<readonly AgentValidationCommand[]>([]);
-  const [coordinationConfigRevision, setCoordinationConfigRevision] = useState(0);
-  const [coordinationSaving, setCoordinationSaving] = useState(false);
-  const [coordinationError, setCoordinationError] = useState<string | null>(null);
-  const [coordinationIntegrations, setCoordinationIntegrations] = useState<readonly AgentIntegrationStatus[] | null>(null);
-  const [coordinationIntegrationBusy, setCoordinationIntegrationBusy] = useState<AgentIntegrationProvider | null>(null);
-  const [coordinationIntegrationMessage, setCoordinationIntegrationMessage] = useState<string | null>(null);
-  const [coordinationIntegrationError, setCoordinationIntegrationError] = useState<string | null>(null);
-  const [collaborationEnabled, setCollaborationEnabled] = useState(false);
-  const [collaborationPermission, setCollaborationPermission] = useState<CollaborationPermissionMode>('ask');
-  const [collaborationProfiles, setCollaborationProfiles] = useState<readonly string[]>([]);
-  const [collaborationAllowPaths, setCollaborationAllowPaths] = useState('');
-  const [collaborationDenyPaths, setCollaborationDenyPaths] = useState(DEFAULT_COLLABORATION_MERGE_POLICY.denyPaths.join('\n'));
-  const [collaborationMaxConcurrent, setCollaborationMaxConcurrent] = useState(DEFAULT_COLLABORATION_LIMITS.maxConcurrent);
-  const [collaborationMaxCreated, setCollaborationMaxCreated] = useState(DEFAULT_COLLABORATION_LIMITS.maxCreated);
-  const [collaborationMaxMinutes, setCollaborationMaxMinutes] = useState(DEFAULT_COLLABORATION_LIMITS.maxDurationMs / 60_000);
-  const [collaborationMaxFiles, setCollaborationMaxFiles] = useState(DEFAULT_COLLABORATION_MERGE_POLICY.maxChangedFiles);
-  const [collaborationMaxLines, setCollaborationMaxLines] = useState(DEFAULT_COLLABORATION_MERGE_POLICY.maxChangedLines);
-  const [collaborationPolicyRevision] = useState(0);
   const [mergeBusy, setMergeBusy] = useState(false);
   const [mergeError, setMergeError] = useState<string | null>(null);
   const [overrideRequest, setOverrideRequest] = useState<ManagedMergeRequest | null>(null);
@@ -333,21 +291,6 @@ export function AgentHub({
     () => new Map(coordinationSnapshot.projects.map((project) => [project.projectId, project])),
     [coordinationSnapshot.projects],
   );
-  const unavailableBuiltInProviders = useMemo<readonly {
-    readonly providerId: AgentIntegrationProvider;
-    readonly displayName: string;
-  }[]>(() => orchestrationSnapshot.providers.flatMap((provider) => {
-    if (provider.kind !== 'builtin' || (provider.providerId !== 'codex' && provider.providerId !== 'claude')) {
-      return [];
-    }
-    const workerProfiles = orchestrationSnapshot.profiles.filter((profile) => (
-      profile.providerId === provider.providerId && profile.capabilities.includes('worker')
-    ));
-    return workerProfiles.length > 0 && workerProfiles.every((profile) => !profile.available)
-      ? [{ providerId: provider.providerId, displayName: provider.displayName }]
-      : [];
-  }), [orchestrationSnapshot.profiles, orchestrationSnapshot.providers]);
-  const coordinationProjectId = coordinationProject?.projectId ?? null;
   const pendingMergeRequests = useMemo(() => coordinationSnapshot.mergeRequests.filter((request) => (
     ['preparing', 'validating', 'approval-required', 'override-required', 'merging'].includes(request.state)
   )), [coordinationSnapshot.mergeRequests]);
@@ -367,28 +310,6 @@ export function AgentHub({
     if (activeProjectId === undefined) setLocalDrillProject(project);
     onActiveProjectIdChange?.(project?.projectId ?? null);
   }, [activeProjectId, onActiveProjectIdChange]);
-
-  useEffect(() => {
-    if (!coordinationProjectId) return undefined;
-    const desktop = window.ezterminalDesktop;
-    let active = true;
-    setCoordinationIntegrations(null);
-    if (!desktop) {
-      setCoordinationIntegrations([]);
-      setCoordinationIntegrationError(t('collaboration.integrationUnavailable'));
-      return () => { active = false; };
-    }
-    void desktop.listAgentIntegrations()
-      .then((integrations) => {
-        if (active) setCoordinationIntegrations(integrations);
-      })
-      .catch(() => {
-        if (!active) return;
-        setCoordinationIntegrations([]);
-        setCoordinationIntegrationError(t('collaboration.integrationUnavailable'));
-      });
-    return () => { active = false; };
-  }, [coordinationProjectId, t]);
 
   useEffect(() => {
     onProjectDrillChange?.(projectDrillOpen);
@@ -920,120 +841,6 @@ export function AgentHub({
           ? t('agentHub.errorSessionEnded')
           : t('agentHub.errorDeliveryFailed');
   }, [onSendFollowup, sendingId, t]);
-
-  const enableCoordinationIntegration = useCallback(async (
-    provider: AgentIntegrationProvider,
-    displayName: string,
-  ): Promise<void> => {
-    const desktop = window.ezterminalDesktop;
-    if (!desktop || coordinationIntegrationBusy || coordinationSaving) return;
-    setCoordinationIntegrationBusy(provider);
-    setCoordinationIntegrationMessage(null);
-    setCoordinationIntegrationError(null);
-    try {
-      const result = await desktop.setAgentIntegrationEnabled(provider, true);
-      setCoordinationIntegrations((current) => {
-        if (!current) return [result.status];
-        const remaining = current.filter((status) => status.provider !== provider);
-        return [...remaining, result.status];
-      });
-      if (!result.ok) {
-        setCoordinationIntegrationError(result.message);
-        return;
-      }
-      setCoordinationIntegrationMessage(t('collaboration.integrationEnabled', { provider: displayName }));
-    } catch {
-      setCoordinationIntegrationError(t('collaboration.integrationEnableFailed', { provider: displayName }));
-    } finally {
-      setCoordinationIntegrationBusy(null);
-    }
-  }, [coordinationIntegrationBusy, coordinationSaving, t]);
-
-  const saveCoordinationProject = useCallback(async (): Promise<void> => {
-    if (!coordinationProject || !onSaveCoordinationProject || coordinationSaving) return;
-    setCoordinationSaving(true);
-    setCoordinationError(null);
-    const result = await onSaveCoordinationProject({
-      projectId: coordinationProject.projectId,
-      goal: coordinationGoal.trim(),
-      defaultTargetBranch: coordinationTarget.trim(),
-      validationCommands: coordinationValidations.map((validation) => ({
-        ...validation,
-        name: validation.name.trim(),
-        command: validation.command.trim(),
-        timeoutMs: Number.isFinite(validation.timeoutMs)
-          ? Math.max(1_000, Math.min(30 * 60_000, Math.round(validation.timeoutMs)))
-          : 300_000,
-      })),
-      expectedRevision: coordinationConfigRevision,
-    }).catch(() => ({
-      ok: false as const,
-      error: 'unavailable' as const,
-      message: 'Project coordination is unavailable.',
-    }));
-    if (!result.ok) {
-      setCoordinationSaving(false);
-      setCoordinationError(result.message);
-      return;
-    }
-    setCoordinationConfigRevision(result.value.configRevision);
-    if (onSaveCollaborationPolicy) {
-      const splitPaths = (value: string): readonly string[] => value.split(/\r?\n/gu)
-        .map((entry) => entry.trim()).filter(Boolean);
-      const policyResult = await onSaveCollaborationPolicy({
-        projectId: coordinationProject.projectId,
-        enabled: collaborationEnabled,
-        permissionMode: collaborationPermission,
-        allowedWorkerProfileIds: collaborationProfiles,
-        limits: {
-          maxConcurrent: Math.max(1, Math.min(4, Math.round(collaborationMaxConcurrent))),
-          maxCreated: Math.max(1, Math.min(12, Math.round(collaborationMaxCreated))),
-          maxDurationMs: Math.max(1, Math.min(120, Math.round(collaborationMaxMinutes))) * 60_000,
-        },
-        mergePolicy: {
-          targetBranches: [coordinationTarget.trim()],
-          allowPaths: splitPaths(collaborationAllowPaths),
-          denyPaths: splitPaths(collaborationDenyPaths),
-          requiredValidationIds: coordinationValidations.map((validation) => validation.id),
-          maxChangedFiles: Math.max(1, Math.round(collaborationMaxFiles)),
-          maxChangedLines: Math.max(1, Math.round(collaborationMaxLines)),
-        },
-        expectedRevision: collaborationPolicyRevision,
-      }).catch(() => ({
-        ok: false as const,
-        error: 'unavailable' as const,
-        message: t('collaboration.policySaveFailed'),
-      }));
-      if (!policyResult.ok) {
-        setCoordinationSaving(false);
-        setCoordinationError(policyResult.message);
-        return;
-      }
-    }
-    setCoordinationSaving(false);
-    setCoordinationProject(null);
-  }, [
-    collaborationAllowPaths,
-    collaborationDenyPaths,
-    collaborationEnabled,
-    collaborationMaxConcurrent,
-    collaborationMaxCreated,
-    collaborationMaxFiles,
-    collaborationMaxLines,
-    collaborationMaxMinutes,
-    collaborationPermission,
-    collaborationProfiles,
-    collaborationPolicyRevision,
-    coordinationConfigRevision,
-    coordinationGoal,
-    coordinationProject,
-    coordinationSaving,
-    coordinationTarget,
-    coordinationValidations,
-    onSaveCollaborationPolicy,
-    onSaveCoordinationProject,
-    t,
-  ]);
 
   const decideMerge = useCallback(async (
     request: ManagedMergeRequest,
@@ -1698,262 +1505,6 @@ export function AgentHub({
           )}
         </footer>
       )}
-      <Dialog
-        open={coordinationProject !== null}
-        onOpenChange={(open) => {
-          if (!open && !coordinationSaving && !coordinationIntegrationBusy) setCoordinationProject(null);
-        }}
-        title={t('agentHub.collaboration.projectTitle', { name: coordinationProject?.name ?? '' })}
-        description={t('agentHub.collaboration.projectDescription')}
-        closeLabel={t('common.cancel')}
-        size="lg"
-        testId="agent-coordination-project-dialog"
-        footer={(
-          <>
-            <Button
-              variant="ghost"
-              disabled={coordinationSaving || coordinationIntegrationBusy !== null}
-              onClick={() => setCoordinationProject(null)}
-            >
-              {t('common.cancel')}
-            </Button>
-            <Button
-              variant="primary"
-              loading={coordinationSaving}
-              disabled={coordinationIntegrationBusy !== null
-                || !coordinationGoal.trim() || !coordinationTarget.trim()
-                || coordinationValidations.some((item) => !item.name.trim() || !item.command.trim())
-                || (collaborationEnabled && collaborationProfiles.length === 0)}
-              onClick={() => void saveCoordinationProject()}
-              data-testid="agent-coordination-project-save"
-            >
-              {t('common.save')}
-            </Button>
-          </>
-        )}
-      >
-        <div className="agent-coordination-form">
-          <Field id="agent-collaboration-goal" label={t('agentHub.collaboration.goal')} required>
-            <textarea
-              id="agent-collaboration-goal"
-              className="ui-textarea"
-              value={coordinationGoal}
-              rows={4}
-              maxLength={2000}
-              onChange={(event) => setCoordinationGoal(event.currentTarget.value)}
-            />
-          </Field>
-          <Field label={t('agentHub.collaboration.targetBranch')} required>
-            <Input value={coordinationTarget} maxLength={200} onChange={(event) => setCoordinationTarget(event.currentTarget.value)} />
-          </Field>
-          <section className="agent-collaboration-policy" aria-labelledby="agent-collaboration-policy-title">
-            <div>
-              <h3 id="agent-collaboration-policy-title">{t('collaboration.projectPolicy')}</h3>
-              <p>{t('collaboration.projectPolicyHint')}</p>
-            </div>
-            <Switch
-              checked={collaborationEnabled}
-              label={t('collaboration.enableForProject')}
-              description={t('collaboration.enableForProjectHint')}
-              onChange={(event) => setCollaborationEnabled(event.currentTarget.checked)}
-            />
-            <Field
-              label={t('collaboration.permissionMode')}
-              description={t(`collaboration.permissionHint.${collaborationPermission}`)}
-              disabled={!collaborationEnabled}
-            >
-              <Select
-                value={collaborationPermission}
-                onChange={(event) => setCollaborationPermission(event.currentTarget.value as CollaborationPermissionMode)}
-              >
-                <option value="ask">{t('collaboration.permission.ask')}</option>
-                <option value="safe-auto">{t('collaboration.permission.safe-auto')}</option>
-                <option value="custom">{t('collaboration.permission.custom')}</option>
-              </Select>
-            </Field>
-            {collaborationEnabled && unavailableBuiltInProviders.length > 0 && (
-              <div
-                className="agent-collaboration-policy__integrations"
-                role="group"
-                aria-label={t('collaboration.integrationRecoveryTitle')}
-              >
-                {unavailableBuiltInProviders.map(({ providerId, displayName }) => {
-                  const status = coordinationIntegrations?.find((candidate) => candidate.provider === providerId);
-                  const blockers = status
-                    ? [...status.blockers, ...(status.drift ? ['modified-hook'] : [])]
-                    : [];
-                  const loading = coordinationIntegrations === null;
-                  const preparing = status?.enabled === true && blockers.length === 0;
-                  return (
-                    <div className="agent-collaboration-policy__integration" key={providerId}>
-                      <div className="agent-collaboration-policy__integration-copy">
-                        <strong>{displayName}</strong>
-                        <p>
-                          {loading
-                            ? t('collaboration.integrationChecking')
-                            : blockers.length > 0
-                              ? t('collaboration.integrationBlocked', { reason: blockers.join(', ') })
-                              : preparing
-                                ? t('collaboration.integrationPreparing')
-                                : t('collaboration.integrationRequired', { provider: displayName })}
-                        </p>
-                      </div>
-                      {blockers.length > 0 ? (
-                        onOpenAgentSettings && (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            disabled={coordinationSaving || coordinationIntegrationBusy !== null}
-                            onClick={() => {
-                              setCoordinationProject(null);
-                              onOpenAgentSettings();
-                            }}
-                          >
-                            {t('collaboration.openAgentSettings')}
-                          </Button>
-                        )
-                      ) : preparing ? null : (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          loading={loading || coordinationIntegrationBusy === providerId}
-                          disabled={coordinationSaving || coordinationIntegrationBusy !== null || loading}
-                          onClick={() => void enableCoordinationIntegration(providerId, displayName)}
-                          data-testid={`agent-collaboration-enable-integration-${providerId}`}
-                        >
-                          {t('collaboration.enableIntegration')}
-                        </Button>
-                      )}
-                    </div>
-                  );
-                })}
-                {coordinationIntegrationMessage && (
-                  <p className="agent-collaboration-policy__integration-message" role="status">
-                    {coordinationIntegrationMessage}
-                  </p>
-                )}
-                {coordinationIntegrationError && (
-                  <p className="agent-collaboration-policy__integration-error" role="alert">
-                    {coordinationIntegrationError}
-                  </p>
-                )}
-              </div>
-            )}
-            <fieldset className="agent-collaboration-policy__profiles" disabled={!collaborationEnabled}>
-              <legend>{t('collaboration.allowedProfiles')}</legend>
-              <p>{t('collaboration.allowedProfilesHint')}</p>
-              {orchestrationSnapshot.profiles.filter((profile) => profile.capabilities.includes('worker')).map((profile) => (
-                <Switch
-                  key={profile.profileId}
-                  checked={collaborationProfiles.includes(profile.profileId)}
-                  disabled={!collaborationEnabled || (!profile.available && !collaborationProfiles.includes(profile.profileId))}
-                  label={profile.name}
-                  description={`${profile.permissionMode} · ${profile.capabilities.filter((capability) => capability === 'read' || capability === 'write' || capability === 'verify').join(' / ')}`}
-                  data-testid={`agent-collaboration-profile-${profile.profileId}`}
-                  onChange={(event) => setCollaborationProfiles((current) => event.currentTarget.checked
-                    ? [...current, profile.profileId]
-                    : current.filter((profileId) => profileId !== profile.profileId))}
-                />
-              ))}
-              {orchestrationSnapshot.profiles.length === 0 && <p>{t('collaboration.noProfiles')}</p>}
-            </fieldset>
-            {collaborationPermission === 'safe-auto' && (
-              <p className="settings-agent-warning">{t('collaboration.safeAutoWarning')}</p>
-            )}
-            <details className="agent-collaboration-policy__advanced" open={collaborationPermission === 'custom'}>
-              <summary>{t('collaboration.policyLimits')}</summary>
-              <div className="agent-collaboration-policy__limit-grid">
-                <Field label={t('collaboration.maxConcurrent')}>
-                  <Input type="number" min={1} max={4} value={collaborationMaxConcurrent} onChange={(event) => setCollaborationMaxConcurrent(Number(event.currentTarget.value))} />
-                </Field>
-                <Field label={t('collaboration.maxCreated')}>
-                  <Input type="number" min={1} max={12} value={collaborationMaxCreated} onChange={(event) => setCollaborationMaxCreated(Number(event.currentTarget.value))} />
-                </Field>
-                <Field label={t('collaboration.maxMinutes')}>
-                  <Input type="number" min={1} max={120} value={collaborationMaxMinutes} onChange={(event) => setCollaborationMaxMinutes(Number(event.currentTarget.value))} />
-                </Field>
-                <Field label={t('collaboration.maxFiles')}>
-                  <Input type="number" min={1} max={1000} value={collaborationMaxFiles} onChange={(event) => setCollaborationMaxFiles(Number(event.currentTarget.value))} />
-                </Field>
-                <Field label={t('collaboration.maxLines')}>
-                  <Input type="number" min={1} max={1000000} value={collaborationMaxLines} onChange={(event) => setCollaborationMaxLines(Number(event.currentTarget.value))} />
-                </Field>
-              </div>
-              <Field id="agent-collaboration-allow-paths" label={t('collaboration.allowPaths')} description={t('collaboration.onePathPerLine')}>
-                <textarea id="agent-collaboration-allow-paths" className="ui-textarea" rows={3} value={collaborationAllowPaths} onChange={(event) => setCollaborationAllowPaths(event.currentTarget.value)} />
-              </Field>
-              <Field id="agent-collaboration-deny-paths" label={t('collaboration.denyPaths')} description={t('collaboration.onePathPerLine')}>
-                <textarea id="agent-collaboration-deny-paths" className="ui-textarea" rows={4} value={collaborationDenyPaths} onChange={(event) => setCollaborationDenyPaths(event.currentTarget.value)} />
-              </Field>
-            </details>
-          </section>
-          <section className="agent-validation-editor">
-            <div className="agent-validation-editor__head">
-              <h3>{t('agentHub.collaboration.validations')}</h3>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={coordinationValidations.length >= 8}
-                onClick={() => setCoordinationValidations((current) => [...current, {
-                  id: globalThis.crypto?.randomUUID?.() ?? `validation-${Date.now()}-${current.length}`,
-                  name: '',
-                  command: '',
-                  timeoutMs: 300000,
-                }])}
-              >
-                {t('agentHub.collaboration.addValidation')}
-              </Button>
-            </div>
-            {coordinationValidations.map((validation, index) => (
-              <fieldset className="agent-validation-row" key={validation.id}>
-                <legend>{t('agentHub.collaboration.validationNumber', { value: index + 1 })}</legend>
-                <Field label={t('agentHub.collaboration.validationName')} required>
-                  <Input
-                    value={validation.name}
-                    maxLength={120}
-                    onChange={(event) => setCoordinationValidations((current) => current.map((item) => (
-                      item.id === validation.id ? { ...item, name: event.currentTarget.value } : item
-                    )))}
-                  />
-                </Field>
-                <Field id={`agent-validation-command-${index}`} label={t('agentHub.collaboration.validationCommand')} required>
-                  <textarea
-                    id={`agent-validation-command-${index}`}
-                    className="ui-textarea"
-                    value={validation.command}
-                    rows={3}
-                    maxLength={8192}
-                    onChange={(event) => setCoordinationValidations((current) => current.map((item) => (
-                      item.id === validation.id ? { ...item, command: event.currentTarget.value } : item
-                    )))}
-                  />
-                </Field>
-                <Field label={t('agentHub.collaboration.validationTimeout')}>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={1800}
-                    value={Math.round(validation.timeoutMs / 1000)}
-                    onChange={(event) => setCoordinationValidations((current) => current.map((item) => (
-                      item.id === validation.id
-                        ? { ...item, timeoutMs: Number(event.currentTarget.value) * 1000 }
-                        : item
-                    )))}
-                  />
-                </Field>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => setCoordinationValidations((current) => current.filter((item) => item.id !== validation.id))}
-                >
-                  {t('common.remove')}
-                </Button>
-              </fieldset>
-            ))}
-          </section>
-          {coordinationError && <p className="agent-project-error" role="alert">{coordinationError}</p>}
-        </div>
-      </Dialog>
       <Dialog
         open={overrideRequest !== null}
         onOpenChange={(open) => {
