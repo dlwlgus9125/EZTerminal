@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
 import {
+  daemonProjectSyncDescriptor,
+  daemonWorkspaceId,
   planDaemonProjectSync,
   type DaemonProjectSyncDescriptor,
 } from './daemon-project-sync';
@@ -34,6 +36,62 @@ const descriptor: DaemonProjectSyncDescriptor = {
 };
 
 describe('planDaemonProjectSync', () => {
+  it('namespaces renderer Workspace identities and keeps every root selectable', () => {
+    const built = daemonProjectSyncDescriptor({
+      projectId: 'project-1',
+      name: 'Multi root',
+      primaryRoot: 'C:\\Working\\frontend',
+      additionalRoots: ['C:\\Working\\backend'],
+      pinned: true,
+      saved: true,
+      sessionCount: 0,
+      providers: [],
+      lastActiveAt: null,
+    }, {
+      projectId: 'project-1',
+      name: 'Multi root',
+      roots: [
+        { rootId: 'root-front', name: 'frontend', displayPath: 'C:\\Working\\frontend', primary: true },
+        { rootId: 'root-back', name: 'backend', displayPath: 'C:\\Working\\backend', primary: false },
+      ],
+      workspaces: [
+        {
+          workspaceId: 'shared-worktree', rootId: 'root-front', name: 'feature front',
+          displayPath: 'C:\\Working\\feature\\frontend', kind: 'managed', access: 'granted',
+        },
+        {
+          workspaceId: 'shared-worktree', rootId: 'root-back', name: 'feature back',
+          displayPath: 'C:\\Working\\feature\\backend', kind: 'managed', access: 'granted',
+        },
+        {
+          workspaceId: 'external-denied', rootId: 'root-front', name: 'external',
+          displayPath: 'C:\\External', kind: 'external', access: 'authorization-required',
+        },
+      ],
+    });
+
+    const frontRootId = daemonWorkspaceId('project-1', 'root-front', 'root-front');
+    const backRootId = daemonWorkspaceId('project-1', 'root-back', 'root-back');
+    expect(built.workspaces).toEqual([
+      {
+        id: frontRootId, name: 'frontend', kind: 'local', rootPath: 'C:\\Working\\frontend',
+      },
+      {
+        id: backRootId, name: 'backend', kind: 'local', rootPath: 'C:\\Working\\backend',
+      },
+      {
+        id: daemonWorkspaceId('project-1', 'root-front', 'shared-worktree'),
+        name: 'feature front', kind: 'worktree', rootPath: 'C:\\Working\\feature\\frontend',
+        sourceWorkspaceId: frontRootId,
+      },
+      {
+        id: daemonWorkspaceId('project-1', 'root-back', 'shared-worktree'),
+        name: 'feature back', kind: 'worktree', rootPath: 'C:\\Working\\feature\\backend',
+        sourceWorkspaceId: backRootId,
+      },
+    ]);
+  });
+
   it('creates one native Project before all of its selectable Workspaces', () => {
     expect(planDaemonProjectSync(snapshot(), [descriptor])).toEqual([
       { kind: 'project.upsert', value: {

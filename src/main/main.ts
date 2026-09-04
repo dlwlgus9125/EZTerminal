@@ -100,6 +100,7 @@ import { SessionWorktreeGuard } from './session-worktree-guard';
 import { SessionSurfaceAuthority } from './session-surface-authority';
 import type {
   RemoteAgentOrchestrationSource,
+  RemoteAgentHistorySource,
   RemoteFileSource,
   RemoteOpenClawSource,
   RemotePacketSource,
@@ -172,7 +173,10 @@ import type {
   AgentResumeStartRequest,
   AgentResumeStartResult,
 } from '../shared/agent-history';
-import { MAX_AGENT_LAUNCH_DIRECTORY_LENGTH } from '../shared/agent-history';
+import {
+  MAX_AGENT_LAUNCH_DIRECTORY_LENGTH,
+  MAX_AGENT_PROJECTS,
+} from '../shared/agent-history';
 import { classifyRecentPanelInput } from './recent-panel-input';
 import type { WorkspaceFileSearchRequest } from '../shared/workspace-search';
 import { isWorktreeRequest, type WorktreeInfo, type WorktreeResult } from '../shared/worktree';
@@ -202,6 +206,11 @@ import { DaemonAgentRuntime } from './daemon-agent-runtime';
 import { AgentProviderRegistry } from './agent-provider-registry';
 import { CodexProviderAdapter } from './codex-provider-adapter';
 import { ClaudeProviderAdapter } from './claude-provider-adapter';
+import { AgentOrchestrationMcpServer } from './agent-orchestration-mcp-server';
+import {
+  daemonProjectSyncDescriptor,
+  planDaemonProjectSync,
+} from './daemon-project-sync';
 import { UserDataClaudeProviderEnablementStore } from './claude-provider-enablement-store';
 import { installDaemonProviderIpc } from './daemon-provider-ipc';
 import type { DaemonCommandReceipt } from '../shared/daemon-protocol';
@@ -863,6 +872,16 @@ app.on('ready', async () => {
     },
   });
   const daemonRouterRef: { current?: DaemonCommandRouter } = {};
+  const agentOrchestrationMcpServer = new AgentOrchestrationMcpServer({
+    authority: {
+      getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
+      execute: (command) => daemonRouterRef.current!.execute(command),
+    },
+    reportError: (context, error) => {
+      console.error(`[main] ${context}:`, error);
+      mainLog?.line(`${context}: ${String(error)}`);
+    },
+  });
   const daemonAgentRuntime = new DaemonAgentRuntime({
     providers: providerRegistry,
     getSnapshot: () => daemonRouterRef.current!.getSnapshot(),
@@ -871,6 +890,9 @@ app.on('ready', async () => {
       daemonRouterRef.current!.readTranscript(sessionId, afterSequence, limit)
     ),
     findCommand: (commandId) => daemonStore.findCommand(commandId)?.command,
+    orchestrationForSession: (sessionId) => (
+      agentOrchestrationMcpServer.descriptorForSession(sessionId)
+    ),
     reportError: (context, error) => {
       console.error(`[main] ${context}:`, error);
       mainLog?.line(`${context}: ${String(error)}`);
@@ -927,11 +949,13 @@ app.on('ready', async () => {
     id: 'managed-agent-runtime',
     gracefulStop: async () => {
       await daemonAgentRuntime.dispose();
+      await agentOrchestrationMcpServer.stop();
       daemonAgentRuntimeStopped = true;
     },
     hasStopped: () => daemonAgentRuntimeStopped,
     forceStop: async () => {
       await daemonAgentRuntime.dispose();
+      await agentOrchestrationMcpServer.stop();
       daemonAgentRuntimeStopped = true;
     },
   });
@@ -952,6 +976,7 @@ app.on('ready', async () => {
           }],
         });
       }
+      await agentOrchestrationMcpServer.start();
       await daemonAgentRuntime.start();
       return daemonCommandRouter;
     });
@@ -1296,6 +1321,54 @@ app.on('ready', async () => {
   const projectDocumentService = new ProjectDocumentService(projectWorkspaceService, projectReviewService);
   const projectWorkspaceSearches = new Map<string, AbortController>();
   const projectWorkspaceReady = Promise.all([agentHistoryReady, projectWorkspaceAccessReady]);
+  let daemonProjectSyncTail: Promise<void> = Promise.resolve();
+  const syncAgentProjectsToDaemon = async (): Promise<void> => {
+    await Promise.all([daemonAuthorityReady, projectWorkspaceReady]);
+    const descriptors: ReturnType<typeof daemonProjectSyncDescriptor>[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    let exhausted = false;
+    for (let pageIndex = 0; pageIndex <= Math.ceil(MAX_AGENT_PROJECTS / 100); pageIndex += 1) {
+      const page = await agentHistoryService.listProjects(false, cursor, 100);
+      for (const summary of page.items) {
+        const described = await projectWorkspaceService.describeProjectWorkspaces(summary.projectId);
+        if (!described.ok) {
+          mainLog?.line(
+            `daemon Project sync skipped ${summary.projectId}: ${described.error}`,
+          );
+          continue;
+        }
+        descriptors.push(daemonProjectSyncDescriptor(summary, described.project));
+      }
+      if (!page.nextCursor) {
+        exhausted = true;
+        break;
+      }
+      if (seenCursors.has(page.nextCursor)) {
+        throw new Error('Agent Project pagination repeated a cursor during daemon sync.');
+      }
+      seenCursors.add(page.nextCursor);
+      cursor = page.nextCursor;
+    }
+    if (!exhausted) throw new Error('Agent Project pagination exceeded its durable limit.');
+
+    const mutations = planDaemonProjectSync(daemonCommandRouter.getSnapshot(), descriptors);
+    if (mutations.length > 0) {
+      await daemonCommandRouter.applySystemCommit({ mutations });
+    }
+  };
+  const requestDaemonProjectSync = (): Promise<void> => {
+    const run = daemonProjectSyncTail.then(
+      () => syncAgentProjectsToDaemon(),
+      () => syncAgentProjectsToDaemon(),
+    );
+    daemonProjectSyncTail = run.catch(() => undefined);
+    return run;
+  };
+  const daemonProjectsReady = requestDaemonProjectSync().catch((error) => {
+    console.error('[main] initial Agent Project daemon sync failed:', error);
+    mainLog?.line(`initial Agent Project daemon sync failed: ${String(error)}`);
+  });
   agentHistoryService.setProjectSessionTargetResolver(async (target) => {
     await projectWorkspaceReady;
     return projectWorkspaceService.resolveSessionTarget(target);
@@ -1524,7 +1597,7 @@ app.on('ready', async () => {
     const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
     if (!principalId) return null;
     try {
-      await daemonAuthorityReady;
+      await Promise.all([daemonAuthorityReady, daemonProjectsReady]);
       return daemonCommandRouter.getSnapshot();
     } catch {
       return null;
@@ -1565,7 +1638,7 @@ app.on('ready', async () => {
     const principalId = resolveDesktopSessionPrincipal(event, clientInstanceId);
     if (!principalId) return rejectedDaemonCommand(value, 'Desktop daemon authority is unavailable.');
     try {
-      await daemonAuthorityReady;
+      await Promise.all([daemonAuthorityReady, daemonProjectsReady]);
     } catch {
       return rejectedDaemonCommand(
         value,
@@ -1995,9 +2068,11 @@ app.on('ready', async () => {
       resolved.displayCommandText,
     );
     if (!port) return { ok: false, reason: 'unavailable' };
-    void agentHistoryService.recordTerminalWork(resolved.roots, Date.now()).catch((err) => {
-      console.error('[main] failed to record resumed Agent project:', err);
-    });
+    void agentHistoryService.recordTerminalWork(resolved.roots, Date.now())
+      .then(() => requestDaemonProjectSync())
+      .catch((err) => {
+        console.error('[main] failed to record resumed Agent project:', err);
+      });
     event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
     return { ok: true };
   });
@@ -2027,9 +2102,11 @@ app.on('ready', async () => {
       resolved.displayCommandText,
     );
     if (!port) return { ok: false, reason: 'unavailable' };
-    void agentHistoryService.recordLaunchTargetWork(candidate.target, resolved.roots, Date.now()).catch((err) => {
-      console.error('[main] failed to record launched Agent project:', err);
-    });
+    void agentHistoryService.recordLaunchTargetWork(candidate.target, resolved.roots, Date.now())
+      .then(() => requestDaemonProjectSync())
+      .catch((err) => {
+        console.error('[main] failed to record launched Agent project:', err);
+      });
     event.sender.postMessage('cmd-port', { runId: candidate.runId }, [port as unknown as MessagePortMain]);
     return { ok: true };
   };
@@ -2112,7 +2189,13 @@ app.on('ready', async () => {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
       return { ok: false, reason: 'invalid' };
     }
-    return agentHistoryService.saveProject(input as AgentProjectInput);
+    const result = await agentHistoryService.saveProject(input as AgentProjectInput);
+    if (result.ok) {
+      await requestDaemonProjectSync().catch((error) => {
+        console.error('[main] saved Agent Project daemon sync failed:', error);
+      });
+    }
+    return result;
   });
   ipcMain.handle('agent-projects:remove', async (_event, projectId: unknown) => {
     await agentHistoryReady;
@@ -2148,7 +2231,13 @@ app.on('ready', async () => {
   });
   ipcMain.handle('project-workspace:describe', async (_event, projectId: unknown) => {
     await projectWorkspaceReady;
-    return projectWorkspaceService.describeProjectWorkspaces(projectId);
+    const described = await projectWorkspaceService.describeProjectWorkspaces(projectId);
+    if (described.ok) {
+      await requestDaemonProjectSync().catch((error) => {
+        console.error('[main] described Agent Project daemon sync failed:', error);
+      });
+    }
+    return described;
   });
   ipcMain.handle('project-documents:resolve', async (_event, request: unknown) => {
     await projectWorkspaceReady;
@@ -3189,7 +3278,9 @@ app.on('ready', async () => {
           expectedProjectRevision: agentCoordinationService!.getProject(run.projectId)?.configRevision,
         });
         if (!joined.ok) throw new Error(joined.message);
-        void agentHistoryService.recordTerminalWork(resolved.roots, Date.now()).catch(() => undefined);
+        void agentHistoryService.recordTerminalWork(resolved.roots, Date.now())
+          .then(() => requestDaemonProjectSync())
+          .catch(() => undefined);
         return {
           profileId: profile.profileId,
           providerId: profile.providerId,
@@ -3384,9 +3475,10 @@ app.on('ready', async () => {
             registered.request.projectId,
             activity.updatedAt,
           );
-          return;
+        } else {
+          await agentHistoryService.recordTerminalWork([activity.cwd], activity.updatedAt);
         }
-        await agentHistoryService.recordTerminalWork([activity.cwd], activity.updatedAt);
+        await requestDaemonProjectSync();
       })
       .catch((err) => {
         console.error('[main] failed to record terminal Agent project:', err);
@@ -3852,6 +3944,49 @@ app.on('ready', async () => {
   const remotePacketSource: RemotePacketSource = {
     subscribe: (listener) => packetMirror?.subscribe(listener) ?? (() => undefined),
   };
+  const remoteAgentHistorySource: RemoteAgentHistorySource = {
+    listProjects: (force, cursor, limit, query) => (
+      agentHistoryService.listProjects(force, cursor, limit, query)
+    ),
+    saveProject: async (input) => {
+      const result = await agentHistoryService.saveProject(input);
+      if (result.ok) await requestDaemonProjectSync();
+      return result;
+    },
+    removeProject: async (projectId) => {
+      const removed = await agentHistoryService.removeProject(projectId);
+      if (removed) {
+        await Promise.all([
+          projectWorkspaceService.revokeProjectAccess(projectId),
+          agentOrchestrationStore.removeProject(projectId),
+        ]);
+        await requestDaemonProjectSync();
+      }
+      return removed;
+    },
+    listLaunchers: () => agentHistoryService.listLaunchers(),
+    prepareLaunch: (target, launcherId) => agentHistoryService.prepareLaunch(target, launcherId),
+    prepareProjectLaunch: (projectId, launcherId) => (
+      agentHistoryService.prepareProjectLaunch(projectId, launcherId)
+    ),
+    resolveLaunch: (target, launcherId, revision) => (
+      agentHistoryService.resolveLaunch(target, launcherId, revision)
+    ),
+    listSessions: (projectId, cursor, limit, force) => (
+      agentHistoryService.listSessions(projectId, cursor, limit, force)
+    ),
+    readTranscript: (historyId, cursor, limit) => (
+      agentHistoryService.readTranscript(historyId, cursor, limit)
+    ),
+    prepareResume: (historyId) => agentHistoryService.prepareResume(historyId),
+    recordTerminalWork: async (roots, lastActiveAt) => {
+      await agentHistoryService.recordTerminalWork(roots, lastActiveAt);
+      await requestDaemonProjectSync();
+    },
+    resolveResume: (historyId, revision, choice) => (
+      agentHistoryService.resolveResume(historyId, revision, choice)
+    ),
+  };
   const remoteQuickCommandSource: RemoteQuickCommandSource = {
     list: async () => {
       await quickCommandsReady;
@@ -3908,7 +4043,7 @@ app.on('ready', async () => {
       await layoutStore.setRemoteEnabled(enabled);
     },
     waitUntilBridgeReady: async () => {
-      await Promise.all([agentInfrastructureReady, daemonAuthorityReady]);
+      await Promise.all([agentInfrastructureReady, daemonAuthorityReady, daemonProjectsReady]);
     },
     prepareBridge: async () => {
       // Keep the presentation hint current before auth; it no longer gates
@@ -3945,7 +4080,7 @@ app.on('ready', async () => {
       } : undefined,
       agentOrchestrationSource: remoteAgentOrchestrationSource,
       daemonSource: daemonCommandRouter,
-      agentHistorySource: agentHistoryService,
+      agentHistorySource: remoteAgentHistorySource,
       gitSource: gitStatusService,
       pairingSource: {
         match: (code) => pairingCodeService.match(code),

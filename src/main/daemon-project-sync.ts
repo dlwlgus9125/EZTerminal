@@ -1,6 +1,9 @@
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 
+import type { AgentProjectSummary } from '../shared/agent-history';
 import type { DaemonSnapshot } from '../shared/daemon-protocol';
+import type { ProjectWorkspaceDescriptor } from '../shared/project-workspace';
 import type { DaemonStoreMutation } from './daemon-store';
 
 export interface DaemonProjectSyncWorkspace {
@@ -16,6 +19,72 @@ export interface DaemonProjectSyncDescriptor {
   readonly name: string;
   readonly rootPath: string;
   readonly workspaces: readonly DaemonProjectSyncWorkspace[];
+}
+
+/**
+ * Workspace ids in ProjectWorkspaceService are scoped by root/repository.
+ * Daemon Workspace ids are global, so retain the source identities while
+ * namespacing them by Project and root. The hash fallback only applies to
+ * legacy/custom identities that would exceed the v12 identifier bound.
+ */
+export function daemonWorkspaceId(
+  projectId: string,
+  rootId: string,
+  sourceWorkspaceId: string,
+): string {
+  const value = `${projectId}.${rootId}.${sourceWorkspaceId}`;
+  return value.length <= 256
+    ? value
+    : `workspace-${createHash('sha256').update(value).digest('hex')}`;
+}
+
+/** Translate one renderer-facing Project descriptor into daemon identities. */
+export function daemonProjectSyncDescriptor(
+  summary: AgentProjectSummary,
+  descriptor: ProjectWorkspaceDescriptor,
+): DaemonProjectSyncDescriptor {
+  if (summary.projectId !== descriptor.projectId) {
+    throw new Error('Agent Project and Workspace descriptor identities do not match.');
+  }
+  const primaryRoot = descriptor.roots.find((root) => root.primary) ?? descriptor.roots[0];
+  if (!primaryRoot || pathKey(primaryRoot.displayPath) !== pathKey(summary.primaryRoot)) {
+    throw new Error(`Agent Project ${summary.projectId} has no matching primary root.`);
+  }
+
+  const roots = new Map(descriptor.roots.map((root) => [root.rootId, root]));
+  const workspaces = new Map<string, DaemonProjectSyncWorkspace>();
+  for (const root of descriptor.roots) {
+    const id = daemonWorkspaceId(summary.projectId, root.rootId, root.rootId);
+    workspaces.set(id, {
+      id,
+      name: root.name,
+      kind: 'local',
+      rootPath: root.displayPath,
+    });
+  }
+  for (const workspace of descriptor.workspaces ?? []) {
+    if (workspace.access !== 'granted') continue;
+    const root = roots.get(workspace.rootId);
+    if (!root) throw new Error(`Agent Workspace ${workspace.workspaceId} has an unknown root.`);
+    const id = daemonWorkspaceId(summary.projectId, workspace.rootId, workspace.workspaceId);
+    const rootWorkspaceId = daemonWorkspaceId(summary.projectId, workspace.rootId, workspace.rootId);
+    const kind = workspace.kind === 'managed' || workspace.kind === 'external'
+      ? 'worktree'
+      : 'local';
+    workspaces.set(id, {
+      id,
+      name: workspace.name,
+      kind,
+      rootPath: workspace.displayPath,
+      ...(kind === 'worktree' ? { sourceWorkspaceId: rootWorkspaceId } : {}),
+    });
+  }
+  return {
+    id: summary.projectId,
+    name: summary.name,
+    rootPath: primaryRoot.displayPath,
+    workspaces: [...workspaces.values()],
+  };
 }
 
 function pathKey(value: string): string {

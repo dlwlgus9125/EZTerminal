@@ -155,9 +155,33 @@ Settings category는 다음 여섯 개다.
 6. About & Diagnostics
 
 General은 언어·density·resource profile, Appearance는 theme·font·CRT, Terminal &
-Safety는 terminal behavior와 paste/clipboard/close 안전 설정을 소유한다. Pairing,
-OpenClaw와 provider 설정은 Integrations에 둔다. version과 diagnostic metadata는
-About & Diagnostics에 둔다.
+Safety는 terminal behavior와 paste/clipboard/close 안전 설정을 소유한다. Agents는
+structured Agent provider 설정과 별도로 구분된 terminal activity hook을 소유하고,
+Pairing과 OpenClaw는 Integrations에 둔다. version과 diagnostic metadata는 About &
+Diagnostics에 둔다.
+
+Structured Agent provider 설정은 Codex와 Claude를 같은 compact provider row family로
+보여 주되 단순 toggle로 축약하지 않는다. 각 row는 `설치 확인`에서 발견한 executable path,
+version, 고정 argv, 전달되는 환경 변수의 **이름만**, 지원 capability와 provider 공지를
+검토한 뒤에만 `활성화`할 수 있다. 검토 정보가 바뀌어 digest가 맞지 않으면 실행하지 않고
+다시 검토하게 한다. 활성화된 row에는 `Ready` 또는 구체적인 복구 가능한 오류와 `비활성화`를
+표시한다. 설치 없음, 확인 중, 확인 실패, 검토 대기, 활성화 중, 활성, 비활성화 중 상태는 text와
+control 상태로 구분하며 이전 성공 상태를 loading으로 가장하지 않는다.
+
+Claude row는 활성화 전에 API key environment, 기존 CLI environment, 기존 claude.ai login의
+세 인증 경로 중 하나를 고르게 한다. credential/token/cookie 값을 입력하거나 표시하는 필드는
+만들지 않는다. 약관 확인과 상용 사용 승인 확인은 활성화 시 필수이고, 기존 claude.ai login은
+Anthropic의 third-party 사용 사전 승인을 받았다는 별도 확인이 있어야 한다. 이 조건은 inline
+설명과 공식 문서 link를 함께 제공하고 checkbox 하나로 합치지 않는다. 비활성화는 이 비밀 없는
+동의 기록과 daemon provider 상태를 모두 비활성화하되 기존 CLI 로그인을 삭제하지 않는다.
+
+기존 terminal activity hook은 `터미널 상태 연동` subsection으로 분리하여 structured provider를
+켜는 기능으로 오해하지 않게 한다. provider setup은 keyboard로 row → 세부 검토 → 인증 경로 →
+필수 확인 → primary action 순서로 이동하고, 펼쳐진 상세 영역은 heading/fieldset/status semantics를
+사용한다. 좁은 drawer에서는 metadata label/value를 한 열로 쌓고 path와 argv는 줄바꿈하되 document
+수평 overflow를 만들지 않는다. 관련 Storybook Settings fixture는 설치 없음·검토 대기·Claude
+승인 조건·Ready·오류 상태를 고정 입력으로 제공하고 component test는 stale review, 중복 제출,
+조건부 승인 checkbox와 credential 비노출을 검증한다.
 
 ### 3.7 Resource profile
 
