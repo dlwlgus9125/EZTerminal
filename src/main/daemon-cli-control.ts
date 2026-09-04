@@ -122,13 +122,41 @@ function containsPhysicalPath(root: string, candidate: string): boolean {
   const rootDialect = pathDialect(root);
   const candidateDialect = pathDialect(candidate);
   if (!rootDialect || rootDialect !== candidateDialect) return false;
-  const relative = rootDialect.relative(rootDialect.resolve(root), rootDialect.resolve(candidate));
-  return relative === '' || (
+  const resolvedRoot = rootDialect.resolve(root);
+  const resolvedCandidate = rootDialect.resolve(candidate);
+  const relative = rootDialect.relative(resolvedRoot, resolvedCandidate);
+  const lexicallyContained = relative === '' || (
     relative !== '..'
     && !relative.startsWith(`..${rootDialect.sep}`)
     && !rootDialect.isAbsolute(relative)
   );
+  if (!lexicallyContained) return false;
+  if (rootDialect !== path.win32) return true;
+
+  // win32.relative intentionally compares path segments case-insensitively.
+  // realpath preserves distinct names on case-sensitive NTFS directories, so
+  // reconstruct the candidate and require the verified spelling to match.
+  return rootDialect.resolve(resolvedRoot, relative) === resolvedCandidate;
 }
+
+function cliProviderView(provider: DaemonSnapshot['providers'][number]) {
+  return {
+    id: provider.id,
+    displayName: provider.displayName,
+    protocol: provider.protocol,
+    executableVersion: provider.executableVersion,
+    capabilities: provider.capabilities,
+    enabled: provider.enabled,
+    health: provider.health,
+    ...(provider.healthDetail ? { healthDetail: provider.healthDetail } : {}),
+    reviewCurrent: isNonEmptyString(provider.reviewDigest),
+    updatedAt: provider.updatedAt,
+  };
+}
+
+type DaemonCliSnapshot = Omit<DaemonSnapshot, 'providers'> & {
+  readonly providers: readonly ReturnType<typeof cliProviderView>[];
+};
 
 /**
  * Project-scoped local CLI adapter over the same daemon command authority used
@@ -234,7 +262,11 @@ export class DaemonCliControl {
       case '/v1/daemon/projects/update':
         return this.updateProject(scope.value, body, source.sessionId);
       case '/v1/daemon/projects/archive':
-        return this.archiveProject(scope.value, body, source.sessionId);
+        return this.desktopOnly(
+          'project-archive-desktop-required',
+          'Archiving the current Project revokes this Session capability and requires Desktop confirmation.',
+          'archive-project',
+        );
       case '/v1/daemon/workspaces/create':
         return this.createWorkspace(scope.value, body, source.sessionId);
       case '/v1/daemon/workspaces/update':
@@ -253,13 +285,12 @@ export class DaemonCliControl {
         return this.resumeAgent(scope.value, body, source.sessionId);
       case '/v1/daemon/providers/enable':
       case '/v1/daemon/providers/update':
+      case '/v1/daemon/providers/disable':
         return this.desktopOnly(
           'desktop-principal-required',
-          'Provider review and enablement require the authenticated Desktop settings flow.',
+          'Provider lifecycle changes require the authenticated Desktop settings flow.',
           'review-provider',
         );
-      case '/v1/daemon/providers/disable':
-        return this.disableProvider(scope.value, body, source.sessionId);
       case '/v1/daemon/schedules/create':
         return this.createSchedule(scope.value, body, source.sessionId);
       case '/v1/daemon/schedules/update':
@@ -338,7 +369,7 @@ export class DaemonCliControl {
     });
   }
 
-  private scopedSnapshot(scope: DaemonProjectScope): DaemonSnapshot {
+  private scopedSnapshot(scope: DaemonProjectScope): DaemonCliSnapshot {
     const snapshot = scope.snapshot;
     const providerIds = new Set([
       ...snapshot.agents.filter((agent) => scope.sessionIds.has(agent.sessionId)).map((agent) => agent.providerId),
@@ -356,7 +387,7 @@ export class DaemonCliControl {
       turns: snapshot.turns.filter((turn) => scope.sessionIds.has(turn.sessionId)),
       transcriptHeads: snapshot.transcriptHeads.filter((head) => scope.sessionIds.has(head.sessionId)),
       approvals: snapshot.approvals.filter((approval) => scope.sessionIds.has(approval.sessionId)),
-      providers: snapshot.providers.filter((provider) => providerIds.has(provider.id)),
+      providers: snapshot.providers.filter((provider) => providerIds.has(provider.id)).map(cliProviderView),
       schedules: snapshot.schedules.filter((schedule) => scope.workspaceIds.has(schedule.workspaceId)),
       heartbeats: snapshot.heartbeats.filter((heartbeat) => scope.sessionIds.has(heartbeat.sessionId)),
     };
@@ -367,18 +398,7 @@ export class DaemonCliControl {
       ok: true,
       protocolVersion: scope.snapshot.protocolVersion,
       revision: scope.snapshot.revision,
-      items: scope.snapshot.providers.map((provider) => ({
-        id: provider.id,
-        displayName: provider.displayName,
-        protocol: provider.protocol,
-        executableVersion: provider.executableVersion,
-        capabilities: provider.capabilities,
-        enabled: provider.enabled,
-        health: provider.health,
-        ...(provider.healthDetail ? { healthDetail: provider.healthDetail } : {}),
-        reviewCurrent: isNonEmptyString(provider.reviewDigest),
-        updatedAt: provider.updatedAt,
-      })),
+      items: scope.snapshot.providers.map(cliProviderView),
     });
   }
 
@@ -421,21 +441,6 @@ export class DaemonCliControl {
       projectId: target.value.id,
       ...(body.name !== undefined ? { name: body.name } : {}),
     });
-  }
-
-  private async archiveProject(
-    scope: DaemonProjectScope,
-    body: Readonly<Record<string, unknown>>,
-    sourceSessionId: string,
-  ): Promise<DaemonCliResponse> {
-    if (!hasOnlyKeys(body, new Set(['target', 'requestId']))) {
-      return errorResponse(400, 'invalid-request', 'The Project archive request contains unsupported fields.');
-    }
-    const target = this.resolveProject(scope, body.target);
-    if (!target.ok) return target.response;
-    const requestId = this.requestId(body.requestId);
-    if (!requestId.ok) return requestId.response;
-    return this.execute(sourceSessionId, requestId.value, 'project.archive', { projectId: target.value.id });
   }
 
   private async createWorkspace(
@@ -707,22 +712,6 @@ export class DaemonCliControl {
       permissionPreset: (body.permissionPreset ?? source.value.agent.permissionPreset) as PermissionPreset,
       ...(parent?.ok ? { parentSessionId: parent.value.session.id } : {}),
     });
-  }
-
-  private async disableProvider(
-    scope: DaemonProjectScope,
-    body: Readonly<Record<string, unknown>>,
-    sourceSessionId: string,
-  ): Promise<DaemonCliResponse> {
-    if (!hasOnlyKeys(body, new Set(['target', 'providerId', 'requestId']))
-      || (body.target !== undefined && body.providerId !== undefined)) {
-      return errorResponse(400, 'invalid-request', 'A single Provider id is required.');
-    }
-    const provider = this.resolveProvider(scope, body.target ?? body.providerId);
-    if (!provider.ok) return provider.response;
-    const requestId = this.requestId(body.requestId);
-    if (!requestId.ok) return requestId.response;
-    return this.execute(sourceSessionId, requestId.value, 'provider.disable', { providerId: provider.value.id });
   }
 
   private async projectContainedPath(scope: DaemonProjectScope, value: string): Promise<ScopedTarget<string>> {

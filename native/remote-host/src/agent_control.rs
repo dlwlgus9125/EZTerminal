@@ -974,7 +974,7 @@ usage:\n\
 \n\
 JSON stdin is limited to 32 KiB. Complex commands reject reserved target/requestId fields.\n\
 Create commands accept optional stable ids and generate one when omitted.\n\
-Project creation and Provider enable/update require Desktop review and return remediation without mutating state.\n\
+Project creation/archive and all Provider lifecycle changes require Desktop review and return remediation without mutating state.\n\
 Agent resume accepts only a stopped Agent already owned by this Project; raw Provider Session ids are not accepted.\n\
 \n\
 Compatibility commands:\n\
@@ -1245,7 +1245,9 @@ mod tests {
         let text = usage();
         assert!(text.contains("project list|create --stdin|update"));
         assert!(text.contains("provider list|enable --stdin|update"));
-        assert!(text.contains("require Desktop review"));
+        assert!(text.contains(
+            "Project creation/archive and all Provider lifecycle changes require Desktop review"
+        ));
         assert!(text.contains("raw Provider Session ids are not accepted"));
     }
 

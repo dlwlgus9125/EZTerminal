@@ -100,6 +100,12 @@ describe('DaemonCliControl', () => {
     expect(scoped.sessions.map((session) => session.id)).toEqual(['terminal-1', 'agent-1']);
     expect(scoped.schedules.map((schedule) => schedule.id)).toEqual(['schedule-1']);
     expect(scoped.providers.map((provider) => provider.id)).toEqual(['codex']);
+    for (const provider of scoped.providers as unknown as Array<Record<string, unknown>>) {
+      expect(provider).not.toHaveProperty('executablePath');
+      expect(provider).not.toHaveProperty('argv');
+      expect(provider).not.toHaveProperty('environmentVariableNames');
+      expect(provider).not.toHaveProperty('reviewDigest');
+    }
   });
 
   it('lists scoped Projects and Workspaces plus sanitized global Provider health', async () => {
@@ -316,6 +322,21 @@ describe('DaemonCliControl', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('fails closed when verified Windows paths differ only by casing', async () => {
+    const { control, execute } = fixture();
+    await expect(control.handle('/v1/daemon/workspaces/create', {
+      workspaceId: 'workspace-case-escape',
+      name: 'Case-sensitive sibling',
+      kind: 'local',
+      rootPath: 'C:\\ONE\\case-sensitive-sibling',
+      requestId: 'case-sensitive-root',
+    }, source)).resolves.toMatchObject({
+      status: 403,
+      body: { error: 'path-outside-project' },
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('allows Worktree naming but delegates Worktree identity changes to Desktop', async () => {
     const { control, execute, setSnapshot } = fixture();
     const current = snapshot();
@@ -419,7 +440,7 @@ describe('DaemonCliControl', () => {
     expect(execute).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps Project creation and Provider review desktop-only while allowing Provider disable', async () => {
+  it('keeps Project creation and every Provider lifecycle change desktop-only', async () => {
     const { control, execute } = fixture();
     for (const route of [
       '/v1/daemon/projects/create',
@@ -433,11 +454,30 @@ describe('DaemonCliControl', () => {
     }
     await expect(control.handle('/v1/daemon/providers/disable', {
       target: 'codex', requestId: 'provider-disable',
-    }, source)).resolves.toMatchObject({ status: 200, body: { ok: true } });
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute.mock.calls[0]![0]).toMatchObject({
-      type: 'provider.disable', payload: { providerId: 'codex' },
+    }, source)).resolves.toMatchObject({
+      status: 403,
+      body: {
+        error: 'unauthorized',
+        code: 'desktop-principal-required',
+        remediation: { surface: 'desktop', action: 'review-provider' },
+      },
     });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('routes current Project archive to truthful Desktop remediation', async () => {
+    const { control, execute } = fixture();
+    await expect(control.handle('/v1/daemon/projects/archive', {
+      target: 'One', requestId: 'project-archive',
+    }, source)).resolves.toMatchObject({
+      status: 403,
+      body: {
+        error: 'unauthorized',
+        code: 'project-archive-desktop-required',
+        remediation: { surface: 'desktop', action: 'archive-project' },
+      },
+    });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('requires stable ids when Project-local names are ambiguous', async () => {
