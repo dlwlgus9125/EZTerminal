@@ -74,6 +74,14 @@ import {
   type ServerToClientMessage,
 } from '../shared/remote-protocol';
 import {
+  DAEMON_PROTOCOL_VERSION,
+  parseDaemonCommand,
+  type DaemonCommand,
+  type DaemonCommandReceipt,
+  type DaemonEvent,
+  type DaemonSnapshot,
+} from '../shared/daemon-protocol';
+import {
   isSessionSurfaceCloseDecisions,
   isSessionSurfaceCloseEntries,
   isSessionSurfaceId,
@@ -563,6 +571,28 @@ function isDispatchableClientMessage(value: unknown): value is DispatchableClien
         && value.requestId.length > 0
         && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
       );
+    case 'daemon-snapshot-get':
+      return (
+        typeof value.requestId === 'string'
+        && value.requestId.length > 0
+        && value.requestId.length <= MAX_REMOTE_REQUEST_ID_LENGTH
+      );
+    case 'daemon-command':
+      if (
+        typeof value.requestId !== 'string'
+        || value.requestId.length === 0
+        || value.requestId.length > MAX_REMOTE_REQUEST_ID_LENGTH
+      ) return false;
+      try {
+        parseDaemonCommand(value.command);
+        return true;
+      } catch {
+        return false;
+      }
+    case 'daemon-events-subscribe':
+      return Number.isSafeInteger(value.afterSequence) && (value.afterSequence as number) >= 0;
+    case 'daemon-events-unsubscribe':
+      return true;
     case 'agent-seen':
       return (
         typeof value.requestId === 'string'
@@ -1069,6 +1099,13 @@ export interface RemoteAgentOrchestrationSource {
   confirmLegacyMigration(): Promise<AgentOrchestrationSnapshot['migration']>;
 }
 
+/** Revisioned runtime projection shared by Desktop IPC, Android, CLI and MCP. */
+export interface RemoteDaemonSource {
+  getSnapshot(): DaemonSnapshot;
+  execute(command: DaemonCommand): Promise<DaemonCommandReceipt>;
+  onEvent(listener: (event: DaemonEvent) => void): () => void;
+}
+
 function remoteCoordinationSnapshot(snapshot: AgentCoordinationSnapshot): AgentCoordinationSnapshot {
   return {
     ...snapshot,
@@ -1203,6 +1240,7 @@ export interface RemoteBridgeOptions {
   readonly agentSource?: RemoteAgentSource;
   readonly agentCoordinationSource?: RemoteAgentCoordinationSource;
   readonly agentOrchestrationSource?: RemoteAgentOrchestrationSource;
+  readonly daemonSource?: RemoteDaemonSource;
   readonly agentHistorySource?: RemoteAgentHistorySource;
   /** Optional so existing fixtures without Git wiring keep working. */
   readonly gitSource?: RemoteGitSource;
@@ -1295,6 +1333,7 @@ export function attachConnection(
   let authPending = false;
   let releaseRunsOnClose = false;
   let connectionClosed = false;
+  let daemonEventsSubscribed = false;
   const connectionId = randomUUID();
   const sessionSurfaces = sessionSurfacesFor(options);
   const runLeases = leasesFor(options);
@@ -1678,6 +1717,12 @@ export function attachConnection(
         send({ kind: 'agent-orchestration-snapshot', snapshot });
       }
     }) ?? (() => undefined);
+  const unsubDaemonEvents =
+    options.daemonSource?.onEvent((event) => {
+      if (authed && daemonEventsSubscribed && negotiatedProtocol >= DAEMON_PROTOCOL_VERSION) {
+        send({ kind: 'daemon-event', event });
+      }
+    }) ?? (() => undefined);
 
   ws.on('close', () => {
     if (connectionClosed) return;
@@ -1709,6 +1754,7 @@ export function attachConnection(
     contain(unsubAgentSnapshot);
     contain(unsubAgentCoordination);
     contain(unsubAgentOrchestration);
+    contain(unsubDaemonEvents);
     for (const [runId, record] of runs) {
       if (releaseRunsOnClose) contain(() => record.port.close());
       else {
@@ -1892,6 +1938,9 @@ export function attachConnection(
               kind: 'agent-orchestration-snapshot',
               snapshot: options.agentOrchestrationSource.getSnapshot(),
             });
+          }
+          if (options.daemonSource && negotiatedProtocol >= DAEMON_PROTOCOL_VERSION) {
+            send({ kind: 'daemon-snapshot', snapshot: options.daemonSource.getSnapshot() });
           }
           // OpenClaw availability (M3): initial state, right after auth —
           // `subscribeVisibility` above only covers CHANGES from here on.
@@ -2288,6 +2337,68 @@ export function attachConnection(
             ?? EMPTY_AGENT_ORCHESTRATION_SNAPSHOT,
         });
         break;
+
+      case 'daemon-snapshot-get':
+        if (negotiatedProtocol < DAEMON_PROTOCOL_VERSION || !options.daemonSource) break;
+        send({
+          kind: 'daemon-snapshot',
+          requestId: msg.requestId,
+          snapshot: options.daemonSource.getSnapshot(),
+        });
+        break;
+
+      case 'daemon-events-subscribe': {
+        if (negotiatedProtocol < DAEMON_PROTOCOL_VERSION || !options.daemonSource) break;
+        daemonEventsSubscribed = true;
+        const snapshot = options.daemonSource.getSnapshot();
+        if (msg.afterSequence !== snapshot.eventSequence) {
+          send({ kind: 'daemon-snapshot', snapshot });
+        }
+        break;
+      }
+
+      case 'daemon-events-unsubscribe':
+        daemonEventsSubscribed = false;
+        break;
+
+      case 'daemon-command': {
+        if (
+          negotiatedProtocol < DAEMON_PROTOCOL_VERSION
+          || !options.daemonSource
+          || !clientIdentity
+        ) break;
+        const { requestId } = msg;
+        let command: DaemonCommand;
+        try {
+          command = parseDaemonCommand({
+            ...msg.command,
+            principal: { kind: 'android', id: clientIdentity.clientId },
+          });
+        } catch {
+          break;
+        }
+        void options.daemonSource.execute(command).then((receipt) => {
+          if (authed) send({ kind: 'daemon-command-reply', requestId, receipt });
+        }).catch((error: unknown) => {
+          if (!authed) return;
+          send({
+            kind: 'daemon-command-reply',
+            requestId,
+            receipt: {
+              ok: false,
+              status: 'rejected',
+              commandId: command.commandId,
+              revision: options.daemonSource?.getSnapshot().revision ?? 0,
+              error: {
+                code: 'internal-error',
+                message: error instanceof Error ? error.message : 'Daemon command failed.',
+                retryable: false,
+              },
+            },
+          });
+        });
+        break;
+      }
 
       case 'agent-collaboration-policy-save':
         if (negotiatedProtocol < REMOTE_PROTOCOL_VERSION_AGENT_ORCHESTRATION) break;

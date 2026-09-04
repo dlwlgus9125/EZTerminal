@@ -20,6 +20,7 @@ import {
   type RemoteAgentOrchestrationSource,
   type RemoteAgentSource,
   type RemoteAgentHistorySource,
+  type RemoteDaemonSource,
   type RemoteFileSource,
   type RemoteMessageChannel,
   type RemoteOpenClawSource,
@@ -74,6 +75,12 @@ import {
 import { EMPTY_GIT_DIRECTORY_STATUS } from '../shared/git-status';
 import type { WorktreeRequest } from '../shared/worktree';
 import type { SessionSurfaceBinding } from '../shared/session-surface';
+import {
+  DAEMON_PROTOCOL_VERSION,
+  createDaemonCommand,
+  type DaemonEvent,
+  type DaemonSnapshot,
+} from '../shared/daemon-protocol';
 
 const TOKEN = 'the-secret-token';
 const HOST_VERSION = '1.0.0-test';
@@ -476,6 +483,62 @@ async function authed(ws: FakeWs, options: RemoteBridgeOptions): Promise<void> {
   attachConnection(ws, options);
   ws.clientSend(authMessage());
   await flush();
+}
+
+function daemonSnapshot(revision = 3, eventSequence = 5): DaemonSnapshot {
+  return {
+    protocolVersion: DAEMON_PROTOCOL_VERSION,
+    revision,
+    eventSequence,
+    generatedAt: '2026-09-04T10:00:00.000Z',
+    runtime: {
+      keepRunning: false,
+      startAtLogin: false,
+      orchestrationToolsEnabled: false,
+      browserEnabled: false,
+    },
+    projects: [],
+    workspaces: [],
+    sessions: [],
+    agents: [],
+    agentRelations: [],
+    turns: [],
+    transcriptHeads: [],
+    approvals: [],
+    providers: [],
+    schedules: [],
+    heartbeats: [],
+  };
+}
+
+function makeDaemonSource(snapshot = daemonSnapshot()): {
+  readonly source: RemoteDaemonSource;
+  readonly execute: ReturnType<typeof vi.fn>;
+  readonly emit: (event: DaemonEvent) => void;
+  readonly unsubscribe: ReturnType<typeof vi.fn>;
+} {
+  let listener: ((event: DaemonEvent) => void) | undefined;
+  const execute = vi.fn(async (command: { readonly commandId: string }) => ({
+    ok: true as const,
+    status: 'applied' as const,
+    commandId: command.commandId,
+    revision: snapshot.revision + 1,
+    eventSequence: snapshot.eventSequence + 1,
+  }));
+  const unsubscribe = vi.fn();
+  return {
+    source: {
+      getSnapshot: () => snapshot,
+      execute,
+      onEvent: (next) => {
+        listener = next;
+        return unsubscribe;
+      },
+    },
+    execute,
+    emit: (event) => listener?.(event),
+    unsubscribe,
+  };
 }
 
 async function replyToRunList(
@@ -4935,4 +4998,86 @@ describe('startRemoteBridge — real WS server lifecycle (v0.2.0 D2)', () => {
 
     expect(initiators.isInitiatedBy('session-own', 'run-own', 'client-own')).toBe(true);
   }, 10_000);
+});
+
+describe('RemoteBridge — daemon protocol v12', () => {
+  it('pushes the authoritative daemon snapshot after authentication', async () => {
+    const daemon = makeDaemonSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ daemonSource: daemon.source });
+
+    await authed(ws, options);
+
+    expect(ws.sent).toContainEqual({ kind: 'daemon-snapshot', snapshot: daemonSnapshot() });
+  });
+
+  it('replaces a wire-supplied principal with the authenticated Android identity', async () => {
+    const daemon = makeDaemonSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ daemonSource: daemon.source });
+    await authed(ws, options);
+    const command = createDaemonCommand({
+      commandId: 'mobile-command-1',
+      idempotencyKey: 'mobile:command-1',
+      expectedRevision: 3,
+      issuedAt: '2026-09-04T10:00:01.000Z',
+      principal: { kind: 'mcp', id: 'spoofed', sessionId: 'victim' },
+      type: 'agent.submit',
+      payload: { sessionId: 'agent-1', prompt: 'Continue.' },
+    });
+
+    ws.clientSend({ kind: 'daemon-command', requestId: 'request-1', command });
+    await flush();
+
+    expect(daemon.execute).toHaveBeenCalledWith(expect.objectContaining({
+      commandId: 'mobile-command-1',
+      principal: {
+        kind: 'android',
+        id: '00000000-0000-4000-8000-000000000001',
+      },
+    }));
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      kind: 'daemon-command-reply',
+      requestId: 'request-1',
+      receipt: expect.objectContaining({ ok: true, commandId: 'mobile-command-1' }),
+    }));
+  });
+
+  it('streams subscribed events and repairs a cursor gap with a snapshot', async () => {
+    const daemon = makeDaemonSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ daemonSource: daemon.source });
+    await authed(ws, options);
+    ws.sent.length = 0;
+
+    ws.clientSend({ kind: 'daemon-events-subscribe', afterSequence: 2 });
+    expect(ws.sent).toContainEqual({ kind: 'daemon-snapshot', snapshot: daemonSnapshot() });
+
+    const event = {
+      protocolVersion: DAEMON_PROTOCOL_VERSION,
+      eventId: 'event-6',
+      sequence: 6,
+      revision: 4,
+      occurredAt: '2026-09-04T10:00:02.000Z',
+      kind: 'entity.upserted',
+      payload: { entityType: 'session', entityId: 'agent-1' },
+    } satisfies DaemonEvent;
+    daemon.emit(event);
+    expect(ws.sent).toContainEqual({ kind: 'daemon-event', event });
+
+    ws.clientSend({ kind: 'daemon-events-unsubscribe' });
+    daemon.emit({ ...event, eventId: 'event-7', sequence: 7 });
+    expect(ws.sent.filter((message) => message.kind === 'daemon-event')).toHaveLength(1);
+  });
+
+  it('releases its daemon event observer when the socket closes', async () => {
+    const daemon = makeDaemonSource();
+    const ws = new FakeWs();
+    const { options } = makeOptions({ daemonSource: daemon.source });
+    await authed(ws, options);
+
+    ws.close();
+
+    expect(daemon.unsubscribe).toHaveBeenCalledOnce();
+  });
 });
