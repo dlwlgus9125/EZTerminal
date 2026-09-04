@@ -11,6 +11,7 @@ import type {
 } from '../shared/agent';
 import type { AgentCoordinationSnapshot } from '../shared/agent-coordination';
 import type { GitDiffResult } from '../shared/git-status';
+import { DAEMON_PROTOCOL_VERSION, type DaemonSnapshot } from '../shared/daemon-protocol';
 import {
   AGENT_ORCHESTRATION_SCHEMA_VERSION,
   DEFAULT_COLLABORATION_LIMITS,
@@ -454,6 +455,76 @@ describe('AgentHub Lead-only orchestration projection', () => {
     expect(container.querySelectorAll('[data-testid="agent-row"]')).toHaveLength(1);
     expect(container.querySelectorAll('.agent-followup-input')).toHaveLength(1);
     expect(container.textContent).not.toContain('C:\\worker');
+  });
+});
+
+describe('AgentHub structured daemon navigation', () => {
+  it('makes persisted structured sessions discoverable and delegates opening to App', async () => {
+    const now = '2026-09-04T10:30:00.000Z';
+    const daemonSnapshot: DaemonSnapshot = {
+      protocolVersion: DAEMON_PROTOCOL_VERSION,
+      revision: 2,
+      eventSequence: 4,
+      generatedAt: now,
+      runtime: {
+        keepRunning: false,
+        startAtLogin: false,
+        orchestrationToolsEnabled: true,
+        browserEnabled: false,
+      },
+      projects: [{
+        id: 'project', name: 'Product', rootPath: 'C:\\Product', source: 'native',
+        revision: 1, createdAt: now, updatedAt: now,
+      }],
+      workspaces: [{
+        id: 'workspace', projectId: 'project', name: 'main', kind: 'local', rootPath: 'C:\\Product',
+        revision: 1, createdAt: now, updatedAt: now,
+      }],
+      sessions: [{
+        id: 'structured-session', projectId: 'project', workspaceId: 'workspace', kind: 'agent',
+        title: 'Persisted session', state: 'idle', source: 'structured',
+        revision: 1, createdAt: now, updatedAt: now,
+      }],
+      agents: [{
+        sessionId: 'structured-session', providerId: 'codex', permissionPreset: 'standard',
+        state: 'idle', queuedTurnCount: 0, orchestrationEnabled: true,
+        revision: 1, createdAt: now, updatedAt: now,
+      }],
+      agentRelations: [],
+      turns: [],
+      transcriptHeads: [],
+      approvals: [],
+      providers: [{
+        id: 'codex', displayName: 'Codex', protocol: 'codex-app-server', executablePath: 'codex',
+        executableVersion: '1', argv: ['app-server'], environmentVariableNames: [], capabilities: [],
+        enabled: true, health: 'ready', revision: 1, createdAt: now, updatedAt: now,
+      }],
+      schedules: [],
+      heartbeats: [],
+    };
+    Object.defineProperty(window, 'ezterminal', {
+      configurable: true,
+      value: {
+        listAgentProjects: vi.fn(async () => ({ items: [], nextCursor: null })),
+      },
+    });
+    const onOpenStructuredAgentSession = vi.fn();
+    const stop = vi.fn();
+    await renderHub({ revision: 1, items: [] }, {
+      onOpenStructuredAgentSession,
+      daemonAgentSessionAccess: {
+        getSnapshot: vi.fn(async () => daemonSnapshot),
+        observeEvents: vi.fn(() => stop),
+      },
+    });
+
+    expect(container.querySelector('[data-testid="daemon-agent-sessions"]')).not.toBeNull();
+    act(() => container.querySelector<HTMLButtonElement>('[data-session-id="structured-session"]')!.click());
+    expect(onOpenStructuredAgentSession).toHaveBeenCalledWith({
+      sessionId: 'structured-session',
+      title: 'Persisted session',
+      providerLabel: 'Codex',
+    });
   });
 });
 

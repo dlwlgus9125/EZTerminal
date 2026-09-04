@@ -3761,6 +3761,7 @@ export function App(): JSX.Element {
           },
           onLaunchAgent: launchAgent,
           onOpenStructuredAgentDraft: openStructuredAgentDraft,
+          onOpenStructuredAgentSession: openStructuredAgentSession,
           onOpenProjectTerminal: openProjectTerminal,
           onOpenAgentSettings: () => {
             setSettingsCategoryRequest((current) => ({ category: 'agents', id: current.id + 1 }));

@@ -64,6 +64,10 @@ import type { ProjectCodeLocation } from './project-code-navigation';
 import type { ProjectEditorDocument } from './project-editor-model';
 import { AgentFollowupComposer } from './AgentFollowupComposer';
 import { AgentApprovalCountdown, AgentElapsed, AgentRelativeAge } from './AgentTime';
+import {
+  DaemonAgentSessions,
+  type DaemonAgentSessionListAccess,
+} from './DaemonAgentSessions';
 import { DeferredSearchInput } from './DeferredSearchInput';
 import { useLatestRequestGate } from './latest-request';
 import {
@@ -172,6 +176,14 @@ export interface AgentHubProps {
     target?: ProjectSessionTarget,
     locationLabel?: string,
   ) => void;
+  /** Reuses or opens a normal structured Agent tab from the daemon projection. */
+  readonly onOpenStructuredAgentSession?: (input: {
+    readonly sessionId: string;
+    readonly title?: string;
+    readonly providerLabel?: string;
+  }) => void;
+  /** Injectable seam for deterministic component stories and tests. */
+  readonly daemonAgentSessionAccess?: DaemonAgentSessionListAccess;
   readonly onOpenProjectTerminal?: (projectSession: ProjectSessionPanelMetadata) => void;
   readonly onOpenAgentSettings?: () => void;
   readonly onDecideManagedMerge?: (
@@ -216,6 +228,8 @@ export function AgentHub({
   onProjectDrillChange,
   onLaunchAgent,
   onOpenStructuredAgentDraft,
+  onOpenStructuredAgentSession,
+  daemonAgentSessionAccess,
   onOpenProjectTerminal,
   onOpenAgentSettings,
   onDecideManagedMerge,
@@ -1454,6 +1468,12 @@ export function AgentHub({
                 );
               })}
             </ol>
+            {!mobile && onOpenStructuredAgentSession && (
+              <DaemonAgentSessions
+                access={daemonAgentSessionAccess}
+                onOpenSession={onOpenStructuredAgentSession}
+              />
+            )}
             {projectCursor && (
               <Button
                 className="agent-projects-more"
@@ -1468,7 +1488,7 @@ export function AgentHub({
               </Button>
             )}
           </section>
-          {coordinatedActivities.length === 0 && (
+          {!onOpenStructuredAgentSession && coordinatedActivities.length === 0 && (
             <div className="agent-empty">{t('agentHub.empty')}</div>
           )}
           {renderGroup('active', t('agentHub.groups.active'), groups.active)}
