@@ -52,8 +52,8 @@ ps | where memory > 100mb | sort-by memory
   parking and renderer recovery without discarding eligible live runs.
 - **Projects and coding agents in context.** Browse a project tree, inspect full-file inline diffs
   beside a live terminal, manage worktrees, and follow Codex, Claude, or configured Agent sessions
-  through attention, approval, history, resume, change-review, Project coordination, and managed
-  merge states.
+  through durable Project → Workspace → Session navigation, semantic transcripts, direct child
+  conversations, approval, history, resume, change-review, and managed merge states.
 - **Files, SSH, and local operations tooling.** Use the built-in Explorer, bounded file previews,
   drag-to-terminal paths, TOFU-verified SSH, loopback-only SSH forwards, a system monitor, and
   optional Npcap packet capture.
@@ -80,7 +80,10 @@ ezterminal sessions
 ezterminal agents
 ezterminal schedules
 'Continue with the approved task.' | ezterminal send Builder --stdin
-ezterminal cancel Builder
+ezterminal agent read Builder --limit 100
+ezterminal agent cancel Builder
+'{"permissionPreset":"plan"}' | ezterminal agent settings Builder --stdin
+'{"name":"Morning","workspace":"Main","providerId":"codex","permissionPreset":"standard","prompt":"Review blockers.","cron":"0 9 * * 1-5","timezone":"Asia/Seoul","enabled":false}' | ezterminal schedule create --stdin
 ezterminal schedule run Morning
 ezterminal heartbeat trigger Builder
 ```
@@ -100,12 +103,17 @@ ezterminal-agent wait Reviewer --until done
 ezterminal-agent merge request --target main --wait
 ```
 
-Desktop Settings can also create preset-based Codex/Claude Personas, arrange 2–8 of them into a Team,
-and optionally prefill a reusable desired outcome with observable completion criteria. A Team run
-keeps the Project purpose as read-only context, freezes one target commit, starts only its Planner,
-and waits for a structured plan to be
-reviewed. Approval returns the Planner's assignment and opens each other approved member in a
-separate managed worktree; partial launch failures stay visible and retryable.
+**New Agent** opens a draft tab; no provider process, daemon Session, or transcript is created until
+the first Send. Codex sessions use the Codex app-server protocol and Claude sessions use the Claude
+Agent SDK streaming protocol, while ordinary CLI/TUI programs remain normal terminal sessions.
+Persisted Agent sessions can be reopened from their Project and Workspace. Managed child Agents use
+the same conversation surface as their parent, can mix providers recursively within the runtime
+caps, and can be opened and controlled directly. Provider-native children remain visibly read-only.
+
+Settings → Agents owns explicit provider review, background-host lifecycle, schedules, and legacy
+terminal activity hooks. There is no per-Project collaboration switch, Persona editor, or Team graph
+in the active workflow. The old collaboration CLI is retained only as a one-major-release
+compatibility surface.
 
 Managed merge never turns an arbitrary terminal command into an approval
 button. It accepts only committed changes from an EZTerminal-managed worktree,
