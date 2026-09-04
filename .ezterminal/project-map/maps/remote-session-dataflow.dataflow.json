@@ -2,244 +2,459 @@
   "schemaVersion": 2,
   "id": "remote-session-dataflow",
   "type": "dataflow",
-  "title": "Remote session dataflow",
-  "summary": "How terminal frames and desktop-control signals cross the authenticated desktop-to-mobile transport.",
+  "title": "Authenticated v12 Agent session dataflow",
+  "summary": "How an Android Agent command crosses exact-version authentication into the same revisioned SQLite authority, then returns as correlated receipts, bounded transcripts, and gap-recoverable snapshot and event projections.",
   "contentLocale": "en",
   "layoutIntent": {
     "density": "balanced",
-    "emphasisIds": ["interpreter-frame", "encoded-frame", "authenticated-socket", "mobile-run"]
+    "emphasisIds": [
+      "mobile-agent-command",
+      "v12-ingress",
+      "android-principal-command",
+      "authorized-outbox",
+      "sqlite-session-graph",
+      "revisioned-events",
+      "v12-egress",
+      "mobile-agent-projection"
+    ]
   },
   "chapters": [
     {
-      "id": "terminal-mirror",
-      "title": "Terminal mirror",
-      "summary": "Interpreter frames are encoded, transported, decoded, and applied to a mobile run.",
-      "focusIds": ["interpreter-frame", "encoded-frame", "authenticated-socket", "mobile-run", "frame-to-wire", "wire-to-mobile"]
+      "id": "authenticated-command-path",
+      "title": "Authenticated command path",
+      "summary": "The host accepts only an exact v12 authenticated connection, replaces the claimed principal with the connected Android identity, and executes through the durable command FIFO.",
+      "focusIds": ["mobile-agent-command", "v12-ingress", "android-principal-command", "authorized-outbox", "sqlite-session-graph"]
     },
     {
-      "id": "control-return-path",
-      "title": "Control return path",
-      "summary": "Mobile controls return through the same authenticated connection to the exact run or desktop lease.",
-      "focusIds": ["mobile-control", "authenticated-socket", "run-control", "control-to-socket", "socket-to-control"]
+      "id": "revisioned-return-path",
+      "title": "Revisioned return path",
+      "summary": "Committed events prompt authoritative snapshot refresh; duplicates are ignored and gaps or revision regression force a clean resubscription.",
+      "focusIds": ["sqlite-session-graph", "revisioned-events", "v12-egress", "mobile-agent-projection"]
     },
     {
-      "id": "desktop-control",
-      "title": "Desktop control",
-      "summary": "Desktop video and input are governed by a single main-owned lease beside terminal mirroring.",
-      "focusIds": ["desktop-lease", "mobile-run", "desktop-to-mobile"]
+      "id": "session-transcript",
+      "title": "Bounded session transcript",
+      "summary": "A selected structured Session reads a forward-only bounded transcript page and rejects malformed or mismatched items on mobile.",
+      "focusIds": ["sqlite-session-graph", "bounded-transcript", "v12-egress", "mobile-agent-projection"]
+    },
+    {
+      "id": "safe-mode-projection",
+      "title": "Safe-mode projection",
+      "summary": "Remote clients receive authority availability without local recovery paths and cannot issue structured commands while the host is in terminal-only safe mode.",
+      "focusIds": ["authority-availability", "redacted-availability", "v12-egress", "mobile-agent-projection"]
     }
   ],
   "stages": [
-    { "id": "desktop-runtime", "label": "Desktop runtime" },
+    { "id": "mobile-intent", "label": "Mobile intent" },
+    { "id": "authenticated-ingress", "label": "Authenticated ingress" },
+    { "id": "main-authority", "label": "Electron-main authority" },
     { "id": "host-projection", "label": "Host projection" },
-    { "id": "trusted-transport", "label": "Trusted transport" },
-    { "id": "mobile-runtime", "label": "Mobile runtime" }
+    { "id": "authenticated-egress", "label": "Authenticated egress" },
+    { "id": "mobile-projection", "label": "Mobile projection" }
   ],
   "entities": [
     {
-      "id": "interpreter-frame",
-      "label": "Interpreter frame",
-      "detail": "Typed start/schema/chunk/PTY lifecycle data from one run port.",
+      "id": "mobile-agent-command",
+      "label": "Mobile Agent command",
+      "detail": "A typed daemon command carries a stable command and idempotency identity; mobile never replays it after a dropped connection.",
       "kind": "source",
-      "stage": "desktop-runtime",
+      "stage": "mobile-intent",
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+          "startLine": 1984,
+          "endLine": 2015,
+          "lineDigest": "sha256:36acf0398a8b0347c4e17ef04682d9635eb1e997cc7f34d18abb965b6fbe65f8",
+          "claim": "Mobile sends one daemon command request, rejects it locally in safe mode, and converts an unavailable connection into an explicit delivery-uncertain receipt."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+          "startLine": 3805,
+          "endLine": 3811,
+          "lineDigest": "sha256:7af4c125f1997ec57155a368388d7e79f399e8adc73039695ca5e76bc5a00bb6",
+          "claim": "Connection loss settles each pending daemon command as delivery-uncertain and clears it rather than replaying the mutation."
+        }
+      ]
+    },
+    {
+      "id": "v12-ingress",
+      "label": "Authenticated v12 ingress",
+      "detail": "Operational frames enter only after bearer or one-shot pairing authentication, exact protocol negotiation, and client identity binding.",
+      "kind": "boundary",
+      "stage": "authenticated-ingress",
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/shared/remote-protocol.ts",
+          "startLine": 120,
+          "endLine": 145,
+          "lineDigest": "sha256:e5f74da22a64e9b276656eee8606ef048860b27253cf953d61d222d25cb1d29e",
+          "claim": "Remote protocol v12 replaces collaboration projection with the revisioned daemon surface and admits only version 12 in this build."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 1857,
+          "endLine": 1938,
+          "lineDigest": "sha256:d7c9f4ba52ddcc24de61885963dfb0905e5f5c5facd9ec8a390ed60948214f29",
+          "claim": "The host ignores non-auth frames, verifies bearer or consumes a matching pairing generation, enforces exact v12 identity, then marks the socket authenticated."
+        }
+      ]
+    },
+    {
+      "id": "android-principal-command",
+      "label": "Android-principal command",
+      "detail": "The bridge parses the strict daemon envelope after overwriting any caller-supplied principal with the authenticated client identity.",
+      "kind": "transform",
+      "stage": "main-authority",
       "order": 0,
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1366,
-        "endLine": 1384,
-        "lineDigest": "sha256:6fb3bc09beb75f7d4ed809ca244cf7d48ed77e80c39ab0bc28cea537bd715e1e",
-        "claim": "The bridge observes a run MessagePort and receives InterpreterFrame values."
+        "startLine": 2488,
+        "endLine": 2525,
+        "lineDigest": "sha256:58a73aa02a0f7694d097593adcc869f9c87c75d9a882d3318018a7fa013587a5",
+        "claim": "The command handler requires v12 and a bound client, replaces principal with that Android id, strictly parses the result, checks availability, and executes it."
       }]
     },
     {
-      "id": "encoded-frame",
-      "label": "Wire-safe run frame",
-      "detail": "Binary and structured frame fields are converted to the remote protocol shape.",
+      "id": "authorized-outbox",
+      "label": "Authorized FIFO and outbox",
+      "detail": "Principal policy, expected revision, idempotency, provider-dispatch state, and the resulting receipt are serialized before projection.",
+      "kind": "transform",
+      "stage": "main-authority",
+      "order": 1,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/daemon-command-router.ts",
+        "startLine": 334,
+        "endLine": 420,
+        "lineDigest": "sha256:c02c653018ba4a7c3862e79035f1f80c7cc279a974a1f268540e9557c86aa8d0",
+        "claim": "The exclusive router authorizes the bound principal, deduplicates by idempotency key, records provider dispatch, commits or rejects, and publishes durable events."
+      }]
+    },
+    {
+      "id": "sqlite-session-graph",
+      "label": "Revisioned SQLite Session graph",
+      "detail": "One snapshot owns Project, Workspace, Session, Agent relation, turn, transcript head, approval, provider, schedule, and heartbeat state.",
+      "kind": "store",
+      "stage": "main-authority",
+      "order": 2,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/shared/daemon-protocol.ts",
+        "startLine": 215,
+        "endLine": 236,
+        "lineDigest": "sha256:ed1c720fab5764b6ec13ee8dadc43f98a6bed62b70f2c562b5fc7c9cbcbefcff",
+        "claim": "The v12 snapshot carries runtime settings and the revisioned Project, Workspace, Session, Agent, relation, turn, transcript, approval, and provider collections."
+      }]
+    },
+    {
+      "id": "revisioned-events",
+      "label": "Revisioned daemon events",
+      "detail": "Every durable mutation is projected as an ordered event; subscribed remote clients receive it only after authentication.",
+      "kind": "source",
+      "stage": "host-projection",
+      "order": 0,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-command-router.ts",
+          "startLine": 579,
+          "endLine": 595,
+          "lineDigest": "sha256:0c90e7a29b5f0a01dfefa1c223199da2497b621a2f47998f98a49f3c4350248b",
+          "claim": "After a commit, the router reads ordered events from the store and treats observers as non-authoritative projections."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/remote-bridge.ts",
+          "startLine": 1773,
+          "endLine": 1778,
+          "lineDigest": "sha256:7a62f930fc509f9a6453e3d2c1e289b32fab4d4ef265e7318ef923555ceb35e6",
+          "claim": "The bridge emits daemon events only to authenticated, explicitly subscribed v12 connections."
+        }
+      ]
+    },
+    {
+      "id": "bounded-transcript",
+      "label": "Bounded transcript page",
+      "detail": "A forward-only Session transcript page is read from the authority and marked unavailable rather than leaking partial failure.",
       "kind": "transform",
       "stage": "host-projection",
       "order": 1,
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1375,
-        "endLine": 1387,
-        "lineDigest": "sha256:5584a204b526823be19e9d1556e1e6140962b8177f8228b6f77dcbd85860930c",
-        "claim": "The bridge encodes an InterpreterFrame immediately before sending it."
+        "startLine": 2429,
+        "endLine": 2460,
+        "lineDigest": "sha256:2911989044b70d32431cf4bc982f07d0ec4f6c3f36c83b94b7a926341f99e114",
+        "claim": "Transcript reads require ready v12 authority and return either the exact bounded Session page or an explicit unavailable empty page."
       }]
     },
     {
-      "id": "authenticated-socket",
-      "label": "Authenticated WebSocket",
-      "detail": "One size-capped, generation-bound connection carries remote protocol messages.",
-      "kind": "boundary",
-      "stage": "trusted-transport",
+      "id": "authority-availability",
+      "label": "Local authority availability",
+      "detail": "Ready or legacy-only-safe-mode state includes schema and database disposition; only trusted desktop state may include a recovery path.",
+      "kind": "source",
+      "stage": "main-authority",
+      "order": 3,
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/shared/daemon-authority.ts",
+        "startLine": 19,
+        "endLine": 43,
+        "lineDigest": "sha256:2777baa6b3eb69fe24ca386178ed60ebbd5f773554da6d44a818e8b1a78f1335",
+        "claim": "The authority type distinguishes ready and safe mode, records database disposition, and reserves recoveryPath for trusted Desktop consumers."
+      }]
+    },
+    {
+      "id": "redacted-availability",
+      "label": "Remote-safe availability",
+      "detail": "The host removes local recovery paths and fails closed to preserved safe mode if availability cannot be read.",
+      "kind": "transform",
+      "stage": "host-projection",
       "order": 2,
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1757,
-        "endLine": 1840,
-        "lineDigest": "sha256:11769dadaaca439fdbaa339e54b4ff1d7a34f75be97e508aef08998ed669512c",
-        "claim": "The connection ignores operational frames until token authentication and client identity settle."
+        "startLine": 1123,
+        "endLine": 1150,
+        "lineDigest": "sha256:dc53275637a10c00aa6a0cd59061566213a552752462d69286499b8ad5ba6d0d",
+        "claim": "RemoteDaemonSource is narrowed to snapshot, transcript, command, and event methods, and its availability is redacted before serialization."
       }]
     },
     {
-      "id": "mobile-run",
-      "label": "Mobile run projection",
-      "detail": "The mobile transport routes decoded frames to the matching run observer.",
-      "kind": "sink",
-      "stage": "mobile-runtime",
-      "order": 3,
+      "id": "v12-egress",
+      "label": "Authenticated v12 egress",
+      "detail": "Correlated receipts, snapshots, transcripts, redacted availability, and subscribed events return over the authenticated connection.",
+      "kind": "boundary",
+      "stage": "authenticated-egress",
+      "order": 1,
       "evidence": [{
         "rootAlias": "app",
-        "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-        "startLine": 3892,
-        "endLine": 3924,
-        "lineDigest": "sha256:6996c4150a20020c2f3a7e0499aada0ad11861b7207a9065030cd2281d7562b5",
-        "claim": "The mobile transport dispatches a frame message to the matching run handler."
+        "relativePath": "src/shared/remote-protocol.ts",
+        "startLine": 1155,
+        "endLine": 1186,
+        "lineDigest": "sha256:2254e94e91faaa3bda7b442095d1dd4613ecc2142cb6b3ffc8ea937a8d4e9103",
+        "claim": "The v12 return contract has explicit snapshot, transcript, redacted availability, correlated command receipt, and revisioned event envelopes."
       }]
     },
     {
-      "id": "mobile-control",
-      "label": "Mobile input and flow control",
-      "detail": "PTY input, resize, acknowledgement, and viewport controls originate on mobile.",
-      "kind": "source",
-      "stage": "mobile-runtime",
+      "id": "mobile-agent-projection",
+      "label": "Mobile Agent projection",
+      "detail": "Mobile accepts monotonic snapshots, detects duplicate, gap, or regression events, and refetches before resubscribing after discontinuity.",
+      "kind": "sink",
+      "stage": "mobile-projection",
       "order": 0,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-        "startLine": 2699,
-        "endLine": 2751,
-        "lineDigest": "sha256:58692c59b3263d874dd9f3d2475eaac050b4a3caedbfc755fe6b44cdd5dd0879",
-        "claim": "The mobile client checks negotiated capability and sends desktop-control requests through its authenticated transport."
-      }]
-    },
-    {
-      "id": "run-control",
-      "label": "Exact run control",
-      "detail": "The bridge forwards admissible controls only to the named live run port.",
-      "kind": "sink",
-      "stage": "desktop-runtime",
-      "order": 3,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 2186,
-        "endLine": 2216,
-        "lineDigest": "sha256:66c154f07c92556fbfcb7ae3a7c107d7c79dbf09e717c713ffada97d4276ff4f",
-        "claim": "A control message resolves the exact run record before posting to its MessagePort."
-      }]
-    },
-    {
-      "id": "desktop-lease",
-      "label": "Desktop-control lease",
-      "detail": "Main owns one graphical-control session and its native child process.",
-      "kind": "store",
-      "stage": "desktop-runtime",
-      "order": 4,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/remote-desktop-controller.ts",
-        "startLine": 98,
-        "endLine": 127,
-        "lineDigest": "sha256:9dbec057f703ce586209b103c80c846dbf01d08baa53efde16ff055e47e19f85",
-        "claim": "RemoteDesktopController owns the single desktop-control lease and unprivileged WebRTC child."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+          "startLine": 3457,
+          "endLine": 3517,
+          "lineDigest": "sha256:25106c9a3a1fd8bac8bd8d5ec443a564d65ac0ce6a3107da9b4d594c4d46c376",
+          "claim": "Mobile accepts only a non-regressing authoritative snapshot and responds to event gaps or revision regression by refetching and resubscribing from the new cursor."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+          "startLine": 4551,
+          "endLine": 4587,
+          "lineDigest": "sha256:83c17a2a2e37318b6e54ea36408ac01d540a60d21fe46deaa8f6b932740e3810",
+          "claim": "Mobile correlates receipts, validates bounded transcript items against the requested Session, and feeds valid daemon events into continuity handling."
+        }
+      ]
     }
   ],
   "flows": [
     {
-      "id": "frame-to-wire",
-      "from": "interpreter-frame",
-      "to": "encoded-frame",
-      "label": "encode",
+      "id": "command-to-ingress",
+      "from": "mobile-agent-command",
+      "to": "v12-ingress",
+      "label": "send once",
+      "kind": "primary",
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+          "startLine": 1984,
+          "endLine": 2015,
+          "lineDigest": "sha256:36acf0398a8b0347c4e17ef04682d9635eb1e997cc7f34d18abb965b6fbe65f8",
+          "claim": "A command enters the transport once and immediately becomes delivery-uncertain when it cannot be sent."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "mobile/src/transport/ws-ezterminal.ts",
+          "startLine": 3805,
+          "endLine": 3811,
+          "lineDigest": "sha256:7af4c125f1997ec57155a368388d7e79f399e8adc73039695ca5e76bc5a00bb6",
+          "claim": "A connection drop resolves the original pending command as delivery-uncertain and removes it without transport replay."
+        }
+      ]
+    },
+    {
+      "id": "ingress-to-principal",
+      "from": "v12-ingress",
+      "to": "android-principal-command",
+      "label": "bind client identity",
       "kind": "primary",
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1375,
-        "endLine": 1384,
-        "lineDigest": "sha256:4749b93d5a29318563fb942e394546946c84540a78eb4e963a44c077986e5027",
-        "claim": "Each observed interpreter frame is encoded into a frame protocol message."
+        "startLine": 2488,
+        "endLine": 2503,
+        "lineDigest": "sha256:a86dadd123a9026b869c1906a5faad520b47ec978e68d2a29fbd9af4263e4be9",
+        "claim": "Only the authenticated connection's client id becomes the Android principal of the strict daemon command."
       }]
     },
     {
-      "id": "wire-to-socket",
-      "from": "encoded-frame",
-      "to": "authenticated-socket",
-      "label": "bounded send",
+      "id": "principal-to-outbox",
+      "from": "android-principal-command",
+      "to": "authorized-outbox",
+      "label": "authorize and serialize",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/daemon-command-router.ts",
+        "startLine": 202,
+        "endLine": 223,
+        "lineDigest": "sha256:ae2c52bc6410a53d9fbd160fd5feeb9aaa31e96c7e09d0ed5472454964de2be8",
+        "claim": "The parsed command joins the same exclusive FIFO used by every daemon client."
+      }]
+    },
+    {
+      "id": "outbox-to-graph",
+      "from": "authorized-outbox",
+      "to": "sqlite-session-graph",
+      "label": "atomic durable commit",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/daemon-command-router.ts",
+        "startLine": 367,
+        "endLine": 419,
+        "lineDigest": "sha256:524d17f1511b3f90f92e97de397a97fa3edce1c3f611e01958bf614f437980b5",
+        "claim": "Outbox state and command effects settle durably before the router returns a receipt or publishes events."
+      }]
+    },
+    {
+      "id": "graph-to-events",
+      "from": "sqlite-session-graph",
+      "to": "revisioned-events",
+      "label": "ordered projection",
+      "kind": "primary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/daemon-command-router.ts",
+        "startLine": 579,
+        "endLine": 595,
+        "lineDigest": "sha256:0c90e7a29b5f0a01dfefa1c223199da2497b621a2f47998f98a49f3c4350248b",
+        "claim": "Published events are read back from the durable sequence after commit rather than synthesized by a transport."
+      }]
+    },
+    {
+      "id": "events-to-egress",
+      "from": "revisioned-events",
+      "to": "v12-egress",
+      "label": "subscribed event",
       "kind": "primary",
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1375,
-        "endLine": 1388,
-        "lineDigest": "sha256:27108294dce5441ab30ae4d61ab65c78378915d70b1c0b42fa3ba43536189f9c",
-        "claim": "The encoded frame is sent on the connection that owns this run observer."
+        "startLine": 1773,
+        "endLine": 1778,
+        "lineDigest": "sha256:7a62f930fc509f9a6453e3d2c1e289b32fab4d4ef265e7318ef923555ceb35e6",
+        "claim": "Only an authenticated v12 socket with an active daemon subscription receives the event envelope."
       }]
     },
     {
-      "id": "wire-to-mobile",
-      "from": "authenticated-socket",
-      "to": "mobile-run",
-      "label": "decode and route",
+      "id": "egress-to-mobile",
+      "from": "v12-egress",
+      "to": "mobile-agent-projection",
+      "label": "validate and reconcile",
       "kind": "primary",
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-        "startLine": 3896,
-        "endLine": 3920,
-        "lineDigest": "sha256:6abeee58d68048efedc0e34fac85c9e8a246642c7a35584002a1f7693f5c4aba",
-        "claim": "Mobile routes only decoded frame messages with a matching run identifier."
+        "startLine": 3490,
+        "endLine": 3517,
+        "lineDigest": "sha256:c82412e21d9783fe44ab9a9fa30cf706ed69d4e046ff41c3c152431df2461a8b",
+        "claim": "A valid event advances the cursor through an authoritative refresh; a gap or regression invalidates the local projection and forces reseeding."
       }]
     },
     {
-      "id": "control-to-socket",
-      "from": "mobile-control",
-      "to": "authenticated-socket",
-      "label": "send control",
+      "id": "graph-to-transcript",
+      "from": "sqlite-session-graph",
+      "to": "bounded-transcript",
+      "label": "read forward page",
       "kind": "secondary",
       "evidence": [{
         "rootAlias": "app",
-        "relativePath": "mobile/src/transport/ws-ezterminal.ts",
-        "startLine": 2727,
-        "endLine": 2749,
-        "lineDigest": "sha256:efc2a2f06d874f9608e6a94aa5a3621f4a7f2e145055029aa8b62b75c3e1622d",
-        "claim": "Desktop signal messages use the same authenticated client send path."
+        "relativePath": "src/main/daemon-command-router.ts",
+        "startLine": 177,
+        "endLine": 195,
+        "lineDigest": "sha256:1a2db6d9849a2167256a4b6fe331d54606b8bee1062c3a4bf5adc7b75225ac58",
+        "claim": "Transports read Session transcript items through a bounded router method without access to the SQLite store itself."
       }]
     },
     {
-      "id": "socket-to-control",
-      "from": "authenticated-socket",
-      "to": "run-control",
-      "label": "authorize and forward",
+      "id": "transcript-to-egress",
+      "from": "bounded-transcript",
+      "to": "v12-egress",
+      "label": "correlated page",
       "kind": "secondary",
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 2195,
-        "endLine": 2216,
-        "lineDigest": "sha256:43cb5e955dc6452b380eeb8baa02309fbdcb42f1db4fcb5daa7dd4d27776b1a5",
-        "claim": "The host forwards a control only when the exact run record exists."
+        "startLine": 2429,
+        "endLine": 2460,
+        "lineDigest": "sha256:2911989044b70d32431cf4bc982f07d0ec4f6c3f36c83b94b7a926341f99e114",
+        "claim": "The host returns transcript items with the original request and Session ids or explicitly marks the page unavailable."
       }]
     },
     {
-      "id": "desktop-to-mobile",
-      "from": "desktop-lease",
-      "to": "mobile-run",
-      "label": "WebRTC video and status",
-      "kind": "optional",
+      "id": "availability-to-redaction",
+      "from": "authority-availability",
+      "to": "redacted-availability",
+      "label": "remove local paths",
+      "kind": "secondary",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/shared/daemon-authority.ts",
+        "startLine": 40,
+        "endLine": 57,
+        "lineDigest": "sha256:49a9eba64d4e60a7f5c99206127a5ed809e099ab9e761fdead5766b7456cf7a1",
+        "claim": "The remote-safe type and conversion preserve the safe-mode reason and schema while structurally excluding recoveryPath."
+      }]
+    },
+    {
+      "id": "redaction-to-egress",
+      "from": "redacted-availability",
+      "to": "v12-egress",
+      "label": "safe status",
+      "kind": "secondary",
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/remote-bridge.ts",
-        "startLine": 1915,
-        "endLine": 1976,
-        "lineDigest": "sha256:81d8f6a26082207e55a37e9fb554bf1706a29488e0dbf8d8da843aa32bf4ec2d",
-        "claim": "Desktop-control start, signal, and stop messages are delegated to the main-owned desktop source."
+        "startLine": 1995,
+        "endLine": 2005,
+        "lineDigest": "sha256:1c7c6e9fe0085f95d654460a7ef58e52143ff70bdb0bbd162948e044c2191ac8",
+        "claim": "Immediately after authentication the host sends redacted availability and sends a structured snapshot only when authority state is ready."
       }]
     }
   ],
-  "primaryPath": ["interpreter-frame", "encoded-frame", "authenticated-socket", "mobile-run"]
+  "primaryPath": [
+    "mobile-agent-command",
+    "v12-ingress",
+    "android-principal-command",
+    "authorized-outbox",
+    "sqlite-session-graph",
+    "revisioned-events",
+    "v12-egress",
+    "mobile-agent-projection"
+  ]
 }

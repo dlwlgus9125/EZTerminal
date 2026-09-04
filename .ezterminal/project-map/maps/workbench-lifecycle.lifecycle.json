@@ -2,283 +2,361 @@
   "schemaVersion": 2,
   "id": "workbench-lifecycle",
   "type": "lifecycle",
-  "title": "Workbench persistence lifecycle",
-  "summary": "How a persisted layout is sanitized, restored, operated, checkpointed, recovered, and drained.",
+  "title": "Local Agent authority lifecycle",
+  "summary": "How the Electron-owned structured Agent authority verifies and recovers durable state, remains usable without a window, fails closed into terminal-only safe mode, and drains before SQLite closes.",
   "contentLocale": "en",
   "layoutIntent": {
     "density": "balanced",
-    "emphasisIds": ["persisted", "validating", "restoring", "ready", "checkpointed", "recovering", "closed"]
+    "emphasisIds": [
+      "persisted-material",
+      "verifying-store",
+      "authority-ready",
+      "terminal-only-safe-mode",
+      "background-running",
+      "draining-authority",
+      "closed"
+    ]
   },
   "chapters": [
     {
-      "id": "safe-restore",
-      "title": "Safe restore",
-      "summary": "Disk input is sanitized and validated before Dockview receives it.",
-      "focusIds": ["persisted", "validating", "restoring", "validate-layout", "restore-layout"]
+      "id": "crash-safe-startup",
+      "title": "Crash-safe startup",
+      "summary": "Existing material is contained, backed up when required, migrated, and reconciled before structured clients can observe ready state.",
+      "focusIds": ["persisted-material", "verifying-store", "authority-ready", "start-verification", "verification-ready"]
     },
     {
-      "id": "crash-recovery",
-      "title": "Crash recovery",
-      "summary": "Active surface checkpoints allow a renderer replacement to recover bounded UI state.",
-      "focusIds": ["ready", "checkpointed", "recovering", "capture-checkpoint", "renderer-replaced"]
+      "id": "safe-mode-fallback",
+      "title": "Terminal-only safe mode",
+      "summary": "Unsafe, future, corrupt, or unverified database state disables structured Agent mutation for the process lifetime while preserving legacy terminal access.",
+      "focusIds": ["verifying-store", "terminal-only-safe-mode", "verification-failed"]
     },
     {
-      "id": "clean-shutdown",
-      "title": "Clean shutdown",
-      "summary": "The app flushes the current layout before runtime owners are disposed.",
-      "focusIds": ["ready", "closed", "quit-and-flush"]
+      "id": "optional-window-lifetime",
+      "title": "Optional window lifetime",
+      "summary": "With keep-running enabled, closing the workbench hides the window while the Electron-main authority continues to own work.",
+      "focusIds": ["authority-ready", "background-running", "hide-window", "reopen-window"]
+    },
+    {
+      "id": "ordered-shutdown",
+      "title": "Ordered shutdown",
+      "summary": "Quit closes ingress, drains accepted commands and automation, persists Agent termination when legal, releases providers and MCP, then closes the store.",
+      "focusIds": ["authority-ready", "terminal-only-safe-mode", "draining-authority", "closed", "drain-and-close"]
     }
   ],
   "phases": [
-    { "id": "disk", "label": "Persisted input" },
-    { "id": "startup", "label": "Startup transaction" },
-    { "id": "active", "label": "Active workbench" },
-    { "id": "recovery", "label": "Renderer recovery" },
-    { "id": "shutdown", "label": "Shutdown" }
+    { "id": "durable-input", "label": "Durable input" },
+    { "id": "startup", "label": "Startup and recovery" },
+    { "id": "active", "label": "Active authority" },
+    { "id": "fallback", "label": "Fail-closed fallback" },
+    { "id": "shutdown", "label": "Ordered shutdown" }
   ],
   "states": [
     {
-      "id": "persisted",
-      "label": "Layout on disk",
-      "detail": "A versioned envelope contains bounded known panel data.",
+      "id": "persisted-material",
+      "label": "Persisted daemon material",
+      "detail": "SQLite, WAL sidecars, and named legacy sources remain under one contained user-data recovery boundary.",
       "kind": "initial",
-      "phase": "disk",
+      "phase": "durable-input",
       "order": 0,
       "evidence": [{
         "rootAlias": "app",
-        "relativePath": "src/main/layout-store.ts",
-        "startLine": 83,
-        "endLine": 107,
-        "lineDigest": "sha256:41a63dd299e5207d7b8c7b08e46848e2a8dd940f1ff5964097b2736a6bd813aa",
-        "claim": "LayoutStore reads and writes versioned layout envelopes through its owned file primitive."
+        "relativePath": "src/main/daemon-store-recovery.ts",
+        "startLine": 141,
+        "endLine": 163,
+        "lineDigest": "sha256:454816cb33df049acd88de0f69a9c4eca1e1bb7959aaa303d50d45fb36acf3c3",
+        "claim": "DaemonStoreRecovery owns the contained filesystem boundary for exact SQLite material and explicitly named legacy inputs."
       }]
     },
     {
-      "id": "validating",
-      "label": "Sanitizing and validating",
-      "detail": "Unknown or unsafe panel payloads fail before Dockview restoration.",
+      "id": "verifying-store",
+      "label": "Verifying and recovering store",
+      "detail": "Containment, integrity, backup, schema migration, and uncertain-command recovery must finish before the store becomes ready.",
       "kind": "transient",
       "phase": "startup",
       "order": 0,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/shared/layout-schema.ts",
-        "startLine": 393,
-        "endLine": 486,
-        "lineDigest": "sha256:2ce861079e37d426f870ea861b8967254675d58a93c3c7e769099dd51848850d",
-        "claim": "sanitizeSerializedLayout removes unsupported buckets and normalizes known panel payloads before validation."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-store.ts",
+          "startLine": 610,
+          "endLine": 695,
+          "lineDigest": "sha256:553d740f99709fd3be92e2000da2f830413ad7136f3bd5033b9a434adb37cd95",
+          "claim": "Initialization validates containment and existing database material, rejects future schemas, and requires a verified migration or legacy backup before mutation."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-store.ts",
+          "startLine": 698,
+          "endLine": 735,
+          "lineDigest": "sha256:e581d7e96f0440d669c0d594c1efc90c9c3b007164275494f00511150fef149e",
+          "claim": "The store opens with strict SQLite options, enables WAL and full synchronization, migrates, recovers uncertain commands, then marks itself ready."
+        }
+      ]
     },
     {
-      "id": "restoring",
-      "label": "Atomic restore transaction",
-      "detail": "Restore is generation-guarded and can fall back without exposing partial state.",
-      "kind": "transient",
-      "phase": "startup",
-      "order": 1,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/renderer/workbench-coordinator.ts",
-        "startLine": 350,
-        "endLine": 401,
-        "lineDigest": "sha256:527ee02d8948558add9ec49b9a53117e7cc636cd4c1aaa98f376c075aaafeed9",
-        "claim": "WorkbenchCoordinator restores within a transaction and handles failed or zero-panel restoration."
-      }]
-    },
-    {
-      "id": "ready",
-      "label": "Interactive workbench",
-      "detail": "Dockview panels are live and later layout changes are scheduled for persistence.",
+      "id": "authority-ready",
+      "label": "Structured authority ready",
+      "detail": "The router, session MCP, provider state machine, automation, and revisioned projections are live; the workbench is only one client.",
       "kind": "steady",
       "phase": "active",
       "order": 0,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/renderer/App.tsx",
-        "startLine": 3468,
-        "endLine": 3482,
-        "lineDigest": "sha256:8b421e60bdc6e5e3bf9c5988ba5ee9e18064f217cfb6a186496f535aca29c00b",
-        "claim": "The app attaches persistence listeners only after startup restoration settles."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts",
+          "startLine": 1029,
+          "endLine": 1059,
+          "lineDigest": "sha256:fdd2c92535cc7ba2e69b4cf10d4632f36b796d7949d2fb67345d974a4c8cd370",
+          "claim": "Only after store and lifecycle initialization does main synchronize settings, start MCP, rehydrate Agents, start automation, and bind shutdown to startup."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-agent-runtime.ts",
+          "startLine": 335,
+          "endLine": 353,
+          "lineDigest": "sha256:d3a345787b078d0f1879d601daa0ddbc9b4ebf9fbf168f73cb1649a33a4ebee2",
+          "claim": "Agent startup restores provider subscriptions, expires approvals, repairs claims, rehydrates Sessions, reconciles unsettled work, and rearms durable timeouts."
+        }
+      ]
     },
     {
-      "id": "checkpointed",
-      "label": "Recovery checkpoint captured",
-      "detail": "A bounded checkpoint records restorable panel and run identities.",
-      "kind": "steady",
-      "phase": "recovery",
+      "id": "terminal-only-safe-mode",
+      "label": "Terminal-only safe mode",
+      "detail": "The failure and database disposition are latched; structured Agent reads and writes stop while legacy terminal operation remains available.",
+      "kind": "error",
+      "phase": "fallback",
       "order": 0,
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/renderer/App.tsx",
-        "startLine": 3432,
-        "endLine": 3440,
-        "lineDigest": "sha256:a02cb05c616b1ef9d4ed9d9fb9695603efbfbf7ca8d14f2d985223f47e2fc24e",
-        "claim": "Layout and active-panel changes schedule renderer recovery checkpoints."
-      }]
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-authority-availability.ts",
+          "startLine": 15,
+          "endLine": 33,
+          "lineDigest": "sha256:2da0de8f2c63d82f611e09abe95474333474c963bc76cdf9f599fa59d51aa028",
+          "claim": "Any structured-store initialization error becomes a stable legacy-only safe-mode availability record with its database disposition."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts",
+          "startLine": 1680,
+          "endLine": 1740,
+          "lineDigest": "sha256:280a21b85ec8a437bf3965ce096c35d87e40b98403840e2cc2a19256181020de",
+          "claim": "Desktop clients can still read availability, while structured snapshot and command paths return unavailable or reject with the terminal-only safe-mode reason."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts",
+          "startLine": 801,
+          "endLine": 809,
+          "lineDigest": "sha256:3af45fffdc9e0a0cb7de49d6d5a9d989d64a1e1bd62f11f4f154a16dc7c4e3e9",
+          "claim": "Main reports structured authority failure as a terminal-preserving safe mode rather than failing the entire desktop runtime."
+        }
+      ]
     },
     {
-      "id": "recovering",
-      "label": "Renderer replacement",
-      "detail": "Main consumes one checkpoint for the replacement renderer generation.",
-      "kind": "transient",
-      "phase": "recovery",
+      "id": "background-running",
+      "label": "Window hidden, daemon running",
+      "detail": "With explicit keep-running preference, closing the main window hides it without ending provider or terminal processes.",
+      "kind": "steady",
+      "phase": "active",
       "order": 1,
       "evidence": [{
         "rootAlias": "app",
-        "relativePath": "src/main/renderer-recovery-checkpoint-store.ts",
-        "startLine": 1,
-        "endLine": 58,
-        "lineDigest": "sha256:cc3365070c62de75c528788c3c63d20d44e22db5abb41a00fdcdafed42d99714",
-        "claim": "The main-owned checkpoint store saves, consumes, and bounds renderer recovery state per sender."
+        "relativePath": "src/main/daemon-runtime.ts",
+        "startLine": 56,
+        "endLine": 88,
+        "lineDigest": "sha256:fed39a694258567d637f8ab9729a65029828db5cf9ac9b0336daacce595e8930",
+        "claim": "The main-window close policy hides only when keepRunning is enabled; opening restores, shows, and focuses the same authority client window."
       }]
     },
     {
-      "id": "closed",
-      "label": "Flushed and disposed",
-      "detail": "Layout persistence and runtime shutdown complete under one bounded coordinator.",
-      "kind": "terminal",
+      "id": "draining-authority",
+      "label": "Ingress closed and draining",
+      "detail": "New commands and provider probes stop synchronously while accepted FIFO work, startup, automation, Agents, and MCP settle exactly once.",
+      "kind": "transient",
       "phase": "shutdown",
       "order": 0,
       "evidence": [{
         "rootAlias": "app",
-        "relativePath": "src/main/main.ts",
-        "startLine": 2068,
-        "endLine": 2199,
-        "lineDigest": "sha256:263da8d59096eb0499db809e32fd9ce54cad41007a28b7a07eab628517f50e0e",
-        "claim": "Graceful shutdown flushes layout and disposes owned services under a deadline."
+        "relativePath": "src/main/daemon-authority-shutdown.ts",
+        "startLine": 51,
+        "endLine": 121,
+        "lineDigest": "sha256:9b724b873c5c9f60d474bd52e46094e78a521131816b33779119b33be2f432a7",
+        "claim": "The idempotent authority barrier closes command, provider, and Agent ingress first, then drains automation, startup, Agent persistence, and both early and late MCP instances."
       }]
+    },
+    {
+      "id": "closed",
+      "label": "Authority and SQLite closed",
+      "detail": "The store closes only after the exact authority barrier and concurrent desktop writers have drained.",
+      "kind": "terminal",
+      "phase": "shutdown",
+      "order": 1,
+      "evidence": [
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/daemon-authority-shutdown.ts",
+          "startLine": 14,
+          "endLine": 29,
+          "lineDigest": "sha256:f5cd800a4da4e07cb4831e995d77b0abe37ecefb31e2b96d51be51ea5e061a54",
+          "claim": "The close helper awaits the exact authority stop plus every concurrent drain before preparing and closing the store."
+        },
+        {
+          "rootAlias": "app",
+          "relativePath": "src/main/main.ts",
+          "startLine": 2695,
+          "endLine": 2710,
+          "lineDigest": "sha256:aa437f98c2e76f4d992109e9dc470119ad29dcd1da8867704728ddc0e9161f68",
+          "claim": "Main joins the authority, daemon runtime, and desktop-file drains before removing event fanout and closing DaemonStore."
+        }
+      ]
     }
   ],
   "transitions": [
     {
-      "id": "validate-layout",
-      "from": "persisted",
-      "to": "validating",
-      "label": "read envelope",
+      "id": "start-verification",
+      "from": "persisted-material",
+      "to": "verifying-store",
+      "label": "inspect exact material",
       "kind": "primary",
       "event": "app starts",
       "evidence": [{
         "rootAlias": "app",
-        "relativePath": "src/shared/layout-schema.ts",
-        "startLine": 488,
-        "endLine": 510,
-        "lineDigest": "sha256:dbd73c101a9126b3d120ad68af6527a8a35a2d9988aa4ca67dcf1a79e8693e1b",
-        "claim": "The full validation pipeline sanitizes and parses the envelope before applying invariants."
+        "relativePath": "src/main/daemon-store.ts",
+        "startLine": 587,
+        "endLine": 607,
+        "lineDigest": "sha256:ab7c115ed1aef1694fe596607ce70a22db79d78cca505d9e191c16eed88c6375",
+        "claim": "DaemonStore serializes initialization, latches a structured failure, and never exposes a partially initialized database."
       }]
     },
     {
-      "id": "restore-layout",
-      "from": "validating",
-      "to": "restoring",
-      "label": "begin restore",
+      "id": "verification-ready",
+      "from": "verifying-store",
+      "to": "authority-ready",
+      "label": "publish ready authority",
       "kind": "primary",
-      "event": "validation passes",
+      "event": "recovery succeeds",
       "evidence": [{
         "rootAlias": "app",
-        "relativePath": "src/renderer/workbench-coordinator.ts",
-        "startLine": 361,
-        "endLine": 380,
-        "lineDigest": "sha256:ff0261170da325e871b7d1ca3d68f37ac50e5dc9bc9ef1cc94c7d22aad552050",
-        "claim": "A validated envelope is passed to the adapter restore path with fallback protection."
+        "relativePath": "src/main/main.ts",
+        "startLine": 1029,
+        "endLine": 1059,
+        "lineDigest": "sha256:fdd2c92535cc7ba2e69b4cf10d4632f36b796d7949d2fb67345d974a4c8cd370",
+        "claim": "Successful database and lifecycle initialization gates the ordered start of every structured Agent runtime."
       }]
     },
     {
-      "id": "restore-complete",
-      "from": "restoring",
-      "to": "ready",
-      "label": "publish workbench",
-      "kind": "primary",
-      "event": "restore commits",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/renderer/App.tsx",
-        "startLine": 3468,
-        "endLine": 3482,
-        "lineDigest": "sha256:8b421e60bdc6e5e3bf9c5988ba5ee9e18064f217cfb6a186496f535aca29c00b",
-        "claim": "After restore settles, the app attaches save listeners and persists the resulting state."
-      }]
-    },
-    {
-      "id": "capture-checkpoint",
-      "from": "ready",
-      "to": "checkpointed",
-      "label": "capture bounded state",
-      "kind": "secondary",
-      "event": "workspace changes",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/renderer/App.tsx",
-        "startLine": 3432,
-        "endLine": 3440,
-        "lineDigest": "sha256:a02cb05c616b1ef9d4ed9d9fb9695603efbfbf7ca8d14f2d985223f47e2fc24e",
-        "claim": "Both layout and active-panel events feed the checkpoint scheduler."
-      }]
-    },
-    {
-      "id": "continue-after-checkpoint",
-      "from": "checkpointed",
-      "to": "ready",
-      "label": "continue normally",
-      "kind": "secondary",
-      "event": "renderer healthy",
-      "evidence": [{
-        "rootAlias": "app",
-        "relativePath": "src/main/renderer-recovery-checkpoint-store.ts",
-        "startLine": 20,
-        "endLine": 43,
-        "lineDigest": "sha256:b9790632909b57c708f4db0fe020439cc194b2803ec507ec5f908aba4383a4b9",
-        "claim": "Saving a checkpoint does not consume it or interrupt the active renderer."
-      }]
-    },
-    {
-      "id": "renderer-replaced",
-      "from": "checkpointed",
-      "to": "recovering",
-      "label": "consume checkpoint",
+      "id": "verification-failed",
+      "from": "verifying-store",
+      "to": "terminal-only-safe-mode",
+      "label": "latch safe mode",
       "kind": "error",
-      "event": "renderer crashes",
+      "event": "verification fails",
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/main.ts",
-        "startLine": 1771,
-        "endLine": 1779,
-        "lineDigest": "sha256:e49f13b5b6411dc62fe43bc018f2acbc64e0a7c32ca4dcef829e7091cab9c7c1",
-        "claim": "Main exposes save, consume, and prepare recovery IPC for renderer replacement."
+        "startLine": 791,
+        "endLine": 813,
+        "lineDigest": "sha256:2a14682304e2ef5c5ce8df40c7ee754de98eb80526eaa876d384212b3d8eb4c2",
+        "claim": "A rejected store initialization is converted once into process-lifetime safe-mode availability and logged without blocking legacy store initialization."
       }]
     },
     {
-      "id": "recovery-complete",
-      "from": "recovering",
-      "to": "ready",
-      "label": "restore live surfaces",
-      "kind": "primary",
-      "event": "replacement ready",
+      "id": "hide-window",
+      "from": "authority-ready",
+      "to": "background-running",
+      "label": "hide workbench",
+      "kind": "secondary",
+      "event": "close with keep-running",
       "evidence": [{
         "rootAlias": "app",
-        "relativePath": "src/renderer/App.tsx",
-        "startLine": 640,
-        "endLine": 655,
-        "lineDigest": "sha256:0fa4dbc73e891660215a38746ff0e475b4f7a89d888ce393a75d5f7df070e6dd",
-        "claim": "A replacement renderer consumes the recovery seed before normal checkpoint scheduling resumes."
+        "relativePath": "src/main/daemon-runtime.ts",
+        "startLine": 71,
+        "endLine": 78,
+        "lineDigest": "sha256:657f70d521fa1b77865235acdf330a8aab3e465ba76944572a51ab265f809eaa",
+        "claim": "Closing the main window hides it only when keepRunning is true; otherwise the same event requests application Quit."
       }]
     },
     {
-      "id": "quit-and-flush",
-      "from": "ready",
+      "id": "reopen-window",
+      "from": "background-running",
+      "to": "authority-ready",
+      "label": "restore workbench",
+      "kind": "secondary",
+      "event": "user reopens app",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/daemon-runtime.ts",
+        "startLine": 80,
+        "endLine": 88,
+        "lineDigest": "sha256:ca75bd6b688c16b2b87578b70e34f8d986548e93ef226f82e12c2c3c0d520f4b",
+        "claim": "Reopening creates a missing window or restores, shows, and focuses the existing renderer client."
+      }]
+    },
+    {
+      "id": "quit-ready",
+      "from": "authority-ready",
+      "to": "draining-authority",
+      "label": "close ingress",
+      "kind": "primary",
+      "event": "explicit Quit",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/daemon-authority-shutdown.ts",
+        "startLine": 85,
+        "endLine": 114,
+        "lineDigest": "sha256:073e4e320ef33375b25d51f9f6dfefaaaddb539cf98817ce1516e704f1e3b3a0",
+        "claim": "Quit immediately closes external ingress and begins Agent shutdown before awaiting the exact drain sequence."
+      }]
+    },
+    {
+      "id": "quit-background",
+      "from": "background-running",
+      "to": "draining-authority",
+      "label": "stop background work",
+      "kind": "primary",
+      "event": "explicit Quit",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/daemon-runtime.ts",
+        "startLine": 91,
+        "endLine": 97,
+        "lineDigest": "sha256:e71274cbd1f080240c1290b41918f7c7b870cae22b951525d72aba12c4022aab",
+        "claim": "Explicit Quit requests application shutdown, whose process owner stops all registered daemon resources exactly once."
+      }]
+    },
+    {
+      "id": "quit-safe-mode",
+      "from": "terminal-only-safe-mode",
+      "to": "draining-authority",
+      "label": "release providers only",
+      "kind": "primary",
+      "event": "explicit Quit",
+      "evidence": [{
+        "rootAlias": "app",
+        "relativePath": "src/main/daemon-authority-shutdown.ts",
+        "startLine": 3,
+        "endLine": 12,
+        "lineDigest": "sha256:cb1dca4ae03d85e5bd38c0a0a9000e625b9cbcd7206125dde161b00393a06ee2",
+        "claim": "When no writable authority exists, safe-mode shutdown selects process-loss cleanup so it releases providers without attempting structured database writes."
+      }]
+    },
+    {
+      "id": "drain-and-close",
+      "from": "draining-authority",
       "to": "closed",
-      "label": "flush and dispose",
+      "label": "close after exact barrier",
       "kind": "primary",
-      "event": "app quits",
+      "event": "all writers settle",
       "evidence": [{
         "rootAlias": "app",
-        "relativePath": "src/main/main.ts",
-        "startLine": 2068,
-        "endLine": 2199,
-        "lineDigest": "sha256:263da8d59096eb0499db809e32fd9ce54cad41007a28b7a07eab628517f50e0e",
-        "claim": "The shutdown task list flushes renderer layout before disposing runtime owners."
+        "relativePath": "src/main/daemon-authority-shutdown.ts",
+        "startLine": 14,
+        "endLine": 29,
+        "lineDigest": "sha256:f5cd800a4da4e07cb4831e995d77b0abe37ecefb31e2b96d51be51ea5e061a54",
+        "claim": "SQLite closure cannot run until the authoritative stop promise and all concurrent writer drains resolve."
       }]
     }
   ],
-  "initialState": "persisted"
+  "initialState": "persisted-material"
 }

@@ -149,8 +149,8 @@
         {
           "rootAlias": "app",
           "relativePath": "src/renderer/App.tsx",
-          "startLine": 2106,
-          "endLine": 2114,
+          "startLine": 2189,
+          "endLine": 2197,
           "lineDigest": "sha256:269830d8137e1d7644219237fbf0421fd14414ce31b5cc6a69f7671d4548a92b",
           "claim": "The Project Map navigation callback routes the validated bootstrap and project session into a new workbench terminal and reports whether it opened."
         },
@@ -246,8 +246,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/agent-control-server.ts",
-        "startLine": 381,
-        "endLine": 390,
+        "startLine": 393,
+        "endLine": 402,
         "lineDigest": "sha256:de1afae1ba20c078081048a1263c6dade2890383f347ab30d9a62ce9dc4bbd1b",
         "claim": "The capability-bound Agent endpoint returns the repository-native guide only for a closed Project Map type."
       }]
@@ -281,16 +281,16 @@
         {
           "rootAlias": "app",
           "relativePath": "native/remote-host/src/agent_control.rs",
-          "startLine": 244,
-          "endLine": 341,
-          "lineDigest": "sha256:ba7c05bbaeda05a52ae012f5d6ab237d719e1725999a913257c698a6dc4194a9",
+          "startLine": 687,
+          "endLine": 783,
+          "lineDigest": "sha256:114df0ff2dd5107227702d81f4878e0b25002032cf55525f0094d8b974b3a1dd",
           "claim": "The native shim validates guide, Draft or Production check, and job phase arguments without a system Node dependency."
         },
         {
           "rootAlias": "app",
           "relativePath": "src/main/agent-control-server.ts",
-          "startLine": 392,
-          "endLine": 443,
+          "startLine": 404,
+          "endLine": 455,
           "lineDigest": "sha256:f7b36a9092fcd4e3843e9de0395a0e7eb6182436add01fcd184036b7543e9521",
           "claim": "The loopback check accepts an explicit Draft or Production profile and returns verification, provenance, or structured diagnostics."
         }
@@ -550,8 +550,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/agent-control-server.ts",
-        "startLine": 381,
-        "endLine": 390,
+        "startLine": 393,
+        "endLine": 402,
         "lineDigest": "sha256:de1afae1ba20c078081048a1263c6dade2890383f347ab30d9a62ce9dc4bbd1b",
         "claim": "The Agent can retrieve the native map-type contract through its scoped loopback capability."
       }]
@@ -580,9 +580,9 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "native/remote-host/src/agent_control.rs",
-        "startLine": 244,
-        "endLine": 341,
-        "lineDigest": "sha256:ba7c05bbaeda05a52ae012f5d6ab237d719e1725999a913257c698a6dc4194a9",
+        "startLine": 687,
+        "endLine": 783,
+        "lineDigest": "sha256:114df0ff2dd5107227702d81f4878e0b25002032cf55525f0094d8b974b3a1dd",
         "claim": "The native CLI accepts a map ID with an explicit Draft quality profile and rejects invalid arguments locally."
       }]
     },
@@ -595,8 +595,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/agent-control-server.ts",
-        "startLine": 392,
-        "endLine": 443,
+        "startLine": 404,
+        "endLine": 455,
         "lineDigest": "sha256:f7b36a9092fcd4e3843e9de0395a0e7eb6182436add01fcd184036b7543e9521",
         "claim": "Draft and Production are closed request values passed to the same main-owned validation service."
       }]
@@ -625,8 +625,8 @@
       "evidence": [{
         "rootAlias": "app",
         "relativePath": "src/main/agent-control-server.ts",
-        "startLine": 446,
-        "endLine": 471,
+        "startLine": 458,
+        "endLine": 483,
         "lineDigest": "sha256:e648a232119be5278658426b17aaefa9efe346b5f061223467f856286fad4c9f",
         "claim": "The scoped Agent reports validating-production then awaiting-review against the persisted job."
       }]
@@ -669,11 +669,11 @@
       "kind": "primary",
       "evidence": [{
         "rootAlias": "app",
-        "relativePath": "src/main/project-map-exporter.ts",
-        "startLine": 26,
-        "endLine": 48,
-        "lineDigest": "sha256:6cb511eb4a93a26fe488905e6ff1f1d560f6b927e1df50daad15b6141b0e624d",
-        "claim": "PNG rendering uses a hidden sandboxed window with JavaScript and Node disabled at the fixed export viewport."
+        "relativePath": "src/renderer/ProjectMapPanel.tsx",
+        "startLine": 1294,
+        "endLine": 1317,
+        "lineDigest": "sha256:026b60d97927c03fbd4973c6ccd61c91279f9f6a5c86de805c1bb2cb11b79b3e",
+        "claim": "Approval is offered only for an unmatched candidate, while both export controls stay disabled until an approved fingerprint exists."
       }]
     }
   ],

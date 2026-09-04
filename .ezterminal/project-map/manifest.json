@@ -15,19 +15,26 @@
       "type": "architecture",
       "path": "maps/runtime-architecture.architecture.json",
       "authoritativeInputs": [
-        { "rootAlias": "app", "relativePath": "src/renderer/App.tsx" },
+        { "rootAlias": "app", "relativePath": "src/renderer/StructuredAgentDockPanel.tsx" },
         { "rootAlias": "app", "relativePath": "src/preload/preload.ts" },
         { "rootAlias": "app", "relativePath": "src/main/main.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/interpreter-broker.ts" },
-        { "rootAlias": "app", "relativePath": "src/interpreter/interpreter-process.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/openclaw-lifecycle-coordinator.ts" },
-        { "rootAlias": "app", "relativePath": "assets/openclaw-supervisor.ps1" }
+        { "rootAlias": "app", "relativePath": "src/main/daemon-runtime.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-cli-control.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-command-router.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-store.ts" },
+        { "rootAlias": "app", "relativePath": "src/shared/daemon-protocol.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-agent-runtime.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-orchestration-mcp-server.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-provider-adapter.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/agent-provider-registry.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/codex-provider-adapter.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/claude-provider-adapter.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:88f588fb6da09c3942e40351f1fd09114db190413ce85dbabe6bc14b989cd9bf",
-        "decision": "no-semantic-impact",
-        "reason": "Lead orchestration, signed adapters, and remote Project policy writes stay inside the represented renderer, preload, Electron-main, and authenticated-remote trust boundaries; the architecture-level path remains unchanged."
+        "inputDigest": "sha256:949ce10c35efea112f4a00dcba5f22b9e5e1e35fd907eed3519f4d7734849dce",
+        "decision": "map-updated",
+        "reason": "The map now shows Electron-main authority, durable Project to Workspace to Session ownership, UI, CLI, and remote clients, permission-capped managed-child control, serialized provider lifecycle, turn-scoped event correlation, and Codex app-server or Claude Agent SDK boundaries."
       }
     },
     {
@@ -53,17 +60,18 @@
       "type": "lifecycle",
       "path": "maps/workbench-lifecycle.lifecycle.json",
       "authoritativeInputs": [
-        { "rootAlias": "app", "relativePath": "src/renderer/workbench-coordinator.ts" },
-        { "rootAlias": "app", "relativePath": "src/shared/layout-schema.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/layout-store.ts" },
-        { "rootAlias": "app", "relativePath": "src/renderer/App.tsx" },
-        { "rootAlias": "app", "relativePath": "src/main/renderer-recovery-checkpoint-store.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/main.ts" }
+        { "rootAlias": "app", "relativePath": "src/main/daemon-store-recovery.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-store.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/main.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-agent-runtime.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-authority-availability.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-runtime.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-authority-shutdown.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:e75a999c60ee68770a899c62eed9628e0c38b64fb2e46e59077aebd296233a13",
-        "decision": "no-semantic-impact",
-        "reason": "Lead workers and adapter services join the bounded shutdown drain, while restore, checkpoint, renderer replacement, pane, and window lifecycle transitions remain unchanged."
+        "inputDigest": "sha256:40cd751f8d14d3d264b4f03df09df10328aa4b0c9edb70c10729dfe5eaa1b880",
+        "decision": "map-updated",
+        "reason": "The lifecycle now follows crash-safe daemon-store verification and rehydration, optional background window lifetime, terminal-only safe mode, and the exact ingress-to-provider-to-SQLite shutdown barrier."
       }
     },
     {
@@ -71,16 +79,17 @@
       "type": "dataflow",
       "path": "maps/remote-session-dataflow.dataflow.json",
       "authoritativeInputs": [
-        { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/remote-runtime.ts" },
-        { "rootAlias": "app", "relativePath": "src/main/remote-desktop-controller.ts" },
         { "rootAlias": "app", "relativePath": "src/shared/remote-protocol.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/remote-bridge.ts" },
+        { "rootAlias": "app", "relativePath": "src/main/daemon-command-router.ts" },
+        { "rootAlias": "app", "relativePath": "src/shared/daemon-protocol.ts" },
+        { "rootAlias": "app", "relativePath": "src/shared/daemon-authority.ts" },
         { "rootAlias": "app", "relativePath": "mobile/src/transport/ws-ezterminal.ts" }
       ],
       "review": {
-        "inputDigest": "sha256:9dc4fb976fbf26381891277a85307deb1c621e0c06971be11490a90027aeaeb5",
-        "decision": "no-semantic-impact",
-        "reason": "Protocol v11 adds correlated mobile Project coordination writes on the same authenticated, size-capped WebSocket boundary; the represented terminal and desktop-control flows are unchanged."
+        "inputDigest": "sha256:a741e85a96ecf69372073e68c3aa36eebb38b9bb222629c96afc8f2b47c78ceb",
+        "decision": "map-updated",
+        "reason": "The map now follows authenticated protocol-v12 Agent commands through Android principal binding and the durable FIFO, then returns revisioned snapshots, events, bounded transcripts, receipts, and redacted safe-mode availability."
       }
     },
     {
@@ -103,9 +112,9 @@
         { "rootAlias": "app", "relativePath": "native/remote-host/src/agent_control.rs" }
       ],
       "review": {
-        "inputDigest": "sha256:acbaa7fb7dec2eb75d1ad7d05ff84c0817aef5a048c3cc6b35a4d1c1f1386f85",
+        "inputDigest": "sha256:f178c9fd7705b31b146d0264ca16bebabb9e4d14b5b284f0c7d2505a760ba5f4",
         "decision": "no-semantic-impact",
-        "reason": "Lead orchestration adds adjacent depth-one worker routes, structured reports, and a compact terminal strip without changing the represented human-approved Project Map authoring, validation, approval, or export workflow."
+        "reason": "Structured daemon Sessions, reviewed provider onboarding, direct managed-child control, and remote v12 are adjacent to this flow; dedicated owning-workspace map dispatch, scoped guide/check/report, human approval, and verified export remain unchanged."
       }
     }
   ]
